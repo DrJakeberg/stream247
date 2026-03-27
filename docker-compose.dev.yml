@@ -9,9 +9,17 @@ services:
       - .env
     volumes:
       - ./data/media:/app/data/media
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
   worker:
     build:
       context: .
@@ -20,9 +28,17 @@ services:
       - .env
     volumes:
       - ./data/media:/app/data/media
+    healthcheck:
+      test: ["CMD", "node", "apps/worker/dist/index.js", "healthcheck", "worker"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
   playout:
     build:
       context: .
@@ -32,9 +48,17 @@ services:
       - .env
     volumes:
       - ./data/media:/app/data/media
+    healthcheck:
+      test: ["CMD", "node", "apps/worker/dist/index.js", "healthcheck", "playout"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
   mailpit:
     image: axllent/mailpit:v1.22
     ports:
@@ -49,8 +73,20 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stream247}
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stream247} -d ${POSTGRES_DB:-stream247}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   redis:
     image: redis:7-alpine
     volumes:
       - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

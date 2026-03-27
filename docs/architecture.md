@@ -68,10 +68,16 @@ Persisted playout runtime fields include:
 - heartbeat timestamp
 - process pid
 - process start time
+- last successful start
+- last successful asset
 - last exit code
 - restart count
+- crash count window
+- crash-loop protection state
 - last error
 - last stderr sample
+- selection reason code
+- fallback tier
 - override mode
 - override asset id
 - override expiry

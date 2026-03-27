@@ -168,10 +168,25 @@ export type PlayoutRuntimeRecord = {
   heartbeatAt: string;
   processPid: number;
   processStartedAt: string;
+  lastSuccessfulStartAt: string;
+  lastSuccessfulAssetId: string;
   lastExitCode: string;
   restartCount: number;
+  crashCountWindow: number;
+  crashLoopDetected: boolean;
   lastError: string;
   lastStderrSample: string;
+  selectionReasonCode:
+    | "operator_override"
+    | "scheduled_match"
+    | "global_fallback"
+    | "generic_fallback"
+    | "no_asset"
+    | "destination_missing"
+    | "resolve_failed"
+    | "ffmpeg_crash_loop"
+    | "";
+  fallbackTier: "none" | "scheduled" | "operator" | "global-fallback" | "generic-fallback";
   overrideMode: "schedule" | "asset" | "fallback";
   overrideAssetId: string;
   overrideUntil: string;
@@ -387,10 +402,16 @@ function defaultState(): AppState {
       heartbeatAt: "",
       processPid: 0,
       processStartedAt: "",
+      lastSuccessfulStartAt: "",
+      lastSuccessfulAssetId: "",
       lastExitCode: "",
       restartCount: 0,
+      crashCountWindow: 0,
+      crashLoopDetected: false,
       lastError: "",
       lastStderrSample: "",
+      selectionReasonCode: "",
+      fallbackTier: "none",
       overrideMode: "schedule",
       overrideAssetId: "",
       overrideUntil: "",
@@ -639,10 +660,16 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       heartbeat_at TEXT NOT NULL DEFAULT '',
       process_pid INTEGER NOT NULL DEFAULT 0,
       process_started_at TEXT NOT NULL DEFAULT '',
+      last_successful_start_at TEXT NOT NULL DEFAULT '',
+      last_successful_asset_id TEXT NOT NULL DEFAULT '',
       last_exit_code TEXT NOT NULL DEFAULT '',
       restart_count INTEGER NOT NULL DEFAULT 0,
+      crash_count_window INTEGER NOT NULL DEFAULT 0,
+      crash_loop_detected BOOLEAN NOT NULL DEFAULT FALSE,
       last_error TEXT NOT NULL DEFAULT '',
       last_stderr_sample TEXT NOT NULL DEFAULT '',
+      selection_reason_code TEXT NOT NULL DEFAULT '',
+      fallback_tier TEXT NOT NULL DEFAULT 'none',
       override_mode TEXT NOT NULL DEFAULT 'schedule',
       override_asset_id TEXT NOT NULL DEFAULT '',
       override_until TEXT NOT NULL DEFAULT '',
@@ -684,10 +711,16 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS restart_requested_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS process_pid INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS process_started_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_successful_start_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_successful_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_exit_code TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS restart_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS crash_count_window INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS crash_loop_detected BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_stderr_sample TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS selection_reason_code TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS fallback_tier TEXT NOT NULL DEFAULT 'none';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_mode TEXT NOT NULL DEFAULT 'schedule';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_until TEXT NOT NULL DEFAULT '';
@@ -856,10 +889,11 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     `
       INSERT INTO playout_runtime (
         singleton_id, status, current_asset_id, current_title, desired_asset_id, current_destination_id, restart_requested_at,
-        heartbeat_at, process_pid, process_started_at, last_exit_code, restart_count, last_error, last_stderr_sample,
-        override_mode, override_asset_id, override_until, skip_asset_id, skip_until, message
+        heartbeat_at, process_pid, process_started_at, last_successful_start_at, last_successful_asset_id, last_exit_code, restart_count,
+        crash_count_window, crash_loop_detected, last_error, last_stderr_sample, selection_reason_code, fallback_tier, override_mode,
+        override_asset_id, override_until, skip_asset_id, skip_until, message
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         current_asset_id = EXCLUDED.current_asset_id,
@@ -870,10 +904,16 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         heartbeat_at = EXCLUDED.heartbeat_at,
         process_pid = EXCLUDED.process_pid,
         process_started_at = EXCLUDED.process_started_at,
+        last_successful_start_at = EXCLUDED.last_successful_start_at,
+        last_successful_asset_id = EXCLUDED.last_successful_asset_id,
         last_exit_code = EXCLUDED.last_exit_code,
         restart_count = EXCLUDED.restart_count,
+        crash_count_window = EXCLUDED.crash_count_window,
+        crash_loop_detected = EXCLUDED.crash_loop_detected,
         last_error = EXCLUDED.last_error,
         last_stderr_sample = EXCLUDED.last_stderr_sample,
+        selection_reason_code = EXCLUDED.selection_reason_code,
+        fallback_tier = EXCLUDED.fallback_tier,
         override_mode = EXCLUDED.override_mode,
         override_asset_id = EXCLUDED.override_asset_id,
         override_until = EXCLUDED.override_until,
@@ -891,10 +931,16 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       next.playout.heartbeatAt,
       next.playout.processPid,
       next.playout.processStartedAt,
+      next.playout.lastSuccessfulStartAt,
+      next.playout.lastSuccessfulAssetId,
       next.playout.lastExitCode,
       next.playout.restartCount,
+      next.playout.crashCountWindow,
+      next.playout.crashLoopDetected,
       next.playout.lastError,
       next.playout.lastStderrSample,
+      next.playout.selectionReasonCode,
+      next.playout.fallbackTier,
       next.playout.overrideMode,
       next.playout.overrideAssetId,
       next.playout.overrideUntil,
@@ -1218,10 +1264,16 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     heartbeat_at: string;
     process_pid: number;
     process_started_at: string;
+    last_successful_start_at: string;
+    last_successful_asset_id: string;
     last_exit_code: string;
     restart_count: number;
+    crash_count_window: number;
+    crash_loop_detected: boolean;
     last_error: string;
     last_stderr_sample: string;
+    selection_reason_code: PlayoutRuntimeRecord["selectionReasonCode"];
+    fallback_tier: PlayoutRuntimeRecord["fallbackTier"];
     override_mode: PlayoutRuntimeRecord["overrideMode"];
     override_asset_id: string;
     override_until: string;
@@ -1402,10 +1454,16 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           heartbeatAt: playoutRow.heartbeat_at,
           processPid: playoutRow.process_pid,
           processStartedAt: playoutRow.process_started_at,
+          lastSuccessfulStartAt: playoutRow.last_successful_start_at,
+          lastSuccessfulAssetId: playoutRow.last_successful_asset_id,
           lastExitCode: playoutRow.last_exit_code,
           restartCount: playoutRow.restart_count,
+          crashCountWindow: playoutRow.crash_count_window,
+          crashLoopDetected: playoutRow.crash_loop_detected,
           lastError: playoutRow.last_error,
           lastStderrSample: playoutRow.last_stderr_sample,
+          selectionReasonCode: playoutRow.selection_reason_code,
+          fallbackTier: playoutRow.fallback_tier,
           overrideMode: playoutRow.override_mode,
           overrideAssetId: playoutRow.override_asset_id,
           overrideUntil: playoutRow.override_until,

@@ -29,6 +29,10 @@ const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcessByStdio<null, Readable, Readable> | null = null;
 let playoutAssetId = "";
 let playoutDestinationId = "";
+const WORKER_HEARTBEAT_STALE_MS = 120_000;
+const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
+const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
+const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -681,7 +685,9 @@ function choosePlaybackCandidate(state: AppState) {
         state.playout.overrideMode === "fallback"
           ? `Temporary fallback override selected asset ${desiredAsset.title}.`
           : `Operator override selected asset ${desiredAsset.title}.`,
-      lifecycleStatus: "recovering" as const
+      lifecycleStatus: "recovering" as const,
+      reasonCode: "operator_override" as const,
+      fallbackTier: "operator" as const
     };
   }
 
@@ -704,7 +710,9 @@ function choosePlaybackCandidate(state: AppState) {
       reason: currentScheduleItem
         ? `Scheduled block ${currentScheduleItem.title} is mapped to asset ${preferredAsset.title}.`
         : `Selected asset ${preferredAsset.title}.`,
-      lifecycleStatus: "running" as const
+      lifecycleStatus: "running" as const,
+      reasonCode: "scheduled_match" as const,
+      fallbackTier: "scheduled" as const
     };
   }
 
@@ -717,7 +725,9 @@ function choosePlaybackCandidate(state: AppState) {
     return {
       asset: globalFallback,
       reason: `Global fallback asset ${globalFallback.title} is selected.`,
-      lifecycleStatus: "recovering" as const
+      lifecycleStatus: "recovering" as const,
+      reasonCode: "global_fallback" as const,
+      fallbackTier: "global-fallback" as const
     };
   }
 
@@ -730,14 +740,18 @@ function choosePlaybackCandidate(state: AppState) {
     return {
       asset: anyReadyAsset,
       reason: `Fallback asset ${anyReadyAsset.title} is selected.`,
-      lifecycleStatus: "recovering" as const
+      lifecycleStatus: "recovering" as const,
+      reasonCode: "generic_fallback" as const,
+      fallbackTier: "generic-fallback" as const
     };
   }
 
   return {
     asset: null,
     reason: "The playout engine could not find a ready asset to put on air.",
-    lifecycleStatus: "failed" as const
+    lifecycleStatus: "failed" as const,
+    reasonCode: "no_asset" as const,
+    fallbackTier: "none" as const
   };
 }
 
@@ -756,6 +770,8 @@ async function startOrSwitchPlayout(args: {
   streamTarget: string;
   lifecycleStatus: AppState["playout"]["status"];
   reason: string;
+  reasonCode: AppState["playout"]["selectionReasonCode"];
+  fallbackTier: AppState["playout"]["fallbackTier"];
 }): Promise<void> {
   const switching = playoutProcess && !playoutProcess.killed;
   if (switching) {
@@ -789,6 +805,8 @@ async function startOrSwitchPlayout(args: {
       heartbeatAt: startedAt,
       processPid: pid,
       processStartedAt: startedAt,
+      selectionReasonCode: args.reasonCode,
+      fallbackTier: args.fallbackTier,
       lastError: "",
       message: args.reason
     }
@@ -824,18 +842,55 @@ async function startOrSwitchPlayout(args: {
     playoutProcess = null;
     playoutAssetId = "";
     playoutDestinationId = "";
+    const exitedAt = new Date().toISOString();
     void updateAppState((current) => ({
       ...current,
       playout: {
         ...current.playout,
-        status: code === 0 ? "idle" : "failed",
-        heartbeatAt: new Date().toISOString(),
+        status:
+          code === 0
+            ? "idle"
+            : current.playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
+              ? "degraded"
+              : "failed",
+        heartbeatAt: exitedAt,
         processPid: 0,
         processStartedAt: "",
+        lastSuccessfulStartAt:
+          code === 0 ||
+          (current.playout.processStartedAt !== "" &&
+            Date.now() - new Date(current.playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS)
+            ? current.playout.processStartedAt
+            : current.playout.lastSuccessfulStartAt,
+        lastSuccessfulAssetId:
+          code === 0 ||
+          (current.playout.processStartedAt !== "" &&
+            Date.now() - new Date(current.playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS)
+            ? current.playout.currentAssetId
+            : current.playout.lastSuccessfulAssetId,
         lastExitCode: String(code ?? ""),
         restartCount: current.playout.restartCount + 1,
+        crashCountWindow:
+          code === 0 ||
+          (current.playout.processStartedAt !== "" &&
+            Date.now() - new Date(current.playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS)
+            ? 0
+            : current.playout.crashCountWindow + 1,
+        crashLoopDetected:
+          code !== 0 &&
+          (code === null ? current.playout.crashCountWindow + 1 : current.playout.crashCountWindow + 1) >=
+            PLAYOUT_CRASH_LOOP_THRESHOLD,
         lastError: code === 0 ? current.playout.lastError : `FFmpeg exited with code ${String(code)}.`,
-        message: code === 0 ? "Playout process stopped cleanly." : "Playout process exited unexpectedly."
+        selectionReasonCode:
+          code !== 0 && current.playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
+            ? "ffmpeg_crash_loop"
+            : current.playout.selectionReasonCode,
+        message:
+          code === 0
+            ? "Playout process stopped cleanly."
+            : current.playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
+              ? "Playout entered crash-loop protection."
+              : "Playout process exited unexpectedly."
       }
     }));
     void upsertIncident({
@@ -911,6 +966,8 @@ async function runPlayoutCycle(): Promise<void> {
         processPid: 0,
         processStartedAt: "",
         heartbeatAt: new Date().toISOString(),
+        selectionReasonCode: "destination_missing",
+        fallbackTier: "none",
         message: "No active RTMP destination is configured."
       }
     }));
@@ -938,6 +995,8 @@ async function runPlayoutCycle(): Promise<void> {
         desiredAssetId: "",
         heartbeatAt: new Date().toISOString(),
         lastError: selection.reason,
+        selectionReasonCode: selection.reasonCode,
+        fallbackTier: selection.fallbackTier,
         message: selection.reason
       }
     }));
@@ -947,27 +1006,111 @@ async function runPlayoutCycle(): Promise<void> {
 
   await resolveIncident("playout.no-asset", "A playable asset is available again.");
 
+  if (state.playout.crashLoopDetected && !state.playout.restartRequestedAt) {
+    await upsertIncident({
+      scope: "playout",
+      severity: "critical",
+      title: "Playout crash-loop protection is active",
+      message: "FFmpeg exited repeatedly. Manual intervention is required before automatic restarts resume.",
+      fingerprint: "playout.crash-loop"
+    });
+    await updateAppState((current) => ({
+      ...current,
+      playout: {
+        ...current.playout,
+        status: "degraded",
+        heartbeatAt: new Date().toISOString(),
+        selectionReasonCode: "ffmpeg_crash_loop",
+        message: "Crash-loop protection is active."
+      }
+    }));
+    return;
+  }
+
+  await resolveIncident("playout.crash-loop", "Playout crash-loop protection is not active.");
+
   const restartRequested = Boolean(state.playout.restartRequestedAt);
   if (restartRequested) {
     stopPlayoutProcess();
+    state = await updateAppState((current) => ({
+      ...current,
+      playout: {
+        ...current.playout,
+        crashLoopDetected: false,
+        crashCountWindow: 0,
+        lastError: "",
+        restartRequestedAt: current.playout.restartRequestedAt
+      }
+    }));
   }
 
   if (!playoutProcess || playoutProcess.killed || restartRequested) {
-    await startOrSwitchPlayout({
-      asset: selection.asset,
-      destination,
-      streamTarget,
-      lifecycleStatus: selection.lifecycleStatus,
-      reason: selection.reason
-    });
+    try {
+      await startOrSwitchPlayout({
+        asset: selection.asset,
+        destination,
+        streamTarget,
+        lifecycleStatus: selection.lifecycleStatus,
+        reason: selection.reason,
+        reasonCode: selection.reasonCode,
+        fallbackTier: selection.fallbackTier
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown playout start error.";
+      await upsertIncident({
+        scope: "playout",
+        severity: "critical",
+        title: "Playout failed to start",
+        message,
+        fingerprint: "playout.start.failed"
+      });
+      await updateAppState((current) => ({
+        ...current,
+        playout: {
+          ...current.playout,
+          status: "degraded",
+          heartbeatAt: new Date().toISOString(),
+          lastError: message,
+          selectionReasonCode: "resolve_failed",
+          fallbackTier: "none",
+          message
+        }
+      }));
+      return;
+    }
   } else if (playoutAssetId !== selection.asset.id || playoutDestinationId !== destination.id) {
-    await startOrSwitchPlayout({
-      asset: selection.asset,
-      destination,
-      streamTarget,
-      lifecycleStatus: "switching",
-      reason: selection.reason
-    });
+    try {
+      await startOrSwitchPlayout({
+        asset: selection.asset,
+        destination,
+        streamTarget,
+        lifecycleStatus: "switching",
+        reason: selection.reason,
+        reasonCode: selection.reasonCode,
+        fallbackTier: selection.fallbackTier
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown playout switch error.";
+      await upsertIncident({
+        scope: "playout",
+        severity: "critical",
+        title: "Playout switch failed",
+        message,
+        fingerprint: "playout.switch.failed"
+      });
+      await updateAppState((current) => ({
+        ...current,
+        playout: {
+          ...current.playout,
+          status: "degraded",
+          heartbeatAt: new Date().toISOString(),
+          lastError: message,
+          selectionReasonCode: "resolve_failed",
+          message
+        }
+      }));
+      return;
+    }
   }
 
   await updateAppState((current) => ({
@@ -985,6 +1128,8 @@ async function runPlayoutCycle(): Promise<void> {
       overrideUntil: current.playout.overrideUntil,
       skipAssetId: current.playout.skipAssetId,
       skipUntil: current.playout.skipUntil,
+      selectionReasonCode: selection.reasonCode,
+      fallbackTier: selection.fallbackTier,
       heartbeatAt: new Date().toISOString(),
       message: selection.reason
     }
@@ -1401,6 +1546,38 @@ async function runWorkerCycle(): Promise<void> {
   await appendAuditEvent("worker.cycle", "Worker reconciliation cycle completed.");
 }
 
+async function runHealthcheck(mode: "worker" | "playout"): Promise<void> {
+  const state = await readAppState();
+  const now = Date.now();
+
+  if (mode === "worker") {
+    const lastWorkerCycle = state.auditEvents.find((event) => event.type === "worker.cycle")?.createdAt ?? "";
+    if (!lastWorkerCycle) {
+      throw new Error("No worker heartbeat has been recorded yet.");
+    }
+
+    if (now - new Date(lastWorkerCycle).getTime() > WORKER_HEARTBEAT_STALE_MS) {
+      throw new Error("Worker heartbeat is stale.");
+    }
+
+    return;
+  }
+
+  if (state.playout.status === "failed") {
+    throw new Error("Playout runtime is failed.");
+  }
+
+  if (state.playout.crashLoopDetected) {
+    throw new Error("Playout crash-loop protection is active.");
+  }
+
+  if (state.playout.status !== "idle" && state.playout.heartbeatAt) {
+    if (now - new Date(state.playout.heartbeatAt).getTime() > PLAYOUT_HEARTBEAT_STALE_MS) {
+      throw new Error("Playout heartbeat is stale.");
+    }
+  }
+}
+
 async function runLoop(mode: "worker" | "playout"): Promise<void> {
   const run = mode === "worker" ? runWorkerCycle : runPlayoutCycle;
   const delay = mode === "worker" ? 30_000 : 15_000;
@@ -1424,10 +1601,20 @@ async function runLoop(mode: "worker" | "playout"): Promise<void> {
   }
 }
 
-const mode = process.argv[2] === "playout" ? "playout" : "worker";
+const command = process.argv[2] || "worker";
 
-runLoop(mode).catch((error) => {
-  // eslint-disable-next-line no-console
-  console.error(error);
-  process.exit(1);
-});
+if (command === "healthcheck") {
+  const healthcheckMode = process.argv[3] === "playout" ? "playout" : "worker";
+  runHealthcheck(healthcheckMode).catch((error) => {
+    // eslint-disable-next-line no-console
+    console.error(error);
+    process.exit(1);
+  });
+} else {
+  const mode = command === "playout" ? "playout" : "worker";
+  runLoop(mode).catch((error) => {
+    // eslint-disable-next-line no-console
+    console.error(error);
+    process.exit(1);
+  });
+}
