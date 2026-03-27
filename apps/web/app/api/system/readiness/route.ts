@@ -2,10 +2,6 @@ import { NextResponse } from "next/server";
 import { getSystemReadiness } from "@/lib/server/readiness";
 
 export async function GET() {
-  const readiness = await getSystemReadiness();
-
-  return NextResponse.json({
-    status: "ok",
-    ...readiness
-  });
+  return NextResponse.json(await getSystemReadiness());
 }
+

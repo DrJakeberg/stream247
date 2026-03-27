@@ -6,6 +6,10 @@ import {
 } from "@stream247/core";
 
 describe("moderator presence windows", () => {
+  it("includes emote-only fallback in the default policy", () => {
+    expect(createDefaultModerationConfig().fallbackEmoteOnly).toBe(true);
+  });
+
   it("parses 'here 30' into an active presence window", () => {
     const now = new Date("2026-03-27T10:00:00.000Z");
     const window = parseModeratorCheckIn({
@@ -28,5 +32,21 @@ describe("moderator presence windows", () => {
 
     expect(status.chatMode).toBe("emote-only");
   });
-});
 
+  it("supports prefixed moderator commands when configured", () => {
+    const now = new Date("2026-03-27T10:00:00.000Z");
+    const config = {
+      ...createDefaultModerationConfig(),
+      requirePrefix: true
+    };
+
+    const window = parseModeratorCheckIn({
+      actor: "mod_b",
+      input: "!here 45",
+      now,
+      config
+    });
+
+    expect(window?.minutes).toBe(45);
+  });
+});

@@ -1,0 +1,109 @@
+import { scryptSync, timingSafeEqual, randomBytes, createHmac } from "node:crypto";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { NextResponse } from "next/server";
+import { readAppState } from "./state";
+
+const sessionCookieName = "stream247_session";
+
+function getAuthSecret(): string {
+  return process.env.APP_SECRET || "stream247-dev-secret";
+}
+
+export function hashPassword(password: string): string {
+  const salt = randomBytes(16).toString("hex");
+  const hash = scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+
+export function verifyPassword(password: string, encoded: string): boolean {
+  const [salt, storedHash] = encoded.split(":");
+
+  if (!salt || !storedHash) {
+    return false;
+  }
+
+  const derivedHash = scryptSync(password, salt, 64);
+  const storedBuffer = Buffer.from(storedHash, "hex");
+
+  if (derivedHash.length !== storedBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(derivedHash, storedBuffer);
+}
+
+function signValue(value: string): string {
+  return createHmac("sha256", getAuthSecret()).update(value).digest("hex");
+}
+
+export function buildSessionValue(email: string): string {
+  const payload = `${email}:${Date.now()}`;
+  return `${payload}:${signValue(payload)}`;
+}
+
+export function parseSessionValue(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const parts = value.split(":");
+  if (parts.length < 3) {
+    return null;
+  }
+
+  const signature = parts.pop();
+  const payload = parts.join(":");
+
+  if (!signature || signValue(payload) !== signature) {
+    return null;
+  }
+
+  return parts[0] ?? null;
+}
+
+export async function getAuthenticatedUserEmail(): Promise<string | null> {
+  const cookieStore = await cookies();
+  return parseSessionValue(cookieStore.get(sessionCookieName)?.value);
+}
+
+export async function requireAuthenticatedUser(): Promise<string> {
+  const email = await getAuthenticatedUserEmail();
+  if (!email) {
+    redirect("/login");
+  }
+
+  const state = await readAppState();
+  if (!state.owner || state.owner.email !== email) {
+    redirect("/login");
+  }
+
+  return email;
+}
+
+export async function setSessionCookie(email: string): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.set(sessionCookieName, buildSessionValue(email), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 14
+  });
+}
+
+export async function clearSessionCookie(): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.delete(sessionCookieName);
+}
+
+export async function requireApiAuth(): Promise<NextResponse | null> {
+  const email = await getAuthenticatedUserEmail();
+  const state = await readAppState();
+
+  if (!email || !state.owner || state.owner.email !== email) {
+    return NextResponse.json({ message: "Authentication required." }, { status: 401 });
+  }
+
+  return null;
+}

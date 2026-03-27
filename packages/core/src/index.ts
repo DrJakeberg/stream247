@@ -5,6 +5,7 @@ export type ModerationConfig = {
   minMinutes: number;
   maxMinutes: number;
   requirePrefix: boolean;
+  fallbackEmoteOnly: boolean;
 };
 
 export type PresenceWindow = {
@@ -49,7 +50,8 @@ export function createDefaultModerationConfig(): ModerationConfig {
     defaultMinutes: 30,
     minMinutes: 5,
     maxMinutes: 240,
-    requirePrefix: false
+    requirePrefix: false,
+    fallbackEmoteOnly: true
   };
 }
 
@@ -141,4 +143,3 @@ export function buildSchedulePreview(args: {
 
   return { date: args.date, items };
 }
-

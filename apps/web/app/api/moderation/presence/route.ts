@@ -1,13 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createDefaultModerationConfig, parseModeratorCheckIn } from "@stream247/core";
+import { parseModeratorCheckIn } from "@stream247/core";
+import { requireApiAuth } from "@/lib/server/auth";
+import { appendAuditEvent, readAppState, updateAppState } from "@/lib/server/state";
 
 export async function POST(request: NextRequest) {
+  const unauthorized = await requireApiAuth();
+  if (unauthorized) {
+    return unauthorized;
+  }
+
   const body = (await request.json()) as { actor?: string; input?: string };
-  const config = createDefaultModerationConfig();
+  const now = new Date();
+  const state = await readAppState();
+  const config = state.moderation;
   const window = parseModeratorCheckIn({
     actor: body.actor ?? "unknown",
     input: body.input ?? "",
-    now: new Date(),
+    now,
     config
   });
 
@@ -18,6 +27,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  await updateAppState((current) => ({
+    ...current,
+    presenceWindows: [
+      {
+        actor: window.actor,
+        minutes: window.minutes,
+        createdAt: window.createdAt.toISOString(),
+        expiresAt: window.expiresAt.toISOString()
+      },
+      ...current.presenceWindows.filter((entry) => new Date(entry.expiresAt) > now)
+    ]
+  }));
+  await appendAuditEvent("moderation.checkin", `${window.actor} checked in for ${window.minutes} minutes.`);
+
   return NextResponse.json({
     ok: true,
     window: {
@@ -27,4 +50,3 @@ export async function POST(request: NextRequest) {
     }
   });
 }
-

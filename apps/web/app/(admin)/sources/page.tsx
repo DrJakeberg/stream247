@@ -1,12 +1,9 @@
 import { Panel } from "@/components/panel";
+import { readAppState } from "@/lib/server/state";
 
-const sources = [
-  { name: "YouTube Playlist", type: "Managed ingestion", status: "Ready" },
-  { name: "Twitch Archive", type: "Twitch VOD sync", status: "Ready" },
-  { name: "Fallback Slate", type: "Local media", status: "Standby" }
-];
+export default async function SourcesPage() {
+  const state = await readAppState();
 
-export default function SourcesPage() {
   return (
     <Panel title="Source connectors" eyebrow="Sources">
       <p className="subtle">
@@ -22,7 +19,7 @@ export default function SourcesPage() {
           </tr>
         </thead>
         <tbody>
-          {sources.map((source) => (
+          {state.sources.map((source) => (
             <tr key={source.name}>
               <td>{source.name}</td>
               <td>{source.type}</td>
@@ -34,4 +31,3 @@ export default function SourcesPage() {
     </Panel>
   );
 }
-

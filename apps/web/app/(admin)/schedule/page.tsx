@@ -1,7 +1,11 @@
 import { Panel } from "@/components/panel";
-import { schedulePreview } from "@/lib/mock-data";
+import { getSchedulePreview, readAppState } from "@/lib/server/state";
 
-export default function SchedulePage() {
+export default async function SchedulePage() {
+  const state = await readAppState();
+  const schedulePreview = getSchedulePreview(state);
+  type ScheduleItem = (typeof schedulePreview.items)[number];
+
   return (
     <Panel title="Schedule preview" eyebrow="Programming">
       <p className="subtle">
@@ -9,7 +13,7 @@ export default function SchedulePage() {
         reasons and room for manual overrides.
       </p>
       <div className="list">
-        {schedulePreview.items.map((item) => (
+        {schedulePreview.items.map((item: ScheduleItem) => (
           <div className="item" key={item.id}>
             <strong>{item.title}</strong>
             <div className="subtle">
@@ -22,4 +26,3 @@ export default function SchedulePage() {
     </Panel>
   );
 }
-
