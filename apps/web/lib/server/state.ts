@@ -29,7 +29,8 @@ import {
   type TwitchConnection,
   type UserRecord,
   type UserRole,
-  type OverlaySettingsRecord
+  type OverlaySettingsRecord,
+  type ManagedConfigRecord
 } from "@stream247/db";
 
 export type {
@@ -41,6 +42,7 @@ export type {
   OwnerAccount,
   PlayoutRuntimeRecord,
   OverlaySettingsRecord,
+  ManagedConfigRecord,
   ScheduleBlockRecord,
   SourceRecord,
   StreamDestinationRecord,
@@ -84,6 +86,39 @@ export function getPresenceStatus(state: AppState) {
 export function getActivePresenceWindows(state: AppState): ModeratorPresenceWindowRecord[] {
   const now = new Date();
   return state.presenceWindows.filter((window) => new Date(window.expiresAt) > now);
+}
+
+export function getManagedConfigValue<K extends keyof ManagedConfigRecord>(
+  state: AppState,
+  key: K,
+  envFallback = ""
+): ManagedConfigRecord[K] {
+  const value = state.managedConfig[key];
+  return ((typeof value === "string" && value !== "" ? value : envFallback) as ManagedConfigRecord[K]);
+}
+
+export function getManagedTwitchConfig(state: AppState) {
+  return {
+    clientId: getManagedConfigValue(state, "twitchClientId", process.env.TWITCH_CLIENT_ID || ""),
+    clientSecret: getManagedConfigValue(state, "twitchClientSecret", process.env.TWITCH_CLIENT_SECRET || ""),
+    defaultCategoryId: getManagedConfigValue(
+      state,
+      "twitchDefaultCategoryId",
+      process.env.TWITCH_DEFAULT_CATEGORY_ID || ""
+    )
+  };
+}
+
+export function getManagedAlertConfig(state: AppState) {
+  return {
+    discordWebhookUrl: getManagedConfigValue(state, "discordWebhookUrl", process.env.DISCORD_WEBHOOK_URL || ""),
+    smtpHost: getManagedConfigValue(state, "smtpHost", process.env.SMTP_HOST || ""),
+    smtpPort: getManagedConfigValue(state, "smtpPort", process.env.SMTP_PORT || ""),
+    smtpUser: getManagedConfigValue(state, "smtpUser", process.env.SMTP_USER || ""),
+    smtpPassword: getManagedConfigValue(state, "smtpPassword", process.env.SMTP_PASSWORD || ""),
+    smtpFrom: getManagedConfigValue(state, "smtpFrom", process.env.SMTP_FROM || ""),
+    alertEmailTo: getManagedConfigValue(state, "alertEmailTo", process.env.ALERT_EMAIL_TO || "")
+  };
 }
 
 export function getCurrentScheduleItem(state: AppState) {

@@ -11,6 +11,7 @@ import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
 export default async function SetupPage() {
   const state = await readAppState();
   const user = await getAuthenticatedUser();
+  const twitchAuthorizeUrl = await getTwitchAuthorizeUrl("broadcaster-connect");
 
   if (state.initialized) {
     redirect(user ? "/dashboard" : "/login");
@@ -22,8 +23,8 @@ export default async function SetupPage() {
         <span className="badge">First-run setup</span>
         <h2>Deploy the stack, open the browser, bootstrap the workspace.</h2>
         <p>
-          Create the owner account first. Twitch OAuth client credentials stay in `.env` for now, because client
-          secrets should not be stored through the browser UI in plaintext.
+          Create the owner account first. You can still keep third-party credentials in `.env`, but Stream247 also
+          supports encrypted managed credentials after bootstrap.
         </p>
       </section>
       <section className="grid two">
@@ -37,8 +38,10 @@ export default async function SetupPage() {
           </p>
           <div className="list">
             <div className="item">
-              <strong>Set `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` in `.env`</strong>
-              <div className="subtle">These are application secrets and should stay outside normal runtime forms.</div>
+              <strong>Set Twitch client credentials in `.env` or save them after bootstrap in settings</strong>
+              <div className="subtle">
+                The setup form can now store them encrypted, and the admin settings page can update them later.
+              </div>
             </div>
             <div className="item">
               <strong>Register redirect URLs in the Twitch developer console</strong>
@@ -50,7 +53,7 @@ export default async function SetupPage() {
               </div>
             </div>
           </div>
-          <TwitchConnectPanel authorizeUrl={getTwitchAuthorizeUrl("broadcaster-connect")} />
+          <TwitchConnectPanel authorizeUrl={twitchAuthorizeUrl} />
         </Panel>
       </section>
     </main>

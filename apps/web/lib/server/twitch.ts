@@ -1,12 +1,23 @@
-import { appendAuditEvent, findTeamGrantByLogin, updateAppState, type UserRecord, type UserRole } from "./state";
+import {
+  appendAuditEvent,
+  findTeamGrantByLogin,
+  getManagedTwitchConfig,
+  readAppState,
+  updateAppState,
+  type UserRecord,
+  type UserRole
+} from "./state";
 
 export function getTwitchRedirectUri(): string {
   const appUrl = process.env.APP_URL || "http://localhost:3000";
   return `${appUrl.replace(/\/$/, "")}/api/integrations/twitch/callback`;
 }
 
-export function getTwitchAuthorizeUrl(kind: "broadcaster-connect" | "team-login" = "broadcaster-connect"): string | null {
-  const clientId = process.env.TWITCH_CLIENT_ID;
+export async function getTwitchAuthorizeUrl(
+  kind: "broadcaster-connect" | "team-login" = "broadcaster-connect"
+): Promise<string | null> {
+  const state = await readAppState();
+  const clientId = getManagedTwitchConfig(state).clientId;
   if (!clientId) {
     return null;
   }
@@ -31,8 +42,8 @@ export function getTwitchAuthorizeUrl(kind: "broadcaster-connect" | "team-login"
 }
 
 export async function exchangeTwitchCode(code: string) {
-  const clientId = process.env.TWITCH_CLIENT_ID;
-  const clientSecret = process.env.TWITCH_CLIENT_SECRET;
+  const state = await readAppState();
+  const { clientId, clientSecret } = getManagedTwitchConfig(state);
 
   if (!clientId || !clientSecret) {
     throw new Error("Missing TWITCH_CLIENT_ID or TWITCH_CLIENT_SECRET.");
@@ -120,8 +131,8 @@ export async function recordTwitchError(message: string) {
 }
 
 export async function exchangeTwitchLoginCode(code: string): Promise<UserRecord> {
-  const clientId = process.env.TWITCH_CLIENT_ID;
-  const clientSecret = process.env.TWITCH_CLIENT_SECRET;
+  const state = await readAppState();
+  const { clientId, clientSecret } = getManagedTwitchConfig(state);
 
   if (!clientId || !clientSecret) {
     throw new Error("Missing TWITCH_CLIENT_ID or TWITCH_CLIENT_SECRET.");

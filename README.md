@@ -38,13 +38,13 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - Discord webhook alerts
   - SMTP email alerts
   - readiness and health endpoints
+- encrypted-at-rest managed secret storage for Twitch and alert credentials
 - viewer-facing pages with:
   - public schedule page
   - browser-source overlay page with admin-managed branding
 
 ## What Is Not Done Yet
 
-- encrypted secret storage in the setup/admin UI
 - richer multi-scene overlay composition inside the playout runtime
 - more advanced playout transitions and scene-aware switchovers
 - deeper incident history, filtering, and analytics views
@@ -71,13 +71,18 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
    - `http://localhost:3000/setup`
 6. Create the owner account.
 7. Sign in to the admin UI.
-8. Connect Twitch from the dashboard if you want broadcaster sync and Twitch SSO.
-9. Add media by either:
+8. Optional during bootstrap:
+   - enter `TWITCH_CLIENT_ID`
+   - enter `TWITCH_CLIENT_SECRET`
+9. Or add/update encrypted managed credentials later in:
+   - `/settings`
+10. Connect Twitch from the dashboard if you want broadcaster sync and Twitch SSO.
+11. Add media by either:
    - placing files into `data/media`
    - adding direct media URLs
    - adding a YouTube playlist source
    - adding a Twitch VOD source
-10. Build a schedule and let the worker ingest assets.
+12. Build a schedule and let the worker ingest assets.
 
 For local-development builds instead of GHCR images:
 
@@ -109,9 +114,9 @@ docker compose -f docker-compose.dev.yml up -d --build
 ### What Belongs In `.env`
 
 - infrastructure secrets
-- OAuth application credentials
 - RTMP stream keys
-- SMTP credentials
+- optional fallback OAuth application credentials
+- optional fallback SMTP / Discord credentials
 - deployment-level defaults such as `CHANNEL_TIMEZONE`
 
 ### What Does Not Belong In `.env`
@@ -123,6 +128,25 @@ docker compose -f docker-compose.dev.yml up -d --build
 - incidents and acknowledgements
 
 Those are runtime settings stored in PostgreSQL and managed from the admin UI.
+
+### Managed Secrets In The Admin UI
+
+Stream247 can now store these credentials encrypted at rest in PostgreSQL:
+
+- `TWITCH_CLIENT_ID`
+- `TWITCH_CLIENT_SECRET`
+- default Twitch category id
+- Discord webhook URL
+- SMTP host / port / user / password
+- SMTP from address
+- alert recipient email
+
+Behavior:
+
+- setup can capture Twitch client id and secret during bootstrap
+- `/settings` can update managed credentials later
+- blank password/secret fields keep the existing stored value
+- `.env` values still work as fallback if no managed value exists
 
 ## Twitch App Credentials
 
@@ -144,7 +168,8 @@ Important:
 
 - `TWITCH_CLIENT_ID` is public application identity.
 - `TWITCH_CLIENT_SECRET` is private application secret.
-- today both still live in `.env`; browser-managed encrypted secret storage is not implemented yet.
+- both can now be stored as encrypted managed settings in Stream247.
+- `.env` remains supported as bootstrap and deployment fallback.
 
 ## Deployment
 
@@ -183,6 +208,7 @@ The default `.env.example` already points Compose at the `latest` GHCR tags.
 - Twitch SSO team login
 - role-based access with `owner`, `admin`, `operator`, `moderator`, `viewer`
 - team access grants by Twitch login
+- optional Twitch client credential capture during setup
 
 ### Sources And Assets
 
@@ -236,6 +262,7 @@ The default `.env.example` already points Compose at the `latest` GHCR tags.
 - Discord webhook alerts
 - SMTP email alerts
 - audit events
+- encrypted-at-rest managed integration secrets with `.env` fallback
 
 ### Overlay And Viewer Pages
 

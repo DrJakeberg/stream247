@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import path from "node:path";
 import { Pool, type PoolClient } from "pg";
 import { createDefaultModerationConfig, type ModerationConfig } from "@stream247/core";
@@ -143,6 +144,20 @@ export type OverlaySettingsRecord = {
   updatedAt: string;
 };
 
+export type ManagedConfigRecord = {
+  twitchClientId: string;
+  twitchClientSecret: string;
+  twitchDefaultCategoryId: string;
+  discordWebhookUrl: string;
+  smtpHost: string;
+  smtpPort: string;
+  smtpUser: string;
+  smtpPassword: string;
+  smtpFrom: string;
+  alertEmailTo: string;
+  updatedAt: string;
+};
+
 export type PlayoutRuntimeRecord = {
   status: "idle" | "starting" | "running" | "switching" | "degraded" | "recovering" | "failed";
   currentAssetId: string;
@@ -173,6 +188,7 @@ export type AppState = {
   moderation: ModerationConfig;
   presenceWindows: ModeratorPresenceWindowRecord[];
   overlay: OverlaySettingsRecord;
+  managedConfig: ManagedConfigRecord;
   twitch: TwitchConnection;
   twitchScheduleSegments: TwitchScheduleSegmentRecord[];
   scheduleBlocks: ScheduleBlockRecord[];
@@ -211,6 +227,44 @@ function getPool(): Pool {
   return globalThis.__stream247Pool;
 }
 
+function getEncryptionKey(): Buffer {
+  return scryptSync(process.env.APP_SECRET || "stream247-dev-secret", "stream247-managed-config", 32);
+}
+
+function encryptManagedConfig(value: ManagedConfigRecord): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", getEncryptionKey(), iv);
+  const plaintext = Buffer.from(JSON.stringify(value), "utf8");
+  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+
+  return `v1:${iv.toString("base64url")}:${authTag.toString("base64url")}:${encrypted.toString("base64url")}`;
+}
+
+function decryptManagedConfig(value: string): ManagedConfigRecord | null {
+  if (!value) {
+    return null;
+  }
+
+  const [version, ivText, authTagText, payloadText] = value.split(":");
+  if (version !== "v1" || !ivText || !authTagText || !payloadText) {
+    return null;
+  }
+
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", getEncryptionKey(), Buffer.from(ivText, "base64url"));
+    decipher.setAuthTag(Buffer.from(authTagText, "base64url"));
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(payloadText, "base64url")),
+      decipher.final()
+    ]).toString("utf8");
+
+    return JSON.parse(decrypted) as ManagedConfigRecord;
+  } catch {
+    return null;
+  }
+}
+
 function defaultState(): AppState {
   return {
     initialized: false,
@@ -228,6 +282,19 @@ function defaultState(): AppState {
       showNextItem: true,
       showScheduleTeaser: true,
       emergencyBanner: "",
+      updatedAt: ""
+    },
+    managedConfig: {
+      twitchClientId: "",
+      twitchClientSecret: "",
+      twitchDefaultCategoryId: "",
+      discordWebhookUrl: "",
+      smtpHost: "",
+      smtpPort: "",
+      smtpUser: "",
+      smtpPassword: "",
+      smtpFrom: "",
+      alertEmailTo: "",
       updatedAt: ""
     },
     twitch: {
@@ -360,6 +427,10 @@ function normalizeState(state: AppState): AppState {
       ...defaults.overlay,
       ...(state.overlay ?? {})
     },
+    managedConfig: {
+      ...defaults.managedConfig,
+      ...(state.managedConfig ?? {})
+    },
     twitch: {
       ...defaults.twitch,
       ...(state.twitch ?? {})
@@ -454,6 +525,12 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       show_next_item BOOLEAN NOT NULL DEFAULT TRUE,
       show_schedule_teaser BOOLEAN NOT NULL DEFAULT TRUE,
       emergency_banner TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS managed_config (
+      singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+      encrypted_payload TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT ''
     );
 
@@ -599,6 +676,8 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_schedule_teaser BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE managed_config ADD COLUMN IF NOT EXISTS encrypted_payload TEXT NOT NULL DEFAULT '';
+    ALTER TABLE managed_config ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS start_minute_of_day INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS current_destination_id TEXT NOT NULL DEFAULT '';
@@ -708,6 +787,17 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       next.overlay.emergencyBanner,
       next.overlay.updatedAt
     ]
+  );
+
+  await client.query(
+    `
+      INSERT INTO managed_config (singleton_id, encrypted_payload, updated_at)
+      VALUES (1, $1, $2)
+      ON CONFLICT (singleton_id) DO UPDATE SET
+        encrypted_payload = EXCLUDED.encrypted_payload,
+        updated_at = EXCLUDED.updated_at
+    `,
+    [encryptManagedConfig(next.managedConfig), next.managedConfig.updatedAt]
   );
 
   await client.query(
@@ -1032,6 +1122,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     emergency_banner: string;
     updated_at: string;
   }>("SELECT * FROM overlay_settings WHERE singleton_id = 1");
+  const managedConfigResult = await client.query<{
+    encrypted_payload: string;
+    updated_at: string;
+  }>("SELECT * FROM managed_config WHERE singleton_id = 1");
   const twitchResult = await client.query<{
     status: TwitchConnection["status"];
     broadcaster_id: string;
@@ -1140,8 +1234,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   const systemRow = systemResult.rows[0];
   const moderationRow = moderationResult.rows[0];
   const overlayRow = overlayResult.rows[0];
+  const managedConfigRow = managedConfigResult.rows[0];
   const twitchRow = twitchResult.rows[0];
   const playoutRow = playoutResult.rows[0];
+  const decryptedManagedConfig = managedConfigRow ? decryptManagedConfig(managedConfigRow.encrypted_payload) : null;
 
   return normalizeState({
     initialized: systemRow?.initialized ?? false,
@@ -1202,6 +1298,12 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           updatedAt: overlayRow.updated_at
         }
       : defaults.overlay,
+    managedConfig: decryptedManagedConfig
+      ? {
+          ...decryptedManagedConfig,
+          updatedAt: managedConfigRow?.updated_at || decryptedManagedConfig.updatedAt
+        }
+      : defaults.managedConfig,
     twitch: twitchRow
       ? {
           status: twitchRow.status,

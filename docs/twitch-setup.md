@@ -30,17 +30,28 @@ Both redirect URLs must be registered on the same Twitch application:
    - `<APP_URL>/api/auth/twitch/callback`
 4. Copy the Client ID into `TWITCH_CLIENT_ID`.
 5. Generate, reveal, or regenerate the Client Secret and store it in `TWITCH_CLIENT_SECRET`.
-6. Restart the stack after updating `.env`.
-7. Open the Stream247 dashboard and complete:
+6. Choose one of these storage paths:
+   - put both values in `.env`
+   - enter them during `/setup`
+   - save them later in `/settings`
+7. Restart the stack only if you changed `.env`.
+8. Open the Stream247 dashboard and complete:
    - `Connect Twitch` for the broadcaster connection
    - `Sign in with Twitch` for team members
 
-## Why These Stay In `.env`
+## Where These Credentials Live
 
 - `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` are application credentials, not per-user preferences.
-- Stream247 currently stores deployment-time secrets in `.env`.
+- Stream247 can now store them encrypted at rest in PostgreSQL through the admin UI.
+- `.env` still works as a bootstrap/fallback source for self-hosted deployments.
 - Runtime state such as moderation policy, schedule blocks, incidents, and overlay settings is stored in PostgreSQL instead.
-- Encrypted secret management from the admin UI is still planned, not implemented.
+
+Current behavior:
+
+- setup can optionally capture Twitch client id and secret
+- `/settings` can rotate them later
+- blank secret fields keep the stored value instead of wiping it
+- `.env` values are used only when no managed value exists
 
 ## Broadcaster Connect
 
@@ -94,6 +105,5 @@ That creates an explicit moderator presence window. While such a window is activ
 
 ## Current Limitations
 
-- client credentials are not yet entered and encrypted through the setup wizard
 - Twitch integration is Twitch-first, not multi-destination
 - overlay is not yet a native Twitch-scene/plans system; it is a browser-source overlay page
