@@ -3,15 +3,15 @@ import { Panel } from "@/components/panel";
 import { SetupForm } from "@/components/setup-form";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
 import { readAppState } from "@/lib/server/state";
-import { getAuthenticatedUserEmail } from "@/lib/server/auth";
+import { getAuthenticatedUser } from "@/lib/server/auth";
 import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
 
 export default async function SetupPage() {
   const state = await readAppState();
-  const email = await getAuthenticatedUserEmail();
+  const user = await getAuthenticatedUser();
 
   if (state.initialized) {
-    redirect(email ? "/dashboard" : "/login");
+    redirect(user ? "/dashboard" : "/login");
   }
 
   return (
@@ -30,10 +30,9 @@ export default async function SetupPage() {
             Twitch connection becomes available after the workspace is initialized. If OAuth is not configured yet,
             the admin UI will explain what is missing.
           </p>
-          <TwitchConnectPanel authorizeUrl={getTwitchAuthorizeUrl()} />
+          <TwitchConnectPanel authorizeUrl={getTwitchAuthorizeUrl("broadcaster-connect")} />
         </Panel>
       </section>
     </main>
   );
 }
-

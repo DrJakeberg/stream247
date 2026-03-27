@@ -2,7 +2,7 @@ import { scryptSync, timingSafeEqual, randomBytes, createHmac } from "node:crypt
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
-import { readAppState } from "./state";
+import { findUserById, readAppState, type UserRecord, type UserRole } from "./state";
 
 const sessionCookieName = "stream247_session";
 
@@ -37,8 +37,8 @@ function signValue(value: string): string {
   return createHmac("sha256", getAuthSecret()).update(value).digest("hex");
 }
 
-export function buildSessionValue(email: string): string {
-  const payload = `${email}:${Date.now()}`;
+export function buildSessionValue(userId: string): string {
+  const payload = `${userId}:${Date.now()}`;
   return `${payload}:${signValue(payload)}`;
 }
 
@@ -62,28 +62,37 @@ export function parseSessionValue(value: string | undefined): string | null {
   return parts[0] ?? null;
 }
 
-export async function getAuthenticatedUserEmail(): Promise<string | null> {
+export async function getAuthenticatedUserId(): Promise<string | null> {
   const cookieStore = await cookies();
   return parseSessionValue(cookieStore.get(sessionCookieName)?.value);
 }
 
-export async function requireAuthenticatedUser(): Promise<string> {
-  const email = await getAuthenticatedUserEmail();
-  if (!email) {
-    redirect("/login");
-  }
-
+export async function getAuthenticatedUser(): Promise<UserRecord | null> {
+  const userId = await getAuthenticatedUserId();
   const state = await readAppState();
-  if (!state.owner || state.owner.email !== email) {
-    redirect("/login");
-  }
-
-  return email;
+  return findUserById(state, userId);
 }
 
-export async function setSessionCookie(email: string): Promise<void> {
+export async function requireAuthenticatedUser(): Promise<UserRecord> {
+  const user = await getAuthenticatedUser();
+  if (!user) {
+    redirect("/login");
+  }
+
+  return user;
+}
+
+export async function requireRoles(roles: UserRole[]): Promise<UserRecord> {
+  const user = await requireAuthenticatedUser();
+  if (!roles.includes(user.role)) {
+    redirect("/dashboard");
+  }
+  return user;
+}
+
+export async function setSessionCookie(userId: string): Promise<void> {
   const cookieStore = await cookies();
-  cookieStore.set(sessionCookieName, buildSessionValue(email), {
+  cookieStore.set(sessionCookieName, buildSessionValue(userId), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
@@ -98,11 +107,22 @@ export async function clearSessionCookie(): Promise<void> {
 }
 
 export async function requireApiAuth(): Promise<NextResponse | null> {
-  const email = await getAuthenticatedUserEmail();
-  const state = await readAppState();
-
-  if (!email || !state.owner || state.owner.email !== email) {
+  const user = await getAuthenticatedUser();
+  if (!user) {
     return NextResponse.json({ message: "Authentication required." }, { status: 401 });
+  }
+
+  return null;
+}
+
+export async function requireApiRoles(roles: UserRole[]): Promise<NextResponse | null> {
+  const user = await getAuthenticatedUser();
+  if (!user) {
+    return NextResponse.json({ message: "Authentication required." }, { status: 401 });
+  }
+
+  if (!roles.includes(user.role)) {
+    return NextResponse.json({ message: "Insufficient permissions." }, { status: 403 });
   }
 
   return null;

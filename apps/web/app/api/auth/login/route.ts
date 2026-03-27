@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { setSessionCookie, verifyPassword } from "@/lib/server/auth";
-import { readAppState } from "@/lib/server/state";
+import { findUserByEmail, readAppState, updateAppState } from "@/lib/server/state";
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as { email?: string; password?: string };
@@ -12,7 +12,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Invalid email or password." }, { status: 401 });
   }
 
-  await setSessionCookie(email);
+  const user = findUserByEmail(state, email);
+  if (!user) {
+    return NextResponse.json({ message: "Owner user is missing from state." }, { status: 500 });
+  }
+
+  await updateAppState((current) => ({
+    ...current,
+    users: current.users.map((currentUser) =>
+      currentUser.id === user.id ? { ...currentUser, lastLoginAt: new Date().toISOString() } : currentUser
+    )
+  }));
+
+  await setSessionCookie(user.id);
   return NextResponse.json({ ok: true });
 }
 

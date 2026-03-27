@@ -12,20 +12,23 @@ export default async function AdminLayout({ children }: { children: ReactNode })
     redirect("/setup");
   }
 
-  const email = await requireAuthenticatedUser();
+  const user = await requireAuthenticatedUser();
 
   return (
     <main className="shell">
       <aside className="sidebar">
         <div className="brand">
           <h1>Stream247</h1>
-          <p>{email}</p>
+          <p>
+            {user.displayName} · {user.role}
+          </p>
         </div>
         <nav className="nav">
           <Link href="/dashboard">Dashboard</Link>
           <Link href="/sources">Sources</Link>
           <Link href="/schedule">Schedule</Link>
           <Link href="/moderation">Moderation</Link>
+          <Link href="/team">Team</Link>
           <Link href="/channel">Public page</Link>
         </nav>
         <div style={{ marginTop: 24 }}>
@@ -36,4 +39,3 @@ export default async function AdminLayout({ children }: { children: ReactNode })
     </main>
   );
 }
-
