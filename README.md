@@ -13,7 +13,7 @@ Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel fr
 
 - Source ingestion for YouTube playlists, Twitch VODs, local media, and direct media URLs
 - Timeline-based scheduling with deterministic playout queue generation
-- Twitch metadata sync for title, category, and schedule
+- Twitch schedule sync for viewer-facing planning on the platform side and optional broadcaster sync to Twitch
 - Moderator presence windows such as `here 30` to disable emote-only mode temporarily
 - Discord and email alerting
 - Audit logging, incidents, and health checks
@@ -97,6 +97,7 @@ Every release image should be gated by:
   - Twitch VOD ingestion via yt-dlp
   - minute-accurate schedule block editing from the admin UI
   - Twitch broadcaster connect and Twitch SSO team login
+  - Twitch metadata sync for title and category from the active schedule block
   - FFmpeg-based RTMP playout foundation
   - incident tracking, readiness checks, Discord webhook alerts, and SMTP email alerts
 - Not implemented yet:

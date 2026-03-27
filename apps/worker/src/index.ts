@@ -187,6 +187,45 @@ async function refreshBroadcasterAccessToken(): Promise<string> {
   return payload.access_token;
 }
 
+async function resolveTwitchCategory(args: {
+  accessToken: string;
+  categoryName: string;
+}): Promise<{ id: string; name: string } | null> {
+  const normalizedName = args.categoryName.trim();
+  if (!normalizedName) {
+    return null;
+  }
+
+  const response = await fetch(
+    `https://api.twitch.tv/helix/search/categories?query=${encodeURIComponent(normalizedName)}&first=10`,
+    {
+      headers: {
+        Authorization: `Bearer ${args.accessToken}`,
+        "Client-Id": process.env.TWITCH_CLIENT_ID || ""
+      }
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Category lookup failed with status ${response.status}.`);
+  }
+
+  const payload = (await response.json()) as {
+    data?: Array<{ id?: string; name?: string }>;
+  };
+
+  const exactMatch =
+    payload.data?.find((entry) => entry.name?.toLowerCase() === normalizedName.toLowerCase() && entry.id && entry.name) ??
+    payload.data?.find((entry) => entry.id && entry.name);
+
+  return exactMatch?.id && exactMatch.name
+    ? {
+        id: exactMatch.id,
+        name: exactMatch.name
+      }
+    : null;
+}
+
 async function walkMediaFiles(root: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(root, { withFileTypes: true });
@@ -948,6 +987,8 @@ async function reconcileTwitch(): Promise<void> {
   }
 
   const desiredTitle = currentScheduleItem.title;
+  let desiredCategoryId = process.env.TWITCH_DEFAULT_CATEGORY_ID || "";
+  let desiredCategoryName = currentScheduleItem.categoryName;
   const presenceStatus = describePresenceStatus({
     activeWindows: state.presenceWindows.map((window) => ({
       actor: window.actor,
@@ -960,26 +1001,58 @@ async function reconcileTwitch(): Promise<void> {
   });
 
   const sync = async (accessToken: string) => {
-    const channelBody: Record<string, string> = { title: desiredTitle };
-    if (process.env.TWITCH_DEFAULT_CATEGORY_ID) {
-      channelBody.game_id = process.env.TWITCH_DEFAULT_CATEGORY_ID;
+    const resolvedCategory = await resolveTwitchCategory({
+      accessToken,
+      categoryName: currentScheduleItem.categoryName
+    });
+
+    if (resolvedCategory) {
+      desiredCategoryId = resolvedCategory.id;
+      desiredCategoryName = resolvedCategory.name;
+      await resolveIncident(
+        "twitch.category.lookup.failed",
+        `Resolved Twitch category ${resolvedCategory.name} for schedule block ${currentScheduleItem.title}.`
+      );
+    } else if (!desiredCategoryId) {
+      await upsertIncident({
+        scope: "twitch",
+        severity: "warning",
+        title: "Twitch category lookup failed",
+        message: `Could not resolve a Twitch category id for "${currentScheduleItem.categoryName}". Title sync still continues.`,
+        fingerprint: "twitch.category.lookup.failed"
+      });
+    } else {
+      await resolveIncident(
+        "twitch.category.lookup.failed",
+        `Using default Twitch category for schedule block ${currentScheduleItem.title}.`
+      );
     }
 
-    const channelResponse = await fetch(
-      `https://api.twitch.tv/helix/channels?broadcaster_id=${encodeURIComponent(state.twitch.broadcasterId)}`,
-      {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Client-Id": process.env.TWITCH_CLIENT_ID || "",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(channelBody)
-      }
-    );
+    const shouldSyncChannelMetadata =
+      state.twitch.lastSyncedTitle !== desiredTitle || state.twitch.lastSyncedCategoryId !== desiredCategoryId;
 
-    if (!channelResponse.ok) {
-      throw new Error(`Channel metadata sync failed with status ${channelResponse.status}.`);
+    if (shouldSyncChannelMetadata) {
+      const channelBody: Record<string, string> = { title: desiredTitle };
+      if (desiredCategoryId) {
+        channelBody.game_id = desiredCategoryId;
+      }
+
+      const channelResponse = await fetch(
+        `https://api.twitch.tv/helix/channels?broadcaster_id=${encodeURIComponent(state.twitch.broadcasterId)}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Client-Id": process.env.TWITCH_CLIENT_ID || "",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(channelBody)
+        }
+      );
+
+      if (!channelResponse.ok) {
+        throw new Error(`Channel metadata sync failed with status ${channelResponse.status}.`);
+      }
     }
 
     const chatResponse = await fetch(
@@ -1002,6 +1075,19 @@ async function reconcileTwitch(): Promise<void> {
     if (!chatResponse.ok) {
       throw new Error(`Chat settings sync failed with status ${chatResponse.status}.`);
     }
+
+    await updateAppState((current) => ({
+      ...current,
+      twitch: {
+        ...current.twitch,
+        status: "connected",
+        lastMetadataSyncAt: new Date().toISOString(),
+        lastSyncedTitle: desiredTitle,
+        lastSyncedCategoryName: desiredCategoryName,
+        lastSyncedCategoryId: desiredCategoryId,
+        error: ""
+      }
+    }));
   };
 
   try {

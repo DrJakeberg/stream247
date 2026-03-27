@@ -26,12 +26,15 @@
 - Stream247 keeps moderator presence and operational settings inside PostgreSQL because they are runtime state.
 - Stream247 keeps OAuth client secrets in `.env` because that is the safer place for deployment-time secrets until encrypted secret storage exists.
 
-## Planned API Usage
+## Current API Usage
 
-- Channel metadata updates
-- Stream schedule sync
+- Channel metadata updates for title and category from the active schedule block
 - Chat settings updates for emote-only mode
 - RTMP output using `TWITCH_RTMP_URL` and `TWITCH_STREAM_KEY`
+
+## Still Planned
+
+- Stream schedule sync into Twitch schedule segments
 
 ## Team Access And SSO
 
