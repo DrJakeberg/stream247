@@ -1,6 +1,6 @@
 {
   "name": "@stream247/config",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,4 +9,3 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   }
 }
-
