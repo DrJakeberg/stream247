@@ -41,6 +41,10 @@ export type TwitchConnection = {
   connectedAt: string;
   tokenExpiresAt: string;
   lastRefreshAt: string;
+  lastMetadataSyncAt: string;
+  lastSyncedTitle: string;
+  lastSyncedCategoryName: string;
+  lastSyncedCategoryId: string;
   error: string;
 };
 
@@ -195,6 +199,10 @@ function defaultState(): AppState {
       connectedAt: "",
       tokenExpiresAt: "",
       lastRefreshAt: "",
+      lastMetadataSyncAt: "",
+      lastSyncedTitle: "",
+      lastSyncedCategoryName: "",
+      lastSyncedCategoryId: "",
       error: ""
     },
     scheduleBlocks: [
@@ -394,6 +402,10 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       connected_at TEXT NOT NULL DEFAULT '',
       token_expires_at TEXT NOT NULL DEFAULT '',
       last_refresh_at TEXT NOT NULL DEFAULT '',
+      last_metadata_sync_at TEXT NOT NULL DEFAULT '',
+      last_synced_title TEXT NOT NULL DEFAULT '',
+      last_synced_category_name TEXT NOT NULL DEFAULT '',
+      last_synced_category_id TEXT NOT NULL DEFAULT '',
       error TEXT NOT NULL DEFAULT ''
     );
 
@@ -486,6 +498,10 @@ async function ensureSchema(client: PoolClient): Promise<void> {
   await client.query(`
     ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS token_expires_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_refresh_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_metadata_sync_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_synced_title TEXT NOT NULL DEFAULT '';
+    ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_synced_category_name TEXT NOT NULL DEFAULT '';
+    ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_synced_category_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS connector_kind TEXT NOT NULL DEFAULT 'local-library';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS external_url TEXT NOT NULL DEFAULT '';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
@@ -572,9 +588,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   await client.query(
     `
       INSERT INTO twitch_connection (
-        singleton_id, status, broadcaster_id, broadcaster_login, access_token, refresh_token, connected_at, token_expires_at, last_refresh_at, error
+        singleton_id, status, broadcaster_id, broadcaster_login, access_token, refresh_token, connected_at, token_expires_at,
+        last_refresh_at, last_metadata_sync_at, last_synced_title, last_synced_category_name, last_synced_category_id, error
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         broadcaster_id = EXCLUDED.broadcaster_id,
@@ -584,6 +601,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         connected_at = EXCLUDED.connected_at,
         token_expires_at = EXCLUDED.token_expires_at,
         last_refresh_at = EXCLUDED.last_refresh_at,
+        last_metadata_sync_at = EXCLUDED.last_metadata_sync_at,
+        last_synced_title = EXCLUDED.last_synced_title,
+        last_synced_category_name = EXCLUDED.last_synced_category_name,
+        last_synced_category_id = EXCLUDED.last_synced_category_id,
         error = EXCLUDED.error
     `,
     [
@@ -595,6 +616,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       next.twitch.connectedAt,
       next.twitch.tokenExpiresAt,
       next.twitch.lastRefreshAt,
+      next.twitch.lastMetadataSyncAt,
+      next.twitch.lastSyncedTitle,
+      next.twitch.lastSyncedCategoryName,
+      next.twitch.lastSyncedCategoryId,
       next.twitch.error
     ]
   );
@@ -856,6 +881,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     connected_at: string;
     token_expires_at: string;
     last_refresh_at: string;
+    last_metadata_sync_at: string;
+    last_synced_title: string;
+    last_synced_category_name: string;
+    last_synced_category_id: string;
     error: string;
   }>("SELECT * FROM twitch_connection WHERE singleton_id = 1");
   const blocksResult = await client.query<{
@@ -995,6 +1024,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           connectedAt: twitchRow.connected_at,
           tokenExpiresAt: twitchRow.token_expires_at,
           lastRefreshAt: twitchRow.last_refresh_at,
+          lastMetadataSyncAt: twitchRow.last_metadata_sync_at,
+          lastSyncedTitle: twitchRow.last_synced_title,
+          lastSyncedCategoryName: twitchRow.last_synced_category_name,
+          lastSyncedCategoryId: twitchRow.last_synced_category_id,
           error: twitchRow.error
         }
       : defaults.twitch,

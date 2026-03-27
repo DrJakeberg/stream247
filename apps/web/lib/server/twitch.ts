@@ -94,6 +94,10 @@ export async function exchangeTwitchCode(code: string) {
       connectedAt: new Date().toISOString(),
       tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString() : "",
       lastRefreshAt: "",
+      lastMetadataSyncAt: "",
+      lastSyncedTitle: "",
+      lastSyncedCategoryName: "",
+      lastSyncedCategoryId: "",
       error: ""
     }
   }));

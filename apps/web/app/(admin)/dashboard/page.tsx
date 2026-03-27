@@ -42,6 +42,12 @@ export default async function DashboardPage() {
               ? `Broadcaster ${state.twitch.broadcasterLogin || state.twitch.broadcasterId}`
               : state.twitch.error || "OAuth connection not completed yet."}
           </p>
+          {state.twitch.lastMetadataSyncAt ? (
+            <p className="subtle">
+              Last metadata sync: {state.twitch.lastSyncedTitle || "no title"} ·{" "}
+              {state.twitch.lastSyncedCategoryName || "no category"}
+            </p>
+          ) : null}
         </article>
         <article className="metric">
           <span className="label">Moderator window</span>
@@ -153,6 +159,19 @@ export default async function DashboardPage() {
                 {activeDestination
                   ? `${activeDestination.status} · ${activeDestination.notes}`
                   : "RTMP destination is missing. Set STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY."}
+              </div>
+            </div>
+            <div className="item">
+              <strong>Twitch metadata sync</strong>
+              <div className="subtle">
+                {state.twitch.lastMetadataSyncAt
+                  ? `${state.twitch.lastSyncedTitle || "no title"} · ${state.twitch.lastSyncedCategoryName || "no category"}`
+                  : "No Twitch metadata sync has completed yet."}
+              </div>
+              <div className="subtle">
+                {state.twitch.lastMetadataSyncAt
+                  ? `Last synced at ${state.twitch.lastMetadataSyncAt}`
+                  : "Connect Twitch and let the worker complete a reconciliation cycle."}
               </div>
             </div>
             <TwitchConnectPanel authorizeUrl={getTwitchAuthorizeUrl("broadcaster-connect")} />
