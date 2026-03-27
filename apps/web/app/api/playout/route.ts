@@ -12,11 +12,13 @@ export async function GET() {
   const destination = state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ?? null;
   const currentAsset = state.assets.find((entry) => entry.id === state.playout.currentAssetId) ?? null;
   const desiredAsset = state.assets.find((entry) => entry.id === state.playout.desiredAssetId) ?? null;
+  const overrideAsset = state.assets.find((entry) => entry.id === state.playout.overrideAssetId) ?? null;
 
   return NextResponse.json({
     playout: state.playout,
     destination,
     currentAsset,
-    desiredAsset
+    desiredAsset,
+    overrideAsset
   });
 }

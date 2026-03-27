@@ -30,6 +30,10 @@ let playoutProcess: ChildProcessByStdio<null, Readable, Readable> | null = null;
 let playoutAssetId = "";
 let playoutDestinationId = "";
 
+function isTimestampActive(value: string): boolean {
+  return value !== "" && new Date(value).getTime() > Date.now();
+}
+
 function execFileText(file: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(file, args, { maxBuffer: 1024 * 1024 * 20 }, (error, stdout, stderr) => {
@@ -629,15 +633,22 @@ function getCurrentScheduleItem(state: AppState) {
 }
 
 function choosePlaybackCandidate(state: AppState) {
+  const manualOverrideActive = isTimestampActive(state.playout.overrideUntil);
+  const skippedAssetId = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
   const desiredAsset =
-    state.playout.restartRequestedAt !== "" && state.playout.desiredAssetId !== ""
-      ? state.assets.find((asset) => asset.id === state.playout.desiredAssetId && asset.status === "ready")
-      : null;
+    manualOverrideActive && state.playout.overrideAssetId !== ""
+      ? state.assets.find((asset) => asset.id === state.playout.overrideAssetId && asset.status === "ready")
+      : state.playout.restartRequestedAt !== "" && state.playout.desiredAssetId !== ""
+        ? state.assets.find((asset) => asset.id === state.playout.desiredAssetId && asset.status === "ready")
+        : null;
 
   if (desiredAsset) {
     return {
       asset: desiredAsset,
-      reason: `Operator override selected asset ${desiredAsset.title}.`,
+      reason:
+        state.playout.overrideMode === "fallback"
+          ? `Temporary fallback override selected asset ${desiredAsset.title}.`
+          : `Operator override selected asset ${desiredAsset.title}.`,
       lifecycleStatus: "recovering" as const
     };
   }
@@ -646,6 +657,9 @@ function choosePlaybackCandidate(state: AppState) {
   const preferredSource = currentScheduleItem?.sourceName;
   const preferredAsset = state.assets.find((entry) => {
     if (entry.status !== "ready") {
+      return false;
+    }
+    if (entry.id === skippedAssetId) {
       return false;
     }
     const matchingSource = state.sources.find((source) => source.id === entry.sourceId);
@@ -664,6 +678,7 @@ function choosePlaybackCandidate(state: AppState) {
 
   const globalFallback = [...state.assets]
     .filter((asset) => asset.status === "ready" && asset.isGlobalFallback)
+    .filter((asset) => asset.id !== skippedAssetId)
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 
   if (globalFallback) {
@@ -676,6 +691,7 @@ function choosePlaybackCandidate(state: AppState) {
 
   const anyReadyAsset = [...state.assets]
     .filter((asset) => asset.status === "ready")
+    .filter((asset) => asset.id !== skippedAssetId)
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 
   if (anyReadyAsset) {
@@ -820,7 +836,24 @@ async function syncDestinations(): Promise<void> {
 }
 
 async function runPlayoutCycle(): Promise<void> {
-  const state = await readAppState();
+  let state = await readAppState();
+  if (
+    (state.playout.overrideUntil !== "" && !isTimestampActive(state.playout.overrideUntil)) ||
+    (state.playout.skipUntil !== "" && !isTimestampActive(state.playout.skipUntil))
+  ) {
+    state = await updateAppState((current) => ({
+      ...current,
+      playout: {
+        ...current.playout,
+        overrideMode: isTimestampActive(current.playout.overrideUntil) ? current.playout.overrideMode : "schedule",
+        overrideAssetId: isTimestampActive(current.playout.overrideUntil) ? current.playout.overrideAssetId : "",
+        overrideUntil: isTimestampActive(current.playout.overrideUntil) ? current.playout.overrideUntil : "",
+        skipAssetId: isTimestampActive(current.playout.skipUntil) ? current.playout.skipAssetId : "",
+        skipUntil: isTimestampActive(current.playout.skipUntil) ? current.playout.skipUntil : ""
+      }
+    }));
+  }
+
   const destination = state.destinations.find((entry) => entry.enabled) ?? null;
   const streamTarget = getConfiguredStreamTarget(destination);
   const selection = choosePlaybackCandidate(state);
@@ -915,6 +948,11 @@ async function runPlayoutCycle(): Promise<void> {
       desiredAssetId: selection.asset.id,
       currentDestinationId: destination.id,
       restartRequestedAt: "",
+      overrideMode: current.playout.overrideMode,
+      overrideAssetId: current.playout.overrideAssetId,
+      overrideUntil: current.playout.overrideUntil,
+      skipAssetId: current.playout.skipAssetId,
+      skipUntil: current.playout.skipUntil,
       heartbeatAt: new Date().toISOString(),
       message: selection.reason
     }

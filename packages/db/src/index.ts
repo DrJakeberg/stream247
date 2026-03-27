@@ -131,6 +131,18 @@ export type ScheduleBlockRecord = {
   sourceName: string;
 };
 
+export type OverlaySettingsRecord = {
+  enabled: boolean;
+  channelName: string;
+  headline: string;
+  accentColor: string;
+  showClock: boolean;
+  showNextItem: boolean;
+  showScheduleTeaser: boolean;
+  emergencyBanner: string;
+  updatedAt: string;
+};
+
 export type PlayoutRuntimeRecord = {
   status: "idle" | "starting" | "running" | "switching" | "degraded" | "recovering" | "failed";
   currentAssetId: string;
@@ -145,6 +157,11 @@ export type PlayoutRuntimeRecord = {
   restartCount: number;
   lastError: string;
   lastStderrSample: string;
+  overrideMode: "schedule" | "asset" | "fallback";
+  overrideAssetId: string;
+  overrideUntil: string;
+  skipAssetId: string;
+  skipUntil: string;
   message: string;
 };
 
@@ -155,6 +172,7 @@ export type AppState = {
   teamAccessGrants: TeamAccessGrant[];
   moderation: ModerationConfig;
   presenceWindows: ModeratorPresenceWindowRecord[];
+  overlay: OverlaySettingsRecord;
   twitch: TwitchConnection;
   twitchScheduleSegments: TwitchScheduleSegmentRecord[];
   scheduleBlocks: ScheduleBlockRecord[];
@@ -201,6 +219,17 @@ function defaultState(): AppState {
     teamAccessGrants: [],
     moderation: createDefaultModerationConfig(),
     presenceWindows: [],
+    overlay: {
+      enabled: false,
+      channelName: "Stream247",
+      headline: "Always on air",
+      accentColor: "#0e6d5a",
+      showClock: true,
+      showNextItem: true,
+      showScheduleTeaser: true,
+      emergencyBanner: "",
+      updatedAt: ""
+    },
     twitch: {
       status: "not-connected",
       broadcasterId: "",
@@ -295,6 +324,11 @@ function defaultState(): AppState {
       restartCount: 0,
       lastError: "",
       lastStderrSample: "",
+      overrideMode: "schedule",
+      overrideAssetId: "",
+      overrideUntil: "",
+      skipAssetId: "",
+      skipUntil: "",
       message: "Playout engine has not started yet."
     }
   };
@@ -321,6 +355,10 @@ function normalizeState(state: AppState): AppState {
     moderation: {
       ...defaults.moderation,
       ...(state.moderation ?? {})
+    },
+    overlay: {
+      ...defaults.overlay,
+      ...(state.overlay ?? {})
     },
     twitch: {
       ...defaults.twitch,
@@ -404,6 +442,19 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       minutes INTEGER NOT NULL,
       created_at TEXT NOT NULL,
       expires_at TEXT PRIMARY KEY
+    );
+
+    CREATE TABLE IF NOT EXISTS overlay_settings (
+      singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      channel_name TEXT NOT NULL DEFAULT 'Stream247',
+      headline TEXT NOT NULL DEFAULT 'Always on air',
+      accent_color TEXT NOT NULL DEFAULT '#0e6d5a',
+      show_clock BOOLEAN NOT NULL DEFAULT TRUE,
+      show_next_item BOOLEAN NOT NULL DEFAULT TRUE,
+      show_schedule_teaser BOOLEAN NOT NULL DEFAULT TRUE,
+      emergency_banner TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS twitch_connection (
@@ -515,6 +566,11 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       restart_count INTEGER NOT NULL DEFAULT 0,
       last_error TEXT NOT NULL DEFAULT '',
       last_stderr_sample TEXT NOT NULL DEFAULT '',
+      override_mode TEXT NOT NULL DEFAULT 'schedule',
+      override_asset_id TEXT NOT NULL DEFAULT '',
+      override_until TEXT NOT NULL DEFAULT '',
+      skip_asset_id TEXT NOT NULL DEFAULT '',
+      skip_until TEXT NOT NULL DEFAULT '',
       message TEXT NOT NULL DEFAULT 'Playout engine has not started yet.'
     );
   `);
@@ -534,6 +590,15 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS is_global_fallback BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_by TEXT NOT NULL DEFAULT '';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS channel_name TEXT NOT NULL DEFAULT 'Stream247';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS headline TEXT NOT NULL DEFAULT 'Always on air';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS accent_color TEXT NOT NULL DEFAULT '#0e6d5a';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_clock BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_next_item BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_schedule_teaser BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS start_minute_of_day INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS current_destination_id TEXT NOT NULL DEFAULT '';
@@ -544,6 +609,11 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS restart_count INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_stderr_sample TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_mode TEXT NOT NULL DEFAULT 'schedule';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_until TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS skip_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS skip_until TEXT NOT NULL DEFAULT '';
   `);
 
   await client.query(`
@@ -612,6 +682,36 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
 
   await client.query(
     `
+      INSERT INTO overlay_settings (
+        singleton_id, enabled, channel_name, headline, accent_color, show_clock, show_next_item, show_schedule_teaser, emergency_banner, updated_at
+      )
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ON CONFLICT (singleton_id) DO UPDATE SET
+        enabled = EXCLUDED.enabled,
+        channel_name = EXCLUDED.channel_name,
+        headline = EXCLUDED.headline,
+        accent_color = EXCLUDED.accent_color,
+        show_clock = EXCLUDED.show_clock,
+        show_next_item = EXCLUDED.show_next_item,
+        show_schedule_teaser = EXCLUDED.show_schedule_teaser,
+        emergency_banner = EXCLUDED.emergency_banner,
+        updated_at = EXCLUDED.updated_at
+    `,
+    [
+      next.overlay.enabled,
+      next.overlay.channelName,
+      next.overlay.headline,
+      next.overlay.accentColor,
+      next.overlay.showClock,
+      next.overlay.showNextItem,
+      next.overlay.showScheduleTeaser,
+      next.overlay.emergencyBanner,
+      next.overlay.updatedAt
+    ]
+  );
+
+  await client.query(
+    `
       INSERT INTO twitch_connection (
         singleton_id, status, broadcaster_id, broadcaster_login, access_token, refresh_token, connected_at, token_expires_at,
         last_refresh_at, last_metadata_sync_at, last_synced_title, last_synced_category_name, last_synced_category_id, last_schedule_sync_at, error
@@ -666,9 +766,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     `
       INSERT INTO playout_runtime (
         singleton_id, status, current_asset_id, current_title, desired_asset_id, current_destination_id, restart_requested_at,
-        heartbeat_at, process_pid, process_started_at, last_exit_code, restart_count, last_error, last_stderr_sample, message
+        heartbeat_at, process_pid, process_started_at, last_exit_code, restart_count, last_error, last_stderr_sample,
+        override_mode, override_asset_id, override_until, skip_asset_id, skip_until, message
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         current_asset_id = EXCLUDED.current_asset_id,
@@ -683,6 +784,11 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         restart_count = EXCLUDED.restart_count,
         last_error = EXCLUDED.last_error,
         last_stderr_sample = EXCLUDED.last_stderr_sample,
+        override_mode = EXCLUDED.override_mode,
+        override_asset_id = EXCLUDED.override_asset_id,
+        override_until = EXCLUDED.override_until,
+        skip_asset_id = EXCLUDED.skip_asset_id,
+        skip_until = EXCLUDED.skip_until,
         message = EXCLUDED.message
     `,
     [
@@ -699,6 +805,11 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       next.playout.restartCount,
       next.playout.lastError,
       next.playout.lastStderrSample,
+      next.playout.overrideMode,
+      next.playout.overrideAssetId,
+      next.playout.overrideUntil,
+      next.playout.skipAssetId,
+      next.playout.skipUntil,
       next.playout.message
     ]
   );
@@ -910,6 +1021,17 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   const presenceResult = await client.query<{ actor: string; minutes: number; created_at: string; expires_at: string }>(
     "SELECT * FROM presence_windows ORDER BY created_at DESC"
   );
+  const overlayResult = await client.query<{
+    enabled: boolean;
+    channel_name: string;
+    headline: string;
+    accent_color: string;
+    show_clock: boolean;
+    show_next_item: boolean;
+    show_schedule_teaser: boolean;
+    emergency_banner: string;
+    updated_at: string;
+  }>("SELECT * FROM overlay_settings WHERE singleton_id = 1");
   const twitchResult = await client.query<{
     status: TwitchConnection["status"];
     broadcaster_id: string;
@@ -1006,12 +1128,18 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     restart_count: number;
     last_error: string;
     last_stderr_sample: string;
+    override_mode: PlayoutRuntimeRecord["overrideMode"];
+    override_asset_id: string;
+    override_until: string;
+    skip_asset_id: string;
+    skip_until: string;
     message: string;
   }>("SELECT * FROM playout_runtime WHERE singleton_id = 1");
 
   const defaults = defaultState();
   const systemRow = systemResult.rows[0];
   const moderationRow = moderationResult.rows[0];
+  const overlayRow = overlayResult.rows[0];
   const twitchRow = twitchResult.rows[0];
   const playoutRow = playoutResult.rows[0];
 
@@ -1061,6 +1189,19 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       createdAt: row.created_at,
       expiresAt: row.expires_at
     })),
+    overlay: overlayRow
+      ? {
+          enabled: overlayRow.enabled,
+          channelName: overlayRow.channel_name,
+          headline: overlayRow.headline,
+          accentColor: overlayRow.accent_color,
+          showClock: overlayRow.show_clock,
+          showNextItem: overlayRow.show_next_item,
+          showScheduleTeaser: overlayRow.show_schedule_teaser,
+          emergencyBanner: overlayRow.emergency_banner,
+          updatedAt: overlayRow.updated_at
+        }
+      : defaults.overlay,
     twitch: twitchRow
       ? {
           status: twitchRow.status,
@@ -1163,6 +1304,11 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           restartCount: playoutRow.restart_count,
           lastError: playoutRow.last_error,
           lastStderrSample: playoutRow.last_stderr_sample,
+          overrideMode: playoutRow.override_mode,
+          overrideAssetId: playoutRow.override_asset_id,
+          overrideUntil: playoutRow.override_until,
+          skipAssetId: playoutRow.skip_asset_id,
+          skipUntil: playoutRow.skip_until,
           message: playoutRow.message
         }
       : defaults.playout

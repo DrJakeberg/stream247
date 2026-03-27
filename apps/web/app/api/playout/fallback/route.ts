@@ -21,9 +21,13 @@ export async function POST() {
     ...current,
     playout: {
       ...current.playout,
+      status: "recovering",
       desiredAssetId: fallback.id,
       restartRequestedAt: new Date().toISOString(),
       heartbeatAt: new Date().toISOString(),
+      overrideMode: "fallback",
+      overrideAssetId: fallback.id,
+      overrideUntil: new Date(Date.now() + 60 * 60_000).toISOString(),
       message: `Manual fallback requested for asset ${fallback.title}.`
     }
   }));

@@ -17,6 +17,7 @@ Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel fr
 - Moderator presence windows such as `here 30` to disable emote-only mode temporarily
 - Discord and email alerting
 - Audit logging, incidents, and health checks
+- Scene-aware browser-source overlay themes beyond the current single-template overlay
 
 ## Monorepo Layout
 
@@ -97,6 +98,8 @@ Every release image should be gated by:
   - YouTube playlist ingestion via yt-dlp
   - Twitch VOD ingestion via yt-dlp
   - minute-accurate schedule block editing from the admin UI
+  - operator overrides for pinning an asset, skipping the current asset, temporary fallback, and resuming schedule control
+  - browser-source overlay page with admin-managed branding and now/next teaser settings
   - Twitch broadcaster connect and Twitch SSO team login
   - Twitch metadata sync for title and category from the active schedule block
   - Twitch schedule sync for upcoming schedule blocks
@@ -104,7 +107,8 @@ Every release image should be gated by:
   - incident tracking, readiness checks, Discord webhook alerts, and SMTP email alerts
 - Not implemented yet:
   - browser-stored third-party secrets from the setup wizard
-  - drag/drop timeline editing and operator override lanes
+  - drag/drop timeline editing
+  - richer multi-scene overlay composition inside the playout runtime
 
 ## License
 
