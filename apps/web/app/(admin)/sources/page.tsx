@@ -11,15 +11,16 @@ export default async function SourcesPage() {
     <div className="grid two">
       <Panel title="Add source" eyebrow="Sources">
         <p className="subtle">
-          Direct media URLs are ingestible now. YouTube playlists and Twitch VODs can already be configured and will
-          remain inactive until their connector workers are implemented.
+          Direct media URLs, YouTube playlists, and Twitch VODs are ingestible now. Playlist and VOD sources are
+          normalized through yt-dlp into playable assets for the playout runtime.
         </p>
         <SourceCreateForm />
       </Panel>
       <Panel title="Source connectors" eyebrow="Catalog">
         <p className="subtle">
           Connectors normalize external video sources into playable assets for the playout queue. The worker currently
-          scans the local media library and validates direct media URLs into PostgreSQL.
+          scans the local media library, ingests direct media URLs, expands YouTube playlists, and resolves Twitch VODs
+          into PostgreSQL-backed assets.
         </p>
         <table className="table">
           <thead>

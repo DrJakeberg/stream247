@@ -43,6 +43,29 @@ export type SchedulePreview = {
   }>;
 };
 
+export function isLikelyYouTubePlaylistUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    return (
+      ["youtube.com", "www.youtube.com", "music.youtube.com", "m.youtube.com"].includes(host) &&
+      url.searchParams.has("list")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function isLikelyTwitchVodUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    return (host === "twitch.tv" || host === "www.twitch.tv") && /\/videos\/\d+/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function padTwo(value: number): string {
   return String(value).padStart(2, "0");
 }
