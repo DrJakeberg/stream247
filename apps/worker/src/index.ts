@@ -4,12 +4,15 @@ import nodemailer from "nodemailer";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import {
+  addDaysToDateString,
+  buildScheduleOccurrences,
   buildSchedulePreview,
   describePresenceStatus,
   getCurrentScheduleMoment,
   isCurrentScheduleTime,
   isLikelyTwitchVodUrl,
-  isLikelyYouTubePlaylistUrl
+  isLikelyYouTubePlaylistUrl,
+  toUtcIsoForLocalDateTime
 } from "@stream247/core";
 import {
   appendAuditEvent,
@@ -969,6 +972,167 @@ async function sendAlert(subject: string, message: string): Promise<void> {
   await Promise.allSettled([sendDiscordAlert(`Stream247: ${message}`), sendEmailAlert(subject, message)]);
 }
 
+async function syncTwitchSchedule(args: {
+  state: AppState;
+  accessToken: string;
+  timeZone: string;
+  categoryCache: Map<string, { id: string; name: string } | null>;
+}): Promise<void> {
+  const syncEveryMs = 15 * 60_000;
+  const currentDate = getCurrentScheduleMoment({
+    now: new Date(),
+    timeZone: args.timeZone
+  }).date;
+
+  const desiredOccurrences = Array.from({ length: 7 }, (_, offset) =>
+    buildScheduleOccurrences({
+      date: addDaysToDateString(currentDate, offset),
+      blocks: args.state.scheduleBlocks
+    })
+  )
+    .flat()
+    .filter((occurrence) => {
+      const startIso = toUtcIsoForLocalDateTime({
+        date: occurrence.date,
+        minuteOfDay: occurrence.startMinuteOfDay,
+        timeZone: args.timeZone
+      });
+      return new Date(startIso).getTime() > Date.now() + 5 * 60_000;
+    });
+
+  const desiredKeys = desiredOccurrences.map((occurrence) => occurrence.key).sort();
+  const currentKeys = args.state.twitchScheduleSegments.map((segment) => segment.key).sort();
+  const sameKeys =
+    desiredKeys.length === currentKeys.length && desiredKeys.every((entry, index) => entry === currentKeys[index]);
+  const lastScheduleSyncAt = args.state.twitch.lastScheduleSyncAt ? new Date(args.state.twitch.lastScheduleSyncAt).getTime() : 0;
+  if (sameKeys && lastScheduleSyncAt > 0 && Date.now() - lastScheduleSyncAt < syncEveryMs) {
+    return;
+  }
+
+  const existingSegmentsByKey = new Map(args.state.twitchScheduleSegments.map((segment) => [segment.key, segment]));
+  const nextSegments: AppState["twitchScheduleSegments"] = [];
+  let skippedCount = 0;
+
+  for (const occurrence of desiredOccurrences) {
+    if (occurrence.durationMinutes < 30 || occurrence.durationMinutes > 1380) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const startTime = toUtcIsoForLocalDateTime({
+      date: occurrence.date,
+      minuteOfDay: occurrence.startMinuteOfDay,
+      timeZone: args.timeZone
+    });
+
+    let category = args.categoryCache.get(occurrence.categoryName) ?? null;
+    if (category === null && !args.categoryCache.has(occurrence.categoryName)) {
+      category = await resolveTwitchCategory({
+        accessToken: args.accessToken,
+        categoryName: occurrence.categoryName
+      });
+      args.categoryCache.set(occurrence.categoryName, category);
+    }
+
+    const existingSegment = existingSegmentsByKey.get(occurrence.key);
+    const requestBody: Record<string, string | number | boolean> = {
+      start_time: startTime,
+      timezone: args.timeZone,
+      is_recurring: false,
+      duration: occurrence.durationMinutes,
+      title: occurrence.title.slice(0, 140)
+    };
+
+    if (category?.id) {
+      requestBody.category_id = category.id;
+    }
+
+    const endpoint = existingSegment
+      ? `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
+          args.state.twitch.broadcasterId
+        )}&id=${encodeURIComponent(existingSegment.segmentId)}`
+      : `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(args.state.twitch.broadcasterId)}`;
+
+    const response = await fetch(endpoint, {
+      method: existingSegment ? "PATCH" : "POST",
+      headers: {
+        Authorization: `Bearer ${args.accessToken}`,
+        "Client-Id": process.env.TWITCH_CLIENT_ID || "",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error("Twitch schedule sync requires the broadcaster to be an affiliate or partner for non-recurring segments.");
+      }
+
+      throw new Error(`Twitch schedule segment sync failed with status ${response.status}.`);
+    }
+
+    const payload = (await response.json()) as {
+      data?: {
+        segments?: Array<{ id?: string; start_time?: string; title?: string }>;
+      };
+    };
+    const segment = payload.data?.segments?.[0];
+    if (!segment?.id) {
+      throw new Error("Twitch schedule sync did not return a segment id.");
+    }
+
+    nextSegments.push({
+      key: occurrence.key,
+      segmentId: segment.id,
+      blockId: occurrence.blockId,
+      startTime: segment.start_time || startTime,
+      title: segment.title || occurrence.title,
+      syncedAt: new Date().toISOString()
+    });
+  }
+
+  for (const staleSegment of args.state.twitchScheduleSegments) {
+    if (desiredKeys.includes(staleSegment.key)) {
+      continue;
+    }
+
+    await fetch(
+      `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
+        args.state.twitch.broadcasterId
+      )}&id=${encodeURIComponent(staleSegment.segmentId)}`,
+      {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${args.accessToken}`,
+          "Client-Id": process.env.TWITCH_CLIENT_ID || ""
+        }
+      }
+    );
+  }
+
+  await updateAppState((current) => ({
+    ...current,
+    twitch: {
+      ...current.twitch,
+      lastScheduleSyncAt: new Date().toISOString(),
+      error: ""
+    },
+    twitchScheduleSegments: nextSegments
+  }));
+
+  if (skippedCount > 0) {
+    await upsertIncident({
+      scope: "twitch",
+      severity: "warning",
+      title: "Some schedule blocks could not be synced to Twitch",
+      message: `${skippedCount} schedule block(s) were skipped because Twitch requires a duration between 30 and 1380 minutes.`,
+      fingerprint: "twitch.schedule.duration.skipped"
+    });
+  } else {
+    await resolveIncident("twitch.schedule.duration.skipped", "All schedule blocks fit Twitch schedule duration limits.");
+  }
+}
+
 async function reconcileTwitch(): Promise<void> {
   const state = await readAppState();
   if (state.twitch.status !== "connected" || !state.twitch.accessToken || !state.twitch.broadcasterId) {
@@ -989,6 +1153,7 @@ async function reconcileTwitch(): Promise<void> {
   const desiredTitle = currentScheduleItem.title;
   let desiredCategoryId = process.env.TWITCH_DEFAULT_CATEGORY_ID || "";
   let desiredCategoryName = currentScheduleItem.categoryName;
+  const categoryCache = new Map<string, { id: string; name: string } | null>();
   const presenceStatus = describePresenceStatus({
     activeWindows: state.presenceWindows.map((window) => ({
       actor: window.actor,
@@ -1092,14 +1257,28 @@ async function reconcileTwitch(): Promise<void> {
 
   try {
     await sync(twitchAccessToken);
+    await syncTwitchSchedule({
+      state,
+      accessToken: twitchAccessToken,
+      timeZone: process.env.CHANNEL_TIMEZONE || "UTC",
+      categoryCache
+    });
     await resolveIncident("twitch.reconcile.failed", "Twitch reconciliation succeeded.");
+    await resolveIncident("twitch.schedule.sync.failed", "Twitch schedule synchronization succeeded.");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Twitch reconciliation error.";
     if (message.includes("401")) {
       try {
         twitchAccessToken = await refreshBroadcasterAccessToken();
         await sync(twitchAccessToken);
+        await syncTwitchSchedule({
+          state: await readAppState(),
+          accessToken: twitchAccessToken,
+          timeZone: process.env.CHANNEL_TIMEZONE || "UTC",
+          categoryCache
+        });
         await resolveIncident("twitch.reconcile.failed", "Twitch reconciliation succeeded after token refresh.");
+        await resolveIncident("twitch.schedule.sync.failed", "Twitch schedule synchronization succeeded after token refresh.");
         return;
       } catch (refreshError) {
         const refreshMessage = refreshError instanceof Error ? refreshError.message : "Unknown Twitch refresh failure.";
@@ -1120,6 +1299,15 @@ async function reconcileTwitch(): Promise<void> {
       message,
       fingerprint: "twitch.reconcile.failed"
     });
+    if (message.toLowerCase().includes("schedule")) {
+      await upsertIncident({
+        scope: "twitch",
+        severity: "warning",
+        title: "Twitch schedule synchronization failed",
+        message,
+        fingerprint: "twitch.schedule.sync.failed"
+      });
+    }
     await sendAlert("Twitch reconciliation warning", message);
   }
 }

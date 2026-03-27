@@ -29,12 +29,13 @@
 ## Current API Usage
 
 - Channel metadata updates for title and category from the active schedule block
+- Schedule segment sync for upcoming schedule blocks
 - Chat settings updates for emote-only mode
 - RTMP output using `TWITCH_RTMP_URL` and `TWITCH_STREAM_KEY`
 
 ## Still Planned
 
-- Stream schedule sync into Twitch schedule segments
+- richer drag/drop schedule authoring and operator override flows
 
 ## Team Access And SSO
 

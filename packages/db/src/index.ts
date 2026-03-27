@@ -45,7 +45,17 @@ export type TwitchConnection = {
   lastSyncedTitle: string;
   lastSyncedCategoryName: string;
   lastSyncedCategoryId: string;
+  lastScheduleSyncAt: string;
   error: string;
+};
+
+export type TwitchScheduleSegmentRecord = {
+  key: string;
+  segmentId: string;
+  blockId: string;
+  startTime: string;
+  title: string;
+  syncedAt: string;
 };
 
 export type ModeratorPresenceWindowRecord = {
@@ -146,6 +156,7 @@ export type AppState = {
   moderation: ModerationConfig;
   presenceWindows: ModeratorPresenceWindowRecord[];
   twitch: TwitchConnection;
+  twitchScheduleSegments: TwitchScheduleSegmentRecord[];
   scheduleBlocks: ScheduleBlockRecord[];
   sources: SourceRecord[];
   assets: AssetRecord[];
@@ -203,8 +214,10 @@ function defaultState(): AppState {
       lastSyncedTitle: "",
       lastSyncedCategoryName: "",
       lastSyncedCategoryId: "",
+      lastScheduleSyncAt: "",
       error: ""
     },
+    twitchScheduleSegments: [],
     scheduleBlocks: [
       {
         id: "morning-vods",
@@ -313,6 +326,7 @@ function normalizeState(state: AppState): AppState {
       ...defaults.twitch,
       ...(state.twitch ?? {})
     },
+    twitchScheduleSegments: Array.isArray(state.twitchScheduleSegments) ? state.twitchScheduleSegments : [],
     users: Array.isArray(state.users) ? state.users : [],
     teamAccessGrants: Array.isArray(state.teamAccessGrants) ? state.teamAccessGrants : [],
     presenceWindows: Array.isArray(state.presenceWindows) ? state.presenceWindows : [],
@@ -406,7 +420,17 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       last_synced_title TEXT NOT NULL DEFAULT '',
       last_synced_category_name TEXT NOT NULL DEFAULT '',
       last_synced_category_id TEXT NOT NULL DEFAULT '',
+      last_schedule_sync_at TEXT NOT NULL DEFAULT '',
       error TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS twitch_schedule_segments (
+      key TEXT PRIMARY KEY,
+      segment_id TEXT NOT NULL,
+      block_id TEXT NOT NULL,
+      start_time TEXT NOT NULL,
+      title TEXT NOT NULL,
+      synced_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS schedule_blocks (
@@ -502,6 +526,7 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_synced_title TEXT NOT NULL DEFAULT '';
     ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_synced_category_name TEXT NOT NULL DEFAULT '';
     ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_synced_category_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_schedule_sync_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS connector_kind TEXT NOT NULL DEFAULT 'local-library';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS external_url TEXT NOT NULL DEFAULT '';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
@@ -589,9 +614,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     `
       INSERT INTO twitch_connection (
         singleton_id, status, broadcaster_id, broadcaster_login, access_token, refresh_token, connected_at, token_expires_at,
-        last_refresh_at, last_metadata_sync_at, last_synced_title, last_synced_category_name, last_synced_category_id, error
+        last_refresh_at, last_metadata_sync_at, last_synced_title, last_synced_category_name, last_synced_category_id, last_schedule_sync_at, error
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         broadcaster_id = EXCLUDED.broadcaster_id,
@@ -605,6 +630,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         last_synced_title = EXCLUDED.last_synced_title,
         last_synced_category_name = EXCLUDED.last_synced_category_name,
         last_synced_category_id = EXCLUDED.last_synced_category_id,
+        last_schedule_sync_at = EXCLUDED.last_schedule_sync_at,
         error = EXCLUDED.error
     `,
     [
@@ -620,9 +646,21 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       next.twitch.lastSyncedTitle,
       next.twitch.lastSyncedCategoryName,
       next.twitch.lastSyncedCategoryId,
+      next.twitch.lastScheduleSyncAt,
       next.twitch.error
     ]
   );
+
+  await client.query("DELETE FROM twitch_schedule_segments");
+  for (const segment of next.twitchScheduleSegments) {
+    await client.query(
+      `
+        INSERT INTO twitch_schedule_segments (key, segment_id, block_id, start_time, title, synced_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `,
+      [segment.key, segment.segmentId, segment.blockId, segment.startTime, segment.title, segment.syncedAt]
+    );
+  }
 
   await client.query(
     `
@@ -885,8 +923,17 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     last_synced_title: string;
     last_synced_category_name: string;
     last_synced_category_id: string;
+    last_schedule_sync_at: string;
     error: string;
   }>("SELECT * FROM twitch_connection WHERE singleton_id = 1");
+  const twitchScheduleSegmentsResult = await client.query<{
+    key: string;
+    segment_id: string;
+    block_id: string;
+    start_time: string;
+    title: string;
+    synced_at: string;
+  }>("SELECT * FROM twitch_schedule_segments ORDER BY start_time ASC");
   const blocksResult = await client.query<{
     id: string;
     title: string;
@@ -1028,9 +1075,18 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           lastSyncedTitle: twitchRow.last_synced_title,
           lastSyncedCategoryName: twitchRow.last_synced_category_name,
           lastSyncedCategoryId: twitchRow.last_synced_category_id,
+          lastScheduleSyncAt: twitchRow.last_schedule_sync_at,
           error: twitchRow.error
         }
       : defaults.twitch,
+    twitchScheduleSegments: twitchScheduleSegmentsResult.rows.map((row) => ({
+      key: row.key,
+      segmentId: row.segment_id,
+      blockId: row.block_id,
+      startTime: row.start_time,
+      title: row.title,
+      syncedAt: row.synced_at
+    })),
     scheduleBlocks: blocksResult.rows.map((row) => ({
       id: row.id,
       title: row.title,

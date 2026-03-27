@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  addDaysToDateString,
+  buildScheduleOccurrences,
   buildSchedulePreview,
   findScheduleConflicts,
   getCurrentScheduleMoment,
@@ -76,5 +78,28 @@ describe("schedule preview", () => {
     ]);
 
     expect(conflicts).toEqual(["a", "b"]);
+  });
+
+  it("builds keyed schedule occurrences for a local day", () => {
+    const occurrences = buildScheduleOccurrences({
+      date: "2026-03-27",
+      blocks: [
+        {
+          id: "a",
+          title: "Morning",
+          categoryName: "Chatting",
+          startMinuteOfDay: 8 * 60,
+          durationMinutes: 60,
+          sourceName: "Archive"
+        }
+      ]
+    });
+
+    expect(occurrences[0]?.key).toBe("2026-03-27:a:480:60");
+    expect(occurrences[0]?.endTime).toBe("09:00");
+  });
+
+  it("adds days to a local schedule date string", () => {
+    expect(addDaysToDateString("2026-03-27", 2)).toBe("2026-03-29");
   });
 });
