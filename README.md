@@ -97,9 +97,8 @@ Every release image should be gated by:
   - Twitch VOD ingestion via yt-dlp
   - Twitch broadcaster connect and Twitch SSO team login
   - FFmpeg-based RTMP playout foundation
-  - incident tracking, readiness checks, and Discord webhook alerts
+  - incident tracking, readiness checks, Discord webhook alerts, and SMTP email alerts
 - Not implemented yet:
-  - email alert delivery
   - browser-stored third-party secrets from the setup wizard
   - rich schedule editing with drag/drop and operator overrides
 

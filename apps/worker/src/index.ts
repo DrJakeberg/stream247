@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
+import nodemailer from "nodemailer";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import {
@@ -586,6 +587,19 @@ function getCurrentScheduleItem(state: AppState) {
 }
 
 function choosePlaybackCandidate(state: AppState) {
+  const desiredAsset =
+    state.playout.restartRequestedAt !== "" && state.playout.desiredAssetId !== ""
+      ? state.assets.find((asset) => asset.id === state.playout.desiredAssetId && asset.status === "ready")
+      : null;
+
+  if (desiredAsset) {
+    return {
+      asset: desiredAsset,
+      reason: `Operator override selected asset ${desiredAsset.title}.`,
+      lifecycleStatus: "recovering" as const
+    };
+  }
+
   const currentScheduleItem = getCurrentScheduleItem(state);
   const preferredSource = currentScheduleItem?.sourceName;
   const preferredAsset = state.assets.find((entry) => {
@@ -882,6 +896,40 @@ async function sendDiscordAlert(message: string): Promise<void> {
   }
 }
 
+async function sendEmailAlert(subject: string, message: string): Promise<void> {
+  const host = process.env.SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT || "0");
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+  const to = process.env.ALERT_EMAIL_TO;
+
+  if (!host || !port || !from || !to) {
+    return;
+  }
+
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: process.env.SMTP_USER
+      ? {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASSWORD || ""
+        }
+      : undefined
+  });
+
+  await transporter.sendMail({
+    from,
+    to,
+    subject,
+    text: message
+  });
+}
+
+async function sendAlert(subject: string, message: string): Promise<void> {
+  await Promise.allSettled([sendDiscordAlert(`Stream247: ${message}`), sendEmailAlert(subject, message)]);
+}
+
 async function reconcileTwitch(): Promise<void> {
   const state = await readAppState();
   if (state.twitch.status !== "connected" || !state.twitch.accessToken || !state.twitch.broadcasterId) {
@@ -986,7 +1034,7 @@ async function reconcileTwitch(): Promise<void> {
       message,
       fingerprint: "twitch.reconcile.failed"
     });
-    await sendDiscordAlert(`Stream247 warning: ${message}`);
+    await sendAlert("Twitch reconciliation warning", message);
   }
 }
 
@@ -1016,7 +1064,7 @@ async function runLoop(mode: "worker" | "playout"): Promise<void> {
         message,
         fingerprint: `${mode}.loop.crashed`
       });
-      await sendDiscordAlert(`Stream247 critical: ${mode} loop crashed: ${message}`);
+      await sendAlert(`${mode} loop crashed`, message);
     }
 
     await new Promise((resolve) => setTimeout(resolve, delay));

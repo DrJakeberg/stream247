@@ -28,6 +28,7 @@
 - `TWITCH_CLIENT_SECRET` belongs in `.env`.
 - `TWITCH_STREAM_KEY` belongs in `.env`.
 - `CHANNEL_TIMEZONE` belongs in `.env` for now.
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and `ALERT_EMAIL_TO` belong in `.env` if email alerts should be enabled.
 - Moderator presence policy does not belong in `.env`; it is edited live in the admin UI and stored in PostgreSQL.
 - The setup wizard currently does not persist third-party client secrets because browser-entered secrets would otherwise be stored in plaintext.
 
@@ -42,4 +43,4 @@
 
 - Local media and direct media URLs are ingestible today.
 - YouTube playlist and Twitch VOD sources are ingested through `yt-dlp`, which is bundled into the worker/playout image.
-- Discord alert dispatch exists; SMTP email delivery is not implemented yet.
+- Discord alert dispatch and SMTP email alert dispatch exist.
