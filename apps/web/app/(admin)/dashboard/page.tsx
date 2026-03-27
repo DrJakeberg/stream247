@@ -11,6 +11,8 @@ export default async function DashboardPage() {
   const presenceStatus = getPresenceStatus(state);
   const activeWindows = getActivePresenceWindows(state);
   const openIncidents = state.incidents.filter((incident) => incident.status === "open");
+  const activeDestination = state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ?? state.destinations[0];
+  const currentAsset = state.assets.find((entry) => entry.id === state.playout.currentAssetId) ?? null;
   type ScheduleItem = (typeof schedulePreview.items)[number];
 
   return (
@@ -45,9 +47,18 @@ export default async function DashboardPage() {
           <p className="subtle">{presenceStatus.summary}</p>
         </article>
         <article className="metric">
-          <span className="label">Playout</span>
+          <span className="label">Playout runtime</span>
           <div className="value">{state.playout.status}</div>
           <p className="subtle">{state.playout.message}</p>
+        </article>
+        <article className="metric">
+          <span className="label">Destination</span>
+          <div className="value">{activeDestination?.status ?? "missing"}</div>
+          <p className="subtle">
+            {activeDestination
+              ? `${activeDestination.name} · ${activeDestination.streamKeyPresent ? "stream key present" : "stream key missing"}`
+              : "No playout destination is configured."}
+          </p>
         </article>
         <article className="metric">
           <span className="label">Assets</span>
@@ -85,6 +96,19 @@ export default async function DashboardPage() {
 
         <Panel title="Alerts and drift" eyebrow="Ops">
           <div className="list">
+            <div className="item">
+              <strong>Encoder runtime</strong>
+              <div className="subtle">
+                {activeDestination ? `${activeDestination.name} · ${activeDestination.rtmpUrl}` : "No destination selected."}
+              </div>
+              <div className="subtle">
+                PID {state.playout.processPid || "not running"} · restart count {state.playout.restartCount} · asset{" "}
+                {currentAsset?.title ?? state.playout.currentTitle ?? "none"}
+              </div>
+              <div className="subtle">
+                Last stderr: {state.playout.lastStderrSample || "No FFmpeg stderr captured yet."}
+              </div>
+            </div>
             {openIncidents.length > 0 ? (
               openIncidents.slice(0, 4).map((incident) => (
                 <div className="item" key={incident.id}>
@@ -113,8 +137,8 @@ export default async function DashboardPage() {
             <div className="item">
               <strong>Broadcast destination</strong>
               <div className="subtle">
-                {process.env.STREAM_OUTPUT_URL || process.env.TWITCH_RTMP_URL
-                  ? "RTMP destination configured in environment."
+                {activeDestination
+                  ? `${activeDestination.status} · ${activeDestination.notes}`
                   : "RTMP destination is missing. Set STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY."}
               </div>
             </div>
