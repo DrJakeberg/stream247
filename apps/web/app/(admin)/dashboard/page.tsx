@@ -110,6 +110,14 @@ export default async function DashboardPage() {
                   : "No moderator presence windows are active."}
               </div>
             </div>
+            <div className="item">
+              <strong>Broadcast destination</strong>
+              <div className="subtle">
+                {process.env.STREAM_OUTPUT_URL || process.env.TWITCH_RTMP_URL
+                  ? "RTMP destination configured in environment."
+                  : "RTMP destination is missing. Set STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY."}
+              </div>
+            </div>
             <TwitchConnectPanel authorizeUrl={getTwitchAuthorizeUrl("broadcaster-connect")} />
           </div>
         </Panel>

@@ -16,11 +16,19 @@ export function TwitchConnectPanel({ authorizeUrl }: { authorizeUrl: string | nu
   return (
     <div className="item">
       <strong>Connect Twitch</strong>
-      <div className="subtle">Launch the Twitch OAuth flow from the browser-based setup.</div>
+      <div className="subtle">
+        Launch the Twitch OAuth flow from the browser-based setup. For actual output, also set
+        <code> TWITCH_RTMP_URL </code>
+        and
+        <code> TWITCH_STREAM_KEY </code>
+        or the generic
+        <code> STREAM_OUTPUT_URL </code>
+        and
+        <code> STREAM_OUTPUT_KEY </code>.
+      </div>
       <a className="button" href={authorizeUrl}>
         Connect Twitch
       </a>
     </div>
   );
 }
-

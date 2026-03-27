@@ -60,7 +60,10 @@ export type SourceRecord = {
   id: string;
   name: string;
   type: string;
+  connectorKind: "local-library" | "direct-media" | "youtube-playlist" | "twitch-vod";
   status: string;
+  externalUrl?: string;
+  notes?: string;
   lastSyncedAt?: string;
 };
 
@@ -183,9 +186,33 @@ function defaultState(): AppState {
       }
     ],
     sources: [
-      { id: "source-youtube", name: "YouTube Playlist", type: "Managed ingestion", status: "Planned" },
-      { id: "source-twitch", name: "Twitch Archive", type: "Twitch VOD sync", status: "Planned" },
-      { id: "source-local-library", name: "Local Media Library", type: "Filesystem scan", status: "Pending scan" }
+      {
+        id: "source-youtube",
+        name: "YouTube Playlist",
+        type: "Managed ingestion",
+        connectorKind: "youtube-playlist",
+        status: "Planned",
+        externalUrl: "",
+        notes: "Configure a playlist URL when the connector is ready."
+      },
+      {
+        id: "source-twitch",
+        name: "Twitch Archive",
+        type: "Twitch VOD sync",
+        connectorKind: "twitch-vod",
+        status: "Planned",
+        externalUrl: "",
+        notes: "Configure a VOD URL when the connector is ready."
+      },
+      {
+        id: "source-local-library",
+        name: "Local Media Library",
+        type: "Filesystem scan",
+        connectorKind: "local-library",
+        status: "Pending scan",
+        externalUrl: "",
+        notes: "Scans files mounted into the media library volume."
+      }
     ],
     assets: [],
     incidents: [],
@@ -314,7 +341,10 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       type TEXT NOT NULL,
+      connector_kind TEXT NOT NULL DEFAULT 'local-library',
       status TEXT NOT NULL,
+      external_url TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
       last_synced_at TEXT NOT NULL DEFAULT ''
     );
 
@@ -356,6 +386,12 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       heartbeat_at TEXT NOT NULL DEFAULT '',
       message TEXT NOT NULL DEFAULT 'Playout engine has not started yet.'
     );
+  `);
+
+  await client.query(`
+    ALTER TABLE sources ADD COLUMN IF NOT EXISTS connector_kind TEXT NOT NULL DEFAULT 'local-library';
+    ALTER TABLE sources ADD COLUMN IF NOT EXISTS external_url TEXT NOT NULL DEFAULT '';
+    ALTER TABLE sources ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
   `);
 }
 
@@ -523,10 +559,19 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   for (const source of next.sources) {
     await client.query(
       `
-        INSERT INTO sources (id, name, type, status, last_synced_at)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO sources (id, name, type, connector_kind, status, external_url, notes, last_synced_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `,
-      [source.id, source.name, source.type, source.status, source.lastSyncedAt ?? ""]
+      [
+        source.id,
+        source.name,
+        source.type,
+        source.connectorKind,
+        source.status,
+        source.externalUrl ?? "",
+        source.notes ?? "",
+        source.lastSyncedAt ?? ""
+      ]
     );
   }
 
@@ -638,7 +683,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     id: string;
     name: string;
     type: string;
+    connector_kind: SourceRecord["connectorKind"];
     status: string;
+    external_url: string;
+    notes: string;
     last_synced_at: string;
   }>("SELECT * FROM sources ORDER BY name ASC");
   const assetsResult = await client.query<{
@@ -748,7 +796,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       id: row.id,
       name: row.name,
       type: row.type,
+      connectorKind: row.connector_kind,
       status: row.status,
+      externalUrl: row.external_url || undefined,
+      notes: row.notes || undefined,
       lastSyncedAt: row.last_synced_at || undefined
     })),
     assets: assetsResult.rows.map((row) => ({
