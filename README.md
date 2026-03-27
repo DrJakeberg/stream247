@@ -13,7 +13,7 @@ Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel fr
 
 - Source ingestion for YouTube playlists, Twitch VODs, local media, and direct media URLs
 - Timeline-based scheduling with deterministic playout queue generation
-- Drag/drop timeline editing and operator override lanes
+- Day timeline editing with drag/drop rescheduling
 - Moderator presence windows such as `here 30` to disable emote-only mode temporarily
 - Discord and email alerting
 - Audit logging, incidents, and health checks
@@ -98,6 +98,7 @@ Every release image should be gated by:
   - YouTube playlist ingestion via yt-dlp
   - Twitch VOD ingestion via yt-dlp
   - minute-accurate schedule block editing from the admin UI
+  - drag/drop day timeline editing for schedule blocks
   - operator overrides for pinning an asset, skipping the current asset, temporary fallback, and resuming schedule control
   - browser-source overlay page with admin-managed branding and now/next teaser settings
   - Twitch broadcaster connect and Twitch SSO team login
@@ -107,7 +108,6 @@ Every release image should be gated by:
   - incident tracking, readiness checks, Discord webhook alerts, and SMTP email alerts
 - Not implemented yet:
   - browser-stored third-party secrets from the setup wizard
-  - drag/drop timeline editing
   - richer multi-scene overlay composition inside the playout runtime
 
 ## License

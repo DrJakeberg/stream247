@@ -4,6 +4,7 @@ import { findScheduleConflicts, formatMinuteOfDay } from "@stream247/core";
 import { Panel } from "@/components/panel";
 import { ScheduleBlockDeleteForm } from "@/components/schedule-block-delete-form";
 import { ScheduleBlockForm } from "@/components/schedule-block-form";
+import { ScheduleTimeline } from "@/components/schedule-timeline";
 import { getSchedulePreview, getWorkspaceTimeZone, readAppState } from "@/lib/server/state";
 
 export default async function SchedulePage() {
@@ -46,6 +47,7 @@ export default async function SchedulePage() {
       </section>
 
       <Panel title="Existing blocks" eyebrow="Editor">
+        <ScheduleTimeline blocks={state.scheduleBlocks} conflicts={[...conflicts]} timeZone={timeZone} />
         <div className="list">
           {state.scheduleBlocks
             .slice()

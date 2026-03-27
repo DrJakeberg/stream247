@@ -265,6 +265,82 @@ input,
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 }
 
+.schedule-timeline {
+  position: relative;
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.schedule-timeline-grid {
+  position: relative;
+}
+
+.schedule-slot {
+  position: relative;
+  height: 28px;
+  border-bottom: 1px solid rgba(27, 26, 22, 0.06);
+  padding-left: 84px;
+}
+
+.schedule-slot-hour {
+  background: rgba(255, 249, 239, 0.7);
+}
+
+.schedule-slot-active {
+  background: rgba(14, 109, 90, 0.06);
+}
+
+.schedule-slot-label {
+  position: absolute;
+  left: 14px;
+  top: 5px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.schedule-timeline-blocks {
+  position: absolute;
+  inset: 0 0 0 84px;
+  pointer-events: none;
+}
+
+.schedule-block-card {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 0;
+  border-left: 4px solid var(--brand);
+  border-radius: 16px;
+  background: rgba(14, 109, 90, 0.18);
+  color: var(--text);
+  text-align: left;
+  box-shadow: 0 10px 24px rgba(32, 29, 21, 0.08);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.schedule-block-card span {
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+.schedule-block-card:active {
+  cursor: grabbing;
+}
+
+.schedule-block-conflict {
+  border-left-color: var(--danger);
+  background: rgba(158, 36, 48, 0.14);
+}
+
 .overlay-page {
   min-height: 100vh;
   padding: 28px;
