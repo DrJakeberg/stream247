@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { Panel } from "@/components/panel";
 import { TeamAccessForm } from "@/components/team-access-form";
 import { requireRoles } from "@/lib/server/auth";
@@ -44,4 +46,3 @@ export default async function TeamPage() {
     </div>
   );
 }
-

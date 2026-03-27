@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "declaration": false,
+    "emitDeclarationOnly": false,
+    "rootDir": "src",
+    "paths": {
+      "@stream247/core": ["../../packages/core/dist/index.d.ts"],
+      "@stream247/db": ["../../packages/db/dist/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

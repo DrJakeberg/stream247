@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { Panel } from "@/components/panel";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
 import { getActivePresenceWindows, getPresenceStatus, getSchedulePreview, readAppState } from "@/lib/server/state";
@@ -8,6 +10,7 @@ export default async function DashboardPage() {
   const schedulePreview = getSchedulePreview(state);
   const presenceStatus = getPresenceStatus(state);
   const activeWindows = getActivePresenceWindows(state);
+  const openIncidents = state.incidents.filter((incident) => incident.status === "open");
   type ScheduleItem = (typeof schedulePreview.items)[number];
 
   return (
@@ -42,6 +45,23 @@ export default async function DashboardPage() {
           <p className="subtle">{presenceStatus.summary}</p>
         </article>
         <article className="metric">
+          <span className="label">Playout</span>
+          <div className="value">{state.playout.status}</div>
+          <p className="subtle">{state.playout.message}</p>
+        </article>
+        <article className="metric">
+          <span className="label">Assets</span>
+          <div className="value">{state.assets.length}</div>
+          <p className="subtle">Local ingestion and future connectors feed the asset catalog.</p>
+        </article>
+        <article className="metric">
+          <span className="label">Incidents</span>
+          <div className="value">{openIncidents.length}</div>
+          <p className="subtle">
+            {openIncidents.length > 0 ? `${openIncidents[0].title}` : "No open incidents at the moment."}
+          </p>
+        </article>
+        <article className="metric">
           <span className="label">Team access</span>
           <div className="value">{state.teamAccessGrants.length}</div>
           <p className="subtle">{state.users.length} authenticated user record(s) in the workspace.</p>
@@ -65,12 +85,23 @@ export default async function DashboardPage() {
 
         <Panel title="Alerts and drift" eyebrow="Ops">
           <div className="list">
-            <div className="item">
-              <strong>System readiness</strong>
-              <div className="subtle">
-                Initialization, auth, and persisted moderation policy are now stateful instead of mock-only.
+            {openIncidents.length > 0 ? (
+              openIncidents.slice(0, 4).map((incident) => (
+                <div className="item" key={incident.id}>
+                  <strong>
+                    {incident.severity.toUpperCase()} · {incident.title}
+                  </strong>
+                  <div className="subtle">{incident.message}</div>
+                </div>
+              ))
+            ) : (
+              <div className="item">
+                <strong>System readiness</strong>
+                <div className="subtle">
+                  Database persistence, background worker reconciliation, and playout heartbeat are now active.
+                </div>
               </div>
-            </div>
+            )}
             <div className="item">
               <strong>Active moderator windows</strong>
               <div className="subtle">

@@ -6,6 +6,25 @@
 - `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` must be configured in the environment.
 - The Twitch application redirect URL should point to `/api/integrations/twitch/callback`.
 - Twitch team sign-in uses `/api/auth/twitch/callback`.
+- Stream247 expects both redirect URLs to be registered on the same Twitch application.
+
+## How To Get Client ID And Secret
+
+1. Sign in to the Twitch developer console with the broadcaster account or the account that owns the Twitch application.
+2. Create a new application or open an existing application for Stream247.
+3. Add the redirect URLs for broadcaster connect and team SSO:
+   - `<APP_URL>/api/integrations/twitch/callback`
+   - `<APP_URL>/api/auth/twitch/callback`
+4. Copy the Client ID into `TWITCH_CLIENT_ID`.
+5. Create, reveal, or regenerate the Client Secret and store it in `TWITCH_CLIENT_SECRET`.
+6. Restart the containers after updating `.env`.
+7. Open the Stream247 dashboard and use `Connect Twitch` or `Sign in with Twitch`.
+
+## Why This Stays In `.env`
+
+- The Twitch client secret is an application credential, not a normal per-user preference.
+- Stream247 keeps moderator presence and operational settings inside PostgreSQL because they are runtime state.
+- Stream247 keeps OAuth client secrets in `.env` because that is the safer place for deployment-time secrets until encrypted secret storage exists.
 
 ## Planned API Usage
 

@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { redirect } from "next/navigation";
 import { Panel } from "@/components/panel";
 import { LoginForm } from "@/components/login-form";
@@ -23,7 +25,7 @@ export default async function LoginPage() {
     <main className="standalone">
       <section className="grid two">
         <Panel title="Owner access" eyebrow="Local bootstrap">
-          <p className="subtle">Use the local owner account for bootstrap or emergency access.</p>
+          <p className="subtle">Use the local owner account for bootstrap, recovery, or emergency access.</p>
           <LoginForm />
         </Panel>
         <Panel title="Team sign-in" eyebrow="Twitch SSO">
