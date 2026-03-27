@@ -1,49 +1,99 @@
 # Twitch Setup
 
-## OAuth Configuration
+## What Twitch Is Used For
 
-- `APP_URL` must match the URL that Twitch redirects back to.
-- `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` must be configured in the environment.
-- The Twitch application redirect URL should point to `/api/integrations/twitch/callback`.
-- Twitch team sign-in uses `/api/auth/twitch/callback`.
-- Stream247 expects both redirect URLs to be registered on the same Twitch application.
+Stream247 currently uses Twitch for:
+
+- broadcaster OAuth connection
+- team SSO sign-in
+- title sync from the active schedule block
+- category sync from the active schedule block
+- upcoming Twitch schedule segment sync
+- moderation automation such as emote-only fallback windows
+- RTMP output when streaming to Twitch
+
+## Required Redirect URLs
+
+Both redirect URLs must be registered on the same Twitch application:
+
+- `<APP_URL>/api/integrations/twitch/callback`
+- `<APP_URL>/api/auth/twitch/callback`
+
+`APP_URL` must exactly match the externally reachable base URL of your Stream247 deployment.
 
 ## How To Get Client ID And Secret
 
-1. Sign in to the Twitch developer console with the broadcaster account or the account that owns the Twitch application.
-2. Create a new application or open an existing application for Stream247.
-3. Add the redirect URLs for broadcaster connect and team SSO:
+1. Sign in to the Twitch developer console.
+2. Create a new application or edit the application you want Stream247 to use.
+3. Add both redirect URLs:
    - `<APP_URL>/api/integrations/twitch/callback`
    - `<APP_URL>/api/auth/twitch/callback`
 4. Copy the Client ID into `TWITCH_CLIENT_ID`.
-5. Create, reveal, or regenerate the Client Secret and store it in `TWITCH_CLIENT_SECRET`.
-6. Restart the containers after updating `.env`.
-7. Open the Stream247 dashboard and use `Connect Twitch` or `Sign in with Twitch`.
+5. Generate, reveal, or regenerate the Client Secret and store it in `TWITCH_CLIENT_SECRET`.
+6. Restart the stack after updating `.env`.
+7. Open the Stream247 dashboard and complete:
+   - `Connect Twitch` for the broadcaster connection
+   - `Sign in with Twitch` for team members
 
-## Why This Stays In `.env`
+## Why These Stay In `.env`
 
-- The Twitch client secret is an application credential, not a normal per-user preference.
-- Stream247 keeps moderator presence and operational settings inside PostgreSQL because they are runtime state.
-- Stream247 keeps OAuth client secrets in `.env` because that is the safer place for deployment-time secrets until encrypted secret storage exists.
+- `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` are application credentials, not per-user preferences.
+- Stream247 currently stores deployment-time secrets in `.env`.
+- Runtime state such as moderation policy, schedule blocks, incidents, and overlay settings is stored in PostgreSQL instead.
+- Encrypted secret management from the admin UI is still planned, not implemented.
 
-## Current API Usage
+## Broadcaster Connect
 
-- Channel metadata updates for title and category from the active schedule block
-- Schedule segment sync for upcoming schedule blocks
-- Chat settings updates for emote-only mode
-- RTMP output using `TWITCH_RTMP_URL` and `TWITCH_STREAM_KEY`
+The broadcaster connection is used for:
 
-## Still Planned
+- title sync
+- category sync
+- Twitch schedule segment sync
+- moderation/chat settings automation
 
-- richer drag/drop schedule authoring and operator override flows
+If broadcaster connect is missing or invalid:
 
-## Team Access And SSO
+- the app still boots
+- scheduling still works internally
+- Twitch sync creates incidents instead of silently failing
 
-- The streamer or an admin can grant access to moderators and operators by Twitch login in the admin UI.
-- Team members then authenticate with Twitch SSO.
-- The broadcaster account can be treated as owner when its Twitch user id matches the connected broadcaster identity.
+## Team Access And Twitch SSO
+
+- the owner or an admin grants access by Twitch login in the admin UI
+- team members then sign in with Twitch SSO
+- supported roles are:
+  - `owner`
+  - `admin`
+  - `operator`
+  - `moderator`
+  - `viewer`
+
+The broadcaster account can effectively act as workspace owner when it matches the connected broadcaster identity and the workspace owner role.
+
+## RTMP Output
+
+For Twitch RTMP output, configure:
+
+- `TWITCH_STREAM_KEY`
+- optionally `TWITCH_RTMP_URL`
+
+Default Twitch RTMP URL:
+
+- `rtmp://live.twitch.tv/app`
+
+Generic output overrides also work:
+
+- `STREAM_OUTPUT_URL`
+- `STREAM_OUTPUT_KEY`
 
 ## Moderator Presence
 
-If enabled, moderators can check in with `here 30` or a configured variant.
-The system treats this as an explicit presence window and can disable emote-only mode until the window expires.
+If enabled, moderators can check in with commands such as `here 30`.
+
+That creates an explicit moderator presence window. While such a window is active, Stream247 can keep chat out of emote-only mode. When the window expires, Stream247 can return to the configured fallback moderation mode.
+
+## Current Limitations
+
+- client credentials are not yet entered and encrypted through the setup wizard
+- Twitch integration is Twitch-first, not multi-destination
+- overlay is not yet a native Twitch-scene/plans system; it is a browser-source overlay page
