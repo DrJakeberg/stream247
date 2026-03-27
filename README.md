@@ -94,6 +94,12 @@ For local-development builds instead of GHCR images:
 docker compose -f docker-compose.dev.yml up -d --build
 ```
 
+For pinned production deployment, start from:
+
+```bash
+cp .env.production.example .env
+```
+
 ## Configuration
 
 ### Required Environment Variables
@@ -196,6 +202,7 @@ See [docs/deployment.md](docs/deployment.md) for the deployment-focused guide.
 - `ghcr.io/drjakeberg/stream247-playout`
 
 The default `.env.example` already points Compose at the `latest` GHCR tags.
+For production pinning, use `.env.production.example` or set the image tags explicitly to the target release.
 
 ### Release Behavior
 
