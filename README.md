@@ -11,13 +11,11 @@ Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel fr
 
 ## Planned Capabilities
 
-- Source ingestion for YouTube playlists, Twitch VODs, local media, and direct media URLs
-- Timeline-based scheduling with deterministic playout queue generation
-- Day timeline editing with drag/drop rescheduling
-- Moderator presence windows such as `here 30` to disable emote-only mode temporarily
-- Discord and email alerting
-- Audit logging, incidents, and health checks
-- Scene-aware browser-source overlay themes beyond the current single-template overlay
+- encrypted secret management from the setup/admin UI instead of `.env`-only third-party credentials
+- richer multi-scene overlay composition inside the playout runtime
+- deeper timeline authoring such as resize/duplicate flows and operator override lanes directly inside the schedule editor
+- stronger playout transitions and scene-aware switchovers instead of simple process-level asset switching
+- broader incident history, filtering, and long-horizon operational analytics
 
 ## Monorepo Layout
 
