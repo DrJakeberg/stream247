@@ -121,6 +121,7 @@ export type PlayoutRuntimeRecord = {
   currentTitle: string;
   desiredAssetId: string;
   currentDestinationId: string;
+  restartRequestedAt: string;
   heartbeatAt: string;
   processPid: number;
   processStartedAt: string;
@@ -263,6 +264,7 @@ function defaultState(): AppState {
       currentTitle: "",
       desiredAssetId: "",
       currentDestinationId: "destination-primary",
+      restartRequestedAt: "",
       heartbeatAt: "",
       processPid: 0,
       processStartedAt: "",
@@ -456,6 +458,7 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       current_title TEXT NOT NULL DEFAULT '',
       desired_asset_id TEXT NOT NULL DEFAULT '',
       current_destination_id TEXT NOT NULL DEFAULT '',
+      restart_requested_at TEXT NOT NULL DEFAULT '',
       heartbeat_at TEXT NOT NULL DEFAULT '',
       process_pid INTEGER NOT NULL DEFAULT 0,
       process_started_at TEXT NOT NULL DEFAULT '',
@@ -477,6 +480,7 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS is_global_fallback BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS current_destination_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS restart_requested_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS process_pid INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS process_started_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_exit_code TEXT NOT NULL DEFAULT '';
@@ -576,16 +580,17 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   await client.query(
     `
       INSERT INTO playout_runtime (
-        singleton_id, status, current_asset_id, current_title, desired_asset_id, current_destination_id, heartbeat_at,
-        process_pid, process_started_at, last_exit_code, restart_count, last_error, last_stderr_sample, message
+        singleton_id, status, current_asset_id, current_title, desired_asset_id, current_destination_id, restart_requested_at,
+        heartbeat_at, process_pid, process_started_at, last_exit_code, restart_count, last_error, last_stderr_sample, message
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         current_asset_id = EXCLUDED.current_asset_id,
         current_title = EXCLUDED.current_title,
         desired_asset_id = EXCLUDED.desired_asset_id,
         current_destination_id = EXCLUDED.current_destination_id,
+        restart_requested_at = EXCLUDED.restart_requested_at,
         heartbeat_at = EXCLUDED.heartbeat_at,
         process_pid = EXCLUDED.process_pid,
         process_started_at = EXCLUDED.process_started_at,
@@ -601,6 +606,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       next.playout.currentTitle,
       next.playout.desiredAssetId,
       next.playout.currentDestinationId,
+      next.playout.restartRequestedAt,
       next.playout.heartbeatAt,
       next.playout.processPid,
       next.playout.processStartedAt,
@@ -881,6 +887,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     current_title: string;
     desired_asset_id: string;
     current_destination_id: string;
+    restart_requested_at: string;
     heartbeat_at: string;
     process_pid: number;
     process_started_at: string;
@@ -1021,6 +1028,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           currentTitle: playoutRow.current_title,
           desiredAssetId: playoutRow.desired_asset_id,
           currentDestinationId: playoutRow.current_destination_id,
+          restartRequestedAt: playoutRow.restart_requested_at,
           heartbeatAt: playoutRow.heartbeat_at,
           processPid: playoutRow.process_pid,
           processStartedAt: playoutRow.process_started_at,

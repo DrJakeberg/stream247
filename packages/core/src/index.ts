@@ -43,6 +43,34 @@ export type SchedulePreview = {
   }>;
 };
 
+function padTwo(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function extractZonedParts(args: { now: Date; timeZone: string }) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: args.timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  });
+
+  const parts = formatter.formatToParts(args.now);
+  const year = parts.find((part) => part.type === "year")?.value ?? "1970";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
+  const minute = parts.find((part) => part.type === "minute")?.value ?? "00";
+
+  return {
+    date: `${year}-${month}-${day}`,
+    time: `${hour}:${minute}`
+  };
+}
+
 export function createDefaultModerationConfig(): ModerationConfig {
   return {
     enabled: true,
@@ -126,15 +154,14 @@ export function buildSchedulePreview(args: {
   const items = [...args.blocks]
     .sort((a, b) => a.startHour - b.startHour)
     .map((block) => {
-      const start = new Date(`${args.date}T00:00:00.000Z`);
-      start.setUTCHours(block.startHour, 0, 0, 0);
-      const end = new Date(start.getTime() + block.durationMinutes * 60_000);
+      const startMinutes = block.startHour * 60;
+      const endMinutes = (startMinutes + block.durationMinutes) % (24 * 60);
 
       return {
         id: block.id,
         title: block.title,
-        startTime: start.toISOString().slice(11, 16),
-        endTime: end.toISOString().slice(11, 16),
+        startTime: `${padTwo(Math.floor(startMinutes / 60))}:${padTwo(startMinutes % 60)}`,
+        endTime: `${padTwo(Math.floor(endMinutes / 60))}:${padTwo(endMinutes % 60)}`,
         categoryName: block.categoryName,
         sourceName: block.sourceName,
         reason: `Selected from ${block.sourceName} for ${block.durationMinutes} minutes.`
@@ -142,4 +169,20 @@ export function buildSchedulePreview(args: {
     });
 
   return { date: args.date, items };
+}
+
+export function getCurrentScheduleMoment(args: { now: Date; timeZone: string }) {
+  return extractZonedParts(args);
+}
+
+export function isCurrentScheduleTime(args: {
+  startTime: string;
+  endTime: string;
+  currentTime: string;
+}) {
+  if (args.endTime > args.startTime) {
+    return args.currentTime >= args.startTime && args.currentTime < args.endTime;
+  }
+
+  return args.currentTime >= args.startTime || args.currentTime < args.endTime;
 }

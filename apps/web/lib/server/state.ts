@@ -1,4 +1,4 @@
-import { buildSchedulePreview, describePresenceStatus } from "@stream247/core";
+import { buildSchedulePreview, describePresenceStatus, getCurrentScheduleMoment } from "@stream247/core";
 import {
   appendAuditEvent,
   findTeamGrantByLogin,
@@ -42,9 +42,18 @@ export type {
 
 export { appendAuditEvent, findTeamGrantByLogin, findUserByEmail, findUserById, readAppState, updateAppState, writeAppState };
 
+export function getWorkspaceTimeZone(): string {
+  return process.env.CHANNEL_TIMEZONE || "UTC";
+}
+
 export function getSchedulePreview(state: AppState) {
+  const scheduleMoment = getCurrentScheduleMoment({
+    now: new Date(),
+    timeZone: getWorkspaceTimeZone()
+  });
+
   return buildSchedulePreview({
-    date: new Date().toISOString().slice(0, 10),
+    date: scheduleMoment.date,
     blocks: state.scheduleBlocks
   });
 }

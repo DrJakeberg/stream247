@@ -1,18 +1,19 @@
 export const dynamic = "force-dynamic";
 
 import { Panel } from "@/components/panel";
-import { getSchedulePreview, readAppState } from "@/lib/server/state";
+import { getSchedulePreview, getWorkspaceTimeZone, readAppState } from "@/lib/server/state";
 
 export default async function SchedulePage() {
   const state = await readAppState();
   const schedulePreview = getSchedulePreview(state);
+  const timeZone = getWorkspaceTimeZone();
   type ScheduleItem = (typeof schedulePreview.items)[number];
 
   return (
     <Panel title="Schedule preview" eyebrow="Programming">
       <p className="subtle">
         The scheduler generates deterministic playout items with explainable
-        reasons and room for manual overrides.
+        reasons and room for manual overrides. Times are shown in {timeZone}.
       </p>
       <div className="list">
         {schedulePreview.items.map((item: ScheduleItem) => (

@@ -12,7 +12,7 @@ export default async function SourcesPage() {
       <Panel title="Add source" eyebrow="Sources">
         <p className="subtle">
           Direct media URLs are ingestible now. YouTube playlists and Twitch VODs can already be configured and will
-          become active once their connector workers are added.
+          remain inactive until their connector workers are implemented.
         </p>
         <SourceCreateForm />
       </Panel>

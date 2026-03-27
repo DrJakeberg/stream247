@@ -13,9 +13,8 @@ export async function POST() {
     playout: {
       ...state.playout,
       status: "recovering",
+      restartRequestedAt: new Date().toISOString(),
       heartbeatAt: new Date().toISOString(),
-      processPid: 0,
-      processStartedAt: "",
       message: "Manual playout restart requested from the admin API."
     }
   }));

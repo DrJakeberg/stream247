@@ -20,7 +20,7 @@ services:
       - postgres
       - redis
   playout:
-    image: ${STREAM247_PLAYOUT_IMAGE:-ghcr.io/drjakeberg/stream247-worker:latest}
+    image: ${STREAM247_PLAYOUT_IMAGE:-ghcr.io/drjakeberg/stream247-playout:latest}
     command: ["node", "apps/worker/dist/index.js", "playout"]
     env_file:
       - .env
