@@ -1,47 +1,123 @@
 # Deployment
 
-## Production Defaults
+## Production Profile
 
-- CPU-first Linux host
+Recommended production shape:
+
+- Linux host
 - Docker Compose
-- Reverse proxy in front of `web`
-- Persistent volumes for PostgreSQL, Redis, and media files in `data/media`
+- reverse proxy in front of `web`
+- persistent storage for:
+  - PostgreSQL
+  - Redis
+  - `data/media`
 
-## Deployment Steps
+Stream247 is currently designed as a self-hosted single-workspace deployment.
+
+## Deploy Steps
 
 1. Copy `.env.example` to `.env`.
-2. Set `APP_URL` to the externally reachable base URL.
-3. Set `APP_SECRET` to a long random secret.
-4. Set `POSTGRES_PASSWORD` and update the password inside `DATABASE_URL` to match.
-5. Set `TWITCH_STREAM_KEY` and keep `TWITCH_RTMP_URL=rtmp://live.twitch.tv/app` unless another RTMP destination is required.
-6. Set `CHANNEL_TIMEZONE` to the timezone the schedule should follow.
-7. Optionally pin `STREAM247_WEB_IMAGE`, `STREAM247_WORKER_IMAGE`, and `STREAM247_PLAYOUT_IMAGE` to specific GHCR release tags.
-8. Add `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` if OAuth should work from the browser UI.
-9. Run `docker compose up -d`.
-10. Open `/setup` and create the owner account.
-11. Sign in and finish Twitch connection from the dashboard.
-12. Put playable files into `data/media` or add direct media URL sources so the worker can ingest them.
+2. Set:
+   - `APP_URL`
+   - `APP_SECRET`
+   - `POSTGRES_PASSWORD`
+   - matching `DATABASE_URL`
+3. Optional but recommended:
+   - `TWITCH_CLIENT_ID`
+   - `TWITCH_CLIENT_SECRET`
+   - `TWITCH_STREAM_KEY`
+   - `CHANNEL_TIMEZONE`
+   - Discord / SMTP alert settings
+4. Optionally pin:
+   - `STREAM247_WEB_IMAGE`
+   - `STREAM247_WORKER_IMAGE`
+   - `STREAM247_PLAYOUT_IMAGE`
+5. Start the stack:
+   ```bash
+   docker compose up -d
+   ```
+6. Open `/setup`.
+7. Create the owner account.
+8. Sign in to the admin UI.
+9. Connect Twitch from the dashboard if you want Twitch metadata sync, Twitch schedule sync, or team SSO.
+10. Add playable media:
+   - files in `data/media`
+   - direct media URL sources
+   - YouTube playlist sources
+   - Twitch VOD sources
+11. Build schedule blocks and let the worker ingest and reconcile.
+
+## Reverse Proxy And URL Notes
+
+- `APP_URL` must be the real externally reachable base URL.
+- Twitch OAuth will fail if `APP_URL` and the registered Twitch redirect URLs do not match.
+- In real production, HTTPS is strongly recommended because Twitch OAuth and browser sessions should not run over plain HTTP on the public internet.
 
 ## Secrets And Runtime Settings
 
-- `POSTGRES_PASSWORD` belongs in `.env`.
-- `TWITCH_CLIENT_SECRET` belongs in `.env`.
-- `TWITCH_STREAM_KEY` belongs in `.env`.
-- `CHANNEL_TIMEZONE` belongs in `.env` for now.
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and `ALERT_EMAIL_TO` belong in `.env` if email alerts should be enabled.
-- Moderator presence policy does not belong in `.env`; it is edited live in the admin UI and stored in PostgreSQL.
-- The setup wizard currently does not persist third-party client secrets because browser-entered secrets would otherwise be stored in plaintext.
+Belongs in `.env`:
 
-## Release Channel
+- `POSTGRES_PASSWORD`
+- `TWITCH_CLIENT_ID`
+- `TWITCH_CLIENT_SECRET`
+- `TWITCH_STREAM_KEY`
+- `STREAM_OUTPUT_KEY`
+- SMTP credentials
+- Discord webhook URL
+- `CHANNEL_TIMEZONE`
 
-- Production Compose should pull from `ghcr.io/drjakeberg/stream247-web:<tag>`.
-- Worker should pull from `ghcr.io/drjakeberg/stream247-worker:<tag>`.
-- Playout should pull from `ghcr.io/drjakeberg/stream247-playout:<tag>`.
-- Development should use `docker-compose.dev.yml` with local builds.
+Does not belong in `.env`:
+
+- moderator presence settings
+- schedule blocks
+- sources and assets
+- operator overrides
+- overlay settings
+- incidents and acknowledgements
+
+Those are runtime settings managed from the UI and stored in PostgreSQL.
+
+Important current limitation:
+
+- third-party secrets are still deployment-time secrets in `.env`
+- encrypted secret management from the admin UI is not implemented yet
+
+## Media And Persistence
+
+- local media is read from `data/media`
+- PostgreSQL and Redis must use persistent volumes
+- deleting your database volume resets workspace state
+- deleting `data/media` removes locally mounted playable files
+
+## GHCR Images
+
+Production Compose is intended to pull from:
+
+- `ghcr.io/drjakeberg/stream247-web:<tag>`
+- `ghcr.io/drjakeberg/stream247-worker:<tag>`
+- `ghcr.io/drjakeberg/stream247-playout:<tag>`
+
+Default `.env.example` uses `latest`.
+Pinning explicit tags is safer for stable deployments.
+
+## Release Flow
+
+- `push` to `main`:
+  - validate
+  - build
+  - smoke-test
+  - publish `latest` and branch/SHA-tagged images
+- `push` of `v*` tags:
+  - release workflow
+  - versioned GHCR images
+
+CI currently builds against the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners.
 
 ## Current Capability Notes
 
-- Local media and direct media URLs are ingestible today.
-- YouTube playlist and Twitch VOD sources are ingested through `yt-dlp`, which is bundled into the worker/playout image.
-- Discord alert dispatch and SMTP email alert dispatch exist.
-- Schedule blocks can be created, edited, and deleted from the admin UI with 15-minute granularity and overlap validation.
+- local media, direct media URLs, YouTube playlists, and Twitch VODs are ingestible today
+- YouTube and Twitch ingestion rely on `yt-dlp`
+- schedule blocks support CRUD, overlap validation, and drag/drop day timeline repositioning
+- playout supports operator restart, temporary fallback, asset pinning, skip-current, and resume-schedule actions
+- overlay is currently a browser-source page, not native FFmpeg scene composition
+- email and Discord alert delivery are both implemented

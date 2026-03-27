@@ -1,51 +1,181 @@
 # Architecture
 
-## Services
+## Service Topology
 
-- `web`: Next.js admin UI, public schedule pages, lightweight API endpoints
-- `worker`: background jobs for ingestion, Twitch sync, alerts, and reconciliation
-- `playout`: FFmpeg-based stream process manager
-- `postgres`: relational state
-- `redis`: queues, locks, transient runtime state
+- `web`: Next.js admin UI, public pages, and API routes
+- `worker`: ingestion, Twitch reconciliation, incidents, alerts, and playout supervision
+- `playout`: playout runtime image used for FFmpeg-oriented broadcast execution
+- `postgres`: durable relational state
+- `redis`: transient runtime support and queue/lock-oriented infrastructure
 
-## Current Persistence
+## Persistence Model
 
-- The runtime persists workspace state in PostgreSQL through the `@stream247/db` package.
-- Initialization, users, Twitch SSO/team access, moderation settings, presence windows, sources, assets, incidents, destinations, and playout runtime are all stored in relational tables.
-- The old `data/app/state.json` path is only used as a one-time legacy migration source when a database is empty.
+Stream247 now uses PostgreSQL as the primary application store through `@stream247/db`.
 
-## Current Delivery Model
+Persisted domains include:
 
-- Production Compose is image-based and intended to pull from GHCR.
-- Pushes to `main` publish `latest` and `main-<sha>` images to GHCR after validation and smoke tests succeed.
-- GitHub release tags publish versioned images to GHCR.
-- Development Compose remains build-based for local iteration.
+- initialization and owner bootstrap state
+- users, Twitch identities, and team access grants
+- moderation settings and presence windows
+- overlay settings
+- sources and assets
+- schedule blocks
+- Twitch connection state
+- Twitch-managed schedule segment mappings
+- stream destinations
+- incidents and audit events
+- playout runtime state
 
-## Core Runtime Model
+Legacy `data/app/state.json` is only treated as a one-time migration source when the database is empty.
 
-- Desired state: generated schedule, moderation policy, Twitch metadata targets
-- Actual state: currently running playout item, FFmpeg process metadata, destination readiness, platform settings, active incidents
-- Reconciler: background logic that drives actual state toward desired state
+## Delivery Model
+
+- production Compose is image-based and intended to pull from GHCR
+- development Compose remains build-based
+- `main` pushes publish current GHCR images after validation
+- `v*` tags publish versioned GHCR images
+
+## Runtime Model
+
+Stream247 works around three high-level state concepts:
+
+- desired state:
+  - schedule intent
+  - moderation policy
+  - Twitch metadata targets
+  - operator overrides
+- actual state:
+  - currently selected asset
+  - destination readiness
+  - FFmpeg process metadata
+  - Twitch connection state
+  - open incidents
+- reconciled state:
+  - worker/playout logic continuously moves actual state toward desired state
 
 ## Broadcast Runtime
 
-- `worker` runs reconciliation for local media ingestion, direct-media normalization, Twitch metadata sync, destination validation, and alert generation.
-- `playout` runs a supervised FFmpeg loop with a persisted playout state machine:
-  - `idle`
-  - `starting`
-  - `running`
-  - `switching`
-  - `degraded`
-  - `recovering`
-  - `failed`
-- Asset selection prefers scheduled content first, then global fallback assets, then any ready asset.
-- Runtime state stores process PID, start time, restart count, current/desired asset, destination, last exit code, and the last captured stderr sample.
+The current playout model is FFmpeg-based and supervisor-driven.
 
-## Key Domains
+Persisted playout runtime fields include:
 
-- Users and roles
-- Sources and source credentials
-- Assets, playlists, and schedule blocks
-- Stream destinations, playout queue, and operator overrides
-- Alerts, incidents, and audit events
-- Twitch destination and moderation policies
+- status
+- current asset
+- desired asset
+- current destination
+- restart requests
+- heartbeat timestamp
+- process pid
+- process start time
+- last exit code
+- restart count
+- last error
+- last stderr sample
+- override mode
+- override asset id
+- override expiry
+- skipped asset id
+- skip expiry
+
+Current playout status values:
+
+- `idle`
+- `starting`
+- `running`
+- `switching`
+- `degraded`
+- `recovering`
+- `failed`
+
+Asset selection precedence is currently:
+
+1. active operator override
+2. active scheduled source mapping
+3. global fallback asset
+4. any ready asset
+
+## Source Ingestion
+
+Current source connectors:
+
+- local media library scan
+- direct media URL normalization
+- YouTube playlist ingestion via `yt-dlp`
+- Twitch VOD ingestion via `yt-dlp`
+
+Assets are normalized into a PostgreSQL-backed catalog and then selected by the playout runtime.
+
+## Scheduling
+
+The schedule model is block-based and timezone-aware.
+
+Current schedule capabilities:
+
+- minute-accurate block start times
+- duration validation
+- overlap detection
+- public schedule preview
+- drag/drop day timeline repositioning
+
+The scheduler is deterministic and explainable: schedule preview items carry explicit source/reason information.
+
+## Twitch Integration
+
+Current Twitch domains:
+
+- broadcaster OAuth connection
+- team SSO login
+- title sync from active schedule block
+- category lookup and sync from active schedule block
+- Twitch schedule segment sync for upcoming blocks
+- moderation-related chat mode updates
+
+When Twitch reconciliation fails, Stream247 raises incidents instead of failing silently.
+
+## Operator Controls
+
+Current operator controls include:
+
+- restart encoder
+- temporary fallback
+- pin specific asset on air
+- skip current asset
+- resume schedule control
+
+Those controls are persisted in the playout runtime state and picked up by the worker/playout reconciliation loop.
+
+## Overlay Model
+
+Overlay is currently implemented as a browser-source page, not native FFmpeg scene composition.
+
+Current overlay capabilities:
+
+- channel name
+- headline
+- accent color
+- emergency banner
+- clock toggle
+- now/next teaser toggle
+- schedule teaser toggle
+
+The admin UI manages these settings; the public overlay page renders them for OBS/browser-source usage.
+
+## Alerting And Incidents
+
+Current operational domains:
+
+- incidents
+- acknowledgements
+- resolution state
+- audit events
+- Discord alerts
+- SMTP email alerts
+- health/readiness endpoints
+
+## Major Known Gaps
+
+- encrypted secret management from the admin/setup UI
+- richer multi-scene overlay composition
+- more advanced playout transitions and switchovers
+- deeper incident history and analytics views
+- richer schedule authoring directly in the timeline
