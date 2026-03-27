@@ -1,0 +1,26 @@
+{
+  "name": "stream247",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.6.1",
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter core build && pnpm --filter config build && pnpm --filter web build",
+    "lint": "pnpm --filter web lint",
+    "typecheck": "pnpm --filter core typecheck && pnpm --filter config typecheck && pnpm --filter web typecheck",
+    "test": "pnpm test:unit && pnpm test:integration",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.25.0",
+    "eslint-config-next": "^15.2.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1"
+  }
+}
+
