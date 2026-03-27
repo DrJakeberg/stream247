@@ -43,6 +43,19 @@ export type SchedulePreview = {
   }>;
 };
 
+export type ScheduleOccurrence = {
+  key: string;
+  blockId: string;
+  title: string;
+  categoryName: string;
+  sourceName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  startMinuteOfDay: number;
+  durationMinutes: number;
+};
+
 export function isLikelyYouTubePlaylistUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -73,6 +86,12 @@ function padTwo(value: number): string {
 export function formatMinuteOfDay(value: number): string {
   const normalized = ((Math.trunc(value) % (24 * 60)) + 24 * 60) % (24 * 60);
   return `${padTwo(Math.floor(normalized / 60))}:${padTwo(normalized % 60)}`;
+}
+
+export function addDaysToDateString(value: string, days: number): string {
+  const base = new Date(`${value}T00:00:00.000Z`);
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
 }
 
 export function parseTimeOfDay(value: string): number | null {
@@ -194,22 +213,15 @@ export function buildSchedulePreview(args: {
   date: string;
   blocks: ScheduleBlock[];
 }): SchedulePreview {
-  const items = [...args.blocks]
-    .sort((a, b) => a.startMinuteOfDay - b.startMinuteOfDay)
-    .map((block) => {
-      const startMinutes = block.startMinuteOfDay;
-      const endMinutes = (startMinutes + block.durationMinutes) % (24 * 60);
-
-      return {
-        id: block.id,
-        title: block.title,
-        startTime: formatMinuteOfDay(startMinutes),
-        endTime: formatMinuteOfDay(endMinutes),
-        categoryName: block.categoryName,
-        sourceName: block.sourceName,
-        reason: `Selected from ${block.sourceName} for ${block.durationMinutes} minutes.`
-      };
-    });
+  const items = buildScheduleOccurrences(args).map((occurrence) => ({
+    id: occurrence.blockId,
+    title: occurrence.title,
+    startTime: occurrence.startTime,
+    endTime: occurrence.endTime,
+    categoryName: occurrence.categoryName,
+    sourceName: occurrence.sourceName,
+    reason: `Selected from ${occurrence.sourceName} for ${occurrence.durationMinutes} minutes.`
+  }));
 
   return { date: args.date, items };
 }
@@ -301,4 +313,83 @@ export function findScheduleConflicts(blocks: Array<ScheduleBlock>): string[] {
   }
 
   return [...conflicts];
+}
+
+export function buildScheduleOccurrences(args: {
+  date: string;
+  blocks: ScheduleBlock[];
+}): ScheduleOccurrence[] {
+  return [...args.blocks]
+    .sort((a, b) => a.startMinuteOfDay - b.startMinuteOfDay)
+    .map((block) => {
+      const startMinutes = block.startMinuteOfDay;
+      const endMinutes = (startMinutes + block.durationMinutes) % (24 * 60);
+
+      return {
+        key: `${args.date}:${block.id}:${startMinutes}:${block.durationMinutes}`,
+        blockId: block.id,
+        title: block.title,
+        categoryName: block.categoryName,
+        sourceName: block.sourceName,
+        date: args.date,
+        startTime: formatMinuteOfDay(startMinutes),
+        endTime: formatMinuteOfDay(endMinutes),
+        startMinuteOfDay: startMinutes,
+        durationMinutes: block.durationMinutes
+      };
+    });
+}
+
+function extractFormatterParts(args: { instant: Date; timeZone: string }) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: args.timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  });
+
+  const parts = formatter.formatToParts(args.instant);
+  const read = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value ?? "0");
+
+  return {
+    year: read("year"),
+    month: read("month"),
+    day: read("day"),
+    hour: read("hour"),
+    minute: read("minute"),
+    second: read("second")
+  };
+}
+
+export function toUtcIsoForLocalDateTime(args: {
+  date: string;
+  minuteOfDay: number;
+  timeZone: string;
+}): string {
+  const [yearText, monthText, dayText] = args.date.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Math.floor(args.minuteOfDay / 60);
+  const minute = args.minuteOfDay % 60;
+  let instant = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const zoned = extractFormatterParts({ instant, timeZone: args.timeZone });
+    const desiredAsUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
+    const zonedAsUtc = Date.UTC(zoned.year, zoned.month - 1, zoned.day, zoned.hour, zoned.minute, zoned.second);
+    const delta = desiredAsUtc - zonedAsUtc;
+
+    if (delta === 0) {
+      break;
+    }
+
+    instant = new Date(instant.getTime() + delta);
+  }
+
+  return instant.toISOString();
 }

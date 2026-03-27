@@ -98,6 +98,7 @@ export async function exchangeTwitchCode(code: string) {
       lastSyncedTitle: "",
       lastSyncedCategoryName: "",
       lastSyncedCategoryId: "",
+      lastScheduleSyncAt: "",
       error: ""
     }
   }));

@@ -48,6 +48,9 @@ export default async function DashboardPage() {
               {state.twitch.lastSyncedCategoryName || "no category"}
             </p>
           ) : null}
+          {state.twitch.lastScheduleSyncAt ? (
+            <p className="subtle">Last schedule sync: {state.twitch.lastScheduleSyncAt}</p>
+          ) : null}
         </article>
         <article className="metric">
           <span className="label">Moderator window</span>
@@ -172,6 +175,19 @@ export default async function DashboardPage() {
                 {state.twitch.lastMetadataSyncAt
                   ? `Last synced at ${state.twitch.lastMetadataSyncAt}`
                   : "Connect Twitch and let the worker complete a reconciliation cycle."}
+              </div>
+            </div>
+            <div className="item">
+              <strong>Twitch schedule sync</strong>
+              <div className="subtle">
+                {state.twitch.lastScheduleSyncAt
+                  ? `${state.twitchScheduleSegments.length} segment(s) managed by Stream247`
+                  : "No Twitch schedule sync has completed yet."}
+              </div>
+              <div className="subtle">
+                {state.twitch.lastScheduleSyncAt
+                  ? `Last synced at ${state.twitch.lastScheduleSyncAt}`
+                  : "Future schedule blocks will be mirrored to Twitch after the worker syncs them."}
               </div>
             </div>
             <TwitchConnectPanel authorizeUrl={getTwitchAuthorizeUrl("broadcaster-connect")} />
