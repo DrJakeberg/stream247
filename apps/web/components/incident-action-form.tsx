@@ -10,7 +10,7 @@ export function IncidentActionForm(props: { fingerprint: string; acknowledgedAt?
     <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
       {props.status === "open" && !props.acknowledgedAt ? (
         <button
-          className="button secondary"
+          className="button button-secondary"
           disabled={isPending}
           onClick={() => {
             setError("");
@@ -40,7 +40,7 @@ export function IncidentActionForm(props: { fingerprint: string; acknowledgedAt?
       ) : null}
       {props.status === "open" ? (
         <button
-          className="button secondary"
+          className="button button-secondary"
           disabled={isPending}
           onClick={() => {
             setError("");

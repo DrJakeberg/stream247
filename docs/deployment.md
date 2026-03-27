@@ -44,3 +44,4 @@
 - Local media and direct media URLs are ingestible today.
 - YouTube playlist and Twitch VOD sources are ingested through `yt-dlp`, which is bundled into the worker/playout image.
 - Discord alert dispatch and SMTP email alert dispatch exist.
+- Schedule blocks can be created, edited, and deleted from the admin UI with 15-minute granularity and overlap validation.

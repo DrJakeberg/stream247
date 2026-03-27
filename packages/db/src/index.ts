@@ -112,7 +112,7 @@ export type ScheduleBlockRecord = {
   id: string;
   title: string;
   categoryName: string;
-  startHour: number;
+  startMinuteOfDay: number;
   durationMinutes: number;
   sourceName: string;
 };
@@ -202,7 +202,7 @@ function defaultState(): AppState {
         id: "morning-vods",
         title: "Morning Twitch VOD Rotation",
         categoryName: "Just Chatting",
-        startHour: 6,
+        startMinuteOfDay: 6 * 60,
         durationMinutes: 240,
         sourceName: "Twitch Archive"
       },
@@ -210,7 +210,7 @@ function defaultState(): AppState {
         id: "playlist-prime",
         title: "Prime Time YouTube Playlist",
         categoryName: "Music",
-        startHour: 18,
+        startMinuteOfDay: 18 * 60,
         durationMinutes: 360,
         sourceName: "YouTube Playlist"
       }
@@ -308,7 +308,15 @@ function normalizeState(state: AppState): AppState {
     users: Array.isArray(state.users) ? state.users : [],
     teamAccessGrants: Array.isArray(state.teamAccessGrants) ? state.teamAccessGrants : [],
     presenceWindows: Array.isArray(state.presenceWindows) ? state.presenceWindows : [],
-    scheduleBlocks: Array.isArray(state.scheduleBlocks) ? state.scheduleBlocks : defaults.scheduleBlocks,
+    scheduleBlocks: Array.isArray(state.scheduleBlocks)
+      ? state.scheduleBlocks.map((block) => ({
+          ...block,
+          startMinuteOfDay:
+            typeof (block as ScheduleBlockRecord & { startHour?: number }).startMinuteOfDay === "number"
+              ? block.startMinuteOfDay
+              : (((block as ScheduleBlockRecord & { startHour?: number }).startHour ?? 0) % 24) * 60
+        }))
+      : defaults.scheduleBlocks,
     sources: Array.isArray(state.sources) ? state.sources : defaults.sources,
     assets: Array.isArray(state.assets)
       ? state.assets.map((asset) => ({
@@ -394,6 +402,7 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       title TEXT NOT NULL,
       category_name TEXT NOT NULL,
       start_hour INTEGER NOT NULL,
+      start_minute_of_day INTEGER NOT NULL DEFAULT 0,
       duration_minutes INTEGER NOT NULL,
       source_name TEXT NOT NULL
     );
@@ -484,6 +493,7 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS is_global_fallback BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_by TEXT NOT NULL DEFAULT '';
+    ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS start_minute_of_day INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS current_destination_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS restart_requested_at TEXT NOT NULL DEFAULT '';
@@ -493,6 +503,12 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS restart_count INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_stderr_sample TEXT NOT NULL DEFAULT '';
+  `);
+
+  await client.query(`
+    UPDATE schedule_blocks
+    SET start_minute_of_day = start_hour * 60
+    WHERE start_minute_of_day = 0 AND start_hour <> 0
   `);
 }
 
@@ -674,10 +690,18 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   for (const block of next.scheduleBlocks) {
     await client.query(
       `
-        INSERT INTO schedule_blocks (id, title, category_name, start_hour, duration_minutes, source_name)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO schedule_blocks (id, title, category_name, start_hour, start_minute_of_day, duration_minutes, source_name)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
       `,
-      [block.id, block.title, block.categoryName, block.startHour, block.durationMinutes, block.sourceName]
+      [
+        block.id,
+        block.title,
+        block.categoryName,
+        Math.floor(block.startMinuteOfDay / 60),
+        block.startMinuteOfDay,
+        block.durationMinutes,
+        block.sourceName
+      ]
     );
   }
 
@@ -839,9 +863,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     title: string;
     category_name: string;
     start_hour: number;
+    start_minute_of_day: number;
     duration_minutes: number;
     source_name: string;
-  }>("SELECT * FROM schedule_blocks ORDER BY start_hour ASC");
+  }>("SELECT * FROM schedule_blocks ORDER BY start_minute_of_day ASC, start_hour ASC");
   const sourcesResult = await client.query<{
     id: string;
     name: string;
@@ -977,7 +1002,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       id: row.id,
       title: row.title,
       categoryName: row.category_name,
-      startHour: row.start_hour,
+      startMinuteOfDay:
+        typeof row.start_minute_of_day === "number" ? row.start_minute_of_day : (row.start_hour % 24) * 60,
       durationMinutes: row.duration_minutes,
       sourceName: row.source_name
     })),
