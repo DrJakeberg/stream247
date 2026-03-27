@@ -1,116 +1,327 @@
 # Stream247
 
-Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel from managed video sources such as YouTube playlists, Twitch VODs, and local media libraries.
+Stream247 is a self-hosted platform for running a Twitch-first 24/7 channel from managed video sources such as local media, direct media URLs, YouTube playlists, and Twitch VODs.
 
-## Goals
+It ships as Docker / Docker Compose, publishes images through GitHub Actions and GHCR, and gives operators a browser-based admin UI for scheduling, playout control, Twitch sync, moderation policy, and incident handling.
 
-- Run a continuous playout channel with fallback content.
-- Manage sources, playlists, schedules, moderation policies, alerts, and Twitch automation from a polished admin UI.
-- Publish a public-facing schedule page for viewers.
-- Ship as Docker and Docker Compose with validation gates before images are released.
+## What It Does Today
 
-## Planned Capabilities
+- Docker-first self-hosted deployment with published GHCR images
+- setup wizard with owner account bootstrap
+- local login plus Twitch broadcaster connect and Twitch SSO team access
+- PostgreSQL-backed runtime state
+- source ingestion for:
+  - local media library
+  - direct media URLs
+  - YouTube playlists via `yt-dlp`
+  - Twitch VODs via `yt-dlp`
+- schedule management with:
+  - minute-accurate blocks
+  - overlap validation
+  - drag-and-drop day timeline editing
+- playout operations with:
+  - FFmpeg RTMP output foundation
+  - fallback asset selection
+  - manual restart
+  - temporary fallback override
+  - pin asset on air
+  - skip current asset
+  - resume schedule control
+- Twitch automation with:
+  - title sync from active schedule block
+  - category sync from active schedule block
+  - upcoming Twitch schedule segment sync
+  - moderation policy support for emote-only fallback
+- ops tooling with:
+  - incidents
+  - acknowledge / resolve actions
+  - Discord webhook alerts
+  - SMTP email alerts
+  - readiness and health endpoints
+- viewer-facing pages with:
+  - public schedule page
+  - browser-source overlay page with admin-managed branding
 
-- encrypted secret management from the setup/admin UI instead of `.env`-only third-party credentials
+## What Is Not Done Yet
+
+- encrypted secret storage in the setup/admin UI
 - richer multi-scene overlay composition inside the playout runtime
-- deeper timeline authoring such as resize/duplicate flows and operator override lanes directly inside the schedule editor
-- stronger playout transitions and scene-aware switchovers instead of simple process-level asset switching
-- broader incident history, filtering, and long-horizon operational analytics
+- more advanced playout transitions and scene-aware switchovers
+- deeper incident history, filtering, and analytics views
+- richer timeline editing such as resize / duplicate flows and inline override lanes
 
-## Monorepo Layout
-
-- `apps/web`: Next.js admin UI, public schedule pages, and API routes
-- `packages/core`: domain types and scheduling/moderation logic
-- `packages/config`: runtime config helpers
-- `docs`: architecture and operational docs
-- `.github`: issue templates, pull request template, and CI workflows
-
-## Deploy With Docker
+## Quick Start
 
 1. Copy `.env.example` to `.env`.
-2. Set `APP_URL`, `APP_SECRET`, `POSTGRES_PASSWORD`, and the matching password inside `DATABASE_URL`.
-3. Set `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` if you want browser-based Twitch OAuth and Twitch SSO.
-   See [Twitch App Credentials](#twitch-app-credentials) or the dedicated guide in [docs/twitch-setup.md](docs/twitch-setup.md#how-to-get-client-id-and-secret).
-4. Set `TWITCH_STREAM_KEY` and optionally override `TWITCH_RTMP_URL` or the generic `STREAM_OUTPUT_URL` / `STREAM_OUTPUT_KEY` pair if playout should push RTMP output.
-5. Set `CHANNEL_TIMEZONE` to the timezone the schedule should follow.
-6. Optionally pin `STREAM247_WEB_IMAGE`, `STREAM247_WORKER_IMAGE`, and `STREAM247_PLAYOUT_IMAGE` to specific GHCR tags.
-7. Start the stack with `docker compose up -d`.
-8. For local development builds, use `docker compose -f docker-compose.dev.yml up -d --build`.
-9. Open `http://localhost:3000/setup`.
-10. Create the owner account in the setup wizard.
-11. Sign in to the admin UI and connect Twitch from the dashboard.
-12. Drop local media files into `data/media` or add direct media URL sources so the worker can ingest them into the asset catalog.
+2. Set:
+   - `APP_URL`
+   - `APP_SECRET`
+   - `POSTGRES_PASSWORD`
+   - the matching password inside `DATABASE_URL`
+3. Optional but recommended:
+   - `TWITCH_CLIENT_ID`
+   - `TWITCH_CLIENT_SECRET`
+   - `TWITCH_STREAM_KEY`
+   - `CHANNEL_TIMEZONE`
+4. Start the stack:
+   ```bash
+   docker compose up -d
+   ```
+5. Open:
+   - `http://localhost:3000/setup`
+6. Create the owner account.
+7. Sign in to the admin UI.
+8. Connect Twitch from the dashboard if you want broadcaster sync and Twitch SSO.
+9. Add media by either:
+   - placing files into `data/media`
+   - adding direct media URLs
+   - adding a YouTube playlist source
+   - adding a Twitch VOD source
+10. Build a schedule and let the worker ingest assets.
 
-## Environment Model
+For local-development builds instead of GHCR images:
 
-- Put infrastructure and secret values in `.env`.
-- Keep `POSTGRES_PASSWORD` in `.env`, not hardcoded in Compose.
-- Keep `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` in `.env`.
-- `TWITCH_CLIENT_ID` is the public application identifier from your Twitch developer application.
-- `TWITCH_CLIENT_SECRET` is the private application secret from the same Twitch application.
-- If you do not have them yet, follow [Twitch App Credentials](#twitch-app-credentials) or [docs/twitch-setup.md](docs/twitch-setup.md#how-to-get-client-id-and-secret).
-- Keep RTMP stream keys such as `TWITCH_STREAM_KEY` in `.env`.
-- Keep `CHANNEL_TIMEZONE` in `.env` until timezone management is exposed in the admin UI.
-- Do not keep moderator presence policy in `.env`; it is runtime state managed from the admin UI.
-- `MEDIA_LIBRARY_ROOT` should normally stay `/app/data/media` inside containers.
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+## Configuration
+
+### Required Environment Variables
+
+- `APP_URL`: externally reachable base URL, for example `https://stream247.example.com`
+- `APP_SECRET`: session-signing secret
+- `POSTGRES_PASSWORD`: password used by PostgreSQL
+- `DATABASE_URL`: must use the same PostgreSQL password as `POSTGRES_PASSWORD`
+
+### Common Optional Environment Variables
+
+- `TWITCH_CLIENT_ID`: Twitch application client id
+- `TWITCH_CLIENT_SECRET`: Twitch application client secret
+- `TWITCH_STREAM_KEY`: Twitch stream key for RTMP output
+- `TWITCH_RTMP_URL`: defaults to `rtmp://live.twitch.tv/app`
+- `STREAM_OUTPUT_URL`: generic RTMP output override
+- `STREAM_OUTPUT_KEY`: generic RTMP key override
+- `CHANNEL_TIMEZONE`: schedule timezone, for example `Europe/Berlin`
+- `DISCORD_WEBHOOK_URL`: Discord alert target
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL_TO`: email alerting
+
+### What Belongs In `.env`
+
+- infrastructure secrets
+- OAuth application credentials
+- RTMP stream keys
+- SMTP credentials
+- deployment-level defaults such as `CHANNEL_TIMEZONE`
+
+### What Does Not Belong In `.env`
+
+- moderator presence policy
+- schedule blocks
+- operator overrides
+- sources and assets
+- incidents and acknowledgements
+
+Those are runtime settings stored in PostgreSQL and managed from the admin UI.
 
 ## Twitch App Credentials
 
-1. Open the Twitch developer console and create or edit an application.
-2. Add both redirect URLs:
+If you need `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`, follow this section or the dedicated guide in [docs/twitch-setup.md](docs/twitch-setup.md#how-to-get-client-id-and-secret).
+
+1. Open the Twitch developer console.
+2. Create a new application or edit the existing Stream247 application.
+3. Register both redirect URLs:
    - `<APP_URL>/api/integrations/twitch/callback`
    - `<APP_URL>/api/auth/twitch/callback`
-3. Copy the generated Client ID into `TWITCH_CLIENT_ID`.
-4. Generate or reveal the Client Secret and place it into `TWITCH_CLIENT_SECRET`.
-5. Restart the stack if you changed `.env`.
-6. Use the setup/dashboard UI to complete broadcaster connect and team SSO flows.
+4. Copy the generated Client ID into `TWITCH_CLIENT_ID`.
+5. Generate, reveal, or regenerate the Client Secret and store it in `TWITCH_CLIENT_SECRET`.
+6. Restart the stack after changing `.env`.
+7. Use the dashboard for:
+   - broadcaster connect
+   - Twitch SSO sign-in for team members
+
+Important:
+
+- `TWITCH_CLIENT_ID` is public application identity.
+- `TWITCH_CLIENT_SECRET` is private application secret.
+- today both still live in `.env`; browser-managed encrypted secret storage is not implemented yet.
+
+## Deployment
+
+### Production Defaults
+
+- Linux host
+- Docker Compose
+- reverse proxy in front of `web`
+- persistent storage for:
+  - PostgreSQL
+  - Redis
+  - `data/media`
+
+See [docs/deployment.md](docs/deployment.md) for the deployment-focused guide.
+
+### Published Images
+
+- `ghcr.io/drjakeberg/stream247-web`
+- `ghcr.io/drjakeberg/stream247-worker`
+- `ghcr.io/drjakeberg/stream247-playout`
+
+The default `.env.example` already points Compose at the `latest` GHCR tags.
+
+### Release Behavior
+
+- `push` to `main` validates, builds, smoke-tests, and publishes current images
+- `push` of `v*` tags runs the release workflow for versioned images
+- CI uses the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners
+
+## Feature Overview
+
+### Authentication And Access
+
+- owner bootstrap via setup wizard
+- local session-based authentication
+- Twitch SSO team login
+- role-based access with `owner`, `admin`, `operator`, `moderator`, `viewer`
+- team access grants by Twitch login
+
+### Sources And Assets
+
+- local media scan from `data/media`
+- direct media URL sources
+- YouTube playlist ingestion via `yt-dlp`
+- Twitch VOD ingestion via `yt-dlp`
+- PostgreSQL-backed asset catalog
+- fallback asset priority and global fallback support
+
+### Scheduling
+
+- schedule block CRUD
+- minute-accurate start times
+- duration validation
+- overlap detection
+- day timeline with drag-and-drop rescheduling
+- public-facing schedule page
+
+### Playout And Broadcast Ops
+
+- FFmpeg-based RTMP playout foundation
+- destination readiness state
+- operator restart control
+- operator pin-asset override
+- operator skip-current control
+- temporary fallback override
+- resume-schedule control
+- worker-managed playout runtime state
+
+### Twitch Automation
+
+- broadcaster OAuth connect
+- title sync from active schedule block
+- category lookup and sync from active schedule block
+- Twitch schedule segment sync for upcoming blocks
+- Twitch SSO for team members
+- moderation policy automation for emote-only fallback windows
+
+### Moderation
+
+- explicit moderator presence windows such as `here 30`
+- configurable moderation policy in admin UI
+- emote-only fallback when no active moderator window is present
+
+### Alerts And Incident Management
+
+- incident creation from runtime failures
+- incident acknowledgement
+- incident resolution
+- Discord webhook alerts
+- SMTP email alerts
+- audit events
+
+### Overlay And Viewer Pages
+
+- public schedule page at `/channel`
+- browser-source overlay at `/overlay`
+- overlay studio in admin UI
+- configurable channel name, headline, accent color, emergency banner, and now/next teaser toggles
 
 ## Local Development
 
 1. Copy `.env.example` to `.env`.
-2. Start dependencies with `docker compose up -d postgres redis`.
-3. Install dependencies with `pnpm install`.
-4. Start the app with `pnpm dev`.
+2. Start dependencies:
+   ```bash
+   docker compose up -d postgres redis
+   ```
+3. Install dependencies:
+   ```bash
+   pnpm install
+   ```
+4. Start the web app:
+   ```bash
+   pnpm dev
+   ```
 
 ## Validation
 
-Every release image should be gated by:
+The intended validation path is:
+
+- `pnpm validate`
+- Docker image build
+- container smoke test
+
+Current validation covers:
 
 - lint
 - typecheck
 - unit tests
 - integration tests
-- build
-- Docker image build
-- container smoke test
+- production build
+- Docker builds
+- smoke test for the web image
 
-## Release Images
+## Troubleshooting
 
-- Production images are published to `ghcr.io/drjakeberg/stream247-web`.
-- Background worker images are published to `ghcr.io/drjakeberg/stream247-worker`.
-- Playout images are published to `ghcr.io/drjakeberg/stream247-playout`.
-- CI builds use the public ECR mirror of the Docker Official `node:22-alpine` image to avoid Docker Hub rate-limit failures on GitHub-hosted runners.
-- Tagging `v*` on GitHub triggers the release workflow to validate, build, smoke-test, and publish the image.
+### Twitch OAuth does not work
 
-## Current Feature Status
+- check that `APP_URL` matches the externally reachable URL exactly
+- confirm both redirect URLs are registered in the Twitch developer application
+- verify `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`
 
-- Implemented now:
-  - local media library ingestion
-  - direct media URL ingestion
-  - YouTube playlist ingestion via yt-dlp
-  - Twitch VOD ingestion via yt-dlp
-  - minute-accurate schedule block editing from the admin UI
-  - drag/drop day timeline editing for schedule blocks
-  - operator overrides for pinning an asset, skipping the current asset, temporary fallback, and resuming schedule control
-  - browser-source overlay page with admin-managed branding and now/next teaser settings
-  - Twitch broadcaster connect and Twitch SSO team login
-  - Twitch metadata sync for title and category from the active schedule block
-  - Twitch schedule sync for upcoming schedule blocks
-  - FFmpeg-based RTMP playout foundation
-  - incident tracking, readiness checks, Discord webhook alerts, and SMTP email alerts
-- Not implemented yet:
-  - browser-stored third-party secrets from the setup wizard
-  - richer multi-scene overlay composition inside the playout runtime
+### No assets are available
+
+- put files into `data/media`
+- or add a direct media URL / YouTube playlist / Twitch VOD source
+- check worker incidents if ingestion failed
+
+### Stream output is not ready
+
+- verify `TWITCH_STREAM_KEY` or `STREAM_OUTPUT_KEY`
+- verify `TWITCH_RTMP_URL` or `STREAM_OUTPUT_URL`
+- inspect destination state and incidents on the dashboard
+
+### Email alerts do not send
+
+- verify `SMTP_HOST`
+- verify `SMTP_FROM`
+- verify `ALERT_EMAIL_TO`
+- verify SMTP auth settings if your server requires them
+
+## Monorepo Layout
+
+- `apps/web`: Next.js admin UI, public pages, and API routes
+- `apps/worker`: background ingestion, reconciliation, and playout logic
+- `packages/core`: scheduling and moderation domain logic
+- `packages/config`: runtime config helpers
+- `packages/db`: PostgreSQL-backed application state layer
+- `docs`: architecture, deployment, and Twitch setup docs
+- `.github`: CI, release, issues, and PR templates
+
+## Roadmap
+
+- encrypted secret management from the setup/admin UI
+- richer multi-scene overlay composition
+- more advanced playout transitions and switchovers
+- deeper ops views, filtering, and historical analytics
+- more powerful timeline authoring directly in the schedule editor
 
 ## License
 
