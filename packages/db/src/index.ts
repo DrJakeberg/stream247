@@ -39,6 +39,8 @@ export type TwitchConnection = {
   accessToken: string;
   refreshToken: string;
   connectedAt: string;
+  tokenExpiresAt: string;
+  lastRefreshAt: string;
   error: string;
 };
 
@@ -73,8 +75,22 @@ export type AssetRecord = {
   title: string;
   path: string;
   status: "ready" | "pending" | "error";
+  fallbackPriority: number;
+  isGlobalFallback: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+export type StreamDestinationRecord = {
+  id: string;
+  provider: "twitch" | "custom-rtmp";
+  name: string;
+  enabled: boolean;
+  rtmpUrl: string;
+  streamKeyPresent: boolean;
+  status: "ready" | "missing-config" | "error";
+  notes: string;
+  lastValidatedAt: string;
 };
 
 export type IncidentRecord = {
@@ -100,10 +116,18 @@ export type ScheduleBlockRecord = {
 };
 
 export type PlayoutRuntimeRecord = {
-  status: "idle" | "running" | "degraded";
+  status: "idle" | "starting" | "running" | "switching" | "degraded" | "recovering" | "failed";
   currentAssetId: string;
   currentTitle: string;
+  desiredAssetId: string;
+  currentDestinationId: string;
   heartbeatAt: string;
+  processPid: number;
+  processStartedAt: string;
+  lastExitCode: string;
+  restartCount: number;
+  lastError: string;
+  lastStderrSample: string;
   message: string;
 };
 
@@ -118,6 +142,7 @@ export type AppState = {
   scheduleBlocks: ScheduleBlockRecord[];
   sources: SourceRecord[];
   assets: AssetRecord[];
+  destinations: StreamDestinationRecord[];
   incidents: IncidentRecord[];
   auditEvents: AuditEvent[];
   playout: PlayoutRuntimeRecord;
@@ -165,6 +190,8 @@ function defaultState(): AppState {
       accessToken: "",
       refreshToken: "",
       connectedAt: "",
+      tokenExpiresAt: "",
+      lastRefreshAt: "",
       error: ""
     },
     scheduleBlocks: [
@@ -215,13 +242,34 @@ function defaultState(): AppState {
       }
     ],
     assets: [],
+    destinations: [
+      {
+        id: "destination-primary",
+        provider: "twitch",
+        name: "Primary Twitch Output",
+        enabled: true,
+        rtmpUrl: process.env.STREAM_OUTPUT_URL || process.env.TWITCH_RTMP_URL || "rtmp://live.twitch.tv/app",
+        streamKeyPresent: Boolean(process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY),
+        status: process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY ? "ready" : "missing-config",
+        notes: "Primary RTMP destination for the broadcast runtime.",
+        lastValidatedAt: ""
+      }
+    ],
     incidents: [],
     auditEvents: [],
     playout: {
       status: "idle",
       currentAssetId: "",
       currentTitle: "",
+      desiredAssetId: "",
+      currentDestinationId: "destination-primary",
       heartbeatAt: "",
+      processPid: 0,
+      processStartedAt: "",
+      lastExitCode: "",
+      restartCount: 0,
+      lastError: "",
+      lastStderrSample: "",
       message: "Playout engine has not started yet."
     }
   };
@@ -258,7 +306,14 @@ function normalizeState(state: AppState): AppState {
     presenceWindows: Array.isArray(state.presenceWindows) ? state.presenceWindows : [],
     scheduleBlocks: Array.isArray(state.scheduleBlocks) ? state.scheduleBlocks : defaults.scheduleBlocks,
     sources: Array.isArray(state.sources) ? state.sources : defaults.sources,
-    assets: Array.isArray(state.assets) ? state.assets : [],
+    assets: Array.isArray(state.assets)
+      ? state.assets.map((asset) => ({
+          ...asset,
+          fallbackPriority: asset.fallbackPriority ?? 100,
+          isGlobalFallback: asset.isGlobalFallback ?? false
+        }))
+      : [],
+    destinations: Array.isArray(state.destinations) ? state.destinations : defaults.destinations,
     incidents: Array.isArray(state.incidents) ? state.incidents : [],
     auditEvents: Array.isArray(state.auditEvents) ? state.auditEvents : [],
     playout: {
@@ -325,6 +380,8 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       access_token TEXT NOT NULL DEFAULT '',
       refresh_token TEXT NOT NULL DEFAULT '',
       connected_at TEXT NOT NULL DEFAULT '',
+      token_expires_at TEXT NOT NULL DEFAULT '',
+      last_refresh_at TEXT NOT NULL DEFAULT '',
       error TEXT NOT NULL DEFAULT ''
     );
 
@@ -354,8 +411,22 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       title TEXT NOT NULL,
       path TEXT NOT NULL,
       status TEXT NOT NULL,
+      fallback_priority INTEGER NOT NULL DEFAULT 100,
+      is_global_fallback BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS stream_destinations (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      name TEXT NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      rtmp_url TEXT NOT NULL DEFAULT '',
+      stream_key_present BOOLEAN NOT NULL DEFAULT FALSE,
+      status TEXT NOT NULL DEFAULT 'missing-config',
+      notes TEXT NOT NULL DEFAULT '',
+      last_validated_at TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS incidents (
@@ -383,15 +454,35 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       status TEXT NOT NULL DEFAULT 'idle',
       current_asset_id TEXT NOT NULL DEFAULT '',
       current_title TEXT NOT NULL DEFAULT '',
+      desired_asset_id TEXT NOT NULL DEFAULT '',
+      current_destination_id TEXT NOT NULL DEFAULT '',
       heartbeat_at TEXT NOT NULL DEFAULT '',
+      process_pid INTEGER NOT NULL DEFAULT 0,
+      process_started_at TEXT NOT NULL DEFAULT '',
+      last_exit_code TEXT NOT NULL DEFAULT '',
+      restart_count INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT NOT NULL DEFAULT '',
+      last_stderr_sample TEXT NOT NULL DEFAULT '',
       message TEXT NOT NULL DEFAULT 'Playout engine has not started yet.'
     );
   `);
 
   await client.query(`
+    ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS token_expires_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_refresh_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS connector_kind TEXT NOT NULL DEFAULT 'local-library';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS external_url TEXT NOT NULL DEFAULT '';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS fallback_priority INTEGER NOT NULL DEFAULT 100;
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS is_global_fallback BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS current_destination_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS process_pid INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS process_started_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_exit_code TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS restart_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS last_stderr_sample TEXT NOT NULL DEFAULT '';
   `);
 }
 
@@ -455,9 +546,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   await client.query(
     `
       INSERT INTO twitch_connection (
-        singleton_id, status, broadcaster_id, broadcaster_login, access_token, refresh_token, connected_at, error
+        singleton_id, status, broadcaster_id, broadcaster_login, access_token, refresh_token, connected_at, token_expires_at, last_refresh_at, error
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         broadcaster_id = EXCLUDED.broadcaster_id,
@@ -465,6 +556,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         access_token = EXCLUDED.access_token,
         refresh_token = EXCLUDED.refresh_token,
         connected_at = EXCLUDED.connected_at,
+        token_expires_at = EXCLUDED.token_expires_at,
+        last_refresh_at = EXCLUDED.last_refresh_at,
         error = EXCLUDED.error
     `,
     [
@@ -474,26 +567,47 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       next.twitch.accessToken,
       next.twitch.refreshToken,
       next.twitch.connectedAt,
+      next.twitch.tokenExpiresAt,
+      next.twitch.lastRefreshAt,
       next.twitch.error
     ]
   );
 
   await client.query(
     `
-      INSERT INTO playout_runtime (singleton_id, status, current_asset_id, current_title, heartbeat_at, message)
-      VALUES (1, $1, $2, $3, $4, $5)
+      INSERT INTO playout_runtime (
+        singleton_id, status, current_asset_id, current_title, desired_asset_id, current_destination_id, heartbeat_at,
+        process_pid, process_started_at, last_exit_code, restart_count, last_error, last_stderr_sample, message
+      )
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         current_asset_id = EXCLUDED.current_asset_id,
         current_title = EXCLUDED.current_title,
+        desired_asset_id = EXCLUDED.desired_asset_id,
+        current_destination_id = EXCLUDED.current_destination_id,
         heartbeat_at = EXCLUDED.heartbeat_at,
+        process_pid = EXCLUDED.process_pid,
+        process_started_at = EXCLUDED.process_started_at,
+        last_exit_code = EXCLUDED.last_exit_code,
+        restart_count = EXCLUDED.restart_count,
+        last_error = EXCLUDED.last_error,
+        last_stderr_sample = EXCLUDED.last_stderr_sample,
         message = EXCLUDED.message
     `,
     [
       next.playout.status,
       next.playout.currentAssetId,
       next.playout.currentTitle,
+      next.playout.desiredAssetId,
+      next.playout.currentDestinationId,
       next.playout.heartbeatAt,
+      next.playout.processPid,
+      next.playout.processStartedAt,
+      next.playout.lastExitCode,
+      next.playout.restartCount,
+      next.playout.lastError,
+      next.playout.lastStderrSample,
       next.playout.message
     ]
   );
@@ -579,10 +693,43 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   for (const asset of next.assets) {
     await client.query(
       `
-        INSERT INTO assets (id, source_id, title, path, status, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO assets (id, source_id, title, path, status, fallback_priority, is_global_fallback, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
-      [asset.id, asset.sourceId, asset.title, asset.path, asset.status, asset.createdAt, asset.updatedAt]
+      [
+        asset.id,
+        asset.sourceId,
+        asset.title,
+        asset.path,
+        asset.status,
+        asset.fallbackPriority,
+        asset.isGlobalFallback,
+        asset.createdAt,
+        asset.updatedAt
+      ]
+    );
+  }
+
+  await client.query("DELETE FROM stream_destinations");
+  for (const destination of next.destinations) {
+    await client.query(
+      `
+        INSERT INTO stream_destinations (
+          id, provider, name, enabled, rtmp_url, stream_key_present, status, notes, last_validated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `,
+      [
+        destination.id,
+        destination.provider,
+        destination.name,
+        destination.enabled,
+        destination.rtmpUrl,
+        destination.streamKeyPresent,
+        destination.status,
+        destination.notes,
+        destination.lastValidatedAt
+      ]
     );
   }
 
@@ -669,6 +816,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     access_token: string;
     refresh_token: string;
     connected_at: string;
+    token_expires_at: string;
+    last_refresh_at: string;
     error: string;
   }>("SELECT * FROM twitch_connection WHERE singleton_id = 1");
   const blocksResult = await client.query<{
@@ -695,9 +844,22 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     title: string;
     path: string;
     status: AssetRecord["status"];
+    fallback_priority: number;
+    is_global_fallback: boolean;
     created_at: string;
     updated_at: string;
   }>("SELECT * FROM assets ORDER BY updated_at DESC");
+  const destinationsResult = await client.query<{
+    id: string;
+    provider: StreamDestinationRecord["provider"];
+    name: string;
+    enabled: boolean;
+    rtmp_url: string;
+    stream_key_present: boolean;
+    status: StreamDestinationRecord["status"];
+    notes: string;
+    last_validated_at: string;
+  }>("SELECT * FROM stream_destinations ORDER BY name ASC");
   const incidentsResult = await client.query<{
     id: string;
     scope: IncidentRecord["scope"];
@@ -717,7 +879,15 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     status: PlayoutRuntimeRecord["status"];
     current_asset_id: string;
     current_title: string;
+    desired_asset_id: string;
+    current_destination_id: string;
     heartbeat_at: string;
+    process_pid: number;
+    process_started_at: string;
+    last_exit_code: string;
+    restart_count: number;
+    last_error: string;
+    last_stderr_sample: string;
     message: string;
   }>("SELECT * FROM playout_runtime WHERE singleton_id = 1");
 
@@ -781,6 +951,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           accessToken: twitchRow.access_token,
           refreshToken: twitchRow.refresh_token,
           connectedAt: twitchRow.connected_at,
+          tokenExpiresAt: twitchRow.token_expires_at,
+          lastRefreshAt: twitchRow.last_refresh_at,
           error: twitchRow.error
         }
       : defaults.twitch,
@@ -808,8 +980,21 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       title: row.title,
       path: row.path,
       status: row.status,
+      fallbackPriority: row.fallback_priority,
+      isGlobalFallback: row.is_global_fallback,
       createdAt: row.created_at,
       updatedAt: row.updated_at
+    })),
+    destinations: destinationsResult.rows.map((row) => ({
+      id: row.id,
+      provider: row.provider,
+      name: row.name,
+      enabled: row.enabled,
+      rtmpUrl: row.rtmp_url,
+      streamKeyPresent: row.stream_key_present,
+      status: row.status,
+      notes: row.notes,
+      lastValidatedAt: row.last_validated_at
     })),
     incidents: incidentsResult.rows.map((row) => ({
       id: row.id,
@@ -834,7 +1019,15 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           status: playoutRow.status,
           currentAssetId: playoutRow.current_asset_id,
           currentTitle: playoutRow.current_title,
+          desiredAssetId: playoutRow.desired_asset_id,
+          currentDestinationId: playoutRow.current_destination_id,
           heartbeatAt: playoutRow.heartbeat_at,
+          processPid: playoutRow.process_pid,
+          processStartedAt: playoutRow.process_started_at,
+          lastExitCode: playoutRow.last_exit_code,
+          restartCount: playoutRow.restart_count,
+          lastError: playoutRow.last_error,
+          lastStderrSample: playoutRow.last_stderr_sample,
           message: playoutRow.message
         }
       : defaults.playout

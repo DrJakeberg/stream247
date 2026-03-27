@@ -10,12 +10,14 @@ import {
   updateAppState,
   upsertIncident,
   type AppState,
-  type AssetRecord
+  type AssetRecord,
+  type StreamDestinationRecord
 } from "@stream247/db";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcessByStdio<null, Readable, Readable> | null = null;
 let playoutAssetId = "";
+let playoutDestinationId = "";
 
 function getMediaRoot(): string {
   return process.env.MEDIA_LIBRARY_ROOT || path.join(process.cwd(), "data", "media");
@@ -30,9 +32,15 @@ function isDirectMediaUrl(value: string): boolean {
   }
 }
 
-function getStreamTarget(): string | null {
-  const streamUrl = process.env.STREAM_OUTPUT_URL || process.env.TWITCH_RTMP_URL;
-  const streamKey = process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY;
+function getConfiguredStreamTarget(destination: StreamDestinationRecord | null): string | null {
+  if (!destination?.enabled) {
+    return null;
+  }
+
+  const envUrl = process.env.STREAM_OUTPUT_URL || process.env.TWITCH_RTMP_URL;
+  const envKey = process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY;
+  const streamUrl = destination.rtmpUrl || envUrl;
+  const streamKey = envKey;
 
   if (!streamUrl || !streamKey) {
     return null;
@@ -43,6 +51,9 @@ function getStreamTarget(): string | null {
 
 function getFfmpegCommand(input: string, output: string): string[] {
   return [
+    "-hide_banner",
+    "-loglevel",
+    "warning",
     "-re",
     "-stream_loop",
     "-1",
@@ -97,7 +108,12 @@ async function refreshBroadcasterAccessToken(): Promise<string> {
     throw new Error(`Twitch token refresh failed with status ${response.status}.`);
   }
 
-  const payload = (await response.json()) as { access_token: string; refresh_token?: string };
+  const payload = (await response.json()) as { access_token: string; refresh_token?: string; expires_in?: number };
+  const refreshedAt = new Date().toISOString();
+  const tokenExpiresAt = payload.expires_in
+    ? new Date(Date.now() + payload.expires_in * 1000).toISOString()
+    : state.twitch.tokenExpiresAt;
+
   await updateAppState((current) => ({
     ...current,
     twitch: {
@@ -105,10 +121,13 @@ async function refreshBroadcasterAccessToken(): Promise<string> {
       accessToken: payload.access_token,
       refreshToken: payload.refresh_token ?? current.twitch.refreshToken,
       status: "connected",
+      tokenExpiresAt,
+      lastRefreshAt: refreshedAt,
       error: ""
     }
   }));
 
+  await resolveIncident("twitch.refresh.failed", "Twitch token refresh succeeded.");
   return payload.access_token;
 }
 
@@ -131,6 +150,7 @@ async function walkMediaFiles(root: string): Promise<string[]> {
 }
 
 function buildAssetFromPath(filePath: string, now: string): AssetRecord {
+  const isFallback = filePath.toLowerCase().includes("fallback") || filePath.toLowerCase().includes("standby");
   const id = `asset_${Buffer.from(filePath).toString("base64url").slice(0, 32)}`;
   return {
     id,
@@ -138,6 +158,8 @@ function buildAssetFromPath(filePath: string, now: string): AssetRecord {
     title: path.basename(filePath, path.extname(filePath)).replace(/[_-]+/g, " "),
     path: filePath,
     status: "ready",
+    fallbackPriority: isFallback ? 1 : 100,
+    isGlobalFallback: isFallback,
     createdAt: now,
     updatedAt: now
   };
@@ -158,6 +180,8 @@ async function syncLocalMediaLibrary(): Promise<void> {
             ...existing,
             title: asset.title,
             status: "ready",
+            fallbackPriority: asset.fallbackPriority,
+            isGlobalFallback: asset.isGlobalFallback,
             updatedAt: now
           }
         : asset;
@@ -228,6 +252,8 @@ async function syncDirectMediaSources(): Promise<void> {
       title: source.name,
       path: url,
       status: "ready",
+      fallbackPriority: 100,
+      isGlobalFallback: false,
       createdAt: now,
       updatedAt: now
     });
@@ -285,41 +311,189 @@ function getCurrentScheduleItem(state: AppState) {
   );
 }
 
-async function runPlayoutCycle(): Promise<void> {
-  const state = await readAppState();
+function choosePlaybackCandidate(state: AppState) {
   const currentScheduleItem = getCurrentScheduleItem(state);
   const preferredSource = currentScheduleItem?.sourceName;
-  const eligibleSource = state.sources.find((source) => source.name === preferredSource) ?? state.sources[0];
-  const asset =
-    state.assets.find((entry) => {
-      const matchingSource = state.sources.find((source) => source.id === entry.sourceId);
-      return matchingSource?.name === eligibleSource?.name && entry.status === "ready";
-    }) ?? state.assets.find((entry) => entry.status === "ready");
+  const preferredAsset = state.assets.find((entry) => {
+    if (entry.status !== "ready") {
+      return false;
+    }
+    const matchingSource = state.sources.find((source) => source.id === entry.sourceId);
+    return matchingSource?.name === preferredSource;
+  });
 
-  if (!asset) {
-    await upsertIncident({
-      scope: "playout",
-      severity: "critical",
-      title: "No playable asset available",
-      message: "The playout engine could not find a ready asset to put on air.",
-      fingerprint: "playout.no-asset"
-    });
-
-    await updateAppState((current) => ({
-      ...current,
-      playout: {
-        status: "degraded",
-        currentAssetId: "",
-        currentTitle: "",
-        heartbeatAt: new Date().toISOString(),
-        message: "No playable asset is available."
-      }
-    }));
-    return;
+  if (preferredAsset) {
+    return {
+      asset: preferredAsset,
+      reason: currentScheduleItem
+        ? `Scheduled block ${currentScheduleItem.title} is mapped to asset ${preferredAsset.title}.`
+        : `Selected asset ${preferredAsset.title}.`,
+      lifecycleStatus: "running" as const
+    };
   }
 
-  const streamTarget = getStreamTarget();
-  if (!streamTarget) {
+  const globalFallback = [...state.assets]
+    .filter((asset) => asset.status === "ready" && asset.isGlobalFallback)
+    .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
+
+  if (globalFallback) {
+    return {
+      asset: globalFallback,
+      reason: `Global fallback asset ${globalFallback.title} is selected.`,
+      lifecycleStatus: "recovering" as const
+    };
+  }
+
+  const anyReadyAsset = [...state.assets]
+    .filter((asset) => asset.status === "ready")
+    .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
+
+  if (anyReadyAsset) {
+    return {
+      asset: anyReadyAsset,
+      reason: `Fallback asset ${anyReadyAsset.title} is selected.`,
+      lifecycleStatus: "recovering" as const
+    };
+  }
+
+  return {
+    asset: null,
+    reason: "The playout engine could not find a ready asset to put on air.",
+    lifecycleStatus: "failed" as const
+  };
+}
+
+function stopPlayoutProcess(): void {
+  if (playoutProcess && !playoutProcess.killed) {
+    playoutProcess.kill("SIGTERM");
+  }
+  playoutProcess = null;
+  playoutAssetId = "";
+  playoutDestinationId = "";
+}
+
+async function startOrSwitchPlayout(args: {
+  asset: AssetRecord;
+  destination: StreamDestinationRecord;
+  streamTarget: string;
+  lifecycleStatus: AppState["playout"]["status"];
+  reason: string;
+}): Promise<void> {
+  const switching = playoutProcess && !playoutProcess.killed;
+  if (switching) {
+    stopPlayoutProcess();
+  }
+
+  const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
+  const command = getFfmpegCommand(args.asset.path, args.streamTarget);
+  const child = spawn(ffmpegBinary, command, {
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  playoutProcess = child;
+  playoutAssetId = args.asset.id;
+  playoutDestinationId = args.destination.id;
+
+  const pid = child.pid ?? 0;
+  const startedAt = new Date().toISOString();
+
+  await updateAppState((current) => ({
+    ...current,
+    playout: {
+      ...current.playout,
+      status: switching ? "switching" : args.lifecycleStatus === "recovering" ? "recovering" : "starting",
+      currentAssetId: args.asset.id,
+      currentTitle: args.asset.title,
+      desiredAssetId: args.asset.id,
+      currentDestinationId: args.destination.id,
+      heartbeatAt: startedAt,
+      processPid: pid,
+      processStartedAt: startedAt,
+      lastError: "",
+      message: args.reason
+    }
+  }));
+
+  child.stderr.on("data", (chunk) => {
+    const line = chunk.toString().trim();
+    if (!line) {
+      return;
+    }
+
+    void updateAppState((current) => ({
+      ...current,
+      playout: {
+        ...current.playout,
+        lastStderrSample: line.slice(0, 400),
+        heartbeatAt: new Date().toISOString()
+      }
+    }));
+
+    if (line.toLowerCase().includes("error")) {
+      void upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "FFmpeg reported an error",
+        message: line.slice(0, 400),
+        fingerprint: "playout.ffmpeg.stderr"
+      });
+    }
+  });
+
+  child.on("exit", (code) => {
+    playoutProcess = null;
+    playoutAssetId = "";
+    playoutDestinationId = "";
+    void updateAppState((current) => ({
+      ...current,
+      playout: {
+        ...current.playout,
+        status: code === 0 ? "idle" : "failed",
+        heartbeatAt: new Date().toISOString(),
+        processPid: 0,
+        processStartedAt: "",
+        lastExitCode: String(code ?? ""),
+        restartCount: current.playout.restartCount + 1,
+        lastError: code === 0 ? current.playout.lastError : `FFmpeg exited with code ${String(code)}.`,
+        message: code === 0 ? "Playout process stopped cleanly." : "Playout process exited unexpectedly."
+      }
+    }));
+    void upsertIncident({
+      scope: "playout",
+      severity: code === 0 ? "info" : "critical",
+      title: "FFmpeg process exited",
+      message: `FFmpeg exited with code ${String(code)}.`,
+      fingerprint: "playout.ffmpeg.exit"
+    });
+  });
+}
+
+async function syncDestinations(): Promise<void> {
+  const now = new Date().toISOString();
+  await updateAppState((state) => ({
+    ...state,
+    destinations: state.destinations.map((destination) => {
+      const streamTarget = getConfiguredStreamTarget(destination);
+      return {
+        ...destination,
+        streamKeyPresent: Boolean(process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY),
+        status: destination.enabled ? (streamTarget ? "ready" : "missing-config") : "missing-config",
+        lastValidatedAt: now,
+        notes: streamTarget
+          ? "Destination is configured and ready for FFmpeg output."
+          : "Configure STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY."
+      };
+    })
+  }));
+}
+
+async function runPlayoutCycle(): Promise<void> {
+  const state = await readAppState();
+  const destination = state.destinations.find((entry) => entry.enabled) ?? null;
+  const streamTarget = getConfiguredStreamTarget(destination);
+  const selection = choosePlaybackCandidate(state);
+
+  if (!destination || !streamTarget) {
     await upsertIncident({
       scope: "playout",
       severity: "warning",
@@ -327,62 +501,78 @@ async function runPlayoutCycle(): Promise<void> {
       message: "Set STREAM_OUTPUT_URL and STREAM_OUTPUT_KEY or TWITCH_RTMP_URL and TWITCH_STREAM_KEY to enable FFmpeg playout.",
       fingerprint: "playout.output.missing"
     });
-  } else {
-    await resolveIncident("playout.output.missing", "Playout destination is configured.");
+
+    await updateAppState((current) => ({
+      ...current,
+      playout: {
+        ...current.playout,
+        status: "degraded",
+        heartbeatAt: new Date().toISOString(),
+        message: "No active RTMP destination is configured."
+      }
+    }));
+    return;
   }
 
-  if (streamTarget && (playoutAssetId !== asset.id || !playoutProcess || playoutProcess.killed)) {
-    if (playoutProcess && !playoutProcess.killed) {
-      playoutProcess.kill("SIGTERM");
-    }
+  await resolveIncident("playout.output.missing", "Playout destination is configured.");
 
-    const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
-    const command = getFfmpegCommand(asset.path, streamTarget);
-    const child = spawn(ffmpegBinary, command, {
-      stdio: ["ignore", "pipe", "pipe"]
+  if (!selection.asset) {
+    await upsertIncident({
+      scope: "playout",
+      severity: "critical",
+      title: "No playable asset available",
+      message: selection.reason,
+      fingerprint: "playout.no-asset"
     });
-    playoutProcess = child;
-    playoutAssetId = asset.id;
 
-    child.stderr.on("data", (chunk) => {
-      const line = chunk.toString();
-      if (line.toLowerCase().includes("error")) {
-        void upsertIncident({
-          scope: "playout",
-          severity: "warning",
-          title: "FFmpeg reported an error",
-          message: line.trim().slice(0, 400),
-          fingerprint: "playout.ffmpeg.stderr"
-        });
+    await updateAppState((current) => ({
+      ...current,
+      playout: {
+        ...current.playout,
+        status: "failed",
+        currentAssetId: "",
+        currentTitle: "",
+        desiredAssetId: "",
+        heartbeatAt: new Date().toISOString(),
+        lastError: selection.reason,
+        message: selection.reason
       }
-    });
-
-    child.on("exit", (code) => {
-      playoutProcess = null;
-      playoutAssetId = "";
-      void upsertIncident({
-        scope: "playout",
-        severity: code === 0 ? "info" : "critical",
-        title: "FFmpeg process exited",
-        message: `FFmpeg exited with code ${String(code)}.`,
-        fingerprint: "playout.ffmpeg.exit"
-      });
-    });
+    }));
+    stopPlayoutProcess();
+    return;
   }
 
   await resolveIncident("playout.no-asset", "A playable asset is available again.");
+
+  if (!playoutProcess || playoutProcess.killed) {
+    await startOrSwitchPlayout({
+      asset: selection.asset,
+      destination,
+      streamTarget,
+      lifecycleStatus: selection.lifecycleStatus,
+      reason: selection.reason
+    });
+  } else if (playoutAssetId !== selection.asset.id || playoutDestinationId !== destination.id) {
+    await startOrSwitchPlayout({
+      asset: selection.asset,
+      destination,
+      streamTarget,
+      lifecycleStatus: "switching",
+      reason: selection.reason
+    });
+  }
+
   await updateAppState((current) => ({
     ...current,
     playout: {
-      status: "running",
-      currentAssetId: asset.id,
-      currentTitle: currentScheduleItem ? `${currentScheduleItem.title} · ${asset.title}` : asset.title,
+      ...current.playout,
+      status: selection.lifecycleStatus === "recovering" ? "recovering" : "running",
+      currentAssetId: selection.asset.id,
+      currentTitle: selection.asset.title,
+      desiredAssetId: selection.asset.id,
+      currentDestinationId: destination.id,
       heartbeatAt: new Date().toISOString(),
-      message: streamTarget
-        ? `Streaming ${asset.title} to ${streamTarget.replace(/\/[^/]+$/, "/***")}.`
-        : currentScheduleItem
-          ? `Scheduled block ${currentScheduleItem.title} is mapped to asset ${asset.title}.`
-          : `Fallback asset ${asset.title} is selected.`
+      message: selection.reason
     }
   }));
 }
@@ -415,6 +605,12 @@ async function reconcileTwitch(): Promise<void> {
     return;
   }
 
+  const expiresAt = state.twitch.tokenExpiresAt ? new Date(state.twitch.tokenExpiresAt).getTime() : 0;
+  let twitchAccessToken = state.twitch.accessToken;
+  if (expiresAt > 0 && expiresAt - Date.now() < 5 * 60_000) {
+    twitchAccessToken = await refreshBroadcasterAccessToken();
+  }
+
   const desiredTitle = currentScheduleItem.title;
   const presenceStatus = describePresenceStatus({
     activeWindows: state.presenceWindows.map((window) => ({
@@ -427,19 +623,18 @@ async function reconcileTwitch(): Promise<void> {
     fallbackEmoteOnly: state.moderation.fallbackEmoteOnly
   });
 
-  try {
-    const twitchAccessToken = state.twitch.accessToken;
+  const sync = async (accessToken: string) => {
     const channelBody: Record<string, string> = { title: desiredTitle };
     if (process.env.TWITCH_DEFAULT_CATEGORY_ID) {
       channelBody.game_id = process.env.TWITCH_DEFAULT_CATEGORY_ID;
     }
 
     const channelResponse = await fetch(
-          `https://api.twitch.tv/helix/channels?broadcaster_id=${encodeURIComponent(state.twitch.broadcasterId)}`,
+      `https://api.twitch.tv/helix/channels?broadcaster_id=${encodeURIComponent(state.twitch.broadcasterId)}`,
       {
         method: "PATCH",
         headers: {
-          Authorization: `Bearer ${twitchAccessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           "Client-Id": process.env.TWITCH_CLIENT_ID || "",
           "Content-Type": "application/json"
         },
@@ -458,7 +653,7 @@ async function reconcileTwitch(): Promise<void> {
       {
         method: "PATCH",
         headers: {
-          Authorization: `Bearer ${twitchAccessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           "Client-Id": process.env.TWITCH_CLIENT_ID || "",
           "Content-Type": "application/json"
         },
@@ -471,13 +666,18 @@ async function reconcileTwitch(): Promise<void> {
     if (!chatResponse.ok) {
       throw new Error(`Chat settings sync failed with status ${chatResponse.status}.`);
     }
+  };
 
+  try {
+    await sync(twitchAccessToken);
     await resolveIncident("twitch.reconcile.failed", "Twitch reconciliation succeeded.");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Twitch reconciliation error.";
     if (message.includes("401")) {
       try {
-        await refreshBroadcasterAccessToken();
+        twitchAccessToken = await refreshBroadcasterAccessToken();
+        await sync(twitchAccessToken);
+        await resolveIncident("twitch.reconcile.failed", "Twitch reconciliation succeeded after token refresh.");
         return;
       } catch (refreshError) {
         const refreshMessage = refreshError instanceof Error ? refreshError.message : "Unknown Twitch refresh failure.";
@@ -490,6 +690,7 @@ async function reconcileTwitch(): Promise<void> {
         });
       }
     }
+
     await upsertIncident({
       scope: "twitch",
       severity: "warning",
@@ -502,6 +703,7 @@ async function reconcileTwitch(): Promise<void> {
 }
 
 async function runWorkerCycle(): Promise<void> {
+  await syncDestinations();
   await syncLocalMediaLibrary();
   await syncDirectMediaSources();
   await reconcileTwitch();

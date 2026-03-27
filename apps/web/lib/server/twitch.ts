@@ -58,6 +58,7 @@ export async function exchangeTwitchCode(code: string) {
   const tokenData = (await tokenResponse.json()) as {
     access_token: string;
     refresh_token?: string;
+    expires_in?: number;
   };
 
   const userResponse = await fetch("https://api.twitch.tv/helix/users", {
@@ -91,6 +92,8 @@ export async function exchangeTwitchCode(code: string) {
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token ?? "",
       connectedAt: new Date().toISOString(),
+      tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString() : "",
+      lastRefreshAt: "",
       error: ""
     }
   }));
