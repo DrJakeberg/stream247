@@ -1,4 +1,4 @@
-FROM node:22-alpine AS deps
+FROM public.ecr.aws/docker/library/node:22-alpine AS deps
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
@@ -9,14 +9,14 @@ COPY packages/config/package.json packages/config/package.json
 COPY packages/db/package.json packages/db/package.json
 RUN pnpm install --frozen-lockfile=false
 
-FROM node:22-alpine AS builder
+FROM public.ecr.aws/docker/library/node:22-alpine AS builder
 WORKDIR /app
 RUN corepack enable
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN pnpm build
 
-FROM node:22-alpine AS runner
+FROM public.ecr.aws/docker/library/node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
