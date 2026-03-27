@@ -4,6 +4,13 @@
 
 - No unreleased changes currently tracked.
 
+## 1.0.1 - 2026-03-27
+
+### Added
+
+- added `.env.production.example` with pinned `v1.0.0` image tags for stable deployment
+- clarified README and deployment docs to distinguish evaluation envs from production-pinned envs
+
 ## 1.0.0 - 2026-03-27
 
 First stable self-hosted release for running a Twitch-first 24/7 channel with Docker, GHCR images, scheduling, source ingestion, playout control, Twitch sync, overlays, and operator tooling.
