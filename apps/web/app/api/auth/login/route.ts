@@ -7,14 +7,11 @@ export async function POST(request: NextRequest) {
   const email = (body.email ?? "").trim().toLowerCase();
   const password = body.password ?? "";
   const state = await readAppState();
-
-  if (!state.owner || state.owner.email !== email || !verifyPassword(password, state.owner.passwordHash)) {
-    return NextResponse.json({ message: "Invalid email or password." }, { status: 401 });
-  }
-
   const user = findUserByEmail(state, email);
-  if (!user) {
-    return NextResponse.json({ message: "Owner user is missing from state." }, { status: 500 });
+  const passwordHash = user?.passwordHash || state.owner?.passwordHash || "";
+
+  if (!state.owner || state.owner.email !== email || !user || !verifyPassword(password, passwordHash)) {
+    return NextResponse.json({ message: "Invalid email or password." }, { status: 401 });
   }
 
   await updateAppState((current) => ({
@@ -27,4 +24,3 @@ export async function POST(request: NextRequest) {
   await setSessionCookie(user.id);
   return NextResponse.json({ ok: true });
 }
-

@@ -23,4 +23,5 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: docker build -f docker/web.Dockerfile -t stream247-web:test .
+      - run: docker build -f docker/worker.Dockerfile -t stream247-worker:test .
       - run: chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:test

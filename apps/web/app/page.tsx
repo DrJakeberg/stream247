@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/server/auth";
 import { readAppState } from "@/lib/server/state";

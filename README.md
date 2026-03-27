@@ -29,14 +29,34 @@ Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel fr
 ## Deploy With Docker
 
 1. Copy `.env.example` to `.env`.
-2. Set `APP_URL` and `APP_SECRET`.
-3. Set `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` if you want browser-based Twitch OAuth.
-4. Set `STREAM247_WEB_IMAGE` if you want to pin a specific GHCR release image.
+2. Set `APP_URL`, `APP_SECRET`, `POSTGRES_PASSWORD`, and the matching password inside `DATABASE_URL`.
+3. Set `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` if you want browser-based Twitch OAuth and Twitch SSO.
+4. Optionally pin `STREAM247_WEB_IMAGE`, `STREAM247_WORKER_IMAGE`, and `STREAM247_PLAYOUT_IMAGE` to specific GHCR tags.
 5. Start the stack with `docker compose up -d`.
 6. For local development builds, use `docker compose -f docker-compose.dev.yml up -d --build`.
 7. Open `http://localhost:3000/setup`.
 8. Create the owner account in the setup wizard.
 9. Sign in to the admin UI and connect Twitch from the dashboard.
+10. Drop local media files into `data/media` so the worker can ingest them into the asset catalog.
+
+## Environment Model
+
+- Put infrastructure and secret values in `.env`.
+- Keep `POSTGRES_PASSWORD` in `.env`, not hardcoded in Compose.
+- Keep `TWITCH_CLIENT_SECRET` in `.env`, not in normal runtime settings.
+- Do not keep moderator presence policy in `.env`; it is runtime state managed from the admin UI.
+- `MEDIA_LIBRARY_ROOT` should normally stay `/app/data/media` inside containers.
+
+## Twitch App Credentials
+
+1. Open the Twitch developer console and create or edit an application.
+2. Add both redirect URLs:
+   - `<APP_URL>/api/integrations/twitch/callback`
+   - `<APP_URL>/api/auth/twitch/callback`
+3. Copy the generated Client ID into `TWITCH_CLIENT_ID`.
+4. Generate or reveal the Client Secret and place it into `TWITCH_CLIENT_SECRET`.
+5. Restart the stack if you changed `.env`.
+6. Use the setup/dashboard UI to complete broadcaster connect and team SSO flows.
 
 ## Local Development
 
@@ -60,6 +80,7 @@ Every release image should be gated by:
 ## Release Images
 
 - Production images are published to `ghcr.io/drjakeberg/stream247-web`.
+- Background worker and playout images are published to `ghcr.io/drjakeberg/stream247-worker`.
 - Tagging `v*` on GitHub triggers the release workflow to validate, build, smoke-test, and publish the image.
 
 ## License

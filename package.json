@@ -5,9 +5,9 @@
   "packageManager": "pnpm@10.6.1",
   "scripts": {
     "dev": "pnpm --filter web dev",
-    "build": "pnpm --filter core build && pnpm --filter config build && pnpm --filter web build",
+    "build": "pnpm --filter core build && pnpm --filter config build && pnpm --filter db build && pnpm --filter worker build && pnpm --filter web build",
     "lint": "pnpm --filter web lint",
-    "typecheck": "pnpm --filter core typecheck && pnpm --filter config typecheck && pnpm --filter web typecheck",
+    "typecheck": "pnpm --filter core build && pnpm --filter config build && pnpm --filter db build && pnpm --filter worker build && pnpm --filter web typecheck",
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
@@ -23,4 +23,3 @@
     "vitest": "^3.1.1"
   }
 }
-

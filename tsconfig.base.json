@@ -13,8 +13,8 @@
     "baseUrl": ".",
     "paths": {
       "@stream247/core": ["packages/core/src/index.ts"],
-      "@stream247/config": ["packages/config/src/index.ts"]
+      "@stream247/config": ["packages/config/src/index.ts"],
+      "@stream247/db": ["packages/db/src/index.ts"]
     }
   }
 }
-

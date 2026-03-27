@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { Panel } from "@/components/panel";
 import { getSchedulePreview, readAppState } from "@/lib/server/state";
 

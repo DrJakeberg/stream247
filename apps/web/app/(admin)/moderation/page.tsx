@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { Panel } from "@/components/panel";
 import { ModerationSettingsForm } from "@/components/moderation-settings-form";
 import { PresenceCheckInForm } from "@/components/presence-checkin-form";

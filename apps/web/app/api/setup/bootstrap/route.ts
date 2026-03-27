@@ -19,12 +19,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Workspace has already been initialized." }, { status: 409 });
   }
 
+  const passwordHash = hashPassword(password);
+
   await updateAppState((state) => ({
     ...state,
     initialized: true,
     owner: {
       email,
-      passwordHash: hashPassword(password),
+      passwordHash,
       createdAt: new Date().toISOString()
     },
     users: [
@@ -36,6 +38,7 @@ export async function POST(request: NextRequest) {
         role: "owner",
         twitchUserId: "",
         twitchLogin: "",
+        passwordHash,
         createdAt: new Date().toISOString(),
         lastLoginAt: new Date().toISOString()
       }
