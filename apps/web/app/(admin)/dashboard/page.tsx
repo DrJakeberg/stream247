@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import Link from "next/link";
 import { IncidentActionForm } from "@/components/incident-action-form";
 import { Panel } from "@/components/panel";
 import { PlayoutActionForm } from "@/components/playout-action-form";
@@ -222,6 +223,13 @@ export default async function DashboardPage() {
               </div>
               <div className="subtle">
                 Use <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> in a browser source.
+              </div>
+            </div>
+            <div className="item">
+              <strong>Ops workspace</strong>
+              <div className="subtle">Use the dedicated ops page for incident history, filters, drift checks, and recent audit activity.</div>
+              <div className="subtle">
+                <Link href="/ops">Open the ops view</Link>
               </div>
             </div>
             <TwitchConnectPanel authorizeUrl={twitchAuthorizeUrl} />

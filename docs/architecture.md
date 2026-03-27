@@ -166,8 +166,11 @@ The admin UI manages these settings; the public overlay page renders them for OB
 Current operational domains:
 
 - incidents
+- incident history filters in the ops view
 - acknowledgements
 - resolution state
+- runtime drift checks
+- recent audit trail visibility
 - audit events
 - Discord alerts
 - SMTP email alerts
@@ -194,5 +197,5 @@ Implementation model:
 
 - richer multi-scene overlay composition
 - more advanced playout transitions and switchovers
-- deeper incident history and analytics views
+- deeper analytics and incident correlation views
 - richer schedule authoring directly in the timeline

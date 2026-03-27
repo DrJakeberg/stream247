@@ -168,3 +168,166 @@ export function getNextScheduleItem(state: AppState) {
 
   return occurrences[(currentIndex + 1) % occurrences.length] ?? null;
 }
+
+export function getRecentAuditEvents(state: AppState, limit = 20): AuditEvent[] {
+  return [...state.auditEvents]
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, limit);
+}
+
+export function getFilteredIncidents(
+  state: AppState,
+  filters: {
+    status?: "open" | "resolved" | "all";
+    severity?: IncidentRecord["severity"] | "all";
+    scope?: IncidentRecord["scope"] | "all";
+    query?: string;
+  } = {}
+): IncidentRecord[] {
+  const query = (filters.query || "").trim().toLowerCase();
+
+  return [...state.incidents]
+    .filter((incident) => (filters.status && filters.status !== "all" ? incident.status === filters.status : true))
+    .filter((incident) => (filters.severity && filters.severity !== "all" ? incident.severity === filters.severity : true))
+    .filter((incident) => (filters.scope && filters.scope !== "all" ? incident.scope === filters.scope : true))
+    .filter((incident) => {
+      if (!query) {
+        return true;
+      }
+
+      return [incident.title, incident.message, incident.fingerprint, incident.scope]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    })
+    .sort((left, right) => new Date(right.updatedAt || right.createdAt).getTime() - new Date(left.updatedAt || left.createdAt).getTime());
+}
+
+export function getWorkerHealth(state: AppState) {
+  const lastWorkerCycle = state.auditEvents.find((event) => event.type === "worker.cycle") ?? null;
+  const lastRunAt = lastWorkerCycle?.createdAt || "";
+  const ageMs = lastRunAt ? Date.now() - new Date(lastRunAt).getTime() : Number.POSITIVE_INFINITY;
+
+  if (!lastRunAt) {
+    return {
+      status: "missing" as const,
+      summary: "No worker heartbeat has been recorded yet.",
+      lastRunAt
+    };
+  }
+
+  if (ageMs > 120_000) {
+    return {
+      status: "stale" as const,
+      summary: "Worker heartbeat is stale. Reconciliation may be stuck.",
+      lastRunAt
+    };
+  }
+
+  return {
+    status: "healthy" as const,
+    summary: "Worker heartbeat is current.",
+    lastRunAt
+  };
+}
+
+export function getRuntimeDriftReport(state: AppState) {
+  const currentScheduleItem = getCurrentScheduleItem(state);
+  const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
+  const currentSource = currentAsset ? state.sources.find((source) => source.id === currentAsset.sourceId) ?? null : null;
+  const activeDestination = state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ?? state.destinations[0] ?? null;
+  const workerHealth = getWorkerHealth(state);
+  const playoutHeartbeatAgeMs = state.playout.heartbeatAt ? Date.now() - new Date(state.playout.heartbeatAt).getTime() : Number.POSITIVE_INFINITY;
+
+  const items = [
+    {
+      id: "worker-heartbeat",
+      label: "Worker heartbeat",
+      severity: workerHealth.status === "healthy" ? ("ok" as const) : ("warning" as const),
+      summary: workerHealth.summary,
+      detail: workerHealth.lastRunAt ? `Last cycle: ${workerHealth.lastRunAt}` : "No cycle timestamp recorded."
+    },
+    {
+      id: "playout-heartbeat",
+      label: "Playout heartbeat",
+      severity:
+        state.playout.status === "running" || state.playout.status === "recovering" || state.playout.status === "switching"
+          ? playoutHeartbeatAgeMs > 45_000
+            ? ("warning" as const)
+            : ("ok" as const)
+          : state.playout.status === "failed" || state.playout.status === "degraded"
+            ? ("warning" as const)
+            : ("info" as const),
+      summary:
+        state.playout.status === "failed" || state.playout.status === "degraded"
+          ? `Playout is ${state.playout.status}.`
+          : playoutHeartbeatAgeMs > 45_000 &&
+              (state.playout.status === "running" || state.playout.status === "recovering" || state.playout.status === "switching")
+            ? "Playout heartbeat is stale."
+            : "Playout heartbeat is in sync.",
+      detail: state.playout.heartbeatAt ? `Last heartbeat: ${state.playout.heartbeatAt}` : "No playout heartbeat recorded."
+    },
+    {
+      id: "schedule-alignment",
+      label: "Schedule alignment",
+      severity:
+        state.playout.overrideMode !== "schedule"
+          ? ("info" as const)
+          : currentScheduleItem && currentSource && currentSource.name !== currentScheduleItem.sourceName
+            ? ("warning" as const)
+            : currentScheduleItem && currentAsset
+              ? ("ok" as const)
+              : ("info" as const),
+      summary:
+        state.playout.overrideMode !== "schedule"
+          ? `Operator override is active (${state.playout.overrideMode}).`
+          : currentScheduleItem && currentSource && currentSource.name !== currentScheduleItem.sourceName
+            ? "Current asset source does not match the active schedule block."
+            : currentScheduleItem && currentAsset
+              ? "Current asset follows the active schedule block."
+              : "No current schedule block or asset to compare.",
+      detail:
+        currentScheduleItem && currentAsset
+          ? `Schedule source: ${currentScheduleItem.sourceName} · Asset source: ${currentSource?.name || "unknown"}`
+          : "Alignment check is waiting for both a schedule block and a current asset."
+    },
+    {
+      id: "destination-readiness",
+      label: "Destination readiness",
+      severity: activeDestination && activeDestination.status === "ready" ? ("ok" as const) : ("warning" as const),
+      summary: activeDestination ? `Destination is ${activeDestination.status}.` : "No active destination is configured.",
+      detail: activeDestination
+        ? `${activeDestination.name} · ${activeDestination.notes}`
+        : "Configure a playout destination before expecting a stable broadcast."
+    },
+    {
+      id: "twitch-metadata",
+      label: "Twitch metadata sync",
+      severity:
+        state.twitch.status !== "connected"
+          ? ("info" as const)
+          : currentScheduleItem &&
+              (state.twitch.lastSyncedTitle !== currentScheduleItem.title ||
+                (currentScheduleItem.categoryName !== "" && state.twitch.lastSyncedCategoryName !== currentScheduleItem.categoryName))
+            ? ("warning" as const)
+            : ("ok" as const),
+      summary:
+        state.twitch.status !== "connected"
+          ? "Twitch is not connected."
+          : currentScheduleItem &&
+              (state.twitch.lastSyncedTitle !== currentScheduleItem.title ||
+                (currentScheduleItem.categoryName !== "" && state.twitch.lastSyncedCategoryName !== currentScheduleItem.categoryName))
+            ? "Twitch metadata does not match the active schedule block yet."
+            : "Twitch metadata matches the active schedule block.",
+      detail:
+        state.twitch.status !== "connected"
+          ? "Connect the broadcaster account to enable metadata drift checks."
+          : `Last synced title/category: ${state.twitch.lastSyncedTitle || "none"} · ${state.twitch.lastSyncedCategoryName || "none"}`
+    }
+  ];
+
+  return {
+    items,
+    attentionCount: items.filter((item) => item.severity === "warning").length
+  };
+}
