@@ -3,9 +3,16 @@ import { hashPassword, setSessionCookie } from "@/lib/server/auth";
 import { appendAuditEvent, readAppState, updateAppState } from "@/lib/server/state";
 
 export async function POST(request: NextRequest) {
-  const body = (await request.json()) as { email?: string; password?: string };
+  const body = (await request.json()) as {
+    email?: string;
+    password?: string;
+    twitchClientId?: string;
+    twitchClientSecret?: string;
+  };
   const email = (body.email ?? "").trim().toLowerCase();
   const password = body.password ?? "";
+  const twitchClientId = (body.twitchClientId ?? "").trim();
+  const twitchClientSecret = body.twitchClientSecret ?? "";
 
   if (!email || password.length < 10) {
     return NextResponse.json(
@@ -42,7 +49,13 @@ export async function POST(request: NextRequest) {
         createdAt: new Date().toISOString(),
         lastLoginAt: new Date().toISOString()
       }
-    ]
+    ],
+    managedConfig: {
+      ...state.managedConfig,
+      twitchClientId: twitchClientId || state.managedConfig.twitchClientId,
+      twitchClientSecret: twitchClientSecret || state.managedConfig.twitchClientSecret,
+      updatedAt: twitchClientId || twitchClientSecret ? new Date().toISOString() : state.managedConfig.updatedAt
+    }
   }));
 
   const state = await readAppState();

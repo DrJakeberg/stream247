@@ -47,6 +47,37 @@ function execFileText(file: string, args: string[]): Promise<string> {
   });
 }
 
+function getManagedString(state: AppState, key: keyof AppState["managedConfig"], envFallback = ""): string {
+  return state.managedConfig[key] || envFallback;
+}
+
+function getTwitchClientId(state: AppState): string {
+  return getManagedString(state, "twitchClientId", process.env.TWITCH_CLIENT_ID || "");
+}
+
+function getTwitchClientSecret(state: AppState): string {
+  return getManagedString(state, "twitchClientSecret", process.env.TWITCH_CLIENT_SECRET || "");
+}
+
+function getTwitchDefaultCategoryId(state: AppState): string {
+  return getManagedString(state, "twitchDefaultCategoryId", process.env.TWITCH_DEFAULT_CATEGORY_ID || "");
+}
+
+function getDiscordWebhookUrl(state: AppState): string {
+  return getManagedString(state, "discordWebhookUrl", process.env.DISCORD_WEBHOOK_URL || "");
+}
+
+function getSmtpConfig(state: AppState) {
+  return {
+    host: getManagedString(state, "smtpHost", process.env.SMTP_HOST || ""),
+    port: Number(getManagedString(state, "smtpPort", process.env.SMTP_PORT || "0") || "0"),
+    user: getManagedString(state, "smtpUser", process.env.SMTP_USER || ""),
+    password: getManagedString(state, "smtpPassword", process.env.SMTP_PASSWORD || ""),
+    from: getManagedString(state, "smtpFrom", process.env.SMTP_FROM || process.env.SMTP_USER || ""),
+    to: getManagedString(state, "alertEmailTo", process.env.ALERT_EMAIL_TO || "")
+  };
+}
+
 function getMediaRoot(): string {
   return process.env.MEDIA_LIBRARY_ROOT || path.join(process.cwd(), "data", "media");
 }
@@ -148,8 +179,8 @@ function getFfmpegCommand(input: string, output: string): string[] {
 
 async function refreshBroadcasterAccessToken(): Promise<string> {
   const state = await readAppState();
-  const clientId = process.env.TWITCH_CLIENT_ID;
-  const clientSecret = process.env.TWITCH_CLIENT_SECRET;
+  const clientId = getTwitchClientId(state);
+  const clientSecret = getTwitchClientSecret(state);
 
   if (!clientId || !clientSecret || !state.twitch.refreshToken) {
     throw new Error("Missing Twitch client credentials or refresh token.");
@@ -197,6 +228,7 @@ async function refreshBroadcasterAccessToken(): Promise<string> {
 async function resolveTwitchCategory(args: {
   accessToken: string;
   categoryName: string;
+  clientId: string;
 }): Promise<{ id: string; name: string } | null> {
   const normalizedName = args.categoryName.trim();
   if (!normalizedName) {
@@ -208,7 +240,7 @@ async function resolveTwitchCategory(args: {
     {
       headers: {
         Authorization: `Bearer ${args.accessToken}`,
-        "Client-Id": process.env.TWITCH_CLIENT_ID || ""
+        "Client-Id": args.clientId
       }
     }
   );
@@ -960,7 +992,8 @@ async function runPlayoutCycle(): Promise<void> {
 }
 
 async function sendDiscordAlert(message: string): Promise<void> {
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+  const state = await readAppState();
+  const webhookUrl = getDiscordWebhookUrl(state);
   if (!webhookUrl) {
     return;
   }
@@ -977,10 +1010,12 @@ async function sendDiscordAlert(message: string): Promise<void> {
 }
 
 async function sendEmailAlert(subject: string, message: string): Promise<void> {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || "0");
-  const from = process.env.SMTP_FROM || process.env.SMTP_USER;
-  const to = process.env.ALERT_EMAIL_TO;
+  const state = await readAppState();
+  const smtp = getSmtpConfig(state);
+  const host = smtp.host;
+  const port = smtp.port;
+  const from = smtp.from;
+  const to = smtp.to;
 
   if (!host || !port || !from || !to) {
     return;
@@ -990,10 +1025,10 @@ async function sendEmailAlert(subject: string, message: string): Promise<void> {
     host,
     port,
     secure: port === 465,
-    auth: process.env.SMTP_USER
+    auth: smtp.user
       ? {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASSWORD || ""
+          user: smtp.user,
+          pass: smtp.password || ""
         }
       : undefined
   });
@@ -1014,6 +1049,7 @@ async function syncTwitchSchedule(args: {
   state: AppState;
   accessToken: string;
   timeZone: string;
+  clientId: string;
   categoryCache: Map<string, { id: string; name: string } | null>;
 }): Promise<void> {
   const syncEveryMs = 15 * 60_000;
@@ -1067,7 +1103,8 @@ async function syncTwitchSchedule(args: {
     if (category === null && !args.categoryCache.has(occurrence.categoryName)) {
       category = await resolveTwitchCategory({
         accessToken: args.accessToken,
-        categoryName: occurrence.categoryName
+        categoryName: occurrence.categoryName,
+        clientId: args.clientId
       });
       args.categoryCache.set(occurrence.categoryName, category);
     }
@@ -1095,7 +1132,7 @@ async function syncTwitchSchedule(args: {
       method: existingSegment ? "PATCH" : "POST",
       headers: {
         Authorization: `Bearer ${args.accessToken}`,
-        "Client-Id": process.env.TWITCH_CLIENT_ID || "",
+        "Client-Id": args.clientId,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(requestBody)
@@ -1142,7 +1179,7 @@ async function syncTwitchSchedule(args: {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${args.accessToken}`,
-          "Client-Id": process.env.TWITCH_CLIENT_ID || ""
+          "Client-Id": args.clientId
         }
       }
     );
@@ -1184,12 +1221,13 @@ async function reconcileTwitch(): Promise<void> {
 
   const expiresAt = state.twitch.tokenExpiresAt ? new Date(state.twitch.tokenExpiresAt).getTime() : 0;
   let twitchAccessToken = state.twitch.accessToken;
+  const twitchClientId = getTwitchClientId(state);
   if (expiresAt > 0 && expiresAt - Date.now() < 5 * 60_000) {
     twitchAccessToken = await refreshBroadcasterAccessToken();
   }
 
   const desiredTitle = currentScheduleItem.title;
-  let desiredCategoryId = process.env.TWITCH_DEFAULT_CATEGORY_ID || "";
+  let desiredCategoryId = getTwitchDefaultCategoryId(state);
   let desiredCategoryName = currentScheduleItem.categoryName;
   const categoryCache = new Map<string, { id: string; name: string } | null>();
   const presenceStatus = describePresenceStatus({
@@ -1206,7 +1244,8 @@ async function reconcileTwitch(): Promise<void> {
   const sync = async (accessToken: string) => {
     const resolvedCategory = await resolveTwitchCategory({
       accessToken,
-      categoryName: currentScheduleItem.categoryName
+      categoryName: currentScheduleItem.categoryName,
+      clientId: twitchClientId
     });
 
     if (resolvedCategory) {
@@ -1246,7 +1285,7 @@ async function reconcileTwitch(): Promise<void> {
           method: "PATCH",
           headers: {
             Authorization: `Bearer ${accessToken}`,
-            "Client-Id": process.env.TWITCH_CLIENT_ID || "",
+            "Client-Id": twitchClientId,
             "Content-Type": "application/json"
           },
           body: JSON.stringify(channelBody)
@@ -1266,7 +1305,7 @@ async function reconcileTwitch(): Promise<void> {
         method: "PATCH",
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          "Client-Id": process.env.TWITCH_CLIENT_ID || "",
+          "Client-Id": twitchClientId,
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
@@ -1299,6 +1338,7 @@ async function reconcileTwitch(): Promise<void> {
       state,
       accessToken: twitchAccessToken,
       timeZone: process.env.CHANNEL_TIMEZONE || "UTC",
+      clientId: twitchClientId,
       categoryCache
     });
     await resolveIncident("twitch.reconcile.failed", "Twitch reconciliation succeeded.");
@@ -1313,6 +1353,7 @@ async function reconcileTwitch(): Promise<void> {
           state: await readAppState(),
           accessToken: twitchAccessToken,
           timeZone: process.env.CHANNEL_TIMEZONE || "UTC",
+          clientId: twitchClientId,
           categoryCache
         });
         await resolveIncident("twitch.reconcile.failed", "Twitch reconciliation succeeded after token refresh.");

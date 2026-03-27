@@ -6,8 +6,8 @@ export function TwitchConnectPanel({ authorizeUrl }: { authorizeUrl: string | nu
       <div className="item">
         <strong>Twitch OAuth not configured</strong>
         <div className="subtle">
-          Set <code>APP_URL</code>, <code>TWITCH_CLIENT_ID</code>, and <code>TWITCH_CLIENT_SECRET</code> to enable
-          browser-based Twitch connection.
+          Set <code>APP_URL</code> and provide Twitch client credentials in <code>.env</code> or the admin settings
+          page to enable browser-based Twitch connection.
         </div>
       </div>
     );

@@ -10,6 +10,7 @@ import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
 
 export default async function LoginPage() {
   const state = await readAppState();
+  const twitchAuthorizeUrl = await getTwitchAuthorizeUrl("team-login");
 
   if (!state.initialized) {
     redirect("/setup");
@@ -29,7 +30,7 @@ export default async function LoginPage() {
           <LoginForm />
         </Panel>
         <Panel title="Team sign-in" eyebrow="Twitch SSO">
-          <TwitchLoginPanel authorizeUrl={getTwitchAuthorizeUrl("team-login")} />
+          <TwitchLoginPanel authorizeUrl={twitchAuthorizeUrl} />
         </Panel>
       </section>
     </main>

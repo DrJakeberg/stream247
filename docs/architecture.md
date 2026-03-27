@@ -15,6 +15,7 @@ Stream247 now uses PostgreSQL as the primary application store through `@stream2
 Persisted domains include:
 
 - initialization and owner bootstrap state
+- managed encrypted integration credentials
 - users, Twitch identities, and team access grants
 - moderation settings and presence windows
 - overlay settings
@@ -172,9 +173,25 @@ Current operational domains:
 - SMTP email alerts
 - health/readiness endpoints
 
+## Secret Management
+
+Stream247 now supports encrypted-at-rest managed credentials in PostgreSQL for:
+
+- Twitch client id and client secret
+- default Twitch category id
+- Discord webhook URL
+- SMTP host, port, user, password, sender, and recipient
+
+Implementation model:
+
+- values are encrypted before persistence
+- setup can optionally capture Twitch client credentials
+- `/settings` can update managed credentials later
+- blank secret fields preserve the currently stored secret
+- `.env` remains a fallback source when no managed value exists
+
 ## Major Known Gaps
 
-- encrypted secret management from the admin/setup UI
 - richer multi-scene overlay composition
 - more advanced playout transitions and switchovers
 - deeper incident history and analytics views

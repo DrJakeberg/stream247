@@ -16,6 +16,7 @@ import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
 
 export default async function DashboardPage() {
   const state = await readAppState();
+  const twitchAuthorizeUrl = await getTwitchAuthorizeUrl("broadcaster-connect");
   const schedulePreview = getSchedulePreview(state);
   const presenceStatus = getPresenceStatus(state);
   const activeWindows = getActivePresenceWindows(state);
@@ -223,7 +224,7 @@ export default async function DashboardPage() {
                 Use <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> in a browser source.
               </div>
             </div>
-            <TwitchConnectPanel authorizeUrl={getTwitchAuthorizeUrl("broadcaster-connect")} />
+            <TwitchConnectPanel authorizeUrl={twitchAuthorizeUrl} />
           </div>
         </Panel>
       </section>

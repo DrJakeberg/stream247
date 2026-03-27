@@ -16,12 +16,14 @@ export function SetupForm() {
         const formData = new FormData(event.currentTarget);
         const email = String(formData.get("email") || "");
         const password = String(formData.get("password") || "");
+        const twitchClientId = String(formData.get("twitchClientId") || "");
+        const twitchClientSecret = String(formData.get("twitchClientSecret") || "");
 
         startTransition(async () => {
           const response = await fetch("/api/setup/bootstrap", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email, password })
+            body: JSON.stringify({ email, password, twitchClientId, twitchClientSecret })
           });
 
           if (!response.ok) {
@@ -42,6 +44,16 @@ export function SetupForm() {
         <span className="label">Password</span>
         <input name="password" type="password" minLength={10} required placeholder="At least 10 characters" />
       </label>
+      <div className="form-grid">
+        <label>
+          <span className="label">Optional Twitch client id</span>
+          <input name="twitchClientId" placeholder="Optional during bootstrap" />
+        </label>
+        <label>
+          <span className="label">Optional Twitch client secret</span>
+          <input name="twitchClientSecret" type="password" placeholder="Optional during bootstrap" />
+        </label>
+      </div>
       {error ? <p className="danger">{error}</p> : null}
       <button className="button" disabled={isPending} type="submit">
         {isPending ? "Creating workspace..." : "Create owner account"}
@@ -49,4 +61,3 @@ export function SetupForm() {
     </form>
   );
 }
-

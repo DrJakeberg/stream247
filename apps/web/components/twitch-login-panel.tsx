@@ -14,10 +14,10 @@ export function TwitchLoginPanel({ authorizeUrl }: { authorizeUrl: string | null
         </a>
       ) : (
         <div className="subtle">
-          Configure <code>APP_URL</code>, <code>TWITCH_CLIENT_ID</code>, and <code>TWITCH_CLIENT_SECRET</code> first.
+          Configure <code>APP_URL</code> and Twitch client credentials first, either in <code>.env</code> or admin
+          settings.
         </div>
       )}
     </div>
   );
 }
-
