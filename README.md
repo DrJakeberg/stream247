@@ -34,7 +34,10 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - moderation policy support for emote-only fallback
 - ops tooling with:
   - incidents
+  - incident history and filters
   - acknowledge / resolve actions
+  - runtime drift checks
+  - recent audit trail visibility
   - Discord webhook alerts
   - SMTP email alerts
   - readiness and health endpoints
@@ -47,7 +50,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 
 - richer multi-scene overlay composition inside the playout runtime
 - more advanced playout transitions and scene-aware switchovers
-- deeper incident history, filtering, and analytics views
+- deeper analytics views and richer incident correlation
 - richer timeline editing such as resize / duplicate flows and inline override lanes
 
 ## Quick Start
@@ -257,8 +260,11 @@ The default `.env.example` already points Compose at the `latest` GHCR tags.
 ### Alerts And Incident Management
 
 - incident creation from runtime failures
+- incident history with status / severity / scope filters
 - incident acknowledgement
 - incident resolution
+- runtime drift reporting for worker, playout, schedule alignment, destination readiness, and Twitch metadata
+- recent audit trail visibility in the ops view
 - Discord webhook alerts
 - SMTP email alerts
 - audit events
