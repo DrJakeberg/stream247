@@ -41,5 +41,5 @@
 ## Current Capability Notes
 
 - Local media and direct media URLs are ingestible today.
-- YouTube playlist and Twitch VOD sources are stored and shown in the UI, but are not yet ingested into assets.
+- YouTube playlist and Twitch VOD sources are ingested through `yt-dlp`, which is bundled into the worker/playout image.
 - Discord alert dispatch exists; SMTP email delivery is not implemented yet.

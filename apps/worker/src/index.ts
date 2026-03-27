@@ -1,8 +1,15 @@
 import { promises as fs } from "node:fs";
-import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import { buildSchedulePreview, describePresenceStatus, getCurrentScheduleMoment, isCurrentScheduleTime } from "@stream247/core";
+import {
+  buildSchedulePreview,
+  describePresenceStatus,
+  getCurrentScheduleMoment,
+  isCurrentScheduleTime,
+  isLikelyTwitchVodUrl,
+  isLikelyYouTubePlaylistUrl
+} from "@stream247/core";
 import {
   appendAuditEvent,
   readAppState,
@@ -19,6 +26,19 @@ let playoutProcess: ChildProcessByStdio<null, Readable, Readable> | null = null;
 let playoutAssetId = "";
 let playoutDestinationId = "";
 
+function execFileText(file: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { maxBuffer: 1024 * 1024 * 20 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr.trim() || error.message));
+        return;
+      }
+
+      resolve(stdout.trim());
+    });
+  });
+}
+
 function getMediaRoot(): string {
   return process.env.MEDIA_LIBRARY_ROOT || path.join(process.cwd(), "data", "media");
 }
@@ -30,6 +50,41 @@ function isDirectMediaUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isResolvableRemoteVideoUrl(value: string): boolean {
+  return isLikelyYouTubePlaylistUrl(value) || isLikelyTwitchVodUrl(value) || value.includes("youtube.com/watch");
+}
+
+async function resolvePlayableInput(input: string): Promise<string> {
+  if (!input.startsWith("http://") && !input.startsWith("https://")) {
+    return input;
+  }
+
+  if (isDirectMediaUrl(input)) {
+    return input;
+  }
+
+  if (!isResolvableRemoteVideoUrl(input)) {
+    return input;
+  }
+
+  const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
+  const resolved = await execFileText(ytDlpBinary, [
+    "--no-warnings",
+    "--no-playlist",
+    "--format",
+    "best",
+    "--get-url",
+    input
+  ]);
+
+  const directUrl = resolved.split("\n").find(Boolean)?.trim();
+  if (!directUrl) {
+    throw new Error(`Could not resolve a playable media URL for ${input}.`);
+  }
+
+  return directUrl;
 }
 
 function getConfiguredStreamTarget(destination: StreamDestinationRecord | null): string | null {
@@ -298,6 +353,213 @@ async function syncDirectMediaSources(): Promise<void> {
   }
 }
 
+type YtDlpPlaylistEntry = {
+  id?: string;
+  title?: string;
+  url?: string;
+  webpage_url?: string;
+  original_url?: string;
+};
+
+type YtDlpPlaylistResponse = {
+  title?: string;
+  entries?: YtDlpPlaylistEntry[];
+};
+
+type YtDlpVideoResponse = {
+  id?: string;
+  title?: string;
+  webpage_url?: string;
+  original_url?: string;
+};
+
+function buildRemoteAsset(args: {
+  sourceId: string;
+  assetIdSeed: string;
+  title: string;
+  path: string;
+  now: string;
+}): AssetRecord {
+  return {
+    id: `asset_${args.sourceId}_${args.assetIdSeed}`.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120),
+    sourceId: args.sourceId,
+    title: args.title,
+    path: args.path,
+    status: "ready",
+    fallbackPriority: 100,
+    isGlobalFallback: false,
+    createdAt: args.now,
+    updatedAt: args.now
+  };
+}
+
+async function syncYoutubePlaylistSources(): Promise<void> {
+  const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
+  const state = await readAppState();
+  const now = new Date().toISOString();
+  const youtubeSources = state.sources.filter((source) => source.connectorKind === "youtube-playlist");
+  const youtubeAssets: AssetRecord[] = [];
+  let hadFailure = false;
+
+  for (const source of youtubeSources) {
+    const externalUrl = source.externalUrl?.trim() ?? "";
+    if (!isLikelyYouTubePlaylistUrl(externalUrl)) {
+      hadFailure = true;
+      continue;
+    }
+
+    try {
+      const output = await execFileText(ytDlpBinary, [
+        "--flat-playlist",
+        "--dump-single-json",
+        "--playlist-end",
+        process.env.YOUTUBE_PLAYLIST_LIMIT || "50",
+        externalUrl
+      ]);
+      const payload = JSON.parse(output) as YtDlpPlaylistResponse;
+      const entries = payload.entries ?? [];
+
+      for (const entry of entries) {
+        const id = entry.id ?? entry.url ?? entry.webpage_url ?? "";
+        const videoUrl = entry.webpage_url || (entry.id ? `https://www.youtube.com/watch?v=${entry.id}` : entry.url ?? "");
+        if (!id || !videoUrl) {
+          continue;
+        }
+
+        youtubeAssets.push(
+          buildRemoteAsset({
+            sourceId: source.id,
+            assetIdSeed: id,
+            title: entry.title || `${source.name} item`,
+            path: videoUrl,
+            now
+          })
+        );
+      }
+    } catch (error) {
+      hadFailure = true;
+      const message = error instanceof Error ? error.message : "Unknown YouTube playlist ingestion error.";
+      await upsertIncident({
+        scope: "source",
+        severity: "warning",
+        title: "YouTube playlist ingestion failed",
+        message: `${source.name}: ${message}`,
+        fingerprint: `source.youtube-playlist.${source.id}`
+      });
+    }
+  }
+
+  await updateAppState((current) => ({
+    ...current,
+    sources: current.sources.map((source) => {
+      if (source.connectorKind !== "youtube-playlist") {
+        return source;
+      }
+
+      const sourceAssetCount = youtubeAssets.filter((asset) => asset.sourceId === source.id).length;
+      return {
+        ...source,
+        status: sourceAssetCount > 0 ? "Ready" : "Ingestion failed",
+        notes:
+          sourceAssetCount > 0
+            ? `Ingested ${sourceAssetCount} playlist item(s) via yt-dlp.`
+            : "Could not ingest this playlist. Check the URL and worker incident log.",
+        lastSyncedAt: now
+      };
+    }),
+    assets: [
+      ...youtubeAssets,
+      ...current.assets.filter((asset) => {
+        const matchingSource = current.sources.find((source) => source.id === asset.sourceId);
+        return matchingSource?.connectorKind !== "youtube-playlist";
+      })
+    ]
+  }));
+
+  if (!hadFailure) {
+    for (const source of youtubeSources) {
+      await resolveIncident(`source.youtube-playlist.${source.id}`, `YouTube playlist ${source.name} ingested successfully.`);
+    }
+  }
+}
+
+async function syncTwitchVodSources(): Promise<void> {
+  const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
+  const state = await readAppState();
+  const now = new Date().toISOString();
+  const twitchSources = state.sources.filter((source) => source.connectorKind === "twitch-vod");
+  const twitchAssets: AssetRecord[] = [];
+
+  for (const source of twitchSources) {
+    const externalUrl = source.externalUrl?.trim() ?? "";
+    if (!isLikelyTwitchVodUrl(externalUrl)) {
+      await upsertIncident({
+        scope: "source",
+        severity: "warning",
+        title: "Twitch VOD URL is invalid",
+        message: `${source.name} requires a twitch.tv/videos/<id> URL.`,
+        fingerprint: `source.twitch-vod.${source.id}`
+      });
+      continue;
+    }
+
+    try {
+      const output = await execFileText(ytDlpBinary, ["--dump-single-json", "--no-playlist", externalUrl]);
+      const payload = JSON.parse(output) as YtDlpVideoResponse;
+      const assetPath = payload.webpage_url || payload.original_url || externalUrl;
+      const assetIdSeed = payload.id || externalUrl;
+
+      twitchAssets.push(
+        buildRemoteAsset({
+          sourceId: source.id,
+          assetIdSeed,
+          title: payload.title || source.name,
+          path: assetPath,
+          now
+        })
+      );
+
+      await resolveIncident(`source.twitch-vod.${source.id}`, `Twitch VOD ${source.name} ingested successfully.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown Twitch VOD ingestion error.";
+      await upsertIncident({
+        scope: "source",
+        severity: "warning",
+        title: "Twitch VOD ingestion failed",
+        message: `${source.name}: ${message}`,
+        fingerprint: `source.twitch-vod.${source.id}`
+      });
+    }
+  }
+
+  await updateAppState((current) => ({
+    ...current,
+    sources: current.sources.map((source) => {
+      if (source.connectorKind !== "twitch-vod") {
+        return source;
+      }
+
+      const sourceAssetCount = twitchAssets.filter((asset) => asset.sourceId === source.id).length;
+      return {
+        ...source,
+        status: sourceAssetCount > 0 ? "Ready" : "Ingestion failed",
+        notes:
+          sourceAssetCount > 0
+            ? "Ingested the Twitch VOD into a playable asset via yt-dlp."
+            : "Could not ingest this VOD. Check the URL and worker incident log.",
+        lastSyncedAt: now
+      };
+    }),
+    assets: [
+      ...twitchAssets,
+      ...current.assets.filter((asset) => {
+        const matchingSource = current.sources.find((source) => source.id === asset.sourceId);
+        return matchingSource?.connectorKind !== "twitch-vod";
+      })
+    ]
+  }));
+}
+
 function getCurrentScheduleItem(state: AppState) {
   const timeZone = process.env.CHANNEL_TIMEZONE || "UTC";
   const scheduleMoment = getCurrentScheduleMoment({
@@ -397,7 +659,8 @@ async function startOrSwitchPlayout(args: {
   }
 
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
-  const command = getFfmpegCommand(args.asset.path, args.streamTarget);
+  const playableInput = await resolvePlayableInput(args.asset.path);
+  const command = getFfmpegCommand(playableInput, args.streamTarget);
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -731,6 +994,8 @@ async function runWorkerCycle(): Promise<void> {
   await syncDestinations();
   await syncLocalMediaLibrary();
   await syncDirectMediaSources();
+  await syncYoutubePlaylistSources();
+  await syncTwitchVodSources();
   await reconcileTwitch();
   await appendAuditEvent("worker.cycle", "Worker reconciliation cycle completed.");
 }

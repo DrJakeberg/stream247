@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isLikelyTwitchVodUrl, isLikelyYouTubePlaylistUrl } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, readAppState, updateAppState } from "@/lib/server/state";
 
@@ -32,6 +33,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Source name is required." }, { status: 400 });
   }
 
+  if (connectorKind === "youtube-playlist" && !isLikelyYouTubePlaylistUrl(externalUrl)) {
+    return NextResponse.json({ message: "YouTube playlist sources require a playlist URL with a list parameter." }, { status: 400 });
+  }
+
+  if (connectorKind === "twitch-vod" && !isLikelyTwitchVodUrl(externalUrl)) {
+    return NextResponse.json({ message: "Twitch VOD sources require a twitch.tv/videos/<id> URL." }, { status: 400 });
+  }
+
   const typeByConnector = {
     "direct-media": "Direct media URL",
     "youtube-playlist": "YouTube playlist",
@@ -51,7 +60,9 @@ export async function POST(request: NextRequest) {
         notes:
           connectorKind === "direct-media"
             ? "Worker will normalize supported direct media URLs into assets."
-            : "Connector saved. Full ingestion for this connector type is not implemented yet.",
+            : connectorKind === "youtube-playlist"
+              ? "Worker will ingest playlist entries into playable assets via yt-dlp."
+              : "Worker will ingest the Twitch VOD into a playable asset via yt-dlp.",
         lastSyncedAt: ""
       },
       ...state.sources

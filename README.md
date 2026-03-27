@@ -93,12 +93,11 @@ Every release image should be gated by:
 - Implemented now:
   - local media library ingestion
   - direct media URL ingestion
+  - YouTube playlist ingestion via yt-dlp
+  - Twitch VOD ingestion via yt-dlp
   - Twitch broadcaster connect and Twitch SSO team login
   - FFmpeg-based RTMP playout foundation
   - incident tracking, readiness checks, and Discord webhook alerts
-- Configurable but not ingesting yet:
-  - YouTube playlist sources
-  - Twitch VOD sources
 - Not implemented yet:
   - email alert delivery
   - browser-stored third-party secrets from the setup wizard

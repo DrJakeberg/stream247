@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   createDefaultModerationConfig,
   describePresenceStatus,
+  isLikelyTwitchVodUrl,
+  isLikelyYouTubePlaylistUrl,
   parseModeratorCheckIn
 } from "@stream247/core";
 
@@ -48,5 +50,16 @@ describe("moderator presence windows", () => {
     });
 
     expect(window?.minutes).toBe(45);
+  });
+
+  it("detects valid YouTube playlist URLs", () => {
+    expect(isLikelyYouTubePlaylistUrl("https://www.youtube.com/playlist?list=PL123")).toBe(true);
+    expect(isLikelyYouTubePlaylistUrl("https://www.youtube.com/watch?v=abc123&list=PL123")).toBe(true);
+    expect(isLikelyYouTubePlaylistUrl("https://www.youtube.com/watch?v=abc123")).toBe(false);
+  });
+
+  it("detects valid Twitch VOD URLs", () => {
+    expect(isLikelyTwitchVodUrl("https://www.twitch.tv/videos/123456789")).toBe(true);
+    expect(isLikelyTwitchVodUrl("https://www.twitch.tv/somechannel")).toBe(false);
   });
 });
