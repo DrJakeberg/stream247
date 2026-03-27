@@ -11,7 +11,14 @@
 ## Current Alpha Persistence
 
 - The installable alpha persists initialization state, owner account, moderation settings, active moderator windows, and Twitch connection metadata in `data/app/state.json`.
+- It now also persists workspace users, Twitch-based team access grants, and Twitch SSO-authenticated sessions.
 - PostgreSQL and Redis remain in the stack for the planned runtime architecture, but the onboarding slice currently uses file-backed persistence so the setup wizard can run end to end before the full data layer is introduced.
+
+## Current Delivery Model
+
+- Production Compose is image-based and intended to pull from GHCR.
+- GitHub release tags publish versioned web images to GHCR.
+- Development Compose remains build-based for local iteration.
 
 ## Core Runtime Model
 

@@ -26,12 +26,28 @@ export async function POST(request: NextRequest) {
       email,
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString()
-    }
+    },
+    users: [
+      {
+        id: `user_${Math.random().toString(36).slice(2, 10)}`,
+        email,
+        displayName: "Owner",
+        authProvider: "local",
+        role: "owner",
+        twitchUserId: "",
+        twitchLogin: "",
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString()
+      }
+    ]
   }));
 
+  const state = await readAppState();
+  const ownerUser = state.users.find((user) => user.email === email);
   await appendAuditEvent("setup.completed", `Workspace initialized by ${email}.`);
-  await setSessionCookie(email);
+  if (ownerUser) {
+    await setSessionCookie(ownerUser.id);
+  }
 
   return NextResponse.json({ ok: true });
 }
-

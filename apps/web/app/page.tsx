@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getAuthenticatedUserEmail } from "@/lib/server/auth";
+import { getAuthenticatedUser } from "@/lib/server/auth";
 import { readAppState } from "@/lib/server/state";
 
 export default async function HomePage() {
@@ -9,6 +9,6 @@ export default async function HomePage() {
     redirect("/setup");
   }
 
-  const email = await getAuthenticatedUserEmail();
-  redirect(email ? "/dashboard" : "/login");
+  const user = await getAuthenticatedUser();
+  redirect(user ? "/dashboard" : "/login");
 }

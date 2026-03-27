@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireApiAuth } from "@/lib/server/auth";
+import { requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, updateAppState } from "@/lib/server/state";
 
 export async function PUT(request: NextRequest) {
-  const unauthorized = await requireApiAuth();
+  const unauthorized = await requireApiRoles(["owner", "admin", "operator"]);
   if (unauthorized) {
     return unauthorized;
   }

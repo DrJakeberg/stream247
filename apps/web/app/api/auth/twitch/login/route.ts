@@ -1,14 +1,8 @@
 import { NextResponse } from "next/server";
-import { requireApiRoles } from "@/lib/server/auth";
 import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
 
 export async function GET() {
-  const unauthorized = await requireApiRoles(["owner", "admin"]);
-  if (unauthorized) {
-    return unauthorized;
-  }
-
-  const url = getTwitchAuthorizeUrl("broadcaster-connect");
+  const url = getTwitchAuthorizeUrl("team-login");
 
   if (!url) {
     return NextResponse.json(
@@ -19,3 +13,4 @@ export async function GET() {
 
   return NextResponse.redirect(url);
 }
+

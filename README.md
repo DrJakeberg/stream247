@@ -31,10 +31,12 @@ Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel fr
 1. Copy `.env.example` to `.env`.
 2. Set `APP_URL` and `APP_SECRET`.
 3. Set `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` if you want browser-based Twitch OAuth.
-4. Start the stack with `docker compose up -d --build`.
-5. Open `http://localhost:3000/setup`.
-6. Create the owner account in the setup wizard.
-7. Sign in to the admin UI and connect Twitch from the dashboard.
+4. Set `STREAM247_WEB_IMAGE` if you want to pin a specific GHCR release image.
+5. Start the stack with `docker compose up -d`.
+6. For local development builds, use `docker compose -f docker-compose.dev.yml up -d --build`.
+7. Open `http://localhost:3000/setup`.
+8. Create the owner account in the setup wizard.
+9. Sign in to the admin UI and connect Twitch from the dashboard.
 
 ## Local Development
 
@@ -54,6 +56,11 @@ Every release image should be gated by:
 - build
 - Docker image build
 - container smoke test
+
+## Release Images
+
+- Production images are published to `ghcr.io/drjakeberg/stream247-web`.
+- Tagging `v*` on GitHub triggers the release workflow to validate, build, smoke-test, and publish the image.
 
 ## License
 

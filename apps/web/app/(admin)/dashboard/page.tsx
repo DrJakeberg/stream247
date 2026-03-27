@@ -32,7 +32,7 @@ export default async function DashboardPage() {
           <div className="value">{state.twitch.status}</div>
           <p className="subtle">
             {state.twitch.status === "connected"
-              ? `Broadcaster ${state.twitch.broadcasterId}`
+              ? `Broadcaster ${state.twitch.broadcasterLogin || state.twitch.broadcasterId}`
               : state.twitch.error || "OAuth connection not completed yet."}
           </p>
         </article>
@@ -40,6 +40,11 @@ export default async function DashboardPage() {
           <span className="label">Moderator window</span>
           <div className="value">{presenceStatus.chatMode === "normal" ? "Active" : "Fallback"}</div>
           <p className="subtle">{presenceStatus.summary}</p>
+        </article>
+        <article className="metric">
+          <span className="label">Team access</span>
+          <div className="value">{state.teamAccessGrants.length}</div>
+          <p className="subtle">{state.users.length} authenticated user record(s) in the workspace.</p>
         </article>
       </section>
 
@@ -74,7 +79,7 @@ export default async function DashboardPage() {
                   : "No moderator presence windows are active."}
               </div>
             </div>
-            <TwitchConnectPanel authorizeUrl={getTwitchAuthorizeUrl()} />
+            <TwitchConnectPanel authorizeUrl={getTwitchAuthorizeUrl("broadcaster-connect")} />
           </div>
         </Panel>
       </section>

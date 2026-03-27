@@ -8,9 +8,32 @@ export type OwnerAccount = {
   createdAt: string;
 };
 
+export type UserRole = "owner" | "admin" | "operator" | "moderator" | "viewer";
+
+export type UserRecord = {
+  id: string;
+  email: string;
+  displayName: string;
+  authProvider: "local" | "twitch";
+  role: UserRole;
+  twitchUserId: string;
+  twitchLogin: string;
+  createdAt: string;
+  lastLoginAt: string;
+};
+
+export type TeamAccessGrant = {
+  id: string;
+  twitchLogin: string;
+  role: UserRole;
+  createdAt: string;
+  createdBy: string;
+};
+
 export type TwitchConnection = {
   status: "not-connected" | "connected" | "error";
   broadcasterId: string;
+  broadcasterLogin: string;
   accessToken: string;
   refreshToken: string;
   connectedAt: string;
@@ -50,6 +73,8 @@ export type ScheduleBlockRecord = {
 export type AppState = {
   initialized: boolean;
   owner: OwnerAccount | null;
+  users: UserRecord[];
+  teamAccessGrants: TeamAccessGrant[];
   moderation: ReturnType<typeof createDefaultModerationConfig>;
   presenceWindows: ModeratorPresenceWindowRecord[];
   twitch: TwitchConnection;
@@ -65,11 +90,14 @@ function defaultState(): AppState {
   return {
     initialized: false,
     owner: null,
+    users: [],
+    teamAccessGrants: [],
     moderation: createDefaultModerationConfig(),
     presenceWindows: [],
     twitch: {
       status: "not-connected",
       broadcasterId: "",
+      broadcasterLogin: "",
       accessToken: "",
       refreshToken: "",
       connectedAt: "",
@@ -112,10 +140,64 @@ async function ensureStateFile(): Promise<void> {
   }
 }
 
+function createId(prefix: string): string {
+  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function migrateLegacyOwner(state: AppState): AppState {
+  const nextState: AppState = {
+    ...state,
+    users: Array.isArray(state.users) ? state.users : [],
+    teamAccessGrants: Array.isArray(state.teamAccessGrants) ? state.teamAccessGrants : [],
+    twitch: {
+      status: state.twitch?.status ?? "not-connected",
+      broadcasterId: state.twitch?.broadcasterId ?? "",
+      broadcasterLogin: state.twitch?.broadcasterLogin ?? "",
+      accessToken: state.twitch?.accessToken ?? "",
+      refreshToken: state.twitch?.refreshToken ?? "",
+      connectedAt: state.twitch?.connectedAt ?? "",
+      error: state.twitch?.error ?? ""
+    }
+  };
+
+  if (!nextState.owner) {
+    return nextState;
+  }
+
+  const existingOwner = nextState.users.find(
+    (user) => user.authProvider === "local" && user.email === nextState.owner?.email
+  );
+  if (existingOwner) {
+    return nextState;
+  }
+
+  return {
+    ...nextState,
+    users: [
+      {
+        id: createId("user"),
+        email: nextState.owner.email,
+        displayName: "Owner",
+        authProvider: "local",
+        role: "owner",
+        twitchUserId: "",
+        twitchLogin: "",
+        createdAt: nextState.owner.createdAt,
+        lastLoginAt: nextState.owner.createdAt
+      },
+      ...nextState.users
+    ]
+  };
+}
+
 export async function readAppState(): Promise<AppState> {
   await ensureStateFile();
   const raw = await fs.readFile(statePath, "utf8");
-  return JSON.parse(raw) as AppState;
+  const parsed = migrateLegacyOwner(JSON.parse(raw) as AppState);
+  if (JSON.stringify(parsed) !== raw) {
+    await fs.writeFile(statePath, JSON.stringify(parsed, null, 2), "utf8");
+  }
+  return parsed;
 }
 
 export async function writeAppState(state: AppState): Promise<void> {
@@ -170,3 +252,18 @@ export function getActivePresenceWindows(state: AppState): ModeratorPresenceWind
   return state.presenceWindows.filter((window) => new Date(window.expiresAt) > now);
 }
 
+export function findUserById(state: AppState, id: string | null): UserRecord | null {
+  if (!id) {
+    return null;
+  }
+
+  return state.users.find((user) => user.id === id) ?? null;
+}
+
+export function findUserByEmail(state: AppState, email: string): UserRecord | null {
+  return state.users.find((user) => user.email === email) ?? null;
+}
+
+export function findTeamGrantByLogin(state: AppState, twitchLogin: string): TeamAccessGrant | null {
+  return state.teamAccessGrants.find((grant) => grant.twitchLogin.toLowerCase() === twitchLogin.toLowerCase()) ?? null;
+}

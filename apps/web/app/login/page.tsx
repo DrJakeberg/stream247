@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
 import { Panel } from "@/components/panel";
 import { LoginForm } from "@/components/login-form";
-import { getAuthenticatedUserEmail } from "@/lib/server/auth";
+import { getAuthenticatedUser } from "@/lib/server/auth";
 import { readAppState } from "@/lib/server/state";
+import { TwitchLoginPanel } from "@/components/twitch-login-panel";
+import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
 
 export default async function LoginPage() {
   const state = await readAppState();
@@ -11,19 +13,23 @@ export default async function LoginPage() {
     redirect("/setup");
   }
 
-  const email = await getAuthenticatedUserEmail();
+  const user = await getAuthenticatedUser();
 
-  if (email) {
+  if (user) {
     redirect("/dashboard");
   }
 
   return (
     <main className="standalone">
-      <Panel title="Sign in" eyebrow="Owner access">
-        <p className="subtle">Use the owner account created during first-run setup.</p>
-        <LoginForm />
-      </Panel>
+      <section className="grid two">
+        <Panel title="Owner access" eyebrow="Local bootstrap">
+          <p className="subtle">Use the local owner account for bootstrap or emergency access.</p>
+          <LoginForm />
+        </Panel>
+        <Panel title="Team sign-in" eyebrow="Twitch SSO">
+          <TwitchLoginPanel authorizeUrl={getTwitchAuthorizeUrl("team-login")} />
+        </Panel>
+      </section>
     </main>
   );
 }
-

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseModeratorCheckIn } from "@stream247/core";
-import { requireApiAuth } from "@/lib/server/auth";
+import { requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, readAppState, updateAppState } from "@/lib/server/state";
 
 export async function POST(request: NextRequest) {
-  const unauthorized = await requireApiAuth();
+  const unauthorized = await requireApiRoles(["owner", "admin", "operator", "moderator"]);
   if (unauthorized) {
     return unauthorized;
   }

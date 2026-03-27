@@ -1,8 +1,6 @@
 services:
   web:
-    build:
-      context: .
-      dockerfile: docker/web.Dockerfile
+    image: ${STREAM247_WEB_IMAGE:-ghcr.io/drjakeberg/stream247-web:latest}
     ports:
       - "3000:3000"
     env_file:
