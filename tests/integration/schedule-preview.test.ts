@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildSchedulePreview, getCurrentScheduleMoment, isCurrentScheduleTime } from "@stream247/core";
+import {
+  buildSchedulePreview,
+  findScheduleConflicts,
+  getCurrentScheduleMoment,
+  isCurrentScheduleTime
+} from "@stream247/core";
 
 describe("schedule preview", () => {
   it("sorts blocks and calculates time windows", () => {
@@ -10,7 +15,7 @@ describe("schedule preview", () => {
           id: "b",
           title: "Night",
           categoryName: "Music",
-          startHour: 22,
+          startMinuteOfDay: 22 * 60,
           durationMinutes: 120,
           sourceName: "Playlist"
         },
@@ -18,7 +23,7 @@ describe("schedule preview", () => {
           id: "a",
           title: "Morning",
           categoryName: "Chatting",
-          startHour: 8,
+          startMinuteOfDay: 8 * 60 + 15,
           durationMinutes: 60,
           sourceName: "Archive"
         }
@@ -26,6 +31,7 @@ describe("schedule preview", () => {
     });
 
     expect(preview.items[0]?.id).toBe("a");
+    expect(preview.items[0]?.startTime).toBe("08:15");
     expect(preview.items[1]?.endTime).toBe("00:00");
   });
 
@@ -47,5 +53,28 @@ describe("schedule preview", () => {
         currentTime: "23:30"
       })
     ).toBe(true);
+  });
+
+  it("detects overlapping schedule blocks", () => {
+    const conflicts = findScheduleConflicts([
+      {
+        id: "a",
+        title: "Morning",
+        categoryName: "Chatting",
+        startMinuteOfDay: 8 * 60,
+        durationMinutes: 120,
+        sourceName: "Archive"
+      },
+      {
+        id: "b",
+        title: "Overlap",
+        categoryName: "Music",
+        startMinuteOfDay: 9 * 60,
+        durationMinutes: 60,
+        sourceName: "Playlist"
+      }
+    ]);
+
+    expect(conflicts).toEqual(["a", "b"]);
   });
 });

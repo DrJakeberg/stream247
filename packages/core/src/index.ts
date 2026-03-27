@@ -25,7 +25,7 @@ export type ScheduleBlock = {
   id: string;
   title: string;
   categoryName: string;
-  startHour: number;
+  startMinuteOfDay: number;
   durationMinutes: number;
   sourceName: string;
 };
@@ -68,6 +68,26 @@ export function isLikelyTwitchVodUrl(value: string): boolean {
 
 function padTwo(value: number): string {
   return String(value).padStart(2, "0");
+}
+
+export function formatMinuteOfDay(value: number): string {
+  const normalized = ((Math.trunc(value) % (24 * 60)) + 24 * 60) % (24 * 60);
+  return `${padTwo(Math.floor(normalized / 60))}:${padTwo(normalized % 60)}`;
+}
+
+export function parseTimeOfDay(value: string): number | null {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  return hours * 60 + minutes;
 }
 
 function extractZonedParts(args: { now: Date; timeZone: string }) {
@@ -175,16 +195,16 @@ export function buildSchedulePreview(args: {
   blocks: ScheduleBlock[];
 }): SchedulePreview {
   const items = [...args.blocks]
-    .sort((a, b) => a.startHour - b.startHour)
+    .sort((a, b) => a.startMinuteOfDay - b.startMinuteOfDay)
     .map((block) => {
-      const startMinutes = block.startHour * 60;
+      const startMinutes = block.startMinuteOfDay;
       const endMinutes = (startMinutes + block.durationMinutes) % (24 * 60);
 
       return {
         id: block.id,
         title: block.title,
-        startTime: `${padTwo(Math.floor(startMinutes / 60))}:${padTwo(startMinutes % 60)}`,
-        endTime: `${padTwo(Math.floor(endMinutes / 60))}:${padTwo(endMinutes % 60)}`,
+        startTime: formatMinuteOfDay(startMinutes),
+        endTime: formatMinuteOfDay(endMinutes),
         categoryName: block.categoryName,
         sourceName: block.sourceName,
         reason: `Selected from ${block.sourceName} for ${block.durationMinutes} minutes.`
@@ -208,4 +228,77 @@ export function isCurrentScheduleTime(args: {
   }
 
   return args.currentTime >= args.startTime || args.currentTime < args.endTime;
+}
+
+export function validateScheduleBlock(block: {
+  title: string;
+  categoryName: string;
+  sourceName: string;
+  startMinuteOfDay: number;
+  durationMinutes: number;
+}) {
+  if (!block.title.trim() || !block.categoryName.trim() || !block.sourceName.trim()) {
+    return "Title, category, and source are required.";
+  }
+
+  if (
+    !Number.isInteger(block.startMinuteOfDay) ||
+    block.startMinuteOfDay < 0 ||
+    block.startMinuteOfDay >= 24 * 60
+  ) {
+    return "Start time must be within the current day.";
+  }
+
+  if (!Number.isInteger(block.durationMinutes) || block.durationMinutes < 15 || block.durationMinutes > 24 * 60) {
+    return "Duration must be between 15 and 1440 minutes.";
+  }
+
+  return null;
+}
+
+export function findScheduleConflicts(blocks: Array<ScheduleBlock>): string[] {
+  const conflicts = new Set<string>();
+
+  for (let index = 0; index < blocks.length; index += 1) {
+    const current = blocks[index];
+    if (!current) {
+      continue;
+    }
+
+    const currentRanges =
+      current.startMinuteOfDay + current.durationMinutes <= 24 * 60
+        ? [[current.startMinuteOfDay, current.startMinuteOfDay + current.durationMinutes]]
+        : [
+            [current.startMinuteOfDay, 24 * 60],
+            [0, (current.startMinuteOfDay + current.durationMinutes) % (24 * 60)]
+          ];
+
+    for (let compareIndex = index + 1; compareIndex < blocks.length; compareIndex += 1) {
+      const candidate = blocks[compareIndex];
+      if (!candidate) {
+        continue;
+      }
+
+      const candidateRanges =
+        candidate.startMinuteOfDay + candidate.durationMinutes <= 24 * 60
+          ? [[candidate.startMinuteOfDay, candidate.startMinuteOfDay + candidate.durationMinutes]]
+          : [
+              [candidate.startMinuteOfDay, 24 * 60],
+              [0, (candidate.startMinuteOfDay + candidate.durationMinutes) % (24 * 60)]
+            ];
+
+      const overlaps = currentRanges.some(([currentStart, currentEnd]) =>
+        candidateRanges.some(
+          ([candidateStart, candidateEnd]) => currentStart < candidateEnd && candidateStart < currentEnd
+        )
+      );
+
+      if (overlaps) {
+        conflicts.add(current.id);
+        conflicts.add(candidate.id);
+      }
+    }
+  }
+
+  return [...conflicts];
 }

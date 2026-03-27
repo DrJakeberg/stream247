@@ -21,7 +21,7 @@ export function PlayoutActionForm() {
   return (
     <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
       <button
-        className="button secondary"
+        className="button button-secondary"
         disabled={isPending}
         onClick={() => startTransition(() => void runAction("/api/playout/restart"))}
         type="button"
@@ -29,7 +29,7 @@ export function PlayoutActionForm() {
         Restart encoder
       </button>
       <button
-        className="button secondary"
+        className="button button-secondary"
         disabled={isPending}
         onClick={() => startTransition(() => void runAction("/api/playout/fallback"))}
         type="button"
