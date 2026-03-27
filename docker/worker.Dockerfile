@@ -17,6 +17,7 @@ RUN pnpm --filter core build && pnpm --filter db build && pnpm --filter worker b
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apk add --no-cache ffmpeg
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/worker ./apps/worker
 COPY --from=builder /app/packages/core ./packages/core

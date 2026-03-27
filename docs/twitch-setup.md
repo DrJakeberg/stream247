@@ -31,6 +31,7 @@
 - Channel metadata updates
 - Stream schedule sync
 - Chat settings updates for emote-only mode
+- RTMP output using `TWITCH_RTMP_URL` and `TWITCH_STREAM_KEY`
 
 ## Team Access And SSO
 

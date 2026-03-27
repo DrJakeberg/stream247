@@ -31,19 +31,21 @@ Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel fr
 1. Copy `.env.example` to `.env`.
 2. Set `APP_URL`, `APP_SECRET`, `POSTGRES_PASSWORD`, and the matching password inside `DATABASE_URL`.
 3. Set `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` if you want browser-based Twitch OAuth and Twitch SSO.
-4. Optionally pin `STREAM247_WEB_IMAGE`, `STREAM247_WORKER_IMAGE`, and `STREAM247_PLAYOUT_IMAGE` to specific GHCR tags.
-5. Start the stack with `docker compose up -d`.
-6. For local development builds, use `docker compose -f docker-compose.dev.yml up -d --build`.
-7. Open `http://localhost:3000/setup`.
-8. Create the owner account in the setup wizard.
-9. Sign in to the admin UI and connect Twitch from the dashboard.
-10. Drop local media files into `data/media` so the worker can ingest them into the asset catalog.
+4. Set `TWITCH_STREAM_KEY` and optionally override `TWITCH_RTMP_URL` or the generic `STREAM_OUTPUT_URL` / `STREAM_OUTPUT_KEY` pair if playout should push RTMP output.
+5. Optionally pin `STREAM247_WEB_IMAGE`, `STREAM247_WORKER_IMAGE`, and `STREAM247_PLAYOUT_IMAGE` to specific GHCR tags.
+6. Start the stack with `docker compose up -d`.
+7. For local development builds, use `docker compose -f docker-compose.dev.yml up -d --build`.
+8. Open `http://localhost:3000/setup`.
+9. Create the owner account in the setup wizard.
+10. Sign in to the admin UI and connect Twitch from the dashboard.
+11. Drop local media files into `data/media` or add direct media URL sources so the worker can ingest them into the asset catalog.
 
 ## Environment Model
 
 - Put infrastructure and secret values in `.env`.
 - Keep `POSTGRES_PASSWORD` in `.env`, not hardcoded in Compose.
 - Keep `TWITCH_CLIENT_SECRET` in `.env`, not in normal runtime settings.
+- Keep RTMP stream keys such as `TWITCH_STREAM_KEY` in `.env`.
 - Do not keep moderator presence policy in `.env`; it is runtime state managed from the admin UI.
 - `MEDIA_LIBRARY_ROOT` should normally stay `/app/data/media` inside containers.
 
