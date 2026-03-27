@@ -4,7 +4,14 @@ import { IncidentActionForm } from "@/components/incident-action-form";
 import { Panel } from "@/components/panel";
 import { PlayoutActionForm } from "@/components/playout-action-form";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
-import { getActivePresenceWindows, getPresenceStatus, getSchedulePreview, readAppState } from "@/lib/server/state";
+import {
+  getActivePresenceWindows,
+  getCurrentScheduleItem,
+  getNextScheduleItem,
+  getPresenceStatus,
+  getSchedulePreview,
+  readAppState
+} from "@/lib/server/state";
 import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
 
 export default async function DashboardPage() {
@@ -15,6 +22,9 @@ export default async function DashboardPage() {
   const openIncidents = state.incidents.filter((incident) => incident.status === "open");
   const activeDestination = state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ?? state.destinations[0];
   const currentAsset = state.assets.find((entry) => entry.id === state.playout.currentAssetId) ?? null;
+  const overrideAsset = state.assets.find((entry) => entry.id === state.playout.overrideAssetId) ?? null;
+  const currentScheduleItem = getCurrentScheduleItem(state);
+  const nextScheduleItem = getNextScheduleItem(state);
   type ScheduleItem = (typeof schedulePreview.items)[number];
 
   return (
@@ -61,6 +71,10 @@ export default async function DashboardPage() {
           <span className="label">Playout runtime</span>
           <div className="value">{state.playout.status}</div>
           <p className="subtle">{state.playout.message}</p>
+          <p className="subtle">
+            Control mode: {state.playout.overrideMode}
+            {overrideAsset ? ` · ${overrideAsset.title}` : ""}
+          </p>
         </article>
         <article className="metric">
           <span className="label">Destination</span>
@@ -119,7 +133,15 @@ export default async function DashboardPage() {
               <div className="subtle">
                 Last stderr: {state.playout.lastStderrSample || "No FFmpeg stderr captured yet."}
               </div>
-              <PlayoutActionForm />
+              <div className="subtle">
+                Current schedule: {currentScheduleItem ? currentScheduleItem.title : "none"} · Next:{" "}
+                {nextScheduleItem ? nextScheduleItem.title : "none"}
+              </div>
+              <PlayoutActionForm
+                assets={state.assets.filter((asset) => asset.status === "ready").map((asset) => ({ id: asset.id, title: asset.title }))}
+                currentAssetId={currentAsset?.id}
+                overrideMode={state.playout.overrideMode}
+              />
             </div>
             {openIncidents.length > 0 ? (
               openIncidents.slice(0, 4).map((incident) => (
@@ -188,6 +210,17 @@ export default async function DashboardPage() {
                 {state.twitch.lastScheduleSyncAt
                   ? `Last synced at ${state.twitch.lastScheduleSyncAt}`
                   : "Future schedule blocks will be mirrored to Twitch after the worker syncs them."}
+              </div>
+            </div>
+            <div className="item">
+              <strong>Overlay browser source</strong>
+              <div className="subtle">
+                {state.overlay.enabled
+                  ? `${state.overlay.channelName} · ${state.overlay.headline}`
+                  : "Overlay is currently disabled."}
+              </div>
+              <div className="subtle">
+                Use <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> in a browser source.
               </div>
             </div>
             <TwitchConnectPanel authorizeUrl={getTwitchAuthorizeUrl("broadcaster-connect")} />
