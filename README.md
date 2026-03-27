@@ -32,6 +32,7 @@ Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel fr
 1. Copy `.env.example` to `.env`.
 2. Set `APP_URL`, `APP_SECRET`, `POSTGRES_PASSWORD`, and the matching password inside `DATABASE_URL`.
 3. Set `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` if you want browser-based Twitch OAuth and Twitch SSO.
+   See [Twitch App Credentials](#twitch-app-credentials) or the dedicated guide in [docs/twitch-setup.md](docs/twitch-setup.md#how-to-get-client-id-and-secret).
 4. Set `TWITCH_STREAM_KEY` and optionally override `TWITCH_RTMP_URL` or the generic `STREAM_OUTPUT_URL` / `STREAM_OUTPUT_KEY` pair if playout should push RTMP output.
 5. Set `CHANNEL_TIMEZONE` to the timezone the schedule should follow.
 6. Optionally pin `STREAM247_WEB_IMAGE`, `STREAM247_WORKER_IMAGE`, and `STREAM247_PLAYOUT_IMAGE` to specific GHCR tags.
@@ -46,7 +47,10 @@ Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel fr
 
 - Put infrastructure and secret values in `.env`.
 - Keep `POSTGRES_PASSWORD` in `.env`, not hardcoded in Compose.
-- Keep `TWITCH_CLIENT_SECRET` in `.env`, not in normal runtime settings.
+- Keep `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` in `.env`.
+- `TWITCH_CLIENT_ID` is the public application identifier from your Twitch developer application.
+- `TWITCH_CLIENT_SECRET` is the private application secret from the same Twitch application.
+- If you do not have them yet, follow [Twitch App Credentials](#twitch-app-credentials) or [docs/twitch-setup.md](docs/twitch-setup.md#how-to-get-client-id-and-secret).
 - Keep RTMP stream keys such as `TWITCH_STREAM_KEY` in `.env`.
 - Keep `CHANNEL_TIMEZONE` in `.env` until timezone management is exposed in the admin UI.
 - Do not keep moderator presence policy in `.env`; it is runtime state managed from the admin UI.
