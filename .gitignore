@@ -6,8 +6,9 @@ coverage
 .env
 .env.local
 .DS_Store
-pnpm-lock.yaml
 *.log
 data/postgres
 data/redis
-
+data/app
+apps/web/data
+*.tsbuildinfo

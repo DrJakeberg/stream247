@@ -26,7 +26,17 @@ Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel fr
 - `docs`: architecture and operational docs
 - `.github`: issue templates, pull request template, and CI workflows
 
-## Quick Start
+## Deploy With Docker
+
+1. Copy `.env.example` to `.env`.
+2. Set `APP_URL` and `APP_SECRET`.
+3. Set `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` if you want browser-based Twitch OAuth.
+4. Start the stack with `docker compose up -d --build`.
+5. Open `http://localhost:3000/setup`.
+6. Create the owner account in the setup wizard.
+7. Sign in to the admin UI and connect Twitch from the dashboard.
+
+## Local Development
 
 1. Copy `.env.example` to `.env`.
 2. Start dependencies with `docker compose up -d postgres redis`.
@@ -48,4 +58,3 @@ Every release image should be gated by:
 ## License
 
 Apache-2.0
-

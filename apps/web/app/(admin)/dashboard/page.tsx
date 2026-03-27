@@ -1,42 +1,52 @@
 import { Panel } from "@/components/panel";
-import { moderationState, schedulePreview } from "@/lib/mock-data";
+import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
+import { getActivePresenceWindows, getPresenceStatus, getSchedulePreview, readAppState } from "@/lib/server/state";
+import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const state = await readAppState();
+  const schedulePreview = getSchedulePreview(state);
+  const presenceStatus = getPresenceStatus(state);
+  const activeWindows = getActivePresenceWindows(state);
+  type ScheduleItem = (typeof schedulePreview.items)[number];
+
   return (
     <>
       <section className="hero">
-        <span className="badge">Twitch-first v1 scaffold</span>
-        <h2>Operate a 24/7 channel without dead air.</h2>
+        <span className="badge">Installable alpha</span>
+        <h2>Operate a 24/7 channel from a real initialized workspace.</h2>
         <p>
-          Sources, schedules, moderation rules, alerts, and Twitch metadata all
-          converge in one operational surface.
+          The admin UI now reads persisted state, tracks initialization, and keeps moderation and Twitch readiness
+          visible.
         </p>
       </section>
 
       <section className="grid metrics">
         <article className="metric">
-          <span className="label">Current state</span>
-          <div className="value">Streaming</div>
-          <p className="subtle">Fallback-safe queue generated for 24 hours.</p>
+          <span className="label">Workspace</span>
+          <div className="value">{state.initialized ? "Ready" : "Setup"}</div>
+          <p className="subtle">{state.owner ? `Owner: ${state.owner.email}` : "Owner account missing."}</p>
         </article>
         <article className="metric">
-          <span className="label">Next switch</span>
-          <div className="value">18:00</div>
-          <p className="subtle">Prime Time YouTube Playlist</p>
+          <span className="label">Twitch</span>
+          <div className="value">{state.twitch.status}</div>
+          <p className="subtle">
+            {state.twitch.status === "connected"
+              ? `Broadcaster ${state.twitch.broadcasterId}`
+              : state.twitch.error || "OAuth connection not completed yet."}
+          </p>
         </article>
         <article className="metric">
           <span className="label">Moderator window</span>
-          <div className="value">
-            {moderationState.status.chatMode === "normal" ? "Active" : "Expired"}
-          </div>
-          <p className="subtle">{moderationState.status.summary}</p>
+          <div className="value">{presenceStatus.chatMode === "normal" ? "Active" : "Fallback"}</div>
+          <p className="subtle">{presenceStatus.summary}</p>
         </article>
       </section>
 
       <section className="grid two" style={{ marginTop: 24 }}>
         <Panel title="Upcoming schedule" eyebrow="Schedule">
           <div className="list">
-            {schedulePreview.items.map((item) => (
+            {schedulePreview.items.map((item: ScheduleItem) => (
               <div className="item" key={item.id}>
                 <strong>{item.title}</strong>
                 <div className="subtle">
@@ -51,22 +61,23 @@ export default function DashboardPage() {
         <Panel title="Alerts and drift" eyebrow="Ops">
           <div className="list">
             <div className="item">
-              <strong>Queue coverage healthy</strong>
+              <strong>System readiness</strong>
               <div className="subtle">
-                Fallback slate available if a source sync fails.
+                Initialization, auth, and persisted moderation policy are now stateful instead of mock-only.
               </div>
             </div>
             <div className="item">
-              <strong>Moderator policy enabled</strong>
+              <strong>Active moderator windows</strong>
               <div className="subtle">
-                Default command <code>here 30</code>, fallback emote-only when
-                no active presence window exists.
+                {activeWindows.length > 0
+                  ? `${activeWindows.length} active check-in window(s).`
+                  : "No moderator presence windows are active."}
               </div>
             </div>
+            <TwitchConnectPanel authorizeUrl={getTwitchAuthorizeUrl()} />
           </div>
         </Panel>
       </section>
     </>
   );
 }
-

@@ -1,9 +1,13 @@
 import { Panel } from "@/components/panel";
-import { schedulePreview } from "@/lib/mock-data";
+import { readAppState, getSchedulePreview } from "@/lib/server/state";
 
-export default function ChannelPage() {
+export default async function ChannelPage() {
+  const state = await readAppState();
+  const schedulePreview = getSchedulePreview(state);
+  type ScheduleItem = (typeof schedulePreview.items)[number];
+
   return (
-    <>
+    <main className="standalone">
       <section className="hero">
         <span className="badge">Public schedule</span>
         <h2>What is live now, and what comes next.</h2>
@@ -14,7 +18,7 @@ export default function ChannelPage() {
       </section>
       <Panel title="Upcoming lineup" eyebrow="Viewer page">
         <div className="list">
-          {schedulePreview.items.map((item) => (
+          {schedulePreview.items.map((item: ScheduleItem) => (
             <div className="item" key={item.id}>
               <strong>{item.title}</strong>
               <div className="subtle">
@@ -24,6 +28,6 @@ export default function ChannelPage() {
           ))}
         </div>
       </Panel>
-    </>
+    </main>
   );
 }

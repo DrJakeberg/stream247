@@ -1,8 +1,14 @@
 import { Panel } from "@/components/panel";
-import { moderationState } from "@/lib/mock-data";
+import { ModerationSettingsForm } from "@/components/moderation-settings-form";
+import { PresenceCheckInForm } from "@/components/presence-checkin-form";
+import { getActivePresenceWindows, getPresenceStatus, readAppState } from "@/lib/server/state";
 
-export default function ModerationPage() {
-  const { config, latestCheckIn, status } = moderationState;
+export default async function ModerationPage() {
+  const state = await readAppState();
+  const status = getPresenceStatus(state);
+  const activeWindows = getActivePresenceWindows(state);
+  const latestCheckIn = activeWindows[0];
+  const { moderation: config } = state;
 
   return (
     <Panel title="Moderator presence policy" eyebrow="Moderation">
@@ -28,12 +34,17 @@ export default function ModerationPage() {
           <strong>Latest check-in</strong>
           <div className="subtle">
             {latestCheckIn
-              ? `${latestCheckIn.actor} until ${latestCheckIn.expiresAt.toISOString()}`
+              ? `${latestCheckIn.actor} until ${latestCheckIn.expiresAt}`
               : "No active moderator window"}
           </div>
         </div>
       </div>
+      <div style={{ marginTop: 20 }}>
+        <PresenceCheckInForm />
+      </div>
+      <div style={{ marginTop: 20 }}>
+        <ModerationSettingsForm config={config} />
+      </div>
     </Panel>
   );
 }
-
