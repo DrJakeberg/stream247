@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import { buildSchedulePreview, describePresenceStatus } from "@stream247/core";
+import { buildSchedulePreview, describePresenceStatus, getCurrentScheduleMoment, isCurrentScheduleTime } from "@stream247/core";
 import {
   appendAuditEvent,
   readAppState,
@@ -299,13 +299,25 @@ async function syncDirectMediaSources(): Promise<void> {
 }
 
 function getCurrentScheduleItem(state: AppState) {
+  const timeZone = process.env.CHANNEL_TIMEZONE || "UTC";
+  const scheduleMoment = getCurrentScheduleMoment({
+    now: new Date(),
+    timeZone
+  });
+
   const preview = buildSchedulePreview({
-    date: new Date().toISOString().slice(0, 10),
+    date: scheduleMoment.date,
     blocks: state.scheduleBlocks
   });
-  const currentTime = new Date().toISOString().slice(11, 16);
+  const currentTime = scheduleMoment.time;
   return (
-    preview.items.find((item) => item.startTime <= currentTime && item.endTime > currentTime) ??
+    preview.items.find((item) =>
+      isCurrentScheduleTime({
+        startTime: item.startTime,
+        endTime: item.endTime,
+        currentTime
+      })
+    ) ??
     preview.items[0] ??
     null
   );
@@ -406,6 +418,7 @@ async function startOrSwitchPlayout(args: {
       currentTitle: args.asset.title,
       desiredAssetId: args.asset.id,
       currentDestinationId: args.destination.id,
+      restartRequestedAt: "",
       heartbeatAt: startedAt,
       processPid: pid,
       processStartedAt: startedAt,
@@ -494,6 +507,7 @@ async function runPlayoutCycle(): Promise<void> {
   const selection = choosePlaybackCandidate(state);
 
   if (!destination || !streamTarget) {
+    stopPlayoutProcess();
     await upsertIncident({
       scope: "playout",
       severity: "warning",
@@ -507,6 +521,11 @@ async function runPlayoutCycle(): Promise<void> {
       playout: {
         ...current.playout,
         status: "degraded",
+        currentAssetId: "",
+        currentTitle: "",
+        desiredAssetId: "",
+        processPid: 0,
+        processStartedAt: "",
         heartbeatAt: new Date().toISOString(),
         message: "No active RTMP destination is configured."
       }
@@ -544,7 +563,12 @@ async function runPlayoutCycle(): Promise<void> {
 
   await resolveIncident("playout.no-asset", "A playable asset is available again.");
 
-  if (!playoutProcess || playoutProcess.killed) {
+  const restartRequested = Boolean(state.playout.restartRequestedAt);
+  if (restartRequested) {
+    stopPlayoutProcess();
+  }
+
+  if (!playoutProcess || playoutProcess.killed || restartRequested) {
     await startOrSwitchPlayout({
       asset: selection.asset,
       destination,
@@ -571,6 +595,7 @@ async function runPlayoutCycle(): Promise<void> {
       currentTitle: selection.asset.title,
       desiredAssetId: selection.asset.id,
       currentDestinationId: destination.id,
+      restartRequestedAt: "",
       heartbeatAt: new Date().toISOString(),
       message: selection.reason
     }

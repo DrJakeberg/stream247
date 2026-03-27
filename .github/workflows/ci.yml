@@ -51,6 +51,14 @@ jobs:
             type=raw,value=latest
             type=sha,prefix=main-
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: meta-playout
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/drjakeberg/stream247-playout
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=main-
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -66,3 +74,11 @@ jobs:
           push: true
           tags: ${{ steps.meta-worker.outputs.tags }}
           labels: ${{ steps.meta-worker.outputs.labels }}
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/worker.Dockerfile
+          push: true
+          tags: ${{ steps.meta-playout.outputs.tags }}
+          labels: ${{ steps.meta-playout.outputs.labels }}

@@ -32,13 +32,14 @@ Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel fr
 2. Set `APP_URL`, `APP_SECRET`, `POSTGRES_PASSWORD`, and the matching password inside `DATABASE_URL`.
 3. Set `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` if you want browser-based Twitch OAuth and Twitch SSO.
 4. Set `TWITCH_STREAM_KEY` and optionally override `TWITCH_RTMP_URL` or the generic `STREAM_OUTPUT_URL` / `STREAM_OUTPUT_KEY` pair if playout should push RTMP output.
-5. Optionally pin `STREAM247_WEB_IMAGE`, `STREAM247_WORKER_IMAGE`, and `STREAM247_PLAYOUT_IMAGE` to specific GHCR tags.
-6. Start the stack with `docker compose up -d`.
-7. For local development builds, use `docker compose -f docker-compose.dev.yml up -d --build`.
-8. Open `http://localhost:3000/setup`.
-9. Create the owner account in the setup wizard.
-10. Sign in to the admin UI and connect Twitch from the dashboard.
-11. Drop local media files into `data/media` or add direct media URL sources so the worker can ingest them into the asset catalog.
+5. Set `CHANNEL_TIMEZONE` to the timezone the schedule should follow.
+6. Optionally pin `STREAM247_WEB_IMAGE`, `STREAM247_WORKER_IMAGE`, and `STREAM247_PLAYOUT_IMAGE` to specific GHCR tags.
+7. Start the stack with `docker compose up -d`.
+8. For local development builds, use `docker compose -f docker-compose.dev.yml up -d --build`.
+9. Open `http://localhost:3000/setup`.
+10. Create the owner account in the setup wizard.
+11. Sign in to the admin UI and connect Twitch from the dashboard.
+12. Drop local media files into `data/media` or add direct media URL sources so the worker can ingest them into the asset catalog.
 
 ## Environment Model
 
@@ -46,6 +47,7 @@ Stream247 is a self-hosted platform for operating a 24/7 Twitch-first channel fr
 - Keep `POSTGRES_PASSWORD` in `.env`, not hardcoded in Compose.
 - Keep `TWITCH_CLIENT_SECRET` in `.env`, not in normal runtime settings.
 - Keep RTMP stream keys such as `TWITCH_STREAM_KEY` in `.env`.
+- Keep `CHANNEL_TIMEZONE` in `.env` until timezone management is exposed in the admin UI.
 - Do not keep moderator presence policy in `.env`; it is runtime state managed from the admin UI.
 - `MEDIA_LIBRARY_ROOT` should normally stay `/app/data/media` inside containers.
 
@@ -82,8 +84,25 @@ Every release image should be gated by:
 ## Release Images
 
 - Production images are published to `ghcr.io/drjakeberg/stream247-web`.
-- Background worker and playout images are published to `ghcr.io/drjakeberg/stream247-worker`.
+- Background worker images are published to `ghcr.io/drjakeberg/stream247-worker`.
+- Playout images are published to `ghcr.io/drjakeberg/stream247-playout`.
 - Tagging `v*` on GitHub triggers the release workflow to validate, build, smoke-test, and publish the image.
+
+## Current Feature Status
+
+- Implemented now:
+  - local media library ingestion
+  - direct media URL ingestion
+  - Twitch broadcaster connect and Twitch SSO team login
+  - FFmpeg-based RTMP playout foundation
+  - incident tracking, readiness checks, and Discord webhook alerts
+- Configurable but not ingesting yet:
+  - YouTube playlist sources
+  - Twitch VOD sources
+- Not implemented yet:
+  - email alert delivery
+  - browser-stored third-party secrets from the setup wizard
+  - rich schedule editing with drag/drop and operator overrides
 
 ## License
 

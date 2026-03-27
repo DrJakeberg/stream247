@@ -1,11 +1,12 @@
 export const dynamic = "force-dynamic";
 
 import { Panel } from "@/components/panel";
-import { readAppState, getSchedulePreview } from "@/lib/server/state";
+import { readAppState, getSchedulePreview, getWorkspaceTimeZone } from "@/lib/server/state";
 
 export default async function ChannelPage() {
   const state = await readAppState();
   const schedulePreview = getSchedulePreview(state);
+  const timeZone = getWorkspaceTimeZone();
   type ScheduleItem = (typeof schedulePreview.items)[number];
 
   return (
@@ -15,7 +16,7 @@ export default async function ChannelPage() {
         <h2>What is live now, and what comes next.</h2>
         <p>
           Viewers can check the channel lineup, current block, and the next
-          rotation window without opening the admin interface.
+          rotation window without opening the admin interface. Times are shown in {timeZone}.
         </p>
       </section>
       <Panel title="Upcoming lineup" eyebrow="Viewer page">
