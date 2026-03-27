@@ -86,6 +86,7 @@ Every release image should be gated by:
 - Production images are published to `ghcr.io/drjakeberg/stream247-web`.
 - Background worker images are published to `ghcr.io/drjakeberg/stream247-worker`.
 - Playout images are published to `ghcr.io/drjakeberg/stream247-playout`.
+- CI builds use the public ECR mirror of the Docker Official `node:22-alpine` image to avoid Docker Hub rate-limit failures on GitHub-hosted runners.
 - Tagging `v*` on GitHub triggers the release workflow to validate, build, smoke-test, and publish the image.
 
 ## Current Feature Status
