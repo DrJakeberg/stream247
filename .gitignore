@@ -1,0 +1,13 @@
+node_modules
+.next
+dist
+coverage
+.turbo
+.env
+.env.local
+.DS_Store
+pnpm-lock.yaml
+*.log
+data/postgres
+data/redis
+

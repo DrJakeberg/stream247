@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile=false
+      - run: pnpm validate
+      - run: docker build -f docker/web.Dockerfile -t ghcr.io/${{ github.repository }}/web:${{ github.ref_name }} .
+      - run: chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh ghcr.io/${{ github.repository }}/web:${{ github.ref_name }}
+      - run: echo "Publish step belongs here after registry login."
