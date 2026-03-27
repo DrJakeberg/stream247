@@ -32,7 +32,7 @@ export default async function DashboardPage() {
   return (
     <>
       <section className="hero">
-        <span className="badge">Installable alpha</span>
+        <span className="badge">Broadcast control</span>
         <h2>Operate a 24/7 channel from a real initialized workspace.</h2>
         <p>
           The admin UI now reads persisted state, tracks initialization, and keeps moderation and Twitch readiness

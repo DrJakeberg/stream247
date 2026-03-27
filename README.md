@@ -38,6 +38,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - acknowledge / resolve actions
   - runtime drift checks
   - recent audit trail visibility
+  - worker/playout healthcheck commands
   - Discord webhook alerts
   - SMTP email alerts
   - readiness and health endpoints
@@ -201,6 +202,14 @@ The default `.env.example` already points Compose at the `latest` GHCR tags.
 - `push` to `main` validates, builds, smoke-tests, and publishes current images
 - `push` of `v*` tags runs the release workflow for versioned images
 - CI uses the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners
+- production should pin explicit release tags and not follow `latest`
+
+Operational docs:
+
+- [docs/upgrading.md](docs/upgrading.md)
+- [docs/backup-and-restore.md](docs/backup-and-restore.md)
+- [docs/operations.md](docs/operations.md)
+- [docs/versioning.md](docs/versioning.md)
 
 ## Feature Overview
 

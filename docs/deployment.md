@@ -30,6 +30,8 @@ Stream247 is currently designed as a self-hosted single-workspace deployment.
    - `STREAM247_WEB_IMAGE`
    - `STREAM247_WORKER_IMAGE`
    - `STREAM247_PLAYOUT_IMAGE`
+   Recommended for production:
+   - explicit version tags, not `latest`
 5. Start the stack:
    ```bash
    docker compose up -d
@@ -100,6 +102,12 @@ Production Compose is intended to pull from:
 
 Default `.env.example` uses `latest`.
 Pinning explicit tags is safer for stable deployments.
+See:
+
+- `docs/versioning.md`
+- `docs/upgrading.md`
+- `docs/backup-and-restore.md`
+- `docs/operations.md`
 
 ## Release Flow
 
