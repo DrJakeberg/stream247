@@ -109,6 +109,12 @@ See:
 - `docs/backup-and-restore.md`
 - `docs/operations.md`
 
+Recommended pre-release commands:
+
+- `pnpm release:preflight`
+- `./scripts/upgrade-rehearsal.sh <target-version>`
+- `./scripts/soak-monitor.sh --hours 24`
+
 ## Release Flow
 
 - `push` to `main`:
