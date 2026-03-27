@@ -203,6 +203,10 @@ The default `.env.example` already points Compose at the `latest` GHCR tags.
 - `push` of `v*` tags runs the release workflow for versioned images
 - CI uses the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners
 - production should pin explicit release tags and not follow `latest`
+- release rehearsal helpers are available:
+  - `pnpm release:preflight`
+  - `./scripts/upgrade-rehearsal.sh v1.0.0`
+  - `./scripts/soak-monitor.sh --hours 24`
 
 Operational docs:
 
@@ -210,6 +214,31 @@ Operational docs:
 - [docs/backup-and-restore.md](docs/backup-and-restore.md)
 - [docs/operations.md](docs/operations.md)
 - [docs/versioning.md](docs/versioning.md)
+
+## Release Readiness Workflow
+
+Before tagging a production release:
+
+1. Pin explicit GHCR version tags in `.env`.
+2. Run:
+   ```bash
+   pnpm release:preflight
+   ```
+3. Rehearse the target version:
+   ```bash
+   ./scripts/upgrade-rehearsal.sh v1.0.0
+   ```
+4. Run an extended soak:
+   ```bash
+   ./scripts/soak-monitor.sh --hours 24
+   ```
+5. Review `/ops`, `/api/health`, and `/api/system/readiness`.
+6. Tag only after the rehearsal and soak are clean.
+
+Notes:
+
+- set `CHECK_BASE_URL=http://127.0.0.1:3000` if your public `APP_URL` points through an external proxy or domain that is not reachable from the host running the scripts
+- set `SESSION_COOKIE="stream247_session=..."` if you want the soak monitor to fail on open critical incidents via the authenticated incidents API
 
 ## Feature Overview
 

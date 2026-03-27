@@ -18,14 +18,30 @@ Do not use `latest` for unattended production deployments.
 2. Create a PostgreSQL backup.
 3. Back up `.env`.
 4. Confirm `data/media` is intact.
-5. Update the pinned image tags in your Compose configuration.
-6. Pull the new images.
-7. Restart the stack.
-8. Check:
+5. Run:
+   ```bash
+   pnpm release:preflight
+   ```
+6. Update the pinned image tags in your Compose configuration, or rehearse the target version with:
+   ```bash
+   ./scripts/upgrade-rehearsal.sh v1.0.0
+   ```
+7. Pull the new images.
+8. Restart the stack.
+9. Check:
    - `/api/health`
    - `/api/system/readiness`
    - `/ops`
    - current broadcast state
+10. For production candidates, run:
+    ```bash
+    ./scripts/soak-monitor.sh --hours 24
+    ```
+
+Useful overrides:
+
+- `CHECK_BASE_URL=http://127.0.0.1:3000` if `APP_URL` is externally routed and not directly reachable from the host
+- `SESSION_COOKIE="stream247_session=..."` if the soak monitor should also fail on open critical incidents from the authenticated incidents API
 
 ## Patch vs Minor Upgrades
 

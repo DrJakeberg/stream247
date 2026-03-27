@@ -11,7 +11,10 @@
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
-    "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "release:preflight": "./scripts/release-preflight.sh",
+    "release:rehearse": "./scripts/upgrade-rehearsal.sh",
+    "soak:monitor": "./scripts/soak-monitor.sh"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
