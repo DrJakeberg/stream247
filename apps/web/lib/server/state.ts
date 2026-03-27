@@ -1,10 +1,12 @@
 import { buildSchedulePreview, describePresenceStatus, getCurrentScheduleMoment } from "@stream247/core";
 import {
   appendAuditEvent,
+  acknowledgeIncident,
   findTeamGrantByLogin,
   findUserByEmail,
   findUserById,
   readAppState,
+  resolveIncident,
   updateAppState,
   writeAppState,
   type AppState,
@@ -40,7 +42,7 @@ export type {
   UserRole
 };
 
-export { appendAuditEvent, findTeamGrantByLogin, findUserByEmail, findUserById, readAppState, updateAppState, writeAppState };
+export { acknowledgeIncident, appendAuditEvent, findTeamGrantByLogin, findUserByEmail, findUserById, readAppState, resolveIncident, updateAppState, writeAppState };
 
 export function getWorkspaceTimeZone(): string {
   return process.env.CHANNEL_TIMEZONE || "UTC";

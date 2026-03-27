@@ -10,6 +10,10 @@
   },
   "dependencies": {
     "@stream247/core": "workspace:*",
-    "@stream247/db": "workspace:*"
+    "@stream247/db": "workspace:*",
+    "nodemailer": "^8.0.4"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^7.0.11"
   }
 }

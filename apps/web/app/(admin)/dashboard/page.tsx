@@ -1,6 +1,8 @@
 export const dynamic = "force-dynamic";
 
+import { IncidentActionForm } from "@/components/incident-action-form";
 import { Panel } from "@/components/panel";
+import { PlayoutActionForm } from "@/components/playout-action-form";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
 import { getActivePresenceWindows, getPresenceStatus, getSchedulePreview, readAppState } from "@/lib/server/state";
 import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
@@ -108,6 +110,7 @@ export default async function DashboardPage() {
               <div className="subtle">
                 Last stderr: {state.playout.lastStderrSample || "No FFmpeg stderr captured yet."}
               </div>
+              <PlayoutActionForm />
             </div>
             {openIncidents.length > 0 ? (
               openIncidents.slice(0, 4).map((incident) => (
@@ -116,6 +119,16 @@ export default async function DashboardPage() {
                     {incident.severity.toUpperCase()} · {incident.title}
                   </strong>
                   <div className="subtle">{incident.message}</div>
+                  <div className="subtle">
+                    {incident.acknowledgedAt
+                      ? `Acknowledged by ${incident.acknowledgedBy || "unknown"} at ${incident.acknowledgedAt}`
+                      : "Not acknowledged yet."}
+                  </div>
+                  <IncidentActionForm
+                    acknowledgedAt={incident.acknowledgedAt}
+                    fingerprint={incident.fingerprint}
+                    status={incident.status}
+                  />
                 </div>
               ))
             ) : (

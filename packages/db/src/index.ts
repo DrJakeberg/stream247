@@ -98,6 +98,8 @@ export type IncidentRecord = {
   scope: "worker" | "playout" | "twitch" | "source" | "system";
   severity: "info" | "warning" | "critical";
   status: "open" | "resolved";
+  acknowledgedAt: string;
+  acknowledgedBy: string;
   title: string;
   message: string;
   fingerprint: string;
@@ -436,6 +438,8 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       scope TEXT NOT NULL,
       severity TEXT NOT NULL,
       status TEXT NOT NULL,
+      acknowledged_at TEXT NOT NULL DEFAULT '',
+      acknowledged_by TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL,
       message TEXT NOT NULL,
       fingerprint TEXT NOT NULL,
@@ -478,6 +482,8 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS fallback_priority INTEGER NOT NULL DEFAULT 100;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS is_global_fallback BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_by TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS current_destination_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS restart_requested_at TEXT NOT NULL DEFAULT '';
@@ -744,15 +750,17 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     await client.query(
       `
         INSERT INTO incidents (
-          id, scope, severity, status, title, message, fingerprint, created_at, updated_at, resolved_at
+          id, scope, severity, status, acknowledged_at, acknowledged_by, title, message, fingerprint, created_at, updated_at, resolved_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       `,
       [
         incident.id,
         incident.scope,
         incident.severity,
         incident.status,
+        incident.acknowledgedAt,
+        incident.acknowledgedBy,
         incident.title,
         incident.message,
         incident.fingerprint,
@@ -871,6 +879,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     scope: IncidentRecord["scope"];
     severity: IncidentRecord["severity"];
     status: IncidentRecord["status"];
+    acknowledged_at: string;
+    acknowledged_by: string;
     title: string;
     message: string;
     fingerprint: string;
@@ -1008,6 +1018,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       scope: row.scope,
       severity: row.severity,
       status: row.status,
+      acknowledgedAt: row.acknowledged_at,
+      acknowledgedBy: row.acknowledged_by,
       title: row.title,
       message: row.message,
       fingerprint: row.fingerprint,
@@ -1147,6 +1159,8 @@ export async function upsertIncident(args: {
           ...existing,
           severity: args.severity,
           status: "open",
+          acknowledgedAt: "",
+          acknowledgedBy: "",
           title: args.title,
           message: args.message,
           updatedAt: now,
@@ -1157,6 +1171,8 @@ export async function upsertIncident(args: {
           scope: args.scope,
           severity: args.severity,
           status: "open",
+          acknowledgedAt: "",
+          acknowledgedBy: "",
           title: args.title,
           message: args.message,
           fingerprint: args.fingerprint,
@@ -1185,6 +1201,22 @@ export async function resolveIncident(fingerprint: string, resolutionMessage?: s
             message: resolutionMessage || incident.message,
             updatedAt: new Date().toISOString(),
             resolvedAt: new Date().toISOString()
+          }
+        : incident
+    )
+  }));
+}
+
+export async function acknowledgeIncident(fingerprint: string, acknowledgedBy: string): Promise<void> {
+  await updateAppState((state) => ({
+    ...state,
+    incidents: state.incidents.map((incident) =>
+      incident.fingerprint === fingerprint && incident.status === "open"
+        ? {
+            ...incident,
+            acknowledgedAt: new Date().toISOString(),
+            acknowledgedBy,
+            updatedAt: new Date().toISOString()
           }
         : incident
     )
