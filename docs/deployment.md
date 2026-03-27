@@ -16,7 +16,15 @@ Stream247 is currently designed as a self-hosted single-workspace deployment.
 
 ## Deploy Steps
 
-1. Copy `.env.example` to `.env`.
+1. Choose your base env file:
+   - evaluation:
+     ```bash
+     cp .env.example .env
+     ```
+   - production:
+     ```bash
+     cp .env.production.example .env
+     ```
 2. Set:
    - `APP_URL`
    - `APP_SECRET`
@@ -100,8 +108,8 @@ Production Compose is intended to pull from:
 - `ghcr.io/drjakeberg/stream247-worker:<tag>`
 - `ghcr.io/drjakeberg/stream247-playout:<tag>`
 
-Default `.env.example` uses `latest`.
-Pinning explicit tags is safer for stable deployments.
+`.env.example` uses `latest` for evaluation.
+`.env.production.example` pins `v1.0.0` for stable deployment.
 See:
 
 - `docs/versioning.md`
