@@ -1,12 +1,50 @@
 services:
+  traefik:
+    image: traefik:v3.4
+    profiles: ["proxy"]
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --ping=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.${TRAEFIK_CERT_RESOLVER:-letsencrypt}.acme.email=${TRAEFIK_ACME_EMAIL}
+      - --certificatesresolvers.${TRAEFIK_CERT_RESOLVER:-letsencrypt}.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.${TRAEFIK_CERT_RESOLVER:-letsencrypt}.acme.httpchallenge=true
+      - --certificatesresolvers.${TRAEFIK_CERT_RESOLVER:-letsencrypt}.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./data/traefik:/letsencrypt
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
   web:
     image: ${STREAM247_WEB_IMAGE:-ghcr.io/drjakeberg/stream247-web:latest}
     ports:
       - "3000:3000"
+    expose:
+      - "3000"
     env_file:
       - .env
     volumes:
       - ./data/media:/app/data/media
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.stream247.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.stream247.entrypoints=websecure
+      - traefik.http.routers.stream247.tls=true
+      - traefik.http.routers.stream247.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+      - traefik.http.services.stream247.loadbalancer.server.port=3000
+      - traefik.http.routers.stream247-http.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.stream247-http.entrypoints=web
+      - traefik.http.routers.stream247-http.middlewares=stream247-https
+      - traefik.http.middlewares.stream247-https.redirectscheme.scheme=https
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
       interval: 30s

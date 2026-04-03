@@ -7,6 +7,7 @@ Recommended production shape:
 - Linux host
 - Docker Compose
 - reverse proxy in front of `web`
+- optional built-in Traefik profile for HTTPS and Let's Encrypt
 - persistent storage for:
   - PostgreSQL
   - Redis
@@ -28,6 +29,8 @@ Stream247 is currently designed as a self-hosted single-workspace deployment.
 2. Set:
    - `APP_URL`
    - `APP_SECRET`
+   - `TRAEFIK_HOST` if using the built-in Traefik profile
+   - `TRAEFIK_ACME_EMAIL` if using the built-in Traefik profile
    - `POSTGRES_PASSWORD`
    - matching `DATABASE_URL`
 3. Optional but recommended:
@@ -43,6 +46,10 @@ Stream247 is currently designed as a self-hosted single-workspace deployment.
 5. Start the stack:
    ```bash
    docker compose up -d
+   ```
+   Or with built-in Traefik and automatic HTTPS:
+   ```bash
+   docker compose --profile proxy up -d
    ```
 6. Open `/setup`.
 7. Create the owner account.
@@ -63,6 +70,11 @@ Stream247 is currently designed as a self-hosted single-workspace deployment.
 - `APP_URL` must be the real externally reachable base URL.
 - Twitch OAuth will fail if `APP_URL` and the registered Twitch redirect URLs do not match.
 - In real production, HTTPS is strongly recommended because Twitch OAuth and browser sessions should not run over plain HTTP on the public internet.
+- If you use the built-in Traefik profile, set:
+  - `APP_URL=https://<TRAEFIK_HOST>`
+  - `TRAEFIK_HOST=<same-hostname>`
+  - `TRAEFIK_ACME_EMAIL=<your-email>`
+- The built-in Traefik profile leaves direct port `3000` publishing enabled for easier first-time recovery and debugging. If you want a proxy-only surface, remove the `web.ports` entry locally.
 
 ## Secrets And Runtime Settings
 
@@ -109,7 +121,7 @@ Production Compose is intended to pull from:
 - `ghcr.io/drjakeberg/stream247-playout:<tag>`
 
 `.env.example` uses `latest` for evaluation.
-`.env.production.example` pins `v1.0.0` for stable deployment.
+`.env.production.example` pins `v1.0.1` for stable deployment.
 See:
 
 - `docs/versioning.md`
