@@ -5,6 +5,7 @@ import {
   getFilteredIncidents,
   getRuntimeDriftReport,
   getSourceIncidents,
+  getSourceSyncRuns,
   getSourceReferences,
   getWorkerHealth
 } from "../../apps/web/lib/server/state";
@@ -135,6 +136,7 @@ function createState(overrides: Partial<AppState> = {}): AppState {
         updatedAt: ""
       }
     ],
+    sourceSyncRuns: [],
     destinations: [
       {
         id: "destination-primary",
@@ -293,6 +295,19 @@ describe("ops state helpers", () => {
 
   it("collects source incidents and programming references", () => {
     const state = createState({
+      sourceSyncRuns: [
+        {
+          id: "sync-1",
+          sourceId: "source-1",
+          startedAt: "2026-03-27T10:30:00.000Z",
+          finishedAt: "2026-03-27T10:31:00.000Z",
+          status: "success",
+          summary: "Imported 4 YouTube item(s) from youtube-playlist.",
+          discoveredAssets: 4,
+          readyAssets: 4,
+          errorMessage: ""
+        }
+      ],
       incidents: [
         {
           id: "incident-source",
@@ -312,6 +327,7 @@ describe("ops state helpers", () => {
     });
 
     expect(getSourceIncidents(state, "source-1")).toHaveLength(1);
+    expect(getSourceSyncRuns(state, "source-1")).toHaveLength(1);
     const references = getSourceReferences(state, "source-1");
     expect(references.pools).toHaveLength(1);
     expect(references.scheduleBlocks).toHaveLength(1);

@@ -107,6 +107,18 @@ export type AssetRecord = {
   updatedAt: string;
 };
 
+export type SourceSyncRunRecord = {
+  id: string;
+  sourceId: string;
+  startedAt: string;
+  finishedAt: string;
+  status: "success" | "error" | "skipped";
+  summary: string;
+  discoveredAssets: number;
+  readyAssets: number;
+  errorMessage: string;
+};
+
 export type PoolRecord = {
   id: string;
   name: string;
@@ -247,6 +259,7 @@ export type AppState = {
   scheduleBlocks: ScheduleBlockRecord[];
   sources: SourceRecord[];
   assets: AssetRecord[];
+  sourceSyncRuns: SourceSyncRunRecord[];
   destinations: StreamDestinationRecord[];
   incidents: IncidentRecord[];
   auditEvents: AuditEvent[];
@@ -373,6 +386,7 @@ function defaultState(): AppState {
     scheduleBlocks: [],
     sources: [],
     assets: [],
+    sourceSyncRuns: [],
     destinations: [
       {
         id: "destination-primary",
@@ -585,6 +599,11 @@ function normalizeState(state: AppState): AppState {
           isGlobalFallback: asset.isGlobalFallback ?? false
         }))
       : [],
+    sourceSyncRuns: Array.isArray((state as AppState & { sourceSyncRuns?: SourceSyncRunRecord[] }).sourceSyncRuns)
+      ? dedupeById((state as AppState & { sourceSyncRuns?: SourceSyncRunRecord[] }).sourceSyncRuns ?? [])
+          .sort((left, right) => new Date(right.finishedAt || right.startedAt).getTime() - new Date(left.finishedAt || left.startedAt).getTime())
+          .slice(0, 250)
+      : [],
     destinations: Array.isArray(state.destinations) ? dedupeById(state.destinations) : defaults.destinations,
     incidents: Array.isArray(state.incidents) ? dedupeById(state.incidents) : [],
     auditEvents: Array.isArray(state.auditEvents) ? state.auditEvents : [],
@@ -749,6 +768,18 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       is_global_fallback BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS source_sync_runs (
+      id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      discovered_assets INTEGER NOT NULL DEFAULT 0,
+      ready_assets INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS stream_destinations (
@@ -1238,6 +1269,29 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     );
   }
 
+  await client.query("DELETE FROM source_sync_runs");
+  for (const run of next.sourceSyncRuns.slice(0, 250)) {
+    await client.query(
+      `
+        INSERT INTO source_sync_runs (
+          id, source_id, started_at, finished_at, status, summary, discovered_assets, ready_assets, error_message
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `,
+      [
+        run.id,
+        run.sourceId,
+        run.startedAt,
+        run.finishedAt,
+        run.status,
+        run.summary,
+        run.discoveredAssets,
+        run.readyAssets,
+        run.errorMessage
+      ]
+    );
+  }
+
   await client.query("DELETE FROM stream_destinations");
   for (const destination of next.destinations) {
     await client.query(
@@ -1445,6 +1499,17 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     notes: string;
     last_validated_at: string;
   }>("SELECT * FROM stream_destinations ORDER BY name ASC");
+  const sourceSyncRunsResult = await client.query<{
+    id: string;
+    source_id: string;
+    started_at: string;
+    finished_at: string;
+    status: SourceSyncRunRecord["status"];
+    summary: string;
+    discovered_assets: number;
+    ready_assets: number;
+    error_message: string;
+  }>("SELECT * FROM source_sync_runs ORDER BY finished_at DESC LIMIT 250");
   const incidentsResult = await client.query<{
     id: string;
     scope: IncidentRecord["scope"];
@@ -1645,6 +1710,17 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       isGlobalFallback: row.is_global_fallback,
       createdAt: row.created_at,
       updatedAt: row.updated_at
+    })),
+    sourceSyncRuns: sourceSyncRunsResult.rows.map((row) => ({
+      id: row.id,
+      sourceId: row.source_id,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      status: row.status,
+      summary: row.summary,
+      discoveredAssets: row.discovered_assets,
+      readyAssets: row.ready_assets,
+      errorMessage: row.error_message
     })),
     destinations: destinationsResult.rows.map((row) => ({
       id: row.id,
