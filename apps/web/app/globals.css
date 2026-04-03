@@ -180,11 +180,33 @@ main {
   margin-top: 16px;
 }
 
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
 .table th,
 .table td {
   text-align: left;
   padding: 12px 8px;
   border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.source-cell strong {
+  display: block;
+}
+
+.source-url {
+  margin-top: 6px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.actions-cell {
+  min-width: 180px;
 }
 
 code {

@@ -83,7 +83,11 @@ export function isLikelyYouTubeChannelUrl(value: string): boolean {
       return false;
     }
 
-    return /^\/(@[^/]+|channel\/[^/]+|c\/[^/]+|user\/[^/]+)$/.test(url.pathname);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    return (
+      /^\/@[^/]+(?:\/(featured|videos|streams|shorts|playlists|community|about))?$/.test(pathname) ||
+      /^\/(?:channel|c|user)\/[^/]+(?:\/(featured|videos|streams|shorts|playlists|community|about))?$/.test(pathname)
+    );
   } catch {
     return false;
   }

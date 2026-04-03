@@ -32,35 +32,37 @@ export default async function SourcesPage() {
           scans the local media library, ingests direct media URLs, expands YouTube playlists/channels, and resolves
           Twitch VODs/channels into PostgreSQL-backed assets.
         </p>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Enabled</th>
-              <th>Status</th>
-              <th>Last sync</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {state.sources.map((source) => (
-              <tr key={source.id}>
-                <td>
-                  {source.name}
-                  {source.externalUrl ? <div className="subtle">{source.externalUrl}</div> : null}
-                </td>
-                <td>{source.type}</td>
-                <td>{source.enabled ?? true ? "Yes" : "No"}</td>
-                <td>{source.status}</td>
-                <td>{source.lastSyncedAt || "Not synced yet"}</td>
-                <td>
-                  <SourceActionsForm source={source} />
-                </td>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Enabled</th>
+                <th>Status</th>
+                <th>Last sync</th>
+                <th>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {state.sources.map((source) => (
+                <tr key={source.id}>
+                  <td className="source-cell">
+                    <strong>{source.name}</strong>
+                    {source.externalUrl ? <div className="subtle source-url">{source.externalUrl}</div> : null}
+                  </td>
+                  <td>{source.type}</td>
+                  <td>{source.enabled ?? true ? "Yes" : "No"}</td>
+                  <td>{source.status}</td>
+                  <td>{source.lastSyncedAt || "Not synced yet"}</td>
+                  <td className="actions-cell">
+                    <SourceActionsForm source={source} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Panel>
       <Panel title="Pools" eyebrow="Programming">
         <div className="list">
