@@ -11,6 +11,7 @@ function normalizeBody(body: {
   durationMinutes?: number;
   dayOfWeek?: number;
   dayOfWeeks?: number[];
+  showId?: string;
   poolId?: string;
   sourceName?: string;
 }) {
@@ -24,6 +25,7 @@ function normalizeBody(body: {
     dayOfWeeks: Array.isArray(body.dayOfWeeks)
       ? [...new Set(body.dayOfWeeks.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 0 && value <= 6))]
       : [],
+    showId: (body.showId ?? "").trim(),
     poolId: (body.poolId ?? "").trim(),
     sourceName: (body.sourceName ?? "").trim()
   };
@@ -57,6 +59,7 @@ export async function POST(request: NextRequest) {
       durationMinutes?: number;
       dayOfWeek?: number;
       dayOfWeeks?: number[];
+      showId?: string;
       poolId?: string;
       sourceName?: string;
     }
@@ -73,6 +76,9 @@ export async function POST(request: NextRequest) {
       if (!pool) {
         throw new Error("Schedule blocks must target an existing pool.");
       }
+      if (payload.showId && !state.showProfiles.some((show) => show.id === payload.showId)) {
+        throw new Error("Selected show profile no longer exists.");
+      }
 
       const dayOfWeeks = payload.dayOfWeeks.length > 0 ? payload.dayOfWeeks : [payload.dayOfWeek];
 
@@ -85,6 +91,7 @@ export async function POST(request: NextRequest) {
           startMinuteOfDay: payload.startMinuteOfDay,
           durationMinutes: payload.durationMinutes,
           dayOfWeek,
+          showId: payload.showId,
           poolId: payload.poolId,
           sourceName: pool.name
         }))
@@ -159,6 +166,9 @@ export async function PUT(request: NextRequest) {
       if (!pool) {
         throw new Error("Schedule blocks must target an existing pool.");
       }
+      if (payload.showId && !state.showProfiles.some((show) => show.id === payload.showId)) {
+        throw new Error("Selected show profile no longer exists.");
+      }
 
       const nextBlocks = state.scheduleBlocks.map((block) =>
         block.id === payload.id
@@ -169,6 +179,7 @@ export async function PUT(request: NextRequest) {
               startMinuteOfDay: payload.startMinuteOfDay,
               durationMinutes: payload.durationMinutes,
               dayOfWeek: payload.dayOfWeek,
+              showId: payload.showId,
               poolId: payload.poolId,
               sourceName: pool.name
             }

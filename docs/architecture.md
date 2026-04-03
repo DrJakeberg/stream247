@@ -125,6 +125,7 @@ Current schedule capabilities:
 - minute-accurate block start times
 - duration validation
 - overlap detection
+- reusable show profiles above raw blocks
 - multi-day block creation
 - weekly coverage summaries
 - quick-start programming templates

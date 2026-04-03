@@ -2,6 +2,7 @@
 
 import { formatMinuteOfDay, type ScheduleBlock } from "@stream247/core";
 import { useRef, useState, useTransition } from "react";
+import type { ShowProfileRecord } from "@/lib/server/state";
 
 const minutesPerSlot = 15;
 const slotHeight = 28;
@@ -11,10 +12,11 @@ const dayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frid
 type Props = {
   blocks: ScheduleBlock[];
   conflicts: string[];
+  showProfiles: ShowProfileRecord[];
   timeZone: string;
 };
 
-export function ScheduleTimeline({ blocks, conflicts, timeZone }: Props) {
+export function ScheduleTimeline({ blocks, conflicts, showProfiles, timeZone }: Props) {
   const [draggedId, setDraggedId] = useState("");
   const [activeDay, setActiveDay] = useState(1);
   const [error, setError] = useState("");
@@ -144,6 +146,7 @@ export function ScheduleTimeline({ blocks, conflicts, timeZone }: Props) {
           {visibleBlocks.map((block) => {
               const top = (block.startMinuteOfDay / minutesPerSlot) * slotHeight;
               const height = Math.max((block.durationMinutes / minutesPerSlot) * slotHeight - 4, 24);
+              const show = showProfiles.find((entry) => entry.id === block.showId);
 
               return (
                 <button
@@ -156,11 +159,21 @@ export function ScheduleTimeline({ blocks, conflicts, timeZone }: Props) {
                     event.dataTransfer.setData("text/plain", block.id);
                     event.dataTransfer.effectAllowed = "move";
                   }}
-                  style={{ top, height }}
+                  style={{
+                    top,
+                    height,
+                    borderLeftColor: conflictSet.has(block.id) ? undefined : show?.color || undefined,
+                    background: conflictSet.has(block.id)
+                      ? undefined
+                      : show?.color
+                        ? `color-mix(in srgb, ${show.color} 18%, rgba(255,255,255,0.74))`
+                        : undefined
+                  }}
                   title={`${block.title} · ${formatMinuteOfDay(block.startMinuteOfDay)} · ${block.durationMinutes} minutes`}
                   type="button"
                 >
                   <strong>{block.title}</strong>
+                  {show ? <span className="schedule-show-name">{show.name}</span> : null}
                   <span>
                     {formatMinuteOfDay(block.startMinuteOfDay)} · {block.durationMinutes}m
                   </span>

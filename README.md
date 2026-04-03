@@ -309,6 +309,7 @@ Notes:
 - minute-accurate start times
 - duration validation
 - overlap detection
+- reusable show profiles with default title/category/duration/color
 - multi-day block creation
 - weekly coverage overview
 - quick-start programming templates
