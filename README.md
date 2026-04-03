@@ -315,6 +315,8 @@ Notes:
 
 - FFmpeg-based RTMP playout foundation
 - pool-based round-robin playout selection
+- standby replay slate when no playable asset is available
+- scheduled daily reconnect window with controlled standby mode
 - destination readiness state
 - operator restart control
 - operator pin-asset override
