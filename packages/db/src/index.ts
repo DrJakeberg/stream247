@@ -182,7 +182,7 @@ export type ManagedConfigRecord = {
 };
 
 export type PlayoutRuntimeRecord = {
-  status: "idle" | "starting" | "running" | "switching" | "degraded" | "recovering" | "failed";
+  status: "idle" | "starting" | "running" | "switching" | "degraded" | "recovering" | "failed" | "standby" | "reconnecting";
   currentAssetId: string;
   currentTitle: string;
   desiredAssetId: string;
@@ -208,8 +208,10 @@ export type PlayoutRuntimeRecord = {
     | "destination_missing"
     | "resolve_failed"
     | "ffmpeg_crash_loop"
+    | "standby"
+    | "scheduled_reconnect"
     | "";
-  fallbackTier: "none" | "scheduled" | "operator" | "global-fallback" | "generic-fallback";
+  fallbackTier: "none" | "scheduled" | "operator" | "global-fallback" | "generic-fallback" | "standby";
   overrideMode: "schedule" | "asset" | "fallback";
   overrideAssetId: string;
   overrideUntil: string;

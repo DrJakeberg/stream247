@@ -31,10 +31,14 @@ const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcessByStdio<null, Readable, Readable> | null = null;
 let playoutAssetId = "";
 let playoutDestinationId = "";
+let plannedStopReason = "";
 const WORKER_HEARTBEAT_STALE_MS = 120_000;
 const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
+const PLAYOUT_RECONNECT_INTERVAL_MS = Number(process.env.PLAYOUT_RECONNECT_HOURS || "24") * 60 * 60 * 1000;
+const PLAYOUT_RECONNECT_WINDOW_MS = Number(process.env.PLAYOUT_RECONNECT_SECONDS || "20") * 1000;
+const standbySlatePath = "/tmp/stream247-standby.txt";
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -181,6 +185,66 @@ function getFfmpegCommand(input: string, output: string): string[] {
     "flv",
     output
   ];
+}
+
+function getStandbyFfmpegCommand(output: string): string[] {
+  return [
+    "-hide_banner",
+    "-loglevel",
+    "warning",
+    "-re",
+    "-f",
+    "lavfi",
+    "-i",
+    "color=c=0x0b1f18:s=1280x720:r=30",
+    "-f",
+    "lavfi",
+    "-i",
+    "anullsrc=channel_layout=stereo:sample_rate=44100",
+    "-vf",
+    `drawtext=fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:textfile=${standbySlatePath}:reload=1:fontcolor=white:fontsize=34:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=12`,
+    "-c:v",
+    "libx264",
+    "-preset",
+    process.env.FFMPEG_PRESET || "veryfast",
+    "-maxrate",
+    process.env.FFMPEG_MAXRATE || "4500k",
+    "-bufsize",
+    process.env.FFMPEG_BUFSIZE || "9000k",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    "60",
+    "-c:a",
+    "aac",
+    "-ar",
+    "44100",
+    "-b:a",
+    process.env.FFMPEG_AUDIO_BITRATE || "160k",
+    "-shortest",
+    "-f",
+    "flv",
+    output
+  ];
+}
+
+async function writeStandbySlate(state: AppState): Promise<void> {
+  const currentItem = getCurrentScheduleItem(state);
+  const nextPreview = buildSchedulePreview({
+    date: getCurrentScheduleMoment({
+      now: new Date(),
+      timeZone: process.env.CHANNEL_TIMEZONE || "UTC"
+    }).date,
+    blocks: state.scheduleBlocks
+  }).items;
+  const nextItem = nextPreview.find((item) => item.id !== currentItem?.blockId) ?? null;
+  const lines = [
+    state.overlay.replayLabel || "Replay stream",
+    state.overlay.headline || "Please wait, restream is starting",
+    currentItem ? `Current: ${currentItem.title}` : "Current: Stand by",
+    nextItem ? `Next: ${nextItem.title} ${nextItem.startTime}-${nextItem.endTime}` : "Next: Programming will resume shortly"
+  ];
+  await fs.writeFile(standbySlatePath, `${lines.join("\n")}\n`, "utf8");
 }
 
 async function refreshBroadcasterAccessToken(): Promise<string> {
@@ -778,7 +842,15 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
   return eligibleAssets[(currentIndex + 1) % eligibleAssets.length] ?? eligibleAssets[0] ?? null;
 }
 
-function choosePlaybackCandidate(state: AppState) {
+type SelectionResult = {
+  asset: AssetRecord | null;
+  reason: string;
+  lifecycleStatus: AppState["playout"]["status"];
+  reasonCode: AppState["playout"]["selectionReasonCode"];
+  fallbackTier: AppState["playout"]["fallbackTier"];
+};
+
+function choosePlaybackCandidate(state: AppState): SelectionResult {
   const manualOverrideActive = isTimestampActive(state.playout.overrideUntil);
   const skippedAssetId = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
   const desiredAsset =
@@ -866,7 +938,8 @@ function choosePlaybackCandidate(state: AppState) {
   };
 }
 
-function stopPlayoutProcess(): void {
+function stopPlayoutProcess(reason = ""): void {
+  plannedStopReason = reason;
   if (playoutProcess && !playoutProcess.killed) {
     playoutProcess.kill("SIGTERM");
   }
@@ -876,7 +949,7 @@ function stopPlayoutProcess(): void {
 }
 
 async function startOrSwitchPlayout(args: {
-  asset: AssetRecord;
+  asset: AssetRecord | null;
   destination: StreamDestinationRecord;
   streamTarget: string;
   lifecycleStatus: AppState["playout"]["status"];
@@ -886,18 +959,19 @@ async function startOrSwitchPlayout(args: {
 }): Promise<void> {
   const switching = playoutProcess && !playoutProcess.killed;
   if (switching) {
-    stopPlayoutProcess();
+    stopPlayoutProcess("switch");
   }
 
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
-  const playableInput = await resolvePlayableInput(args.asset.path);
-  const command = getFfmpegCommand(playableInput, args.streamTarget);
+  const command = args.asset
+    ? getFfmpegCommand(await resolvePlayableInput(args.asset.path), args.streamTarget)
+    : getStandbyFfmpegCommand(args.streamTarget);
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe"]
   });
 
   playoutProcess = child;
-  playoutAssetId = args.asset.id;
+  playoutAssetId = args.asset?.id ?? "";
   playoutDestinationId = args.destination.id;
 
   const pid = child.pid ?? 0;
@@ -907,10 +981,17 @@ async function startOrSwitchPlayout(args: {
     ...current,
     playout: {
       ...current.playout,
-      status: switching ? "switching" : args.lifecycleStatus === "recovering" ? "recovering" : "starting",
-      currentAssetId: args.asset.id,
-      currentTitle: args.asset.title,
-      desiredAssetId: args.asset.id,
+      status:
+        args.lifecycleStatus === "standby" || args.lifecycleStatus === "reconnecting"
+          ? args.lifecycleStatus
+          : switching
+            ? "switching"
+            : args.lifecycleStatus === "recovering"
+              ? "recovering"
+              : "starting",
+      currentAssetId: args.asset?.id ?? "",
+      currentTitle: args.asset?.title ?? "Replay standby",
+      desiredAssetId: args.asset?.id ?? "",
       currentDestinationId: args.destination.id,
       restartRequestedAt: "",
       heartbeatAt: startedAt,
@@ -950,6 +1031,8 @@ async function startOrSwitchPlayout(args: {
   });
 
   child.on("exit", (code) => {
+    const wasPlanned = plannedStopReason !== "";
+    plannedStopReason = "";
     playoutProcess = null;
     playoutAssetId = "";
     playoutDestinationId = "";
@@ -959,7 +1042,7 @@ async function startOrSwitchPlayout(args: {
       playout: {
         ...current.playout,
         status:
-          code === 0
+          wasPlanned || code === 0
             ? "idle"
             : current.playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
               ? "degraded"
@@ -968,12 +1051,14 @@ async function startOrSwitchPlayout(args: {
         processPid: 0,
         processStartedAt: "",
         lastSuccessfulStartAt:
+          wasPlanned ||
           code === 0 ||
           (current.playout.processStartedAt !== "" &&
             Date.now() - new Date(current.playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS)
             ? current.playout.processStartedAt
             : current.playout.lastSuccessfulStartAt,
         lastSuccessfulAssetId:
+          wasPlanned ||
           code === 0 ||
           (current.playout.processStartedAt !== "" &&
             Date.now() - new Date(current.playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS)
@@ -982,35 +1067,44 @@ async function startOrSwitchPlayout(args: {
         lastExitCode: String(code ?? ""),
         restartCount: current.playout.restartCount + 1,
         crashCountWindow:
+          wasPlanned ||
           code === 0 ||
           (current.playout.processStartedAt !== "" &&
             Date.now() - new Date(current.playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS)
             ? 0
             : current.playout.crashCountWindow + 1,
         crashLoopDetected:
+          !wasPlanned &&
           code !== 0 &&
           (code === null ? current.playout.crashCountWindow + 1 : current.playout.crashCountWindow + 1) >=
             PLAYOUT_CRASH_LOOP_THRESHOLD,
-        lastError: code === 0 ? current.playout.lastError : `FFmpeg exited with code ${String(code)}.`,
+        lastError: wasPlanned || code === 0 ? current.playout.lastError : `FFmpeg exited with code ${String(code)}.`,
         selectionReasonCode:
+          wasPlanned
+            ? current.playout.selectionReasonCode
+            :
           code !== 0 && current.playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
             ? "ffmpeg_crash_loop"
             : current.playout.selectionReasonCode,
         message:
-          code === 0
+          wasPlanned
+            ? "Playout stopped for a planned transition."
+            : code === 0
             ? "Playout process stopped cleanly."
             : current.playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
               ? "Playout entered crash-loop protection."
               : "Playout process exited unexpectedly."
       }
     }));
-    void upsertIncident({
-      scope: "playout",
-      severity: code === 0 ? "info" : "critical",
-      title: "FFmpeg process exited",
-      message: `FFmpeg exited with code ${String(code)}.`,
-      fingerprint: "playout.ffmpeg.exit"
-    });
+    if (!wasPlanned) {
+      void upsertIncident({
+        scope: "playout",
+        severity: code === 0 ? "info" : "critical",
+        title: "FFmpeg process exited",
+        message: `FFmpeg exited with code ${String(code)}.`,
+        fingerprint: "playout.ffmpeg.exit"
+      });
+    }
   });
 }
 
@@ -1054,10 +1148,10 @@ async function runPlayoutCycle(): Promise<void> {
 
   const destination = state.destinations.find((entry) => entry.enabled) ?? null;
   const streamTarget = getConfiguredStreamTarget(destination);
-  const selection = choosePlaybackCandidate(state);
+  let selection: SelectionResult = choosePlaybackCandidate(state);
 
   if (!destination || !streamTarget) {
-    stopPlayoutProcess();
+    stopPlayoutProcess("destination-missing");
     await upsertIncident({
       scope: "playout",
       severity: "warning",
@@ -1087,35 +1181,56 @@ async function runPlayoutCycle(): Promise<void> {
 
   await resolveIncident("playout.output.missing", "Playout destination is configured.");
 
-  if (!selection.asset) {
+  const reconnectActive =
+    state.playout.restartRequestedAt !== "" &&
+    Date.now() - new Date(state.playout.restartRequestedAt).getTime() < PLAYOUT_RECONNECT_WINDOW_MS;
+  const reconnectDue =
+    !reconnectActive &&
+    state.playout.processStartedAt !== "" &&
+    Date.now() - new Date(state.playout.processStartedAt).getTime() >= PLAYOUT_RECONNECT_INTERVAL_MS;
+
+  if (reconnectDue) {
+    stopPlayoutProcess("scheduled-reconnect");
+    state = await updateAppState((current) => ({
+      ...current,
+      playout: {
+        ...current.playout,
+        restartRequestedAt: new Date().toISOString(),
+        message: "Scheduled 24h reconnect is starting."
+      }
+    }));
+  }
+
+  if (reconnectActive || state.playout.restartRequestedAt !== "") {
+    await writeStandbySlate(state);
+    selection = {
+      asset: null,
+      reason: "Scheduled reconnect window is active. Standby slate is on air.",
+      lifecycleStatus: "reconnecting" as const,
+      reasonCode: "scheduled_reconnect" as const,
+      fallbackTier: "standby" as const
+    };
+  } else if (!selection.asset) {
     await upsertIncident({
       scope: "playout",
-      severity: "critical",
+      severity: "warning",
       title: "No playable asset available",
       message: selection.reason,
       fingerprint: "playout.no-asset"
     });
-
-    await updateAppState((current) => ({
-      ...current,
-      playout: {
-        ...current.playout,
-        status: "failed",
-        currentAssetId: "",
-        currentTitle: "",
-        desiredAssetId: "",
-        heartbeatAt: new Date().toISOString(),
-        lastError: selection.reason,
-        selectionReasonCode: selection.reasonCode,
-        fallbackTier: selection.fallbackTier,
-        message: selection.reason
-      }
-    }));
-    stopPlayoutProcess();
-    return;
+    await writeStandbySlate(state);
+    selection = {
+      asset: null,
+      reason: "No playable asset is available. Standby replay slate is on air.",
+      lifecycleStatus: "standby" as const,
+      reasonCode: "standby" as const,
+      fallbackTier: "standby" as const
+    };
   }
 
-  await resolveIncident("playout.no-asset", "A playable asset is available again.");
+  if (selection.asset) {
+    await resolveIncident("playout.no-asset", "A playable asset is available again.");
+  }
 
   if (state.playout.crashLoopDetected && !state.playout.restartRequestedAt) {
     await upsertIncident({
@@ -1143,7 +1258,7 @@ async function runPlayoutCycle(): Promise<void> {
   const restartRequested = Boolean(state.playout.restartRequestedAt);
   const currentScheduleItem = getCurrentScheduleItem(state);
   if (restartRequested) {
-    stopPlayoutProcess();
+    stopPlayoutProcess("restart-requested");
     state = await updateAppState((current) => ({
       ...current,
       playout: {
@@ -1151,7 +1266,8 @@ async function runPlayoutCycle(): Promise<void> {
         crashLoopDetected: false,
         crashCountWindow: 0,
         lastError: "",
-        restartRequestedAt: current.playout.restartRequestedAt
+        restartRequestedAt:
+          reconnectActive || selection.reasonCode === "scheduled_reconnect" ? current.playout.restartRequestedAt : ""
       }
     }));
   }
@@ -1190,7 +1306,7 @@ async function runPlayoutCycle(): Promise<void> {
       }));
       return;
     }
-  } else if (playoutAssetId !== selection.asset.id || playoutDestinationId !== destination.id) {
+  } else if (selection.asset && (playoutAssetId !== selection.asset.id || playoutDestinationId !== destination.id)) {
     try {
       await startOrSwitchPlayout({
         asset: selection.asset,
@@ -1233,7 +1349,7 @@ async function runPlayoutCycle(): Promise<void> {
             pool.id === currentScheduleItem.poolId
               ? {
                   ...pool,
-                  cursorAssetId: selection.asset.id,
+                  cursorAssetId: selection.asset?.id ?? pool.cursorAssetId,
                   updatedAt: new Date().toISOString()
                 }
               : pool
@@ -1241,12 +1357,19 @@ async function runPlayoutCycle(): Promise<void> {
         : current.pools,
     playout: {
       ...current.playout,
-      status: selection.lifecycleStatus === "recovering" ? "recovering" : "running",
-      currentAssetId: selection.asset.id,
-      currentTitle: selection.asset.title,
-      desiredAssetId: selection.asset.id,
+      status:
+        selection.lifecycleStatus === "recovering"
+          ? "recovering"
+          : selection.lifecycleStatus === "standby"
+            ? "standby"
+            : selection.lifecycleStatus === "reconnecting"
+              ? "reconnecting"
+              : "running",
+      currentAssetId: selection.asset?.id ?? "",
+      currentTitle: selection.asset?.title ?? "Replay standby",
+      desiredAssetId: selection.asset?.id ?? "",
       currentDestinationId: destination.id,
-      restartRequestedAt: "",
+      restartRequestedAt: selection.reasonCode === "scheduled_reconnect" ? current.playout.restartRequestedAt : "",
       overrideMode: current.playout.overrideMode,
       overrideAssetId: current.playout.overrideAssetId,
       overrideUntil: current.playout.overrideUntil,
