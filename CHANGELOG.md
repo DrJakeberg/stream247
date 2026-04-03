@@ -4,6 +4,19 @@
 
 - No unreleased changes currently tracked.
 
+## 1.0.3 - 2026-04-03
+
+### Fixed
+
+- fixed Twitch channel archive ingestion so channel connectors sync archive VODs instead of failing on offline channel pages
+- fixed Twitch archive playback URL normalization for `v<id>` entries emitted by `yt-dlp`
+- fixed worker/playout healthchecks by marking ESM worker packages explicitly as modules
+- fixed source validation for real YouTube handle/channel URLs and repaired the sources UI for long names and URLs
+- fixed playout state recovery so valid assets can automatically clear crash-loop protection
+- blocked destructive source deletion while sources are still referenced by pools or schedule blocks
+- fixed standby-to-asset switching so the old FFmpeg process is fully stopped before a new one starts
+- fixed pool playout selection so the currently running asset stays active instead of rotating every worker cycle
+
 ## 1.0.2 - 2026-04-03
 
 ### Fixed

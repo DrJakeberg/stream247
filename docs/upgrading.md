@@ -6,9 +6,9 @@ Use pinned GHCR image tags in production.
 
 Example:
 
-- `ghcr.io/drjakeberg/stream247-web:v1.0.0`
-- `ghcr.io/drjakeberg/stream247-worker:v1.0.0`
-- `ghcr.io/drjakeberg/stream247-playout:v1.0.0`
+- `ghcr.io/drjakeberg/stream247-web:v1.0.3`
+- `ghcr.io/drjakeberg/stream247-worker:v1.0.3`
+- `ghcr.io/drjakeberg/stream247-playout:v1.0.3`
 
 Do not use `latest` for unattended production deployments.
 
@@ -24,7 +24,7 @@ Do not use `latest` for unattended production deployments.
    ```
 6. Update the pinned image tags in your Compose configuration, or rehearse the target version with:
    ```bash
-   ./scripts/upgrade-rehearsal.sh v1.0.0
+   ./scripts/upgrade-rehearsal.sh v1.0.3
    ```
 7. Pull the new images.
 8. Restart the stack.

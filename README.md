@@ -241,7 +241,7 @@ For production pinning, use `.env.production.example` or set the image tags expl
 - production should pin explicit release tags and not follow `latest`
 - release rehearsal helpers are available:
   - `pnpm release:preflight`
-  - `./scripts/upgrade-rehearsal.sh v1.0.0`
+  - `./scripts/upgrade-rehearsal.sh v1.0.3`
   - `./scripts/soak-monitor.sh --hours 24`
 
 Operational docs:
@@ -262,7 +262,7 @@ Before tagging a production release:
    ```
 3. Rehearse the target version:
    ```bash
-   ./scripts/upgrade-rehearsal.sh v1.0.0
+   ./scripts/upgrade-rehearsal.sh v1.0.3
    ```
 4. Run an extended soak:
    ```bash
