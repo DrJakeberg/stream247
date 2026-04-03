@@ -394,6 +394,7 @@ function buildAssetFromPath(filePath: string, now: string): AssetRecord {
 
 async function syncLocalMediaLibrary(): Promise<void> {
   const mediaRoot = getMediaRoot();
+  const startedAt = new Date().toISOString();
   const discoveredFiles = await walkMediaFiles(mediaRoot);
   const now = new Date().toISOString();
   const discoveredAssets = discoveredFiles.map((filePath) => buildAssetFromPath(filePath, now));
@@ -457,6 +458,25 @@ async function syncLocalMediaLibrary(): Promise<void> {
       fingerprint: "source.local-library.empty"
     });
   }
+
+  await updateAppState((state) => ({
+    ...state,
+    sourceSyncRuns: [
+      buildSourceSyncRun({
+        sourceId: "source-local-library",
+        startedAt,
+        finishedAt: now,
+        status: discoveredAssets.length > 0 ? "success" : "skipped",
+        summary:
+          discoveredAssets.length > 0
+            ? `Discovered ${discoveredAssets.length} file(s) in the local media library.`
+            : "Local media library scan completed with no playable files.",
+        discoveredAssets: discoveredAssets.length,
+        readyAssets: discoveredAssets.length
+      }),
+      ...state.sourceSyncRuns
+    ].slice(0, 250)
+  }));
 }
 
 async function syncDirectMediaSources(): Promise<void> {
@@ -467,11 +487,23 @@ async function syncDirectMediaSources(): Promise<void> {
   );
   const directAssets: AssetRecord[] = [];
   let hasInvalidSource = false;
+  const syncRuns: AppState["sourceSyncRuns"] = [];
 
   for (const source of directSources) {
+    const startedAt = new Date().toISOString();
     const url = source.externalUrl?.trim() ?? "";
     if (!isDirectMediaUrl(url)) {
       hasInvalidSource = true;
+      syncRuns.push(buildSourceSyncRun({
+        sourceId: source.id,
+        startedAt,
+        finishedAt: now,
+        status: "error",
+        summary: "Direct media URL validation failed.",
+        discoveredAssets: 0,
+        readyAssets: 0,
+        errorMessage: "Direct media URLs must be http(s) links ending in a supported media file extension."
+      }));
       continue;
     }
 
@@ -487,6 +519,16 @@ async function syncDirectMediaSources(): Promise<void> {
       createdAt: now,
       updatedAt: now
     });
+    syncRuns.push(buildSourceSyncRun({
+      sourceId: source.id,
+      startedAt,
+      finishedAt: now,
+      status: "success",
+      summary: "Direct media URL normalized into a playable asset.",
+      discoveredAssets: 1,
+      readyAssets: 1,
+      errorMessage: ""
+    }));
   }
 
   await updateAppState((current) => ({
@@ -512,7 +554,8 @@ async function syncDirectMediaSources(): Promise<void> {
         const matchingSource = current.sources.find((source) => source.id === asset.sourceId);
         return matchingSource?.connectorKind !== "direct-media";
       })
-    ]
+    ],
+    sourceSyncRuns: [...syncRuns, ...current.sourceSyncRuns].slice(0, 250)
   }));
 
   if (hasInvalidSource) {
@@ -582,6 +625,29 @@ function buildRemoteAsset(args: {
   };
 }
 
+function buildSourceSyncRun(args: {
+  sourceId: string;
+  startedAt: string;
+  finishedAt: string;
+  status: AppState["sourceSyncRuns"][number]["status"];
+  summary: string;
+  discoveredAssets: number;
+  readyAssets: number;
+  errorMessage?: string;
+}) {
+  return {
+    id: `sync_${Math.random().toString(36).slice(2, 10)}`,
+    sourceId: args.sourceId,
+    startedAt: args.startedAt,
+    finishedAt: args.finishedAt,
+    status: args.status,
+    summary: args.summary,
+    discoveredAssets: args.discoveredAssets,
+    readyAssets: args.readyAssets,
+    errorMessage: args.errorMessage ?? ""
+  };
+}
+
 function fromUnixTimestamp(value?: number): string | undefined {
   return typeof value === "number" && Number.isFinite(value) ? new Date(value * 1000).toISOString() : undefined;
 }
@@ -623,8 +689,10 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   );
   const youtubeAssets: AssetRecord[] = [];
   let hadFailure = false;
+  const syncRuns: AppState["sourceSyncRuns"] = [];
 
   for (const source of youtubeSources) {
+    const startedAt = new Date().toISOString();
     const externalUrl = source.externalUrl?.trim() ?? "";
     const isValid =
       source.connectorKind === "youtube-playlist"
@@ -632,12 +700,26 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         : isLikelyYouTubeChannelUrl(externalUrl);
     if (!isValid) {
       hadFailure = true;
+      syncRuns.push(buildSourceSyncRun({
+        sourceId: source.id,
+        startedAt,
+        finishedAt: now,
+        status: "error",
+        summary: "Source URL validation failed before yt-dlp ingestion.",
+        discoveredAssets: 0,
+        readyAssets: 0,
+        errorMessage:
+          source.connectorKind === "youtube-playlist"
+            ? "YouTube playlist sources require a playlist URL with a list parameter."
+            : "YouTube channel sources require a channel, handle, or user URL."
+      }));
       continue;
     }
 
     try {
       const payload = await loadFlatCollection(externalUrl);
       const entries = payload.entries ?? [];
+      let sourceAssetCount = 0;
 
       for (const entry of entries) {
         const id = entry.id ?? entry.url ?? entry.webpage_url ?? "";
@@ -658,10 +740,35 @@ async function syncYoutubePlaylistSources(): Promise<void> {
             now
           })
         );
+        sourceAssetCount += 1;
       }
+
+      syncRuns.push(buildSourceSyncRun({
+        sourceId: source.id,
+        startedAt,
+        finishedAt: now,
+        status: sourceAssetCount > 0 ? "success" : "skipped",
+        summary:
+          sourceAssetCount > 0
+            ? `Imported ${sourceAssetCount} YouTube item(s) from ${source.connectorKind}.`
+            : "YouTube ingestion completed but returned no playable items.",
+        discoveredAssets: sourceAssetCount,
+        readyAssets: sourceAssetCount,
+        errorMessage: ""
+      }));
     } catch (error) {
       hadFailure = true;
       const message = error instanceof Error ? error.message : "Unknown YouTube playlist ingestion error.";
+      syncRuns.push(buildSourceSyncRun({
+        sourceId: source.id,
+        startedAt,
+        finishedAt: now,
+        status: "error",
+        summary: "yt-dlp ingestion failed.",
+        discoveredAssets: 0,
+        readyAssets: 0,
+        errorMessage: message
+      }));
       await upsertIncident({
         scope: "source",
         severity: "warning",
@@ -696,7 +803,8 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         const matchingSource = current.sources.find((source) => source.id === asset.sourceId);
         return matchingSource?.connectorKind !== "youtube-playlist" && matchingSource?.connectorKind !== "youtube-channel";
       })
-    ]
+    ],
+    sourceSyncRuns: [...syncRuns, ...current.sourceSyncRuns].slice(0, 250)
   }));
 
   if (!hadFailure) {
@@ -714,12 +822,27 @@ async function syncTwitchVodSources(): Promise<void> {
     (source) => (source.connectorKind === "twitch-vod" || source.connectorKind === "twitch-channel") && (source.enabled ?? true)
   );
   const twitchAssets: AssetRecord[] = [];
+  const syncRuns: AppState["sourceSyncRuns"] = [];
 
   for (const source of twitchSources) {
+    const startedAt = new Date().toISOString();
     const externalUrl = source.externalUrl?.trim() ?? "";
     const isValid =
       source.connectorKind === "twitch-vod" ? isLikelyTwitchVodUrl(externalUrl) : isLikelyTwitchChannelUrl(externalUrl);
     if (!isValid) {
+      syncRuns.push(buildSourceSyncRun({
+        sourceId: source.id,
+        startedAt,
+        finishedAt: now,
+        status: "error",
+        summary: "Source URL validation failed before Twitch ingestion.",
+        discoveredAssets: 0,
+        readyAssets: 0,
+        errorMessage:
+          source.connectorKind === "twitch-vod"
+            ? "Twitch VOD sources require a twitch.tv/videos/<id> URL."
+            : "Twitch channel sources require a twitch.tv/<channel> URL."
+      }));
       await upsertIncident({
         scope: "source",
         severity: "warning",
@@ -753,8 +876,19 @@ async function syncTwitchVodSources(): Promise<void> {
             now
           })
         );
+        syncRuns.push(buildSourceSyncRun({
+          sourceId: source.id,
+          startedAt,
+          finishedAt: now,
+          status: "success",
+          summary: "Imported the Twitch VOD into the asset catalog.",
+          discoveredAssets: 1,
+          readyAssets: 1,
+          errorMessage: ""
+        }));
       } else {
         const payload = await loadFlatCollection(getTwitchArchiveUrl(externalUrl));
+        let sourceAssetCount = 0;
         for (const entry of payload.entries ?? []) {
           const id = entry.id ?? "";
           if (!id) {
@@ -774,12 +908,36 @@ async function syncTwitchVodSources(): Promise<void> {
               now
             })
           );
+          sourceAssetCount += 1;
         }
+        syncRuns.push(buildSourceSyncRun({
+          sourceId: source.id,
+          startedAt,
+          finishedAt: now,
+          status: sourceAssetCount > 0 ? "success" : "skipped",
+          summary:
+            sourceAssetCount > 0
+              ? `Imported ${sourceAssetCount} Twitch archive item(s).`
+              : "Twitch archive ingestion completed but returned no playable items.",
+          discoveredAssets: sourceAssetCount,
+          readyAssets: sourceAssetCount,
+          errorMessage: ""
+        }));
       }
 
       await resolveIncident(`source.${source.connectorKind}.${source.id}`, `Twitch source ${source.name} ingested successfully.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Twitch VOD ingestion error.";
+      syncRuns.push(buildSourceSyncRun({
+        sourceId: source.id,
+        startedAt,
+        finishedAt: now,
+        status: "error",
+        summary: "Twitch ingestion failed.",
+        discoveredAssets: 0,
+        readyAssets: 0,
+        errorMessage: message
+      }));
       await upsertIncident({
         scope: "source",
         severity: "warning",
@@ -818,7 +976,8 @@ async function syncTwitchVodSources(): Promise<void> {
         const matchingSource = current.sources.find((source) => source.id === asset.sourceId);
         return matchingSource?.connectorKind !== "twitch-vod" && matchingSource?.connectorKind !== "twitch-channel";
       })
-    ]
+    ],
+    sourceSyncRuns: [...syncRuns, ...current.sourceSyncRuns].slice(0, 250)
   }));
 }
 

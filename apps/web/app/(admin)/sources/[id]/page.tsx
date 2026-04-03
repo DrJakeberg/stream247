@@ -8,6 +8,7 @@ import { SourceSyncForm } from "@/components/source-sync-form";
 import {
   getSourceAuditEvents,
   getSourceIncidents,
+  getSourceSyncRuns,
   getSourceReferences,
   readAppState
 } from "@/lib/server/state";
@@ -29,6 +30,7 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
   const readyAssets = assets.filter((asset) => asset.status === "ready");
   const errorAssets = assets.filter((asset) => asset.status === "error");
   const incidents = getSourceIncidents(state, source.id);
+  const syncRuns = getSourceSyncRuns(state, source.id);
   const auditEvents = getSourceAuditEvents(state, source.id);
   const references = getSourceReferences(state, source.id);
 
@@ -111,6 +113,23 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
 
         <Panel title="Sync and incident history" eyebrow="Ops">
           <div className="list">
+            {syncRuns.map((run) => (
+              <div className="item" key={run.id}>
+                <div className="stats-row">
+                  <strong>{run.summary}</strong>
+                  <span className={`badge badge-${run.status === "success" ? "ready" : run.status === "error" ? "action" : "optional"}`}>
+                    {run.status}
+                  </span>
+                </div>
+                <div className="subtle">
+                  {run.startedAt} to {run.finishedAt}
+                </div>
+                <div className="subtle">
+                  {run.discoveredAssets} discovered · {run.readyAssets} ready
+                </div>
+                {run.errorMessage ? <div className="danger">{run.errorMessage}</div> : null}
+              </div>
+            ))}
             {incidents.map((incident) => (
               <div className="item" key={incident.id}>
                 <div className="stats-row">
@@ -130,7 +149,7 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
                 <div className="subtle">{event.createdAt}</div>
               </div>
             ))}
-            {incidents.length === 0 && auditEvents.length === 0 ? (
+            {syncRuns.length === 0 && incidents.length === 0 && auditEvents.length === 0 ? (
               <div className="item">
                 <strong>No sync history yet</strong>
                 <div className="subtle">Run the worker once or request a manual source sync to build a history trail.</div>

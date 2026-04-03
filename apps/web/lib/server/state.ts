@@ -25,6 +25,7 @@ import {
   type PoolRecord,
   type ShowProfileRecord,
   type ScheduleBlockRecord,
+  type SourceSyncRunRecord,
   type SourceRecord,
   type StreamDestinationRecord,
   type TeamAccessGrant,
@@ -48,6 +49,7 @@ export type {
   OverlaySettingsRecord,
   ManagedConfigRecord,
   ScheduleBlockRecord,
+  SourceSyncRunRecord,
   SourceRecord,
   StreamDestinationRecord,
   TeamAccessGrant,
@@ -230,6 +232,13 @@ export function getSourceIncidents(state: AppState, sourceId: string): IncidentR
       return haystack.includes(source.id.toLowerCase()) || haystack.includes(source.name.toLowerCase());
     })
     .sort((left, right) => new Date(right.updatedAt || right.createdAt).getTime() - new Date(left.updatedAt || left.createdAt).getTime());
+}
+
+export function getSourceSyncRuns(state: AppState, sourceId: string, limit = 12): SourceSyncRunRecord[] {
+  return state.sourceSyncRuns
+    .filter((run) => run.sourceId === sourceId)
+    .sort((left, right) => new Date(right.finishedAt || right.startedAt).getTime() - new Date(left.finishedAt || left.startedAt).getTime())
+    .slice(0, limit);
 }
 
 export function getSourceAuditEvents(state: AppState, sourceId: string, limit = 12): AuditEvent[] {
