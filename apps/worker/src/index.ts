@@ -1011,14 +1011,36 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   };
 }
 
-function stopPlayoutProcess(reason = ""): void {
+async function stopPlayoutProcess(reason = ""): Promise<void> {
   plannedStopReason = reason;
-  if (playoutProcess && !playoutProcess.killed) {
-    playoutProcess.kill("SIGTERM");
+  const currentProcess = playoutProcess;
+
+  if (!currentProcess || currentProcess.killed) {
+    playoutProcess = null;
+    playoutAssetId = "";
+    playoutDestinationId = "";
+    return;
   }
-  playoutProcess = null;
-  playoutAssetId = "";
-  playoutDestinationId = "";
+
+  await new Promise<void>((resolve) => {
+    const finalize = () => {
+      if (playoutProcess === currentProcess) {
+        playoutProcess = null;
+        playoutAssetId = "";
+        playoutDestinationId = "";
+      }
+      resolve();
+    };
+
+    currentProcess.once("exit", finalize);
+    currentProcess.kill("SIGTERM");
+
+    setTimeout(() => {
+      if (currentProcess.exitCode === null && !currentProcess.killed) {
+        currentProcess.kill("SIGKILL");
+      }
+    }, 5_000);
+  });
 }
 
 async function startOrSwitchPlayout(args: {
@@ -1033,7 +1055,7 @@ async function startOrSwitchPlayout(args: {
 }): Promise<void> {
   const switching = playoutProcess && !playoutProcess.killed;
   if (switching) {
-    stopPlayoutProcess("switch");
+    await stopPlayoutProcess("switch");
   }
 
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
@@ -1225,7 +1247,7 @@ async function runPlayoutCycle(): Promise<void> {
   let selection: SelectionResult = choosePlaybackCandidate(state);
 
   if (!destination || !streamTarget) {
-    stopPlayoutProcess("destination-missing");
+    await stopPlayoutProcess("destination-missing");
     await upsertIncident({
       scope: "playout",
       severity: "warning",
@@ -1264,7 +1286,7 @@ async function runPlayoutCycle(): Promise<void> {
     Date.now() - new Date(state.playout.processStartedAt).getTime() >= PLAYOUT_RECONNECT_INTERVAL_MS;
 
   if (reconnectDue) {
-    stopPlayoutProcess("scheduled-reconnect");
+    await stopPlayoutProcess("scheduled-reconnect");
     state = await updateAppState((current) => ({
       ...current,
       playout: {
@@ -1310,7 +1332,7 @@ async function runPlayoutCycle(): Promise<void> {
   }
 
   if (state.playout.crashLoopDetected && selection.asset && !state.playout.restartRequestedAt) {
-    stopPlayoutProcess("crash-loop-reset");
+    await stopPlayoutProcess("crash-loop-reset");
     state = await updateAppState((current) => ({
       ...current,
       playout: {
@@ -1351,7 +1373,7 @@ async function runPlayoutCycle(): Promise<void> {
   const restartRequested = Boolean(state.playout.restartRequestedAt);
   const currentScheduleItem = getCurrentScheduleItem(state);
   if (restartRequested) {
-    stopPlayoutProcess("restart-requested");
+    await stopPlayoutProcess("restart-requested");
     state = await updateAppState((current) => ({
       ...current,
       playout: {
