@@ -29,14 +29,14 @@ Stream247 is currently designed as a self-hosted single-workspace deployment.
 2. Set:
    - `APP_URL`
    - `APP_SECRET`
-   - `TRAEFIK_HOST` if using the built-in Traefik profile
-   - `TRAEFIK_ACME_EMAIL` if using the built-in Traefik profile
    - `POSTGRES_PASSWORD`
    - matching `DATABASE_URL`
+   - `TRAEFIK_HOST` and `TRAEFIK_ACME_EMAIL` if using the built-in Traefik profile
 3. Optional but recommended:
    - `TWITCH_STREAM_KEY`
    - `CHANNEL_TIMEZONE`
    - Discord / SMTP alert settings
+   - Twitch client credentials if you do not want to enter them later in setup or `/settings`
 4. Optionally pin:
    - `STREAM247_WEB_IMAGE`
    - `STREAM247_WORKER_IMAGE`
@@ -84,6 +84,10 @@ Belongs in `.env`:
 - `TWITCH_STREAM_KEY`
 - `STREAM_OUTPUT_KEY`
 - `CHANNEL_TIMEZONE`
+- `APP_URL`
+- `APP_SECRET`
+- `TRAEFIK_HOST`
+- `TRAEFIK_ACME_EMAIL`
 - optional fallback Twitch client credentials
 - optional fallback SMTP credentials
 - optional fallback Discord webhook URL
@@ -104,6 +108,7 @@ Important current limitation:
 - third-party secrets can now be stored encrypted at rest in PostgreSQL from the admin UI
 - `.env` is still supported as bootstrap/fallback input for self-hosted deployments
 - stream keys remain deployment-time secrets in `.env`
+- infrastructure and reverse-proxy settings always stay in `.env`
 
 ## Media And Persistence
 

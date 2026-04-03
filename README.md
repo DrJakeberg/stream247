@@ -100,6 +100,17 @@ For pinned production deployment, start from:
 cp .env.production.example .env
 ```
 
+In most cases you only need to set these before first start:
+
+- `APP_URL`
+- `APP_SECRET`
+- `POSTGRES_PASSWORD`
+- `DATABASE_URL`
+- `TRAEFIK_HOST` and `TRAEFIK_ACME_EMAIL` if you use the Traefik profile
+- `TWITCH_STREAM_KEY` if you want real Twitch output immediately
+
+Twitch client credentials, SMTP, and Discord can also be entered later in the setup wizard or `/settings`.
+
 For Traefik-based HTTPS deployment:
 
 ```bash
@@ -115,6 +126,11 @@ docker compose --profile proxy up -d
 - `POSTGRES_PASSWORD`: password used by PostgreSQL
 - `DATABASE_URL`: must use the same PostgreSQL password as `POSTGRES_PASSWORD`
 
+### Required Only For The Traefik Profile
+
+- `TRAEFIK_HOST`: public hostname for Traefik routing
+- `TRAEFIK_ACME_EMAIL`: email used for Let's Encrypt
+
 ### Common Optional Environment Variables
 
 - `TWITCH_CLIENT_ID`: Twitch application client id
@@ -126,8 +142,6 @@ docker compose --profile proxy up -d
 - `CHANNEL_TIMEZONE`: schedule timezone, for example `Europe/Berlin`
 - `DISCORD_WEBHOOK_URL`: Discord alert target
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL_TO`: email alerting
-- `TRAEFIK_HOST`: public hostname for Traefik routing
-- `TRAEFIK_ACME_EMAIL`: email used for Let's Encrypt
 - `TRAEFIK_CERT_RESOLVER`: Traefik certificate resolver name, defaults to `letsencrypt`
 
 ### What Belongs In `.env`
