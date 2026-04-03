@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { AssetLibraryBrowser } from "@/components/asset-library-browser";
+import Link from "next/link";
 import { Panel } from "@/components/panel";
 import { PoolDeleteForm } from "@/components/pool-delete-form";
 import { PoolForm } from "@/components/pool-form";
@@ -56,6 +57,11 @@ export default async function SourcesPage() {
                   <span className="subtle">{assetCountBySource.get(source.id) ?? 0} assets</span>
                   <span className="subtle">{readyAssetCountBySource.get(source.id) ?? 0} ready</span>
                   <span className="subtle">{source.lastSyncedAt || "Not synced yet"}</span>
+                </div>
+                <div className="stats-row">
+                  <Link className="subtle-link" href={`/sources/${source.id}`}>
+                    Open detail
+                  </Link>
                 </div>
                 <SourceActionsForm source={source} />
               </div>
