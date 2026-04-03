@@ -19,7 +19,9 @@ export default async function OverlayPage() {
       }
     >
       <section className="overlay-frame">
-        <div className="overlay-chip">{state.overlay.channelName}</div>
+        <div className="overlay-chip">
+          {state.overlay.replayLabel} · {state.overlay.channelName}
+        </div>
         <div className="overlay-card overlay-card-large">
           <div className="label">Now Playing</div>
           <h1>{currentItem?.title || state.playout.currentTitle || "Stream247"}</h1>
@@ -37,7 +39,8 @@ export default async function OverlayPage() {
         {state.overlay.showScheduleTeaser ? (
           <div className="overlay-card">
             <div className="label">Schedule</div>
-            <strong>{currentItem?.categoryName ?? "Always on air"}</strong>
+            <strong>{state.playout.currentTitle || currentItem?.title || "Stand by"}</strong>
+            <div className="subtle">{currentItem?.categoryName ?? "Always on air"}</div>
             <div className="subtle">{currentItem?.sourceName ?? "Source to be announced"}</div>
           </div>
         ) : null}

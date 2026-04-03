@@ -1,6 +1,6 @@
 # Stream247
 
-Stream247 is a self-hosted platform for running a Twitch-first 24/7 channel from managed video sources such as local media, direct media URLs, YouTube playlists, and Twitch VODs.
+Stream247 is a self-hosted platform for running a Twitch-first 24/7 channel from managed video sources such as local media, direct media URLs, YouTube playlists or channels, and Twitch VODs or channels.
 
 It ships as Docker / Docker Compose, publishes images through GitHub Actions and GHCR, and gives operators a browser-based admin UI for scheduling, playout control, Twitch sync, moderation policy, and incident handling.
 
@@ -13,12 +13,17 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 - source ingestion for:
   - local media library
   - direct media URLs
-  - YouTube playlists via `yt-dlp`
-  - Twitch VODs via `yt-dlp`
+  - YouTube playlists and channels via `yt-dlp`
+  - Twitch VODs and channels via `yt-dlp`
 - schedule management with:
+  - weekly pool-based blocks
   - minute-accurate blocks
   - overlap validation
   - drag-and-drop day timeline editing
+  - resize-to-change-duration editing
+- pool management with:
+  - source grouping
+  - persistent round-robin playback cursors
 - playout operations with:
   - FFmpeg RTMP output foundation
   - fallback asset selection
@@ -28,8 +33,8 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - skip current asset
   - resume schedule control
 - Twitch automation with:
-  - title sync from active schedule block
-  - category sync from active schedule block
+  - title sync from active asset metadata or schedule override
+  - category sync from active asset metadata or schedule override
   - upcoming Twitch schedule segment sync
   - moderation policy support for emote-only fallback
 - ops tooling with:
@@ -45,14 +50,14 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 - encrypted-at-rest managed secret storage for Twitch and alert credentials
 - viewer-facing pages with:
   - public schedule page
-  - browser-source overlay page with admin-managed branding
+  - browser-source overlay page with admin-managed branding and replay labeling
 
 ## What Is Not Done Yet
 
 - richer multi-scene overlay composition inside the playout runtime
 - more advanced playout transitions and scene-aware switchovers
 - deeper analytics views and richer incident correlation
-- richer timeline editing such as resize / duplicate flows and inline override lanes
+- duplicate flows and inline override lanes in the schedule editor
 
 ## Quick Start
 
@@ -84,9 +89,9 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 11. Add media by either:
    - placing files into `data/media`
    - adding direct media URLs
-   - adding a YouTube playlist source
-   - adding a Twitch VOD source
-12. Build a schedule and let the worker ingest assets.
+   - adding a YouTube playlist or channel source
+   - adding a Twitch VOD or channel source
+12. Build pools and weekly schedule blocks and let the worker ingest assets.
 
 For local-development builds instead of GHCR images:
 
@@ -287,22 +292,29 @@ Notes:
 - local media scan from `data/media`
 - direct media URL sources
 - YouTube playlist ingestion via `yt-dlp`
+- YouTube channel ingestion via `yt-dlp`
 - Twitch VOD ingestion via `yt-dlp`
+- Twitch channel ingestion via `yt-dlp`
 - PostgreSQL-backed asset catalog
+- source metadata capture for title, natural duration, publish time, and source category where available
 - fallback asset priority and global fallback support
+- source enable/disable and delete controls
 
 ### Scheduling
 
-- schedule block CRUD
+- weekly schedule block CRUD
+- pool-based programming
 - minute-accurate start times
 - duration validation
 - overlap detection
 - day timeline with drag-and-drop rescheduling
+- resize-to-change-duration editing
 - public-facing schedule page
 
 ### Playout And Broadcast Ops
 
 - FFmpeg-based RTMP playout foundation
+- pool-based round-robin playout selection
 - destination readiness state
 - operator restart control
 - operator pin-asset override
@@ -314,8 +326,8 @@ Notes:
 ### Twitch Automation
 
 - broadcaster OAuth connect
-- title sync from active schedule block
-- category lookup and sync from active schedule block
+- title sync from active asset metadata or schedule override
+- category lookup and sync from active asset metadata or schedule override
 - Twitch schedule segment sync for upcoming blocks
 - Twitch SSO for team members
 - moderation policy automation for emote-only fallback windows
@@ -344,7 +356,7 @@ Notes:
 - public schedule page at `/channel`
 - browser-source overlay at `/overlay`
 - overlay studio in admin UI
-- configurable channel name, headline, accent color, emergency banner, and now/next teaser toggles
+- configurable replay label, channel name, headline, accent color, emergency banner, and now/next teaser toggles
 
 ## Local Development
 
@@ -391,7 +403,7 @@ Current validation covers:
 ### No assets are available
 
 - put files into `data/media`
-- or add a direct media URL / YouTube playlist / Twitch VOD source
+- or add a direct media URL / YouTube playlist / YouTube channel / Twitch VOD / Twitch channel source
 - check worker incidents if ingestion failed
 
 ### Stream output is not ready

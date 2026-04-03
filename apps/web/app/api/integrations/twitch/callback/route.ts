@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeTwitchCode, recordTwitchError } from "@/lib/server/twitch";
+import { exchangeTwitchCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
@@ -7,12 +7,12 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     await recordTwitchError(`Twitch authorization failed: ${error}.`);
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    return NextResponse.redirect(getAbsoluteAppUrl("/dashboard"));
   }
 
   if (!code) {
     await recordTwitchError("Twitch callback did not include an authorization code.");
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    return NextResponse.redirect(getAbsoluteAppUrl("/dashboard"));
   }
 
   try {
@@ -22,5 +22,5 @@ export async function GET(request: NextRequest) {
     await recordTwitchError(message);
   }
 
-  return NextResponse.redirect(new URL("/dashboard", request.url));
+  return NextResponse.redirect(getAbsoluteAppUrl("/dashboard"));
 }

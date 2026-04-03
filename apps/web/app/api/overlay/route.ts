@@ -27,6 +27,7 @@ export async function PUT(request: Request) {
     showNextItem: boolean;
     showScheduleTeaser: boolean;
     emergencyBanner: string;
+    replayLabel: string;
   }>;
 
   const now = new Date().toISOString();
@@ -43,6 +44,7 @@ export async function PUT(request: Request) {
       showNextItem: payload.showNextItem ?? state.overlay.showNextItem,
       showScheduleTeaser: payload.showScheduleTeaser ?? state.overlay.showScheduleTeaser,
       emergencyBanner: (payload.emergencyBanner ?? state.overlay.emergencyBanner).trim().slice(0, 180),
+      replayLabel: (payload.replayLabel ?? state.overlay.replayLabel).trim().slice(0, 80) || "Replay stream",
       updatedAt: now
     }
   }));

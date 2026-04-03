@@ -108,7 +108,9 @@ Current source connectors:
 - local media library scan
 - direct media URL normalization
 - YouTube playlist ingestion via `yt-dlp`
+- YouTube channel ingestion via `yt-dlp`
 - Twitch VOD ingestion via `yt-dlp`
+- Twitch channel ingestion via `yt-dlp`
 
 Assets are normalized into a PostgreSQL-backed catalog and then selected by the playout runtime.
 
@@ -118,11 +120,14 @@ The schedule model is block-based and timezone-aware.
 
 Current schedule capabilities:
 
+- weekly block-based scheduling
+- pool-based programming
 - minute-accurate block start times
 - duration validation
 - overlap detection
 - public schedule preview
 - drag/drop day timeline repositioning
+- resize-to-change-duration editing
 
 The scheduler is deterministic and explainable: schedule preview items carry explicit source/reason information.
 

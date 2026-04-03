@@ -17,16 +17,20 @@ describe("schedule preview", () => {
           id: "b",
           title: "Night",
           categoryName: "Music",
+          dayOfWeek: 5,
           startMinuteOfDay: 22 * 60,
           durationMinutes: 120,
+          poolId: "pool-night",
           sourceName: "Playlist"
         },
         {
           id: "a",
           title: "Morning",
           categoryName: "Chatting",
+          dayOfWeek: 5,
           startMinuteOfDay: 8 * 60 + 15,
           durationMinutes: 60,
+          poolId: "pool-morning",
           sourceName: "Archive"
         }
       ]
@@ -63,16 +67,20 @@ describe("schedule preview", () => {
         id: "a",
         title: "Morning",
         categoryName: "Chatting",
+        dayOfWeek: 5,
         startMinuteOfDay: 8 * 60,
         durationMinutes: 120,
+        poolId: "pool-a",
         sourceName: "Archive"
       },
       {
         id: "b",
         title: "Overlap",
         categoryName: "Music",
+        dayOfWeek: 5,
         startMinuteOfDay: 9 * 60,
         durationMinutes: 60,
+        poolId: "pool-b",
         sourceName: "Playlist"
       }
     ]);
@@ -88,8 +96,10 @@ describe("schedule preview", () => {
           id: "a",
           title: "Morning",
           categoryName: "Chatting",
+          dayOfWeek: 5,
           startMinuteOfDay: 8 * 60,
           durationMinutes: 60,
+          poolId: "pool-a",
           sourceName: "Archive"
         }
       ]

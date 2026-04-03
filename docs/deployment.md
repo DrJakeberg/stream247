@@ -155,10 +155,11 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 
 ## Current Capability Notes
 
-- local media, direct media URLs, YouTube playlists, and Twitch VODs are ingestible today
+- local media, direct media URLs, YouTube playlists/channels, and Twitch VODs/channels are ingestible today
 - YouTube and Twitch ingestion rely on `yt-dlp`
-- schedule blocks support CRUD, overlap validation, and drag/drop day timeline repositioning
+- schedule blocks support weekly CRUD, overlap validation, drag/drop repositioning, and resize-to-change-duration editing
+- pools are first-class programming units for round-robin playout selection
 - playout supports operator restart, temporary fallback, asset pinning, skip-current, and resume-schedule actions
-- overlay is currently a browser-source page, not native FFmpeg scene composition
+- overlay is currently a browser-source page with replay labeling, current/next context, and admin-managed branding
 - email and Discord alert delivery are both implemented
 - managed secret storage in `/settings` is implemented for Twitch and alert credentials

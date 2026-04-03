@@ -9,8 +9,15 @@ import {
 } from "./state";
 
 export function getTwitchRedirectUri(): string {
-  const appUrl = process.env.APP_URL || "http://localhost:3000";
-  return `${appUrl.replace(/\/$/, "")}/api/integrations/twitch/callback`;
+  return getAbsoluteAppUrl("/api/integrations/twitch/callback");
+}
+
+export function getAppBaseUrl(): string {
+  return (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
+}
+
+export function getAbsoluteAppUrl(pathname: string): string {
+  return `${getAppBaseUrl()}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
 }
 
 export async function getTwitchAuthorizeUrl(
@@ -29,10 +36,7 @@ export async function getTwitchAuthorizeUrl(
 
   const params = new URLSearchParams({
     client_id: clientId,
-    redirect_uri:
-      kind === "team-login"
-        ? `${(process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "")}/api/auth/twitch/callback`
-        : getTwitchRedirectUri(),
+    redirect_uri: kind === "team-login" ? getAbsoluteAppUrl("/api/auth/twitch/callback") : getTwitchRedirectUri(),
     response_type: "code",
     scope,
     state: kind
@@ -138,7 +142,7 @@ export async function exchangeTwitchLoginCode(code: string): Promise<UserRecord>
     throw new Error("Missing TWITCH_CLIENT_ID or TWITCH_CLIENT_SECRET.");
   }
 
-  const redirectUri = `${(process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "")}/api/auth/twitch/callback`;
+  const redirectUri = getAbsoluteAppUrl("/api/auth/twitch/callback");
   const tokenParams = new URLSearchParams({
     client_id: clientId,
     client_secret: clientSecret,

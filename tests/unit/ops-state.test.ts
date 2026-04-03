@@ -31,6 +31,7 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       showNextItem: true,
       showScheduleTeaser: true,
       emergencyBanner: "",
+      replayLabel: "Replay stream",
       updatedAt: ""
     },
     managedConfig: {
@@ -63,13 +64,25 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       error: ""
     },
     twitchScheduleSegments: [],
+    pools: [
+      {
+        id: "pool-1",
+        name: "YouTube Playlist",
+        sourceIds: ["source-1"],
+        playbackMode: "round-robin",
+        cursorAssetId: "",
+        updatedAt: ""
+      }
+    ],
     scheduleBlocks: [
       {
         id: "block-1",
         title: "Morning Show",
         categoryName: "Just Chatting",
+        dayOfWeek: 5,
         startMinuteOfDay: 0,
         durationMinutes: 1440,
+        poolId: "pool-1",
         sourceName: "YouTube Playlist"
       }
     ],
@@ -79,6 +92,7 @@ function createState(overrides: Partial<AppState> = {}): AppState {
         name: "YouTube Playlist",
         type: "Managed ingestion",
         connectorKind: "youtube-playlist",
+        enabled: true,
         status: "Ready",
         externalUrl: "",
         notes: "",
@@ -92,6 +106,10 @@ function createState(overrides: Partial<AppState> = {}): AppState {
         title: "Asset 1",
         path: "/tmp/asset.mp4",
         status: "ready",
+        externalId: "abc123",
+        categoryName: "Just Chatting",
+        durationSeconds: 3600,
+        publishedAt: "2026-03-27T09:00:00.000Z",
         fallbackPriority: 100,
         isGlobalFallback: false,
         createdAt: "",
@@ -207,6 +225,7 @@ describe("ops state helpers", () => {
           name: "Different Source",
           type: "Managed ingestion",
           connectorKind: "youtube-playlist",
+          enabled: true,
           status: "Ready",
           externalUrl: "",
           notes: "",

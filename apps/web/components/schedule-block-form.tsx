@@ -4,11 +4,21 @@ import { formatMinuteOfDay, type ScheduleBlock } from "@stream247/core";
 import { useState, useTransition } from "react";
 
 type Props = {
-  sources: string[];
+  pools: Array<{ id: string; name: string }>;
   block?: ScheduleBlock;
 };
 
-export function ScheduleBlockForm({ sources, block }: Props) {
+const dayOptions = [
+  { value: 0, label: "Sunday" },
+  { value: 1, label: "Monday" },
+  { value: 2, label: "Tuesday" },
+  { value: 3, label: "Wednesday" },
+  { value: 4, label: "Thursday" },
+  { value: 5, label: "Friday" },
+  { value: 6, label: "Saturday" }
+];
+
+export function ScheduleBlockForm({ pools, block }: Props) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -31,7 +41,9 @@ export function ScheduleBlockForm({ sources, block }: Props) {
           id: String(formData.get("id") || ""),
           title: String(formData.get("title") || ""),
           categoryName: String(formData.get("categoryName") || ""),
-          sourceName: String(formData.get("sourceName") || ""),
+          sourceName: "",
+          poolId: String(formData.get("poolId") || ""),
+          dayOfWeek: Number(formData.get("dayOfWeek") || 0),
           startMinuteOfDay: hours * 60 + minutes,
           durationMinutes: Number(formData.get("durationMinutes") || 0)
         };
@@ -67,6 +79,16 @@ export function ScheduleBlockForm({ sources, block }: Props) {
       </div>
       <div className="form-grid">
         <label>
+          <span className="label">Day</span>
+          <select defaultValue={String(block?.dayOfWeek ?? 1)} name="dayOfWeek">
+            {dayOptions.map((day) => (
+              <option key={day.value} value={day.value}>
+                {day.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           <span className="label">Start hour</span>
           <select defaultValue={String(Math.floor((block?.startMinuteOfDay ?? 0) / 60))} name="startHour">
             {Array.from({ length: 24 }, (_, hour) => (
@@ -98,19 +120,17 @@ export function ScheduleBlockForm({ sources, block }: Props) {
         </label>
       </div>
       <label>
-        <span className="label">Preferred source</span>
-        <input
-          defaultValue={block?.sourceName ?? ""}
-          list={block ? `schedule-sources-${block.id}` : "schedule-sources-new"}
-          name="sourceName"
-          placeholder="YouTube Playlist"
-          required
-        />
-        <datalist id={block ? `schedule-sources-${block.id}` : "schedule-sources-new"}>
-          {sources.map((source) => (
-            <option key={source} value={source} />
+        <span className="label">Pool</span>
+        <select defaultValue={block?.poolId ?? ""} name="poolId" required>
+          <option value="" disabled>
+            Select a pool
+          </option>
+          {pools.map((pool) => (
+            <option key={pool.id} value={pool.id}>
+              {pool.name}
+            </option>
           ))}
-        </datalist>
+        </select>
       </label>
       {block ? <p className="subtle">Current start: {formatMinuteOfDay(block.startMinuteOfDay)}</p> : null}
       {message ? <p>{message}</p> : null}

@@ -29,7 +29,8 @@ export function OverlaySettingsForm(props: { overlay: OverlaySettingsRecord }) {
               showClock: formData.get("showClock") === "on",
               showNextItem: formData.get("showNextItem") === "on",
               showScheduleTeaser: formData.get("showScheduleTeaser") === "on",
-              emergencyBanner: String(formData.get("emergencyBanner") || "")
+              emergencyBanner: String(formData.get("emergencyBanner") || ""),
+              replayLabel: String(formData.get("replayLabel") || "")
             })
           });
 
@@ -56,6 +57,10 @@ export function OverlaySettingsForm(props: { overlay: OverlaySettingsRecord }) {
         <label>
           <span className="label">Headline</span>
           <input defaultValue={props.overlay.headline} name="headline" required />
+        </label>
+        <label>
+          <span className="label">Replay label</span>
+          <input defaultValue={props.overlay.replayLabel} name="replayLabel" required />
         </label>
         <label>
           <span className="label">Accent color</span>

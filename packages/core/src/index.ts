@@ -25,8 +25,10 @@ export type ScheduleBlock = {
   id: string;
   title: string;
   categoryName: string;
+  dayOfWeek: number;
   startMinuteOfDay: number;
   durationMinutes: number;
+  poolId?: string;
   sourceName: string;
 };
 
@@ -38,6 +40,8 @@ export type SchedulePreview = {
     startTime: string;
     endTime: string;
     categoryName: string;
+    dayOfWeek: number;
+    poolId?: string;
     sourceName: string;
     reason: string;
   }>;
@@ -48,6 +52,8 @@ export type ScheduleOccurrence = {
   blockId: string;
   title: string;
   categoryName: string;
+  dayOfWeek: number;
+  poolId?: string;
   sourceName: string;
   date: string;
   startTime: string;
@@ -69,11 +75,39 @@ export function isLikelyYouTubePlaylistUrl(value: string): boolean {
   }
 }
 
+export function isLikelyYouTubeChannelUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    if (!["youtube.com", "www.youtube.com", "m.youtube.com"].includes(host)) {
+      return false;
+    }
+
+    return /^\/(@[^/]+|channel\/[^/]+|c\/[^/]+|user\/[^/]+)$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 export function isLikelyTwitchVodUrl(value: string): boolean {
   try {
     const url = new URL(value);
     const host = url.hostname.toLowerCase();
     return (host === "twitch.tv" || host === "www.twitch.tv") && /\/videos\/\d+/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function isLikelyTwitchChannelUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    if (!(host === "twitch.tv" || host === "www.twitch.tv")) {
+      return false;
+    }
+
+    return /^\/[a-zA-Z0-9_]+$/.test(url.pathname);
   } catch {
     return false;
   }
@@ -219,6 +253,8 @@ export function buildSchedulePreview(args: {
     startTime: occurrence.startTime,
     endTime: occurrence.endTime,
     categoryName: occurrence.categoryName,
+    dayOfWeek: occurrence.dayOfWeek,
+    poolId: occurrence.poolId,
     sourceName: occurrence.sourceName,
     reason: `Selected from ${occurrence.sourceName} for ${occurrence.durationMinutes} minutes.`
   }));
@@ -246,11 +282,21 @@ export function validateScheduleBlock(block: {
   title: string;
   categoryName: string;
   sourceName: string;
+  poolId?: string;
+  dayOfWeek: number;
   startMinuteOfDay: number;
   durationMinutes: number;
 }) {
-  if (!block.title.trim() || !block.categoryName.trim() || !block.sourceName.trim()) {
-    return "Title, category, and source are required.";
+  if (!block.sourceName.trim() && !(block.poolId ?? "").trim()) {
+    return "Pool or source label is required.";
+  }
+
+  if (!block.title.trim() && !block.categoryName.trim()) {
+    return "At least a title or category is required.";
+  }
+
+  if (!Number.isInteger(block.dayOfWeek) || block.dayOfWeek < 0 || block.dayOfWeek > 6) {
+    return "Day of week must be between 0 and 6.";
   }
 
   if (
@@ -291,6 +337,10 @@ export function findScheduleConflicts(blocks: Array<ScheduleBlock>): string[] {
         continue;
       }
 
+      if (candidate.dayOfWeek !== current.dayOfWeek) {
+        continue;
+      }
+
       const candidateRanges =
         candidate.startMinuteOfDay + candidate.durationMinutes <= 24 * 60
           ? [[candidate.startMinuteOfDay, candidate.startMinuteOfDay + candidate.durationMinutes]]
@@ -315,11 +365,17 @@ export function findScheduleConflicts(blocks: Array<ScheduleBlock>): string[] {
   return [...conflicts];
 }
 
+function getDayOfWeekForDate(value: string): number {
+  return new Date(`${value}T00:00:00.000Z`).getUTCDay();
+}
+
 export function buildScheduleOccurrences(args: {
   date: string;
   blocks: ScheduleBlock[];
 }): ScheduleOccurrence[] {
+  const dayOfWeek = getDayOfWeekForDate(args.date);
   return [...args.blocks]
+    .filter((block) => block.dayOfWeek === dayOfWeek)
     .sort((a, b) => a.startMinuteOfDay - b.startMinuteOfDay)
     .map((block) => {
       const startMinutes = block.startMinuteOfDay;
@@ -330,6 +386,8 @@ export function buildScheduleOccurrences(args: {
         blockId: block.id,
         title: block.title,
         categoryName: block.categoryName,
+        dayOfWeek: block.dayOfWeek,
+        poolId: block.poolId,
         sourceName: block.sourceName,
         date: args.date,
         startTime: formatMinuteOfDay(startMinutes),

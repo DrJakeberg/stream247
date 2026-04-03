@@ -9,6 +9,8 @@ function normalizeBody(body: {
   categoryName?: string;
   startMinuteOfDay?: number;
   durationMinutes?: number;
+  dayOfWeek?: number;
+  poolId?: string;
   sourceName?: string;
 }) {
   return {
@@ -17,6 +19,8 @@ function normalizeBody(body: {
     categoryName: (body.categoryName ?? "").trim(),
     startMinuteOfDay: Number(body.startMinuteOfDay ?? 0),
     durationMinutes: Number(body.durationMinutes ?? 0),
+    dayOfWeek: Number(body.dayOfWeek ?? 0),
+    poolId: (body.poolId ?? "").trim(),
     sourceName: (body.sourceName ?? "").trim()
   };
 }
@@ -47,6 +51,8 @@ export async function POST(request: NextRequest) {
       categoryName?: string;
       startMinuteOfDay?: number;
       durationMinutes?: number;
+      dayOfWeek?: number;
+      poolId?: string;
       sourceName?: string;
     }
   );
@@ -58,6 +64,11 @@ export async function POST(request: NextRequest) {
 
   try {
     const nextState = await updateAppState((state) => {
+      const pool = state.pools.find((entry) => entry.id === payload.poolId);
+      if (!pool) {
+        throw new Error("Schedule blocks must target an existing pool.");
+      }
+
       const nextBlocks = [
         ...state.scheduleBlocks,
         {
@@ -66,7 +77,9 @@ export async function POST(request: NextRequest) {
           categoryName: payload.categoryName,
           startMinuteOfDay: payload.startMinuteOfDay,
           durationMinutes: payload.durationMinutes,
-          sourceName: payload.sourceName
+          dayOfWeek: payload.dayOfWeek,
+          poolId: payload.poolId,
+          sourceName: pool.name
         }
       ];
 
@@ -113,6 +126,8 @@ export async function PUT(request: NextRequest) {
       categoryName?: string;
       startMinuteOfDay?: number;
       durationMinutes?: number;
+      dayOfWeek?: number;
+      poolId?: string;
       sourceName?: string;
     }
   );
@@ -133,6 +148,11 @@ export async function PUT(request: NextRequest) {
         throw new Error("Schedule block not found.");
       }
 
+      const pool = state.pools.find((entry) => entry.id === payload.poolId);
+      if (!pool) {
+        throw new Error("Schedule blocks must target an existing pool.");
+      }
+
       const nextBlocks = state.scheduleBlocks.map((block) =>
         block.id === payload.id
           ? {
@@ -141,7 +161,9 @@ export async function PUT(request: NextRequest) {
               categoryName: payload.categoryName,
               startMinuteOfDay: payload.startMinuteOfDay,
               durationMinutes: payload.durationMinutes,
-              sourceName: payload.sourceName
+              dayOfWeek: payload.dayOfWeek,
+              poolId: payload.poolId,
+              sourceName: pool.name
             }
           : block
       );
