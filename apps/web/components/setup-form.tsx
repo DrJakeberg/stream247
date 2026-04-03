@@ -44,6 +44,10 @@ export function SetupForm() {
         <span className="label">Password</span>
         <input name="password" type="password" minLength={10} required placeholder="At least 10 characters" />
       </label>
+      <p className="subtle">
+        After bootstrap you will land in the dashboard, where the remaining go-live steps explain what is still missing
+        for a fully broadcast-ready channel.
+      </p>
       <div className="form-grid">
         <label>
           <span className="label">Optional Twitch client id</span>

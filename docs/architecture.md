@@ -127,6 +127,7 @@ Current schedule capabilities:
 - overlap detection
 - multi-day block creation
 - weekly coverage summaries
+- quick-start programming templates
 - public schedule preview
 - drag/drop day timeline repositioning
 - resize-to-change-duration editing

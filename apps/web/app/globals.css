@@ -166,6 +166,21 @@ main {
   color: var(--brand-strong);
 }
 
+.badge-ready {
+  background: rgba(14, 109, 90, 0.12);
+  color: var(--brand-strong);
+}
+
+.badge-action {
+  background: rgba(160, 74, 22, 0.14);
+  color: var(--warning);
+}
+
+.badge-optional {
+  background: rgba(27, 26, 22, 0.08);
+  color: var(--muted);
+}
+
 .warning {
   color: var(--warning);
 }

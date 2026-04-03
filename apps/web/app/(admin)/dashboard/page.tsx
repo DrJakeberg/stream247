@@ -1,10 +1,12 @@
 export const dynamic = "force-dynamic";
 
+import { GoLiveChecklist } from "@/components/go-live-checklist";
 import Link from "next/link";
 import { IncidentActionForm } from "@/components/incident-action-form";
 import { Panel } from "@/components/panel";
 import { PlayoutActionForm } from "@/components/playout-action-form";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
+import { getGoLiveChecklist } from "@/lib/server/onboarding";
 import {
   getActivePresenceWindows,
   getCurrentScheduleItem,
@@ -18,6 +20,7 @@ import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
 export default async function DashboardPage() {
   const state = await readAppState();
   const twitchAuthorizeUrl = await getTwitchAuthorizeUrl("broadcaster-connect");
+  const checklist = getGoLiveChecklist(state);
   const schedulePreview = getSchedulePreview(state);
   const presenceStatus = getPresenceStatus(state);
   const activeWindows = getActivePresenceWindows(state);
@@ -107,6 +110,13 @@ export default async function DashboardPage() {
       </section>
 
       <section className="grid two" style={{ marginTop: 24 }}>
+        <Panel title="Go-live readiness" eyebrow="Launch">
+          <p className="subtle">
+            This checklist is the fastest way to understand whether the channel is configured well enough for reliable
+            24/7 operation.
+          </p>
+          <GoLiveChecklist items={checklist} />
+        </Panel>
         <Panel title="Upcoming schedule" eyebrow="Schedule">
           <div className="list">
             {schedulePreview.items.map((item: ScheduleItem) => (
