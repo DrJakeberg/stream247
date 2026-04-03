@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AppState } from "../../apps/web/lib/server/state";
+import { getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
 import { getFilteredIncidents, getRuntimeDriftReport, getWorkerHealth } from "../../apps/web/lib/server/state";
 
 function createState(overrides: Partial<AppState> = {}): AppState {
@@ -238,5 +239,37 @@ describe("ops state helpers", () => {
     const scheduleAlignment = report.items.find((item) => item.id === "schedule-alignment");
 
     expect(scheduleAlignment?.severity).toBe("warning");
+  });
+
+  it("builds a go-live checklist that reflects missing programming steps", () => {
+    const state = createState({
+      sources: [],
+      assets: [],
+      pools: [],
+      scheduleBlocks: [],
+      destinations: [
+        {
+          id: "destination-primary",
+          provider: "twitch",
+          name: "Primary Twitch Output",
+          enabled: true,
+          rtmpUrl: "rtmp://live.twitch.tv/app",
+          streamKeyPresent: false,
+          status: "missing-config",
+          notes: "Missing stream key",
+          lastValidatedAt: ""
+        }
+      ],
+      twitch: {
+        ...createState().twitch,
+        status: "not-connected"
+      }
+    });
+
+    const checklist = getGoLiveChecklist(state);
+
+    expect(checklist.find((item) => item.id === "sources")?.status).toBe("action");
+    expect(checklist.find((item) => item.id === "destination")?.status).toBe("action");
+    expect(checklist.find((item) => item.id === "overlay")?.status).toBe("optional");
   });
 });

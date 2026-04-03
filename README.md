@@ -311,6 +311,7 @@ Notes:
 - overlap detection
 - multi-day block creation
 - weekly coverage overview
+- quick-start programming templates
 - day timeline with drag-and-drop rescheduling
 - resize-to-change-duration editing
 - public-facing schedule page
@@ -363,6 +364,13 @@ Notes:
 - browser-source overlay at `/overlay`
 - overlay studio in admin UI
 - configurable replay label, channel name, headline, accent color, emergency banner, and now/next teaser toggles
+
+### Guided Setup And Launch
+
+- owner bootstrap wizard
+- optional Twitch client credential capture during setup
+- guided go-live checklist in setup and dashboard
+- readiness-oriented launch guidance for destination, assets, pools, schedule, and overlay
 
 ## Local Development
 

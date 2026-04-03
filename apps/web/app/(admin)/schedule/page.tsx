@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { findScheduleConflicts, formatMinuteOfDay } from "@stream247/core";
 import { Panel } from "@/components/panel";
+import { ProgrammingTemplateForm } from "@/components/programming-template-form";
 import { ScheduleBlockDeleteForm } from "@/components/schedule-block-delete-form";
 import { ScheduleBlockForm } from "@/components/schedule-block-form";
 import { ScheduleTimeline } from "@/components/schedule-timeline";
@@ -35,6 +36,12 @@ export default async function SchedulePage() {
             first or last blocks start.
           </p>
           <ScheduleWeekOverview blocks={state.scheduleBlocks} />
+        </Panel>
+        <Panel title="Quick-start templates" eyebrow="Programming">
+          <p className="subtle">
+            Use templates to bootstrap a full week quickly, then fine-tune individual days in the editor below.
+          </p>
+          <ProgrammingTemplateForm pools={poolOptions} />
         </Panel>
 
         <Panel title="Schedule preview" eyebrow="Programming">

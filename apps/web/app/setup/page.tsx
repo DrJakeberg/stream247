@@ -1,9 +1,11 @@
 export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
+import { GoLiveChecklist } from "@/components/go-live-checklist";
 import { Panel } from "@/components/panel";
 import { SetupForm } from "@/components/setup-form";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
+import { getGoLiveChecklist } from "@/lib/server/onboarding";
 import { readAppState } from "@/lib/server/state";
 import { getAuthenticatedUser } from "@/lib/server/auth";
 import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
@@ -12,6 +14,7 @@ export default async function SetupPage() {
   const state = await readAppState();
   const user = await getAuthenticatedUser();
   const twitchAuthorizeUrl = await getTwitchAuthorizeUrl("broadcaster-connect");
+  const checklist = getGoLiveChecklist(state);
 
   if (state.initialized) {
     redirect(user ? "/dashboard" : "/login");
@@ -54,6 +57,13 @@ export default async function SetupPage() {
             </div>
           </div>
           <TwitchConnectPanel authorizeUrl={twitchAuthorizeUrl} />
+        </Panel>
+        <Panel title="Go-live checklist" eyebrow="Before launch">
+          <p className="subtle">
+            Stream247 can explain what is still missing before the channel is truly ready, even before the first
+            broadcast starts.
+          </p>
+          <GoLiveChecklist items={checklist} />
         </Panel>
       </section>
     </main>
