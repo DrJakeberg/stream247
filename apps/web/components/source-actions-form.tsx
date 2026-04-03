@@ -56,7 +56,11 @@ export function SourceActionsForm(props: { source: SourceRecord }) {
           className="button secondary"
           disabled={isPending}
           onClick={() => {
-            if (window.confirm(`Delete source ${props.source.name}? Its ingested assets will also be removed.`)) {
+            if (
+              window.confirm(
+                `Delete source ${props.source.name}? Its ingested assets will be removed. Sources that are still used by pools or schedule blocks can no longer be deleted until those references are removed.`
+              )
+            ) {
               startTransition(() => void deleteSource());
             }
           }}
