@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import type { AssetRecord, SourceRecord } from "@/lib/server/state";
 
@@ -71,6 +72,11 @@ export function AssetLibraryBrowser(props: { assets: AssetRecord[]; sources: Sou
                 {asset.publishedAt ? ` · ${asset.publishedAt.slice(0, 10)}` : ""}
               </div>
               <div className="subtle asset-path">{asset.path}</div>
+              <div style={{ marginTop: 8 }}>
+                <Link className="subtle-link" href={`/assets/${asset.id}`}>
+                  Open asset detail
+                </Link>
+              </div>
             </div>
           );
         })}

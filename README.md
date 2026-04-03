@@ -299,7 +299,9 @@ Notes:
 - source metadata capture for title, natural duration, publish time, and source category where available
 - fallback asset priority and global fallback support
 - source edit, enable/disable, and delete controls
+- source detail pages with programming references, incidents, audit trail, and manual sync actions
 - source-side asset counts and ready counts
+- asset detail pages with source origin, pool context, and runtime visibility
 - searchable asset library by title, source, and status
 
 ### Scheduling

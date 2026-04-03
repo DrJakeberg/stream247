@@ -207,6 +207,61 @@ export function getFilteredIncidents(
     .sort((left, right) => new Date(right.updatedAt || right.createdAt).getTime() - new Date(left.updatedAt || left.createdAt).getTime());
 }
 
+export function getSourceIncidents(state: AppState, sourceId: string): IncidentRecord[] {
+  const source = state.sources.find((entry) => entry.id === sourceId);
+  if (!source) {
+    return [];
+  }
+
+  const fingerprints = new Set<string>();
+  if (source.connectorKind === "local-library" || source.id === "source-local-library") {
+    fingerprints.add("source.local-library.empty");
+  } else {
+    fingerprints.add(`source.${source.connectorKind}.${source.id}`);
+  }
+
+  return [...state.incidents]
+    .filter((incident) => {
+      if (fingerprints.has(incident.fingerprint)) {
+        return true;
+      }
+
+      const haystack = [incident.title, incident.message, incident.fingerprint].join(" ").toLowerCase();
+      return haystack.includes(source.id.toLowerCase()) || haystack.includes(source.name.toLowerCase());
+    })
+    .sort((left, right) => new Date(right.updatedAt || right.createdAt).getTime() - new Date(left.updatedAt || left.createdAt).getTime());
+}
+
+export function getSourceAuditEvents(state: AppState, sourceId: string, limit = 12): AuditEvent[] {
+  const source = state.sources.find((entry) => entry.id === sourceId);
+  if (!source) {
+    return [];
+  }
+
+  return [...state.auditEvents]
+    .filter((event) => {
+      const haystack = [event.type, event.message].join(" ").toLowerCase();
+      return (
+        haystack.includes(source.id.toLowerCase()) ||
+        haystack.includes(source.name.toLowerCase()) ||
+        (source.connectorKind === "local-library" && haystack.includes("local media library"))
+      );
+    })
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, limit);
+}
+
+export function getSourceReferences(state: AppState, sourceId: string) {
+  const pools = state.pools.filter((pool) => pool.sourceIds.includes(sourceId));
+  const poolIds = new Set(pools.map((pool) => pool.id));
+  const scheduleBlocks = state.scheduleBlocks.filter((block) => block.poolId && poolIds.has(block.poolId));
+
+  return {
+    pools,
+    scheduleBlocks
+  };
+}
+
 export function getWorkerHealth(state: AppState) {
   const lastWorkerCycle = state.auditEvents.find((event) => event.type === "worker.cycle") ?? null;
   const lastRunAt = lastWorkerCycle?.createdAt || "";

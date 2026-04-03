@@ -425,6 +425,12 @@ select,
   word-break: break-word;
 }
 
+.subtle-link {
+  color: var(--brand-strong);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
 .stats-row {
   display: flex;
   flex-wrap: wrap;

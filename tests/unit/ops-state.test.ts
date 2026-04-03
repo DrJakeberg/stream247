@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { AppState } from "../../apps/web/lib/server/state";
 import { getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
-import { getFilteredIncidents, getRuntimeDriftReport, getWorkerHealth } from "../../apps/web/lib/server/state";
+import {
+  getFilteredIncidents,
+  getRuntimeDriftReport,
+  getSourceIncidents,
+  getSourceReferences,
+  getWorkerHealth
+} from "../../apps/web/lib/server/state";
 
 function createState(overrides: Partial<AppState> = {}): AppState {
   return {
@@ -283,5 +289,31 @@ describe("ops state helpers", () => {
     expect(checklist.find((item) => item.id === "sources")?.status).toBe("action");
     expect(checklist.find((item) => item.id === "destination")?.status).toBe("action");
     expect(checklist.find((item) => item.id === "overlay")?.status).toBe("optional");
+  });
+
+  it("collects source incidents and programming references", () => {
+    const state = createState({
+      incidents: [
+        {
+          id: "incident-source",
+          scope: "source",
+          severity: "warning",
+          status: "open",
+          acknowledgedAt: "",
+          acknowledgedBy: "",
+          title: "YouTube playlist ingestion failed",
+          message: "YouTube Playlist: upstream fetch failed",
+          fingerprint: "source.youtube-playlist.source-1",
+          createdAt: "2026-03-27T11:00:00.000Z",
+          updatedAt: "2026-03-27T11:05:00.000Z",
+          resolvedAt: ""
+        }
+      ]
+    });
+
+    expect(getSourceIncidents(state, "source-1")).toHaveLength(1);
+    const references = getSourceReferences(state, "source-1");
+    expect(references.pools).toHaveLength(1);
+    expect(references.scheduleBlocks).toHaveLength(1);
   });
 });
