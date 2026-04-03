@@ -100,6 +100,12 @@ For pinned production deployment, start from:
 cp .env.production.example .env
 ```
 
+For Traefik-based HTTPS deployment:
+
+```bash
+docker compose --profile proxy up -d
+```
+
 ## Configuration
 
 ### Required Environment Variables
@@ -120,6 +126,9 @@ cp .env.production.example .env
 - `CHANNEL_TIMEZONE`: schedule timezone, for example `Europe/Berlin`
 - `DISCORD_WEBHOOK_URL`: Discord alert target
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL_TO`: email alerting
+- `TRAEFIK_HOST`: public hostname for Traefik routing
+- `TRAEFIK_ACME_EMAIL`: email used for Let's Encrypt
+- `TRAEFIK_CERT_RESOLVER`: Traefik certificate resolver name, defaults to `letsencrypt`
 
 ### What Belongs In `.env`
 
@@ -188,6 +197,7 @@ Important:
 - Linux host
 - Docker Compose
 - reverse proxy in front of `web`
+- optional built-in Traefik profile for HTTPS and Let's Encrypt
 - persistent storage for:
   - PostgreSQL
   - Redis
