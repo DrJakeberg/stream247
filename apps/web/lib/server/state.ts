@@ -241,6 +241,24 @@ export function getSourceSyncRuns(state: AppState, sourceId: string, limit = 12)
     .slice(0, limit);
 }
 
+export function getSourceHealthSnapshot(state: AppState, sourceId: string) {
+  const source = state.sources.find((entry) => entry.id === sourceId) ?? null;
+  const assets = state.assets.filter((asset) => asset.sourceId === sourceId);
+  const readyAssets = assets.filter((asset) => asset.status === "ready");
+  const openIncidents = getSourceIncidents(state, sourceId).filter((incident) => incident.status === "open");
+  const latestRun = getSourceSyncRuns(state, sourceId, 1)[0] ?? null;
+  const references = getSourceReferences(state, sourceId);
+
+  return {
+    source,
+    assetCount: assets.length,
+    readyAssetCount: readyAssets.length,
+    openIncidentCount: openIncidents.length,
+    latestRun,
+    references
+  };
+}
+
 export function getSourceAuditEvents(state: AppState, sourceId: string, limit = 12): AuditEvent[] {
   const source = state.sources.find((entry) => entry.id === sourceId);
   if (!source) {

@@ -7,6 +7,7 @@ import { SourceActionsForm } from "@/components/source-actions-form";
 import { SourceSyncForm } from "@/components/source-sync-form";
 import {
   getSourceAuditEvents,
+  getSourceHealthSnapshot,
   getSourceIncidents,
   getSourceSyncRuns,
   getSourceReferences,
@@ -33,6 +34,7 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
   const syncRuns = getSourceSyncRuns(state, source.id);
   const auditEvents = getSourceAuditEvents(state, source.id);
   const references = getSourceReferences(state, source.id);
+  const health = getSourceHealthSnapshot(state, source.id);
 
   return (
     <>
@@ -64,9 +66,11 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
           </p>
         </article>
         <article className="metric">
-          <span className="label">Programming refs</span>
-          <div className="value">{references.pools.length}</div>
-          <p className="subtle">{references.scheduleBlocks.length} schedule block(s) depend on this source via pools.</p>
+          <span className="label">Open incidents</span>
+          <div className="value">{health.openIncidentCount}</div>
+          <p className="subtle">
+            {health.latestRun ? `${health.latestRun.status} · ${health.latestRun.summary}` : "No sync result recorded yet."}
+          </p>
         </article>
       </section>
 
