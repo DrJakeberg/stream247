@@ -125,6 +125,8 @@ Current schedule capabilities:
 - minute-accurate block start times
 - duration validation
 - overlap detection
+- multi-day block creation
+- weekly coverage summaries
 - public schedule preview
 - drag/drop day timeline repositioning
 - resize-to-change-duration editing

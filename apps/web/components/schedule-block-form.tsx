@@ -22,6 +22,7 @@ export function ScheduleBlockForm({ pools, block }: Props) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [selectedDays, setSelectedDays] = useState<number[]>(block ? [block.dayOfWeek] : [1]);
 
   const isEditing = Boolean(block);
 
@@ -44,6 +45,7 @@ export function ScheduleBlockForm({ pools, block }: Props) {
           sourceName: "",
           poolId: String(formData.get("poolId") || ""),
           dayOfWeek: Number(formData.get("dayOfWeek") || 0),
+          dayOfWeeks: isEditing ? undefined : selectedDays,
           startMinuteOfDay: hours * 60 + minutes,
           durationMinutes: Number(formData.get("durationMinutes") || 0)
         };
@@ -78,16 +80,48 @@ export function ScheduleBlockForm({ pools, block }: Props) {
         </label>
       </div>
       <div className="form-grid">
-        <label>
-          <span className="label">Day</span>
-          <select defaultValue={String(block?.dayOfWeek ?? 1)} name="dayOfWeek">
-            {dayOptions.map((day) => (
-              <option key={day.value} value={day.value}>
-                {day.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        {isEditing ? (
+          <label>
+            <span className="label">Day</span>
+            <select defaultValue={String(block?.dayOfWeek ?? 1)} name="dayOfWeek">
+              {dayOptions.map((day) => (
+                <option key={day.value} value={day.value}>
+                  {day.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <label style={{ gridColumn: "1 / -1" }}>
+            <span className="label">Repeat on weekdays</span>
+            <div className="chip-grid">
+              {dayOptions.map((day) => {
+                const selected = selectedDays.includes(day.value);
+                return (
+                  <label className={`chip-toggle${selected ? " chip-toggle-active" : ""}`} key={day.value}>
+                    <input
+                      checked={selected}
+                      name="dayOfWeeks"
+                      onChange={(event) => {
+                        setSelectedDays((current) => {
+                          if (event.target.checked) {
+                            return [...current, day.value].sort((left, right) => left - right);
+                          }
+
+                          const next = current.filter((value) => value !== day.value);
+                          return next.length > 0 ? next : current;
+                        });
+                      }}
+                      type="checkbox"
+                      value={day.value}
+                    />
+                    <span>{day.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </label>
+        )}
         <label>
           <span className="label">Start hour</span>
           <select defaultValue={String(Math.floor((block?.startMinuteOfDay ?? 0) / 60))} name="startHour">
@@ -132,7 +166,13 @@ export function ScheduleBlockForm({ pools, block }: Props) {
           ))}
         </select>
       </label>
-      {block ? <p className="subtle">Current start: {formatMinuteOfDay(block.startMinuteOfDay)}</p> : null}
+      {block ? (
+        <p className="subtle">Current start: {formatMinuteOfDay(block.startMinuteOfDay)}</p>
+      ) : (
+        <p className="subtle">
+          New blocks can be created for one or multiple weekdays at once. Pool windows still snap to 15-minute timing.
+        </p>
+      )}
       {message ? <p>{message}</p> : null}
       {error ? <p className="danger">{error}</p> : null}
       <button className="button" disabled={isPending} type="submit">

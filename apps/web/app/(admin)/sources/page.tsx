@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import { AssetLibraryBrowser } from "@/components/asset-library-browser";
 import { Panel } from "@/components/panel";
 import { PoolDeleteForm } from "@/components/pool-delete-form";
 import { PoolForm } from "@/components/pool-form";
@@ -9,6 +10,15 @@ import { readAppState } from "@/lib/server/state";
 
 export default async function SourcesPage() {
   const state = await readAppState();
+  const assetCountBySource = new Map<string, number>();
+  const readyAssetCountBySource = new Map<string, number>();
+
+  for (const asset of state.assets) {
+    assetCountBySource.set(asset.sourceId, (assetCountBySource.get(asset.sourceId) ?? 0) + 1);
+    if (asset.status === "ready") {
+      readyAssetCountBySource.set(asset.sourceId, (readyAssetCountBySource.get(asset.sourceId) ?? 0) + 1);
+    }
+  }
 
   return (
     <div className="grid two">
@@ -26,42 +36,31 @@ export default async function SourcesPage() {
         </p>
         <PoolForm sources={state.sources} />
       </Panel>
-      <Panel title="Source connectors" eyebrow="Catalog">
+      <Panel title="Source library" eyebrow="Catalog">
         <p className="subtle">
-          Connectors normalize external video sources into playable assets for the playout queue. The worker currently
-          scans the local media library, ingests direct media URLs, expands YouTube playlists/channels, and resolves
-          Twitch VODs/channels into PostgreSQL-backed assets.
+          Sources now act like a programming library, not just connector rows. Edit naming, connector type, source URL,
+          and enabled state directly here, then review how many assets each source currently contributes to your pools.
         </p>
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Enabled</th>
-                <th>Status</th>
-                <th>Last sync</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.sources.map((source) => (
-                <tr key={source.id}>
-                  <td className="source-cell">
-                    <strong>{source.name}</strong>
-                    {source.externalUrl ? <div className="subtle source-url">{source.externalUrl}</div> : null}
-                  </td>
-                  <td>{source.type}</td>
-                  <td>{source.enabled ?? true ? "Yes" : "No"}</td>
-                  <td>{source.status}</td>
-                  <td>{source.lastSyncedAt || "Not synced yet"}</td>
-                  <td className="actions-cell">
-                    <SourceActionsForm source={source} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="list">
+          {state.sources.map((source) => (
+            <div className="item" key={source.id}>
+              <div className="stack-form">
+                <div>
+                  <strong>{source.name}</strong>
+                  <div className="subtle">{source.type}</div>
+                  {source.externalUrl ? <div className="subtle source-url">{source.externalUrl}</div> : null}
+                </div>
+                <div className="stats-row">
+                  <span className="badge">{source.status}</span>
+                  <span className="subtle">{source.enabled ?? true ? "Enabled" : "Disabled"}</span>
+                  <span className="subtle">{assetCountBySource.get(source.id) ?? 0} assets</span>
+                  <span className="subtle">{readyAssetCountBySource.get(source.id) ?? 0} ready</span>
+                  <span className="subtle">{source.lastSyncedAt || "Not synced yet"}</span>
+                </div>
+                <SourceActionsForm source={source} />
+              </div>
+            </div>
+          ))}
         </div>
       </Panel>
       <Panel title="Pools" eyebrow="Programming">
@@ -76,6 +75,10 @@ export default async function SourcesPage() {
                 {pool.sourceIds
                   .map((sourceId) => state.sources.find((source) => source.id === sourceId)?.name || sourceId)
                   .join(", ")}
+              </div>
+              <div className="subtle">
+                {state.assets.filter((asset) => pool.sourceIds.includes(asset.sourceId)).length} total assets ·{" "}
+                {state.assets.filter((asset) => pool.sourceIds.includes(asset.sourceId) && asset.status === "ready").length} ready
               </div>
               <div style={{ marginTop: 12 }}>
                 <PoolForm pool={pool} sources={state.sources} />
@@ -93,28 +96,12 @@ export default async function SourcesPage() {
           ) : null}
         </div>
       </Panel>
-      <Panel title="Recent assets" eyebrow="Catalog">
-        <div className="list" style={{ marginTop: 24 }}>
-          {state.assets.slice(0, 8).map((asset) => (
-            <div className="item" key={asset.id}>
-              <strong>{asset.title}</strong>
-              <div className="subtle">
-                {asset.status} · {asset.durationSeconds ? `${Math.round(asset.durationSeconds / 60)}m` : "natural duration unknown"} · {asset.path}
-              </div>
-              <div className="subtle">
-                {asset.categoryName || "No source category"}{asset.publishedAt ? ` · ${asset.publishedAt.slice(0, 10)}` : ""}
-              </div>
-            </div>
-          ))}
-          {state.assets.length === 0 ? (
-            <div className="item">
-              <strong>No assets ingested yet</strong>
-              <div className="subtle">
-                Mount files into the media library volume or add a direct media URL source.
-              </div>
-            </div>
-          ) : null}
-        </div>
+      <Panel title="Asset library" eyebrow="Catalog">
+        <p className="subtle">
+          Search the current playable catalog by title, category, source, and status. This should make channel-scale
+          programming much easier than working from raw source rows alone.
+        </p>
+        <AssetLibraryBrowser assets={state.assets} sources={state.sources} />
       </Panel>
     </div>
   );
