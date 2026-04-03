@@ -598,6 +598,10 @@ function getTwitchArchiveUrl(channelUrl: string): string {
   }
 }
 
+function normalizeTwitchVideoId(value: string): string {
+  return value.replace(/^v(?=\d+$)/i, "");
+}
+
 async function loadFlatCollection(url: string): Promise<YtDlpPlaylistResponse> {
   const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
   const output = await execFileText(ytDlpBinary, [
@@ -756,14 +760,15 @@ async function syncTwitchVodSources(): Promise<void> {
           if (!id) {
             continue;
           }
+          const normalizedId = normalizeTwitchVideoId(id);
 
           twitchAssets.push(
             buildRemoteAsset({
               sourceId: source.id,
               assetIdSeed: id,
               title: entry.title || source.name,
-              path: entry.webpage_url || `https://www.twitch.tv/videos/${id}`,
-              externalId: id,
+              path: entry.webpage_url || `https://www.twitch.tv/videos/${normalizedId}`,
+              externalId: normalizedId,
               durationSeconds: entry.duration,
               publishedAt: fromUnixTimestamp(entry.timestamp),
               now
