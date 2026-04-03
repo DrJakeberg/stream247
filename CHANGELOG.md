@@ -4,6 +4,13 @@
 
 - No unreleased changes currently tracked.
 
+## 1.0.2 - 2026-04-03
+
+### Fixed
+
+- fixed `playout_runtime` persistence SQL so worker and playout no longer crash on PostgreSQL-backed state writes
+- stable production env example now points at `v1.0.2`
+
 ## 1.0.1 - 2026-03-27
 
 ### Added
