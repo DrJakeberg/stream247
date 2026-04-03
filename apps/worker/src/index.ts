@@ -947,8 +947,19 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   }
 
   const currentScheduleItem = getCurrentScheduleItem(state);
+  const currentPoolAsset =
+    currentScheduleItem?.poolId && state.playout.currentAssetId
+      ? state.assets.find(
+          (asset) =>
+            asset.id === state.playout.currentAssetId &&
+            asset.status === "ready" &&
+            asset.id !== skippedAssetId &&
+            state.pools.find((pool) => pool.id === currentScheduleItem.poolId)?.sourceIds.includes(asset.sourceId)
+        ) ?? null
+      : null;
+
   const preferredAsset = currentScheduleItem?.poolId
-    ? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId)
+    ? currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId)
     : state.assets.find((entry) => {
         if (entry.status !== "ready") {
           return false;
