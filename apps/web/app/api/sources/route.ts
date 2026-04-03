@@ -187,23 +187,27 @@ export async function DELETE(request: NextRequest) {
         throw new Error("Source not found.");
       }
 
+      const referencedPools = state.pools.filter((pool) => pool.sourceIds.includes(id));
+      const referencedScheduleBlocks = state.scheduleBlocks.filter(
+        (block) => block.poolId && referencedPools.some((pool) => pool.id === block.poolId)
+      );
+
+      if (state.sources.length <= 1) {
+        throw new Error("You cannot delete the last remaining source. Disable it instead or add another source first.");
+      }
+
+      if (referencedPools.length > 0 || referencedScheduleBlocks.length > 0) {
+        throw new Error(
+          `Source is still referenced by ${referencedPools.length} pool(s) and ${referencedScheduleBlocks.length} schedule block(s). Remove those references before deleting the source.`
+        );
+      }
+
       return {
         ...state,
         sources: state.sources.filter((source) => source.id !== id),
         assets: state.assets.filter((asset) => asset.sourceId !== id),
-        pools: state.pools
-          .map((pool) => ({
-            ...pool,
-            sourceIds: pool.sourceIds.filter((sourceId) => sourceId !== id)
-          }))
-          .filter((pool) => pool.sourceIds.length > 0),
-        scheduleBlocks: state.scheduleBlocks.filter((block) => {
-          if (!block.poolId) {
-            return block.sourceName !== existing.name;
-          }
-          const pool = state.pools.find((entry) => entry.id === block.poolId);
-          return pool ? pool.sourceIds.some((sourceId) => sourceId !== id) : true;
-        })
+        pools: state.pools,
+        scheduleBlocks: state.scheduleBlocks
       };
     });
   } catch (error) {

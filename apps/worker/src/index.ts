@@ -1304,6 +1304,22 @@ async function runPlayoutCycle(): Promise<void> {
     await resolveIncident("playout.no-asset", "A playable asset is available again.");
   }
 
+  if (state.playout.crashLoopDetected && selection.asset && !state.playout.restartRequestedAt) {
+    stopPlayoutProcess("crash-loop-reset");
+    state = await updateAppState((current) => ({
+      ...current,
+      playout: {
+        ...current.playout,
+        crashLoopDetected: false,
+        crashCountWindow: 0,
+        restartRequestedAt: new Date().toISOString(),
+        lastError: "",
+        status: "recovering",
+        message: "A playable asset is available again. Playout is restarting automatically."
+      }
+    }));
+  }
+
   if (state.playout.crashLoopDetected && !state.playout.restartRequestedAt) {
     await upsertIncident({
       scope: "playout",
