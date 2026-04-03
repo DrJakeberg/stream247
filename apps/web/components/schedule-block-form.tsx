@@ -2,9 +2,11 @@
 
 import { formatMinuteOfDay, type ScheduleBlock } from "@stream247/core";
 import { useState, useTransition } from "react";
+import type { ShowProfileRecord } from "@/lib/server/state";
 
 type Props = {
   pools: Array<{ id: string; name: string }>;
+  shows: ShowProfileRecord[];
   block?: ScheduleBlock;
 };
 
@@ -18,11 +20,15 @@ const dayOptions = [
   { value: 6, label: "Saturday" }
 ];
 
-export function ScheduleBlockForm({ pools, block }: Props) {
+export function ScheduleBlockForm({ pools, shows, block }: Props) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const [selectedDays, setSelectedDays] = useState<number[]>(block ? [block.dayOfWeek] : [1]);
+  const [selectedShowId, setSelectedShowId] = useState(block?.showId ?? "");
+  const [title, setTitle] = useState(block?.title ?? "");
+  const [categoryName, setCategoryName] = useState(block?.categoryName ?? "");
+  const [durationMinutes, setDurationMinutes] = useState(block?.durationMinutes ?? 60);
 
   const isEditing = Boolean(block);
 
@@ -43,6 +49,7 @@ export function ScheduleBlockForm({ pools, block }: Props) {
           title: String(formData.get("title") || ""),
           categoryName: String(formData.get("categoryName") || ""),
           sourceName: "",
+          showId: String(formData.get("showId") || ""),
           poolId: String(formData.get("poolId") || ""),
           dayOfWeek: Number(formData.get("dayOfWeek") || 0),
           dayOfWeeks: isEditing ? undefined : selectedDays,
@@ -71,12 +78,36 @@ export function ScheduleBlockForm({ pools, block }: Props) {
       {block ? <input name="id" type="hidden" value={block.id} /> : null}
       <div className="form-grid">
         <label>
+          <span className="label">Show profile</span>
+          <select
+            name="showId"
+            onChange={(event) => {
+              const nextId = event.target.value;
+              setSelectedShowId(nextId);
+              const nextShow = shows.find((show) => show.id === nextId);
+              if (nextShow) {
+                setTitle(nextShow.name);
+                setCategoryName(nextShow.categoryName);
+                setDurationMinutes(nextShow.defaultDurationMinutes);
+              }
+            }}
+            value={selectedShowId}
+          >
+            <option value="">No show profile</option>
+            {shows.map((show) => (
+              <option key={show.id} value={show.id}>
+                {show.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           <span className="label">Title</span>
-          <input defaultValue={block?.title ?? ""} name="title" placeholder="Prime time mix" required />
+          <input name="title" onChange={(event) => setTitle(event.target.value)} placeholder="Prime time mix" required value={title} />
         </label>
         <label>
           <span className="label">Category</span>
-          <input defaultValue={block?.categoryName ?? ""} name="categoryName" placeholder="Music" required />
+          <input name="categoryName" onChange={(event) => setCategoryName(event.target.value)} placeholder="Music" required value={categoryName} />
         </label>
       </div>
       <div className="form-grid">
@@ -145,11 +176,12 @@ export function ScheduleBlockForm({ pools, block }: Props) {
         <label>
           <span className="label">Duration (minutes)</span>
           <input
-            defaultValue={block?.durationMinutes ?? 60}
             min={15}
             name="durationMinutes"
+            onChange={(event) => setDurationMinutes(Number(event.target.value || 0))}
             step={15}
             type="number"
+            value={durationMinutes}
           />
         </label>
       </div>
@@ -170,7 +202,7 @@ export function ScheduleBlockForm({ pools, block }: Props) {
         <p className="subtle">Current start: {formatMinuteOfDay(block.startMinuteOfDay)}</p>
       ) : (
         <p className="subtle">
-          New blocks can be created for one or multiple weekdays at once. Pool windows still snap to 15-minute timing.
+          New blocks can be created for one or multiple weekdays at once. Show profiles prefill title, category, and duration.
         </p>
       )}
       {message ? <p>{message}</p> : null}

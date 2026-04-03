@@ -116,6 +116,16 @@ export type PoolRecord = {
   updatedAt: string;
 };
 
+export type ShowProfileRecord = {
+  id: string;
+  name: string;
+  categoryName: string;
+  defaultDurationMinutes: number;
+  color: string;
+  description: string;
+  updatedAt: string;
+};
+
 export type StreamDestinationRecord = {
   id: string;
   provider: "twitch" | "custom-rtmp";
@@ -150,6 +160,7 @@ export type ScheduleBlockRecord = {
   dayOfWeek: number;
   startMinuteOfDay: number;
   durationMinutes: number;
+  showId?: string;
   poolId?: string;
   sourceName: string;
 };
@@ -232,6 +243,7 @@ export type AppState = {
   twitch: TwitchConnection;
   twitchScheduleSegments: TwitchScheduleSegmentRecord[];
   pools: PoolRecord[];
+  showProfiles: ShowProfileRecord[];
   scheduleBlocks: ScheduleBlockRecord[];
   sources: SourceRecord[];
   assets: AssetRecord[];
@@ -357,6 +369,7 @@ function defaultState(): AppState {
     },
     twitchScheduleSegments: [],
     pools: [],
+    showProfiles: [],
     scheduleBlocks: [],
     sources: [],
     assets: [],
@@ -533,10 +546,21 @@ function normalizeState(state: AppState): AppState {
           playbackMode: "round-robin"
         }))
       : [],
+    showProfiles: Array.isArray(state.showProfiles)
+      ? dedupeById(state.showProfiles).map((show) => ({
+          ...show,
+          categoryName: show.categoryName ?? "",
+          defaultDurationMinutes: show.defaultDurationMinutes ?? 60,
+          color: show.color ?? "#0e6d5a",
+          description: show.description ?? "",
+          updatedAt: show.updatedAt ?? ""
+        }))
+      : [],
     scheduleBlocks: Array.isArray(state.scheduleBlocks)
       ? dedupeById(state.scheduleBlocks).map((block) => ({
           ...block,
           dayOfWeek: typeof block.dayOfWeek === "number" ? block.dayOfWeek : 0,
+          showId: block.showId ?? "",
           poolId: block.poolId ?? "",
           startMinuteOfDay:
             typeof (block as ScheduleBlockRecord & { startHour?: number }).startMinuteOfDay === "number"
@@ -675,6 +699,7 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       start_hour INTEGER NOT NULL,
       start_minute_of_day INTEGER NOT NULL DEFAULT 0,
       duration_minutes INTEGER NOT NULL,
+      show_id TEXT NOT NULL DEFAULT '',
       pool_id TEXT NOT NULL DEFAULT '',
       source_name TEXT NOT NULL
     );
@@ -685,6 +710,16 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       source_ids TEXT NOT NULL DEFAULT '[]',
       playback_mode TEXT NOT NULL DEFAULT 'round-robin',
       cursor_asset_id TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS show_profiles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      category_name TEXT NOT NULL DEFAULT '',
+      default_duration_minutes INTEGER NOT NULL DEFAULT 60,
+      color TEXT NOT NULL DEFAULT '#0e6d5a',
+      description TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT ''
     );
 
@@ -809,6 +844,7 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE managed_config ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS start_minute_of_day INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS day_of_week INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS show_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS pool_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS external_id TEXT NOT NULL DEFAULT '';
@@ -1112,9 +1148,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     await client.query(
       `
         INSERT INTO schedule_blocks (
-          id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, pool_id, source_name
+          id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `,
       [
         block.id,
@@ -1124,6 +1160,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         block.startMinuteOfDay,
         block.durationMinutes,
         block.dayOfWeek,
+        block.showId ?? "",
         block.poolId ?? "",
         block.sourceName
       ]
@@ -1138,6 +1175,17 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         VALUES ($1, $2, $3, $4, $5, $6)
       `,
       [pool.id, pool.name, JSON.stringify(pool.sourceIds), pool.playbackMode, pool.cursorAssetId ?? "", pool.updatedAt]
+    );
+  }
+
+  await client.query("DELETE FROM show_profiles");
+  for (const show of next.showProfiles) {
+    await client.query(
+      `
+        INSERT INTO show_profiles (id, name, category_name, default_duration_minutes, color, description, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `,
+      [show.id, show.name, show.categoryName, show.defaultDurationMinutes, show.color, show.description, show.updatedAt]
     );
   }
 
@@ -1339,6 +1387,15 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     cursor_asset_id: string;
     updated_at: string;
   }>("SELECT * FROM pools ORDER BY name ASC");
+  const showProfilesResult = await client.query<{
+    id: string;
+    name: string;
+    category_name: string;
+    default_duration_minutes: number;
+    color: string;
+    description: string;
+    updated_at: string;
+  }>("SELECT * FROM show_profiles ORDER BY name ASC");
   const blocksResult = await client.query<{
     id: string;
     title: string;
@@ -1347,6 +1404,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     start_minute_of_day: number;
     duration_minutes: number;
     day_of_week: number;
+    show_id: string;
     pool_id: string;
     source_name: string;
   }>("SELECT * FROM schedule_blocks ORDER BY start_minute_of_day ASC, start_hour ASC");
@@ -1541,6 +1599,15 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       cursorAssetId: row.cursor_asset_id || "",
       updatedAt: row.updated_at
     })),
+    showProfiles: showProfilesResult.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      categoryName: row.category_name,
+      defaultDurationMinutes: row.default_duration_minutes,
+      color: row.color,
+      description: row.description,
+      updatedAt: row.updated_at
+    })),
     scheduleBlocks: blocksResult.rows.map((row) => ({
       id: row.id,
       title: row.title,
@@ -1549,6 +1616,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
         typeof row.start_minute_of_day === "number" ? row.start_minute_of_day : (row.start_hour % 24) * 60,
       durationMinutes: row.duration_minutes,
       dayOfWeek: row.day_of_week ?? 0,
+      showId: row.show_id || undefined,
       poolId: row.pool_id || undefined,
       sourceName: row.source_name
     })),

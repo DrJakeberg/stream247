@@ -75,6 +75,17 @@ function createState(overrides: Partial<AppState> = {}): AppState {
         updatedAt: ""
       }
     ],
+    showProfiles: [
+      {
+        id: "show-1",
+        name: "Morning Replay",
+        categoryName: "Just Chatting",
+        defaultDurationMinutes: 120,
+        color: "#0e6d5a",
+        description: "Standard morning archive block.",
+        updatedAt: ""
+      }
+    ],
     scheduleBlocks: [
       {
         id: "block-1",
@@ -83,6 +94,7 @@ function createState(overrides: Partial<AppState> = {}): AppState {
         dayOfWeek: 5,
         startMinuteOfDay: 0,
         durationMinutes: 1440,
+        showId: "show-1",
         poolId: "pool-1",
         sourceName: "YouTube Playlist"
       }

@@ -28,8 +28,18 @@ export type ScheduleBlock = {
   dayOfWeek: number;
   startMinuteOfDay: number;
   durationMinutes: number;
+  showId?: string;
   poolId?: string;
   sourceName: string;
+};
+
+export type ShowProfile = {
+  id: string;
+  name: string;
+  categoryName: string;
+  defaultDurationMinutes: number;
+  color: string;
+  description: string;
 };
 
 export type SchedulePreview = {
@@ -41,6 +51,7 @@ export type SchedulePreview = {
     endTime: string;
     categoryName: string;
     dayOfWeek: number;
+    showId?: string;
     poolId?: string;
     sourceName: string;
     reason: string;
@@ -53,6 +64,7 @@ export type ScheduleOccurrence = {
   title: string;
   categoryName: string;
   dayOfWeek: number;
+  showId?: string;
   poolId?: string;
   sourceName: string;
   date: string;
@@ -267,6 +279,7 @@ export function buildSchedulePreview(args: {
     categoryName: occurrence.categoryName,
     dayOfWeek: occurrence.dayOfWeek,
     poolId: occurrence.poolId,
+    showId: occurrence.showId,
     sourceName: occurrence.sourceName,
     reason: `Selected from ${occurrence.sourceName} for ${occurrence.durationMinutes} minutes.`
   }));
@@ -294,6 +307,7 @@ export function validateScheduleBlock(block: {
   title: string;
   categoryName: string;
   sourceName: string;
+  showId?: string;
   poolId?: string;
   dayOfWeek: number;
   startMinuteOfDay: number;
@@ -429,6 +443,7 @@ export function buildScheduleOccurrences(args: {
         title: block.title,
         categoryName: block.categoryName,
         dayOfWeek: block.dayOfWeek,
+        showId: block.showId,
         poolId: block.poolId,
         sourceName: block.sourceName,
         date: args.date,

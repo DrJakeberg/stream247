@@ -432,6 +432,20 @@ select,
   align-items: center;
 }
 
+.show-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(27, 26, 22, 0.12);
+  flex: 0 0 auto;
+}
+
+.schedule-show-name {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .schedule-block-card:active {
   cursor: grabbing;
 }
