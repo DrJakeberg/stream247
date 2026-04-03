@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { AppState } from "../../apps/web/lib/server/state";
 import { getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
 import {
+  getAssetPlaybackDiagnostics,
   getFilteredIncidents,
   getRuntimeDriftReport,
+  getSourceConnectorDiagnostics,
   getSourceHealthSnapshot,
   getSourceIncidents,
   getSourceSyncRuns,
@@ -335,5 +337,31 @@ describe("ops state helpers", () => {
     const snapshot = getSourceHealthSnapshot(state, "source-1");
     expect(snapshot.openIncidentCount).toBe(1);
     expect(snapshot.latestRun?.status).toBe("success");
+  });
+
+  it("builds connector diagnostics and asset playback diagnostics", () => {
+    const state = createState({
+      sources: [
+        {
+          id: "source-1",
+          name: "YouTube Playlist",
+          type: "Managed ingestion",
+          connectorKind: "youtube-playlist",
+          enabled: true,
+          status: "Ready",
+          externalUrl: "https://www.youtube.com/playlist?list=PL123",
+          notes: "",
+          lastSyncedAt: ""
+        }
+      ]
+    });
+
+    const sourceDiagnostics = getSourceConnectorDiagnostics(state, "source-1");
+    expect(sourceDiagnostics.isValidUrl).toBe(true);
+    expect(sourceDiagnostics.expectedInput).toContain("playlist");
+
+    const assetDiagnostics = getAssetPlaybackDiagnostics(state, "asset-1");
+    expect(assetDiagnostics.status).toBe("playable");
+    expect(assetDiagnostics.summary).toContain("usable");
   });
 });

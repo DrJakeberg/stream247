@@ -3,7 +3,11 @@ import {
   buildSchedulePreview,
   describePresenceStatus,
   getCurrentScheduleMoment,
-  isCurrentScheduleTime
+  isCurrentScheduleTime,
+  isLikelyTwitchChannelUrl,
+  isLikelyTwitchVodUrl,
+  isLikelyYouTubeChannelUrl,
+  isLikelyYouTubePlaylistUrl
 } from "@stream247/core";
 import {
   appendAuditEvent,
@@ -256,6 +260,127 @@ export function getSourceHealthSnapshot(state: AppState, sourceId: string) {
     openIncidentCount: openIncidents.length,
     latestRun,
     references
+  };
+}
+
+function isLikelyDirectMediaUrl(value: string): boolean {
+  return /^https?:\/\/.+\.(mp4|mov|m4v|webm|mkv|mp3|m4a|aac|flac|wav)(\?.*)?$/i.test(value.trim());
+}
+
+export function getSourceConnectorDiagnostics(state: AppState, sourceId: string) {
+  const source = state.sources.find((entry) => entry.id === sourceId) ?? null;
+  const latestRun = getSourceSyncRuns(state, sourceId, 1)[0] ?? null;
+  const hints: string[] = [];
+
+  if (!source) {
+    return {
+      isValidUrl: false,
+      expectedInput: "Unknown source.",
+      hints: ["The selected source could not be found in workspace state."]
+    };
+  }
+
+  let isValidUrl = true;
+  let expectedInput = "";
+  const externalUrl = source.externalUrl?.trim() ?? "";
+
+  switch (source.connectorKind) {
+    case "youtube-playlist":
+      expectedInput = "Expected a YouTube playlist URL with a list parameter.";
+      isValidUrl = isLikelyYouTubePlaylistUrl(externalUrl);
+      hints.push("Use a playlist URL like youtube.com/playlist?list=... or a watch URL that still contains list=...");
+      hints.push("Private, removed, or region-blocked playlist items will not ingest.");
+      break;
+    case "youtube-channel":
+      expectedInput = "Expected a YouTube channel URL using @handle, /channel/, /user/, or /c/.";
+      isValidUrl = isLikelyYouTubeChannelUrl(externalUrl);
+      hints.push("Supported examples: /@handle, /@handle/videos, /channel/<id>, /user/<name>, /c/<name>.");
+      hints.push("If ingestion returns no items, verify the channel actually has public videos.");
+      break;
+    case "twitch-vod":
+      expectedInput = "Expected a Twitch VOD URL like twitch.tv/videos/<id>.";
+      isValidUrl = isLikelyTwitchVodUrl(externalUrl);
+      hints.push("Use a direct Twitch VOD URL, not the channel homepage.");
+      hints.push("Deleted or subscriber-only VODs can fail during ingestion or playback.");
+      break;
+    case "twitch-channel":
+      expectedInput = "Expected a Twitch channel URL like twitch.tv/<channel>.";
+      isValidUrl = isLikelyTwitchChannelUrl(externalUrl);
+      hints.push("Channel ingestion reads archive VODs, not the current live stream.");
+      hints.push("If nothing is imported, verify the channel actually has public archived VODs.");
+      break;
+    case "direct-media":
+      expectedInput = "Expected an http(s) URL ending in a supported media file extension.";
+      isValidUrl = isLikelyDirectMediaUrl(externalUrl);
+      hints.push("Supported direct-media inputs should point at a real media file such as .mp4, .mkv, or .mp3.");
+      hints.push("Generic web pages or expiring signed URLs often fail validation or playback.");
+      break;
+    case "local-library":
+      expectedInput = "Expected local media files to exist under the mounted media library root.";
+      isValidUrl = true;
+      hints.push("Place files under data/media on the host so the worker can scan and register them.");
+      hints.push("Empty local-library scans are valid, but they leave the pool with no playable assets.");
+      break;
+    default:
+      expectedInput = "Expected a valid source URL or mounted local media path.";
+  }
+
+  if (!(source.enabled ?? true)) {
+    hints.unshift("This source is disabled. Enable it before expecting new sync runs or playable assets.");
+  }
+
+  if (!externalUrl && source.connectorKind !== "local-library") {
+    hints.unshift("This source has no external URL configured yet.");
+  }
+
+  if (latestRun?.status === "error" && latestRun.errorMessage) {
+    hints.unshift(`Last sync failed with: ${latestRun.errorMessage}`);
+  }
+
+  return {
+    isValidUrl,
+    expectedInput,
+    hints
+  };
+}
+
+export function getAssetPlaybackDiagnostics(state: AppState, assetId: string) {
+  const asset = state.assets.find((entry) => entry.id === assetId) ?? null;
+  if (!asset) {
+    return {
+      status: "missing" as const,
+      summary: "Asset could not be found in the catalog.",
+      details: ["The selected asset id no longer exists in workspace state."]
+    };
+  }
+
+  const source = state.sources.find((entry) => entry.id === asset.sourceId) ?? null;
+  const sourceSnapshot = getSourceHealthSnapshot(state, asset.sourceId);
+  const details = [
+    asset.status === "ready" ? "Asset is marked ready in the catalog." : `Asset catalog status is ${asset.status}.`,
+    asset.path ? `Playable input: ${asset.path}` : "No playable input path is recorded.",
+    source ? `Source connector: ${source.connectorKind}` : "Source record is missing."
+  ];
+
+  if (!asset.durationSeconds) {
+    details.push("Natural duration is missing, so schedule fill and operator expectations may be less accurate.");
+  }
+
+  if (sourceSnapshot.latestRun?.status === "error") {
+    details.push(`The latest source sync run failed: ${sourceSnapshot.latestRun.errorMessage || sourceSnapshot.latestRun.summary}`);
+  }
+
+  if (sourceSnapshot.openIncidentCount > 0) {
+    details.push(`${sourceSnapshot.openIncidentCount} open source incident(s) may still affect playback quality.`);
+  }
+
+  return {
+    status: asset.status === "ready" ? ("playable" as const) : ("warning" as const),
+    summary:
+      asset.status === "ready"
+        ? "Asset should be usable for pool rotation or override if the upstream URL is still reachable."
+        : "Asset is not currently in a ready state and should be treated as suspect for playback.",
+    details
   };
 }
 

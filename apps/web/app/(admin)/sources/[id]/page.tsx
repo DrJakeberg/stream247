@@ -6,6 +6,7 @@ import { Panel } from "@/components/panel";
 import { SourceActionsForm } from "@/components/source-actions-form";
 import { SourceSyncForm } from "@/components/source-sync-form";
 import {
+  getSourceConnectorDiagnostics,
   getSourceAuditEvents,
   getSourceHealthSnapshot,
   getSourceIncidents,
@@ -35,6 +36,7 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
   const auditEvents = getSourceAuditEvents(state, source.id);
   const references = getSourceReferences(state, source.id);
   const health = getSourceHealthSnapshot(state, source.id);
+  const diagnostics = getSourceConnectorDiagnostics(state, source.id);
 
   return (
     <>
@@ -112,6 +114,23 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
                 <div className="subtle">This source is not currently used by any pool or weekly schedule block.</div>
               </div>
             ) : null}
+          </div>
+        </Panel>
+
+        <Panel title="Connector diagnostics" eyebrow="Troubleshooting">
+          <div className="list">
+            <div className="item">
+              <strong>Expected input</strong>
+              <div className="subtle">{diagnostics.expectedInput}</div>
+              <div className="subtle">
+                URL check: {diagnostics.isValidUrl ? "looks valid" : "does not match the expected connector pattern"}
+              </div>
+            </div>
+            {diagnostics.hints.map((hint) => (
+              <div className="item" key={hint}>
+                <div className="subtle">{hint}</div>
+              </div>
+            ))}
           </div>
         </Panel>
 
