@@ -586,6 +586,18 @@ function fromUnixTimestamp(value?: number): string | undefined {
   return typeof value === "number" && Number.isFinite(value) ? new Date(value * 1000).toISOString() : undefined;
 }
 
+function getTwitchArchiveUrl(channelUrl: string): string {
+  try {
+    const url = new URL(channelUrl);
+    url.pathname = `${url.pathname.replace(/\/+$/, "")}/videos`;
+    url.searchParams.set("filter", "archives");
+    url.searchParams.set("sort", "time");
+    return url.toString();
+  } catch {
+    return channelUrl;
+  }
+}
+
 async function loadFlatCollection(url: string): Promise<YtDlpPlaylistResponse> {
   const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
   const output = await execFileText(ytDlpBinary, [
@@ -738,7 +750,7 @@ async function syncTwitchVodSources(): Promise<void> {
           })
         );
       } else {
-        const payload = await loadFlatCollection(externalUrl);
+        const payload = await loadFlatCollection(getTwitchArchiveUrl(externalUrl));
         for (const entry of payload.entries ?? []) {
           const id = entry.id ?? "";
           if (!id) {
@@ -786,8 +798,12 @@ async function syncTwitchVodSources(): Promise<void> {
         status: sourceAssetCount > 0 ? "Ready" : "Ingestion failed",
         notes:
           sourceAssetCount > 0
-            ? "Ingested the Twitch VOD into a playable asset via yt-dlp."
-            : "Could not ingest this VOD. Check the URL and worker incident log.",
+            ? source.connectorKind === "twitch-channel"
+              ? `Ingested ${sourceAssetCount} Twitch archive item(s) via yt-dlp.`
+              : "Ingested the Twitch VOD into a playable asset via yt-dlp."
+            : source.connectorKind === "twitch-channel"
+              ? "Could not ingest Twitch channel archives. Check the URL and worker incident log."
+              : "Could not ingest this VOD. Check the URL and worker incident log.",
         lastSyncedAt: now
       };
     }),
