@@ -10,7 +10,9 @@ import {
   describePresenceStatus,
   getCurrentScheduleMoment,
   isCurrentScheduleTime,
+  isLikelyTwitchChannelUrl,
   isLikelyTwitchVodUrl,
+  isLikelyYouTubeChannelUrl,
   isLikelyYouTubePlaylistUrl,
   toUtcIsoForLocalDateTime
 } from "@stream247/core";
@@ -373,7 +375,9 @@ async function syncLocalMediaLibrary(): Promise<void> {
 async function syncDirectMediaSources(): Promise<void> {
   const state = await readAppState();
   const now = new Date().toISOString();
-  const directSources = state.sources.filter((source) => source.connectorKind === "direct-media");
+  const directSources = state.sources.filter(
+    (source) => source.connectorKind === "direct-media" && (source.enabled ?? true)
+  );
   const directAssets: AssetRecord[] = [];
   let hasInvalidSource = false;
 
@@ -390,6 +394,7 @@ async function syncDirectMediaSources(): Promise<void> {
       title: source.name,
       path: url,
       status: "ready",
+      externalId: source.id,
       fallbackPriority: 100,
       isGlobalFallback: false,
       createdAt: now,
@@ -439,6 +444,8 @@ async function syncDirectMediaSources(): Promise<void> {
 type YtDlpPlaylistEntry = {
   id?: string;
   title?: string;
+  duration?: number;
+  timestamp?: number;
   url?: string;
   webpage_url?: string;
   original_url?: string;
@@ -452,6 +459,10 @@ type YtDlpPlaylistResponse = {
 type YtDlpVideoResponse = {
   id?: string;
   title?: string;
+  duration?: number;
+  timestamp?: number;
+  category?: string;
+  categories?: string[];
   webpage_url?: string;
   original_url?: string;
 };
@@ -461,6 +472,10 @@ function buildRemoteAsset(args: {
   assetIdSeed: string;
   title: string;
   path: string;
+  externalId?: string;
+  categoryName?: string;
+  durationSeconds?: number;
+  publishedAt?: string;
   now: string;
 }): AssetRecord {
   return {
@@ -469,6 +484,10 @@ function buildRemoteAsset(args: {
     title: args.title,
     path: args.path,
     status: "ready",
+    externalId: args.externalId,
+    categoryName: args.categoryName,
+    durationSeconds: args.durationSeconds,
+    publishedAt: args.publishedAt,
     fallbackPriority: 100,
     isGlobalFallback: false,
     createdAt: args.now,
@@ -476,30 +495,45 @@ function buildRemoteAsset(args: {
   };
 }
 
-async function syncYoutubePlaylistSources(): Promise<void> {
+function fromUnixTimestamp(value?: number): string | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? new Date(value * 1000).toISOString() : undefined;
+}
+
+async function loadFlatCollection(url: string): Promise<YtDlpPlaylistResponse> {
   const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
+  const output = await execFileText(ytDlpBinary, [
+    "--flat-playlist",
+    "--dump-single-json",
+    "--playlist-end",
+    process.env.SOURCE_SYNC_LIMIT || "200",
+    url
+  ]);
+  return JSON.parse(output) as YtDlpPlaylistResponse;
+}
+
+async function syncYoutubePlaylistSources(): Promise<void> {
   const state = await readAppState();
   const now = new Date().toISOString();
-  const youtubeSources = state.sources.filter((source) => source.connectorKind === "youtube-playlist");
+  const youtubeSources = state.sources.filter(
+    (source) =>
+      (source.connectorKind === "youtube-playlist" || source.connectorKind === "youtube-channel") && (source.enabled ?? true)
+  );
   const youtubeAssets: AssetRecord[] = [];
   let hadFailure = false;
 
   for (const source of youtubeSources) {
     const externalUrl = source.externalUrl?.trim() ?? "";
-    if (!isLikelyYouTubePlaylistUrl(externalUrl)) {
+    const isValid =
+      source.connectorKind === "youtube-playlist"
+        ? isLikelyYouTubePlaylistUrl(externalUrl)
+        : isLikelyYouTubeChannelUrl(externalUrl);
+    if (!isValid) {
       hadFailure = true;
       continue;
     }
 
     try {
-      const output = await execFileText(ytDlpBinary, [
-        "--flat-playlist",
-        "--dump-single-json",
-        "--playlist-end",
-        process.env.YOUTUBE_PLAYLIST_LIMIT || "50",
-        externalUrl
-      ]);
-      const payload = JSON.parse(output) as YtDlpPlaylistResponse;
+      const payload = await loadFlatCollection(externalUrl);
       const entries = payload.entries ?? [];
 
       for (const entry of entries) {
@@ -515,6 +549,9 @@ async function syncYoutubePlaylistSources(): Promise<void> {
             assetIdSeed: id,
             title: entry.title || `${source.name} item`,
             path: videoUrl,
+            externalId: entry.id,
+            durationSeconds: entry.duration,
+            publishedAt: fromUnixTimestamp(entry.timestamp),
             now
           })
         );
@@ -525,9 +562,9 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       await upsertIncident({
         scope: "source",
         severity: "warning",
-        title: "YouTube playlist ingestion failed",
+        title: source.connectorKind === "youtube-channel" ? "YouTube channel ingestion failed" : "YouTube playlist ingestion failed",
         message: `${source.name}: ${message}`,
-        fingerprint: `source.youtube-playlist.${source.id}`
+        fingerprint: `source.${source.connectorKind}.${source.id}`
       });
     }
   }
@@ -535,7 +572,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   await updateAppState((current) => ({
     ...current,
     sources: current.sources.map((source) => {
-      if (source.connectorKind !== "youtube-playlist") {
+      if (source.connectorKind !== "youtube-playlist" && source.connectorKind !== "youtube-channel") {
         return source;
       }
 
@@ -545,8 +582,8 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         status: sourceAssetCount > 0 ? "Ready" : "Ingestion failed",
         notes:
           sourceAssetCount > 0
-            ? `Ingested ${sourceAssetCount} playlist item(s) via yt-dlp.`
-            : "Could not ingest this playlist. Check the URL and worker incident log.",
+            ? `Ingested ${sourceAssetCount} YouTube item(s) via yt-dlp.`
+            : "Could not ingest this YouTube source. Check the URL and worker incident log.",
         lastSyncedAt: now
       };
     }),
@@ -554,14 +591,14 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       ...youtubeAssets,
       ...current.assets.filter((asset) => {
         const matchingSource = current.sources.find((source) => source.id === asset.sourceId);
-        return matchingSource?.connectorKind !== "youtube-playlist";
+        return matchingSource?.connectorKind !== "youtube-playlist" && matchingSource?.connectorKind !== "youtube-channel";
       })
     ]
   }));
 
   if (!hadFailure) {
     for (const source of youtubeSources) {
-      await resolveIncident(`source.youtube-playlist.${source.id}`, `YouTube playlist ${source.name} ingested successfully.`);
+      await resolveIncident(`source.${source.connectorKind}.${source.id}`, `YouTube source ${source.name} ingested successfully.`);
     }
   }
 }
@@ -570,47 +607,81 @@ async function syncTwitchVodSources(): Promise<void> {
   const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
   const state = await readAppState();
   const now = new Date().toISOString();
-  const twitchSources = state.sources.filter((source) => source.connectorKind === "twitch-vod");
+  const twitchSources = state.sources.filter(
+    (source) => (source.connectorKind === "twitch-vod" || source.connectorKind === "twitch-channel") && (source.enabled ?? true)
+  );
   const twitchAssets: AssetRecord[] = [];
 
   for (const source of twitchSources) {
     const externalUrl = source.externalUrl?.trim() ?? "";
-    if (!isLikelyTwitchVodUrl(externalUrl)) {
+    const isValid =
+      source.connectorKind === "twitch-vod" ? isLikelyTwitchVodUrl(externalUrl) : isLikelyTwitchChannelUrl(externalUrl);
+    if (!isValid) {
       await upsertIncident({
         scope: "source",
         severity: "warning",
-        title: "Twitch VOD URL is invalid",
-        message: `${source.name} requires a twitch.tv/videos/<id> URL.`,
-        fingerprint: `source.twitch-vod.${source.id}`
+        title: "Twitch source URL is invalid",
+        message:
+          source.connectorKind === "twitch-vod"
+            ? `${source.name} requires a twitch.tv/videos/<id> URL.`
+            : `${source.name} requires a twitch.tv/<channel> URL.`,
+        fingerprint: `source.${source.connectorKind}.${source.id}`
       });
       continue;
     }
 
     try {
-      const output = await execFileText(ytDlpBinary, ["--dump-single-json", "--no-playlist", externalUrl]);
-      const payload = JSON.parse(output) as YtDlpVideoResponse;
-      const assetPath = payload.webpage_url || payload.original_url || externalUrl;
-      const assetIdSeed = payload.id || externalUrl;
+      if (source.connectorKind === "twitch-vod") {
+        const output = await execFileText(ytDlpBinary, ["--dump-single-json", "--no-playlist", externalUrl]);
+        const payload = JSON.parse(output) as YtDlpVideoResponse;
+        const assetPath = payload.webpage_url || payload.original_url || externalUrl;
+        const assetIdSeed = payload.id || externalUrl;
 
-      twitchAssets.push(
-        buildRemoteAsset({
-          sourceId: source.id,
-          assetIdSeed,
-          title: payload.title || source.name,
-          path: assetPath,
-          now
-        })
-      );
+        twitchAssets.push(
+          buildRemoteAsset({
+            sourceId: source.id,
+            assetIdSeed,
+            title: payload.title || source.name,
+            path: assetPath,
+            externalId: payload.id,
+            categoryName: payload.category || payload.categories?.[0] || "",
+            durationSeconds: payload.duration,
+            publishedAt: fromUnixTimestamp(payload.timestamp),
+            now
+          })
+        );
+      } else {
+        const payload = await loadFlatCollection(externalUrl);
+        for (const entry of payload.entries ?? []) {
+          const id = entry.id ?? "";
+          if (!id) {
+            continue;
+          }
 
-      await resolveIncident(`source.twitch-vod.${source.id}`, `Twitch VOD ${source.name} ingested successfully.`);
+          twitchAssets.push(
+            buildRemoteAsset({
+              sourceId: source.id,
+              assetIdSeed: id,
+              title: entry.title || source.name,
+              path: entry.webpage_url || `https://www.twitch.tv/videos/${id}`,
+              externalId: id,
+              durationSeconds: entry.duration,
+              publishedAt: fromUnixTimestamp(entry.timestamp),
+              now
+            })
+          );
+        }
+      }
+
+      await resolveIncident(`source.${source.connectorKind}.${source.id}`, `Twitch source ${source.name} ingested successfully.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Twitch VOD ingestion error.";
       await upsertIncident({
         scope: "source",
         severity: "warning",
-        title: "Twitch VOD ingestion failed",
+        title: source.connectorKind === "twitch-channel" ? "Twitch channel ingestion failed" : "Twitch VOD ingestion failed",
         message: `${source.name}: ${message}`,
-        fingerprint: `source.twitch-vod.${source.id}`
+        fingerprint: `source.${source.connectorKind}.${source.id}`
       });
     }
   }
@@ -618,7 +689,7 @@ async function syncTwitchVodSources(): Promise<void> {
   await updateAppState((current) => ({
     ...current,
     sources: current.sources.map((source) => {
-      if (source.connectorKind !== "twitch-vod") {
+      if (source.connectorKind !== "twitch-vod" && source.connectorKind !== "twitch-channel") {
         return source;
       }
 
@@ -637,35 +708,74 @@ async function syncTwitchVodSources(): Promise<void> {
       ...twitchAssets,
       ...current.assets.filter((asset) => {
         const matchingSource = current.sources.find((source) => source.id === asset.sourceId);
-        return matchingSource?.connectorKind !== "twitch-vod";
+        return matchingSource?.connectorKind !== "twitch-vod" && matchingSource?.connectorKind !== "twitch-channel";
       })
     ]
   }));
 }
 
-function getCurrentScheduleItem(state: AppState) {
+function getCurrentScheduleItem(state: AppState): ReturnType<typeof buildScheduleOccurrences>[number] | null {
   const timeZone = process.env.CHANNEL_TIMEZONE || "UTC";
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
     timeZone
   });
 
-  const preview = buildSchedulePreview({
+  const occurrences = buildScheduleOccurrences({
     date: scheduleMoment.date,
     blocks: state.scheduleBlocks
   });
   const currentTime = scheduleMoment.time;
   return (
-    preview.items.find((item) =>
+    occurrences.find((item) =>
       isCurrentScheduleTime({
         startTime: item.startTime,
         endTime: item.endTime,
         currentTime
       })
     ) ??
-    preview.items[0] ??
+    occurrences[0] ??
     null
   );
+}
+
+function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string): AssetRecord | null {
+  const pool = state.pools.find((entry) => entry.id === poolId);
+  if (!pool) {
+    return null;
+  }
+
+  const eligibleAssets = state.assets.filter((asset) => {
+    if (asset.status !== "ready" || asset.id === skippedAssetId) {
+      return false;
+    }
+
+    return pool.sourceIds.includes(asset.sourceId);
+  });
+
+  if (eligibleAssets.length === 0) {
+    return null;
+  }
+
+  eligibleAssets.sort((left, right) => {
+    const publishedDelta = new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
+    if (publishedDelta !== 0) {
+      return publishedDelta;
+    }
+
+    return left.title.localeCompare(right.title);
+  });
+
+  if (!pool.cursorAssetId) {
+    return eligibleAssets[0] ?? null;
+  }
+
+  const currentIndex = eligibleAssets.findIndex((asset) => asset.id === pool.cursorAssetId);
+  if (currentIndex === -1) {
+    return eligibleAssets[0] ?? null;
+  }
+
+  return eligibleAssets[(currentIndex + 1) % eligibleAssets.length] ?? eligibleAssets[0] ?? null;
 }
 
 function choosePlaybackCandidate(state: AppState) {
@@ -692,17 +802,18 @@ function choosePlaybackCandidate(state: AppState) {
   }
 
   const currentScheduleItem = getCurrentScheduleItem(state);
-  const preferredSource = currentScheduleItem?.sourceName;
-  const preferredAsset = state.assets.find((entry) => {
-    if (entry.status !== "ready") {
-      return false;
-    }
-    if (entry.id === skippedAssetId) {
-      return false;
-    }
-    const matchingSource = state.sources.find((source) => source.id === entry.sourceId);
-    return matchingSource?.name === preferredSource;
-  });
+  const preferredAsset = currentScheduleItem?.poolId
+    ? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId)
+    : state.assets.find((entry) => {
+        if (entry.status !== "ready") {
+          return false;
+        }
+        if (entry.id === skippedAssetId) {
+          return false;
+        }
+        const matchingSource = state.sources.find((source) => source.id === entry.sourceId);
+        return matchingSource?.name === currentScheduleItem?.sourceName;
+      });
 
   if (preferredAsset) {
     return {
@@ -1030,6 +1141,7 @@ async function runPlayoutCycle(): Promise<void> {
   await resolveIncident("playout.crash-loop", "Playout crash-loop protection is not active.");
 
   const restartRequested = Boolean(state.playout.restartRequestedAt);
+  const currentScheduleItem = getCurrentScheduleItem(state);
   if (restartRequested) {
     stopPlayoutProcess();
     state = await updateAppState((current) => ({
@@ -1115,6 +1227,18 @@ async function runPlayoutCycle(): Promise<void> {
 
   await updateAppState((current) => ({
     ...current,
+    pools:
+      currentScheduleItem?.poolId && selection.reasonCode === "scheduled_match"
+        ? current.pools.map((pool) =>
+            pool.id === currentScheduleItem.poolId
+              ? {
+                  ...pool,
+                  cursorAssetId: selection.asset.id,
+                  updatedAt: new Date().toISOString()
+                }
+              : pool
+          )
+        : current.pools,
     playout: {
       ...current.playout,
       status: selection.lifecycleStatus === "recovering" ? "recovering" : "running",
@@ -1360,7 +1484,8 @@ async function reconcileTwitch(): Promise<void> {
   }
 
   const currentScheduleItem = getCurrentScheduleItem(state);
-  if (!currentScheduleItem) {
+  const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
+  if (!currentScheduleItem && !currentAsset) {
     return;
   }
 
@@ -1371,9 +1496,9 @@ async function reconcileTwitch(): Promise<void> {
     twitchAccessToken = await refreshBroadcasterAccessToken();
   }
 
-  const desiredTitle = currentScheduleItem.title;
+  const desiredTitle = currentAsset?.title || currentScheduleItem?.title || state.playout.currentTitle;
   let desiredCategoryId = getTwitchDefaultCategoryId(state);
-  let desiredCategoryName = currentScheduleItem.categoryName;
+  let desiredCategoryName = currentAsset?.categoryName || currentScheduleItem?.categoryName || "";
   const categoryCache = new Map<string, { id: string; name: string } | null>();
   const presenceStatus = describePresenceStatus({
     activeWindows: state.presenceWindows.map((window) => ({
@@ -1389,7 +1514,7 @@ async function reconcileTwitch(): Promise<void> {
   const sync = async (accessToken: string) => {
     const resolvedCategory = await resolveTwitchCategory({
       accessToken,
-      categoryName: currentScheduleItem.categoryName,
+      categoryName: currentAsset?.categoryName || currentScheduleItem?.categoryName || "",
       clientId: twitchClientId
     });
 
@@ -1398,20 +1523,20 @@ async function reconcileTwitch(): Promise<void> {
       desiredCategoryName = resolvedCategory.name;
       await resolveIncident(
         "twitch.category.lookup.failed",
-        `Resolved Twitch category ${resolvedCategory.name} for schedule block ${currentScheduleItem.title}.`
+        `Resolved Twitch category ${resolvedCategory.name} for the current playout item ${desiredTitle}.`
       );
     } else if (!desiredCategoryId) {
       await upsertIncident({
         scope: "twitch",
         severity: "warning",
         title: "Twitch category lookup failed",
-        message: `Could not resolve a Twitch category id for "${currentScheduleItem.categoryName}". Title sync still continues.`,
+        message: `Could not resolve a Twitch category id for "${currentAsset?.categoryName || currentScheduleItem?.categoryName || "unknown"}". Title sync still continues.`,
         fingerprint: "twitch.category.lookup.failed"
       });
     } else {
       await resolveIncident(
         "twitch.category.lookup.failed",
-        `Using default Twitch category for schedule block ${currentScheduleItem.title}.`
+        `Using default Twitch category for the current playout item ${desiredTitle}.`
       );
     }
 

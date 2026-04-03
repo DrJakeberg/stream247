@@ -47,7 +47,9 @@ export function SourceCreateForm() {
         <select defaultValue="direct-media" name="connectorKind">
           <option value="direct-media">Direct media URL</option>
           <option value="youtube-playlist">YouTube playlist</option>
+          <option value="youtube-channel">YouTube channel</option>
           <option value="twitch-vod">Twitch VOD</option>
+          <option value="twitch-channel">Twitch channel</option>
         </select>
       </label>
       <label>

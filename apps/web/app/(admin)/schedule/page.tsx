@@ -12,9 +12,10 @@ export default async function SchedulePage() {
   const schedulePreview = getSchedulePreview(state);
   const timeZone = getWorkspaceTimeZone();
   const conflicts = new Set(findScheduleConflicts(state.scheduleBlocks));
-  const sourceOptions = [...new Set(state.sources.map((source) => source.name))].sort((left, right) =>
-    left.localeCompare(right)
-  );
+  const poolOptions = state.pools
+    .map((pool) => ({ id: pool.id, name: pool.name }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   type ScheduleItem = (typeof schedulePreview.items)[number];
 
   return (
@@ -22,10 +23,10 @@ export default async function SchedulePage() {
       <section className="grid two">
         <Panel title="Add schedule block" eyebrow="Programming">
           <p className="subtle">
-            Build the day in {timeZone}. Start times are minute-accurate, durations use 15-minute steps, and
-            overlapping blocks are rejected before save.
+            Build the week in {timeZone}. Blocks target pools, start times are minute-accurate, durations use
+            15-minute steps, and overlapping windows on the same weekday are rejected before save.
           </p>
-          <ScheduleBlockForm sources={sourceOptions} />
+          <ScheduleBlockForm pools={poolOptions} />
         </Panel>
 
         <Panel title="Schedule preview" eyebrow="Programming">
@@ -37,7 +38,7 @@ export default async function SchedulePage() {
               <div className="item" key={item.id}>
                 <strong>{item.title}</strong>
                 <div className="subtle">
-                  {item.startTime} to {item.endTime} · {item.sourceName}
+                  {dayLabels[item.dayOfWeek]} · {item.startTime} to {item.endTime} · {item.sourceName}
                 </div>
                 <div className="subtle">{item.reason}</div>
               </div>
@@ -56,14 +57,14 @@ export default async function SchedulePage() {
               <div className="item" key={block.id}>
                 <strong>{block.title}</strong>
                 <div className="subtle">
-                  {formatMinuteOfDay(block.startMinuteOfDay)} · {block.durationMinutes} minutes · {block.sourceName}
+                  {dayLabels[block.dayOfWeek]} · {formatMinuteOfDay(block.startMinuteOfDay)} · {block.durationMinutes} minutes · {block.sourceName}
                 </div>
                 <div className="subtle">
                   {block.categoryName}
                   {conflicts.has(block.id) ? " · Conflict detected" : ""}
                 </div>
                 <div style={{ marginTop: 12 }}>
-                  <ScheduleBlockForm block={block} sources={sourceOptions} />
+                  <ScheduleBlockForm block={block} pools={poolOptions} />
                 </div>
                 <div style={{ marginTop: 8 }}>
                   <ScheduleBlockDeleteForm id={block.id} />

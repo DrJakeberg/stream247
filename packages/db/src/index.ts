@@ -77,8 +77,15 @@ export type SourceRecord = {
   id: string;
   name: string;
   type: string;
-  connectorKind: "local-library" | "direct-media" | "youtube-playlist" | "twitch-vod";
+  connectorKind:
+    | "local-library"
+    | "direct-media"
+    | "youtube-playlist"
+    | "youtube-channel"
+    | "twitch-vod"
+    | "twitch-channel";
   status: string;
+  enabled?: boolean;
   externalUrl?: string;
   notes?: string;
   lastSyncedAt?: string;
@@ -90,9 +97,22 @@ export type AssetRecord = {
   title: string;
   path: string;
   status: "ready" | "pending" | "error";
+  externalId?: string;
+  categoryName?: string;
+  durationSeconds?: number;
+  publishedAt?: string;
   fallbackPriority: number;
   isGlobalFallback: boolean;
   createdAt: string;
+  updatedAt: string;
+};
+
+export type PoolRecord = {
+  id: string;
+  name: string;
+  sourceIds: string[];
+  playbackMode: "round-robin";
+  cursorAssetId: string;
   updatedAt: string;
 };
 
@@ -127,8 +147,10 @@ export type ScheduleBlockRecord = {
   id: string;
   title: string;
   categoryName: string;
+  dayOfWeek: number;
   startMinuteOfDay: number;
   durationMinutes: number;
+  poolId?: string;
   sourceName: string;
 };
 
@@ -136,6 +158,7 @@ export type OverlaySettingsRecord = {
   enabled: boolean;
   channelName: string;
   headline: string;
+  replayLabel: string;
   accentColor: string;
   showClock: boolean;
   showNextItem: boolean;
@@ -206,6 +229,7 @@ export type AppState = {
   managedConfig: ManagedConfigRecord;
   twitch: TwitchConnection;
   twitchScheduleSegments: TwitchScheduleSegmentRecord[];
+  pools: PoolRecord[];
   scheduleBlocks: ScheduleBlockRecord[];
   sources: SourceRecord[];
   assets: AssetRecord[];
@@ -292,6 +316,7 @@ function defaultState(): AppState {
       enabled: false,
       channelName: "Stream247",
       headline: "Always on air",
+      replayLabel: "Replay stream",
       accentColor: "#0e6d5a",
       showClock: true,
       showNextItem: true,
@@ -329,53 +354,9 @@ function defaultState(): AppState {
       error: ""
     },
     twitchScheduleSegments: [],
-    scheduleBlocks: [
-      {
-        id: "morning-vods",
-        title: "Morning Twitch VOD Rotation",
-        categoryName: "Just Chatting",
-        startMinuteOfDay: 6 * 60,
-        durationMinutes: 240,
-        sourceName: "Twitch Archive"
-      },
-      {
-        id: "playlist-prime",
-        title: "Prime Time YouTube Playlist",
-        categoryName: "Music",
-        startMinuteOfDay: 18 * 60,
-        durationMinutes: 360,
-        sourceName: "YouTube Playlist"
-      }
-    ],
-    sources: [
-      {
-        id: "source-youtube",
-        name: "YouTube Playlist",
-        type: "Managed ingestion",
-        connectorKind: "youtube-playlist",
-        status: "Planned",
-        externalUrl: "",
-        notes: "Configure a playlist URL when the connector is ready."
-      },
-      {
-        id: "source-twitch",
-        name: "Twitch Archive",
-        type: "Twitch VOD sync",
-        connectorKind: "twitch-vod",
-        status: "Planned",
-        externalUrl: "",
-        notes: "Configure a VOD URL when the connector is ready."
-      },
-      {
-        id: "source-local-library",
-        name: "Local Media Library",
-        type: "Filesystem scan",
-        connectorKind: "local-library",
-        status: "Pending scan",
-        externalUrl: "",
-        notes: "Scans files mounted into the media library volume."
-      }
-    ],
+    pools: [],
+    scheduleBlocks: [],
+    sources: [],
     assets: [],
     destinations: [
       {
@@ -422,9 +403,92 @@ function defaultState(): AppState {
   };
 }
 
+function createInitialSeedState(): AppState {
+  const state = defaultState();
+  return {
+    ...state,
+    pools: [
+      {
+        id: "pool-archive",
+        name: "Archive Pool",
+        sourceIds: ["source-twitch", "source-youtube"],
+        playbackMode: "round-robin",
+        cursorAssetId: "",
+        updatedAt: ""
+      }
+    ],
+    scheduleBlocks: [
+      {
+        id: "morning-vods",
+        title: "Morning Twitch VOD Rotation",
+        categoryName: "Just Chatting",
+        dayOfWeek: 1,
+        startMinuteOfDay: 6 * 60,
+        durationMinutes: 240,
+        poolId: "pool-archive",
+        sourceName: "Twitch Archive"
+      },
+      {
+        id: "playlist-prime",
+        title: "Prime Time YouTube Playlist",
+        categoryName: "Music",
+        dayOfWeek: 5,
+        startMinuteOfDay: 18 * 60,
+        durationMinutes: 360,
+        poolId: "pool-archive",
+        sourceName: "YouTube Playlist"
+      }
+    ],
+    sources: [
+      {
+        id: "source-youtube",
+        name: "YouTube Playlist",
+        type: "Managed ingestion",
+        connectorKind: "youtube-playlist",
+        enabled: true,
+        status: "Planned",
+        externalUrl: "",
+        notes: "Configure a playlist URL when the connector is ready."
+      },
+      {
+        id: "source-twitch",
+        name: "Twitch Archive",
+        type: "Twitch VOD sync",
+        connectorKind: "twitch-vod",
+        enabled: true,
+        status: "Planned",
+        externalUrl: "",
+        notes: "Configure a VOD URL when the connector is ready."
+      },
+      {
+        id: "source-local-library",
+        name: "Local Media Library",
+        type: "Filesystem scan",
+        connectorKind: "local-library",
+        enabled: true,
+        status: "Pending scan",
+        externalUrl: "",
+        notes: "Scans files mounted into the media library volume."
+      }
+    ],
+    assets: []
+  };
+}
+
 function normalizeState(state: AppState): AppState {
   const defaults = defaultState();
   const localOwnerUser = state.users.find((user) => user.role === "owner" && user.authProvider === "local");
+
+  const dedupeById = <T extends { id: string }>(items: T[]): T[] => {
+    const seen = new Set<string>();
+    return items.filter((item) => {
+      if (seen.has(item.id)) {
+        return false;
+      }
+      seen.add(item.id);
+      return true;
+    });
+  };
 
   const owner =
     state.owner ??
@@ -457,28 +521,46 @@ function normalizeState(state: AppState): AppState {
       ...(state.twitch ?? {})
     },
     twitchScheduleSegments: Array.isArray(state.twitchScheduleSegments) ? state.twitchScheduleSegments : [],
-    users: Array.isArray(state.users) ? state.users : [],
-    teamAccessGrants: Array.isArray(state.teamAccessGrants) ? state.teamAccessGrants : [],
+    users: Array.isArray(state.users) ? dedupeById(state.users) : [],
+    teamAccessGrants: Array.isArray(state.teamAccessGrants) ? dedupeById(state.teamAccessGrants) : [],
     presenceWindows: Array.isArray(state.presenceWindows) ? state.presenceWindows : [],
+    pools: Array.isArray(state.pools)
+      ? dedupeById(state.pools).map((pool) => ({
+          ...pool,
+          sourceIds: Array.isArray(pool.sourceIds) ? [...new Set(pool.sourceIds)] : [],
+          playbackMode: "round-robin"
+        }))
+      : [],
     scheduleBlocks: Array.isArray(state.scheduleBlocks)
-      ? state.scheduleBlocks.map((block) => ({
+      ? dedupeById(state.scheduleBlocks).map((block) => ({
           ...block,
+          dayOfWeek: typeof block.dayOfWeek === "number" ? block.dayOfWeek : 0,
+          poolId: block.poolId ?? "",
           startMinuteOfDay:
             typeof (block as ScheduleBlockRecord & { startHour?: number }).startMinuteOfDay === "number"
               ? block.startMinuteOfDay
               : (((block as ScheduleBlockRecord & { startHour?: number }).startHour ?? 0) % 24) * 60
         }))
-      : defaults.scheduleBlocks,
-    sources: Array.isArray(state.sources) ? state.sources : defaults.sources,
+      : [],
+    sources: Array.isArray(state.sources)
+      ? dedupeById(state.sources).map((source) => ({
+          ...source,
+          enabled: source.enabled ?? true
+        }))
+      : [],
     assets: Array.isArray(state.assets)
-      ? state.assets.map((asset) => ({
+      ? dedupeById(state.assets).map((asset) => ({
           ...asset,
+          externalId: asset.externalId ?? "",
+          categoryName: asset.categoryName ?? "",
+          durationSeconds: asset.durationSeconds ?? 0,
+          publishedAt: asset.publishedAt ?? "",
           fallbackPriority: asset.fallbackPriority ?? 100,
           isGlobalFallback: asset.isGlobalFallback ?? false
         }))
       : [],
-    destinations: Array.isArray(state.destinations) ? state.destinations : defaults.destinations,
-    incidents: Array.isArray(state.incidents) ? state.incidents : [],
+    destinations: Array.isArray(state.destinations) ? dedupeById(state.destinations) : defaults.destinations,
+    incidents: Array.isArray(state.incidents) ? dedupeById(state.incidents) : [],
     auditEvents: Array.isArray(state.auditEvents) ? state.auditEvents : [],
     playout: {
       ...defaults.playout,
@@ -541,6 +623,7 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       enabled BOOLEAN NOT NULL DEFAULT FALSE,
       channel_name TEXT NOT NULL DEFAULT 'Stream247',
       headline TEXT NOT NULL DEFAULT 'Always on air',
+      replay_label TEXT NOT NULL DEFAULT 'Replay stream',
       accent_color TEXT NOT NULL DEFAULT '#0e6d5a',
       show_clock BOOLEAN NOT NULL DEFAULT TRUE,
       show_next_item BOOLEAN NOT NULL DEFAULT TRUE,
@@ -586,10 +669,21 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       category_name TEXT NOT NULL,
+      day_of_week INTEGER NOT NULL DEFAULT 0,
       start_hour INTEGER NOT NULL,
       start_minute_of_day INTEGER NOT NULL DEFAULT 0,
       duration_minutes INTEGER NOT NULL,
+      pool_id TEXT NOT NULL DEFAULT '',
       source_name TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS pools (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      source_ids TEXT NOT NULL DEFAULT '[]',
+      playback_mode TEXT NOT NULL DEFAULT 'round-robin',
+      cursor_asset_id TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS sources (
@@ -597,6 +691,7 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       name TEXT NOT NULL,
       type TEXT NOT NULL,
       connector_kind TEXT NOT NULL DEFAULT 'local-library',
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
       status TEXT NOT NULL,
       external_url TEXT NOT NULL DEFAULT '',
       notes TEXT NOT NULL DEFAULT '',
@@ -609,6 +704,10 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       title TEXT NOT NULL,
       path TEXT NOT NULL,
       status TEXT NOT NULL,
+      external_id TEXT NOT NULL DEFAULT '',
+      category_name TEXT NOT NULL DEFAULT '',
+      duration_seconds INTEGER NOT NULL DEFAULT 0,
+      published_at TEXT NOT NULL DEFAULT '',
       fallback_priority INTEGER NOT NULL DEFAULT 100,
       is_global_fallback BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TEXT NOT NULL,
@@ -702,10 +801,18 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_next_item BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_schedule_teaser BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE managed_config ADD COLUMN IF NOT EXISTS encrypted_payload TEXT NOT NULL DEFAULT '';
     ALTER TABLE managed_config ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS start_minute_of_day INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS day_of_week INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS pool_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE sources ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS external_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS category_name TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS duration_seconds INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS published_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS current_destination_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS restart_requested_at TEXT NOT NULL DEFAULT '';
@@ -795,9 +902,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   await client.query(
     `
       INSERT INTO overlay_settings (
-        singleton_id, enabled, channel_name, headline, accent_color, show_clock, show_next_item, show_schedule_teaser, emergency_banner, updated_at
+        singleton_id, enabled, channel_name, headline, accent_color, show_clock, show_next_item, show_schedule_teaser, emergency_banner, replay_label, updated_at
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       ON CONFLICT (singleton_id) DO UPDATE SET
         enabled = EXCLUDED.enabled,
         channel_name = EXCLUDED.channel_name,
@@ -807,6 +914,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         show_next_item = EXCLUDED.show_next_item,
         show_schedule_teaser = EXCLUDED.show_schedule_teaser,
         emergency_banner = EXCLUDED.emergency_banner,
+        replay_label = EXCLUDED.replay_label,
         updated_at = EXCLUDED.updated_at
     `,
     [
@@ -818,6 +926,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       next.overlay.showNextItem,
       next.overlay.showScheduleTeaser,
       next.overlay.emergencyBanner,
+      next.overlay.replayLabel,
       next.overlay.updatedAt
     ]
   );
@@ -1000,8 +1109,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   for (const block of next.scheduleBlocks) {
     await client.query(
       `
-        INSERT INTO schedule_blocks (id, title, category_name, start_hour, start_minute_of_day, duration_minutes, source_name)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO schedule_blocks (
+          id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, pool_id, source_name
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
       [
         block.id,
@@ -1010,8 +1121,21 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         Math.floor(block.startMinuteOfDay / 60),
         block.startMinuteOfDay,
         block.durationMinutes,
+        block.dayOfWeek,
+        block.poolId ?? "",
         block.sourceName
       ]
+    );
+  }
+
+  await client.query("DELETE FROM pools");
+  for (const pool of next.pools) {
+    await client.query(
+      `
+        INSERT INTO pools (id, name, source_ids, playback_mode, cursor_asset_id, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `,
+      [pool.id, pool.name, JSON.stringify(pool.sourceIds), pool.playbackMode, pool.cursorAssetId ?? "", pool.updatedAt]
     );
   }
 
@@ -1019,14 +1143,15 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   for (const source of next.sources) {
     await client.query(
       `
-        INSERT INTO sources (id, name, type, connector_kind, status, external_url, notes, last_synced_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO sources (id, name, type, connector_kind, enabled, status, external_url, notes, last_synced_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
       [
         source.id,
         source.name,
         source.type,
         source.connectorKind,
+        source.enabled ?? true,
         source.status,
         source.externalUrl ?? "",
         source.notes ?? "",
@@ -1039,8 +1164,11 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   for (const asset of next.assets) {
     await client.query(
       `
-        INSERT INTO assets (id, source_id, title, path, status, fallback_priority, is_global_fallback, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO assets (
+          id, source_id, title, path, status, external_id, category_name, duration_seconds, published_at,
+          fallback_priority, is_global_fallback, created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       `,
       [
         asset.id,
@@ -1048,6 +1176,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         asset.title,
         asset.path,
         asset.status,
+        asset.externalId ?? "",
+        asset.categoryName ?? "",
+        asset.durationSeconds ?? 0,
+        asset.publishedAt ?? "",
         asset.fallbackPriority,
         asset.isGlobalFallback,
         asset.createdAt,
@@ -1166,6 +1298,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     show_next_item: boolean;
     show_schedule_teaser: boolean;
     emergency_banner: string;
+    replay_label: string;
     updated_at: string;
   }>("SELECT * FROM overlay_settings WHERE singleton_id = 1");
   const managedConfigResult = await client.query<{
@@ -1196,6 +1329,14 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     title: string;
     synced_at: string;
   }>("SELECT * FROM twitch_schedule_segments ORDER BY start_time ASC");
+  const poolsResult = await client.query<{
+    id: string;
+    name: string;
+    source_ids: string;
+    playback_mode: PoolRecord["playbackMode"];
+    cursor_asset_id: string;
+    updated_at: string;
+  }>("SELECT * FROM pools ORDER BY name ASC");
   const blocksResult = await client.query<{
     id: string;
     title: string;
@@ -1203,6 +1344,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     start_hour: number;
     start_minute_of_day: number;
     duration_minutes: number;
+    day_of_week: number;
+    pool_id: string;
     source_name: string;
   }>("SELECT * FROM schedule_blocks ORDER BY start_minute_of_day ASC, start_hour ASC");
   const sourcesResult = await client.query<{
@@ -1210,6 +1353,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     name: string;
     type: string;
     connector_kind: SourceRecord["connectorKind"];
+    enabled: boolean;
     status: string;
     external_url: string;
     notes: string;
@@ -1221,6 +1365,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     title: string;
     path: string;
     status: AssetRecord["status"];
+    external_id: string;
+    category_name: string;
+    duration_seconds: number;
+    published_at: string;
     fallback_priority: number;
     is_global_fallback: boolean;
     created_at: string;
@@ -1347,6 +1495,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           showNextItem: overlayRow.show_next_item,
           showScheduleTeaser: overlayRow.show_schedule_teaser,
           emergencyBanner: overlayRow.emergency_banner,
+          replayLabel: overlayRow.replay_label,
           updatedAt: overlayRow.updated_at
         }
       : defaults.overlay,
@@ -1382,6 +1531,14 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       title: row.title,
       syncedAt: row.synced_at
     })),
+    pools: poolsResult.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      sourceIds: JSON.parse(row.source_ids || "[]") as string[],
+      playbackMode: row.playback_mode,
+      cursorAssetId: row.cursor_asset_id || "",
+      updatedAt: row.updated_at
+    })),
     scheduleBlocks: blocksResult.rows.map((row) => ({
       id: row.id,
       title: row.title,
@@ -1389,6 +1546,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       startMinuteOfDay:
         typeof row.start_minute_of_day === "number" ? row.start_minute_of_day : (row.start_hour % 24) * 60,
       durationMinutes: row.duration_minutes,
+      dayOfWeek: row.day_of_week ?? 0,
+      poolId: row.pool_id || undefined,
       sourceName: row.source_name
     })),
     sources: sourcesResult.rows.map((row) => ({
@@ -1396,6 +1555,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       name: row.name,
       type: row.type,
       connectorKind: row.connector_kind,
+      enabled: row.enabled,
       status: row.status,
       externalUrl: row.external_url || undefined,
       notes: row.notes || undefined,
@@ -1407,6 +1567,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       title: row.title,
       path: row.path,
       status: row.status,
+      externalId: row.external_id || undefined,
+      categoryName: row.category_name || undefined,
+      durationSeconds: row.duration_seconds || undefined,
+      publishedAt: row.published_at || undefined,
       fallbackPriority: row.fallback_priority,
       isGlobalFallback: row.is_global_fallback,
       createdAt: row.created_at,
@@ -1486,7 +1650,7 @@ export async function ensureDatabase(): Promise<void> {
         const empty = await isDatabaseEmpty(client);
         if (empty) {
           const legacy = await readLegacyState();
-          await persistState(client, legacy ?? defaultState());
+          await persistState(client, legacy ?? createInitialSeedState());
         }
       } finally {
         client.release();
