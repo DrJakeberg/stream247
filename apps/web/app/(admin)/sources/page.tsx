@@ -7,7 +7,7 @@ import { PoolDeleteForm } from "@/components/pool-delete-form";
 import { PoolForm } from "@/components/pool-form";
 import { SourceCreateForm } from "@/components/source-create-form";
 import { SourceActionsForm } from "@/components/source-actions-form";
-import { readAppState } from "@/lib/server/state";
+import { getSourceHealthSnapshot, readAppState } from "@/lib/server/state";
 
 export default async function SourcesPage() {
   const state = await readAppState();
@@ -43,30 +43,44 @@ export default async function SourcesPage() {
           and enabled state directly here, then review how many assets each source currently contributes to your pools.
         </p>
         <div className="list">
-          {state.sources.map((source) => (
-            <div className="item" key={source.id}>
-              <div className="stack-form">
-                <div>
-                  <strong>{source.name}</strong>
-                  <div className="subtle">{source.type}</div>
-                  {source.externalUrl ? <div className="subtle source-url">{source.externalUrl}</div> : null}
+          {state.sources.map((source) => {
+            const snapshot = getSourceHealthSnapshot(state, source.id);
+            return (
+              <div className="item" key={source.id}>
+                <div className="stack-form">
+                  <div>
+                    <strong>{source.name}</strong>
+                    <div className="subtle">{source.type}</div>
+                    {source.externalUrl ? <div className="subtle source-url">{source.externalUrl}</div> : null}
+                  </div>
+                  <div className="stats-row">
+                    <span className="badge">{source.status}</span>
+                    <span className="subtle">{source.enabled ?? true ? "Enabled" : "Disabled"}</span>
+                    <span className="subtle">{assetCountBySource.get(source.id) ?? 0} assets</span>
+                    <span className="subtle">{readyAssetCountBySource.get(source.id) ?? 0} ready</span>
+                    <span className="subtle">{source.lastSyncedAt || "Not synced yet"}</span>
+                  </div>
+                  <div className="subtle">
+                    {snapshot.latestRun
+                      ? `${snapshot.latestRun.summary} · ${snapshot.latestRun.finishedAt}`
+                      : "No sync run recorded yet."}
+                  </div>
+                  {snapshot.latestRun?.errorMessage ? <div className="danger">{snapshot.latestRun.errorMessage}</div> : null}
+                  <div className="stats-row">
+                    <span className="subtle">{snapshot.references.pools.length} pool refs</span>
+                    <span className="subtle">{snapshot.references.scheduleBlocks.length} schedule refs</span>
+                    <span className="subtle">{snapshot.openIncidentCount} open incident(s)</span>
+                  </div>
+                  <div className="stats-row">
+                    <Link className="subtle-link" href={`/sources/${source.id}`}>
+                      Open detail
+                    </Link>
+                  </div>
+                  <SourceActionsForm source={source} />
                 </div>
-                <div className="stats-row">
-                  <span className="badge">{source.status}</span>
-                  <span className="subtle">{source.enabled ?? true ? "Enabled" : "Disabled"}</span>
-                  <span className="subtle">{assetCountBySource.get(source.id) ?? 0} assets</span>
-                  <span className="subtle">{readyAssetCountBySource.get(source.id) ?? 0} ready</span>
-                  <span className="subtle">{source.lastSyncedAt || "Not synced yet"}</span>
-                </div>
-                <div className="stats-row">
-                  <Link className="subtle-link" href={`/sources/${source.id}`}>
-                    Open detail
-                  </Link>
-                </div>
-                <SourceActionsForm source={source} />
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </Panel>
       <Panel title="Pools" eyebrow="Programming">

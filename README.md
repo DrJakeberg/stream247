@@ -301,6 +301,7 @@ Notes:
 - source edit, enable/disable, and delete controls
 - source detail pages with programming references, incidents, audit trail, and manual sync actions
 - persisted per-source sync runs with success/error summaries and last ingestion results
+- source library health snapshots with latest sync outcome and open issue counts
 - source-side asset counts and ready counts
 - asset detail pages with source origin, pool context, and runtime visibility
 - searchable asset library by title, source, and status

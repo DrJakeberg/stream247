@@ -4,6 +4,7 @@ import { getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
 import {
   getFilteredIncidents,
   getRuntimeDriftReport,
+  getSourceHealthSnapshot,
   getSourceIncidents,
   getSourceSyncRuns,
   getSourceReferences,
@@ -331,5 +332,8 @@ describe("ops state helpers", () => {
     const references = getSourceReferences(state, "source-1");
     expect(references.pools).toHaveLength(1);
     expect(references.scheduleBlocks).toHaveLength(1);
+    const snapshot = getSourceHealthSnapshot(state, "source-1");
+    expect(snapshot.openIncidentCount).toBe(1);
+    expect(snapshot.latestRun?.status).toBe("success");
   });
 });

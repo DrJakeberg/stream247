@@ -3,7 +3,12 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Panel } from "@/components/panel";
-import { getCurrentScheduleItem, getNextScheduleItem, readAppState } from "@/lib/server/state";
+import {
+  getCurrentScheduleItem,
+  getNextScheduleItem,
+  getSourceHealthSnapshot,
+  readAppState
+} from "@/lib/server/state";
 
 export default async function AssetDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -16,6 +21,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
 
   const source = state.sources.find((entry) => entry.id === asset.sourceId) ?? null;
   const pools = state.pools.filter((pool) => pool.sourceIds.includes(asset.sourceId));
+  const sourceSnapshot = getSourceHealthSnapshot(state, asset.sourceId);
   const activeScheduleItem = getCurrentScheduleItem(state);
   const nextScheduleItem = getNextScheduleItem(state);
   const isCurrent = state.playout.currentAssetId === asset.id;
@@ -116,6 +122,16 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
           <div className="stack-form">
             <div className="subtle">{source?.notes || "No source notes available."}</div>
             {source?.externalUrl ? <div className="subtle source-url">{source.externalUrl}</div> : null}
+            <div className="subtle">
+              {sourceSnapshot.latestRun
+                ? `${sourceSnapshot.latestRun.summary} · ${sourceSnapshot.latestRun.finishedAt}`
+                : "No source sync run recorded yet."}
+            </div>
+            <div className="subtle">
+              {sourceSnapshot.assetCount} asset(s) from source · {sourceSnapshot.readyAssetCount} ready ·{" "}
+              {sourceSnapshot.openIncidentCount} open incident(s)
+            </div>
+            {sourceSnapshot.latestRun?.errorMessage ? <div className="danger">{sourceSnapshot.latestRun.errorMessage}</div> : null}
             {source ? (
               <Link className="subtle-link" href={`/sources/${source.id}`}>
                 Open source detail
