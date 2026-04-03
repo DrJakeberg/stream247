@@ -893,7 +893,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         crash_count_window, crash_loop_detected, last_error, last_stderr_sample, selection_reason_code, fallback_tier, override_mode,
         override_asset_id, override_until, skip_asset_id, skip_until, message
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         current_asset_id = EXCLUDED.current_asset_id,
