@@ -39,6 +39,7 @@ const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
 const PLAYOUT_RECONNECT_INTERVAL_MS = Number(process.env.PLAYOUT_RECONNECT_HOURS || "24") * 60 * 60 * 1000;
 const PLAYOUT_RECONNECT_WINDOW_MS = Number(process.env.PLAYOUT_RECONNECT_SECONDS || "20") * 1000;
 const standbySlatePath = "/tmp/stream247-standby.txt";
+const onAirOverlayPath = "/tmp/stream247-on-air.txt";
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -153,16 +154,25 @@ function getConfiguredStreamTarget(destination: StreamDestinationRecord | null):
   return `${streamUrl.replace(/\/$/, "")}/${streamKey}`;
 }
 
-function getFfmpegCommand(input: string, output: string): string[] {
-  return [
+function getMediaOverlayFilter(textPath: string): string {
+  return `drawtext=fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:textfile=${textPath}:reload=1:fontcolor=white:fontsize=20:box=1:boxcolor=0x00000099:boxborderw=10:x=32:y=h-th-32:line_spacing=8`;
+}
+
+function getFfmpegCommand(input: string, output: string, overlayEnabled: boolean): string[] {
+  const command = [
     "-hide_banner",
     "-loglevel",
     "warning",
     "-re",
-    "-stream_loop",
-    "-1",
     "-i",
     input,
+  ];
+
+  if (overlayEnabled) {
+    command.push("-vf", getMediaOverlayFilter(onAirOverlayPath));
+  }
+
+  command.push(
     "-c:v",
     "libx264",
     "-preset",
@@ -184,7 +194,9 @@ function getFfmpegCommand(input: string, output: string): string[] {
     "-f",
     "flv",
     output
-  ];
+  );
+
+  return command;
 }
 
 function getStandbyFfmpegCommand(output: string): string[] {
@@ -245,6 +257,17 @@ async function writeStandbySlate(state: AppState): Promise<void> {
     nextItem ? `Next: ${nextItem.title} ${nextItem.startTime}-${nextItem.endTime}` : "Next: Programming will resume shortly"
   ];
   await fs.writeFile(standbySlatePath, `${lines.join("\n")}\n`, "utf8");
+}
+
+async function writeOnAirOverlay(state: AppState, asset: AssetRecord | null): Promise<void> {
+  const currentItem = getCurrentScheduleItem(state);
+  const nextItem = getNextScheduleItem(state);
+  const lines = [
+    state.overlay.replayLabel || "Replay stream",
+    `Now: ${asset?.title || state.playout.currentTitle || currentItem?.title || "Stand by"}`,
+    `Next: ${nextItem?.title || "Scheduling next item"}`
+  ];
+  await fs.writeFile(onAirOverlayPath, `${lines.join("\n")}\n`, "utf8");
 }
 
 async function refreshBroadcasterAccessToken(): Promise<string> {
@@ -803,6 +826,35 @@ function getCurrentScheduleItem(state: AppState): ReturnType<typeof buildSchedul
   );
 }
 
+function getNextScheduleItem(state: AppState): ReturnType<typeof buildScheduleOccurrences>[number] | null {
+  const current = getCurrentScheduleItem(state);
+  const timeZone = process.env.CHANNEL_TIMEZONE || "UTC";
+  const scheduleMoment = getCurrentScheduleMoment({
+    now: new Date(),
+    timeZone
+  });
+
+  const occurrences = buildScheduleOccurrences({
+    date: scheduleMoment.date,
+    blocks: state.scheduleBlocks
+  });
+
+  if (occurrences.length === 0) {
+    return null;
+  }
+
+  if (!current) {
+    return occurrences[0] ?? null;
+  }
+
+  const currentIndex = occurrences.findIndex((item) => item.key === current.key);
+  if (currentIndex === -1) {
+    return occurrences[0] ?? null;
+  }
+
+  return occurrences[(currentIndex + 1) % occurrences.length] ?? null;
+}
+
 function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string): AssetRecord | null {
   const pool = state.pools.find((entry) => entry.id === poolId);
   if (!pool) {
@@ -956,6 +1008,7 @@ async function startOrSwitchPlayout(args: {
   reason: string;
   reasonCode: AppState["playout"]["selectionReasonCode"];
   fallbackTier: AppState["playout"]["fallbackTier"];
+  overlayEnabled: boolean;
 }): Promise<void> {
   const switching = playoutProcess && !playoutProcess.killed;
   if (switching) {
@@ -964,7 +1017,7 @@ async function startOrSwitchPlayout(args: {
 
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
   const command = args.asset
-    ? getFfmpegCommand(await resolvePlayableInput(args.asset.path), args.streamTarget)
+    ? getFfmpegCommand(await resolvePlayableInput(args.asset.path), args.streamTarget, args.overlayEnabled)
     : getStandbyFfmpegCommand(args.streamTarget);
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe"]
@@ -1229,6 +1282,9 @@ async function runPlayoutCycle(): Promise<void> {
   }
 
   if (selection.asset) {
+    if (state.overlay.enabled) {
+      await writeOnAirOverlay(state, selection.asset);
+    }
     await resolveIncident("playout.no-asset", "A playable asset is available again.");
   }
 
@@ -1281,7 +1337,8 @@ async function runPlayoutCycle(): Promise<void> {
         lifecycleStatus: selection.lifecycleStatus,
         reason: selection.reason,
         reasonCode: selection.reasonCode,
-        fallbackTier: selection.fallbackTier
+        fallbackTier: selection.fallbackTier,
+        overlayEnabled: state.overlay.enabled
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout start error.";
@@ -1315,7 +1372,8 @@ async function runPlayoutCycle(): Promise<void> {
         lifecycleStatus: "switching",
         reason: selection.reason,
         reasonCode: selection.reasonCode,
-        fallbackTier: selection.fallbackTier
+        fallbackTier: selection.fallbackTier,
+        overlayEnabled: state.overlay.enabled
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout switch error.";
@@ -1339,6 +1397,8 @@ async function runPlayoutCycle(): Promise<void> {
       }));
       return;
     }
+  } else if (selection.asset && state.overlay.enabled) {
+    await writeOnAirOverlay(state, selection.asset);
   }
 
   await updateAppState((current) => ({
