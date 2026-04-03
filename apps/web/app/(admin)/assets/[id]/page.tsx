@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Panel } from "@/components/panel";
 import {
+  getAssetPlaybackDiagnostics,
   getCurrentScheduleItem,
   getNextScheduleItem,
   getSourceHealthSnapshot,
@@ -22,6 +23,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
   const source = state.sources.find((entry) => entry.id === asset.sourceId) ?? null;
   const pools = state.pools.filter((pool) => pool.sourceIds.includes(asset.sourceId));
   const sourceSnapshot = getSourceHealthSnapshot(state, asset.sourceId);
+  const playbackDiagnostics = getAssetPlaybackDiagnostics(state, asset.id);
   const activeScheduleItem = getCurrentScheduleItem(state);
   const nextScheduleItem = getNextScheduleItem(state);
   const isCurrent = state.playout.currentAssetId === asset.id;
@@ -142,6 +144,16 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
 
         <Panel title="Runtime state" eyebrow="Ops">
           <div className="stack-form">
+            <div className="item">
+              <strong>Playback diagnostics</strong>
+              <div className="subtle">{playbackDiagnostics.summary}</div>
+              <div className="subtle">Status: {playbackDiagnostics.status}</div>
+            </div>
+            {playbackDiagnostics.details.map((detail) => (
+              <div className="item" key={detail}>
+                <div className="subtle">{detail}</div>
+              </div>
+            ))}
             <div className="item">
               <strong>Playout status</strong>
               <div className="subtle">
