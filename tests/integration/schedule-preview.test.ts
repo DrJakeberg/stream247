@@ -5,7 +5,8 @@ import {
   buildSchedulePreview,
   findScheduleConflicts,
   getCurrentScheduleMoment,
-  isCurrentScheduleTime
+  isCurrentScheduleTime,
+  summarizeScheduleWeek
 } from "@stream247/core";
 
 describe("schedule preview", () => {
@@ -111,5 +112,39 @@ describe("schedule preview", () => {
 
   it("adds days to a local schedule date string", () => {
     expect(addDaysToDateString("2026-03-27", 2)).toBe("2026-03-29");
+  });
+
+  it("summarizes weekly schedule coverage by weekday", () => {
+    const summary = summarizeScheduleWeek([
+      {
+        id: "a",
+        title: "Morning",
+        categoryName: "Chatting",
+        dayOfWeek: 1,
+        startMinuteOfDay: 8 * 60,
+        durationMinutes: 120,
+        poolId: "pool-a",
+        sourceName: "Archive"
+      },
+      {
+        id: "b",
+        title: "Afternoon",
+        categoryName: "Music",
+        dayOfWeek: 1,
+        startMinuteOfDay: 14 * 60,
+        durationMinutes: 180,
+        poolId: "pool-b",
+        sourceName: "Playlist"
+      }
+    ]);
+
+    expect(summary[1]).toEqual({
+      dayOfWeek: 1,
+      blockCount: 2,
+      scheduledMinutes: 300,
+      firstStartMinute: 480,
+      lastEndMinute: 1020
+    });
+    expect(summary[2]?.blockCount).toBe(0);
   });
 });

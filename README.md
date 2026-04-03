@@ -298,7 +298,9 @@ Notes:
 - PostgreSQL-backed asset catalog
 - source metadata capture for title, natural duration, publish time, and source category where available
 - fallback asset priority and global fallback support
-- source enable/disable and delete controls
+- source edit, enable/disable, and delete controls
+- source-side asset counts and ready counts
+- searchable asset library by title, source, and status
 
 ### Scheduling
 
@@ -307,6 +309,8 @@ Notes:
 - minute-accurate start times
 - duration validation
 - overlap detection
+- multi-day block creation
+- weekly coverage overview
 - day timeline with drag-and-drop rescheduling
 - resize-to-change-duration editing
 - public-facing schedule page

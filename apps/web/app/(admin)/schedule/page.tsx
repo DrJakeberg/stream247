@@ -5,6 +5,7 @@ import { Panel } from "@/components/panel";
 import { ScheduleBlockDeleteForm } from "@/components/schedule-block-delete-form";
 import { ScheduleBlockForm } from "@/components/schedule-block-form";
 import { ScheduleTimeline } from "@/components/schedule-timeline";
+import { ScheduleWeekOverview } from "@/components/schedule-week-overview";
 import { getSchedulePreview, getWorkspaceTimeZone, readAppState } from "@/lib/server/state";
 
 export default async function SchedulePage() {
@@ -27,6 +28,13 @@ export default async function SchedulePage() {
             15-minute steps, and overlapping windows on the same weekday are rejected before save.
           </p>
           <ScheduleBlockForm pools={poolOptions} />
+        </Panel>
+        <Panel title="Weekly coverage" eyebrow="Programming">
+          <p className="subtle">
+            This is the programming shape of the full week. Use it to spot empty days, overloaded days, and when your
+            first or last blocks start.
+          </p>
+          <ScheduleWeekOverview blocks={state.scheduleBlocks} />
         </Panel>
 
         <Panel title="Schedule preview" eyebrow="Programming">

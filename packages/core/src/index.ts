@@ -62,6 +62,14 @@ export type ScheduleOccurrence = {
   durationMinutes: number;
 };
 
+export type ScheduleDaySummary = {
+  dayOfWeek: number;
+  blockCount: number;
+  scheduledMinutes: number;
+  firstStartMinute: number | null;
+  lastEndMinute: number | null;
+};
+
 export function isLikelyYouTubePlaylistUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -367,6 +375,36 @@ export function findScheduleConflicts(blocks: Array<ScheduleBlock>): string[] {
   }
 
   return [...conflicts];
+}
+
+export function summarizeScheduleWeek(blocks: ScheduleBlock[]): ScheduleDaySummary[] {
+  return Array.from({ length: 7 }, (_, dayOfWeek) => {
+    const dayBlocks = blocks
+      .filter((block) => block.dayOfWeek === dayOfWeek)
+      .slice()
+      .sort((left, right) => left.startMinuteOfDay - right.startMinuteOfDay);
+
+    if (dayBlocks.length === 0) {
+      return {
+        dayOfWeek,
+        blockCount: 0,
+        scheduledMinutes: 0,
+        firstStartMinute: null,
+        lastEndMinute: null
+      };
+    }
+
+    const first = dayBlocks[0];
+    const last = dayBlocks[dayBlocks.length - 1];
+
+    return {
+      dayOfWeek,
+      blockCount: dayBlocks.length,
+      scheduledMinutes: dayBlocks.reduce((total, block) => total + block.durationMinutes, 0),
+      firstStartMinute: first?.startMinuteOfDay ?? null,
+      lastEndMinute: last ? (last.startMinuteOfDay + last.durationMinutes) % (24 * 60) : null
+    };
+  });
 }
 
 function getDayOfWeekForDate(value: string): number {

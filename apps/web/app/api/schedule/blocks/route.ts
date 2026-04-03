@@ -10,6 +10,7 @@ function normalizeBody(body: {
   startMinuteOfDay?: number;
   durationMinutes?: number;
   dayOfWeek?: number;
+  dayOfWeeks?: number[];
   poolId?: string;
   sourceName?: string;
 }) {
@@ -20,6 +21,9 @@ function normalizeBody(body: {
     startMinuteOfDay: Number(body.startMinuteOfDay ?? 0),
     durationMinutes: Number(body.durationMinutes ?? 0),
     dayOfWeek: Number(body.dayOfWeek ?? 0),
+    dayOfWeeks: Array.isArray(body.dayOfWeeks)
+      ? [...new Set(body.dayOfWeeks.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 0 && value <= 6))]
+      : [],
     poolId: (body.poolId ?? "").trim(),
     sourceName: (body.sourceName ?? "").trim()
   };
@@ -52,6 +56,7 @@ export async function POST(request: NextRequest) {
       startMinuteOfDay?: number;
       durationMinutes?: number;
       dayOfWeek?: number;
+      dayOfWeeks?: number[];
       poolId?: string;
       sourceName?: string;
     }
@@ -69,18 +74,20 @@ export async function POST(request: NextRequest) {
         throw new Error("Schedule blocks must target an existing pool.");
       }
 
+      const dayOfWeeks = payload.dayOfWeeks.length > 0 ? payload.dayOfWeeks : [payload.dayOfWeek];
+
       const nextBlocks = [
         ...state.scheduleBlocks,
-        {
+        ...dayOfWeeks.map((dayOfWeek) => ({
           id: `schedule_${Math.random().toString(36).slice(2, 10)}`,
           title: payload.title,
           categoryName: payload.categoryName,
           startMinuteOfDay: payload.startMinuteOfDay,
           durationMinutes: payload.durationMinutes,
-          dayOfWeek: payload.dayOfWeek,
+          dayOfWeek,
           poolId: payload.poolId,
           sourceName: pool.name
-        }
+        }))
       ];
 
       const conflicts = findScheduleConflicts(nextBlocks);
@@ -96,12 +103,12 @@ export async function POST(request: NextRequest) {
 
     await appendAuditEvent(
       "schedule.created",
-      `${user?.displayName || user?.email || "Unknown user"} created schedule block ${payload.title}.`
+      `${user?.displayName || user?.email || "Unknown user"} created schedule block ${payload.title}${payload.dayOfWeeks.length > 1 ? ` across ${payload.dayOfWeeks.length} days` : ""}.`
     );
 
     return NextResponse.json({
       ok: true,
-      message: `Schedule block ${payload.title} created.`,
+      message: `Schedule block ${payload.title} created${payload.dayOfWeeks.length > 1 ? ` across ${payload.dayOfWeeks.length} days` : ""}.`,
       blocks: nextState.scheduleBlocks
     });
   } catch (error) {

@@ -222,6 +222,7 @@ button {
 }
 
 input,
+select,
 .select {
   width: 100%;
   border: 1px solid var(--line);
@@ -266,6 +267,7 @@ input,
   cursor: wait;
 }
 
+.button.secondary,
 .button-secondary {
   background: rgba(27, 26, 22, 0.08);
   color: var(--text);
@@ -273,6 +275,7 @@ input,
 
 .toggle-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: center;
 }
@@ -285,6 +288,49 @@ input,
   display: grid;
   gap: 14px;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.chip-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+}
+
+.chip-toggle input {
+  width: auto;
+}
+
+.chip-toggle-active {
+  border-color: rgba(14, 109, 90, 0.4);
+  background: rgba(14, 109, 90, 0.12);
+}
+
+.week-overview {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  margin-top: 18px;
+}
+
+.week-day-card {
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(27, 26, 22, 0.07);
+  background: var(--surface-strong);
+  display: grid;
+  gap: 6px;
 }
 
 .schedule-timeline {
@@ -352,6 +398,23 @@ input,
 .schedule-block-card span {
   font-size: 0.86rem;
   color: var(--muted);
+}
+
+.truncate-title {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.asset-path {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: center;
 }
 
 .schedule-block-card:active {
