@@ -40,7 +40,7 @@ const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcessByStdio<null, Readable, Readable> | null = null;
 let playoutAssetId = "";
 let playoutDestinationId = "";
-let playoutTargetKind: "asset" | "standby" | "reconnect" | "" = "";
+let playoutTargetKind: "asset" | "insert" | "standby" | "reconnect" | "" = "";
 let plannedStopReason = "";
 const WORKER_HEARTBEAT_STALE_MS = 120_000;
 const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
@@ -1234,6 +1234,14 @@ function buildRuntimeQueueItems(args: {
       subtitle: queueHead.subtitle,
       scenePreset: queueHead.scenePreset
     });
+  } else if (args.selection.reasonCode === "operator_insert" && args.selection.asset) {
+    pushItem({
+      kind: "insert",
+      assetId: args.selection.asset.id,
+      title: queueHead.title,
+      subtitle: queueHead.subtitle,
+      scenePreset: queueHead.scenePreset
+    });
   } else if (args.selection.lifecycleStatus === "standby" || !args.selection.asset) {
     pushItem({
       kind: "standby",
@@ -1278,6 +1286,14 @@ function buildQueueHeadForSelection(args: {
   selection: SelectionResult;
   currentScheduleItem: ReturnType<typeof getCurrentScheduleItem> | null;
 }) {
+  if (args.selection.reasonCode === "operator_insert" && args.selection.asset) {
+    return {
+      title: args.selection.asset.title,
+      subtitle: `Insert · ${buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem) || "Operator requested insert"}`,
+      scenePreset: args.state.overlay.scenePreset
+    };
+  }
+
   if (args.selection.lifecycleStatus === "reconnecting") {
     return {
       title: "Scheduled reconnect",
@@ -1304,6 +1320,12 @@ function buildQueueHeadForSelection(args: {
 function choosePlaybackCandidate(state: AppState): SelectionResult {
   const manualOverrideActive = isTimestampActive(state.playout.overrideUntil);
   const skippedAssetId = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
+  const activeInsertAsset =
+    state.playout.insertAssetId !== ""
+      ? state.assets.find(
+          (asset) => asset.id === state.playout.insertAssetId && asset.status === "ready" && asset.id !== skippedAssetId
+        ) ?? null
+      : null;
   const desiredAsset =
     manualOverrideActive && state.playout.overrideAssetId !== ""
       ? state.assets.find((asset) => asset.id === state.playout.overrideAssetId && asset.status === "ready")
@@ -1320,6 +1342,19 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
           : `Operator override selected asset ${desiredAsset.title}.`,
       lifecycleStatus: "recovering" as const,
       reasonCode: "operator_override" as const,
+      fallbackTier: "operator" as const
+    };
+  }
+
+  if (activeInsertAsset && state.playout.insertStatus !== "") {
+    return {
+      asset: activeInsertAsset,
+      reason:
+        state.playout.insertStatus === "pending"
+          ? `Insert ${activeInsertAsset.title} is queued as the next on-air item.`
+          : `Insert ${activeInsertAsset.title} is currently on air.`,
+      lifecycleStatus: state.playout.insertStatus === "pending" ? ("recovering" as const) : ("running" as const),
+      reasonCode: "operator_insert" as const,
       fallbackTier: "operator" as const
     };
   }
@@ -1434,7 +1469,10 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
   });
 }
 
-function getDesiredTargetKind(selection: SelectionResult): "asset" | "standby" | "reconnect" {
+function getDesiredTargetKind(selection: SelectionResult): "asset" | "insert" | "standby" | "reconnect" {
+  if (selection.reasonCode === "operator_insert") {
+    return "insert";
+  }
   if (selection.asset) {
     return "asset";
   }
@@ -1460,6 +1498,14 @@ function isMatchingRunningTarget(args: {
       return false;
     }
     return playoutTargetKind === "asset" && playoutAssetId === desiredAsset.id;
+  }
+
+  if (desiredKind === "insert") {
+    const desiredAsset = args.selection.asset;
+    if (!desiredAsset) {
+      return false;
+    }
+    return playoutTargetKind === "insert" && playoutAssetId === desiredAsset.id;
   }
 
   return playoutTargetKind === "standby" || playoutTargetKind === "reconnect";
@@ -1491,7 +1537,13 @@ async function startOrSwitchPlayout(args: {
   playoutProcess = child;
   playoutAssetId = args.asset?.id ?? "";
   playoutDestinationId = args.destination.id;
-  playoutTargetKind = args.asset ? "asset" : args.lifecycleStatus === "reconnecting" ? "reconnect" : "standby";
+  playoutTargetKind = args.asset
+    ? args.reasonCode === "operator_insert"
+      ? "insert"
+      : "asset"
+    : args.lifecycleStatus === "reconnecting"
+      ? "reconnect"
+      : "standby";
 
   const pid = child.pid ?? 0;
   const startedAt = new Date().toISOString();
@@ -1589,6 +1641,18 @@ async function startOrSwitchPlayout(args: {
       crashLoopDetected: !wasPlanned && code !== 0 && playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD,
       lastError: wasPlanned || code === 0 ? playout.lastError : `FFmpeg exited with code ${String(code)}.`,
       transitionState: "idle",
+      insertAssetId:
+        !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
+          ? ""
+          : playout.insertAssetId,
+      insertRequestedAt:
+        !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
+          ? ""
+          : playout.insertRequestedAt,
+      insertStatus:
+        !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
+          ? ""
+          : playout.insertStatus,
       selectionReasonCode:
         wasPlanned
           ? playout.selectionReasonCode
@@ -1654,6 +1718,19 @@ async function runPlayoutCycle(): Promise<void> {
   const streamTarget = getConfiguredStreamTarget(destination);
   let selection: SelectionResult = choosePlaybackCandidate(state);
 
+  if (state.playout.insertStatus !== "" && selection.reasonCode !== "operator_insert") {
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      insertAssetId: "",
+      insertRequestedAt: "",
+      insertStatus: "",
+      heartbeatAt: new Date().toISOString(),
+      message: "The pending insert is no longer available. Returning to scheduled playout."
+    }));
+    state = await readAppState();
+    selection = choosePlaybackCandidate(state);
+  }
+
   if (!destination || !streamTarget) {
     await stopPlayoutProcess("destination-missing");
     await upsertIncident({
@@ -1671,6 +1748,9 @@ async function runPlayoutCycle(): Promise<void> {
       currentTitle: "",
       desiredAssetId: "",
       queueItems: [],
+      insertAssetId: "",
+      insertRequestedAt: "",
+      insertStatus: "",
       processPid: 0,
       processStartedAt: "",
       heartbeatAt: new Date().toISOString(),
@@ -1881,6 +1961,9 @@ async function runPlayoutCycle(): Promise<void> {
         nextTitle: "",
         queuedAssetIds: [],
         queueItems: [],
+        insertAssetId: "",
+        insertRequestedAt: "",
+        insertStatus: "",
         prefetchedAssetId: "",
         prefetchedTitle: "",
         prefetchedAt: "",
@@ -1922,6 +2005,9 @@ async function runPlayoutCycle(): Promise<void> {
         nextTitle: "",
         queuedAssetIds: [],
         queueItems: [],
+        insertAssetId: "",
+        insertRequestedAt: "",
+        insertStatus: "",
         prefetchedAssetId: "",
         prefetchedTitle: "",
         prefetchedAt: "",
@@ -1962,6 +2048,17 @@ async function runPlayoutCycle(): Promise<void> {
     nextTitle: nextQueueItem?.title ?? prefetchedAsset?.title ?? "",
     queuedAssetIds: playableQueue.map((asset) => asset.id),
     queueItems,
+    insertAssetId: selection.reasonCode === "operator_insert" && selection.asset ? selection.asset.id : playout.insertAssetId,
+    insertRequestedAt:
+      selection.reasonCode === "operator_insert" && selection.asset
+        ? playout.insertRequestedAt || new Date().toISOString()
+        : playout.insertRequestedAt,
+    insertStatus:
+      selection.reasonCode === "operator_insert"
+        ? "active"
+        : selection.lifecycleStatus === "standby" || selection.lifecycleStatus === "reconnecting"
+          ? playout.insertStatus
+          : playout.insertStatus,
     prefetchedAssetId: prefetchedAsset?.id ?? "",
     prefetchedTitle: prefetchedAsset?.title ?? "",
     prefetchedAt: prefetchedAsset ? new Date().toISOString() : "",

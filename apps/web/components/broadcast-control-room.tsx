@@ -82,7 +82,10 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 {snapshot.queueItems.length > 0
                   ? snapshot.queueItems
                       .slice(0, 6)
-                      .map((item) => `${item.kind === "asset" ? "Asset" : item.kind === "reconnect" ? "Reconnect" : "Standby"}: ${item.title}`)
+                      .map(
+                        (item) =>
+                          `${item.kind === "asset" ? "Asset" : item.kind === "insert" ? "Insert" : item.kind === "reconnect" ? "Reconnect" : "Standby"}: ${item.title}`
+                      )
                       .join(" → ")
                   : "No queue preview is currently available."}
               </div>
