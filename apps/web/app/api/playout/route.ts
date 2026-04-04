@@ -12,6 +12,10 @@ export async function GET() {
   const destination = state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ?? null;
   const currentAsset = state.assets.find((entry) => entry.id === state.playout.currentAssetId) ?? null;
   const desiredAsset = state.assets.find((entry) => entry.id === state.playout.desiredAssetId) ?? null;
+  const nextAsset = state.assets.find((entry) => entry.id === state.playout.nextAssetId) ?? null;
+  const queuedAssets = state.playout.queuedAssetIds
+    .map((id) => state.assets.find((entry) => entry.id === id))
+    .filter((entry): entry is NonNullable<typeof currentAsset> => Boolean(entry));
   const overrideAsset = state.assets.find((entry) => entry.id === state.playout.overrideAssetId) ?? null;
 
   return NextResponse.json({
@@ -19,6 +23,8 @@ export async function GET() {
     destination,
     currentAsset,
     desiredAsset,
+    nextAsset,
+    queuedAssets,
     overrideAsset
   });
 }

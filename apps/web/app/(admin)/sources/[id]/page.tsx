@@ -10,6 +10,7 @@ import {
   getSourceAuditEvents,
   getSourceHealthSnapshot,
   getSourceIncidents,
+  getSourceRecoveryActions,
   getSourceSyncRuns,
   getSourceReferences,
   readAppState
@@ -37,6 +38,7 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
   const references = getSourceReferences(state, source.id);
   const health = getSourceHealthSnapshot(state, source.id);
   const diagnostics = getSourceConnectorDiagnostics(state, source.id);
+  const recoveryActions = getSourceRecoveryActions(state, source.id);
 
   return (
     <>
@@ -129,6 +131,12 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
             {diagnostics.hints.map((hint) => (
               <div className="item" key={hint}>
                 <div className="subtle">{hint}</div>
+              </div>
+            ))}
+            {recoveryActions.map((action) => (
+              <div className="item" key={action}>
+                <strong>Suggested next step</strong>
+                <div className="subtle">{action}</div>
               </div>
             ))}
           </div>

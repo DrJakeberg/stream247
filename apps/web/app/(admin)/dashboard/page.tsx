@@ -11,6 +11,7 @@ import {
   getActivePresenceWindows,
   getCurrentScheduleItem,
   getNextScheduleItem,
+  getPlayoutQueueAssets,
   getPresenceStatus,
   getSchedulePreview,
   readAppState
@@ -27,6 +28,7 @@ export default async function DashboardPage() {
   const openIncidents = state.incidents.filter((incident) => incident.status === "open");
   const activeDestination = state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ?? state.destinations[0];
   const currentAsset = state.assets.find((entry) => entry.id === state.playout.currentAssetId) ?? null;
+  const queuedAssets = getPlayoutQueueAssets(state);
   const overrideAsset = state.assets.find((entry) => entry.id === state.playout.overrideAssetId) ?? null;
   const currentScheduleItem = getCurrentScheduleItem(state);
   const nextScheduleItem = getNextScheduleItem(state);
@@ -148,6 +150,9 @@ export default async function DashboardPage() {
               <div className="subtle">
                 Current schedule: {currentScheduleItem ? currentScheduleItem.title : "none"} · Next:{" "}
                 {nextScheduleItem ? nextScheduleItem.title : "none"}
+              </div>
+              <div className="subtle">
+                Queue: {queuedAssets.length > 0 ? queuedAssets.slice(0, 3).map((asset) => asset.title).join(" → ") : "no queued assets"}
               </div>
               <PlayoutActionForm
                 assets={state.assets.filter((asset) => asset.status === "ready").map((asset) => ({ id: asset.id, title: asset.title }))}

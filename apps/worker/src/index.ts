@@ -1074,6 +1074,49 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
   return eligibleAssets[(currentIndex + 1) % eligibleAssets.length] ?? eligibleAssets[0] ?? null;
 }
 
+function getPoolPlaybackQueue(state: AppState, poolId: string, skippedAssetId: string, currentAssetId = "", limit = 4): AssetRecord[] {
+  const pool = state.pools.find((entry) => entry.id === poolId);
+  if (!pool) {
+    return [];
+  }
+
+  const eligibleAssets = state.assets.filter((asset) => {
+    if (asset.status !== "ready" || asset.id === skippedAssetId) {
+      return false;
+    }
+
+    return pool.sourceIds.includes(asset.sourceId);
+  });
+
+  if (eligibleAssets.length === 0) {
+    return [];
+  }
+
+  eligibleAssets.sort((left, right) => {
+    const publishedDelta =
+      new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
+    if (publishedDelta !== 0) {
+      return publishedDelta;
+    }
+
+    return left.title.localeCompare(right.title);
+  });
+
+  const startIndex = currentAssetId ? eligibleAssets.findIndex((asset) => asset.id === currentAssetId) : -1;
+  const queue: AssetRecord[] = [];
+
+  for (let offset = 1; offset <= Math.min(limit, eligibleAssets.length); offset += 1) {
+    const index = startIndex === -1 ? offset - 1 : (startIndex + offset) % eligibleAssets.length;
+    const candidate = eligibleAssets[index];
+    if (!candidate || candidate.id === currentAssetId || queue.some((asset) => asset.id === candidate.id)) {
+      continue;
+    }
+    queue.push(candidate);
+  }
+
+  return queue;
+}
+
 type SelectionResult = {
   asset: AssetRecord | null;
   reason: string;
@@ -1542,6 +1585,11 @@ async function runPlayoutCycle(): Promise<void> {
 
   const restartRequested = Boolean(state.playout.restartRequestedAt);
   const currentScheduleItem = getCurrentScheduleItem(state);
+  const queueAssets =
+    selection.asset && currentScheduleItem?.poolId && selection.reasonCode === "scheduled_match"
+      ? getPoolPlaybackQueue(state, currentScheduleItem.poolId, isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "", selection.asset.id)
+      : [];
+
   if (restartRequested) {
     await stopPlayoutProcess("restart-requested");
     state = await updateAppState((current) => ({
@@ -1550,9 +1598,9 @@ async function runPlayoutCycle(): Promise<void> {
         ...current.playout,
         crashLoopDetected: false,
         crashCountWindow: 0,
-        lastError: "",
-        restartRequestedAt:
-          reconnectActive || selection.reasonCode === "scheduled_reconnect" ? current.playout.restartRequestedAt : ""
+          lastError: "",
+          restartRequestedAt:
+            reconnectActive || selection.reasonCode === "scheduled_reconnect" ? current.playout.restartRequestedAt : ""
       }
     }));
   }
@@ -1587,6 +1635,9 @@ async function runPlayoutCycle(): Promise<void> {
           lastError: message,
           selectionReasonCode: "resolve_failed",
           fallbackTier: "none",
+          nextAssetId: "",
+          nextTitle: "",
+          queuedAssetIds: [],
           message
         }
       }));
@@ -1621,6 +1672,9 @@ async function runPlayoutCycle(): Promise<void> {
           heartbeatAt: new Date().toISOString(),
           lastError: message,
           selectionReasonCode: "resolve_failed",
+          nextAssetId: "",
+          nextTitle: "",
+          queuedAssetIds: [],
           message
         }
       }));
@@ -1657,6 +1711,9 @@ async function runPlayoutCycle(): Promise<void> {
       currentAssetId: selection.asset?.id ?? "",
       currentTitle: selection.asset?.title ?? "Replay standby",
       desiredAssetId: selection.asset?.id ?? "",
+      nextAssetId: queueAssets[0]?.id ?? "",
+      nextTitle: queueAssets[0]?.title ?? "",
+      queuedAssetIds: queueAssets.map((asset) => asset.id),
       currentDestinationId: destination.id,
       restartRequestedAt: selection.reasonCode === "scheduled_reconnect" ? current.playout.restartRequestedAt : "",
       overrideMode: current.playout.overrideMode,

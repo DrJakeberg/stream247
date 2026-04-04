@@ -384,6 +384,66 @@ export function getAssetPlaybackDiagnostics(state: AppState, assetId: string) {
   };
 }
 
+export function getSourceRecoveryActions(state: AppState, sourceId: string): string[] {
+  const source = state.sources.find((entry) => entry.id === sourceId) ?? null;
+  const latestRun = getSourceSyncRuns(state, sourceId, 1)[0] ?? null;
+  const actions: string[] = [];
+
+  if (!source) {
+    return ["Re-open the source library and confirm the source still exists."];
+  }
+
+  if (!(source.enabled ?? true)) {
+    actions.push("Enable the source before expecting sync or playback updates.");
+  }
+
+  if (!source.externalUrl && source.connectorKind !== "local-library") {
+    actions.push("Enter a valid external URL for the source and save it before retrying sync.");
+  }
+
+  const errorText = `${latestRun?.errorMessage || ""} ${source.status} ${source.notes || ""}`.toLowerCase();
+  if (errorText.includes("private") || errorText.includes("subscriber")) {
+    actions.push("Check whether the upstream content is private, subscriber-only, or otherwise restricted.");
+  }
+  if (errorText.includes("not currently live")) {
+    actions.push("Use the Twitch channel archive connector for VODs; the live channel page itself is not a playable archive source.");
+  }
+  if (errorText.includes("no playable") || errorText.includes("returned no playable items")) {
+    actions.push("Verify that the upstream playlist or channel actually contains public videos/VODs.");
+  }
+  if (errorText.includes("invalid") || errorText.includes("require")) {
+    actions.push("Double-check that the connector type matches the URL shape shown in the diagnostics panel.");
+  }
+  if (errorText.includes("geo") || errorText.includes("region")) {
+    actions.push("Some upstream items may be geo-blocked; test the source from the host with yt-dlp if failures persist.");
+  }
+
+  if (source.connectorKind === "local-library") {
+    actions.push("Place media files under data/media and wait for the next worker cycle or request a manual sync.");
+  }
+
+  if (actions.length === 0) {
+    actions.push("Request a manual sync and review the newest source sync run for a more specific upstream error.");
+  }
+
+  return [...new Set(actions)];
+}
+
+export function getPlayoutQueueAssets(state: AppState) {
+  const ids = [state.playout.currentAssetId, state.playout.nextAssetId, ...state.playout.queuedAssetIds].filter(Boolean);
+  const seen = new Set<string>();
+  return ids
+    .filter((id) => {
+      if (seen.has(id)) {
+        return false;
+      }
+      seen.add(id);
+      return true;
+    })
+    .map((id) => state.assets.find((asset) => asset.id === id))
+    .filter((asset): asset is AssetRecord => Boolean(asset));
+}
+
 export function getSourceAuditEvents(state: AppState, sourceId: string, limit = 12): AuditEvent[] {
   const source = state.sources.find((entry) => entry.id === sourceId);
   if (!source) {

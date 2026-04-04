@@ -209,6 +209,9 @@ export type PlayoutRuntimeRecord = {
   currentAssetId: string;
   currentTitle: string;
   desiredAssetId: string;
+  nextAssetId: string;
+  nextTitle: string;
+  queuedAssetIds: string[];
   currentDestinationId: string;
   restartRequestedAt: string;
   heartbeatAt: string;
@@ -407,6 +410,9 @@ function defaultState(): AppState {
       currentAssetId: "",
       currentTitle: "",
       desiredAssetId: "",
+      nextAssetId: "",
+      nextTitle: "",
+      queuedAssetIds: [],
       currentDestinationId: "destination-primary",
       restartRequestedAt: "",
       heartbeatAt: "",
@@ -822,6 +828,9 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       current_asset_id TEXT NOT NULL DEFAULT '',
       current_title TEXT NOT NULL DEFAULT '',
       desired_asset_id TEXT NOT NULL DEFAULT '',
+      next_asset_id TEXT NOT NULL DEFAULT '',
+      next_title TEXT NOT NULL DEFAULT '',
+      queued_asset_ids TEXT NOT NULL DEFAULT '[]',
       current_destination_id TEXT NOT NULL DEFAULT '',
       restart_requested_at TEXT NOT NULL DEFAULT '',
       heartbeat_at TEXT NOT NULL DEFAULT '',
@@ -883,6 +892,9 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS duration_seconds INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS published_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS next_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS next_title TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS queued_asset_ids TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS current_destination_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS restart_requested_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS process_pid INTEGER NOT NULL DEFAULT 0;
@@ -1066,17 +1078,20 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   await client.query(
     `
       INSERT INTO playout_runtime (
-        singleton_id, status, current_asset_id, current_title, desired_asset_id, current_destination_id, restart_requested_at,
+        singleton_id, status, current_asset_id, current_title, desired_asset_id, next_asset_id, next_title, queued_asset_ids, current_destination_id, restart_requested_at,
         heartbeat_at, process_pid, process_started_at, last_successful_start_at, last_successful_asset_id, last_exit_code, restart_count,
         crash_count_window, crash_loop_detected, last_error, last_stderr_sample, selection_reason_code, fallback_tier, override_mode,
         override_asset_id, override_until, skip_asset_id, skip_until, message
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         current_asset_id = EXCLUDED.current_asset_id,
         current_title = EXCLUDED.current_title,
         desired_asset_id = EXCLUDED.desired_asset_id,
+        next_asset_id = EXCLUDED.next_asset_id,
+        next_title = EXCLUDED.next_title,
+        queued_asset_ids = EXCLUDED.queued_asset_ids,
         current_destination_id = EXCLUDED.current_destination_id,
         restart_requested_at = EXCLUDED.restart_requested_at,
         heartbeat_at = EXCLUDED.heartbeat_at,
@@ -1104,6 +1119,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       next.playout.currentAssetId,
       next.playout.currentTitle,
       next.playout.desiredAssetId,
+      next.playout.nextAssetId,
+      next.playout.nextTitle,
+      JSON.stringify(next.playout.queuedAssetIds ?? []),
       next.playout.currentDestinationId,
       next.playout.restartRequestedAt,
       next.playout.heartbeatAt,
@@ -1532,6 +1550,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     current_asset_id: string;
     current_title: string;
     desired_asset_id: string;
+    next_asset_id: string;
+    next_title: string;
+    queued_asset_ids: string;
     current_destination_id: string;
     restart_requested_at: string;
     heartbeat_at: string;
@@ -1759,6 +1780,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           currentAssetId: playoutRow.current_asset_id,
           currentTitle: playoutRow.current_title,
           desiredAssetId: playoutRow.desired_asset_id,
+          nextAssetId: playoutRow.next_asset_id,
+          nextTitle: playoutRow.next_title,
+          queuedAssetIds: JSON.parse(playoutRow.queued_asset_ids || "[]") as string[],
           currentDestinationId: playoutRow.current_destination_id,
           restartRequestedAt: playoutRow.restart_requested_at,
           heartbeatAt: playoutRow.heartbeat_at,

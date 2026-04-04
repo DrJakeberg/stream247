@@ -4,6 +4,7 @@ import { IncidentActionForm } from "@/components/incident-action-form";
 import { Panel } from "@/components/panel";
 import {
   getFilteredIncidents,
+  getPlayoutQueueAssets,
   getRecentAuditEvents,
   getRuntimeDriftReport,
   getWorkerHealth,
@@ -43,6 +44,7 @@ export default async function OpsPage(props: { searchParams: SearchParams }) {
   });
   const drift = getRuntimeDriftReport(state);
   const workerHealth = getWorkerHealth(state);
+  const queuedAssets = getPlayoutQueueAssets(state);
   const recentAuditEvents = getRecentAuditEvents(state, 12);
   const acknowledgedOpenCount = state.incidents.filter((incident) => incident.status === "open" && incident.acknowledgedAt).length;
 
@@ -101,6 +103,10 @@ export default async function OpsPage(props: { searchParams: SearchParams }) {
               </div>
               <div className="subtle">
                 Current asset {state.playout.currentTitle || "none"} · desired asset {state.playout.desiredAssetId || "none"}
+              </div>
+              <div className="subtle">
+                Next asset {state.playout.nextTitle || "none"} · queue{" "}
+                {queuedAssets.length > 0 ? queuedAssets.slice(0, 4).map((asset) => asset.title).join(" → ") : "empty"}
               </div>
             </div>
             <div className="item">
