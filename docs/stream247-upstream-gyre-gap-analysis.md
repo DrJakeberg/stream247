@@ -138,6 +138,7 @@ The following product gaps are now addressed:
 - scene designer controls now support hiding layers in addition to reordering them
 - the schedule editor can now duplicate existing blocks onto multiple additional weekdays
 - the schedule editor can now clone a full programming day onto additional empty weekdays
+- source creation and editing now use guided connector templates instead of only raw connector/url fields
 
 ## Implementation Roadmap
 

@@ -25,8 +25,9 @@ export default async function SourcesPage() {
     <div className="grid two">
       <Panel title="Add source" eyebrow="Sources">
         <p className="subtle">
-          Direct media URLs, full YouTube playlists or channels, and Twitch VOD or channel archive sources are
-          ingestible now. Channel-based connectors preserve source metadata like original title and natural duration.
+          Start from a source template instead of raw connector fields. Direct media URLs, full YouTube playlists or
+          channels, Twitch VODs or archive channels, and the local media library are all ingestible now. Channel-based
+          connectors preserve source metadata like original title and natural duration.
         </p>
         <SourceCreateForm />
       </Panel>
@@ -39,8 +40,9 @@ export default async function SourcesPage() {
       </Panel>
       <Panel title="Source library" eyebrow="Catalog">
         <p className="subtle">
-          Sources now act like a programming library, not just connector rows. Edit naming, connector type, source URL,
-          and enabled state directly here, then review how many assets each source currently contributes to your pools.
+          Sources now act more like a programming library, not just connector rows. Edit naming, connector type,
+          source URL, and enabled state directly here, then review how many assets each source currently contributes to
+          your pools.
         </p>
         <div className="list">
           {state.sources.map((source) => {

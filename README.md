@@ -15,6 +15,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - direct media URLs
   - YouTube playlists and channels via `yt-dlp`
   - Twitch VODs and channels via `yt-dlp`
+  - guided source templates for local library, direct URLs, YouTube, and Twitch inputs
 - schedule management with:
   - weekly pool-based blocks
   - minute-accurate blocks

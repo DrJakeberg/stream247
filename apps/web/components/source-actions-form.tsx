@@ -2,23 +2,39 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { getSourceConnectorDefinition, sourceConnectorDefinitions, type SourceConnectorKind } from "@/lib/source-connectors";
 import type { SourceRecord } from "@/lib/server/state";
 
 export function SourceActionsForm(props: { source: SourceRecord }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [name, setName] = useState(props.source.name);
+  const [connectorKind, setConnectorKind] = useState<SourceConnectorKind>(props.source.connectorKind);
+  const [externalUrl, setExternalUrl] = useState(props.source.externalUrl || "");
   const router = useRouter();
 
-  async function updateSource(formData: FormData, enabled: boolean) {
+  const connector = getSourceConnectorDefinition(connectorKind);
+
+  function chooseConnector(nextKind: SourceConnectorKind) {
+    const nextConnector = getSourceConnectorDefinition(nextKind);
+    setConnectorKind(nextKind);
+    setError("");
+    setMessage("");
+    if (!nextConnector.requiresUrl) {
+      setExternalUrl("");
+    }
+  }
+
+  async function updateSource(enabled: boolean) {
     const response = await fetch("/api/sources", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: props.source.id,
-        name: String(formData.get("name") || props.source.name),
-        connectorKind: String(formData.get("connectorKind") || props.source.connectorKind),
-        externalUrl: String(formData.get("externalUrl") || props.source.externalUrl || ""),
+        name,
+        connectorKind,
+        externalUrl: connector.requiresUrl ? externalUrl : "",
         enabled
       })
     });
@@ -53,29 +69,40 @@ export function SourceActionsForm(props: { source: SourceRecord }) {
         event.preventDefault();
         setError("");
         setMessage("");
-        const formData = new FormData(event.currentTarget);
-        startTransition(() => void updateSource(formData, props.source.enabled ?? true));
+        startTransition(() => void updateSource(props.source.enabled ?? true));
       }}
     >
       <label>
         <span className="label">Display name</span>
-        <input defaultValue={props.source.name} name="name" />
+        <input onChange={(event) => setName(event.target.value)} value={name} />
       </label>
       <label>
         <span className="label">Connector type</span>
-        <select defaultValue={props.source.connectorKind} name="connectorKind">
-          <option value="local-library">Local media library</option>
-          <option value="direct-media">Direct media URL</option>
-          <option value="youtube-playlist">YouTube playlist</option>
-          <option value="youtube-channel">YouTube channel</option>
-          <option value="twitch-vod">Twitch VOD</option>
-          <option value="twitch-channel">Twitch channel</option>
+        <select onChange={(event) => chooseConnector(event.target.value as SourceConnectorKind)} value={connectorKind}>
+          {sourceConnectorDefinitions.map((entry) => (
+            <option key={entry.id} value={entry.id}>
+              {entry.label}
+            </option>
+          ))}
         </select>
       </label>
+      <div className="item">
+        <strong>{connector.shortLabel}</strong>
+        <div className="subtle">{connector.helper}</div>
+        <div className="subtle" style={{ marginTop: 4 }}>
+          Example: {connector.example}
+        </div>
+      </div>
       <label>
-        <span className="label">External URL</span>
-        <input defaultValue={props.source.externalUrl || ""} name="externalUrl" placeholder="https://..." />
+        <span className="label">{connector.urlLabel}</span>
+        <input
+          disabled={!connector.requiresUrl}
+          onChange={(event) => setExternalUrl(event.target.value)}
+          placeholder={connector.requiresUrl ? connector.placeholder : "No external URL needed"}
+          value={connector.requiresUrl ? externalUrl : ""}
+        />
       </label>
+      <div className="subtle">{connector.notes}</div>
       <div className="toggle-row">
         <button className="button" disabled={isPending} type="submit">
           {isPending ? "Saving..." : "Save"}
@@ -83,14 +110,8 @@ export function SourceActionsForm(props: { source: SourceRecord }) {
         <button
           className="button secondary"
           disabled={isPending}
-          onClick={(event) => {
-            const form = event.currentTarget.form;
-            if (!form) {
-              return;
-            }
-
-            const formData = new FormData(form);
-            startTransition(() => void updateSource(formData, !(props.source.enabled ?? true)));
+          onClick={() => {
+            startTransition(() => void updateSource(!(props.source.enabled ?? true)));
           }}
           type="button"
         >
