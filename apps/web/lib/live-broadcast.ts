@@ -51,6 +51,16 @@ export type LiveWorkerHealth = {
   lastRunAt: string;
 };
 
+export type LiveQueueItemSummary = {
+  id: string;
+  kind: "asset" | "standby" | "reconnect";
+  title: string;
+  subtitle: string;
+  position: number;
+  scenePreset: "replay-lower-third" | "split-now-next" | "standby-board" | "minimal-chip" | "";
+  asset: LiveAssetSummary | null;
+};
+
 export type LivePlayoutSummary = {
   status: string;
   message: string;
@@ -81,6 +91,7 @@ export type LivePlayoutSummary = {
   pendingAction: string;
   pendingActionRequestedAt: string;
   restartRequestedAt: string;
+  lastTransitionAt: string;
   lastStderrSample: string;
   currentDestinationId: string;
 };
@@ -116,6 +127,7 @@ export type BroadcastSnapshot = {
   prefetchedAsset: LiveAssetSummary | null;
   overrideAsset: LiveAssetSummary | null;
   queuedAssets: LiveAssetSummary[];
+  queueItems: LiveQueueItemSummary[];
   currentScheduleItem: LiveScheduleSummary | null;
   nextScheduleItem: LiveScheduleSummary | null;
   openIncidents: LiveIncidentSummary[];
@@ -129,6 +141,7 @@ export type PublicChannelSnapshot = {
   currentAsset: LiveAssetSummary | null;
   nextAsset: LiveAssetSummary | null;
   queuedAssets: LiveAssetSummary[];
+  queueItems: LiveQueueItemSummary[];
   currentScheduleItem: LiveScheduleSummary | null;
   nextScheduleItem: LiveScheduleSummary | null;
 };

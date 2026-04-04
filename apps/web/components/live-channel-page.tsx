@@ -43,8 +43,8 @@ export function LiveChannelPage(props: { initialSnapshot: PublicChannelSnapshot 
         <div className="item">
           <strong>Queue preview</strong>
           <div className="subtle">
-            {snapshot.queuedAssets.length > 0
-              ? snapshot.queuedAssets.slice(0, 4).map((asset) => asset.title).join(" → ")
+            {snapshot.queueItems.length > 0
+              ? snapshot.queueItems.slice(0, 4).map((item) => item.title).join(" → ")
               : "Queue preview is currently empty."}
           </div>
         </div>

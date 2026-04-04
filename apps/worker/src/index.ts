@@ -1182,6 +1182,83 @@ async function getPlayableQueuedAssets(queueAssets: AssetRecord[]): Promise<{
   };
 }
 
+function buildAssetQueueSubtitle(
+  state: AppState,
+  asset: AssetRecord,
+  scheduleItem: ReturnType<typeof getCurrentScheduleItem> | null,
+  emphasizeSchedule = false
+): string {
+  const sourceName = state.sources.find((source) => source.id === asset.sourceId)?.name || "";
+  const parts: string[] = [];
+
+  if (emphasizeSchedule && scheduleItem?.title && scheduleItem.title !== asset.title) {
+    parts.push(scheduleItem.title);
+  }
+  if (sourceName) {
+    parts.push(sourceName);
+  }
+  if (asset.categoryName || scheduleItem?.categoryName) {
+    parts.push(asset.categoryName || scheduleItem?.categoryName || "");
+  }
+
+  return parts.filter(Boolean).join(" · ");
+}
+
+function buildRuntimeQueueItems(args: {
+  state: AppState;
+  selection: SelectionResult;
+  currentScheduleItem: ReturnType<typeof getCurrentScheduleItem> | null;
+  playableQueue: AssetRecord[];
+}): AppState["playout"]["queueItems"] {
+  const items: AppState["playout"]["queueItems"] = [];
+  const pushItem = (item: Omit<AppState["playout"]["queueItems"][number], "id" | "position">) => {
+    const position = items.length;
+    items.push({
+      id: `${item.kind}-${item.assetId || "scene"}-${position}`,
+      position,
+      ...item
+    });
+  };
+
+  if (args.selection.lifecycleStatus === "reconnecting") {
+    pushItem({
+      kind: "reconnect",
+      assetId: "",
+      title: "Scheduled reconnect",
+      subtitle: args.selection.reason,
+      scenePreset: "standby-board"
+    });
+  } else if (args.selection.lifecycleStatus === "standby" || !args.selection.asset) {
+    pushItem({
+      kind: "standby",
+      assetId: "",
+      title: args.state.overlay.headline || "Replay standby",
+      subtitle: args.selection.reason,
+      scenePreset: "standby-board"
+    });
+  } else {
+    pushItem({
+      kind: "asset",
+      assetId: args.selection.asset.id,
+      title: args.selection.asset.title,
+      subtitle: buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem, true),
+      scenePreset: args.state.overlay.scenePreset
+    });
+  }
+
+  for (const asset of args.playableQueue.slice(0, 6)) {
+    pushItem({
+      kind: "asset",
+      assetId: asset.id,
+      title: asset.title,
+      subtitle: buildAssetQueueSubtitle(args.state, asset, null),
+      scenePreset: args.state.overlay.scenePreset
+    });
+  }
+
+  return items;
+}
+
 type SelectionResult = {
   asset: AssetRecord | null;
   reason: string;
@@ -1370,6 +1447,7 @@ async function startOrSwitchPlayout(args: {
     heartbeatAt: startedAt,
     processPid: pid,
     processStartedAt: startedAt,
+    lastTransitionAt: startedAt,
     selectionReasonCode: args.reasonCode,
     fallbackTier: args.fallbackTier,
     lastError: "",
@@ -1523,6 +1601,7 @@ async function runPlayoutCycle(): Promise<void> {
       currentAssetId: "",
       currentTitle: "",
       desiredAssetId: "",
+      queueItems: [],
       processPid: 0,
       processStartedAt: "",
       heartbeatAt: new Date().toISOString(),
@@ -1561,6 +1640,7 @@ async function runPlayoutCycle(): Promise<void> {
       nextAssetId: "",
       nextTitle: "",
       queuedAssetIds: [],
+      queueItems: [],
       pendingAction: "",
       pendingActionRequestedAt: "",
       heartbeatAt: new Date().toISOString(),
@@ -1662,6 +1742,12 @@ async function runPlayoutCycle(): Promise<void> {
       ? getPoolPlaybackQueue(state, currentScheduleItem.poolId, isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "", selection.asset.id)
       : [];
   const { playableQueue, prefetchedAsset, prefetchStatus, prefetchError } = await getPlayableQueuedAssets(rawQueueAssets);
+  const queueItems = buildRuntimeQueueItems({
+    state,
+    selection,
+    currentScheduleItem,
+    playableQueue
+  });
 
   if (prefetchStatus === "failed" && prefetchError) {
     await upsertIncident({
@@ -1719,6 +1805,7 @@ async function runPlayoutCycle(): Promise<void> {
         nextAssetId: "",
         nextTitle: "",
         queuedAssetIds: [],
+        queueItems: [],
         prefetchedAssetId: "",
         prefetchedTitle: "",
         prefetchedAt: "",
@@ -1759,6 +1846,7 @@ async function runPlayoutCycle(): Promise<void> {
         nextAssetId: "",
         nextTitle: "",
         queuedAssetIds: [],
+        queueItems: [],
         prefetchedAssetId: "",
         prefetchedTitle: "",
         prefetchedAt: "",
@@ -1796,6 +1884,7 @@ async function runPlayoutCycle(): Promise<void> {
     nextAssetId: prefetchedAsset?.id ?? "",
     nextTitle: prefetchedAsset?.title ?? "",
     queuedAssetIds: playableQueue.map((asset) => asset.id),
+    queueItems,
     prefetchedAssetId: prefetchedAsset?.id ?? "",
     prefetchedTitle: prefetchedAsset?.title ?? "",
     prefetchedAt: prefetchedAsset ? new Date().toISOString() : "",
@@ -1811,7 +1900,12 @@ async function runPlayoutCycle(): Promise<void> {
     message: selection.reason
   }));
 
-  if (currentScheduleItem?.poolId && selection.reasonCode === "scheduled_match" && selection.asset) {
+  if (
+    currentScheduleItem?.poolId &&
+    selection.reasonCode === "scheduled_match" &&
+    selection.asset &&
+    state.playout.currentAssetId !== selection.asset.id
+  ) {
     await updatePoolCursor(currentScheduleItem.poolId, selection.asset.id);
   }
 }

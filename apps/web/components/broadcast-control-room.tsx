@@ -16,6 +16,8 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
     stateUrl: "/api/broadcast/state",
     streamUrl: "/api/broadcast/stream"
   });
+  const currentQueueItem = snapshot.queueItems[0] ?? null;
+  const nextQueueItem = snapshot.queueItems[1] ?? null;
 
   return (
     <div className="stack-form">
@@ -33,11 +35,11 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
           </div>
           <div>
             <span className="label">Current</span>
-            <strong>{snapshot.currentAsset?.title || snapshot.playout.currentTitle || "Standby"}</strong>
+            <strong>{currentQueueItem?.title || snapshot.currentAsset?.title || snapshot.playout.currentTitle || "Standby"}</strong>
           </div>
           <div>
             <span className="label">Next</span>
-            <strong>{snapshot.nextAsset?.title || snapshot.nextScheduleItem?.title || "Pending"}</strong>
+            <strong>{nextQueueItem?.title || snapshot.nextAsset?.title || snapshot.nextScheduleItem?.title || "Pending"}</strong>
           </div>
           <div>
             <span className="label">Destination</span>
@@ -56,28 +58,32 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
           <h3>Current and next</h3>
           <div className="list">
             <div className="item">
-              <strong>{snapshot.currentAsset?.title || snapshot.playout.currentTitle || "Standby slate"}</strong>
+              <strong>{currentQueueItem?.title || snapshot.currentAsset?.title || snapshot.playout.currentTitle || "Standby slate"}</strong>
               <div className="subtle">
                 {snapshot.currentScheduleItem
                   ? `${snapshot.currentScheduleItem.startTime} to ${snapshot.currentScheduleItem.endTime} · ${snapshot.currentScheduleItem.categoryName}`
-                  : snapshot.playout.message}
+                  : currentQueueItem?.subtitle || snapshot.playout.message}
               </div>
               <div className="subtle">
                 Transition {snapshot.playout.transitionState} · queue reason {snapshot.playout.selectionReasonCode || "none"}
               </div>
             </div>
             <div className="item">
-              <strong>{snapshot.nextAsset?.title || snapshot.nextScheduleItem?.title || "No next item yet"}</strong>
+              <strong>{nextQueueItem?.title || snapshot.nextAsset?.title || snapshot.nextScheduleItem?.title || "No next item yet"}</strong>
               <div className="subtle">
                 Prefetch {snapshot.playout.prefetchStatus || "idle"} · last probe {snapshot.playout.prefetchedAt || "never"}
               </div>
+              {nextQueueItem?.subtitle ? <div className="subtle">{nextQueueItem.subtitle}</div> : null}
               {snapshot.playout.prefetchError ? <div className="danger">{snapshot.playout.prefetchError}</div> : null}
             </div>
             <div className="item">
               <strong>Queue preview</strong>
               <div className="subtle">
-                {snapshot.queuedAssets.length > 0
-                  ? snapshot.queuedAssets.slice(0, 6).map((asset) => asset.title).join(" → ")
+                {snapshot.queueItems.length > 0
+                  ? snapshot.queueItems
+                      .slice(0, 6)
+                      .map((item) => `${item.kind === "asset" ? "Asset" : item.kind === "reconnect" ? "Reconnect" : "Standby"}: ${item.title}`)
+                      .join(" → ")
                   : "No queue preview is currently available."}
               </div>
             </div>
@@ -113,6 +119,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 PID {snapshot.playout.processPid || "not running"} · restarts {snapshot.playout.restartCount} · crash loop{" "}
                 {snapshot.playout.crashLoopDetected ? "detected" : "clear"}
               </div>
+              <div className="subtle">Last transition {snapshot.playout.lastTransitionAt || "not recorded yet"}</div>
               <div className="subtle">{snapshot.playout.lastStderrSample || "No recent FFmpeg stderr sample."}</div>
             </div>
           </div>
