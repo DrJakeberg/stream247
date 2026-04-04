@@ -216,6 +216,13 @@ export type OverlaySettingsRecord = {
   updatedAt: string;
 };
 
+export type OverlayStudioStateRecord = {
+  liveOverlay: OverlaySettingsRecord;
+  draftOverlay: OverlaySettingsRecord;
+  basedOnUpdatedAt: string;
+  hasUnpublishedChanges: boolean;
+};
+
 export type ManagedConfigRecord = {
   twitchClientId: string;
   twitchClientSecret: string;
@@ -330,6 +337,33 @@ type MigrationDefinition = {
   apply: (client: PoolClient) => Promise<void>;
 };
 
+type OverlaySettingsRow = {
+  enabled: boolean;
+  channel_name: string;
+  headline: string;
+  brand_badge: string;
+  scene_preset: OverlaySettingsRecord["scenePreset"];
+  accent_color: string;
+  surface_style: OverlaySettingsRecord["surfaceStyle"];
+  panel_anchor: OverlaySettingsRecord["panelAnchor"];
+  title_scale: OverlaySettingsRecord["titleScale"];
+  show_clock: boolean;
+  show_next_item: boolean;
+  show_schedule_teaser: boolean;
+  show_current_category: boolean;
+  show_source_label: boolean;
+  show_queue_preview: boolean;
+  queue_preview_count: number;
+  emergency_banner: string;
+  replay_label: string;
+  ticker_text: string;
+  updated_at: string;
+};
+
+type OverlayDraftRow = OverlaySettingsRow & {
+  based_on_updated_at: string;
+};
+
 const legacyStatePath = path.join(process.cwd(), "data", "app", "state.json");
 
 declare global {
@@ -344,6 +378,178 @@ const DB_BOOTSTRAP_LOCK_KEY = 247002;
 const STATE_WRITE_MAX_RETRIES = 3;
 const LATEST_SCHEMA_MIGRATION_ID = "20260404_001_schema_baseline";
 const schemaMigrations: MigrationDefinition[] = [];
+
+function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): OverlaySettingsRecord {
+  const defaults = defaultState().overlay;
+  return {
+    ...defaults,
+    ...overlay,
+    channelName: String(overlay.channelName ?? defaults.channelName).trim().slice(0, 80) || defaults.channelName,
+    headline: String(overlay.headline ?? defaults.headline).trim().slice(0, 120) || defaults.headline,
+    replayLabel: String(overlay.replayLabel ?? defaults.replayLabel).trim().slice(0, 80) || defaults.replayLabel,
+    brandBadge: String(overlay.brandBadge ?? defaults.brandBadge).trim().slice(0, 48),
+    scenePreset: normalizeOverlayScenePreset(String(overlay.scenePreset ?? defaults.scenePreset)),
+    accentColor: String(overlay.accentColor ?? defaults.accentColor).trim().slice(0, 20) || defaults.accentColor,
+    surfaceStyle: normalizeOverlaySurfaceStyle(String(overlay.surfaceStyle ?? defaults.surfaceStyle)),
+    panelAnchor: normalizeOverlayPanelAnchor(String(overlay.panelAnchor ?? defaults.panelAnchor)),
+    titleScale: normalizeOverlayTitleScale(String(overlay.titleScale ?? defaults.titleScale)),
+    queuePreviewCount: Math.max(1, Math.min(5, Number(overlay.queuePreviewCount ?? defaults.queuePreviewCount) || defaults.queuePreviewCount)),
+    emergencyBanner: String(overlay.emergencyBanner ?? defaults.emergencyBanner).trim().slice(0, 180),
+    tickerText: String(overlay.tickerText ?? defaults.tickerText).trim().slice(0, 180),
+    updatedAt: overlay.updatedAt ?? defaults.updatedAt
+  };
+}
+
+function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: OverlaySettingsRecord): OverlaySettingsRecord {
+  return row
+    ? normalizeOverlaySettingsRecord({
+        enabled: row.enabled,
+        channelName: row.channel_name,
+        headline: row.headline,
+        replayLabel: row.replay_label,
+        brandBadge: row.brand_badge,
+        scenePreset: row.scene_preset,
+        accentColor: row.accent_color,
+        surfaceStyle: row.surface_style,
+        panelAnchor: row.panel_anchor,
+        titleScale: row.title_scale,
+        showClock: row.show_clock,
+        showNextItem: row.show_next_item,
+        showScheduleTeaser: row.show_schedule_teaser,
+        showCurrentCategory: row.show_current_category,
+        showSourceLabel: row.show_source_label,
+        showQueuePreview: row.show_queue_preview,
+        queuePreviewCount: row.queue_preview_count,
+        emergencyBanner: row.emergency_banner,
+        tickerText: row.ticker_text,
+        updatedAt: row.updated_at
+      })
+    : fallback;
+}
+
+function overlaySettingsEqual(left: OverlaySettingsRecord, right: OverlaySettingsRecord): boolean {
+  const normalizedLeft = normalizeOverlaySettingsRecord(left);
+  const normalizedRight = normalizeOverlaySettingsRecord(right);
+  return JSON.stringify(normalizedLeft) === JSON.stringify(normalizedRight);
+}
+
+async function upsertOverlaySettingsTable(
+  client: PoolClient,
+  tableName: "overlay_settings" | "overlay_drafts",
+  overlay: OverlaySettingsRecord,
+  basedOnUpdatedAt = ""
+): Promise<void> {
+  const normalized = normalizeOverlaySettingsRecord(overlay);
+
+  if (tableName === "overlay_drafts") {
+    await client.query(
+      `
+        INSERT INTO overlay_drafts (
+          singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, emergency_banner, ticker_text, updated_at, based_on_updated_at
+        )
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          enabled = EXCLUDED.enabled,
+          channel_name = EXCLUDED.channel_name,
+          headline = EXCLUDED.headline,
+          replay_label = EXCLUDED.replay_label,
+          brand_badge = EXCLUDED.brand_badge,
+          scene_preset = EXCLUDED.scene_preset,
+          accent_color = EXCLUDED.accent_color,
+          surface_style = EXCLUDED.surface_style,
+          panel_anchor = EXCLUDED.panel_anchor,
+          title_scale = EXCLUDED.title_scale,
+          show_clock = EXCLUDED.show_clock,
+          show_next_item = EXCLUDED.show_next_item,
+          show_schedule_teaser = EXCLUDED.show_schedule_teaser,
+          show_current_category = EXCLUDED.show_current_category,
+          show_source_label = EXCLUDED.show_source_label,
+          show_queue_preview = EXCLUDED.show_queue_preview,
+          queue_preview_count = EXCLUDED.queue_preview_count,
+          emergency_banner = EXCLUDED.emergency_banner,
+          ticker_text = EXCLUDED.ticker_text,
+          updated_at = EXCLUDED.updated_at,
+          based_on_updated_at = EXCLUDED.based_on_updated_at
+      `,
+      [
+        normalized.enabled,
+        normalized.channelName,
+        normalized.headline,
+        normalized.replayLabel,
+        normalized.brandBadge,
+        normalized.scenePreset,
+        normalized.accentColor,
+        normalized.surfaceStyle,
+        normalized.panelAnchor,
+        normalized.titleScale,
+        normalized.showClock,
+        normalized.showNextItem,
+        normalized.showScheduleTeaser,
+        normalized.showCurrentCategory,
+        normalized.showSourceLabel,
+        normalized.showQueuePreview,
+        normalized.queuePreviewCount,
+        normalized.emergencyBanner,
+        normalized.tickerText,
+        normalized.updatedAt,
+        basedOnUpdatedAt
+      ]
+    );
+    return;
+  }
+
+  await client.query(
+    `
+      INSERT INTO overlay_settings (
+        singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, emergency_banner, ticker_text, updated_at
+      )
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+      ON CONFLICT (singleton_id) DO UPDATE SET
+        enabled = EXCLUDED.enabled,
+        channel_name = EXCLUDED.channel_name,
+        headline = EXCLUDED.headline,
+        replay_label = EXCLUDED.replay_label,
+        brand_badge = EXCLUDED.brand_badge,
+        scene_preset = EXCLUDED.scene_preset,
+        accent_color = EXCLUDED.accent_color,
+        surface_style = EXCLUDED.surface_style,
+        panel_anchor = EXCLUDED.panel_anchor,
+        title_scale = EXCLUDED.title_scale,
+        show_clock = EXCLUDED.show_clock,
+        show_next_item = EXCLUDED.show_next_item,
+        show_schedule_teaser = EXCLUDED.show_schedule_teaser,
+        show_current_category = EXCLUDED.show_current_category,
+        show_source_label = EXCLUDED.show_source_label,
+        show_queue_preview = EXCLUDED.show_queue_preview,
+        queue_preview_count = EXCLUDED.queue_preview_count,
+        emergency_banner = EXCLUDED.emergency_banner,
+        ticker_text = EXCLUDED.ticker_text,
+        updated_at = EXCLUDED.updated_at
+    `,
+    [
+      normalized.enabled,
+      normalized.channelName,
+      normalized.headline,
+      normalized.replayLabel,
+      normalized.brandBadge,
+      normalized.scenePreset,
+      normalized.accentColor,
+      normalized.surfaceStyle,
+      normalized.panelAnchor,
+      normalized.titleScale,
+      normalized.showClock,
+      normalized.showNextItem,
+      normalized.showScheduleTeaser,
+      normalized.showCurrentCategory,
+      normalized.showSourceLabel,
+      normalized.showQueuePreview,
+      normalized.queuePreviewCount,
+      normalized.emergencyBanner,
+      normalized.tickerText,
+      normalized.updatedAt
+    ]
+  );
+}
 
 function isRetryableStateWriteError(error: unknown): error is { code: string } {
   return (
@@ -825,6 +1031,31 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       updated_at TEXT NOT NULL DEFAULT ''
     );
 
+    CREATE TABLE IF NOT EXISTS overlay_drafts (
+      singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      channel_name TEXT NOT NULL DEFAULT 'Stream247',
+      headline TEXT NOT NULL DEFAULT 'Always on air',
+      replay_label TEXT NOT NULL DEFAULT 'Replay stream',
+      brand_badge TEXT NOT NULL DEFAULT '',
+      scene_preset TEXT NOT NULL DEFAULT 'replay-lower-third',
+      accent_color TEXT NOT NULL DEFAULT '#0e6d5a',
+      surface_style TEXT NOT NULL DEFAULT 'glass',
+      panel_anchor TEXT NOT NULL DEFAULT 'bottom',
+      title_scale TEXT NOT NULL DEFAULT 'balanced',
+      show_clock BOOLEAN NOT NULL DEFAULT TRUE,
+      show_next_item BOOLEAN NOT NULL DEFAULT TRUE,
+      show_schedule_teaser BOOLEAN NOT NULL DEFAULT TRUE,
+      show_current_category BOOLEAN NOT NULL DEFAULT TRUE,
+      show_source_label BOOLEAN NOT NULL DEFAULT TRUE,
+      show_queue_preview BOOLEAN NOT NULL DEFAULT FALSE,
+      queue_preview_count INTEGER NOT NULL DEFAULT 3,
+      emergency_banner TEXT NOT NULL DEFAULT '',
+      ticker_text TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT '',
+      based_on_updated_at TEXT NOT NULL DEFAULT ''
+    );
+
     CREATE TABLE IF NOT EXISTS managed_config (
       singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
       encrypted_payload TEXT NOT NULL DEFAULT '',
@@ -1052,6 +1283,27 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS ticker_text TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS channel_name TEXT NOT NULL DEFAULT 'Stream247';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS headline TEXT NOT NULL DEFAULT 'Always on air';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS accent_color TEXT NOT NULL DEFAULT '#0e6d5a';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS show_clock BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS show_next_item BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS show_schedule_teaser BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS brand_badge TEXT NOT NULL DEFAULT '';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS scene_preset TEXT NOT NULL DEFAULT 'replay-lower-third';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS surface_style TEXT NOT NULL DEFAULT 'glass';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS panel_anchor TEXT NOT NULL DEFAULT 'bottom';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS title_scale TEXT NOT NULL DEFAULT 'balanced';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS show_current_category BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS show_source_label BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS show_queue_preview BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS queue_preview_count INTEGER NOT NULL DEFAULT 3;
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS ticker_text TEXT NOT NULL DEFAULT '';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS based_on_updated_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE managed_config ADD COLUMN IF NOT EXISTS encrypted_payload TEXT NOT NULL DEFAULT '';
     ALTER TABLE managed_config ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS start_minute_of_day INTEGER NOT NULL DEFAULT 0;
@@ -1763,28 +2015,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   const presenceResult = await client.query<{ actor: string; minutes: number; created_at: string; expires_at: string }>(
     "SELECT * FROM presence_windows ORDER BY created_at DESC"
   );
-  const overlayResult = await client.query<{
-    enabled: boolean;
-    channel_name: string;
-    headline: string;
-    brand_badge: string;
-    scene_preset: OverlaySettingsRecord["scenePreset"];
-    accent_color: string;
-    surface_style: OverlaySettingsRecord["surfaceStyle"];
-    panel_anchor: OverlaySettingsRecord["panelAnchor"];
-    title_scale: OverlaySettingsRecord["titleScale"];
-    show_clock: boolean;
-    show_next_item: boolean;
-    show_schedule_teaser: boolean;
-    show_current_category: boolean;
-    show_source_label: boolean;
-    show_queue_preview: boolean;
-    queue_preview_count: number;
-    emergency_banner: string;
-    replay_label: string;
-    ticker_text: string;
-    updated_at: string;
-  }>("SELECT * FROM overlay_settings WHERE singleton_id = 1");
+  const overlayResult = await client.query<OverlaySettingsRow>("SELECT * FROM overlay_settings WHERE singleton_id = 1");
   const managedConfigResult = await client.query<{
     encrypted_payload: string;
     updated_at: string;
@@ -2013,30 +2244,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       createdAt: row.created_at,
       expiresAt: row.expires_at
     })),
-    overlay: overlayRow
-      ? {
-          enabled: overlayRow.enabled,
-          channelName: overlayRow.channel_name,
-          headline: overlayRow.headline,
-          replayLabel: overlayRow.replay_label,
-          brandBadge: overlayRow.brand_badge,
-          scenePreset: overlayRow.scene_preset,
-          accentColor: overlayRow.accent_color,
-          surfaceStyle: overlayRow.surface_style,
-          panelAnchor: overlayRow.panel_anchor,
-          titleScale: overlayRow.title_scale,
-          showClock: overlayRow.show_clock,
-          showNextItem: overlayRow.show_next_item,
-          showScheduleTeaser: overlayRow.show_schedule_teaser,
-          showCurrentCategory: overlayRow.show_current_category,
-          showSourceLabel: overlayRow.show_source_label,
-          showQueuePreview: overlayRow.show_queue_preview,
-          queuePreviewCount: overlayRow.queue_preview_count,
-          emergencyBanner: overlayRow.emergency_banner,
-          tickerText: overlayRow.ticker_text,
-          updatedAt: overlayRow.updated_at
-        }
-      : defaults.overlay,
+    overlay: mapOverlayRowToRecord(overlayRow, defaults.overlay),
     managedConfig: decryptedManagedConfig
       ? {
           ...decryptedManagedConfig,
@@ -2269,6 +2477,28 @@ export async function readAppState(): Promise<AppState> {
   }
 }
 
+export async function readOverlayStudioState(): Promise<OverlayStudioStateRecord> {
+  await ensureDatabase();
+  const client = await getPool().connect();
+
+  try {
+    const defaults = defaultState().overlay;
+    const liveResult = await client.query<OverlaySettingsRow>("SELECT * FROM overlay_settings WHERE singleton_id = 1");
+    const draftResult = await client.query<OverlayDraftRow>("SELECT * FROM overlay_drafts WHERE singleton_id = 1");
+    const liveOverlay = mapOverlayRowToRecord(liveResult.rows[0], defaults);
+    const draftOverlay = mapOverlayRowToRecord(draftResult.rows[0], liveOverlay);
+
+    return {
+      liveOverlay,
+      draftOverlay,
+      basedOnUpdatedAt: draftResult.rows[0]?.based_on_updated_at || liveOverlay.updatedAt,
+      hasUnpublishedChanges: !overlaySettingsEqual(liveOverlay, draftOverlay)
+    };
+  } finally {
+    client.release();
+  }
+}
+
 export async function resetDatabaseConnectionsForTests(): Promise<void> {
   if (globalThis.__stream247Pool) {
     await globalThis.__stream247Pool.end();
@@ -2454,57 +2684,53 @@ export async function updateManagedConfigRecord(config: ManagedConfigRecord): Pr
 
 export async function updateOverlaySettingsRecord(overlay: OverlaySettingsRecord): Promise<void> {
   await withSerializedStateWrite("updateOverlaySettingsRecord", async (client) => {
-    await client.query(
-      `
-        INSERT INTO overlay_settings (
-          singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, emergency_banner, ticker_text, updated_at
-        )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-        ON CONFLICT (singleton_id) DO UPDATE SET
-          enabled = EXCLUDED.enabled,
-          channel_name = EXCLUDED.channel_name,
-          headline = EXCLUDED.headline,
-          replay_label = EXCLUDED.replay_label,
-          brand_badge = EXCLUDED.brand_badge,
-          scene_preset = EXCLUDED.scene_preset,
-          accent_color = EXCLUDED.accent_color,
-          surface_style = EXCLUDED.surface_style,
-          panel_anchor = EXCLUDED.panel_anchor,
-          title_scale = EXCLUDED.title_scale,
-          show_clock = EXCLUDED.show_clock,
-          show_next_item = EXCLUDED.show_next_item,
-          show_schedule_teaser = EXCLUDED.show_schedule_teaser,
-          show_current_category = EXCLUDED.show_current_category,
-          show_source_label = EXCLUDED.show_source_label,
-          show_queue_preview = EXCLUDED.show_queue_preview,
-          queue_preview_count = EXCLUDED.queue_preview_count,
-          emergency_banner = EXCLUDED.emergency_banner,
-          ticker_text = EXCLUDED.ticker_text,
-          updated_at = EXCLUDED.updated_at
-      `,
-      [
-        overlay.enabled,
-        overlay.channelName,
-        overlay.headline,
-        overlay.replayLabel,
-        overlay.brandBadge,
-        overlay.scenePreset,
-        overlay.accentColor,
-        overlay.surfaceStyle,
-        overlay.panelAnchor,
-        overlay.titleScale,
-        overlay.showClock,
-        overlay.showNextItem,
-        overlay.showScheduleTeaser,
-        overlay.showCurrentCategory,
-        overlay.showSourceLabel,
-        overlay.showQueuePreview,
-        overlay.queuePreviewCount,
-        overlay.emergencyBanner,
-        overlay.tickerText,
-        overlay.updatedAt
-      ]
-    );
+    await upsertOverlaySettingsTable(client, "overlay_settings", overlay);
+  });
+}
+
+export async function saveOverlayDraftRecord(overlay: OverlaySettingsRecord, basedOnUpdatedAt: string): Promise<OverlayStudioStateRecord> {
+  return withSerializedStateWrite("saveOverlayDraftRecord", async (client) => {
+    const liveResult = await client.query<OverlaySettingsRow>("SELECT * FROM overlay_settings WHERE singleton_id = 1");
+    const liveOverlay = mapOverlayRowToRecord(liveResult.rows[0], defaultState().overlay);
+    const normalizedDraft = normalizeOverlaySettingsRecord(overlay);
+    await upsertOverlaySettingsTable(client, "overlay_drafts", normalizedDraft, basedOnUpdatedAt || liveOverlay.updatedAt);
+
+    return {
+      liveOverlay,
+      draftOverlay: normalizedDraft,
+      basedOnUpdatedAt: basedOnUpdatedAt || liveOverlay.updatedAt,
+      hasUnpublishedChanges: !overlaySettingsEqual(liveOverlay, normalizedDraft)
+    };
+  });
+}
+
+export async function publishOverlayDraftRecord(overlay: OverlaySettingsRecord): Promise<OverlayStudioStateRecord> {
+  return withSerializedStateWrite("publishOverlayDraftRecord", async (client) => {
+    const normalizedOverlay = normalizeOverlaySettingsRecord(overlay);
+    await upsertOverlaySettingsTable(client, "overlay_settings", normalizedOverlay);
+    await upsertOverlaySettingsTable(client, "overlay_drafts", normalizedOverlay, normalizedOverlay.updatedAt);
+
+    return {
+      liveOverlay: normalizedOverlay,
+      draftOverlay: normalizedOverlay,
+      basedOnUpdatedAt: normalizedOverlay.updatedAt,
+      hasUnpublishedChanges: false
+    };
+  });
+}
+
+export async function resetOverlayDraftRecord(): Promise<OverlayStudioStateRecord> {
+  return withSerializedStateWrite("resetOverlayDraftRecord", async (client) => {
+    const liveResult = await client.query<OverlaySettingsRow>("SELECT * FROM overlay_settings WHERE singleton_id = 1");
+    const liveOverlay = mapOverlayRowToRecord(liveResult.rows[0], defaultState().overlay);
+    await upsertOverlaySettingsTable(client, "overlay_drafts", liveOverlay, liveOverlay.updatedAt);
+
+    return {
+      liveOverlay,
+      draftOverlay: liveOverlay,
+      basedOnUpdatedAt: liveOverlay.updatedAt,
+      hasUnpublishedChanges: false
+    };
   });
 }
 

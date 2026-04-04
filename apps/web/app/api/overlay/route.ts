@@ -6,7 +6,61 @@ import {
   normalizeOverlayTitleScale
 } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateOverlaySettingsRecord } from "@/lib/server/state";
+import {
+  appendAuditEvent,
+  publishOverlayDraftRecord,
+  readOverlayStudioState,
+  resetOverlayDraftRecord,
+  saveOverlayDraftRecord
+} from "@/lib/server/state";
+
+type OverlayPayload = Partial<{
+  enabled: boolean;
+  channelName: string;
+  headline: string;
+  brandBadge: string;
+  accentColor: string;
+  scenePreset: string;
+  surfaceStyle: string;
+  panelAnchor: string;
+  titleScale: string;
+  showClock: boolean;
+  showNextItem: boolean;
+  showScheduleTeaser: boolean;
+  showCurrentCategory: boolean;
+  showSourceLabel: boolean;
+  showQueuePreview: boolean;
+  queuePreviewCount: number;
+  emergencyBanner: string;
+  tickerText: string;
+  replayLabel: string;
+}>;
+
+function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnType<typeof readOverlayStudioState>>["draftOverlay"], updatedAt: string) {
+  return {
+    ...base,
+    enabled: payload.enabled ?? base.enabled,
+    channelName: (payload.channelName ?? base.channelName).trim().slice(0, 80) || "Stream247",
+    headline: (payload.headline ?? base.headline).trim().slice(0, 120) || "Always on air",
+    brandBadge: (payload.brandBadge ?? base.brandBadge).trim().slice(0, 48),
+    scenePreset: normalizeOverlayScenePreset(String(payload.scenePreset ?? base.scenePreset)),
+    accentColor: (payload.accentColor ?? base.accentColor).trim().slice(0, 20) || "#0e6d5a",
+    surfaceStyle: normalizeOverlaySurfaceStyle(String(payload.surfaceStyle ?? base.surfaceStyle)),
+    panelAnchor: normalizeOverlayPanelAnchor(String(payload.panelAnchor ?? base.panelAnchor)),
+    titleScale: normalizeOverlayTitleScale(String(payload.titleScale ?? base.titleScale)),
+    showClock: payload.showClock ?? base.showClock,
+    showNextItem: payload.showNextItem ?? base.showNextItem,
+    showScheduleTeaser: payload.showScheduleTeaser ?? base.showScheduleTeaser,
+    showCurrentCategory: payload.showCurrentCategory ?? base.showCurrentCategory,
+    showSourceLabel: payload.showSourceLabel ?? base.showSourceLabel,
+    showQueuePreview: payload.showQueuePreview ?? base.showQueuePreview,
+    queuePreviewCount: Math.max(1, Math.min(5, Number(payload.queuePreviewCount ?? base.queuePreviewCount) || 3)),
+    emergencyBanner: (payload.emergencyBanner ?? base.emergencyBanner).trim().slice(0, 180),
+    tickerText: (payload.tickerText ?? base.tickerText).trim().slice(0, 180),
+    replayLabel: (payload.replayLabel ?? base.replayLabel).trim().slice(0, 80) || "Replay stream",
+    updatedAt
+  };
+}
 
 export async function GET() {
   const unauthorized = await requireApiRoles(["owner", "admin", "operator", "moderator", "viewer"]);
@@ -14,8 +68,8 @@ export async function GET() {
     return unauthorized;
   }
 
-  const state = await readAppState();
-  return NextResponse.json({ overlay: state.overlay });
+  const studioState = await readOverlayStudioState();
+  return NextResponse.json(studioState);
 }
 
 export async function PUT(request: Request) {
@@ -24,55 +78,41 @@ export async function PUT(request: Request) {
     return unauthorized;
   }
 
-  const payload = (await request.json()) as Partial<{
-    enabled: boolean;
-    channelName: string;
-    headline: string;
-    brandBadge: string;
-    accentColor: string;
-    scenePreset: string;
-    surfaceStyle: string;
-    panelAnchor: string;
-    titleScale: string;
-    showClock: boolean;
-    showNextItem: boolean;
-    showScheduleTeaser: boolean;
-    showCurrentCategory: boolean;
-    showSourceLabel: boolean;
-    showQueuePreview: boolean;
-    queuePreviewCount: number;
-    emergencyBanner: string;
-    tickerText: string;
-    replayLabel: string;
-  }>;
+  const payload = (await request.json()) as OverlayPayload;
+  const studioState = await readOverlayStudioState();
+  const savedState = await saveOverlayDraftRecord(
+    sanitizeOverlayPayload(payload, studioState.draftOverlay, new Date().toISOString()),
+    studioState.basedOnUpdatedAt || studioState.liveOverlay.updatedAt
+  );
 
-  const now = new Date().toISOString();
+  await appendAuditEvent("overlay.draft_saved", "Overlay scene draft was saved.");
+  return NextResponse.json({ ok: true, ...savedState, message: "Scene draft saved." });
+}
 
-  const state = await readAppState();
-  await updateOverlaySettingsRecord({
-    ...state.overlay,
-    enabled: payload.enabled ?? state.overlay.enabled,
-    channelName: (payload.channelName ?? state.overlay.channelName).trim().slice(0, 80) || "Stream247",
-    headline: (payload.headline ?? state.overlay.headline).trim().slice(0, 120) || "Always on air",
-    brandBadge: (payload.brandBadge ?? state.overlay.brandBadge).trim().slice(0, 48),
-    scenePreset: normalizeOverlayScenePreset(String(payload.scenePreset ?? state.overlay.scenePreset)),
-    accentColor: (payload.accentColor ?? state.overlay.accentColor).trim().slice(0, 20) || "#0e6d5a",
-    surfaceStyle: normalizeOverlaySurfaceStyle(String(payload.surfaceStyle ?? state.overlay.surfaceStyle)),
-    panelAnchor: normalizeOverlayPanelAnchor(String(payload.panelAnchor ?? state.overlay.panelAnchor)),
-    titleScale: normalizeOverlayTitleScale(String(payload.titleScale ?? state.overlay.titleScale)),
-    showClock: payload.showClock ?? state.overlay.showClock,
-    showNextItem: payload.showNextItem ?? state.overlay.showNextItem,
-    showScheduleTeaser: payload.showScheduleTeaser ?? state.overlay.showScheduleTeaser,
-    showCurrentCategory: payload.showCurrentCategory ?? state.overlay.showCurrentCategory,
-    showSourceLabel: payload.showSourceLabel ?? state.overlay.showSourceLabel,
-    showQueuePreview: payload.showQueuePreview ?? state.overlay.showQueuePreview,
-    queuePreviewCount: Math.max(1, Math.min(5, Number(payload.queuePreviewCount ?? state.overlay.queuePreviewCount) || 3)),
-    emergencyBanner: (payload.emergencyBanner ?? state.overlay.emergencyBanner).trim().slice(0, 180),
-    tickerText: (payload.tickerText ?? state.overlay.tickerText).trim().slice(0, 180),
-    replayLabel: (payload.replayLabel ?? state.overlay.replayLabel).trim().slice(0, 80) || "Replay stream",
-    updatedAt: now
-  });
+export async function POST(request: Request) {
+  const unauthorized = await requireApiRoles(["owner", "admin", "operator"]);
+  if (unauthorized) {
+    return unauthorized;
+  }
 
-  await appendAuditEvent("overlay.updated", "Overlay settings were updated.");
-  return NextResponse.json({ ok: true, message: "Overlay settings updated." });
+  const payload = (await request.json()) as { action?: "publish" | "reset"; draft?: OverlayPayload };
+  if (!payload.action) {
+    return NextResponse.json({ message: "Action is required." }, { status: 400 });
+  }
+
+  if (payload.action === "reset") {
+    const resetState = await resetOverlayDraftRecord();
+    await appendAuditEvent("overlay.draft_reset", "Overlay draft was reset to the live scene.");
+    return NextResponse.json({ ok: true, ...resetState, message: "Draft reset to the live scene." });
+  }
+
+  if (payload.action === "publish") {
+    const studioState = await readOverlayStudioState();
+    const nextLiveOverlay = sanitizeOverlayPayload(payload.draft ?? {}, studioState.draftOverlay, new Date().toISOString());
+    const publishedState = await publishOverlayDraftRecord(nextLiveOverlay);
+    await appendAuditEvent("overlay.published", "Overlay scene changes were published live.");
+    return NextResponse.json({ ok: true, ...publishedState, message: "Scene changes published live." });
+  }
+
+  return NextResponse.json({ message: "Unsupported overlay action." }, { status: 400 });
 }

@@ -3,10 +3,11 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { OverlaySettingsForm } from "@/components/overlay-settings-form";
 import { Panel } from "@/components/panel";
-import { getCurrentScheduleItem, getNextScheduleItem, readAppState } from "@/lib/server/state";
+import { getCurrentScheduleItem, getNextScheduleItem, readAppState, readOverlayStudioState } from "@/lib/server/state";
 
 export default async function OverlayStudioPage() {
   const state = await readAppState();
+  const studioState = await readOverlayStudioState();
   const currentItem = getCurrentScheduleItem(state);
   const nextItem = getNextScheduleItem(state);
   const previewQueueTitles = state.playout.queueItems.slice(1, 5).map((item) => item.title).filter(Boolean);
@@ -16,11 +17,14 @@ export default async function OverlayStudioPage() {
       <Panel title="Overlay settings" eyebrow="Overlay">
         <p className="subtle">
           Use <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> as a browser source in OBS
-          or another scene tool. The same scene settings also drive the on-air replay text overlay inside the FFmpeg
-          playout path, so this page is now the first step toward a unified scene system.
+          or another scene tool. Draft changes stay inside the studio until you publish them, and the same live scene
+          settings also drive the on-air replay text overlay inside the FFmpeg playout path.
         </p>
         <OverlaySettingsForm
-          overlay={state.overlay}
+          basedOnUpdatedAt={studioState.basedOnUpdatedAt}
+          draftOverlay={studioState.draftOverlay}
+          hasUnpublishedChanges={studioState.hasUnpublishedChanges}
+          liveOverlay={studioState.liveOverlay}
           preview={{
             timeZone: process.env.CHANNEL_TIMEZONE || "UTC",
             currentTitle: currentItem?.title || state.playout.currentTitle || "Morning Replay",
@@ -39,16 +43,29 @@ export default async function OverlayStudioPage() {
       <Panel title="Current overlay payload" eyebrow="Preview">
         <div className="list">
           <div className="item">
-            <strong>Active scene preset</strong>
+            <strong>Live scene preset</strong>
             <div className="subtle">
-              {state.overlay.scenePreset} · {state.overlay.surfaceStyle} surface · {state.overlay.panelAnchor} anchor · {state.overlay.titleScale} title scale
+              {studioState.liveOverlay.scenePreset} · {studioState.liveOverlay.surfaceStyle} surface · {studioState.liveOverlay.panelAnchor} anchor · {studioState.liveOverlay.titleScale} title scale
             </div>
             <div className="subtle">
-              Current category {state.overlay.showCurrentCategory ? "shown" : "hidden"} · source label{" "}
-              {state.overlay.showSourceLabel ? "shown" : "hidden"}
+              Current category {studioState.liveOverlay.showCurrentCategory ? "shown" : "hidden"} · source label{" "}
+              {studioState.liveOverlay.showSourceLabel ? "shown" : "hidden"}
             </div>
             <div className="subtle">
-              Queue preview {state.overlay.showQueuePreview ? `shown (${state.overlay.queuePreviewCount})` : "hidden"}
+              Queue preview {studioState.liveOverlay.showQueuePreview ? `shown (${studioState.liveOverlay.queuePreviewCount})` : "hidden"}
+            </div>
+            <div className="subtle">Published {studioState.liveOverlay.updatedAt || "never"}</div>
+          </div>
+          <div className="item">
+            <strong>Draft status</strong>
+            <div className="subtle">
+              {studioState.hasUnpublishedChanges ? "Draft differs from live scene." : "Draft matches the live scene."}
+            </div>
+            <div className="subtle">Draft saved {studioState.draftOverlay.updatedAt || "not yet saved"}</div>
+            <div className="subtle">Based on live scene {studioState.basedOnUpdatedAt || "unknown"}</div>
+            <div className="subtle">
+              Draft preset {studioState.draftOverlay.scenePreset} · {studioState.draftOverlay.surfaceStyle} surface ·{" "}
+              {studioState.draftOverlay.panelAnchor} anchor
             </div>
           </div>
           <div className="item">
@@ -71,7 +88,7 @@ export default async function OverlayStudioPage() {
           </div>
           <div className="item">
             <strong>Emergency banner</strong>
-            <div className="subtle">{state.overlay.emergencyBanner || "No emergency banner is active."}</div>
+            <div className="subtle">{studioState.liveOverlay.emergencyBanner || "No emergency banner is active."}</div>
           </div>
         </div>
       </Panel>

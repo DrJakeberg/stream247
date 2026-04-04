@@ -129,6 +129,7 @@ The following product gaps are now addressed:
 - the local-library connector is now visible in source forms
 - overlay settings now include first-class scene presets and richer presentation controls
 - browser overlay and on-air text overlay now share the same scene-oriented text composition logic
+- overlay studio now supports draft-save, reset-to-live, and publish-live scene changes
 
 ## Implementation Roadmap
 
@@ -149,7 +150,7 @@ Deliverables:
 
 ### Phase 2: Scene System
 
-Status: in progress, first preset/layout slice implemented.
+Status: in progress, presets plus draft/publish workflow implemented.
 
 Deliverables:
 
