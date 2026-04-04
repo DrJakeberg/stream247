@@ -3,6 +3,7 @@ import { appendAuditEvent, readAppState, updatePlayoutRuntime } from "@/lib/serv
 type BroadcastAction =
   | { type: "restart" | "hard_reload" }
   | { type: "refresh" | "rebuild_queue" }
+  | { type: "force_reconnect" }
   | { type: "fallback" }
   | { type: "resume" }
   | { type: "skip"; minutes?: number }
@@ -53,6 +54,21 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       action.type === "restart" ? "playout.restart.requested" : "broadcast.hard-reload.requested",
       action.type === "restart" ? "Manual playout restart was requested." : "Broadcast hard reload was requested."
     );
+    return { ok: true, message };
+  }
+
+  if (action.type === "force_reconnect") {
+    const message = "Manual reconnect requested. The encoder will enter the reconnect window on the next playout cycle.";
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      status: "reconnecting",
+      restartRequestedAt: now,
+      heartbeatAt: now,
+      pendingAction: "",
+      pendingActionRequestedAt: "",
+      message
+    }));
+    await appendAuditEvent("broadcast.reconnect.requested", "Manual reconnect was requested.");
     return { ok: true, message };
   }
 

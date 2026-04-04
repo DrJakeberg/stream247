@@ -74,6 +74,14 @@ export function PlayoutActionForm(props: {
         <button
           className="button button-secondary"
           disabled={isPending}
+          onClick={() => startTransition(() => void runAction({ type: "force_reconnect" }))}
+          type="button"
+        >
+          Force reconnect
+        </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending}
           onClick={() => startTransition(() => void runAction({ type: "fallback" }))}
           type="button"
         >

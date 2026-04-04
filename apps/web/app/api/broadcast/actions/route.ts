@@ -3,7 +3,7 @@ import { requireApiRoles } from "@/lib/server/auth";
 import { runBroadcastAction } from "@/lib/server/broadcast";
 
 type BroadcastActionRequest = {
-  type?: "restart" | "hard_reload" | "refresh" | "rebuild_queue" | "fallback" | "resume" | "skip" | "override";
+  type?: "restart" | "hard_reload" | "refresh" | "rebuild_queue" | "force_reconnect" | "fallback" | "resume" | "skip" | "override";
   minutes?: number;
   assetId?: string;
 };

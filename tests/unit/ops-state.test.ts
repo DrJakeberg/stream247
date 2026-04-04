@@ -3,6 +3,7 @@ import type { AppState } from "../../apps/web/lib/server/state";
 import { getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
 import {
   getAssetPlaybackDiagnostics,
+  getBroadcastSnapshot,
   getFilteredIncidents,
   getPlayoutQueueAssets,
   getRuntimeDriftReport,
@@ -454,5 +455,37 @@ describe("ops state helpers", () => {
 
     expect(getSourceRecoveryActions(state, "source-1").join(" ")).toContain("private");
     expect(getPlayoutQueueAssets(state)).toHaveLength(2);
+  });
+
+  it("summarizes typed broadcast queue items in the live snapshot", () => {
+    const snapshot = getBroadcastSnapshot(createState({
+      playout: {
+        ...createState().playout,
+        queueItems: [
+          {
+            id: "queue-standby-0",
+            kind: "standby",
+            assetId: "",
+            title: "Replay standby",
+            subtitle: "No playable asset is available.",
+            scenePreset: "standby-board",
+            position: 0
+          },
+          {
+            id: "queue-asset-1-1",
+            kind: "asset",
+            assetId: "asset-1",
+            title: "Asset 1",
+            subtitle: "YouTube Playlist · Just Chatting",
+            scenePreset: "replay-lower-third",
+            position: 1
+          }
+        ]
+      }
+    }));
+
+    expect(snapshot.queueItems[0]?.kind).toBe("standby");
+    expect(snapshot.queueItems[0]?.asset).toBeNull();
+    expect(snapshot.queueItems[1]?.asset?.id).toBe("asset-1");
   });
 });
