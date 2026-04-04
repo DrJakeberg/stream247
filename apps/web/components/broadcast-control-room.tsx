@@ -139,13 +139,18 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               <strong>{snapshot.overlay.replayLabel} · {snapshot.overlay.channelName}</strong>
               <div className="subtle">{snapshot.overlay.headline}</div>
               <div className="subtle">
-                Preset {snapshot.overlay.scenePreset} · Accent {snapshot.overlay.accentColor} · Next visible{" "}
+                Preset {snapshot.overlay.scenePreset} · {snapshot.overlay.surfaceStyle} surface · {snapshot.overlay.panelAnchor} anchor ·{" "}
+                {snapshot.overlay.titleScale} scale
+              </div>
+              <div className="subtle">
+                Accent {snapshot.overlay.accentColor} · Brand badge {snapshot.overlay.brandBadge || "none"} · Next visible{" "}
                 {snapshot.overlay.showNextItem ? "yes" : "no"} · Clock {snapshot.overlay.showClock ? "yes" : "no"}
               </div>
               <div className="subtle">
                 Queue preview {snapshot.overlay.showQueuePreview ? `yes (${snapshot.overlay.queuePreviewCount})` : "no"} · Current category{" "}
                 {snapshot.overlay.showCurrentCategory ? "yes" : "no"} · Source label {snapshot.overlay.showSourceLabel ? "yes" : "no"}
               </div>
+              {snapshot.overlay.tickerText ? <div className="subtle">{snapshot.overlay.tickerText}</div> : null}
               {snapshot.overlay.emergencyBanner ? <div className="danger">{snapshot.overlay.emergencyBanner}</div> : null}
               <div className="subtle-link-row" style={{ marginTop: 8 }}>
                 <Link className="subtle-link" href="/overlay-studio">

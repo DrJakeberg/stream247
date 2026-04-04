@@ -31,8 +31,18 @@ export type OverlayScenePreset =
 
 export type OverlayQueueKind = "asset" | "insert" | "standby" | "reconnect" | "";
 
+export type OverlaySurfaceStyle = "glass" | "solid" | "signal";
+export type OverlayPanelAnchor = "bottom" | "center";
+export type OverlayTitleScale = "compact" | "balanced" | "cinematic";
+
 export type OverlayScenePresetDefinition = {
   id: OverlayScenePreset;
+  label: string;
+  description: string;
+};
+
+export type OverlayOptionDefinition<T extends string> = {
+  id: T;
   label: string;
   description: string;
 };
@@ -131,12 +141,73 @@ export const OVERLAY_SCENE_PRESETS: OverlayScenePresetDefinition[] = [
   }
 ];
 
+export const OVERLAY_SURFACE_STYLES: OverlayOptionDefinition<OverlaySurfaceStyle>[] = [
+  {
+    id: "glass",
+    label: "Glass",
+    description: "Soft translucent panels with the most broadcast-style depth."
+  },
+  {
+    id: "solid",
+    label: "Solid",
+    description: "Heavier, more grounded panels for replay channels that want stronger contrast."
+  },
+  {
+    id: "signal",
+    label: "Signal",
+    description: "High-energy accent treatment for inserts, IDs, and promo-heavy channels."
+  }
+];
+
+export const OVERLAY_PANEL_ANCHORS: OverlayOptionDefinition<OverlayPanelAnchor>[] = [
+  {
+    id: "bottom",
+    label: "Bottom Dock",
+    description: "Classic lower-third placement anchored near the bottom edge."
+  },
+  {
+    id: "center",
+    label: "Center Stage",
+    description: "Centered presentation for standby, reconnect, and branded replay boards."
+  }
+];
+
+export const OVERLAY_TITLE_SCALES: OverlayOptionDefinition<OverlayTitleScale>[] = [
+  {
+    id: "compact",
+    label: "Compact",
+    description: "Tighter titles for metadata-heavy overlays."
+  },
+  {
+    id: "balanced",
+    label: "Balanced",
+    description: "Default heading scale for most replay channels."
+  },
+  {
+    id: "cinematic",
+    label: "Cinematic",
+    description: "Larger hero titles for brand-forward scenes and reconnect boards."
+  }
+];
+
 export function isOverlayScenePreset(value: string): value is OverlayScenePreset {
   return OVERLAY_SCENE_PRESETS.some((preset) => preset.id === value);
 }
 
 export function normalizeOverlayScenePreset(value: string): OverlayScenePreset {
   return isOverlayScenePreset(value) ? value : "replay-lower-third";
+}
+
+export function normalizeOverlaySurfaceStyle(value: string): OverlaySurfaceStyle {
+  return OVERLAY_SURFACE_STYLES.some((entry) => entry.id === value) ? (value as OverlaySurfaceStyle) : "glass";
+}
+
+export function normalizeOverlayPanelAnchor(value: string): OverlayPanelAnchor {
+  return OVERLAY_PANEL_ANCHORS.some((entry) => entry.id === value) ? (value as OverlayPanelAnchor) : "bottom";
+}
+
+export function normalizeOverlayTitleScale(value: string): OverlayTitleScale {
+  return OVERLAY_TITLE_SCALES.some((entry) => entry.id === value) ? (value as OverlayTitleScale) : "balanced";
 }
 
 export function resolveOverlayScenePresetForQueueKind(
@@ -158,15 +229,22 @@ export function resolveOverlayScenePresetForQueueKind(
   return scenePreset;
 }
 
+export function buildOverlayBrandLine(replayLabel: string, brandBadge = ""): string {
+  const parts = [replayLabel || "Replay stream", brandBadge].map((part) => part.trim()).filter(Boolean);
+  return parts.join(" · ");
+}
+
 export function buildOverlayTextLines(args: {
   scenePreset: OverlayScenePreset;
   replayLabel: string;
+  brandBadge?: string;
   headline: string;
   nowTitle: string;
   nextTitle: string;
   currentCategory?: string;
   sourceName?: string;
   queueTitles?: string[];
+  tickerText?: string;
   standby?: boolean;
   showCurrentCategory?: boolean;
   showSourceLabel?: boolean;
@@ -176,56 +254,63 @@ export function buildOverlayTextLines(args: {
   const nextTitle = args.nextTitle || "Scheduling next item";
   const queuePreview = (args.queueTitles || []).filter(Boolean).slice(0, 3).join(" · ");
   const metaBits = [args.showCurrentCategory ? args.currentCategory || "" : "", args.showSourceLabel ? args.sourceName || "" : ""].filter(Boolean);
+  const brandLine = buildOverlayBrandLine(args.replayLabel, args.brandBadge);
+  const tickerLine = args.tickerText?.trim() || "";
 
   if (args.scenePreset === "minimal-chip") {
-    return [args.replayLabel || "Replay stream", `Now: ${nowTitle}`, metaBits.join(" · ")].filter(Boolean);
+    return [brandLine, `Now: ${nowTitle}`, metaBits.join(" · "), tickerLine].filter(Boolean);
   }
 
   if (args.scenePreset === "bumper-board") {
     return [
-      args.replayLabel || "Replay stream",
+      brandLine,
       args.headline || "Insert on air",
       `Insert: ${nowTitle}`,
       `Next: ${nextTitle}`,
-      args.showQueuePreview && queuePreview ? `After this: ${queuePreview}` : ""
+      args.showQueuePreview && queuePreview ? `After this: ${queuePreview}` : "",
+      tickerLine
     ].filter(Boolean);
   }
 
   if (args.scenePreset === "reconnect-board") {
     return [
-      args.replayLabel || "Replay stream",
+      brandLine,
       args.headline || "Scheduled reconnect in progress",
       `Resuming with: ${nextTitle}`,
-      args.showQueuePreview && queuePreview ? `Queue: ${queuePreview}` : ""
+      args.showQueuePreview && queuePreview ? `Queue: ${queuePreview}` : "",
+      tickerLine
     ].filter(Boolean);
   }
 
   if (args.scenePreset === "split-now-next") {
     return [
-      args.replayLabel || "Replay stream",
+      brandLine,
       `Now: ${nowTitle}`,
       `Next: ${nextTitle}`,
-      metaBits.join(" · ")
+      metaBits.join(" · "),
+      tickerLine
     ].filter(Boolean);
   }
 
   if (args.scenePreset === "standby-board") {
     return [
-      args.replayLabel || "Replay stream",
+      brandLine,
       args.headline || "Please wait, restream is starting",
       `Current: ${nowTitle}`,
       `Next: ${nextTitle}`,
-      args.showQueuePreview && queuePreview ? `Later: ${queuePreview}` : ""
+      args.showQueuePreview && queuePreview ? `Later: ${queuePreview}` : "",
+      tickerLine
     ].filter(Boolean);
   }
 
   return [
-    args.replayLabel || "Replay stream",
+    brandLine,
     `Now: ${nowTitle}`,
     metaBits.join(" · "),
     `Next: ${nextTitle}`,
     args.showQueuePreview && queuePreview ? `Queue: ${queuePreview}` : "",
-    args.standby ? args.headline || "Please wait, restream is starting" : ""
+    args.standby ? args.headline || "Please wait, restream is starting" : "",
+    tickerLine
   ].filter(Boolean);
 }
 

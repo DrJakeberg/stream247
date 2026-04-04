@@ -114,6 +114,7 @@ export type LiveOverlaySummary = {
   enabled: boolean;
   channelName: string;
   headline: string;
+  brandBadge: string;
   scenePreset:
     | "replay-lower-third"
     | "split-now-next"
@@ -122,6 +123,9 @@ export type LiveOverlaySummary = {
     | "bumper-board"
     | "reconnect-board";
   accentColor: string;
+  surfaceStyle: "glass" | "solid" | "signal";
+  panelAnchor: "bottom" | "center";
+  titleScale: "compact" | "balanced" | "cinematic";
   showClock: boolean;
   showNextItem: boolean;
   showScheduleTeaser: boolean;
@@ -130,6 +134,7 @@ export type LiveOverlaySummary = {
   showQueuePreview: boolean;
   queuePreviewCount: number;
   emergencyBanner: string;
+  tickerText: string;
   replayLabel: string;
   updatedAt: string;
 };
