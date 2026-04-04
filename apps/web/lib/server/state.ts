@@ -1,4 +1,5 @@
 import {
+  buildOverlaySceneDefinition,
   buildScheduleOccurrences,
   buildSchedulePreview,
   describePresenceStatus,
@@ -634,11 +635,32 @@ function summarizeOverlay(overlay: OverlaySettingsRecord): LiveOverlaySummary {
     showSourceLabel: overlay.showSourceLabel,
     showQueuePreview: overlay.showQueuePreview,
     queuePreviewCount: overlay.queuePreviewCount,
+    layerOrder: overlay.layerOrder,
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText,
     replayLabel: overlay.replayLabel,
     updatedAt: overlay.updatedAt
   };
+}
+
+function summarizeActiveScene(state: AppState) {
+  const queueKind = state.playout.queueItems[0]?.kind || "asset";
+  return buildOverlaySceneDefinition({
+    overlay: {
+      scenePreset: normalizeOverlayScenePreset(state.overlay.scenePreset),
+      surfaceStyle: normalizeOverlaySurfaceStyle(state.overlay.surfaceStyle),
+      panelAnchor: normalizeOverlayPanelAnchor(state.overlay.panelAnchor),
+      titleScale: normalizeOverlayTitleScale(state.overlay.titleScale),
+      showClock: state.overlay.showClock,
+      showNextItem: state.overlay.showNextItem,
+      showScheduleTeaser: state.overlay.showScheduleTeaser,
+      showQueuePreview: state.overlay.showQueuePreview,
+      emergencyBanner: state.overlay.emergencyBanner,
+      tickerText: state.overlay.tickerText,
+      layerOrder: state.overlay.layerOrder
+    },
+    queueKind
+  });
 }
 
 function summarizeQueueItems(state: AppState): LiveQueueItemSummary[] {
@@ -708,6 +730,7 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
     workerHealth: getWorkerHealth(state),
     playout: summarizePlayout(state.playout),
     overlay: summarizeOverlay(state.overlay),
+    activeScene: summarizeActiveScene(state),
     destination: summarizeDestination(state),
     currentAsset: summarizeAsset(state, state.playout.currentAssetId),
     desiredAsset: summarizeAsset(state, state.playout.desiredAssetId),
@@ -729,6 +752,7 @@ export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot
     generatedAt: snapshot.generatedAt,
     timeZone: snapshot.timeZone,
     overlay: snapshot.overlay,
+    activeScene: snapshot.activeScene,
     playout: {
       status: snapshot.playout.status,
       message: snapshot.playout.message,

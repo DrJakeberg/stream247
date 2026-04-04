@@ -1,11 +1,13 @@
 "use client";
 
 import {
+  OVERLAY_SCENE_LAYERS,
   OVERLAY_PANEL_ANCHORS,
   OVERLAY_SCENE_PRESETS,
   OVERLAY_SURFACE_STYLES,
   OVERLAY_TITLE_SCALES,
-  type OverlayQueueKind
+  type OverlayQueueKind,
+  type OverlaySceneLayerKind
 } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -41,6 +43,7 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
     showSourceLabel: overlay.showSourceLabel,
     showQueuePreview: overlay.showQueuePreview,
     queuePreviewCount: overlay.queuePreviewCount,
+    layerOrder: overlay.layerOrder,
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText
   });
@@ -68,6 +71,27 @@ export function OverlaySettingsForm(props: {
       ...current,
       [key]: value
     }));
+  };
+
+  const moveLayer = (kind: OverlaySceneLayerKind, direction: -1 | 1) => {
+    setDraft((current) => {
+      const nextOrder = [...current.layerOrder];
+      const index = nextOrder.indexOf(kind);
+      if (index === -1) {
+        return current;
+      }
+
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= nextOrder.length) {
+        return current;
+      }
+
+      [nextOrder[index], nextOrder[targetIndex]] = [nextOrder[targetIndex], nextOrder[index]];
+      return {
+        ...current,
+        layerOrder: nextOrder
+      };
+    });
   };
 
   const previewSubtitle =
@@ -244,6 +268,33 @@ export function OverlaySettingsForm(props: {
               </select>
               <span className="subtle">{OVERLAY_TITLE_SCALES.find((scale) => scale.id === draft.titleScale)?.description}</span>
             </label>
+          </div>
+
+          <div className="list">
+            <div className="item">
+              <span className="label">Scene layer order</span>
+              <div className="subtle">Top to bottom render order inside the current scene preset.</div>
+              <div className="list" style={{ marginTop: 12 }}>
+                {draft.layerOrder.map((layerKind, index) => {
+                  const layer = OVERLAY_SCENE_LAYERS.find((entry) => entry.id === layerKind);
+                  return (
+                    <div className="item" key={layerKind}>
+                      <strong>{layer?.label || layerKind}</strong>
+                      <div className="subtle">{layer?.description}</div>
+                      <div className="inline-form" style={{ marginTop: 8 }}>
+                        <button className="button secondary" onClick={() => moveLayer(layerKind, -1)} type="button">
+                          Move up
+                        </button>
+                        <button className="button secondary" onClick={() => moveLayer(layerKind, 1)} type="button">
+                          Move down
+                        </button>
+                        <span className="subtle">Position {index + 1}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           <p className="subtle">

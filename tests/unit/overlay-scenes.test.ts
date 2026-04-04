@@ -1,4 +1,10 @@
-import { buildOverlayBrandLine, buildOverlayTextLines, resolveOverlayScenePresetForQueueKind } from "@stream247/core";
+import {
+  buildOverlayBrandLine,
+  buildOverlaySceneDefinition,
+  buildOverlayTextLines,
+  normalizeOverlaySceneLayerOrder,
+  resolveOverlayScenePresetForQueueKind
+} from "@stream247/core";
 import { describe, expect, it } from "vitest";
 
 describe("overlay scene resolution", () => {
@@ -60,5 +66,44 @@ describe("overlay text lines", () => {
       "Resuming with: Archive Hour",
       "Queue: Archive Hour"
     ]);
+  });
+});
+
+describe("overlay scene definitions", () => {
+  it("normalizes custom layer order and preserves valid entries first", () => {
+    expect(normalizeOverlaySceneLayerOrder(["hero", "chip", "clock"])).toEqual([
+      "hero",
+      "chip",
+      "clock",
+      "next",
+      "queue",
+      "schedule",
+      "banner",
+      "ticker"
+    ]);
+  });
+
+  it("builds a scene definition with resolved preset and enabled layers", () => {
+    const scene = buildOverlaySceneDefinition({
+      overlay: {
+        scenePreset: "replay-lower-third",
+        surfaceStyle: "signal",
+        panelAnchor: "center",
+        titleScale: "cinematic",
+        showClock: true,
+        showNextItem: true,
+        showScheduleTeaser: false,
+        showQueuePreview: true,
+        emergencyBanner: "",
+        tickerText: "Always on air",
+        layerOrder: ["hero", "chip", "next", "ticker", "clock", "queue", "schedule", "banner"]
+      },
+      queueKind: "insert"
+    });
+
+    expect(scene.resolvedPresetId).toBe("bumper-board");
+    expect(scene.layers[0]?.kind).toBe("hero");
+    expect(scene.layers.find((layer) => layer.kind === "ticker")?.enabled).toBe(true);
+    expect(scene.layers.find((layer) => layer.kind === "schedule")?.enabled).toBe(false);
   });
 });
