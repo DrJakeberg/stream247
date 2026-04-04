@@ -40,6 +40,7 @@ const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcessByStdio<null, Readable, Readable> | null = null;
 let playoutAssetId = "";
 let playoutDestinationId = "";
+let playoutTargetKind: "asset" | "standby" | "reconnect" | "" = "";
 let plannedStopReason = "";
 const WORKER_HEARTBEAT_STALE_MS = 120_000;
 const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
@@ -1211,6 +1212,11 @@ function buildRuntimeQueueItems(args: {
   playableQueue: AssetRecord[];
 }): AppState["playout"]["queueItems"] {
   const items: AppState["playout"]["queueItems"] = [];
+  const queueHead = buildQueueHeadForSelection({
+    state: args.state,
+    selection: args.selection,
+    currentScheduleItem: args.currentScheduleItem
+  });
   const pushItem = (item: Omit<AppState["playout"]["queueItems"][number], "id" | "position">) => {
     const position = items.length;
     items.push({
@@ -1224,25 +1230,25 @@ function buildRuntimeQueueItems(args: {
     pushItem({
       kind: "reconnect",
       assetId: "",
-      title: "Scheduled reconnect",
-      subtitle: args.selection.reason,
-      scenePreset: "standby-board"
+      title: queueHead.title,
+      subtitle: queueHead.subtitle,
+      scenePreset: queueHead.scenePreset
     });
   } else if (args.selection.lifecycleStatus === "standby" || !args.selection.asset) {
     pushItem({
       kind: "standby",
       assetId: "",
-      title: args.state.overlay.headline || "Replay standby",
-      subtitle: args.selection.reason,
-      scenePreset: "standby-board"
+      title: queueHead.title,
+      subtitle: queueHead.subtitle,
+      scenePreset: queueHead.scenePreset
     });
   } else {
     pushItem({
       kind: "asset",
       assetId: args.selection.asset.id,
-      title: args.selection.asset.title,
-      subtitle: buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem, true),
-      scenePreset: args.state.overlay.scenePreset
+      title: queueHead.title,
+      subtitle: queueHead.subtitle,
+      scenePreset: queueHead.scenePreset
     });
   }
 
@@ -1266,6 +1272,34 @@ type SelectionResult = {
   reasonCode: AppState["playout"]["selectionReasonCode"];
   fallbackTier: AppState["playout"]["fallbackTier"];
 };
+
+function buildQueueHeadForSelection(args: {
+  state: AppState;
+  selection: SelectionResult;
+  currentScheduleItem: ReturnType<typeof getCurrentScheduleItem> | null;
+}) {
+  if (args.selection.lifecycleStatus === "reconnecting") {
+    return {
+      title: "Scheduled reconnect",
+      subtitle: args.selection.reason,
+      scenePreset: "standby-board" as const
+    };
+  }
+
+  if (args.selection.lifecycleStatus === "standby" || !args.selection.asset) {
+    return {
+      title: args.state.overlay.headline || "Replay standby",
+      subtitle: args.selection.reason,
+      scenePreset: "standby-board" as const
+    };
+  }
+
+  return {
+    title: args.selection.asset.title,
+    subtitle: buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem, true),
+    scenePreset: args.state.overlay.scenePreset
+  };
+}
 
 function choosePlaybackCandidate(state: AppState): SelectionResult {
   const manualOverrideActive = isTimestampActive(state.playout.overrideUntil);
@@ -1374,6 +1408,7 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
     playoutProcess = null;
     playoutAssetId = "";
     playoutDestinationId = "";
+    playoutTargetKind = "";
     return;
   }
 
@@ -1383,6 +1418,7 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
         playoutProcess = null;
         playoutAssetId = "";
         playoutDestinationId = "";
+        playoutTargetKind = "";
       }
       resolve();
     };
@@ -1396,6 +1432,37 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
       }
     }, 5_000);
   });
+}
+
+function getDesiredTargetKind(selection: SelectionResult): "asset" | "standby" | "reconnect" {
+  if (selection.asset) {
+    return "asset";
+  }
+  return selection.lifecycleStatus === "reconnecting" ? "reconnect" : "standby";
+}
+
+function isMatchingRunningTarget(args: {
+  selection: SelectionResult;
+  destinationId: string;
+}): boolean {
+  if (!playoutProcess || playoutProcess.killed) {
+    return false;
+  }
+
+  if (playoutDestinationId !== args.destinationId) {
+    return false;
+  }
+
+  const desiredKind = getDesiredTargetKind(args.selection);
+  if (desiredKind === "asset") {
+    const desiredAsset = args.selection.asset;
+    if (!desiredAsset) {
+      return false;
+    }
+    return playoutTargetKind === "asset" && playoutAssetId === desiredAsset.id;
+  }
+
+  return playoutTargetKind === "standby" || playoutTargetKind === "reconnect";
 }
 
 async function startOrSwitchPlayout(args: {
@@ -1424,6 +1491,7 @@ async function startOrSwitchPlayout(args: {
   playoutProcess = child;
   playoutAssetId = args.asset?.id ?? "";
   playoutDestinationId = args.destination.id;
+  playoutTargetKind = args.asset ? "asset" : args.lifecycleStatus === "reconnecting" ? "reconnect" : "standby";
 
   const pid = child.pid ?? 0;
   const startedAt = new Date().toISOString();
@@ -1485,6 +1553,7 @@ async function startOrSwitchPlayout(args: {
     playoutProcess = null;
     playoutAssetId = "";
     playoutDestinationId = "";
+    playoutTargetKind = "";
     const exitedAt = new Date().toISOString();
     void updatePlayoutRuntime((playout) => ({
       ...playout,
@@ -1748,6 +1817,12 @@ async function runPlayoutCycle(): Promise<void> {
     currentScheduleItem,
     playableQueue
   });
+  const activeQueueItem = queueItems[0] ?? null;
+  const nextQueueItem = queueItems[1] ?? null;
+  const targetAlreadyRunning = isMatchingRunningTarget({
+    selection,
+    destinationId: destination.id
+  });
 
   if (prefetchStatus === "failed" && prefetchError) {
     await upsertIncident({
@@ -1815,7 +1890,7 @@ async function runPlayoutCycle(): Promise<void> {
       }));
       return;
     }
-  } else if (selection.asset && (playoutAssetId !== selection.asset.id || playoutDestinationId !== destination.id)) {
+  } else if (!targetAlreadyRunning) {
     try {
       await startOrSwitchPlayout({
         asset: selection.asset,
@@ -1858,6 +1933,8 @@ async function runPlayoutCycle(): Promise<void> {
     }
   } else if (selection.asset && state.overlay.enabled) {
     await writeOnAirOverlay(state, selection.asset);
+  } else if (!selection.asset) {
+    await writeStandbySlate(state);
   }
 
   await updatePlayoutRuntime((playout) => ({
@@ -1879,10 +1956,10 @@ async function runPlayoutCycle(): Promise<void> {
             ? "prefetching"
             : "idle",
     currentAssetId: selection.asset?.id ?? "",
-    currentTitle: selection.asset?.title ?? "Replay standby",
+    currentTitle: activeQueueItem?.title || selection.asset?.title || "Replay standby",
     desiredAssetId: selection.asset?.id ?? "",
-    nextAssetId: prefetchedAsset?.id ?? "",
-    nextTitle: prefetchedAsset?.title ?? "",
+    nextAssetId: nextQueueItem?.assetId ?? prefetchedAsset?.id ?? "",
+    nextTitle: nextQueueItem?.title ?? prefetchedAsset?.title ?? "",
     queuedAssetIds: playableQueue.map((asset) => asset.id),
     queueItems,
     prefetchedAssetId: prefetchedAsset?.id ?? "",
@@ -1897,7 +1974,7 @@ async function runPlayoutCycle(): Promise<void> {
     heartbeatAt: new Date().toISOString(),
     pendingAction: "",
     pendingActionRequestedAt: "",
-    message: selection.reason
+    message: activeQueueItem?.subtitle || selection.reason
   }));
 
   if (
