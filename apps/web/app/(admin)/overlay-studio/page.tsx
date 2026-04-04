@@ -9,6 +9,7 @@ export default async function OverlayStudioPage() {
   const state = await readAppState();
   const currentItem = getCurrentScheduleItem(state);
   const nextItem = getNextScheduleItem(state);
+  const previewQueueTitles = state.playout.queueItems.slice(1, 5).map((item) => item.title).filter(Boolean);
 
   return (
     <div className="grid two">
@@ -18,7 +19,21 @@ export default async function OverlayStudioPage() {
           or another scene tool. The same scene settings also drive the on-air replay text overlay inside the FFmpeg
           playout path, so this page is now the first step toward a unified scene system.
         </p>
-        <OverlaySettingsForm overlay={state.overlay} />
+        <OverlaySettingsForm
+          overlay={state.overlay}
+          preview={{
+            timeZone: process.env.CHANNEL_TIMEZONE || "UTC",
+            currentTitle: currentItem?.title || state.playout.currentTitle || "Morning Replay",
+            currentCategory: currentItem?.categoryName || "Always on air",
+            currentSourceName: currentItem?.sourceName || "Archive Pool",
+            nextTitle: nextItem?.title || state.playout.nextTitle || "Next replay block",
+            nextTimeLabel: nextItem ? `${nextItem.startTime} to ${nextItem.endTime}` : "No next block configured",
+            queueTitles:
+              previewQueueTitles.length > 0
+                ? previewQueueTitles
+                : [nextItem?.title || "Next replay block", "Prime time replay", "Late night standby"].filter(Boolean)
+          }}
+        />
       </Panel>
 
       <Panel title="Current overlay payload" eyebrow="Preview">
@@ -26,7 +41,10 @@ export default async function OverlayStudioPage() {
           <div className="item">
             <strong>Active scene preset</strong>
             <div className="subtle">
-              {state.overlay.scenePreset} · current category {state.overlay.showCurrentCategory ? "shown" : "hidden"} · source label{" "}
+              {state.overlay.scenePreset} · {state.overlay.surfaceStyle} surface · {state.overlay.panelAnchor} anchor · {state.overlay.titleScale} title scale
+            </div>
+            <div className="subtle">
+              Current category {state.overlay.showCurrentCategory ? "shown" : "hidden"} · source label{" "}
               {state.overlay.showSourceLabel ? "shown" : "hidden"}
             </div>
             <div className="subtle">

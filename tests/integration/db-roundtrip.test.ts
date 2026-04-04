@@ -158,6 +158,11 @@ describe.sequential("database roundtrip", () => {
         enabled: true,
         channelName: "Roundtrip TV",
         replayLabel: "Replay",
+        brandBadge: "Archive Channel",
+        surfaceStyle: "signal",
+        panelAnchor: "center",
+        titleScale: "cinematic",
+        tickerText: "Roundtrip preview ticker",
         updatedAt: "2026-04-04T10:00:00.000Z"
       },
       managedConfig: {
@@ -360,6 +365,11 @@ describe.sequential("database roundtrip", () => {
     expect(reread.initialized).toBe(true);
     expect(reread.owner?.email).toBe("owner@example.com");
     expect(reread.overlay.channelName).toBe("Roundtrip TV");
+    expect(reread.overlay.brandBadge).toBe("Archive Channel");
+    expect(reread.overlay.surfaceStyle).toBe("signal");
+    expect(reread.overlay.panelAnchor).toBe("center");
+    expect(reread.overlay.titleScale).toBe("cinematic");
+    expect(reread.overlay.tickerText).toBe("Roundtrip preview ticker");
     expect(reread.managedConfig.twitchClientId).toBe("client-id");
     expect(reread.twitch.broadcasterLogin).toBe("roundtrip");
     expect(reread.twitchScheduleSegments[0]?.segmentId).toBe("abc");

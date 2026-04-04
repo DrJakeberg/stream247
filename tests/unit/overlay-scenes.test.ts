@@ -1,4 +1,4 @@
-import { buildOverlayTextLines, resolveOverlayScenePresetForQueueKind } from "@stream247/core";
+import { buildOverlayBrandLine, buildOverlayTextLines, resolveOverlayScenePresetForQueueKind } from "@stream247/core";
 import { describe, expect, it } from "vitest";
 
 describe("overlay scene resolution", () => {
@@ -16,23 +16,30 @@ describe("overlay scene resolution", () => {
 });
 
 describe("overlay text lines", () => {
+  it("builds a combined brand line", () => {
+    expect(buildOverlayBrandLine("Replay stream", "Archive Channel")).toBe("Replay stream · Archive Channel");
+  });
+
   it("builds insert copy for the bumper scene", () => {
     expect(
       buildOverlayTextLines({
         scenePreset: "bumper-board",
         replayLabel: "Replay stream",
+        brandBadge: "Archive Channel",
         headline: "Insert on air",
         nowTitle: "Channel ID",
         nextTitle: "Main program returns",
         queueTitles: ["Main program returns", "Later item"],
+        tickerText: "Coming up all night",
         showQueuePreview: true
       })
     ).toEqual([
-      "Replay stream",
+      "Replay stream · Archive Channel",
       "Insert on air",
       "Insert: Channel ID",
       "Next: Main program returns",
-      "After this: Main program returns · Later item"
+      "After this: Main program returns · Later item",
+      "Coming up all night"
     ]);
   });
 
