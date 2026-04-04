@@ -15,6 +15,7 @@ import {
   isLikelyTwitchVodUrl,
   isLikelyYouTubeChannelUrl,
   isLikelyYouTubePlaylistUrl,
+  resolveOverlayScenePresetForQueueKind,
   toUtcIsoForLocalDateTime
 } from "@stream247/core";
 import {
@@ -260,7 +261,10 @@ function getStandbyFfmpegCommand(output: string): string[] {
   ];
 }
 
-async function writeStandbySlate(state: AppState): Promise<void> {
+async function writeStandbySlate(
+  state: AppState,
+  queueKind: AppState["playout"]["queueItems"][number]["kind"] | "" = state.playout.queueItems[0]?.kind || "standby"
+): Promise<void> {
   const currentItem = getCurrentScheduleItem(state);
   const nextPreview = buildSchedulePreview({
     date: getCurrentScheduleMoment({
@@ -270,10 +274,15 @@ async function writeStandbySlate(state: AppState): Promise<void> {
     blocks: state.scheduleBlocks
   }).items;
   const nextItem = nextPreview.find((item) => item.id !== currentItem?.blockId) ?? null;
+  const scenePreset = resolveOverlayScenePresetForQueueKind(state.overlay.scenePreset, queueKind);
+  const headline =
+    queueKind === "reconnect"
+      ? "Scheduled reconnect in progress"
+      : state.overlay.headline || "Please wait, restream is starting";
   const lines = buildOverlayTextLines({
-    scenePreset: state.overlay.scenePreset,
+    scenePreset,
     replayLabel: state.overlay.replayLabel || "Replay stream",
-    headline: state.overlay.headline || "Please wait, restream is starting",
+    headline,
     nowTitle: currentItem?.title || "Stand by",
     nextTitle: nextItem ? `${nextItem.title} ${nextItem.startTime}-${nextItem.endTime}` : "Programming will resume shortly",
     currentCategory: currentItem?.categoryName,
@@ -287,17 +296,28 @@ async function writeStandbySlate(state: AppState): Promise<void> {
   await fs.writeFile(standbySlatePath, `${lines.join("\n")}\n`, "utf8");
 }
 
-async function writeOnAirOverlay(state: AppState, asset: AssetRecord | null): Promise<void> {
+async function writeOnAirOverlay(
+  state: AppState,
+  asset: AssetRecord | null,
+  queueKind: AppState["playout"]["queueItems"][number]["kind"] | "" = state.playout.queueItems[0]?.kind || "asset"
+): Promise<void> {
   const currentItem = getCurrentScheduleItem(state);
   const nextItem = getNextScheduleItem(state);
   const queueTitles = state.playout.queuedAssetIds
     .map((id) => state.assets.find((entry) => entry.id === id)?.title || "")
     .filter(Boolean)
     .slice(0, state.overlay.queuePreviewCount);
+  const scenePreset = resolveOverlayScenePresetForQueueKind(state.overlay.scenePreset, queueKind);
+  const headline =
+    queueKind === "insert"
+      ? "Insert on air"
+      : queueKind === "reconnect"
+        ? "Scheduled reconnect in progress"
+        : state.overlay.headline || "Always on air";
   const lines = buildOverlayTextLines({
-    scenePreset: state.overlay.scenePreset,
+    scenePreset,
     replayLabel: state.overlay.replayLabel || "Replay stream",
-    headline: state.overlay.headline || "Always on air",
+    headline,
     nowTitle: asset?.title || state.playout.currentTitle || currentItem?.title || "Stand by",
     nextTitle: nextItem?.title || "Scheduling next item",
     currentCategory: currentItem?.categoryName || asset?.categoryName,
@@ -1299,7 +1319,7 @@ function buildQueueHeadForSelection(args: {
       subtitle: `${args.selection.reasonCode === "operator_insert" ? "Insert" : "Automatic insert"} · ${
         buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem) || "Insert requested"
       }`,
-      scenePreset: args.state.overlay.scenePreset
+      scenePreset: "bumper-board" as const
     };
   }
 
@@ -1307,7 +1327,7 @@ function buildQueueHeadForSelection(args: {
     return {
       title: "Scheduled reconnect",
       subtitle: args.selection.reason,
-      scenePreset: "standby-board" as const
+      scenePreset: "reconnect-board" as const
     };
   }
 
@@ -1801,12 +1821,12 @@ async function runPlayoutCycle(): Promise<void> {
     if (playoutProcess && !playoutProcess.killed && state.playout.currentAssetId) {
       const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
       if (currentAsset && state.overlay.enabled) {
-        await writeOnAirOverlay(state, currentAsset);
+        await writeOnAirOverlay(state, currentAsset, state.playout.queueItems[0]?.kind || "asset");
       } else {
-        await writeStandbySlate(state);
+        await writeStandbySlate(state, state.playout.queueItems[0]?.kind || "standby");
       }
     } else {
-      await writeStandbySlate(state);
+      await writeStandbySlate(state, state.playout.queueItems[0]?.kind || "standby");
     }
 
     await updatePlayoutRuntime((playout) => ({
@@ -1851,7 +1871,7 @@ async function runPlayoutCycle(): Promise<void> {
   }
 
   if (reconnectActive || state.playout.restartRequestedAt !== "") {
-    await writeStandbySlate(state);
+    await writeStandbySlate(state, "reconnect");
     selection = {
       asset: null,
       reason: "Scheduled reconnect window is active. Standby slate is on air.",
@@ -1867,7 +1887,7 @@ async function runPlayoutCycle(): Promise<void> {
       message: selection.reason,
       fingerprint: "playout.no-asset"
     });
-    await writeStandbySlate(state);
+    await writeStandbySlate(state, "standby");
     selection = {
       asset: null,
       reason: "No playable asset is available. Standby replay slate is on air.",
@@ -1879,7 +1899,11 @@ async function runPlayoutCycle(): Promise<void> {
 
   if (selection.asset) {
     if (state.overlay.enabled) {
-      await writeOnAirOverlay(state, selection.asset);
+      await writeOnAirOverlay(
+        state,
+        selection.asset,
+        selection.reasonCode === "operator_insert" || selection.reasonCode === "scheduled_insert" ? "insert" : "asset"
+      );
     }
     await resolveIncident("playout.no-asset", "A playable asset is available again.");
   }
@@ -2052,9 +2076,13 @@ async function runPlayoutCycle(): Promise<void> {
       return;
     }
   } else if (selection.asset && state.overlay.enabled) {
-    await writeOnAirOverlay(state, selection.asset);
+    await writeOnAirOverlay(
+      state,
+      selection.asset,
+      selection.reasonCode === "operator_insert" || selection.reasonCode === "scheduled_insert" ? "insert" : "asset"
+    );
   } else if (!selection.asset) {
-    await writeStandbySlate(state);
+    await writeStandbySlate(state, selection.lifecycleStatus === "reconnecting" ? "reconnect" : "standby");
   }
 
   await updatePlayoutRuntime((playout) => ({

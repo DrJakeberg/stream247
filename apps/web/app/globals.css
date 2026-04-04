@@ -562,10 +562,35 @@ select,
   max-width: 980px;
 }
 
+.overlay-frame-bumper,
+.overlay-frame-reconnect {
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+  max-width: 1040px;
+}
+
 .overlay-frame-minimal {
   grid-template-columns: minmax(0, 1fr);
   align-content: end;
   max-width: 760px;
+}
+
+.overlay-frame-bumper .overlay-card-large,
+.overlay-frame-reconnect .overlay-card-large {
+  padding: 32px;
+}
+
+.overlay-frame-bumper .overlay-card-large {
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--overlay-accent) 26%, rgba(8, 15, 13, 0.82)), rgba(8, 15, 13, 0.56)),
+    rgba(8, 15, 13, 0.56);
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.26);
+}
+
+.overlay-frame-reconnect .overlay-card-large {
+  background:
+    linear-gradient(145deg, rgba(176, 118, 29, 0.34), rgba(8, 15, 13, 0.64)),
+    rgba(8, 15, 13, 0.56);
 }
 
 .overlay-card,

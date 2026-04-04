@@ -185,7 +185,13 @@ export type OverlaySettingsRecord = {
   channelName: string;
   headline: string;
   replayLabel: string;
-  scenePreset: "replay-lower-third" | "split-now-next" | "standby-board" | "minimal-chip";
+  scenePreset:
+    | "replay-lower-third"
+    | "split-now-next"
+    | "standby-board"
+    | "minimal-chip"
+    | "bumper-board"
+    | "reconnect-board";
   accentColor: string;
   showClock: boolean;
   showNextItem: boolean;

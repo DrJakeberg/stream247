@@ -21,7 +21,15 @@ export type PresenceStatus = {
   summary: string;
 };
 
-export type OverlayScenePreset = "replay-lower-third" | "split-now-next" | "standby-board" | "minimal-chip";
+export type OverlayScenePreset =
+  | "replay-lower-third"
+  | "split-now-next"
+  | "standby-board"
+  | "minimal-chip"
+  | "bumper-board"
+  | "reconnect-board";
+
+export type OverlayQueueKind = "asset" | "insert" | "standby" | "reconnect" | "";
 
 export type OverlayScenePresetDefinition = {
   id: OverlayScenePreset;
@@ -110,6 +118,16 @@ export const OVERLAY_SCENE_PRESETS: OverlayScenePresetDefinition[] = [
     id: "minimal-chip",
     label: "Minimal Chip",
     description: "Compact replay badge with current metadata for channels that want very light on-air graphics."
+  },
+  {
+    id: "bumper-board",
+    label: "Bumper Board",
+    description: "Bold insert scene for channel IDs, bumpers, and manual inserts between regular programming."
+  },
+  {
+    id: "reconnect-board",
+    label: "Reconnect Board",
+    description: "Centered reconnect scene for controlled output resets without losing channel branding."
   }
 ];
 
@@ -119,6 +137,25 @@ export function isOverlayScenePreset(value: string): value is OverlayScenePreset
 
 export function normalizeOverlayScenePreset(value: string): OverlayScenePreset {
   return isOverlayScenePreset(value) ? value : "replay-lower-third";
+}
+
+export function resolveOverlayScenePresetForQueueKind(
+  scenePreset: OverlayScenePreset,
+  queueKind: OverlayQueueKind
+): OverlayScenePreset {
+  if (queueKind === "insert") {
+    return "bumper-board";
+  }
+
+  if (queueKind === "reconnect") {
+    return "reconnect-board";
+  }
+
+  if (queueKind === "standby") {
+    return "standby-board";
+  }
+
+  return scenePreset;
 }
 
 export function buildOverlayTextLines(args: {
@@ -142,6 +179,25 @@ export function buildOverlayTextLines(args: {
 
   if (args.scenePreset === "minimal-chip") {
     return [args.replayLabel || "Replay stream", `Now: ${nowTitle}`, metaBits.join(" · ")].filter(Boolean);
+  }
+
+  if (args.scenePreset === "bumper-board") {
+    return [
+      args.replayLabel || "Replay stream",
+      args.headline || "Insert on air",
+      `Insert: ${nowTitle}`,
+      `Next: ${nextTitle}`,
+      args.showQueuePreview && queuePreview ? `After this: ${queuePreview}` : ""
+    ].filter(Boolean);
+  }
+
+  if (args.scenePreset === "reconnect-board") {
+    return [
+      args.replayLabel || "Replay stream",
+      args.headline || "Scheduled reconnect in progress",
+      `Resuming with: ${nextTitle}`,
+      args.showQueuePreview && queuePreview ? `Queue: ${queuePreview}` : ""
+    ].filter(Boolean);
   }
 
   if (args.scenePreset === "split-now-next") {

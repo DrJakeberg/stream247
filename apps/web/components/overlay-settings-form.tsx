@@ -99,6 +99,9 @@ export function OverlaySettingsForm(props: { overlay: OverlaySettingsRecord }) {
           </button>
         ))}
       </div>
+      <p className="subtle">
+        Inserts and scheduled reconnects can automatically switch to dedicated live scene variants without changing your main preset.
+      </p>
       <label>
         <span className="label">Emergency banner</span>
         <input defaultValue={props.overlay.emergencyBanner} name="emergencyBanner" placeholder="Optional urgent message" />

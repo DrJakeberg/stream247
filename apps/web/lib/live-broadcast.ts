@@ -57,7 +57,14 @@ export type LiveQueueItemSummary = {
   title: string;
   subtitle: string;
   position: number;
-  scenePreset: "replay-lower-third" | "split-now-next" | "standby-board" | "minimal-chip" | "";
+  scenePreset:
+    | "replay-lower-third"
+    | "split-now-next"
+    | "standby-board"
+    | "minimal-chip"
+    | "bumper-board"
+    | "reconnect-board"
+    | "";
   asset: LiveAssetSummary | null;
 };
 
@@ -103,7 +110,13 @@ export type LiveOverlaySummary = {
   enabled: boolean;
   channelName: string;
   headline: string;
-  scenePreset: "replay-lower-third" | "split-now-next" | "standby-board" | "minimal-chip";
+  scenePreset:
+    | "replay-lower-third"
+    | "split-now-next"
+    | "standby-board"
+    | "minimal-chip"
+    | "bumper-board"
+    | "reconnect-board";
   accentColor: string;
   showClock: boolean;
   showNextItem: boolean;
