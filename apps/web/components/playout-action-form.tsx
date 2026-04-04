@@ -17,12 +17,12 @@ export function PlayoutActionForm(props: {
   const [minutes, setMinutes] = useState("60");
   const [isPending, startTransition] = useTransition();
 
-  async function runAction(path: string, body?: Record<string, unknown>) {
+  async function runAction(body: Record<string, unknown>) {
     setError("");
-    const response = await fetch(path, {
+    const response = await fetch("/api/broadcast/actions", {
       method: "POST",
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
     });
 
     if (!response.ok) {
@@ -40,7 +40,7 @@ export function PlayoutActionForm(props: {
         <button
           className="button button-secondary"
           disabled={isPending}
-          onClick={() => startTransition(() => void runAction("/api/playout/restart"))}
+          onClick={() => startTransition(() => void runAction({ type: "restart" }))}
           type="button"
         >
           Restart encoder
@@ -48,7 +48,23 @@ export function PlayoutActionForm(props: {
         <button
           className="button button-secondary"
           disabled={isPending}
-          onClick={() => startTransition(() => void runAction("/api/playout/fallback"))}
+          onClick={() => startTransition(() => void runAction({ type: "refresh" }))}
+          type="button"
+        >
+          Refresh overlays
+        </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending}
+          onClick={() => startTransition(() => void runAction({ type: "rebuild_queue" }))}
+          type="button"
+        >
+          Rebuild queue
+        </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending}
+          onClick={() => startTransition(() => void runAction({ type: "fallback" }))}
           type="button"
         >
           Temporary fallback
@@ -56,7 +72,7 @@ export function PlayoutActionForm(props: {
         <button
           className="button button-secondary"
           disabled={isPending}
-          onClick={() => startTransition(() => void runAction("/api/playout/skip", { minutes: Number(minutes) || 60 }))}
+          onClick={() => startTransition(() => void runAction({ type: "skip", minutes: Number(minutes) || 60 }))}
           type="button"
         >
           Skip current
@@ -64,7 +80,7 @@ export function PlayoutActionForm(props: {
         <button
           className="button button-secondary"
           disabled={isPending || props.overrideMode === "schedule"}
-          onClick={() => startTransition(() => void runAction("/api/playout/resume"))}
+          onClick={() => startTransition(() => void runAction({ type: "resume" }))}
           type="button"
         >
           Resume schedule
@@ -94,7 +110,8 @@ export function PlayoutActionForm(props: {
           disabled={isPending || !selectedAssetId}
           onClick={() =>
             startTransition(() =>
-              void runAction("/api/playout/override", {
+              void runAction({
+                type: "override",
                 assetId: selectedAssetId,
                 minutes: Number(minutes) || 60
               })

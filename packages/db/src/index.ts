@@ -243,6 +243,8 @@ export type PlayoutRuntimeRecord = {
   overrideUntil: string;
   skipAssetId: string;
   skipUntil: string;
+  pendingAction: "" | "refresh" | "rebuild_queue";
+  pendingActionRequestedAt: string;
   message: string;
 };
 
@@ -450,6 +452,8 @@ function defaultState(): AppState {
       overrideUntil: "",
       skipAssetId: "",
       skipUntil: "",
+      pendingAction: "",
+      pendingActionRequestedAt: "",
       message: "Playout engine has not started yet."
     }
   };
@@ -868,6 +872,8 @@ async function ensureSchema(client: PoolClient): Promise<void> {
       override_until TEXT NOT NULL DEFAULT '',
       skip_asset_id TEXT NOT NULL DEFAULT '',
       skip_until TEXT NOT NULL DEFAULT '',
+      pending_action TEXT NOT NULL DEFAULT '',
+      pending_action_requested_at TEXT NOT NULL DEFAULT '',
       message TEXT NOT NULL DEFAULT 'Playout engine has not started yet.'
     );
   `);
@@ -931,6 +937,8 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_until TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS skip_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS skip_until TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS pending_action TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS pending_action_requested_at TEXT NOT NULL DEFAULT '';
   `);
 
   await client.query(`
@@ -1142,76 +1150,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     );
   }
 
-  await client.query(
-    `
-      INSERT INTO playout_runtime (
-        singleton_id, status, current_asset_id, current_title, desired_asset_id, next_asset_id, next_title, queued_asset_ids, current_destination_id, restart_requested_at,
-        heartbeat_at, process_pid, process_started_at, last_successful_start_at, last_successful_asset_id, last_exit_code, restart_count,
-        crash_count_window, crash_loop_detected, last_error, last_stderr_sample, selection_reason_code, fallback_tier, override_mode,
-        override_asset_id, override_until, skip_asset_id, skip_until, message
-      )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
-      ON CONFLICT (singleton_id) DO UPDATE SET
-        status = EXCLUDED.status,
-        current_asset_id = EXCLUDED.current_asset_id,
-        current_title = EXCLUDED.current_title,
-        desired_asset_id = EXCLUDED.desired_asset_id,
-        next_asset_id = EXCLUDED.next_asset_id,
-        next_title = EXCLUDED.next_title,
-        queued_asset_ids = EXCLUDED.queued_asset_ids,
-        current_destination_id = EXCLUDED.current_destination_id,
-        restart_requested_at = EXCLUDED.restart_requested_at,
-        heartbeat_at = EXCLUDED.heartbeat_at,
-        process_pid = EXCLUDED.process_pid,
-        process_started_at = EXCLUDED.process_started_at,
-        last_successful_start_at = EXCLUDED.last_successful_start_at,
-        last_successful_asset_id = EXCLUDED.last_successful_asset_id,
-        last_exit_code = EXCLUDED.last_exit_code,
-        restart_count = EXCLUDED.restart_count,
-        crash_count_window = EXCLUDED.crash_count_window,
-        crash_loop_detected = EXCLUDED.crash_loop_detected,
-        last_error = EXCLUDED.last_error,
-        last_stderr_sample = EXCLUDED.last_stderr_sample,
-        selection_reason_code = EXCLUDED.selection_reason_code,
-        fallback_tier = EXCLUDED.fallback_tier,
-        override_mode = EXCLUDED.override_mode,
-        override_asset_id = EXCLUDED.override_asset_id,
-        override_until = EXCLUDED.override_until,
-        skip_asset_id = EXCLUDED.skip_asset_id,
-        skip_until = EXCLUDED.skip_until,
-        message = EXCLUDED.message
-    `,
-    [
-      next.playout.status,
-      next.playout.currentAssetId,
-      next.playout.currentTitle,
-      next.playout.desiredAssetId,
-      next.playout.nextAssetId,
-      next.playout.nextTitle,
-      JSON.stringify(next.playout.queuedAssetIds ?? []),
-      next.playout.currentDestinationId,
-      next.playout.restartRequestedAt,
-      next.playout.heartbeatAt,
-      next.playout.processPid,
-      next.playout.processStartedAt,
-      next.playout.lastSuccessfulStartAt,
-      next.playout.lastSuccessfulAssetId,
-      next.playout.lastExitCode,
-      next.playout.restartCount,
-      next.playout.crashCountWindow,
-      next.playout.crashLoopDetected,
-      next.playout.lastError,
-      next.playout.lastStderrSample,
-      next.playout.selectionReasonCode,
-      next.playout.fallbackTier,
-      next.playout.overrideMode,
-      next.playout.overrideAssetId,
-      next.playout.overrideUntil,
-      next.playout.skipAssetId,
-      next.playout.skipUntil,
-      next.playout.message
-    ]
-  );
+  await persistPlayoutRuntime(client, next.playout);
 
   await client.query("DELETE FROM users");
   for (const user of next.users) {
@@ -1438,6 +1377,83 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   }
 }
 
+async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntimeRecord): Promise<void> {
+  await client.query(
+    `
+      INSERT INTO playout_runtime (
+        singleton_id, status, current_asset_id, current_title, desired_asset_id, next_asset_id, next_title, queued_asset_ids, current_destination_id, restart_requested_at,
+        heartbeat_at, process_pid, process_started_at, last_successful_start_at, last_successful_asset_id, last_exit_code, restart_count,
+        crash_count_window, crash_loop_detected, last_error, last_stderr_sample, selection_reason_code, fallback_tier, override_mode,
+        override_asset_id, override_until, skip_asset_id, skip_until, pending_action, pending_action_requested_at, message
+      )
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+      ON CONFLICT (singleton_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        current_asset_id = EXCLUDED.current_asset_id,
+        current_title = EXCLUDED.current_title,
+        desired_asset_id = EXCLUDED.desired_asset_id,
+        next_asset_id = EXCLUDED.next_asset_id,
+        next_title = EXCLUDED.next_title,
+        queued_asset_ids = EXCLUDED.queued_asset_ids,
+        current_destination_id = EXCLUDED.current_destination_id,
+        restart_requested_at = EXCLUDED.restart_requested_at,
+        heartbeat_at = EXCLUDED.heartbeat_at,
+        process_pid = EXCLUDED.process_pid,
+        process_started_at = EXCLUDED.process_started_at,
+        last_successful_start_at = EXCLUDED.last_successful_start_at,
+        last_successful_asset_id = EXCLUDED.last_successful_asset_id,
+        last_exit_code = EXCLUDED.last_exit_code,
+        restart_count = EXCLUDED.restart_count,
+        crash_count_window = EXCLUDED.crash_count_window,
+        crash_loop_detected = EXCLUDED.crash_loop_detected,
+        last_error = EXCLUDED.last_error,
+        last_stderr_sample = EXCLUDED.last_stderr_sample,
+        selection_reason_code = EXCLUDED.selection_reason_code,
+        fallback_tier = EXCLUDED.fallback_tier,
+        override_mode = EXCLUDED.override_mode,
+        override_asset_id = EXCLUDED.override_asset_id,
+        override_until = EXCLUDED.override_until,
+        skip_asset_id = EXCLUDED.skip_asset_id,
+        skip_until = EXCLUDED.skip_until,
+        pending_action = EXCLUDED.pending_action,
+        pending_action_requested_at = EXCLUDED.pending_action_requested_at,
+        message = EXCLUDED.message
+    `,
+    [
+      playout.status,
+      playout.currentAssetId,
+      playout.currentTitle,
+      playout.desiredAssetId,
+      playout.nextAssetId,
+      playout.nextTitle,
+      JSON.stringify(playout.queuedAssetIds ?? []),
+      playout.currentDestinationId,
+      playout.restartRequestedAt,
+      playout.heartbeatAt,
+      playout.processPid,
+      playout.processStartedAt,
+      playout.lastSuccessfulStartAt,
+      playout.lastSuccessfulAssetId,
+      playout.lastExitCode,
+      playout.restartCount,
+      playout.crashCountWindow,
+      playout.crashLoopDetected,
+      playout.lastError,
+      playout.lastStderrSample,
+      playout.selectionReasonCode,
+      playout.fallbackTier,
+      playout.overrideMode,
+      playout.overrideAssetId,
+      playout.overrideUntil,
+      playout.skipAssetId,
+      playout.skipUntil,
+      playout.pendingAction,
+      playout.pendingActionRequestedAt,
+      playout.message
+    ]
+  );
+}
+
 async function hydrateState(client: PoolClient): Promise<AppState> {
   const systemResult = await client.query<{
     initialized: boolean;
@@ -1640,6 +1656,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     override_until: string;
     skip_asset_id: string;
     skip_until: string;
+    pending_action: PlayoutRuntimeRecord["pendingAction"];
+    pending_action_requested_at: string;
     message: string;
   }>("SELECT * FROM playout_runtime WHERE singleton_id = 1");
 
@@ -1870,6 +1888,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           overrideUntil: playoutRow.override_until,
           skipAssetId: playoutRow.skip_asset_id,
           skipUntil: playoutRow.skip_until,
+          pendingAction: (playoutRow.pending_action as PlayoutRuntimeRecord["pendingAction"]) || "",
+          pendingActionRequestedAt: playoutRow.pending_action_requested_at || "",
           message: playoutRow.message
         }
       : defaults.playout
@@ -1934,18 +1954,23 @@ export async function updateAppState(updater: (state: AppState) => AppState | Pr
 }
 
 export async function appendAuditEvent(type: string, message: string): Promise<void> {
-  await updateAppState((state) => ({
-    ...state,
-    auditEvents: [
-      {
-        id: createId("audit"),
-        type,
-        message,
-        createdAt: new Date().toISOString()
-      },
-      ...state.auditEvents
-    ].slice(0, 100)
-  }));
+  await withSerializedStateWrite("appendAuditEvent", async (client) => {
+    const createdAt = new Date().toISOString();
+    await client.query("INSERT INTO audit_events (id, type, message, created_at) VALUES ($1, $2, $3, $4)", [
+      createId("audit"),
+      type,
+      message,
+      createdAt
+    ]);
+    await client.query(`
+      DELETE FROM audit_events
+      WHERE id IN (
+        SELECT id FROM audit_events
+        ORDER BY created_at DESC
+        OFFSET 100
+      )
+    `);
+  });
 }
 
 export async function upsertIncident(args: {
@@ -1955,76 +1980,110 @@ export async function upsertIncident(args: {
   message: string;
   fingerprint: string;
 }): Promise<void> {
-  await updateAppState((state) => {
-    const existing = state.incidents.find((incident) => incident.fingerprint === args.fingerprint);
+  await withSerializedStateWrite("upsertIncident", async (client) => {
+    const existingResult = await client.query<{
+      id: string;
+      created_at: string;
+    }>("SELECT id, created_at FROM incidents WHERE fingerprint = $1 LIMIT 1", [args.fingerprint]);
+    const existing = existingResult.rows[0] ?? null;
     const now = new Date().toISOString();
-    const nextIncident: IncidentRecord = existing
-      ? {
-          ...existing,
-          severity: args.severity,
-          status: "open",
-          acknowledgedAt: "",
-          acknowledgedBy: "",
-          title: args.title,
-          message: args.message,
-          updatedAt: now,
-          resolvedAt: ""
-        }
-      : {
-          id: createId("incident"),
-          scope: args.scope,
-          severity: args.severity,
-          status: "open",
-          acknowledgedAt: "",
-          acknowledgedBy: "",
-          title: args.title,
-          message: args.message,
-          fingerprint: args.fingerprint,
-          createdAt: now,
-          updatedAt: now,
-          resolvedAt: ""
-        };
 
-    return {
-      ...state,
-      incidents: existing
-        ? state.incidents.map((incident) => (incident.id === existing.id ? nextIncident : incident))
-        : [nextIncident, ...state.incidents].slice(0, 100)
-    };
+    if (existing) {
+      await client.query(
+        `
+          UPDATE incidents
+          SET scope = $2,
+              severity = $3,
+              status = 'open',
+              acknowledged_at = '',
+              acknowledged_by = '',
+              title = $4,
+              message = $5,
+              updated_at = $6,
+              resolved_at = ''
+          WHERE fingerprint = $1
+        `,
+        [args.fingerprint, args.scope, args.severity, args.title, args.message, now]
+      );
+      return;
+    }
+
+    await client.query(
+      `
+        INSERT INTO incidents (
+          id, scope, severity, status, acknowledged_at, acknowledged_by, title, message, fingerprint, created_at, updated_at, resolved_at
+        )
+        VALUES ($1, $2, $3, 'open', '', '', $4, $5, $6, $7, $7, '')
+      `,
+      [createId("incident"), args.scope, args.severity, args.title, args.message, args.fingerprint, now]
+    );
+
+    await client.query(`
+      DELETE FROM incidents
+      WHERE id IN (
+        SELECT id FROM incidents
+        ORDER BY updated_at DESC, created_at DESC
+        OFFSET 100
+      )
+    `);
   });
 }
 
 export async function resolveIncident(fingerprint: string, resolutionMessage?: string): Promise<void> {
-  await updateAppState((state) => ({
-    ...state,
-    incidents: state.incidents.map((incident) =>
-      incident.fingerprint === fingerprint && incident.status === "open"
-        ? {
-            ...incident,
-            status: "resolved",
-            message: resolutionMessage || incident.message,
-            updatedAt: new Date().toISOString(),
-            resolvedAt: new Date().toISOString()
-          }
-        : incident
-    )
-  }));
+  await withSerializedStateWrite("resolveIncident", async (client) => {
+    const now = new Date().toISOString();
+    await client.query(
+      `
+        UPDATE incidents
+        SET status = 'resolved',
+            message = COALESCE(NULLIF($2, ''), message),
+            updated_at = $3,
+            resolved_at = $3
+        WHERE fingerprint = $1 AND status = 'open'
+      `,
+      [fingerprint, resolutionMessage || "", now]
+    );
+  });
 }
 
 export async function acknowledgeIncident(fingerprint: string, acknowledgedBy: string): Promise<void> {
-  await updateAppState((state) => ({
-    ...state,
-    incidents: state.incidents.map((incident) =>
-      incident.fingerprint === fingerprint && incident.status === "open"
-        ? {
-            ...incident,
-            acknowledgedAt: new Date().toISOString(),
-            acknowledgedBy,
-            updatedAt: new Date().toISOString()
-          }
-        : incident
-    )
-  }));
+  await withSerializedStateWrite("acknowledgeIncident", async (client) => {
+    const now = new Date().toISOString();
+    await client.query(
+      `
+        UPDATE incidents
+        SET acknowledged_at = $2,
+            acknowledged_by = $3,
+            updated_at = $2
+        WHERE fingerprint = $1 AND status = 'open'
+      `,
+      [fingerprint, now, acknowledgedBy]
+    );
+  });
+}
+
+export async function updatePlayoutRuntime(
+  updater: (playout: PlayoutRuntimeRecord, state: AppState) => PlayoutRuntimeRecord | Promise<PlayoutRuntimeRecord>
+): Promise<PlayoutRuntimeRecord> {
+  return withSerializedStateWrite("updatePlayoutRuntime", async (client) => {
+    const state = await hydrateState(client);
+    const nextState = normalizeState({
+      ...state,
+      playout: await updater(state.playout, state)
+    });
+    await persistPlayoutRuntime(client, nextState.playout);
+    return nextState.playout;
+  });
+}
+
+export async function updatePoolCursor(poolId: string, cursorAssetId: string): Promise<void> {
+  await withSerializedStateWrite("updatePoolCursor", async (client) => {
+    await client.query("UPDATE pools SET cursor_asset_id = $2, updated_at = $3 WHERE id = $1", [
+      poolId,
+      cursorAssetId,
+      new Date().toISOString()
+    ]);
+  });
 }
 
 export function findUserById(state: AppState, id: string | null): UserRecord | null {

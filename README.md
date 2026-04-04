@@ -330,7 +330,10 @@ Notes:
 - standby replay slate when no playable asset is available
 - scheduled daily reconnect window with controlled standby mode
 - destination readiness state
+- unified broadcast action API for restart, refresh, queue rebuild, fallback, skip, resume, and pin-on-air actions
 - operator restart control
+- operator refresh-overlays control
+- operator rebuild-queue control
 - operator pin-asset override
 - operator skip-current control
 - temporary fallback override
