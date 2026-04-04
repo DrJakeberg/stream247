@@ -3,6 +3,7 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:
 import path from "node:path";
 import { Pool, type PoolClient } from "pg";
 import { createDefaultModerationConfig, type ModerationConfig } from "@stream247/core";
+import { schemaMigrations, type MigrationDefinition } from "./migrations";
 
 export type OwnerAccount = {
   email: string;
@@ -289,6 +290,7 @@ declare global {
 const STATE_WRITE_LOCK_KEY = 247001;
 const DB_BOOTSTRAP_LOCK_KEY = 247002;
 const STATE_WRITE_MAX_RETRIES = 3;
+const LATEST_SCHEMA_MIGRATION_ID = "20260404_001_schema_baseline";
 
 function isRetryableStateWriteError(error: unknown): error is { code: string } {
   return (
@@ -654,7 +656,7 @@ function normalizeState(state: AppState): AppState {
   };
 }
 
-async function ensureSchema(client: PoolClient): Promise<void> {
+async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS system_state (
       singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
@@ -971,6 +973,45 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     SET start_minute_of_day = start_hour * 60
     WHERE start_minute_of_day = 0 AND start_hour <> 0
   `);
+}
+
+const schemaBaselineMigration: MigrationDefinition = {
+  id: LATEST_SCHEMA_MIGRATION_ID,
+  description: "Establish the Stream247 baseline PostgreSQL schema.",
+  apply: applyCurrentSchemaDefinition
+};
+
+if (!schemaMigrations.some((migration) => migration.id === schemaBaselineMigration.id)) {
+  schemaMigrations.push(schemaBaselineMigration);
+}
+
+async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id TEXT PRIMARY KEY,
+      description TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    )
+  `);
+}
+
+async function applyPendingMigrations(client: PoolClient): Promise<void> {
+  await ensureSchemaMigrationsTable(client);
+  const result = await client.query<{ id: string }>("SELECT id FROM schema_migrations");
+  const applied = new Set(result.rows.map((row) => row.id));
+
+  for (const migration of schemaMigrations) {
+    if (applied.has(migration.id)) {
+      continue;
+    }
+
+    await migration.apply(client);
+    await client.query("INSERT INTO schema_migrations (id, description, applied_at) VALUES ($1, $2, $3)", [
+      migration.id,
+      migration.description,
+      new Date().toISOString()
+    ]);
+  }
 }
 
 async function readLegacyState(): Promise<AppState | null> {
@@ -1955,7 +1996,7 @@ export async function ensureDatabase(): Promise<void> {
       try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock($1)", [DB_BOOTSTRAP_LOCK_KEY]);
-        await ensureSchema(client);
+        await applyPendingMigrations(client);
         const empty = await isDatabaseEmpty(client);
         if (empty) {
           const legacy = await readLegacyState();
@@ -1994,6 +2035,15 @@ export async function readAppState(): Promise<AppState> {
   }
 }
 
+export async function resetDatabaseConnectionsForTests(): Promise<void> {
+  if (globalThis.__stream247Pool) {
+    await globalThis.__stream247Pool.end();
+  }
+
+  globalThis.__stream247Pool = undefined;
+  globalThis.__stream247DbReady = undefined;
+}
+
 export async function writeAppState(state: AppState): Promise<void> {
   await withSerializedStateWrite("writeAppState", async (client) => {
     await persistState(client, state);
@@ -2024,6 +2074,119 @@ export async function appendAuditEvent(type: string, message: string): Promise<v
         SELECT id FROM audit_events
         ORDER BY created_at DESC
         OFFSET 100
+      )
+    `);
+  });
+}
+
+export async function upsertSources(sources: SourceRecord[]): Promise<void> {
+  if (sources.length === 0) {
+    return;
+  }
+
+  await withSerializedStateWrite("upsertSources", async (client) => {
+    for (const source of sources) {
+      await client.query(
+        `
+          INSERT INTO sources (id, name, type, connector_kind, enabled, status, external_url, notes, last_synced_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          ON CONFLICT (id) DO UPDATE SET
+            name = EXCLUDED.name,
+            type = EXCLUDED.type,
+            connector_kind = EXCLUDED.connector_kind,
+            enabled = EXCLUDED.enabled,
+            status = EXCLUDED.status,
+            external_url = EXCLUDED.external_url,
+            notes = EXCLUDED.notes,
+            last_synced_at = EXCLUDED.last_synced_at
+        `,
+        [
+          source.id,
+          source.name,
+          source.type,
+          source.connectorKind,
+          source.enabled ?? true,
+          source.status,
+          source.externalUrl ?? "",
+          source.notes ?? "",
+          source.lastSyncedAt ?? ""
+        ]
+      );
+    }
+  });
+}
+
+export async function replaceAssetsForSourceIds(sourceIds: string[], assets: AssetRecord[]): Promise<void> {
+  if (sourceIds.length === 0) {
+    return;
+  }
+
+  await withSerializedStateWrite("replaceAssetsForSourceIds", async (client) => {
+    await client.query("DELETE FROM assets WHERE source_id = ANY($1::text[])", [sourceIds]);
+
+    for (const asset of assets) {
+      await client.query(
+        `
+          INSERT INTO assets (
+            id, source_id, title, path, status, external_id, category_name, duration_seconds, published_at,
+            fallback_priority, is_global_fallback, created_at, updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        `,
+        [
+          asset.id,
+          asset.sourceId,
+          asset.title,
+          asset.path,
+          asset.status,
+          asset.externalId ?? "",
+          asset.categoryName ?? "",
+          asset.durationSeconds ?? 0,
+          asset.publishedAt ?? "",
+          asset.fallbackPriority,
+          asset.isGlobalFallback,
+          asset.createdAt,
+          asset.updatedAt
+        ]
+      );
+    }
+  });
+}
+
+export async function appendSourceSyncRuns(runs: SourceSyncRunRecord[]): Promise<void> {
+  if (runs.length === 0) {
+    return;
+  }
+
+  await withSerializedStateWrite("appendSourceSyncRuns", async (client) => {
+    for (const run of runs) {
+      await client.query(
+        `
+          INSERT INTO source_sync_runs (
+            id, source_id, started_at, finished_at, status, summary, discovered_assets, ready_assets, error_message
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `,
+        [
+          run.id,
+          run.sourceId,
+          run.startedAt,
+          run.finishedAt,
+          run.status,
+          run.summary,
+          run.discoveredAssets,
+          run.readyAssets,
+          run.errorMessage
+        ]
+      );
+    }
+
+    await client.query(`
+      DELETE FROM source_sync_runs
+      WHERE id IN (
+        SELECT id FROM source_sync_runs
+        ORDER BY finished_at DESC, started_at DESC
+        OFFSET 250
       )
     `);
   });
