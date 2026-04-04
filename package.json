@@ -12,6 +12,7 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:fresh-db": "bash ./scripts/fresh-db-bootstrap-smoke.sh",
+    "test:fresh-compose": "bash ./scripts/fresh-compose-bootstrap-smoke.sh",
     "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "release:preflight": "./scripts/release-preflight.sh",
     "release:rehearse": "./scripts/upgrade-rehearsal.sh",

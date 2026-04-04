@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateAppState } from "@/lib/server/state";
+import {
+  appendAuditEvent,
+  createShowProfileRecord,
+  deleteShowProfileRecord,
+  readAppState,
+  updateShowProfileRecord
+} from "@/lib/server/state";
 
 function normalizeBody(body: {
   id?: string;
@@ -58,21 +64,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: error }, { status: 400 });
   }
 
-  await updateAppState((state) => ({
-    ...state,
-    showProfiles: [
-      {
-        id: `show_${Math.random().toString(36).slice(2, 10)}`,
-        name: payload.name,
-        categoryName: payload.categoryName,
-        defaultDurationMinutes: payload.defaultDurationMinutes,
-        color: payload.color,
-        description: payload.description,
-        updatedAt: new Date().toISOString()
-      },
-      ...state.showProfiles
-    ]
-  }));
+  await createShowProfileRecord({
+    id: `show_${Math.random().toString(36).slice(2, 10)}`,
+    name: payload.name,
+    categoryName: payload.categoryName,
+    defaultDurationMinutes: payload.defaultDurationMinutes,
+    color: payload.color,
+    description: payload.description,
+    updatedAt: new Date().toISOString()
+  });
 
   await appendAuditEvent("show.created", `Created show profile ${payload.name}.`);
   return NextResponse.json({ ok: true, message: `Show profile ${payload.name} created.` });
@@ -94,28 +94,20 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    await updateAppState((state) => {
-      const existing = state.showProfiles.find((show) => show.id === payload.id);
-      if (!existing) {
-        throw new Error("Show profile not found.");
-      }
+    const state = await readAppState();
+    const existing = state.showProfiles.find((show) => show.id === payload.id);
+    if (!existing) {
+      throw new Error("Show profile not found.");
+    }
 
-      return {
-        ...state,
-        showProfiles: state.showProfiles.map((show) =>
-          show.id === payload.id
-            ? {
-                ...show,
-                name: payload.name,
-                categoryName: payload.categoryName,
-                defaultDurationMinutes: payload.defaultDurationMinutes,
-                color: payload.color,
-                description: payload.description,
-                updatedAt: new Date().toISOString()
-              }
-            : show
-        )
-      };
+    await updateShowProfileRecord({
+      ...existing,
+      name: payload.name,
+      categoryName: payload.categoryName,
+      defaultDurationMinutes: payload.defaultDurationMinutes,
+      color: payload.color,
+      description: payload.description,
+      updatedAt: new Date().toISOString()
     });
   } catch (error) {
     return NextResponse.json(
@@ -141,25 +133,13 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    await updateAppState((state) => {
-      const show = state.showProfiles.find((entry) => entry.id === id);
-      if (!show) {
-        throw new Error("Show profile not found.");
-      }
+    const state = await readAppState();
+    const show = state.showProfiles.find((entry) => entry.id === id);
+    if (!show) {
+      throw new Error("Show profile not found.");
+    }
 
-      return {
-        ...state,
-        showProfiles: state.showProfiles.filter((entry) => entry.id !== id),
-        scheduleBlocks: state.scheduleBlocks.map((block) =>
-          block.showId === id
-            ? {
-                ...block,
-                showId: ""
-              }
-            : block
-        )
-      };
-    });
+    await deleteShowProfileRecord(id);
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "Could not delete show profile." },

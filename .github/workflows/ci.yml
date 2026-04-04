@@ -30,6 +30,7 @@ jobs:
       - run: docker build -f docker/web.Dockerfile -t stream247-web:test .
       - run: docker build -f docker/worker.Dockerfile -t stream247-worker:test .
       - run: pnpm test:fresh-db
+      - run: pnpm test:fresh-compose
       - run: chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:test
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
