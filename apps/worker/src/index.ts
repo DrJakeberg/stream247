@@ -17,12 +17,15 @@ import {
   toUtcIsoForLocalDateTime
 } from "@stream247/core";
 import {
+  appendSourceSyncRuns,
   appendAuditEvent,
+  replaceAssetsForSourceIds,
   readAppState,
   resolveIncident,
   updatePlayoutRuntime,
   updatePoolCursor,
   updateAppState,
+  upsertSources,
   upsertIncident,
   type AppState,
   type AssetRecord,
@@ -410,54 +413,36 @@ async function syncLocalMediaLibrary(): Promise<void> {
   const discoveredFiles = await walkMediaFiles(mediaRoot);
   const now = new Date().toISOString();
   const discoveredAssets = discoveredFiles.map((filePath) => buildAssetFromPath(filePath, now));
-
-  await updateAppState((state) => {
-    const existingByPath = new Map(state.assets.map((asset) => [asset.path, asset]));
-    const nextAssets: AssetRecord[] = discoveredAssets.map((asset) => {
-      const existing = existingByPath.get(asset.path);
-      return existing
-        ? {
-            ...existing,
-            title: asset.title,
-            status: "ready",
-            fallbackPriority: asset.fallbackPriority,
-            isGlobalFallback: asset.isGlobalFallback,
-            updatedAt: now
-          }
-        : asset;
-    });
-
-    const otherAssets = state.assets.filter((asset) => asset.sourceId !== "source-local-library");
-    const nextSources: AppState["sources"] = state.sources.some((source) => source.id === "source-local-library")
-      ? state.sources.map((source) =>
-          source.id === "source-local-library"
-            ? {
-                ...source,
-                status: nextAssets.length > 0 ? "Ready" : "Empty",
-                lastSyncedAt: now
-              }
-            : source
-        )
-      : [
-          ...state.sources,
-          {
-            id: "source-local-library",
-            name: "Local Media Library",
-            type: "Filesystem scan",
-            connectorKind: "local-library",
-            status: nextAssets.length > 0 ? "Ready" : "Empty",
-            externalUrl: "",
-            notes: "Scans files mounted into the media library volume.",
-            lastSyncedAt: now
-          }
-        ];
-
-    return {
-      ...state,
-      sources: nextSources,
-      assets: [...nextAssets, ...otherAssets]
-    };
+  const state = await readAppState();
+  const existingByPath = new Map(state.assets.map((asset) => [asset.path, asset]));
+  const nextAssets: AssetRecord[] = discoveredAssets.map((asset) => {
+    const existing = existingByPath.get(asset.path);
+    return existing
+      ? {
+          ...existing,
+          title: asset.title,
+          status: "ready",
+          fallbackPriority: asset.fallbackPriority,
+          isGlobalFallback: asset.isGlobalFallback,
+          updatedAt: now
+        }
+      : asset;
   });
+
+  await upsertSources([
+    {
+      id: "source-local-library",
+      name: "Local Media Library",
+      type: "Filesystem scan",
+      connectorKind: "local-library",
+      enabled: true,
+      status: nextAssets.length > 0 ? "Ready" : "Empty",
+      externalUrl: "",
+      notes: "Scans files mounted into the media library volume.",
+      lastSyncedAt: now
+    }
+  ]);
+  await replaceAssetsForSourceIds(["source-local-library"], nextAssets);
 
   if (discoveredAssets.length > 0) {
     await resolveIncident("source.local-library.empty", "Local media library now contains playable assets.");
@@ -471,24 +456,20 @@ async function syncLocalMediaLibrary(): Promise<void> {
     });
   }
 
-  await updateAppState((state) => ({
-    ...state,
-    sourceSyncRuns: [
-      buildSourceSyncRun({
-        sourceId: "source-local-library",
-        startedAt,
-        finishedAt: now,
-        status: discoveredAssets.length > 0 ? "success" : "skipped",
-        summary:
-          discoveredAssets.length > 0
-            ? `Discovered ${discoveredAssets.length} file(s) in the local media library.`
-            : "Local media library scan completed with no playable files.",
-        discoveredAssets: discoveredAssets.length,
-        readyAssets: discoveredAssets.length
-      }),
-      ...state.sourceSyncRuns
-    ].slice(0, 250)
-  }));
+  await appendSourceSyncRuns([
+    buildSourceSyncRun({
+      sourceId: "source-local-library",
+      startedAt,
+      finishedAt: now,
+      status: discoveredAssets.length > 0 ? "success" : "skipped",
+      summary:
+        discoveredAssets.length > 0
+          ? `Discovered ${discoveredAssets.length} file(s) in the local media library.`
+          : "Local media library scan completed with no playable files.",
+      discoveredAssets: discoveredAssets.length,
+      readyAssets: discoveredAssets.length
+    })
+  ]);
 }
 
 async function syncDirectMediaSources(): Promise<void> {
@@ -543,13 +524,8 @@ async function syncDirectMediaSources(): Promise<void> {
     }));
   }
 
-  await updateAppState((current) => ({
-    ...current,
-    sources: current.sources.map((source) => {
-      if (source.connectorKind !== "direct-media") {
-        return source;
-      }
-
+  await upsertSources(
+    directSources.map((source) => {
       const valid = isDirectMediaUrl(source.externalUrl?.trim() ?? "");
       return {
         ...source,
@@ -559,16 +535,13 @@ async function syncDirectMediaSources(): Promise<void> {
           : "Direct media sources currently require an http(s) URL ending in a supported media file extension.",
         lastSyncedAt: now
       };
-    }),
-    assets: [
-      ...directAssets,
-      ...current.assets.filter((asset) => {
-        const matchingSource = current.sources.find((source) => source.id === asset.sourceId);
-        return matchingSource?.connectorKind !== "direct-media";
-      })
-    ],
-    sourceSyncRuns: [...syncRuns, ...current.sourceSyncRuns].slice(0, 250)
-  }));
+    })
+  );
+  await replaceAssetsForSourceIds(
+    directSources.map((source) => source.id),
+    directAssets
+  );
+  await appendSourceSyncRuns(syncRuns);
 
   if (hasInvalidSource) {
     await upsertIncident({
@@ -791,13 +764,8 @@ async function syncYoutubePlaylistSources(): Promise<void> {
     }
   }
 
-  await updateAppState((current) => ({
-    ...current,
-    sources: current.sources.map((source) => {
-      if (source.connectorKind !== "youtube-playlist" && source.connectorKind !== "youtube-channel") {
-        return source;
-      }
-
+  await upsertSources(
+    youtubeSources.map((source) => {
       const sourceAssetCount = youtubeAssets.filter((asset) => asset.sourceId === source.id).length;
       return {
         ...source,
@@ -808,16 +776,13 @@ async function syncYoutubePlaylistSources(): Promise<void> {
             : "Could not ingest this YouTube source. Check the URL and worker incident log.",
         lastSyncedAt: now
       };
-    }),
-    assets: [
-      ...youtubeAssets,
-      ...current.assets.filter((asset) => {
-        const matchingSource = current.sources.find((source) => source.id === asset.sourceId);
-        return matchingSource?.connectorKind !== "youtube-playlist" && matchingSource?.connectorKind !== "youtube-channel";
-      })
-    ],
-    sourceSyncRuns: [...syncRuns, ...current.sourceSyncRuns].slice(0, 250)
-  }));
+    })
+  );
+  await replaceAssetsForSourceIds(
+    youtubeSources.map((source) => source.id),
+    youtubeAssets
+  );
+  await appendSourceSyncRuns(syncRuns);
 
   if (!hadFailure) {
     for (const source of youtubeSources) {
@@ -960,13 +925,8 @@ async function syncTwitchVodSources(): Promise<void> {
     }
   }
 
-  await updateAppState((current) => ({
-    ...current,
-    sources: current.sources.map((source) => {
-      if (source.connectorKind !== "twitch-vod" && source.connectorKind !== "twitch-channel") {
-        return source;
-      }
-
+  await upsertSources(
+    twitchSources.map((source) => {
       const sourceAssetCount = twitchAssets.filter((asset) => asset.sourceId === source.id).length;
       return {
         ...source,
@@ -981,16 +941,13 @@ async function syncTwitchVodSources(): Promise<void> {
               : "Could not ingest this VOD. Check the URL and worker incident log.",
         lastSyncedAt: now
       };
-    }),
-    assets: [
-      ...twitchAssets,
-      ...current.assets.filter((asset) => {
-        const matchingSource = current.sources.find((source) => source.id === asset.sourceId);
-        return matchingSource?.connectorKind !== "twitch-vod" && matchingSource?.connectorKind !== "twitch-channel";
-      })
-    ],
-    sourceSyncRuns: [...syncRuns, ...current.sourceSyncRuns].slice(0, 250)
-  }));
+    })
+  );
+  await replaceAssetsForSourceIds(
+    twitchSources.map((source) => source.id),
+    twitchAssets
+  );
+  await appendSourceSyncRuns(syncRuns);
 }
 
 function getCurrentScheduleItem(state: AppState): ReturnType<typeof buildScheduleOccurrences>[number] | null {
