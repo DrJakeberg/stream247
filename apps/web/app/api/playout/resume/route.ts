@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, updateAppState } from "@/lib/server/state";
+import { runBroadcastAction } from "@/lib/server/broadcast";
 
 export async function POST() {
   const unauthorized = await requireApiRoles(["owner", "admin", "operator"]);
@@ -8,25 +8,12 @@ export async function POST() {
     return unauthorized;
   }
 
-  const now = new Date().toISOString();
-
-  await updateAppState((state) => ({
-    ...state,
-    playout: {
-      ...state.playout,
-      status: "recovering",
-      desiredAssetId: "",
-      restartRequestedAt: now,
-      heartbeatAt: now,
-      overrideMode: "schedule",
-      overrideAssetId: "",
-      overrideUntil: "",
-      skipAssetId: "",
-      skipUntil: "",
-      message: "Operator override cleared. Schedule control resumed."
-    }
-  }));
-
-  await appendAuditEvent("playout.resume.schedule", "Operator override cleared and schedule control resumed.");
-  return NextResponse.json({ ok: true, message: "Schedule control resumed." });
+  try {
+    return NextResponse.json(await runBroadcastAction({ type: "resume" }));
+  } catch (error) {
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "Playout action failed." },
+      { status: 400 }
+    );
+  }
 }

@@ -19,6 +19,8 @@
 ## Common Operator Actions
 
 - restart encoder
+- refresh overlay/slate payloads without restarting the encoder
+- rebuild the visible current / next / queued runtime state on the next playout cycle
 - switch to fallback
 - pin asset on air
 - skip current asset

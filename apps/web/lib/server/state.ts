@@ -17,6 +17,8 @@ import {
   findUserById,
   readAppState,
   resolveIncident,
+  updatePlayoutRuntime,
+  updatePoolCursor,
   updateAppState,
   writeAppState,
   type AppState,
@@ -62,7 +64,19 @@ export type {
   UserRole
 };
 
-export { acknowledgeIncident, appendAuditEvent, findTeamGrantByLogin, findUserByEmail, findUserById, readAppState, resolveIncident, updateAppState, writeAppState };
+export {
+  acknowledgeIncident,
+  appendAuditEvent,
+  findTeamGrantByLogin,
+  findUserByEmail,
+  findUserById,
+  readAppState,
+  resolveIncident,
+  updateAppState,
+  updatePlayoutRuntime,
+  updatePoolCursor,
+  writeAppState
+};
 
 export function getWorkspaceTimeZone(): string {
   return process.env.CHANNEL_TIMEZONE || "UTC";

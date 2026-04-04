@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, updateAppState } from "@/lib/server/state";
+import { runBroadcastAction } from "@/lib/server/broadcast";
 
 export async function POST() {
   const unauthorized = await requireApiRoles(["owner", "admin", "operator"]);
@@ -8,17 +8,12 @@ export async function POST() {
     return unauthorized;
   }
 
-  await updateAppState((state) => ({
-    ...state,
-    playout: {
-      ...state.playout,
-      status: "recovering",
-      restartRequestedAt: new Date().toISOString(),
-      heartbeatAt: new Date().toISOString(),
-      message: "Manual playout restart requested from the admin API."
-    }
-  }));
-
-  await appendAuditEvent("playout.restart.requested", "Manual playout restart was requested.");
-  return NextResponse.json({ ok: true, message: "Playout restart requested." });
+  try {
+    return NextResponse.json(await runBroadcastAction({ type: "restart" }));
+  } catch (error) {
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "Playout action failed." },
+      { status: 400 }
+    );
+  }
 }
