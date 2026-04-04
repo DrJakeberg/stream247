@@ -13,6 +13,7 @@
 - playout heartbeat freshness
 - destination readiness
 - current asset selection reason
+- transition state and next-asset probe status
 - crash-loop protection state
 - open critical incidents
 
