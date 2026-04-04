@@ -13,6 +13,8 @@ function normalizeBody(body: {
   action?: string;
   id?: string;
   sourceBlockId?: string;
+  sourceDayOfWeek?: number;
+  targetDayOfWeeks?: number[];
   title?: string;
   categoryName?: string;
   startMinuteOfDay?: number;
@@ -27,6 +29,10 @@ function normalizeBody(body: {
     action: (body.action ?? "").trim(),
     id: (body.id ?? "").trim(),
     sourceBlockId: (body.sourceBlockId ?? "").trim(),
+    sourceDayOfWeek: Number(body.sourceDayOfWeek ?? 0),
+    targetDayOfWeeks: Array.isArray(body.targetDayOfWeeks)
+      ? [...new Set(body.targetDayOfWeeks.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 0 && value <= 6))]
+      : [],
     title: (body.title ?? "").trim(),
     categoryName: (body.categoryName ?? "").trim(),
     startMinuteOfDay: Number(body.startMinuteOfDay ?? 0),
@@ -65,6 +71,8 @@ export async function POST(request: NextRequest) {
     (await request.json()) as {
       action?: string;
       sourceBlockId?: string;
+      sourceDayOfWeek?: number;
+      targetDayOfWeeks?: number[];
       title?: string;
       categoryName?: string;
       startMinuteOfDay?: number;
@@ -125,6 +133,61 @@ export async function POST(request: NextRequest) {
     } catch (error) {
       return NextResponse.json(
         { message: error instanceof Error ? error.message : "Could not duplicate schedule block." },
+        { status: 400 }
+      );
+    }
+  }
+
+  if (payload.action === "clone-day") {
+    const targetDays = payload.targetDayOfWeeks;
+    if (targetDays.length === 0) {
+      return NextResponse.json({ message: "Select at least one target weekday." }, { status: 400 });
+    }
+
+    try {
+      const state = await readAppState();
+      const sourceBlocks = state.scheduleBlocks
+        .filter((block) => block.dayOfWeek === payload.sourceDayOfWeek)
+        .slice()
+        .sort((left, right) => left.startMinuteOfDay - right.startMinuteOfDay);
+      if (sourceBlocks.length === 0) {
+        throw new Error("The selected source day does not contain any schedule blocks.");
+      }
+
+      const distinctTargetDays = [...new Set(targetDays)].filter((day) => day !== payload.sourceDayOfWeek);
+      if (distinctTargetDays.length === 0) {
+        throw new Error("Choose at least one different weekday to clone onto.");
+      }
+
+      const occupiedTargetDay = distinctTargetDays.find((day) => state.scheduleBlocks.some((block) => block.dayOfWeek === day));
+      if (occupiedTargetDay !== undefined) {
+        throw new Error("One of the selected target weekdays already has blocks. Clear it first or choose empty weekdays.");
+      }
+
+      const clonedBlocks = distinctTargetDays.flatMap((dayOfWeek) =>
+        sourceBlocks.map((block) => ({
+          ...block,
+          id: `schedule_${Math.random().toString(36).slice(2, 10)}`,
+          dayOfWeek
+        }))
+      );
+
+      await createScheduleBlocks(clonedBlocks);
+      const nextState = await readAppState();
+
+      await appendAuditEvent(
+        "schedule.day_cloned",
+        `${user?.displayName || user?.email || "Unknown user"} cloned ${sourceBlocks.length} schedule block${sourceBlocks.length === 1 ? "" : "s"} from day ${payload.sourceDayOfWeek} onto ${distinctTargetDays.length} day${distinctTargetDays.length === 1 ? "" : "s"}.`
+      );
+
+      return NextResponse.json({
+        ok: true,
+        message: `Cloned ${sourceBlocks.length} block${sourceBlocks.length === 1 ? "" : "s"} onto ${distinctTargetDays.length} weekday${distinctTargetDays.length === 1 ? "" : "s"}.`,
+        blocks: nextState.scheduleBlocks
+      });
+    } catch (error) {
+      return NextResponse.json(
+        { message: error instanceof Error ? error.message : "Could not clone programming day." },
         { status: 400 }
       );
     }

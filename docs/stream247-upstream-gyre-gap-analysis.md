@@ -137,6 +137,7 @@ The following product gaps are now addressed:
 - scene headlines can now be assigned separately for asset, insert, standby, and reconnect modes
 - scene designer controls now support hiding layers in addition to reordering them
 - the schedule editor can now duplicate existing blocks onto multiple additional weekdays
+- the schedule editor can now clone a full programming day onto additional empty weekdays
 
 ## Implementation Roadmap
 

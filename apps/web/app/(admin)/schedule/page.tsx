@@ -6,6 +6,7 @@ import { ProgrammingTemplateForm } from "@/components/programming-template-form"
 import { ScheduleBlockDeleteForm } from "@/components/schedule-block-delete-form";
 import { ScheduleBlockDuplicateForm } from "@/components/schedule-block-duplicate-form";
 import { ScheduleBlockForm } from "@/components/schedule-block-form";
+import { ScheduleDayCloneForm } from "@/components/schedule-day-clone-form";
 import { ScheduleTimeline } from "@/components/schedule-timeline";
 import { ScheduleWeekOverview } from "@/components/schedule-week-overview";
 import { ShowProfileDeleteForm } from "@/components/show-profile-delete-form";
@@ -80,6 +81,13 @@ export default async function SchedulePage() {
             Use templates to bootstrap a full week quickly, then fine-tune individual days in the editor below.
           </p>
           <ProgrammingTemplateForm pools={poolOptions} />
+        </Panel>
+        <Panel title="Clone a programming day" eyebrow="Programming">
+          <p className="subtle">
+            Copy one fully built weekday onto additional empty weekdays in a single step. This is useful for weekday
+            patterns before you fine-tune exceptions.
+          </p>
+          <ScheduleDayCloneForm />
         </Panel>
 
         <Panel title="Schedule preview" eyebrow="Programming">

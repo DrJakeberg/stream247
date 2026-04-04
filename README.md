@@ -22,6 +22,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - drag-and-drop day timeline editing
   - resize-to-change-duration editing
   - duplicate existing blocks onto other weekdays
+  - clone a full programming day onto additional empty weekdays
 - pool management with:
   - source grouping
   - persistent round-robin playback cursors
