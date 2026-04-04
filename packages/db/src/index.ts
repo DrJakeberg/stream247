@@ -125,6 +125,9 @@ export type PoolRecord = {
   sourceIds: string[];
   playbackMode: "round-robin";
   cursorAssetId: string;
+  insertAssetId: string;
+  insertEveryItems: number;
+  itemsSinceInsert: number;
   updatedAt: string;
 };
 
@@ -258,6 +261,7 @@ export type PlayoutRuntimeRecord = {
     | "resolve_failed"
     | "ffmpeg_crash_loop"
     | "operator_insert"
+    | "scheduled_insert"
     | "standby"
     | "scheduled_reconnect"
     | "";
@@ -522,6 +526,9 @@ function createInitialSeedState(): AppState {
         sourceIds: ["source-twitch", "source-youtube"],
         playbackMode: "round-robin",
         cursorAssetId: "",
+        insertAssetId: "",
+        insertEveryItems: 0,
+        itemsSinceInsert: 0,
         updatedAt: ""
       }
     ],
@@ -636,7 +643,10 @@ function normalizeState(state: AppState): AppState {
       ? dedupeById(state.pools).map((pool) => ({
           ...pool,
           sourceIds: Array.isArray(pool.sourceIds) ? [...new Set(pool.sourceIds)] : [],
-          playbackMode: "round-robin"
+          playbackMode: "round-robin",
+          insertAssetId: pool.insertAssetId ?? "",
+          insertEveryItems: typeof pool.insertEveryItems === "number" ? Math.max(0, pool.insertEveryItems) : 0,
+          itemsSinceInsert: typeof pool.itemsSinceInsert === "number" ? Math.max(0, pool.itemsSinceInsert) : 0
         }))
       : [],
     showProfiles: Array.isArray(state.showProfiles)
@@ -824,6 +834,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       source_ids TEXT NOT NULL DEFAULT '[]',
       playback_mode TEXT NOT NULL DEFAULT 'round-robin',
       cursor_asset_id TEXT NOT NULL DEFAULT '',
+      insert_asset_id TEXT NOT NULL DEFAULT '',
+      insert_every_items INTEGER NOT NULL DEFAULT 0,
+      items_since_insert INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL DEFAULT ''
     );
 
@@ -993,6 +1006,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS day_of_week INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS show_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS pool_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE pools ADD COLUMN IF NOT EXISTS insert_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE pools ADD COLUMN IF NOT EXISTS insert_every_items INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE pools ADD COLUMN IF NOT EXISTS items_since_insert INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS external_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS category_name TEXT NOT NULL DEFAULT '';
@@ -1370,10 +1386,20 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   for (const pool of next.pools) {
     await client.query(
       `
-        INSERT INTO pools (id, name, source_ids, playback_mode, cursor_asset_id, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO pools (id, name, source_ids, playback_mode, cursor_asset_id, insert_asset_id, insert_every_items, items_since_insert, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
-      [pool.id, pool.name, JSON.stringify(pool.sourceIds), pool.playbackMode, pool.cursorAssetId ?? "", pool.updatedAt]
+      [
+        pool.id,
+        pool.name,
+        JSON.stringify(pool.sourceIds),
+        pool.playbackMode,
+        pool.cursorAssetId ?? "",
+        pool.insertAssetId ?? "",
+        pool.insertEveryItems ?? 0,
+        pool.itemsSinceInsert ?? 0,
+        pool.updatedAt
+      ]
     );
   }
 
@@ -1714,6 +1740,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     source_ids: string;
     playback_mode: PoolRecord["playbackMode"];
     cursor_asset_id: string;
+    insert_asset_id: string;
+    insert_every_items: number;
+    items_since_insert: number;
     updated_at: string;
   }>("SELECT * FROM pools ORDER BY name ASC");
   const showProfilesResult = await client.query<{
@@ -1958,6 +1987,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       sourceIds: JSON.parse(row.source_ids || "[]") as string[],
       playbackMode: row.playback_mode,
       cursorAssetId: row.cursor_asset_id || "",
+      insertAssetId: row.insert_asset_id || "",
+      insertEveryItems: row.insert_every_items ?? 0,
+      itemsSinceInsert: row.items_since_insert ?? 0,
       updatedAt: row.updated_at
     })),
     showProfiles: showProfilesResult.rows.map((row) => ({
@@ -2682,10 +2714,22 @@ export async function createPoolRecord(pool: PoolRecord): Promise<void> {
   await withSerializedStateWrite("createPoolRecord", async (client) => {
     await client.query(
       `
-        INSERT INTO pools (id, name, source_ids, playback_mode, cursor_asset_id, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO pools (
+          id, name, source_ids, playback_mode, cursor_asset_id, insert_asset_id, insert_every_items, items_since_insert, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
-      [pool.id, pool.name, JSON.stringify(pool.sourceIds), pool.playbackMode, pool.cursorAssetId, pool.updatedAt]
+      [
+        pool.id,
+        pool.name,
+        JSON.stringify(pool.sourceIds),
+        pool.playbackMode,
+        pool.cursorAssetId,
+        pool.insertAssetId,
+        pool.insertEveryItems,
+        pool.itemsSinceInsert,
+        pool.updatedAt
+      ]
     );
   });
 }
@@ -2699,10 +2743,23 @@ export async function updatePoolRecord(pool: PoolRecord): Promise<void> {
             source_ids = $3,
             playback_mode = $4,
             cursor_asset_id = $5,
-            updated_at = $6
+            insert_asset_id = $6,
+            insert_every_items = $7,
+            items_since_insert = $8,
+            updated_at = $9
         WHERE id = $1
       `,
-      [pool.id, pool.name, JSON.stringify(pool.sourceIds), pool.playbackMode, pool.cursorAssetId, pool.updatedAt]
+      [
+        pool.id,
+        pool.name,
+        JSON.stringify(pool.sourceIds),
+        pool.playbackMode,
+        pool.cursorAssetId,
+        pool.insertAssetId,
+        pool.insertEveryItems,
+        pool.itemsSinceInsert,
+        pool.updatedAt
+      ]
     );
   });
 }
@@ -2854,13 +2911,24 @@ export async function updatePlayoutRuntime(
   });
 }
 
-export async function updatePoolCursor(poolId: string, cursorAssetId: string): Promise<void> {
+export async function updatePoolCursor(
+  poolId: string,
+  cursorAssetId: string,
+  options?: { incrementItemsSinceInsert?: boolean; resetItemsSinceInsert?: boolean }
+): Promise<void> {
   await withSerializedStateWrite("updatePoolCursor", async (client) => {
-    await client.query("UPDATE pools SET cursor_asset_id = $2, updated_at = $3 WHERE id = $1", [
-      poolId,
-      cursorAssetId,
-      new Date().toISOString()
-    ]);
+    const row = await client.query<{ items_since_insert: number }>("SELECT items_since_insert FROM pools WHERE id = $1", [poolId]);
+    const currentItemsSinceInsert = row.rows[0]?.items_since_insert ?? 0;
+    const nextItemsSinceInsert = options?.resetItemsSinceInsert
+      ? 0
+      : options?.incrementItemsSinceInsert
+        ? currentItemsSinceInsert + 1
+        : currentItemsSinceInsert;
+
+    await client.query(
+      "UPDATE pools SET cursor_asset_id = $2, items_since_insert = $3, updated_at = $4 WHERE id = $1",
+      [poolId, cursorAssetId, nextItemsSinceInsert, new Date().toISOString()]
+    );
   });
 }
 

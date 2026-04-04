@@ -6,6 +6,7 @@ import type { PoolRecord, SourceRecord } from "@/lib/server/state";
 
 export function PoolForm(props: {
   sources: SourceRecord[];
+  assets: Array<{ id: string; title: string; sourceId: string; status: string }>;
   pool?: PoolRecord;
 }) {
   const [error, setError] = useState("");
@@ -32,7 +33,9 @@ export function PoolForm(props: {
             body: JSON.stringify({
               id: String(formData.get("id") || ""),
               name: String(formData.get("name") || ""),
-              sourceIds
+              sourceIds,
+              insertAssetId: String(formData.get("insertAssetId") || ""),
+              insertEveryItems: Number(formData.get("insertEveryItems") || 0)
             })
           });
 
@@ -62,6 +65,32 @@ export function PoolForm(props: {
           ))}
         </select>
       </label>
+      <div className="form-grid">
+        <label>
+          <span className="label">Automatic insert asset</span>
+          <select defaultValue={props.pool?.insertAssetId ?? ""} name="insertAssetId">
+            <option value="">No automatic insert</option>
+            {props.assets
+              .filter((asset) => asset.status === "ready")
+              .map((asset) => (
+                <option key={asset.id} value={asset.id}>
+                  {asset.title}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label>
+          <span className="label">Insert every N scheduled items</span>
+          <input
+            defaultValue={props.pool?.insertEveryItems ?? 0}
+            min="0"
+            name="insertEveryItems"
+            placeholder="0 disables"
+            step="1"
+            type="number"
+          />
+        </label>
+      </div>
       <p className="subtle">Pools currently use persistent round-robin playback across all ready assets from the selected sources.</p>
       {error ? <p className="danger">{error}</p> : null}
       {message ? <p className="subtle">{message}</p> : null}
