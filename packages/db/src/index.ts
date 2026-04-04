@@ -278,6 +278,8 @@ declare global {
   var __stream247DbReady: Promise<void> | undefined;
 }
 
+const STATE_WRITE_LOCK_KEY = 247001;
+
 function createId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -935,6 +937,10 @@ async function readLegacyState(): Promise<AppState | null> {
 async function isDatabaseEmpty(client: PoolClient): Promise<boolean> {
   const result = await client.query<{ count: string }>("SELECT COUNT(*) AS count FROM users");
   return Number(result.rows[0]?.count ?? "0") === 0;
+}
+
+async function acquireStateWriteLock(client: PoolClient): Promise<void> {
+  await client.query("SELECT pg_advisory_xact_lock($1)", [STATE_WRITE_LOCK_KEY]);
 }
 
 async function persistState(client: PoolClient, state: AppState): Promise<void> {
@@ -1856,6 +1862,7 @@ export async function writeAppState(state: AppState): Promise<void> {
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await acquireStateWriteLock(client);
     await persistState(client, state);
     await client.query("COMMIT");
   } catch (error) {
@@ -1871,6 +1878,7 @@ export async function updateAppState(updater: (state: AppState) => AppState | Pr
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await acquireStateWriteLock(client);
     const current = await hydrateState(client);
     const next = normalizeState(await updater(current));
     await persistState(client, next);
