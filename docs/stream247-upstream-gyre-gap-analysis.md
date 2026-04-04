@@ -130,6 +130,7 @@ The following product gaps are now addressed:
 - overlay settings now include first-class scene presets and richer presentation controls
 - browser overlay and on-air text overlay now share the same scene-oriented text composition logic
 - overlay studio now supports draft-save, reset-to-live, and publish-live scene changes
+- overlay studio now has a reusable scene preset library that can save draft scenes and re-apply them later
 - scheduled playout now has a graceful handoff path so a running item can finish before the next schedule block takes over
 - scene definitions now have a first-class layer order and a dedicated `/api/scenes` read path
 - scene presets can now be assigned separately for asset, insert, standby, and reconnect modes

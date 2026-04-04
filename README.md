@@ -53,7 +53,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 - viewer-facing pages with:
   - public schedule page
   - browser-source overlay page with live current/next updates
-  - overlay studio with draft-save, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, and publish-live scene controls
+  - overlay studio with draft-save, reusable scene preset library, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, and publish-live scene controls
   - admin-managed replay branding, scene presets, and ticker/badge styling
 
 ## What Is Not Done Yet

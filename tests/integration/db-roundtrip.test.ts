@@ -3,13 +3,17 @@ import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  applyOverlayScenePresetRecordToDraft,
+  deleteOverlayScenePresetRecord,
   ensureDatabase,
+  listOverlayScenePresetRecords,
   publishOverlayDraftRecord,
   readAppState,
   readOverlayStudioState,
   resetDatabaseConnectionsForTests,
   resetOverlayDraftRecord,
   saveOverlayDraftRecord,
+  saveOverlayScenePresetRecord,
   writeAppState
 } from "@stream247/db";
 
@@ -460,5 +464,40 @@ describe.sequential("database roundtrip", () => {
     expect(resetState.hasUnpublishedChanges).toBe(false);
     expect(resetState.draftOverlay.headline).toBe(resetState.liveOverlay.headline);
     expect(resetState.draftOverlay.headline).toBe("Draft Scene Headline");
+  }, 60_000);
+
+  it("stores scene presets and can apply them back onto the draft scene", async () => {
+    await ensureDatabaseWithRetry();
+
+    const studioState = await readOverlayStudioState();
+    const savedPreset = await saveOverlayScenePresetRecord({
+      name: "Prime Time Replay",
+      description: "Louder replay board for the evening block.",
+      overlay: {
+        ...studioState.draftOverlay,
+        headline: "Prime time archive",
+        insertHeadline: "Prime time bumper",
+        scenePreset: "split-now-next",
+        insertScenePreset: "bumper-board",
+        disabledLayers: ["schedule"],
+        updatedAt: "2026-04-04T12:00:00.000Z"
+      }
+    });
+
+    const presets = await listOverlayScenePresetRecords();
+    expect(presets[0]?.id).toBe(savedPreset.id);
+    expect(presets[0]?.name).toBe("Prime Time Replay");
+    expect(presets[0]?.overlay.headline).toBe("Prime time archive");
+
+    const appliedState = await applyOverlayScenePresetRecordToDraft(savedPreset.id);
+    expect(appliedState).not.toBeNull();
+    expect(appliedState?.draftOverlay.headline).toBe("Prime time archive");
+    expect(appliedState?.draftOverlay.insertHeadline).toBe("Prime time bumper");
+    expect(appliedState?.draftOverlay.scenePreset).toBe("split-now-next");
+    expect(appliedState?.draftOverlay.disabledLayers).toEqual(["schedule"]);
+
+    await deleteOverlayScenePresetRecord(savedPreset.id);
+    const remainingPresets = await listOverlayScenePresetRecords();
+    expect(remainingPresets.some((preset) => preset.id === savedPreset.id)).toBe(false);
   }, 60_000);
 });

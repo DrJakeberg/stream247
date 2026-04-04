@@ -251,6 +251,15 @@ export type OverlayStudioStateRecord = {
   hasUnpublishedChanges: boolean;
 };
 
+export type OverlayScenePresetRecord = {
+  id: string;
+  name: string;
+  description: string;
+  overlay: OverlaySettingsRecord;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ManagedConfigRecord = {
   twitchClientId: string;
   twitchClientSecret: string;
@@ -401,6 +410,15 @@ type OverlayDraftRow = OverlaySettingsRow & {
   based_on_updated_at: string;
 };
 
+type OverlayScenePresetRow = {
+  id: string;
+  name: string;
+  description: string;
+  overlay_json: string;
+  created_at: string;
+  updated_at: string;
+};
+
 const legacyStatePath = path.join(process.cwd(), "data", "app", "state.json");
 
 declare global {
@@ -486,6 +504,28 @@ function overlaySettingsEqual(left: OverlaySettingsRecord, right: OverlaySetting
   const normalizedLeft = normalizeOverlaySettingsRecord(left);
   const normalizedRight = normalizeOverlaySettingsRecord(right);
   return JSON.stringify(normalizedLeft) === JSON.stringify(normalizedRight);
+}
+
+function normalizeOverlayScenePresetRecord(record: OverlayScenePresetRecord): OverlayScenePresetRecord {
+  return {
+    id: record.id,
+    name: String(record.name || "").trim().slice(0, 80) || "Untitled preset",
+    description: String(record.description || "").trim().slice(0, 220),
+    overlay: normalizeOverlaySettingsRecord(record.overlay),
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt
+  };
+}
+
+function mapOverlayScenePresetRowToRecord(row: OverlayScenePresetRow): OverlayScenePresetRecord {
+  return normalizeOverlayScenePresetRecord({
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    overlay: JSON.parse(row.overlay_json || "{}") as OverlaySettingsRecord,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  });
 }
 
 async function upsertOverlaySettingsTable(
@@ -1178,6 +1218,15 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       ticker_text TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT '',
       based_on_updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS overlay_scene_presets (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      overlay_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS managed_config (
@@ -2655,6 +2704,20 @@ export async function readOverlayStudioState(): Promise<OverlayStudioStateRecord
   }
 }
 
+export async function listOverlayScenePresetRecords(): Promise<OverlayScenePresetRecord[]> {
+  await ensureDatabase();
+  const client = await getPool().connect();
+
+  try {
+    const result = await client.query<OverlayScenePresetRow>(
+      "SELECT * FROM overlay_scene_presets ORDER BY updated_at DESC, created_at DESC, name ASC"
+    );
+    return result.rows.map(mapOverlayScenePresetRowToRecord);
+  } finally {
+    client.release();
+  }
+}
+
 export async function resetDatabaseConnectionsForTests(): Promise<void> {
   if (globalThis.__stream247Pool) {
     await globalThis.__stream247Pool.end();
@@ -2886,6 +2949,77 @@ export async function resetOverlayDraftRecord(): Promise<OverlayStudioStateRecor
       draftOverlay: liveOverlay,
       basedOnUpdatedAt: liveOverlay.updatedAt,
       hasUnpublishedChanges: false
+    };
+  });
+}
+
+export async function saveOverlayScenePresetRecord(args: {
+  name: string;
+  description: string;
+  overlay: OverlaySettingsRecord;
+}): Promise<OverlayScenePresetRecord> {
+  return withSerializedStateWrite("saveOverlayScenePresetRecord", async (client) => {
+    const timestamp = new Date().toISOString();
+    const preset = normalizeOverlayScenePresetRecord({
+      id: createId("scene_preset"),
+      name: args.name,
+      description: args.description,
+      overlay: {
+        ...args.overlay,
+        updatedAt: args.overlay.updatedAt || timestamp
+      },
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    await client.query(
+      `
+        INSERT INTO overlay_scene_presets (id, name, description, overlay_json, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `,
+      [
+        preset.id,
+        preset.name,
+        preset.description,
+        JSON.stringify(preset.overlay),
+        preset.createdAt,
+        preset.updatedAt
+      ]
+    );
+
+    return preset;
+  });
+}
+
+export async function deleteOverlayScenePresetRecord(id: string): Promise<void> {
+  await withSerializedStateWrite("deleteOverlayScenePresetRecord", async (client) => {
+    await client.query("DELETE FROM overlay_scene_presets WHERE id = $1", [id]);
+  });
+}
+
+export async function applyOverlayScenePresetRecordToDraft(id: string): Promise<OverlayStudioStateRecord | null> {
+  return withSerializedStateWrite("applyOverlayScenePresetRecordToDraft", async (client) => {
+    const presetResult = await client.query<OverlayScenePresetRow>("SELECT * FROM overlay_scene_presets WHERE id = $1", [id]);
+    const presetRow = presetResult.rows[0];
+    if (!presetRow) {
+      return null;
+    }
+
+    const liveResult = await client.query<OverlaySettingsRow>("SELECT * FROM overlay_settings WHERE singleton_id = 1");
+    const liveOverlay = mapOverlayRowToRecord(liveResult.rows[0], defaultState().overlay);
+    const timestamp = new Date().toISOString();
+    const nextDraft = normalizeOverlaySettingsRecord({
+      ...mapOverlayScenePresetRowToRecord(presetRow).overlay,
+      updatedAt: timestamp
+    });
+
+    await upsertOverlaySettingsTable(client, "overlay_drafts", nextDraft, liveOverlay.updatedAt);
+
+    return {
+      liveOverlay,
+      draftOverlay: nextDraft,
+      basedOnUpdatedAt: liveOverlay.updatedAt,
+      hasUnpublishedChanges: !overlaySettingsEqual(liveOverlay, nextDraft)
     };
   });
 }
