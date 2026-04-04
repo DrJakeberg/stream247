@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hashPassword, setSessionCookie } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateAppState } from "@/lib/server/state";
+import {
+  appendAuditEvent,
+  readAppState,
+  updateManagedConfigRecord,
+  updateOwnerAndInitialized,
+  upsertUserRecord
+} from "@/lib/server/state";
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as {
@@ -27,42 +33,44 @@ export async function POST(request: NextRequest) {
   }
 
   const passwordHash = hashPassword(password);
+  const createdAt = new Date().toISOString();
+  const ownerUser = {
+    id: `user_${Math.random().toString(36).slice(2, 10)}`,
+    email,
+    displayName: "Owner",
+    authProvider: "local" as const,
+    role: "owner" as const,
+    twitchUserId: "",
+    twitchLogin: "",
+    passwordHash,
+    createdAt,
+    lastLoginAt: createdAt
+  };
 
-  await updateAppState((state) => ({
-    ...state,
+  await updateOwnerAndInitialized({
     initialized: true,
     owner: {
       email,
       passwordHash,
-      createdAt: new Date().toISOString()
-    },
-    users: [
-      {
-        id: `user_${Math.random().toString(36).slice(2, 10)}`,
-        email,
-        displayName: "Owner",
-        authProvider: "local",
-        role: "owner",
-        twitchUserId: "",
-        twitchLogin: "",
-        passwordHash,
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString()
-      }
-    ],
-    managedConfig: {
-      ...state.managedConfig,
-      twitchClientId: twitchClientId || state.managedConfig.twitchClientId,
-      twitchClientSecret: twitchClientSecret || state.managedConfig.twitchClientSecret,
-      updatedAt: twitchClientId || twitchClientSecret ? new Date().toISOString() : state.managedConfig.updatedAt
+      createdAt
     }
-  }));
+  });
+  await upsertUserRecord(ownerUser);
+
+  if (twitchClientId || twitchClientSecret) {
+    await updateManagedConfigRecord({
+      ...existing.managedConfig,
+      twitchClientId: twitchClientId || existing.managedConfig.twitchClientId,
+      twitchClientSecret: twitchClientSecret || existing.managedConfig.twitchClientSecret,
+      updatedAt: new Date().toISOString()
+    });
+  }
 
   const state = await readAppState();
-  const ownerUser = state.users.find((user) => user.email === email);
+  const persistedOwnerUser = state.users.find((user) => user.email === email);
   await appendAuditEvent("setup.completed", `Workspace initialized by ${email}.`);
-  if (ownerUser) {
-    await setSessionCookie(ownerUser.id);
+  if (persistedOwnerUser) {
+    await setSessionCookie(persistedOwnerUser.id);
   }
 
   return NextResponse.json({ ok: true });

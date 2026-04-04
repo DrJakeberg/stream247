@@ -6,7 +6,7 @@ import {
   isLikelyYouTubePlaylistUrl
 } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateAppState } from "@/lib/server/state";
+import { appendAuditEvent, deleteSourceRecordAndAssets, readAppState, upsertSourceRecord } from "@/lib/server/state";
 
 type ConnectorKind = "direct-media" | "youtube-playlist" | "youtube-channel" | "twitch-vod" | "twitch-channel";
 
@@ -81,23 +81,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: validationError }, { status: 400 });
   }
 
-  await updateAppState((state) => ({
-    ...state,
-    sources: [
-      {
-        id: `source_${Math.random().toString(36).slice(2, 10)}`,
-        name,
-        type: typeByConnector[connectorKind],
-        connectorKind,
-        enabled: true,
-        status: connectorKind === "direct-media" ? "Pending validation" : "Configured",
-        externalUrl,
-        notes: notesByConnector[connectorKind],
-        lastSyncedAt: ""
-      },
-      ...state.sources
-    ]
-  }));
+  await upsertSourceRecord({
+    id: `source_${Math.random().toString(36).slice(2, 10)}`,
+    name,
+    type: typeByConnector[connectorKind],
+    connectorKind,
+    enabled: true,
+    status: connectorKind === "direct-media" ? "Pending validation" : "Configured",
+    externalUrl,
+    notes: notesByConnector[connectorKind],
+    lastSyncedAt: ""
+  });
 
   await appendAuditEvent("source.created", `Created source ${name} (${connectorKind}).`);
   return NextResponse.json({ ok: true, message: `Source ${name} created.` });
@@ -134,28 +128,20 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    await updateAppState((state) => {
-      const existing = state.sources.find((source) => source.id === id);
-      if (!existing) {
-        throw new Error("Source not found.");
-      }
+    const state = await readAppState();
+    const existing = state.sources.find((source) => source.id === id);
+    if (!existing) {
+      throw new Error("Source not found.");
+    }
 
-      return {
-        ...state,
-        sources: state.sources.map((source) =>
-          source.id === id
-            ? {
-                ...source,
-                name,
-                type: typeByConnector[connectorKind],
-                connectorKind,
-                enabled: body.enabled ?? source.enabled ?? true,
-                externalUrl,
-                notes: notesByConnector[connectorKind]
-              }
-            : source
-        )
-      };
+    await upsertSourceRecord({
+      ...existing,
+      name,
+      type: typeByConnector[connectorKind],
+      connectorKind,
+      enabled: body.enabled ?? existing.enabled ?? true,
+      externalUrl,
+      notes: notesByConnector[connectorKind]
     });
   } catch (error) {
     return NextResponse.json(
@@ -181,35 +167,28 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    await updateAppState((state) => {
-      const existing = state.sources.find((source) => source.id === id);
-      if (!existing) {
-        throw new Error("Source not found.");
-      }
+    const state = await readAppState();
+    const existing = state.sources.find((source) => source.id === id);
+    if (!existing) {
+      throw new Error("Source not found.");
+    }
 
-      const referencedPools = state.pools.filter((pool) => pool.sourceIds.includes(id));
-      const referencedScheduleBlocks = state.scheduleBlocks.filter(
-        (block) => block.poolId && referencedPools.some((pool) => pool.id === block.poolId)
+    const referencedPools = state.pools.filter((pool) => pool.sourceIds.includes(id));
+    const referencedScheduleBlocks = state.scheduleBlocks.filter(
+      (block) => block.poolId && referencedPools.some((pool) => pool.id === block.poolId)
+    );
+
+    if (state.sources.length <= 1) {
+      throw new Error("You cannot delete the last remaining source. Disable it instead or add another source first.");
+    }
+
+    if (referencedPools.length > 0 || referencedScheduleBlocks.length > 0) {
+      throw new Error(
+        `Source is still referenced by ${referencedPools.length} pool(s) and ${referencedScheduleBlocks.length} schedule block(s). Remove those references before deleting the source.`
       );
+    }
 
-      if (state.sources.length <= 1) {
-        throw new Error("You cannot delete the last remaining source. Disable it instead or add another source first.");
-      }
-
-      if (referencedPools.length > 0 || referencedScheduleBlocks.length > 0) {
-        throw new Error(
-          `Source is still referenced by ${referencedPools.length} pool(s) and ${referencedScheduleBlocks.length} schedule block(s). Remove those references before deleting the source.`
-        );
-      }
-
-      return {
-        ...state,
-        sources: state.sources.filter((source) => source.id !== id),
-        assets: state.assets.filter((asset) => asset.sourceId !== id),
-        pools: state.pools,
-        scheduleBlocks: state.scheduleBlocks
-      };
-    });
+    await deleteSourceRecordAndAssets(id);
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "Could not delete source." },

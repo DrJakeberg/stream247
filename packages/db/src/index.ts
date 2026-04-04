@@ -2198,6 +2198,258 @@ export async function appendSourceSyncRuns(runs: SourceSyncRunRecord[]): Promise
   });
 }
 
+export async function upsertSourceRecord(source: SourceRecord): Promise<void> {
+  await upsertSources([source]);
+}
+
+export async function deleteSourceRecordAndAssets(sourceId: string): Promise<void> {
+  await withSerializedStateWrite("deleteSourceRecordAndAssets", async (client) => {
+    await client.query("DELETE FROM assets WHERE source_id = $1", [sourceId]);
+    await client.query("DELETE FROM sources WHERE id = $1", [sourceId]);
+  });
+}
+
+export async function updateManagedConfigRecord(config: ManagedConfigRecord): Promise<void> {
+  await withSerializedStateWrite("updateManagedConfigRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO managed_config (singleton_id, encrypted_payload, updated_at)
+        VALUES (1, $1, $2)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          encrypted_payload = EXCLUDED.encrypted_payload,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [encryptManagedConfig(config), config.updatedAt]
+    );
+  });
+}
+
+export async function updateOverlaySettingsRecord(overlay: OverlaySettingsRecord): Promise<void> {
+  await withSerializedStateWrite("updateOverlaySettingsRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO overlay_settings (
+          singleton_id, enabled, channel_name, headline, accent_color, show_clock, show_next_item, show_schedule_teaser, emergency_banner, replay_label, updated_at
+        )
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          enabled = EXCLUDED.enabled,
+          channel_name = EXCLUDED.channel_name,
+          headline = EXCLUDED.headline,
+          accent_color = EXCLUDED.accent_color,
+          show_clock = EXCLUDED.show_clock,
+          show_next_item = EXCLUDED.show_next_item,
+          show_schedule_teaser = EXCLUDED.show_schedule_teaser,
+          emergency_banner = EXCLUDED.emergency_banner,
+          replay_label = EXCLUDED.replay_label,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        overlay.enabled,
+        overlay.channelName,
+        overlay.headline,
+        overlay.accentColor,
+        overlay.showClock,
+        overlay.showNextItem,
+        overlay.showScheduleTeaser,
+        overlay.emergencyBanner,
+        overlay.replayLabel,
+        overlay.updatedAt
+      ]
+    );
+  });
+}
+
+export async function updateDestinationRecord(destination: StreamDestinationRecord): Promise<void> {
+  await withSerializedStateWrite("updateDestinationRecord", async (client) => {
+    await client.query(
+      `
+        UPDATE stream_destinations
+        SET provider = $2,
+            name = $3,
+            enabled = $4,
+            rtmp_url = $5,
+            stream_key_present = $6,
+            status = $7,
+            notes = $8,
+            last_validated_at = $9
+        WHERE id = $1
+      `,
+      [
+        destination.id,
+        destination.provider,
+        destination.name,
+        destination.enabled,
+        destination.rtmpUrl,
+        destination.streamKeyPresent,
+        destination.status,
+        destination.notes,
+        destination.lastValidatedAt
+      ]
+    );
+  });
+}
+
+export async function updateTwitchConnectionRecord(twitch: TwitchConnection): Promise<void> {
+  await withSerializedStateWrite("updateTwitchConnectionRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO twitch_connection (
+          singleton_id, status, broadcaster_id, broadcaster_login, access_token, refresh_token, connected_at, token_expires_at,
+          last_refresh_at, last_metadata_sync_at, last_synced_title, last_synced_category_name, last_synced_category_id, last_schedule_sync_at, error
+        )
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          status = EXCLUDED.status,
+          broadcaster_id = EXCLUDED.broadcaster_id,
+          broadcaster_login = EXCLUDED.broadcaster_login,
+          access_token = EXCLUDED.access_token,
+          refresh_token = EXCLUDED.refresh_token,
+          connected_at = EXCLUDED.connected_at,
+          token_expires_at = EXCLUDED.token_expires_at,
+          last_refresh_at = EXCLUDED.last_refresh_at,
+          last_metadata_sync_at = EXCLUDED.last_metadata_sync_at,
+          last_synced_title = EXCLUDED.last_synced_title,
+          last_synced_category_name = EXCLUDED.last_synced_category_name,
+          last_synced_category_id = EXCLUDED.last_synced_category_id,
+          last_schedule_sync_at = EXCLUDED.last_schedule_sync_at,
+          error = EXCLUDED.error
+      `,
+      [
+        twitch.status,
+        twitch.broadcasterId,
+        twitch.broadcasterLogin,
+        twitch.accessToken,
+        twitch.refreshToken,
+        twitch.connectedAt,
+        twitch.tokenExpiresAt,
+        twitch.lastRefreshAt,
+        twitch.lastMetadataSyncAt,
+        twitch.lastSyncedTitle,
+        twitch.lastSyncedCategoryName,
+        twitch.lastSyncedCategoryId,
+        twitch.lastScheduleSyncAt,
+        twitch.error
+      ]
+    );
+  });
+}
+
+export async function upsertUserRecord(user: UserRecord): Promise<void> {
+  await withSerializedStateWrite("upsertUserRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO users (
+          id, email, display_name, auth_provider, role, twitch_user_id, twitch_login, password_hash, created_at, last_login_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (id) DO UPDATE SET
+          email = EXCLUDED.email,
+          display_name = EXCLUDED.display_name,
+          auth_provider = EXCLUDED.auth_provider,
+          role = EXCLUDED.role,
+          twitch_user_id = EXCLUDED.twitch_user_id,
+          twitch_login = EXCLUDED.twitch_login,
+          password_hash = EXCLUDED.password_hash,
+          created_at = EXCLUDED.created_at,
+          last_login_at = EXCLUDED.last_login_at
+      `,
+      [
+        user.id,
+        user.email,
+        user.displayName,
+        user.authProvider,
+        user.role,
+        user.twitchUserId,
+        user.twitchLogin,
+        user.passwordHash ?? "",
+        user.createdAt,
+        user.lastLoginAt
+      ]
+    );
+  });
+}
+
+export async function updateOwnerAndInitialized(args: {
+  initialized: boolean;
+  owner: OwnerAccount;
+}): Promise<void> {
+  await withSerializedStateWrite("updateOwnerAndInitialized", async (client) => {
+    await client.query(
+      `
+        INSERT INTO system_state (singleton_id, initialized, owner_email, owner_password_hash, owner_created_at)
+        VALUES (1, $1, $2, $3, $4)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          initialized = EXCLUDED.initialized,
+          owner_email = EXCLUDED.owner_email,
+          owner_password_hash = EXCLUDED.owner_password_hash,
+          owner_created_at = EXCLUDED.owner_created_at
+      `,
+      [args.initialized, args.owner.email, args.owner.passwordHash, args.owner.createdAt]
+    );
+  });
+}
+
+export async function upsertTeamAccessGrantRecord(grant: TeamAccessGrant): Promise<void> {
+  await withSerializedStateWrite("upsertTeamAccessGrantRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO team_access_grants (id, twitch_login, role, created_at, created_by)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (id) DO UPDATE SET
+          twitch_login = EXCLUDED.twitch_login,
+          role = EXCLUDED.role,
+          created_at = EXCLUDED.created_at,
+          created_by = EXCLUDED.created_by
+      `,
+      [grant.id, grant.twitchLogin, grant.role, grant.createdAt, grant.createdBy]
+    );
+  });
+}
+
+export async function updateModerationConfigRecord(config: ModerationConfig): Promise<void> {
+  await withSerializedStateWrite("updateModerationConfigRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO moderation_settings (
+          singleton_id, enabled, command, default_minutes, min_minutes, max_minutes, require_prefix, fallback_emote_only
+        )
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          enabled = EXCLUDED.enabled,
+          command = EXCLUDED.command,
+          default_minutes = EXCLUDED.default_minutes,
+          min_minutes = EXCLUDED.min_minutes,
+          max_minutes = EXCLUDED.max_minutes,
+          require_prefix = EXCLUDED.require_prefix,
+          fallback_emote_only = EXCLUDED.fallback_emote_only
+      `,
+      [
+        config.enabled,
+        config.command,
+        config.defaultMinutes,
+        config.minMinutes,
+        config.maxMinutes,
+        config.requirePrefix,
+        config.fallbackEmoteOnly
+      ]
+    );
+  });
+}
+
+export async function appendPresenceWindowRecord(window: ModeratorPresenceWindowRecord): Promise<void> {
+  await withSerializedStateWrite("appendPresenceWindowRecord", async (client) => {
+    await client.query("DELETE FROM presence_windows WHERE expires_at <= $1", [new Date().toISOString()]);
+    await client.query(
+      `
+        INSERT INTO presence_windows (actor, minutes, created_at, expires_at)
+        VALUES ($1, $2, $3, $4)
+      `,
+      [window.actor, window.minutes, window.createdAt, window.expiresAt]
+    );
+  });
+}
+
 export async function createScheduleBlocks(blocks: ScheduleBlockRecord[]): Promise<void> {
   if (blocks.length === 0) {
     return;

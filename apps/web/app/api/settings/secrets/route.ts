@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, updateAppState } from "@/lib/server/state";
+import { appendAuditEvent, readAppState, updateManagedConfigRecord } from "@/lib/server/state";
 
 export async function PUT(request: NextRequest) {
   const unauthorized = await requireApiRoles(["owner", "admin"]);
@@ -23,23 +23,21 @@ export async function PUT(request: NextRequest) {
 
   const trim = (value: string | undefined) => (value ?? "").trim();
 
-  await updateAppState((state) => ({
-    ...state,
-    managedConfig: {
-      ...state.managedConfig,
-      twitchClientId: trim(body.twitchClientId),
-      twitchClientSecret: trim(body.twitchClientSecret) || state.managedConfig.twitchClientSecret,
-      twitchDefaultCategoryId: trim(body.twitchDefaultCategoryId),
-      discordWebhookUrl: trim(body.discordWebhookUrl) || state.managedConfig.discordWebhookUrl,
-      smtpHost: trim(body.smtpHost),
-      smtpPort: trim(body.smtpPort),
-      smtpUser: trim(body.smtpUser),
-      smtpPassword: trim(body.smtpPassword) || state.managedConfig.smtpPassword,
-      smtpFrom: trim(body.smtpFrom),
-      alertEmailTo: trim(body.alertEmailTo),
-      updatedAt: new Date().toISOString()
-    }
-  }));
+  const state = await readAppState();
+  await updateManagedConfigRecord({
+    ...state.managedConfig,
+    twitchClientId: trim(body.twitchClientId),
+    twitchClientSecret: trim(body.twitchClientSecret) || state.managedConfig.twitchClientSecret,
+    twitchDefaultCategoryId: trim(body.twitchDefaultCategoryId),
+    discordWebhookUrl: trim(body.discordWebhookUrl) || state.managedConfig.discordWebhookUrl,
+    smtpHost: trim(body.smtpHost),
+    smtpPort: trim(body.smtpPort),
+    smtpUser: trim(body.smtpUser),
+    smtpPassword: trim(body.smtpPassword) || state.managedConfig.smtpPassword,
+    smtpFrom: trim(body.smtpFrom),
+    alertEmailTo: trim(body.alertEmailTo),
+    updatedAt: new Date().toISOString()
+  });
 
   await appendAuditEvent("settings.managed-config.updated", "Managed encrypted integration settings were updated.");
   return NextResponse.json({ ok: true, message: "Managed settings updated." });

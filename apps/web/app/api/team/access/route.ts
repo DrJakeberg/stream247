@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles, getAuthenticatedUser } from "@/lib/server/auth";
-import { appendAuditEvent, updateAppState, type UserRole } from "@/lib/server/state";
+import { appendAuditEvent, readAppState, upsertTeamAccessGrantRecord, type UserRole } from "@/lib/server/state";
 
 export async function POST(request: NextRequest) {
   const unauthorized = await requireApiRoles(["owner", "admin"]);
@@ -21,22 +21,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Role is invalid." }, { status: 400 });
   }
 
-  await updateAppState((state) => {
-    const existing = state.teamAccessGrants.find((grant) => grant.twitchLogin === twitchLogin);
-    const nextGrant = {
-      id: existing?.id ?? `grant_${Math.random().toString(36).slice(2, 10)}`,
-      twitchLogin,
-      role,
-      createdAt: existing?.createdAt ?? new Date().toISOString(),
-      createdBy: actor?.id ?? "unknown"
-    };
-
-    return {
-      ...state,
-      teamAccessGrants: existing
-        ? state.teamAccessGrants.map((grant) => (grant.id === existing.id ? nextGrant : grant))
-        : [nextGrant, ...state.teamAccessGrants]
-    };
+  const state = await readAppState();
+  const existing = state.teamAccessGrants.find((grant) => grant.twitchLogin === twitchLogin);
+  await upsertTeamAccessGrantRecord({
+    id: existing?.id ?? `grant_${Math.random().toString(36).slice(2, 10)}`,
+    twitchLogin,
+    role,
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
+    createdBy: actor?.id ?? "unknown"
   });
 
   await appendAuditEvent("team.grant", `Granted ${role} access to Twitch user ${twitchLogin}.`);

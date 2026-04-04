@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, updateAppState } from "@/lib/server/state";
+import { appendAuditEvent, updateModerationConfigRecord } from "@/lib/server/state";
 
 export async function PUT(request: NextRequest) {
   const unauthorized = await requireApiRoles(["owner", "admin", "operator"]);
@@ -27,18 +27,15 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ message: "Moderation settings are invalid." }, { status: 400 });
   }
 
-  await updateAppState((state) => ({
-    ...state,
-    moderation: {
-      enabled: Boolean(body.enabled),
-      command,
-      defaultMinutes,
-      minMinutes,
-      maxMinutes,
-      requirePrefix: Boolean(body.requirePrefix),
-      fallbackEmoteOnly: Boolean(body.fallbackEmoteOnly)
-    }
-  }));
+  await updateModerationConfigRecord({
+    enabled: Boolean(body.enabled),
+    command,
+    defaultMinutes,
+    minMinutes,
+    maxMinutes,
+    requirePrefix: Boolean(body.requirePrefix),
+    fallbackEmoteOnly: Boolean(body.fallbackEmoteOnly)
+  });
 
   await appendAuditEvent("moderation.updated", `Updated moderator command to ${command}.`);
   return NextResponse.json({ ok: true, message: "Moderation policy saved." });

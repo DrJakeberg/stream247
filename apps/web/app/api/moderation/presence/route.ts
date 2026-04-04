@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseModeratorCheckIn } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateAppState } from "@/lib/server/state";
+import { appendAuditEvent, appendPresenceWindowRecord, readAppState } from "@/lib/server/state";
 
 export async function POST(request: NextRequest) {
   const unauthorized = await requireApiRoles(["owner", "admin", "operator", "moderator"]);
@@ -27,18 +27,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  await updateAppState((current) => ({
-    ...current,
-    presenceWindows: [
-      {
-        actor: window.actor,
-        minutes: window.minutes,
-        createdAt: window.createdAt.toISOString(),
-        expiresAt: window.expiresAt.toISOString()
-      },
-      ...current.presenceWindows.filter((entry) => new Date(entry.expiresAt) > now)
-    ]
-  }));
+  await appendPresenceWindowRecord({
+    actor: window.actor,
+    minutes: window.minutes,
+    createdAt: window.createdAt.toISOString(),
+    expiresAt: window.expiresAt.toISOString()
+  });
   await appendAuditEvent("moderation.checkin", `${window.actor} checked in for ${window.minutes} minutes.`);
 
   return NextResponse.json({

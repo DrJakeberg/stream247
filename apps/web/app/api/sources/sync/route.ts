@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, updateAppState } from "@/lib/server/state";
+import { appendAuditEvent, readAppState, upsertSourceRecord } from "@/lib/server/state";
 
 export async function POST(request: NextRequest) {
   const unauthorized = await requireApiRoles(["owner", "admin", "operator"]);
@@ -15,28 +15,20 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    await updateAppState((state) => {
-      const source = state.sources.find((entry) => entry.id === id);
-      if (!source) {
-        throw new Error("Source not found.");
-      }
+    const state = await readAppState();
+    const source = state.sources.find((entry) => entry.id === id);
+    if (!source) {
+      throw new Error("Source not found.");
+    }
 
-      if (!(source.enabled ?? true)) {
-        throw new Error("Enable the source before requesting a manual sync.");
-      }
+    if (!(source.enabled ?? true)) {
+      throw new Error("Enable the source before requesting a manual sync.");
+    }
 
-      return {
-        ...state,
-        sources: state.sources.map((entry) =>
-          entry.id === id
-            ? {
-                ...entry,
-                status: "Sync queued",
-                notes: "Manual re-sync requested. The worker will refresh this source on the next cycle."
-              }
-            : entry
-        )
-      };
+    await upsertSourceRecord({
+      ...source,
+      status: "Sync queued",
+      notes: "Manual re-sync requested. The worker will refresh this source on the next cycle."
     });
   } catch (error) {
     return NextResponse.json(

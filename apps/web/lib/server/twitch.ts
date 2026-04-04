@@ -3,7 +3,8 @@ import {
   findTeamGrantByLogin,
   getManagedTwitchConfig,
   readAppState,
-  updateAppState,
+  updateTwitchConnectionRecord,
+  upsertUserRecord,
   type UserRecord,
   type UserRole
 } from "./state";
@@ -98,38 +99,33 @@ export async function exchangeTwitchCode(code: string) {
     throw new Error("Twitch user lookup did not return a broadcaster id.");
   }
 
-  await updateAppState((state) => ({
-    ...state,
-    twitch: {
-      status: "connected",
-      broadcasterId,
-      broadcasterLogin,
-      accessToken: tokenData.access_token,
-      refreshToken: tokenData.refresh_token ?? "",
-      connectedAt: new Date().toISOString(),
-      tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString() : "",
-      lastRefreshAt: "",
-      lastMetadataSyncAt: "",
-      lastSyncedTitle: "",
-      lastSyncedCategoryName: "",
-      lastSyncedCategoryId: "",
-      lastScheduleSyncAt: "",
-      error: ""
-    }
-  }));
+  await updateTwitchConnectionRecord({
+    status: "connected",
+    broadcasterId,
+    broadcasterLogin,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token ?? "",
+    connectedAt: new Date().toISOString(),
+    tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString() : "",
+    lastRefreshAt: "",
+    lastMetadataSyncAt: "",
+    lastSyncedTitle: "",
+    lastSyncedCategoryName: "",
+    lastSyncedCategoryId: "",
+    lastScheduleSyncAt: "",
+    error: ""
+  });
 
   await appendAuditEvent("twitch.connected", `Connected Twitch broadcaster ${broadcasterId}.`);
 }
 
 export async function recordTwitchError(message: string) {
-  await updateAppState((state) => ({
-    ...state,
-    twitch: {
-      ...state.twitch,
-      status: "error",
-      error: message
-    }
-  }));
+  const state = await readAppState();
+  await updateTwitchConnectionRecord({
+    ...state.twitch,
+    status: "error",
+    error: message
+  });
 
   await appendAuditEvent("twitch.error", message);
 }
@@ -185,48 +181,40 @@ export async function exchangeTwitchLoginCode(code: string): Promise<UserRecord>
   }
 
   let authenticatedUser: UserRecord | null = null;
-  await updateAppState((state) => {
-    const grant = findTeamGrantByLogin(state, twitchUser.login);
-    const isBroadcasterOwner =
-      state.twitch.broadcasterId !== "" && state.twitch.broadcasterId === twitchUser.id;
+  const grant = findTeamGrantByLogin(state, twitchUser.login);
+  const isBroadcasterOwner =
+    state.twitch.broadcasterId !== "" && state.twitch.broadcasterId === twitchUser.id;
 
-    if (!grant && !isBroadcasterOwner) {
-      throw new Error(`Twitch user ${twitchUser.login} is not authorized for this workspace.`);
-    }
+  if (!grant && !isBroadcasterOwner) {
+    throw new Error(`Twitch user ${twitchUser.login} is not authorized for this workspace.`);
+  }
 
-    const role: UserRole = isBroadcasterOwner ? "owner" : grant?.role ?? "viewer";
-    const existing = state.users.find((user) => user.twitchUserId === twitchUser.id);
+  const role: UserRole = isBroadcasterOwner ? "owner" : grant?.role ?? "viewer";
+  const existing = state.users.find((user) => user.twitchUserId === twitchUser.id);
 
-    const nextUser: UserRecord = existing
-      ? {
-          ...existing,
-          displayName: twitchUser.display_name,
-          email: twitchUser.email ?? existing.email,
-          role,
-          twitchLogin: twitchUser.login,
-          lastLoginAt: new Date().toISOString()
-        }
-      : {
-          id: `user_${Math.random().toString(36).slice(2, 10)}`,
-          email: twitchUser.email ?? `${twitchUser.login}@twitch.local`,
-          displayName: twitchUser.display_name,
-          authProvider: "twitch",
-          role,
-          twitchUserId: twitchUser.id,
-          twitchLogin: twitchUser.login,
-          createdAt: new Date().toISOString(),
-          lastLoginAt: new Date().toISOString()
-        };
+  const nextUser: UserRecord = existing
+    ? {
+        ...existing,
+        displayName: twitchUser.display_name,
+        email: twitchUser.email ?? existing.email,
+        role,
+        twitchLogin: twitchUser.login,
+        lastLoginAt: new Date().toISOString()
+      }
+    : {
+        id: `user_${Math.random().toString(36).slice(2, 10)}`,
+        email: twitchUser.email ?? `${twitchUser.login}@twitch.local`,
+        displayName: twitchUser.display_name,
+        authProvider: "twitch",
+        role,
+        twitchUserId: twitchUser.id,
+        twitchLogin: twitchUser.login,
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString()
+      };
 
-    authenticatedUser = nextUser;
-
-    return {
-      ...state,
-      users: existing
-        ? state.users.map((user) => (user.id === existing.id ? nextUser : user))
-        : [nextUser, ...state.users]
-    };
-  });
+  authenticatedUser = nextUser;
+  await upsertUserRecord(nextUser);
 
   await appendAuditEvent("auth.twitch", `Twitch SSO login succeeded for ${twitchUser.login}.`);
   if (!authenticatedUser) {
