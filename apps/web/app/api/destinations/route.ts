@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateAppState } from "@/lib/server/state";
+import { appendAuditEvent, readAppState, updateDestinationRecord } from "@/lib/server/state";
 
 export async function GET() {
   const unauthorized = await requireApiRoles(["owner", "admin", "operator", "moderator", "viewer"]);
@@ -35,28 +35,19 @@ export async function PUT(request: NextRequest) {
   const nextRtmpUrl = typeof body.rtmpUrl === "string" ? body.rtmpUrl.trim() : undefined;
   const nextNotes = typeof body.notes === "string" ? body.notes.trim() : undefined;
 
-  let found = false;
-  await updateAppState((state) => ({
-    ...state,
-    destinations: state.destinations.map((destination) => {
-      if (destination.id !== destinationId) {
-        return destination;
-      }
-
-      found = true;
-      return {
-        ...destination,
-        enabled: typeof body.enabled === "boolean" ? body.enabled : destination.enabled,
-        name: nextName && nextName.length > 0 ? nextName : destination.name,
-        rtmpUrl: nextRtmpUrl !== undefined ? nextRtmpUrl : destination.rtmpUrl,
-        notes: nextNotes !== undefined ? nextNotes : destination.notes
-      };
-    })
-  }));
-
-  if (!found) {
+  const state = await readAppState();
+  const existing = state.destinations.find((destination) => destination.id === destinationId);
+  if (!existing) {
     return NextResponse.json({ message: "Destination not found." }, { status: 404 });
   }
+
+  await updateDestinationRecord({
+    ...existing,
+    enabled: typeof body.enabled === "boolean" ? body.enabled : existing.enabled,
+    name: nextName && nextName.length > 0 ? nextName : existing.name,
+    rtmpUrl: nextRtmpUrl !== undefined ? nextRtmpUrl : existing.rtmpUrl,
+    notes: nextNotes !== undefined ? nextNotes : existing.notes
+  });
 
   await appendAuditEvent("destination.updated", `Updated destination ${destinationId}.`);
   return NextResponse.json({ ok: true });

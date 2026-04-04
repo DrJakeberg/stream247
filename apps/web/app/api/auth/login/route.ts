@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { setSessionCookie, verifyPassword } from "@/lib/server/auth";
-import { findUserByEmail, readAppState, updateAppState } from "@/lib/server/state";
+import { findUserByEmail, readAppState, upsertUserRecord } from "@/lib/server/state";
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as { email?: string; password?: string };
@@ -14,12 +14,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Invalid email or password." }, { status: 401 });
   }
 
-  await updateAppState((current) => ({
-    ...current,
-    users: current.users.map((currentUser) =>
-      currentUser.id === user.id ? { ...currentUser, lastLoginAt: new Date().toISOString() } : currentUser
-    )
-  }));
+  await upsertUserRecord({
+    ...user,
+    lastLoginAt: new Date().toISOString()
+  });
 
   await setSessionCookie(user.id);
   return NextResponse.json({ ok: true });
