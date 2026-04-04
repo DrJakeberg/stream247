@@ -114,6 +114,9 @@ export type LiveOverlaySummary = {
   enabled: boolean;
   channelName: string;
   headline: string;
+  insertHeadline: string;
+  standbyHeadline: string;
+  reconnectHeadline: string;
   brandBadge: string;
   scenePreset:
     | "replay-lower-third"

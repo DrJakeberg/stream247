@@ -193,6 +193,9 @@ export type OverlaySettingsRecord = {
   enabled: boolean;
   channelName: string;
   headline: string;
+  insertHeadline: string;
+  standbyHeadline: string;
+  reconnectHeadline: string;
   replayLabel: string;
   brandBadge: string;
   scenePreset:
@@ -367,6 +370,9 @@ type OverlaySettingsRow = {
   enabled: boolean;
   channel_name: string;
   headline: string;
+  insert_headline: string;
+  standby_headline: string;
+  reconnect_headline: string;
   brand_badge: string;
   scene_preset: OverlaySettingsRecord["scenePreset"];
   insert_scene_preset: OverlaySettingsRecord["insertScenePreset"];
@@ -417,6 +423,9 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
     ...overlay,
     channelName: String(overlay.channelName ?? defaults.channelName).trim().slice(0, 80) || defaults.channelName,
     headline: String(overlay.headline ?? defaults.headline).trim().slice(0, 120) || defaults.headline,
+    insertHeadline: String(overlay.insertHeadline ?? defaults.insertHeadline).trim().slice(0, 120) || defaults.insertHeadline,
+    standbyHeadline: String(overlay.standbyHeadline ?? defaults.standbyHeadline).trim().slice(0, 120) || defaults.standbyHeadline,
+    reconnectHeadline: String(overlay.reconnectHeadline ?? defaults.reconnectHeadline).trim().slice(0, 120) || defaults.reconnectHeadline,
     replayLabel: String(overlay.replayLabel ?? defaults.replayLabel).trim().slice(0, 80) || defaults.replayLabel,
     brandBadge: String(overlay.brandBadge ?? defaults.brandBadge).trim().slice(0, 48),
     scenePreset: normalizeOverlayScenePreset(String(overlay.scenePreset ?? defaults.scenePreset)),
@@ -444,6 +453,9 @@ function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: Ov
         enabled: row.enabled,
         channelName: row.channel_name,
         headline: row.headline,
+        insertHeadline: row.insert_headline,
+        standbyHeadline: row.standby_headline,
+        reconnectHeadline: row.reconnect_headline,
         replayLabel: row.replay_label,
         brandBadge: row.brand_badge,
         scenePreset: row.scene_preset,
@@ -488,13 +500,16 @@ async function upsertOverlaySettingsTable(
     await client.query(
       `
         INSERT INTO overlay_drafts (
-          singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, emergency_banner, ticker_text, updated_at, based_on_updated_at
+          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, emergency_banner, ticker_text, updated_at, based_on_updated_at
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           channel_name = EXCLUDED.channel_name,
           headline = EXCLUDED.headline,
+          insert_headline = EXCLUDED.insert_headline,
+          standby_headline = EXCLUDED.standby_headline,
+          reconnect_headline = EXCLUDED.reconnect_headline,
           replay_label = EXCLUDED.replay_label,
           brand_badge = EXCLUDED.brand_badge,
           scene_preset = EXCLUDED.scene_preset,
@@ -523,6 +538,9 @@ async function upsertOverlaySettingsTable(
         normalized.enabled,
         normalized.channelName,
         normalized.headline,
+        normalized.insertHeadline,
+        normalized.standbyHeadline,
+        normalized.reconnectHeadline,
         normalized.replayLabel,
         normalized.brandBadge,
         normalized.scenePreset,
@@ -554,13 +572,16 @@ async function upsertOverlaySettingsTable(
   await client.query(
     `
       INSERT INTO overlay_settings (
-        singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, emergency_banner, ticker_text, updated_at
+          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, emergency_banner, ticker_text, updated_at
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
       ON CONFLICT (singleton_id) DO UPDATE SET
         enabled = EXCLUDED.enabled,
         channel_name = EXCLUDED.channel_name,
         headline = EXCLUDED.headline,
+        insert_headline = EXCLUDED.insert_headline,
+        standby_headline = EXCLUDED.standby_headline,
+        reconnect_headline = EXCLUDED.reconnect_headline,
         replay_label = EXCLUDED.replay_label,
         brand_badge = EXCLUDED.brand_badge,
         scene_preset = EXCLUDED.scene_preset,
@@ -588,6 +609,9 @@ async function upsertOverlaySettingsTable(
       normalized.enabled,
       normalized.channelName,
       normalized.headline,
+      normalized.insertHeadline,
+      normalized.standbyHeadline,
+      normalized.reconnectHeadline,
       normalized.replayLabel,
       normalized.brandBadge,
       normalized.scenePreset,
@@ -696,6 +720,9 @@ function defaultState(): AppState {
       enabled: false,
       channelName: "Stream247",
       headline: "Always on air",
+      insertHeadline: "Insert on air",
+      standbyHeadline: "Please wait, restream is starting",
+      reconnectHeadline: "Scheduled reconnect in progress",
       replayLabel: "Replay stream",
       brandBadge: "",
       scenePreset: "replay-lower-third",
@@ -935,6 +962,12 @@ function normalizeState(state: AppState): AppState {
       insertScenePreset: normalizeOverlayScenePreset(String(state.overlay?.insertScenePreset ?? defaults.overlay.insertScenePreset)),
       standbyScenePreset: normalizeOverlayScenePreset(String(state.overlay?.standbyScenePreset ?? defaults.overlay.standbyScenePreset)),
       reconnectScenePreset: normalizeOverlayScenePreset(String(state.overlay?.reconnectScenePreset ?? defaults.overlay.reconnectScenePreset)),
+      headline: String(state.overlay?.headline ?? defaults.overlay.headline).trim().slice(0, 120) || defaults.overlay.headline,
+      insertHeadline: String(state.overlay?.insertHeadline ?? defaults.overlay.insertHeadline).trim().slice(0, 120) || defaults.overlay.insertHeadline,
+      standbyHeadline: String(state.overlay?.standbyHeadline ?? defaults.overlay.standbyHeadline).trim().slice(0, 120) || defaults.overlay.standbyHeadline,
+      reconnectHeadline:
+        String(state.overlay?.reconnectHeadline ?? defaults.overlay.reconnectHeadline).trim().slice(0, 120) ||
+        defaults.overlay.reconnectHeadline,
       surfaceStyle: normalizeOverlaySurfaceStyle(String(state.overlay?.surfaceStyle ?? defaults.overlay.surfaceStyle)),
       panelAnchor: normalizeOverlayPanelAnchor(String(state.overlay?.panelAnchor ?? defaults.overlay.panelAnchor)),
       titleScale: normalizeOverlayTitleScale(String(state.overlay?.titleScale ?? defaults.overlay.titleScale)),
@@ -1087,6 +1120,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       enabled BOOLEAN NOT NULL DEFAULT FALSE,
       channel_name TEXT NOT NULL DEFAULT 'Stream247',
       headline TEXT NOT NULL DEFAULT 'Always on air',
+      insert_headline TEXT NOT NULL DEFAULT 'Insert on air',
+      standby_headline TEXT NOT NULL DEFAULT 'Please wait, restream is starting',
+      reconnect_headline TEXT NOT NULL DEFAULT 'Scheduled reconnect in progress',
       replay_label TEXT NOT NULL DEFAULT 'Replay stream',
       brand_badge TEXT NOT NULL DEFAULT '',
       scene_preset TEXT NOT NULL DEFAULT 'replay-lower-third',
@@ -1116,6 +1152,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       enabled BOOLEAN NOT NULL DEFAULT FALSE,
       channel_name TEXT NOT NULL DEFAULT 'Stream247',
       headline TEXT NOT NULL DEFAULT 'Always on air',
+      insert_headline TEXT NOT NULL DEFAULT 'Insert on air',
+      standby_headline TEXT NOT NULL DEFAULT 'Please wait, restream is starting',
+      reconnect_headline TEXT NOT NULL DEFAULT 'Scheduled reconnect in progress',
       replay_label TEXT NOT NULL DEFAULT 'Replay stream',
       brand_badge TEXT NOT NULL DEFAULT '',
       scene_preset TEXT NOT NULL DEFAULT 'replay-lower-third',
@@ -1351,6 +1390,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS channel_name TEXT NOT NULL DEFAULT 'Stream247';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS headline TEXT NOT NULL DEFAULT 'Always on air';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS insert_headline TEXT NOT NULL DEFAULT 'Insert on air';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS standby_headline TEXT NOT NULL DEFAULT 'Please wait, restream is starting';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS reconnect_headline TEXT NOT NULL DEFAULT 'Scheduled reconnect in progress';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS accent_color TEXT NOT NULL DEFAULT '#0e6d5a';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_clock BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_next_item BOOLEAN NOT NULL DEFAULT TRUE;
@@ -1376,6 +1418,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS channel_name TEXT NOT NULL DEFAULT 'Stream247';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS headline TEXT NOT NULL DEFAULT 'Always on air';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS insert_headline TEXT NOT NULL DEFAULT 'Insert on air';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS standby_headline TEXT NOT NULL DEFAULT 'Please wait, restream is starting';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS reconnect_headline TEXT NOT NULL DEFAULT 'Scheduled reconnect in progress';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS accent_color TEXT NOT NULL DEFAULT '#0e6d5a';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS show_clock BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS show_next_item BOOLEAN NOT NULL DEFAULT TRUE;
@@ -1611,13 +1656,16 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   await client.query(
     `
         INSERT INTO overlay_settings (
-          singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, emergency_banner, ticker_text, updated_at
+          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, emergency_banner, ticker_text, updated_at
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           channel_name = EXCLUDED.channel_name,
           headline = EXCLUDED.headline,
+          insert_headline = EXCLUDED.insert_headline,
+          standby_headline = EXCLUDED.standby_headline,
+          reconnect_headline = EXCLUDED.reconnect_headline,
           replay_label = EXCLUDED.replay_label,
           brand_badge = EXCLUDED.brand_badge,
           scene_preset = EXCLUDED.scene_preset,
@@ -1645,6 +1693,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         next.overlay.enabled,
         next.overlay.channelName,
         next.overlay.headline,
+        next.overlay.insertHeadline,
+        next.overlay.standbyHeadline,
+        next.overlay.reconnectHeadline,
         next.overlay.replayLabel,
         next.overlay.brandBadge,
         next.overlay.scenePreset,

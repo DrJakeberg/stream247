@@ -62,6 +62,10 @@ export type OverlaySceneSource = {
   insertScenePreset: OverlayScenePreset;
   standbyScenePreset: OverlayScenePreset;
   reconnectScenePreset: OverlayScenePreset;
+  headline: string;
+  insertHeadline: string;
+  standbyHeadline: string;
+  reconnectHeadline: string;
   surfaceStyle: OverlaySurfaceStyle;
   panelAnchor: OverlayPanelAnchor;
   titleScale: OverlayTitleScale;
@@ -334,6 +338,26 @@ export function resolveOverlayScenePresetForQueueKind(
 export function buildOverlayBrandLine(replayLabel: string, brandBadge = ""): string {
   const parts = [replayLabel || "Replay stream", brandBadge].map((part) => part.trim()).filter(Boolean);
   return parts.join(" · ");
+}
+
+export function resolveOverlayHeadlineForQueueKind(
+  headline: string,
+  queueKind: OverlayQueueKind,
+  overrides?: Partial<Pick<OverlaySceneSource, "insertHeadline" | "standbyHeadline" | "reconnectHeadline">>
+): string {
+  if (queueKind === "insert") {
+    return String(overrides?.insertHeadline || "Insert on air").trim() || "Insert on air";
+  }
+
+  if (queueKind === "reconnect") {
+    return String(overrides?.reconnectHeadline || "Scheduled reconnect in progress").trim() || "Scheduled reconnect in progress";
+  }
+
+  if (queueKind === "standby") {
+    return String(overrides?.standbyHeadline || headline || "Please wait, restream is starting").trim() || "Please wait, restream is starting";
+  }
+
+  return String(headline || "Always on air").trim() || "Always on air";
 }
 
 export function buildOverlaySceneDefinition(args: {

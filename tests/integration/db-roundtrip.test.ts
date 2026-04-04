@@ -162,6 +162,9 @@ describe.sequential("database roundtrip", () => {
         enabled: true,
         channelName: "Roundtrip TV",
         replayLabel: "Replay",
+        insertHeadline: "Custom insert break",
+        standbyHeadline: "Stand by for the next archive block",
+        reconnectHeadline: "Refreshing the live output",
         brandBadge: "Archive Channel",
         insertScenePreset: "minimal-chip",
         standbyScenePreset: "standby-board",
@@ -374,6 +377,9 @@ describe.sequential("database roundtrip", () => {
     expect(reread.initialized).toBe(true);
     expect(reread.owner?.email).toBe("owner@example.com");
     expect(reread.overlay.channelName).toBe("Roundtrip TV");
+    expect(reread.overlay.insertHeadline).toBe("Custom insert break");
+    expect(reread.overlay.standbyHeadline).toBe("Stand by for the next archive block");
+    expect(reread.overlay.reconnectHeadline).toBe("Refreshing the live output");
     expect(reread.overlay.brandBadge).toBe("Archive Channel");
     expect(reread.overlay.insertScenePreset).toBe("minimal-chip");
     expect(reread.overlay.standbyScenePreset).toBe("standby-board");
