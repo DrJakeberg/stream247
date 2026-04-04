@@ -1412,7 +1412,7 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         crash_count_window, crash_loop_detected, last_error, last_stderr_sample, selection_reason_code, fallback_tier, override_mode,
         override_asset_id, override_until, skip_asset_id, skip_until, pending_action, pending_action_requested_at, message
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         transition_state = EXCLUDED.transition_state,
