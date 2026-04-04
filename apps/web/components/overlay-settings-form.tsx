@@ -22,13 +22,46 @@ type OverlayPreviewSeed = {
   queueTitles: string[];
 };
 
-export function OverlaySettingsForm(props: { overlay: OverlaySettingsRecord; preview: OverlayPreviewSeed }) {
+function overlaySignature(overlay: OverlaySettingsRecord): string {
+  return JSON.stringify({
+    enabled: overlay.enabled,
+    channelName: overlay.channelName,
+    headline: overlay.headline,
+    replayLabel: overlay.replayLabel,
+    brandBadge: overlay.brandBadge,
+    scenePreset: overlay.scenePreset,
+    accentColor: overlay.accentColor,
+    surfaceStyle: overlay.surfaceStyle,
+    panelAnchor: overlay.panelAnchor,
+    titleScale: overlay.titleScale,
+    showClock: overlay.showClock,
+    showNextItem: overlay.showNextItem,
+    showScheduleTeaser: overlay.showScheduleTeaser,
+    showCurrentCategory: overlay.showCurrentCategory,
+    showSourceLabel: overlay.showSourceLabel,
+    showQueuePreview: overlay.showQueuePreview,
+    queuePreviewCount: overlay.queuePreviewCount,
+    emergencyBanner: overlay.emergencyBanner,
+    tickerText: overlay.tickerText
+  });
+}
+
+export function OverlaySettingsForm(props: {
+  liveOverlay: OverlaySettingsRecord;
+  draftOverlay: OverlaySettingsRecord;
+  hasUnpublishedChanges: boolean;
+  basedOnUpdatedAt: string;
+  preview: OverlayPreviewSeed;
+}) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
   const [previewMode, setPreviewMode] = useState<OverlayQueueKind>("asset");
-  const [draft, setDraft] = useState<OverlaySettingsRecord>(props.overlay);
+  const [draft, setDraft] = useState<OverlaySettingsRecord>(props.draftOverlay);
   const router = useRouter();
+  const hasLocalChanges = overlaySignature(draft) !== overlaySignature(props.draftOverlay);
+  const canPublish = hasLocalChanges || props.hasUnpublishedChanges;
+  const canReset = hasLocalChanges || props.hasUnpublishedChanges;
 
   const setDraftField = <K extends keyof OverlaySettingsRecord>(key: K, value: OverlaySettingsRecord[K]) => {
     setDraft((current) => ({
@@ -73,12 +106,15 @@ export function OverlaySettingsForm(props: { overlay: OverlaySettingsRecord; pre
             body: JSON.stringify(draft)
           });
 
-          const payload = (await response.json()) as { message?: string };
+          const payload = (await response.json()) as { message?: string; draftOverlay?: OverlaySettingsRecord };
           if (!response.ok) {
             setError(payload.message ?? "Could not save overlay settings.");
             return;
           }
 
+          if (payload.draftOverlay) {
+            setDraft(payload.draftOverlay);
+          }
           setMessage(payload.message ?? "Overlay settings updated.");
           router.refresh();
         });
@@ -270,11 +306,91 @@ export function OverlaySettingsForm(props: { overlay: OverlaySettingsRecord; pre
         </div>
       </div>
 
+      <div className="scene-status-grid">
+        <div className="item">
+          <span className="label">Live scene</span>
+          <strong>{props.liveOverlay.scenePreset}</strong>
+          <div className="subtle">Published {props.liveOverlay.updatedAt || "never"}</div>
+        </div>
+        <div className="item">
+          <span className="label">Draft scene</span>
+          <strong>{draft.scenePreset}</strong>
+          <div className="subtle">Draft saved {props.draftOverlay.updatedAt || "not yet saved"}</div>
+        </div>
+        <div className="item">
+          <span className="label">Publish status</span>
+          <strong>{canPublish ? "Pending changes" : "Live and draft match"}</strong>
+          <div className="subtle">Draft is based on live scene updated at {props.basedOnUpdatedAt || "unknown"}.</div>
+        </div>
+      </div>
+
       {error ? <p className="danger">{error}</p> : null}
       {message ? <p className="subtle">{message}</p> : null}
-      <button className="button" disabled={isPending} type="submit">
-        {isPending ? "Saving..." : "Publish scene changes"}
-      </button>
+      <div className="inline-form">
+        <button className="button secondary" disabled={isPending || !hasLocalChanges} type="submit">
+          {isPending ? "Saving..." : "Save draft"}
+        </button>
+        <button
+          className="button"
+          disabled={isPending || !canPublish}
+          onClick={() => {
+            setError("");
+            setMessage("");
+            startTransition(async () => {
+              const response = await fetch("/api/overlay", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "publish", draft })
+              });
+
+              const payload = (await response.json()) as { message?: string; draftOverlay?: OverlaySettingsRecord };
+              if (!response.ok) {
+                setError(payload.message ?? "Could not publish scene changes.");
+                return;
+              }
+
+              if (payload.draftOverlay) {
+                setDraft(payload.draftOverlay);
+              }
+              setMessage(payload.message ?? "Scene changes published live.");
+              router.refresh();
+            });
+          }}
+          type="button"
+        >
+          {isPending ? "Publishing..." : "Publish live"}
+        </button>
+        <button
+          className="button secondary"
+          disabled={isPending || !canReset}
+          onClick={() => {
+            setError("");
+            setMessage("");
+            startTransition(async () => {
+              const response = await fetch("/api/overlay", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "reset" })
+              });
+
+              const payload = (await response.json()) as { message?: string; draftOverlay?: OverlaySettingsRecord };
+              if (!response.ok) {
+                setError(payload.message ?? "Could not reset the scene draft.");
+                return;
+              }
+
+              if (payload.draftOverlay) {
+                setDraft(payload.draftOverlay);
+              }
+              setMessage(payload.message ?? "Draft reset to the live scene.");
+              router.refresh();
+            });
+          }}
+          type="button"
+        >
+          {isPending ? "Resetting..." : "Reset to live"}
+        </button>
+      </div>
     </form>
   );
 }

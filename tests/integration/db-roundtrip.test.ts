@@ -4,8 +4,12 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   ensureDatabase,
+  publishOverlayDraftRecord,
   readAppState,
+  readOverlayStudioState,
   resetDatabaseConnectionsForTests,
+  resetOverlayDraftRecord,
+  saveOverlayDraftRecord,
   writeAppState
 } from "@stream247/db";
 
@@ -390,5 +394,55 @@ describe.sequential("database roundtrip", () => {
     expect(reread.playout.queuedAssetIds).toEqual(["asset_2", "asset_3"]);
     expect(reread.playout.queueItems[1]?.kind).toBe("insert");
     expect(reread.playout.queueItems[1]?.assetId).toBe("asset_3");
+  }, 60_000);
+
+  it("persists overlay drafts separately from the live scene and can publish/reset them", async () => {
+    await ensureDatabaseWithRetry();
+
+    const initialStudioState = await readOverlayStudioState();
+    expect(initialStudioState.hasUnpublishedChanges).toBe(false);
+
+    const savedDraftState = await saveOverlayDraftRecord(
+      {
+        ...initialStudioState.draftOverlay,
+        headline: "Draft Scene Headline",
+        tickerText: "Draft ticker",
+        updatedAt: "2026-04-04T11:00:00.000Z"
+      },
+      initialStudioState.liveOverlay.updatedAt
+    );
+
+    expect(savedDraftState.hasUnpublishedChanges).toBe(true);
+    expect(savedDraftState.liveOverlay.headline).not.toBe("Draft Scene Headline");
+    expect(savedDraftState.draftOverlay.headline).toBe("Draft Scene Headline");
+
+    const rereadDraftState = await readOverlayStudioState();
+    expect(rereadDraftState.hasUnpublishedChanges).toBe(true);
+    expect(rereadDraftState.draftOverlay.tickerText).toBe("Draft ticker");
+    expect(rereadDraftState.liveOverlay.tickerText).not.toBe("Draft ticker");
+
+    const publishedState = await publishOverlayDraftRecord({
+      ...rereadDraftState.draftOverlay,
+      updatedAt: "2026-04-04T11:05:00.000Z"
+    });
+    expect(publishedState.hasUnpublishedChanges).toBe(false);
+    expect(publishedState.liveOverlay.headline).toBe("Draft Scene Headline");
+
+    const rereadPublishedState = await readOverlayStudioState();
+    expect(rereadPublishedState.liveOverlay.headline).toBe("Draft Scene Headline");
+    expect(rereadPublishedState.hasUnpublishedChanges).toBe(false);
+
+    await saveOverlayDraftRecord(
+      {
+        ...rereadPublishedState.draftOverlay,
+        headline: "Second Draft",
+        updatedAt: "2026-04-04T11:10:00.000Z"
+      },
+      rereadPublishedState.liveOverlay.updatedAt
+    );
+    const resetState = await resetOverlayDraftRecord();
+    expect(resetState.hasUnpublishedChanges).toBe(false);
+    expect(resetState.draftOverlay.headline).toBe(resetState.liveOverlay.headline);
+    expect(resetState.draftOverlay.headline).toBe("Draft Scene Headline");
   }, 60_000);
 });

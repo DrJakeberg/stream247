@@ -50,11 +50,13 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 - encrypted-at-rest managed secret storage for Twitch and alert credentials
 - viewer-facing pages with:
   - public schedule page
-  - browser-source overlay page with admin-managed branding and replay labeling
+  - browser-source overlay page with live current/next updates
+  - overlay studio with draft-save, preview, and publish-live scene controls
+  - admin-managed replay branding, scene presets, and ticker/badge styling
 
 ## What Is Not Done Yet
 
-- richer multi-scene overlay composition inside the playout runtime
+- richer multi-scene composition inside the playout runtime beyond the current scene-presets + draft/publish workflow
 - more advanced playout transitions and scene-aware switchovers
 - deeper analytics views and richer incident correlation
 - duplicate flows and inline override lanes in the schedule editor
