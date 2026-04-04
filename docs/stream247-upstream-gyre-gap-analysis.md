@@ -138,6 +138,7 @@ The following product gaps are now addressed:
 - scene designer controls now support hiding layers in addition to reordering them
 - the schedule editor can now duplicate existing blocks onto multiple additional weekdays
 - the schedule editor can now clone a full programming day onto additional empty weekdays
+- the schedule editor now has search, pool/show filters, and conflict-only focus inside the programming workspace
 - source creation and editing now use guided connector templates instead of only raw connector/url fields
 - operators can now upload local media directly from the admin UI into the shared library path
 - the broadcast runtime now distinguishes between primary and backup RTMP destinations, marks failed outputs with a cooldown window, and can fail over to the next healthy target

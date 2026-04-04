@@ -1,13 +1,11 @@
 export const dynamic = "force-dynamic";
 
-import { findScheduleConflicts, formatMinuteOfDay } from "@stream247/core";
+import { findScheduleConflicts } from "@stream247/core";
 import { Panel } from "@/components/panel";
 import { ProgrammingTemplateForm } from "@/components/programming-template-form";
-import { ScheduleBlockDeleteForm } from "@/components/schedule-block-delete-form";
-import { ScheduleBlockDuplicateForm } from "@/components/schedule-block-duplicate-form";
+import { ScheduleEditorWorkspace } from "@/components/schedule-editor-workspace";
 import { ScheduleBlockForm } from "@/components/schedule-block-form";
 import { ScheduleDayCloneForm } from "@/components/schedule-day-clone-form";
-import { ScheduleTimeline } from "@/components/schedule-timeline";
 import { ScheduleWeekOverview } from "@/components/schedule-week-overview";
 import { ShowProfileDeleteForm } from "@/components/show-profile-delete-form";
 import { ShowProfileForm } from "@/components/show-profile-form";
@@ -108,39 +106,14 @@ export default async function SchedulePage() {
         </Panel>
       </section>
 
-      <Panel title="Existing blocks" eyebrow="Editor">
-        <ScheduleTimeline blocks={state.scheduleBlocks} conflicts={[...conflicts]} showProfiles={shows} timeZone={timeZone} />
-        <div className="list">
-          {state.scheduleBlocks
-            .slice()
-            .sort((left, right) => left.startMinuteOfDay - right.startMinuteOfDay)
-            .map((block) => {
-              const show = shows.find((entry) => entry.id === block.showId);
-
-              return (
-                <div className="item" key={block.id}>
-                  <strong>{block.title}</strong>
-                  <div className="subtle">
-                    {dayLabels[block.dayOfWeek]} · {formatMinuteOfDay(block.startMinuteOfDay)} · {block.durationMinutes} minutes · {block.sourceName}
-                  </div>
-                  <div className="subtle">
-                    {block.categoryName}
-                    {show ? ` · Show: ${show.name}` : ""}
-                    {conflicts.has(block.id) ? " · Conflict detected" : ""}
-                  </div>
-                  <div style={{ marginTop: 12 }}>
-                    <ScheduleBlockForm block={block} pools={poolOptions} shows={shows} />
-                  </div>
-                  <div style={{ marginTop: 8 }}>
-                    <ScheduleBlockDuplicateForm block={block} />
-                  </div>
-                  <div style={{ marginTop: 8 }}>
-                    <ScheduleBlockDeleteForm id={block.id} />
-                  </div>
-                </div>
-              );
-            })}
-        </div>
+      <Panel title="Programming editor" eyebrow="Editor">
+        <ScheduleEditorWorkspace
+          blocks={state.scheduleBlocks}
+          conflicts={[...conflicts]}
+          pools={poolOptions}
+          showProfiles={shows}
+          timeZone={timeZone}
+        />
       </Panel>
     </>
   );

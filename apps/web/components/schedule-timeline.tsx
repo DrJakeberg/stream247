@@ -15,16 +15,20 @@ type Props = {
   conflicts: string[];
   showProfiles: ShowProfileRecord[];
   timeZone: string;
+  activeDay?: number;
+  onActiveDayChange?: (day: number) => void;
 };
 
-export function ScheduleTimeline({ blocks, conflicts, showProfiles, timeZone }: Props) {
+export function ScheduleTimeline({ blocks, conflicts, showProfiles, timeZone, activeDay, onActiveDayChange }: Props) {
   const [draggedId, setDraggedId] = useState("");
-  const [activeDay, setActiveDay] = useState(1);
+  const [internalActiveDay, setInternalActiveDay] = useState(1);
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const resizingRef = useRef<{ block: ScheduleBlock; startY: number; startDuration: number } | null>(null);
   const conflictSet = new Set(conflicts);
   const router = useRouter();
+  const resolvedActiveDay = activeDay ?? internalActiveDay;
+  const handleActiveDayChange = onActiveDayChange ?? setInternalActiveDay;
 
   async function saveBlock(block: ScheduleBlock, updates: Partial<ScheduleBlock>) {
     setError("");
@@ -92,7 +96,7 @@ export function ScheduleTimeline({ blocks, conflicts, showProfiles, timeZone }: 
   }
 
   const visibleBlocks = blocks
-    .filter((block) => block.dayOfWeek === activeDay)
+    .filter((block) => block.dayOfWeek === resolvedActiveDay)
     .slice()
     .sort((left, right) => left.startMinuteOfDay - right.startMinuteOfDay);
 
@@ -105,9 +109,9 @@ export function ScheduleTimeline({ blocks, conflicts, showProfiles, timeZone }: 
       <div className="toggle-row" style={{ flexWrap: "wrap", gap: 8 }}>
         {dayLabels.map((label, index) => (
           <button
-            className={activeDay === index ? "button" : "button secondary"}
+            className={resolvedActiveDay === index ? "button" : "button secondary"}
             key={label}
-            onClick={() => setActiveDay(index)}
+            onClick={() => handleActiveDayChange(index)}
             type="button"
           >
             {label}
@@ -132,7 +136,7 @@ export function ScheduleTimeline({ blocks, conflicts, showProfiles, timeZone }: 
                   const block = blocks.find((entry) => entry.id === blockId);
                   setDraggedId("");
 
-                  if (!block || block.dayOfWeek !== activeDay) {
+                  if (!block || block.dayOfWeek !== resolvedActiveDay) {
                     return;
                   }
 
