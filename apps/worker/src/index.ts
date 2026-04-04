@@ -40,8 +40,18 @@ const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
 const PLAYOUT_RECONNECT_INTERVAL_MS = Number(process.env.PLAYOUT_RECONNECT_HOURS || "24") * 60 * 60 * 1000;
 const PLAYOUT_RECONNECT_WINDOW_MS = Number(process.env.PLAYOUT_RECONNECT_SECONDS || "20") * 1000;
+const NEXT_ASSET_PROBE_READY_TTL_MS = 5 * 60_000;
+const NEXT_ASSET_PROBE_FAILED_TTL_MS = 60_000;
 const standbySlatePath = "/tmp/stream247-standby.txt";
 const onAirOverlayPath = "/tmp/stream247-on-air.txt";
+
+type QueueProbeCacheEntry = {
+  status: "ready" | "failed";
+  checkedAt: number;
+  error: string;
+};
+
+const queueProbeCache = new Map<string, QueueProbeCacheEntry>();
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -1119,6 +1129,81 @@ function getPoolPlaybackQueue(state: AppState, poolId: string, skippedAssetId: s
   return queue;
 }
 
+function getFreshProbeCache(assetId: string): QueueProbeCacheEntry | null {
+  const entry = queueProbeCache.get(assetId);
+  if (!entry) {
+    return null;
+  }
+
+  const ttl = entry.status === "ready" ? NEXT_ASSET_PROBE_READY_TTL_MS : NEXT_ASSET_PROBE_FAILED_TTL_MS;
+  if (Date.now() - entry.checkedAt > ttl) {
+    queueProbeCache.delete(assetId);
+    return null;
+  }
+
+  return entry;
+}
+
+async function getPlayableQueuedAssets(queueAssets: AssetRecord[]): Promise<{
+  playableQueue: AssetRecord[];
+  prefetchedAsset: AssetRecord | null;
+  prefetchStatus: "" | "ready" | "failed";
+  prefetchError: string;
+}> {
+  const playableQueue: AssetRecord[] = [];
+  let prefetchedAsset: AssetRecord | null = null;
+  let prefetchStatus: "" | "ready" | "failed" = "";
+  let prefetchError = "";
+
+  for (const asset of queueAssets) {
+    const cached = getFreshProbeCache(asset.id);
+    if (cached?.status === "ready") {
+      prefetchedAsset = prefetchedAsset ?? asset;
+      prefetchStatus = "ready";
+      playableQueue.push(asset);
+      continue;
+    }
+
+    if (cached?.status === "failed") {
+      if (!prefetchError) {
+        prefetchStatus = "failed";
+        prefetchError = cached.error;
+      }
+      continue;
+    }
+
+    try {
+      await resolvePlayableInput(asset.path);
+      queueProbeCache.set(asset.id, {
+        status: "ready",
+        checkedAt: Date.now(),
+        error: ""
+      });
+      prefetchedAsset = prefetchedAsset ?? asset;
+      prefetchStatus = "ready";
+      playableQueue.push(asset);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown queue prefetch error.";
+      queueProbeCache.set(asset.id, {
+        status: "failed",
+        checkedAt: Date.now(),
+        error: message
+      });
+      if (!prefetchError) {
+        prefetchStatus = "failed";
+        prefetchError = message;
+      }
+    }
+  }
+
+  return {
+    playableQueue,
+    prefetchedAsset,
+    prefetchStatus,
+    prefetchError
+  };
+}
+
 type SelectionResult = {
   asset: AssetRecord | null;
   reason: string;
@@ -1298,6 +1383,7 @@ async function startOrSwitchPlayout(args: {
           : args.lifecycleStatus === "recovering"
             ? "recovering"
             : "starting",
+    transitionState: switching ? "switching" : "idle",
     currentAssetId: args.asset?.id ?? "",
     currentTitle: args.asset?.title ?? "Replay standby",
     desiredAssetId: args.asset?.id ?? "",
@@ -1377,6 +1463,7 @@ async function startOrSwitchPlayout(args: {
           : playout.crashCountWindow + 1,
       crashLoopDetected: !wasPlanned && code !== 0 && playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD,
       lastError: wasPlanned || code === 0 ? playout.lastError : `FFmpeg exited with code ${String(code)}.`,
+      transitionState: "idle",
       selectionReasonCode:
         wasPlanned
           ? playout.selectionReasonCode
@@ -1594,10 +1681,23 @@ async function runPlayoutCycle(): Promise<void> {
 
   const restartRequested = Boolean(state.playout.restartRequestedAt);
   const currentScheduleItem = getCurrentScheduleItem(state);
-  const queueAssets =
+  const rawQueueAssets =
     selection.asset && currentScheduleItem?.poolId && selection.reasonCode === "scheduled_match"
       ? getPoolPlaybackQueue(state, currentScheduleItem.poolId, isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "", selection.asset.id)
       : [];
+  const { playableQueue, prefetchedAsset, prefetchStatus, prefetchError } = await getPlayableQueuedAssets(rawQueueAssets);
+
+  if (prefetchStatus === "failed" && prefetchError) {
+    await upsertIncident({
+      scope: "playout",
+      severity: "warning",
+      title: "Next queued asset probe failed",
+      message: prefetchError,
+      fingerprint: "playout.prefetch.failed"
+    });
+  } else {
+    await resolveIncident("playout.prefetch.failed", "Next queued asset probe succeeded.");
+  }
 
   if (restartRequested) {
     await stopPlayoutProcess("restart-requested");
@@ -1635,6 +1735,7 @@ async function runPlayoutCycle(): Promise<void> {
       await updatePlayoutRuntime((playout) => ({
         ...playout,
         status: "degraded",
+        transitionState: "idle",
         heartbeatAt: new Date().toISOString(),
         lastError: message,
         selectionReasonCode: "resolve_failed",
@@ -1642,6 +1743,11 @@ async function runPlayoutCycle(): Promise<void> {
         nextAssetId: "",
         nextTitle: "",
         queuedAssetIds: [],
+        prefetchedAssetId: "",
+        prefetchedTitle: "",
+        prefetchedAt: "",
+        prefetchStatus: "",
+        prefetchError: "",
         message
       }));
       return;
@@ -1670,12 +1776,18 @@ async function runPlayoutCycle(): Promise<void> {
       await updatePlayoutRuntime((playout) => ({
         ...playout,
         status: "degraded",
+        transitionState: "idle",
         heartbeatAt: new Date().toISOString(),
         lastError: message,
         selectionReasonCode: "resolve_failed",
         nextAssetId: "",
         nextTitle: "",
         queuedAssetIds: [],
+        prefetchedAssetId: "",
+        prefetchedTitle: "",
+        prefetchedAt: "",
+        prefetchStatus: "",
+        prefetchError: "",
         message
       }));
       return;
@@ -1694,12 +1806,25 @@ async function runPlayoutCycle(): Promise<void> {
           : selection.lifecycleStatus === "reconnecting"
             ? "reconnecting"
             : "running",
+    transitionState:
+      selection.lifecycleStatus === "standby" || selection.lifecycleStatus === "reconnecting"
+        ? "idle"
+        : prefetchedAsset
+          ? "ready"
+          : rawQueueAssets.length > 0
+            ? "prefetching"
+            : "idle",
     currentAssetId: selection.asset?.id ?? "",
     currentTitle: selection.asset?.title ?? "Replay standby",
     desiredAssetId: selection.asset?.id ?? "",
-    nextAssetId: queueAssets[0]?.id ?? "",
-    nextTitle: queueAssets[0]?.title ?? "",
-    queuedAssetIds: queueAssets.map((asset) => asset.id),
+    nextAssetId: prefetchedAsset?.id ?? "",
+    nextTitle: prefetchedAsset?.title ?? "",
+    queuedAssetIds: playableQueue.map((asset) => asset.id),
+    prefetchedAssetId: prefetchedAsset?.id ?? "",
+    prefetchedTitle: prefetchedAsset?.title ?? "",
+    prefetchedAt: prefetchedAsset ? new Date().toISOString() : "",
+    prefetchStatus,
+    prefetchError,
     currentDestinationId: destination.id,
     restartRequestedAt: selection.reasonCode === "scheduled_reconnect" ? playout.restartRequestedAt : "",
     selectionReasonCode: selection.reasonCode,

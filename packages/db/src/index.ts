@@ -206,12 +206,18 @@ export type ManagedConfigRecord = {
 
 export type PlayoutRuntimeRecord = {
   status: "idle" | "starting" | "running" | "switching" | "degraded" | "recovering" | "failed" | "standby" | "reconnecting";
+  transitionState: "idle" | "prefetching" | "ready" | "switching";
   currentAssetId: string;
   currentTitle: string;
   desiredAssetId: string;
   nextAssetId: string;
   nextTitle: string;
   queuedAssetIds: string[];
+  prefetchedAssetId: string;
+  prefetchedTitle: string;
+  prefetchedAt: string;
+  prefetchStatus: "" | "ready" | "failed";
+  prefetchError: string;
   currentDestinationId: string;
   restartRequestedAt: string;
   heartbeatAt: string;
@@ -426,12 +432,18 @@ function defaultState(): AppState {
     auditEvents: [],
     playout: {
       status: "idle",
+      transitionState: "idle",
       currentAssetId: "",
       currentTitle: "",
       desiredAssetId: "",
       nextAssetId: "",
       nextTitle: "",
       queuedAssetIds: [],
+      prefetchedAssetId: "",
+      prefetchedTitle: "",
+      prefetchedAt: "",
+      prefetchStatus: "",
+      prefetchError: "",
       currentDestinationId: "destination-primary",
       restartRequestedAt: "",
       heartbeatAt: "",
@@ -846,12 +858,18 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE TABLE IF NOT EXISTS playout_runtime (
       singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'idle',
+      transition_state TEXT NOT NULL DEFAULT 'idle',
       current_asset_id TEXT NOT NULL DEFAULT '',
       current_title TEXT NOT NULL DEFAULT '',
       desired_asset_id TEXT NOT NULL DEFAULT '',
       next_asset_id TEXT NOT NULL DEFAULT '',
       next_title TEXT NOT NULL DEFAULT '',
       queued_asset_ids TEXT NOT NULL DEFAULT '[]',
+      prefetched_asset_id TEXT NOT NULL DEFAULT '',
+      prefetched_title TEXT NOT NULL DEFAULT '',
+      prefetched_at TEXT NOT NULL DEFAULT '',
+      prefetch_status TEXT NOT NULL DEFAULT '',
+      prefetch_error TEXT NOT NULL DEFAULT '',
       current_destination_id TEXT NOT NULL DEFAULT '',
       restart_requested_at TEXT NOT NULL DEFAULT '',
       heartbeat_at TEXT NOT NULL DEFAULT '',
@@ -915,9 +933,15 @@ async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS duration_seconds INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS published_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_state TEXT NOT NULL DEFAULT 'idle';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS next_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS next_title TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS queued_asset_ids TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS prefetched_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS prefetched_title TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS prefetched_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS prefetch_status TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS prefetch_error TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS current_destination_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS restart_requested_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS process_pid INTEGER NOT NULL DEFAULT 0;
@@ -1381,20 +1405,27 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
   await client.query(
     `
       INSERT INTO playout_runtime (
-        singleton_id, status, current_asset_id, current_title, desired_asset_id, next_asset_id, next_title, queued_asset_ids, current_destination_id, restart_requested_at,
+        singleton_id, status, transition_state, current_asset_id, current_title, desired_asset_id, next_asset_id, next_title, queued_asset_ids,
+        prefetched_asset_id, prefetched_title, prefetched_at, prefetch_status, prefetch_error, current_destination_id, restart_requested_at,
         heartbeat_at, process_pid, process_started_at, last_successful_start_at, last_successful_asset_id, last_exit_code, restart_count,
         crash_count_window, crash_loop_detected, last_error, last_stderr_sample, selection_reason_code, fallback_tier, override_mode,
         override_asset_id, override_until, skip_asset_id, skip_until, pending_action, pending_action_requested_at, message
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
+        transition_state = EXCLUDED.transition_state,
         current_asset_id = EXCLUDED.current_asset_id,
         current_title = EXCLUDED.current_title,
         desired_asset_id = EXCLUDED.desired_asset_id,
         next_asset_id = EXCLUDED.next_asset_id,
         next_title = EXCLUDED.next_title,
         queued_asset_ids = EXCLUDED.queued_asset_ids,
+        prefetched_asset_id = EXCLUDED.prefetched_asset_id,
+        prefetched_title = EXCLUDED.prefetched_title,
+        prefetched_at = EXCLUDED.prefetched_at,
+        prefetch_status = EXCLUDED.prefetch_status,
+        prefetch_error = EXCLUDED.prefetch_error,
         current_destination_id = EXCLUDED.current_destination_id,
         restart_requested_at = EXCLUDED.restart_requested_at,
         heartbeat_at = EXCLUDED.heartbeat_at,
@@ -1421,12 +1452,18 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
     `,
     [
       playout.status,
+      playout.transitionState,
       playout.currentAssetId,
       playout.currentTitle,
       playout.desiredAssetId,
       playout.nextAssetId,
       playout.nextTitle,
       JSON.stringify(playout.queuedAssetIds ?? []),
+      playout.prefetchedAssetId,
+      playout.prefetchedTitle,
+      playout.prefetchedAt,
+      playout.prefetchStatus,
+      playout.prefetchError,
       playout.currentDestinationId,
       playout.restartRequestedAt,
       playout.heartbeatAt,
@@ -1630,12 +1667,18 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   );
   const playoutResult = await client.query<{
     status: PlayoutRuntimeRecord["status"];
+    transition_state: PlayoutRuntimeRecord["transitionState"];
     current_asset_id: string;
     current_title: string;
     desired_asset_id: string;
     next_asset_id: string;
     next_title: string;
     queued_asset_ids: string;
+    prefetched_asset_id: string;
+    prefetched_title: string;
+    prefetched_at: string;
+    prefetch_status: PlayoutRuntimeRecord["prefetchStatus"];
+    prefetch_error: string;
     current_destination_id: string;
     restart_requested_at: string;
     heartbeat_at: string;
@@ -1862,12 +1905,18 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     playout: playoutRow
       ? {
           status: playoutRow.status,
+          transitionState: playoutRow.transition_state,
           currentAssetId: playoutRow.current_asset_id,
           currentTitle: playoutRow.current_title,
           desiredAssetId: playoutRow.desired_asset_id,
           nextAssetId: playoutRow.next_asset_id,
           nextTitle: playoutRow.next_title,
           queuedAssetIds: JSON.parse(playoutRow.queued_asset_ids || "[]") as string[],
+          prefetchedAssetId: playoutRow.prefetched_asset_id,
+          prefetchedTitle: playoutRow.prefetched_title,
+          prefetchedAt: playoutRow.prefetched_at,
+          prefetchStatus: playoutRow.prefetch_status,
+          prefetchError: playoutRow.prefetch_error,
           currentDestinationId: playoutRow.current_destination_id,
           restartRequestedAt: playoutRow.restart_requested_at,
           heartbeatAt: playoutRow.heartbeat_at,

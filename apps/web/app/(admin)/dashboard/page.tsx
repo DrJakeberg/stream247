@@ -145,6 +145,10 @@ export default async function DashboardPage() {
                 {currentAsset?.title ?? state.playout.currentTitle ?? "none"}
               </div>
               <div className="subtle">
+                Transition {state.playout.transitionState} · next probe {state.playout.prefetchStatus || "idle"} · next{" "}
+                {state.playout.prefetchedTitle || state.playout.nextTitle || "none"}
+              </div>
+              <div className="subtle">
                 Last stderr: {state.playout.lastStderrSample || "No FFmpeg stderr captured yet."}
               </div>
               <div className="subtle">

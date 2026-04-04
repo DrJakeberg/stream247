@@ -331,6 +331,7 @@ Notes:
 - scheduled daily reconnect window with controlled standby mode
 - destination readiness state
 - unified broadcast action API for restart, refresh, queue rebuild, fallback, skip, resume, and pin-on-air actions
+- playout transition state with next-asset probe / prefetch visibility
 - operator restart control
 - operator refresh-overlays control
 - operator rebuild-queue control

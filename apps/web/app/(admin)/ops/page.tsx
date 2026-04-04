@@ -102,12 +102,17 @@ export default async function OpsPage(props: { searchParams: SearchParams }) {
                 Status {state.playout.status} · PID {state.playout.processPid || "not running"} · restarts {state.playout.restartCount}
               </div>
               <div className="subtle">
+                Transition {state.playout.transitionState} · prefetch {state.playout.prefetchStatus || "idle"} · last probe{" "}
+                {state.playout.prefetchedAt || "never"}
+              </div>
+              <div className="subtle">
                 Current asset {state.playout.currentTitle || "none"} · desired asset {state.playout.desiredAssetId || "none"}
               </div>
               <div className="subtle">
                 Next asset {state.playout.nextTitle || "none"} · queue{" "}
                 {queuedAssets.length > 0 ? queuedAssets.slice(0, 4).map((asset) => asset.title).join(" → ") : "empty"}
               </div>
+              {state.playout.prefetchError ? <div className="subtle">Prefetch error: {state.playout.prefetchError}</div> : null}
             </div>
             <div className="item">
               <strong>Operator control</strong>
