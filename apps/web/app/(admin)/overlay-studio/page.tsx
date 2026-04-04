@@ -15,14 +15,24 @@ export default async function OverlayStudioPage() {
       <Panel title="Overlay settings" eyebrow="Overlay">
         <p className="subtle">
           Use <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> as a browser source in OBS
-          or another scene tool. The overlay stays separate from the FFmpeg output so operators can toggle it without
-          changing the encoded stream stack.
+          or another scene tool. The same scene settings also drive the on-air replay text overlay inside the FFmpeg
+          playout path, so this page is now the first step toward a unified scene system.
         </p>
         <OverlaySettingsForm overlay={state.overlay} />
       </Panel>
 
       <Panel title="Current overlay payload" eyebrow="Preview">
         <div className="list">
+          <div className="item">
+            <strong>Active scene preset</strong>
+            <div className="subtle">
+              {state.overlay.scenePreset} · current category {state.overlay.showCurrentCategory ? "shown" : "hidden"} · source label{" "}
+              {state.overlay.showSourceLabel ? "shown" : "hidden"}
+            </div>
+            <div className="subtle">
+              Queue preview {state.overlay.showQueuePreview ? `shown (${state.overlay.queuePreviewCount})` : "hidden"}
+            </div>
+          </div>
           <div className="item">
             <strong>Current block</strong>
             <div className="subtle">

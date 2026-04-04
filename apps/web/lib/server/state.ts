@@ -4,6 +4,7 @@ import {
   describePresenceStatus,
   getCurrentScheduleMoment,
   isCurrentScheduleTime,
+  normalizeOverlayScenePreset,
   isLikelyTwitchChannelUrl,
   isLikelyTwitchVodUrl,
   isLikelyYouTubeChannelUrl,
@@ -65,6 +66,16 @@ import {
   type OverlaySettingsRecord,
   type ManagedConfigRecord
 } from "@stream247/db";
+import type {
+  BroadcastSnapshot,
+  LiveAssetSummary,
+  LiveDestinationSummary,
+  LiveIncidentSummary,
+  LiveOverlaySummary,
+  LivePlayoutSummary,
+  LiveScheduleSummary,
+  PublicChannelSnapshot
+} from "@/lib/live-broadcast";
 
 export type {
   AppState,
@@ -504,6 +515,185 @@ export function getPlayoutQueueAssets(state: AppState) {
     })
     .map((id) => state.assets.find((asset) => asset.id === id))
     .filter((asset): asset is AssetRecord => Boolean(asset));
+}
+
+function summarizeAsset(state: AppState, assetId: string): LiveAssetSummary | null {
+  const asset = state.assets.find((entry) => entry.id === assetId) ?? null;
+  if (!asset) {
+    return null;
+  }
+
+  const source = state.sources.find((entry) => entry.id === asset.sourceId) ?? null;
+  return {
+    id: asset.id,
+    title: asset.title,
+    status: asset.status,
+    sourceId: asset.sourceId,
+    sourceName: source?.name || asset.sourceId,
+    categoryName: asset.categoryName || "",
+    durationSeconds: asset.durationSeconds || 0,
+    publishedAt: asset.publishedAt || "",
+    externalId: asset.externalId || "",
+    isGlobalFallback: asset.isGlobalFallback
+  };
+}
+
+function summarizeDestination(state: AppState): LiveDestinationSummary | null {
+  const destination =
+    state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ?? state.destinations[0] ?? null;
+  if (!destination) {
+    return null;
+  }
+
+  return {
+    id: destination.id,
+    name: destination.name,
+    status: destination.status,
+    notes: destination.notes,
+    rtmpUrl: destination.rtmpUrl,
+    streamKeyPresent: destination.streamKeyPresent
+  };
+}
+
+function summarizeScheduleItem(
+  item: ReturnType<typeof getCurrentScheduleItem> | ReturnType<typeof getNextScheduleItem>
+): LiveScheduleSummary | null {
+  if (!item) {
+    return null;
+  }
+
+  return {
+    id: item.blockId,
+    key: item.key,
+    title: item.title,
+    startTime: item.startTime,
+    endTime: item.endTime,
+    categoryName: item.categoryName,
+    sourceName: item.sourceName,
+    reason: "Scheduled occurrence",
+    dayOfWeek: item.dayOfWeek
+  };
+}
+
+function summarizeOpenIncidents(state: AppState, limit = 5): LiveIncidentSummary[] {
+  return [...state.incidents]
+    .filter((incident) => incident.status === "open")
+    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
+    .slice(0, limit)
+    .map((incident) => ({
+      id: incident.id,
+      title: incident.title,
+      message: incident.message,
+      severity: incident.severity,
+      status: incident.status,
+      scope: incident.scope,
+      fingerprint: incident.fingerprint,
+      createdAt: incident.createdAt,
+      acknowledgedAt: incident.acknowledgedAt,
+      resolvedAt: incident.resolvedAt
+    }));
+}
+
+function summarizeOverlay(overlay: OverlaySettingsRecord): LiveOverlaySummary {
+  return {
+    enabled: overlay.enabled,
+    channelName: overlay.channelName,
+    headline: overlay.headline,
+    scenePreset: normalizeOverlayScenePreset(overlay.scenePreset),
+    accentColor: overlay.accentColor,
+    showClock: overlay.showClock,
+    showNextItem: overlay.showNextItem,
+    showScheduleTeaser: overlay.showScheduleTeaser,
+    showCurrentCategory: overlay.showCurrentCategory,
+    showSourceLabel: overlay.showSourceLabel,
+    showQueuePreview: overlay.showQueuePreview,
+    queuePreviewCount: overlay.queuePreviewCount,
+    emergencyBanner: overlay.emergencyBanner,
+    replayLabel: overlay.replayLabel,
+    updatedAt: overlay.updatedAt
+  };
+}
+
+function summarizePlayout(playout: PlayoutRuntimeRecord): LivePlayoutSummary {
+  return {
+    status: playout.status,
+    message: playout.message,
+    transitionState: playout.transitionState,
+    heartbeatAt: playout.heartbeatAt,
+    processPid: playout.processPid,
+    restartCount: playout.restartCount,
+    crashLoopDetected: playout.crashLoopDetected,
+    crashCountWindow: playout.crashCountWindow,
+    selectionReasonCode: playout.selectionReasonCode,
+    fallbackTier: playout.fallbackTier,
+    overrideMode: playout.overrideMode,
+    overrideAssetId: playout.overrideAssetId,
+    overrideUntil: playout.overrideUntil,
+    skipAssetId: playout.skipAssetId,
+    skipUntil: playout.skipUntil,
+    currentAssetId: playout.currentAssetId,
+    currentTitle: playout.currentTitle,
+    desiredAssetId: playout.desiredAssetId,
+    nextAssetId: playout.nextAssetId,
+    nextTitle: playout.nextTitle,
+    queuedAssetIds: playout.queuedAssetIds,
+    prefetchedAssetId: playout.prefetchedAssetId,
+    prefetchedTitle: playout.prefetchedTitle,
+    prefetchedAt: playout.prefetchedAt,
+    prefetchStatus: playout.prefetchStatus,
+    prefetchError: playout.prefetchError,
+    pendingAction: playout.pendingAction,
+    pendingActionRequestedAt: playout.pendingActionRequestedAt,
+    restartRequestedAt: playout.restartRequestedAt,
+    lastStderrSample: playout.lastStderrSample,
+    currentDestinationId: playout.currentDestinationId
+  };
+}
+
+export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
+  const currentScheduleItem = getCurrentScheduleItem(state);
+  const nextScheduleItem = getNextScheduleItem(state);
+  const queuedAssets = getPlayoutQueueAssets(state);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    timeZone: getWorkspaceTimeZone(),
+    workerHealth: getWorkerHealth(state),
+    playout: summarizePlayout(state.playout),
+    overlay: summarizeOverlay(state.overlay),
+    destination: summarizeDestination(state),
+    currentAsset: summarizeAsset(state, state.playout.currentAssetId),
+    desiredAsset: summarizeAsset(state, state.playout.desiredAssetId),
+    nextAsset: summarizeAsset(state, state.playout.nextAssetId),
+    prefetchedAsset: summarizeAsset(state, state.playout.prefetchedAssetId),
+    overrideAsset: summarizeAsset(state, state.playout.overrideAssetId),
+    queuedAssets: queuedAssets.map((asset) => summarizeAsset(state, asset.id)).filter((asset): asset is LiveAssetSummary => Boolean(asset)),
+    currentScheduleItem: summarizeScheduleItem(currentScheduleItem),
+    nextScheduleItem: summarizeScheduleItem(nextScheduleItem),
+    openIncidents: summarizeOpenIncidents(state)
+  };
+}
+
+export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot {
+  const snapshot = getBroadcastSnapshot(state);
+
+  return {
+    generatedAt: snapshot.generatedAt,
+    timeZone: snapshot.timeZone,
+    overlay: snapshot.overlay,
+    playout: {
+      status: snapshot.playout.status,
+      message: snapshot.playout.message,
+      currentTitle: snapshot.playout.currentTitle,
+      transitionState: snapshot.playout.transitionState,
+      overrideMode: snapshot.playout.overrideMode
+    },
+    currentAsset: snapshot.currentAsset,
+    nextAsset: snapshot.nextAsset,
+    queuedAssets: snapshot.queuedAssets,
+    currentScheduleItem: snapshot.currentScheduleItem,
+    nextScheduleItem: snapshot.nextScheduleItem
+  };
 }
 
 export function getSourceAuditEvents(state: AppState, sourceId: string, limit = 12): AuditEvent[] {

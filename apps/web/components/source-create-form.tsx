@@ -1,11 +1,13 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 export function SourceCreateForm() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   return (
     <form
@@ -34,7 +36,7 @@ export function SourceCreateForm() {
           }
 
           setMessage(payload.message ?? "Source saved.");
-          window.location.reload();
+          router.refresh();
         });
       }}
     >
@@ -45,6 +47,7 @@ export function SourceCreateForm() {
       <label>
         <span className="label">Connector type</span>
         <select defaultValue="direct-media" name="connectorKind">
+          <option value="local-library">Local media library</option>
           <option value="direct-media">Direct media URL</option>
           <option value="youtube-playlist">YouTube playlist</option>
           <option value="youtube-channel">YouTube channel</option>

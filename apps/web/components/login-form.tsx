@@ -1,10 +1,12 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 export function LoginForm() {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   return (
     <form
@@ -30,7 +32,7 @@ export function LoginForm() {
             return;
           }
 
-          window.location.href = "/dashboard";
+          router.replace("/broadcast");
         });
       }}
     >
@@ -49,4 +51,3 @@ export function LoginForm() {
     </form>
   );
 }
-

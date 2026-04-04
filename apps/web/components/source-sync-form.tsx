@@ -1,11 +1,13 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 export function SourceSyncForm(props: { sourceId: string; enabled: boolean }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   async function requestSync() {
     const response = await fetch("/api/sources/sync", {
@@ -21,7 +23,7 @@ export function SourceSyncForm(props: { sourceId: string; enabled: boolean }) {
     }
 
     setMessage(payload.message ?? "Source sync queued.");
-    window.location.reload();
+    router.refresh();
   }
 
   return (

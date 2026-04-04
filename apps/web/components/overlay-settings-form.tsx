@@ -1,5 +1,7 @@
 "use client";
 
+import { OVERLAY_SCENE_PRESETS } from "@stream247/core";
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { OverlaySettingsRecord } from "@/lib/server/state";
 
@@ -7,6 +9,8 @@ export function OverlaySettingsForm(props: { overlay: OverlaySettingsRecord }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [scenePreset, setScenePreset] = useState(props.overlay.scenePreset);
+  const router = useRouter();
 
   return (
     <form
@@ -25,10 +29,15 @@ export function OverlaySettingsForm(props: { overlay: OverlaySettingsRecord }) {
               enabled: formData.get("enabled") === "on",
               channelName: String(formData.get("channelName") || ""),
               headline: String(formData.get("headline") || ""),
+              scenePreset: String(formData.get("scenePreset") || props.overlay.scenePreset),
               accentColor: String(formData.get("accentColor") || ""),
               showClock: formData.get("showClock") === "on",
               showNextItem: formData.get("showNextItem") === "on",
               showScheduleTeaser: formData.get("showScheduleTeaser") === "on",
+              showCurrentCategory: formData.get("showCurrentCategory") === "on",
+              showSourceLabel: formData.get("showSourceLabel") === "on",
+              showQueuePreview: formData.get("showQueuePreview") === "on",
+              queuePreviewCount: Number(formData.get("queuePreviewCount") || props.overlay.queuePreviewCount || 3),
               emergencyBanner: String(formData.get("emergencyBanner") || ""),
               replayLabel: String(formData.get("replayLabel") || "")
             })
@@ -41,7 +50,7 @@ export function OverlaySettingsForm(props: { overlay: OverlaySettingsRecord }) {
           }
 
           setMessage(payload.message ?? "Overlay settings updated.");
-          window.location.reload();
+          router.refresh();
         });
       }}
     >
@@ -68,6 +77,29 @@ export function OverlaySettingsForm(props: { overlay: OverlaySettingsRecord }) {
         </label>
       </div>
       <label>
+        <span className="label">Active scene preset</span>
+        <select name="scenePreset" onChange={(event) => setScenePreset(event.target.value as OverlaySettingsRecord["scenePreset"])} value={scenePreset}>
+          {OVERLAY_SCENE_PRESETS.map((preset) => (
+            <option key={preset.id} value={preset.id}>
+              {preset.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="preset-grid">
+        {OVERLAY_SCENE_PRESETS.map((preset) => (
+          <button
+            className={`preset-card${preset.id === scenePreset ? " preset-card-active" : ""}`}
+            key={preset.id}
+            onClick={() => setScenePreset(preset.id)}
+            type="button"
+          >
+            <strong>{preset.label}</strong>
+            <div className="subtle">{preset.description}</div>
+          </button>
+        ))}
+      </div>
+      <label>
         <span className="label">Emergency banner</span>
         <input defaultValue={props.overlay.emergencyBanner} name="emergencyBanner" placeholder="Optional urgent message" />
       </label>
@@ -83,6 +115,22 @@ export function OverlaySettingsForm(props: { overlay: OverlaySettingsRecord }) {
         <label className="toggle-row">
           <input defaultChecked={props.overlay.showScheduleTeaser} name="showScheduleTeaser" type="checkbox" />
           <span>Show schedule teaser</span>
+        </label>
+        <label className="toggle-row">
+          <input defaultChecked={props.overlay.showCurrentCategory} name="showCurrentCategory" type="checkbox" />
+          <span>Show current category</span>
+        </label>
+        <label className="toggle-row">
+          <input defaultChecked={props.overlay.showSourceLabel} name="showSourceLabel" type="checkbox" />
+          <span>Show source label</span>
+        </label>
+        <label className="toggle-row">
+          <input defaultChecked={props.overlay.showQueuePreview} name="showQueuePreview" type="checkbox" />
+          <span>Show queue preview</span>
+        </label>
+        <label>
+          <span className="label">Queue preview count</span>
+          <input defaultValue={props.overlay.queuePreviewCount} max={5} min={1} name="queuePreviewCount" type="number" />
         </label>
       </div>
       {error ? <p className="danger">{error}</p> : null}

@@ -1,6 +1,7 @@
 "use client";
 
 import { formatMinuteOfDay, type ScheduleBlock } from "@stream247/core";
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { ShowProfileRecord } from "@/lib/server/state";
 
@@ -29,6 +30,7 @@ export function ScheduleBlockForm({ pools, shows, block }: Props) {
   const [title, setTitle] = useState(block?.title ?? "");
   const [categoryName, setCategoryName] = useState(block?.categoryName ?? "");
   const [durationMinutes, setDurationMinutes] = useState(block?.durationMinutes ?? 60);
+  const router = useRouter();
 
   const isEditing = Boolean(block);
 
@@ -71,7 +73,7 @@ export function ScheduleBlockForm({ pools, shows, block }: Props) {
           }
 
           setMessage(body.message ?? "Schedule block saved.");
-          window.location.reload();
+          router.refresh();
         });
       }}
     >

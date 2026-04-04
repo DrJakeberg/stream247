@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { normalizeOverlayScenePreset } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, readAppState, updateOverlaySettingsRecord } from "@/lib/server/state";
 
@@ -23,9 +24,14 @@ export async function PUT(request: Request) {
     channelName: string;
     headline: string;
     accentColor: string;
+    scenePreset: string;
     showClock: boolean;
     showNextItem: boolean;
     showScheduleTeaser: boolean;
+    showCurrentCategory: boolean;
+    showSourceLabel: boolean;
+    showQueuePreview: boolean;
+    queuePreviewCount: number;
     emergencyBanner: string;
     replayLabel: string;
   }>;
@@ -38,10 +44,15 @@ export async function PUT(request: Request) {
     enabled: payload.enabled ?? state.overlay.enabled,
     channelName: (payload.channelName ?? state.overlay.channelName).trim().slice(0, 80) || "Stream247",
     headline: (payload.headline ?? state.overlay.headline).trim().slice(0, 120) || "Always on air",
+    scenePreset: normalizeOverlayScenePreset(String(payload.scenePreset ?? state.overlay.scenePreset)),
     accentColor: (payload.accentColor ?? state.overlay.accentColor).trim().slice(0, 20) || "#0e6d5a",
     showClock: payload.showClock ?? state.overlay.showClock,
     showNextItem: payload.showNextItem ?? state.overlay.showNextItem,
     showScheduleTeaser: payload.showScheduleTeaser ?? state.overlay.showScheduleTeaser,
+    showCurrentCategory: payload.showCurrentCategory ?? state.overlay.showCurrentCategory,
+    showSourceLabel: payload.showSourceLabel ?? state.overlay.showSourceLabel,
+    showQueuePreview: payload.showQueuePreview ?? state.overlay.showQueuePreview,
+    queuePreviewCount: Math.max(1, Math.min(5, Number(payload.queuePreviewCount ?? state.overlay.queuePreviewCount) || 3)),
     emergencyBanner: (payload.emergencyBanner ?? state.overlay.emergencyBanner).trim().slice(0, 180),
     replayLabel: (payload.replayLabel ?? state.overlay.replayLabel).trim().slice(0, 80) || "Replay stream",
     updatedAt: now

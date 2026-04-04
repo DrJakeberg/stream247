@@ -1,10 +1,12 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 export function ScheduleBlockDeleteForm({ id }: { id: string }) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   return (
     <form
@@ -25,7 +27,7 @@ export function ScheduleBlockDeleteForm({ id }: { id: string }) {
             return;
           }
 
-          window.location.reload();
+          router.refresh();
         });
       }}
     >

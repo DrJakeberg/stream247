@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { ShowProfileRecord } from "@/lib/server/state";
 
@@ -8,6 +9,7 @@ export function ShowProfileForm(props: { show?: ShowProfileRecord }) {
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
   const isEditing = Boolean(props.show);
+  const router = useRouter();
 
   return (
     <form
@@ -40,7 +42,7 @@ export function ShowProfileForm(props: { show?: ShowProfileRecord }) {
           }
 
           setMessage(payload.message ?? "Show profile saved.");
-          window.location.reload();
+          router.refresh();
         });
       }}
     >

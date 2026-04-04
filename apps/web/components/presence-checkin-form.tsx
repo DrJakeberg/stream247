@@ -1,11 +1,13 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 export function PresenceCheckInForm() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   return (
     <form
@@ -35,7 +37,7 @@ export function PresenceCheckInForm() {
           }
 
           setMessage(`Presence active until ${payload.window?.expiresAt ?? "unknown"}.`);
-          window.location.reload();
+          router.refresh();
         });
       }}
     >
@@ -49,4 +51,3 @@ export function PresenceCheckInForm() {
     </form>
   );
 }
-

@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 type PoolOption = { id: string; name: string };
@@ -9,6 +10,7 @@ export function ProgrammingTemplateForm(props: { pools: PoolOption[] }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   return (
     <form
@@ -40,7 +42,7 @@ export function ProgrammingTemplateForm(props: { pools: PoolOption[] }) {
           }
 
           setMessage(payload.message ?? "Template applied.");
-          window.location.reload();
+          router.refresh();
         });
       }}
     >

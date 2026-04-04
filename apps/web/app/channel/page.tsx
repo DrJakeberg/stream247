@@ -1,13 +1,12 @@
 export const dynamic = "force-dynamic";
 
+import { LiveChannelPage } from "@/components/live-channel-page";
 import { Panel } from "@/components/panel";
-import { readAppState, getSchedulePreview, getWorkspaceTimeZone } from "@/lib/server/state";
+import { getPublicChannelSnapshot, getWorkspaceTimeZone, readAppState } from "@/lib/server/state";
 
 export default async function ChannelPage() {
   const state = await readAppState();
-  const schedulePreview = getSchedulePreview(state);
   const timeZone = getWorkspaceTimeZone();
-  type ScheduleItem = (typeof schedulePreview.items)[number];
 
   return (
     <main className="standalone">
@@ -20,16 +19,7 @@ export default async function ChannelPage() {
         </p>
       </section>
       <Panel title="Upcoming lineup" eyebrow="Viewer page">
-        <div className="list">
-          {schedulePreview.items.map((item: ScheduleItem) => (
-            <div className="item" key={item.id}>
-              <strong>{item.title}</strong>
-              <div className="subtle">
-                {item.startTime} to {item.endTime} · {item.categoryName}
-              </div>
-            </div>
-          ))}
-        </div>
+        <LiveChannelPage initialSnapshot={getPublicChannelSnapshot(state)} />
       </Panel>
     </main>
   );

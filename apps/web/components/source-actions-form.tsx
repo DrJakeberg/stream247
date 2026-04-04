@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { SourceRecord } from "@/lib/server/state";
 
@@ -7,6 +8,7 @@ export function SourceActionsForm(props: { source: SourceRecord }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   async function updateSource(formData: FormData, enabled: boolean) {
     const response = await fetch("/api/sources", {
@@ -26,7 +28,7 @@ export function SourceActionsForm(props: { source: SourceRecord }) {
       return;
     }
     setMessage(payload.message ?? "Source updated.");
-    window.location.reload();
+    router.refresh();
   }
 
   async function deleteSource() {
@@ -41,7 +43,7 @@ export function SourceActionsForm(props: { source: SourceRecord }) {
       return;
     }
     setMessage(payload.message ?? "Source deleted.");
-    window.location.reload();
+    router.refresh();
   }
 
   return (
@@ -62,6 +64,7 @@ export function SourceActionsForm(props: { source: SourceRecord }) {
       <label>
         <span className="label">Connector type</span>
         <select defaultValue={props.source.connectorKind} name="connectorKind">
+          <option value="local-library">Local media library</option>
           <option value="direct-media">Direct media URL</option>
           <option value="youtube-playlist">YouTube playlist</option>
           <option value="youtube-channel">YouTube channel</option>

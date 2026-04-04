@@ -1,12 +1,14 @@
 "use client";
 
 import type { ModerationConfig } from "@stream247/core";
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 export function ModerationSettingsForm({ config }: { config: ModerationConfig }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   return (
     <form
@@ -42,7 +44,7 @@ export function ModerationSettingsForm({ config }: { config: ModerationConfig })
           }
 
           setMessage(body.message ?? "Saved.");
-          window.location.reload();
+          router.refresh();
         });
       }}
     >
@@ -84,4 +86,3 @@ export function ModerationSettingsForm({ config }: { config: ModerationConfig })
     </form>
   );
 }
-

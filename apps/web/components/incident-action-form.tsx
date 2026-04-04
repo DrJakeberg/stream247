@@ -1,10 +1,12 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 export function IncidentActionForm(props: { fingerprint: string; acknowledgedAt?: string; status: "open" | "resolved" }) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   return (
     <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
@@ -30,7 +32,7 @@ export function IncidentActionForm(props: { fingerprint: string; acknowledgedAt?
                 return;
               }
 
-              window.location.reload();
+              router.refresh();
             });
           }}
           type="button"
@@ -60,7 +62,7 @@ export function IncidentActionForm(props: { fingerprint: string; acknowledgedAt?
                 return;
               }
 
-              window.location.reload();
+              router.refresh();
             });
           }}
           type="button"
