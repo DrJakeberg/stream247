@@ -1348,7 +1348,10 @@ function buildQueueHeadForSelection(args: {
 
   return {
     title: args.selection.asset.title,
-    subtitle: buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem, true),
+    subtitle:
+      args.selection.reasonCode === "graceful_handoff"
+        ? `Finishing current item · ${buildAssetQueueSubtitle(args.state, args.selection.asset, null) || "Schedule handoff pending"}`
+        : buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem, true),
     scenePreset: args.state.overlay.scenePreset
   };
 }
@@ -1397,6 +1400,14 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
 
   const currentScheduleItem = getCurrentScheduleItem(state);
   const currentPool = currentScheduleItem?.poolId ? state.pools.find((pool) => pool.id === currentScheduleItem.poolId) ?? null : null;
+  const runningScheduledAsset =
+    state.playout.processPid > 0 &&
+    state.playout.currentAssetId !== "" &&
+    (state.playout.selectionReasonCode === "scheduled_match" || state.playout.selectionReasonCode === "graceful_handoff")
+      ? state.assets.find(
+          (asset) => asset.id === state.playout.currentAssetId && asset.status === "ready" && asset.id !== skippedAssetId
+        ) ?? null
+      : null;
   const autoInsertAsset =
     currentPool &&
     state.playout.currentAssetId === "" &&
@@ -1428,6 +1439,16 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
             currentPool?.sourceIds.includes(asset.sourceId)
         ) ?? null
       : null;
+
+  if (runningScheduledAsset && (!currentPool || !currentPool.sourceIds.includes(runningScheduledAsset.sourceId))) {
+    return {
+      asset: runningScheduledAsset,
+      reason: `Current on-air asset ${runningScheduledAsset.title} will finish before the next scheduled block takes over.`,
+      lifecycleStatus: "running" as const,
+      reasonCode: "graceful_handoff" as const,
+      fallbackTier: "scheduled" as const
+    };
+  }
 
   const preferredAsset = currentScheduleItem?.poolId
     ? currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId)
@@ -1980,7 +2001,9 @@ async function runPlayoutCycle(): Promise<void> {
   const restartRequested = Boolean(state.playout.restartRequestedAt);
   const currentScheduleItem = getCurrentScheduleItem(state);
   const rawQueueAssets =
-    currentScheduleItem?.poolId && selection.asset && (selection.reasonCode === "scheduled_match" || selection.reasonCode === "scheduled_insert")
+    currentScheduleItem?.poolId &&
+    selection.asset &&
+    (selection.reasonCode === "scheduled_match" || selection.reasonCode === "scheduled_insert" || selection.reasonCode === "graceful_handoff")
       ? getPoolPlaybackQueue(state, currentScheduleItem.poolId, isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "", selection.asset.id)
       : [];
   const { playableQueue, prefetchedAsset, prefetchStatus, prefetchError } = await getPlayableQueuedAssets(rawQueueAssets);
