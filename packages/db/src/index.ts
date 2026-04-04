@@ -231,6 +231,10 @@ export type BroadcastQueueItemRecord = {
 export type PlayoutRuntimeRecord = {
   status: "idle" | "starting" | "running" | "switching" | "degraded" | "recovering" | "failed" | "standby" | "reconnecting";
   transitionState: "idle" | "prefetching" | "ready" | "switching";
+  transitionTargetKind: BroadcastQueueItemRecord["kind"] | "";
+  transitionTargetAssetId: string;
+  transitionTargetTitle: string;
+  transitionReadyAt: string;
   currentAssetId: string;
   currentTitle: string;
   desiredAssetId: string;
@@ -478,6 +482,10 @@ function defaultState(): AppState {
     playout: {
       status: "idle",
       transitionState: "idle",
+      transitionTargetKind: "",
+      transitionTargetAssetId: "",
+      transitionTargetTitle: "",
+      transitionReadyAt: "",
       currentAssetId: "",
       currentTitle: "",
       desiredAssetId: "",
@@ -708,7 +716,10 @@ function normalizeState(state: AppState): AppState {
       queueItems: Array.isArray(state.playout?.queueItems)
         ? state.playout.queueItems.map((item, index) => ({
             id: item.id ?? `queue-${index}`,
-            kind: item.kind === "reconnect" || item.kind === "standby" ? item.kind : "asset",
+            kind:
+              item.kind === "insert" || item.kind === "reconnect" || item.kind === "standby" || item.kind === "asset"
+                ? item.kind
+                : "asset",
             assetId: item.assetId ?? "",
             title: item.title ?? "",
             subtitle: item.subtitle ?? "",
@@ -934,6 +945,10 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'idle',
       transition_state TEXT NOT NULL DEFAULT 'idle',
+      transition_target_kind TEXT NOT NULL DEFAULT '',
+      transition_target_asset_id TEXT NOT NULL DEFAULT '',
+      transition_target_title TEXT NOT NULL DEFAULT '',
+      transition_ready_at TEXT NOT NULL DEFAULT '',
       current_asset_id TEXT NOT NULL DEFAULT '',
       current_title TEXT NOT NULL DEFAULT '',
       desired_asset_id TEXT NOT NULL DEFAULT '',
@@ -1022,6 +1037,10 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS published_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_state TEXT NOT NULL DEFAULT 'idle';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_target_kind TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_target_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_target_title TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_ready_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS next_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS next_title TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS queued_asset_ids TEXT NOT NULL DEFAULT '[]';
@@ -1557,18 +1576,22 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
   await client.query(
     `
       INSERT INTO playout_runtime (
-        singleton_id, status, transition_state, current_asset_id, current_title, desired_asset_id, next_asset_id, next_title, queued_asset_ids,
-        queue_items, prefetched_asset_id, prefetched_title, prefetched_at, prefetch_status, prefetch_error, current_destination_id,
-        restart_requested_at, heartbeat_at, process_pid, process_started_at, last_transition_at, last_successful_start_at,
-        last_successful_asset_id, last_exit_code, restart_count, crash_count_window, crash_loop_detected, last_error,
-        last_stderr_sample, selection_reason_code, fallback_tier, override_mode, override_asset_id, override_until,
-        insert_asset_id, insert_requested_at, insert_status, skip_asset_id, skip_until, pending_action,
+        singleton_id, status, transition_state, transition_target_kind, transition_target_asset_id, transition_target_title, transition_ready_at,
+        current_asset_id, current_title, desired_asset_id, next_asset_id, next_title, queued_asset_ids, queue_items, prefetched_asset_id,
+        prefetched_title, prefetched_at, prefetch_status, prefetch_error, current_destination_id, restart_requested_at, heartbeat_at, process_pid,
+        process_started_at, last_transition_at, last_successful_start_at, last_successful_asset_id, last_exit_code, restart_count,
+        crash_count_window, crash_loop_detected, last_error, last_stderr_sample, selection_reason_code, fallback_tier, override_mode,
+        override_asset_id, override_until, insert_asset_id, insert_requested_at, insert_status, skip_asset_id, skip_until, pending_action,
         pending_action_requested_at, message
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         transition_state = EXCLUDED.transition_state,
+        transition_target_kind = EXCLUDED.transition_target_kind,
+        transition_target_asset_id = EXCLUDED.transition_target_asset_id,
+        transition_target_title = EXCLUDED.transition_target_title,
+        transition_ready_at = EXCLUDED.transition_ready_at,
         current_asset_id = EXCLUDED.current_asset_id,
         current_title = EXCLUDED.current_title,
         desired_asset_id = EXCLUDED.desired_asset_id,
@@ -1612,6 +1635,10 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
     [
       playout.status,
       playout.transitionState,
+      playout.transitionTargetKind,
+      playout.transitionTargetAssetId,
+      playout.transitionTargetTitle,
+      playout.transitionReadyAt,
       playout.currentAssetId,
       playout.currentTitle,
       playout.desiredAssetId,
@@ -1840,6 +1867,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   const playoutResult = await client.query<{
     status: PlayoutRuntimeRecord["status"];
     transition_state: PlayoutRuntimeRecord["transitionState"];
+    transition_target_kind: PlayoutRuntimeRecord["transitionTargetKind"];
+    transition_target_asset_id: string;
+    transition_target_title: string;
+    transition_ready_at: string;
     current_asset_id: string;
     current_title: string;
     desired_asset_id: string;
@@ -2091,6 +2122,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       ? {
           status: playoutRow.status,
           transitionState: playoutRow.transition_state,
+          transitionTargetKind: playoutRow.transition_target_kind || "",
+          transitionTargetAssetId: playoutRow.transition_target_asset_id,
+          transitionTargetTitle: playoutRow.transition_target_title,
+          transitionReadyAt: playoutRow.transition_ready_at,
           currentAssetId: playoutRow.current_asset_id,
           currentTitle: playoutRow.current_title,
           desiredAssetId: playoutRow.desired_asset_id,

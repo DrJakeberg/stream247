@@ -72,6 +72,10 @@ export type LivePlayoutSummary = {
   status: string;
   message: string;
   transitionState: string;
+  transitionTargetKind: "" | "asset" | "insert" | "standby" | "reconnect";
+  transitionTargetAssetId: string;
+  transitionTargetTitle: string;
+  transitionReadyAt: string;
   heartbeatAt: string;
   processPid: number;
   restartCount: number;

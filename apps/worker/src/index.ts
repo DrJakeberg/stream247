@@ -1615,6 +1615,16 @@ async function startOrSwitchPlayout(args: {
             ? "recovering"
             : "starting",
     transitionState: switching ? "switching" : "idle",
+    transitionTargetKind: args.asset
+      ? args.reasonCode === "operator_insert" || args.reasonCode === "scheduled_insert"
+        ? "insert"
+        : "asset"
+      : args.lifecycleStatus === "reconnecting"
+        ? "reconnect"
+        : "standby",
+    transitionTargetAssetId: args.asset?.id ?? "",
+    transitionTargetTitle: args.asset?.title ?? (args.lifecycleStatus === "reconnecting" ? "Scheduled reconnect" : "Replay standby"),
+    transitionReadyAt: "",
     currentAssetId: args.asset?.id ?? "",
     currentTitle: args.asset?.title ?? "Replay standby",
     desiredAssetId: args.asset?.id ?? "",
@@ -1672,6 +1682,10 @@ async function startOrSwitchPlayout(args: {
             ? "degraded"
             : "failed",
       heartbeatAt: exitedAt,
+      transitionTargetKind: "",
+      transitionTargetAssetId: "",
+      transitionTargetTitle: "",
+      transitionReadyAt: "",
       processPid: 0,
       processStartedAt: "",
       lastSuccessfulStartAt:
@@ -1803,6 +1817,10 @@ async function runPlayoutCycle(): Promise<void> {
     await updatePlayoutRuntime((playout) => ({
       ...playout,
       status: "degraded",
+      transitionTargetKind: "",
+      transitionTargetAssetId: "",
+      transitionTargetTitle: "",
+      transitionReadyAt: "",
       currentAssetId: "",
       currentTitle: "",
       desiredAssetId: "",
@@ -1847,6 +1865,10 @@ async function runPlayoutCycle(): Promise<void> {
       ...playout,
       nextAssetId: "",
       nextTitle: "",
+      transitionTargetKind: "",
+      transitionTargetAssetId: "",
+      transitionTargetTitle: "",
+      transitionReadyAt: "",
       queuedAssetIds: [],
       queueItems: [],
       pendingAction: "",
@@ -1938,6 +1960,10 @@ async function runPlayoutCycle(): Promise<void> {
     await updatePlayoutRuntime((playout) => ({
       ...playout,
       status: "degraded",
+      transitionTargetKind: "",
+      transitionTargetAssetId: "",
+      transitionTargetTitle: "",
+      transitionReadyAt: "",
       heartbeatAt: new Date().toISOString(),
       selectionReasonCode: "ffmpeg_crash_loop",
       message: "Crash-loop protection is active."
@@ -2016,6 +2042,10 @@ async function runPlayoutCycle(): Promise<void> {
         ...playout,
         status: "degraded",
         transitionState: "idle",
+        transitionTargetKind: "",
+        transitionTargetAssetId: "",
+        transitionTargetTitle: "",
+        transitionReadyAt: "",
         heartbeatAt: new Date().toISOString(),
         lastError: message,
         selectionReasonCode: "resolve_failed",
@@ -2061,6 +2091,10 @@ async function runPlayoutCycle(): Promise<void> {
         ...playout,
         status: "degraded",
         transitionState: "idle",
+        transitionTargetKind: "",
+        transitionTargetAssetId: "",
+        transitionTargetTitle: "",
+        transitionReadyAt: "",
         heartbeatAt: new Date().toISOString(),
         lastError: message,
         selectionReasonCode: "resolve_failed",
@@ -2090,6 +2124,19 @@ async function runPlayoutCycle(): Promise<void> {
     await writeStandbySlate(state, selection.lifecycleStatus === "reconnecting" ? "reconnect" : "standby");
   }
 
+  const computedPrefetchedAt = prefetchedAsset ? new Date().toISOString() : "";
+  const transitionTargetKind = nextQueueItem?.kind ?? "";
+  const transitionTargetAssetId = nextQueueItem?.assetId ?? "";
+  const transitionTargetTitle = nextQueueItem?.title ?? "";
+  const transitionReadyAt =
+    nextQueueItem?.kind === "asset"
+      ? prefetchedAsset && nextQueueItem.assetId === prefetchedAsset.id
+        ? computedPrefetchedAt
+        : ""
+      : nextQueueItem
+        ? new Date().toISOString()
+        : "";
+
   await updatePlayoutRuntime((playout) => ({
     ...playout,
     status:
@@ -2108,6 +2155,10 @@ async function runPlayoutCycle(): Promise<void> {
           : rawQueueAssets.length > 0
             ? "prefetching"
             : "idle",
+    transitionTargetKind,
+    transitionTargetAssetId,
+    transitionTargetTitle,
+    transitionReadyAt,
     currentAssetId: selection.asset?.id ?? "",
     currentTitle: activeQueueItem?.title || selection.asset?.title || "Replay standby",
     desiredAssetId: selection.asset?.id ?? "",
@@ -2128,7 +2179,7 @@ async function runPlayoutCycle(): Promise<void> {
           : playout.insertStatus,
     prefetchedAssetId: prefetchedAsset?.id ?? "",
     prefetchedTitle: prefetchedAsset?.title ?? "",
-    prefetchedAt: prefetchedAsset ? new Date().toISOString() : "",
+    prefetchedAt: computedPrefetchedAt,
     prefetchStatus,
     prefetchError,
     currentDestinationId: destination.id,

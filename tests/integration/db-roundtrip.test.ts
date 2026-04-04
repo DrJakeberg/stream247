@@ -307,6 +307,10 @@ describe.sequential("database roundtrip", () => {
         ...initial.playout,
         status: "running" as const,
         transitionState: "ready" as const,
+        transitionTargetKind: "insert" as const,
+        transitionTargetAssetId: "asset_3",
+        transitionTargetTitle: "Channel ID",
+        transitionReadyAt: "2026-04-04T10:00:11.000Z",
         currentAssetId: "asset_1",
         currentTitle: "Asset One",
         desiredAssetId: "asset_1",
@@ -325,11 +329,11 @@ describe.sequential("database roundtrip", () => {
           },
           {
             id: "queue-asset_2-1",
-            kind: "asset" as const,
-            assetId: "asset_2",
-            title: "Asset Two",
-            subtitle: "Pool One · Just Chatting",
-            scenePreset: "replay-lower-third" as const,
+            kind: "insert" as const,
+            assetId: "asset_3",
+            title: "Channel ID",
+            subtitle: "Insert · Channel ID",
+            scenePreset: "bumper-board" as const,
             position: 1
           }
         ],
@@ -370,8 +374,11 @@ describe.sequential("database roundtrip", () => {
     expect(reread.incidents[0]?.fingerprint).toBe("example");
     expect(reread.auditEvents[0]?.type).toBe("test.roundtrip");
     expect(reread.playout.transitionState).toBe("ready");
+    expect(reread.playout.transitionTargetKind).toBe("insert");
+    expect(reread.playout.transitionTargetAssetId).toBe("asset_3");
     expect(reread.playout.prefetchedAssetId).toBe("asset_2");
     expect(reread.playout.queuedAssetIds).toEqual(["asset_2", "asset_3"]);
-    expect(reread.playout.queueItems[1]?.assetId).toBe("asset_2");
+    expect(reread.playout.queueItems[1]?.kind).toBe("insert");
+    expect(reread.playout.queueItems[1]?.assetId).toBe("asset_3");
   }, 60_000);
 });
