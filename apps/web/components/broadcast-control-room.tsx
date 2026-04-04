@@ -150,6 +150,10 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 Queue preview {snapshot.overlay.showQueuePreview ? `yes (${snapshot.overlay.queuePreviewCount})` : "no"} · Current category{" "}
                 {snapshot.overlay.showCurrentCategory ? "yes" : "no"} · Source label {snapshot.overlay.showSourceLabel ? "yes" : "no"}
               </div>
+              <div className="subtle">
+                Active scene {snapshot.activeScene.resolvedPresetId} · layers{" "}
+                {snapshot.activeScene.layers.filter((layer) => layer.enabled).map((layer) => layer.label).join(" → ")}
+              </div>
               {snapshot.overlay.tickerText ? <div className="subtle">{snapshot.overlay.tickerText}</div> : null}
               {snapshot.overlay.emergencyBanner ? <div className="danger">{snapshot.overlay.emergencyBanner}</div> : null}
               <div className="subtle-link-row" style={{ marginTop: 8 }}>

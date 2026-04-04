@@ -133,10 +133,26 @@ export type LiveOverlaySummary = {
   showSourceLabel: boolean;
   showQueuePreview: boolean;
   queuePreviewCount: number;
+  layerOrder: Array<"chip" | "hero" | "next" | "queue" | "schedule" | "clock" | "banner" | "ticker">;
   emergencyBanner: string;
   tickerText: string;
   replayLabel: string;
   updatedAt: string;
+};
+
+export type LiveSceneLayerSummary = {
+  kind: "chip" | "hero" | "next" | "queue" | "schedule" | "clock" | "banner" | "ticker";
+  label: string;
+  enabled: boolean;
+};
+
+export type LiveSceneSummary = {
+  presetId: LiveOverlaySummary["scenePreset"];
+  resolvedPresetId: LiveOverlaySummary["scenePreset"];
+  surfaceStyle: LiveOverlaySummary["surfaceStyle"];
+  panelAnchor: LiveOverlaySummary["panelAnchor"];
+  titleScale: LiveOverlaySummary["titleScale"];
+  layers: LiveSceneLayerSummary[];
 };
 
 export type BroadcastSnapshot = {
@@ -145,6 +161,7 @@ export type BroadcastSnapshot = {
   workerHealth: LiveWorkerHealth;
   playout: LivePlayoutSummary;
   overlay: LiveOverlaySummary;
+  activeScene: LiveSceneSummary;
   destination: LiveDestinationSummary | null;
   currentAsset: LiveAssetSummary | null;
   desiredAsset: LiveAssetSummary | null;
@@ -162,6 +179,7 @@ export type PublicChannelSnapshot = {
   generatedAt: string;
   timeZone: string;
   overlay: LiveOverlaySummary;
+  activeScene: LiveSceneSummary;
   playout: Pick<LivePlayoutSummary, "status" | "message" | "currentTitle" | "transitionState" | "overrideMode">;
   currentAsset: LiveAssetSummary | null;
   nextAsset: LiveAssetSummary | null;

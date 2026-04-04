@@ -34,11 +34,41 @@ export type OverlayQueueKind = "asset" | "insert" | "standby" | "reconnect" | ""
 export type OverlaySurfaceStyle = "glass" | "solid" | "signal";
 export type OverlayPanelAnchor = "bottom" | "center";
 export type OverlayTitleScale = "compact" | "balanced" | "cinematic";
+export type OverlaySceneLayerKind = "chip" | "hero" | "next" | "queue" | "schedule" | "clock" | "banner" | "ticker";
 
 export type OverlayScenePresetDefinition = {
   id: OverlayScenePreset;
   label: string;
   description: string;
+};
+
+export type OverlaySceneLayerDefinition = {
+  kind: OverlaySceneLayerKind;
+  label: string;
+  enabled: boolean;
+};
+
+export type OverlaySceneDefinition = {
+  presetId: OverlayScenePreset;
+  resolvedPresetId: OverlayScenePreset;
+  surfaceStyle: OverlaySurfaceStyle;
+  panelAnchor: OverlayPanelAnchor;
+  titleScale: OverlayTitleScale;
+  layers: OverlaySceneLayerDefinition[];
+};
+
+export type OverlaySceneSource = {
+  scenePreset: OverlayScenePreset;
+  surfaceStyle: OverlaySurfaceStyle;
+  panelAnchor: OverlayPanelAnchor;
+  titleScale: OverlayTitleScale;
+  showClock: boolean;
+  showNextItem: boolean;
+  showScheduleTeaser: boolean;
+  showQueuePreview: boolean;
+  emergencyBanner: string;
+  tickerText: string;
+  layerOrder: OverlaySceneLayerKind[];
 };
 
 export type OverlayOptionDefinition<T extends string> = {
@@ -190,6 +220,60 @@ export const OVERLAY_TITLE_SCALES: OverlayOptionDefinition<OverlayTitleScale>[] 
   }
 ];
 
+export const OVERLAY_SCENE_LAYERS: OverlayOptionDefinition<OverlaySceneLayerKind>[] = [
+  {
+    id: "chip",
+    label: "Brand Chip",
+    description: "Replay badge, channel name, and mode label."
+  },
+  {
+    id: "hero",
+    label: "Hero Card",
+    description: "Primary now-playing or standby headline card."
+  },
+  {
+    id: "next",
+    label: "Next Card",
+    description: "Next item preview block."
+  },
+  {
+    id: "queue",
+    label: "Queue Preview",
+    description: "Later queue strip for a few confirmed upcoming items."
+  },
+  {
+    id: "schedule",
+    label: "Schedule Teaser",
+    description: "Extra supporting scene card for current category or fallback copy."
+  },
+  {
+    id: "clock",
+    label: "Clock",
+    description: "Live local time in the configured channel timezone."
+  },
+  {
+    id: "banner",
+    label: "Emergency Banner",
+    description: "High-priority operator banner."
+  },
+  {
+    id: "ticker",
+    label: "Ticker",
+    description: "Persistent lower ticker line."
+  }
+];
+
+export const DEFAULT_OVERLAY_SCENE_LAYER_ORDER: OverlaySceneLayerKind[] = [
+  "chip",
+  "hero",
+  "next",
+  "queue",
+  "schedule",
+  "clock",
+  "banner",
+  "ticker"
+];
+
 export function isOverlayScenePreset(value: string): value is OverlayScenePreset {
   return OVERLAY_SCENE_PRESETS.some((preset) => preset.id === value);
 }
@@ -208,6 +292,19 @@ export function normalizeOverlayPanelAnchor(value: string): OverlayPanelAnchor {
 
 export function normalizeOverlayTitleScale(value: string): OverlayTitleScale {
   return OVERLAY_TITLE_SCALES.some((entry) => entry.id === value) ? (value as OverlayTitleScale) : "balanced";
+}
+
+export function normalizeOverlaySceneLayerOrder(value: unknown): OverlaySceneLayerKind[] {
+  const provided = Array.isArray(value) ? value.filter((entry): entry is OverlaySceneLayerKind => OVERLAY_SCENE_LAYERS.some((layer) => layer.id === entry)) : [];
+  const ordered = [...new Set(provided)];
+
+  for (const layer of DEFAULT_OVERLAY_SCENE_LAYER_ORDER) {
+    if (!ordered.includes(layer)) {
+      ordered.push(layer);
+    }
+  }
+
+  return ordered;
 }
 
 export function resolveOverlayScenePresetForQueueKind(
@@ -232,6 +329,37 @@ export function resolveOverlayScenePresetForQueueKind(
 export function buildOverlayBrandLine(replayLabel: string, brandBadge = ""): string {
   const parts = [replayLabel || "Replay stream", brandBadge].map((part) => part.trim()).filter(Boolean);
   return parts.join(" · ");
+}
+
+export function buildOverlaySceneDefinition(args: {
+  overlay: OverlaySceneSource;
+  queueKind: OverlayQueueKind;
+}): OverlaySceneDefinition {
+  const resolvedPresetId = resolveOverlayScenePresetForQueueKind(args.overlay.scenePreset, args.queueKind);
+  const normalizedLayerOrder = normalizeOverlaySceneLayerOrder(args.overlay.layerOrder);
+  const enabledMap: Record<OverlaySceneLayerKind, boolean> = {
+    chip: true,
+    hero: true,
+    next: args.overlay.showNextItem,
+    queue: args.overlay.showQueuePreview,
+    schedule: args.overlay.showScheduleTeaser,
+    clock: args.overlay.showClock,
+    banner: Boolean(args.overlay.emergencyBanner.trim()),
+    ticker: Boolean(args.overlay.tickerText.trim())
+  };
+
+  return {
+    presetId: args.overlay.scenePreset,
+    resolvedPresetId,
+    surfaceStyle: args.overlay.surfaceStyle,
+    panelAnchor: args.overlay.panelAnchor,
+    titleScale: args.overlay.titleScale,
+    layers: normalizedLayerOrder.map((kind) => ({
+      kind,
+      label: OVERLAY_SCENE_LAYERS.find((layer) => layer.id === kind)?.label || kind,
+      enabled: enabledMap[kind]
+    }))
+  };
 }
 
 export function buildOverlayTextLines(args: {

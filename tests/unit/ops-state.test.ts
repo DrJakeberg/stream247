@@ -54,6 +54,7 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       showSourceLabel: true,
       showQueuePreview: false,
       queuePreviewCount: 3,
+      layerOrder: ["chip", "hero", "next", "queue", "schedule", "clock", "banner", "ticker"],
       emergencyBanner: "",
       tickerText: "",
       replayLabel: "Replay stream",
@@ -502,5 +503,7 @@ describe("ops state helpers", () => {
     expect(snapshot.queueItems[0]?.kind).toBe("standby");
     expect(snapshot.queueItems[0]?.asset).toBeNull();
     expect(snapshot.queueItems[1]?.asset?.id).toBe("asset-1");
+    expect(snapshot.activeScene.resolvedPresetId).toBe("standby-board");
+    expect(snapshot.activeScene.layers[0]?.kind).toBe("chip");
   });
 });

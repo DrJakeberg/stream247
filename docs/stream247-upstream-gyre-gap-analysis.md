@@ -131,6 +131,7 @@ The following product gaps are now addressed:
 - browser overlay and on-air text overlay now share the same scene-oriented text composition logic
 - overlay studio now supports draft-save, reset-to-live, and publish-live scene changes
 - scheduled playout now has a graceful handoff path so a running item can finish before the next schedule block takes over
+- scene definitions now have a first-class layer order and a dedicated `/api/scenes` read path
 
 ## Implementation Roadmap
 

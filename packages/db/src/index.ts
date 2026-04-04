@@ -5,10 +5,12 @@ import { Pool, type PoolClient } from "pg";
 import {
   createDefaultModerationConfig,
   normalizeOverlayPanelAnchor,
+  normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
   normalizeOverlayTitleScale,
-  type ModerationConfig
+  type ModerationConfig,
+  type OverlaySceneLayerKind
 } from "@stream247/core";
 
 export type OwnerAccount = {
@@ -211,6 +213,7 @@ export type OverlaySettingsRecord = {
   showSourceLabel: boolean;
   showQueuePreview: boolean;
   queuePreviewCount: number;
+  layerOrder: OverlaySceneLayerKind[];
   emergencyBanner: string;
   tickerText: string;
   updatedAt: string;
@@ -355,6 +358,7 @@ type OverlaySettingsRow = {
   show_source_label: boolean;
   show_queue_preview: boolean;
   queue_preview_count: number;
+  layer_order_json: string;
   emergency_banner: string;
   replay_label: string;
   ticker_text: string;
@@ -395,6 +399,7 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
     panelAnchor: normalizeOverlayPanelAnchor(String(overlay.panelAnchor ?? defaults.panelAnchor)),
     titleScale: normalizeOverlayTitleScale(String(overlay.titleScale ?? defaults.titleScale)),
     queuePreviewCount: Math.max(1, Math.min(5, Number(overlay.queuePreviewCount ?? defaults.queuePreviewCount) || defaults.queuePreviewCount)),
+    layerOrder: normalizeOverlaySceneLayerOrder(overlay.layerOrder ?? defaults.layerOrder),
     emergencyBanner: String(overlay.emergencyBanner ?? defaults.emergencyBanner).trim().slice(0, 180),
     tickerText: String(overlay.tickerText ?? defaults.tickerText).trim().slice(0, 180),
     updatedAt: overlay.updatedAt ?? defaults.updatedAt
@@ -421,6 +426,7 @@ function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: Ov
         showSourceLabel: row.show_source_label,
         showQueuePreview: row.show_queue_preview,
         queuePreviewCount: row.queue_preview_count,
+        layerOrder: JSON.parse(row.layer_order_json || "[]") as OverlaySceneLayerKind[],
         emergencyBanner: row.emergency_banner,
         tickerText: row.ticker_text,
         updatedAt: row.updated_at
@@ -446,9 +452,9 @@ async function upsertOverlaySettingsTable(
     await client.query(
       `
         INSERT INTO overlay_drafts (
-          singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, emergency_banner, ticker_text, updated_at, based_on_updated_at
+          singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, emergency_banner, ticker_text, updated_at, based_on_updated_at
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           channel_name = EXCLUDED.channel_name,
@@ -467,6 +473,7 @@ async function upsertOverlaySettingsTable(
           show_source_label = EXCLUDED.show_source_label,
           show_queue_preview = EXCLUDED.show_queue_preview,
           queue_preview_count = EXCLUDED.queue_preview_count,
+          layer_order_json = EXCLUDED.layer_order_json,
           emergency_banner = EXCLUDED.emergency_banner,
           ticker_text = EXCLUDED.ticker_text,
           updated_at = EXCLUDED.updated_at,
@@ -490,6 +497,7 @@ async function upsertOverlaySettingsTable(
         normalized.showSourceLabel,
         normalized.showQueuePreview,
         normalized.queuePreviewCount,
+        JSON.stringify(normalized.layerOrder),
         normalized.emergencyBanner,
         normalized.tickerText,
         normalized.updatedAt,
@@ -502,9 +510,9 @@ async function upsertOverlaySettingsTable(
   await client.query(
     `
       INSERT INTO overlay_settings (
-        singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, emergency_banner, ticker_text, updated_at
+        singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, emergency_banner, ticker_text, updated_at
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
       ON CONFLICT (singleton_id) DO UPDATE SET
         enabled = EXCLUDED.enabled,
         channel_name = EXCLUDED.channel_name,
@@ -523,6 +531,7 @@ async function upsertOverlaySettingsTable(
         show_source_label = EXCLUDED.show_source_label,
         show_queue_preview = EXCLUDED.show_queue_preview,
         queue_preview_count = EXCLUDED.queue_preview_count,
+        layer_order_json = EXCLUDED.layer_order_json,
         emergency_banner = EXCLUDED.emergency_banner,
         ticker_text = EXCLUDED.ticker_text,
         updated_at = EXCLUDED.updated_at
@@ -545,6 +554,7 @@ async function upsertOverlaySettingsTable(
       normalized.showSourceLabel,
       normalized.showQueuePreview,
       normalized.queuePreviewCount,
+      JSON.stringify(normalized.layerOrder),
       normalized.emergencyBanner,
       normalized.tickerText,
       normalized.updatedAt
@@ -648,6 +658,7 @@ function defaultState(): AppState {
       showSourceLabel: true,
       showQueuePreview: false,
       queuePreviewCount: 3,
+      layerOrder: normalizeOverlaySceneLayerOrder([]),
       emergencyBanner: "",
       tickerText: "",
       updatedAt: ""
@@ -867,7 +878,8 @@ function normalizeState(state: AppState): AppState {
       scenePreset: normalizeOverlayScenePreset(String(state.overlay?.scenePreset ?? defaults.overlay.scenePreset)),
       surfaceStyle: normalizeOverlaySurfaceStyle(String(state.overlay?.surfaceStyle ?? defaults.overlay.surfaceStyle)),
       panelAnchor: normalizeOverlayPanelAnchor(String(state.overlay?.panelAnchor ?? defaults.overlay.panelAnchor)),
-      titleScale: normalizeOverlayTitleScale(String(state.overlay?.titleScale ?? defaults.overlay.titleScale))
+      titleScale: normalizeOverlayTitleScale(String(state.overlay?.titleScale ?? defaults.overlay.titleScale)),
+      layerOrder: normalizeOverlaySceneLayerOrder(state.overlay?.layerOrder ?? defaults.overlay.layerOrder)
     },
     managedConfig: {
       ...defaults.managedConfig,
@@ -1027,6 +1039,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       show_source_label BOOLEAN NOT NULL DEFAULT TRUE,
       show_queue_preview BOOLEAN NOT NULL DEFAULT FALSE,
       queue_preview_count INTEGER NOT NULL DEFAULT 3,
+      layer_order_json TEXT NOT NULL DEFAULT '[]',
       emergency_banner TEXT NOT NULL DEFAULT '',
       ticker_text TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT ''
@@ -1051,6 +1064,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       show_source_label BOOLEAN NOT NULL DEFAULT TRUE,
       show_queue_preview BOOLEAN NOT NULL DEFAULT FALSE,
       queue_preview_count INTEGER NOT NULL DEFAULT 3,
+      layer_order_json TEXT NOT NULL DEFAULT '[]',
       emergency_banner TEXT NOT NULL DEFAULT '',
       ticker_text TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT '',
@@ -1280,6 +1294,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_source_label BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_queue_preview BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS queue_preview_count INTEGER NOT NULL DEFAULT 3;
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS layer_order_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS ticker_text TEXT NOT NULL DEFAULT '';
@@ -1300,6 +1315,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS show_source_label BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS show_queue_preview BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS queue_preview_count INTEGER NOT NULL DEFAULT 3;
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS layer_order_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS ticker_text TEXT NOT NULL DEFAULT '';
@@ -1517,9 +1533,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   await client.query(
     `
         INSERT INTO overlay_settings (
-          singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, emergency_banner, ticker_text, updated_at
+          singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, emergency_banner, ticker_text, updated_at
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           channel_name = EXCLUDED.channel_name,
@@ -1538,6 +1554,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
           show_source_label = EXCLUDED.show_source_label,
           show_queue_preview = EXCLUDED.show_queue_preview,
           queue_preview_count = EXCLUDED.queue_preview_count,
+          layer_order_json = EXCLUDED.layer_order_json,
           emergency_banner = EXCLUDED.emergency_banner,
           ticker_text = EXCLUDED.ticker_text,
           updated_at = EXCLUDED.updated_at
@@ -1560,6 +1577,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         next.overlay.showSourceLabel,
         next.overlay.showQueuePreview,
         next.overlay.queuePreviewCount,
+        JSON.stringify(next.overlay.layerOrder),
         next.overlay.emergencyBanner,
         next.overlay.tickerText,
         next.overlay.updatedAt

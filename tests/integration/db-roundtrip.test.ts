@@ -166,6 +166,7 @@ describe.sequential("database roundtrip", () => {
         surfaceStyle: "signal",
         panelAnchor: "center",
         titleScale: "cinematic",
+        layerOrder: ["hero", "chip", "next", "queue", "schedule", "clock", "banner", "ticker"],
         tickerText: "Roundtrip preview ticker",
         updatedAt: "2026-04-04T10:00:00.000Z"
       },
@@ -373,6 +374,7 @@ describe.sequential("database roundtrip", () => {
     expect(reread.overlay.surfaceStyle).toBe("signal");
     expect(reread.overlay.panelAnchor).toBe("center");
     expect(reread.overlay.titleScale).toBe("cinematic");
+    expect(reread.overlay.layerOrder[0]).toBe("hero");
     expect(reread.overlay.tickerText).toBe("Roundtrip preview ticker");
     expect(reread.managedConfig.twitchClientId).toBe("client-id");
     expect(reread.twitch.broadcasterLogin).toBe("roundtrip");
