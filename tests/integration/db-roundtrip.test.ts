@@ -299,7 +299,10 @@ describe.sequential("database roundtrip", () => {
           streamKeyPresent: true,
           status: "ready" as const,
           notes: "Primary output",
-          lastValidatedAt: "2026-04-04T10:00:00.000Z"
+          lastValidatedAt: "2026-04-04T10:00:00.000Z",
+          lastFailureAt: "",
+          failureCount: 0,
+          lastError: ""
         }
       ],
       incidents: [

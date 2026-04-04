@@ -177,7 +177,10 @@ function createState(overrides: Partial<AppState> = {}): AppState {
         streamKeyPresent: true,
         status: "ready",
         notes: "Ready",
-        lastValidatedAt: ""
+        lastValidatedAt: "",
+        lastFailureAt: "",
+        failureCount: 0,
+        lastError: ""
       }
     ],
     incidents: [
@@ -339,7 +342,10 @@ describe("ops state helpers", () => {
           streamKeyPresent: false,
           status: "missing-config",
           notes: "Missing stream key",
-          lastValidatedAt: ""
+          lastValidatedAt: "",
+          lastFailureAt: "",
+          failureCount: 0,
+          lastError: ""
         }
       ],
       twitch: {

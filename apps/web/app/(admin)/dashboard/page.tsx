@@ -137,7 +137,7 @@ export default async function DashboardPage() {
         <Panel title="Output destinations" eyebrow="Broadcast">
           <p className="subtle">
             Stream247 now distinguishes between primary and backup output targets. If the primary target is not usable,
-            playout will prefer the next enabled destination with valid config.
+            playout will prefer the next enabled destination with healthy config and keep failed outputs on a short cooldown.
           </p>
           <div className="list">
             {orderedDestinations.map((destination) => (
@@ -149,6 +149,11 @@ export default async function DashboardPage() {
                 <div className="subtle">
                   {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"}
                 </div>
+                {destination.lastFailureAt ? (
+                  <div className="subtle">
+                    Last failure {destination.lastFailureAt} · count {destination.failureCount} · {destination.lastError || "No error sample captured."}
+                  </div>
+                ) : null}
                 <div style={{ marginTop: 12 }}>
                   <DestinationSettingsForm destination={destination} />
                 </div>

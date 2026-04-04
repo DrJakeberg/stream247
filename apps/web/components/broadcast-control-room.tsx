@@ -138,6 +138,11 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                   {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"}
                 </div>
                 <div className="subtle">{destination.notes}</div>
+                {destination.lastFailureAt ? (
+                  <div className="subtle">
+                    Last failure {destination.lastFailureAt} · count {destination.failureCount} · {destination.lastError || "No error sample captured."}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

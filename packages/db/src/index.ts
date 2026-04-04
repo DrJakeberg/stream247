@@ -162,6 +162,9 @@ export type StreamDestinationRecord = {
   status: "ready" | "missing-config" | "error";
   notes: string;
   lastValidatedAt: string;
+  lastFailureAt: string;
+  failureCount: number;
+  lastError: string;
 };
 
 export type IncidentRecord = {
@@ -542,7 +545,10 @@ function normalizeDestinationRecords(destinations: StreamDestinationRecord[], de
     .map((destination) => ({
       ...destination,
       role: (destination.role === "backup" ? "backup" : "primary") as StreamDestinationRecord["role"],
-      priority: typeof destination.priority === "number" ? destination.priority : destination.role === "backup" ? 10 : 0
+      priority: typeof destination.priority === "number" ? destination.priority : destination.role === "backup" ? 10 : 0,
+      lastFailureAt: destination.lastFailureAt || "",
+      failureCount: typeof destination.failureCount === "number" ? destination.failureCount : 0,
+      lastError: destination.lastError || ""
     }))
     .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name));
 }
@@ -853,7 +859,10 @@ function defaultState(): AppState {
         streamKeyPresent: Boolean(process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY),
         status: process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY ? "ready" : "missing-config",
         notes: "Primary RTMP destination for the broadcast runtime.",
-        lastValidatedAt: ""
+        lastValidatedAt: "",
+        lastFailureAt: "",
+        failureCount: 0,
+        lastError: ""
       },
       {
         id: "destination-backup",
@@ -871,7 +880,10 @@ function defaultState(): AppState {
               : "missing-config"
             : "missing-config",
         notes: "Backup RTMP destination used when the primary output is unavailable or disabled.",
-        lastValidatedAt: ""
+        lastValidatedAt: "",
+        lastFailureAt: "",
+        failureCount: 0,
+        lastError: ""
       }
     ],
     incidents: [],
@@ -1389,7 +1401,10 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       stream_key_present BOOLEAN NOT NULL DEFAULT FALSE,
       status TEXT NOT NULL DEFAULT 'missing-config',
       notes TEXT NOT NULL DEFAULT '',
-      last_validated_at TEXT NOT NULL DEFAULT ''
+      last_validated_at TEXT NOT NULL DEFAULT '',
+      last_failure_at TEXT NOT NULL DEFAULT '',
+      failure_count INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS incidents (
@@ -1477,6 +1492,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'primary';
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS last_failure_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS failure_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS fallback_priority INTEGER NOT NULL DEFAULT 100;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS is_global_fallback BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_at TEXT NOT NULL DEFAULT '';
@@ -2059,9 +2077,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     await client.query(
       `
         INSERT INTO stream_destinations (
-          id, provider, role, priority, name, enabled, rtmp_url, stream_key_present, status, notes, last_validated_at
+          id, provider, role, priority, name, enabled, rtmp_url, stream_key_present, status, notes, last_validated_at,
+          last_failure_at, failure_count, last_error
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       `,
       [
         destination.id,
@@ -2074,7 +2093,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         destination.streamKeyPresent,
         destination.status,
         destination.notes,
-        destination.lastValidatedAt
+        destination.lastValidatedAt,
+        destination.lastFailureAt,
+        destination.failureCount,
+        destination.lastError
       ]
     );
   }
@@ -2366,6 +2388,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     status: StreamDestinationRecord["status"];
     notes: string;
     last_validated_at: string;
+    last_failure_at: string;
+    failure_count: number;
+    last_error: string;
   }>("SELECT * FROM stream_destinations ORDER BY priority ASC, name ASC");
   const sourceSyncRunsResult = await client.query<{
     id: string;
@@ -2611,7 +2636,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       streamKeyPresent: row.stream_key_present,
       status: row.status,
       notes: row.notes,
-      lastValidatedAt: row.last_validated_at
+      lastValidatedAt: row.last_validated_at,
+      lastFailureAt: row.last_failure_at,
+      failureCount: row.failure_count,
+      lastError: row.last_error
     })),
     incidents: incidentsResult.rows.map((row) => ({
       id: row.id,
@@ -3080,9 +3108,10 @@ export async function updateDestinationRecord(destination: StreamDestinationReco
     await client.query(
       `
         INSERT INTO stream_destinations (
-          id, provider, role, priority, name, enabled, rtmp_url, stream_key_present, status, notes, last_validated_at
+          id, provider, role, priority, name, enabled, rtmp_url, stream_key_present, status, notes, last_validated_at,
+          last_failure_at, failure_count, last_error
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (id) DO UPDATE
         SET provider = EXCLUDED.provider,
             role = EXCLUDED.role,
@@ -3093,7 +3122,10 @@ export async function updateDestinationRecord(destination: StreamDestinationReco
             stream_key_present = EXCLUDED.stream_key_present,
             status = EXCLUDED.status,
             notes = EXCLUDED.notes,
-            last_validated_at = EXCLUDED.last_validated_at
+            last_validated_at = EXCLUDED.last_validated_at,
+            last_failure_at = EXCLUDED.last_failure_at,
+            failure_count = EXCLUDED.failure_count,
+            last_error = EXCLUDED.last_error
       `,
       [
         destination.id,
@@ -3106,7 +3138,10 @@ export async function updateDestinationRecord(destination: StreamDestinationReco
         destination.streamKeyPresent,
         destination.status,
         destination.notes,
-        destination.lastValidatedAt
+        destination.lastValidatedAt,
+        destination.lastFailureAt,
+        destination.failureCount,
+        destination.lastError
       ]
     );
   });

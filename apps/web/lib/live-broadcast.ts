@@ -20,6 +20,9 @@ export type LiveDestinationSummary = {
   notes: string;
   rtmpUrl: string;
   streamKeyPresent: boolean;
+  lastFailureAt: string;
+  failureCount: number;
+  lastError: string;
 };
 
 export type LiveScheduleSummary = {
