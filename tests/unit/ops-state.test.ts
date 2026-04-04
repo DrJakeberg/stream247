@@ -4,16 +4,19 @@ import { getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
 import {
   getAssetPlaybackDiagnostics,
   getFilteredIncidents,
+  getPlayoutQueueAssets,
   getRuntimeDriftReport,
   getSourceConnectorDiagnostics,
   getSourceHealthSnapshot,
   getSourceIncidents,
+  getSourceRecoveryActions,
   getSourceSyncRuns,
   getSourceReferences,
   getWorkerHealth
 } from "../../apps/web/lib/server/state";
 
 function createState(overrides: Partial<AppState> = {}): AppState {
+  const currentDayOfWeek = new Date().getDay();
   return {
     initialized: true,
     owner: {
@@ -101,7 +104,7 @@ function createState(overrides: Partial<AppState> = {}): AppState {
         id: "block-1",
         title: "Morning Show",
         categoryName: "Just Chatting",
-        dayOfWeek: 5,
+        dayOfWeek: currentDayOfWeek,
         startMinuteOfDay: 0,
         durationMinutes: 1440,
         showId: "show-1",
@@ -196,6 +199,9 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       currentAssetId: "asset-1",
       currentTitle: "Asset 1",
       desiredAssetId: "asset-1",
+      nextAssetId: "",
+      nextTitle: "",
+      queuedAssetIds: [],
       currentDestinationId: "destination-primary",
       restartRequestedAt: "",
       heartbeatAt: new Date().toISOString(),
@@ -363,5 +369,65 @@ describe("ops state helpers", () => {
     const assetDiagnostics = getAssetPlaybackDiagnostics(state, "asset-1");
     expect(assetDiagnostics.status).toBe("playable");
     expect(assetDiagnostics.summary).toContain("usable");
+  });
+
+  it("builds recovery actions and playout queue assets", () => {
+    const state = createState({
+      sourceSyncRuns: [
+        {
+          id: "sync-err",
+          sourceId: "source-1",
+          startedAt: "2026-03-27T10:30:00.000Z",
+          finishedAt: "2026-03-27T10:31:00.000Z",
+          status: "error",
+          summary: "yt-dlp ingestion failed.",
+          discoveredAssets: 0,
+          readyAssets: 0,
+          errorMessage: "Private video"
+        }
+      ],
+      assets: [
+        {
+          id: "asset-1",
+          sourceId: "source-1",
+          title: "Asset 1",
+          path: "/tmp/asset.mp4",
+          status: "ready",
+          externalId: "abc123",
+          categoryName: "Just Chatting",
+          durationSeconds: 3600,
+          publishedAt: "2026-03-27T09:00:00.000Z",
+          fallbackPriority: 100,
+          isGlobalFallback: false,
+          createdAt: "",
+          updatedAt: ""
+        },
+        {
+          id: "asset-2",
+          sourceId: "source-1",
+          title: "Asset 2",
+          path: "/tmp/asset-2.mp4",
+          status: "ready",
+          externalId: "def456",
+          categoryName: "Just Chatting",
+          durationSeconds: 3600,
+          publishedAt: "2026-03-27T10:00:00.000Z",
+          fallbackPriority: 100,
+          isGlobalFallback: false,
+          createdAt: "",
+          updatedAt: ""
+        }
+      ],
+      playout: {
+        ...createState().playout,
+        currentAssetId: "asset-1",
+        nextAssetId: "asset-2",
+        nextTitle: "Asset 2",
+        queuedAssetIds: ["asset-2"]
+      }
+    });
+
+    expect(getSourceRecoveryActions(state, "source-1").join(" ")).toContain("private");
+    expect(getPlayoutQueueAssets(state)).toHaveLength(2);
   });
 });

@@ -303,6 +303,7 @@ Notes:
 - persisted per-source sync runs with success/error summaries and last ingestion results
 - source library health snapshots with latest sync outcome and open issue counts
 - connector-specific troubleshooting hints for source and asset diagnostics
+- playout runtime visibility for current / next / queued assets in the admin UI
 - source-side asset counts and ready counts
 - asset detail pages with source origin, pool context, and runtime visibility
 - searchable asset library by title, source, and status
