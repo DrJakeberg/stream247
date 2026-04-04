@@ -59,6 +59,9 @@ export type OverlaySceneDefinition = {
 
 export type OverlaySceneSource = {
   scenePreset: OverlayScenePreset;
+  insertScenePreset: OverlayScenePreset;
+  standbyScenePreset: OverlayScenePreset;
+  reconnectScenePreset: OverlayScenePreset;
   surfaceStyle: OverlaySurfaceStyle;
   panelAnchor: OverlayPanelAnchor;
   titleScale: OverlayTitleScale;
@@ -69,6 +72,7 @@ export type OverlaySceneSource = {
   emergencyBanner: string;
   tickerText: string;
   layerOrder: OverlaySceneLayerKind[];
+  disabledLayers: OverlaySceneLayerKind[];
 };
 
 export type OverlayOptionDefinition<T extends string> = {
@@ -309,18 +313,19 @@ export function normalizeOverlaySceneLayerOrder(value: unknown): OverlaySceneLay
 
 export function resolveOverlayScenePresetForQueueKind(
   scenePreset: OverlayScenePreset,
-  queueKind: OverlayQueueKind
+  queueKind: OverlayQueueKind,
+  overrides?: Partial<Pick<OverlaySceneSource, "insertScenePreset" | "standbyScenePreset" | "reconnectScenePreset">>
 ): OverlayScenePreset {
   if (queueKind === "insert") {
-    return "bumper-board";
+    return normalizeOverlayScenePreset(overrides?.insertScenePreset || "bumper-board");
   }
 
   if (queueKind === "reconnect") {
-    return "reconnect-board";
+    return normalizeOverlayScenePreset(overrides?.reconnectScenePreset || "reconnect-board");
   }
 
   if (queueKind === "standby") {
-    return "standby-board";
+    return normalizeOverlayScenePreset(overrides?.standbyScenePreset || "standby-board");
   }
 
   return scenePreset;
@@ -335,8 +340,16 @@ export function buildOverlaySceneDefinition(args: {
   overlay: OverlaySceneSource;
   queueKind: OverlayQueueKind;
 }): OverlaySceneDefinition {
-  const resolvedPresetId = resolveOverlayScenePresetForQueueKind(args.overlay.scenePreset, args.queueKind);
+  const resolvedPresetId = resolveOverlayScenePresetForQueueKind(args.overlay.scenePreset, args.queueKind, {
+    insertScenePreset: args.overlay.insertScenePreset,
+    standbyScenePreset: args.overlay.standbyScenePreset,
+    reconnectScenePreset: args.overlay.reconnectScenePreset
+  });
   const normalizedLayerOrder = normalizeOverlaySceneLayerOrder(args.overlay.layerOrder);
+  const disabledLayersSource = Array.isArray(args.overlay.disabledLayers) ? args.overlay.disabledLayers : [];
+  const disabledLayers = new Set(
+    normalizeOverlaySceneLayerOrder(disabledLayersSource).filter((kind) => disabledLayersSource.includes(kind))
+  );
   const enabledMap: Record<OverlaySceneLayerKind, boolean> = {
     chip: true,
     hero: true,
@@ -357,7 +370,7 @@ export function buildOverlaySceneDefinition(args: {
     layers: normalizedLayerOrder.map((kind) => ({
       kind,
       label: OVERLAY_SCENE_LAYERS.find((layer) => layer.id === kind)?.label || kind,
-      enabled: enabledMap[kind]
+      enabled: enabledMap[kind] && !disabledLayers.has(kind)
     }))
   };
 }

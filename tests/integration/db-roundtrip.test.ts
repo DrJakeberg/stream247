@@ -163,10 +163,14 @@ describe.sequential("database roundtrip", () => {
         channelName: "Roundtrip TV",
         replayLabel: "Replay",
         brandBadge: "Archive Channel",
+        insertScenePreset: "minimal-chip",
+        standbyScenePreset: "standby-board",
+        reconnectScenePreset: "reconnect-board",
         surfaceStyle: "signal",
         panelAnchor: "center",
         titleScale: "cinematic",
         layerOrder: ["hero", "chip", "next", "queue", "schedule", "clock", "banner", "ticker"],
+        disabledLayers: ["schedule"],
         tickerText: "Roundtrip preview ticker",
         updatedAt: "2026-04-04T10:00:00.000Z"
       },
@@ -371,10 +375,14 @@ describe.sequential("database roundtrip", () => {
     expect(reread.owner?.email).toBe("owner@example.com");
     expect(reread.overlay.channelName).toBe("Roundtrip TV");
     expect(reread.overlay.brandBadge).toBe("Archive Channel");
+    expect(reread.overlay.insertScenePreset).toBe("minimal-chip");
+    expect(reread.overlay.standbyScenePreset).toBe("standby-board");
+    expect(reread.overlay.reconnectScenePreset).toBe("reconnect-board");
     expect(reread.overlay.surfaceStyle).toBe("signal");
     expect(reread.overlay.panelAnchor).toBe("center");
     expect(reread.overlay.titleScale).toBe("cinematic");
     expect(reread.overlay.layerOrder[0]).toBe("hero");
+    expect(reread.overlay.disabledLayers).toEqual(["schedule"]);
     expect(reread.overlay.tickerText).toBe("Roundtrip preview ticker");
     expect(reread.managedConfig.twitchClientId).toBe("client-id");
     expect(reread.twitch.broadcasterLogin).toBe("roundtrip");

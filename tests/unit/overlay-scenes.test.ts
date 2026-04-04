@@ -16,6 +16,21 @@ describe("overlay scene resolution", () => {
     expect(resolveOverlayScenePresetForQueueKind("replay-lower-third", "insert")).toBe("bumper-board");
   });
 
+  it("uses configured per-mode scene presets when provided", () => {
+    expect(
+      resolveOverlayScenePresetForQueueKind("replay-lower-third", "insert", {
+        insertScenePreset: "minimal-chip",
+        standbyScenePreset: "split-now-next",
+        reconnectScenePreset: "standby-board"
+      })
+    ).toBe("minimal-chip");
+    expect(
+      resolveOverlayScenePresetForQueueKind("replay-lower-third", "standby", {
+        standbyScenePreset: "split-now-next"
+      })
+    ).toBe("split-now-next");
+  });
+
   it("switches reconnects to the reconnect scene", () => {
     expect(resolveOverlayScenePresetForQueueKind("minimal-chip", "reconnect")).toBe("reconnect-board");
   });
@@ -87,6 +102,9 @@ describe("overlay scene definitions", () => {
     const scene = buildOverlaySceneDefinition({
       overlay: {
         scenePreset: "replay-lower-third",
+        insertScenePreset: "minimal-chip",
+        standbyScenePreset: "standby-board",
+        reconnectScenePreset: "reconnect-board",
         surfaceStyle: "signal",
         panelAnchor: "center",
         titleScale: "cinematic",
@@ -96,14 +114,16 @@ describe("overlay scene definitions", () => {
         showQueuePreview: true,
         emergencyBanner: "",
         tickerText: "Always on air",
-        layerOrder: ["hero", "chip", "next", "ticker", "clock", "queue", "schedule", "banner"]
+        layerOrder: ["hero", "chip", "next", "ticker", "clock", "queue", "schedule", "banner"],
+        disabledLayers: ["next"]
       },
       queueKind: "insert"
     });
 
-    expect(scene.resolvedPresetId).toBe("bumper-board");
+    expect(scene.resolvedPresetId).toBe("minimal-chip");
     expect(scene.layers[0]?.kind).toBe("hero");
     expect(scene.layers.find((layer) => layer.kind === "ticker")?.enabled).toBe(true);
+    expect(scene.layers.find((layer) => layer.kind === "next")?.enabled).toBe(false);
     expect(scene.layers.find((layer) => layer.kind === "schedule")?.enabled).toBe(false);
   });
 });

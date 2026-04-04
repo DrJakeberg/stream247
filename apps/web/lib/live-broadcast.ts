@@ -122,6 +122,27 @@ export type LiveOverlaySummary = {
     | "minimal-chip"
     | "bumper-board"
     | "reconnect-board";
+  insertScenePreset:
+    | "replay-lower-third"
+    | "split-now-next"
+    | "standby-board"
+    | "minimal-chip"
+    | "bumper-board"
+    | "reconnect-board";
+  standbyScenePreset:
+    | "replay-lower-third"
+    | "split-now-next"
+    | "standby-board"
+    | "minimal-chip"
+    | "bumper-board"
+    | "reconnect-board";
+  reconnectScenePreset:
+    | "replay-lower-third"
+    | "split-now-next"
+    | "standby-board"
+    | "minimal-chip"
+    | "bumper-board"
+    | "reconnect-board";
   accentColor: string;
   surfaceStyle: "glass" | "solid" | "signal";
   panelAnchor: "bottom" | "center";
@@ -134,6 +155,7 @@ export type LiveOverlaySummary = {
   showQueuePreview: boolean;
   queuePreviewCount: number;
   layerOrder: Array<"chip" | "hero" | "next" | "queue" | "schedule" | "clock" | "banner" | "ticker">;
+  disabledLayers: Array<"chip" | "hero" | "next" | "queue" | "schedule" | "clock" | "banner" | "ticker">;
   emergencyBanner: string;
   tickerText: string;
   replayLabel: string;

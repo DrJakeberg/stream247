@@ -22,6 +22,9 @@ type OverlayPayload = Partial<{
   brandBadge: string;
   accentColor: string;
   scenePreset: string;
+  insertScenePreset: string;
+  standbyScenePreset: string;
+  reconnectScenePreset: string;
   surfaceStyle: string;
   panelAnchor: string;
   titleScale: string;
@@ -33,12 +36,14 @@ type OverlayPayload = Partial<{
   showQueuePreview: boolean;
   queuePreviewCount: number;
   layerOrder: string[];
+  disabledLayers: string[];
   emergencyBanner: string;
   tickerText: string;
   replayLabel: string;
 }>;
 
 function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnType<typeof readOverlayStudioState>>["draftOverlay"], updatedAt: string) {
+  const disabledLayersSource = payload.disabledLayers ?? base.disabledLayers;
   return {
     ...base,
     enabled: payload.enabled ?? base.enabled,
@@ -46,6 +51,9 @@ function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnTyp
     headline: (payload.headline ?? base.headline).trim().slice(0, 120) || "Always on air",
     brandBadge: (payload.brandBadge ?? base.brandBadge).trim().slice(0, 48),
     scenePreset: normalizeOverlayScenePreset(String(payload.scenePreset ?? base.scenePreset)),
+    insertScenePreset: normalizeOverlayScenePreset(String(payload.insertScenePreset ?? base.insertScenePreset)),
+    standbyScenePreset: normalizeOverlayScenePreset(String(payload.standbyScenePreset ?? base.standbyScenePreset)),
+    reconnectScenePreset: normalizeOverlayScenePreset(String(payload.reconnectScenePreset ?? base.reconnectScenePreset)),
     accentColor: (payload.accentColor ?? base.accentColor).trim().slice(0, 20) || "#0e6d5a",
     surfaceStyle: normalizeOverlaySurfaceStyle(String(payload.surfaceStyle ?? base.surfaceStyle)),
     panelAnchor: normalizeOverlayPanelAnchor(String(payload.panelAnchor ?? base.panelAnchor)),
@@ -58,6 +66,7 @@ function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnTyp
     showQueuePreview: payload.showQueuePreview ?? base.showQueuePreview,
     queuePreviewCount: Math.max(1, Math.min(5, Number(payload.queuePreviewCount ?? base.queuePreviewCount) || 3)),
     layerOrder: normalizeOverlaySceneLayerOrder(payload.layerOrder ?? base.layerOrder),
+    disabledLayers: normalizeOverlaySceneLayerOrder(disabledLayersSource).filter((kind) => disabledLayersSource.includes(kind)),
     emergencyBanner: (payload.emergencyBanner ?? base.emergencyBanner).trim().slice(0, 180),
     tickerText: (payload.tickerText ?? base.tickerText).trim().slice(0, 180),
     replayLabel: (payload.replayLabel ?? base.replayLabel).trim().slice(0, 80) || "Replay stream",

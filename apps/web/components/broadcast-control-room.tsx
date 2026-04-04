@@ -143,6 +143,10 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 {snapshot.overlay.titleScale} scale
               </div>
               <div className="subtle">
+                Asset {snapshot.overlay.scenePreset} · Insert {snapshot.overlay.insertScenePreset} · Standby {snapshot.overlay.standbyScenePreset} ·
+                Reconnect {snapshot.overlay.reconnectScenePreset}
+              </div>
+              <div className="subtle">
                 Accent {snapshot.overlay.accentColor} · Brand badge {snapshot.overlay.brandBadge || "none"} · Next visible{" "}
                 {snapshot.overlay.showNextItem ? "yes" : "no"} · Clock {snapshot.overlay.showClock ? "yes" : "no"}
               </div>
@@ -153,6 +157,12 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               <div className="subtle">
                 Active scene {snapshot.activeScene.resolvedPresetId} · layers{" "}
                 {snapshot.activeScene.layers.filter((layer) => layer.enabled).map((layer) => layer.label).join(" → ")}
+              </div>
+              <div className="subtle">
+                Hidden layers{" "}
+                {snapshot.overlay.disabledLayers.length > 0
+                  ? snapshot.overlay.disabledLayers.join(" → ")
+                  : "none"}
               </div>
               {snapshot.overlay.tickerText ? <div className="subtle">{snapshot.overlay.tickerText}</div> : null}
               {snapshot.overlay.emergencyBanner ? <div className="danger">{snapshot.overlay.emergencyBanner}</div> : null}
