@@ -279,6 +279,21 @@ declare global {
 }
 
 const STATE_WRITE_LOCK_KEY = 247001;
+const STATE_WRITE_MAX_RETRIES = 3;
+
+function isRetryableStateWriteError(error: unknown): error is { code: string } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code !== undefined &&
+    ["40P01", "40001"].includes((error as { code: string }).code)
+  );
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function createId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -941,6 +956,52 @@ async function isDatabaseEmpty(client: PoolClient): Promise<boolean> {
 
 async function acquireStateWriteLock(client: PoolClient): Promise<void> {
   await client.query("SELECT pg_advisory_xact_lock($1)", [STATE_WRITE_LOCK_KEY]);
+}
+
+async function rollbackQuietly(client: PoolClient): Promise<void> {
+  try {
+    await client.query("ROLLBACK");
+  } catch {
+    // Ignore rollback errors when the transaction is already aborted or closed.
+  }
+}
+
+async function withSerializedStateWrite<T>(operationName: string, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  await ensureDatabase();
+
+  let attempt = 0;
+  let lastError: unknown;
+
+  while (attempt < STATE_WRITE_MAX_RETRIES) {
+    attempt += 1;
+    const client = await getPool().connect();
+
+    try {
+      await client.query("BEGIN");
+      await acquireStateWriteLock(client);
+      const result = await fn(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      lastError = error;
+      await rollbackQuietly(client);
+
+      if (!isRetryableStateWriteError(error) || attempt >= STATE_WRITE_MAX_RETRIES) {
+        throw error;
+      }
+
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[stream247-db] ${operationName} retrying after PostgreSQL ${error.code} (attempt ${attempt}/${STATE_WRITE_MAX_RETRIES}).`
+      );
+
+      await sleep(75 * attempt);
+    } finally {
+      client.release();
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(`State write failed during ${operationName}.`);
 }
 
 async function persistState(client: PoolClient, state: AppState): Promise<void> {
@@ -1858,38 +1919,18 @@ export async function readAppState(): Promise<AppState> {
 }
 
 export async function writeAppState(state: AppState): Promise<void> {
-  await ensureDatabase();
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
-    await acquireStateWriteLock(client);
+  await withSerializedStateWrite("writeAppState", async (client) => {
     await persistState(client, state);
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function updateAppState(updater: (state: AppState) => AppState | Promise<AppState>): Promise<AppState> {
-  await ensureDatabase();
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
-    await acquireStateWriteLock(client);
+  return withSerializedStateWrite("updateAppState", async (client) => {
     const current = await hydrateState(client);
     const next = normalizeState(await updater(current));
     await persistState(client, next);
-    await client.query("COMMIT");
     return next;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function appendAuditEvent(type: string, message: string): Promise<void> {
