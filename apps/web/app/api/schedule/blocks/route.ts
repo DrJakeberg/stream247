@@ -10,7 +10,9 @@ import {
 } from "@/lib/server/state";
 
 function normalizeBody(body: {
+  action?: string;
   id?: string;
+  sourceBlockId?: string;
   title?: string;
   categoryName?: string;
   startMinuteOfDay?: number;
@@ -22,7 +24,9 @@ function normalizeBody(body: {
   sourceName?: string;
 }) {
   return {
+    action: (body.action ?? "").trim(),
     id: (body.id ?? "").trim(),
+    sourceBlockId: (body.sourceBlockId ?? "").trim(),
     title: (body.title ?? "").trim(),
     categoryName: (body.categoryName ?? "").trim(),
     startMinuteOfDay: Number(body.startMinuteOfDay ?? 0),
@@ -59,6 +63,8 @@ export async function POST(request: NextRequest) {
   const user = await getAuthenticatedUser();
   const payload = normalizeBody(
     (await request.json()) as {
+      action?: string;
+      sourceBlockId?: string;
       title?: string;
       categoryName?: string;
       startMinuteOfDay?: number;
@@ -70,6 +76,59 @@ export async function POST(request: NextRequest) {
       sourceName?: string;
     }
   );
+
+  if (payload.action === "duplicate") {
+    if (!payload.sourceBlockId) {
+      return NextResponse.json({ message: "Source schedule block is required." }, { status: 400 });
+    }
+
+    const selectedDays = payload.dayOfWeeks;
+    if (selectedDays.length === 0) {
+      return NextResponse.json({ message: "Select at least one weekday to duplicate onto." }, { status: 400 });
+    }
+
+    try {
+      const state = await readAppState();
+      const sourceBlock = state.scheduleBlocks.find((block) => block.id === payload.sourceBlockId);
+      if (!sourceBlock) {
+        throw new Error("Source schedule block not found.");
+      }
+
+      const duplicateDays = [...new Set(selectedDays)].filter((day) => day !== sourceBlock.dayOfWeek);
+      if (duplicateDays.length === 0) {
+        throw new Error("Choose at least one different weekday for the duplicate.");
+      }
+
+      const newBlocks = duplicateDays.map((dayOfWeek) => ({
+        ...sourceBlock,
+        id: `schedule_${Math.random().toString(36).slice(2, 10)}`,
+        dayOfWeek
+      }));
+      const conflicts = findScheduleConflicts([...state.scheduleBlocks, ...newBlocks]);
+      if (conflicts.length > 0) {
+        throw new Error("Duplicated blocks overlap with existing programming. Adjust the target days or schedule.");
+      }
+
+      await createScheduleBlocks(newBlocks);
+      const nextState = await readAppState();
+
+      await appendAuditEvent(
+        "schedule.duplicated",
+        `${user?.displayName || user?.email || "Unknown user"} duplicated schedule block ${sourceBlock.title} onto ${duplicateDays.length} day${duplicateDays.length === 1 ? "" : "s"}.`
+      );
+
+      return NextResponse.json({
+        ok: true,
+        message: `Schedule block ${sourceBlock.title} duplicated onto ${duplicateDays.length} day${duplicateDays.length === 1 ? "" : "s"}.`,
+        blocks: nextState.scheduleBlocks
+      });
+    } catch (error) {
+      return NextResponse.json(
+        { message: error instanceof Error ? error.message : "Could not duplicate schedule block." },
+        { status: 400 }
+      );
+    }
+  }
 
   const validationError = validateScheduleBlock(payload);
   if (validationError) {

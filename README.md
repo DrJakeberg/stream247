@@ -21,6 +21,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - overlap validation
   - drag-and-drop day timeline editing
   - resize-to-change-duration editing
+  - duplicate existing blocks onto other weekdays
 - pool management with:
   - source grouping
   - persistent round-robin playback cursors
@@ -61,7 +62,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 - richer multi-scene composition inside the playout runtime beyond the current scene-presets + draft/publish workflow
 - more advanced playout transitions and scene-aware switchovers
 - deeper analytics views and richer incident correlation
-- duplicate flows and inline override lanes in the schedule editor
+- inline override lanes in the schedule editor
 
 ## Quick Start
 

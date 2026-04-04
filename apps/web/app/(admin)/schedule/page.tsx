@@ -4,6 +4,7 @@ import { findScheduleConflicts, formatMinuteOfDay } from "@stream247/core";
 import { Panel } from "@/components/panel";
 import { ProgrammingTemplateForm } from "@/components/programming-template-form";
 import { ScheduleBlockDeleteForm } from "@/components/schedule-block-delete-form";
+import { ScheduleBlockDuplicateForm } from "@/components/schedule-block-duplicate-form";
 import { ScheduleBlockForm } from "@/components/schedule-block-form";
 import { ScheduleTimeline } from "@/components/schedule-timeline";
 import { ScheduleWeekOverview } from "@/components/schedule-week-overview";
@@ -121,6 +122,9 @@ export default async function SchedulePage() {
                   </div>
                   <div style={{ marginTop: 12 }}>
                     <ScheduleBlockForm block={block} pools={poolOptions} shows={shows} />
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <ScheduleBlockDuplicateForm block={block} />
                   </div>
                   <div style={{ marginTop: 8 }}>
                     <ScheduleBlockDeleteForm id={block.id} />
