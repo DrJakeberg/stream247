@@ -73,6 +73,7 @@ import type {
   LiveIncidentSummary,
   LiveOverlaySummary,
   LivePlayoutSummary,
+  LiveQueueItemSummary,
   LiveScheduleSummary,
   PublicChannelSnapshot
 } from "@/lib/live-broadcast";
@@ -503,7 +504,15 @@ export function getSourceRecoveryActions(state: AppState, sourceId: string): str
 }
 
 export function getPlayoutQueueAssets(state: AppState) {
-  const ids = [state.playout.currentAssetId, state.playout.nextAssetId, ...state.playout.queuedAssetIds].filter(Boolean);
+  const queueItemAssetIds = state.playout.queueItems
+    .map((item) => item.assetId)
+    .filter(Boolean);
+  const ids = [
+    ...queueItemAssetIds,
+    state.playout.currentAssetId,
+    state.playout.nextAssetId,
+    ...state.playout.queuedAssetIds
+  ].filter(Boolean);
   const seen = new Set<string>();
   return ids
     .filter((id) => {
@@ -614,6 +623,18 @@ function summarizeOverlay(overlay: OverlaySettingsRecord): LiveOverlaySummary {
   };
 }
 
+function summarizeQueueItems(state: AppState): LiveQueueItemSummary[] {
+  return state.playout.queueItems.map((item) => ({
+    id: item.id,
+    kind: item.kind,
+    title: item.title,
+    subtitle: item.subtitle,
+    position: item.position,
+    scenePreset: item.scenePreset,
+    asset: item.assetId ? summarizeAsset(state, item.assetId) : null
+  }));
+}
+
 function summarizePlayout(playout: PlayoutRuntimeRecord): LivePlayoutSummary {
   return {
     status: playout.status,
@@ -645,6 +666,7 @@ function summarizePlayout(playout: PlayoutRuntimeRecord): LivePlayoutSummary {
     pendingAction: playout.pendingAction,
     pendingActionRequestedAt: playout.pendingActionRequestedAt,
     restartRequestedAt: playout.restartRequestedAt,
+    lastTransitionAt: playout.lastTransitionAt,
     lastStderrSample: playout.lastStderrSample,
     currentDestinationId: playout.currentDestinationId
   };
@@ -668,6 +690,7 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
     prefetchedAsset: summarizeAsset(state, state.playout.prefetchedAssetId),
     overrideAsset: summarizeAsset(state, state.playout.overrideAssetId),
     queuedAssets: queuedAssets.map((asset) => summarizeAsset(state, asset.id)).filter((asset): asset is LiveAssetSummary => Boolean(asset)),
+    queueItems: summarizeQueueItems(state),
     currentScheduleItem: summarizeScheduleItem(currentScheduleItem),
     nextScheduleItem: summarizeScheduleItem(nextScheduleItem),
     openIncidents: summarizeOpenIncidents(state)
@@ -691,6 +714,7 @@ export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot
     currentAsset: snapshot.currentAsset,
     nextAsset: snapshot.nextAsset,
     queuedAssets: snapshot.queuedAssets,
+    queueItems: snapshot.queueItems,
     currentScheduleItem: snapshot.currentScheduleItem,
     nextScheduleItem: snapshot.nextScheduleItem
   };

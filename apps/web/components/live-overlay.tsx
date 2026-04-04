@@ -20,7 +20,7 @@ export function LiveOverlay(props: { initialSnapshot: PublicChannelSnapshot }) {
 
   const currentItem = snapshot.currentScheduleItem;
   const nextItem = snapshot.nextScheduleItem;
-  const queuePreview = snapshot.queuedAssets.slice(0, snapshot.overlay.queuePreviewCount);
+  const queuePreview = snapshot.queueItems.slice(1, 1 + snapshot.overlay.queuePreviewCount);
   const frameClassName =
     snapshot.overlay.scenePreset === "standby-board"
       ? "overlay-frame overlay-frame-standby"
@@ -72,7 +72,7 @@ export function LiveOverlay(props: { initialSnapshot: PublicChannelSnapshot }) {
             <div className="label">Later</div>
             <strong>
               {queuePreview.length > 0
-                ? queuePreview.map((asset) => asset.title).join(" → ")
+                ? queuePreview.map((item) => item.title).join(" → ")
                 : "Queue preview will appear here once playout confirms it."}
             </strong>
           </div>

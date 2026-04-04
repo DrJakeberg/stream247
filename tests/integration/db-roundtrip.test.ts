@@ -310,6 +310,26 @@ describe.sequential("database roundtrip", () => {
         nextAssetId: "asset_2",
         nextTitle: "Asset Two",
         queuedAssetIds: ["asset_2", "asset_3"],
+        queueItems: [
+          {
+            id: "queue-asset_1-0",
+            kind: "asset" as const,
+            assetId: "asset_1",
+            title: "Asset One",
+            subtitle: "Pool One · Just Chatting",
+            scenePreset: "replay-lower-third" as const,
+            position: 0
+          },
+          {
+            id: "queue-asset_2-1",
+            kind: "asset" as const,
+            assetId: "asset_2",
+            title: "Asset Two",
+            subtitle: "Pool One · Just Chatting",
+            scenePreset: "replay-lower-third" as const,
+            position: 1
+          }
+        ],
         prefetchedAssetId: "asset_2",
         prefetchedTitle: "Asset Two",
         prefetchedAt: "2026-04-04T10:00:10.000Z",
@@ -318,6 +338,7 @@ describe.sequential("database roundtrip", () => {
         heartbeatAt: "2026-04-04T10:00:20.000Z",
         processPid: 42,
         processStartedAt: "2026-04-04T10:00:00.000Z",
+        lastTransitionAt: "2026-04-04T10:00:00.000Z",
         lastSuccessfulStartAt: "2026-04-04T10:00:00.000Z",
         lastSuccessfulAssetId: "asset_1",
         selectionReasonCode: "scheduled_match" as const,
@@ -347,5 +368,6 @@ describe.sequential("database roundtrip", () => {
     expect(reread.playout.transitionState).toBe("ready");
     expect(reread.playout.prefetchedAssetId).toBe("asset_2");
     expect(reread.playout.queuedAssetIds).toEqual(["asset_2", "asset_3"]);
+    expect(reread.playout.queueItems[1]?.assetId).toBe("asset_2");
   }, 60_000);
 });

@@ -201,17 +201,35 @@ function createState(overrides: Partial<AppState> = {}): AppState {
     ],
     playout: {
       status: "running",
+      transitionState: "ready",
       currentAssetId: "asset-1",
       currentTitle: "Asset 1",
       desiredAssetId: "asset-1",
       nextAssetId: "",
       nextTitle: "",
       queuedAssetIds: [],
+      queueItems: [
+        {
+          id: "queue-asset-1-0",
+          kind: "asset",
+          assetId: "asset-1",
+          title: "Asset 1",
+          subtitle: "YouTube Playlist · Just Chatting",
+          scenePreset: "replay-lower-third",
+          position: 0
+        }
+      ],
+      prefetchedAssetId: "",
+      prefetchedTitle: "",
+      prefetchedAt: "",
+      prefetchStatus: "",
+      prefetchError: "",
       currentDestinationId: "destination-primary",
       restartRequestedAt: "",
       heartbeatAt: new Date().toISOString(),
       processPid: 123,
       processStartedAt: new Date().toISOString(),
+      lastTransitionAt: new Date().toISOString(),
       lastSuccessfulStartAt: new Date().toISOString(),
       lastSuccessfulAssetId: "asset-1",
       lastExitCode: "",
@@ -227,6 +245,8 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       overrideUntil: "",
       skipAssetId: "",
       skipUntil: "",
+      pendingAction: "",
+      pendingActionRequestedAt: "",
       message: "Running"
     },
     ...overrides

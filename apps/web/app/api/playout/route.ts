@@ -17,6 +17,10 @@ export async function GET() {
   const queuedAssets = state.playout.queuedAssetIds
     .map((id) => state.assets.find((entry) => entry.id === id))
     .filter((entry): entry is NonNullable<typeof currentAsset> => Boolean(entry));
+  const queueItems = state.playout.queueItems.map((item) => ({
+    ...item,
+    asset: item.assetId ? state.assets.find((entry) => entry.id === item.assetId) ?? null : null
+  }));
   const overrideAsset = state.assets.find((entry) => entry.id === state.playout.overrideAssetId) ?? null;
 
   return NextResponse.json({
@@ -27,6 +31,7 @@ export async function GET() {
     nextAsset,
     prefetchedAsset,
     queuedAssets,
+    queueItems,
     overrideAsset
   });
 }
