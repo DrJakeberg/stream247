@@ -57,6 +57,7 @@ const onAirOverlayPath = "/tmp/stream247-on-air.txt";
 type QueueProbeCacheEntry = {
   status: "ready" | "failed";
   checkedAt: number;
+  resolvedInput: string;
   error: string;
 };
 
@@ -1176,10 +1177,11 @@ async function getPlayableQueuedAssets(queueAssets: AssetRecord[]): Promise<{
     }
 
     try {
-      await resolvePlayableInput(asset.path);
+      const resolvedInput = await resolvePlayableInput(asset.path);
       queueProbeCache.set(asset.id, {
         status: "ready",
         checkedAt: Date.now(),
+        resolvedInput,
         error: ""
       });
       prefetchedAsset = prefetchedAsset ?? asset;
@@ -1190,6 +1192,7 @@ async function getPlayableQueuedAssets(queueAssets: AssetRecord[]): Promise<{
       queueProbeCache.set(asset.id, {
         status: "failed",
         checkedAt: Date.now(),
+        resolvedInput: "",
         error: message
       });
       if (!prefetchError) {
@@ -1578,8 +1581,10 @@ async function startOrSwitchPlayout(args: {
   }
 
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
+  const cachedProbe = args.asset ? getFreshProbeCache(args.asset.id) : null;
+  const cachedResolvedInput = cachedProbe?.status === "ready" ? cachedProbe.resolvedInput : "";
   const command = args.asset
-    ? getFfmpegCommand(await resolvePlayableInput(args.asset.path), args.streamTarget, args.overlayEnabled)
+    ? getFfmpegCommand(cachedResolvedInput || (await resolvePlayableInput(args.asset.path)), args.streamTarget, args.overlayEnabled)
     : getStandbyFfmpegCommand(args.streamTarget);
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe"]
