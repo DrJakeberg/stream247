@@ -6,11 +6,25 @@ import {
   isLikelyYouTubePlaylistUrl
 } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
+import { sourceConnectorDefinitions, type SourceConnectorKind } from "@/lib/source-connectors";
 import { appendAuditEvent, deleteSourceRecordAndAssets, readAppState, upsertSourceRecord } from "@/lib/server/state";
 
-type ConnectorKind = "direct-media" | "youtube-playlist" | "youtube-channel" | "twitch-vod" | "twitch-channel";
+function normalizeConnectorKind(value: unknown): SourceConnectorKind {
+  const connectorKind = typeof value === "string" ? value : "";
+  return sourceConnectorDefinitions.some((entry) => entry.id === connectorKind)
+    ? (connectorKind as SourceConnectorKind)
+    : "direct-media";
+}
 
-function validateSource(connectorKind: ConnectorKind, externalUrl: string): string | null {
+function validateSource(connectorKind: SourceConnectorKind, externalUrl: string): string | null {
+  if (connectorKind === "local-library") {
+    return null;
+  }
+
+  if (connectorKind === "direct-media" && !externalUrl) {
+    return "Direct media sources require a reachable media URL.";
+  }
+
   if (connectorKind === "youtube-playlist" && !isLikelyYouTubePlaylistUrl(externalUrl)) {
     return "YouTube playlist sources require a playlist URL with a list parameter.";
   }
@@ -30,7 +44,8 @@ function validateSource(connectorKind: ConnectorKind, externalUrl: string): stri
   return null;
 }
 
-const typeByConnector: Record<ConnectorKind, string> = {
+const typeByConnector: Record<SourceConnectorKind, string> = {
+  "local-library": "Local media library",
   "direct-media": "Direct media URL",
   "youtube-playlist": "YouTube playlist",
   "youtube-channel": "YouTube channel",
@@ -38,7 +53,8 @@ const typeByConnector: Record<ConnectorKind, string> = {
   "twitch-channel": "Twitch channel"
 };
 
-const notesByConnector: Record<ConnectorKind, string> = {
+const notesByConnector: Record<SourceConnectorKind, string> = {
+  "local-library": "Worker will scan the shared local media directory into playable assets.",
   "direct-media": "Worker will normalize supported direct media URLs into assets.",
   "youtube-playlist": "Worker will ingest playlist entries into playable assets via yt-dlp.",
   "youtube-channel": "Worker will ingest channel videos into playable assets via yt-dlp.",
@@ -64,13 +80,13 @@ export async function POST(request: NextRequest) {
 
   const body = (await request.json()) as {
     name?: string;
-    connectorKind?: ConnectorKind;
+    connectorKind?: SourceConnectorKind;
     externalUrl?: string;
   };
 
   const name = (body.name ?? "").trim();
-  const connectorKind = body.connectorKind ?? "direct-media";
-  const externalUrl = (body.externalUrl ?? "").trim();
+  const connectorKind = normalizeConnectorKind(body.connectorKind);
+  const externalUrl = connectorKind === "local-library" ? "" : (body.externalUrl ?? "").trim();
 
   if (!name) {
     return NextResponse.json({ message: "Source name is required." }, { status: 400 });
@@ -106,15 +122,15 @@ export async function PUT(request: NextRequest) {
   const body = (await request.json()) as {
     id?: string;
     name?: string;
-    connectorKind?: ConnectorKind;
+    connectorKind?: SourceConnectorKind;
     externalUrl?: string;
     enabled?: boolean;
   };
 
   const id = (body.id ?? "").trim();
   const name = (body.name ?? "").trim();
-  const connectorKind = body.connectorKind ?? "direct-media";
-  const externalUrl = (body.externalUrl ?? "").trim();
+  const connectorKind = normalizeConnectorKind(body.connectorKind);
+  const externalUrl = connectorKind === "local-library" ? "" : (body.externalUrl ?? "").trim();
 
   if (!id) {
     return NextResponse.json({ message: "Source id is required." }, { status: 400 });
