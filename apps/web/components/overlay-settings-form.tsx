@@ -32,6 +32,9 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
     replayLabel: overlay.replayLabel,
     brandBadge: overlay.brandBadge,
     scenePreset: overlay.scenePreset,
+    insertScenePreset: overlay.insertScenePreset,
+    standbyScenePreset: overlay.standbyScenePreset,
+    reconnectScenePreset: overlay.reconnectScenePreset,
     accentColor: overlay.accentColor,
     surfaceStyle: overlay.surfaceStyle,
     panelAnchor: overlay.panelAnchor,
@@ -44,6 +47,7 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
     showQueuePreview: overlay.showQueuePreview,
     queuePreviewCount: overlay.queuePreviewCount,
     layerOrder: overlay.layerOrder,
+    disabledLayers: overlay.disabledLayers,
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText
   });
@@ -92,6 +96,15 @@ export function OverlaySettingsForm(props: {
         layerOrder: nextOrder
       };
     });
+  };
+
+  const toggleLayerVisibility = (kind: OverlaySceneLayerKind) => {
+    setDraft((current) => ({
+      ...current,
+      disabledLayers: current.disabledLayers.includes(kind)
+        ? current.disabledLayers.filter((entry) => entry !== kind)
+        : [...current.disabledLayers, kind]
+    }));
   };
 
   const previewSubtitle =
@@ -236,6 +249,51 @@ export function OverlaySettingsForm(props: {
 
           <div className="form-grid">
             <label>
+              <span className="label">Insert scene preset</span>
+              <select
+                onChange={(event) => setDraftField("insertScenePreset", event.target.value as OverlaySettingsRecord["insertScenePreset"])}
+                value={draft.insertScenePreset}
+              >
+                {OVERLAY_SCENE_PRESETS.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+              <span className="subtle">Used for manual and automatic inserts between regular programming.</span>
+            </label>
+            <label>
+              <span className="label">Standby scene preset</span>
+              <select
+                onChange={(event) => setDraftField("standbyScenePreset", event.target.value as OverlaySettingsRecord["standbyScenePreset"])}
+                value={draft.standbyScenePreset}
+              >
+                {OVERLAY_SCENE_PRESETS.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+              <span className="subtle">Used while the stream is on air but waiting for the next playable item.</span>
+            </label>
+            <label>
+              <span className="label">Reconnect scene preset</span>
+              <select
+                onChange={(event) => setDraftField("reconnectScenePreset", event.target.value as OverlaySettingsRecord["reconnectScenePreset"])}
+                value={draft.reconnectScenePreset}
+              >
+                {OVERLAY_SCENE_PRESETS.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+              <span className="subtle">Used during controlled reconnect windows and output resets.</span>
+            </label>
+          </div>
+
+          <div className="form-grid">
+            <label>
               <span className="label">Surface style</span>
               <select onChange={(event) => setDraftField("surfaceStyle", event.target.value as OverlaySettingsRecord["surfaceStyle"])} value={draft.surfaceStyle}>
                 {OVERLAY_SURFACE_STYLES.map((style) => (
@@ -288,7 +346,11 @@ export function OverlaySettingsForm(props: {
                         <button className="button secondary" onClick={() => moveLayer(layerKind, 1)} type="button">
                           Move down
                         </button>
+                        <button className="button secondary" onClick={() => toggleLayerVisibility(layerKind)} type="button">
+                          {draft.disabledLayers.includes(layerKind) ? "Show layer" : "Hide layer"}
+                        </button>
                         <span className="subtle">Position {index + 1}</span>
+                        <span className="subtle">{draft.disabledLayers.includes(layerKind) ? "Hidden" : "Visible"}</span>
                       </div>
                     </div>
                   );
@@ -298,7 +360,7 @@ export function OverlaySettingsForm(props: {
           </div>
 
           <p className="subtle">
-            Inserts and scheduled reconnects can automatically switch to dedicated live scene variants without changing your main preset.
+            Asset, insert, standby, and reconnect modes can now each resolve to different scene presets without changing the main live scene.
           </p>
 
           <label>
@@ -361,11 +423,18 @@ export function OverlaySettingsForm(props: {
         <div className="item">
           <span className="label">Live scene</span>
           <strong>{props.liveOverlay.scenePreset}</strong>
+          <div className="subtle">
+            Asset {props.liveOverlay.scenePreset} · Insert {props.liveOverlay.insertScenePreset} · Standby {props.liveOverlay.standbyScenePreset} · Reconnect{" "}
+            {props.liveOverlay.reconnectScenePreset}
+          </div>
           <div className="subtle">Published {props.liveOverlay.updatedAt || "never"}</div>
         </div>
         <div className="item">
           <span className="label">Draft scene</span>
           <strong>{draft.scenePreset}</strong>
+          <div className="subtle">
+            Asset {draft.scenePreset} · Insert {draft.insertScenePreset} · Standby {draft.standbyScenePreset} · Reconnect {draft.reconnectScenePreset}
+          </div>
           <div className="subtle">Draft saved {props.draftOverlay.updatedAt || "not yet saved"}</div>
         </div>
         <div className="item">

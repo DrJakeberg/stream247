@@ -35,6 +35,9 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
   const sceneDefinition = buildOverlaySceneDefinition({
     overlay: {
       scenePreset: props.overlay.scenePreset,
+      insertScenePreset: props.overlay.insertScenePreset,
+      standbyScenePreset: props.overlay.standbyScenePreset,
+      reconnectScenePreset: props.overlay.reconnectScenePreset,
       surfaceStyle: props.overlay.surfaceStyle,
       panelAnchor: props.overlay.panelAnchor,
       titleScale: props.overlay.titleScale,
@@ -44,7 +47,8 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
       showQueuePreview: props.overlay.showQueuePreview,
       emergencyBanner: props.overlay.emergencyBanner,
       tickerText: props.overlay.tickerText,
-      layerOrder: props.overlay.layerOrder
+      layerOrder: props.overlay.layerOrder,
+      disabledLayers: props.overlay.disabledLayers
     },
     queueKind: props.sceneMode
   });

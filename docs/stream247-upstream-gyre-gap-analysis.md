@@ -132,6 +132,8 @@ The following product gaps are now addressed:
 - overlay studio now supports draft-save, reset-to-live, and publish-live scene changes
 - scheduled playout now has a graceful handoff path so a running item can finish before the next schedule block takes over
 - scene definitions now have a first-class layer order and a dedicated `/api/scenes` read path
+- scene presets can now be assigned separately for asset, insert, standby, and reconnect modes
+- scene designer controls now support hiding layers in addition to reordering them
 
 ## Implementation Roadmap
 

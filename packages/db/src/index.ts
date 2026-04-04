@@ -202,6 +202,27 @@ export type OverlaySettingsRecord = {
     | "minimal-chip"
     | "bumper-board"
     | "reconnect-board";
+  insertScenePreset:
+    | "replay-lower-third"
+    | "split-now-next"
+    | "standby-board"
+    | "minimal-chip"
+    | "bumper-board"
+    | "reconnect-board";
+  standbyScenePreset:
+    | "replay-lower-third"
+    | "split-now-next"
+    | "standby-board"
+    | "minimal-chip"
+    | "bumper-board"
+    | "reconnect-board";
+  reconnectScenePreset:
+    | "replay-lower-third"
+    | "split-now-next"
+    | "standby-board"
+    | "minimal-chip"
+    | "bumper-board"
+    | "reconnect-board";
   accentColor: string;
   surfaceStyle: "glass" | "solid" | "signal";
   panelAnchor: "bottom" | "center";
@@ -214,6 +235,7 @@ export type OverlaySettingsRecord = {
   showQueuePreview: boolean;
   queuePreviewCount: number;
   layerOrder: OverlaySceneLayerKind[];
+  disabledLayers: OverlaySceneLayerKind[];
   emergencyBanner: string;
   tickerText: string;
   updatedAt: string;
@@ -347,6 +369,9 @@ type OverlaySettingsRow = {
   headline: string;
   brand_badge: string;
   scene_preset: OverlaySettingsRecord["scenePreset"];
+  insert_scene_preset: OverlaySettingsRecord["insertScenePreset"];
+  standby_scene_preset: OverlaySettingsRecord["standbyScenePreset"];
+  reconnect_scene_preset: OverlaySettingsRecord["reconnectScenePreset"];
   accent_color: string;
   surface_style: OverlaySettingsRecord["surfaceStyle"];
   panel_anchor: OverlaySettingsRecord["panelAnchor"];
@@ -359,6 +384,7 @@ type OverlaySettingsRow = {
   show_queue_preview: boolean;
   queue_preview_count: number;
   layer_order_json: string;
+  disabled_layers_json: string;
   emergency_banner: string;
   replay_label: string;
   ticker_text: string;
@@ -394,12 +420,18 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
     replayLabel: String(overlay.replayLabel ?? defaults.replayLabel).trim().slice(0, 80) || defaults.replayLabel,
     brandBadge: String(overlay.brandBadge ?? defaults.brandBadge).trim().slice(0, 48),
     scenePreset: normalizeOverlayScenePreset(String(overlay.scenePreset ?? defaults.scenePreset)),
+    insertScenePreset: normalizeOverlayScenePreset(String(overlay.insertScenePreset ?? defaults.insertScenePreset)),
+    standbyScenePreset: normalizeOverlayScenePreset(String(overlay.standbyScenePreset ?? defaults.standbyScenePreset)),
+    reconnectScenePreset: normalizeOverlayScenePreset(String(overlay.reconnectScenePreset ?? defaults.reconnectScenePreset)),
     accentColor: String(overlay.accentColor ?? defaults.accentColor).trim().slice(0, 20) || defaults.accentColor,
     surfaceStyle: normalizeOverlaySurfaceStyle(String(overlay.surfaceStyle ?? defaults.surfaceStyle)),
     panelAnchor: normalizeOverlayPanelAnchor(String(overlay.panelAnchor ?? defaults.panelAnchor)),
     titleScale: normalizeOverlayTitleScale(String(overlay.titleScale ?? defaults.titleScale)),
     queuePreviewCount: Math.max(1, Math.min(5, Number(overlay.queuePreviewCount ?? defaults.queuePreviewCount) || defaults.queuePreviewCount)),
     layerOrder: normalizeOverlaySceneLayerOrder(overlay.layerOrder ?? defaults.layerOrder),
+    disabledLayers: normalizeOverlaySceneLayerOrder(overlay.disabledLayers ?? []).filter((kind) =>
+      (overlay.disabledLayers ?? []).includes(kind)
+    ),
     emergencyBanner: String(overlay.emergencyBanner ?? defaults.emergencyBanner).trim().slice(0, 180),
     tickerText: String(overlay.tickerText ?? defaults.tickerText).trim().slice(0, 180),
     updatedAt: overlay.updatedAt ?? defaults.updatedAt
@@ -415,6 +447,9 @@ function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: Ov
         replayLabel: row.replay_label,
         brandBadge: row.brand_badge,
         scenePreset: row.scene_preset,
+        insertScenePreset: row.insert_scene_preset,
+        standbyScenePreset: row.standby_scene_preset,
+        reconnectScenePreset: row.reconnect_scene_preset,
         accentColor: row.accent_color,
         surfaceStyle: row.surface_style,
         panelAnchor: row.panel_anchor,
@@ -427,6 +462,7 @@ function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: Ov
         showQueuePreview: row.show_queue_preview,
         queuePreviewCount: row.queue_preview_count,
         layerOrder: JSON.parse(row.layer_order_json || "[]") as OverlaySceneLayerKind[],
+        disabledLayers: JSON.parse(row.disabled_layers_json || "[]") as OverlaySceneLayerKind[],
         emergencyBanner: row.emergency_banner,
         tickerText: row.ticker_text,
         updatedAt: row.updated_at
@@ -452,9 +488,9 @@ async function upsertOverlaySettingsTable(
     await client.query(
       `
         INSERT INTO overlay_drafts (
-          singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, emergency_banner, ticker_text, updated_at, based_on_updated_at
+          singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, emergency_banner, ticker_text, updated_at, based_on_updated_at
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           channel_name = EXCLUDED.channel_name,
@@ -462,6 +498,9 @@ async function upsertOverlaySettingsTable(
           replay_label = EXCLUDED.replay_label,
           brand_badge = EXCLUDED.brand_badge,
           scene_preset = EXCLUDED.scene_preset,
+          insert_scene_preset = EXCLUDED.insert_scene_preset,
+          standby_scene_preset = EXCLUDED.standby_scene_preset,
+          reconnect_scene_preset = EXCLUDED.reconnect_scene_preset,
           accent_color = EXCLUDED.accent_color,
           surface_style = EXCLUDED.surface_style,
           panel_anchor = EXCLUDED.panel_anchor,
@@ -474,6 +513,7 @@ async function upsertOverlaySettingsTable(
           show_queue_preview = EXCLUDED.show_queue_preview,
           queue_preview_count = EXCLUDED.queue_preview_count,
           layer_order_json = EXCLUDED.layer_order_json,
+          disabled_layers_json = EXCLUDED.disabled_layers_json,
           emergency_banner = EXCLUDED.emergency_banner,
           ticker_text = EXCLUDED.ticker_text,
           updated_at = EXCLUDED.updated_at,
@@ -486,6 +526,9 @@ async function upsertOverlaySettingsTable(
         normalized.replayLabel,
         normalized.brandBadge,
         normalized.scenePreset,
+        normalized.insertScenePreset,
+        normalized.standbyScenePreset,
+        normalized.reconnectScenePreset,
         normalized.accentColor,
         normalized.surfaceStyle,
         normalized.panelAnchor,
@@ -498,6 +541,7 @@ async function upsertOverlaySettingsTable(
         normalized.showQueuePreview,
         normalized.queuePreviewCount,
         JSON.stringify(normalized.layerOrder),
+        JSON.stringify(normalized.disabledLayers),
         normalized.emergencyBanner,
         normalized.tickerText,
         normalized.updatedAt,
@@ -510,9 +554,9 @@ async function upsertOverlaySettingsTable(
   await client.query(
     `
       INSERT INTO overlay_settings (
-        singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, emergency_banner, ticker_text, updated_at
+        singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, emergency_banner, ticker_text, updated_at
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
       ON CONFLICT (singleton_id) DO UPDATE SET
         enabled = EXCLUDED.enabled,
         channel_name = EXCLUDED.channel_name,
@@ -520,6 +564,9 @@ async function upsertOverlaySettingsTable(
         replay_label = EXCLUDED.replay_label,
         brand_badge = EXCLUDED.brand_badge,
         scene_preset = EXCLUDED.scene_preset,
+        insert_scene_preset = EXCLUDED.insert_scene_preset,
+        standby_scene_preset = EXCLUDED.standby_scene_preset,
+        reconnect_scene_preset = EXCLUDED.reconnect_scene_preset,
         accent_color = EXCLUDED.accent_color,
         surface_style = EXCLUDED.surface_style,
         panel_anchor = EXCLUDED.panel_anchor,
@@ -532,6 +579,7 @@ async function upsertOverlaySettingsTable(
         show_queue_preview = EXCLUDED.show_queue_preview,
         queue_preview_count = EXCLUDED.queue_preview_count,
         layer_order_json = EXCLUDED.layer_order_json,
+        disabled_layers_json = EXCLUDED.disabled_layers_json,
         emergency_banner = EXCLUDED.emergency_banner,
         ticker_text = EXCLUDED.ticker_text,
         updated_at = EXCLUDED.updated_at
@@ -543,6 +591,9 @@ async function upsertOverlaySettingsTable(
       normalized.replayLabel,
       normalized.brandBadge,
       normalized.scenePreset,
+      normalized.insertScenePreset,
+      normalized.standbyScenePreset,
+      normalized.reconnectScenePreset,
       normalized.accentColor,
       normalized.surfaceStyle,
       normalized.panelAnchor,
@@ -555,6 +606,7 @@ async function upsertOverlaySettingsTable(
       normalized.showQueuePreview,
       normalized.queuePreviewCount,
       JSON.stringify(normalized.layerOrder),
+      JSON.stringify(normalized.disabledLayers),
       normalized.emergencyBanner,
       normalized.tickerText,
       normalized.updatedAt
@@ -647,6 +699,9 @@ function defaultState(): AppState {
       replayLabel: "Replay stream",
       brandBadge: "",
       scenePreset: "replay-lower-third",
+      insertScenePreset: "bumper-board",
+      standbyScenePreset: "standby-board",
+      reconnectScenePreset: "reconnect-board",
       accentColor: "#0e6d5a",
       surfaceStyle: "glass",
       panelAnchor: "bottom",
@@ -659,6 +714,7 @@ function defaultState(): AppState {
       showQueuePreview: false,
       queuePreviewCount: 3,
       layerOrder: normalizeOverlaySceneLayerOrder([]),
+      disabledLayers: [],
       emergencyBanner: "",
       tickerText: "",
       updatedAt: ""
@@ -876,10 +932,16 @@ function normalizeState(state: AppState): AppState {
       ...defaults.overlay,
       ...(state.overlay ?? {}),
       scenePreset: normalizeOverlayScenePreset(String(state.overlay?.scenePreset ?? defaults.overlay.scenePreset)),
+      insertScenePreset: normalizeOverlayScenePreset(String(state.overlay?.insertScenePreset ?? defaults.overlay.insertScenePreset)),
+      standbyScenePreset: normalizeOverlayScenePreset(String(state.overlay?.standbyScenePreset ?? defaults.overlay.standbyScenePreset)),
+      reconnectScenePreset: normalizeOverlayScenePreset(String(state.overlay?.reconnectScenePreset ?? defaults.overlay.reconnectScenePreset)),
       surfaceStyle: normalizeOverlaySurfaceStyle(String(state.overlay?.surfaceStyle ?? defaults.overlay.surfaceStyle)),
       panelAnchor: normalizeOverlayPanelAnchor(String(state.overlay?.panelAnchor ?? defaults.overlay.panelAnchor)),
       titleScale: normalizeOverlayTitleScale(String(state.overlay?.titleScale ?? defaults.overlay.titleScale)),
-      layerOrder: normalizeOverlaySceneLayerOrder(state.overlay?.layerOrder ?? defaults.overlay.layerOrder)
+      layerOrder: normalizeOverlaySceneLayerOrder(state.overlay?.layerOrder ?? defaults.overlay.layerOrder),
+      disabledLayers: normalizeOverlaySceneLayerOrder(state.overlay?.disabledLayers ?? []).filter((kind) =>
+        (state.overlay?.disabledLayers ?? []).includes(kind)
+      )
     },
     managedConfig: {
       ...defaults.managedConfig,
@@ -1028,6 +1090,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       replay_label TEXT NOT NULL DEFAULT 'Replay stream',
       brand_badge TEXT NOT NULL DEFAULT '',
       scene_preset TEXT NOT NULL DEFAULT 'replay-lower-third',
+      insert_scene_preset TEXT NOT NULL DEFAULT 'bumper-board',
+      standby_scene_preset TEXT NOT NULL DEFAULT 'standby-board',
+      reconnect_scene_preset TEXT NOT NULL DEFAULT 'reconnect-board',
       accent_color TEXT NOT NULL DEFAULT '#0e6d5a',
       surface_style TEXT NOT NULL DEFAULT 'glass',
       panel_anchor TEXT NOT NULL DEFAULT 'bottom',
@@ -1040,6 +1105,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       show_queue_preview BOOLEAN NOT NULL DEFAULT FALSE,
       queue_preview_count INTEGER NOT NULL DEFAULT 3,
       layer_order_json TEXT NOT NULL DEFAULT '[]',
+      disabled_layers_json TEXT NOT NULL DEFAULT '[]',
       emergency_banner TEXT NOT NULL DEFAULT '',
       ticker_text TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT ''
@@ -1053,6 +1119,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       replay_label TEXT NOT NULL DEFAULT 'Replay stream',
       brand_badge TEXT NOT NULL DEFAULT '',
       scene_preset TEXT NOT NULL DEFAULT 'replay-lower-third',
+      insert_scene_preset TEXT NOT NULL DEFAULT 'bumper-board',
+      standby_scene_preset TEXT NOT NULL DEFAULT 'standby-board',
+      reconnect_scene_preset TEXT NOT NULL DEFAULT 'reconnect-board',
       accent_color TEXT NOT NULL DEFAULT '#0e6d5a',
       surface_style TEXT NOT NULL DEFAULT 'glass',
       panel_anchor TEXT NOT NULL DEFAULT 'bottom',
@@ -1065,6 +1134,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       show_queue_preview BOOLEAN NOT NULL DEFAULT FALSE,
       queue_preview_count INTEGER NOT NULL DEFAULT 3,
       layer_order_json TEXT NOT NULL DEFAULT '[]',
+      disabled_layers_json TEXT NOT NULL DEFAULT '[]',
       emergency_banner TEXT NOT NULL DEFAULT '',
       ticker_text TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT '',
@@ -1287,6 +1357,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_schedule_teaser BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS brand_badge TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS scene_preset TEXT NOT NULL DEFAULT 'replay-lower-third';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS insert_scene_preset TEXT NOT NULL DEFAULT 'bumper-board';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS standby_scene_preset TEXT NOT NULL DEFAULT 'standby-board';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS reconnect_scene_preset TEXT NOT NULL DEFAULT 'reconnect-board';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS surface_style TEXT NOT NULL DEFAULT 'glass';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS panel_anchor TEXT NOT NULL DEFAULT 'bottom';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS title_scale TEXT NOT NULL DEFAULT 'balanced';
@@ -1295,6 +1368,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_queue_preview BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS queue_preview_count INTEGER NOT NULL DEFAULT 3;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS layer_order_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS disabled_layers_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS ticker_text TEXT NOT NULL DEFAULT '';
@@ -1308,6 +1382,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS show_schedule_teaser BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS brand_badge TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS scene_preset TEXT NOT NULL DEFAULT 'replay-lower-third';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS insert_scene_preset TEXT NOT NULL DEFAULT 'bumper-board';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS standby_scene_preset TEXT NOT NULL DEFAULT 'standby-board';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS reconnect_scene_preset TEXT NOT NULL DEFAULT 'reconnect-board';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS surface_style TEXT NOT NULL DEFAULT 'glass';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS panel_anchor TEXT NOT NULL DEFAULT 'bottom';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS title_scale TEXT NOT NULL DEFAULT 'balanced';
@@ -1316,6 +1393,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS show_queue_preview BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS queue_preview_count INTEGER NOT NULL DEFAULT 3;
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS layer_order_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS disabled_layers_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS ticker_text TEXT NOT NULL DEFAULT '';
@@ -1533,9 +1611,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   await client.query(
     `
         INSERT INTO overlay_settings (
-          singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, emergency_banner, ticker_text, updated_at
+          singleton_id, enabled, channel_name, headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, emergency_banner, ticker_text, updated_at
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           channel_name = EXCLUDED.channel_name,
@@ -1543,6 +1621,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
           replay_label = EXCLUDED.replay_label,
           brand_badge = EXCLUDED.brand_badge,
           scene_preset = EXCLUDED.scene_preset,
+          insert_scene_preset = EXCLUDED.insert_scene_preset,
+          standby_scene_preset = EXCLUDED.standby_scene_preset,
+          reconnect_scene_preset = EXCLUDED.reconnect_scene_preset,
           accent_color = EXCLUDED.accent_color,
           surface_style = EXCLUDED.surface_style,
           panel_anchor = EXCLUDED.panel_anchor,
@@ -1555,6 +1636,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
           show_queue_preview = EXCLUDED.show_queue_preview,
           queue_preview_count = EXCLUDED.queue_preview_count,
           layer_order_json = EXCLUDED.layer_order_json,
+          disabled_layers_json = EXCLUDED.disabled_layers_json,
           emergency_banner = EXCLUDED.emergency_banner,
           ticker_text = EXCLUDED.ticker_text,
           updated_at = EXCLUDED.updated_at
@@ -1566,6 +1648,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         next.overlay.replayLabel,
         next.overlay.brandBadge,
         next.overlay.scenePreset,
+        next.overlay.insertScenePreset,
+        next.overlay.standbyScenePreset,
+        next.overlay.reconnectScenePreset,
         next.overlay.accentColor,
         next.overlay.surfaceStyle,
         next.overlay.panelAnchor,
@@ -1578,6 +1663,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         next.overlay.showQueuePreview,
         next.overlay.queuePreviewCount,
         JSON.stringify(next.overlay.layerOrder),
+        JSON.stringify(next.overlay.disabledLayers),
         next.overlay.emergencyBanner,
         next.overlay.tickerText,
         next.overlay.updatedAt

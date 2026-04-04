@@ -22,6 +22,9 @@ export async function GET(request: Request) {
   const liveScene = buildOverlaySceneDefinition({
     overlay: {
       scenePreset: studioState.liveOverlay.scenePreset,
+      insertScenePreset: studioState.liveOverlay.insertScenePreset,
+      standbyScenePreset: studioState.liveOverlay.standbyScenePreset,
+      reconnectScenePreset: studioState.liveOverlay.reconnectScenePreset,
       surfaceStyle: studioState.liveOverlay.surfaceStyle,
       panelAnchor: studioState.liveOverlay.panelAnchor,
       titleScale: studioState.liveOverlay.titleScale,
@@ -31,7 +34,8 @@ export async function GET(request: Request) {
       showQueuePreview: studioState.liveOverlay.showQueuePreview,
       emergencyBanner: studioState.liveOverlay.emergencyBanner,
       tickerText: studioState.liveOverlay.tickerText,
-      layerOrder: studioState.liveOverlay.layerOrder
+      layerOrder: studioState.liveOverlay.layerOrder,
+      disabledLayers: studioState.liveOverlay.disabledLayers
     },
     queueKind
   });
@@ -39,6 +43,9 @@ export async function GET(request: Request) {
   const draftScene = buildOverlaySceneDefinition({
     overlay: {
       scenePreset: studioState.draftOverlay.scenePreset,
+      insertScenePreset: studioState.draftOverlay.insertScenePreset,
+      standbyScenePreset: studioState.draftOverlay.standbyScenePreset,
+      reconnectScenePreset: studioState.draftOverlay.reconnectScenePreset,
       surfaceStyle: studioState.draftOverlay.surfaceStyle,
       panelAnchor: studioState.draftOverlay.panelAnchor,
       titleScale: studioState.draftOverlay.titleScale,
@@ -48,7 +55,8 @@ export async function GET(request: Request) {
       showQueuePreview: studioState.draftOverlay.showQueuePreview,
       emergencyBanner: studioState.draftOverlay.emergencyBanner,
       tickerText: studioState.draftOverlay.tickerText,
-      layerOrder: studioState.draftOverlay.layerOrder
+      layerOrder: studioState.draftOverlay.layerOrder,
+      disabledLayers: studioState.draftOverlay.disabledLayers
     },
     queueKind
   });

@@ -275,7 +275,11 @@ async function writeStandbySlate(
     blocks: state.scheduleBlocks
   }).items;
   const nextItem = nextPreview.find((item) => item.id !== currentItem?.blockId) ?? null;
-  const scenePreset = resolveOverlayScenePresetForQueueKind(state.overlay.scenePreset, queueKind);
+  const scenePreset = resolveOverlayScenePresetForQueueKind(state.overlay.scenePreset, queueKind, {
+    insertScenePreset: state.overlay.insertScenePreset,
+    standbyScenePreset: state.overlay.standbyScenePreset,
+    reconnectScenePreset: state.overlay.reconnectScenePreset
+  });
   const headline =
     queueKind === "reconnect"
       ? "Scheduled reconnect in progress"
@@ -310,7 +314,11 @@ async function writeOnAirOverlay(
     .map((id) => state.assets.find((entry) => entry.id === id)?.title || "")
     .filter(Boolean)
     .slice(0, state.overlay.queuePreviewCount);
-  const scenePreset = resolveOverlayScenePresetForQueueKind(state.overlay.scenePreset, queueKind);
+  const scenePreset = resolveOverlayScenePresetForQueueKind(state.overlay.scenePreset, queueKind, {
+    insertScenePreset: state.overlay.insertScenePreset,
+    standbyScenePreset: state.overlay.standbyScenePreset,
+    reconnectScenePreset: state.overlay.reconnectScenePreset
+  });
   const headline =
     queueKind === "insert"
       ? "Insert on air"
@@ -1300,7 +1308,11 @@ function buildRuntimeQueueItems(args: {
       assetId: asset.id,
       title: asset.title,
       subtitle: buildAssetQueueSubtitle(args.state, asset, null),
-      scenePreset: args.state.overlay.scenePreset
+      scenePreset: resolveOverlayScenePresetForQueueKind(args.state.overlay.scenePreset, "asset", {
+        insertScenePreset: args.state.overlay.insertScenePreset,
+        standbyScenePreset: args.state.overlay.standbyScenePreset,
+        reconnectScenePreset: args.state.overlay.reconnectScenePreset
+      })
     });
   }
 
@@ -1326,7 +1338,11 @@ function buildQueueHeadForSelection(args: {
       subtitle: `${args.selection.reasonCode === "operator_insert" ? "Insert" : "Automatic insert"} · ${
         buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem) || "Insert requested"
       }`,
-      scenePreset: "bumper-board" as const
+      scenePreset: resolveOverlayScenePresetForQueueKind(args.state.overlay.scenePreset, "insert", {
+        insertScenePreset: args.state.overlay.insertScenePreset,
+        standbyScenePreset: args.state.overlay.standbyScenePreset,
+        reconnectScenePreset: args.state.overlay.reconnectScenePreset
+      })
     };
   }
 
@@ -1334,7 +1350,11 @@ function buildQueueHeadForSelection(args: {
     return {
       title: "Scheduled reconnect",
       subtitle: args.selection.reason,
-      scenePreset: "reconnect-board" as const
+      scenePreset: resolveOverlayScenePresetForQueueKind(args.state.overlay.scenePreset, "reconnect", {
+        insertScenePreset: args.state.overlay.insertScenePreset,
+        standbyScenePreset: args.state.overlay.standbyScenePreset,
+        reconnectScenePreset: args.state.overlay.reconnectScenePreset
+      })
     };
   }
 
@@ -1342,7 +1362,11 @@ function buildQueueHeadForSelection(args: {
     return {
       title: args.state.overlay.headline || "Replay standby",
       subtitle: args.selection.reason,
-      scenePreset: "standby-board" as const
+      scenePreset: resolveOverlayScenePresetForQueueKind(args.state.overlay.scenePreset, "standby", {
+        insertScenePreset: args.state.overlay.insertScenePreset,
+        standbyScenePreset: args.state.overlay.standbyScenePreset,
+        reconnectScenePreset: args.state.overlay.reconnectScenePreset
+      })
     };
   }
 
@@ -1352,7 +1376,11 @@ function buildQueueHeadForSelection(args: {
       args.selection.reasonCode === "graceful_handoff"
         ? `Finishing current item · ${buildAssetQueueSubtitle(args.state, args.selection.asset, null) || "Schedule handoff pending"}`
         : buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem, true),
-    scenePreset: args.state.overlay.scenePreset
+    scenePreset: resolveOverlayScenePresetForQueueKind(args.state.overlay.scenePreset, "asset", {
+      insertScenePreset: args.state.overlay.insertScenePreset,
+      standbyScenePreset: args.state.overlay.standbyScenePreset,
+      reconnectScenePreset: args.state.overlay.reconnectScenePreset
+    })
   };
 }
 

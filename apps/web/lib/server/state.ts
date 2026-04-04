@@ -624,6 +624,9 @@ function summarizeOverlay(overlay: OverlaySettingsRecord): LiveOverlaySummary {
     headline: overlay.headline,
     brandBadge: overlay.brandBadge,
     scenePreset: normalizeOverlayScenePreset(overlay.scenePreset),
+    insertScenePreset: normalizeOverlayScenePreset(overlay.insertScenePreset),
+    standbyScenePreset: normalizeOverlayScenePreset(overlay.standbyScenePreset),
+    reconnectScenePreset: normalizeOverlayScenePreset(overlay.reconnectScenePreset),
     accentColor: overlay.accentColor,
     surfaceStyle: normalizeOverlaySurfaceStyle(overlay.surfaceStyle),
     panelAnchor: normalizeOverlayPanelAnchor(overlay.panelAnchor),
@@ -636,6 +639,7 @@ function summarizeOverlay(overlay: OverlaySettingsRecord): LiveOverlaySummary {
     showQueuePreview: overlay.showQueuePreview,
     queuePreviewCount: overlay.queuePreviewCount,
     layerOrder: overlay.layerOrder,
+    disabledLayers: overlay.disabledLayers,
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText,
     replayLabel: overlay.replayLabel,
@@ -648,6 +652,9 @@ function summarizeActiveScene(state: AppState) {
   return buildOverlaySceneDefinition({
     overlay: {
       scenePreset: normalizeOverlayScenePreset(state.overlay.scenePreset),
+      insertScenePreset: normalizeOverlayScenePreset(state.overlay.insertScenePreset),
+      standbyScenePreset: normalizeOverlayScenePreset(state.overlay.standbyScenePreset),
+      reconnectScenePreset: normalizeOverlayScenePreset(state.overlay.reconnectScenePreset),
       surfaceStyle: normalizeOverlaySurfaceStyle(state.overlay.surfaceStyle),
       panelAnchor: normalizeOverlayPanelAnchor(state.overlay.panelAnchor),
       titleScale: normalizeOverlayTitleScale(state.overlay.titleScale),
@@ -657,7 +664,8 @@ function summarizeActiveScene(state: AppState) {
       showQueuePreview: state.overlay.showQueuePreview,
       emergencyBanner: state.overlay.emergencyBanner,
       tickerText: state.overlay.tickerText,
-      layerOrder: state.overlay.layerOrder
+      layerOrder: state.overlay.layerOrder,
+      disabledLayers: state.overlay.disabledLayers
     },
     queueKind
   });
