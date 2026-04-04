@@ -287,6 +287,7 @@ declare global {
 }
 
 const STATE_WRITE_LOCK_KEY = 247001;
+const DB_BOOTSTRAP_LOCK_KEY = 247002;
 const STATE_WRITE_MAX_RETRIES = 3;
 
 function isRetryableStateWriteError(error: unknown): error is { code: string } {
@@ -1952,12 +1953,18 @@ export async function ensureDatabase(): Promise<void> {
       const client = await pool.connect();
 
       try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock($1)", [DB_BOOTSTRAP_LOCK_KEY]);
         await ensureSchema(client);
         const empty = await isDatabaseEmpty(client);
         if (empty) {
           const legacy = await readLegacyState();
           await persistState(client, legacy ?? createInitialSeedState());
         }
+        await client.query("COMMIT");
+      } catch (error) {
+        await rollbackQuietly(client);
+        throw error;
       } finally {
         client.release();
       }
