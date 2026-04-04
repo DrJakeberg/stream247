@@ -26,6 +26,7 @@ export async function GET() {
   return NextResponse.json({
     playout: state.playout,
     destination,
+    destinations: state.destinations,
     currentAsset,
     desiredAsset,
     nextAsset,

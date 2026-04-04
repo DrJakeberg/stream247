@@ -30,6 +30,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - persistent round-robin playback cursors
 - playout operations with:
   - FFmpeg RTMP output foundation
+  - primary + backup RTMP destination slots
   - queue-aware next-asset prefetch
   - graceful schedule handoff so running scheduled items can finish before the next block takes over
   - fallback asset selection
@@ -152,6 +153,10 @@ docker compose --profile proxy up -d
 - `TWITCH_RTMP_URL`: defaults to `rtmp://live.twitch.tv/app`
 - `STREAM_OUTPUT_URL`: generic RTMP output override
 - `STREAM_OUTPUT_KEY`: generic RTMP key override
+- `BACKUP_STREAM_OUTPUT_URL`: backup RTMP output URL
+- `BACKUP_STREAM_OUTPUT_KEY`: backup RTMP key
+- `BACKUP_TWITCH_RTMP_URL`: backup Twitch-style RTMP URL
+- `BACKUP_TWITCH_STREAM_KEY`: backup Twitch-style stream key
 - `CHANNEL_TIMEZONE`: schedule timezone, for example `Europe/Berlin`
 - `DISCORD_WEBHOOK_URL`: Discord alert target
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL_TO`: email alerting

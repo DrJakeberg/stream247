@@ -169,6 +169,8 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       {
         id: "destination-primary",
         provider: "twitch",
+        role: "primary",
+        priority: 0,
         name: "Primary Twitch Output",
         enabled: true,
         rtmpUrl: "rtmp://live.twitch.tv/app",
@@ -329,6 +331,8 @@ describe("ops state helpers", () => {
         {
           id: "destination-primary",
           provider: "twitch",
+          role: "primary",
+          priority: 0,
           name: "Primary Twitch Output",
           enabled: true,
           rtmpUrl: "rtmp://live.twitch.tv/app",

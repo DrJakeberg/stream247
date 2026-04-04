@@ -13,6 +13,8 @@ export type LiveAssetSummary = {
 
 export type LiveDestinationSummary = {
   id: string;
+  role: "primary" | "backup";
+  priority: number;
   name: string;
   status: string;
   notes: string;
@@ -188,6 +190,7 @@ export type BroadcastSnapshot = {
   overlay: LiveOverlaySummary;
   activeScene: LiveSceneSummary;
   destination: LiveDestinationSummary | null;
+  destinations: LiveDestinationSummary[];
   currentAsset: LiveAssetSummary | null;
   desiredAsset: LiveAssetSummary | null;
   nextAsset: LiveAssetSummary | null;

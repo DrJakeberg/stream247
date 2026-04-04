@@ -9,7 +9,12 @@ export async function getSystemReadiness() {
     const workerHeartbeat = state.auditEvents.find((event) => event.type === "worker.cycle")?.createdAt ?? "";
     const workerHeartbeatAt = workerHeartbeat ? new Date(workerHeartbeat).getTime() : 0;
     const now = Date.now();
-    const destination = state.destinations.find((entry) => entry.enabled) ?? null;
+    const destination = [...state.destinations]
+      .filter((entry) => entry.enabled)
+      .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name))
+      .find((entry) => entry.status === "ready")
+      ?? state.destinations.find((entry) => entry.enabled)
+      ?? null;
     const destinationStatus = destination
       ? destination.status === "ready"
         ? "ok"
@@ -70,6 +75,8 @@ export async function getSystemReadiness() {
         destination ?? {
           name: "",
           provider: "twitch",
+          role: "primary",
+          priority: 0,
           status: "missing-config",
           streamKeyPresent: false
         }

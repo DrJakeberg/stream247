@@ -140,6 +140,7 @@ The following product gaps are now addressed:
 - the schedule editor can now clone a full programming day onto additional empty weekdays
 - source creation and editing now use guided connector templates instead of only raw connector/url fields
 - operators can now upload local media directly from the admin UI into the shared library path
+- the broadcast runtime now distinguishes between primary and backup RTMP destinations and can fall back to the next configured target
 
 ## Implementation Roadmap
 

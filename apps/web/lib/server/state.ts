@@ -580,12 +580,29 @@ function summarizeDestination(state: AppState): LiveDestinationSummary | null {
 
   return {
     id: destination.id,
+    role: destination.role,
+    priority: destination.priority,
     name: destination.name,
     status: destination.status,
     notes: destination.notes,
     rtmpUrl: destination.rtmpUrl,
     streamKeyPresent: destination.streamKeyPresent
   };
+}
+
+function summarizeDestinations(state: AppState): LiveDestinationSummary[] {
+  return [...state.destinations]
+    .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name))
+    .map((destination) => ({
+      id: destination.id,
+      role: destination.role,
+      priority: destination.priority,
+      name: destination.name,
+      status: destination.status,
+      notes: destination.notes,
+      rtmpUrl: destination.rtmpUrl,
+      streamKeyPresent: destination.streamKeyPresent
+    }));
 }
 
 function summarizeScheduleItem(
@@ -757,6 +774,7 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
     overlay: summarizeOverlay(state.overlay),
     activeScene: summarizeActiveScene(state),
     destination: summarizeDestination(state),
+    destinations: summarizeDestinations(state),
     currentAsset: summarizeAsset(state, state.playout.currentAssetId),
     desiredAsset: summarizeAsset(state, state.playout.desiredAssetId),
     nextAsset: summarizeAsset(state, state.playout.nextAssetId),

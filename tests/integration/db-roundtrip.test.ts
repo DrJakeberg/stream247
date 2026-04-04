@@ -291,6 +291,8 @@ describe.sequential("database roundtrip", () => {
         {
           id: "destination-primary",
           provider: "twitch" as const,
+          role: "primary" as const,
+          priority: 0,
           name: "Primary",
           enabled: true,
           rtmpUrl: "rtmp://live.twitch.tv/app",
