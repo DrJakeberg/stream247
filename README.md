@@ -25,6 +25,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - resize-to-change-duration editing
   - duplicate existing blocks onto other weekdays
   - clone a full programming day onto additional empty weekdays
+  - search, pool filters, show filters, and conflict-only views in the programming editor
 - pool management with:
   - source grouping
   - persistent round-robin playback cursors
@@ -335,6 +336,7 @@ Notes:
 - quick-start programming templates
 - day timeline with drag-and-drop rescheduling
 - resize-to-change-duration editing
+- filterable programming editor with search, pool/show filters, and conflict focus
 - public-facing schedule page
 
 ### Playout And Broadcast Ops
