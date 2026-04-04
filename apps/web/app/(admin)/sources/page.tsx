@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { AssetLibraryBrowser } from "@/components/asset-library-browser";
+import { LibraryUploadForm } from "@/components/library-upload-form";
 import Link from "next/link";
 import { Panel } from "@/components/panel";
 import { PoolDeleteForm } from "@/components/pool-delete-form";
@@ -37,6 +38,13 @@ export default async function SourcesPage() {
           the selected sources in round-robin order.
         </p>
         <PoolForm assets={state.assets} sources={state.sources} />
+      </Panel>
+      <Panel title="Upload local media" eyebrow="Library">
+        <p className="subtle">
+          For less technical operators, local uploads are now available directly in the admin UI. Files are written
+          into the shared media library so the local-library source can ingest them on the next worker cycle.
+        </p>
+        <LibraryUploadForm />
       </Panel>
       <Panel title="Source library" eyebrow="Catalog">
         <p className="subtle">

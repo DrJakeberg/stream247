@@ -12,6 +12,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 - PostgreSQL-backed runtime state
 - source ingestion for:
   - local media library
+  - local media uploads from the admin UI into the shared library
   - direct media URLs
   - YouTube playlists and channels via `yt-dlp`
   - Twitch VODs and channels via `yt-dlp`
