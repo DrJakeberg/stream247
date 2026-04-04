@@ -13,7 +13,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { OverlaySceneCanvas } from "@/components/overlay-scene-canvas";
-import type { OverlaySettingsRecord } from "@/lib/server/state";
+import type { OverlayScenePresetRecord, OverlaySettingsRecord } from "@/lib/server/state";
 
 type OverlayPreviewSeed = {
   timeZone: string;
@@ -60,6 +60,7 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
 export function OverlaySettingsForm(props: {
   liveOverlay: OverlaySettingsRecord;
   draftOverlay: OverlaySettingsRecord;
+  scenePresets: OverlayScenePresetRecord[];
   hasUnpublishedChanges: boolean;
   basedOnUpdatedAt: string;
   preview: OverlayPreviewSeed;
@@ -69,6 +70,9 @@ export function OverlaySettingsForm(props: {
   const [isPending, startTransition] = useTransition();
   const [previewMode, setPreviewMode] = useState<OverlayQueueKind>("asset");
   const [draft, setDraft] = useState<OverlaySettingsRecord>(props.draftOverlay);
+  const [scenePresets, setScenePresets] = useState<OverlayScenePresetRecord[]>(props.scenePresets);
+  const [presetName, setPresetName] = useState("");
+  const [presetDescription, setPresetDescription] = useState("");
   const router = useRouter();
   const hasLocalChanges = overlaySignature(draft) !== overlaySignature(props.draftOverlay);
   const canPublish = hasLocalChanges || props.hasUnpublishedChanges;
@@ -129,6 +133,101 @@ export function OverlaySettingsForm(props: {
 
   const previewNextTitle =
     previewMode === "reconnect" ? props.preview.currentTitle : props.preview.nextTitle || "Programming resumes shortly";
+
+  const saveScenePreset = () => {
+    setError("");
+    setMessage("");
+
+    startTransition(async () => {
+      const response = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "save",
+          name: presetName,
+          description: presetDescription,
+          draft
+        })
+      });
+
+      const payload = (await response.json()) as {
+        message?: string;
+        presets?: OverlayScenePresetRecord[];
+      };
+      if (!response.ok) {
+        setError(payload.message ?? "Could not save scene preset.");
+        return;
+      }
+
+      setScenePresets(payload.presets ?? []);
+      setPresetName("");
+      setPresetDescription("");
+      setMessage(payload.message ?? "Scene preset saved.");
+    });
+  };
+
+  const applyScenePreset = (presetId: string) => {
+    setError("");
+    setMessage("");
+
+    startTransition(async () => {
+      const response = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "apply",
+          presetId
+        })
+      });
+
+      const payload = (await response.json()) as {
+        message?: string;
+        presets?: OverlayScenePresetRecord[];
+        studioState?: {
+          draftOverlay?: OverlaySettingsRecord;
+        };
+      };
+      if (!response.ok) {
+        setError(payload.message ?? "Could not apply scene preset.");
+        return;
+      }
+
+      if (payload.studioState?.draftOverlay) {
+        setDraft(payload.studioState.draftOverlay);
+      }
+      setScenePresets(payload.presets ?? []);
+      setMessage(payload.message ?? "Scene preset applied to draft.");
+      router.refresh();
+    });
+  };
+
+  const deleteScenePreset = (presetId: string) => {
+    setError("");
+    setMessage("");
+
+    startTransition(async () => {
+      const response = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete",
+          presetId
+        })
+      });
+
+      const payload = (await response.json()) as {
+        message?: string;
+        presets?: OverlayScenePresetRecord[];
+      };
+      if (!response.ok) {
+        setError(payload.message ?? "Could not delete scene preset.");
+        return;
+      }
+
+      setScenePresets(payload.presets ?? []);
+      setMessage(payload.message ?? "Scene preset deleted.");
+    });
+  };
 
   return (
     <form
@@ -376,6 +475,57 @@ export function OverlaySettingsForm(props: {
           <p className="subtle">
             Asset, insert, standby, and reconnect modes can now each resolve to different scene presets without changing the main live scene.
           </p>
+
+          <div className="list">
+            <div className="item">
+              <span className="label">Scene preset library</span>
+              <div className="subtle">Save the current draft as a reusable scene preset, then re-apply it later without rebuilding every control by hand.</div>
+              <div className="form-grid" style={{ marginTop: 12 }}>
+                <label>
+                  <span className="label">Preset name</span>
+                  <input onChange={(event) => setPresetName(event.target.value)} placeholder="e.g. Prime Time Replay" value={presetName} />
+                </label>
+                <label>
+                  <span className="label">Description</span>
+                  <input
+                    onChange={(event) => setPresetDescription(event.target.value)}
+                    placeholder="Optional note for operators"
+                    value={presetDescription}
+                  />
+                </label>
+              </div>
+              <div className="inline-form" style={{ marginTop: 12 }}>
+                <button className="button secondary" disabled={isPending || presetName.trim() === ""} onClick={saveScenePreset} type="button">
+                  {isPending ? "Saving..." : "Save draft as preset"}
+                </button>
+              </div>
+              <div className="list" style={{ marginTop: 12 }}>
+                {scenePresets.length > 0 ? (
+                  scenePresets.map((preset) => (
+                    <div className="item" key={preset.id}>
+                      <strong>{preset.name}</strong>
+                      <div className="subtle">{preset.description || "No description provided."}</div>
+                      <div className="subtle">
+                        Asset {preset.overlay.scenePreset} · Insert {preset.overlay.insertScenePreset} · Standby {preset.overlay.standbyScenePreset} · Reconnect{" "}
+                        {preset.overlay.reconnectScenePreset}
+                      </div>
+                      <div className="subtle">Updated {preset.updatedAt || "unknown"}</div>
+                      <div className="inline-form" style={{ marginTop: 8 }}>
+                        <button className="button secondary" disabled={isPending} onClick={() => applyScenePreset(preset.id)} type="button">
+                          Apply to draft
+                        </button>
+                        <button className="button secondary" disabled={isPending} onClick={() => deleteScenePreset(preset.id)} type="button">
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="subtle">No saved scene presets yet.</div>
+                )}
+              </div>
+            </div>
+          </div>
 
           <label>
             <span className="label">Emergency banner</span>

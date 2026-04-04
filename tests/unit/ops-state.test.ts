@@ -17,7 +17,7 @@ import {
 } from "../../apps/web/lib/server/state";
 
 function createState(overrides: Partial<AppState> = {}): AppState {
-  const currentDayOfWeek = new Date().getDay();
+  const currentDayOfWeek = new Date().getUTCDay();
   return {
     initialized: true,
     owner: {

@@ -3,11 +3,12 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { OverlaySettingsForm } from "@/components/overlay-settings-form";
 import { Panel } from "@/components/panel";
-import { getCurrentScheduleItem, getNextScheduleItem, readAppState, readOverlayStudioState } from "@/lib/server/state";
+import { getCurrentScheduleItem, getNextScheduleItem, listOverlayScenePresetRecords, readAppState, readOverlayStudioState } from "@/lib/server/state";
 
 export default async function OverlayStudioPage() {
   const state = await readAppState();
   const studioState = await readOverlayStudioState();
+  const scenePresets = await listOverlayScenePresetRecords();
   const currentItem = getCurrentScheduleItem(state);
   const nextItem = getNextScheduleItem(state);
   const previewQueueTitles = state.playout.queueItems.slice(1, 5).map((item) => item.title).filter(Boolean);
@@ -25,6 +26,7 @@ export default async function OverlayStudioPage() {
           draftOverlay={studioState.draftOverlay}
           hasUnpublishedChanges={studioState.hasUnpublishedChanges}
           liveOverlay={studioState.liveOverlay}
+          scenePresets={scenePresets}
           preview={{
             timeZone: process.env.CHANNEL_TIMEZONE || "UTC",
             currentTitle: currentItem?.title || state.playout.currentTitle || "Morning Replay",
@@ -67,6 +69,7 @@ export default async function OverlayStudioPage() {
               Draft preset {studioState.draftOverlay.scenePreset} · {studioState.draftOverlay.surfaceStyle} surface ·{" "}
               {studioState.draftOverlay.panelAnchor} anchor
             </div>
+            <div className="subtle">{scenePresets.length} saved scene preset{scenePresets.length === 1 ? "" : "s"} in the library.</div>
           </div>
           <div className="item">
             <strong>Current block</strong>
