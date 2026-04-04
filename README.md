@@ -315,6 +315,7 @@ Notes:
 - fallback asset priority and global fallback support
 - source edit, enable/disable, and delete controls
 - source detail pages with programming references, incidents, audit trail, and manual sync actions
+- bulk source actions for enable, disable, and sync queueing
 - persisted per-source sync runs with success/error summaries and last ingestion results
 - source library health snapshots with latest sync outcome and open issue counts
 - connector-specific troubleshooting hints for source and asset diagnostics

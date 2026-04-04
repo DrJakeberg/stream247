@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Panel } from "@/components/panel";
 import { PoolDeleteForm } from "@/components/pool-delete-form";
 import { PoolForm } from "@/components/pool-form";
+import { SourceBulkActionsForm } from "@/components/source-bulk-actions-form";
 import { SourceCreateForm } from "@/components/source-create-form";
 import { SourceActionsForm } from "@/components/source-actions-form";
 import { getSourceHealthSnapshot, readAppState } from "@/lib/server/state";
@@ -52,6 +53,9 @@ export default async function SourcesPage() {
           source URL, and enabled state directly here, then review how many assets each source currently contributes to
           your pools.
         </p>
+        <div style={{ marginBottom: 16 }}>
+          <SourceBulkActionsForm sources={state.sources} />
+        </div>
         <div className="list">
           {state.sources.map((source) => {
             const snapshot = getSourceHealthSnapshot(state, source.id);
