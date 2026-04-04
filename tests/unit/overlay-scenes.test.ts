@@ -3,6 +3,7 @@ import {
   buildOverlaySceneDefinition,
   buildOverlayTextLines,
   normalizeOverlaySceneLayerOrder,
+  resolveOverlayHeadlineForQueueKind,
   resolveOverlayScenePresetForQueueKind
 } from "@stream247/core";
 import { describe, expect, it } from "vitest";
@@ -33,6 +34,25 @@ describe("overlay scene resolution", () => {
 
   it("switches reconnects to the reconnect scene", () => {
     expect(resolveOverlayScenePresetForQueueKind("minimal-chip", "reconnect")).toBe("reconnect-board");
+  });
+});
+
+describe("overlay headline resolution", () => {
+  it("keeps the asset headline for regular assets", () => {
+    expect(resolveOverlayHeadlineForQueueKind("Always on air", "asset")).toBe("Always on air");
+  });
+
+  it("uses configured mode headlines when provided", () => {
+    expect(
+      resolveOverlayHeadlineForQueueKind("Always on air", "insert", {
+        insertHeadline: "Manual bumper"
+      })
+    ).toBe("Manual bumper");
+    expect(
+      resolveOverlayHeadlineForQueueKind("Always on air", "reconnect", {
+        reconnectHeadline: "Refreshing the output"
+      })
+    ).toBe("Refreshing the output");
   });
 });
 
@@ -105,6 +125,10 @@ describe("overlay scene definitions", () => {
         insertScenePreset: "minimal-chip",
         standbyScenePreset: "standby-board",
         reconnectScenePreset: "reconnect-board",
+        headline: "Always on air",
+        insertHeadline: "Manual bumper",
+        standbyHeadline: "Stand by",
+        reconnectHeadline: "Refreshing output",
         surfaceStyle: "signal",
         panelAnchor: "center",
         titleScale: "cinematic",

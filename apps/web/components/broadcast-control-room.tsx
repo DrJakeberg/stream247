@@ -143,6 +143,10 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 {snapshot.overlay.titleScale} scale
               </div>
               <div className="subtle">
+                Asset headline {snapshot.overlay.headline} · Insert {snapshot.overlay.insertHeadline} · Standby {snapshot.overlay.standbyHeadline} ·
+                Reconnect {snapshot.overlay.reconnectHeadline}
+              </div>
+              <div className="subtle">
                 Asset {snapshot.overlay.scenePreset} · Insert {snapshot.overlay.insertScenePreset} · Standby {snapshot.overlay.standbyScenePreset} ·
                 Reconnect {snapshot.overlay.reconnectScenePreset}
               </div>

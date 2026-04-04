@@ -19,6 +19,9 @@ type OverlayPayload = Partial<{
   enabled: boolean;
   channelName: string;
   headline: string;
+  insertHeadline: string;
+  standbyHeadline: string;
+  reconnectHeadline: string;
   brandBadge: string;
   accentColor: string;
   scenePreset: string;
@@ -49,6 +52,11 @@ function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnTyp
     enabled: payload.enabled ?? base.enabled,
     channelName: (payload.channelName ?? base.channelName).trim().slice(0, 80) || "Stream247",
     headline: (payload.headline ?? base.headline).trim().slice(0, 120) || "Always on air",
+    insertHeadline: (payload.insertHeadline ?? base.insertHeadline).trim().slice(0, 120) || "Insert on air",
+    standbyHeadline:
+      (payload.standbyHeadline ?? base.standbyHeadline).trim().slice(0, 120) || "Please wait, restream is starting",
+    reconnectHeadline:
+      (payload.reconnectHeadline ?? base.reconnectHeadline).trim().slice(0, 120) || "Scheduled reconnect in progress",
     brandBadge: (payload.brandBadge ?? base.brandBadge).trim().slice(0, 48),
     scenePreset: normalizeOverlayScenePreset(String(payload.scenePreset ?? base.scenePreset)),
     insertScenePreset: normalizeOverlayScenePreset(String(payload.insertScenePreset ?? base.insertScenePreset)),

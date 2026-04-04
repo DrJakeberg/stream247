@@ -3,6 +3,7 @@
 import {
   buildOverlayBrandLine,
   buildOverlaySceneDefinition,
+  resolveOverlayHeadlineForQueueKind,
   type OverlayQueueKind,
   type OverlaySceneLayerKind
 } from "@stream247/core";
@@ -38,6 +39,10 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
       insertScenePreset: props.overlay.insertScenePreset,
       standbyScenePreset: props.overlay.standbyScenePreset,
       reconnectScenePreset: props.overlay.reconnectScenePreset,
+      headline: props.overlay.headline,
+      insertHeadline: props.overlay.insertHeadline,
+      standbyHeadline: props.overlay.standbyHeadline,
+      reconnectHeadline: props.overlay.reconnectHeadline,
       surfaceStyle: props.overlay.surfaceStyle,
       panelAnchor: props.overlay.panelAnchor,
       titleScale: props.overlay.titleScale,
@@ -62,13 +67,12 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
           ? "Standby"
           : "Now Playing";
   const heroBody =
-    props.sceneMode === "insert"
-      ? props.modeSubtitle || "A bumper or manual insert is on air."
-      : props.sceneMode === "reconnect"
-        ? props.modeSubtitle || "A planned reconnect is in progress."
-        : props.sceneMode === "standby"
-          ? props.modeSubtitle || props.overlay.headline || "Programming will resume shortly."
-          : props.modeSubtitle || props.overlay.headline;
+    props.modeSubtitle ||
+    resolveOverlayHeadlineForQueueKind(props.overlay.headline, props.sceneMode, {
+      insertHeadline: props.overlay.insertHeadline,
+      standbyHeadline: props.overlay.standbyHeadline,
+      reconnectHeadline: props.overlay.reconnectHeadline
+    });
   const nextLabel =
     props.sceneMode === "insert" ? "After Insert" : props.sceneMode === "reconnect" ? "Returning With" : "Next";
   const frameClassName = [

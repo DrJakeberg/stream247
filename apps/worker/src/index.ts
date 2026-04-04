@@ -15,6 +15,7 @@ import {
   isLikelyTwitchVodUrl,
   isLikelyYouTubeChannelUrl,
   isLikelyYouTubePlaylistUrl,
+  resolveOverlayHeadlineForQueueKind,
   resolveOverlayScenePresetForQueueKind,
   toUtcIsoForLocalDateTime
 } from "@stream247/core";
@@ -280,10 +281,11 @@ async function writeStandbySlate(
     standbyScenePreset: state.overlay.standbyScenePreset,
     reconnectScenePreset: state.overlay.reconnectScenePreset
   });
-  const headline =
-    queueKind === "reconnect"
-      ? "Scheduled reconnect in progress"
-      : state.overlay.headline || "Please wait, restream is starting";
+  const headline = resolveOverlayHeadlineForQueueKind(state.overlay.headline, queueKind, {
+    insertHeadline: state.overlay.insertHeadline,
+    standbyHeadline: state.overlay.standbyHeadline,
+    reconnectHeadline: state.overlay.reconnectHeadline
+  });
   const lines = buildOverlayTextLines({
     scenePreset,
     replayLabel: state.overlay.replayLabel || "Replay stream",
@@ -319,12 +321,11 @@ async function writeOnAirOverlay(
     standbyScenePreset: state.overlay.standbyScenePreset,
     reconnectScenePreset: state.overlay.reconnectScenePreset
   });
-  const headline =
-    queueKind === "insert"
-      ? "Insert on air"
-      : queueKind === "reconnect"
-        ? "Scheduled reconnect in progress"
-        : state.overlay.headline || "Always on air";
+  const headline = resolveOverlayHeadlineForQueueKind(state.overlay.headline, queueKind, {
+    insertHeadline: state.overlay.insertHeadline,
+    standbyHeadline: state.overlay.standbyHeadline,
+    reconnectHeadline: state.overlay.reconnectHeadline
+  });
   const lines = buildOverlayTextLines({
     scenePreset,
     replayLabel: state.overlay.replayLabel || "Replay stream",
@@ -1360,7 +1361,7 @@ function buildQueueHeadForSelection(args: {
 
   if (args.selection.lifecycleStatus === "standby" || !args.selection.asset) {
     return {
-      title: args.state.overlay.headline || "Replay standby",
+      title: args.state.overlay.standbyHeadline || args.state.overlay.headline || "Replay standby",
       subtitle: args.selection.reason,
       scenePreset: resolveOverlayScenePresetForQueueKind(args.state.overlay.scenePreset, "standby", {
         insertScenePreset: args.state.overlay.insertScenePreset,

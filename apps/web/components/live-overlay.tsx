@@ -1,5 +1,6 @@
 "use client";
 
+import { resolveOverlayHeadlineForQueueKind } from "@stream247/core";
 import type { PublicChannelSnapshot } from "@/lib/live-broadcast";
 import { OverlaySceneCanvas } from "@/components/overlay-scene-canvas";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
@@ -29,13 +30,11 @@ export function LiveOverlay(props: { initialSnapshot: PublicChannelSnapshot }) {
             : queueHead?.title || snapshot.playout.currentTitle || snapshot.overlay.headline || "Replay stream"
         }
         modeSubtitle={
-          sceneMode === "insert"
-            ? queueHead?.subtitle || "A bumper or manual insert is on air."
-            : sceneMode === "reconnect"
-              ? queueHead?.subtitle || "A planned reconnect is in progress."
-              : sceneMode === "standby"
-                ? queueHead?.subtitle || snapshot.overlay.headline || "Programming will resume shortly."
-                : snapshot.overlay.headline
+          resolveOverlayHeadlineForQueueKind(snapshot.overlay.headline, sceneMode, {
+            insertHeadline: snapshot.overlay.insertHeadline,
+            standbyHeadline: snapshot.overlay.standbyHeadline,
+            reconnectHeadline: snapshot.overlay.reconnectHeadline
+          })
         }
         nextTimeLabel={nextItem ? `${nextItem.startTime} to ${nextItem.endTime}` : "No next block configured"}
         nextTitle={nextItem?.title ?? snapshot.nextAsset?.title ?? "Schedule not available"}

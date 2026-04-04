@@ -6,6 +6,7 @@ import {
   OVERLAY_SCENE_PRESETS,
   OVERLAY_SURFACE_STYLES,
   OVERLAY_TITLE_SCALES,
+  resolveOverlayHeadlineForQueueKind,
   type OverlayQueueKind,
   type OverlaySceneLayerKind
 } from "@stream247/core";
@@ -29,6 +30,9 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
     enabled: overlay.enabled,
     channelName: overlay.channelName,
     headline: overlay.headline,
+    insertHeadline: overlay.insertHeadline,
+    standbyHeadline: overlay.standbyHeadline,
+    reconnectHeadline: overlay.reconnectHeadline,
     replayLabel: overlay.replayLabel,
     brandBadge: overlay.brandBadge,
     scenePreset: overlay.scenePreset,
@@ -108,13 +112,11 @@ export function OverlaySettingsForm(props: {
   };
 
   const previewSubtitle =
-    previewMode === "insert"
-      ? "Manual bumper between regular programming."
-      : previewMode === "reconnect"
-        ? "Controlled reconnect while the channel stays branded."
-        : previewMode === "standby"
-          ? "Waiting for the next scheduled item."
-          : draft.headline;
+    resolveOverlayHeadlineForQueueKind(draft.headline, previewMode, {
+      insertHeadline: draft.insertHeadline,
+      standbyHeadline: draft.standbyHeadline,
+      reconnectHeadline: draft.reconnectHeadline
+    });
 
   const previewCurrentTitle =
     previewMode === "asset"
@@ -204,6 +206,18 @@ export function OverlaySettingsForm(props: {
             <label>
               <span className="label">Headline</span>
               <input onChange={(event) => setDraftField("headline", event.target.value)} required value={draft.headline} />
+            </label>
+            <label>
+              <span className="label">Insert headline</span>
+              <input onChange={(event) => setDraftField("insertHeadline", event.target.value)} required value={draft.insertHeadline} />
+            </label>
+            <label>
+              <span className="label">Standby headline</span>
+              <input onChange={(event) => setDraftField("standbyHeadline", event.target.value)} required value={draft.standbyHeadline} />
+            </label>
+            <label>
+              <span className="label">Reconnect headline</span>
+              <input onChange={(event) => setDraftField("reconnectHeadline", event.target.value)} required value={draft.reconnectHeadline} />
             </label>
             <label>
               <span className="label">Replay label</span>
@@ -424,6 +438,10 @@ export function OverlaySettingsForm(props: {
           <span className="label">Live scene</span>
           <strong>{props.liveOverlay.scenePreset}</strong>
           <div className="subtle">
+            Asset headline {props.liveOverlay.headline} · Insert {props.liveOverlay.insertHeadline} · Standby {props.liveOverlay.standbyHeadline} ·
+            Reconnect {props.liveOverlay.reconnectHeadline}
+          </div>
+          <div className="subtle">
             Asset {props.liveOverlay.scenePreset} · Insert {props.liveOverlay.insertScenePreset} · Standby {props.liveOverlay.standbyScenePreset} · Reconnect{" "}
             {props.liveOverlay.reconnectScenePreset}
           </div>
@@ -432,6 +450,9 @@ export function OverlaySettingsForm(props: {
         <div className="item">
           <span className="label">Draft scene</span>
           <strong>{draft.scenePreset}</strong>
+          <div className="subtle">
+            Asset headline {draft.headline} · Insert {draft.insertHeadline} · Standby {draft.standbyHeadline} · Reconnect {draft.reconnectHeadline}
+          </div>
           <div className="subtle">
             Asset {draft.scenePreset} · Insert {draft.insertScenePreset} · Standby {draft.standbyScenePreset} · Reconnect {draft.reconnectScenePreset}
           </div>
