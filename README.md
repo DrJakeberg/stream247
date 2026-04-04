@@ -398,6 +398,7 @@ Notes:
 - optional Twitch client credential capture during setup
 - guided go-live checklist in setup and dashboard
 - readiness-oriented launch guidance for destination, assets, pools, schedule, and overlay
+- settings-side update center with pinned-tag visibility, release channel hints, and preflight/runbook guidance
 
 ## Local Development
 

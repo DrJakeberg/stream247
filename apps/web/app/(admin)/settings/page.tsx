@@ -2,15 +2,51 @@ export const dynamic = "force-dynamic";
 
 import { Panel } from "@/components/panel";
 import { SecretSettingsForm } from "@/components/secret-settings-form";
+import { getSystemReadiness } from "@/lib/server/readiness";
 import { getManagedAlertConfig, getManagedTwitchConfig, readAppState } from "@/lib/server/state";
+import { getUpdateCenterState } from "@/lib/server/update-center";
 
 export default async function SettingsPage() {
   const state = await readAppState();
   const twitchConfig = getManagedTwitchConfig(state);
   const alertConfig = getManagedAlertConfig(state);
+  const readiness = await getSystemReadiness();
+  const updateCenter = await getUpdateCenterState();
 
   return (
     <div className="grid two">
+      <Panel title="Update center" eyebrow="Operations">
+        <p className="subtle">
+          Keep production installs pinned to explicit image tags. Use the release preflight and upgrade rehearsal
+          scripts before changing a live system.
+        </p>
+        <div className="list">
+          <div className="item">
+            <strong>Release channel</strong>
+            <div className="subtle">
+              App {updateCenter.appVersion} · channel {updateCenter.channel} · images{" "}
+              {updateCenter.alignedImages ? "aligned" : "not aligned"}
+            </div>
+          </div>
+          <div className="item">
+            <strong>Image tags</strong>
+            <div className="subtle">web: {updateCenter.imageTags.web || "unset"}</div>
+            <div className="subtle">worker: {updateCenter.imageTags.worker || "unset"}</div>
+            <div className="subtle">playout: {updateCenter.imageTags.playout || "unset"}</div>
+          </div>
+          <div className="item">
+            <strong>Production checklist</strong>
+            <div className="subtle">{updateCenter.pinnedImages ? "Images are pinned away from latest." : "Production should not run on latest image tags."}</div>
+            <div className="subtle">{readiness.broadcastReady ? "Broadcast readiness is currently green." : "Broadcast readiness is currently degraded."}</div>
+            <div className="subtle">Run `pnpm release:preflight` before upgrades and `pnpm release:rehearse vX.Y.Z` before major changes.</div>
+          </div>
+          <div className="item">
+            <strong>Runbooks</strong>
+            <div className="subtle">See `docs/upgrading.md`, `docs/backup-and-restore.md`, `docs/operations.md`, and `docs/versioning.md`.</div>
+          </div>
+        </div>
+      </Panel>
+
       <Panel title="Managed credentials" eyebrow="Settings">
         <p className="subtle">
           Stream247 can now store integration credentials encrypted at rest in PostgreSQL. Environment variables still
@@ -57,6 +93,13 @@ export default async function SettingsPage() {
             <div className="subtle">
               Empty fields do not wipe existing secrets. Stream247 keeps the stored value, or falls back to `.env` when
               no managed value exists.
+            </div>
+          </div>
+          <div className="item">
+            <strong>Operational stance</strong>
+            <div className="subtle">
+              Primary and backup destinations, release preflight, upgrade rehearsal, and fresh-boot CI are now built
+              into the default operating model.
             </div>
           </div>
         </div>
