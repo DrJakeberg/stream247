@@ -142,6 +142,7 @@ The following product gaps are now addressed:
 - source creation and editing now use guided connector templates instead of only raw connector/url fields
 - operators can now upload local media directly from the admin UI into the shared library path
 - the broadcast runtime now distinguishes between primary and backup RTMP destinations, marks failed outputs with a cooldown window, and can fail over to the next healthy target
+- settings now include an update center with release-channel detection, pinned-image visibility, and upgrade/runbook guidance
 
 ## Implementation Roadmap
 
