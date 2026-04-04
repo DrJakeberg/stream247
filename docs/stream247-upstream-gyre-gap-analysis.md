@@ -130,6 +130,7 @@ The following product gaps are now addressed:
 - overlay settings now include first-class scene presets and richer presentation controls
 - browser overlay and on-air text overlay now share the same scene-oriented text composition logic
 - overlay studio now supports draft-save, reset-to-live, and publish-live scene changes
+- scheduled playout now has a graceful handoff path so a running item can finish before the next schedule block takes over
 
 ## Implementation Roadmap
 

@@ -26,6 +26,8 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - persistent round-robin playback cursors
 - playout operations with:
   - FFmpeg RTMP output foundation
+  - queue-aware next-asset prefetch
+  - graceful schedule handoff so running scheduled items can finish before the next block takes over
   - fallback asset selection
   - manual restart
   - temporary fallback override

@@ -283,6 +283,7 @@ export type PlayoutRuntimeRecord = {
   selectionReasonCode:
     | "operator_override"
     | "scheduled_match"
+    | "graceful_handoff"
     | "global_fallback"
     | "generic_fallback"
     | "no_asset"
