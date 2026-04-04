@@ -2497,6 +2497,35 @@ export async function createScheduleBlocks(blocks: ScheduleBlockRecord[]): Promi
   });
 }
 
+export async function replaceAllScheduleBlocks(blocks: ScheduleBlockRecord[]): Promise<void> {
+  await withSerializedStateWrite("replaceAllScheduleBlocks", async (client) => {
+    await client.query("DELETE FROM schedule_blocks");
+
+    for (const block of blocks) {
+      await client.query(
+        `
+          INSERT INTO schedule_blocks (
+            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `,
+        [
+          block.id,
+          block.title,
+          block.categoryName,
+          Math.floor(block.startMinuteOfDay / 60),
+          block.startMinuteOfDay,
+          block.durationMinutes,
+          block.dayOfWeek,
+          block.showId ?? "",
+          block.poolId ?? "",
+          block.sourceName
+        ]
+      );
+    }
+  });
+}
+
 export async function updateScheduleBlockRecord(block: ScheduleBlockRecord): Promise<void> {
   await withSerializedStateWrite("updateScheduleBlockRecord", async (client) => {
     await client.query(

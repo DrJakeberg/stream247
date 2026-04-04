@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser, requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, updateAppState } from "@/lib/server/state";
+import { appendAuditEvent, createScheduleBlocks, readAppState, replaceAllScheduleBlocks } from "@/lib/server/state";
 
 type TemplateKind = "always-on-single-pool" | "weekday-weekend-split" | "three-part-day";
 
@@ -59,94 +59,94 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    await updateAppState((state) => {
-      const primaryPool = state.pools.find((pool) => pool.id === primaryPoolId);
-      const secondaryPool = state.pools.find((pool) => pool.id === secondaryPoolId);
-      const tertiaryPool = state.pools.find((pool) => pool.id === tertiaryPoolId);
+    const state = await readAppState();
+    const primaryPool = state.pools.find((pool) => pool.id === primaryPoolId);
+    const secondaryPool = state.pools.find((pool) => pool.id === secondaryPoolId);
+    const tertiaryPool = state.pools.find((pool) => pool.id === tertiaryPoolId);
 
-      if (!primaryPool) {
-        throw new Error("Primary pool not found.");
-      }
-      if (template !== "always-on-single-pool" && !secondaryPool) {
-        throw new Error("Secondary pool not found.");
-      }
-      if (template === "three-part-day" && !tertiaryPool) {
-        throw new Error("Prime-time pool not found.");
-      }
+    if (!primaryPool) {
+      throw new Error("Primary pool not found.");
+    }
+    if (template !== "always-on-single-pool" && !secondaryPool) {
+      throw new Error("Secondary pool not found.");
+    }
+    if (template === "three-part-day" && !tertiaryPool) {
+      throw new Error("Prime-time pool not found.");
+    }
 
-      const generatedBlocks =
-        template === "always-on-single-pool"
-          ? Array.from({ length: 7 }, (_, dayOfWeek) =>
-              createBlock({
-                title: `${primaryPool.name} All Day`,
-                categoryName: "Replay",
-                dayOfWeek,
-                startMinuteOfDay: 0,
-                durationMinutes: 24 * 60,
-                poolId: primaryPool.id,
-                sourceName: primaryPool.name
-              })
-            )
-          : template === "weekday-weekend-split"
-            ? [
-                ...[1, 2, 3, 4, 5].map((dayOfWeek) =>
-                  createBlock({
-                    title: `${primaryPool.name} Weekdays`,
-                    categoryName: "Replay",
-                    dayOfWeek,
-                    startMinuteOfDay: 0,
-                    durationMinutes: 24 * 60,
-                    poolId: primaryPool.id,
-                    sourceName: primaryPool.name
-                  })
-                ),
-                ...[0, 6].map((dayOfWeek) =>
-                  createBlock({
-                    title: `${secondaryPool?.name || "Weekend"} Weekend`,
-                    categoryName: "Replay",
-                    dayOfWeek,
-                    startMinuteOfDay: 0,
-                    durationMinutes: 24 * 60,
-                    poolId: secondaryPool!.id,
-                    sourceName: secondaryPool!.name
-                  })
-                )
-              ]
-            : Array.from({ length: 7 }, (_, dayOfWeek) => dayOfWeek).flatMap((dayOfWeek) => [
+    const generatedBlocks =
+      template === "always-on-single-pool"
+        ? Array.from({ length: 7 }, (_, dayOfWeek) =>
+            createBlock({
+              title: `${primaryPool.name} All Day`,
+              categoryName: "Replay",
+              dayOfWeek,
+              startMinuteOfDay: 0,
+              durationMinutes: 24 * 60,
+              poolId: primaryPool.id,
+              sourceName: primaryPool.name
+            })
+          )
+        : template === "weekday-weekend-split"
+          ? [
+              ...[1, 2, 3, 4, 5].map((dayOfWeek) =>
                 createBlock({
-                  title: `${primaryPool.name} Overnight`,
+                  title: `${primaryPool.name} Weekdays`,
                   categoryName: "Replay",
                   dayOfWeek,
                   startMinuteOfDay: 0,
-                  durationMinutes: 8 * 60,
+                  durationMinutes: 24 * 60,
                   poolId: primaryPool.id,
                   sourceName: primaryPool.name
-                }),
+                })
+              ),
+              ...[0, 6].map((dayOfWeek) =>
                 createBlock({
-                  title: `${secondaryPool!.name} Daytime`,
+                  title: `${secondaryPool?.name || "Weekend"} Weekend`,
                   categoryName: "Replay",
                   dayOfWeek,
-                  startMinuteOfDay: 8 * 60,
-                  durationMinutes: 8 * 60,
+                  startMinuteOfDay: 0,
+                  durationMinutes: 24 * 60,
                   poolId: secondaryPool!.id,
                   sourceName: secondaryPool!.name
-                }),
-                createBlock({
-                  title: `${tertiaryPool!.name} Prime Time`,
-                  categoryName: "Replay",
-                  dayOfWeek,
-                  startMinuteOfDay: 16 * 60,
-                  durationMinutes: 8 * 60,
-                  poolId: tertiaryPool!.id,
-                  sourceName: tertiaryPool!.name
                 })
-              ]);
+              )
+            ]
+          : Array.from({ length: 7 }, (_, dayOfWeek) => dayOfWeek).flatMap((dayOfWeek) => [
+              createBlock({
+                title: `${primaryPool.name} Overnight`,
+                categoryName: "Replay",
+                dayOfWeek,
+                startMinuteOfDay: 0,
+                durationMinutes: 8 * 60,
+                poolId: primaryPool.id,
+                sourceName: primaryPool.name
+              }),
+              createBlock({
+                title: `${secondaryPool!.name} Daytime`,
+                categoryName: "Replay",
+                dayOfWeek,
+                startMinuteOfDay: 8 * 60,
+                durationMinutes: 8 * 60,
+                poolId: secondaryPool!.id,
+                sourceName: secondaryPool!.name
+              }),
+              createBlock({
+                title: `${tertiaryPool!.name} Prime Time`,
+                categoryName: "Replay",
+                dayOfWeek,
+                startMinuteOfDay: 16 * 60,
+                durationMinutes: 8 * 60,
+                poolId: tertiaryPool!.id,
+                sourceName: tertiaryPool!.name
+              })
+            ]);
 
-      return {
-        ...state,
-        scheduleBlocks: replaceExisting ? generatedBlocks : [...state.scheduleBlocks, ...generatedBlocks]
-      };
-    });
+    if (replaceExisting) {
+      await replaceAllScheduleBlocks(generatedBlocks);
+    } else {
+      await createScheduleBlocks(generatedBlocks);
+    }
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "Could not apply programming template." },
