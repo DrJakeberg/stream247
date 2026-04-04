@@ -2335,6 +2335,22 @@ export async function updateTwitchConnectionRecord(twitch: TwitchConnection): Pr
   });
 }
 
+export async function replaceTwitchScheduleSegments(segments: TwitchScheduleSegmentRecord[]): Promise<void> {
+  await withSerializedStateWrite("replaceTwitchScheduleSegments", async (client) => {
+    await client.query("DELETE FROM twitch_schedule_segments");
+
+    for (const segment of segments) {
+      await client.query(
+        `
+          INSERT INTO twitch_schedule_segments (key, segment_id, block_id, start_time, title, synced_at)
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `,
+        [segment.key, segment.segmentId, segment.blockId, segment.startTime, segment.title, segment.syncedAt]
+      );
+    }
+  });
+}
+
 export async function upsertUserRecord(user: UserRecord): Promise<void> {
   await withSerializedStateWrite("upsertUserRecord", async (client) => {
     await client.query(

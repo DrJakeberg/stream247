@@ -21,10 +21,13 @@ import {
   appendAuditEvent,
   replaceAssetsForSourceIds,
   readAppState,
+  replaceTwitchScheduleSegments,
   resolveIncident,
+  updateDestinationRecord,
   updatePlayoutRuntime,
   updatePoolCursor,
   updateAppState,
+  updateTwitchConnectionRecord,
   upsertSources,
   upsertIncident,
   type AppState,
@@ -316,18 +319,15 @@ async function refreshBroadcasterAccessToken(): Promise<string> {
     ? new Date(Date.now() + payload.expires_in * 1000).toISOString()
     : state.twitch.tokenExpiresAt;
 
-  await updateAppState((current) => ({
-    ...current,
-    twitch: {
-      ...current.twitch,
-      accessToken: payload.access_token,
-      refreshToken: payload.refresh_token ?? current.twitch.refreshToken,
-      status: "connected",
-      tokenExpiresAt,
-      lastRefreshAt: refreshedAt,
-      error: ""
-    }
-  }));
+  await updateTwitchConnectionRecord({
+    ...state.twitch,
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token ?? state.twitch.refreshToken,
+    status: "connected",
+    tokenExpiresAt,
+    lastRefreshAt: refreshedAt,
+    error: ""
+  });
 
   await resolveIncident("twitch.refresh.failed", "Twitch token refresh succeeded.");
   return payload.access_token;
@@ -1449,22 +1449,20 @@ async function startOrSwitchPlayout(args: {
 }
 
 async function syncDestinations(): Promise<void> {
+  const state = await readAppState();
   const now = new Date().toISOString();
-  await updateAppState((state) => ({
-    ...state,
-    destinations: state.destinations.map((destination) => {
-      const streamTarget = getConfiguredStreamTarget(destination);
-      return {
-        ...destination,
-        streamKeyPresent: Boolean(process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY),
-        status: destination.enabled ? (streamTarget ? "ready" : "missing-config") : "missing-config",
-        lastValidatedAt: now,
-        notes: streamTarget
-          ? "Destination is configured and ready for FFmpeg output."
-          : "Configure STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY."
-      };
-    })
-  }));
+  for (const destination of state.destinations) {
+    const streamTarget = getConfiguredStreamTarget(destination);
+    await updateDestinationRecord({
+      ...destination,
+      streamKeyPresent: Boolean(process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY),
+      status: destination.enabled ? (streamTarget ? "ready" : "missing-config") : "missing-config",
+      lastValidatedAt: now,
+      notes: streamTarget
+        ? "Destination is configured and ready for FFmpeg output."
+        : "Configure STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY."
+    });
+  }
 }
 
 async function runPlayoutCycle(): Promise<void> {
@@ -1991,15 +1989,12 @@ async function syncTwitchSchedule(args: {
     );
   }
 
-  await updateAppState((current) => ({
-    ...current,
-    twitch: {
-      ...current.twitch,
-      lastScheduleSyncAt: new Date().toISOString(),
-      error: ""
-    },
-    twitchScheduleSegments: nextSegments
-  }));
+  await replaceTwitchScheduleSegments(nextSegments);
+  await updateTwitchConnectionRecord({
+    ...args.state.twitch,
+    lastScheduleSyncAt: new Date().toISOString(),
+    error: ""
+  });
 
   if (skippedCount > 0) {
     await upsertIncident({
@@ -2125,18 +2120,15 @@ async function reconcileTwitch(): Promise<void> {
       throw new Error(`Chat settings sync failed with status ${chatResponse.status}.`);
     }
 
-    await updateAppState((current) => ({
-      ...current,
-      twitch: {
-        ...current.twitch,
-        status: "connected",
-        lastMetadataSyncAt: new Date().toISOString(),
-        lastSyncedTitle: desiredTitle,
-        lastSyncedCategoryName: desiredCategoryName,
-        lastSyncedCategoryId: desiredCategoryId,
-        error: ""
-      }
-    }));
+    await updateTwitchConnectionRecord({
+      ...state.twitch,
+      status: "connected",
+      lastMetadataSyncAt: new Date().toISOString(),
+      lastSyncedTitle: desiredTitle,
+      lastSyncedCategoryName: desiredCategoryName,
+      lastSyncedCategoryId: desiredCategoryId,
+      error: ""
+    });
   };
 
   try {
