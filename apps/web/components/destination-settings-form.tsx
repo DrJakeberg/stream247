@@ -13,7 +13,7 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
-  async function save(nextEnabled: boolean) {
+  async function save(nextEnabled: boolean, clearFailure = false) {
     const response = await fetch("/api/destinations", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -22,7 +22,8 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
         enabled: nextEnabled,
         name,
         rtmpUrl,
-        notes
+        notes,
+        clearFailure
       })
     });
     const payload = (await response.json()) as { message?: string };
@@ -49,6 +50,11 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
         <span className="subtle">Priority {destination.priority}</span>
         <span className="subtle">{destination.streamKeyPresent ? "stream key present" : "stream key missing"}</span>
       </div>
+      {destination.lastFailureAt ? (
+        <p className="danger">
+          Recent failure at {destination.lastFailureAt}. {destination.lastError || "No detailed destination error captured yet."}
+        </p>
+      ) : null}
       <label>
         <span className="label">Name</span>
         <input onChange={(event) => setName(event.target.value)} value={name} />
@@ -84,6 +90,20 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
         >
           {destination.enabled ? "Disable" : "Enable"}
         </button>
+        {destination.status === "error" ? (
+          <button
+            className="button secondary"
+            disabled={isPending}
+            onClick={() => {
+              setError("");
+              setMessage("");
+              startTransition(() => void save(destination.enabled, true));
+            }}
+            type="button"
+          >
+            Clear failure hold
+          </button>
+        ) : null}
       </div>
     </form>
   );

@@ -586,7 +586,10 @@ function summarizeDestination(state: AppState): LiveDestinationSummary | null {
     status: destination.status,
     notes: destination.notes,
     rtmpUrl: destination.rtmpUrl,
-    streamKeyPresent: destination.streamKeyPresent
+    streamKeyPresent: destination.streamKeyPresent,
+    lastFailureAt: destination.lastFailureAt,
+    failureCount: destination.failureCount,
+    lastError: destination.lastError
   };
 }
 
@@ -601,7 +604,10 @@ function summarizeDestinations(state: AppState): LiveDestinationSummary[] {
       status: destination.status,
       notes: destination.notes,
       rtmpUrl: destination.rtmpUrl,
-      streamKeyPresent: destination.streamKeyPresent
+      streamKeyPresent: destination.streamKeyPresent,
+      lastFailureAt: destination.lastFailureAt,
+      failureCount: destination.failureCount,
+      lastError: destination.lastError
     }));
 }
 

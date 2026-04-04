@@ -157,6 +157,7 @@ docker compose --profile proxy up -d
 - `BACKUP_STREAM_OUTPUT_KEY`: backup RTMP key
 - `BACKUP_TWITCH_RTMP_URL`: backup Twitch-style RTMP URL
 - `BACKUP_TWITCH_STREAM_KEY`: backup Twitch-style stream key
+- `DESTINATION_FAILURE_COOLDOWN_SECONDS`: how long a failed destination stays on hold before the worker will retry it automatically
 - `CHANNEL_TIMEZONE`: schedule timezone, for example `Europe/Berlin`
 - `DISCORD_WEBHOOK_URL`: Discord alert target
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL_TO`: email alerting

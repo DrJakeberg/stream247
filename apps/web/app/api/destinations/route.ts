@@ -24,6 +24,7 @@ export async function PUT(request: NextRequest) {
     name?: string;
     rtmpUrl?: string;
     notes?: string;
+    clearFailure?: boolean;
   };
 
   const destinationId = (body.id ?? "").trim();
@@ -46,9 +47,15 @@ export async function PUT(request: NextRequest) {
     enabled: typeof body.enabled === "boolean" ? body.enabled : existing.enabled,
     name: nextName && nextName.length > 0 ? nextName : existing.name,
     rtmpUrl: nextRtmpUrl !== undefined ? nextRtmpUrl : existing.rtmpUrl,
-    notes: nextNotes !== undefined ? nextNotes : existing.notes
+    notes: nextNotes !== undefined ? nextNotes : existing.notes,
+    status: body.clearFailure ? (existing.enabled && existing.streamKeyPresent ? "ready" : "missing-config") : existing.status,
+    lastFailureAt: body.clearFailure ? "" : existing.lastFailureAt,
+    lastError: body.clearFailure ? "" : existing.lastError
   });
 
-  await appendAuditEvent("destination.updated", `Updated destination ${destinationId}.`);
+  await appendAuditEvent(
+    body.clearFailure ? "destination.failure.cleared" : "destination.updated",
+    body.clearFailure ? `Cleared failure state for destination ${destinationId}.` : `Updated destination ${destinationId}.`
+  );
   return NextResponse.json({ ok: true });
 }

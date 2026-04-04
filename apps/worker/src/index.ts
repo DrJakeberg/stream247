@@ -50,6 +50,7 @@ const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
 const PLAYOUT_RECONNECT_INTERVAL_MS = Number(process.env.PLAYOUT_RECONNECT_HOURS || "24") * 60 * 60 * 1000;
 const PLAYOUT_RECONNECT_WINDOW_MS = Number(process.env.PLAYOUT_RECONNECT_SECONDS || "20") * 1000;
+const DESTINATION_FAILURE_COOLDOWN_MS = Number(process.env.DESTINATION_FAILURE_COOLDOWN_SECONDS || "300") * 1000;
 const NEXT_ASSET_PROBE_READY_TTL_MS = 5 * 60_000;
 const NEXT_ASSET_PROBE_FAILED_TTL_MS = 60_000;
 const standbySlatePath = "/tmp/stream247-standby.txt";
@@ -192,13 +193,103 @@ function getConfiguredStreamTarget(destination: StreamDestinationRecord | null):
   return `${streamUrl.replace(/\/$/, "")}/${streamKey}`;
 }
 
-function getBestAvailableDestination(destinations: StreamDestinationRecord[]): StreamDestinationRecord | null {
+function isDestinationCoolingDown(destination: StreamDestinationRecord): boolean {
+  return (
+    destination.status === "error" &&
+    destination.lastFailureAt !== "" &&
+    Date.now() - new Date(destination.lastFailureAt).getTime() < DESTINATION_FAILURE_COOLDOWN_MS
+  );
+}
+
+function getDestinationFailureSecondsRemaining(destination: StreamDestinationRecord): number {
+  if (!isDestinationCoolingDown(destination)) {
+    return 0;
+  }
+
+  const elapsed = Date.now() - new Date(destination.lastFailureAt).getTime();
+  return Math.max(0, Math.ceil((DESTINATION_FAILURE_COOLDOWN_MS - elapsed) / 1000));
+}
+
+function isLikelyDestinationOutputError(line: string): boolean {
+  const sample = line.toLowerCase();
+  return [
+    "broken pipe",
+    "connection refused",
+    "connection reset",
+    "error writing trailer",
+    "input/output error",
+    "i/o error",
+    "av_interleaved_write_frame",
+    "failed to update header",
+    "server returned 4",
+    "server returned 5",
+    "end of file"
+  ].some((token) => sample.includes(token));
+}
+
+async function markDestinationFailure(destinationId: string, errorMessage: string): Promise<void> {
+  if (!destinationId) {
+    return;
+  }
+
+  const state = await readAppState();
+  const destination = state.destinations.find((entry) => entry.id === destinationId);
+  if (!destination) {
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const nextError = errorMessage.slice(0, 400);
+  if (
+    destination.status === "error" &&
+    destination.lastError === nextError &&
+    destination.lastFailureAt !== "" &&
+    Date.now() - new Date(destination.lastFailureAt).getTime() < 15_000
+  ) {
+    return;
+  }
+
+  await updateDestinationRecord({
+    ...destination,
+    status: "error",
+    lastValidatedAt: now,
+    lastFailureAt: now,
+    failureCount: destination.failureCount + 1,
+    lastError: nextError,
+    notes: `${
+      destination.role === "backup" ? "Backup" : "Primary"
+    } destination failed recently. Worker will prefer the next healthy output until the hold expires.`
+  });
+
+  await upsertIncident({
+    scope: "playout",
+    severity: "warning",
+    title: `${destination.name} output failed`,
+    message: nextError,
+    fingerprint: `playout.destination.${destination.id}.failed`
+  });
+}
+
+function getBestAvailableDestination(
+  destinations: StreamDestinationRecord[],
+  currentDestinationId = ""
+): StreamDestinationRecord | null {
   const enabledDestinations = destinations
     .filter((entry) => entry.enabled)
     .slice()
     .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name));
 
-  return enabledDestinations.find((entry) => Boolean(getConfiguredStreamTarget(entry))) ?? enabledDestinations[0] ?? null;
+  const currentDestination = enabledDestinations.find((entry) => entry.id === currentDestinationId) ?? null;
+  if (currentDestination && Boolean(getConfiguredStreamTarget(currentDestination)) && !isDestinationCoolingDown(currentDestination)) {
+    return currentDestination;
+  }
+
+  return (
+    enabledDestinations.find((entry) => Boolean(getConfiguredStreamTarget(entry)) && !isDestinationCoolingDown(entry)) ??
+    enabledDestinations.find((entry) => Boolean(getConfiguredStreamTarget(entry))) ??
+    enabledDestinations[0] ??
+    null
+  );
 }
 
 function getMediaOverlayFilter(textPath: string): string {
@@ -1720,6 +1811,14 @@ async function startOrSwitchPlayout(args: {
     message: args.reason
   }));
 
+  await updateDestinationRecord({
+    ...args.destination,
+    status: "ready",
+    lastValidatedAt: startedAt,
+    lastError: "",
+    notes: `${args.destination.role === "backup" ? "Backup" : "Primary"} destination is active for the current broadcast output.`
+  });
+
   child.stderr.on("data", (chunk) => {
     const line = chunk.toString().trim();
     if (!line) {
@@ -1741,10 +1840,15 @@ async function startOrSwitchPlayout(args: {
         fingerprint: "playout.ffmpeg.stderr"
       });
     }
+
+    if (isLikelyDestinationOutputError(line)) {
+      void markDestinationFailure(playoutDestinationId, line);
+    }
   });
 
   child.on("exit", (code) => {
     const wasPlanned = plannedStopReason !== "";
+    const lastDestinationId = playoutDestinationId;
     plannedStopReason = "";
     playoutProcess = null;
     playoutAssetId = "";
@@ -1827,6 +1931,14 @@ async function startOrSwitchPlayout(args: {
         message: `FFmpeg exited with code ${String(code)}.`,
         fingerprint: "playout.ffmpeg.exit"
       });
+      if (code !== 0) {
+        void (async () => {
+          const state = await readAppState();
+          if (isLikelyDestinationOutputError(state.playout.lastStderrSample || "")) {
+            await markDestinationFailure(lastDestinationId, state.playout.lastStderrSample || `FFmpeg exited with code ${String(code)}.`);
+          }
+        })();
+      }
     }
   });
 }
@@ -1837,16 +1949,23 @@ async function syncDestinations(): Promise<void> {
   for (const destination of state.destinations) {
     const streamTarget = getConfiguredStreamTarget(destination);
     const envConfig = getDestinationEnvConfig(destination.role);
+    const coolingDown = destination.enabled && Boolean(streamTarget) && isDestinationCoolingDown(destination);
+    const readyStatus = destination.enabled ? (streamTarget ? "ready" : "missing-config") : "missing-config";
     await updateDestinationRecord({
       ...destination,
       streamKeyPresent: Boolean(envConfig.key),
-      status: destination.enabled ? (streamTarget ? "ready" : "missing-config") : "missing-config",
+      status: coolingDown ? "error" : readyStatus,
       lastValidatedAt: now,
-      notes: streamTarget
-        ? `${destination.role === "backup" ? "Backup" : "Primary"} destination is configured and ready for FFmpeg output.`
-        : destination.role === "backup"
-          ? "Configure BACKUP_STREAM_OUTPUT_URL/KEY or BACKUP_TWITCH_RTMP_URL/TWITCH_STREAM_KEY."
-          : "Configure STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY."
+      lastError: coolingDown ? destination.lastError : readyStatus === "ready" ? "" : destination.lastError,
+      notes: coolingDown
+        ? `${
+            destination.role === "backup" ? "Backup" : "Primary"
+          } destination is cooling down after a recent output failure. Retry in ${getDestinationFailureSecondsRemaining(destination)}s.`
+        : streamTarget
+          ? `${destination.role === "backup" ? "Backup" : "Primary"} destination is configured and ready for FFmpeg output.`
+          : destination.role === "backup"
+            ? "Configure BACKUP_STREAM_OUTPUT_URL/KEY or BACKUP_TWITCH_RTMP_URL/TWITCH_STREAM_KEY."
+            : "Configure STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY."
     });
   }
 }
@@ -1868,7 +1987,10 @@ async function runPlayoutCycle(): Promise<void> {
     state = await readAppState();
   }
 
-  const destination = getBestAvailableDestination(state.destinations);
+  const destination = getBestAvailableDestination(
+    state.destinations,
+    playoutProcess && !playoutProcess.killed ? state.playout.currentDestinationId : ""
+  );
   const streamTarget = getConfiguredStreamTarget(destination);
   let selection: SelectionResult = choosePlaybackCandidate(state);
 
