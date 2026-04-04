@@ -118,7 +118,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               <strong>{snapshot.destination?.name || "No destination configured"}</strong>
               <div className="subtle">
                 {snapshot.destination
-                  ? `${snapshot.destination.status} · ${snapshot.destination.rtmpUrl}`
+                  ? `${snapshot.destination.role} · ${snapshot.destination.status} · ${snapshot.destination.rtmpUrl}`
                   : "Configure a destination before going on air."}
               </div>
               <div className="subtle">
@@ -128,6 +128,18 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               <div className="subtle">Last transition {snapshot.playout.lastTransitionAt || "not recorded yet"}</div>
               <div className="subtle">{snapshot.playout.lastStderrSample || "No recent FFmpeg stderr sample."}</div>
             </div>
+            {snapshot.destinations.map((destination) => (
+              <div className="item" key={destination.id}>
+                <strong>{destination.name}</strong>
+                <div className="subtle">
+                  {destination.role} · priority {destination.priority} · {destination.status}
+                </div>
+                <div className="subtle">
+                  {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"}
+                </div>
+                <div className="subtle">{destination.notes}</div>
+              </div>
+            ))}
           </div>
         </article>
 

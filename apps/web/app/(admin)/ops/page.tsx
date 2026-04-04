@@ -134,7 +134,10 @@ export default async function OpsPage(props: { searchParams: SearchParams }) {
               <strong>Destinations</strong>
               <div className="subtle">
                 {state.destinations.length > 0
-                  ? state.destinations.map((destination) => `${destination.name}:${destination.status}`).join(" · ")
+                  ? [...state.destinations]
+                      .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name))
+                      .map((destination) => `${destination.role}:${destination.name}:${destination.status}`)
+                      .join(" · ")
                   : "No destinations configured."}
               </div>
             </div>

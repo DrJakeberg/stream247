@@ -153,6 +153,8 @@ export type ShowProfileRecord = {
 export type StreamDestinationRecord = {
   id: string;
   provider: "twitch" | "custom-rtmp";
+  role: "primary" | "backup";
+  priority: number;
   name: string;
   enabled: boolean;
   rtmpUrl: string;
@@ -528,6 +530,23 @@ function mapOverlayScenePresetRowToRecord(row: OverlayScenePresetRow): OverlaySc
   });
 }
 
+function normalizeDestinationRecords(destinations: StreamDestinationRecord[], defaults: StreamDestinationRecord[]): StreamDestinationRecord[] {
+  const merged = [...destinations];
+  for (const destination of defaults) {
+    if (!merged.some((entry) => entry.id === destination.id)) {
+      merged.push(destination);
+    }
+  }
+
+  return [...new Map(merged.map((destination) => [destination.id, destination] as const)).values()]
+    .map((destination) => ({
+      ...destination,
+      role: (destination.role === "backup" ? "backup" : "primary") as StreamDestinationRecord["role"],
+      priority: typeof destination.priority === "number" ? destination.priority : destination.role === "backup" ? 10 : 0
+    }))
+    .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name));
+}
+
 async function upsertOverlaySettingsTable(
   client: PoolClient,
   tableName: "overlay_settings" | "overlay_drafts",
@@ -826,12 +845,32 @@ function defaultState(): AppState {
       {
         id: "destination-primary",
         provider: "twitch",
+        role: "primary",
+        priority: 0,
         name: "Primary Twitch Output",
         enabled: true,
         rtmpUrl: process.env.STREAM_OUTPUT_URL || process.env.TWITCH_RTMP_URL || "rtmp://live.twitch.tv/app",
         streamKeyPresent: Boolean(process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY),
         status: process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY ? "ready" : "missing-config",
         notes: "Primary RTMP destination for the broadcast runtime.",
+        lastValidatedAt: ""
+      },
+      {
+        id: "destination-backup",
+        provider: "custom-rtmp",
+        role: "backup",
+        priority: 10,
+        name: "Backup RTMP Output",
+        enabled: Boolean(process.env.BACKUP_STREAM_OUTPUT_URL || process.env.BACKUP_TWITCH_RTMP_URL),
+        rtmpUrl: process.env.BACKUP_STREAM_OUTPUT_URL || process.env.BACKUP_TWITCH_RTMP_URL || "",
+        streamKeyPresent: Boolean(process.env.BACKUP_STREAM_OUTPUT_KEY || process.env.BACKUP_TWITCH_STREAM_KEY),
+        status:
+          process.env.BACKUP_STREAM_OUTPUT_URL || process.env.BACKUP_TWITCH_RTMP_URL
+            ? process.env.BACKUP_STREAM_OUTPUT_KEY || process.env.BACKUP_TWITCH_STREAM_KEY
+              ? "ready"
+              : "missing-config"
+            : "missing-config",
+        notes: "Backup RTMP destination used when the primary output is unavailable or disabled.",
         lastValidatedAt: ""
       }
     ],
@@ -1082,7 +1121,9 @@ function normalizeState(state: AppState): AppState {
           .sort((left, right) => new Date(right.finishedAt || right.startedAt).getTime() - new Date(left.finishedAt || left.startedAt).getTime())
           .slice(0, 250)
       : [],
-    destinations: Array.isArray(state.destinations) ? dedupeById(state.destinations) : defaults.destinations,
+    destinations: Array.isArray(state.destinations)
+      ? normalizeDestinationRecords(state.destinations, defaults.destinations)
+      : defaults.destinations,
     incidents: Array.isArray(state.incidents) ? dedupeById(state.incidents) : [],
     auditEvents: Array.isArray(state.auditEvents) ? state.auditEvents : [],
     playout: {
@@ -1340,6 +1381,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     CREATE TABLE IF NOT EXISTS stream_destinations (
       id TEXT PRIMARY KEY,
       provider TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'primary',
+      priority INTEGER NOT NULL DEFAULT 0,
       name TEXT NOT NULL,
       enabled BOOLEAN NOT NULL DEFAULT TRUE,
       rtmp_url TEXT NOT NULL DEFAULT '',
@@ -1432,6 +1475,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS connector_kind TEXT NOT NULL DEFAULT 'local-library';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS external_url TEXT NOT NULL DEFAULT '';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
+    ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'primary';
+    ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS fallback_priority INTEGER NOT NULL DEFAULT 100;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS is_global_fallback BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_at TEXT NOT NULL DEFAULT '';
@@ -2014,13 +2059,15 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     await client.query(
       `
         INSERT INTO stream_destinations (
-          id, provider, name, enabled, rtmp_url, stream_key_present, status, notes, last_validated_at
+          id, provider, role, priority, name, enabled, rtmp_url, stream_key_present, status, notes, last_validated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       `,
       [
         destination.id,
         destination.provider,
+        destination.role,
+        destination.priority,
         destination.name,
         destination.enabled,
         destination.rtmpUrl,
@@ -2310,6 +2357,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   const destinationsResult = await client.query<{
     id: string;
     provider: StreamDestinationRecord["provider"];
+    role: StreamDestinationRecord["role"];
+    priority: number;
     name: string;
     enabled: boolean;
     rtmp_url: string;
@@ -2317,7 +2366,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     status: StreamDestinationRecord["status"];
     notes: string;
     last_validated_at: string;
-  }>("SELECT * FROM stream_destinations ORDER BY name ASC");
+  }>("SELECT * FROM stream_destinations ORDER BY priority ASC, name ASC");
   const sourceSyncRunsResult = await client.query<{
     id: string;
     source_id: string;
@@ -2554,6 +2603,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     destinations: destinationsResult.rows.map((row) => ({
       id: row.id,
       provider: row.provider,
+      role: row.role,
+      priority: row.priority ?? (row.role === "backup" ? 10 : 0),
       name: row.name,
       enabled: row.enabled,
       rtmpUrl: row.rtmp_url,
@@ -3028,20 +3079,27 @@ export async function updateDestinationRecord(destination: StreamDestinationReco
   await withSerializedStateWrite("updateDestinationRecord", async (client) => {
     await client.query(
       `
-        UPDATE stream_destinations
-        SET provider = $2,
-            name = $3,
-            enabled = $4,
-            rtmp_url = $5,
-            stream_key_present = $6,
-            status = $7,
-            notes = $8,
-            last_validated_at = $9
-        WHERE id = $1
+        INSERT INTO stream_destinations (
+          id, provider, role, priority, name, enabled, rtmp_url, stream_key_present, status, notes, last_validated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (id) DO UPDATE
+        SET provider = EXCLUDED.provider,
+            role = EXCLUDED.role,
+            priority = EXCLUDED.priority,
+            name = EXCLUDED.name,
+            enabled = EXCLUDED.enabled,
+            rtmp_url = EXCLUDED.rtmp_url,
+            stream_key_present = EXCLUDED.stream_key_present,
+            status = EXCLUDED.status,
+            notes = EXCLUDED.notes,
+            last_validated_at = EXCLUDED.last_validated_at
       `,
       [
         destination.id,
         destination.provider,
+        destination.role,
+        destination.priority,
         destination.name,
         destination.enabled,
         destination.rtmpUrl,

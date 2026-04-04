@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { GoLiveChecklist } from "@/components/go-live-checklist";
+import { DestinationSettingsForm } from "@/components/destination-settings-form";
 import Link from "next/link";
 import { IncidentActionForm } from "@/components/incident-action-form";
 import { Panel } from "@/components/panel";
@@ -27,6 +28,7 @@ export default async function DashboardPage() {
   const activeWindows = getActivePresenceWindows(state);
   const openIncidents = state.incidents.filter((incident) => incident.status === "open");
   const activeDestination = state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ?? state.destinations[0];
+  const orderedDestinations = [...state.destinations].sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name));
   const currentAsset = state.assets.find((entry) => entry.id === state.playout.currentAssetId) ?? null;
   const queuedAssets = getPlayoutQueueAssets(state);
   const overrideAsset = state.assets.find((entry) => entry.id === state.playout.overrideAssetId) ?? null;
@@ -88,7 +90,7 @@ export default async function DashboardPage() {
           <div className="value">{activeDestination?.status ?? "missing"}</div>
           <p className="subtle">
             {activeDestination
-              ? `${activeDestination.name} · ${activeDestination.streamKeyPresent ? "stream key present" : "stream key missing"}`
+              ? `${activeDestination.name} · ${activeDestination.role} · ${activeDestination.streamKeyPresent ? "stream key present" : "stream key missing"}`
               : "No playout destination is configured."}
           </p>
         </article>
@@ -128,6 +130,28 @@ export default async function DashboardPage() {
                   {item.startTime} to {item.endTime} · {item.categoryName}
                 </div>
                 <div className="subtle">{item.reason}</div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+        <Panel title="Output destinations" eyebrow="Broadcast">
+          <p className="subtle">
+            Stream247 now distinguishes between primary and backup output targets. If the primary target is not usable,
+            playout will prefer the next enabled destination with valid config.
+          </p>
+          <div className="list">
+            {orderedDestinations.map((destination) => (
+              <div className="item" key={destination.id}>
+                <strong>{destination.name}</strong>
+                <div className="subtle">
+                  {destination.role} · priority {destination.priority} · {destination.status}
+                </div>
+                <div className="subtle">
+                  {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"}
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  <DestinationSettingsForm destination={destination} />
+                </div>
               </div>
             ))}
           </div>
@@ -204,7 +228,7 @@ export default async function DashboardPage() {
               <div className="subtle">
                 {activeDestination
                   ? `${activeDestination.status} · ${activeDestination.notes}`
-                  : "RTMP destination is missing. Set STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY."}
+                  : "RTMP destination is missing. Configure primary or backup output env vars first."}
               </div>
             </div>
             <div className="item">

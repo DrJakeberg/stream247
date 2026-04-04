@@ -160,13 +160,28 @@ async function resolvePlayableInput(input: string): Promise<string> {
   return directUrl;
 }
 
+function getDestinationEnvConfig(role: StreamDestinationRecord["role"]) {
+  if (role === "backup") {
+    return {
+      url: process.env.BACKUP_STREAM_OUTPUT_URL || process.env.BACKUP_TWITCH_RTMP_URL || "",
+      key: process.env.BACKUP_STREAM_OUTPUT_KEY || process.env.BACKUP_TWITCH_STREAM_KEY || ""
+    };
+  }
+
+  return {
+    url: process.env.STREAM_OUTPUT_URL || process.env.TWITCH_RTMP_URL || "",
+    key: process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY || ""
+  };
+}
+
 function getConfiguredStreamTarget(destination: StreamDestinationRecord | null): string | null {
   if (!destination?.enabled) {
     return null;
   }
 
-  const envUrl = process.env.STREAM_OUTPUT_URL || process.env.TWITCH_RTMP_URL;
-  const envKey = process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY;
+  const envConfig = getDestinationEnvConfig(destination.role);
+  const envUrl = envConfig.url;
+  const envKey = envConfig.key;
   const streamUrl = destination.rtmpUrl || envUrl;
   const streamKey = envKey;
 
@@ -175,6 +190,15 @@ function getConfiguredStreamTarget(destination: StreamDestinationRecord | null):
   }
 
   return `${streamUrl.replace(/\/$/, "")}/${streamKey}`;
+}
+
+function getBestAvailableDestination(destinations: StreamDestinationRecord[]): StreamDestinationRecord | null {
+  const enabledDestinations = destinations
+    .filter((entry) => entry.enabled)
+    .slice()
+    .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name));
+
+  return enabledDestinations.find((entry) => Boolean(getConfiguredStreamTarget(entry))) ?? enabledDestinations[0] ?? null;
 }
 
 function getMediaOverlayFilter(textPath: string): string {
@@ -1812,14 +1836,17 @@ async function syncDestinations(): Promise<void> {
   const now = new Date().toISOString();
   for (const destination of state.destinations) {
     const streamTarget = getConfiguredStreamTarget(destination);
+    const envConfig = getDestinationEnvConfig(destination.role);
     await updateDestinationRecord({
       ...destination,
-      streamKeyPresent: Boolean(process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY),
+      streamKeyPresent: Boolean(envConfig.key),
       status: destination.enabled ? (streamTarget ? "ready" : "missing-config") : "missing-config",
       lastValidatedAt: now,
       notes: streamTarget
-        ? "Destination is configured and ready for FFmpeg output."
-        : "Configure STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY."
+        ? `${destination.role === "backup" ? "Backup" : "Primary"} destination is configured and ready for FFmpeg output.`
+        : destination.role === "backup"
+          ? "Configure BACKUP_STREAM_OUTPUT_URL/KEY or BACKUP_TWITCH_RTMP_URL/TWITCH_STREAM_KEY."
+          : "Configure STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY."
     });
   }
 }
@@ -1841,7 +1868,7 @@ async function runPlayoutCycle(): Promise<void> {
     state = await readAppState();
   }
 
-  const destination = state.destinations.find((entry) => entry.enabled) ?? null;
+  const destination = getBestAvailableDestination(state.destinations);
   const streamTarget = getConfiguredStreamTarget(destination);
   let selection: SelectionResult = choosePlaybackCandidate(state);
 
@@ -1864,7 +1891,8 @@ async function runPlayoutCycle(): Promise<void> {
       scope: "playout",
       severity: "warning",
       title: "Playout destination is not configured",
-      message: "Set STREAM_OUTPUT_URL and STREAM_OUTPUT_KEY or TWITCH_RTMP_URL and TWITCH_STREAM_KEY to enable FFmpeg playout.",
+      message:
+        "Set primary STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY, or configure backup RTMP env vars, to enable FFmpeg playout.",
       fingerprint: "playout.output.missing"
     });
 
@@ -1887,7 +1915,7 @@ async function runPlayoutCycle(): Promise<void> {
       heartbeatAt: new Date().toISOString(),
       selectionReasonCode: "destination_missing",
       fallbackTier: "none",
-      message: "No active RTMP destination is configured."
+      message: "No active primary or backup RTMP destination is configured."
     }));
     return;
   }
