@@ -1093,7 +1093,11 @@ function getPoolPlaybackQueue(state: AppState, poolId: string, skippedAssetId: s
     return left.title.localeCompare(right.title);
   });
 
-  const startIndex = currentAssetId ? eligibleAssets.findIndex((asset) => asset.id === currentAssetId) : -1;
+  const primaryReferenceId = currentAssetId || pool.cursorAssetId;
+  let startIndex = primaryReferenceId ? eligibleAssets.findIndex((asset) => asset.id === primaryReferenceId) : -1;
+  if (startIndex === -1 && currentAssetId && pool.cursorAssetId) {
+    startIndex = eligibleAssets.findIndex((asset) => asset.id === pool.cursorAssetId);
+  }
   const queue: AssetRecord[] = [];
 
   for (let offset = 1; offset <= Math.min(limit, eligibleAssets.length); offset += 1) {
@@ -1234,7 +1238,10 @@ function buildRuntimeQueueItems(args: {
       subtitle: queueHead.subtitle,
       scenePreset: queueHead.scenePreset
     });
-  } else if (args.selection.reasonCode === "operator_insert" && args.selection.asset) {
+  } else if (
+    (args.selection.reasonCode === "operator_insert" || args.selection.reasonCode === "scheduled_insert") &&
+    args.selection.asset
+  ) {
     pushItem({
       kind: "insert",
       assetId: args.selection.asset.id,
@@ -1286,10 +1293,12 @@ function buildQueueHeadForSelection(args: {
   selection: SelectionResult;
   currentScheduleItem: ReturnType<typeof getCurrentScheduleItem> | null;
 }) {
-  if (args.selection.reasonCode === "operator_insert" && args.selection.asset) {
+  if ((args.selection.reasonCode === "operator_insert" || args.selection.reasonCode === "scheduled_insert") && args.selection.asset) {
     return {
       title: args.selection.asset.title,
-      subtitle: `Insert · ${buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem) || "Operator requested insert"}`,
+      subtitle: `${args.selection.reasonCode === "operator_insert" ? "Insert" : "Automatic insert"} · ${
+        buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem) || "Insert requested"
+      }`,
       scenePreset: args.state.overlay.scenePreset
     };
   }
@@ -1360,6 +1369,28 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   }
 
   const currentScheduleItem = getCurrentScheduleItem(state);
+  const currentPool = currentScheduleItem?.poolId ? state.pools.find((pool) => pool.id === currentScheduleItem.poolId) ?? null : null;
+  const autoInsertAsset =
+    currentPool &&
+    state.playout.currentAssetId === "" &&
+    currentPool.insertAssetId &&
+    currentPool.insertEveryItems > 0 &&
+    currentPool.itemsSinceInsert >= currentPool.insertEveryItems
+      ? state.assets.find(
+          (asset) => asset.id === currentPool.insertAssetId && asset.status === "ready" && asset.id !== skippedAssetId
+        ) ?? null
+      : null;
+
+  if (autoInsertAsset) {
+    return {
+      asset: autoInsertAsset,
+      reason: `Pool ${currentPool?.name || "schedule"} queued automatic insert ${autoInsertAsset.title}.`,
+      lifecycleStatus: "recovering" as const,
+      reasonCode: "scheduled_insert" as const,
+      fallbackTier: "scheduled" as const
+    };
+  }
+
   const currentPoolAsset =
     currentScheduleItem?.poolId && state.playout.currentAssetId
       ? state.assets.find(
@@ -1367,7 +1398,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
             asset.id === state.playout.currentAssetId &&
             asset.status === "ready" &&
             asset.id !== skippedAssetId &&
-            state.pools.find((pool) => pool.id === currentScheduleItem.poolId)?.sourceIds.includes(asset.sourceId)
+            currentPool?.sourceIds.includes(asset.sourceId)
         ) ?? null
       : null;
 
@@ -1470,7 +1501,7 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
 }
 
 function getDesiredTargetKind(selection: SelectionResult): "asset" | "insert" | "standby" | "reconnect" {
-  if (selection.reasonCode === "operator_insert") {
+  if (selection.reasonCode === "operator_insert" || selection.reasonCode === "scheduled_insert") {
     return "insert";
   }
   if (selection.asset) {
@@ -1538,7 +1569,7 @@ async function startOrSwitchPlayout(args: {
   playoutAssetId = args.asset?.id ?? "";
   playoutDestinationId = args.destination.id;
   playoutTargetKind = args.asset
-    ? args.reasonCode === "operator_insert"
+    ? args.reasonCode === "operator_insert" || args.reasonCode === "scheduled_insert"
       ? "insert"
       : "asset"
     : args.lifecycleStatus === "reconnecting"
@@ -1639,6 +1670,9 @@ async function startOrSwitchPlayout(args: {
           ? 0
           : playout.crashCountWindow + 1,
       crashLoopDetected: !wasPlanned && code !== 0 && playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD,
+      currentAssetId: wasPlanned || code === 0 ? "" : playout.currentAssetId,
+      currentTitle: wasPlanned || code === 0 ? "" : playout.currentTitle,
+      desiredAssetId: wasPlanned || code === 0 ? "" : playout.desiredAssetId,
       lastError: wasPlanned || code === 0 ? playout.lastError : `FFmpeg exited with code ${String(code)}.`,
       transitionState: "idle",
       insertAssetId:
@@ -1887,7 +1921,7 @@ async function runPlayoutCycle(): Promise<void> {
   const restartRequested = Boolean(state.playout.restartRequestedAt);
   const currentScheduleItem = getCurrentScheduleItem(state);
   const rawQueueAssets =
-    selection.asset && currentScheduleItem?.poolId && selection.reasonCode === "scheduled_match"
+    currentScheduleItem?.poolId && selection.asset && (selection.reasonCode === "scheduled_match" || selection.reasonCode === "scheduled_insert")
       ? getPoolPlaybackQueue(state, currentScheduleItem.poolId, isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "", selection.asset.id)
       : [];
   const { playableQueue, prefetchedAsset, prefetchStatus, prefetchError } = await getPlayableQueuedAssets(rawQueueAssets);
@@ -2080,7 +2114,21 @@ async function runPlayoutCycle(): Promise<void> {
     selection.asset &&
     state.playout.currentAssetId !== selection.asset.id
   ) {
-    await updatePoolCursor(currentScheduleItem.poolId, selection.asset.id);
+    await updatePoolCursor(currentScheduleItem.poolId, selection.asset.id, {
+      incrementItemsSinceInsert: true
+    });
+  }
+
+  if (
+    currentScheduleItem?.poolId &&
+    selection.reasonCode === "scheduled_insert" &&
+    selection.asset &&
+    state.playout.currentAssetId !== selection.asset.id
+  ) {
+    const pool = state.pools.find((entry) => entry.id === currentScheduleItem.poolId) ?? null;
+    await updatePoolCursor(currentScheduleItem.poolId, pool?.cursorAssetId ?? "", {
+      resetItemsSinceInsert: true
+    });
   }
 }
 

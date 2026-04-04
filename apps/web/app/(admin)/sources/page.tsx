@@ -35,7 +35,7 @@ export default async function SourcesPage() {
           Pools are the weekly scheduler&apos;s programming units. The playout runtime rotates through ready assets from
           the selected sources in round-robin order.
         </p>
-        <PoolForm sources={state.sources} />
+        <PoolForm assets={state.assets} sources={state.sources} />
       </Panel>
       <Panel title="Source library" eyebrow="Catalog">
         <p className="subtle">
@@ -92,6 +92,11 @@ export default async function SourcesPage() {
                 {pool.sourceIds.length} source(s) · {pool.playbackMode}
               </div>
               <div className="subtle">
+                {pool.insertAssetId && pool.insertEveryItems > 0
+                  ? `Insert ${state.assets.find((asset) => asset.id === pool.insertAssetId)?.title || pool.insertAssetId} every ${pool.insertEveryItems} item(s)`
+                  : "No automatic inserts configured"}
+              </div>
+              <div className="subtle">
                 {pool.sourceIds
                   .map((sourceId) => state.sources.find((source) => source.id === sourceId)?.name || sourceId)
                   .join(", ")}
@@ -101,7 +106,7 @@ export default async function SourcesPage() {
                 {state.assets.filter((asset) => pool.sourceIds.includes(asset.sourceId) && asset.status === "ready").length} ready
               </div>
               <div style={{ marginTop: 12 }}>
-                <PoolForm pool={pool} sources={state.sources} />
+                <PoolForm assets={state.assets} pool={pool} sources={state.sources} />
               </div>
               <div style={{ marginTop: 8 }}>
                 <PoolDeleteForm id={pool.id} name={pool.name} />

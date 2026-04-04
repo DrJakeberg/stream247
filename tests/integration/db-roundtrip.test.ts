@@ -193,6 +193,9 @@ describe.sequential("database roundtrip", () => {
           sourceIds: ["source_1"],
           playbackMode: "round-robin" as const,
           cursorAssetId: "asset_1",
+          insertAssetId: "asset_3",
+          insertEveryItems: 3,
+          itemsSinceInsert: 2,
           updatedAt: "2026-04-04T10:00:00.000Z"
         }
       ],
@@ -357,6 +360,7 @@ describe.sequential("database roundtrip", () => {
     expect(reread.twitch.broadcasterLogin).toBe("roundtrip");
     expect(reread.twitchScheduleSegments[0]?.segmentId).toBe("abc");
     expect(reread.pools[0]?.name).toBe("Pool One");
+    expect(reread.pools[0]?.insertAssetId).toBe("asset_3");
     expect(reread.showProfiles[0]?.name).toBe("Morning Replay");
     expect(reread.scheduleBlocks[0]?.showId).toBe("show_1");
     expect(reread.sources[0]?.connectorKind).toBe("youtube-channel");

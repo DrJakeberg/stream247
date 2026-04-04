@@ -91,6 +91,9 @@ function createState(overrides: Partial<AppState> = {}): AppState {
         sourceIds: ["source-1"],
         playbackMode: "round-robin",
         cursorAssetId: "",
+        insertAssetId: "",
+        insertEveryItems: 0,
+        itemsSinceInsert: 0,
         updatedAt: ""
       }
     ],

@@ -6,11 +6,15 @@ function normalizeBody(body: {
   id?: string;
   name?: string;
   sourceIds?: string[];
+  insertAssetId?: string;
+  insertEveryItems?: number;
 }) {
   return {
     id: (body.id ?? "").trim(),
     name: (body.name ?? "").trim(),
-    sourceIds: Array.isArray(body.sourceIds) ? body.sourceIds.map((value) => String(value).trim()).filter(Boolean) : []
+    sourceIds: Array.isArray(body.sourceIds) ? body.sourceIds.map((value) => String(value).trim()).filter(Boolean) : [],
+    insertAssetId: String(body.insertAssetId ?? "").trim(),
+    insertEveryItems: Math.max(0, Math.min(100, Number(body.insertEveryItems ?? 0) || 0))
   };
 }
 
@@ -30,7 +34,12 @@ export async function POST(request: NextRequest) {
     return unauthorized;
   }
 
-  const payload = normalizeBody((await request.json()) as { name?: string; sourceIds?: string[] });
+  const payload = normalizeBody((await request.json()) as {
+    name?: string;
+    sourceIds?: string[];
+    insertAssetId?: string;
+    insertEveryItems?: number;
+  });
   if (!payload.name) {
     return NextResponse.json({ message: "Pool name is required." }, { status: 400 });
   }
@@ -44,6 +53,12 @@ export async function POST(request: NextRequest) {
   if (sourceIds.length === 0) {
     return NextResponse.json({ message: "Pool sources are no longer available." }, { status: 400 });
   }
+  const validInsertAsset = payload.insertAssetId
+    ? state.assets.find((asset) => asset.id === payload.insertAssetId && asset.status === "ready") ?? null
+    : null;
+  if (payload.insertAssetId && !validInsertAsset) {
+    return NextResponse.json({ message: "The selected insert asset is no longer available." }, { status: 400 });
+  }
 
   await createPoolRecord({
     id: `pool_${Math.random().toString(36).slice(2, 10)}`,
@@ -51,6 +66,9 @@ export async function POST(request: NextRequest) {
     sourceIds,
     playbackMode: "round-robin",
     cursorAssetId: "",
+    insertAssetId: validInsertAsset?.id ?? "",
+    insertEveryItems: payload.insertEveryItems,
+    itemsSinceInsert: 0,
     updatedAt: new Date().toISOString()
   });
 
@@ -64,7 +82,13 @@ export async function PUT(request: NextRequest) {
     return unauthorized;
   }
 
-  const payload = normalizeBody((await request.json()) as { id?: string; name?: string; sourceIds?: string[] });
+  const payload = normalizeBody((await request.json()) as {
+    id?: string;
+    name?: string;
+    sourceIds?: string[];
+    insertAssetId?: string;
+    insertEveryItems?: number;
+  });
   if (!payload.id) {
     return NextResponse.json({ message: "Pool id is required." }, { status: 400 });
   }
@@ -87,11 +111,19 @@ export async function PUT(request: NextRequest) {
     if (sourceIds.length === 0) {
       throw new Error("Pool sources are no longer available.");
     }
+    const validInsertAsset = payload.insertAssetId
+      ? state.assets.find((asset) => asset.id === payload.insertAssetId && asset.status === "ready") ?? null
+      : null;
+    if (payload.insertAssetId && !validInsertAsset) {
+      throw new Error("The selected insert asset is no longer available.");
+    }
 
     await updatePoolRecord({
       ...existing,
       name: payload.name,
       sourceIds,
+      insertAssetId: validInsertAsset?.id ?? "",
+      insertEveryItems: payload.insertEveryItems,
       updatedAt: new Date().toISOString()
     });
   } catch (error) {
