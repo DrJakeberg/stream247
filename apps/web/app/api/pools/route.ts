@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateAppState } from "@/lib/server/state";
+import { appendAuditEvent, createPoolRecord, deletePoolRecord, readAppState, updatePoolRecord } from "@/lib/server/state";
 
 function normalizeBody(body: {
   id?: string;
@@ -38,27 +38,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Select at least one source for the pool." }, { status: 400 });
   }
 
-  await updateAppState((state) => {
-    const validSourceIds = new Set(state.sources.map((source) => source.id));
-    const sourceIds = payload.sourceIds.filter((sourceId) => validSourceIds.has(sourceId));
-    if (sourceIds.length === 0) {
-      throw new Error("Pool sources are no longer available.");
-    }
+  const state = await readAppState();
+  const validSourceIds = new Set(state.sources.map((source) => source.id));
+  const sourceIds = payload.sourceIds.filter((sourceId) => validSourceIds.has(sourceId));
+  if (sourceIds.length === 0) {
+    return NextResponse.json({ message: "Pool sources are no longer available." }, { status: 400 });
+  }
 
-    return {
-      ...state,
-      pools: [
-        {
-          id: `pool_${Math.random().toString(36).slice(2, 10)}`,
-          name: payload.name,
-          sourceIds,
-          playbackMode: "round-robin",
-          cursorAssetId: "",
-          updatedAt: new Date().toISOString()
-        },
-        ...state.pools
-      ]
-    };
+  await createPoolRecord({
+    id: `pool_${Math.random().toString(36).slice(2, 10)}`,
+    name: payload.name,
+    sourceIds,
+    playbackMode: "round-robin",
+    cursorAssetId: "",
+    updatedAt: new Date().toISOString()
   });
 
   await appendAuditEvent("pool.created", `Created pool ${payload.name}.`);
@@ -83,31 +76,23 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    await updateAppState((state) => {
-      const existing = state.pools.find((pool) => pool.id === payload.id);
-      if (!existing) {
-        throw new Error("Pool not found.");
-      }
+    const state = await readAppState();
+    const existing = state.pools.find((pool) => pool.id === payload.id);
+    if (!existing) {
+      throw new Error("Pool not found.");
+    }
 
-      const validSourceIds = new Set(state.sources.map((source) => source.id));
-      const sourceIds = payload.sourceIds.filter((sourceId) => validSourceIds.has(sourceId));
-      if (sourceIds.length === 0) {
-        throw new Error("Pool sources are no longer available.");
-      }
+    const validSourceIds = new Set(state.sources.map((source) => source.id));
+    const sourceIds = payload.sourceIds.filter((sourceId) => validSourceIds.has(sourceId));
+    if (sourceIds.length === 0) {
+      throw new Error("Pool sources are no longer available.");
+    }
 
-      return {
-        ...state,
-        pools: state.pools.map((pool) =>
-          pool.id === payload.id
-            ? {
-                ...pool,
-                name: payload.name,
-                sourceIds,
-                updatedAt: new Date().toISOString()
-              }
-            : pool
-        )
-      };
+    await updatePoolRecord({
+      ...existing,
+      name: payload.name,
+      sourceIds,
+      updatedAt: new Date().toISOString()
     });
   } catch (error) {
     return NextResponse.json(
@@ -132,18 +117,13 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    await updateAppState((state) => {
-      const existing = state.pools.find((pool) => pool.id === payload.id);
-      if (!existing) {
-        throw new Error("Pool not found.");
-      }
+    const state = await readAppState();
+    const existing = state.pools.find((pool) => pool.id === payload.id);
+    if (!existing) {
+      throw new Error("Pool not found.");
+    }
 
-      return {
-        ...state,
-        pools: state.pools.filter((pool) => pool.id !== payload.id),
-        scheduleBlocks: state.scheduleBlocks.filter((block) => block.poolId !== payload.id)
-      };
-    });
+    await deletePoolRecord(payload.id);
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "Could not delete pool." },

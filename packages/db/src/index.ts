@@ -3,7 +3,6 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:
 import path from "node:path";
 import { Pool, type PoolClient } from "pg";
 import { createDefaultModerationConfig, type ModerationConfig } from "@stream247/core";
-import { schemaMigrations, type MigrationDefinition } from "./migrations";
 
 export type OwnerAccount = {
   email: string;
@@ -278,6 +277,12 @@ export type AppState = {
   playout: PlayoutRuntimeRecord;
 };
 
+type MigrationDefinition = {
+  id: string;
+  description: string;
+  apply: (client: PoolClient) => Promise<void>;
+};
+
 const legacyStatePath = path.join(process.cwd(), "data", "app", "state.json");
 
 declare global {
@@ -291,6 +296,7 @@ const STATE_WRITE_LOCK_KEY = 247001;
 const DB_BOOTSTRAP_LOCK_KEY = 247002;
 const STATE_WRITE_MAX_RETRIES = 3;
 const LATEST_SCHEMA_MIGRATION_ID = "20260404_001_schema_baseline";
+const schemaMigrations: MigrationDefinition[] = [];
 
 function isRetryableStateWriteError(error: unknown): error is { code: string } {
   return (
@@ -2189,6 +2195,148 @@ export async function appendSourceSyncRuns(runs: SourceSyncRunRecord[]): Promise
         OFFSET 250
       )
     `);
+  });
+}
+
+export async function createScheduleBlocks(blocks: ScheduleBlockRecord[]): Promise<void> {
+  if (blocks.length === 0) {
+    return;
+  }
+
+  await withSerializedStateWrite("createScheduleBlocks", async (client) => {
+    for (const block of blocks) {
+      await client.query(
+        `
+          INSERT INTO schedule_blocks (
+            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `,
+        [
+          block.id,
+          block.title,
+          block.categoryName,
+          Math.floor(block.startMinuteOfDay / 60),
+          block.startMinuteOfDay,
+          block.durationMinutes,
+          block.dayOfWeek,
+          block.showId ?? "",
+          block.poolId ?? "",
+          block.sourceName
+        ]
+      );
+    }
+  });
+}
+
+export async function updateScheduleBlockRecord(block: ScheduleBlockRecord): Promise<void> {
+  await withSerializedStateWrite("updateScheduleBlockRecord", async (client) => {
+    await client.query(
+      `
+        UPDATE schedule_blocks
+        SET title = $2,
+            category_name = $3,
+            start_hour = $4,
+            start_minute_of_day = $5,
+            duration_minutes = $6,
+            day_of_week = $7,
+            show_id = $8,
+            pool_id = $9,
+            source_name = $10
+        WHERE id = $1
+      `,
+      [
+        block.id,
+        block.title,
+        block.categoryName,
+        Math.floor(block.startMinuteOfDay / 60),
+        block.startMinuteOfDay,
+        block.durationMinutes,
+        block.dayOfWeek,
+        block.showId ?? "",
+        block.poolId ?? "",
+        block.sourceName
+      ]
+    );
+  });
+}
+
+export async function deleteScheduleBlockRecord(id: string): Promise<void> {
+  await withSerializedStateWrite("deleteScheduleBlockRecord", async (client) => {
+    await client.query("DELETE FROM schedule_blocks WHERE id = $1", [id]);
+  });
+}
+
+export async function createPoolRecord(pool: PoolRecord): Promise<void> {
+  await withSerializedStateWrite("createPoolRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO pools (id, name, source_ids, playback_mode, cursor_asset_id, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `,
+      [pool.id, pool.name, JSON.stringify(pool.sourceIds), pool.playbackMode, pool.cursorAssetId, pool.updatedAt]
+    );
+  });
+}
+
+export async function updatePoolRecord(pool: PoolRecord): Promise<void> {
+  await withSerializedStateWrite("updatePoolRecord", async (client) => {
+    await client.query(
+      `
+        UPDATE pools
+        SET name = $2,
+            source_ids = $3,
+            playback_mode = $4,
+            cursor_asset_id = $5,
+            updated_at = $6
+        WHERE id = $1
+      `,
+      [pool.id, pool.name, JSON.stringify(pool.sourceIds), pool.playbackMode, pool.cursorAssetId, pool.updatedAt]
+    );
+  });
+}
+
+export async function deletePoolRecord(poolId: string): Promise<void> {
+  await withSerializedStateWrite("deletePoolRecord", async (client) => {
+    await client.query("DELETE FROM schedule_blocks WHERE pool_id = $1", [poolId]);
+    await client.query("DELETE FROM pools WHERE id = $1", [poolId]);
+  });
+}
+
+export async function createShowProfileRecord(show: ShowProfileRecord): Promise<void> {
+  await withSerializedStateWrite("createShowProfileRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO show_profiles (id, name, category_name, default_duration_minutes, color, description, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `,
+      [show.id, show.name, show.categoryName, show.defaultDurationMinutes, show.color, show.description, show.updatedAt]
+    );
+  });
+}
+
+export async function updateShowProfileRecord(show: ShowProfileRecord): Promise<void> {
+  await withSerializedStateWrite("updateShowProfileRecord", async (client) => {
+    await client.query(
+      `
+        UPDATE show_profiles
+        SET name = $2,
+            category_name = $3,
+            default_duration_minutes = $4,
+            color = $5,
+            description = $6,
+            updated_at = $7
+        WHERE id = $1
+      `,
+      [show.id, show.name, show.categoryName, show.defaultDurationMinutes, show.color, show.description, show.updatedAt]
+    );
+  });
+}
+
+export async function deleteShowProfileRecord(showId: string): Promise<void> {
+  await withSerializedStateWrite("deleteShowProfileRecord", async (client) => {
+    await client.query("UPDATE schedule_blocks SET show_id = '' WHERE show_id = $1", [showId]);
+    await client.query("DELETE FROM show_profiles WHERE id = $1", [showId]);
   });
 }
 

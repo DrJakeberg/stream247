@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { findScheduleConflicts, validateScheduleBlock } from "@stream247/core";
 import { getAuthenticatedUser, requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateAppState } from "@/lib/server/state";
+import {
+  appendAuditEvent,
+  createScheduleBlocks,
+  deleteScheduleBlockRecord,
+  readAppState,
+  updateScheduleBlockRecord
+} from "@/lib/server/state";
 
 function normalizeBody(body: {
   id?: string;
@@ -71,42 +77,34 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const nextState = await updateAppState((state) => {
-      const pool = state.pools.find((entry) => entry.id === payload.poolId);
-      if (!pool) {
-        throw new Error("Schedule blocks must target an existing pool.");
-      }
-      if (payload.showId && !state.showProfiles.some((show) => show.id === payload.showId)) {
-        throw new Error("Selected show profile no longer exists.");
-      }
+    const state = await readAppState();
+    const pool = state.pools.find((entry) => entry.id === payload.poolId);
+    if (!pool) {
+      throw new Error("Schedule blocks must target an existing pool.");
+    }
+    if (payload.showId && !state.showProfiles.some((show) => show.id === payload.showId)) {
+      throw new Error("Selected show profile no longer exists.");
+    }
 
-      const dayOfWeeks = payload.dayOfWeeks.length > 0 ? payload.dayOfWeeks : [payload.dayOfWeek];
+    const dayOfWeeks = payload.dayOfWeeks.length > 0 ? payload.dayOfWeeks : [payload.dayOfWeek];
+    const newBlocks = dayOfWeeks.map((dayOfWeek) => ({
+      id: `schedule_${Math.random().toString(36).slice(2, 10)}`,
+      title: payload.title,
+      categoryName: payload.categoryName,
+      startMinuteOfDay: payload.startMinuteOfDay,
+      durationMinutes: payload.durationMinutes,
+      dayOfWeek,
+      showId: payload.showId,
+      poolId: payload.poolId,
+      sourceName: pool.name
+    }));
+    const conflicts = findScheduleConflicts([...state.scheduleBlocks, ...newBlocks]);
+    if (conflicts.length > 0) {
+      throw new Error("Schedule blocks overlap. Adjust the new start time or duration.");
+    }
 
-      const nextBlocks = [
-        ...state.scheduleBlocks,
-        ...dayOfWeeks.map((dayOfWeek) => ({
-          id: `schedule_${Math.random().toString(36).slice(2, 10)}`,
-          title: payload.title,
-          categoryName: payload.categoryName,
-          startMinuteOfDay: payload.startMinuteOfDay,
-          durationMinutes: payload.durationMinutes,
-          dayOfWeek,
-          showId: payload.showId,
-          poolId: payload.poolId,
-          sourceName: pool.name
-        }))
-      ];
-
-      const conflicts = findScheduleConflicts(nextBlocks);
-      if (conflicts.length > 0) {
-        throw new Error("Schedule blocks overlap. Adjust the new start time or duration.");
-      }
-
-      return {
-        ...state,
-        scheduleBlocks: nextBlocks
-      };
-    });
+    await createScheduleBlocks(newBlocks);
+    const nextState = await readAppState();
 
     await appendAuditEvent(
       "schedule.created",
@@ -156,46 +154,39 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    const nextState = await updateAppState((state) => {
-      const existing = state.scheduleBlocks.find((block) => block.id === payload.id);
-      if (!existing) {
-        throw new Error("Schedule block not found.");
-      }
+    const state = await readAppState();
+    const existing = state.scheduleBlocks.find((block) => block.id === payload.id);
+    if (!existing) {
+      throw new Error("Schedule block not found.");
+    }
 
-      const pool = state.pools.find((entry) => entry.id === payload.poolId);
-      if (!pool) {
-        throw new Error("Schedule blocks must target an existing pool.");
-      }
-      if (payload.showId && !state.showProfiles.some((show) => show.id === payload.showId)) {
-        throw new Error("Selected show profile no longer exists.");
-      }
+    const pool = state.pools.find((entry) => entry.id === payload.poolId);
+    if (!pool) {
+      throw new Error("Schedule blocks must target an existing pool.");
+    }
+    if (payload.showId && !state.showProfiles.some((show) => show.id === payload.showId)) {
+      throw new Error("Selected show profile no longer exists.");
+    }
 
-      const nextBlocks = state.scheduleBlocks.map((block) =>
-        block.id === payload.id
-          ? {
-              ...block,
-              title: payload.title,
-              categoryName: payload.categoryName,
-              startMinuteOfDay: payload.startMinuteOfDay,
-              durationMinutes: payload.durationMinutes,
-              dayOfWeek: payload.dayOfWeek,
-              showId: payload.showId,
-              poolId: payload.poolId,
-              sourceName: pool.name
-            }
-          : block
-      );
+    const updatedBlock = {
+      ...existing,
+      title: payload.title,
+      categoryName: payload.categoryName,
+      startMinuteOfDay: payload.startMinuteOfDay,
+      durationMinutes: payload.durationMinutes,
+      dayOfWeek: payload.dayOfWeek,
+      showId: payload.showId,
+      poolId: payload.poolId,
+      sourceName: pool.name
+    };
+    const nextBlocks = state.scheduleBlocks.map((block) => (block.id === payload.id ? updatedBlock : block));
+    const conflicts = findScheduleConflicts(nextBlocks);
+    if (conflicts.length > 0) {
+      throw new Error("Schedule blocks overlap. Adjust the edited start time or duration.");
+    }
 
-      const conflicts = findScheduleConflicts(nextBlocks);
-      if (conflicts.length > 0) {
-        throw new Error("Schedule blocks overlap. Adjust the edited start time or duration.");
-      }
-
-      return {
-        ...state,
-        scheduleBlocks: nextBlocks
-      };
-    });
+    await updateScheduleBlockRecord(updatedBlock);
+    const nextState = await readAppState();
 
     await appendAuditEvent(
       "schedule.updated",
@@ -235,10 +226,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ message: "Schedule block not found." }, { status: 404 });
   }
 
-  await updateAppState((current) => ({
-    ...current,
-    scheduleBlocks: current.scheduleBlocks.filter((block) => block.id !== id)
-  }));
+  await deleteScheduleBlockRecord(id);
 
   await appendAuditEvent(
     "schedule.deleted",
