@@ -1,6 +1,7 @@
 "use client";
 
 import type { UserRole } from "@/lib/server/state";
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 const roles: UserRole[] = ["admin", "operator", "moderator", "viewer"];
@@ -9,6 +10,7 @@ export function TeamAccessForm() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   return (
     <form
@@ -36,7 +38,7 @@ export function TeamAccessForm() {
           }
 
           setMessage(body.message ?? "Saved.");
-          window.location.reload();
+          router.refresh();
         });
       }}
     >
@@ -62,4 +64,3 @@ export function TeamAccessForm() {
     </form>
   );
 }
-

@@ -21,6 +21,14 @@ export type PresenceStatus = {
   summary: string;
 };
 
+export type OverlayScenePreset = "replay-lower-third" | "split-now-next" | "standby-board" | "minimal-chip";
+
+export type OverlayScenePresetDefinition = {
+  id: OverlayScenePreset;
+  label: string;
+  description: string;
+};
+
 export type ScheduleBlock = {
   id: string;
   title: string;
@@ -81,6 +89,89 @@ export type ScheduleDaySummary = {
   firstStartMinute: number | null;
   lastEndMinute: number | null;
 };
+
+export const OVERLAY_SCENE_PRESETS: OverlayScenePresetDefinition[] = [
+  {
+    id: "replay-lower-third",
+    label: "Replay Lower Third",
+    description: "Wide now-playing panel with a compact next item card for a broadcast lower-third feel."
+  },
+  {
+    id: "split-now-next",
+    label: "Split Now / Next",
+    description: "Balanced dual-card layout that keeps current and next programming equally visible."
+  },
+  {
+    id: "standby-board",
+    label: "Standby Board",
+    description: "Full-frame replay board for standby, reconnects, or channels that always want a strong branded slate."
+  },
+  {
+    id: "minimal-chip",
+    label: "Minimal Chip",
+    description: "Compact replay badge with current metadata for channels that want very light on-air graphics."
+  }
+];
+
+export function isOverlayScenePreset(value: string): value is OverlayScenePreset {
+  return OVERLAY_SCENE_PRESETS.some((preset) => preset.id === value);
+}
+
+export function normalizeOverlayScenePreset(value: string): OverlayScenePreset {
+  return isOverlayScenePreset(value) ? value : "replay-lower-third";
+}
+
+export function buildOverlayTextLines(args: {
+  scenePreset: OverlayScenePreset;
+  replayLabel: string;
+  headline: string;
+  nowTitle: string;
+  nextTitle: string;
+  currentCategory?: string;
+  sourceName?: string;
+  queueTitles?: string[];
+  standby?: boolean;
+  showCurrentCategory?: boolean;
+  showSourceLabel?: boolean;
+  showQueuePreview?: boolean;
+}): string[] {
+  const nowTitle = args.nowTitle || "Stand by";
+  const nextTitle = args.nextTitle || "Scheduling next item";
+  const queuePreview = (args.queueTitles || []).filter(Boolean).slice(0, 3).join(" · ");
+  const metaBits = [args.showCurrentCategory ? args.currentCategory || "" : "", args.showSourceLabel ? args.sourceName || "" : ""].filter(Boolean);
+
+  if (args.scenePreset === "minimal-chip") {
+    return [args.replayLabel || "Replay stream", `Now: ${nowTitle}`, metaBits.join(" · ")].filter(Boolean);
+  }
+
+  if (args.scenePreset === "split-now-next") {
+    return [
+      args.replayLabel || "Replay stream",
+      `Now: ${nowTitle}`,
+      `Next: ${nextTitle}`,
+      metaBits.join(" · ")
+    ].filter(Boolean);
+  }
+
+  if (args.scenePreset === "standby-board") {
+    return [
+      args.replayLabel || "Replay stream",
+      args.headline || "Please wait, restream is starting",
+      `Current: ${nowTitle}`,
+      `Next: ${nextTitle}`,
+      args.showQueuePreview && queuePreview ? `Later: ${queuePreview}` : ""
+    ].filter(Boolean);
+  }
+
+  return [
+    args.replayLabel || "Replay stream",
+    `Now: ${nowTitle}`,
+    metaBits.join(" · "),
+    `Next: ${nextTitle}`,
+    args.showQueuePreview && queuePreview ? `Queue: ${queuePreview}` : "",
+    args.standby ? args.headline || "Please wait, restream is starting" : ""
+  ].filter(Boolean);
+}
 
 export function isLikelyYouTubePlaylistUrl(value: string): boolean {
   try {

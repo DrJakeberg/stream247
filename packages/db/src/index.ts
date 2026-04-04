@@ -182,10 +182,15 @@ export type OverlaySettingsRecord = {
   channelName: string;
   headline: string;
   replayLabel: string;
+  scenePreset: "replay-lower-third" | "split-now-next" | "standby-board" | "minimal-chip";
   accentColor: string;
   showClock: boolean;
   showNextItem: boolean;
   showScheduleTeaser: boolean;
+  showCurrentCategory: boolean;
+  showSourceLabel: boolean;
+  showQueuePreview: boolean;
+  queuePreviewCount: number;
   emergencyBanner: string;
   updatedAt: string;
 };
@@ -381,10 +386,15 @@ function defaultState(): AppState {
       channelName: "Stream247",
       headline: "Always on air",
       replayLabel: "Replay stream",
+      scenePreset: "replay-lower-third",
       accentColor: "#0e6d5a",
       showClock: true,
       showNextItem: true,
       showScheduleTeaser: true,
+      showCurrentCategory: true,
+      showSourceLabel: true,
+      showQueuePreview: false,
+      queuePreviewCount: 3,
       emergencyBanner: "",
       updatedAt: ""
     },
@@ -717,10 +727,15 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       channel_name TEXT NOT NULL DEFAULT 'Stream247',
       headline TEXT NOT NULL DEFAULT 'Always on air',
       replay_label TEXT NOT NULL DEFAULT 'Replay stream',
+      scene_preset TEXT NOT NULL DEFAULT 'replay-lower-third',
       accent_color TEXT NOT NULL DEFAULT '#0e6d5a',
       show_clock BOOLEAN NOT NULL DEFAULT TRUE,
       show_next_item BOOLEAN NOT NULL DEFAULT TRUE,
       show_schedule_teaser BOOLEAN NOT NULL DEFAULT TRUE,
+      show_current_category BOOLEAN NOT NULL DEFAULT TRUE,
+      show_source_label BOOLEAN NOT NULL DEFAULT TRUE,
+      show_queue_preview BOOLEAN NOT NULL DEFAULT FALSE,
+      queue_preview_count INTEGER NOT NULL DEFAULT 3,
       emergency_banner TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT ''
     );
@@ -927,6 +942,11 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_clock BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_next_item BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_schedule_teaser BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS scene_preset TEXT NOT NULL DEFAULT 'replay-lower-third';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_current_category BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_source_label BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS show_queue_preview BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS queue_preview_count INTEGER NOT NULL DEFAULT 3;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT '';
@@ -1129,35 +1149,45 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
 
   await client.query(
     `
-      INSERT INTO overlay_settings (
-        singleton_id, enabled, channel_name, headline, accent_color, show_clock, show_next_item, show_schedule_teaser, emergency_banner, replay_label, updated_at
-      )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      ON CONFLICT (singleton_id) DO UPDATE SET
-        enabled = EXCLUDED.enabled,
-        channel_name = EXCLUDED.channel_name,
-        headline = EXCLUDED.headline,
-        accent_color = EXCLUDED.accent_color,
-        show_clock = EXCLUDED.show_clock,
-        show_next_item = EXCLUDED.show_next_item,
-        show_schedule_teaser = EXCLUDED.show_schedule_teaser,
-        emergency_banner = EXCLUDED.emergency_banner,
-        replay_label = EXCLUDED.replay_label,
-        updated_at = EXCLUDED.updated_at
-    `,
-    [
-      next.overlay.enabled,
-      next.overlay.channelName,
-      next.overlay.headline,
-      next.overlay.accentColor,
-      next.overlay.showClock,
-      next.overlay.showNextItem,
-      next.overlay.showScheduleTeaser,
-      next.overlay.emergencyBanner,
-      next.overlay.replayLabel,
-      next.overlay.updatedAt
-    ]
-  );
+        INSERT INTO overlay_settings (
+          singleton_id, enabled, channel_name, headline, replay_label, scene_preset, accent_color, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, emergency_banner, updated_at
+        )
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          enabled = EXCLUDED.enabled,
+          channel_name = EXCLUDED.channel_name,
+          headline = EXCLUDED.headline,
+          replay_label = EXCLUDED.replay_label,
+          scene_preset = EXCLUDED.scene_preset,
+          accent_color = EXCLUDED.accent_color,
+          show_clock = EXCLUDED.show_clock,
+          show_next_item = EXCLUDED.show_next_item,
+          show_schedule_teaser = EXCLUDED.show_schedule_teaser,
+          show_current_category = EXCLUDED.show_current_category,
+          show_source_label = EXCLUDED.show_source_label,
+          show_queue_preview = EXCLUDED.show_queue_preview,
+          queue_preview_count = EXCLUDED.queue_preview_count,
+          emergency_banner = EXCLUDED.emergency_banner,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        next.overlay.enabled,
+        next.overlay.channelName,
+        next.overlay.headline,
+        next.overlay.replayLabel,
+        next.overlay.scenePreset,
+        next.overlay.accentColor,
+        next.overlay.showClock,
+        next.overlay.showNextItem,
+        next.overlay.showScheduleTeaser,
+        next.overlay.showCurrentCategory,
+        next.overlay.showSourceLabel,
+        next.overlay.showQueuePreview,
+        next.overlay.queuePreviewCount,
+        next.overlay.emergencyBanner,
+        next.overlay.updatedAt
+      ]
+    );
 
   await client.query(
     `
@@ -1583,10 +1613,15 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     enabled: boolean;
     channel_name: string;
     headline: string;
+    scene_preset: OverlaySettingsRecord["scenePreset"];
     accent_color: string;
     show_clock: boolean;
     show_next_item: boolean;
     show_schedule_teaser: boolean;
+    show_current_category: boolean;
+    show_source_label: boolean;
+    show_queue_preview: boolean;
+    queue_preview_count: number;
     emergency_banner: string;
     replay_label: string;
     updated_at: string;
@@ -1812,12 +1847,17 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           enabled: overlayRow.enabled,
           channelName: overlayRow.channel_name,
           headline: overlayRow.headline,
+          replayLabel: overlayRow.replay_label,
+          scenePreset: overlayRow.scene_preset,
           accentColor: overlayRow.accent_color,
           showClock: overlayRow.show_clock,
           showNextItem: overlayRow.show_next_item,
           showScheduleTeaser: overlayRow.show_schedule_teaser,
+          showCurrentCategory: overlayRow.show_current_category,
+          showSourceLabel: overlayRow.show_source_label,
+          showQueuePreview: overlayRow.show_queue_preview,
+          queuePreviewCount: overlayRow.queue_preview_count,
           emergencyBanner: overlayRow.emergency_banner,
-          replayLabel: overlayRow.replay_label,
           updatedAt: overlayRow.updated_at
         }
       : defaults.overlay,
@@ -2229,31 +2269,41 @@ export async function updateOverlaySettingsRecord(overlay: OverlaySettingsRecord
     await client.query(
       `
         INSERT INTO overlay_settings (
-          singleton_id, enabled, channel_name, headline, accent_color, show_clock, show_next_item, show_schedule_teaser, emergency_banner, replay_label, updated_at
+          singleton_id, enabled, channel_name, headline, replay_label, scene_preset, accent_color, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, emergency_banner, updated_at
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           channel_name = EXCLUDED.channel_name,
           headline = EXCLUDED.headline,
+          replay_label = EXCLUDED.replay_label,
+          scene_preset = EXCLUDED.scene_preset,
           accent_color = EXCLUDED.accent_color,
           show_clock = EXCLUDED.show_clock,
           show_next_item = EXCLUDED.show_next_item,
           show_schedule_teaser = EXCLUDED.show_schedule_teaser,
+          show_current_category = EXCLUDED.show_current_category,
+          show_source_label = EXCLUDED.show_source_label,
+          show_queue_preview = EXCLUDED.show_queue_preview,
+          queue_preview_count = EXCLUDED.queue_preview_count,
           emergency_banner = EXCLUDED.emergency_banner,
-          replay_label = EXCLUDED.replay_label,
           updated_at = EXCLUDED.updated_at
       `,
       [
         overlay.enabled,
         overlay.channelName,
         overlay.headline,
+        overlay.replayLabel,
+        overlay.scenePreset,
         overlay.accentColor,
         overlay.showClock,
         overlay.showNextItem,
         overlay.showScheduleTeaser,
+        overlay.showCurrentCategory,
+        overlay.showSourceLabel,
+        overlay.showQueuePreview,
+        overlay.queuePreviewCount,
         overlay.emergencyBanner,
-        overlay.replayLabel,
         overlay.updatedAt
       ]
     );

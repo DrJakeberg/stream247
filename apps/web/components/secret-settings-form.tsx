@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 export function SecretSettingsForm(props: {
@@ -21,6 +22,7 @@ export function SecretSettingsForm(props: {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   return (
     <form
@@ -56,7 +58,7 @@ export function SecretSettingsForm(props: {
           }
 
           setMessage(payload.message ?? "Managed settings updated.");
-          window.location.reload();
+          router.refresh();
         });
       }}
     >

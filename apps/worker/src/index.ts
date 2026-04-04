@@ -5,6 +5,7 @@ import path from "node:path";
 import type { Readable } from "node:stream";
 import {
   addDaysToDateString,
+  buildOverlayTextLines,
   buildScheduleOccurrences,
   buildSchedulePreview,
   describePresenceStatus,
@@ -268,23 +269,43 @@ async function writeStandbySlate(state: AppState): Promise<void> {
     blocks: state.scheduleBlocks
   }).items;
   const nextItem = nextPreview.find((item) => item.id !== currentItem?.blockId) ?? null;
-  const lines = [
-    state.overlay.replayLabel || "Replay stream",
-    state.overlay.headline || "Please wait, restream is starting",
-    currentItem ? `Current: ${currentItem.title}` : "Current: Stand by",
-    nextItem ? `Next: ${nextItem.title} ${nextItem.startTime}-${nextItem.endTime}` : "Next: Programming will resume shortly"
-  ];
+  const lines = buildOverlayTextLines({
+    scenePreset: state.overlay.scenePreset,
+    replayLabel: state.overlay.replayLabel || "Replay stream",
+    headline: state.overlay.headline || "Please wait, restream is starting",
+    nowTitle: currentItem?.title || "Stand by",
+    nextTitle: nextItem ? `${nextItem.title} ${nextItem.startTime}-${nextItem.endTime}` : "Programming will resume shortly",
+    currentCategory: currentItem?.categoryName,
+    sourceName: currentItem?.sourceName,
+    queueTitles: nextPreview.slice(0, state.overlay.queuePreviewCount).map((item) => item.title),
+    standby: true,
+    showCurrentCategory: state.overlay.showCurrentCategory,
+    showSourceLabel: state.overlay.showSourceLabel,
+    showQueuePreview: state.overlay.showQueuePreview
+  });
   await fs.writeFile(standbySlatePath, `${lines.join("\n")}\n`, "utf8");
 }
 
 async function writeOnAirOverlay(state: AppState, asset: AssetRecord | null): Promise<void> {
   const currentItem = getCurrentScheduleItem(state);
   const nextItem = getNextScheduleItem(state);
-  const lines = [
-    state.overlay.replayLabel || "Replay stream",
-    `Now: ${asset?.title || state.playout.currentTitle || currentItem?.title || "Stand by"}`,
-    `Next: ${nextItem?.title || "Scheduling next item"}`
-  ];
+  const queueTitles = state.playout.queuedAssetIds
+    .map((id) => state.assets.find((entry) => entry.id === id)?.title || "")
+    .filter(Boolean)
+    .slice(0, state.overlay.queuePreviewCount);
+  const lines = buildOverlayTextLines({
+    scenePreset: state.overlay.scenePreset,
+    replayLabel: state.overlay.replayLabel || "Replay stream",
+    headline: state.overlay.headline || "Always on air",
+    nowTitle: asset?.title || state.playout.currentTitle || currentItem?.title || "Stand by",
+    nextTitle: nextItem?.title || "Scheduling next item",
+    currentCategory: currentItem?.categoryName || asset?.categoryName,
+    sourceName: currentItem?.sourceName || (asset ? state.sources.find((source) => source.id === asset.sourceId)?.name : ""),
+    queueTitles,
+    showCurrentCategory: state.overlay.showCurrentCategory,
+    showSourceLabel: state.overlay.showSourceLabel,
+    showQueuePreview: state.overlay.showQueuePreview
+  });
   await fs.writeFile(onAirOverlayPath, `${lines.join("\n")}\n`, "utf8");
 }
 

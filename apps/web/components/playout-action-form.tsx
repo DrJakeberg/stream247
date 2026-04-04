@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 type PlayoutAssetOption = {
@@ -16,6 +17,7 @@ export function PlayoutActionForm(props: {
   const [selectedAssetId, setSelectedAssetId] = useState(props.currentAssetId || props.assets[0]?.id || "");
   const [minutes, setMinutes] = useState("60");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   async function runAction(body: Record<string, unknown>) {
     setError("");
@@ -31,7 +33,7 @@ export function PlayoutActionForm(props: {
       return;
     }
 
-    window.location.reload();
+    router.refresh();
   }
 
   return (
@@ -43,7 +45,15 @@ export function PlayoutActionForm(props: {
           onClick={() => startTransition(() => void runAction({ type: "restart" }))}
           type="button"
         >
-          Restart encoder
+          Soft restart
+        </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending}
+          onClick={() => startTransition(() => void runAction({ type: "hard_reload" }))}
+          type="button"
+        >
+          Hard reload
         </button>
         <button
           className="button button-secondary"
@@ -51,7 +61,7 @@ export function PlayoutActionForm(props: {
           onClick={() => startTransition(() => void runAction({ type: "refresh" }))}
           type="button"
         >
-          Refresh overlays
+          Refresh scenes
         </button>
         <button
           className="button button-secondary"

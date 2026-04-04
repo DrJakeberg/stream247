@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { PoolRecord, SourceRecord } from "@/lib/server/state";
 
@@ -11,6 +12,7 @@ export function PoolForm(props: {
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
   const isEditing = Boolean(props.pool);
+  const router = useRouter();
 
   return (
     <form
@@ -41,7 +43,7 @@ export function PoolForm(props: {
           }
 
           setMessage(payload.message ?? "Pool saved.");
-          window.location.reload();
+          router.refresh();
         });
       }}
     >

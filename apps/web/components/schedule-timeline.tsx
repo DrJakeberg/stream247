@@ -1,6 +1,7 @@
 "use client";
 
 import { formatMinuteOfDay, type ScheduleBlock } from "@stream247/core";
+import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import type { ShowProfileRecord } from "@/lib/server/state";
 
@@ -23,6 +24,7 @@ export function ScheduleTimeline({ blocks, conflicts, showProfiles, timeZone }: 
   const [isPending, startTransition] = useTransition();
   const resizingRef = useRef<{ block: ScheduleBlock; startY: number; startDuration: number } | null>(null);
   const conflictSet = new Set(conflicts);
+  const router = useRouter();
 
   async function saveBlock(block: ScheduleBlock, updates: Partial<ScheduleBlock>) {
     setError("");
@@ -42,7 +44,7 @@ export function ScheduleTimeline({ blocks, conflicts, showProfiles, timeZone }: 
       return;
     }
 
-    window.location.reload();
+    router.refresh();
   }
 
   function beginResize(block: ScheduleBlock, startY: number) {

@@ -1,10 +1,12 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 export function PoolDeleteForm(props: { id: string; name: string }) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   return (
     <div className="stack-form">
@@ -29,7 +31,7 @@ export function PoolDeleteForm(props: { id: string; name: string }) {
               return;
             }
 
-            window.location.reload();
+            router.refresh();
           });
         }}
         type="button"

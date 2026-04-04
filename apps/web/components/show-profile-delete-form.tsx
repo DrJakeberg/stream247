@@ -1,10 +1,12 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 export function ShowProfileDeleteForm(props: { id: string; name: string }) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   return (
     <form
@@ -29,7 +31,7 @@ export function ShowProfileDeleteForm(props: { id: string; name: string }) {
             return;
           }
 
-          window.location.reload();
+          router.refresh();
         });
       }}
     >
