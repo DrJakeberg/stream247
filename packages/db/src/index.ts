@@ -211,7 +211,7 @@ export type ManagedConfigRecord = {
 
 export type BroadcastQueueItemRecord = {
   id: string;
-  kind: "asset" | "standby" | "reconnect";
+  kind: "asset" | "insert" | "standby" | "reconnect";
   assetId: string;
   title: string;
   subtitle: string;
@@ -257,6 +257,7 @@ export type PlayoutRuntimeRecord = {
     | "destination_missing"
     | "resolve_failed"
     | "ffmpeg_crash_loop"
+    | "operator_insert"
     | "standby"
     | "scheduled_reconnect"
     | "";
@@ -264,6 +265,9 @@ export type PlayoutRuntimeRecord = {
   overrideMode: "schedule" | "asset" | "fallback";
   overrideAssetId: string;
   overrideUntil: string;
+  insertAssetId: string;
+  insertRequestedAt: string;
+  insertStatus: "" | "pending" | "active";
   skipAssetId: string;
   skipUntil: string;
   pendingAction: "" | "refresh" | "rebuild_queue";
@@ -495,6 +499,9 @@ function defaultState(): AppState {
       overrideMode: "schedule",
       overrideAssetId: "",
       overrideUntil: "",
+      insertAssetId: "",
+      insertRequestedAt: "",
+      insertStatus: "",
       skipAssetId: "",
       skipUntil: "",
       pendingAction: "",
@@ -939,6 +946,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       override_mode TEXT NOT NULL DEFAULT 'schedule',
       override_asset_id TEXT NOT NULL DEFAULT '',
       override_until TEXT NOT NULL DEFAULT '',
+      insert_asset_id TEXT NOT NULL DEFAULT '',
+      insert_requested_at TEXT NOT NULL DEFAULT '',
+      insert_status TEXT NOT NULL DEFAULT '',
       skip_asset_id TEXT NOT NULL DEFAULT '',
       skip_until TEXT NOT NULL DEFAULT '',
       pending_action TEXT NOT NULL DEFAULT '',
@@ -1017,6 +1027,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_mode TEXT NOT NULL DEFAULT 'schedule';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_until TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS insert_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS insert_requested_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS insert_status TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS skip_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS skip_until TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS pending_action TEXT NOT NULL DEFAULT '';
@@ -1516,10 +1529,11 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         queue_items, prefetched_asset_id, prefetched_title, prefetched_at, prefetch_status, prefetch_error, current_destination_id,
         restart_requested_at, heartbeat_at, process_pid, process_started_at, last_transition_at, last_successful_start_at,
         last_successful_asset_id, last_exit_code, restart_count, crash_count_window, crash_loop_detected, last_error,
-        last_stderr_sample, selection_reason_code, fallback_tier, override_mode, override_asset_id, override_until, skip_asset_id,
-        skip_until, pending_action, pending_action_requested_at, message
+        last_stderr_sample, selection_reason_code, fallback_tier, override_mode, override_asset_id, override_until,
+        insert_asset_id, insert_requested_at, insert_status, skip_asset_id, skip_until, pending_action,
+        pending_action_requested_at, message
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         transition_state = EXCLUDED.transition_state,
@@ -1554,6 +1568,9 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         override_mode = EXCLUDED.override_mode,
         override_asset_id = EXCLUDED.override_asset_id,
         override_until = EXCLUDED.override_until,
+        insert_asset_id = EXCLUDED.insert_asset_id,
+        insert_requested_at = EXCLUDED.insert_requested_at,
+        insert_status = EXCLUDED.insert_status,
         skip_asset_id = EXCLUDED.skip_asset_id,
         skip_until = EXCLUDED.skip_until,
         pending_action = EXCLUDED.pending_action,
@@ -1594,6 +1611,9 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
       playout.overrideMode,
       playout.overrideAssetId,
       playout.overrideUntil,
+      playout.insertAssetId,
+      playout.insertRequestedAt,
+      playout.insertStatus,
       playout.skipAssetId,
       playout.skipUntil,
       playout.pendingAction,
@@ -1816,6 +1836,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     override_mode: PlayoutRuntimeRecord["overrideMode"];
     override_asset_id: string;
     override_until: string;
+    insert_asset_id: string;
+    insert_requested_at: string;
+    insert_status: PlayoutRuntimeRecord["insertStatus"];
     skip_asset_id: string;
     skip_until: string;
     pending_action: PlayoutRuntimeRecord["pendingAction"];
@@ -2061,6 +2084,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           overrideMode: playoutRow.override_mode,
           overrideAssetId: playoutRow.override_asset_id,
           overrideUntil: playoutRow.override_until,
+          insertAssetId: playoutRow.insert_asset_id,
+          insertRequestedAt: playoutRow.insert_requested_at,
+          insertStatus: playoutRow.insert_status,
           skipAssetId: playoutRow.skip_asset_id,
           skipUntil: playoutRow.skip_until,
           pendingAction: (playoutRow.pending_action as PlayoutRuntimeRecord["pendingAction"]) || "",

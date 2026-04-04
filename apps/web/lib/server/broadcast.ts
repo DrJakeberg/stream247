@@ -6,6 +6,7 @@ type BroadcastAction =
   | { type: "force_reconnect" }
   | { type: "fallback" }
   | { type: "resume" }
+  | { type: "trigger_insert"; assetId: string }
   | { type: "skip"; minutes?: number }
   | { type: "override"; assetId: string; minutes?: number };
 
@@ -108,6 +109,9 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       overrideMode: "schedule",
       overrideAssetId: "",
       overrideUntil: "",
+      insertAssetId: "",
+      insertRequestedAt: "",
+      insertStatus: "",
       skipAssetId: "",
       skipUntil: "",
       pendingAction: "",
@@ -116,6 +120,28 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
     }));
     await appendAuditEvent("playout.resume.schedule", "Operator override cleared and schedule control resumed.");
     return { ok: true, message: "Schedule control resumed." };
+  }
+
+  if (action.type === "trigger_insert") {
+    const asset = state.assets.find((entry) => entry.id === action.assetId && entry.status === "ready");
+    if (!asset) {
+      throw new Error("The requested insert asset is not available.");
+    }
+
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      status: "recovering",
+      restartRequestedAt: now,
+      heartbeatAt: now,
+      insertAssetId: asset.id,
+      insertRequestedAt: now,
+      insertStatus: "pending",
+      pendingAction: "",
+      pendingActionRequestedAt: "",
+      message: `Insert requested for ${asset.title}.`
+    }));
+    await appendAuditEvent("playout.insert.requested", `Operator requested insert ${asset.title}.`);
+    return { ok: true, message: `Insert requested for ${asset.title}.` };
   }
 
   if (action.type === "skip") {

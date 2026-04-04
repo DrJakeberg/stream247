@@ -139,6 +139,21 @@ export function PlayoutActionForm(props: {
         >
           Pin on air
         </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending || !selectedAssetId}
+          onClick={() =>
+            startTransition(() =>
+              void runAction({
+                type: "trigger_insert",
+                assetId: selectedAssetId
+              })
+            )
+          }
+          type="button"
+        >
+          Play insert
+        </button>
       </div>
 
       {error ? <p className="danger">{error}</p> : null}

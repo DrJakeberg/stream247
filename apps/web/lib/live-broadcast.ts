@@ -53,7 +53,7 @@ export type LiveWorkerHealth = {
 
 export type LiveQueueItemSummary = {
   id: string;
-  kind: "asset" | "standby" | "reconnect";
+  kind: "asset" | "insert" | "standby" | "reconnect";
   title: string;
   subtitle: string;
   position: number;
@@ -75,6 +75,9 @@ export type LivePlayoutSummary = {
   overrideMode: string;
   overrideAssetId: string;
   overrideUntil: string;
+  insertAssetId: string;
+  insertRequestedAt: string;
+  insertStatus: string;
   skipAssetId: string;
   skipUntil: string;
   currentAssetId: string;
