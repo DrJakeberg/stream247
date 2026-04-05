@@ -86,14 +86,29 @@ main {
   padding: 12px 14px;
   border-radius: 14px;
   background: transparent;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
 }
 
 .nav a:hover {
   background: var(--surface);
+  transform: translateX(2px);
+}
+
+.nav a.nav-link-active {
+  background: rgba(14, 109, 90, 0.12);
+  color: var(--brand-strong);
 }
 
 .content {
   padding: 28px;
+}
+
+.content-stack {
+  display: grid;
+  gap: 18px;
 }
 
 .hero,
@@ -470,6 +485,35 @@ select,
   gap: 12px;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   margin-top: 18px;
+}
+
+.admin-status-rail {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.admin-status-chip {
+  padding: 14px 16px;
+  border: 1px solid rgba(27, 26, 22, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 249, 239, 0.78);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 12px 40px rgba(32, 29, 21, 0.06);
+  min-width: 0;
+}
+
+.admin-status-chip strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.admin-status-chip .subtle {
+  display: block;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
 }
 
 .status-rail > div {

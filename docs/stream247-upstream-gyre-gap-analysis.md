@@ -142,6 +142,7 @@ The following product gaps are now addressed:
 - source creation and editing now use guided connector templates instead of only raw connector/url fields
 - operators can now upload local media directly from the admin UI into the shared library path
 - the source library now supports bulk enable, disable, and sync actions from one operator workflow
+- the admin shell now includes a live status rail plus active navigation so every admin page behaves more like a persistent control room
 - the broadcast runtime now distinguishes between primary and backup RTMP destinations, marks failed outputs with a cooldown window, and can fail over to the next healthy target
 - settings now include an update center with release-channel detection, pinned-image visibility, and upgrade/runbook guidance
 
@@ -160,6 +161,7 @@ Deliverables:
 - public `GET /api/channel/live/stream` via SSE
 - live-updating public overlay
 - live-updating public channel page
+- live admin status rail across the control-room shell
 - no more hard reloads in admin forms
 
 ### Phase 2: Scene System
