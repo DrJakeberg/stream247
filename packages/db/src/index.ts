@@ -165,6 +165,7 @@ export type StreamDestinationRecord = {
   enabled: boolean;
   rtmpUrl: string;
   streamKeyPresent: boolean;
+  streamKeySource?: "env" | "managed" | "missing";
   status: "ready" | "missing-config" | "error";
   notes: string;
   lastValidatedAt: string;
@@ -453,6 +454,27 @@ const STATE_WRITE_MAX_RETRIES = 3;
 const LATEST_SCHEMA_MIGRATION_ID = "20260404_001_schema_baseline";
 const schemaMigrations: MigrationDefinition[] = [];
 
+function getLegacyDestinationEnvConfig(destinationId: string): { url: string; key: string } {
+  if (destinationId === "destination-backup") {
+    return {
+      url: process.env.BACKUP_STREAM_OUTPUT_URL || process.env.BACKUP_TWITCH_RTMP_URL || "",
+      key: process.env.BACKUP_STREAM_OUTPUT_KEY || process.env.BACKUP_TWITCH_STREAM_KEY || ""
+    };
+  }
+
+  if (destinationId === "destination-primary") {
+    return {
+      url: process.env.STREAM_OUTPUT_URL || process.env.TWITCH_RTMP_URL || "",
+      key: process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY || ""
+    };
+  }
+
+  return {
+    url: "",
+    key: ""
+  };
+}
+
 function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): OverlaySettingsRecord {
   const defaults = defaultState().overlay;
   return {
@@ -560,6 +582,16 @@ function normalizeDestinationRecords(destinations: StreamDestinationRecord[], de
       ...destination,
       role: (destination.role === "backup" ? "backup" : "primary") as StreamDestinationRecord["role"],
       priority: typeof destination.priority === "number" ? destination.priority : destination.role === "backup" ? 10 : 0,
+      streamKeySource:
+        destination.streamKeySource === "env" ||
+        destination.streamKeySource === "managed" ||
+        destination.streamKeySource === "missing"
+          ? destination.streamKeySource
+          : getLegacyDestinationEnvConfig(destination.id).key
+            ? "env"
+            : destination.streamKeyPresent
+              ? "managed"
+              : "missing",
       lastFailureAt: destination.lastFailureAt || "",
       failureCount: typeof destination.failureCount === "number" ? destination.failureCount : 0,
       lastError: destination.lastError || ""
@@ -939,6 +971,7 @@ function defaultState(): AppState {
         enabled: true,
         rtmpUrl: process.env.STREAM_OUTPUT_URL || process.env.TWITCH_RTMP_URL || "rtmp://live.twitch.tv/app",
         streamKeyPresent: Boolean(process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY),
+        streamKeySource: process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY ? "env" : "missing",
         status: process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY ? "ready" : "missing-config",
         notes: "Primary RTMP destination for the broadcast runtime.",
         lastValidatedAt: "",
@@ -955,6 +988,8 @@ function defaultState(): AppState {
         enabled: Boolean(process.env.BACKUP_STREAM_OUTPUT_URL || process.env.BACKUP_TWITCH_RTMP_URL),
         rtmpUrl: process.env.BACKUP_STREAM_OUTPUT_URL || process.env.BACKUP_TWITCH_RTMP_URL || "",
         streamKeyPresent: Boolean(process.env.BACKUP_STREAM_OUTPUT_KEY || process.env.BACKUP_TWITCH_STREAM_KEY),
+        streamKeySource:
+          process.env.BACKUP_STREAM_OUTPUT_KEY || process.env.BACKUP_TWITCH_STREAM_KEY ? "env" : "missing",
         status:
           process.env.BACKUP_STREAM_OUTPUT_URL || process.env.BACKUP_TWITCH_RTMP_URL
             ? process.env.BACKUP_STREAM_OUTPUT_KEY || process.env.BACKUP_TWITCH_STREAM_KEY
@@ -1505,6 +1540,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       enabled BOOLEAN NOT NULL DEFAULT TRUE,
       rtmp_url TEXT NOT NULL DEFAULT '',
       stream_key_present BOOLEAN NOT NULL DEFAULT FALSE,
+      encrypted_stream_key TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'missing-config',
       notes TEXT NOT NULL DEFAULT '',
       last_validated_at TEXT NOT NULL DEFAULT '',
@@ -1603,6 +1639,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'primary';
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS encrypted_stream_key TEXT NOT NULL DEFAULT '';
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS last_failure_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS failure_count INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
@@ -2231,15 +2268,22 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     );
   }
 
+  const existingDestinationSecretsResult = await client.query<{ id: string; encrypted_stream_key: string }>(
+    "SELECT id, encrypted_stream_key FROM stream_destinations"
+  );
+  const existingDestinationSecrets = new Map(
+    existingDestinationSecretsResult.rows.map((row) => [row.id, row.encrypted_stream_key || ""] as const)
+  );
+
   await client.query("DELETE FROM stream_destinations");
   for (const destination of next.destinations) {
     await client.query(
       `
         INSERT INTO stream_destinations (
-          id, provider, role, priority, name, enabled, rtmp_url, stream_key_present, status, notes, last_validated_at,
-          last_failure_at, failure_count, last_error
+          id, provider, role, priority, name, enabled, rtmp_url, stream_key_present, encrypted_stream_key, status, notes,
+          last_validated_at, last_failure_at, failure_count, last_error
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       `,
       [
         destination.id,
@@ -2250,6 +2294,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         destination.enabled,
         destination.rtmpUrl,
         destination.streamKeyPresent,
+        existingDestinationSecrets.get(destination.id) || "",
         destination.status,
         destination.notes,
         destination.lastValidatedAt,
@@ -2562,6 +2607,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     enabled: boolean;
     rtmp_url: string;
     stream_key_present: boolean;
+    encrypted_stream_key: string;
     status: StreamDestinationRecord["status"];
     notes: string;
     last_validated_at: string;
@@ -2815,22 +2861,29 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       readyAssets: row.ready_assets,
       errorMessage: row.error_message
     })),
-    destinations: destinationsResult.rows.map((row) => ({
-      id: row.id,
-      provider: row.provider,
-      role: row.role,
-      priority: row.priority ?? (row.role === "backup" ? 10 : 0),
-      name: row.name,
-      enabled: row.enabled,
-      rtmpUrl: row.rtmp_url,
-      streamKeyPresent: row.stream_key_present,
-      status: row.status,
-      notes: row.notes,
-      lastValidatedAt: row.last_validated_at,
-      lastFailureAt: row.last_failure_at,
-      failureCount: row.failure_count,
-      lastError: row.last_error
-    })),
+    destinations: destinationsResult.rows.map((row) => {
+      const managedStreamKey = decryptSecretString(row.encrypted_stream_key || "");
+      const envFallback = getLegacyDestinationEnvConfig(row.id);
+      const streamKeyPresent = Boolean(managedStreamKey || envFallback.key);
+      const streamKeySource = managedStreamKey ? "managed" : envFallback.key ? "env" : "missing";
+      return {
+        id: row.id,
+        provider: row.provider,
+        role: row.role,
+        priority: row.priority ?? (row.role === "backup" ? 10 : 0),
+        name: row.name,
+        enabled: row.enabled,
+        rtmpUrl: row.rtmp_url,
+        streamKeyPresent,
+        streamKeySource,
+        status: row.status,
+        notes: row.notes,
+        lastValidatedAt: row.last_validated_at,
+        lastFailureAt: row.last_failure_at,
+        failureCount: row.failure_count,
+        lastError: row.last_error
+      };
+    }),
     incidents: incidentsResult.rows.map((row) => ({
       id: row.id,
       scope: row.scope,
@@ -3400,15 +3453,39 @@ export async function applyOverlayScenePresetRecordToDraft(id: string): Promise<
   });
 }
 
-export async function updateDestinationRecord(destination: StreamDestinationRecord): Promise<void> {
+export async function updateDestinationRecord(
+  destination: StreamDestinationRecord,
+  options?: {
+    managedStreamKey?: string;
+    clearManagedStreamKey?: boolean;
+  }
+): Promise<void> {
   await withSerializedStateWrite("updateDestinationRecord", async (client) => {
+    const existingResult = await client.query<{ encrypted_stream_key: string }>(
+      "SELECT encrypted_stream_key FROM stream_destinations WHERE id = $1 LIMIT 1",
+      [destination.id]
+    );
+    const existingEncryptedStreamKey = existingResult.rows[0]?.encrypted_stream_key || "";
+    const nextManagedStreamKey =
+      typeof options?.managedStreamKey === "string"
+        ? options.managedStreamKey.trim()
+        : options?.clearManagedStreamKey
+          ? ""
+          : null;
+    const encryptedStreamKey =
+      nextManagedStreamKey === null
+        ? existingEncryptedStreamKey
+        : nextManagedStreamKey
+          ? encryptSecretString(nextManagedStreamKey)
+          : "";
+
     await client.query(
       `
         INSERT INTO stream_destinations (
-          id, provider, role, priority, name, enabled, rtmp_url, stream_key_present, status, notes, last_validated_at,
-          last_failure_at, failure_count, last_error
+          id, provider, role, priority, name, enabled, rtmp_url, stream_key_present, encrypted_stream_key, status, notes,
+          last_validated_at, last_failure_at, failure_count, last_error
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (id) DO UPDATE
         SET provider = EXCLUDED.provider,
             role = EXCLUDED.role,
@@ -3417,6 +3494,7 @@ export async function updateDestinationRecord(destination: StreamDestinationReco
             enabled = EXCLUDED.enabled,
             rtmp_url = EXCLUDED.rtmp_url,
             stream_key_present = EXCLUDED.stream_key_present,
+            encrypted_stream_key = EXCLUDED.encrypted_stream_key,
             status = EXCLUDED.status,
             notes = EXCLUDED.notes,
             last_validated_at = EXCLUDED.last_validated_at,
@@ -3433,6 +3511,7 @@ export async function updateDestinationRecord(destination: StreamDestinationReco
         destination.enabled,
         destination.rtmpUrl,
         destination.streamKeyPresent,
+        encryptedStreamKey,
         destination.status,
         destination.notes,
         destination.lastValidatedAt,
@@ -3442,6 +3521,36 @@ export async function updateDestinationRecord(destination: StreamDestinationReco
       ]
     );
   });
+}
+
+export async function deleteDestinationRecord(destinationId: string): Promise<void> {
+  await withSerializedStateWrite("deleteDestinationRecord", async (client) => {
+    await client.query("DELETE FROM stream_destinations WHERE id = $1", [destinationId]);
+  });
+}
+
+export async function readManagedDestinationStreamKeys(destinationIds?: string[]): Promise<Record<string, string>> {
+  await ensureDatabase();
+  const client = await getPool().connect();
+  try {
+    const result =
+      destinationIds && destinationIds.length > 0
+        ? await client.query<{ id: string; encrypted_stream_key: string }>(
+            "SELECT id, encrypted_stream_key FROM stream_destinations WHERE id = ANY($1::text[])",
+            [destinationIds]
+          )
+        : await client.query<{ id: string; encrypted_stream_key: string }>(
+            "SELECT id, encrypted_stream_key FROM stream_destinations WHERE encrypted_stream_key <> ''"
+          );
+
+    return Object.fromEntries(
+      result.rows
+        .map((row) => [row.id, decryptSecretString(row.encrypted_stream_key || "")] as const)
+        .filter((entry): entry is [string, string] => Boolean(entry[1]))
+    );
+  } finally {
+    client.release();
+  }
 }
 
 export async function updateTwitchConnectionRecord(twitch: TwitchConnection): Promise<void> {

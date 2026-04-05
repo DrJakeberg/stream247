@@ -1,6 +1,8 @@
 export const dynamic = "force-dynamic";
 
+import { selectActiveDestinationGroup } from "@stream247/core";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
+import { DestinationCreateForm } from "@/components/destination-create-form";
 import { DestinationSettingsForm } from "@/components/destination-settings-form";
 import Link from "next/link";
 import { IncidentActionForm } from "@/components/incident-action-form";
@@ -29,6 +31,19 @@ export default async function DashboardPage() {
   const openIncidents = state.incidents.filter((incident) => incident.status === "open");
   const activeDestination = state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ?? state.destinations[0];
   const orderedDestinations = [...state.destinations].sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name));
+  const activeDestinationIds = new Set(
+    selectActiveDestinationGroup(
+      orderedDestinations.map((destination) => ({
+        id: destination.id,
+        name: destination.name,
+        role: destination.role,
+        priority: destination.priority,
+        enabled: destination.enabled,
+        streamKeyPresent: destination.streamKeyPresent,
+        status: destination.status
+      }))
+    ).activeDestinationIds
+  );
   const currentAsset = state.assets.find((entry) => entry.id === state.playout.currentAssetId) ?? null;
   const queuedAssets = getPlayoutQueueAssets(state);
   const overrideAsset = state.assets.find((entry) => entry.id === state.playout.overrideAssetId) ?? null;
@@ -87,10 +102,12 @@ export default async function DashboardPage() {
         </article>
         <article className="metric">
           <span className="label">Destination</span>
-          <div className="value">{activeDestination?.status ?? "missing"}</div>
+          <div className="value">
+            {activeDestinationIds.size > 0 ? `${activeDestinationIds.size} active` : activeDestination?.status ?? "missing"}
+          </div>
           <p className="subtle">
             {activeDestination
-              ? `${activeDestination.name} · ${activeDestination.role} · ${activeDestination.streamKeyPresent ? "stream key present" : "stream key missing"}`
+              ? `${activeDestination.name} lead · ${activeDestination.role} · ${activeDestination.streamKeyPresent ? "stream key present" : "stream key missing"}`
               : "No playout destination is configured."}
           </p>
         </article>
@@ -136,18 +153,23 @@ export default async function DashboardPage() {
         </Panel>
         <Panel title="Output destinations" eyebrow="Broadcast">
           <p className="subtle">
-            Stream247 now distinguishes between primary and backup output targets. If the primary target is not usable,
-            playout will prefer the next enabled destination with healthy config and keep failed outputs on a short cooldown.
+            Stream247 can now fan one channel out to multiple active outputs. Healthy primary outputs are preferred
+            together; backup outputs take over only when no primary output group is available.
           </p>
+          <div className="item" style={{ marginBottom: 16 }}>
+            <DestinationCreateForm />
+          </div>
           <div className="list">
             {orderedDestinations.map((destination) => (
               <div className="item" key={destination.id}>
                 <strong>{destination.name}</strong>
                 <div className="subtle">
                   {destination.role} · priority {destination.priority} · {destination.status}
+                  {activeDestinationIds.has(destination.id) ? " · active" : ""}
                 </div>
                 <div className="subtle">
-                  {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"}
+                  {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"} · key source{" "}
+                  {destination.streamKeySource || "missing"}
                 </div>
                 {destination.lastFailureAt ? (
                   <div className="subtle">

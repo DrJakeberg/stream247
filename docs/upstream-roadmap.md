@@ -257,6 +257,8 @@ Turn the media catalog into a richer reusable library and make full stream confi
 
 ## M6 — Multi-Output V1
 
+Status: completed 2026-04-05
+
 **Objective**  
 Extend the delivery model from primary/backup to multiple concurrent outputs.
 
@@ -265,6 +267,8 @@ Extend the delivery model from primary/backup to multiple concurrent outputs.
 - multiple RTMP outputs per channel
 - health-aware routing across outputs
 - clearer operator visibility for output groups
+- managed per-destination stream keys for non-default outputs
+- legacy env fallback preserved for the built-in primary and backup outputs
 
 **Touched Subsystems**
 
@@ -285,8 +289,9 @@ Extend the delivery model from primary/backup to multiple concurrent outputs.
 **Validation**
 
 - `pnpm validate`
+- `pnpm test:fresh-db`
 - `pnpm test:fresh-compose`
-- runtime smoke checks
+- `pnpm test:multi-output-smoke`
 
 **Rollback Posture**
 

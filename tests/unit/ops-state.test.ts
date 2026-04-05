@@ -534,4 +534,74 @@ describe("ops state helpers", () => {
     expect(snapshot.activeScenePayload.scene.resolvedPresetId).toBe("standby-board");
     expect(snapshot.activeScenePayload.nextTitle).toBeTruthy();
   });
+
+  it("marks the active multi-output destination group in the live snapshot", () => {
+    const snapshot = getBroadcastSnapshot(
+      createState({
+        destinations: [
+          {
+            id: "destination-primary",
+            provider: "twitch",
+            role: "primary",
+            priority: 0,
+            name: "Primary Twitch Output",
+            enabled: true,
+            rtmpUrl: "rtmp://live.twitch.tv/app",
+            streamKeyPresent: true,
+            streamKeySource: "env",
+            status: "ready",
+            notes: "Primary",
+            lastValidatedAt: "",
+            lastFailureAt: "",
+            failureCount: 0,
+            lastError: ""
+          },
+          {
+            id: "destination-youtube",
+            provider: "custom-rtmp",
+            role: "primary",
+            priority: 1,
+            name: "YouTube",
+            enabled: true,
+            rtmpUrl: "rtmp://a.rtmp.youtube.com/live2",
+            streamKeyPresent: true,
+            streamKeySource: "managed",
+            status: "ready",
+            notes: "YouTube primary",
+            lastValidatedAt: "",
+            lastFailureAt: "",
+            failureCount: 0,
+            lastError: ""
+          },
+          {
+            id: "destination-backup",
+            provider: "custom-rtmp",
+            role: "backup",
+            priority: 10,
+            name: "Backup",
+            enabled: true,
+            rtmpUrl: "rtmp://backup.example.com/live",
+            streamKeyPresent: true,
+            streamKeySource: "managed",
+            status: "ready",
+            notes: "Backup",
+            lastValidatedAt: "",
+            lastFailureAt: "",
+            failureCount: 0,
+            lastError: ""
+          }
+        ],
+        playout: {
+          ...createState().playout,
+          currentDestinationId: "destination-primary"
+        }
+      })
+    );
+
+    expect(snapshot.destination?.id).toBe("destination-primary");
+    expect(snapshot.destinations.filter((destination) => destination.active).map((destination) => destination.id)).toEqual([
+      "destination-primary",
+      "destination-youtube"
+    ]);
+  });
 });

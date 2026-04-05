@@ -57,8 +57,8 @@ Current Stream247 repo truth:
 | Stream designer / overlay designer | Public designer supports layered overlays, custom fonts, current media metadata, and more | Partial parity | overlay studio with presets, layer order, publish workflow, shared scene payload contract, and an on-air scene renderer v1 | missing richer layer types such as images, websites, and widget embeds | M3, M4 | Do not copy Upstream visual design or naming |
 | Websites and widget embeds | Public help covers website embeds and StreamElements-style widgets/alerts | Missing | no on-air scene embed engine today | add safe embed-capable scene layer system | M2 | Respect CSP, iframe, and X-Frame-Options limits |
 | Reusable playlists / designer presets | Public help supports saving and loading playlists and designer settings | Partial parity | overlay scene preset library and Channel Blueprint export/import now exist | still missing broader reusable programming packages and cross-install media remapping helpers | M5 | Use original `Channel Blueprints` naming |
-| RTMP destinations | Public docs cover custom RTMP and platform-specific outputs | Partial parity | current primary + backup destination model | needs first-class many-output support | M6 | Keep current primary/backup flow functional |
-| Multistream outputs | Public help says one stream can be sent to many platforms | Missing | only primary + backup today | add multi-output delivery groups | M6 | Must not assume cloud delivery infrastructure |
+| RTMP destinations | Public docs cover custom RTMP and platform-specific outputs | Partial parity | built-in primary/backup outputs plus additional managed RTMP outputs | still needs richer per-output operator controls and deeper platform-specific guidance | M6 | Keep current primary/backup flow functional |
+| Multistream outputs | Public help says one stream can be sent to many platforms | Partial parity | multi-output delivery groups with health-aware primary/backup routing now exist | still missing broader operator UX and non-RTMP platform workflows | M6 | Must not assume cloud delivery infrastructure |
 | Backup stream / uninterrupted failover | Public docs describe synchronized backup stream behavior | Partial parity | backup slot, cooldown-aware failover | needs stronger failover semantics and operator visibility | M6 | Preserve simple fallback mode first |
 | Live ingest / live studio equivalent | Public product exposes live studio/live source workflows | Missing | no live ingress path today | add `Live Bridge` takeover mode | M7 | High-risk runtime milestone |
 | Separate audio and video playlists / secondary audio | Public product advertises separate audio/video and secondary audio channel | Missing | current queue is single-track media-first | add audio lanes and secondary audio later | M8 | High complexity, later milestone |
@@ -99,6 +99,7 @@ Current Stream247 repo truth:
 - operator-safe queue surgery
 - deterministic short-asset queue continuity with smoke coverage
 - destination management and failover
+- Multi-Output RTMP fanout with health-aware primary/backup routing
 - operator UX polish
 - reliability and validation gates
 - local account security
@@ -109,13 +110,13 @@ Top missing product capabilities:
 
 1. richer scene layers: images, logos, widgets, websites, metadata blocks, richer typography
 2. deeper persistent queue and transition controller with less reliance on hard encoder restarts
-3. multi-output RTMP beyond the current primary/backup slots
-4. `Live Bridge` live ingest cutover and return-to-queue workflow
-5. thumbnails, richer grouping, and reusable curated sets inside the library
-6. deeper `Channel Blueprints` support such as cross-install media remapping and richer reusable programming packages
-7. cuepoint-style timed insert automation inside longer blocks
-8. richer browser-driven embeds and widget layers with CSP-safe handling
-9. multi-output RTMP beyond the current primary/backup slots
+3. `Live Bridge` live ingest cutover and return-to-queue workflow
+4. thumbnails, richer grouping, and reusable curated sets inside the library
+5. deeper `Channel Blueprints` support such as cross-install media remapping and richer reusable programming packages
+6. cuepoint-style timed insert automation inside longer blocks
+7. richer browser-driven embeds and widget layers with CSP-safe handling
+8. stronger per-output operator controls and destination-specific recovery UI
+9. secondary audio lanes and richer audio routing
 10. longer-running soak coverage and broader browser E2E depth beyond the current critical-path smoke suite
 
 ## Legal Constraints

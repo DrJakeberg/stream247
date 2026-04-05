@@ -22,9 +22,11 @@ export type LiveDestinationSummary = {
   notes: string;
   rtmpUrl: string;
   streamKeyPresent: boolean;
+  streamKeySource: "env" | "managed" | "missing";
   lastFailureAt: string;
   failureCount: number;
   lastError: string;
+  active: boolean;
 };
 
 export type LiveScheduleSummary = {

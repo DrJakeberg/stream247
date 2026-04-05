@@ -23,6 +23,7 @@ import {
 import {
   appendSourceSyncRuns,
   appendAuditEvent,
+  readManagedDestinationStreamKeys,
   replaceAssetsForSourceIds,
   readAppState,
   replaceTwitchScheduleSegments,
@@ -48,12 +49,22 @@ import {
 } from "./on-air-scene.js";
 import { incrementQueueVersion, prioritizeManualNextAsset } from "./broadcast-queue.js";
 import { buildLocalLibraryAssetId, buildLocalLibraryFolderPath } from "./local-library.js";
+import {
+  buildFfmpegOutputTarget,
+  getLegacyDestinationEnvConfig,
+  matchDestinationFailuresInLog,
+  resolveDestinationStreamTarget,
+  selectDestinationRuntimeTargets,
+  type DestinationRuntimeTarget
+} from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
 let playoutAssetId = "";
 let playoutDestinationId = "";
+let playoutDestinationIds: string[] = [];
+let playoutRuntimeTargets: DestinationRuntimeTarget[] = [];
 let playoutTargetKind: "asset" | "insert" | "standby" | "reconnect" | "" = "";
 let plannedStopReason = "";
 const WORKER_HEARTBEAT_STALE_MS = 120_000;
@@ -175,38 +186,6 @@ async function resolvePlayableInput(input: string): Promise<string> {
   return directUrl;
 }
 
-function getDestinationEnvConfig(role: StreamDestinationRecord["role"]) {
-  if (role === "backup") {
-    return {
-      url: process.env.BACKUP_STREAM_OUTPUT_URL || process.env.BACKUP_TWITCH_RTMP_URL || "",
-      key: process.env.BACKUP_STREAM_OUTPUT_KEY || process.env.BACKUP_TWITCH_STREAM_KEY || ""
-    };
-  }
-
-  return {
-    url: process.env.STREAM_OUTPUT_URL || process.env.TWITCH_RTMP_URL || "",
-    key: process.env.STREAM_OUTPUT_KEY || process.env.TWITCH_STREAM_KEY || ""
-  };
-}
-
-function getConfiguredStreamTarget(destination: StreamDestinationRecord | null): string | null {
-  if (!destination?.enabled) {
-    return null;
-  }
-
-  const envConfig = getDestinationEnvConfig(destination.role);
-  const envUrl = envConfig.url;
-  const envKey = envConfig.key;
-  const streamUrl = destination.rtmpUrl || envUrl;
-  const streamKey = envKey;
-
-  if (!streamUrl || !streamKey) {
-    return null;
-  }
-
-  return `${streamUrl.replace(/\/$/, "")}/${streamKey}`;
-}
-
 function isDestinationCoolingDown(destination: StreamDestinationRecord): boolean {
   return (
     destination.status === "error" &&
@@ -290,33 +269,15 @@ async function markDestinationFailure(destinationId: string, errorMessage: strin
   });
 }
 
-function getBestAvailableDestination(
-  destinations: StreamDestinationRecord[],
-  currentDestinationId = ""
-): StreamDestinationRecord | null {
-  const enabledDestinations = destinations
-    .filter((entry) => entry.enabled)
-    .slice()
-    .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name));
-
-  const currentDestination = enabledDestinations.find((entry) => entry.id === currentDestinationId) ?? null;
-  if (currentDestination && Boolean(getConfiguredStreamTarget(currentDestination)) && !isDestinationCoolingDown(currentDestination)) {
-    return currentDestination;
-  }
-
-  return (
-    enabledDestinations.find((entry) => Boolean(getConfiguredStreamTarget(entry)) && !isDestinationCoolingDown(entry)) ??
-    enabledDestinations.find((entry) => Boolean(getConfiguredStreamTarget(entry))) ??
-    enabledDestinations[0] ??
-    null
-  );
-}
-
 function getMediaOverlayFilter(textPath: string): string {
   return `drawtext=fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:textfile=${textPath}:reload=1:fontcolor=white:fontsize=20:box=1:boxcolor=0x00000099:boxborderw=10:x=32:y=h-th-32:line_spacing=8`;
 }
 
-function getFfmpegCommand(input: string, output: string, overlayMode: OnAirOverlayMode): string[] {
+function getFfmpegCommand(
+  input: string,
+  outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
+  overlayMode: OnAirOverlayMode
+): string[] {
   const command = [
     "-hide_banner",
     "-loglevel",
@@ -357,14 +318,17 @@ function getFfmpegCommand(input: string, output: string, overlayMode: OnAirOverl
     "-b:a",
     process.env.FFMPEG_AUDIO_BITRATE || "160k",
     "-f",
-    "flv",
-    output
+    outputTarget.muxer,
+    outputTarget.output
   );
 
   return command;
 }
 
-function getStandbyFfmpegCommand(output: string, overlayMode: OnAirOverlayMode): string[] {
+function getStandbyFfmpegCommand(
+  outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
+  overlayMode: OnAirOverlayMode
+): string[] {
   const command = [
     "-hide_banner",
     "-loglevel",
@@ -416,8 +380,8 @@ function getStandbyFfmpegCommand(output: string, overlayMode: OnAirOverlayMode):
     process.env.FFMPEG_AUDIO_BITRATE || "160k",
     "-shortest",
     "-f",
-    "flv",
-    output
+    outputTarget.muxer,
+    outputTarget.output
   );
 
   return command;
@@ -1927,6 +1891,8 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
     playoutProcess = null;
     playoutAssetId = "";
     playoutDestinationId = "";
+    playoutDestinationIds = [];
+    playoutRuntimeTargets = [];
     playoutTargetKind = "";
     return;
   }
@@ -1937,6 +1903,8 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
         playoutProcess = null;
         playoutAssetId = "";
         playoutDestinationId = "";
+        playoutDestinationIds = [];
+        playoutRuntimeTargets = [];
         playoutTargetKind = "";
       }
       resolve();
@@ -1965,13 +1933,15 @@ function getDesiredTargetKind(selection: SelectionResult): "asset" | "insert" | 
 
 function isMatchingRunningTarget(args: {
   selection: SelectionResult;
-  destinationId: string;
+  destinationIds: string[];
 }): boolean {
   if (!playoutProcess || playoutProcess.killed) {
     return false;
   }
 
-  if (playoutDestinationId !== args.destinationId) {
+  const currentIds = [...playoutDestinationIds].sort();
+  const desiredIds = [...args.destinationIds].sort();
+  if (currentIds.length !== desiredIds.length || currentIds.some((value, index) => value !== desiredIds[index])) {
     return false;
   }
 
@@ -1997,17 +1967,23 @@ function isMatchingRunningTarget(args: {
 
 async function startOrSwitchPlayout(args: {
   asset: AssetRecord | null;
-  destination: StreamDestinationRecord;
-  streamTarget: string;
+  destinations: StreamDestinationRecord[];
+  outputTarget: ReturnType<typeof buildFfmpegOutputTarget>;
   lifecycleStatus: AppState["playout"]["status"];
   reason: string;
   reasonCode: AppState["playout"]["selectionReasonCode"];
   fallbackTier: AppState["playout"]["fallbackTier"];
   overlayEnabled: boolean;
+  runtimeTargets: DestinationRuntimeTarget[];
 }): Promise<void> {
   const switching = playoutProcess && !playoutProcess.killed;
   if (switching) {
     await stopPlayoutProcess("switch");
+  }
+
+  const leadDestination = args.destinations[0] ?? null;
+  if (!leadDestination) {
+    throw new Error("Cannot start playout without at least one resolved destination.");
   }
 
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
@@ -2016,15 +1992,17 @@ async function startOrSwitchPlayout(args: {
   const initialSceneFrame = args.overlayEnabled ? await prepareSceneRendererFrame() : null;
   const overlayMode: OnAirOverlayMode = !args.overlayEnabled ? "none" : initialSceneFrame ? "scene" : "text";
   const command = args.asset
-    ? getFfmpegCommand(cachedResolvedInput || (await resolvePlayableInput(args.asset.path)), args.streamTarget, overlayMode)
-    : getStandbyFfmpegCommand(args.streamTarget, overlayMode);
+    ? getFfmpegCommand(cachedResolvedInput || (await resolvePlayableInput(args.asset.path)), args.outputTarget, overlayMode)
+    : getStandbyFfmpegCommand(args.outputTarget, overlayMode);
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe", "pipe"]
   });
 
   playoutProcess = child;
   playoutAssetId = args.asset?.id ?? "";
-  playoutDestinationId = args.destination.id;
+  playoutDestinationId = leadDestination.id;
+  playoutDestinationIds = args.destinations.map((destination) => destination.id);
+  playoutRuntimeTargets = args.runtimeTargets;
   playoutTargetKind = args.asset
     ? args.reasonCode === "operator_insert" || args.reasonCode === "scheduled_insert"
       ? "insert"
@@ -2034,7 +2012,7 @@ async function startOrSwitchPlayout(args: {
       : "standby";
 
   logRuntimeEvent("playout.process.start", {
-    destinationId: args.destination.id,
+    destinationIds: playoutDestinationIds,
     targetKind: playoutTargetKind,
     assetId: args.asset?.id ?? "",
     reasonCode: args.reasonCode,
@@ -2074,7 +2052,7 @@ async function startOrSwitchPlayout(args: {
     currentAssetId: args.asset?.id ?? "",
     currentTitle: args.asset?.title ?? "Replay standby",
     desiredAssetId: args.asset?.id ?? "",
-    currentDestinationId: args.destination.id,
+    currentDestinationId: leadDestination.id,
     restartRequestedAt: "",
     heartbeatAt: startedAt,
     processPid: pid,
@@ -2088,13 +2066,15 @@ async function startOrSwitchPlayout(args: {
     message: args.reason
   }));
 
-  await updateDestinationRecord({
-    ...args.destination,
-    status: "ready",
-    lastValidatedAt: startedAt,
-    lastError: "",
-    notes: `${args.destination.role === "backup" ? "Backup" : "Primary"} destination is active for the current broadcast output.`
-  });
+  for (const destination of args.destinations) {
+    await updateDestinationRecord({
+      ...destination,
+      status: "ready",
+      lastValidatedAt: startedAt,
+      lastError: "",
+      notes: `${destination.role === "backup" ? "Backup" : "Primary"} destination is active in the current multi-output group.`
+    });
+  }
 
   child.stderr?.on("data", (chunk) => {
     const line = chunk.toString().trim();
@@ -2119,24 +2099,31 @@ async function startOrSwitchPlayout(args: {
     }
 
     if (isLikelyDestinationOutputError(line)) {
-      void markDestinationFailure(playoutDestinationId, line);
+      const destinationIds = matchDestinationFailuresInLog(line, playoutRuntimeTargets);
+      for (const destinationId of destinationIds) {
+        void markDestinationFailure(destinationId, line);
+      }
     }
   });
 
   child.on("exit", (code) => {
     const wasPlanned = plannedStopReason !== "";
     const lastDestinationId = playoutDestinationId;
+    const lastDestinationIds = [...playoutDestinationIds];
+    const lastRuntimeTargets = [...playoutRuntimeTargets];
     plannedStopReason = "";
     stopSceneRendererLoop();
     playoutProcess = null;
     playoutAssetId = "";
     playoutDestinationId = "";
+    playoutDestinationIds = [];
+    playoutRuntimeTargets = [];
     playoutTargetKind = "";
     const exitedAt = new Date().toISOString();
     logRuntimeEvent("playout.process.exit", {
       exitCode: code ?? "",
       planned: wasPlanned,
-      destinationId: lastDestinationId,
+      destinationIds: lastDestinationIds,
       exitedAt
     });
     void updatePlayoutRuntime((playout) => ({
@@ -2218,8 +2205,14 @@ async function startOrSwitchPlayout(args: {
       if (code !== 0) {
         void (async () => {
           const state = await readAppState();
-          if (isLikelyDestinationOutputError(state.playout.lastStderrSample || "")) {
-            await markDestinationFailure(lastDestinationId, state.playout.lastStderrSample || `FFmpeg exited with code ${String(code)}.`);
+          const lastErrorLine = state.playout.lastStderrSample || `FFmpeg exited with code ${String(code)}.`;
+          if (isLikelyDestinationOutputError(lastErrorLine)) {
+            const destinationIds = matchDestinationFailuresInLog(lastErrorLine, lastRuntimeTargets);
+            for (const destinationId of destinationIds) {
+              await markDestinationFailure(destinationId, lastErrorLine);
+            }
+          } else if (lastRuntimeTargets.length === 1 && lastDestinationId) {
+            await markDestinationFailure(lastDestinationId, lastErrorLine);
           }
         })();
       }
@@ -2229,15 +2222,23 @@ async function startOrSwitchPlayout(args: {
 
 async function syncDestinations(): Promise<void> {
   const state = await readAppState();
+  const managedKeys = await readManagedDestinationStreamKeys(state.destinations.map((destination) => destination.id));
   const now = new Date().toISOString();
   for (const destination of state.destinations) {
-    const streamTarget = getConfiguredStreamTarget(destination);
-    const envConfig = getDestinationEnvConfig(destination.role);
+    const streamTarget = resolveDestinationStreamTarget({
+      destination,
+      managedKeys,
+      env: process.env
+    });
+    const envConfig = getLegacyDestinationEnvConfig(destination.id, process.env);
+    const managedKey = managedKeys[destination.id] || "";
+    const streamKeySource = managedKey ? "managed" : envConfig.key ? "env" : "missing";
     const coolingDown = destination.enabled && Boolean(streamTarget) && isDestinationCoolingDown(destination);
     const readyStatus = destination.enabled ? (streamTarget ? "ready" : "missing-config") : "missing-config";
     await updateDestinationRecord({
       ...destination,
-      streamKeyPresent: Boolean(envConfig.key),
+      streamKeyPresent: Boolean(managedKey || envConfig.key),
+      streamKeySource,
       status: coolingDown ? "error" : readyStatus,
       lastValidatedAt: now,
       lastError: coolingDown ? destination.lastError : readyStatus === "ready" ? "" : destination.lastError,
@@ -2246,10 +2247,12 @@ async function syncDestinations(): Promise<void> {
             destination.role === "backup" ? "Backup" : "Primary"
           } destination is cooling down after a recent output failure. Retry in ${getDestinationFailureSecondsRemaining(destination)}s.`
         : streamTarget
-          ? `${destination.role === "backup" ? "Backup" : "Primary"} destination is configured and ready for FFmpeg output.`
-          : destination.role === "backup"
-            ? "Configure BACKUP_STREAM_OUTPUT_URL/KEY or BACKUP_TWITCH_RTMP_URL/TWITCH_STREAM_KEY."
-            : "Configure STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY."
+          ? `${destination.role === "backup" ? "Backup" : "Primary"} destination is configured and ready for multi-output delivery.`
+          : destination.id === "destination-backup"
+            ? "Configure BACKUP_STREAM_OUTPUT_URL/KEY or save a managed backup stream key."
+            : destination.id === "destination-primary"
+              ? "Configure STREAM_OUTPUT_URL/KEY or save a managed primary stream key."
+              : "Save a managed stream key for this destination to include it in multi-output delivery."
     });
   }
 }
@@ -2271,11 +2274,14 @@ async function runPlayoutCycle(): Promise<void> {
     state = await readAppState();
   }
 
-  const destination = getBestAvailableDestination(
-    state.destinations,
-    playoutProcess && !playoutProcess.killed ? state.playout.currentDestinationId : ""
-  );
-  const streamTarget = getConfiguredStreamTarget(destination);
+  const managedDestinationKeys = await readManagedDestinationStreamKeys(state.destinations.map((entry) => entry.id));
+  const activeDestinationGroup = selectDestinationRuntimeTargets({
+    destinations: state.destinations,
+    managedKeys: managedDestinationKeys,
+    env: process.env
+  });
+  const destination = activeDestinationGroup.leadDestination;
+  const outputTarget = buildFfmpegOutputTarget(activeDestinationGroup.targets);
   let selection: SelectionResult = choosePlaybackCandidate(state);
 
   if (state.playout.insertStatus !== "" && selection.reasonCode !== "operator_insert") {
@@ -2313,14 +2319,14 @@ async function runPlayoutCycle(): Promise<void> {
     }
   }
 
-  if (!destination || !streamTarget) {
+  if (!destination || activeDestinationGroup.targets.length === 0 || !outputTarget.output) {
     await stopPlayoutProcess("destination-missing");
     await upsertIncident({
       scope: "playout",
       severity: "warning",
       title: "Playout destination is not configured",
       message:
-        "Set primary STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY, or configure backup RTMP env vars, to enable FFmpeg playout.",
+        "Configure at least one enabled output with an RTMP URL and stream key so the worker can build an active multi-output group.",
       fingerprint: "playout.output.missing"
     });
 
@@ -2343,7 +2349,7 @@ async function runPlayoutCycle(): Promise<void> {
       heartbeatAt: new Date().toISOString(),
       selectionReasonCode: "destination_missing",
       fallbackTier: "none",
-      message: "No active primary or backup RTMP destination is configured."
+      message: "No active multi-output RTMP destination group is configured."
     }));
     return;
   }
@@ -2519,7 +2525,7 @@ async function runPlayoutCycle(): Promise<void> {
   const nextQueueItem = queueItems[1] ?? null;
   const targetAlreadyRunning = isMatchingRunningTarget({
     selection,
-    destinationId: destination.id
+    destinationIds: activeDestinationGroup.targets.map((entry) => entry.destination.id)
   });
 
   if (prefetchStatus === "failed" && prefetchError) {
@@ -2550,13 +2556,14 @@ async function runPlayoutCycle(): Promise<void> {
     try {
       await startOrSwitchPlayout({
         asset: selection.asset,
-        destination,
-        streamTarget,
+        destinations: activeDestinationGroup.targets.map((entry) => entry.destination),
+        outputTarget,
         lifecycleStatus: selection.lifecycleStatus,
         reason: selection.reason,
         reasonCode: selection.reasonCode,
         fallbackTier: selection.fallbackTier,
-        overlayEnabled: state.overlay.enabled
+        overlayEnabled: state.overlay.enabled,
+        runtimeTargets: activeDestinationGroup.targets
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout start error.";
@@ -2599,13 +2606,14 @@ async function runPlayoutCycle(): Promise<void> {
     try {
       await startOrSwitchPlayout({
         asset: selection.asset,
-        destination,
-        streamTarget,
+        destinations: activeDestinationGroup.targets.map((entry) => entry.destination),
+        outputTarget,
         lifecycleStatus: "switching",
         reason: selection.reason,
         reasonCode: selection.reasonCode,
         fallbackTier: selection.fallbackTier,
-        overlayEnabled: state.overlay.enabled
+        overlayEnabled: state.overlay.enabled,
+        runtimeTargets: activeDestinationGroup.targets
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout switch error.";

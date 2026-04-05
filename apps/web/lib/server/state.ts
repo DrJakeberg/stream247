@@ -10,6 +10,7 @@ import {
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
   normalizeOverlayTitleScale,
+  selectActiveDestinationGroup,
   isLikelyTwitchChannelUrl,
   isLikelyTwitchVodUrl,
   isLikelyYouTubeChannelUrl,
@@ -23,6 +24,7 @@ import {
   createPoolRecord,
   createScheduleBlocks,
   createShowProfileRecord,
+  deleteDestinationRecord,
   deleteOverlayScenePresetRecord,
   deletePoolRecord,
   deleteScheduleBlockRecord,
@@ -35,6 +37,7 @@ import {
   listOverlayScenePresetRecords,
   publishOverlayDraftRecord,
   readOverlayStudioState,
+  readManagedDestinationStreamKeys,
   resetOverlayDraftRecord,
   replaceOverlayScenePresetRecords,
   saveOverlayDraftRecord,
@@ -129,6 +132,7 @@ export {
   createPoolRecord,
   createScheduleBlocks,
   createShowProfileRecord,
+  deleteDestinationRecord,
   deleteOverlayScenePresetRecord,
   deletePoolRecord,
   deleteScheduleBlockRecord,
@@ -140,6 +144,7 @@ export {
   listOverlayScenePresetRecords,
   publishOverlayDraftRecord,
   readOverlayStudioState,
+  readManagedDestinationStreamKeys,
   resetOverlayDraftRecord,
   replaceOverlayScenePresetRecords,
   saveOverlayDraftRecord,
@@ -597,8 +602,22 @@ function summarizeAsset(state: AppState, assetId: string): LiveAssetSummary | nu
 }
 
 function summarizeDestination(state: AppState): LiveDestinationSummary | null {
+  const routing = selectActiveDestinationGroup(
+    state.destinations.map((destination) => ({
+      id: destination.id,
+      name: destination.name,
+      role: destination.role,
+      priority: destination.priority,
+      enabled: destination.enabled,
+      streamKeyPresent: destination.streamKeyPresent,
+      status: destination.status
+    }))
+  );
   const destination =
-    state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ?? state.destinations[0] ?? null;
+    state.destinations.find((entry) => entry.id === routing.leadDestinationId) ??
+    state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ??
+    state.destinations[0] ??
+    null;
   if (!destination) {
     return null;
   }
@@ -612,13 +631,26 @@ function summarizeDestination(state: AppState): LiveDestinationSummary | null {
     notes: destination.notes,
     rtmpUrl: destination.rtmpUrl,
     streamKeyPresent: destination.streamKeyPresent,
+    streamKeySource: destination.streamKeySource || "missing",
     lastFailureAt: destination.lastFailureAt,
     failureCount: destination.failureCount,
-    lastError: destination.lastError
+    lastError: destination.lastError,
+    active: routing.activeDestinationIds.includes(destination.id)
   };
 }
 
 function summarizeDestinations(state: AppState): LiveDestinationSummary[] {
+  const routing = selectActiveDestinationGroup(
+    state.destinations.map((destination) => ({
+      id: destination.id,
+      name: destination.name,
+      role: destination.role,
+      priority: destination.priority,
+      enabled: destination.enabled,
+      streamKeyPresent: destination.streamKeyPresent,
+      status: destination.status
+    }))
+  );
   return [...state.destinations]
     .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name))
     .map((destination) => ({
@@ -630,9 +662,11 @@ function summarizeDestinations(state: AppState): LiveDestinationSummary[] {
       notes: destination.notes,
       rtmpUrl: destination.rtmpUrl,
       streamKeyPresent: destination.streamKeyPresent,
+      streamKeySource: destination.streamKeySource || "missing",
       lastFailureAt: destination.lastFailureAt,
       failureCount: destination.failureCount,
-      lastError: destination.lastError
+      lastError: destination.lastError,
+      active: routing.activeDestinationIds.includes(destination.id)
     }));
 }
 
@@ -958,7 +992,7 @@ export function getRuntimeDriftReport(state: AppState) {
   const currentScheduleItem = getCurrentScheduleItem(state);
   const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
   const currentSource = currentAsset ? state.sources.find((source) => source.id === currentAsset.sourceId) ?? null : null;
-  const activeDestination = state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ?? state.destinations[0] ?? null;
+  const activeDestination = summarizeDestination(state);
   const workerHealth = getWorkerHealth(state);
   const playoutHeartbeatAgeMs = state.playout.heartbeatAt ? Date.now() - new Date(state.playout.heartbeatAt).getTime() : Number.POSITIVE_INFINITY;
 

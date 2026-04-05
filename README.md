@@ -34,7 +34,9 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - persistent round-robin playback cursors
 - playout operations with:
   - FFmpeg RTMP output foundation
-  - primary + backup RTMP destination slots
+  - Multi-Output RTMP delivery with multiple primary outputs plus backup outputs
+  - per-destination managed stream keys with legacy env fallback for the built-in primary and backup outputs
+  - health-aware destination fanout that keeps healthy primaries together and falls back to backups when needed
   - deterministic queue state with current, next, previous, and transition-target visibility
   - queue-aware next-asset prefetch
   - operator queue actions for play now, move next, remove next, and replay previous
@@ -160,12 +162,12 @@ docker compose --profile proxy up -d
 - `TWITCH_CLIENT_SECRET`: Twitch application client secret
 - `TWITCH_STREAM_KEY`: Twitch stream key for RTMP output
 - `TWITCH_RTMP_URL`: defaults to `rtmp://live.twitch.tv/app`
-- `STREAM_OUTPUT_URL`: generic RTMP output override
-- `STREAM_OUTPUT_KEY`: generic RTMP key override
-- `BACKUP_STREAM_OUTPUT_URL`: backup RTMP output URL
-- `BACKUP_STREAM_OUTPUT_KEY`: backup RTMP key
-- `BACKUP_TWITCH_RTMP_URL`: backup Twitch-style RTMP URL
-- `BACKUP_TWITCH_STREAM_KEY`: backup Twitch-style stream key
+- `STREAM_OUTPUT_URL`: built-in primary RTMP output URL override
+- `STREAM_OUTPUT_KEY`: built-in primary RTMP key override
+- `BACKUP_STREAM_OUTPUT_URL`: built-in backup RTMP output URL
+- `BACKUP_STREAM_OUTPUT_KEY`: built-in backup RTMP key
+- `BACKUP_TWITCH_RTMP_URL`: built-in backup Twitch-style RTMP URL
+- `BACKUP_TWITCH_STREAM_KEY`: built-in backup Twitch-style stream key
 - `DESTINATION_FAILURE_COOLDOWN_SECONDS`: how long a failed destination stays on hold before the worker will retry it automatically
 - `SCENE_RENDER_BASE_URL`: optional internal base URL that the worker should use when capturing published Scene Studio overlays for on-air rendering; defaults to `INTERNAL_APP_URL`, then `APP_URL`, then `http://web:3000`
 - `SCENE_RENDER_INTERVAL_MS`: how often the worker refreshes captured on-air scene frames; defaults to `2000`
@@ -211,6 +213,16 @@ Behavior:
 - `/settings` can update managed credentials later
 - blank password/secret fields keep the existing stored value
 - `.env` values still work as fallback if no managed value exists
+
+### Multi-Output Routing
+
+Stream247 now supports multiple simultaneous RTMP outputs from one channel.
+
+- healthy enabled `primary` destinations are used together as the active output group
+- `backup` destinations only take over when no healthy primary group is available
+- the built-in `destination-primary` and `destination-backup` records can use `.env` fallback keys
+- additional outputs use managed per-destination stream keys stored encrypted at rest
+- destination failures enter a cooldown hold so the worker can continue on healthier outputs and retry later
 
 ## Twitch App Credentials
 

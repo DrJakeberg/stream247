@@ -64,6 +64,7 @@ Persisted playout runtime fields include:
 - current asset
 - desired asset
 - current destination
+- active output group
 - restart requests
 - heartbeat timestamp
 - process pid
@@ -159,6 +160,16 @@ Current operator controls include:
 - resume schedule control
 
 Those controls are persisted in the playout runtime state and picked up by the worker/playout reconciliation loop.
+
+## Multi-Output Delivery
+
+The runtime now supports multiple concurrent RTMP outputs per channel.
+
+- healthy enabled `primary` destinations are treated as the active delivery group
+- `backup` destinations take over only when no healthy primary group is available
+- the built-in `destination-primary` and `destination-backup` records can still use env-based stream keys
+- additional destinations store managed stream keys encrypted at rest in PostgreSQL
+- the worker resolves the active destination group and builds a tee-muxer output when more than one destination is active
 
 ## Overlay Model
 

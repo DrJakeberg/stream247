@@ -1,3 +1,4 @@
+import { selectActiveDestinationGroup } from "@stream247/core";
 import type { AppState } from "./state";
 import { getManagedTwitchConfig } from "./state";
 
@@ -19,12 +20,25 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
   const hasSources = state.sources.length > 0;
   const hasPools = state.pools.length > 0;
   const hasScheduleBlocks = state.scheduleBlocks.length > 0;
-  const destination = [...state.destinations]
-    .filter((entry) => entry.enabled)
-    .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name))
-    .find((entry) => entry.status === "ready")
-    ?? state.destinations.find((entry) => entry.enabled)
-    ?? null;
+  const routing = selectActiveDestinationGroup(
+    state.destinations.map((destination) => ({
+      id: destination.id,
+      name: destination.name,
+      role: destination.role,
+      priority: destination.priority,
+      enabled: destination.enabled,
+      streamKeyPresent: destination.streamKeyPresent,
+      status: destination.status
+    }))
+  );
+  const destination =
+    state.destinations.find((entry) => entry.id === routing.leadDestinationId) ??
+    [...state.destinations]
+      .filter((entry) => entry.enabled)
+      .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name))
+      .find((entry) => entry.status === "ready")
+      ?? state.destinations.find((entry) => entry.enabled)
+      ?? null;
   const hasDestination = Boolean(destination?.streamKeyPresent && destination.status === "ready");
 
   return [
@@ -75,8 +89,8 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
       id: "destination",
       title: "Broadcast destination",
       detail: hasDestination
-        ? `${destination?.name || "Destination"} (${destination?.role || "primary"}) is ready for output.`
-        : "Set primary STREAM_OUTPUT_URL/KEY or TWITCH_RTMP_URL/TWITCH_STREAM_KEY, or configure the backup output env vars, so the playout runtime has somewhere to stream.",
+        ? `${routing.activeDestinationIds.length || 1} active output(s) are ready. Lead destination: ${destination?.name || "Destination"}.`
+        : "Configure at least one primary or backup RTMP output with a stream key so the playout runtime has somewhere to stream.",
       status: hasDestination ? "ready" : "action",
       href: "/dashboard"
     },

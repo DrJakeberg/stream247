@@ -15,6 +15,7 @@
     "test:e2e:smoke": "bash ./scripts/e2e-smoke.sh",
     "test:fresh-db": "bash ./scripts/fresh-db-bootstrap-smoke.sh",
     "test:fresh-compose": "bash ./scripts/fresh-compose-bootstrap-smoke.sh",
+    "test:multi-output-smoke": "vitest run tests/unit/multi-output-routing.test.ts",
     "test:queue-continuity": "bash ./scripts/queue-continuity-smoke.sh",
     "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "release:preflight": "./scripts/release-preflight.sh",
