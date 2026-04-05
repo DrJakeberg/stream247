@@ -1,6 +1,6 @@
 # Upstream Gap Analysis For Stream247
 
-Updated: 2026-04-05
+Updated: 2026-04-06
 
 ## Goal And Method
 
@@ -40,7 +40,7 @@ Current Stream247 repo truth:
   - operator actions for restart, hard reload, fallback, insert, skip, resume, reconnect, and asset override
   - persistent queue state with current, next, previous, and transition-target visibility
   - operator queue actions for play now, move next, remove next, and replay previous
-  - overlay draft/publish, scene presets, layer order/visibility, ticker/badge controls, and a canonical scene payload shared by browser and playout consumers
+  - overlay draft/publish, scene presets, layer order/visibility, positioned text/logo/image/embed/widget layers, built-in typography presets, ticker/badge controls, and a canonical scene payload shared by browser and playout consumers
   - optional two-factor authentication for local owner accounts
   - browser smoke coverage for setup bootstrap, local 2FA login, on-air controls, and Scene Studio publish
   - incidents, drift, readiness, alerts, encrypted managed secrets, and backup RTMP failover
@@ -56,8 +56,8 @@ Current Stream247 repo truth:
 | 24/7 prerecorded streaming | Public product positioning and help docs clearly center on permanent pre-recorded live channels | Parity | README, worker runtime, playout docs | keep strengthening reliability | M3 | Must stay self-hosted, Docker-first |
 | Scheduling and repeat behavior | Public docs/blog describe scheduling, repeat every day, and reliable automation | Partial parity | schedule blocks, templates, repeat sets, materialized fill preview, queue-aware editor, show profiles, and safe-boundary cuepoint inserts | still needs deeper long-form ad rule families, stronger recurring editing, and denser calendar ergonomics | M12, M14 | Preserve current weekly block model and extend it |
 | Live playback controls | Public pages and docs show live controls, refresh/hard reload, and playlist control | Partial parity | broadcast workspace and broadcast actions | core controls exist, but deeper queue surgery, jump/rewind-style controls, and denser operator workflow remain partial | M12, M14 | Keep original naming as `On-Air Controls` |
-| Stream designer / overlay designer | Public designer supports layered overlays, custom fonts, current media metadata, and more | Partial parity | overlay studio with presets, layer order, publish workflow, shared scene payload contract, and an on-air scene renderer v1 | current Scene Studio is still preset- and fixed-layer-oriented; richer positioned image, website, widget, and typography controls remain open | M11 | Do not copy Upstream visual design or naming |
-| Websites and widget embeds | Public help covers website embeds and StreamElements-style widgets/alerts | Missing | no on-air scene embed engine today | add safe embed-capable scene layer system | M11 | Respect CSP, iframe, and X-Frame-Options limits |
+| Stream designer / overlay designer | Public designer supports layered overlays, custom fonts, current media metadata, and more | Partial parity | overlay studio with presets, draft/publish workflow, positioned text/logo/image/embed/widget layers, built-in typography presets, shared scene payload contract, and an on-air scene renderer v1 | richer current-media widgets, remote/custom font handling, and broader designer depth remain partial | M11 | Do not copy Upstream visual design or naming |
+| Websites and widget embeds | Public help covers website embeds and StreamElements-style widgets/alerts | Partial parity | sandboxed website/widget scene layers now render inside the published browser overlay and shared scene contract | third-party CSP, iframe, and X-Frame-Options policies still limit real-world provider compatibility | M11 | Respect CSP, iframe, and X-Frame-Options limits |
 | Reusable playlists / designer presets | Public help supports saving and loading playlists and designer settings | Partial parity | overlay scene preset library and Channel Blueprint export/import now exist | still missing broader reusable programming packages and cross-install media remapping helpers | M13 | Use original `Channel Blueprints` naming |
 | RTMP destinations | Public docs cover custom RTMP and platform-specific outputs | Partial parity | built-in primary/backup outputs plus additional managed RTMP outputs | routing works, but per-output operator controls, failure attribution, and platform-specific guidance remain partial | M12 | Keep current primary/backup flow functional |
 | Multistream outputs | Public help says one stream can be sent to many platforms | Partial parity | multi-output delivery groups with health-aware primary/backup routing now exist | concurrent outputs exist, but recovery and operator proof remain partial and RTMP-focused | M12, M15 | Must not assume cloud delivery infrastructure |
@@ -90,11 +90,11 @@ Current Stream247 repo truth:
 - asset folders/tags plus bulk curation workflows inside the library
 - `Channel Blueprints` for opt-in export/import of scenes, sources, programming, moderation, and destination metadata
 
-These parity points are bounded. Stream247 does not yet match public Upstream behavior for rich scene composition, deep continuity/recovery semantics, or advanced library and operator ergonomics.
+These parity points are bounded. Stream247 does not yet match public Upstream behavior for deeper scene-composition breadth, broad third-party widget compatibility, deep continuity/recovery semantics, or advanced library and operator ergonomics.
 
 ## Partial Parity
 
-- scene/overlay system
+- scene/overlay system with positioned layers and built-in typography presets
 - scene contract unification across browser and playout consumers
 - reusable presets
 - media library and uploads
@@ -116,12 +116,12 @@ These parity points are bounded. Stream247 does not yet match public Upstream be
 Top missing product capabilities:
 
 1. stale-write safety fixes for asset/source admin flows and deployment-safe update-center version lookup
-2. richer scene layers: images, logos, widgets, websites, metadata blocks, richer typography
+2. deeper scene composition: metadata-driven widgets, broader typography control, and richer scene-automation blocks
 3. deeper persistent queue and transition controller with less reliance on hard encoder restarts
 4. thumbnails, richer grouping, and reusable curated sets inside the library
 5. deeper `Channel Blueprints` support such as cross-install media remapping and richer reusable programming packages
 6. richer ad-rule families and deeper timed-insert tooling beyond the current safe-boundary cuepoint model
-7. richer browser-driven embeds and widget layers with CSP-safe handling
+7. broader browser-driven embed compatibility and provider-specific widget guidance beyond the current sandboxed layer model
 8. stronger per-output operator controls and destination-specific recovery UI
 9. richer audio routing, layered mixing, and crossfade behavior beyond the current replace-mode lanes
 10. longer-running soak coverage, broader browser E2E depth, and deeper `Live Bridge` source management

@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import {
   normalizeOverlayPanelAnchor,
+  normalizeOverlaySceneCustomLayers,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
+  normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale
 } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
@@ -31,6 +33,7 @@ type OverlayPayload = Partial<{
   surfaceStyle: string;
   panelAnchor: string;
   titleScale: string;
+  typographyPreset: string;
   showClock: boolean;
   showNextItem: boolean;
   showScheduleTeaser: boolean;
@@ -40,6 +43,7 @@ type OverlayPayload = Partial<{
   queuePreviewCount: number;
   layerOrder: string[];
   disabledLayers: string[];
+  customLayers: unknown[];
   emergencyBanner: string;
   tickerText: string;
   replayLabel: string;
@@ -66,6 +70,7 @@ function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnTyp
     surfaceStyle: normalizeOverlaySurfaceStyle(String(payload.surfaceStyle ?? base.surfaceStyle)),
     panelAnchor: normalizeOverlayPanelAnchor(String(payload.panelAnchor ?? base.panelAnchor)),
     titleScale: normalizeOverlayTitleScale(String(payload.titleScale ?? base.titleScale)),
+    typographyPreset: normalizeOverlayTypographyPreset(String(payload.typographyPreset ?? base.typographyPreset)),
     showClock: payload.showClock ?? base.showClock,
     showNextItem: payload.showNextItem ?? base.showNextItem,
     showScheduleTeaser: payload.showScheduleTeaser ?? base.showScheduleTeaser,
@@ -75,6 +80,7 @@ function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnTyp
     queuePreviewCount: Math.max(1, Math.min(5, Number(payload.queuePreviewCount ?? base.queuePreviewCount) || 3)),
     layerOrder: normalizeOverlaySceneLayerOrder(payload.layerOrder ?? base.layerOrder),
     disabledLayers: normalizeOverlaySceneLayerOrder(disabledLayersSource).filter((kind) => disabledLayersSource.includes(kind)),
+    customLayers: normalizeOverlaySceneCustomLayers(payload.customLayers ?? base.customLayers),
     emergencyBanner: (payload.emergencyBanner ?? base.emergencyBanner).trim().slice(0, 180),
     tickerText: (payload.tickerText ?? base.tickerText).trim().slice(0, 180),
     replayLabel: (payload.replayLabel ?? base.replayLabel).trim().slice(0, 80) || "Replay stream",

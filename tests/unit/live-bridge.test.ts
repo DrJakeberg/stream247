@@ -44,6 +44,7 @@ describe("live bridge helpers", () => {
         surfaceStyle: "glass",
         panelAnchor: "bottom",
         titleScale: "balanced",
+        typographyPreset: "studio-sans",
         showClock: true,
         showNextItem: true,
         showScheduleTeaser: true,
@@ -54,7 +55,8 @@ describe("live bridge helpers", () => {
         emergencyBanner: "",
         tickerText: "Live guest takeover",
         layerOrder: ["chip", "hero", "next", "queue", "schedule", "clock", "banner", "ticker"],
-        disabledLayers: []
+        disabledLayers: [],
+        customLayers: []
       },
       queueKind: "live",
       target: "browser",

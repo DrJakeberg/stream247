@@ -1,4 +1,9 @@
-import type { OverlayScenePayload } from "@stream247/core";
+import type {
+  OverlaySceneCustomLayer,
+  OverlaySceneLayerKind,
+  OverlayScenePayload,
+  OverlayTypographyPreset
+} from "@stream247/core";
 
 export type LiveAssetSummary = {
   id: string;
@@ -203,6 +208,7 @@ export type LiveOverlaySummary = {
   surfaceStyle: "glass" | "solid" | "signal";
   panelAnchor: "bottom" | "center";
   titleScale: "compact" | "balanced" | "cinematic";
+  typographyPreset: OverlayTypographyPreset;
   showClock: boolean;
   showNextItem: boolean;
   showScheduleTeaser: boolean;
@@ -210,8 +216,9 @@ export type LiveOverlaySummary = {
   showSourceLabel: boolean;
   showQueuePreview: boolean;
   queuePreviewCount: number;
-  layerOrder: Array<"chip" | "hero" | "next" | "queue" | "schedule" | "clock" | "banner" | "ticker">;
-  disabledLayers: Array<"chip" | "hero" | "next" | "queue" | "schedule" | "clock" | "banner" | "ticker">;
+  layerOrder: OverlaySceneLayerKind[];
+  disabledLayers: OverlaySceneLayerKind[];
+  customLayers: OverlaySceneCustomLayer[];
   emergencyBanner: string;
   tickerText: string;
   replayLabel: string;
@@ -219,7 +226,7 @@ export type LiveOverlaySummary = {
 };
 
 export type LiveSceneLayerSummary = {
-  kind: "chip" | "hero" | "next" | "queue" | "schedule" | "clock" | "banner" | "ticker";
+  kind: OverlaySceneLayerKind;
   label: string;
   enabled: boolean;
 };
@@ -230,7 +237,9 @@ export type LiveSceneSummary = {
   surfaceStyle: LiveOverlaySummary["surfaceStyle"];
   panelAnchor: LiveOverlaySummary["panelAnchor"];
   titleScale: LiveOverlaySummary["titleScale"];
+  typographyPreset: LiveOverlaySummary["typographyPreset"];
   layers: LiveSceneLayerSummary[];
+  customLayers: OverlaySceneCustomLayer[];
 };
 
 export type BroadcastSnapshot = {

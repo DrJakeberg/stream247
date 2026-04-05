@@ -37,7 +37,51 @@ export type OverlaySceneRenderTarget = "browser" | "on-air-text" | "on-air-scene
 export type OverlaySurfaceStyle = "glass" | "solid" | "signal";
 export type OverlayPanelAnchor = "bottom" | "center";
 export type OverlayTitleScale = "compact" | "balanced" | "cinematic";
+export type OverlayTypographyPreset = "studio-sans" | "editorial-serif" | "signal-mono";
 export type OverlaySceneLayerKind = "chip" | "hero" | "next" | "queue" | "schedule" | "clock" | "banner" | "ticker";
+export type OverlaySceneCustomLayerKind = "text" | "logo" | "image" | "embed" | "widget";
+export type OverlaySceneCustomTextTone = "headline" | "body" | "caption";
+export type OverlaySceneCustomTextAlign = "left" | "center" | "right";
+export type OverlaySceneCustomMediaFit = "contain" | "cover";
+
+type OverlaySceneCustomLayerBase = {
+  id: string;
+  kind: OverlaySceneCustomLayerKind;
+  name: string;
+  enabled: boolean;
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
+  opacityPercent: number;
+};
+
+export type OverlaySceneCustomTextLayer = OverlaySceneCustomLayerBase & {
+  kind: "text";
+  text: string;
+  secondaryText: string;
+  textTone: OverlaySceneCustomTextTone;
+  textAlign: OverlaySceneCustomTextAlign;
+  useAccent: boolean;
+};
+
+export type OverlaySceneCustomMediaLayer = OverlaySceneCustomLayerBase & {
+  kind: "logo" | "image";
+  url: string;
+  altText: string;
+  fit: OverlaySceneCustomMediaFit;
+};
+
+export type OverlaySceneCustomEmbedLayer = OverlaySceneCustomLayerBase & {
+  kind: "embed" | "widget";
+  url: string;
+  title: string;
+};
+
+export type OverlaySceneCustomLayer =
+  | OverlaySceneCustomTextLayer
+  | OverlaySceneCustomMediaLayer
+  | OverlaySceneCustomEmbedLayer;
 
 export type OverlayScenePresetDefinition = {
   id: OverlayScenePreset;
@@ -57,7 +101,9 @@ export type OverlaySceneDefinition = {
   surfaceStyle: OverlaySurfaceStyle;
   panelAnchor: OverlayPanelAnchor;
   titleScale: OverlayTitleScale;
+  typographyPreset: OverlayTypographyPreset;
   layers: OverlaySceneLayerDefinition[];
+  customLayers: OverlaySceneCustomLayer[];
 };
 
 export type OverlayScenePayload = {
@@ -97,6 +143,7 @@ export type OverlaySceneSource = {
   surfaceStyle: OverlaySurfaceStyle;
   panelAnchor: OverlayPanelAnchor;
   titleScale: OverlayTitleScale;
+  typographyPreset: OverlayTypographyPreset;
   showClock: boolean;
   showNextItem: boolean;
   showScheduleTeaser: boolean;
@@ -108,6 +155,7 @@ export type OverlaySceneSource = {
   tickerText: string;
   layerOrder: OverlaySceneLayerKind[];
   disabledLayers: OverlaySceneLayerKind[];
+  customLayers: OverlaySceneCustomLayer[];
 };
 
 export type OverlayOptionDefinition<T extends string> = {
@@ -352,6 +400,52 @@ export const OVERLAY_TITLE_SCALES: OverlayOptionDefinition<OverlayTitleScale>[] 
   }
 ];
 
+export const OVERLAY_TYPOGRAPHY_PRESETS: OverlayOptionDefinition<OverlayTypographyPreset>[] = [
+  {
+    id: "studio-sans",
+    label: "Studio Sans",
+    description: "Neutral broadcast sans stack for everyday replay channels."
+  },
+  {
+    id: "editorial-serif",
+    label: "Editorial Serif",
+    description: "More expressive serif headlines without loading remote fonts."
+  },
+  {
+    id: "signal-mono",
+    label: "Signal Mono",
+    description: "Monospace-forward typography for technical, retro, or alert-heavy scenes."
+  }
+];
+
+export const OVERLAY_SCENE_CUSTOM_LAYER_KINDS: OverlayOptionDefinition<OverlaySceneCustomLayerKind>[] = [
+  {
+    id: "text",
+    label: "Text Layer",
+    description: "Free-positioned text panel for labels, promos, and manual notes."
+  },
+  {
+    id: "logo",
+    label: "Logo Layer",
+    description: "Contained brand mark or channel badge with safe remote/local URLs."
+  },
+  {
+    id: "image",
+    label: "Image Layer",
+    description: "Positioned artwork or still image block."
+  },
+  {
+    id: "embed",
+    label: "Website Embed",
+    description: "Sandboxed iframe for safe website embeds when the source permits framing."
+  },
+  {
+    id: "widget",
+    label: "Widget Embed",
+    description: "Sandboxed iframe slot for third-party widgets that support embeds."
+  }
+];
+
 export const OVERLAY_SCENE_LAYERS: OverlayOptionDefinition<OverlaySceneLayerKind>[] = [
   {
     id: "chip",
@@ -409,6 +503,7 @@ export const DEFAULT_OVERLAY_SCENE_LAYER_ORDER: OverlaySceneLayerKind[] = [
 const dayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const estimatedProgrammingDurationSeconds = 30 * 60;
 const maxMaterializedItemsPerBlock = 48;
+const maxOverlaySceneCustomLayers = 8;
 
 export function isOverlayScenePreset(value: string): value is OverlayScenePreset {
   return OVERLAY_SCENE_PRESETS.some((preset) => preset.id === value);
@@ -428,6 +523,10 @@ export function normalizeOverlayPanelAnchor(value: string): OverlayPanelAnchor {
 
 export function normalizeOverlayTitleScale(value: string): OverlayTitleScale {
   return OVERLAY_TITLE_SCALES.some((entry) => entry.id === value) ? (value as OverlayTitleScale) : "balanced";
+}
+
+export function normalizeOverlayTypographyPreset(value: string): OverlayTypographyPreset {
+  return OVERLAY_TYPOGRAPHY_PRESETS.some((entry) => entry.id === value) ? (value as OverlayTypographyPreset) : "studio-sans";
 }
 
 export function normalizeScheduleRepeatMode(value: string): ScheduleRepeatMode {
@@ -472,6 +571,130 @@ export function normalizeOverlaySceneLayerOrder(value: unknown): OverlaySceneLay
   }
 
   return ordered;
+}
+
+function clampOverlaySceneNumber(value: unknown, min: number, max: number, fallback: number): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function sanitizeOverlaySceneUrl(value: unknown): string {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.startsWith("/")) {
+    return trimmed;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function sanitizeOverlaySceneCustomLayerId(value: unknown, index: number): string {
+  const cleaned = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return cleaned || `layer-${index + 1}`;
+}
+
+function isOverlaySceneCustomLayerKind(value: unknown): value is OverlaySceneCustomLayerKind {
+  return OVERLAY_SCENE_CUSTOM_LAYER_KINDS.some((entry) => entry.id === value);
+}
+
+function normalizeOverlaySceneCustomTextTone(value: unknown): OverlaySceneCustomTextTone {
+  return value === "body" || value === "caption" ? value : "headline";
+}
+
+function normalizeOverlaySceneCustomTextAlign(value: unknown): OverlaySceneCustomTextAlign {
+  return value === "center" || value === "right" ? value : "left";
+}
+
+function normalizeOverlaySceneCustomMediaFit(value: unknown): OverlaySceneCustomMediaFit {
+  return value === "cover" ? "cover" : "contain";
+}
+
+export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneCustomLayer[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seenIds = new Set<string>();
+  const normalized: OverlaySceneCustomLayer[] = [];
+
+  for (const [index, entry] of value.entries()) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const raw = entry as Record<string, unknown>;
+    if (!isOverlaySceneCustomLayerKind(raw.kind)) {
+      continue;
+    }
+
+    const id = sanitizeOverlaySceneCustomLayerId(raw.id, index);
+    if (seenIds.has(id)) {
+      continue;
+    }
+    seenIds.add(id);
+
+    const base = {
+      id,
+      kind: raw.kind,
+      name: String(raw.name || "").trim().slice(0, 80) || `${raw.kind[0].toUpperCase()}${raw.kind.slice(1)} Layer`,
+      enabled: raw.enabled !== false,
+      xPercent: clampOverlaySceneNumber(raw.xPercent, 0, 90, raw.kind === "text" ? 4 : 62),
+      yPercent: clampOverlaySceneNumber(raw.yPercent, 0, 90, raw.kind === "text" ? 10 : 8),
+      widthPercent: clampOverlaySceneNumber(raw.widthPercent, 10, 100, raw.kind === "text" ? 34 : 26),
+      heightPercent: clampOverlaySceneNumber(raw.heightPercent, 8, 100, raw.kind === "text" ? 18 : 20),
+      opacityPercent: clampOverlaySceneNumber(raw.opacityPercent, 5, 100, 100)
+    } satisfies OverlaySceneCustomLayerBase;
+
+    if (raw.kind === "text") {
+      normalized.push({
+        ...base,
+        kind: "text",
+        text: String(raw.text || "").trim().slice(0, 180),
+        secondaryText: String(raw.secondaryText || "").trim().slice(0, 220),
+        textTone: normalizeOverlaySceneCustomTextTone(raw.textTone),
+        textAlign: normalizeOverlaySceneCustomTextAlign(raw.textAlign),
+        useAccent: raw.useAccent === true
+      });
+    } else if (raw.kind === "logo" || raw.kind === "image") {
+      normalized.push({
+        ...base,
+        kind: raw.kind,
+        url: sanitizeOverlaySceneUrl(raw.url),
+        altText: String(raw.altText || "").trim().slice(0, 120),
+        fit: normalizeOverlaySceneCustomMediaFit(raw.fit)
+      });
+    } else {
+      normalized.push({
+        ...base,
+        kind: raw.kind,
+        url: sanitizeOverlaySceneUrl(raw.url),
+        title: String(raw.title || "").trim().slice(0, 80) || `${raw.kind[0].toUpperCase()}${raw.kind.slice(1)} Layer`
+      });
+    }
+
+    if (normalized.length >= maxOverlaySceneCustomLayers) {
+      break;
+    }
+  }
+
+  return normalized;
 }
 
 export function resolveOverlayScenePresetForQueueKind(
@@ -550,11 +773,13 @@ export function buildOverlaySceneDefinition(args: {
     surfaceStyle: args.overlay.surfaceStyle,
     panelAnchor: args.overlay.panelAnchor,
     titleScale: args.overlay.titleScale,
+    typographyPreset: normalizeOverlayTypographyPreset(args.overlay.typographyPreset),
     layers: normalizedLayerOrder.map((kind) => ({
       kind,
       label: OVERLAY_SCENE_LAYERS.find((layer) => layer.id === kind)?.label || kind,
       enabled: enabledMap[kind] && !disabledLayers.has(kind)
-    }))
+    })),
+    customLayers: normalizeOverlaySceneCustomLayers(args.overlay.customLayers)
   };
 }
 
@@ -739,6 +964,7 @@ export function buildOverlayTextLines(args: {
         surfaceStyle: "glass",
         panelAnchor: "bottom",
         titleScale: "balanced",
+        typographyPreset: "studio-sans",
         showClock: true,
         showNextItem: true,
         showScheduleTeaser: true,
@@ -748,6 +974,7 @@ export function buildOverlayTextLines(args: {
         tickerText: args.tickerText || "",
         layerOrder: DEFAULT_OVERLAY_SCENE_LAYER_ORDER,
         disabledLayers: [],
+        customLayers: [],
         showCurrentCategory: args.showCurrentCategory ?? false,
         showSourceLabel: args.showSourceLabel ?? false
       },

@@ -9,6 +9,7 @@ test.describe.configure({ mode: "serial" });
 test("bootstraps the workspace, enables 2FA, and publishes a live scene update", async ({ browser, page }) => {
   const stamp = Date.now();
   const channelName = `Smoke Channel ${stamp}`;
+  const customText = `Scene Studio V2 ${stamp}`;
   const channelNameMatcher = new RegExp(channelName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 
   await page.goto("/setup");
@@ -50,6 +51,10 @@ test("bootstraps the workspace, enables 2FA, and publishes a live scene update",
   await page.getByRole("link", { name: "Overlay", exact: true }).click();
   await expect(page).toHaveURL(/\/overlay-studio$/);
   await page.getByLabel("Channel name").fill(channelName);
+  await page.getByLabel("Typography preset").selectOption("editorial-serif");
+  await page.getByRole("button", { name: "Add Text Layer" }).click();
+  await page.getByLabel("Text content").fill(customText);
+  await page.getByLabel("Secondary text").fill("CI smoke overlay");
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
   await expect(page.getByText("Scene draft saved.")).toBeVisible();
   await page.getByRole("button", { name: "Publish live" }).click();
@@ -57,5 +62,7 @@ test("bootstraps the workspace, enables 2FA, and publishes a live scene update",
 
   const publicOverlay = await browser.newPage();
   await publicOverlay.goto("/overlay");
+  await expect(publicOverlay.locator(".overlay-frame.overlay-typography-editorial-serif")).toBeVisible();
   await expect(publicOverlay.getByText(channelNameMatcher)).toBeVisible();
+  await expect(publicOverlay.getByText(customText)).toBeVisible();
 });

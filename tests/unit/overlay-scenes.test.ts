@@ -6,9 +6,40 @@ import {
   buildOverlayTextLinesFromScenePayload,
   normalizeOverlaySceneLayerOrder,
   resolveOverlayHeadlineForQueueKind,
-  resolveOverlayScenePresetForQueueKind
+  resolveOverlayScenePresetForQueueKind,
+  type OverlaySceneSource
 } from "@stream247/core";
 import { describe, expect, it } from "vitest";
+
+function createOverlaySource(overrides: Partial<OverlaySceneSource> = {}): OverlaySceneSource {
+  return {
+    scenePreset: "split-now-next",
+    insertScenePreset: "bumper-board",
+    standbyScenePreset: "standby-board",
+    reconnectScenePreset: "reconnect-board",
+    headline: "Always on air",
+    insertHeadline: "Manual insert",
+    standbyHeadline: "Please wait",
+    reconnectHeadline: "Refreshing output",
+    surfaceStyle: "glass",
+    panelAnchor: "bottom",
+    titleScale: "balanced",
+    typographyPreset: "studio-sans",
+    showClock: true,
+    showNextItem: true,
+    showScheduleTeaser: true,
+    showCurrentCategory: true,
+    showSourceLabel: true,
+    showQueuePreview: true,
+    queuePreviewCount: 2,
+    emergencyBanner: "",
+    tickerText: "Coming up next",
+    layerOrder: ["chip", "hero", "next", "queue", "schedule", "clock", "banner", "ticker"],
+    disabledLayers: [],
+    customLayers: [],
+    ...overrides
+  };
+}
 
 describe("overlay scene resolution", () => {
   it("keeps the configured scene for regular assets", () => {
@@ -112,32 +143,11 @@ describe("overlay text lines", () => {
   it("builds a canonical scene payload and renders text from it", () => {
     const payload = buildOverlayScenePayload({
       overlay: {
+        ...createOverlaySource(),
         channelName: "Archive TV",
         replayLabel: "Replay stream",
         brandBadge: "Late Night",
-        accentColor: "#0e6d5a",
-        scenePreset: "split-now-next",
-        insertScenePreset: "bumper-board",
-        standbyScenePreset: "standby-board",
-        reconnectScenePreset: "reconnect-board",
-        headline: "Always on air",
-        insertHeadline: "Manual insert",
-        standbyHeadline: "Please wait",
-        reconnectHeadline: "Refreshing output",
-        surfaceStyle: "glass",
-        panelAnchor: "bottom",
-        titleScale: "balanced",
-        showClock: true,
-        showNextItem: true,
-        showScheduleTeaser: true,
-        showCurrentCategory: true,
-        showSourceLabel: true,
-        showQueuePreview: true,
-        queuePreviewCount: 2,
-        emergencyBanner: "",
-        tickerText: "Coming up next",
-        layerOrder: ["chip", "hero", "next", "queue", "schedule", "clock", "banner", "ticker"],
-        disabledLayers: []
+        accentColor: "#0e6d5a"
       },
       queueKind: "asset",
       target: "browser",
@@ -166,32 +176,14 @@ describe("overlay text lines", () => {
   it("builds live bridge scene copy", () => {
     const payload = buildOverlayScenePayload({
       overlay: {
+        ...createOverlaySource({
+          headline: "Live guest takeover",
+          tickerText: "Live now"
+        }),
         channelName: "Archive TV",
         replayLabel: "Replay stream",
         brandBadge: "Late Night",
-        accentColor: "#0e6d5a",
-        scenePreset: "split-now-next",
-        insertScenePreset: "bumper-board",
-        standbyScenePreset: "standby-board",
-        reconnectScenePreset: "reconnect-board",
-        headline: "Live guest takeover",
-        insertHeadline: "Manual insert",
-        standbyHeadline: "Please wait",
-        reconnectHeadline: "Refreshing output",
-        surfaceStyle: "glass",
-        panelAnchor: "bottom",
-        titleScale: "balanced",
-        showClock: true,
-        showNextItem: true,
-        showScheduleTeaser: true,
-        showCurrentCategory: true,
-        showSourceLabel: true,
-        showQueuePreview: true,
-        queuePreviewCount: 2,
-        emergencyBanner: "",
-        tickerText: "Live now",
-        layerOrder: ["chip", "hero", "next", "queue", "schedule", "clock", "banner", "ticker"],
-        disabledLayers: []
+        accentColor: "#0e6d5a"
       },
       queueKind: "live",
       target: "browser",
@@ -226,30 +218,21 @@ describe("overlay scene definitions", () => {
 
   it("builds a scene definition with resolved preset and enabled layers", () => {
     const scene = buildOverlaySceneDefinition({
-      overlay: {
+      overlay: createOverlaySource({
         scenePreset: "replay-lower-third",
         insertScenePreset: "minimal-chip",
-        standbyScenePreset: "standby-board",
-        reconnectScenePreset: "reconnect-board",
-        headline: "Always on air",
         insertHeadline: "Manual bumper",
         standbyHeadline: "Stand by",
-        reconnectHeadline: "Refreshing output",
         surfaceStyle: "signal",
         panelAnchor: "center",
         titleScale: "cinematic",
-        showClock: true,
-        showNextItem: true,
         showScheduleTeaser: false,
-        showCurrentCategory: true,
-        showSourceLabel: true,
         showQueuePreview: true,
         queuePreviewCount: 3,
-        emergencyBanner: "",
         tickerText: "Always on air",
         layerOrder: ["hero", "chip", "next", "ticker", "clock", "queue", "schedule", "banner"],
         disabledLayers: ["next"]
-      },
+      }),
       queueKind: "insert"
     });
 
@@ -258,5 +241,63 @@ describe("overlay scene definitions", () => {
     expect(scene.layers.find((layer) => layer.kind === "ticker")?.enabled).toBe(true);
     expect(scene.layers.find((layer) => layer.kind === "next")?.enabled).toBe(false);
     expect(scene.layers.find((layer) => layer.kind === "schedule")?.enabled).toBe(false);
+  });
+
+  it("normalizes typography presets and sanitizes positioned layer URLs", () => {
+    const scene = buildOverlaySceneDefinition({
+      overlay: createOverlaySource({
+        typographyPreset: "editorial-serif",
+        customLayers: [
+          {
+            id: "hero-note",
+            kind: "text",
+            name: "Hero Note",
+            enabled: true,
+            xPercent: 5,
+            yPercent: 8,
+            widthPercent: 42,
+            heightPercent: 18,
+            opacityPercent: 92,
+            text: "Scene Studio V2",
+            secondaryText: "Smarter layers",
+            textTone: "headline",
+            textAlign: "center",
+            useAccent: true
+          },
+          {
+            id: "unsafe-widget",
+            kind: "widget",
+            name: "Unsafe Widget",
+            enabled: true,
+            xPercent: 58,
+            yPercent: 12,
+            widthPercent: 30,
+            heightPercent: 22,
+            opacityPercent: 100,
+            url: "javascript:alert(1)",
+            title: "Unsafe widget"
+          }
+        ]
+      }),
+      queueKind: "asset"
+    });
+
+    expect(scene.typographyPreset).toBe("editorial-serif");
+    expect(scene.customLayers).toEqual([
+      expect.objectContaining({
+        id: "hero-note",
+        kind: "text",
+        text: "Scene Studio V2",
+        secondaryText: "Smarter layers",
+        textAlign: "center",
+        useAccent: true
+      }),
+      expect.objectContaining({
+        id: "unsafe-widget",
+        kind: "widget",
+        url: "",
+        title: "Unsafe widget"
+      })
+    ]);
   });
 });
