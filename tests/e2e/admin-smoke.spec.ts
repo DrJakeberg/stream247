@@ -9,6 +9,7 @@ test.describe.configure({ mode: "serial" });
 test("bootstraps the workspace, enables 2FA, and publishes a live scene update", async ({ browser, page }) => {
   const stamp = Date.now();
   const channelName = `Smoke Channel ${stamp}`;
+  const channelNameMatcher = new RegExp(channelName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 
   await page.goto("/setup");
   await page.getByLabel("Owner email").fill(ownerEmail);
@@ -56,5 +57,5 @@ test("bootstraps the workspace, enables 2FA, and publishes a live scene update",
 
   const publicOverlay = await browser.newPage();
   await publicOverlay.goto("/overlay");
-  await expect(publicOverlay.getByRole("heading", { name: channelName, exact: true })).toBeVisible();
+  await expect(publicOverlay.getByText(channelNameMatcher)).toBeVisible();
 });

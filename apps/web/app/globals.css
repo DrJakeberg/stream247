@@ -141,9 +141,19 @@ main {
   color: var(--muted);
 }
 
+.subtle,
+.panel code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .grid {
   display: grid;
   gap: 18px;
+}
+
+.grid > * {
+  min-width: 0;
 }
 
 .grid.metrics {
@@ -292,6 +302,12 @@ select,
 .stack-form {
   display: grid;
   gap: 14px;
+}
+
+.stack-form > *,
+.form-grid > *,
+.list > * {
+  min-width: 0;
 }
 
 .inline-form {

@@ -209,6 +209,12 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - Added structured worker runtime event logging plus release workflow gates for queue continuity, browser smoke, and release preflight before tagged images publish.
 - Validation completed: `pnpm validate`, `pnpm test:fresh-db`, `pnpm test:fresh-compose`, `pnpm test:queue-continuity`, `pnpm test:e2e:smoke`, and `pnpm release:preflight` passed.
 
+### 2026-04-06 — M9 Browser Smoke Stabilization
+
+- Hardened grid panel layouts against long unbroken URLs and provisioning URIs so adjacent cards do not spill across click targets during headless browser runs.
+- Updated the admin browser smoke to assert the published channel name where the public overlay actually renders it, instead of assuming it is the main overlay heading.
+- Validation completed: `pnpm test:e2e:smoke` and `pnpm validate` passed.
+
 ### 2026-04-05 — M4 Programming Workspace V2
 
 - Added explicit repeat-set metadata for schedule blocks so operators can create daily, weekday, weekend, or custom repeat behavior and safely update whole repeat sets from the editor.
