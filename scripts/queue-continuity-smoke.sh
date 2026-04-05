@@ -9,7 +9,9 @@ ENV_FILE="$TMP_DIR/.env"
 OVERRIDE_FILE="$TMP_DIR/docker-compose.override.yml"
 ROOT_ENV_FILE="$WORKDIR/.env"
 ROOT_ENV_BACKUP="$TMP_DIR/root.env.backup"
-DAY_OF_WEEK="$(date +%w)"
+CHANNEL_TIMEZONE="${STREAM247_QUEUE_SMOKE_TIMEZONE:-Europe/Berlin}"
+# Seed the schedule in the same timezone the worker uses to resolve active blocks.
+DAY_OF_WEEK="$(TZ="$CHANNEL_TIMEZONE" date +%w)"
 OUTPUT_NAME="continuity.flv"
 
 cleanup() {
@@ -174,7 +176,7 @@ STREAM_OUTPUT_URL=/tmp/stream-output
 STREAM_OUTPUT_KEY=${OUTPUT_NAME}
 TRAEFIK_HOST=stream247.local
 TRAEFIK_ACME_EMAIL=devnull@example.com
-CHANNEL_TIMEZONE=Europe/Berlin
+CHANNEL_TIMEZONE=${CHANNEL_TIMEZONE}
 MEDIA_LIBRARY_ROOT=/app/data/media
 EOF
 

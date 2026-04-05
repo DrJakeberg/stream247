@@ -19,8 +19,9 @@ import {
 } from "../../apps/web/lib/server/state";
 
 function createState(overrides: Partial<AppState> = {}): AppState {
+  const scheduleTimeZone = process.env.CHANNEL_TIMEZONE || "UTC";
   const currentDayOfWeek = new Date(
-    `${getCurrentScheduleMoment({ now: new Date(), timeZone: "Europe/Berlin" }).date}T12:00:00.000Z`
+    `${getCurrentScheduleMoment({ now: new Date(), timeZone: scheduleTimeZone }).date}T12:00:00.000Z`
   ).getUTCDay();
   return {
     initialized: true,
