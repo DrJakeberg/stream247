@@ -1,3 +1,4 @@
+import { normalizeAudioLaneVolumePercent } from "@stream247/core";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, createPoolRecord, deletePoolRecord, readAppState, updatePoolRecord } from "@/lib/server/state";
@@ -8,14 +9,36 @@ function normalizeBody(body: {
   sourceIds?: string[];
   insertAssetId?: string;
   insertEveryItems?: number;
+  audioLaneAssetId?: string;
+  audioLaneVolumePercent?: number;
 }) {
   return {
     id: (body.id ?? "").trim(),
     name: (body.name ?? "").trim(),
     sourceIds: Array.isArray(body.sourceIds) ? body.sourceIds.map((value) => String(value).trim()).filter(Boolean) : [],
     insertAssetId: String(body.insertAssetId ?? "").trim(),
-    insertEveryItems: Math.max(0, Math.min(100, Number(body.insertEveryItems ?? 0) || 0))
+    insertEveryItems: Math.max(0, Math.min(100, Number(body.insertEveryItems ?? 0) || 0)),
+    audioLaneAssetId: String(body.audioLaneAssetId ?? "").trim(),
+    audioLaneVolumePercent: normalizeAudioLaneVolumePercent(Number(body.audioLaneVolumePercent ?? 100) || 100)
   };
+}
+
+function resolveAudioLaneAsset(state: Awaited<ReturnType<typeof readAppState>>, audioLaneAssetId: string) {
+  if (!audioLaneAssetId) {
+    return null;
+  }
+
+  const asset = state.assets.find((entry) => entry.id === audioLaneAssetId && entry.status === "ready") ?? null;
+  if (!asset) {
+    return undefined;
+  }
+
+  const source = state.sources.find((entry) => entry.id === asset.sourceId) ?? null;
+  if (!source || (source.connectorKind !== "local-library" && source.connectorKind !== "direct-media")) {
+    return undefined;
+  }
+
+  return asset;
 }
 
 export async function GET() {
@@ -39,6 +62,8 @@ export async function POST(request: NextRequest) {
     sourceIds?: string[];
     insertAssetId?: string;
     insertEveryItems?: number;
+    audioLaneAssetId?: string;
+    audioLaneVolumePercent?: number;
   });
   if (!payload.name) {
     return NextResponse.json({ message: "Pool name is required." }, { status: 400 });
@@ -59,6 +84,13 @@ export async function POST(request: NextRequest) {
   if (payload.insertAssetId && !validInsertAsset) {
     return NextResponse.json({ message: "The selected insert asset is no longer available." }, { status: 400 });
   }
+  const validAudioLaneAsset = resolveAudioLaneAsset(state, payload.audioLaneAssetId);
+  if (payload.audioLaneAssetId && !validAudioLaneAsset) {
+    return NextResponse.json(
+      { message: "Audio lane assets must be ready local-library or direct-media items." },
+      { status: 400 }
+    );
+  }
 
   await createPoolRecord({
     id: `pool_${Math.random().toString(36).slice(2, 10)}`,
@@ -69,6 +101,8 @@ export async function POST(request: NextRequest) {
     insertAssetId: validInsertAsset?.id ?? "",
     insertEveryItems: payload.insertEveryItems,
     itemsSinceInsert: 0,
+    audioLaneAssetId: validAudioLaneAsset?.id ?? "",
+    audioLaneVolumePercent: payload.audioLaneVolumePercent,
     updatedAt: new Date().toISOString()
   });
 
@@ -88,6 +122,8 @@ export async function PUT(request: NextRequest) {
     sourceIds?: string[];
     insertAssetId?: string;
     insertEveryItems?: number;
+    audioLaneAssetId?: string;
+    audioLaneVolumePercent?: number;
   });
   if (!payload.id) {
     return NextResponse.json({ message: "Pool id is required." }, { status: 400 });
@@ -117,6 +153,10 @@ export async function PUT(request: NextRequest) {
     if (payload.insertAssetId && !validInsertAsset) {
       throw new Error("The selected insert asset is no longer available.");
     }
+    const validAudioLaneAsset = resolveAudioLaneAsset(state, payload.audioLaneAssetId);
+    if (payload.audioLaneAssetId && !validAudioLaneAsset) {
+      throw new Error("Audio lane assets must be ready local-library or direct-media items.");
+    }
 
     await updatePoolRecord({
       ...existing,
@@ -124,6 +164,8 @@ export async function PUT(request: NextRequest) {
       sourceIds,
       insertAssetId: validInsertAsset?.id ?? "",
       insertEveryItems: payload.insertEveryItems,
+      audioLaneAssetId: validAudioLaneAsset?.id ?? "",
+      audioLaneVolumePercent: payload.audioLaneVolumePercent,
       updatedAt: new Date().toISOString()
     });
   } catch (error) {

@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findScheduleConflicts, getRepeatDaysForMode, normalizeScheduleRepeatMode, validateScheduleBlock } from "@stream247/core";
+import {
+  findScheduleConflicts,
+  getRepeatDaysForMode,
+  normalizeCuepointOffsetsSeconds,
+  normalizeScheduleRepeatMode,
+  validateScheduleBlock
+} from "@stream247/core";
 import { getAuthenticatedUser, requireApiRoles } from "@/lib/server/auth";
 import {
   appendAuditEvent,
@@ -27,6 +33,8 @@ function normalizeBody(body: {
   sourceName?: string;
   repeatMode?: string;
   applyToRepeatSet?: boolean;
+  cuepointAssetId?: string;
+  cuepointOffsetsSeconds?: number[];
 }) {
   return {
     action: (body.action ?? "").trim(),
@@ -48,7 +56,12 @@ function normalizeBody(body: {
     poolId: (body.poolId ?? "").trim(),
     sourceName: (body.sourceName ?? "").trim(),
     repeatMode: normalizeScheduleRepeatMode(String(body.repeatMode ?? "single")),
-    applyToRepeatSet: Boolean(body.applyToRepeatSet)
+    applyToRepeatSet: Boolean(body.applyToRepeatSet),
+    cuepointAssetId: (body.cuepointAssetId ?? "").trim(),
+    cuepointOffsetsSeconds: normalizeCuepointOffsetsSeconds(
+      Array.isArray(body.cuepointOffsetsSeconds) ? body.cuepointOffsetsSeconds.map((value) => Number(value)) : [],
+      Number(body.durationMinutes ?? 0)
+    )
   };
 }
 
@@ -91,6 +104,8 @@ export async function POST(request: NextRequest) {
       showId?: string;
       poolId?: string;
       sourceName?: string;
+      cuepointAssetId?: string;
+      cuepointOffsetsSeconds?: number[];
     }
   );
 
@@ -220,6 +235,15 @@ export async function POST(request: NextRequest) {
     if (payload.showId && !state.showProfiles.some((show) => show.id === payload.showId)) {
       throw new Error("Selected show profile no longer exists.");
     }
+    const cuepointAsset = payload.cuepointAssetId
+      ? state.assets.find((asset) => asset.id === payload.cuepointAssetId && asset.status === "ready") ?? null
+      : null;
+    if (payload.cuepointAssetId && !cuepointAsset) {
+      throw new Error("Cuepoint insert asset is no longer available.");
+    }
+    if (payload.cuepointOffsetsSeconds.length > 0 && !payload.cuepointAssetId && !pool.insertAssetId) {
+      throw new Error("Cuepoints require either a block override insert asset or a pool automatic insert asset.");
+    }
 
       const dayOfWeeks =
         payload.dayOfWeeks.length > 0 ? payload.dayOfWeeks : getRepeatDaysForMode(payload.repeatMode, payload.dayOfWeek);
@@ -240,7 +264,9 @@ export async function POST(request: NextRequest) {
         poolId: payload.poolId,
         sourceName: pool.name,
         repeatMode,
-        repeatGroupId
+        repeatGroupId,
+        cuepointAssetId: cuepointAsset?.id ?? "",
+        cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds
       }));
     const conflicts = findScheduleConflicts([...state.scheduleBlocks, ...newBlocks]);
     if (conflicts.length > 0) {
@@ -287,6 +313,8 @@ export async function PUT(request: NextRequest) {
       poolId?: string;
       sourceName?: string;
       applyToRepeatSet?: boolean;
+      cuepointAssetId?: string;
+      cuepointOffsetsSeconds?: number[];
     }
   );
 
@@ -313,6 +341,15 @@ export async function PUT(request: NextRequest) {
     if (payload.showId && !state.showProfiles.some((show) => show.id === payload.showId)) {
       throw new Error("Selected show profile no longer exists.");
     }
+    const cuepointAsset = payload.cuepointAssetId
+      ? state.assets.find((asset) => asset.id === payload.cuepointAssetId && asset.status === "ready") ?? null
+      : null;
+    if (payload.cuepointAssetId && !cuepointAsset) {
+      throw new Error("Cuepoint insert asset is no longer available.");
+    }
+    if (payload.cuepointOffsetsSeconds.length > 0 && !payload.cuepointAssetId && !pool.insertAssetId) {
+      throw new Error("Cuepoints require either a block override insert asset or a pool automatic insert asset.");
+    }
 
     const applyToRepeatSet = payload.applyToRepeatSet && Boolean(existing.repeatGroupId);
     const updatedBlock = {
@@ -326,7 +363,9 @@ export async function PUT(request: NextRequest) {
       poolId: payload.poolId,
       sourceName: pool.name,
       repeatMode: applyToRepeatSet ? existing.repeatMode || "single" : "single",
-      repeatGroupId: applyToRepeatSet ? existing.repeatGroupId || "" : ""
+      repeatGroupId: applyToRepeatSet ? existing.repeatGroupId || "" : "",
+      cuepointAssetId: cuepointAsset?.id ?? "",
+      cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds
     };
     const nextBlocks = applyToRepeatSet
       ? state.scheduleBlocks.map((block) =>
@@ -339,7 +378,9 @@ export async function PUT(request: NextRequest) {
                 durationMinutes: payload.durationMinutes,
                 showId: payload.showId,
                 poolId: payload.poolId,
-                sourceName: pool.name
+                sourceName: pool.name,
+                cuepointAssetId: cuepointAsset?.id ?? "",
+                cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds
               }
             : block
         )
@@ -358,7 +399,9 @@ export async function PUT(request: NextRequest) {
         durationMinutes: payload.durationMinutes,
         showId: payload.showId,
         poolId: payload.poolId,
-        sourceName: pool.name
+        sourceName: pool.name,
+        cuepointAssetId: cuepointAsset?.id ?? "",
+        cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds
       });
     } else {
       await updateScheduleBlockRecord(updatedBlock);

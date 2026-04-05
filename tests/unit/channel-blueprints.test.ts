@@ -110,6 +110,8 @@ function createState(): AppState {
         cursorAssetId: "asset_old",
         insertAssetId: "asset_bumper",
         insertEveryItems: 3,
+        audioLaneAssetId: "asset_audio_bed",
+        audioLaneVolumePercent: 42,
         itemsSinceInsert: 2,
         updatedAt: "2026-04-05T10:00:00.000Z"
       }
@@ -137,7 +139,9 @@ function createState(): AppState {
         poolId: "pool_replay",
         sourceName: "YouTube Archives",
         repeatMode: "weekdays",
-        repeatGroupId: "repeat_weekday_mornings"
+        repeatGroupId: "repeat_weekday_mornings",
+        cuepointAssetId: "asset_sting",
+        cuepointOffsetsSeconds: [600, 1800]
       }
     ],
     sources: [
@@ -199,6 +203,18 @@ function createState(): AppState {
       overrideMode: "schedule",
       overrideAssetId: "",
       overrideUntil: "",
+      liveBridgeInputType: "",
+      liveBridgeInputUrl: "",
+      liveBridgeLabel: "",
+      liveBridgeStatus: "",
+      liveBridgeRequestedAt: "",
+      liveBridgeStartedAt: "",
+      liveBridgeReleasedAt: "",
+      liveBridgeLastError: "",
+      cuepointWindowKey: "2026-04-05:block_monday:480:240",
+      cuepointFiredKeys: ["2026-04-05:block_monday:480:240:600"],
+      cuepointLastTriggeredAt: "2026-04-05T10:20:00.000Z",
+      cuepointLastAssetId: "asset_sting",
       manualNextAssetId: "",
       manualNextRequestedAt: "",
       insertAssetId: "",
@@ -248,6 +264,8 @@ describe("channel blueprints", () => {
     expect(blueprint.library.sources[0]).not.toHaveProperty("lastSyncedAt");
     expect(blueprint.operations.destinations[0]).not.toHaveProperty("streamKeyPresent");
     expect(blueprint.sceneStudio.draftOverlay.brandBadge).toBe("Draft badge");
+    expect(blueprint.programming.pools[0]?.audioLaneAssetId).toBe("asset_audio_bed");
+    expect(blueprint.programming.scheduleBlocks[0]?.cuepointOffsetsSeconds).toEqual([600, 1800]);
   });
 
   it("normalizes imported blueprints into safe runtime records", () => {
@@ -280,6 +298,10 @@ describe("channel blueprints", () => {
     expect(normalized.importedSources[0]?.lastSyncedAt).toBe("");
     expect(normalized.importedPools[0]?.cursorAssetId).toBe("");
     expect(normalized.importedPools[0]?.itemsSinceInsert).toBe(0);
+    expect(normalized.importedPools[0]?.audioLaneAssetId).toBe("asset_audio_bed");
+    expect(normalized.importedPools[0]?.audioLaneVolumePercent).toBe(42);
+    expect(normalized.importedScheduleBlocks[0]?.cuepointAssetId).toBe("asset_sting");
+    expect(normalized.importedScheduleBlocks[0]?.cuepointOffsetsSeconds).toEqual([600, 1800]);
     expect(normalized.importedDestinations[0]?.streamKeyPresent).toBe(true);
     expect(normalized.importedPresets).toHaveLength(1);
     expect(normalized.importedDraftOverlay.brandBadge).toBe("Draft badge");

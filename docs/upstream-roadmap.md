@@ -2,6 +2,8 @@
 
 Updated: 2026-04-05
 
+This roadmap is not finished. `M0` through `M9` established the first parity wave, but a follow-up audit found remaining safety fixes, partial-parity gaps, and coverage work that still need to ship before Stream247 can claim stronger self-hosted parity against the public Upstream feature set.
+
 ## Roadmap Principles
 
 - self-hosted first
@@ -299,20 +301,23 @@ Extend the delivery model from primary/backup to multiple concurrent outputs.
 
 ## M7 — Live Bridge
 
+Status: completed 2026-04-05
+
 **Objective**  
 Allow safe live ingress takeover and controlled return to scheduled playback.
 
 **Capabilities Added**
 
-- RTMP/HLS live ingress
-- temporary live takeover
-- return-to-queue workflow
+- RTMP/RTMPS and HLS Live Bridge inputs from the broadcast workspace
+- temporary live takeover that preserves queue visibility and multi-output fanout
+- safe return-to-queue workflow with explicit release state and operator visibility
 
 **Touched Subsystems**
 
 - `apps/worker`
 - `apps/web`
-- Docker/runtime support
+- `packages/core`
+- `packages/db`
 
 **Dependencies**
 
@@ -323,12 +328,14 @@ Allow safe live ingress takeover and controlled return to scheduled playback.
 
 - live source can replace scheduled content and return without corrupting the queue
 - operator state stays clear during takeover and release
+- Live Bridge status is visible in the broadcast snapshot and control room without exposing raw input URLs
 
 **Validation**
 
 - `pnpm validate`
-- targeted ingress smoke tests
-- longer soak on candidate builds
+- `pnpm test:fresh-db`
+- `pnpm test:fresh-compose`
+- `pnpm test:live-bridge-smoke`
 
 **Rollback Posture**
 
@@ -336,19 +343,22 @@ Allow safe live ingress takeover and controlled return to scheduled playback.
 
 ## M8 — Audio Lanes, Cuepoints, And Advanced Inserts
 
+Status: completed 2026-04-05
+
 **Objective**  
 Support richer audio/video composition and timed insert behavior without destabilizing the channel.
 
 **Capabilities Added**
 
-- separate audio/video lanes
-- optional ambient audio lane
-- cuepoint-like timed inserts
-- more advanced transition behavior
+- pool-scoped replace-mode audio lanes for scheduled playback
+- schedule-block cuepoints that arm inserts and fire them at the next safe asset boundary
+- broadcast snapshot and control-room visibility for audio lanes and cuepoint progress
+- deterministic cuepoint runtime state that survives worker cycles without refiring old offsets
 
 **Touched Subsystems**
 
 - `apps/worker`
+- `apps/web`
 - `packages/core`
 - `packages/db`
 
@@ -359,18 +369,20 @@ Support richer audio/video composition and timed insert behavior without destabi
 
 **Acceptance Criteria**
 
-- advanced inserts and secondary audio work predictably
-- long-running queue continuity remains stable
+- replace-mode audio lanes work predictably during scheduled playback without breaking existing live, standby, insert, or multi-output behavior
+- cuepoint-triggered inserts fire deterministically at safe boundaries and stay visible to operators
+- queue continuity and runtime safety remain stable
 
 **Validation**
 
 - `pnpm validate`
-- continuity smoke
-- soak run
+- `pnpm test:audio-cuepoint-smoke`
+- `pnpm test:fresh-db`
+- `pnpm test:fresh-compose`
 
 **Rollback Posture**
 
-- keep behind feature flags until soak-tested
+- keep the default program-audio path active whenever no valid audio lane is configured and preserve manual/pool inserts as the safe fallback
 
 ## M9 — Security And Release Hardening
 
@@ -415,3 +427,252 @@ Strengthen release confidence, browser workflow safety, and account security.
 **Rollback Posture**
 
 - additive checks and optional security settings first
+
+## M10 — Truth And Safety Fixes
+
+Status: completed 2026-04-05
+
+**Objective**  
+Fix review-found stale-write admin races, correct the update-center version lookup, and bring the docs back in sync with the real product state.
+
+**Capabilities Added**
+
+- targeted asset-catalog curation updates instead of stale full-row asset rewrites
+- targeted source admin field updates instead of stale whole-source upserts
+- repo-version resolution in the update center that works from repo-root and containerized working directories
+- regression coverage for all three bug classes
+- conservative roadmap and gap-analysis wording that no longer implies the work is finished
+
+**Touched Subsystems**
+
+- `apps/web/app/api/assets/*`
+- `apps/web/app/api/sources/*`
+- `apps/web/app/api/library/uploads/route.ts`
+- `apps/web/lib/server/update-center.ts`
+- `packages/db`
+- tests
+- docs
+
+**Dependencies**
+
+- M0 through M9
+
+**Acceptance Criteria**
+
+- asset curation updates only touch intended curation fields
+- source edit, bulk, sync, and upload-rescan flows only touch intended source fields
+- update center resolves the repo package version safely in supported deployment layouts
+- regression tests exist for the asset, source, and update-center bug classes
+- docs no longer imply full parity or a finished roadmap
+
+**Validation**
+
+- `pnpm validate`
+- `pnpm test:fresh-db`
+
+**Rollback Posture**
+
+- keep DB changes additive and revert the targeted admin routes if needed
+
+## M11 — Scene Studio V2
+
+Status: planned
+
+**Objective**  
+Deepen Scene Studio beyond fixed preset composition while keeping the product original and self-hosted.
+
+**Capabilities Added**
+
+- richer positioned scene layers
+- safer image/logo/embed/widget handling
+- broader typography controls with conservative public parity claims
+
+**Touched Subsystems**
+
+- `packages/core`
+- `packages/db`
+- `apps/web`
+- `apps/worker`
+
+**Dependencies**
+
+- M10
+
+**Acceptance Criteria**
+
+- Scene Studio supports richer layer composition without regressing the current publish-safe path
+- browser and on-air consumers still share one canonical scene contract
+- docs continue to describe the feature set conservatively
+
+**Validation**
+
+- `pnpm validate`
+- targeted scene/browser tests
+- `pnpm test:fresh-compose` when runtime capture paths change
+
+**Rollback Posture**
+
+- preserve the existing Scene Studio v1 contract and fallback path
+
+## M12 — Continuity And Recovery V2
+
+Status: planned
+
+**Objective**  
+Strengthen queue continuity and output recovery beyond the first shipped queue and multi-output milestones.
+
+**Capabilities Added**
+
+- lower restart pressure on normal transitions
+- clearer multi-output failure attribution and recovery visibility
+- stronger operator-safe recovery flows without changing the original control-room model
+
+**Touched Subsystems**
+
+- `apps/worker`
+- `packages/db`
+- `apps/web/lib/server`
+- tests
+
+**Dependencies**
+
+- M10
+- M11
+
+**Acceptance Criteria**
+
+- continuity and recovery behavior improves measurably without regressing Live Bridge or queue visibility
+- output failures are easier for operators to attribute and recover from
+- docs still describe continuity and recovery as proven only where coverage exists
+
+**Validation**
+
+- `pnpm validate`
+- `pnpm test:fresh-db`
+- `pnpm test:fresh-compose`
+- targeted continuity/output smoke checks
+
+**Rollback Posture**
+
+- preserve the current queue engine and output routing as the safe fallback
+
+## M13 — Library And Blueprints V2
+
+Status: planned
+
+**Objective**  
+Deepen library organization and make blueprint reuse safer across installs.
+
+**Capabilities Added**
+
+- thumbnails and richer library grouping
+- curated sets and safer bulk operations
+- selective or merge-aware blueprint import/remap guidance
+
+**Touched Subsystems**
+
+- `apps/web`
+- `apps/worker`
+- `packages/db`
+- docs
+
+**Dependencies**
+
+- M10
+
+**Acceptance Criteria**
+
+- library operations are materially deeper than folders/tags alone
+- blueprint workflows remain explicit about what is and is not portable
+- operator documentation explains remap and media-presence constraints clearly
+
+**Validation**
+
+- `pnpm validate`
+- blueprint/library tests
+- `pnpm test:fresh-db` when DB logic changes
+
+**Rollback Posture**
+
+- keep current folder/tag curation and replace-style blueprint import available
+
+## M14 — Operator UX V2
+
+Status: planned
+
+**Objective**  
+Resolve admin information-architecture drift and make the control-room experience more consistent.
+
+**Capabilities Added**
+
+- clearer separation between Broadcast, Dashboard, Scene Studio, Library/Sources, and Settings
+- more consistent terminology and operator affordances
+- improved tablet/mobile operator ergonomics
+
+**Touched Subsystems**
+
+- `apps/web`
+- docs
+- browser tests
+
+**Dependencies**
+
+- M10
+- M11
+- M13
+
+**Acceptance Criteria**
+
+- major admin surfaces have clear roles and less overlap
+- UI wording and docs align on the same original product terms
+- the control-room workflow is clearer without copying Upstream layout or language
+
+**Validation**
+
+- `pnpm validate`
+- browser smoke/E2E coverage
+
+**Rollback Posture**
+
+- keep existing routes and navigation operable while the IA shifts
+
+## M15 — Coverage And Release Proof V2
+
+Status: planned
+
+**Objective**  
+Increase direct automated proof for the highest-risk parity features and release paths.
+
+**Capabilities Added**
+
+- broader browser workflow coverage
+- deeper runtime smokes for Multi-Output, Live Bridge, and audio/cuepoint flows
+- longer continuity and scene-publish proof before claiming stronger parity
+
+**Touched Subsystems**
+
+- tests
+- CI
+- scripts
+- docs
+
+**Dependencies**
+
+- M10 through M14
+
+**Acceptance Criteria**
+
+- critical parity features are covered by direct browser/runtime proof, not only unit tests
+- release docs and CI state exactly what has been proven automatically
+- parity claims stay bounded by actual automated coverage
+
+**Validation**
+
+- `pnpm validate`
+- expanded browser/runtime smokes
+- release preflight
+- soak/upgrade rehearsal where relevant
+
+**Rollback Posture**
+
+- add coverage incrementally without removing existing guards until replacements are green

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, upsertSourceRecord } from "@/lib/server/state";
+import { appendAuditEvent, readAppState, updateSourceFieldRecords } from "@/lib/server/state";
 
 export async function POST(request: NextRequest) {
   const unauthorized = await requireApiRoles(["owner", "admin", "operator"]);
@@ -25,11 +25,13 @@ export async function POST(request: NextRequest) {
       throw new Error("Enable the source before requesting a manual sync.");
     }
 
-    await upsertSourceRecord({
-      ...source,
-      status: "Sync queued",
-      notes: "Manual re-sync requested. The worker will refresh this source on the next cycle."
-    });
+    await updateSourceFieldRecords([
+      {
+        id: source.id,
+        status: "Sync queued",
+        notes: "Manual re-sync requested. The worker will refresh this source on the next cycle."
+      }
+    ]);
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "Could not queue a source sync." },

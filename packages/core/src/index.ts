@@ -29,7 +29,9 @@ export type OverlayScenePreset =
   | "bumper-board"
   | "reconnect-board";
 
-export type OverlayQueueKind = "asset" | "insert" | "standby" | "reconnect" | "";
+export type LiveBridgeInputType = "rtmp" | "hls";
+
+export type OverlayQueueKind = "asset" | "insert" | "standby" | "reconnect" | "live" | "";
 export type OverlaySceneRenderTarget = "browser" | "on-air-text" | "on-air-scene";
 
 export type OverlaySurfaceStyle = "glass" | "solid" | "signal";
@@ -128,6 +130,8 @@ export type ScheduleBlock = {
   sourceName: string;
   repeatMode?: ScheduleRepeatMode;
   repeatGroupId?: string;
+  cuepointAssetId?: string;
+  cuepointOffsetsSeconds?: number[];
 };
 
 export type ShowProfile = {
@@ -172,6 +176,8 @@ export type ScheduleOccurrence = {
   durationMinutes: number;
   repeatMode?: ScheduleRepeatMode;
   repeatGroupId?: string;
+  cuepointAssetId?: string;
+  cuepointOffsetsSeconds?: number[];
 };
 
 export type ScheduleDaySummary = {
@@ -194,6 +200,7 @@ export type MaterializedProgrammingItem = {
   overflow: boolean;
   repeated: boolean;
   estimatedDuration: boolean;
+  insertTrigger?: "pool-interval" | "cuepoint";
 };
 
 export type MaterializedProgrammingBlock = {
@@ -217,6 +224,7 @@ export type MaterializedProgrammingBlock = {
   overflowMinutes: number;
   uniqueMinutes: number;
   insertCount: number;
+  cuepointCount: number;
   queuePreview: string[];
   notes: string[];
   items: MaterializedProgrammingItem[];
@@ -426,6 +434,33 @@ export function normalizeScheduleRepeatMode(value: string): ScheduleRepeatMode {
   return SCHEDULE_REPEAT_MODE_OPTIONS.some((entry) => entry.id === value) ? (value as ScheduleRepeatMode) : "single";
 }
 
+export function normalizeLiveBridgeInputType(value: string): LiveBridgeInputType {
+  return value === "hls" ? "hls" : "rtmp";
+}
+
+export function isValidLiveBridgeInputUrl(value: string, type: LiveBridgeInputType): boolean {
+  try {
+    const url = new URL(value);
+    if (type === "rtmp") {
+      return url.protocol === "rtmp:" || url.protocol === "rtmps:";
+    }
+
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export function summarizeLiveBridgeInput(value: string): string {
+  try {
+    const url = new URL(value);
+    const protocol = url.protocol.replace(":", "").toUpperCase();
+    return `${protocol} · ${url.host}`;
+  } catch {
+    return "Configured live input";
+  }
+}
+
 export function normalizeOverlaySceneLayerOrder(value: unknown): OverlaySceneLayerKind[] {
   const provided = Array.isArray(value) ? value.filter((entry): entry is OverlaySceneLayerKind => OVERLAY_SCENE_LAYERS.some((layer) => layer.id === entry)) : [];
   const ordered = [...new Set(provided)];
@@ -548,6 +583,8 @@ export function buildOverlayScenePayload(args: {
   const heroLabel =
     args.queueKind === "insert"
       ? "Insert On Air"
+      : args.queueKind === "live"
+        ? "Live Now"
       : args.queueKind === "reconnect"
         ? "Reconnect Window"
         : args.queueKind === "standby"
@@ -561,19 +598,31 @@ export function buildOverlayScenePayload(args: {
       reconnectHeadline: args.overlay.reconnectHeadline
     });
   const nextLabel =
-    args.queueKind === "insert" ? "After Insert" : args.queueKind === "reconnect" ? "Returning With" : "Next";
+    args.queueKind === "insert"
+      ? "After Insert"
+      : args.queueKind === "reconnect"
+        ? "Returning With"
+        : args.queueKind === "live"
+          ? "After Live"
+          : "Next";
   const queueTitles = (args.queueTitles || []).filter(Boolean).slice(0, args.overlay.queuePreviewCount);
   const metaLine = [
-    args.queueKind === "asset" && args.overlay.showCurrentCategory ? args.currentCategory || "" : "",
-    args.queueKind === "asset" && args.overlay.showSourceLabel ? args.currentSourceName || "" : ""
+    (args.queueKind === "asset" || args.queueKind === "live") && args.overlay.showCurrentCategory ? args.currentCategory || "" : "",
+    (args.queueKind === "asset" || args.queueKind === "live") && args.overlay.showSourceLabel ? args.currentSourceName || "" : ""
   ]
     .filter(Boolean)
     .join(" · ");
   const scheduleBody =
-    args.queueKind === "asset" ? args.currentCategory || "Always on air" : heroBody || "Programming will resume shortly";
+    args.queueKind === "asset"
+      ? args.currentCategory || "Always on air"
+      : args.queueKind === "live"
+        ? heroBody || "Live bridge is on air."
+        : heroBody || "Programming will resume shortly";
   const scheduleAux =
     args.queueKind === "asset"
       ? args.currentSourceName || "Source to be announced"
+      : args.queueKind === "live"
+        ? args.nextTitle || "Schedule resumes after live mode"
       : args.nextTitle || "Programming will resume shortly";
 
   return {
@@ -968,6 +1017,8 @@ type MaterializedPoolRecord = {
   insertAssetId: string;
   insertEveryItems: number;
   itemsSinceInsert: number;
+  audioLaneAssetId?: string;
+  audioLaneVolumePercent?: number;
 };
 
 type MaterializedAssetRecord = {
@@ -980,6 +1031,91 @@ type MaterializedAssetRecord = {
   publishedAt?: string;
   createdAt: string;
 };
+
+export function normalizeAudioLaneVolumePercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 100;
+  }
+
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+export function normalizeCuepointOffsetsSeconds(offsets: number[], maxDurationMinutes = 0): number[] {
+  const maxOffset = maxDurationMinutes > 0 ? Math.max(0, maxDurationMinutes * 60 - 1) : Number.POSITIVE_INFINITY;
+
+  return [...new Set(offsets.map((value) => Math.floor(Number(value) || 0)).filter((value) => value >= 15 && value <= maxOffset))]
+    .sort((left, right) => left - right)
+    .slice(0, 24);
+}
+
+export function parseCuepointOffsetsString(value: string, maxDurationMinutes = 0): number[] {
+  const offsets = value
+    .split(/[\s,;]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => Number(entry));
+
+  return normalizeCuepointOffsetsSeconds(offsets, maxDurationMinutes);
+}
+
+export function formatCuepointOffsetLabel(offsetSeconds: number): string {
+  const clamped = Math.max(0, Math.floor(offsetSeconds));
+  const hours = Math.floor(clamped / 3600);
+  const minutes = Math.floor((clamped % 3600) / 60);
+  const seconds = clamped % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+export function summarizeCuepointOffsets(offsets: number[]): string {
+  const normalized = normalizeCuepointOffsetsSeconds(offsets);
+  return normalized.map((offset) => formatCuepointOffsetLabel(offset)).join(", ");
+}
+
+export function buildCuepointKey(occurrenceKey: string, offsetSeconds: number): string {
+  return `${occurrenceKey}@${Math.max(0, Math.floor(offsetSeconds))}`;
+}
+
+export function getScheduleElapsedSeconds(args: {
+  startMinuteOfDay: number;
+  currentTime: string;
+}): number {
+  const [hours, minutes] = args.currentTime.split(":").map((value) => Number(value) || 0);
+  const currentMinuteOfDay = Math.max(0, Math.min(24 * 60 - 1, hours * 60 + minutes));
+  let minuteDelta = currentMinuteOfDay - args.startMinuteOfDay;
+
+  if (minuteDelta < 0) {
+    minuteDelta += 24 * 60;
+  }
+
+  return minuteDelta * 60;
+}
+
+export function getCuepointProgress(args: {
+  occurrenceKey: string;
+  cuepointOffsetsSeconds: number[];
+  firedCuepointKeys: string[];
+  elapsedSeconds: number;
+}) {
+  const normalizedOffsets = normalizeCuepointOffsetsSeconds(args.cuepointOffsetsSeconds);
+  const fired = new Set(args.firedCuepointKeys);
+  const dueOffsetSeconds =
+    normalizedOffsets.find((offset) => offset <= args.elapsedSeconds && !fired.has(buildCuepointKey(args.occurrenceKey, offset))) ?? null;
+  const nextOffsetSeconds =
+    normalizedOffsets.find((offset) => offset > args.elapsedSeconds && !fired.has(buildCuepointKey(args.occurrenceKey, offset))) ?? null;
+
+  return {
+    dueOffsetSeconds,
+    dueCuepointKey: dueOffsetSeconds === null ? "" : buildCuepointKey(args.occurrenceKey, dueOffsetSeconds),
+    nextOffsetSeconds,
+    firedCount: normalizedOffsets.filter((offset) => fired.has(buildCuepointKey(args.occurrenceKey, offset))).length,
+    totalCount: normalizedOffsets.length
+  };
+}
 
 function getMaterializedAssetDurationSeconds(asset: MaterializedAssetRecord): { durationSeconds: number; estimated: boolean } {
   if (typeof asset.durationSeconds === "number" && asset.durationSeconds > 0) {
@@ -1013,7 +1149,13 @@ function materializePoolWindow(args: {
   assets: MaterializedAssetRecord[];
   maxQueuePreviewItems: number;
 }): MaterializedProgrammingBlock {
-  const excludeInsertFromRegularRotation = Boolean(args.pool?.insertAssetId) && Math.max(args.pool?.insertEveryItems ?? 0, 0) > 0;
+  const excludedAssetIds = new Set<string>();
+  if (args.pool?.insertAssetId && Math.max(args.pool?.insertEveryItems ?? 0, 0) > 0) {
+    excludedAssetIds.add(args.pool.insertAssetId);
+  }
+  if (args.pool?.audioLaneAssetId) {
+    excludedAssetIds.add(args.pool.audioLaneAssetId);
+  }
   const poolName = args.pool?.name || args.block.sourceName || "Unassigned pool";
   const eligibleAssets = args.pool
     ? sortPoolAssets(
@@ -1022,7 +1164,7 @@ function materializePoolWindow(args: {
             asset.status === "ready" &&
             asset.includeInProgramming !== false &&
             args.pool?.sourceIds.includes(asset.sourceId) &&
-            (!excludeInsertFromRegularRotation || asset.id !== args.pool?.insertAssetId)
+            !excludedAssetIds.has(asset.id)
         )
       )
     : [];
@@ -1034,6 +1176,15 @@ function materializePoolWindow(args: {
         ) ??
         null
       : null;
+  const cuepointOffsetsSeconds = normalizeCuepointOffsetsSeconds(args.block.cuepointOffsetsSeconds ?? [], args.block.durationMinutes);
+  const cuepointAsset =
+    args.block.cuepointAssetId && cuepointOffsetsSeconds.length > 0
+      ? args.assets.find(
+          (asset) => asset.id === args.block.cuepointAssetId && asset.status === "ready" && asset.includeInProgramming !== false
+        ) ?? null
+      : cuepointOffsetsSeconds.length > 0
+        ? insertAsset
+        : null;
   const notes: string[] = [];
 
   if (!args.pool) {
@@ -1053,21 +1204,30 @@ function materializePoolWindow(args: {
   let projectedSeconds = 0;
   let uniqueSeconds = 0;
   let insertCount = 0;
+  let cuepointCount = 0;
   let estimatedDurationCount = 0;
   let repeatedRegularAsset = false;
+  const firedCuepointOffsets = new Set<number>();
 
   for (let safety = 0; safety < maxMaterializedItemsPerBlock && projectedSeconds < blockSeconds; safety += 1) {
     if (eligibleAssets.length === 0) {
       break;
     }
 
+    const dueCuepointOffset =
+      cuepointAsset && cuepointOffsetsSeconds.length > 0
+        ? cuepointOffsetsSeconds.find((offset) => offset <= projectedSeconds && !firedCuepointOffsets.has(offset)) ?? null
+        : null;
     const shouldInsert =
-      Boolean(insertAsset) &&
-      Math.max(args.pool?.insertEveryItems ?? 0, 0) > 0 &&
-      itemsSinceInsert >= Math.max(args.pool?.insertEveryItems ?? 0, 0);
+      dueCuepointOffset !== null ||
+      (Boolean(insertAsset) &&
+        Math.max(args.pool?.insertEveryItems ?? 0, 0) > 0 &&
+        itemsSinceInsert >= Math.max(args.pool?.insertEveryItems ?? 0, 0));
     const nextAsset =
-      shouldInsert
-        ? insertAsset
+      dueCuepointOffset !== null
+        ? cuepointAsset
+        : shouldInsert
+          ? insertAsset
         : eligibleAssets[(currentIndex + 1 + eligibleAssets.length) % eligibleAssets.length] ?? eligibleAssets[0];
 
     if (!nextAsset) {
@@ -1092,6 +1252,10 @@ function materializePoolWindow(args: {
       itemsSinceInsert += 1;
     } else {
       insertCount += 1;
+      if (dueCuepointOffset !== null) {
+        cuepointCount += 1;
+        firedCuepointOffsets.add(dueCuepointOffset);
+      }
       itemsSinceInsert = 0;
     }
     if (estimated) {
@@ -1107,16 +1271,40 @@ function materializePoolWindow(args: {
       endTime: formatMinuteOfDay(args.block.startMinuteOfDay + Math.ceil(projectedSeconds / 60)),
       overflow: projectedSeconds > blockSeconds,
       repeated,
-      estimatedDuration: estimated
+      estimatedDuration: estimated,
+      insertTrigger: shouldInsert ? (dueCuepointOffset !== null ? "cuepoint" : "pool-interval") : undefined
     });
 
     if (queuePreview.length < args.maxQueuePreviewItems) {
-      queuePreview.push(`${shouldInsert ? "Insert" : "Queue"} · ${nextAsset.title}`);
+      queuePreview.push(
+        `${shouldInsert ? (dueCuepointOffset !== null ? "Cuepoint insert" : "Insert") : "Queue"} · ${nextAsset.title}`
+      );
     }
   }
 
   if (insertAsset && Math.max(args.pool?.insertEveryItems ?? 0, 0) > 0) {
     notes.push(`Automatic insert every ${args.pool?.insertEveryItems} scheduled item${args.pool?.insertEveryItems === 1 ? "" : "s"}.`);
+  }
+
+  if (args.pool?.audioLaneAssetId) {
+    const audioLaneAsset = args.assets.find((asset) => asset.id === args.pool?.audioLaneAssetId) ?? null;
+    if (audioLaneAsset) {
+      notes.push(
+        `Audio lane replaces program audio with ${audioLaneAsset.title} at ${normalizeAudioLaneVolumePercent(
+          args.pool?.audioLaneVolumePercent ?? 100
+        )}% while regular pool items are on air.`
+      );
+    } else {
+      notes.push("Configured audio lane asset is not available, so regular program audio will stay unchanged.");
+    }
+  }
+
+  if (cuepointOffsetsSeconds.length > 0) {
+    notes.push(
+      `Cuepoints at ${summarizeCuepointOffsets(cuepointOffsetsSeconds)} fire safe-boundary inserts${
+        cuepointAsset ? ` using ${cuepointAsset.title}` : ""
+      }.`
+    );
   }
 
   if (estimatedDurationCount > 0) {
@@ -1162,6 +1350,7 @@ function materializePoolWindow(args: {
     overflowMinutes,
     uniqueMinutes: Math.ceil(uniqueSeconds / 60),
     insertCount,
+    cuepointCount,
     queuePreview,
     notes,
     items
@@ -1230,6 +1419,7 @@ export function validateScheduleBlock(block: {
   dayOfWeek: number;
   startMinuteOfDay: number;
   durationMinutes: number;
+  cuepointOffsetsSeconds?: number[];
 }) {
   if (!block.sourceName.trim() && !(block.poolId ?? "").trim()) {
     return "Pool or source label is required.";
@@ -1257,6 +1447,11 @@ export function validateScheduleBlock(block: {
 
   if (block.repeatMode && !SCHEDULE_REPEAT_MODE_OPTIONS.some((entry) => entry.id === block.repeatMode)) {
     return "Repeat behavior is invalid.";
+  }
+
+  const normalizedCuepoints = normalizeCuepointOffsetsSeconds(block.cuepointOffsetsSeconds ?? [], block.durationMinutes);
+  if ((block.cuepointOffsetsSeconds ?? []).length > 0 && normalizedCuepoints.length === 0) {
+    return "Cuepoints must be positive second offsets within the block duration.";
   }
 
   return null;
@@ -1374,7 +1569,9 @@ export function buildScheduleOccurrences(args: {
         startMinuteOfDay: startMinutes,
         durationMinutes: block.durationMinutes,
         repeatMode: normalizeScheduleRepeatMode(block.repeatMode ?? "single"),
-        repeatGroupId: block.repeatGroupId ?? ""
+        repeatGroupId: block.repeatGroupId ?? "",
+        cuepointAssetId: block.cuepointAssetId ?? "",
+        cuepointOffsetsSeconds: normalizeCuepointOffsetsSeconds(block.cuepointOffsetsSeconds ?? [], block.durationMinutes)
       };
     });
 }

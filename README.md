@@ -32,15 +32,18 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 - pool management with:
   - source grouping
   - persistent round-robin playback cursors
+  - optional audio-lane beds that replace program audio during scheduled pool playback
 - playout operations with:
   - FFmpeg RTMP output foundation
   - Multi-Output RTMP delivery with multiple primary outputs plus backup outputs
   - per-destination managed stream keys with legacy env fallback for the built-in primary and backup outputs
   - health-aware destination fanout that keeps healthy primaries together and falls back to backups when needed
+  - Live Bridge takeover from RTMP/RTMPS or HLS inputs with controlled release back to scheduled playback
   - deterministic queue state with current, next, previous, and transition-target visibility
   - queue-aware next-asset prefetch
   - operator queue actions for play now, move next, remove next, and replay previous
   - graceful schedule handoff so running scheduled items can finish before the next block takes over
+  - safe-boundary cuepoint inserts inside schedule blocks using either pool insert assets or block-specific insert assets
   - fallback asset selection
   - manual restart
   - temporary fallback override
@@ -73,11 +76,15 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 
 ## What Is Not Done Yet
 
+- Scene Studio is real, but it is still partial compared with richer cloud products: positioned image/embed/widget layers, broader typography control, and deeper browser-widget support are still open.
 - richer multi-scene composition inside the playout runtime beyond the current scene-presets + draft/publish workflow
-- more advanced playout transitions and scene-aware switchovers
+- more advanced playout transitions, stronger continuity/recovery behavior, and less restart-heavy normal switchovers
+- deeper per-output recovery controls and operator visibility beyond the current Multi-Output v1 routing
+- deeper Live Bridge session management and recovery UX
 - deeper analytics views and richer incident correlation
 - inline override lanes in the schedule editor
-- cuepoint-style timed insert automation inside longer blocks
+- richer audio mixing, crossfades, and layered audio routing beyond the current replace-mode audio lanes
+- thumbnails, richer grouped browsing, and more advanced reusable library/blueprint workflows
 
 ## Quick Start
 
@@ -223,6 +230,27 @@ Stream247 now supports multiple simultaneous RTMP outputs from one channel.
 - the built-in `destination-primary` and `destination-backup` records can use `.env` fallback keys
 - additional outputs use managed per-destination stream keys stored encrypted at rest
 - destination failures enter a cooldown hold so the worker can continue on healthier outputs and retry later
+
+### Live Bridge
+
+Stream247 now supports a `Live Bridge` takeover path for temporary live input.
+
+- operators can start a live bridge from RTMP/RTMPS or HLS URLs in the broadcast workspace
+- the worker keeps the scheduled queue visible while the live input is on air
+- releasing the bridge returns the output to scheduled playback on the next safe transition
+- the existing Multi-Output RTMP fanout and destination health routing remain active during the bridge
+- live snapshots expose only a sanitized input summary instead of the raw bridge URL
+
+### Audio Lanes And Cuepoints
+
+Stream247 now supports two additional programming controls for longer-form channels:
+
+- pools can define an optional replace-mode audio lane using a ready `local-library` or `direct-media` asset
+- audio lanes loop independently and replace the scheduled pool asset's native audio during normal scheduled playback
+- schedule blocks can define cuepoint offsets in seconds from block start
+- cuepoints never cut mid-file; they arm an insert and fire it on the next safe asset boundary
+- cuepoints can use either a block override insert asset or the pool's automatic insert asset
+- the broadcast control room shows both the active audio lane state and cuepoint progress
 
 ## Twitch App Credentials
 
@@ -374,6 +402,7 @@ Notes:
 - pool-based round-robin playout selection
 - standby replay slate when no playable asset is available
 - scheduled daily reconnect window with controlled standby mode
+- Live Bridge RTMP/HLS takeover with safe release back to the scheduled queue
 - destination readiness state
 - unified broadcast action API for restart, refresh, queue rebuild, fallback, skip, resume, and pin-on-air actions
 - live admin status rail with on-air, next, destination, incident, and update state across admin pages

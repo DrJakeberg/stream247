@@ -1,20 +1,24 @@
 import {
   buildOverlayScenePayload,
   buildMaterializedProgrammingWeek,
+  getCuepointProgress,
   buildScheduleOccurrences,
   buildSchedulePreview,
   describePresenceStatus,
+  getScheduleElapsedSeconds,
   getCurrentScheduleMoment,
   isCurrentScheduleTime,
   normalizeOverlayPanelAnchor,
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
   normalizeOverlayTitleScale,
+  normalizeCuepointOffsetsSeconds,
   selectActiveDestinationGroup,
   isLikelyTwitchChannelUrl,
   isLikelyTwitchVodUrl,
   isLikelyYouTubeChannelUrl,
   isLikelyYouTubePlaylistUrl,
+  summarizeLiveBridgeInput,
   type OverlaySceneRenderTarget
 } from "@stream247/core";
 import {
@@ -51,6 +55,7 @@ import {
   replaceTwitchScheduleSegments,
   resolveIncident,
   replaceAssetsForSourceIds,
+  updateAssetCurationRecords,
   updateAssetRecords,
   updatePlayoutRuntime,
   updatePoolCursor,
@@ -59,6 +64,7 @@ import {
   updateScheduleBlockRecord,
   updateScheduleRepeatGroupRecords,
   updateShowProfileRecord,
+  updateSourceFieldRecords,
   updateTwitchConnectionRecord,
   updateOwnerAndInitialized,
   upsertSourceRecord,
@@ -91,11 +97,14 @@ import {
 import type {
   BroadcastSnapshot,
   LiveAssetSummary,
+  LiveAudioLaneSummary,
+  LiveCuepointSummary,
   LiveDestinationSummary,
   LiveIncidentSummary,
   LiveOverlaySummary,
   LivePlayoutSummary,
   LiveQueueItemSummary,
+  LiveBridgeSummary,
   LiveScheduleSummary,
   PublicChannelSnapshot
 } from "@/lib/live-broadcast";
@@ -158,6 +167,7 @@ export {
   replaceTwitchScheduleSegments,
   replaceAssetsForSourceIds,
   resolveIncident,
+  updateAssetCurationRecords,
   updateAssetRecords,
   updateAppState,
   updateOwnerAndInitialized,
@@ -167,6 +177,7 @@ export {
   updateScheduleBlockRecord,
   updateScheduleRepeatGroupRecords,
   updateShowProfileRecord,
+  updateSourceFieldRecords,
   updateTwitchConnectionRecord,
   upsertSourceRecord,
   upsertSources,
@@ -778,7 +789,7 @@ export function buildActiveScenePayload(
   options: {
     overlay?: OverlaySettingsRecord;
     target?: OverlaySceneRenderTarget;
-    queueKind?: "asset" | "insert" | "standby" | "reconnect";
+    queueKind?: "asset" | "insert" | "standby" | "reconnect" | "live";
   } = {}
 ) {
   const overlay = options.overlay ?? state.overlay;
@@ -805,9 +816,14 @@ export function buildActiveScenePayload(
     currentTitle:
       queueKind === "asset"
         ? currentScheduleItem?.title || currentAsset?.title || state.playout.currentTitle || overlay.channelName || "Stream247"
+        : queueKind === "live"
+          ? queueHead?.title || state.playout.liveBridgeLabel || state.playout.currentTitle || "Live Bridge"
         : queueHead?.title || state.playout.currentTitle || overlay.headline || "Replay stream",
-    currentCategory: currentScheduleItem?.categoryName || currentAsset?.categoryName || "Always on air",
-    currentSourceName,
+    currentCategory: queueKind === "live" ? "Live input" : currentScheduleItem?.categoryName || currentAsset?.categoryName || "Always on air",
+    currentSourceName:
+      queueKind === "live"
+        ? `Live Bridge · ${(state.playout.liveBridgeInputType || "rtmp").toUpperCase()}`
+        : currentSourceName,
     nextTitle: nextScheduleItem?.title || nextAsset?.title || "Schedule not available",
     nextTimeLabel: nextScheduleItem ? `${nextScheduleItem.startTime} to ${nextScheduleItem.endTime}` : "No next block configured",
     queueTitles,
@@ -876,6 +892,104 @@ function summarizePlayout(playout: PlayoutRuntimeRecord): LivePlayoutSummary {
   };
 }
 
+function summarizeLiveBridge(playout: PlayoutRuntimeRecord): LiveBridgeSummary {
+  return {
+    configured: Boolean(playout.liveBridgeInputUrl),
+    status: playout.liveBridgeStatus || "idle",
+    inputType: playout.liveBridgeInputType,
+    label: playout.liveBridgeLabel,
+    inputSummary: summarizeLiveBridgeInput(playout.liveBridgeInputUrl),
+    requestedAt: playout.liveBridgeRequestedAt,
+    startedAt: playout.liveBridgeStartedAt,
+    releasedAt: playout.liveBridgeReleasedAt,
+    lastError: playout.liveBridgeLastError
+  };
+}
+
+function summarizeAudioLane(
+  state: AppState,
+  currentScheduleItem: ReturnType<typeof getCurrentScheduleItem> | null
+): LiveAudioLaneSummary {
+  const pool = currentScheduleItem?.poolId ? state.pools.find((entry) => entry.id === currentScheduleItem.poolId) ?? null : null;
+  const asset = pool?.audioLaneAssetId ? state.assets.find((entry) => entry.id === pool.audioLaneAssetId) ?? null : null;
+  const source = asset ? state.sources.find((entry) => entry.id === asset.sourceId) ?? null : null;
+  const active =
+    Boolean(asset && pool) &&
+    state.playout.selectionReasonCode !== "live_bridge" &&
+    state.playout.selectionReasonCode !== "operator_insert" &&
+    state.playout.selectionReasonCode !== "scheduled_insert" &&
+    state.playout.status !== "standby" &&
+    state.playout.status !== "reconnecting";
+
+  return {
+    configured: Boolean(pool?.audioLaneAssetId),
+    active,
+    assetId: asset?.id || "",
+    title: asset?.title || "",
+    sourceName: source?.name || "",
+    volumePercent: pool?.audioLaneVolumePercent ?? 100,
+    poolId: pool?.id || "",
+    poolName: pool?.name || "",
+    mode: "replace"
+  };
+}
+
+function summarizeCuepoints(
+  state: AppState,
+  currentScheduleItem: ReturnType<typeof getCurrentScheduleItem> | null
+): LiveCuepointSummary {
+  const block = currentScheduleItem ? state.scheduleBlocks.find((entry) => entry.id === currentScheduleItem.blockId) ?? null : null;
+  const pool = currentScheduleItem?.poolId ? state.pools.find((entry) => entry.id === currentScheduleItem.poolId) ?? null : null;
+  const offsetsSeconds = normalizeCuepointOffsetsSeconds(block?.cuepointOffsetsSeconds ?? [], block?.durationMinutes ?? 0);
+  const cuepointAssetId = block?.cuepointAssetId || pool?.insertAssetId || "";
+  const cuepointAsset = cuepointAssetId ? state.assets.find((entry) => entry.id === cuepointAssetId) ?? null : null;
+  const scheduleMoment = getCurrentScheduleMoment({
+    now: new Date(),
+    timeZone: getWorkspaceTimeZone()
+  });
+  const active =
+    Boolean(currentScheduleItem) &&
+    isCurrentScheduleTime({
+      startTime: currentScheduleItem?.startTime || "00:00",
+      endTime: currentScheduleItem?.endTime || "00:00",
+      currentTime: scheduleMoment.time
+    });
+  const progress =
+    currentScheduleItem && offsetsSeconds.length > 0 && active
+      ? getCuepointProgress({
+          occurrenceKey: currentScheduleItem.key,
+          cuepointOffsetsSeconds: offsetsSeconds,
+          firedCuepointKeys:
+            state.playout.cuepointWindowKey === currentScheduleItem.key ? state.playout.cuepointFiredKeys : [],
+          elapsedSeconds: getScheduleElapsedSeconds({
+            startMinuteOfDay: currentScheduleItem.startMinuteOfDay,
+            currentTime: scheduleMoment.time
+          })
+        })
+      : {
+          dueOffsetSeconds: null,
+          dueCuepointKey: "",
+          nextOffsetSeconds: null,
+          firedCount: 0,
+          totalCount: offsetsSeconds.length
+        };
+
+  return {
+    configured: offsetsSeconds.length > 0,
+    safeBoundaryOnly: true,
+    assetId: cuepointAsset?.id || "",
+    assetTitle: cuepointAsset?.title || "",
+    offsetsSeconds,
+    nextOffsetSeconds: progress.nextOffsetSeconds,
+    dueOffsetSeconds: progress.dueOffsetSeconds,
+    firedCount: progress.firedCount,
+    totalCount: progress.totalCount,
+    windowKey: currentScheduleItem?.key || "",
+    lastTriggeredAt: state.playout.cuepointLastTriggeredAt,
+    lastAssetId: state.playout.cuepointLastAssetId
+  };
+}
+
 export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
   const currentScheduleItem = getCurrentScheduleItem(state);
   const nextScheduleItem = getNextScheduleItem(state);
@@ -887,6 +1001,9 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
     timeZone: getWorkspaceTimeZone(),
     workerHealth: getWorkerHealth(state),
     playout: summarizePlayout(state.playout),
+    liveBridge: summarizeLiveBridge(state.playout),
+    audioLane: summarizeAudioLane(state, currentScheduleItem),
+    cuepoints: summarizeCuepoints(state, currentScheduleItem),
     overlay: summarizeOverlay(state.overlay),
     activeScene: activeScenePayload.scene,
     activeScenePayload,

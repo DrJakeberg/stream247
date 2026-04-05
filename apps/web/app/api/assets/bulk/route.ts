@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateAssetRecords } from "@/lib/server/state";
+import { appendAuditEvent, readAppState, updateAssetCurationRecords } from "@/lib/server/state";
 
 type BulkAction =
   | "include"
@@ -66,24 +66,24 @@ export async function POST(request: NextRequest) {
   }
 
   const now = new Date().toISOString();
-  const updatedAssets = selectedAssets.map((asset) => {
+  const updates = selectedAssets.map((asset) => {
     switch (action) {
       case "include":
         return {
-          ...asset,
+          id: asset.id,
           includeInProgramming: true,
           updatedAt: now
         };
       case "exclude":
         return {
-          ...asset,
+          id: asset.id,
           includeInProgramming: false,
           isGlobalFallback: false,
           updatedAt: now
         };
       case "mark_global_fallback":
         return {
-          ...asset,
+          id: asset.id,
           includeInProgramming: true,
           isGlobalFallback: true,
           fallbackPriority: Math.max(1, asset.fallbackPriority || 1),
@@ -91,44 +91,44 @@ export async function POST(request: NextRequest) {
         };
       case "clear_global_fallback":
         return {
-          ...asset,
+          id: asset.id,
           isGlobalFallback: false,
           updatedAt: now
         };
       case "set_folder":
         return {
-          ...asset,
+          id: asset.id,
           folderPath,
           updatedAt: now
         };
       case "clear_folder":
         return {
-          ...asset,
+          id: asset.id,
           folderPath: "",
           updatedAt: now
         };
       case "append_tags":
         return {
-          ...asset,
-          tags: [...new Set([...(asset.tags ?? []), ...tags])],
+          id: asset.id,
+          appendTags: tags,
           updatedAt: now
         };
       case "replace_tags":
         return {
-          ...asset,
+          id: asset.id,
           tags,
           updatedAt: now
         };
       case "clear_tags":
         return {
-          ...asset,
+          id: asset.id,
           tags: [],
           updatedAt: now
         };
     }
   });
 
-  await updateAssetRecords(updatedAssets);
+  await updateAssetCurationRecords(updates);
   await appendAuditEvent("asset.bulk.updated", `${action} applied to ${assetIds.length} asset(s).`);
 
   return NextResponse.json({

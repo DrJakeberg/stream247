@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateAssetRecords } from "@/lib/server/state";
+import { appendAuditEvent, readAppState, updateAssetCurationRecords } from "@/lib/server/state";
 
 function normalizeTags(value: unknown): string[] {
   if (!Array.isArray(value)) {
@@ -102,14 +102,14 @@ export async function PUT(request: NextRequest) {
   const nextFolderPath = typeof body.folderPath === "string" ? body.folderPath.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") : asset.folderPath ?? "";
   const nextTags = body.tags !== undefined ? normalizeTags(body.tags) : asset.tags ?? [];
 
-  await updateAssetRecords([
+  await updateAssetCurationRecords([
     {
-      ...asset,
       includeInProgramming: nextGlobalFallback ? true : nextInclude,
       isGlobalFallback: nextGlobalFallback,
       fallbackPriority: nextFallbackPriority,
       folderPath: nextFolderPath,
       tags: nextTags,
+      id,
       updatedAt: new Date().toISOString()
     }
   ]);

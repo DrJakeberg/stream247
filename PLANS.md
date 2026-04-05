@@ -17,6 +17,7 @@ This plan closes those gaps while preserving Stream247's existing self-hosted ar
   - SSE-driven broadcast control room and live public overlay/channel surfaces
   - overlay draft/publish, scene presets, layer order, and layer visibility
   - manual override, fallback, skip, reconnect, insert, and backup RTMP failover
+  - pool-scoped replace-mode audio lanes and safe-boundary cuepoint inserts
   - incidents, drift, alerts, readiness, and encrypted managed secrets
 - Main constraints from the repo:
   - use explicit SQL and `pg`, not an ORM rewrite
@@ -58,9 +59,25 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M4 Programming Workspace V2 | Parity + UX | Next | Complete | Materialized fill view, repeat behavior, queue-aware preview, and faster schedule editing | Operators can author a full week with low friction and clear underfill/overflow signals | `apps/web`, `packages/core`, `packages/db` | medium | revert UI/API changes, preserve existing block CRUD |
 | M5 Library And Channel Blueprints | Parity + UX | Next | Complete | Expand library operations and add reusable full-channel export/import | Assets are easier to manage, and channel setups can be replicated safely | `apps/web`, `packages/db`, `apps/worker` | medium | additive schema only, import/export stays opt-in |
 | M6 Multi-Output V1 | Parity + Ops | Next | Complete | Extend from primary/backup to multiple RTMP outputs per channel | Multiple outputs can run from one channel with health-aware routing | `packages/db`, `apps/worker`, `apps/web` | high | preserve current primary/backup mode as default |
-| M7 Live Bridge | Parity + Architecture | Later | Planned | Add controlled live ingress takeover and return to queue | Live source can replace scheduled playback and return safely | `apps/worker`, `apps/web`, Docker/runtime | high | keep feature disabled by default |
-| M8 Audio Lanes, Cuepoints, Advanced Inserts | Parity + Architecture | Later | Planned | Add separate audio/video lanes, timed inserts, and richer transition logic | Secondary audio and timed inserts work without destabilizing the queue engine | `apps/worker`, `packages/core`, `packages/db` | very high | keep behind feature flags until soak-tested |
+| M7 Live Bridge | Parity + Architecture | Later | Complete | Add controlled live ingress takeover and return to queue | Live source can replace scheduled playback and return safely | `apps/worker`, `apps/web`, Docker/runtime | high | keep feature disabled by default |
+| M8 Audio Lanes, Cuepoints, Advanced Inserts | Parity + Architecture | Later | Complete | Add separate audio/video lanes, timed inserts, and richer transition logic | Secondary audio and timed inserts work without destabilizing the queue engine | `apps/worker`, `packages/core`, `packages/db`, `apps/web` | very high | preserve default program-audio and existing insert flows as the safe fallback |
 | M9 Security And Release Hardening | Ops | Now | Complete | Add browser E2E, continuity smoke, stronger soak gates, and 2FA | Admin/UI/runtime regressions are caught before release and local auth is stronger | tests, CI, `apps/web`, docs | medium | additive checks, 2FA optional at first |
+| M10 Truth And Safety Fixes | Reliability + Ops | Now | Complete | Remove stale-write admin races, fix update-center version resolution, and bring docs back in sync with the actual product state | Asset curation and source admin flows only update intended fields, update center resolves the repo version safely in container and local layouts, regression tests exist for each bug class, and docs stop implying full parity | `apps/web/app/api/assets/*`, `apps/web/app/api/sources/*`, `apps/web/app/api/library/uploads/route.ts`, `apps/web/lib/server/update-center.ts`, `packages/db`, tests, docs | medium | revert to previous route handlers if needed; DB changes remain additive targeted writers |
+| M11 Scene Studio V2 | Parity + UX | Next | Planned | Deepen Scene Studio beyond presets and fixed layer types | Richer positioned image/logo/embed/widget/text layers, safer font handling, and conservative public parity claims | `packages/core`, `packages/db`, `apps/web`, `apps/worker` | high | preserve current Scene Studio v1 payload and text/image fallback path |
+| M12 Continuity And Recovery V2 | Architecture + Ops | Next | Planned | Strengthen output recovery and reduce restart-heavy normal transitions | Continuity and multi-output recovery improve measurably without regressing queue or live-bridge visibility | `apps/worker`, `packages/db`, `apps/web/lib/server`, tests | very high | keep current queue engine and output routing available as the safe fallback |
+| M13 Library And Blueprints V2 | Parity + UX | Next | Planned | Deepen library operations and make blueprints safer to reuse across installs | Thumbnails, grouped browsing, curated sets, and selective blueprint import/remap guidance are available without overpromising media portability | `apps/web`, `apps/worker`, `packages/db`, docs | medium | keep current folder/tag curation and replace-style blueprint import path intact |
+| M14 Operator UX V2 | UX | Next | Planned | Resolve admin IA drift and make the control-room model more consistent | Broadcast, Dashboard, Scene Studio, Sources/Library, and Settings have clearer roles and more consistent naming | `apps/web`, docs, tests | medium | keep current routes and navigation labels working until the new IA is proven |
+| M15 Coverage And Release Proof V2 | Ops | Next | Planned | Prove the highest-risk parity features with broader automated coverage | Multi-output, Live Bridge, audio/cuepoint flows, and scene publish safety have direct runtime/browser proof beyond unit tests | tests, CI, scripts, docs | high | additive coverage only; do not remove current gates until replacements are green |
+
+## Phase 2 — Post-M9 Audit Follow-Up
+
+The first milestone set shipped meaningful parity progress, but a fresh audit found three categories of follow-up work:
+
+- truth and safety fixes that correct review-found stale-write races and deployment-specific bugs
+- parity gaps where the code is real but still partial, especially Scene Studio depth, runtime continuity, and recovery behavior
+- docs that need to stay conservative and aligned with what the code and automated coverage actually prove
+
+Phase 2 starts with `M10 Truth And Safety Fixes` and then continues into deeper parity, UX, and release-proof milestones.
 
 ## Parity Work
 
@@ -70,8 +87,11 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 - `Complete` M4 Programming Workspace V2
 - `Complete` M5 Library And Channel Blueprints
 - `Complete` M6 Multi-Output V1
-- `Later` M7 Live Bridge
-- `Later` M8 Audio Lanes, Cuepoints, Advanced Inserts
+- `Complete` M7 Live Bridge
+- `Complete` M8 Audio Lanes, Cuepoints, Advanced Inserts
+- `Now` M10 Truth And Safety Fixes
+- `Next` M11 Scene Studio V2
+- `Next` M13 Library And Blueprints V2
 - `Not Planned` visual cloning of Upstream UI or branding
 
 ## Architecture Work
@@ -81,7 +101,8 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 - `Now` keep DB changes additive and continue using targeted writers instead of broad state rewrites
 - `Next` move from baseline-style migration growth to clear sequential SQL migrations
 - `Next` make queue persistence and scene renderer caches explicit and observable
-- `Later` add live ingress runtime path and audio-lane support
+- `Later` add richer mixed audio routing, crossfades, and deeper live-ingest controls beyond the first shipped M7/M8 contracts
+- `Next` improve continuity and recovery semantics after the first queue/multi-output/live-bridge milestones land
 - `Not Planned` ORM migration or abandoning Docker/Compose delivery
 
 ## UX Work
@@ -91,6 +112,8 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 - `Complete` upgrade schedule editing into a denser `Programming Workspace` with materialized fill, repeats, queue-aware preview, and insert rules
 - `Complete` expand `Library` with folders, tags, bulk curation, and safer reusable catalog organization
 - `Complete` add `Channel Blueprints` as the original import/export system for full stream setups
+- `Next` resolve IA drift between `Broadcast`, `Dashboard`, `Scene Studio`, `Sources`, and `Settings`
+- `Next` deepen Scene Studio beyond fixed preset composition while keeping original naming and UI
 - `Later` add tablet-friendly layout refinements and richer operator shortcuts
 - `Not Planned` copying Upstream labels like “Stream Designer” or “Live Studio”
 
@@ -102,6 +125,8 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 - `Next` add Playwright smoke coverage for setup, sources, scheduling, overlay publish, and broadcast controls
 - `Next` add queue continuity and scene publish safety checks to CI
 - `Next` expand structured runtime logging and incident fingerprints
+- `Now` fix stale-write admin paths and deployment-specific safety bugs surfaced by review/audit
+- `Next` expand runtime/browser proof for Multi-Output, Live Bridge, and cuepoint/audio flows
 - `Later` broaden soak and upgrade rehearsal coverage for major runtime milestones
 - `Not Planned` unattended production auto-upgrades by default
 
@@ -204,3 +229,25 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - Updated the worker to fan one channel out to multiple active RTMP outputs through health-aware primary/backup routing and tee-muxer delivery, without breaking the existing primary/backup compatibility path.
 - Expanded the admin output management surfaces with destination creation, managed-key editing, delete protection for built-in outputs, and live visibility into the active output group.
 - Validation completed: `pnpm validate`, `pnpm test:fresh-db`, and `pnpm test:fresh-compose` passed.
+
+### 2026-04-05 — M7 Live Bridge
+
+- Added a `Live Bridge` contract to the playout runtime so operators can hand off from scheduled playback to RTMP/RTMPS or HLS live inputs without breaking the existing Multi-Output path.
+- Extended the worker queue/runtime so Live Bridge becomes a first-class on-air target with safe release back to the scheduled queue, preserved queue preview, and sanitized live-input visibility in the control room.
+- Added broadcast actions, control-room UI, snapshot summaries, tests, and a targeted `pnpm test:live-bridge-smoke` check for the new takeover path.
+- Validation completed: `pnpm validate`, `pnpm test:live-bridge-smoke`, `pnpm test:fresh-db`, and `pnpm test:fresh-compose` passed.
+
+### 2026-04-05 — M8 Audio Lanes, Cuepoints, Advanced Inserts
+
+- Added pool-scoped replace-mode audio lanes so scheduled playback can loop a dedicated local/direct media bed without affecting existing live, standby, reconnect, or insert paths.
+- Added schedule-block cuepoint offsets plus deterministic runtime tracking so inserts arm after the configured offset and fire on the next safe asset boundary without refiring after worker cycles.
+- Extended the broadcast snapshot, control room, blueprints, schedule editor, and programming previews so operators can see audio lane state and cuepoint progress directly in the UI.
+- Validation completed: `pnpm validate`, `pnpm test:audio-cuepoint-smoke`, `pnpm test:fresh-db`, and `pnpm test:fresh-compose` passed.
+
+### 2026-04-05 — M10 Truth And Safety Fixes
+
+- Replaced stale full-row asset curation writes with targeted asset-catalog updates so operator edits no longer risk rolling back fresh ingest metadata such as titles, paths, and status.
+- Replaced stale whole-source admin upserts with targeted source field updates across edit, bulk enable/disable, manual sync, and local-upload rescan flows so unrelated source state is preserved.
+- Fixed update-center version discovery so `/settings` resolves the real repo package version from both repo-root and containerized working-directory layouts.
+- Updated docs to stop implying full parity or a finished roadmap where the code is still partial.
+- Validation completed: `pnpm validate` and `pnpm test:fresh-db` passed.

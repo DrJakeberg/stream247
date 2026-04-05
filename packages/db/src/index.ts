@@ -4,6 +4,8 @@ import path from "node:path";
 import { Pool, type PoolClient } from "pg";
 import {
   createDefaultModerationConfig,
+  normalizeAudioLaneVolumePercent,
+  normalizeCuepointOffsetsSeconds,
   normalizeOverlayPanelAnchor,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
@@ -122,6 +124,29 @@ export type AssetRecord = {
   updatedAt: string;
 };
 
+export type AssetCurationUpdateRecord = {
+  id: string;
+  includeInProgramming?: boolean;
+  isGlobalFallback?: boolean;
+  fallbackPriority?: number;
+  folderPath?: string;
+  tags?: string[];
+  appendTags?: string[];
+  updatedAt?: string;
+};
+
+export type SourceFieldUpdateRecord = {
+  id: string;
+  name?: string;
+  type?: string;
+  connectorKind?: SourceRecord["connectorKind"];
+  enabled?: boolean;
+  externalUrl?: string;
+  status?: string;
+  notes?: string;
+  lastSyncedAt?: string;
+};
+
 export type SourceSyncRunRecord = {
   id: string;
   sourceId: string;
@@ -143,6 +168,8 @@ export type PoolRecord = {
   insertAssetId: string;
   insertEveryItems: number;
   itemsSinceInsert: number;
+  audioLaneAssetId: string;
+  audioLaneVolumePercent: number;
   updatedAt: string;
 };
 
@@ -201,6 +228,8 @@ export type ScheduleBlockRecord = {
   sourceName: string;
   repeatMode?: "single" | "daily" | "weekdays" | "weekends" | "custom";
   repeatGroupId?: string;
+  cuepointAssetId?: string;
+  cuepointOffsetsSeconds?: number[];
 };
 
 export type OverlaySettingsRecord = {
@@ -290,7 +319,7 @@ export type ManagedConfigRecord = {
 
 export type BroadcastQueueItemRecord = {
   id: string;
-  kind: "asset" | "insert" | "standby" | "reconnect";
+  kind: "asset" | "insert" | "standby" | "reconnect" | "live";
   assetId: string;
   title: string;
   subtitle: string;
@@ -338,6 +367,7 @@ export type PlayoutRuntimeRecord = {
     | "operator_override"
     | "scheduled_match"
     | "graceful_handoff"
+    | "live_bridge"
     | "global_fallback"
     | "generic_fallback"
     | "no_asset"
@@ -354,6 +384,18 @@ export type PlayoutRuntimeRecord = {
   overrideMode: "schedule" | "asset" | "fallback";
   overrideAssetId: string;
   overrideUntil: string;
+  liveBridgeInputType: "" | "rtmp" | "hls";
+  liveBridgeInputUrl: string;
+  liveBridgeLabel: string;
+  liveBridgeStatus: "" | "pending" | "active" | "releasing" | "error";
+  liveBridgeRequestedAt: string;
+  liveBridgeStartedAt: string;
+  liveBridgeReleasedAt: string;
+  liveBridgeLastError: string;
+  cuepointWindowKey: string;
+  cuepointFiredKeys: string[];
+  cuepointLastTriggeredAt: string;
+  cuepointLastAssetId: string;
   manualNextAssetId: string;
   manualNextRequestedAt: string;
   insertAssetId: string;
@@ -787,6 +829,13 @@ function normalizeAssetTags(value: unknown): string[] {
   return [...new Set(normalized)].slice(0, 24);
 }
 
+function normalizeAssetFolderPath(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+}
+
 function parseAssetTagsJson(value: string): string[] {
   if (!value) {
     return [];
@@ -1046,6 +1095,18 @@ function defaultState(): AppState {
       overrideMode: "schedule",
       overrideAssetId: "",
       overrideUntil: "",
+      liveBridgeInputType: "",
+      liveBridgeInputUrl: "",
+      liveBridgeLabel: "",
+      liveBridgeStatus: "",
+      liveBridgeRequestedAt: "",
+      liveBridgeStartedAt: "",
+      liveBridgeReleasedAt: "",
+      liveBridgeLastError: "",
+      cuepointWindowKey: "",
+      cuepointFiredKeys: [],
+      cuepointLastTriggeredAt: "",
+      cuepointLastAssetId: "",
       manualNextAssetId: "",
       manualNextRequestedAt: "",
       insertAssetId: "",
@@ -1074,6 +1135,8 @@ function createInitialSeedState(): AppState {
         insertAssetId: "",
         insertEveryItems: 0,
         itemsSinceInsert: 0,
+        audioLaneAssetId: "",
+        audioLaneVolumePercent: 100,
         updatedAt: ""
       }
     ],
@@ -1208,7 +1271,9 @@ function normalizeState(state: AppState): AppState {
           playbackMode: "round-robin",
           insertAssetId: pool.insertAssetId ?? "",
           insertEveryItems: typeof pool.insertEveryItems === "number" ? Math.max(0, pool.insertEveryItems) : 0,
-          itemsSinceInsert: typeof pool.itemsSinceInsert === "number" ? Math.max(0, pool.itemsSinceInsert) : 0
+          itemsSinceInsert: typeof pool.itemsSinceInsert === "number" ? Math.max(0, pool.itemsSinceInsert) : 0,
+          audioLaneAssetId: pool.audioLaneAssetId ?? "",
+          audioLaneVolumePercent: normalizeAudioLaneVolumePercent(pool.audioLaneVolumePercent ?? 100)
         }))
       : [],
     showProfiles: Array.isArray(state.showProfiles)
@@ -1235,6 +1300,8 @@ function normalizeState(state: AppState): AppState {
               ? block.repeatMode
               : "single",
           repeatGroupId: block.repeatGroupId ?? "",
+          cuepointAssetId: block.cuepointAssetId ?? "",
+          cuepointOffsetsSeconds: normalizeCuepointOffsetsSeconds(block.cuepointOffsetsSeconds ?? [], block.durationMinutes),
           startMinuteOfDay:
             typeof (block as ScheduleBlockRecord & { startHour?: number }).startMinuteOfDay === "number"
               ? block.startMinuteOfDay
@@ -1274,11 +1341,29 @@ function normalizeState(state: AppState): AppState {
     playout: {
       ...defaults.playout,
       ...(state.playout ?? {}),
+      liveBridgeInputType:
+        state.playout?.liveBridgeInputType === "rtmp" || state.playout?.liveBridgeInputType === "hls"
+          ? state.playout.liveBridgeInputType
+          : "",
+      liveBridgeStatus:
+        state.playout?.liveBridgeStatus === "pending" ||
+        state.playout?.liveBridgeStatus === "active" ||
+        state.playout?.liveBridgeStatus === "releasing" ||
+        state.playout?.liveBridgeStatus === "error"
+          ? state.playout.liveBridgeStatus
+          : "",
+      cuepointFiredKeys: Array.isArray(state.playout?.cuepointFiredKeys)
+        ? [...new Set(state.playout?.cuepointFiredKeys.map((entry) => String(entry).trim()).filter(Boolean))]
+        : defaults.playout.cuepointFiredKeys,
       queueItems: Array.isArray(state.playout?.queueItems)
         ? state.playout.queueItems.map((item, index) => ({
             id: item.id ?? `queue-${index}`,
             kind:
-              item.kind === "insert" || item.kind === "reconnect" || item.kind === "standby" || item.kind === "asset"
+              item.kind === "insert" ||
+              item.kind === "reconnect" ||
+              item.kind === "standby" ||
+              item.kind === "live" ||
+              item.kind === "asset"
                 ? item.kind
                 : "asset",
             assetId: item.assetId ?? "",
@@ -1463,7 +1548,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       pool_id TEXT NOT NULL DEFAULT '',
       source_name TEXT NOT NULL,
       repeat_mode TEXT NOT NULL DEFAULT 'single',
-      repeat_group_id TEXT NOT NULL DEFAULT ''
+      repeat_group_id TEXT NOT NULL DEFAULT '',
+      cuepoint_asset_id TEXT NOT NULL DEFAULT '',
+      cuepoint_offsets_seconds TEXT NOT NULL DEFAULT '[]'
     );
 
     CREATE TABLE IF NOT EXISTS pools (
@@ -1475,6 +1562,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       insert_asset_id TEXT NOT NULL DEFAULT '',
       insert_every_items INTEGER NOT NULL DEFAULT 0,
       items_since_insert INTEGER NOT NULL DEFAULT 0,
+      audio_lane_asset_id TEXT NOT NULL DEFAULT '',
+      audio_lane_volume_percent INTEGER NOT NULL DEFAULT 100,
       updated_at TEXT NOT NULL DEFAULT ''
     );
 
@@ -1613,6 +1702,18 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       override_mode TEXT NOT NULL DEFAULT 'schedule',
       override_asset_id TEXT NOT NULL DEFAULT '',
       override_until TEXT NOT NULL DEFAULT '',
+      live_bridge_input_type TEXT NOT NULL DEFAULT '',
+      live_bridge_input_url TEXT NOT NULL DEFAULT '',
+      live_bridge_label TEXT NOT NULL DEFAULT '',
+      live_bridge_status TEXT NOT NULL DEFAULT '',
+      live_bridge_requested_at TEXT NOT NULL DEFAULT '',
+      live_bridge_started_at TEXT NOT NULL DEFAULT '',
+      live_bridge_released_at TEXT NOT NULL DEFAULT '',
+      live_bridge_last_error TEXT NOT NULL DEFAULT '',
+      cuepoint_window_key TEXT NOT NULL DEFAULT '',
+      cuepoint_fired_keys TEXT NOT NULL DEFAULT '[]',
+      cuepoint_last_triggered_at TEXT NOT NULL DEFAULT '',
+      cuepoint_last_asset_id TEXT NOT NULL DEFAULT '',
       manual_next_asset_id TEXT NOT NULL DEFAULT '',
       manual_next_requested_at TEXT NOT NULL DEFAULT '',
       insert_asset_id TEXT NOT NULL DEFAULT '',
@@ -1716,9 +1817,13 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS pool_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS repeat_mode TEXT NOT NULL DEFAULT 'single';
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS repeat_group_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS cuepoint_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS cuepoint_offsets_seconds TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE pools ADD COLUMN IF NOT EXISTS insert_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE pools ADD COLUMN IF NOT EXISTS insert_every_items INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE pools ADD COLUMN IF NOT EXISTS items_since_insert INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE pools ADD COLUMN IF NOT EXISTS audio_lane_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE pools ADD COLUMN IF NOT EXISTS audio_lane_volume_percent INTEGER NOT NULL DEFAULT 100;
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS external_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS category_name TEXT NOT NULL DEFAULT '';
@@ -1762,6 +1867,18 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_mode TEXT NOT NULL DEFAULT 'schedule';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_until TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS live_bridge_input_type TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS live_bridge_input_url TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS live_bridge_label TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS live_bridge_status TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS live_bridge_requested_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS live_bridge_started_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS live_bridge_released_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS live_bridge_last_error TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS cuepoint_window_key TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS cuepoint_fired_keys TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS cuepoint_last_triggered_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS cuepoint_last_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS manual_next_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS manual_next_requested_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS insert_asset_id TEXT NOT NULL DEFAULT '';
@@ -2140,9 +2257,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     await client.query(
       `
         INSERT INTO schedule_blocks (
-          id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id
+          id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id, cuepoint_asset_id, cuepoint_offsets_seconds
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       `,
       [
         block.id,
@@ -2156,7 +2273,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         block.poolId ?? "",
         block.sourceName,
         block.repeatMode ?? "single",
-        block.repeatGroupId ?? ""
+        block.repeatGroupId ?? "",
+        block.cuepointAssetId ?? "",
+        JSON.stringify(block.cuepointOffsetsSeconds ?? [])
       ]
     );
   }
@@ -2165,8 +2284,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   for (const pool of next.pools) {
     await client.query(
       `
-        INSERT INTO pools (id, name, source_ids, playback_mode, cursor_asset_id, insert_asset_id, insert_every_items, items_since_insert, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO pools (id, name, source_ids, playback_mode, cursor_asset_id, insert_asset_id, insert_every_items, items_since_insert, audio_lane_asset_id, audio_lane_volume_percent, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       `,
       [
         pool.id,
@@ -2177,6 +2296,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         pool.insertAssetId ?? "",
         pool.insertEveryItems ?? 0,
         pool.itemsSinceInsert ?? 0,
+        pool.audioLaneAssetId ?? "",
+        pool.audioLaneVolumePercent ?? 100,
         pool.updatedAt
       ]
     );
@@ -2352,10 +2473,11 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         prefetched_title, prefetched_at, prefetch_status, prefetch_error, current_destination_id, restart_requested_at, heartbeat_at, process_pid,
         process_started_at, last_transition_at, last_successful_start_at, last_successful_asset_id, last_exit_code, restart_count,
         crash_count_window, crash_loop_detected, last_error, last_stderr_sample, selection_reason_code, fallback_tier, override_mode,
-        override_asset_id, override_until, manual_next_asset_id, manual_next_requested_at, insert_asset_id, insert_requested_at, insert_status, skip_asset_id, skip_until, pending_action,
-        pending_action_requested_at, message
+        override_asset_id, override_until, live_bridge_input_type, live_bridge_input_url, live_bridge_label, live_bridge_status, live_bridge_requested_at, live_bridge_started_at,
+        live_bridge_released_at, live_bridge_last_error, cuepoint_window_key, cuepoint_fired_keys, cuepoint_last_triggered_at, cuepoint_last_asset_id, manual_next_asset_id, manual_next_requested_at, insert_asset_id, insert_requested_at, insert_status, skip_asset_id, skip_until,
+        pending_action, pending_action_requested_at, message
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         transition_state = EXCLUDED.transition_state,
@@ -2397,6 +2519,18 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         override_mode = EXCLUDED.override_mode,
         override_asset_id = EXCLUDED.override_asset_id,
         override_until = EXCLUDED.override_until,
+        live_bridge_input_type = EXCLUDED.live_bridge_input_type,
+        live_bridge_input_url = EXCLUDED.live_bridge_input_url,
+        live_bridge_label = EXCLUDED.live_bridge_label,
+        live_bridge_status = EXCLUDED.live_bridge_status,
+        live_bridge_requested_at = EXCLUDED.live_bridge_requested_at,
+        live_bridge_started_at = EXCLUDED.live_bridge_started_at,
+        live_bridge_released_at = EXCLUDED.live_bridge_released_at,
+        live_bridge_last_error = EXCLUDED.live_bridge_last_error,
+        cuepoint_window_key = EXCLUDED.cuepoint_window_key,
+        cuepoint_fired_keys = EXCLUDED.cuepoint_fired_keys,
+        cuepoint_last_triggered_at = EXCLUDED.cuepoint_last_triggered_at,
+        cuepoint_last_asset_id = EXCLUDED.cuepoint_last_asset_id,
         manual_next_asset_id = EXCLUDED.manual_next_asset_id,
         manual_next_requested_at = EXCLUDED.manual_next_requested_at,
         insert_asset_id = EXCLUDED.insert_asset_id,
@@ -2449,6 +2583,18 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
       playout.overrideMode,
       playout.overrideAssetId,
       playout.overrideUntil,
+      playout.liveBridgeInputType,
+      playout.liveBridgeInputUrl,
+      playout.liveBridgeLabel,
+      playout.liveBridgeStatus,
+      playout.liveBridgeRequestedAt,
+      playout.liveBridgeStartedAt,
+      playout.liveBridgeReleasedAt,
+      playout.liveBridgeLastError,
+      playout.cuepointWindowKey,
+      JSON.stringify(playout.cuepointFiredKeys ?? []),
+      playout.cuepointLastTriggeredAt,
+      playout.cuepointLastAssetId,
       playout.manualNextAssetId,
       playout.manualNextRequestedAt,
       playout.insertAssetId,
@@ -2544,6 +2690,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     insert_asset_id: string;
     insert_every_items: number;
     items_since_insert: number;
+    audio_lane_asset_id: string;
+    audio_lane_volume_percent: number;
     updated_at: string;
   }>("SELECT * FROM pools ORDER BY name ASC");
   const showProfilesResult = await client.query<{
@@ -2568,6 +2716,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     source_name: string;
     repeat_mode: ScheduleBlockRecord["repeatMode"];
     repeat_group_id: string;
+    cuepoint_asset_id: string;
+    cuepoint_offsets_seconds: string;
   }>("SELECT * FROM schedule_blocks ORDER BY day_of_week ASC, start_minute_of_day ASC, start_hour ASC");
   const sourcesResult = await client.query<{
     id: string;
@@ -2684,6 +2834,18 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     override_mode: PlayoutRuntimeRecord["overrideMode"];
     override_asset_id: string;
     override_until: string;
+    live_bridge_input_type: PlayoutRuntimeRecord["liveBridgeInputType"];
+    live_bridge_input_url: string;
+    live_bridge_label: string;
+    live_bridge_status: PlayoutRuntimeRecord["liveBridgeStatus"];
+    live_bridge_requested_at: string;
+    live_bridge_started_at: string;
+    live_bridge_released_at: string;
+    live_bridge_last_error: string;
+    cuepoint_window_key: string;
+    cuepoint_fired_keys: string;
+    cuepoint_last_triggered_at: string;
+    cuepoint_last_asset_id: string;
     manual_next_asset_id: string;
     manual_next_requested_at: string;
     insert_asset_id: string;
@@ -2796,6 +2958,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       insertAssetId: row.insert_asset_id || "",
       insertEveryItems: row.insert_every_items ?? 0,
       itemsSinceInsert: row.items_since_insert ?? 0,
+      audioLaneAssetId: row.audio_lane_asset_id || "",
+      audioLaneVolumePercent: row.audio_lane_volume_percent ?? 100,
       updatedAt: row.updated_at
     })),
     showProfiles: showProfilesResult.rows.map((row) => ({
@@ -2819,7 +2983,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       poolId: row.pool_id || undefined,
       sourceName: row.source_name,
       repeatMode: row.repeat_mode || "single",
-      repeatGroupId: row.repeat_group_id || ""
+      repeatGroupId: row.repeat_group_id || "",
+      cuepointAssetId: row.cuepoint_asset_id || "",
+      cuepointOffsetsSeconds: JSON.parse(row.cuepoint_offsets_seconds || "[]") as number[]
     })),
     sources: sourcesResult.rows.map((row) => ({
       id: row.id,
@@ -2946,6 +3112,18 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           overrideMode: playoutRow.override_mode,
           overrideAssetId: playoutRow.override_asset_id,
           overrideUntil: playoutRow.override_until,
+          liveBridgeInputType: playoutRow.live_bridge_input_type,
+          liveBridgeInputUrl: playoutRow.live_bridge_input_url,
+          liveBridgeLabel: playoutRow.live_bridge_label,
+          liveBridgeStatus: playoutRow.live_bridge_status,
+          liveBridgeRequestedAt: playoutRow.live_bridge_requested_at,
+          liveBridgeStartedAt: playoutRow.live_bridge_started_at,
+          liveBridgeReleasedAt: playoutRow.live_bridge_released_at,
+          liveBridgeLastError: playoutRow.live_bridge_last_error,
+          cuepointWindowKey: playoutRow.cuepoint_window_key,
+          cuepointFiredKeys: JSON.parse(playoutRow.cuepoint_fired_keys || "[]") as string[],
+          cuepointLastTriggeredAt: playoutRow.cuepoint_last_triggered_at,
+          cuepointLastAssetId: playoutRow.cuepoint_last_asset_id,
           manualNextAssetId: playoutRow.manual_next_asset_id,
           manualNextRequestedAt: playoutRow.manual_next_requested_at,
           insertAssetId: playoutRow.insert_asset_id,
@@ -3126,6 +3304,68 @@ export async function upsertSources(sources: SourceRecord[]): Promise<void> {
   });
 }
 
+export async function updateSourceFieldRecords(updates: SourceFieldUpdateRecord[]): Promise<void> {
+  if (updates.length === 0) {
+    return;
+  }
+
+  await withSerializedStateWrite("updateSourceFieldRecords", async (client) => {
+    for (const update of updates) {
+      const values: unknown[] = [update.id];
+      const setClauses: string[] = [];
+
+      if (update.name !== undefined) {
+        setClauses.push(`name = $${values.length + 1}`);
+        values.push(update.name);
+      }
+
+      if (update.type !== undefined) {
+        setClauses.push(`type = $${values.length + 1}`);
+        values.push(update.type);
+      }
+
+      if (update.connectorKind !== undefined) {
+        setClauses.push(`connector_kind = $${values.length + 1}`);
+        values.push(update.connectorKind);
+      }
+
+      if (update.enabled !== undefined) {
+        setClauses.push(`enabled = $${values.length + 1}`);
+        values.push(update.enabled);
+      }
+
+      if (update.externalUrl !== undefined) {
+        setClauses.push(`external_url = $${values.length + 1}`);
+        values.push(update.externalUrl);
+      }
+
+      if (update.status !== undefined) {
+        setClauses.push(`status = $${values.length + 1}`);
+        values.push(update.status);
+      }
+
+      if (update.notes !== undefined) {
+        setClauses.push(`notes = $${values.length + 1}`);
+        values.push(update.notes);
+      }
+
+      if (update.lastSyncedAt !== undefined) {
+        setClauses.push(`last_synced_at = $${values.length + 1}`);
+        values.push(update.lastSyncedAt);
+      }
+
+      if (setClauses.length === 0) {
+        continue;
+      }
+
+      const result = await client.query(`UPDATE sources SET ${setClauses.join(", ")} WHERE id = $1`, values);
+      if (result.rowCount === 0) {
+        throw new Error(`Source not found: ${update.id}`);
+      }
+    }
+  });
+}
+
 export async function replaceAssetsForSourceIds(sourceIds: string[], assets: AssetRecord[]): Promise<void> {
   if (sourceIds.length === 0) {
     return;
@@ -3237,6 +3477,71 @@ export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
           asset.updatedAt
         ]
       );
+    }
+  });
+}
+
+export async function updateAssetCurationRecords(updates: AssetCurationUpdateRecord[]): Promise<void> {
+  if (updates.length === 0) {
+    return;
+  }
+
+  await withSerializedStateWrite("updateAssetCurationRecords", async (client) => {
+    for (const update of updates) {
+      const needsCurrentTags = update.appendTags !== undefined;
+      let currentTags: string[] = [];
+
+      if (needsCurrentTags) {
+        const currentResult = await client.query<{ tags_json: string }>("SELECT tags_json FROM assets WHERE id = $1", [update.id]);
+        if (currentResult.rowCount === 0) {
+          throw new Error(`Asset not found: ${update.id}`);
+        }
+        currentTags = parseAssetTagsJson(currentResult.rows[0]?.tags_json || "[]");
+      }
+
+      const values: unknown[] = [update.id];
+      const setClauses: string[] = [];
+
+      if (update.includeInProgramming !== undefined) {
+        setClauses.push(`include_in_programming = $${values.length + 1}`);
+        values.push(update.includeInProgramming);
+      }
+
+      if (update.isGlobalFallback !== undefined) {
+        setClauses.push(`is_global_fallback = $${values.length + 1}`);
+        values.push(update.isGlobalFallback);
+      }
+
+      if (update.fallbackPriority !== undefined) {
+        setClauses.push(`fallback_priority = $${values.length + 1}`);
+        values.push(update.fallbackPriority);
+      }
+
+      if (update.folderPath !== undefined) {
+        setClauses.push(`folder_path = $${values.length + 1}`);
+        values.push(normalizeAssetFolderPath(update.folderPath));
+      }
+
+      if (update.tags !== undefined || update.appendTags !== undefined) {
+        const nextTags =
+          update.tags !== undefined
+            ? normalizeAssetTags(update.tags)
+            : normalizeAssetTags([...currentTags, ...(update.appendTags ?? [])]);
+        setClauses.push(`tags_json = $${values.length + 1}`);
+        values.push(JSON.stringify(nextTags));
+      }
+
+      if (setClauses.length === 0) {
+        continue;
+      }
+
+      setClauses.push(`updated_at = $${values.length + 1}`);
+      values.push(update.updatedAt ?? new Date().toISOString());
+
+      const result = await client.query(`UPDATE assets SET ${setClauses.join(", ")} WHERE id = $1`, values);
+      if (result.rowCount === 0) {
+        throw new Error(`Asset not found: ${update.id}`);
+      }
     }
   });
 }
@@ -3746,9 +4051,9 @@ export async function createScheduleBlocks(blocks: ScheduleBlockRecord[]): Promi
       await client.query(
         `
           INSERT INTO schedule_blocks (
-            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id
+            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id, cuepoint_asset_id, cuepoint_offsets_seconds
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         `,
         [
           block.id,
@@ -3762,7 +4067,9 @@ export async function createScheduleBlocks(blocks: ScheduleBlockRecord[]): Promi
           block.poolId ?? "",
           block.sourceName,
           block.repeatMode ?? "single",
-          block.repeatGroupId ?? ""
+          block.repeatGroupId ?? "",
+          block.cuepointAssetId ?? "",
+          JSON.stringify(block.cuepointOffsetsSeconds ?? [])
         ]
       );
     }
@@ -3777,9 +4084,9 @@ export async function replaceAllScheduleBlocks(blocks: ScheduleBlockRecord[]): P
       await client.query(
         `
           INSERT INTO schedule_blocks (
-            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id
+            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id, cuepoint_asset_id, cuepoint_offsets_seconds
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         `,
         [
           block.id,
@@ -3793,7 +4100,9 @@ export async function replaceAllScheduleBlocks(blocks: ScheduleBlockRecord[]): P
           block.poolId ?? "",
           block.sourceName,
           block.repeatMode ?? "single",
-          block.repeatGroupId ?? ""
+          block.repeatGroupId ?? "",
+          block.cuepointAssetId ?? "",
+          JSON.stringify(block.cuepointOffsetsSeconds ?? [])
         ]
       );
     }
@@ -3815,7 +4124,9 @@ export async function updateScheduleBlockRecord(block: ScheduleBlockRecord): Pro
             pool_id = $9,
             source_name = $10,
             repeat_mode = $11,
-            repeat_group_id = $12
+            repeat_group_id = $12,
+            cuepoint_asset_id = $13,
+            cuepoint_offsets_seconds = $14
         WHERE id = $1
       `,
       [
@@ -3830,7 +4141,9 @@ export async function updateScheduleBlockRecord(block: ScheduleBlockRecord): Pro
         block.poolId ?? "",
         block.sourceName,
         block.repeatMode ?? "single",
-        block.repeatGroupId ?? ""
+        block.repeatGroupId ?? "",
+        block.cuepointAssetId ?? "",
+        JSON.stringify(block.cuepointOffsetsSeconds ?? [])
       ]
     );
   });
@@ -3845,6 +4158,8 @@ export async function updateScheduleRepeatGroupRecords(args: {
   showId?: string;
   poolId?: string;
   sourceName: string;
+  cuepointAssetId?: string;
+  cuepointOffsetsSeconds?: number[];
 }): Promise<void> {
   await withSerializedStateWrite("updateScheduleRepeatGroupRecords", async (client) => {
     await client.query(
@@ -3857,7 +4172,9 @@ export async function updateScheduleRepeatGroupRecords(args: {
             duration_minutes = $6,
             show_id = $7,
             pool_id = $8,
-            source_name = $9
+            source_name = $9,
+            cuepoint_asset_id = $10,
+            cuepoint_offsets_seconds = $11
         WHERE repeat_group_id = $1
       `,
       [
@@ -3869,7 +4186,9 @@ export async function updateScheduleRepeatGroupRecords(args: {
         args.durationMinutes,
         args.showId ?? "",
         args.poolId ?? "",
-        args.sourceName
+        args.sourceName,
+        args.cuepointAssetId ?? "",
+        JSON.stringify(args.cuepointOffsetsSeconds ?? [])
       ]
     );
   });
@@ -3886,19 +4205,21 @@ export async function createPoolRecord(pool: PoolRecord): Promise<void> {
     await client.query(
       `
         INSERT INTO pools (
-          id, name, source_ids, playback_mode, cursor_asset_id, insert_asset_id, insert_every_items, items_since_insert, updated_at
+          id, name, source_ids, playback_mode, cursor_asset_id, insert_asset_id, insert_every_items, items_since_insert, audio_lane_asset_id, audio_lane_volume_percent, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       `,
       [
         pool.id,
         pool.name,
         JSON.stringify(pool.sourceIds),
         pool.playbackMode,
-        pool.cursorAssetId,
-        pool.insertAssetId,
-        pool.insertEveryItems,
-        pool.itemsSinceInsert,
+        pool.cursorAssetId ?? "",
+        pool.insertAssetId ?? "",
+        pool.insertEveryItems ?? 0,
+        pool.itemsSinceInsert ?? 0,
+        pool.audioLaneAssetId ?? "",
+        pool.audioLaneVolumePercent ?? 100,
         pool.updatedAt
       ]
     );
@@ -3917,7 +4238,9 @@ export async function updatePoolRecord(pool: PoolRecord): Promise<void> {
             insert_asset_id = $6,
             insert_every_items = $7,
             items_since_insert = $8,
-            updated_at = $9
+            audio_lane_asset_id = $9,
+            audio_lane_volume_percent = $10,
+            updated_at = $11
         WHERE id = $1
       `,
       [
@@ -3925,10 +4248,12 @@ export async function updatePoolRecord(pool: PoolRecord): Promise<void> {
         pool.name,
         JSON.stringify(pool.sourceIds),
         pool.playbackMode,
-        pool.cursorAssetId,
-        pool.insertAssetId,
-        pool.insertEveryItems,
-        pool.itemsSinceInsert,
+        pool.cursorAssetId ?? "",
+        pool.insertAssetId ?? "",
+        pool.insertEveryItems ?? 0,
+        pool.itemsSinceInsert ?? 0,
+        pool.audioLaneAssetId ?? "",
+        pool.audioLaneVolumePercent ?? 100,
         pool.updatedAt
       ]
     );

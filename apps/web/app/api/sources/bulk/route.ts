@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, upsertSources } from "@/lib/server/state";
+import { appendAuditEvent, readAppState, updateSourceFieldRecords } from "@/lib/server/state";
 
 type BulkAction = "enable" | "disable" | "sync";
 
@@ -55,38 +55,29 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const now = new Date().toISOString();
-  const nextSources = state.sources.map((source) => {
-    if (!sourceIds.includes(source.id)) {
-      return source;
-    }
-
+  const updates = selectedSources.map((source) => {
     if (action === "enable") {
       return {
-        ...source,
-        enabled: true,
-        status: source.status === "Sync queued" ? source.status : source.status || "Configured",
-        notes: source.notes || "Source enabled for worker ingestion and scheduling."
+        id: source.id,
+        enabled: true
       };
     }
 
     if (action === "disable") {
       return {
-        ...source,
-        enabled: false,
-        notes: "Source disabled by a bulk operator action."
+        id: source.id,
+        enabled: false
       };
     }
 
     return {
-      ...source,
+      id: source.id,
       status: "Sync queued",
-      notes: "Bulk re-sync requested. The worker will refresh this source on the next cycle.",
-      lastSyncedAt: source.lastSyncedAt || now
+      notes: "Bulk re-sync requested. The worker will refresh this source on the next cycle."
     };
   });
 
-  await upsertSources(nextSources);
+  await updateSourceFieldRecords(updates);
   await appendAuditEvent("source.bulk.updated", `${action} applied to ${sourceIds.length} source(s).`);
 
   return NextResponse.json({

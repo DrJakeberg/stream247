@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, upsertSourceRecord } from "@/lib/server/state";
+import { appendAuditEvent, readAppState, updateSourceFieldRecords } from "@/lib/server/state";
 
 const allowedExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm", ".avi", ".mp3", ".aac", ".flac", ".wav"]);
 
@@ -44,11 +44,13 @@ async function markLocalLibraryForRescan() {
     return;
   }
 
-  await upsertSourceRecord({
-    ...existing,
-    status: "Sync queued",
-    notes: "New local uploads detected. The worker will refresh the local media library on the next cycle."
-  });
+  await updateSourceFieldRecords([
+    {
+      id: existing.id,
+      status: "Sync queued",
+      notes: "New local uploads detected. The worker will refresh the local media library on the next cycle."
+    }
+  ]);
 }
 
 export async function POST(request: Request) {

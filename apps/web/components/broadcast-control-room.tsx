@@ -95,7 +95,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                       .slice(0, 6)
                       .map(
                         (item) =>
-                          `${item.kind === "asset" ? "Asset" : item.kind === "insert" ? "Insert" : item.kind === "reconnect" ? "Reconnect" : "Standby"}: ${item.title}`
+                          `${item.kind === "asset" ? "Asset" : item.kind === "insert" ? "Insert" : item.kind === "reconnect" ? "Reconnect" : item.kind === "live" ? "Live" : "Standby"}: ${item.title}`
                       )
                       .join(" → ")
                   : "No queue preview is currently available."}
@@ -119,7 +119,77 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
             nextAssetId={nextQueueItem?.asset?.id || snapshot.nextAsset?.id}
             nextAssetTitle={nextQueueItem?.title || snapshot.nextAsset?.title}
             overrideMode={(snapshot.playout.overrideMode as "schedule" | "asset" | "fallback") || "schedule"}
+            liveBridgeStatus={snapshot.liveBridge.status}
+            liveBridgeLabel={snapshot.liveBridge.label}
+            liveBridgeInputType={snapshot.liveBridge.inputType}
+            liveBridgeInputSummary={snapshot.liveBridge.inputSummary}
+            liveBridgeLastError={snapshot.liveBridge.lastError}
           />
+        </article>
+
+        <article className="panel">
+          <span className="label">Audio lane</span>
+          <h3>Secondary audio</h3>
+          <div className="list">
+            <div className="item">
+              <strong>{snapshot.audioLane.title || "Program audio"}</strong>
+              <div className="subtle">
+                {snapshot.audioLane.configured
+                  ? `${snapshot.audioLane.mode} mode · ${snapshot.audioLane.volumePercent}% · ${snapshot.audioLane.active ? "active" : "armed for scheduled playback"}`
+                  : "No audio lane is configured for the active pool."}
+              </div>
+              {snapshot.audioLane.poolName ? <div className="subtle">Pool {snapshot.audioLane.poolName}</div> : null}
+              {snapshot.audioLane.sourceName ? <div className="subtle">Source {snapshot.audioLane.sourceName}</div> : null}
+            </div>
+          </div>
+        </article>
+
+        <article className="panel">
+          <span className="label">Cuepoints</span>
+          <h3>Timed insert state</h3>
+          <div className="list">
+            <div className="item">
+              <strong>{snapshot.cuepoints.assetTitle || "No cuepoint insert asset"}</strong>
+              <div className="subtle">
+                {snapshot.cuepoints.configured
+                  ? `Safe-boundary mode · ${snapshot.cuepoints.firedCount}/${snapshot.cuepoints.totalCount} fired`
+                  : "No cuepoints are configured for the current schedule block."}
+              </div>
+              {snapshot.cuepoints.offsetsSeconds.length > 0 ? (
+                <div className="subtle">Offsets {snapshot.cuepoints.offsetsSeconds.map((offset) => `${offset}s`).join(" · ")}</div>
+              ) : null}
+              {snapshot.cuepoints.nextOffsetSeconds !== null ? (
+                <div className="subtle">Next cuepoint at {snapshot.cuepoints.nextOffsetSeconds}s from block start</div>
+              ) : null}
+              {snapshot.cuepoints.dueOffsetSeconds !== null ? (
+                <div className="subtle">A cuepoint at {snapshot.cuepoints.dueOffsetSeconds}s is armed for the next safe insert boundary.</div>
+              ) : null}
+              {snapshot.cuepoints.lastTriggeredAt ? (
+                <div className="subtle">
+                  Last fired {snapshot.cuepoints.lastTriggeredAt}
+                  {snapshot.cuepoints.lastAssetId ? ` · asset ${snapshot.cuepoints.lastAssetId}` : ""}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </article>
+
+        <article className="panel">
+          <span className="label">Live Bridge</span>
+          <h3>Live takeover</h3>
+          <div className="list">
+            <div className="item">
+              <strong>{snapshot.liveBridge.label || "Live Bridge"}</strong>
+              <div className="subtle">
+                Status {snapshot.liveBridge.status} · {snapshot.liveBridge.inputType ? snapshot.liveBridge.inputType.toUpperCase() : "no input type"}
+              </div>
+              <div className="subtle">{snapshot.liveBridge.configured ? snapshot.liveBridge.inputSummary : "No live input configured."}</div>
+              {snapshot.liveBridge.requestedAt ? <div className="subtle">Requested {snapshot.liveBridge.requestedAt}</div> : null}
+              {snapshot.liveBridge.startedAt ? <div className="subtle">Live since {snapshot.liveBridge.startedAt}</div> : null}
+              {snapshot.liveBridge.releasedAt ? <div className="subtle">Release requested {snapshot.liveBridge.releasedAt}</div> : null}
+              {snapshot.liveBridge.lastError ? <div className="danger">{snapshot.liveBridge.lastError}</div> : null}
+            </div>
+          </div>
         </article>
 
         <article className="panel">

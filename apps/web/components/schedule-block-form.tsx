@@ -4,6 +4,8 @@ import {
   SCHEDULE_REPEAT_MODE_OPTIONS,
   formatMinuteOfDay,
   getRepeatDaysForMode,
+  parseCuepointOffsetsString,
+  summarizeCuepointOffsets,
   type ScheduleBlock,
   type ScheduleRepeatMode
 } from "@stream247/core";
@@ -13,6 +15,7 @@ import type { ShowProfileRecord } from "@/lib/server/state";
 
 type Props = {
   pools: Array<{ id: string; name: string }>;
+  assets: Array<{ id: string; title: string; status: string }>;
   shows: ShowProfileRecord[];
   block?: ScheduleBlock;
 };
@@ -27,7 +30,7 @@ const dayOptions = [
   { value: 6, label: "Saturday" }
 ];
 
-export function ScheduleBlockForm({ pools, shows, block }: Props) {
+export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -37,6 +40,9 @@ export function ScheduleBlockForm({ pools, shows, block }: Props) {
   const [title, setTitle] = useState(block?.title ?? "");
   const [categoryName, setCategoryName] = useState(block?.categoryName ?? "");
   const [durationMinutes, setDurationMinutes] = useState(block?.durationMinutes ?? 60);
+  const [cuepointOffsetsText, setCuepointOffsetsText] = useState(
+    summarizeCuepointOffsets(block?.cuepointOffsetsSeconds ?? [])
+  );
   const [applyToRepeatSet, setApplyToRepeatSet] = useState(Boolean(block?.repeatGroupId));
   const router = useRouter();
 
@@ -71,7 +77,9 @@ export function ScheduleBlockForm({ pools, shows, block }: Props) {
           startMinuteOfDay: hours * 60 + minutes,
           durationMinutes: Number(formData.get("durationMinutes") || 0),
           repeatMode,
-          applyToRepeatSet: isEditing ? applyToRepeatSet : false
+          applyToRepeatSet: isEditing ? applyToRepeatSet : false,
+          cuepointAssetId: String(formData.get("cuepointAssetId") || ""),
+          cuepointOffsetsSeconds: parseCuepointOffsetsString(String(formData.get("cuepointOffsetsText") || ""), Number(formData.get("durationMinutes") || 0))
         };
 
         startTransition(async () => {
@@ -265,6 +273,30 @@ export function ScheduleBlockForm({ pools, shows, block }: Props) {
           ))}
         </select>
       </label>
+      <div className="form-grid">
+        <label>
+          <span className="label">Cuepoint insert asset</span>
+          <select defaultValue={block?.cuepointAssetId ?? ""} name="cuepointAssetId">
+            <option value="">Use pool automatic insert asset</option>
+            {assets
+              .filter((asset) => asset.status === "ready")
+              .map((asset) => (
+                <option key={asset.id} value={asset.id}>
+                  {asset.title}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label>
+          <span className="label">Cuepoints (seconds from block start)</span>
+          <input
+            name="cuepointOffsetsText"
+            onChange={(event) => setCuepointOffsetsText(event.target.value)}
+            placeholder="600, 1800, 2700"
+            value={cuepointOffsetsText}
+          />
+        </label>
+      </div>
       {block ? (
         <p className="subtle">
           Current start: {formatMinuteOfDay(block.startMinuteOfDay)}
@@ -279,6 +311,9 @@ export function ScheduleBlockForm({ pools, shows, block }: Props) {
           New blocks can be created as single blocks or explicit repeat sets. Show profiles prefill title, category, and duration.
         </p>
       )}
+      <p className="subtle">
+        Cuepoints trigger safe-boundary inserts after the configured second offset has passed. They never cut the current asset mid-file.
+      </p>
       {message ? <p>{message}</p> : null}
       {error ? <p className="danger">{error}</p> : null}
       <button className="button" disabled={isPending} type="submit">

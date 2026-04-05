@@ -16,6 +16,8 @@
     "test:fresh-db": "bash ./scripts/fresh-db-bootstrap-smoke.sh",
     "test:fresh-compose": "bash ./scripts/fresh-compose-bootstrap-smoke.sh",
     "test:multi-output-smoke": "vitest run tests/unit/multi-output-routing.test.ts",
+    "test:live-bridge-smoke": "vitest run tests/unit/live-bridge.test.ts",
+    "test:audio-cuepoint-smoke": "vitest run tests/unit/audio-lanes.test.ts tests/unit/cuepoints.test.ts",
     "test:queue-continuity": "bash ./scripts/queue-continuity-smoke.sh",
     "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "release:preflight": "./scripts/release-preflight.sh",

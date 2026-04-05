@@ -60,9 +60,48 @@ export type LiveWorkerHealth = {
   lastRunAt: string;
 };
 
+export type LiveBridgeSummary = {
+  configured: boolean;
+  status: "idle" | "pending" | "active" | "releasing" | "error";
+  inputType: "" | "rtmp" | "hls";
+  label: string;
+  inputSummary: string;
+  requestedAt: string;
+  startedAt: string;
+  releasedAt: string;
+  lastError: string;
+};
+
+export type LiveAudioLaneSummary = {
+  configured: boolean;
+  active: boolean;
+  assetId: string;
+  title: string;
+  sourceName: string;
+  volumePercent: number;
+  poolId: string;
+  poolName: string;
+  mode: "replace";
+};
+
+export type LiveCuepointSummary = {
+  configured: boolean;
+  safeBoundaryOnly: boolean;
+  assetId: string;
+  assetTitle: string;
+  offsetsSeconds: number[];
+  nextOffsetSeconds: number | null;
+  dueOffsetSeconds: number | null;
+  firedCount: number;
+  totalCount: number;
+  windowKey: string;
+  lastTriggeredAt: string;
+  lastAssetId: string;
+};
+
 export type LiveQueueItemSummary = {
   id: string;
-  kind: "asset" | "insert" | "standby" | "reconnect";
+  kind: "asset" | "insert" | "standby" | "reconnect" | "live";
   title: string;
   subtitle: string;
   position: number;
@@ -82,7 +121,7 @@ export type LivePlayoutSummary = {
   message: string;
   transitionState: string;
   queueVersion: number;
-  transitionTargetKind: "" | "asset" | "insert" | "standby" | "reconnect";
+  transitionTargetKind: "" | "asset" | "insert" | "standby" | "reconnect" | "live";
   transitionTargetAssetId: string;
   transitionTargetTitle: string;
   transitionReadyAt: string;
@@ -199,6 +238,9 @@ export type BroadcastSnapshot = {
   timeZone: string;
   workerHealth: LiveWorkerHealth;
   playout: LivePlayoutSummary;
+  liveBridge: LiveBridgeSummary;
+  audioLane: LiveAudioLaneSummary;
+  cuepoints: LiveCuepointSummary;
   overlay: LiveOverlaySummary;
   activeScene: LiveSceneSummary;
   activeScenePayload: OverlayScenePayload;
