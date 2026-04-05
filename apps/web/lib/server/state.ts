@@ -11,6 +11,7 @@ import {
   normalizeOverlayPanelAnchor,
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
+  normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
   normalizeCuepointOffsetsSeconds,
   selectActiveDestinationGroup,
@@ -737,6 +738,7 @@ function summarizeOverlay(overlay: OverlaySettingsRecord): LiveOverlaySummary {
     surfaceStyle: normalizeOverlaySurfaceStyle(overlay.surfaceStyle),
     panelAnchor: normalizeOverlayPanelAnchor(overlay.panelAnchor),
     titleScale: normalizeOverlayTitleScale(overlay.titleScale),
+    typographyPreset: normalizeOverlayTypographyPreset(overlay.typographyPreset),
     showClock: overlay.showClock,
     showNextItem: overlay.showNextItem,
     showScheduleTeaser: overlay.showScheduleTeaser,
@@ -746,6 +748,7 @@ function summarizeOverlay(overlay: OverlaySettingsRecord): LiveOverlaySummary {
     queuePreviewCount: overlay.queuePreviewCount,
     layerOrder: overlay.layerOrder,
     disabledLayers: overlay.disabledLayers,
+    customLayers: overlay.customLayers,
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText,
     replayLabel: overlay.replayLabel,
@@ -770,6 +773,7 @@ function buildOverlaySceneSource(overlay: OverlaySettingsRecord) {
     surfaceStyle: normalizeOverlaySurfaceStyle(overlay.surfaceStyle),
     panelAnchor: normalizeOverlayPanelAnchor(overlay.panelAnchor),
     titleScale: normalizeOverlayTitleScale(overlay.titleScale),
+    typographyPreset: normalizeOverlayTypographyPreset(overlay.typographyPreset),
     showClock: overlay.showClock,
     showNextItem: overlay.showNextItem,
     showScheduleTeaser: overlay.showScheduleTeaser,
@@ -780,7 +784,8 @@ function buildOverlaySceneSource(overlay: OverlaySettingsRecord) {
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText,
     layerOrder: overlay.layerOrder,
-    disabledLayers: overlay.disabledLayers
+    disabledLayers: overlay.disabledLayers,
+    customLayers: overlay.customLayers
   };
 }
 

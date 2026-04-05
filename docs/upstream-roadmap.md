@@ -1,6 +1,6 @@
 # Upstream Parity Roadmap For Stream247
 
-Updated: 2026-04-05
+Updated: 2026-04-06
 
 This roadmap is not finished. `M0` through `M9` established the first parity wave, but a follow-up audit found remaining safety fixes, partial-parity gaps, and coverage work that still need to ship before Stream247 can claim stronger self-hosted parity against the public Upstream feature set.
 
@@ -476,16 +476,16 @@ Fix review-found stale-write admin races, correct the update-center version look
 
 ## M11 — Scene Studio V2
 
-Status: planned
+Status: completed 2026-04-06
 
 **Objective**  
 Deepen Scene Studio beyond fixed preset composition while keeping the product original and self-hosted.
 
 **Capabilities Added**
 
-- richer positioned scene layers
-- safer image/logo/embed/widget handling
-- broader typography controls with conservative public parity claims
+- richer positioned text/logo/image/embed/widget scene layers
+- safer image/logo/embed/widget handling with sanitized URLs and sandboxed iframe rendering
+- built-in typography presets with conservative public parity claims
 
 **Touched Subsystems**
 
@@ -507,8 +507,11 @@ Deepen Scene Studio beyond fixed preset composition while keeping the product or
 **Validation**
 
 - `pnpm validate`
-- targeted scene/browser tests
-- `pnpm test:fresh-compose` when runtime capture paths change
+- `pnpm test:fresh-db`
+- `docker build -f docker/web.Dockerfile -t stream247-web:test .`
+- `docker build -f docker/worker.Dockerfile -t stream247-worker:test .`
+- `pnpm test:fresh-compose`
+- `pnpm test:e2e:smoke`
 
 **Rollback Posture**
 

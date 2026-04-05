@@ -19,7 +19,8 @@ export default async function OverlayStudioPage() {
         <p className="subtle">
           Use <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> as a browser source in OBS
           or another scene tool. Draft changes stay inside the studio until you publish them, and the same live scene
-          settings also drive the on-air replay text overlay inside the FFmpeg playout path.
+          settings also drive the on-air replay text overlay inside the FFmpeg playout path. Positioned embeds remain
+          conservative: third-party CSP and iframe policies still decide whether a website or widget can actually render.
         </p>
         <OverlaySettingsForm
           basedOnUpdatedAt={studioState.basedOnUpdatedAt}
@@ -50,6 +51,10 @@ export default async function OverlayStudioPage() {
               {studioState.liveOverlay.scenePreset} · {studioState.liveOverlay.surfaceStyle} surface · {studioState.liveOverlay.panelAnchor} anchor · {studioState.liveOverlay.titleScale} title scale
             </div>
             <div className="subtle">
+              Typography {studioState.liveOverlay.typographyPreset} · {studioState.liveOverlay.customLayers.length} positioned layer
+              {studioState.liveOverlay.customLayers.length === 1 ? "" : "s"}
+            </div>
+            <div className="subtle">
               Current category {studioState.liveOverlay.showCurrentCategory ? "shown" : "hidden"} · source label{" "}
               {studioState.liveOverlay.showSourceLabel ? "shown" : "hidden"}
             </div>
@@ -68,6 +73,10 @@ export default async function OverlayStudioPage() {
             <div className="subtle">
               Draft preset {studioState.draftOverlay.scenePreset} · {studioState.draftOverlay.surfaceStyle} surface ·{" "}
               {studioState.draftOverlay.panelAnchor} anchor
+            </div>
+            <div className="subtle">
+              Typography {studioState.draftOverlay.typographyPreset} · {studioState.draftOverlay.customLayers.length} positioned layer
+              {studioState.draftOverlay.customLayers.length === 1 ? "" : "s"}
             </div>
             <div className="subtle">{scenePresets.length} saved scene preset{scenePresets.length === 1 ? "" : "s"} in the library.</div>
           </div>

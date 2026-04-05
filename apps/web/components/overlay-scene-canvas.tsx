@@ -1,6 +1,6 @@
 "use client";
 
-import type { OverlaySceneLayerKind, OverlayScenePayload } from "@stream247/core";
+import type { OverlaySceneCustomLayer, OverlaySceneLayerKind, OverlayScenePayload } from "@stream247/core";
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 
@@ -31,7 +31,8 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
               : "",
     `overlay-anchor-${props.payload.scene.panelAnchor}`,
     `overlay-surface-${props.payload.scene.surfaceStyle}`,
-    `overlay-title-${props.payload.scene.titleScale}`
+    `overlay-title-${props.payload.scene.titleScale}`,
+    `overlay-typography-${props.payload.scene.typographyPreset}`
   ]
     .filter(Boolean)
     .join(" ");
@@ -116,6 +117,82 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
     return null;
   }
 
+  function renderCustomLayer(layer: OverlaySceneCustomLayer) {
+    if (!layer.enabled) {
+      return null;
+    }
+
+    const style = {
+      left: `${layer.xPercent}%`,
+      top: `${layer.yPercent}%`,
+      width: `${layer.widthPercent}%`,
+      height: `${layer.heightPercent}%`,
+      opacity: layer.opacityPercent / 100
+    } satisfies CSSProperties;
+
+    if (layer.kind === "text") {
+      return (
+        <div
+          className={`overlay-custom-layer overlay-custom-layer-text overlay-custom-layer-text-${layer.textTone} overlay-custom-layer-align-${layer.textAlign}${
+            layer.useAccent ? " overlay-custom-layer-accent" : ""
+          }`}
+          key={layer.id}
+          style={style}
+        >
+          <div className="overlay-custom-layer-text-primary">{layer.text || layer.name}</div>
+          {layer.secondaryText ? <div className="overlay-custom-layer-text-secondary">{layer.secondaryText}</div> : null}
+        </div>
+      );
+    }
+
+    if (layer.kind === "logo" || layer.kind === "image") {
+      return (
+        <div className="overlay-custom-layer overlay-custom-layer-media" key={layer.id} style={style}>
+          {layer.url ? (
+            // The published overlay must accept already-resolved local or remote asset URLs at runtime.
+            // `next/image` is not a good fit for arbitrary operator-managed scene assets here.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              alt={layer.altText || layer.name}
+              className={`overlay-custom-layer-image overlay-custom-layer-image-${layer.fit}`}
+              src={layer.url}
+            />
+          ) : (
+            <div className="overlay-custom-layer-placeholder">
+              <strong>{layer.name}</strong>
+              <span>{layer.kind === "logo" ? "Logo URL required" : "Image URL required"}</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (layer.kind === "embed" || layer.kind === "widget") {
+      return (
+        <div className="overlay-custom-layer overlay-custom-layer-embed" key={layer.id} style={style}>
+          <div className="overlay-custom-layer-embed-badge">{layer.kind === "widget" ? "Widget" : "Embed"}</div>
+          {layer.url ? (
+            <iframe
+              className="overlay-custom-layer-iframe"
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              sandbox="allow-same-origin allow-scripts"
+              src={layer.url}
+              title={layer.title}
+            />
+          ) : (
+            <div className="overlay-custom-layer-placeholder">
+              <strong>{layer.name}</strong>
+              <span>Embed URL required</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return null;
+  }
+
   return (
     <section
       className={frameClassName}
@@ -126,6 +203,7 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
       }
     >
       {props.payload.scene.layers.filter((layer) => layer.enabled).map((layer) => renderLayer(layer.kind))}
+      {props.payload.scene.customLayers.map(renderCustomLayer)}
     </section>
   );
 }

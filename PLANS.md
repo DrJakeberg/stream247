@@ -15,7 +15,7 @@ This plan closes those gaps while preserving Stream247's existing self-hosted ar
   - local library uploads
   - pools, weekly schedule blocks, show profiles, templates, duplication, and day cloning
   - SSE-driven broadcast control room and live public overlay/channel surfaces
-  - overlay draft/publish, scene presets, layer order, and layer visibility
+  - overlay draft/publish, scene presets, layer order/visibility, positioned layers, and built-in typography presets
   - manual override, fallback, skip, reconnect, insert, and backup RTMP failover
   - pool-scoped replace-mode audio lanes and safe-boundary cuepoint inserts
   - incidents, drift, alerts, readiness, and encrypted managed secrets
@@ -63,7 +63,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M8 Audio Lanes, Cuepoints, Advanced Inserts | Parity + Architecture | Later | Complete | Add separate audio/video lanes, timed inserts, and richer transition logic | Secondary audio and timed inserts work without destabilizing the queue engine | `apps/worker`, `packages/core`, `packages/db`, `apps/web` | very high | preserve default program-audio and existing insert flows as the safe fallback |
 | M9 Security And Release Hardening | Ops | Now | Complete | Add browser E2E, continuity smoke, stronger soak gates, and 2FA | Admin/UI/runtime regressions are caught before release and local auth is stronger | tests, CI, `apps/web`, docs | medium | additive checks, 2FA optional at first |
 | M10 Truth And Safety Fixes | Reliability + Ops | Now | Complete | Remove stale-write admin races, fix update-center version resolution, and bring docs back in sync with the actual product state | Asset curation and source admin flows only update intended fields, update center resolves the repo version safely in container and local layouts, regression tests exist for each bug class, and docs stop implying full parity | `apps/web/app/api/assets/*`, `apps/web/app/api/sources/*`, `apps/web/app/api/library/uploads/route.ts`, `apps/web/lib/server/update-center.ts`, `packages/db`, tests, docs | medium | revert to previous route handlers if needed; DB changes remain additive targeted writers |
-| M11 Scene Studio V2 | Parity + UX | Next | Planned | Deepen Scene Studio beyond presets and fixed layer types | Richer positioned image/logo/embed/widget/text layers, safer font handling, and conservative public parity claims | `packages/core`, `packages/db`, `apps/web`, `apps/worker` | high | preserve current Scene Studio v1 payload and text/image fallback path |
+| M11 Scene Studio V2 | Parity + UX | Next | Complete | Deepen Scene Studio beyond presets and fixed layer types | Richer positioned image/logo/embed/widget/text layers, safer font handling, and conservative public parity claims | `packages/core`, `packages/db`, `apps/web`, `apps/worker` | high | preserve current Scene Studio v1 payload and text/image fallback path |
 | M12 Continuity And Recovery V2 | Architecture + Ops | Next | Planned | Strengthen output recovery and reduce restart-heavy normal transitions | Continuity and multi-output recovery improve measurably without regressing queue or live-bridge visibility | `apps/worker`, `packages/db`, `apps/web/lib/server`, tests | very high | keep current queue engine and output routing available as the safe fallback |
 | M13 Library And Blueprints V2 | Parity + UX | Next | Planned | Deepen library operations and make blueprints safer to reuse across installs | Thumbnails, grouped browsing, curated sets, and selective blueprint import/remap guidance are available without overpromising media portability | `apps/web`, `apps/worker`, `packages/db`, docs | medium | keep current folder/tag curation and replace-style blueprint import path intact |
 | M14 Operator UX V2 | UX | Next | Planned | Resolve admin IA drift and make the control-room model more consistent | Broadcast, Dashboard, Scene Studio, Sources/Library, and Settings have clearer roles and more consistent naming | `apps/web`, docs, tests | medium | keep current routes and navigation labels working until the new IA is proven |
@@ -90,7 +90,7 @@ Phase 2 starts with `M10 Truth And Safety Fixes` and then continues into deeper 
 - `Complete` M7 Live Bridge
 - `Complete` M8 Audio Lanes, Cuepoints, Advanced Inserts
 - `Now` M10 Truth And Safety Fixes
-- `Next` M11 Scene Studio V2
+- `Complete` M11 Scene Studio V2
 - `Next` M13 Library And Blueprints V2
 - `Not Planned` visual cloning of Upstream UI or branding
 
@@ -113,7 +113,7 @@ Phase 2 starts with `M10 Truth And Safety Fixes` and then continues into deeper 
 - `Complete` expand `Library` with folders, tags, bulk curation, and safer reusable catalog organization
 - `Complete` add `Channel Blueprints` as the original import/export system for full stream setups
 - `Next` resolve IA drift between `Broadcast`, `Dashboard`, `Scene Studio`, `Sources`, and `Settings`
-- `Next` deepen Scene Studio beyond fixed preset composition while keeping original naming and UI
+- `Complete` deepen Scene Studio beyond fixed preset composition while keeping original naming and UI
 - `Later` add tablet-friendly layout refinements and richer operator shortcuts
 - `Not Planned` copying Upstream labels like “Stream Designer” or “Live Studio”
 
@@ -257,3 +257,11 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - Fixed update-center version discovery so `/settings` resolves the real repo package version from both repo-root and containerized working-directory layouts.
 - Updated docs to stop implying full parity or a finished roadmap where the code is still partial.
 - Validation completed: `pnpm validate` and `pnpm test:fresh-db` passed.
+
+### 2026-04-06 — M11 Scene Studio V2
+
+- Extended the canonical Scene Studio contract with built-in typography presets plus positioned text, logo, image, website-embed, and widget-embed layers that stay shared across browser and on-air consumers.
+- Added additive overlay persistence for typography and positioned layers, updated blueprint/state wiring, and kept the publish/live draft workflow intact.
+- Expanded the admin studio, public overlay renderer, and browser smoke so the new typography/layer controls are operator-visible and publish-safe.
+- Updated conservative docs to stop claiming these richer layer types are still fully missing while keeping third-party embed limitations explicit.
+- Validation completed: `pnpm validate`, `pnpm test:fresh-db`, `docker build -f docker/web.Dockerfile -t stream247-web:test .`, `docker build -f docker/worker.Dockerfile -t stream247-worker:test .`, `pnpm test:fresh-compose`, and `pnpm test:e2e:smoke` passed.

@@ -1,14 +1,20 @@
 "use client";
 
 import {
+  OVERLAY_SCENE_CUSTOM_LAYER_KINDS,
   OVERLAY_SCENE_LAYERS,
   OVERLAY_PANEL_ANCHORS,
   OVERLAY_SCENE_PRESETS,
   OVERLAY_SURFACE_STYLES,
+  OVERLAY_TYPOGRAPHY_PRESETS,
   OVERLAY_TITLE_SCALES,
   buildOverlayScenePayload,
   resolveOverlayHeadlineForQueueKind,
   type OverlayQueueKind,
+  type OverlaySceneCustomMediaFit,
+  type OverlaySceneCustomTextAlign,
+  type OverlaySceneCustomTextTone,
+  type OverlaySceneCustomLayerKind,
   type OverlaySceneLayerKind
 } from "@stream247/core";
 import { useRouter } from "next/navigation";
@@ -25,6 +31,87 @@ type OverlayPreviewSeed = {
   nextTimeLabel: string;
   queueTitles: string[];
 };
+
+type OverlayDraftCustomLayer = OverlaySettingsRecord["customLayers"][number];
+
+function createSceneCustomLayerId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `layer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): OverlayDraftCustomLayer {
+  const id = createSceneCustomLayerId();
+
+  if (kind === "text") {
+    return {
+      id,
+      kind,
+      name: "Text Layer",
+      enabled: true,
+      xPercent: 4,
+      yPercent: 10,
+      widthPercent: 34,
+      heightPercent: 16,
+      opacityPercent: 100,
+      text: "Fresh scene copy",
+      secondaryText: "",
+      textTone: "headline",
+      textAlign: "left",
+      useAccent: false
+    };
+  }
+
+  if (kind === "logo") {
+    return {
+      id,
+      kind,
+      name: "Logo Layer",
+      enabled: true,
+      xPercent: 76,
+      yPercent: 8,
+      widthPercent: 16,
+      heightPercent: 12,
+      opacityPercent: 100,
+      url: "",
+      altText: "",
+      fit: "contain"
+    };
+  }
+
+  if (kind === "image") {
+    return {
+      id,
+      kind,
+      name: "Image Layer",
+      enabled: true,
+      xPercent: 62,
+      yPercent: 10,
+      widthPercent: 28,
+      heightPercent: 24,
+      opacityPercent: 100,
+      url: "",
+      altText: "",
+      fit: "cover"
+    };
+  }
+
+  return {
+    id,
+    kind,
+    name: kind === "widget" ? "Widget Layer" : "Embed Layer",
+    enabled: true,
+    xPercent: 56,
+    yPercent: 8,
+    widthPercent: 38,
+    heightPercent: 28,
+    opacityPercent: 100,
+    url: "",
+    title: kind === "widget" ? "Widget frame" : "Embed frame"
+  };
+}
 
 function overlaySignature(overlay: OverlaySettingsRecord): string {
   return JSON.stringify({
@@ -44,6 +131,7 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
     surfaceStyle: overlay.surfaceStyle,
     panelAnchor: overlay.panelAnchor,
     titleScale: overlay.titleScale,
+    typographyPreset: overlay.typographyPreset,
     showClock: overlay.showClock,
     showNextItem: overlay.showNextItem,
     showScheduleTeaser: overlay.showScheduleTeaser,
@@ -53,6 +141,7 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
     queuePreviewCount: overlay.queuePreviewCount,
     layerOrder: overlay.layerOrder,
     disabledLayers: overlay.disabledLayers,
+    customLayers: overlay.customLayers,
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText
   });
@@ -84,6 +173,48 @@ export function OverlaySettingsForm(props: {
       ...current,
       [key]: value
     }));
+  };
+
+  const addCustomLayer = (kind: OverlaySceneCustomLayerKind) => {
+    setDraft((current) => ({
+      ...current,
+      customLayers: [...current.customLayers, createDefaultCustomLayer(kind)]
+    }));
+  };
+
+  const updateCustomLayer = (id: string, updater: (layer: OverlayDraftCustomLayer) => OverlayDraftCustomLayer) => {
+    setDraft((current) => ({
+      ...current,
+      customLayers: current.customLayers.map((layer) => (layer.id === id ? updater(layer) : layer))
+    }));
+  };
+
+  const removeCustomLayer = (id: string) => {
+    setDraft((current) => ({
+      ...current,
+      customLayers: current.customLayers.filter((layer) => layer.id !== id)
+    }));
+  };
+
+  const moveCustomLayer = (id: string, direction: -1 | 1) => {
+    setDraft((current) => {
+      const nextLayers = [...current.customLayers];
+      const index = nextLayers.findIndex((layer) => layer.id === id);
+      if (index === -1) {
+        return current;
+      }
+
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= nextLayers.length) {
+        return current;
+      }
+
+      [nextLayers[index], nextLayers[targetIndex]] = [nextLayers[targetIndex], nextLayers[index]];
+      return {
+        ...current,
+        customLayers: nextLayers
+      };
+    });
   };
 
   const moveLayer = (kind: OverlaySceneLayerKind, direction: -1 | 1) => {
@@ -442,6 +573,20 @@ export function OverlaySettingsForm(props: {
               </select>
               <span className="subtle">{OVERLAY_TITLE_SCALES.find((scale) => scale.id === draft.titleScale)?.description}</span>
             </label>
+            <label>
+              <span className="label">Typography preset</span>
+              <select
+                onChange={(event) => setDraftField("typographyPreset", event.target.value as OverlaySettingsRecord["typographyPreset"])}
+                value={draft.typographyPreset}
+              >
+                {OVERLAY_TYPOGRAPHY_PRESETS.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+              <span className="subtle">{OVERLAY_TYPOGRAPHY_PRESETS.find((preset) => preset.id === draft.typographyPreset)?.description}</span>
+            </label>
           </div>
 
           <div className="list">
@@ -481,6 +626,294 @@ export function OverlaySettingsForm(props: {
 
           <div className="list">
             <div className="item">
+              <span className="label">Positioned layers</span>
+              <div className="subtle">
+                Add custom text, logo, image, website, or widget layers on top of the preset layout. Stream247 keeps these layers on built-in font stacks
+                and only accepts local or http/https URLs for image and embed sources.
+              </div>
+              <div className="inline-form" style={{ marginTop: 12 }}>
+                {OVERLAY_SCENE_CUSTOM_LAYER_KINDS.map((layerKind) => (
+                  <button
+                    className="button secondary"
+                    disabled={isPending}
+                    key={layerKind.id}
+                    onClick={() => addCustomLayer(layerKind.id)}
+                    type="button"
+                  >
+                    Add {layerKind.label}
+                  </button>
+                ))}
+              </div>
+              <div className="list" style={{ marginTop: 12 }}>
+                {draft.customLayers.length > 0 ? (
+                  draft.customLayers.map((layer, index) => (
+                    <div className="item" key={layer.id}>
+                      <div className="inline-form" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div>
+                          <strong>{layer.name}</strong>
+                          <div className="subtle">
+                            {OVERLAY_SCENE_CUSTOM_LAYER_KINDS.find((entry) => entry.id === layer.kind)?.description || "Custom scene layer"}
+                          </div>
+                        </div>
+                        <div className="inline-form">
+                          <button className="button secondary" onClick={() => moveCustomLayer(layer.id, -1)} type="button">
+                            Move up
+                          </button>
+                          <button className="button secondary" onClick={() => moveCustomLayer(layer.id, 1)} type="button">
+                            Move down
+                          </button>
+                          <button className="button secondary" onClick={() => removeCustomLayer(layer.id)} type="button">
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="form-grid" style={{ marginTop: 12 }}>
+                        <label>
+                          <span className="label">Layer name</span>
+                          <input onChange={(event) => updateCustomLayer(layer.id, (current) => ({ ...current, name: event.target.value }))} value={layer.name} />
+                        </label>
+                        <label className="toggle-row">
+                          <input
+                            checked={layer.enabled}
+                            onChange={(event) => updateCustomLayer(layer.id, (current) => ({ ...current, enabled: event.target.checked }))}
+                            type="checkbox"
+                          />
+                          <span>Layer enabled</span>
+                        </label>
+                        <label>
+                          <span className="label">Opacity (%)</span>
+                          <input
+                            max={100}
+                            min={5}
+                            onChange={(event) =>
+                              updateCustomLayer(layer.id, (current) => ({
+                                ...current,
+                                opacityPercent: Number(event.target.value) || current.opacityPercent
+                              }))
+                            }
+                            type="number"
+                            value={layer.opacityPercent}
+                          />
+                        </label>
+                        <label>
+                          <span className="label">X position (%)</span>
+                          <input
+                            max={90}
+                            min={0}
+                            onChange={(event) =>
+                              updateCustomLayer(layer.id, (current) => ({
+                                ...current,
+                                xPercent: Number(event.target.value) || 0
+                              }))
+                            }
+                            type="number"
+                            value={layer.xPercent}
+                          />
+                        </label>
+                        <label>
+                          <span className="label">Y position (%)</span>
+                          <input
+                            max={90}
+                            min={0}
+                            onChange={(event) =>
+                              updateCustomLayer(layer.id, (current) => ({
+                                ...current,
+                                yPercent: Number(event.target.value) || 0
+                              }))
+                            }
+                            type="number"
+                            value={layer.yPercent}
+                          />
+                        </label>
+                        <label>
+                          <span className="label">Width (%)</span>
+                          <input
+                            max={100}
+                            min={10}
+                            onChange={(event) =>
+                              updateCustomLayer(layer.id, (current) => ({
+                                ...current,
+                                widthPercent: Number(event.target.value) || current.widthPercent
+                              }))
+                            }
+                            type="number"
+                            value={layer.widthPercent}
+                          />
+                        </label>
+                        <label>
+                          <span className="label">Height (%)</span>
+                          <input
+                            max={100}
+                            min={8}
+                            onChange={(event) =>
+                              updateCustomLayer(layer.id, (current) => ({
+                                ...current,
+                                heightPercent: Number(event.target.value) || current.heightPercent
+                              }))
+                            }
+                            type="number"
+                            value={layer.heightPercent}
+                          />
+                        </label>
+                        <span className="subtle">Position {index + 1}</span>
+                      </div>
+
+                      {layer.kind === "text" ? (
+                        <div className="form-grid" style={{ marginTop: 12 }}>
+                          <label>
+                            <span className="label">Text content</span>
+                            <input
+                              onChange={(event) =>
+                                updateCustomLayer(layer.id, (current) =>
+                                  current.kind === "text" ? { ...current, text: event.target.value } : current
+                                )
+                              }
+                              value={layer.text}
+                            />
+                          </label>
+                          <label>
+                            <span className="label">Secondary text</span>
+                            <input
+                              onChange={(event) =>
+                                updateCustomLayer(layer.id, (current) =>
+                                  current.kind === "text" ? { ...current, secondaryText: event.target.value } : current
+                                )
+                              }
+                              value={layer.secondaryText}
+                            />
+                          </label>
+                          <label>
+                            <span className="label">Text tone</span>
+                            <select
+                              onChange={(event) =>
+                                updateCustomLayer(layer.id, (current) =>
+                                  current.kind === "text"
+                                    ? { ...current, textTone: event.target.value as OverlaySceneCustomTextTone }
+                                    : current
+                                )
+                              }
+                              value={layer.textTone}
+                            >
+                              <option value="headline">Headline</option>
+                              <option value="body">Body</option>
+                              <option value="caption">Caption</option>
+                            </select>
+                          </label>
+                          <label>
+                            <span className="label">Text align</span>
+                            <select
+                              onChange={(event) =>
+                                updateCustomLayer(layer.id, (current) =>
+                                  current.kind === "text"
+                                    ? { ...current, textAlign: event.target.value as OverlaySceneCustomTextAlign }
+                                    : current
+                                )
+                              }
+                              value={layer.textAlign}
+                            >
+                              <option value="left">Left</option>
+                              <option value="center">Center</option>
+                              <option value="right">Right</option>
+                            </select>
+                          </label>
+                          <label className="toggle-row">
+                            <input
+                              checked={layer.useAccent}
+                              onChange={(event) =>
+                                updateCustomLayer(layer.id, (current) =>
+                                  current.kind === "text" ? { ...current, useAccent: event.target.checked } : current
+                                )
+                              }
+                              type="checkbox"
+                            />
+                            <span>Use accent color</span>
+                          </label>
+                        </div>
+                      ) : null}
+
+                      {layer.kind === "logo" || layer.kind === "image" ? (
+                        <div className="form-grid" style={{ marginTop: 12 }}>
+                          <label>
+                            <span className="label">Asset URL</span>
+                            <input
+                              onChange={(event) =>
+                                updateCustomLayer(layer.id, (current) =>
+                                  current.kind === "logo" || current.kind === "image" ? { ...current, url: event.target.value } : current
+                                )
+                              }
+                              placeholder="https://example.com/asset.png or /logo.svg"
+                              value={layer.url}
+                            />
+                          </label>
+                          <label>
+                            <span className="label">Alt text</span>
+                            <input
+                              onChange={(event) =>
+                                updateCustomLayer(layer.id, (current) =>
+                                  current.kind === "logo" || current.kind === "image" ? { ...current, altText: event.target.value } : current
+                                )
+                              }
+                              value={layer.altText}
+                            />
+                          </label>
+                          <label>
+                            <span className="label">Fit</span>
+                            <select
+                              onChange={(event) =>
+                                updateCustomLayer(layer.id, (current) =>
+                                  current.kind === "logo" || current.kind === "image"
+                                    ? { ...current, fit: event.target.value as OverlaySceneCustomMediaFit }
+                                    : current
+                                )
+                              }
+                              value={layer.fit}
+                            >
+                              <option value="contain">Contain</option>
+                              <option value="cover">Cover</option>
+                            </select>
+                          </label>
+                        </div>
+                      ) : null}
+
+                      {layer.kind === "embed" || layer.kind === "widget" ? (
+                        <div className="form-grid" style={{ marginTop: 12 }}>
+                          <label>
+                            <span className="label">Embed URL</span>
+                            <input
+                              onChange={(event) =>
+                                updateCustomLayer(layer.id, (current) =>
+                                  current.kind === "embed" || current.kind === "widget" ? { ...current, url: event.target.value } : current
+                                )
+                              }
+                              placeholder="https://example.com/embed"
+                              value={layer.url}
+                            />
+                          </label>
+                          <label>
+                            <span className="label">Frame title</span>
+                            <input
+                              onChange={(event) =>
+                                updateCustomLayer(layer.id, (current) =>
+                                  current.kind === "embed" || current.kind === "widget" ? { ...current, title: event.target.value } : current
+                                )
+                              }
+                              value={layer.title}
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))
+                ) : (
+                  <div className="subtle">No positioned layers yet. Add one when you need custom text, logos, stills, or embed-safe widgets.</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="list">
+            <div className="item">
               <span className="label">Scene preset library</span>
               <div className="subtle">Save the current draft as a reusable scene preset, then re-apply it later without rebuilding every control by hand.</div>
               <div className="form-grid" style={{ marginTop: 12 }}>
@@ -511,6 +944,10 @@ export function OverlaySettingsForm(props: {
                       <div className="subtle">
                         Asset {preset.overlay.scenePreset} · Insert {preset.overlay.insertScenePreset} · Standby {preset.overlay.standbyScenePreset} · Reconnect{" "}
                         {preset.overlay.reconnectScenePreset}
+                      </div>
+                      <div className="subtle">
+                        Typography {preset.overlay.typographyPreset} · {preset.overlay.customLayers.length} positioned layer
+                        {preset.overlay.customLayers.length === 1 ? "" : "s"}
                       </div>
                       <div className="subtle">Updated {preset.updatedAt || "unknown"}</div>
                       <div className="inline-form" style={{ marginTop: 8 }}>
@@ -595,6 +1032,10 @@ export function OverlaySettingsForm(props: {
             Reconnect {props.liveOverlay.reconnectHeadline}
           </div>
           <div className="subtle">
+            Typography {props.liveOverlay.typographyPreset} · {props.liveOverlay.customLayers.length} positioned layer
+            {props.liveOverlay.customLayers.length === 1 ? "" : "s"}
+          </div>
+          <div className="subtle">
             Asset {props.liveOverlay.scenePreset} · Insert {props.liveOverlay.insertScenePreset} · Standby {props.liveOverlay.standbyScenePreset} · Reconnect{" "}
             {props.liveOverlay.reconnectScenePreset}
           </div>
@@ -605,6 +1046,9 @@ export function OverlaySettingsForm(props: {
           <strong>{draft.scenePreset}</strong>
           <div className="subtle">
             Asset headline {draft.headline} · Insert {draft.insertHeadline} · Standby {draft.standbyHeadline} · Reconnect {draft.reconnectHeadline}
+          </div>
+          <div className="subtle">
+            Typography {draft.typographyPreset} · {draft.customLayers.length} positioned layer{draft.customLayers.length === 1 ? "" : "s"}
           </div>
           <div className="subtle">
             Asset {draft.scenePreset} · Insert {draft.insertScenePreset} · Standby {draft.standbyScenePreset} · Reconnect {draft.reconnectScenePreset}

@@ -2,9 +2,11 @@ import {
   normalizeAudioLaneVolumePercent,
   normalizeCuepointOffsetsSeconds,
   normalizeOverlayPanelAnchor,
+  normalizeOverlaySceneCustomLayers,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
+  normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
   type ModerationConfig
 } from "@stream247/core";
@@ -172,6 +174,7 @@ function normalizeOverlaySettings(value: unknown, fallback: OverlaySettingsRecor
     surfaceStyle: normalizeOverlaySurfaceStyle(candidate.surfaceStyle ?? fallback.surfaceStyle),
     panelAnchor: normalizeOverlayPanelAnchor(candidate.panelAnchor ?? fallback.panelAnchor),
     titleScale: normalizeOverlayTitleScale(candidate.titleScale ?? fallback.titleScale),
+    typographyPreset: normalizeOverlayTypographyPreset(candidate.typographyPreset ?? fallback.typographyPreset),
     showClock: typeof candidate.showClock === "boolean" ? candidate.showClock : fallback.showClock,
     showNextItem: typeof candidate.showNextItem === "boolean" ? candidate.showNextItem : fallback.showNextItem,
     showScheduleTeaser:
@@ -189,6 +192,7 @@ function normalizeOverlaySettings(value: unknown, fallback: OverlaySettingsRecor
     disabledLayers: normalizeOverlaySceneLayerOrder(
       Array.isArray(candidate.disabledLayers) ? candidate.disabledLayers : fallback.disabledLayers
     ),
+    customLayers: normalizeOverlaySceneCustomLayers(Array.isArray(candidate.customLayers) ? candidate.customLayers : fallback.customLayers),
     emergencyBanner: asString(candidate.emergencyBanner),
     tickerText: asString(candidate.tickerText),
     updatedAt: asString(candidate.updatedAt) || now

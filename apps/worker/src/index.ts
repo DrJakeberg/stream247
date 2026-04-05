@@ -597,6 +597,7 @@ function buildWorkerScenePayload(args: {
       surfaceStyle: args.state.overlay.surfaceStyle,
       panelAnchor: args.state.overlay.panelAnchor,
       titleScale: args.state.overlay.titleScale,
+      typographyPreset: args.state.overlay.typographyPreset,
       showClock: args.state.overlay.showClock,
       showNextItem: args.state.overlay.showNextItem,
       showScheduleTeaser: args.state.overlay.showScheduleTeaser,
@@ -607,7 +608,8 @@ function buildWorkerScenePayload(args: {
       emergencyBanner: args.state.overlay.emergencyBanner,
       tickerText: args.state.overlay.tickerText,
       layerOrder: args.state.overlay.layerOrder,
-      disabledLayers: args.state.overlay.disabledLayers
+      disabledLayers: args.state.overlay.disabledLayers,
+      customLayers: args.state.overlay.customLayers
     },
     queueKind: args.queueKind || "asset",
     target: "on-air-text",
