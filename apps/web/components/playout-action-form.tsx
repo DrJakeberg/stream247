@@ -11,6 +11,10 @@ type PlayoutAssetOption = {
 export function PlayoutActionForm(props: {
   assets: PlayoutAssetOption[];
   currentAssetId?: string;
+  previousAssetId?: string;
+  previousAssetTitle?: string;
+  nextAssetId?: string;
+  nextAssetTitle?: string;
   overrideMode: "schedule" | "asset" | "fallback";
 }) {
   const [error, setError] = useState("");
@@ -145,6 +149,36 @@ export function PlayoutActionForm(props: {
           onClick={() =>
             startTransition(() =>
               void runAction({
+                type: "play_now",
+                assetId: selectedAssetId
+              })
+            )
+          }
+          type="button"
+        >
+          Play now
+        </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending || !selectedAssetId}
+          onClick={() =>
+            startTransition(() =>
+              void runAction({
+                type: "move_next",
+                assetId: selectedAssetId
+              })
+            )
+          }
+          type="button"
+        >
+          Move next
+        </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending || !selectedAssetId}
+          onClick={() =>
+            startTransition(() =>
+              void runAction({
                 type: "trigger_insert",
                 assetId: selectedAssetId
               })
@@ -154,8 +188,26 @@ export function PlayoutActionForm(props: {
         >
           Play insert
         </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending || !props.nextAssetId}
+          onClick={() => startTransition(() => void runAction({ type: "remove_next" }))}
+          type="button"
+        >
+          Remove next
+        </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending || !props.previousAssetId}
+          onClick={() => startTransition(() => void runAction({ type: "replay_previous" }))}
+          type="button"
+        >
+          Replay previous
+        </button>
       </div>
 
+      {props.nextAssetTitle ? <p className="subtle">Next queued asset: {props.nextAssetTitle}</p> : null}
+      {props.previousAssetTitle ? <p className="subtle">Previous completed asset: {props.previousAssetTitle}</p> : null}
       {error ? <p className="danger">{error}</p> : null}
     </div>
   );

@@ -1,11 +1,13 @@
 import { promises as fs } from "node:fs";
-import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import nodemailer from "nodemailer";
 import path from "node:path";
-import type { Readable } from "node:stream";
+import type { Writable } from "node:stream";
 import {
   addDaysToDateString,
-  buildOverlayTextLines,
+  buildOverlayScenePayload,
+  buildOverlayTextLinesFromScenePayload,
   buildScheduleOccurrences,
   buildSchedulePreview,
   describePresenceStatus,
@@ -15,7 +17,6 @@ import {
   isLikelyTwitchVodUrl,
   isLikelyYouTubeChannelUrl,
   isLikelyYouTubePlaylistUrl,
-  resolveOverlayHeadlineForQueueKind,
   resolveOverlayScenePresetForQueueKind,
   toUtcIsoForLocalDateTime
 } from "@stream247/core";
@@ -29,7 +30,6 @@ import {
   updateDestinationRecord,
   updatePlayoutRuntime,
   updatePoolCursor,
-  updateAppState,
   updateTwitchConnectionRecord,
   upsertSources,
   upsertIncident,
@@ -37,9 +37,21 @@ import {
   type AssetRecord,
   type StreamDestinationRecord
 } from "@stream247/db";
+import {
+  ON_AIR_SCENE_PIPE_FD,
+  buildChromiumSceneCaptureArgs,
+  getChromiumBinaryCandidates,
+  getSceneRendererIntervalMs,
+  getSceneRendererOverlayUrl,
+  getSceneRendererViewport,
+  type OnAirOverlayMode
+} from "./on-air-scene.js";
+import { incrementQueueVersion, prioritizeManualNextAsset } from "./broadcast-queue.js";
+import { buildLocalLibraryAssetId, buildLocalLibraryFolderPath } from "./local-library.js";
+import { logRuntimeEvent } from "./runtime-log.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
-let playoutProcess: ChildProcessByStdio<null, Readable, Readable> | null = null;
+let playoutProcess: ChildProcess | null = null;
 let playoutAssetId = "";
 let playoutDestinationId = "";
 let playoutTargetKind: "asset" | "insert" | "standby" | "reconnect" | "" = "";
@@ -64,6 +76,8 @@ type QueueProbeCacheEntry = {
 };
 
 const queueProbeCache = new Map<string, QueueProbeCacheEntry>();
+let sceneRendererAbortController: AbortController | null = null;
+const renderedSceneFramePath = "/tmp/stream247-scene.png";
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -260,6 +274,12 @@ async function markDestinationFailure(destinationId: string, errorMessage: strin
       destination.role === "backup" ? "Backup" : "Primary"
     } destination failed recently. Worker will prefer the next healthy output until the hold expires.`
   });
+  logRuntimeEvent("destination.failure", {
+    destinationId,
+    role: destination.role,
+    failureCount: destination.failureCount + 1,
+    error: nextError
+  });
 
   await upsertIncident({
     scope: "playout",
@@ -296,18 +316,25 @@ function getMediaOverlayFilter(textPath: string): string {
   return `drawtext=fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:textfile=${textPath}:reload=1:fontcolor=white:fontsize=20:box=1:boxcolor=0x00000099:boxborderw=10:x=32:y=h-th-32:line_spacing=8`;
 }
 
-function getFfmpegCommand(input: string, output: string, overlayEnabled: boolean): string[] {
+function getFfmpegCommand(input: string, output: string, overlayMode: OnAirOverlayMode): string[] {
   const command = [
     "-hide_banner",
     "-loglevel",
     "warning",
+    "-y",
     "-re",
     "-i",
-    input,
+    input
   ];
 
-  if (overlayEnabled) {
+  if (overlayMode === "scene") {
+    command.push("-f", "image2pipe", "-framerate", "1", "-vcodec", "png", "-i", `pipe:${ON_AIR_SCENE_PIPE_FD}`);
+    command.push("-filter_complex", "[0:v][1:v]overlay=0:0:format=auto[vout]", "-map", "[vout]", "-map", "0:a?");
+  } else if (overlayMode === "text") {
     command.push("-vf", getMediaOverlayFilter(onAirOverlayPath));
+    command.push("-map", "0:v:0", "-map", "0:a?");
+  } else {
+    command.push("-map", "0:v:0", "-map", "0:a?");
   }
 
   command.push(
@@ -337,11 +364,12 @@ function getFfmpegCommand(input: string, output: string, overlayEnabled: boolean
   return command;
 }
 
-function getStandbyFfmpegCommand(output: string): string[] {
-  return [
+function getStandbyFfmpegCommand(output: string, overlayMode: OnAirOverlayMode): string[] {
+  const command = [
     "-hide_banner",
     "-loglevel",
     "warning",
+    "-y",
     "-re",
     "-f",
     "lavfi",
@@ -351,8 +379,23 @@ function getStandbyFfmpegCommand(output: string): string[] {
     "lavfi",
     "-i",
     "anullsrc=channel_layout=stereo:sample_rate=44100",
-    "-vf",
-    `drawtext=fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:textfile=${standbySlatePath}:reload=1:fontcolor=white:fontsize=34:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=12`,
+  ];
+
+  if (overlayMode === "scene") {
+    command.push("-f", "image2pipe", "-framerate", "1", "-vcodec", "png", "-i", `pipe:${ON_AIR_SCENE_PIPE_FD}`);
+    command.push("-filter_complex", "[0:v][2:v]overlay=0:0:format=auto[vout]", "-map", "[vout]", "-map", "1:a");
+  } else {
+    command.push(
+      "-vf",
+      `drawtext=fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:textfile=${standbySlatePath}:reload=1:fontcolor=white:fontsize=34:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=12`,
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a"
+    );
+  }
+
+  command.push(
     "-c:v",
     "libx264",
     "-preset",
@@ -375,7 +418,168 @@ function getStandbyFfmpegCommand(output: string): string[] {
     "-f",
     "flv",
     output
-  ];
+  );
+
+  return command;
+}
+
+async function resolveChromiumBinary(): Promise<string> {
+  for (const candidate of getChromiumBinaryCandidates(process.env)) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+
+  throw new Error("No Chromium binary is available for on-air scene rendering.");
+}
+
+function shouldUseSceneRenderer(): boolean {
+  return (process.env.SCENE_RENDERER_ENABLED || "1") !== "0";
+}
+
+function isWritablePipe(value: unknown): value is Writable {
+  return Boolean(value) && typeof (value as Writable).write === "function";
+}
+
+async function captureRenderedSceneFrame(): Promise<Buffer> {
+  const chromiumBinary = await resolveChromiumBinary();
+  const viewport = getSceneRendererViewport(process.env);
+  await execFileText(
+    chromiumBinary,
+    buildChromiumSceneCaptureArgs({
+      url: getSceneRendererOverlayUrl(process.env),
+      outputPath: renderedSceneFramePath,
+      viewport
+    })
+  );
+  return fs.readFile(renderedSceneFramePath);
+}
+
+async function prepareSceneRendererFrame(): Promise<Buffer | null> {
+  if (!shouldUseSceneRenderer()) {
+    return null;
+  }
+
+  try {
+    const frame = await captureRenderedSceneFrame();
+    await resolveIncident("playout.scene-render.failed", "On-air scene renderer is healthy.");
+    return frame;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown on-air scene renderer error.";
+    logRuntimeEvent("scene.render.fallback", { error: message });
+    await upsertIncident({
+      scope: "playout",
+      severity: "warning",
+      title: "On-air scene renderer fell back to text mode",
+      message,
+      fingerprint: "playout.scene-render.failed"
+    });
+    return null;
+  }
+}
+
+function stopSceneRendererLoop(): void {
+  sceneRendererAbortController?.abort();
+  sceneRendererAbortController = null;
+}
+
+function startSceneRendererLoop(targetPipe: Writable, initialFrame: Buffer): void {
+  stopSceneRendererLoop();
+  const controller = new AbortController();
+  const intervalMs = getSceneRendererIntervalMs(process.env);
+  sceneRendererAbortController = controller;
+
+  void (async () => {
+    let currentFrame = initialFrame;
+
+    while (!controller.signal.aborted && !targetPipe.destroyed) {
+      try {
+        if (!targetPipe.write(currentFrame)) {
+          await once(targetPipe, "drain");
+        }
+      } catch {
+        break;
+      }
+
+      try {
+        currentFrame = await captureRenderedSceneFrame();
+        await resolveIncident("playout.scene-render.failed", "On-air scene renderer is healthy.");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown on-air scene renderer error.";
+        await upsertIncident({
+          scope: "playout",
+          severity: "warning",
+          title: "On-air scene renderer update failed",
+          message,
+          fingerprint: "playout.scene-render.failed"
+        });
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+
+    if (!targetPipe.destroyed) {
+      targetPipe.end();
+    }
+
+    if (sceneRendererAbortController === controller) {
+      sceneRendererAbortController = null;
+    }
+  })();
+}
+
+function buildWorkerScenePayload(args: {
+  state: AppState;
+  queueKind: AppState["playout"]["queueItems"][number]["kind"] | "";
+  currentTitle: string;
+  nextTitle: string;
+  nextTimeLabel?: string;
+  currentCategory?: string;
+  currentSourceName?: string;
+  queueTitles?: string[];
+}){
+  return buildOverlayScenePayload({
+    overlay: {
+      channelName: args.state.overlay.channelName,
+      replayLabel: args.state.overlay.replayLabel,
+      brandBadge: args.state.overlay.brandBadge,
+      accentColor: args.state.overlay.accentColor,
+      scenePreset: args.state.overlay.scenePreset,
+      insertScenePreset: args.state.overlay.insertScenePreset,
+      standbyScenePreset: args.state.overlay.standbyScenePreset,
+      reconnectScenePreset: args.state.overlay.reconnectScenePreset,
+      headline: args.state.overlay.headline,
+      insertHeadline: args.state.overlay.insertHeadline,
+      standbyHeadline: args.state.overlay.standbyHeadline,
+      reconnectHeadline: args.state.overlay.reconnectHeadline,
+      surfaceStyle: args.state.overlay.surfaceStyle,
+      panelAnchor: args.state.overlay.panelAnchor,
+      titleScale: args.state.overlay.titleScale,
+      showClock: args.state.overlay.showClock,
+      showNextItem: args.state.overlay.showNextItem,
+      showScheduleTeaser: args.state.overlay.showScheduleTeaser,
+      showCurrentCategory: args.state.overlay.showCurrentCategory,
+      showSourceLabel: args.state.overlay.showSourceLabel,
+      showQueuePreview: args.state.overlay.showQueuePreview,
+      queuePreviewCount: args.state.overlay.queuePreviewCount,
+      emergencyBanner: args.state.overlay.emergencyBanner,
+      tickerText: args.state.overlay.tickerText,
+      layerOrder: args.state.overlay.layerOrder,
+      disabledLayers: args.state.overlay.disabledLayers
+    },
+    queueKind: args.queueKind || "asset",
+    target: "on-air-text",
+    currentTitle: args.currentTitle,
+    currentCategory: args.currentCategory,
+    currentSourceName: args.currentSourceName,
+    nextTitle: args.nextTitle,
+    nextTimeLabel: args.nextTimeLabel,
+    queueTitles: args.queueTitles,
+    timeZone: process.env.CHANNEL_TIMEZONE || "UTC"
+  });
 }
 
 async function writeStandbySlate(
@@ -391,32 +595,17 @@ async function writeStandbySlate(
     blocks: state.scheduleBlocks
   }).items;
   const nextItem = nextPreview.find((item) => item.id !== currentItem?.blockId) ?? null;
-  const scenePreset = resolveOverlayScenePresetForQueueKind(state.overlay.scenePreset, queueKind, {
-    insertScenePreset: state.overlay.insertScenePreset,
-    standbyScenePreset: state.overlay.standbyScenePreset,
-    reconnectScenePreset: state.overlay.reconnectScenePreset
-  });
-  const headline = resolveOverlayHeadlineForQueueKind(state.overlay.headline, queueKind, {
-    insertHeadline: state.overlay.insertHeadline,
-    standbyHeadline: state.overlay.standbyHeadline,
-    reconnectHeadline: state.overlay.reconnectHeadline
-  });
-  const lines = buildOverlayTextLines({
-    scenePreset,
-    replayLabel: state.overlay.replayLabel || "Replay stream",
-    brandBadge: state.overlay.brandBadge,
-    headline,
-    nowTitle: currentItem?.title || "Stand by",
-    nextTitle: nextItem ? `${nextItem.title} ${nextItem.startTime}-${nextItem.endTime}` : "Programming will resume shortly",
+  const payload = buildWorkerScenePayload({
+    state,
+    queueKind,
+    currentTitle: currentItem?.title || "Stand by",
+    nextTitle: nextItem ? nextItem.title : "Programming will resume shortly",
+    nextTimeLabel: nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured",
     currentCategory: currentItem?.categoryName,
-    sourceName: currentItem?.sourceName,
-    queueTitles: nextPreview.slice(0, state.overlay.queuePreviewCount).map((item) => item.title),
-    tickerText: state.overlay.tickerText,
-    standby: true,
-    showCurrentCategory: state.overlay.showCurrentCategory,
-    showSourceLabel: state.overlay.showSourceLabel,
-    showQueuePreview: state.overlay.showQueuePreview
+    currentSourceName: currentItem?.sourceName,
+    queueTitles: nextPreview.slice(0, state.overlay.queuePreviewCount).map((item) => item.title)
   });
+  const lines = buildOverlayTextLinesFromScenePayload(payload);
   await fs.writeFile(standbySlatePath, `${lines.join("\n")}\n`, "utf8");
 }
 
@@ -431,31 +620,19 @@ async function writeOnAirOverlay(
     .map((id) => state.assets.find((entry) => entry.id === id)?.title || "")
     .filter(Boolean)
     .slice(0, state.overlay.queuePreviewCount);
-  const scenePreset = resolveOverlayScenePresetForQueueKind(state.overlay.scenePreset, queueKind, {
-    insertScenePreset: state.overlay.insertScenePreset,
-    standbyScenePreset: state.overlay.standbyScenePreset,
-    reconnectScenePreset: state.overlay.reconnectScenePreset
-  });
-  const headline = resolveOverlayHeadlineForQueueKind(state.overlay.headline, queueKind, {
-    insertHeadline: state.overlay.insertHeadline,
-    standbyHeadline: state.overlay.standbyHeadline,
-    reconnectHeadline: state.overlay.reconnectHeadline
-  });
-  const lines = buildOverlayTextLines({
-    scenePreset,
-    replayLabel: state.overlay.replayLabel || "Replay stream",
-    brandBadge: state.overlay.brandBadge,
-    headline,
-    nowTitle: asset?.title || state.playout.currentTitle || currentItem?.title || "Stand by",
-    nextTitle: nextItem?.title || "Scheduling next item",
-    currentCategory: currentItem?.categoryName || asset?.categoryName,
-    sourceName: currentItem?.sourceName || (asset ? state.sources.find((source) => source.id === asset.sourceId)?.name : ""),
-    queueTitles,
-    tickerText: state.overlay.tickerText,
-    showCurrentCategory: state.overlay.showCurrentCategory,
-    showSourceLabel: state.overlay.showSourceLabel,
-    showQueuePreview: state.overlay.showQueuePreview
-  });
+  const lines = buildOverlayTextLinesFromScenePayload(
+    buildWorkerScenePayload({
+      state,
+      queueKind,
+      currentTitle: asset?.title || state.playout.currentTitle || currentItem?.title || "Stand by",
+      nextTitle: nextItem?.title || "Scheduling next item",
+      nextTimeLabel: nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured",
+      currentCategory: currentItem?.categoryName || asset?.categoryName,
+      currentSourceName:
+        currentItem?.sourceName || (asset ? state.sources.find((source) => source.id === asset.sourceId)?.name : ""),
+      queueTitles
+    })
+  );
   await fs.writeFile(onAirOverlayPath, `${lines.join("\n")}\n`, "utf8");
 }
 
@@ -563,13 +740,16 @@ async function walkMediaFiles(root: string): Promise<string[]> {
 }
 
 function buildAssetFromPath(filePath: string, now: string): AssetRecord {
+  const mediaRoot = getMediaRoot();
   const isFallback = filePath.toLowerCase().includes("fallback") || filePath.toLowerCase().includes("standby");
-  const id = `asset_${Buffer.from(filePath).toString("base64url").slice(0, 32)}`;
+  const id = buildLocalLibraryAssetId(filePath);
   return {
     id,
     sourceId: "source-local-library",
     title: path.basename(filePath, path.extname(filePath)).replace(/[_-]+/g, " "),
     path: filePath,
+    folderPath: buildLocalLibraryFolderPath(filePath, mediaRoot),
+    tags: [],
     status: "ready",
     includeInProgramming: true,
     fallbackPriority: isFallback ? 1 : 100,
@@ -593,6 +773,7 @@ async function syncLocalMediaLibrary(): Promise<void> {
         ? {
           ...existing,
           title: asset.title,
+          folderPath: asset.folderPath,
           status: "ready",
           includeInProgramming: existing.includeInProgramming,
           fallbackPriority: asset.fallbackPriority,
@@ -678,6 +859,8 @@ async function syncDirectMediaSources(): Promise<void> {
       sourceId: source.id,
       title: source.name,
       path: url,
+      folderPath: buildSourceFolderPath(source.connectorKind, source.name),
+      tags: [],
       status: "ready",
       includeInProgramming: true,
       externalId: source.id,
@@ -761,6 +944,7 @@ function buildRemoteAsset(args: {
   assetIdSeed: string;
   title: string;
   path: string;
+  folderPath?: string;
   externalId?: string;
   categoryName?: string;
   durationSeconds?: number;
@@ -772,6 +956,8 @@ function buildRemoteAsset(args: {
     sourceId: args.sourceId,
     title: args.title,
     path: args.path,
+    folderPath: args.folderPath ?? "",
+    tags: [],
     status: "ready",
     includeInProgramming: true,
     externalId: args.externalId,
@@ -826,6 +1012,16 @@ function getTwitchArchiveUrl(channelUrl: string): string {
 
 function normalizeTwitchVideoId(value: string): string {
   return value.replace(/^v(?=\d+$)/i, "");
+}
+
+function buildSourceFolderPath(connectorKind: AppState["sources"][number]["connectorKind"], sourceName: string): string {
+  const safeName = sourceName
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^\w/-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return [connectorKind, safeName || "source"].filter(Boolean).join("/");
 }
 
 async function loadFlatCollection(url: string): Promise<YtDlpPlaylistResponse> {
@@ -894,6 +1090,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
             assetIdSeed: id,
             title: entry.title || `${source.name} item`,
             path: videoUrl,
+            folderPath: buildSourceFolderPath(source.connectorKind, source.name),
             externalId: entry.id,
             durationSeconds: entry.duration,
             publishedAt: fromUnixTimestamp(entry.timestamp),
@@ -1021,6 +1218,7 @@ async function syncTwitchVodSources(): Promise<void> {
             assetIdSeed,
             title: payload.title || source.name,
             path: assetPath,
+            folderPath: buildSourceFolderPath(source.connectorKind, source.name),
             externalId: payload.id,
             categoryName: payload.category || payload.categories?.[0] || "",
             durationSeconds: payload.duration,
@@ -1054,6 +1252,7 @@ async function syncTwitchVodSources(): Promise<void> {
               assetIdSeed: id,
               title: entry.title || source.name,
               path: entry.webpage_url || `https://www.twitch.tv/videos/${normalizedId}`,
+              folderPath: buildSourceFolderPath(source.connectorKind, source.name),
               externalId: normalizedId,
               durationSeconds: entry.duration,
               publishedAt: fromUnixTimestamp(entry.timestamp),
@@ -1184,9 +1383,15 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
   if (!pool) {
     return null;
   }
+  const excludeInsertFromRotation = Boolean(pool.insertAssetId) && pool.insertEveryItems > 0;
 
   const eligibleAssets = state.assets.filter((asset) => {
-    if (asset.status !== "ready" || asset.id === skippedAssetId || asset.includeInProgramming === false) {
+    if (
+      asset.status !== "ready" ||
+      asset.id === skippedAssetId ||
+      asset.includeInProgramming === false ||
+      (excludeInsertFromRotation && asset.id === pool.insertAssetId)
+    ) {
       return false;
     }
 
@@ -1223,9 +1428,15 @@ function getPoolPlaybackQueue(state: AppState, poolId: string, skippedAssetId: s
   if (!pool) {
     return [];
   }
+  const excludeInsertFromRotation = Boolean(pool.insertAssetId) && pool.insertEveryItems > 0;
 
   const eligibleAssets = state.assets.filter((asset) => {
-    if (asset.status !== "ready" || asset.id === skippedAssetId || asset.includeInProgramming === false) {
+    if (
+      asset.status !== "ready" ||
+      asset.id === skippedAssetId ||
+      asset.includeInProgramming === false ||
+      (excludeInsertFromRotation && asset.id === pool.insertAssetId)
+    ) {
       return false;
     }
 
@@ -1452,6 +1663,20 @@ function buildQueueHeadForSelection(args: {
   selection: SelectionResult;
   currentScheduleItem: ReturnType<typeof getCurrentScheduleItem> | null;
 }) {
+  if (args.selection.reasonCode === "manual_next" && args.selection.asset) {
+    return {
+      title: args.selection.asset.title,
+      subtitle: `Queued next by operator · ${
+        buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem) || "Operator queue request"
+      }`,
+      scenePreset: resolveOverlayScenePresetForQueueKind(args.state.overlay.scenePreset, "asset", {
+        insertScenePreset: args.state.overlay.insertScenePreset,
+        standbyScenePreset: args.state.overlay.standbyScenePreset,
+        reconnectScenePreset: args.state.overlay.reconnectScenePreset
+      })
+    };
+  }
+
   if ((args.selection.reasonCode === "operator_insert" || args.selection.reasonCode === "scheduled_insert") && args.selection.asset) {
     return {
       title: args.selection.asset.title,
@@ -1513,6 +1738,16 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
           (asset) => asset.id === state.playout.insertAssetId && asset.status === "ready" && asset.id !== skippedAssetId
         ) ?? null
       : null;
+  const manualNextAsset =
+    state.playout.manualNextAssetId !== ""
+      ? state.assets.find(
+          (asset) =>
+            asset.id === state.playout.manualNextAssetId &&
+            asset.status === "ready" &&
+            asset.includeInProgramming !== false &&
+            asset.id !== skippedAssetId
+        ) ?? null
+      : null;
   const desiredAsset =
     manualOverrideActive && state.playout.overrideAssetId !== ""
       ? state.assets.find((asset) => asset.id === state.playout.overrideAssetId && asset.status === "ready")
@@ -1546,10 +1781,24 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     };
   }
 
+  if (
+    manualNextAsset &&
+    (state.playout.currentAssetId === "" || state.playout.restartRequestedAt !== "" || state.playout.status === "standby")
+  ) {
+    return {
+      asset: manualNextAsset,
+      reason: `Operator queued ${manualNextAsset.title} as the next on-air item.`,
+      lifecycleStatus: "recovering" as const,
+      reasonCode: "manual_next" as const,
+      fallbackTier: "operator" as const
+    };
+  }
+
   const currentScheduleItem = getCurrentScheduleItem(state);
   const currentPool = currentScheduleItem?.poolId ? state.pools.find((pool) => pool.id === currentScheduleItem.poolId) ?? null : null;
+  const processRunning = Boolean(playoutProcess && !playoutProcess.killed);
   const runningScheduledAsset =
-    state.playout.processPid > 0 &&
+    processRunning &&
     state.playout.currentAssetId !== "" &&
     (state.playout.selectionReasonCode === "scheduled_match" || state.playout.selectionReasonCode === "graceful_handoff")
       ? state.assets.find(
@@ -1582,7 +1831,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   }
 
   const currentPoolAsset =
-    currentScheduleItem?.poolId && state.playout.currentAssetId
+    processRunning && currentScheduleItem?.poolId && state.playout.currentAssetId
       ? state.assets.find(
           (asset) =>
             asset.id === state.playout.currentAssetId &&
@@ -1672,6 +1921,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
 async function stopPlayoutProcess(reason = ""): Promise<void> {
   plannedStopReason = reason;
   const currentProcess = playoutProcess;
+  stopSceneRendererLoop();
 
   if (!currentProcess || currentProcess.killed) {
     playoutProcess = null;
@@ -1763,11 +2013,13 @@ async function startOrSwitchPlayout(args: {
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
   const cachedProbe = args.asset ? getFreshProbeCache(args.asset.id) : null;
   const cachedResolvedInput = cachedProbe?.status === "ready" ? cachedProbe.resolvedInput : "";
+  const initialSceneFrame = args.overlayEnabled ? await prepareSceneRendererFrame() : null;
+  const overlayMode: OnAirOverlayMode = !args.overlayEnabled ? "none" : initialSceneFrame ? "scene" : "text";
   const command = args.asset
-    ? getFfmpegCommand(cachedResolvedInput || (await resolvePlayableInput(args.asset.path)), args.streamTarget, args.overlayEnabled)
-    : getStandbyFfmpegCommand(args.streamTarget);
+    ? getFfmpegCommand(cachedResolvedInput || (await resolvePlayableInput(args.asset.path)), args.streamTarget, overlayMode)
+    : getStandbyFfmpegCommand(args.streamTarget, overlayMode);
   const child = spawn(ffmpegBinary, command, {
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", "pipe", "pipe", "pipe"]
   });
 
   playoutProcess = child;
@@ -1781,8 +2033,22 @@ async function startOrSwitchPlayout(args: {
       ? "reconnect"
       : "standby";
 
+  logRuntimeEvent("playout.process.start", {
+    destinationId: args.destination.id,
+    targetKind: playoutTargetKind,
+    assetId: args.asset?.id ?? "",
+    reasonCode: args.reasonCode,
+    lifecycleStatus: args.lifecycleStatus
+  });
+
   const pid = child.pid ?? 0;
   const startedAt = new Date().toISOString();
+
+  if (overlayMode === "scene" && initialSceneFrame && isWritablePipe(child.stdio[ON_AIR_SCENE_PIPE_FD])) {
+    startSceneRendererLoop(child.stdio[ON_AIR_SCENE_PIPE_FD], initialSceneFrame);
+  } else {
+    stopSceneRendererLoop();
+  }
 
   await updatePlayoutRuntime((playout) => ({
     ...playout,
@@ -1830,7 +2096,7 @@ async function startOrSwitchPlayout(args: {
     notes: `${args.destination.role === "backup" ? "Backup" : "Primary"} destination is active for the current broadcast output.`
   });
 
-  child.stderr.on("data", (chunk) => {
+  child.stderr?.on("data", (chunk) => {
     const line = chunk.toString().trim();
     if (!line) {
       return;
@@ -1861,11 +2127,18 @@ async function startOrSwitchPlayout(args: {
     const wasPlanned = plannedStopReason !== "";
     const lastDestinationId = playoutDestinationId;
     plannedStopReason = "";
+    stopSceneRendererLoop();
     playoutProcess = null;
     playoutAssetId = "";
     playoutDestinationId = "";
     playoutTargetKind = "";
     const exitedAt = new Date().toISOString();
+    logRuntimeEvent("playout.process.exit", {
+      exitCode: code ?? "",
+      planned: wasPlanned,
+      destinationId: lastDestinationId,
+      exitedAt
+    });
     void updatePlayoutRuntime((playout) => ({
       ...playout,
       status:
@@ -2016,6 +2289,28 @@ async function runPlayoutCycle(): Promise<void> {
     }));
     state = await readAppState();
     selection = choosePlaybackCandidate(state);
+  }
+
+  if (state.playout.manualNextAssetId !== "" && selection.reasonCode !== "manual_next") {
+    const manualNextAsset = state.assets.find(
+      (asset) =>
+        asset.id === state.playout.manualNextAssetId &&
+        asset.status === "ready" &&
+        asset.includeInProgramming !== false &&
+        asset.id !== (isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "")
+    );
+
+    if (!manualNextAsset) {
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        manualNextAssetId: "",
+        manualNextRequestedAt: "",
+        heartbeatAt: new Date().toISOString(),
+        message: "The requested next item is no longer available. Returning to the scheduled queue."
+      }));
+      state = await readAppState();
+      selection = choosePlaybackCandidate(state);
+    }
   }
 
   if (!destination || !streamTarget) {
@@ -2190,12 +2485,29 @@ async function runPlayoutCycle(): Promise<void> {
 
   const restartRequested = Boolean(state.playout.restartRequestedAt);
   const currentScheduleItem = getCurrentScheduleItem(state);
-  const rawQueueAssets =
+  const manualNextQueueAsset =
+    state.playout.manualNextAssetId !== "" && state.playout.manualNextAssetId !== selection.asset?.id
+      ? state.assets.find(
+          (asset) =>
+            asset.id === state.playout.manualNextAssetId &&
+            asset.status === "ready" &&
+            asset.includeInProgramming !== false &&
+            asset.id !== (isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "")
+        ) ?? null
+      : null;
+  const rawQueueAssets = prioritizeManualNextAsset(
     currentScheduleItem?.poolId &&
     selection.asset &&
-    (selection.reasonCode === "scheduled_match" || selection.reasonCode === "scheduled_insert" || selection.reasonCode === "graceful_handoff")
+    (
+      selection.reasonCode === "scheduled_match" ||
+      selection.reasonCode === "scheduled_insert" ||
+      selection.reasonCode === "graceful_handoff" ||
+      selection.reasonCode === "manual_next"
+    )
       ? getPoolPlaybackQueue(state, currentScheduleItem.poolId, isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "", selection.asset.id)
-      : [];
+      : [],
+    manualNextQueueAsset
+  );
   const { playableQueue, prefetchedAsset, prefetchStatus, prefetchError } = await getPlayableQueuedAssets(rawQueueAssets);
   const queueItems = buildRuntimeQueueItems({
     state,
@@ -2376,8 +2688,17 @@ async function runPlayoutCycle(): Promise<void> {
     transitionTargetAssetId,
     transitionTargetTitle,
     transitionReadyAt,
+    queueVersion: incrementQueueVersion(playout.queueVersion, playout.queueItems, queueItems),
     currentAssetId: selection.asset?.id ?? "",
     currentTitle: activeQueueItem?.title || selection.asset?.title || "Replay standby",
+    previousAssetId:
+      selection.asset && playout.currentAssetId !== "" && playout.currentAssetId !== selection.asset.id
+        ? playout.currentAssetId
+        : playout.previousAssetId,
+    previousTitle:
+      selection.asset && playout.currentAssetId !== "" && playout.currentAssetId !== selection.asset.id
+        ? playout.currentTitle
+        : playout.previousTitle,
     desiredAssetId: selection.asset?.id ?? "",
     nextAssetId: nextQueueItem?.assetId ?? prefetchedAsset?.id ?? "",
     nextTitle: nextQueueItem?.title ?? prefetchedAsset?.title ?? "",
@@ -2406,6 +2727,9 @@ async function runPlayoutCycle(): Promise<void> {
     heartbeatAt: new Date().toISOString(),
     pendingAction: "",
     pendingActionRequestedAt: "",
+    manualNextAssetId: selection.asset && playout.manualNextAssetId === selection.asset.id ? "" : playout.manualNextAssetId,
+    manualNextRequestedAt:
+      selection.asset && playout.manualNextAssetId === selection.asset.id ? "" : playout.manualNextRequestedAt,
     message: activeQueueItem?.subtitle || selection.reason
   }));
 
@@ -2879,6 +3203,10 @@ async function runLoop(mode: "worker" | "playout"): Promise<void> {
       await run();
     } catch (error) {
       const message = error instanceof Error ? error.message : `Unknown ${mode} error.`;
+      logRuntimeEvent("worker.loop.crashed", {
+        mode,
+        error: message
+      });
       await upsertIncident({
         scope: mode === "worker" ? "worker" : "playout",
         severity: "critical",
@@ -2898,15 +3226,19 @@ const command = process.argv[2] || "worker";
 if (command === "healthcheck") {
   const healthcheckMode = process.argv[3] === "playout" ? "playout" : "worker";
   runHealthcheck(healthcheckMode).catch((error) => {
-    // eslint-disable-next-line no-console
-    console.error(error);
+    logRuntimeEvent("worker.healthcheck.failed", {
+      mode: healthcheckMode,
+      error: error instanceof Error ? error.message : String(error)
+    });
     process.exit(1);
   });
 } else {
   const mode = command === "playout" ? "playout" : "worker";
   runLoop(mode).catch((error) => {
-    // eslint-disable-next-line no-console
-    console.error(error);
+    logRuntimeEvent("worker.process.failed", {
+      mode,
+      error: error instanceof Error ? error.message : String(error)
+    });
     process.exit(1);
   });
 }

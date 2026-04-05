@@ -22,9 +22,11 @@ Do not auto-track `latest` for a 24/7 production channel.
 ## 1.0.3 Release Flow
 
 1. Ensure `main` is green in CI.
+   CI now covers queue continuity and browser smoke before `main` images publish.
 2. Run:
    ```bash
    pnpm release:preflight
+   pnpm test:e2e:smoke
    ./scripts/upgrade-rehearsal.sh v1.0.3
    ./scripts/soak-monitor.sh --hours 24
    ```

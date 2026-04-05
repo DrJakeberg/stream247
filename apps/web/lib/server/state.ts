@@ -1,5 +1,6 @@
 import {
-  buildOverlaySceneDefinition,
+  buildOverlayScenePayload,
+  buildMaterializedProgrammingWeek,
   buildScheduleOccurrences,
   buildSchedulePreview,
   describePresenceStatus,
@@ -12,7 +13,8 @@ import {
   isLikelyTwitchChannelUrl,
   isLikelyTwitchVodUrl,
   isLikelyYouTubeChannelUrl,
-  isLikelyYouTubePlaylistUrl
+  isLikelyYouTubePlaylistUrl,
+  type OverlaySceneRenderTarget
 } from "@stream247/core";
 import {
   appendAuditEvent,
@@ -34,6 +36,7 @@ import {
   publishOverlayDraftRecord,
   readOverlayStudioState,
   resetOverlayDraftRecord,
+  replaceOverlayScenePresetRecords,
   saveOverlayDraftRecord,
   saveOverlayScenePresetRecord,
   updateDestinationRecord,
@@ -51,6 +54,7 @@ import {
   updateAppState,
   updatePoolRecord,
   updateScheduleBlockRecord,
+  updateScheduleRepeatGroupRecords,
   updateShowProfileRecord,
   updateTwitchConnectionRecord,
   updateOwnerAndInitialized,
@@ -137,6 +141,7 @@ export {
   publishOverlayDraftRecord,
   readOverlayStudioState,
   resetOverlayDraftRecord,
+  replaceOverlayScenePresetRecords,
   saveOverlayDraftRecord,
   saveOverlayScenePresetRecord,
   updateDestinationRecord,
@@ -155,6 +160,7 @@ export {
   updatePoolCursor,
   updatePoolRecord,
   updateScheduleBlockRecord,
+  updateScheduleRepeatGroupRecords,
   updateShowProfileRecord,
   updateTwitchConnectionRecord,
   upsertSourceRecord,
@@ -177,6 +183,20 @@ export function getSchedulePreview(state: AppState) {
   return buildSchedulePreview({
     date: scheduleMoment.date,
     blocks: state.scheduleBlocks
+  });
+}
+
+export function getMaterializedProgrammingWeekPreview(state: AppState) {
+  const scheduleMoment = getCurrentScheduleMoment({
+    now: new Date(),
+    timeZone: getWorkspaceTimeZone()
+  });
+
+  return buildMaterializedProgrammingWeek({
+    startDate: scheduleMoment.date,
+    blocks: state.scheduleBlocks,
+    pools: state.pools,
+    assets: state.assets
   });
 }
 
@@ -688,31 +708,76 @@ function summarizeOverlay(overlay: OverlaySettingsRecord): LiveOverlaySummary {
   };
 }
 
-function summarizeActiveScene(state: AppState) {
-  const queueKind = state.playout.queueItems[0]?.kind || "asset";
-  return buildOverlaySceneDefinition({
-    overlay: {
-      scenePreset: normalizeOverlayScenePreset(state.overlay.scenePreset),
-      insertScenePreset: normalizeOverlayScenePreset(state.overlay.insertScenePreset),
-      standbyScenePreset: normalizeOverlayScenePreset(state.overlay.standbyScenePreset),
-      reconnectScenePreset: normalizeOverlayScenePreset(state.overlay.reconnectScenePreset),
-      headline: state.overlay.headline,
-      insertHeadline: state.overlay.insertHeadline,
-      standbyHeadline: state.overlay.standbyHeadline,
-      reconnectHeadline: state.overlay.reconnectHeadline,
-      surfaceStyle: normalizeOverlaySurfaceStyle(state.overlay.surfaceStyle),
-      panelAnchor: normalizeOverlayPanelAnchor(state.overlay.panelAnchor),
-      titleScale: normalizeOverlayTitleScale(state.overlay.titleScale),
-      showClock: state.overlay.showClock,
-      showNextItem: state.overlay.showNextItem,
-      showScheduleTeaser: state.overlay.showScheduleTeaser,
-      showQueuePreview: state.overlay.showQueuePreview,
-      emergencyBanner: state.overlay.emergencyBanner,
-      tickerText: state.overlay.tickerText,
-      layerOrder: state.overlay.layerOrder,
-      disabledLayers: state.overlay.disabledLayers
-    },
-    queueKind
+function buildOverlaySceneSource(overlay: OverlaySettingsRecord) {
+  return {
+    channelName: overlay.channelName,
+    replayLabel: overlay.replayLabel,
+    brandBadge: overlay.brandBadge,
+    accentColor: overlay.accentColor,
+    scenePreset: normalizeOverlayScenePreset(overlay.scenePreset),
+    insertScenePreset: normalizeOverlayScenePreset(overlay.insertScenePreset),
+    standbyScenePreset: normalizeOverlayScenePreset(overlay.standbyScenePreset),
+    reconnectScenePreset: normalizeOverlayScenePreset(overlay.reconnectScenePreset),
+    headline: overlay.headline,
+    insertHeadline: overlay.insertHeadline,
+    standbyHeadline: overlay.standbyHeadline,
+    reconnectHeadline: overlay.reconnectHeadline,
+    surfaceStyle: normalizeOverlaySurfaceStyle(overlay.surfaceStyle),
+    panelAnchor: normalizeOverlayPanelAnchor(overlay.panelAnchor),
+    titleScale: normalizeOverlayTitleScale(overlay.titleScale),
+    showClock: overlay.showClock,
+    showNextItem: overlay.showNextItem,
+    showScheduleTeaser: overlay.showScheduleTeaser,
+    showCurrentCategory: overlay.showCurrentCategory,
+    showSourceLabel: overlay.showSourceLabel,
+    showQueuePreview: overlay.showQueuePreview,
+    queuePreviewCount: overlay.queuePreviewCount,
+    emergencyBanner: overlay.emergencyBanner,
+    tickerText: overlay.tickerText,
+    layerOrder: overlay.layerOrder,
+    disabledLayers: overlay.disabledLayers
+  };
+}
+
+export function buildActiveScenePayload(
+  state: AppState,
+  options: {
+    overlay?: OverlaySettingsRecord;
+    target?: OverlaySceneRenderTarget;
+    queueKind?: "asset" | "insert" | "standby" | "reconnect";
+  } = {}
+) {
+  const overlay = options.overlay ?? state.overlay;
+  const currentScheduleItem = getCurrentScheduleItem(state);
+  const nextScheduleItem = getNextScheduleItem(state);
+  const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
+  const nextAsset = state.assets.find((asset) => asset.id === state.playout.nextAssetId) ?? null;
+  const queueKind = options.queueKind ?? state.playout.queueItems[0]?.kind ?? "asset";
+  const queuePreviewStart = state.playout.queueItems[0] ? 1 : 0;
+  const queueTitles = state.playout.queueItems
+    .slice(queuePreviewStart, queuePreviewStart + overlay.queuePreviewCount)
+    .map((item) => item.title)
+    .filter(Boolean);
+  const queueHead = state.playout.queueItems[0] ?? null;
+  const currentSourceName =
+    currentScheduleItem?.sourceName ||
+    (currentAsset ? state.sources.find((source) => source.id === currentAsset.sourceId)?.name : "") ||
+    "Source to be announced";
+
+  return buildOverlayScenePayload({
+    overlay: buildOverlaySceneSource(overlay),
+    queueKind,
+    target: options.target ?? "browser",
+    currentTitle:
+      queueKind === "asset"
+        ? currentScheduleItem?.title || currentAsset?.title || state.playout.currentTitle || overlay.channelName || "Stream247"
+        : queueHead?.title || state.playout.currentTitle || overlay.headline || "Replay stream",
+    currentCategory: currentScheduleItem?.categoryName || currentAsset?.categoryName || "Always on air",
+    currentSourceName,
+    nextTitle: nextScheduleItem?.title || nextAsset?.title || "Schedule not available",
+    nextTimeLabel: nextScheduleItem ? `${nextScheduleItem.startTime} to ${nextScheduleItem.endTime}` : "No next block configured",
+    queueTitles,
+    timeZone: getWorkspaceTimeZone()
   });
 }
 
@@ -733,6 +798,7 @@ function summarizePlayout(playout: PlayoutRuntimeRecord): LivePlayoutSummary {
     status: playout.status,
     message: playout.message,
     transitionState: playout.transitionState,
+    queueVersion: playout.queueVersion,
     transitionTargetKind: playout.transitionTargetKind,
     transitionTargetAssetId: playout.transitionTargetAssetId,
     transitionTargetTitle: playout.transitionTargetTitle,
@@ -747,6 +813,8 @@ function summarizePlayout(playout: PlayoutRuntimeRecord): LivePlayoutSummary {
     overrideMode: playout.overrideMode,
     overrideAssetId: playout.overrideAssetId,
     overrideUntil: playout.overrideUntil,
+    manualNextAssetId: playout.manualNextAssetId,
+    manualNextRequestedAt: playout.manualNextRequestedAt,
     insertAssetId: playout.insertAssetId,
     insertRequestedAt: playout.insertRequestedAt,
     insertStatus: playout.insertStatus,
@@ -754,6 +822,8 @@ function summarizePlayout(playout: PlayoutRuntimeRecord): LivePlayoutSummary {
     skipUntil: playout.skipUntil,
     currentAssetId: playout.currentAssetId,
     currentTitle: playout.currentTitle,
+    previousAssetId: playout.previousAssetId,
+    previousTitle: playout.previousTitle,
     desiredAssetId: playout.desiredAssetId,
     nextAssetId: playout.nextAssetId,
     nextTitle: playout.nextTitle,
@@ -776,6 +846,7 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
   const currentScheduleItem = getCurrentScheduleItem(state);
   const nextScheduleItem = getNextScheduleItem(state);
   const queuedAssets = getPlayoutQueueAssets(state);
+  const activeScenePayload = buildActiveScenePayload(state);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -783,7 +854,8 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
     workerHealth: getWorkerHealth(state),
     playout: summarizePlayout(state.playout),
     overlay: summarizeOverlay(state.overlay),
-    activeScene: summarizeActiveScene(state),
+    activeScene: activeScenePayload.scene,
+    activeScenePayload,
     destination: summarizeDestination(state),
     destinations: summarizeDestinations(state),
     currentAsset: summarizeAsset(state, state.playout.currentAssetId),
@@ -807,6 +879,7 @@ export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot
     timeZone: snapshot.timeZone,
     overlay: snapshot.overlay,
     activeScene: snapshot.activeScene,
+    activeScenePayload: snapshot.activeScenePayload,
     playout: {
       status: snapshot.playout.status,
       message: snapshot.playout.message,

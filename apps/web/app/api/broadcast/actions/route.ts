@@ -3,7 +3,21 @@ import { requireApiRoles } from "@/lib/server/auth";
 import { runBroadcastAction } from "@/lib/server/broadcast";
 
 type BroadcastActionRequest = {
-  type?: "restart" | "hard_reload" | "refresh" | "rebuild_queue" | "force_reconnect" | "fallback" | "resume" | "trigger_insert" | "skip" | "override";
+  type?:
+    | "restart"
+    | "hard_reload"
+    | "refresh"
+    | "rebuild_queue"
+    | "force_reconnect"
+    | "fallback"
+    | "resume"
+    | "trigger_insert"
+    | "play_now"
+    | "move_next"
+    | "remove_next"
+    | "replay_previous"
+    | "skip"
+    | "override";
   minutes?: number;
   assetId?: string;
 };
@@ -21,6 +35,12 @@ export async function POST(request: Request) {
     const result =
       type === "skip"
         ? await runBroadcastAction({ type, minutes: payload.minutes })
+        : type === "move_next"
+          ? await runBroadcastAction({ type, assetId: String(payload.assetId ?? "") })
+          : type === "play_now"
+            ? await runBroadcastAction({ type, assetId: String(payload.assetId ?? "") })
+            : type === "replay_previous" || type === "remove_next"
+              ? await runBroadcastAction({ type })
         : type === "override"
           ? await runBroadcastAction({ type, assetId: String(payload.assetId ?? ""), minutes: payload.minutes })
           : type === "trigger_insert"

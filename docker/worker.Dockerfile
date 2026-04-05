@@ -17,7 +17,7 @@ RUN pnpm --filter core build && pnpm --filter db build && pnpm --filter worker b
 FROM public.ecr.aws/docker/library/node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-RUN apk add --no-cache ffmpeg yt-dlp python3 ttf-dejavu
+RUN apk add --no-cache chromium ffmpeg yt-dlp python3 ttf-dejavu
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/worker ./apps/worker
 COPY --from=builder /app/packages/core ./packages/core

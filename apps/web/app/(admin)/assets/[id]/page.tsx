@@ -88,6 +88,14 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
               <div className="subtle asset-path">{asset.path}</div>
             </div>
             <div className="item">
+              <strong>Library folder</strong>
+              <div className="subtle">{asset.folderPath || "Root library bucket"}</div>
+            </div>
+            <div className="item">
+              <strong>Tags</strong>
+              <div className="subtle">{asset.tags && asset.tags.length > 0 ? asset.tags.join(", ") : "No tags assigned."}</div>
+            </div>
+            <div className="item">
               <strong>Fallback flags</strong>
               <div className="subtle">
                 Priority {asset.fallbackPriority} · {asset.isGlobalFallback ? "Global fallback" : "Regular catalog item"} ·{" "}

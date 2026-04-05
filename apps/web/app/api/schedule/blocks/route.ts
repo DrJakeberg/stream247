@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findScheduleConflicts, validateScheduleBlock } from "@stream247/core";
+import { findScheduleConflicts, getRepeatDaysForMode, normalizeScheduleRepeatMode, validateScheduleBlock } from "@stream247/core";
 import { getAuthenticatedUser, requireApiRoles } from "@/lib/server/auth";
 import {
   appendAuditEvent,
   createScheduleBlocks,
   deleteScheduleBlockRecord,
   readAppState,
-  updateScheduleBlockRecord
+  updateScheduleBlockRecord,
+  updateScheduleRepeatGroupRecords
 } from "@/lib/server/state";
 
 function normalizeBody(body: {
@@ -24,6 +25,8 @@ function normalizeBody(body: {
   showId?: string;
   poolId?: string;
   sourceName?: string;
+  repeatMode?: string;
+  applyToRepeatSet?: boolean;
 }) {
   return {
     action: (body.action ?? "").trim(),
@@ -43,8 +46,14 @@ function normalizeBody(body: {
       : [],
     showId: (body.showId ?? "").trim(),
     poolId: (body.poolId ?? "").trim(),
-    sourceName: (body.sourceName ?? "").trim()
+    sourceName: (body.sourceName ?? "").trim(),
+    repeatMode: normalizeScheduleRepeatMode(String(body.repeatMode ?? "single")),
+    applyToRepeatSet: Boolean(body.applyToRepeatSet)
   };
+}
+
+function generateId(prefix: "schedule" | "repeat" = "schedule") {
+  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export async function GET() {
@@ -109,8 +118,10 @@ export async function POST(request: NextRequest) {
 
       const newBlocks = duplicateDays.map((dayOfWeek) => ({
         ...sourceBlock,
-        id: `schedule_${Math.random().toString(36).slice(2, 10)}`,
-        dayOfWeek
+        id: generateId("schedule"),
+        dayOfWeek,
+        repeatMode: "single" as const,
+        repeatGroupId: ""
       }));
       const conflicts = findScheduleConflicts([...state.scheduleBlocks, ...newBlocks]);
       if (conflicts.length > 0) {
@@ -167,8 +178,10 @@ export async function POST(request: NextRequest) {
       const clonedBlocks = distinctTargetDays.flatMap((dayOfWeek) =>
         sourceBlocks.map((block) => ({
           ...block,
-          id: `schedule_${Math.random().toString(36).slice(2, 10)}`,
-          dayOfWeek
+          id: generateId("schedule"),
+          dayOfWeek,
+          repeatMode: "single" as const,
+          repeatGroupId: ""
         }))
       );
 
@@ -208,18 +221,27 @@ export async function POST(request: NextRequest) {
       throw new Error("Selected show profile no longer exists.");
     }
 
-    const dayOfWeeks = payload.dayOfWeeks.length > 0 ? payload.dayOfWeeks : [payload.dayOfWeek];
-    const newBlocks = dayOfWeeks.map((dayOfWeek) => ({
-      id: `schedule_${Math.random().toString(36).slice(2, 10)}`,
-      title: payload.title,
-      categoryName: payload.categoryName,
-      startMinuteOfDay: payload.startMinuteOfDay,
-      durationMinutes: payload.durationMinutes,
-      dayOfWeek,
-      showId: payload.showId,
-      poolId: payload.poolId,
-      sourceName: pool.name
-    }));
+      const dayOfWeeks =
+        payload.dayOfWeeks.length > 0 ? payload.dayOfWeeks : getRepeatDaysForMode(payload.repeatMode, payload.dayOfWeek);
+      if (dayOfWeeks.length === 0) {
+        throw new Error("Select at least one weekday for this programming block.");
+      }
+      const repeatMode =
+        payload.repeatMode === "single" && dayOfWeeks.length > 1 ? ("custom" as const) : payload.repeatMode;
+      const repeatGroupId = dayOfWeeks.length > 1 ? generateId("repeat") : "";
+      const newBlocks = dayOfWeeks.map((dayOfWeek) => ({
+        id: generateId("schedule"),
+        title: payload.title,
+        categoryName: payload.categoryName,
+        startMinuteOfDay: payload.startMinuteOfDay,
+        durationMinutes: payload.durationMinutes,
+        dayOfWeek,
+        showId: payload.showId,
+        poolId: payload.poolId,
+        sourceName: pool.name,
+        repeatMode,
+        repeatGroupId
+      }));
     const conflicts = findScheduleConflicts([...state.scheduleBlocks, ...newBlocks]);
     if (conflicts.length > 0) {
       throw new Error("Schedule blocks overlap. Adjust the new start time or duration.");
@@ -230,12 +252,12 @@ export async function POST(request: NextRequest) {
 
     await appendAuditEvent(
       "schedule.created",
-      `${user?.displayName || user?.email || "Unknown user"} created schedule block ${payload.title}${payload.dayOfWeeks.length > 1 ? ` across ${payload.dayOfWeeks.length} days` : ""}.`
+      `${user?.displayName || user?.email || "Unknown user"} created schedule block ${payload.title}${dayOfWeeks.length > 1 ? ` across ${dayOfWeeks.length} days` : ""}.`
     );
 
     return NextResponse.json({
       ok: true,
-      message: `Schedule block ${payload.title} created${payload.dayOfWeeks.length > 1 ? ` across ${payload.dayOfWeeks.length} days` : ""}.`,
+      message: `Schedule block ${payload.title} created${dayOfWeeks.length > 1 ? ` across ${dayOfWeeks.length} days` : ""}.`,
       blocks: nextState.scheduleBlocks
     });
   } catch (error) {
@@ -261,8 +283,10 @@ export async function PUT(request: NextRequest) {
       startMinuteOfDay?: number;
       durationMinutes?: number;
       dayOfWeek?: number;
+      showId?: string;
       poolId?: string;
       sourceName?: string;
+      applyToRepeatSet?: boolean;
     }
   );
 
@@ -290,34 +314,65 @@ export async function PUT(request: NextRequest) {
       throw new Error("Selected show profile no longer exists.");
     }
 
+    const applyToRepeatSet = payload.applyToRepeatSet && Boolean(existing.repeatGroupId);
     const updatedBlock = {
       ...existing,
       title: payload.title,
       categoryName: payload.categoryName,
       startMinuteOfDay: payload.startMinuteOfDay,
       durationMinutes: payload.durationMinutes,
-      dayOfWeek: payload.dayOfWeek,
+      dayOfWeek: applyToRepeatSet ? existing.dayOfWeek : payload.dayOfWeek,
       showId: payload.showId,
       poolId: payload.poolId,
-      sourceName: pool.name
+      sourceName: pool.name,
+      repeatMode: applyToRepeatSet ? existing.repeatMode || "single" : "single",
+      repeatGroupId: applyToRepeatSet ? existing.repeatGroupId || "" : ""
     };
-    const nextBlocks = state.scheduleBlocks.map((block) => (block.id === payload.id ? updatedBlock : block));
+    const nextBlocks = applyToRepeatSet
+      ? state.scheduleBlocks.map((block) =>
+          block.repeatGroupId && block.repeatGroupId === existing.repeatGroupId
+            ? {
+                ...block,
+                title: payload.title,
+                categoryName: payload.categoryName,
+                startMinuteOfDay: payload.startMinuteOfDay,
+                durationMinutes: payload.durationMinutes,
+                showId: payload.showId,
+                poolId: payload.poolId,
+                sourceName: pool.name
+              }
+            : block
+        )
+      : state.scheduleBlocks.map((block) => (block.id === payload.id ? updatedBlock : block));
     const conflicts = findScheduleConflicts(nextBlocks);
     if (conflicts.length > 0) {
       throw new Error("Schedule blocks overlap. Adjust the edited start time or duration.");
     }
 
-    await updateScheduleBlockRecord(updatedBlock);
+    if (applyToRepeatSet && existing.repeatGroupId) {
+      await updateScheduleRepeatGroupRecords({
+        repeatGroupId: existing.repeatGroupId,
+        title: payload.title,
+        categoryName: payload.categoryName,
+        startMinuteOfDay: payload.startMinuteOfDay,
+        durationMinutes: payload.durationMinutes,
+        showId: payload.showId,
+        poolId: payload.poolId,
+        sourceName: pool.name
+      });
+    } else {
+      await updateScheduleBlockRecord(updatedBlock);
+    }
     const nextState = await readAppState();
 
     await appendAuditEvent(
       "schedule.updated",
-      `${user?.displayName || user?.email || "Unknown user"} updated schedule block ${payload.title}.`
+      `${user?.displayName || user?.email || "Unknown user"} updated schedule block ${payload.title}${applyToRepeatSet ? " across its repeat set" : existing.repeatGroupId ? " and detached it from its repeat set" : ""}.`
     );
 
     return NextResponse.json({
       ok: true,
-      message: `Schedule block ${payload.title} updated.`,
+      message: `Schedule block ${payload.title} updated${applyToRepeatSet ? " across its repeat set" : existing.repeatGroupId ? " and detached from its repeat set" : ""}.`,
       blocks: nextState.scheduleBlocks
     });
   } catch (error) {

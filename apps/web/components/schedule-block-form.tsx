@@ -1,6 +1,12 @@
 "use client";
 
-import { formatMinuteOfDay, type ScheduleBlock } from "@stream247/core";
+import {
+  SCHEDULE_REPEAT_MODE_OPTIONS,
+  formatMinuteOfDay,
+  getRepeatDaysForMode,
+  type ScheduleBlock,
+  type ScheduleRepeatMode
+} from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { ShowProfileRecord } from "@/lib/server/state";
@@ -26,13 +32,20 @@ export function ScheduleBlockForm({ pools, shows, block }: Props) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const [selectedDays, setSelectedDays] = useState<number[]>(block ? [block.dayOfWeek] : [1]);
+  const [repeatMode, setRepeatMode] = useState<ScheduleRepeatMode>(block?.repeatMode ?? (block ? "single" : "weekdays"));
   const [selectedShowId, setSelectedShowId] = useState(block?.showId ?? "");
   const [title, setTitle] = useState(block?.title ?? "");
   const [categoryName, setCategoryName] = useState(block?.categoryName ?? "");
   const [durationMinutes, setDurationMinutes] = useState(block?.durationMinutes ?? 60);
+  const [applyToRepeatSet, setApplyToRepeatSet] = useState(Boolean(block?.repeatGroupId));
   const router = useRouter();
 
   const isEditing = Boolean(block);
+  const resolvedCreateDays = isEditing
+    ? [block?.dayOfWeek ?? 1]
+    : repeatMode === "custom"
+      ? selectedDays
+      : getRepeatDaysForMode(repeatMode, selectedDays[0] ?? 1, selectedDays);
 
   return (
     <form
@@ -54,9 +67,11 @@ export function ScheduleBlockForm({ pools, shows, block }: Props) {
           showId: String(formData.get("showId") || ""),
           poolId: String(formData.get("poolId") || ""),
           dayOfWeek: Number(formData.get("dayOfWeek") || 0),
-          dayOfWeeks: isEditing ? undefined : selectedDays,
+          dayOfWeeks: isEditing ? undefined : resolvedCreateDays,
           startMinuteOfDay: hours * 60 + minutes,
-          durationMinutes: Number(formData.get("durationMinutes") || 0)
+          durationMinutes: Number(formData.get("durationMinutes") || 0),
+          repeatMode,
+          applyToRepeatSet: isEditing ? applyToRepeatSet : false
         };
 
         startTransition(async () => {
@@ -114,46 +129,96 @@ export function ScheduleBlockForm({ pools, shows, block }: Props) {
       </div>
       <div className="form-grid">
         {isEditing ? (
-          <label>
-            <span className="label">Day</span>
-            <select defaultValue={String(block?.dayOfWeek ?? 1)} name="dayOfWeek">
-              {dayOptions.map((day) => (
-                <option key={day.value} value={day.value}>
-                  {day.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <>
+            <label>
+              <span className="label">Day</span>
+              <select defaultValue={String(block?.dayOfWeek ?? 1)} disabled={applyToRepeatSet} name="dayOfWeek">
+                {dayOptions.map((day) => (
+                  <option key={day.value} value={day.value}>
+                    {day.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {block?.repeatGroupId ? (
+              <label className={`chip-toggle${applyToRepeatSet ? " chip-toggle-active" : ""}`} style={{ alignSelf: "end" }}>
+                <input
+                  checked={applyToRepeatSet}
+                  onChange={(event) => setApplyToRepeatSet(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>{applyToRepeatSet ? "Apply to repeat set" : "Edit only this occurrence"}</span>
+              </label>
+            ) : null}
+          </>
         ) : (
-          <label style={{ gridColumn: "1 / -1" }}>
-            <span className="label">Repeat on weekdays</span>
-            <div className="chip-grid">
-              {dayOptions.map((day) => {
-                const selected = selectedDays.includes(day.value);
-                return (
-                  <label className={`chip-toggle${selected ? " chip-toggle-active" : ""}`} key={day.value}>
-                    <input
-                      checked={selected}
-                      name="dayOfWeeks"
-                      onChange={(event) => {
-                        setSelectedDays((current) => {
-                          if (event.target.checked) {
-                            return [...current, day.value].sort((left, right) => left - right);
-                          }
+          <>
+            <label>
+              <span className="label">Repeat behavior</span>
+              <select
+                onChange={(event) => {
+                  const nextMode = event.target.value as ScheduleRepeatMode;
+                  setRepeatMode(nextMode);
+                  if (nextMode !== "custom") {
+                    setSelectedDays(getRepeatDaysForMode(nextMode, selectedDays[0] ?? 1, selectedDays));
+                  }
+                }}
+                value={repeatMode}
+              >
+                {SCHEDULE_REPEAT_MODE_OPTIONS.map((mode) => (
+                  <option key={mode.id} value={mode.id}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {repeatMode === "single" ? (
+              <label>
+                <span className="label">Weekday</span>
+                <select
+                  onChange={(event) => setSelectedDays([Number(event.target.value)])}
+                  value={String(selectedDays[0] ?? 1)}
+                >
+                  {dayOptions.map((day) => (
+                    <option key={day.value} value={day.value}>
+                      {day.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {repeatMode === "custom" ? (
+              <label style={{ gridColumn: "1 / -1" }}>
+                <span className="label">Custom weekdays</span>
+                <div className="chip-grid">
+                  {dayOptions.map((day) => {
+                    const selected = selectedDays.includes(day.value);
+                    return (
+                      <label className={`chip-toggle${selected ? " chip-toggle-active" : ""}`} key={day.value}>
+                        <input
+                          checked={selected}
+                          name="dayOfWeeks"
+                          onChange={(event) => {
+                            setSelectedDays((current) => {
+                              if (event.target.checked) {
+                                return [...current, day.value].sort((left, right) => left - right);
+                              }
 
-                          const next = current.filter((value) => value !== day.value);
-                          return next.length > 0 ? next : current;
-                        });
-                      }}
-                      type="checkbox"
-                      value={day.value}
-                    />
-                    <span>{day.label}</span>
-                  </label>
-                );
-              })}
-            </div>
-          </label>
+                              const next = current.filter((value) => value !== day.value);
+                              return next.length > 0 ? next : current;
+                            });
+                          }}
+                          type="checkbox"
+                          value={day.value}
+                        />
+                        <span>{day.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </label>
+            ) : null}
+          </>
         )}
         <label>
           <span className="label">Start hour</span>
@@ -201,10 +266,17 @@ export function ScheduleBlockForm({ pools, shows, block }: Props) {
         </select>
       </label>
       {block ? (
-        <p className="subtle">Current start: {formatMinuteOfDay(block.startMinuteOfDay)}</p>
+        <p className="subtle">
+          Current start: {formatMinuteOfDay(block.startMinuteOfDay)}
+          {block.repeatGroupId
+            ? applyToRepeatSet
+              ? " · Updating applies to the full repeat set."
+              : " · Saving detaches this occurrence from its repeat set."
+            : ""}
+        </p>
       ) : (
         <p className="subtle">
-          New blocks can be created for one or multiple weekdays at once. Show profiles prefill title, category, and duration.
+          New blocks can be created as single blocks or explicit repeat sets. Show profiles prefill title, category, and duration.
         </p>
       )}
       {message ? <p>{message}</p> : null}

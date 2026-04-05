@@ -12,6 +12,8 @@ function createBlock(args: {
   durationMinutes: number;
   poolId: string;
   sourceName: string;
+  repeatMode?: "single" | "daily" | "weekdays" | "weekends" | "custom";
+  repeatGroupId?: string;
 }) {
   return {
     id: `schedule_${Math.random().toString(36).slice(2, 10)}`,
@@ -21,7 +23,9 @@ function createBlock(args: {
     startMinuteOfDay: args.startMinuteOfDay,
     durationMinutes: args.durationMinutes,
     poolId: args.poolId,
-    sourceName: args.sourceName
+    sourceName: args.sourceName,
+    repeatMode: args.repeatMode ?? "single",
+    repeatGroupId: args.repeatGroupId ?? ""
   };
 }
 
@@ -74,6 +78,15 @@ export async function POST(request: NextRequest) {
       throw new Error("Prime-time pool not found.");
     }
 
+    const repeatIds = {
+      daily: `repeat_${Math.random().toString(36).slice(2, 10)}`,
+      weekdays: `repeat_${Math.random().toString(36).slice(2, 10)}`,
+      weekends: `repeat_${Math.random().toString(36).slice(2, 10)}`,
+      overnight: `repeat_${Math.random().toString(36).slice(2, 10)}`,
+      daytime: `repeat_${Math.random().toString(36).slice(2, 10)}`,
+      prime: `repeat_${Math.random().toString(36).slice(2, 10)}`
+    };
+
     const generatedBlocks =
       template === "always-on-single-pool"
         ? Array.from({ length: 7 }, (_, dayOfWeek) =>
@@ -84,7 +97,9 @@ export async function POST(request: NextRequest) {
               startMinuteOfDay: 0,
               durationMinutes: 24 * 60,
               poolId: primaryPool.id,
-              sourceName: primaryPool.name
+              sourceName: primaryPool.name,
+              repeatMode: "daily",
+              repeatGroupId: repeatIds.daily
             })
           )
         : template === "weekday-weekend-split"
@@ -97,7 +112,9 @@ export async function POST(request: NextRequest) {
                   startMinuteOfDay: 0,
                   durationMinutes: 24 * 60,
                   poolId: primaryPool.id,
-                  sourceName: primaryPool.name
+                  sourceName: primaryPool.name,
+                  repeatMode: "weekdays",
+                  repeatGroupId: repeatIds.weekdays
                 })
               ),
               ...[0, 6].map((dayOfWeek) =>
@@ -108,7 +125,9 @@ export async function POST(request: NextRequest) {
                   startMinuteOfDay: 0,
                   durationMinutes: 24 * 60,
                   poolId: secondaryPool!.id,
-                  sourceName: secondaryPool!.name
+                  sourceName: secondaryPool!.name,
+                  repeatMode: "weekends",
+                  repeatGroupId: repeatIds.weekends
                 })
               )
             ]
@@ -120,7 +139,9 @@ export async function POST(request: NextRequest) {
                 startMinuteOfDay: 0,
                 durationMinutes: 8 * 60,
                 poolId: primaryPool.id,
-                sourceName: primaryPool.name
+                sourceName: primaryPool.name,
+                repeatMode: "daily",
+                repeatGroupId: repeatIds.overnight
               }),
               createBlock({
                 title: `${secondaryPool!.name} Daytime`,
@@ -129,7 +150,9 @@ export async function POST(request: NextRequest) {
                 startMinuteOfDay: 8 * 60,
                 durationMinutes: 8 * 60,
                 poolId: secondaryPool!.id,
-                sourceName: secondaryPool!.name
+                sourceName: secondaryPool!.name,
+                repeatMode: "daily",
+                repeatGroupId: repeatIds.daytime
               }),
               createBlock({
                 title: `${tertiaryPool!.name} Prime Time`,
@@ -138,7 +161,9 @@ export async function POST(request: NextRequest) {
                 startMinuteOfDay: 16 * 60,
                 durationMinutes: 8 * 60,
                 poolId: tertiaryPool!.id,
-                sourceName: tertiaryPool!.name
+                sourceName: tertiaryPool!.name,
+                repeatMode: "daily",
+                repeatGroupId: repeatIds.prime
               })
             ]);
 

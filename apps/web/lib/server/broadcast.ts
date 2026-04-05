@@ -7,6 +7,10 @@ type BroadcastAction =
   | { type: "fallback" }
   | { type: "resume" }
   | { type: "trigger_insert"; assetId: string }
+  | { type: "play_now"; assetId: string }
+  | { type: "move_next"; assetId: string }
+  | { type: "remove_next" }
+  | { type: "replay_previous" }
   | { type: "skip"; minutes?: number }
   | { type: "override"; assetId: string; minutes?: number };
 
@@ -91,6 +95,8 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       overrideMode: "fallback",
       overrideAssetId: fallback.id,
       overrideUntil: new Date(Date.now() + 60 * 60_000).toISOString(),
+      manualNextAssetId: "",
+      manualNextRequestedAt: "",
       pendingAction: "",
       pendingActionRequestedAt: "",
       message: `Manual fallback requested for asset ${fallback.title}.`
@@ -109,6 +115,8 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       overrideMode: "schedule",
       overrideAssetId: "",
       overrideUntil: "",
+      manualNextAssetId: "",
+      manualNextRequestedAt: "",
       insertAssetId: "",
       insertRequestedAt: "",
       insertStatus: "",
@@ -122,7 +130,7 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
     return { ok: true, message: "Schedule control resumed." };
   }
 
-  if (action.type === "trigger_insert") {
+  if (action.type === "trigger_insert" || action.type === "play_now") {
     const asset = state.assets.find((entry) => entry.id === action.assetId && entry.status === "ready");
     if (!asset) {
       throw new Error("The requested insert asset is not available.");
@@ -136,12 +144,81 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       insertAssetId: asset.id,
       insertRequestedAt: now,
       insertStatus: "pending",
+      manualNextAssetId: "",
+      manualNextRequestedAt: "",
       pendingAction: "",
       pendingActionRequestedAt: "",
-      message: `Insert requested for ${asset.title}.`
+      message: `${action.type === "play_now" ? "Play now" : "Insert"} requested for ${asset.title}.`
     }));
-    await appendAuditEvent("playout.insert.requested", `Operator requested insert ${asset.title}.`);
-    return { ok: true, message: `Insert requested for ${asset.title}.` };
+    await appendAuditEvent(
+      action.type === "play_now" ? "playout.play-now.requested" : "playout.insert.requested",
+      `${action.type === "play_now" ? "Operator requested play now" : "Operator requested insert"} ${asset.title}.`
+    );
+    return { ok: true, message: `${action.type === "play_now" ? "Play now" : "Insert"} requested for ${asset.title}.` };
+  }
+
+  if (action.type === "move_next") {
+    const asset = state.assets.find((entry) => entry.id === action.assetId && entry.status === "ready");
+    if (!asset) {
+      throw new Error("The requested asset is not available to move next.");
+    }
+    if (asset.id === state.playout.currentAssetId) {
+      throw new Error("The selected asset is already on air.");
+    }
+
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      manualNextAssetId: asset.id,
+      manualNextRequestedAt: now,
+      pendingAction: "rebuild_queue",
+      pendingActionRequestedAt: now,
+      heartbeatAt: now,
+      message: `${asset.title} has been pinned as the next queue item.`
+    }));
+    await appendAuditEvent("playout.move-next.requested", `Operator moved ${asset.title} to the next queue slot.`);
+    return { ok: true, message: `${asset.title} will play next.` };
+  }
+
+  if (action.type === "remove_next") {
+    const nextQueueItem = state.playout.queueItems[1] ?? null;
+    if (!nextQueueItem?.assetId) {
+      throw new Error("There is no removable next queue asset.");
+    }
+
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      skipAssetId: nextQueueItem.assetId,
+      skipUntil: addMinutes(60),
+      manualNextAssetId: playout.manualNextAssetId === nextQueueItem.assetId ? "" : playout.manualNextAssetId,
+      manualNextRequestedAt: playout.manualNextAssetId === nextQueueItem.assetId ? "" : playout.manualNextRequestedAt,
+      pendingAction: "rebuild_queue",
+      pendingActionRequestedAt: now,
+      heartbeatAt: now,
+      message: `${nextQueueItem.title} was removed from the immediate next slot.`
+    }));
+    await appendAuditEvent("playout.remove-next.requested", `Operator removed ${nextQueueItem.title} from the next queue slot.`);
+    return { ok: true, message: `${nextQueueItem.title} was removed from next.` };
+  }
+
+  if (action.type === "replay_previous") {
+    const previousAsset = state.assets.find(
+      (entry) => entry.id === state.playout.previousAssetId && entry.status === "ready" && entry.includeInProgramming !== false
+    );
+    if (!previousAsset) {
+      throw new Error("There is no ready previous asset to replay next.");
+    }
+
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      manualNextAssetId: previousAsset.id,
+      manualNextRequestedAt: now,
+      pendingAction: "rebuild_queue",
+      pendingActionRequestedAt: now,
+      heartbeatAt: now,
+      message: `${previousAsset.title} will replay as the next item.`
+    }));
+    await appendAuditEvent("playout.replay-previous.requested", `Operator queued ${previousAsset.title} as the next replay item.`);
+    return { ok: true, message: `${previousAsset.title} will replay next.` };
   }
 
   if (action.type === "skip") {
@@ -182,6 +259,8 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
     overrideMode: "asset",
     overrideAssetId: asset.id,
     overrideUntil: addMinutes(minutes),
+    manualNextAssetId: "",
+    manualNextRequestedAt: "",
     pendingAction: "",
     pendingActionRequestedAt: "",
     message: `Operator override selected ${asset.title} for ${minutes} minutes.`

@@ -1,27 +1,11 @@
 "use client";
 
-import {
-  buildOverlayBrandLine,
-  buildOverlaySceneDefinition,
-  resolveOverlayHeadlineForQueueKind,
-  type OverlayQueueKind,
-  type OverlaySceneLayerKind
-} from "@stream247/core";
+import type { OverlaySceneLayerKind, OverlayScenePayload } from "@stream247/core";
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
-import type { LiveOverlaySummary } from "@/lib/live-broadcast";
 
 type OverlaySceneCanvasProps = {
-  overlay: LiveOverlaySummary;
-  timeZone: string;
-  sceneMode: OverlayQueueKind;
-  currentTitle: string;
-  currentCategory?: string;
-  currentSourceName?: string;
-  nextTitle: string;
-  nextTimeLabel?: string;
-  queueTitles?: string[];
-  modeSubtitle?: string;
+  payload: OverlayScenePayload;
 };
 
 export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
@@ -31,50 +15,7 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
-
-  const queuePreview = (props.queueTitles || []).filter(Boolean).slice(0, props.overlay.queuePreviewCount);
-  const sceneDefinition = buildOverlaySceneDefinition({
-    overlay: {
-      scenePreset: props.overlay.scenePreset,
-      insertScenePreset: props.overlay.insertScenePreset,
-      standbyScenePreset: props.overlay.standbyScenePreset,
-      reconnectScenePreset: props.overlay.reconnectScenePreset,
-      headline: props.overlay.headline,
-      insertHeadline: props.overlay.insertHeadline,
-      standbyHeadline: props.overlay.standbyHeadline,
-      reconnectHeadline: props.overlay.reconnectHeadline,
-      surfaceStyle: props.overlay.surfaceStyle,
-      panelAnchor: props.overlay.panelAnchor,
-      titleScale: props.overlay.titleScale,
-      showClock: props.overlay.showClock,
-      showNextItem: props.overlay.showNextItem,
-      showScheduleTeaser: props.overlay.showScheduleTeaser,
-      showQueuePreview: props.overlay.showQueuePreview,
-      emergencyBanner: props.overlay.emergencyBanner,
-      tickerText: props.overlay.tickerText,
-      layerOrder: props.overlay.layerOrder,
-      disabledLayers: props.overlay.disabledLayers
-    },
-    queueKind: props.sceneMode
-  });
-  const effectiveScenePreset = sceneDefinition.resolvedPresetId;
-  const heroLabel =
-    props.sceneMode === "insert"
-      ? "Insert On Air"
-      : props.sceneMode === "reconnect"
-        ? "Reconnect Window"
-        : props.sceneMode === "standby"
-          ? "Standby"
-          : "Now Playing";
-  const heroBody =
-    props.modeSubtitle ||
-    resolveOverlayHeadlineForQueueKind(props.overlay.headline, props.sceneMode, {
-      insertHeadline: props.overlay.insertHeadline,
-      standbyHeadline: props.overlay.standbyHeadline,
-      reconnectHeadline: props.overlay.reconnectHeadline
-    });
-  const nextLabel =
-    props.sceneMode === "insert" ? "After Insert" : props.sceneMode === "reconnect" ? "Returning With" : "Next";
+  const effectiveScenePreset = props.payload.scene.resolvedPresetId;
   const frameClassName = [
     "overlay-frame",
     effectiveScenePreset === "standby-board"
@@ -88,9 +29,9 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
             : effectiveScenePreset === "reconnect-board"
               ? "overlay-frame-reconnect"
               : "",
-    `overlay-anchor-${props.overlay.panelAnchor}`,
-    `overlay-surface-${props.overlay.surfaceStyle}`,
-    `overlay-title-${props.overlay.titleScale}`
+    `overlay-anchor-${props.payload.scene.panelAnchor}`,
+    `overlay-surface-${props.payload.scene.surfaceStyle}`,
+    `overlay-title-${props.payload.scene.titleScale}`
   ]
     .filter(Boolean)
     .join(" ");
@@ -99,7 +40,7 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
     if (kind === "chip") {
       return (
         <div className="overlay-chip" key={kind}>
-          {buildOverlayBrandLine(props.overlay.replayLabel, props.overlay.brandBadge)} · {props.overlay.channelName} · {heroLabel}
+          {props.payload.brandLine} · {props.payload.channelName} · {props.payload.heroLabel}
         </div>
       );
     }
@@ -107,17 +48,10 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
     if (kind === "hero") {
       return (
         <div className="overlay-card overlay-card-large" key={kind}>
-          <div className="label">{heroLabel}</div>
-          <h1>{props.currentTitle || "Stream247"}</h1>
-          <p>{heroBody}</p>
-          {props.sceneMode === "asset" && props.overlay.showCurrentCategory ? (
-            <div className="subtle">
-              {props.currentCategory || "Always on air"}
-              {props.overlay.showSourceLabel ? ` · ${props.currentSourceName || "Source to be announced"}` : ""}
-            </div>
-          ) : props.sceneMode === "asset" && props.overlay.showSourceLabel ? (
-            <div className="subtle">{props.currentSourceName || "Source to be announced"}</div>
-          ) : null}
+          <div className="label">{props.payload.heroLabel}</div>
+          <h1>{props.payload.heroTitle || "Stream247"}</h1>
+          <p>{props.payload.heroBody}</p>
+          {props.payload.metaLine ? <div className="subtle">{props.payload.metaLine}</div> : null}
         </div>
       );
     }
@@ -125,9 +59,9 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
     if (kind === "next") {
       return (
         <div className="overlay-card" key={kind}>
-          <div className="label">{nextLabel}</div>
-          <strong>{props.nextTitle || "Schedule not available"}</strong>
-          <div className="subtle">{props.nextTimeLabel || "No next block configured"}</div>
+          <div className="label">{props.payload.nextLabel}</div>
+          <strong>{props.payload.nextTitle || "Schedule not available"}</strong>
+          <div className="subtle">{props.payload.nextTimeLabel || "No next block configured"}</div>
         </div>
       );
     }
@@ -136,7 +70,11 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
       return (
         <div className="overlay-card" key={kind}>
           <div className="label">Later</div>
-          <strong>{queuePreview.length > 0 ? queuePreview.join(" → ") : "Queue preview will appear here once playout confirms it."}</strong>
+          <strong>
+            {props.payload.queueTitles.length > 0
+              ? props.payload.queueTitles.join(" → ")
+              : "Queue preview will appear here once playout confirms it."}
+          </strong>
         </div>
       );
     }
@@ -144,14 +82,10 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
     if (kind === "schedule") {
       return (
         <div className="overlay-card" key={kind}>
-          <div className="label">Scene</div>
-          <strong>{props.currentTitle || "Stand by"}</strong>
-          <div className="subtle">{props.sceneMode === "asset" ? props.currentCategory || "Always on air" : heroBody}</div>
-          <div className="subtle">
-            {props.sceneMode === "asset"
-              ? props.currentSourceName || "Source to be announced"
-              : props.nextTitle || "Programming will resume shortly"}
-          </div>
+          <div className="label">{props.payload.scheduleLabel}</div>
+          <strong>{props.payload.scheduleTitle || "Stand by"}</strong>
+          <div className="subtle">{props.payload.scheduleBody}</div>
+          {props.payload.scheduleAux ? <div className="subtle">{props.payload.scheduleAux}</div> : null}
         </div>
       );
     }
@@ -160,23 +94,23 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
       return (
         <div className="overlay-clock" key={kind}>
           {new Intl.DateTimeFormat("en-GB", {
-            timeZone: props.timeZone,
+            timeZone: props.payload.timeZone,
             hour: "2-digit",
             minute: "2-digit",
             second: "2-digit",
             hourCycle: "h23"
           }).format(now)}{" "}
-          {props.timeZone}
+          {props.payload.timeZone}
         </div>
       );
     }
 
     if (kind === "banner") {
-      return <div className="overlay-banner" key={kind}>{props.overlay.emergencyBanner}</div>;
+      return <div className="overlay-banner" key={kind}>{props.payload.emergencyBanner}</div>;
     }
 
     if (kind === "ticker") {
-      return <div className="overlay-ticker" key={kind}>{props.overlay.tickerText}</div>;
+      return <div className="overlay-ticker" key={kind}>{props.payload.tickerText}</div>;
     }
 
     return null;
@@ -187,11 +121,11 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
       className={frameClassName}
       style={
         {
-          "--overlay-accent": props.overlay.accentColor
+          "--overlay-accent": props.payload.accentColor
         } as CSSProperties
       }
     >
-      {sceneDefinition.layers.filter((layer) => layer.enabled).map((layer) => renderLayer(layer.kind))}
+      {props.payload.scene.layers.filter((layer) => layer.enabled).map((layer) => renderLayer(layer.kind))}
     </section>
   );
 }

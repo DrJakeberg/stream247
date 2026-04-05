@@ -6,6 +6,7 @@ import {
   OVERLAY_SCENE_PRESETS,
   OVERLAY_SURFACE_STYLES,
   OVERLAY_TITLE_SCALES,
+  buildOverlayScenePayload,
   resolveOverlayHeadlineForQueueKind,
   type OverlayQueueKind,
   type OverlaySceneLayerKind
@@ -133,6 +134,19 @@ export function OverlaySettingsForm(props: {
 
   const previewNextTitle =
     previewMode === "reconnect" ? props.preview.currentTitle : props.preview.nextTitle || "Programming resumes shortly";
+  const previewPayload = buildOverlayScenePayload({
+    overlay: draft,
+    queueKind: previewMode,
+    target: "browser",
+    currentTitle: previewCurrentTitle,
+    currentCategory: props.preview.currentCategory,
+    currentSourceName: props.preview.currentSourceName,
+    nextTitle: previewNextTitle,
+    nextTimeLabel: props.preview.nextTimeLabel,
+    queueTitles: props.preview.queueTitles,
+    modeSubtitle: previewSubtitle,
+    timeZone: props.preview.timeZone
+  });
 
   const saveScenePreset = () => {
     setError("");
@@ -270,18 +284,7 @@ export function OverlaySettingsForm(props: {
             </select>
           </div>
           <div className="scene-preview-shell">
-            <OverlaySceneCanvas
-              currentCategory={props.preview.currentCategory}
-              currentSourceName={props.preview.currentSourceName}
-              currentTitle={previewCurrentTitle}
-              modeSubtitle={previewSubtitle}
-              nextTimeLabel={props.preview.nextTimeLabel}
-              nextTitle={previewNextTitle}
-              overlay={draft}
-              queueTitles={props.preview.queueTitles}
-              sceneMode={previewMode}
-              timeZone={props.preview.timeZone}
-            />
+            <OverlaySceneCanvas payload={previewPayload} />
           </div>
         </div>
 

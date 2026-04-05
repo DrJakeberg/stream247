@@ -225,12 +225,15 @@ function createState(overrides: Partial<AppState> = {}): AppState {
     playout: {
       status: "running",
       transitionState: "ready",
+      queueVersion: 1,
       transitionTargetKind: "",
       transitionTargetAssetId: "",
       transitionTargetTitle: "",
       transitionReadyAt: "",
       currentAssetId: "asset-1",
       currentTitle: "Asset 1",
+      previousAssetId: "",
+      previousTitle: "",
       desiredAssetId: "asset-1",
       nextAssetId: "",
       nextTitle: "",
@@ -270,6 +273,8 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       overrideMode: "schedule",
       overrideAssetId: "",
       overrideUntil: "",
+      manualNextAssetId: "",
+      manualNextRequestedAt: "",
       insertAssetId: "",
       insertRequestedAt: "",
       insertStatus: "",
@@ -525,5 +530,8 @@ describe("ops state helpers", () => {
     expect(snapshot.queueItems[1]?.asset?.id).toBe("asset-1");
     expect(snapshot.activeScene.resolvedPresetId).toBe("standby-board");
     expect(snapshot.activeScene.layers[0]?.kind).toBe("chip");
+    expect(snapshot.activeScenePayload.queueKind).toBe("standby");
+    expect(snapshot.activeScenePayload.scene.resolvedPresetId).toBe("standby-board");
+    expect(snapshot.activeScenePayload.nextTitle).toBeTruthy();
   });
 });

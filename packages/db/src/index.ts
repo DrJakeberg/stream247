@@ -30,6 +30,9 @@ export type UserRecord = {
   twitchUserId: string;
   twitchLogin: string;
   passwordHash?: string;
+  twoFactorEnabled?: boolean;
+  twoFactorSecret?: string;
+  twoFactorConfirmedAt?: string;
   createdAt: string;
   lastLoginAt: string;
 };
@@ -105,6 +108,8 @@ export type AssetRecord = {
   sourceId: string;
   title: string;
   path: string;
+  folderPath?: string;
+  tags?: string[];
   status: "ready" | "pending" | "error";
   includeInProgramming: boolean;
   externalId?: string;
@@ -193,6 +198,8 @@ export type ScheduleBlockRecord = {
   showId?: string;
   poolId?: string;
   sourceName: string;
+  repeatMode?: "single" | "daily" | "weekdays" | "weekends" | "custom";
+  repeatGroupId?: string;
 };
 
 export type OverlaySettingsRecord = {
@@ -293,12 +300,15 @@ export type BroadcastQueueItemRecord = {
 export type PlayoutRuntimeRecord = {
   status: "idle" | "starting" | "running" | "switching" | "degraded" | "recovering" | "failed" | "standby" | "reconnecting";
   transitionState: "idle" | "prefetching" | "ready" | "switching";
+  queueVersion: number;
   transitionTargetKind: BroadcastQueueItemRecord["kind"] | "";
   transitionTargetAssetId: string;
   transitionTargetTitle: string;
   transitionReadyAt: string;
   currentAssetId: string;
   currentTitle: string;
+  previousAssetId: string;
+  previousTitle: string;
   desiredAssetId: string;
   nextAssetId: string;
   nextTitle: string;
@@ -335,6 +345,7 @@ export type PlayoutRuntimeRecord = {
     | "ffmpeg_crash_loop"
     | "operator_insert"
     | "scheduled_insert"
+    | "manual_next"
     | "standby"
     | "scheduled_reconnect"
     | "";
@@ -342,6 +353,8 @@ export type PlayoutRuntimeRecord = {
   overrideMode: "schedule" | "asset" | "fallback";
   overrideAssetId: string;
   overrideUntil: string;
+  manualNextAssetId: string;
+  manualNextRequestedAt: string;
   insertAssetId: string;
   insertRequestedAt: string;
   insertStatus: "" | "pending" | "active";
@@ -722,6 +735,38 @@ function createId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function normalizeAssetTags(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const normalized = value
+    .map((entry) => String(entry || "").trim())
+    .filter(Boolean)
+    .map((entry) =>
+      entry
+        .normalize("NFKD")
+        .replace(/[^\w\s/-]+/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+    )
+    .filter(Boolean);
+
+  return [...new Set(normalized)].slice(0, 24);
+}
+
+function parseAssetTagsJson(value: string): string[] {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    return normalizeAssetTags(JSON.parse(value));
+  } catch {
+    return [];
+  }
+}
+
 function getDatabaseUrl(): string {
   return process.env.DATABASE_URL || "postgresql://stream247:stream247@postgres:5432/stream247";
 }
@@ -748,6 +793,42 @@ function encryptManagedConfig(value: ManagedConfigRecord): string {
   const authTag = cipher.getAuthTag();
 
   return `v1:${iv.toString("base64url")}:${authTag.toString("base64url")}:${encrypted.toString("base64url")}`;
+}
+
+function encryptSecretString(value: string): string {
+  if (!value) {
+    return "";
+  }
+
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", getEncryptionKey(), iv);
+  const plaintext = Buffer.from(value, "utf8");
+  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+
+  return `v1:${iv.toString("base64url")}:${authTag.toString("base64url")}:${encrypted.toString("base64url")}`;
+}
+
+function decryptSecretString(value: string): string {
+  if (!value) {
+    return "";
+  }
+
+  const [version, ivText, authTagText, payloadText] = value.split(":");
+  if (version !== "v1" || !ivText || !authTagText || !payloadText) {
+    return "";
+  }
+
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", getEncryptionKey(), Buffer.from(ivText, "base64url"));
+    decipher.setAuthTag(Buffer.from(authTagText, "base64url"));
+    return Buffer.concat([
+      decipher.update(Buffer.from(payloadText, "base64url")),
+      decipher.final()
+    ]).toString("utf8");
+  } catch {
+    return "";
+  }
 }
 
 function decryptManagedConfig(value: string): ManagedConfigRecord | null {
@@ -892,12 +973,15 @@ function defaultState(): AppState {
     playout: {
       status: "idle",
       transitionState: "idle",
+      queueVersion: 0,
       transitionTargetKind: "",
       transitionTargetAssetId: "",
       transitionTargetTitle: "",
       transitionReadyAt: "",
       currentAssetId: "",
       currentTitle: "",
+      previousAssetId: "",
+      previousTitle: "",
       desiredAssetId: "",
       nextAssetId: "",
       nextTitle: "",
@@ -927,6 +1011,8 @@ function defaultState(): AppState {
       overrideMode: "schedule",
       overrideAssetId: "",
       overrideUntil: "",
+      manualNextAssetId: "",
+      manualNextRequestedAt: "",
       insertAssetId: "",
       insertRequestedAt: "",
       insertStatus: "",
@@ -1106,6 +1192,14 @@ function normalizeState(state: AppState): AppState {
           dayOfWeek: typeof block.dayOfWeek === "number" ? block.dayOfWeek : 0,
           showId: block.showId ?? "",
           poolId: block.poolId ?? "",
+          repeatMode:
+            block.repeatMode === "daily" ||
+            block.repeatMode === "weekdays" ||
+            block.repeatMode === "weekends" ||
+            block.repeatMode === "custom"
+              ? block.repeatMode
+              : "single",
+          repeatGroupId: block.repeatGroupId ?? "",
           startMinuteOfDay:
             typeof (block as ScheduleBlockRecord & { startHour?: number }).startMinuteOfDay === "number"
               ? block.startMinuteOfDay
@@ -1121,6 +1215,8 @@ function normalizeState(state: AppState): AppState {
     assets: Array.isArray(state.assets)
       ? dedupeById(state.assets).map((asset) => ({
           ...asset,
+          folderPath: asset.folderPath ?? "",
+          tags: normalizeAssetTags(asset.tags ?? []),
           includeInProgramming: asset.includeInProgramming ?? true,
           externalId: asset.externalId ?? "",
           categoryName: asset.categoryName ?? "",
@@ -1180,6 +1276,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       twitch_user_id TEXT NOT NULL DEFAULT '',
       twitch_login TEXT NOT NULL DEFAULT '',
       password_hash TEXT NOT NULL DEFAULT '',
+      two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      two_factor_secret TEXT NOT NULL DEFAULT '',
+      two_factor_confirmed_at TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       last_login_at TEXT NOT NULL
     );
@@ -1327,7 +1426,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       duration_minutes INTEGER NOT NULL,
       show_id TEXT NOT NULL DEFAULT '',
       pool_id TEXT NOT NULL DEFAULT '',
-      source_name TEXT NOT NULL
+      source_name TEXT NOT NULL,
+      repeat_mode TEXT NOT NULL DEFAULT 'single',
+      repeat_group_id TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS pools (
@@ -1369,6 +1470,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       source_id TEXT NOT NULL,
       title TEXT NOT NULL,
       path TEXT NOT NULL,
+      folder_path TEXT NOT NULL DEFAULT '',
+      tags_json TEXT NOT NULL DEFAULT '[]',
       status TEXT NOT NULL,
       include_in_programming BOOLEAN NOT NULL DEFAULT TRUE,
       external_id TEXT NOT NULL DEFAULT '',
@@ -1436,12 +1539,15 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'idle',
       transition_state TEXT NOT NULL DEFAULT 'idle',
+      queue_version INTEGER NOT NULL DEFAULT 0,
       transition_target_kind TEXT NOT NULL DEFAULT '',
       transition_target_asset_id TEXT NOT NULL DEFAULT '',
       transition_target_title TEXT NOT NULL DEFAULT '',
       transition_ready_at TEXT NOT NULL DEFAULT '',
       current_asset_id TEXT NOT NULL DEFAULT '',
       current_title TEXT NOT NULL DEFAULT '',
+      previous_asset_id TEXT NOT NULL DEFAULT '',
+      previous_title TEXT NOT NULL DEFAULT '',
       desired_asset_id TEXT NOT NULL DEFAULT '',
       next_asset_id TEXT NOT NULL DEFAULT '',
       next_title TEXT NOT NULL DEFAULT '',
@@ -1471,6 +1577,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       override_mode TEXT NOT NULL DEFAULT 'schedule',
       override_asset_id TEXT NOT NULL DEFAULT '',
       override_until TEXT NOT NULL DEFAULT '',
+      manual_next_asset_id TEXT NOT NULL DEFAULT '',
+      manual_next_requested_at TEXT NOT NULL DEFAULT '',
       insert_asset_id TEXT NOT NULL DEFAULT '',
       insert_requested_at TEXT NOT NULL DEFAULT '',
       insert_status TEXT NOT NULL DEFAULT '',
@@ -1535,6 +1643,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS channel_name TEXT NOT NULL DEFAULT 'Stream247';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS headline TEXT NOT NULL DEFAULT 'Always on air';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS insert_headline TEXT NOT NULL DEFAULT 'Insert on air';
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT NOT NULL DEFAULT '';
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_confirmed_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS standby_headline TEXT NOT NULL DEFAULT 'Please wait, restream is starting';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS reconnect_headline TEXT NOT NULL DEFAULT 'Scheduled reconnect in progress';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS accent_color TEXT NOT NULL DEFAULT '#0e6d5a';
@@ -1566,6 +1677,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS day_of_week INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS show_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS pool_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS repeat_mode TEXT NOT NULL DEFAULT 'single';
+    ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS repeat_group_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE pools ADD COLUMN IF NOT EXISTS insert_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE pools ADD COLUMN IF NOT EXISTS insert_every_items INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE pools ADD COLUMN IF NOT EXISTS items_since_insert INTEGER NOT NULL DEFAULT 0;
@@ -1574,12 +1687,17 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS category_name TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS duration_seconds INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS published_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS folder_path TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS tags_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_state TEXT NOT NULL DEFAULT 'idle';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS queue_version INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_target_kind TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_target_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_target_title TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_ready_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS previous_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS previous_title TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS next_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS next_title TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS queued_asset_ids TEXT NOT NULL DEFAULT '[]';
@@ -1607,6 +1725,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_mode TEXT NOT NULL DEFAULT 'schedule';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS override_until TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS manual_next_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS manual_next_requested_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS insert_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS insert_requested_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS insert_status TEXT NOT NULL DEFAULT '';
@@ -1672,8 +1792,34 @@ async function readLegacyState(): Promise<AppState | null> {
 }
 
 async function isDatabaseEmpty(client: PoolClient): Promise<boolean> {
-  const result = await client.query<{ count: string }>("SELECT COUNT(*) AS count FROM users");
-  return Number(result.rows[0]?.count ?? "0") === 0;
+  const result = await client.query<{
+    has_system_state: boolean;
+    has_playout_runtime: boolean;
+    has_users: boolean;
+    has_sources: boolean;
+    has_assets: boolean;
+    has_pools: boolean;
+    has_schedule_blocks: boolean;
+  }>(`
+    SELECT
+      EXISTS (SELECT 1 FROM system_state) AS has_system_state,
+      EXISTS (SELECT 1 FROM playout_runtime) AS has_playout_runtime,
+      EXISTS (SELECT 1 FROM users) AS has_users,
+      EXISTS (SELECT 1 FROM sources) AS has_sources,
+      EXISTS (SELECT 1 FROM assets) AS has_assets,
+      EXISTS (SELECT 1 FROM pools) AS has_pools,
+      EXISTS (SELECT 1 FROM schedule_blocks) AS has_schedule_blocks
+  `);
+  const row = result.rows[0];
+  return !(
+    row?.has_system_state ||
+    row?.has_playout_runtime ||
+    row?.has_users ||
+    row?.has_sources ||
+    row?.has_assets ||
+    row?.has_pools ||
+    row?.has_schedule_blocks
+  );
 }
 
 async function acquireStateWriteLock(client: PoolClient): Promise<void> {
@@ -1907,9 +2053,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     await client.query(
       `
         INSERT INTO users (
-          id, email, display_name, auth_provider, role, twitch_user_id, twitch_login, password_hash, created_at, last_login_at
+          id, email, display_name, auth_provider, role, twitch_user_id, twitch_login, password_hash,
+          two_factor_enabled, two_factor_secret, two_factor_confirmed_at, created_at, last_login_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       `,
       [
         user.id,
@@ -1920,6 +2067,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         user.twitchUserId,
         user.twitchLogin,
         user.passwordHash ?? "",
+        user.twoFactorEnabled ?? false,
+        encryptSecretString(user.twoFactorSecret ?? ""),
+        user.twoFactorConfirmedAt ?? "",
         user.createdAt,
         user.lastLoginAt
       ]
@@ -1953,9 +2103,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     await client.query(
       `
         INSERT INTO schedule_blocks (
-          id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name
+          id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       `,
       [
         block.id,
@@ -1967,7 +2117,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         block.dayOfWeek,
         block.showId ?? "",
         block.poolId ?? "",
-        block.sourceName
+        block.sourceName,
+        block.repeatMode ?? "single",
+        block.repeatGroupId ?? ""
       ]
     );
   }
@@ -2030,16 +2182,18 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     await client.query(
       `
         INSERT INTO assets (
-          id, source_id, title, path, status, include_in_programming, external_id, category_name, duration_seconds, published_at,
-          fallback_priority, is_global_fallback, created_at, updated_at
+          id, source_id, title, path, folder_path, tags_json, status, include_in_programming, external_id, category_name,
+          duration_seconds, published_at, fallback_priority, is_global_fallback, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       `,
       [
         asset.id,
         asset.sourceId,
         asset.title,
         asset.path,
+        asset.folderPath ?? "",
+        JSON.stringify(normalizeAssetTags(asset.tags ?? [])),
         asset.status,
         asset.includeInProgramming,
         asset.externalId ?? "",
@@ -2148,24 +2302,27 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
   await client.query(
     `
       INSERT INTO playout_runtime (
-        singleton_id, status, transition_state, transition_target_kind, transition_target_asset_id, transition_target_title, transition_ready_at,
-        current_asset_id, current_title, desired_asset_id, next_asset_id, next_title, queued_asset_ids, queue_items, prefetched_asset_id,
+        singleton_id, status, transition_state, queue_version, transition_target_kind, transition_target_asset_id, transition_target_title, transition_ready_at,
+        current_asset_id, current_title, previous_asset_id, previous_title, desired_asset_id, next_asset_id, next_title, queued_asset_ids, queue_items, prefetched_asset_id,
         prefetched_title, prefetched_at, prefetch_status, prefetch_error, current_destination_id, restart_requested_at, heartbeat_at, process_pid,
         process_started_at, last_transition_at, last_successful_start_at, last_successful_asset_id, last_exit_code, restart_count,
         crash_count_window, crash_loop_detected, last_error, last_stderr_sample, selection_reason_code, fallback_tier, override_mode,
-        override_asset_id, override_until, insert_asset_id, insert_requested_at, insert_status, skip_asset_id, skip_until, pending_action,
+        override_asset_id, override_until, manual_next_asset_id, manual_next_requested_at, insert_asset_id, insert_requested_at, insert_status, skip_asset_id, skip_until, pending_action,
         pending_action_requested_at, message
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         transition_state = EXCLUDED.transition_state,
+        queue_version = EXCLUDED.queue_version,
         transition_target_kind = EXCLUDED.transition_target_kind,
         transition_target_asset_id = EXCLUDED.transition_target_asset_id,
         transition_target_title = EXCLUDED.transition_target_title,
         transition_ready_at = EXCLUDED.transition_ready_at,
         current_asset_id = EXCLUDED.current_asset_id,
         current_title = EXCLUDED.current_title,
+        previous_asset_id = EXCLUDED.previous_asset_id,
+        previous_title = EXCLUDED.previous_title,
         desired_asset_id = EXCLUDED.desired_asset_id,
         next_asset_id = EXCLUDED.next_asset_id,
         next_title = EXCLUDED.next_title,
@@ -2195,6 +2352,8 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         override_mode = EXCLUDED.override_mode,
         override_asset_id = EXCLUDED.override_asset_id,
         override_until = EXCLUDED.override_until,
+        manual_next_asset_id = EXCLUDED.manual_next_asset_id,
+        manual_next_requested_at = EXCLUDED.manual_next_requested_at,
         insert_asset_id = EXCLUDED.insert_asset_id,
         insert_requested_at = EXCLUDED.insert_requested_at,
         insert_status = EXCLUDED.insert_status,
@@ -2207,12 +2366,15 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
     [
       playout.status,
       playout.transitionState,
+      playout.queueVersion,
       playout.transitionTargetKind,
       playout.transitionTargetAssetId,
       playout.transitionTargetTitle,
       playout.transitionReadyAt,
       playout.currentAssetId,
       playout.currentTitle,
+      playout.previousAssetId,
+      playout.previousTitle,
       playout.desiredAssetId,
       playout.nextAssetId,
       playout.nextTitle,
@@ -2242,6 +2404,8 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
       playout.overrideMode,
       playout.overrideAssetId,
       playout.overrideUntil,
+      playout.manualNextAssetId,
+      playout.manualNextRequestedAt,
       playout.insertAssetId,
       playout.insertRequestedAt,
       playout.insertStatus,
@@ -2270,6 +2434,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     twitch_user_id: string;
     twitch_login: string;
     password_hash: string;
+    two_factor_enabled: boolean;
+    two_factor_secret: string;
+    two_factor_confirmed_at: string;
     created_at: string;
     last_login_at: string;
   }>("SELECT * FROM users ORDER BY created_at ASC");
@@ -2354,7 +2521,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     show_id: string;
     pool_id: string;
     source_name: string;
-  }>("SELECT * FROM schedule_blocks ORDER BY start_minute_of_day ASC, start_hour ASC");
+    repeat_mode: ScheduleBlockRecord["repeatMode"];
+    repeat_group_id: string;
+  }>("SELECT * FROM schedule_blocks ORDER BY day_of_week ASC, start_minute_of_day ASC, start_hour ASC");
   const sourcesResult = await client.query<{
     id: string;
     name: string;
@@ -2371,6 +2540,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     source_id: string;
     title: string;
     path: string;
+    folder_path: string;
+    tags_json: string;
     status: AssetRecord["status"];
     include_in_programming: boolean;
     external_id: string;
@@ -2429,12 +2600,15 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   const playoutResult = await client.query<{
     status: PlayoutRuntimeRecord["status"];
     transition_state: PlayoutRuntimeRecord["transitionState"];
+    queue_version: number;
     transition_target_kind: PlayoutRuntimeRecord["transitionTargetKind"];
     transition_target_asset_id: string;
     transition_target_title: string;
     transition_ready_at: string;
     current_asset_id: string;
     current_title: string;
+    previous_asset_id: string;
+    previous_title: string;
     desired_asset_id: string;
     next_asset_id: string;
     next_title: string;
@@ -2464,6 +2638,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     override_mode: PlayoutRuntimeRecord["overrideMode"];
     override_asset_id: string;
     override_until: string;
+    manual_next_asset_id: string;
+    manual_next_requested_at: string;
     insert_asset_id: string;
     insert_requested_at: string;
     insert_status: PlayoutRuntimeRecord["insertStatus"];
@@ -2502,6 +2678,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       twitchUserId: row.twitch_user_id,
       twitchLogin: row.twitch_login,
       passwordHash: row.password_hash || undefined,
+      twoFactorEnabled: row.two_factor_enabled,
+      twoFactorSecret: decryptSecretString(row.two_factor_secret),
+      twoFactorConfirmedAt: row.two_factor_confirmed_at,
       createdAt: row.created_at,
       lastLoginAt: row.last_login_at
     })),
@@ -2592,7 +2771,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       dayOfWeek: row.day_of_week ?? 0,
       showId: row.show_id || undefined,
       poolId: row.pool_id || undefined,
-      sourceName: row.source_name
+      sourceName: row.source_name,
+      repeatMode: row.repeat_mode || "single",
+      repeatGroupId: row.repeat_group_id || ""
     })),
     sources: sourcesResult.rows.map((row) => ({
       id: row.id,
@@ -2610,6 +2791,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       sourceId: row.source_id,
       title: row.title,
       path: row.path,
+      folderPath: row.folder_path || "",
+      tags: parseAssetTagsJson(row.tags_json),
       status: row.status,
       includeInProgramming: row.include_in_programming,
       externalId: row.external_id || undefined,
@@ -2672,12 +2855,15 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       ? {
           status: playoutRow.status,
           transitionState: playoutRow.transition_state,
+          queueVersion: playoutRow.queue_version,
           transitionTargetKind: playoutRow.transition_target_kind || "",
           transitionTargetAssetId: playoutRow.transition_target_asset_id,
           transitionTargetTitle: playoutRow.transition_target_title,
           transitionReadyAt: playoutRow.transition_ready_at,
           currentAssetId: playoutRow.current_asset_id,
           currentTitle: playoutRow.current_title,
+          previousAssetId: playoutRow.previous_asset_id,
+          previousTitle: playoutRow.previous_title,
           desiredAssetId: playoutRow.desired_asset_id,
           nextAssetId: playoutRow.next_asset_id,
           nextTitle: playoutRow.next_title,
@@ -2707,6 +2893,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           overrideMode: playoutRow.override_mode,
           overrideAssetId: playoutRow.override_asset_id,
           overrideUntil: playoutRow.override_until,
+          manualNextAssetId: playoutRow.manual_next_asset_id,
+          manualNextRequestedAt: playoutRow.manual_next_requested_at,
           insertAssetId: playoutRow.insert_asset_id,
           insertRequestedAt: playoutRow.insert_requested_at,
           insertStatus: playoutRow.insert_status,
@@ -2896,10 +3084,15 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
       source_id: string;
       path: string;
       external_id: string;
+      folder_path: string;
+      tags_json: string;
       include_in_programming: boolean;
       fallback_priority: number;
       is_global_fallback: boolean;
-    }>("SELECT id, source_id, path, external_id, include_in_programming, fallback_priority, is_global_fallback FROM assets WHERE source_id = ANY($1::text[])", [sourceIds]);
+    }>(
+      "SELECT id, source_id, path, external_id, folder_path, tags_json, include_in_programming, fallback_priority, is_global_fallback FROM assets WHERE source_id = ANY($1::text[])",
+      [sourceIds]
+    );
 
     const existingById = new Map(existingResult.rows.map((row) => [row.id, row] as const));
     const existingByExternal = new Map(
@@ -2918,16 +3111,18 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
       await client.query(
         `
           INSERT INTO assets (
-            id, source_id, title, path, status, include_in_programming, external_id, category_name, duration_seconds, published_at,
-            fallback_priority, is_global_fallback, created_at, updated_at
+            id, source_id, title, path, folder_path, tags_json, status, include_in_programming, external_id, category_name,
+            duration_seconds, published_at, fallback_priority, is_global_fallback, created_at, updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         `,
         [
           asset.id,
           asset.sourceId,
           asset.title,
           asset.path,
+          existing?.folder_path ?? asset.folderPath ?? "",
+          existing?.tags_json ?? JSON.stringify(normalizeAssetTags(asset.tags ?? [])),
           asset.status,
           existing?.include_in_programming ?? asset.includeInProgramming,
           asset.externalId ?? "",
@@ -2957,22 +3152,26 @@ export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
           SET
             title = $2,
             path = $3,
-            status = $4,
-            include_in_programming = $5,
-            external_id = $6,
-            category_name = $7,
-            duration_seconds = $8,
-            published_at = $9,
-            fallback_priority = $10,
-            is_global_fallback = $11,
-            created_at = $12,
-            updated_at = $13
+            folder_path = $4,
+            tags_json = $5,
+            status = $6,
+            include_in_programming = $7,
+            external_id = $8,
+            category_name = $9,
+            duration_seconds = $10,
+            published_at = $11,
+            fallback_priority = $12,
+            is_global_fallback = $13,
+            created_at = $14,
+            updated_at = $15
           WHERE id = $1
         `,
         [
           asset.id,
           asset.title,
           asset.path,
+          asset.folderPath ?? "",
+          JSON.stringify(normalizeAssetTags(asset.tags ?? [])),
           asset.status,
           asset.includeInProgramming,
           asset.externalId ?? "",
@@ -3150,6 +3349,30 @@ export async function deleteOverlayScenePresetRecord(id: string): Promise<void> 
   });
 }
 
+export async function replaceOverlayScenePresetRecords(presets: OverlayScenePresetRecord[]): Promise<void> {
+  await withSerializedStateWrite("replaceOverlayScenePresetRecords", async (client) => {
+    await client.query("DELETE FROM overlay_scene_presets");
+
+    for (const preset of presets) {
+      const normalized = normalizeOverlayScenePresetRecord(preset);
+      await client.query(
+        `
+          INSERT INTO overlay_scene_presets (id, name, description, overlay_json, created_at, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `,
+        [
+          normalized.id,
+          normalized.name,
+          normalized.description,
+          JSON.stringify(normalized.overlay),
+          normalized.createdAt,
+          normalized.updatedAt
+        ]
+      );
+    }
+  });
+}
+
 export async function applyOverlayScenePresetRecordToDraft(id: string): Promise<OverlayStudioStateRecord | null> {
   return withSerializedStateWrite("applyOverlayScenePresetRecordToDraft", async (client) => {
     const presetResult = await client.query<OverlayScenePresetRow>("SELECT * FROM overlay_scene_presets WHERE id = $1", [id]);
@@ -3287,9 +3510,10 @@ export async function upsertUserRecord(user: UserRecord): Promise<void> {
     await client.query(
       `
         INSERT INTO users (
-          id, email, display_name, auth_provider, role, twitch_user_id, twitch_login, password_hash, created_at, last_login_at
+          id, email, display_name, auth_provider, role, twitch_user_id, twitch_login, password_hash,
+          two_factor_enabled, two_factor_secret, two_factor_confirmed_at, created_at, last_login_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (id) DO UPDATE SET
           email = EXCLUDED.email,
           display_name = EXCLUDED.display_name,
@@ -3298,6 +3522,9 @@ export async function upsertUserRecord(user: UserRecord): Promise<void> {
           twitch_user_id = EXCLUDED.twitch_user_id,
           twitch_login = EXCLUDED.twitch_login,
           password_hash = EXCLUDED.password_hash,
+          two_factor_enabled = EXCLUDED.two_factor_enabled,
+          two_factor_secret = EXCLUDED.two_factor_secret,
+          two_factor_confirmed_at = EXCLUDED.two_factor_confirmed_at,
           created_at = EXCLUDED.created_at,
           last_login_at = EXCLUDED.last_login_at
       `,
@@ -3310,6 +3537,9 @@ export async function upsertUserRecord(user: UserRecord): Promise<void> {
         user.twitchUserId,
         user.twitchLogin,
         user.passwordHash ?? "",
+        user.twoFactorEnabled ?? false,
+        encryptSecretString(user.twoFactorSecret ?? ""),
+        user.twoFactorConfirmedAt ?? "",
         user.createdAt,
         user.lastLoginAt
       ]
@@ -3407,9 +3637,9 @@ export async function createScheduleBlocks(blocks: ScheduleBlockRecord[]): Promi
       await client.query(
         `
           INSERT INTO schedule_blocks (
-            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name
+            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         `,
         [
           block.id,
@@ -3421,7 +3651,9 @@ export async function createScheduleBlocks(blocks: ScheduleBlockRecord[]): Promi
           block.dayOfWeek,
           block.showId ?? "",
           block.poolId ?? "",
-          block.sourceName
+          block.sourceName,
+          block.repeatMode ?? "single",
+          block.repeatGroupId ?? ""
         ]
       );
     }
@@ -3436,9 +3668,9 @@ export async function replaceAllScheduleBlocks(blocks: ScheduleBlockRecord[]): P
       await client.query(
         `
           INSERT INTO schedule_blocks (
-            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name
+            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         `,
         [
           block.id,
@@ -3450,7 +3682,9 @@ export async function replaceAllScheduleBlocks(blocks: ScheduleBlockRecord[]): P
           block.dayOfWeek,
           block.showId ?? "",
           block.poolId ?? "",
-          block.sourceName
+          block.sourceName,
+          block.repeatMode ?? "single",
+          block.repeatGroupId ?? ""
         ]
       );
     }
@@ -3470,7 +3704,9 @@ export async function updateScheduleBlockRecord(block: ScheduleBlockRecord): Pro
             day_of_week = $7,
             show_id = $8,
             pool_id = $9,
-            source_name = $10
+            source_name = $10,
+            repeat_mode = $11,
+            repeat_group_id = $12
         WHERE id = $1
       `,
       [
@@ -3483,7 +3719,48 @@ export async function updateScheduleBlockRecord(block: ScheduleBlockRecord): Pro
         block.dayOfWeek,
         block.showId ?? "",
         block.poolId ?? "",
-        block.sourceName
+        block.sourceName,
+        block.repeatMode ?? "single",
+        block.repeatGroupId ?? ""
+      ]
+    );
+  });
+}
+
+export async function updateScheduleRepeatGroupRecords(args: {
+  repeatGroupId: string;
+  title: string;
+  categoryName: string;
+  startMinuteOfDay: number;
+  durationMinutes: number;
+  showId?: string;
+  poolId?: string;
+  sourceName: string;
+}): Promise<void> {
+  await withSerializedStateWrite("updateScheduleRepeatGroupRecords", async (client) => {
+    await client.query(
+      `
+        UPDATE schedule_blocks
+        SET title = $2,
+            category_name = $3,
+            start_hour = $4,
+            start_minute_of_day = $5,
+            duration_minutes = $6,
+            show_id = $7,
+            pool_id = $8,
+            source_name = $9
+        WHERE repeat_group_id = $1
+      `,
+      [
+        args.repeatGroupId,
+        args.title,
+        args.categoryName,
+        Math.floor(args.startMinuteOfDay / 60),
+        args.startMinuteOfDay,
+        args.durationMinutes,
+        args.showId ?? "",
+        args.poolId ?? "",
+        args.sourceName
       ]
     );
   });

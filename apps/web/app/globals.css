@@ -390,6 +390,63 @@ select,
   gap: 6px;
 }
 
+.programming-day-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.programming-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  border: 1px solid rgba(27, 26, 22, 0.08);
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.programming-status-balanced {
+  border-color: rgba(14, 109, 90, 0.2);
+  background: rgba(14, 109, 90, 0.12);
+  color: #0b5f4f;
+}
+
+.programming-status-underfilled {
+  border-color: rgba(176, 118, 29, 0.22);
+  background: rgba(176, 118, 29, 0.14);
+  color: #7e5516;
+}
+
+.programming-status-overflow {
+  border-color: rgba(52, 92, 166, 0.22);
+  background: rgba(52, 92, 166, 0.14);
+  color: #284f94;
+}
+
+.programming-status-empty {
+  border-color: rgba(158, 36, 48, 0.18);
+  background: rgba(158, 36, 48, 0.12);
+  color: #8b1e2d;
+}
+
+.programming-workspace-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.programming-workspace-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(27, 26, 22, 0.07);
+  background: rgba(255, 249, 239, 0.76);
+}
+
 .schedule-timeline {
   position: relative;
   margin-top: 16px;
@@ -455,6 +512,22 @@ select,
 .schedule-block-card span {
   font-size: 0.86rem;
   color: var(--muted);
+}
+
+.schedule-block-balanced {
+  background: rgba(14, 109, 90, 0.18);
+}
+
+.schedule-block-underfilled {
+  background: rgba(176, 118, 29, 0.16);
+}
+
+.schedule-block-overflow {
+  background: rgba(52, 92, 166, 0.16);
+}
+
+.schedule-block-empty {
+  background: rgba(158, 36, 48, 0.14);
 }
 
 .truncate-title {
@@ -626,6 +699,16 @@ select,
     radial-gradient(circle at top right, color-mix(in srgb, var(--overlay-accent) 40%, transparent), transparent 28%),
     linear-gradient(160deg, rgba(7, 16, 14, 0.72), rgba(7, 16, 14, 0.12));
   color: #f5f2ea;
+}
+
+.overlay-page.overlay-page-chromeless {
+  padding: 0;
+  background: transparent;
+}
+
+.overlay-page.overlay-page-chromeless .overlay-frame {
+  min-height: 100vh;
+  max-width: none;
 }
 
 .overlay-frame {
