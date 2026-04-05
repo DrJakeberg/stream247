@@ -322,7 +322,9 @@ Notes:
 - playout runtime visibility for current / next / queued assets in the admin UI
 - source-side asset counts and ready counts
 - asset detail pages with source origin, pool context, and runtime visibility
-- searchable asset library by title, source, and status
+- searchable asset library by title, source, status, and programming inclusion
+- asset curation controls for include/exclude from automatic programming
+- bulk asset actions for include, exclude, and global fallback promotion
 
 ### Scheduling
 

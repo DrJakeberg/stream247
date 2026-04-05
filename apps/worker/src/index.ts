@@ -571,6 +571,7 @@ function buildAssetFromPath(filePath: string, now: string): AssetRecord {
     title: path.basename(filePath, path.extname(filePath)).replace(/[_-]+/g, " "),
     path: filePath,
     status: "ready",
+    includeInProgramming: true,
     fallbackPriority: isFallback ? 1 : 100,
     isGlobalFallback: isFallback,
     createdAt: now,
@@ -589,10 +590,11 @@ async function syncLocalMediaLibrary(): Promise<void> {
   const nextAssets: AssetRecord[] = discoveredAssets.map((asset) => {
     const existing = existingByPath.get(asset.path);
     return existing
-      ? {
+        ? {
           ...existing,
           title: asset.title,
           status: "ready",
+          includeInProgramming: existing.includeInProgramming,
           fallbackPriority: asset.fallbackPriority,
           isGlobalFallback: asset.isGlobalFallback,
           updatedAt: now
@@ -677,6 +679,7 @@ async function syncDirectMediaSources(): Promise<void> {
       title: source.name,
       path: url,
       status: "ready",
+      includeInProgramming: true,
       externalId: source.id,
       fallbackPriority: 100,
       isGlobalFallback: false,
@@ -770,6 +773,7 @@ function buildRemoteAsset(args: {
     title: args.title,
     path: args.path,
     status: "ready",
+    includeInProgramming: true,
     externalId: args.externalId,
     categoryName: args.categoryName,
     durationSeconds: args.durationSeconds,
@@ -1182,7 +1186,7 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
   }
 
   const eligibleAssets = state.assets.filter((asset) => {
-    if (asset.status !== "ready" || asset.id === skippedAssetId) {
+    if (asset.status !== "ready" || asset.id === skippedAssetId || asset.includeInProgramming === false) {
       return false;
     }
 
@@ -1221,7 +1225,7 @@ function getPoolPlaybackQueue(state: AppState, poolId: string, skippedAssetId: s
   }
 
   const eligibleAssets = state.assets.filter((asset) => {
-    if (asset.status !== "ready" || asset.id === skippedAssetId) {
+    if (asset.status !== "ready" || asset.id === skippedAssetId || asset.includeInProgramming === false) {
       return false;
     }
 
@@ -1559,7 +1563,11 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     currentPool.insertEveryItems > 0 &&
     currentPool.itemsSinceInsert >= currentPool.insertEveryItems
       ? state.assets.find(
-          (asset) => asset.id === currentPool.insertAssetId && asset.status === "ready" && asset.id !== skippedAssetId
+          (asset) =>
+            asset.id === currentPool.insertAssetId &&
+            asset.status === "ready" &&
+            asset.includeInProgramming !== false &&
+            asset.id !== skippedAssetId
         ) ?? null
       : null;
 
@@ -1603,6 +1611,9 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
         if (entry.id === skippedAssetId) {
           return false;
         }
+        if (entry.includeInProgramming === false) {
+          return false;
+        }
         const matchingSource = state.sources.find((source) => source.id === entry.sourceId);
         return matchingSource?.name === currentScheduleItem?.sourceName;
       });
@@ -1620,7 +1631,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   }
 
   const globalFallback = [...state.assets]
-    .filter((asset) => asset.status === "ready" && asset.isGlobalFallback)
+    .filter((asset) => asset.status === "ready" && asset.isGlobalFallback && asset.includeInProgramming !== false)
     .filter((asset) => asset.id !== skippedAssetId)
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 
@@ -1635,7 +1646,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   }
 
   const anyReadyAsset = [...state.assets]
-    .filter((asset) => asset.status === "ready")
+    .filter((asset) => asset.status === "ready" && asset.includeInProgramming !== false)
     .filter((asset) => asset.id !== skippedAssetId)
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 

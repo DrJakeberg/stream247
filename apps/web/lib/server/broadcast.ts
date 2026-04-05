@@ -75,7 +75,7 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
 
   if (action.type === "fallback") {
     const fallback = [...state.assets]
-      .filter((asset) => asset.status === "ready" && asset.isGlobalFallback)
+      .filter((asset) => asset.status === "ready" && asset.isGlobalFallback && asset.includeInProgramming !== false)
       .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 
     if (!fallback) {

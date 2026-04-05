@@ -45,6 +45,7 @@ import {
   replaceTwitchScheduleSegments,
   resolveIncident,
   replaceAssetsForSourceIds,
+  updateAssetRecords,
   updatePlayoutRuntime,
   updatePoolCursor,
   updateAppState,
@@ -147,6 +148,7 @@ export {
   replaceTwitchScheduleSegments,
   replaceAssetsForSourceIds,
   resolveIncident,
+  updateAssetRecords,
   updateAppState,
   updateOwnerAndInitialized,
   updatePlayoutRuntime,
@@ -456,6 +458,7 @@ export function getAssetPlaybackDiagnostics(state: AppState, assetId: string) {
   const sourceSnapshot = getSourceHealthSnapshot(state, asset.sourceId);
   const details = [
     asset.status === "ready" ? "Asset is marked ready in the catalog." : `Asset catalog status is ${asset.status}.`,
+    asset.includeInProgramming ? "Asset is currently eligible for automated programming." : "Asset is currently excluded from automated programming.",
     asset.path ? `Playable input: ${asset.path}` : "No playable input path is recorded.",
     source ? `Source connector: ${source.connectorKind}` : "Source record is missing."
   ];
@@ -475,8 +478,10 @@ export function getAssetPlaybackDiagnostics(state: AppState, assetId: string) {
   return {
     status: asset.status === "ready" ? ("playable" as const) : ("warning" as const),
     summary:
-      asset.status === "ready"
+      asset.status === "ready" && asset.includeInProgramming
         ? "Asset should be usable for pool rotation or override if the upstream URL is still reachable."
+        : asset.status === "ready"
+          ? "Asset is playable, but it is intentionally excluded from automated programming."
         : "Asset is not currently in a ready state and should be treated as suspect for playback.",
     details
   };

@@ -227,6 +227,9 @@ Deliverables:
   - playability
   - last played
   - source health
+- asset curation for:
+  - include or exclude from automated programming
+  - promote or clear global fallback candidates
 - bulk actions for source and asset library
 - more guided setup language and better validation
 
