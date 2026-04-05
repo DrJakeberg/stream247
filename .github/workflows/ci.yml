@@ -31,6 +31,7 @@ jobs:
       - run: docker build -f docker/worker.Dockerfile -t stream247-worker:test .
       - run: pnpm test:fresh-db
       - run: pnpm test:fresh-compose
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: pnpm test:queue-continuity
       - run: pnpm dlx @playwright/test@1.56.1 install --with-deps chromium
       - run: pnpm test:e2e:smoke
