@@ -1432,3 +1432,67 @@ export function toUtcIsoForLocalDateTime(args: {
 
   return instant.toISOString();
 }
+
+export type DestinationRoutingRecord = {
+  id: string;
+  name: string;
+  role: "primary" | "backup";
+  priority: number;
+  enabled: boolean;
+  streamKeyPresent: boolean;
+  status: "ready" | "missing-config" | "error";
+};
+
+export type DestinationRoutingSelection = {
+  mode: "primary" | "backup" | "none";
+  activeDestinationIds: string[];
+  leadDestinationId: string;
+};
+
+export function selectActiveDestinationGroup(destinations: DestinationRoutingRecord[]): DestinationRoutingSelection {
+  const ordered = [...destinations]
+    .filter((destination) => destination.enabled && destination.streamKeyPresent)
+    .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name));
+
+  const primaryHealthy = ordered.filter((destination) => destination.role === "primary" && destination.status !== "error");
+  if (primaryHealthy.length > 0) {
+    return {
+      mode: "primary",
+      activeDestinationIds: primaryHealthy.map((destination) => destination.id),
+      leadDestinationId: primaryHealthy[0]?.id || ""
+    };
+  }
+
+  const backupHealthy = ordered.filter((destination) => destination.role === "backup" && destination.status !== "error");
+  if (backupHealthy.length > 0) {
+    return {
+      mode: "backup",
+      activeDestinationIds: backupHealthy.map((destination) => destination.id),
+      leadDestinationId: backupHealthy[0]?.id || ""
+    };
+  }
+
+  const primaryConfigured = ordered.filter((destination) => destination.role === "primary");
+  if (primaryConfigured.length > 0) {
+    return {
+      mode: "primary",
+      activeDestinationIds: primaryConfigured.map((destination) => destination.id),
+      leadDestinationId: primaryConfigured[0]?.id || ""
+    };
+  }
+
+  const backupConfigured = ordered.filter((destination) => destination.role === "backup");
+  if (backupConfigured.length > 0) {
+    return {
+      mode: "backup",
+      activeDestinationIds: backupConfigured.map((destination) => destination.id),
+      leadDestinationId: backupConfigured[0]?.id || ""
+    };
+  }
+
+  return {
+    mode: "none",
+    activeDestinationIds: [],
+    leadDestinationId: ""
+  };
+}

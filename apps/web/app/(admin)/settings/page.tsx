@@ -120,8 +120,8 @@ export default async function SettingsPage() {
           <div className="item">
             <strong>Operational stance</strong>
             <div className="subtle">
-              Primary and backup destinations, release preflight, upgrade rehearsal, and fresh-boot CI are now built
-              into the default operating model.
+              Multi-output destinations, release preflight, upgrade rehearsal, and fresh-boot CI are now built into
+              the default operating model.
             </div>
           </div>
         </div>

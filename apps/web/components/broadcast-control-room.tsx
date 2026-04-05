@@ -43,7 +43,11 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
           </div>
           <div>
             <span className="label">Destination</span>
-            <strong>{snapshot.destination?.status || "missing"}</strong>
+            <strong>
+              {snapshot.destinations.filter((destination) => destination.active).length > 0
+                ? `${snapshot.destinations.filter((destination) => destination.active).length} active`
+                : snapshot.destination?.status || "missing"}
+            </strong>
           </div>
           <div>
             <span className="label">Updates</span>
@@ -126,7 +130,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               <strong>{snapshot.destination?.name || "No destination configured"}</strong>
               <div className="subtle">
                 {snapshot.destination
-                  ? `${snapshot.destination.role} · ${snapshot.destination.status} · ${snapshot.destination.rtmpUrl}`
+                  ? `${snapshot.destination.role} lead · ${snapshot.destination.status} · ${snapshot.destination.rtmpUrl}`
                   : "Configure a destination before going on air."}
               </div>
               <div className="subtle">
@@ -141,9 +145,11 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 <strong>{destination.name}</strong>
                 <div className="subtle">
                   {destination.role} · priority {destination.priority} · {destination.status}
+                  {destination.active ? " · active" : ""}
                 </div>
                 <div className="subtle">
-                  {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"}
+                  {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"} · key source{" "}
+                  {destination.streamKeySource}
                 </div>
                 <div className="subtle">{destination.notes}</div>
                 {destination.lastFailureAt ? (

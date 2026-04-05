@@ -284,4 +284,41 @@ describe("channel blueprints", () => {
     expect(normalized.importedPresets).toHaveLength(1);
     expect(normalized.importedDraftOverlay.brandBadge).toBe("Draft badge");
   });
+
+  it("does not leak one primary output key state into another imported primary destination", () => {
+    const state = createState();
+    const studio = createStudio();
+    const blueprint = buildChannelBlueprintDocument({
+      state: {
+        ...state,
+        destinations: [
+          createDestination(),
+          createDestination({
+            id: "destination-youtube",
+            provider: "custom-rtmp",
+            role: "primary",
+            priority: 1,
+            name: "YouTube",
+            rtmpUrl: "rtmp://a.rtmp.youtube.com/live2",
+            streamKeyPresent: false,
+            streamKeySource: "missing"
+          })
+        ]
+      },
+      studio,
+      presets: [],
+      exportedAt: "2026-04-05T12:00:00.000Z"
+    });
+
+    const normalized = normalizeChannelBlueprintDocument({
+      input: blueprint as ChannelBlueprintDocument,
+      currentState: state,
+      studio,
+      now: "2026-04-05T12:05:00.000Z"
+    });
+
+    expect(normalized.importedDestinations.find((destination) => destination.id === "destination-youtube")?.streamKeyPresent).toBe(
+      false
+    );
+  });
 });

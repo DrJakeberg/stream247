@@ -327,7 +327,13 @@ function normalizeBlueprintDestinationRecord(
 
   const provider = candidate.provider === "custom-rtmp" ? "custom-rtmp" : "twitch";
   const role = candidate.role === "backup" ? "backup" : "primary";
-  const existingRecord = existing.find((destination) => destination.id === id) ?? existing.find((destination) => destination.role === role) ?? null;
+  const existingRecord =
+    existing.find((destination) => destination.id === id) ??
+    (id === "destination-primary"
+      ? existing.find((destination) => destination.id === "destination-primary") ?? null
+      : id === "destination-backup"
+        ? existing.find((destination) => destination.id === "destination-backup") ?? null
+        : null);
   const streamKeyPresent = existingRecord?.streamKeyPresent ?? false;
 
   return {
@@ -344,6 +350,13 @@ function normalizeBlueprintDestinationRecord(
     enabled: typeof candidate.enabled === "boolean" ? candidate.enabled : true,
     rtmpUrl,
     streamKeyPresent,
+    streamKeySource:
+      existingRecord?.streamKeySource ||
+      (streamKeyPresent
+        ? id === "destination-primary" || id === "destination-backup"
+          ? "env"
+          : "managed"
+        : "missing"),
     status: rtmpUrl && streamKeyPresent ? "ready" : "missing-config",
     notes: asString(candidate.notes),
     lastValidatedAt: "",

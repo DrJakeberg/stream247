@@ -11,11 +11,13 @@ import {
   listOverlayScenePresetRecords,
   publishOverlayDraftRecord,
   readAppState,
+  readManagedDestinationStreamKeys,
   readOverlayStudioState,
   resetDatabaseConnectionsForTests,
   resetOverlayDraftRecord,
   saveOverlayDraftRecord,
   saveOverlayScenePresetRecord,
+  updateDestinationRecord,
   writeAppState
 } from "@stream247/db";
 
@@ -428,7 +430,8 @@ describe.sequential("database roundtrip", () => {
     expect(reread.assets[0]?.folderPath).toBe("youtube-channel/source-1");
     expect(reread.assets[0]?.tags).toEqual(["featured", "evergreen"]);
     expect(reread.sourceSyncRuns[0]?.status).toBe("success");
-    expect(reread.destinations[0]?.streamKeyPresent).toBe(true);
+    expect(reread.destinations[0]?.streamKeyPresent).toBe(false);
+    expect(reread.destinations[0]?.streamKeySource).toBe("missing");
     expect(reread.incidents[0]?.fingerprint).toBe("example");
     expect(reread.auditEvents[0]?.type).toBe("test.roundtrip");
     expect(reread.playout.transitionState).toBe("ready");
@@ -444,6 +447,35 @@ describe.sequential("database roundtrip", () => {
     expect(reread.playout.queueItems[1]?.assetId).toBe("asset_3");
     expect(reread.users[0]?.twoFactorEnabled).toBe(true);
     expect(reread.users[0]?.twoFactorSecret).toBe("JBSWY3DPEHPK3PXP");
+
+    await updateDestinationRecord(
+      {
+        ...reread.destinations[0]!,
+        id: "destination-youtube",
+        provider: "custom-rtmp",
+        role: "primary",
+        priority: 1,
+        name: "YouTube Output",
+        enabled: true,
+        rtmpUrl: "rtmp://a.rtmp.youtube.com/live2",
+        streamKeyPresent: true,
+        streamKeySource: "managed",
+        status: "ready",
+        notes: "Managed output",
+        lastValidatedAt: "2026-04-04T10:02:00.000Z",
+        lastFailureAt: "",
+        failureCount: 0,
+        lastError: ""
+      },
+      {
+        managedStreamKey: "managed-youtube-key"
+      }
+    );
+
+    const managedKeys = await readManagedDestinationStreamKeys(["destination-youtube"]);
+    const postUpdate = await readAppState();
+    expect(managedKeys["destination-youtube"]).toBe("managed-youtube-key");
+    expect(postUpdate.destinations.find((destination) => destination.id === "destination-youtube")?.streamKeySource).toBe("managed");
   }, 60_000);
 
   it("does not reseed an initialized database just because no users exist", async () => {
