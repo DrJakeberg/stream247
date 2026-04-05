@@ -44,6 +44,10 @@ describe("overlay headline resolution", () => {
     expect(resolveOverlayHeadlineForQueueKind("Always on air", "asset")).toBe("Always on air");
   });
 
+  it("keeps the default headline for live bridge mode", () => {
+    expect(resolveOverlayHeadlineForQueueKind("Live guest takeover", "live")).toBe("Live guest takeover");
+  });
+
   it("uses configured mode headlines when provided", () => {
     expect(
       resolveOverlayHeadlineForQueueKind("Always on air", "insert", {
@@ -157,6 +161,52 @@ describe("overlay text lines", () => {
       "Gaming · Archive Playlist",
       "Coming up next"
     ]);
+  });
+
+  it("builds live bridge scene copy", () => {
+    const payload = buildOverlayScenePayload({
+      overlay: {
+        channelName: "Archive TV",
+        replayLabel: "Replay stream",
+        brandBadge: "Late Night",
+        accentColor: "#0e6d5a",
+        scenePreset: "split-now-next",
+        insertScenePreset: "bumper-board",
+        standbyScenePreset: "standby-board",
+        reconnectScenePreset: "reconnect-board",
+        headline: "Live guest takeover",
+        insertHeadline: "Manual insert",
+        standbyHeadline: "Please wait",
+        reconnectHeadline: "Refreshing output",
+        surfaceStyle: "glass",
+        panelAnchor: "bottom",
+        titleScale: "balanced",
+        showClock: true,
+        showNextItem: true,
+        showScheduleTeaser: true,
+        showCurrentCategory: true,
+        showSourceLabel: true,
+        showQueuePreview: true,
+        queuePreviewCount: 2,
+        emergencyBanner: "",
+        tickerText: "Live now",
+        layerOrder: ["chip", "hero", "next", "queue", "schedule", "clock", "banner", "ticker"],
+        disabledLayers: []
+      },
+      queueKind: "live",
+      target: "browser",
+      currentTitle: "Guest Interview",
+      currentCategory: "Live input",
+      currentSourceName: "Live Bridge · RTMP",
+      nextTitle: "Replay Hour",
+      nextTimeLabel: "11:00 to 12:00",
+      queueTitles: ["Replay Hour", "Late Night Archive"],
+      timeZone: "Europe/Berlin"
+    });
+
+    expect(payload.heroLabel).toBe("Live Now");
+    expect(payload.nextLabel).toBe("After Live");
+    expect(payload.metaLine).toBe("Live input · Live Bridge · RTMP");
   });
 });
 

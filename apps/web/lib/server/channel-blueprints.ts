@@ -1,4 +1,6 @@
 import {
+  normalizeAudioLaneVolumePercent,
+  normalizeCuepointOffsetsSeconds,
   normalizeOverlayPanelAnchor,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
@@ -32,7 +34,14 @@ type BlueprintSourceRecord = Pick<
 
 type BlueprintPoolRecord = Pick<
   PoolRecord,
-  "id" | "name" | "sourceIds" | "playbackMode" | "insertAssetId" | "insertEveryItems"
+  | "id"
+  | "name"
+  | "sourceIds"
+  | "playbackMode"
+  | "insertAssetId"
+  | "insertEveryItems"
+  | "audioLaneAssetId"
+  | "audioLaneVolumePercent"
 >;
 
 type BlueprintShowProfileRecord = Pick<
@@ -42,7 +51,19 @@ type BlueprintShowProfileRecord = Pick<
 
 type BlueprintScheduleBlockRecord = Pick<
   ScheduleBlockRecord,
-  "id" | "title" | "categoryName" | "startMinuteOfDay" | "durationMinutes" | "dayOfWeek" | "showId" | "poolId" | "sourceName" | "repeatMode" | "repeatGroupId"
+  | "id"
+  | "title"
+  | "categoryName"
+  | "startMinuteOfDay"
+  | "durationMinutes"
+  | "dayOfWeek"
+  | "showId"
+  | "poolId"
+  | "sourceName"
+  | "repeatMode"
+  | "repeatGroupId"
+  | "cuepointAssetId"
+  | "cuepointOffsetsSeconds"
 >;
 
 type BlueprintDestinationRecord = Pick<
@@ -234,6 +255,8 @@ function normalizeBlueprintPoolRecord(value: unknown, now: string): PoolRecord |
       typeof candidate.insertEveryItems === "number" && Number.isFinite(candidate.insertEveryItems)
         ? Math.max(0, Math.round(candidate.insertEveryItems))
         : 0,
+    audioLaneAssetId: asString(candidate.audioLaneAssetId),
+    audioLaneVolumePercent: normalizeAudioLaneVolumePercent(candidate.audioLaneVolumePercent ?? 100),
     itemsSinceInsert: 0,
     updatedAt: now
   };
@@ -305,7 +328,16 @@ function normalizeBlueprintScheduleBlockRecord(value: unknown): ScheduleBlockRec
     poolId: asString(candidate.poolId),
     sourceName: asString(candidate.sourceName),
     repeatMode,
-    repeatGroupId: asString(candidate.repeatGroupId)
+    repeatGroupId: asString(candidate.repeatGroupId),
+    cuepointAssetId: asString(candidate.cuepointAssetId),
+    cuepointOffsetsSeconds: normalizeCuepointOffsetsSeconds(
+      Array.isArray(candidate.cuepointOffsetsSeconds)
+        ? candidate.cuepointOffsetsSeconds.map((value) => Number(value))
+        : [],
+      typeof candidate.durationMinutes === "number" && Number.isFinite(candidate.durationMinutes)
+        ? Math.max(1, Math.round(candidate.durationMinutes))
+        : 60
+    )
   };
 }
 
@@ -418,7 +450,9 @@ export function buildChannelBlueprintDocument(args: {
         sourceIds: [...pool.sourceIds],
         playbackMode: "round-robin",
         insertAssetId: pool.insertAssetId,
-        insertEveryItems: pool.insertEveryItems
+        insertEveryItems: pool.insertEveryItems,
+        audioLaneAssetId: pool.audioLaneAssetId ?? "",
+        audioLaneVolumePercent: pool.audioLaneVolumePercent ?? 100
       })),
       showProfiles: args.state.showProfiles.map((show) => ({
         id: show.id,
@@ -439,7 +473,9 @@ export function buildChannelBlueprintDocument(args: {
         poolId: block.poolId ?? "",
         sourceName: block.sourceName,
         repeatMode: block.repeatMode,
-        repeatGroupId: block.repeatGroupId ?? ""
+        repeatGroupId: block.repeatGroupId ?? "",
+        cuepointAssetId: block.cuepointAssetId ?? "",
+        cuepointOffsetsSeconds: [...(block.cuepointOffsetsSeconds ?? [])]
       }))
     },
     sceneStudio: {

@@ -7,7 +7,13 @@ import {
 } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
 import { sourceConnectorDefinitions, type SourceConnectorKind } from "@/lib/source-connectors";
-import { appendAuditEvent, deleteSourceRecordAndAssets, readAppState, upsertSourceRecord } from "@/lib/server/state";
+import {
+  appendAuditEvent,
+  deleteSourceRecordAndAssets,
+  readAppState,
+  updateSourceFieldRecords,
+  upsertSourceRecord
+} from "@/lib/server/state";
 
 function normalizeConnectorKind(value: unknown): SourceConnectorKind {
   const connectorKind = typeof value === "string" ? value : "";
@@ -150,15 +156,16 @@ export async function PUT(request: NextRequest) {
       throw new Error("Source not found.");
     }
 
-    await upsertSourceRecord({
-      ...existing,
+    await updateSourceFieldRecords([
+      {
+        id: existing.id,
       name,
       type: typeByConnector[connectorKind],
       connectorKind,
       enabled: body.enabled ?? existing.enabled ?? true,
-      externalUrl,
-      notes: notesByConnector[connectorKind]
-    });
+        externalUrl
+      }
+    ]);
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "Could not update source." },

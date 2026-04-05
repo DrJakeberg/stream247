@@ -20,6 +20,9 @@ export default async function SchedulePage() {
   const poolOptions = state.pools
     .map((pool) => ({ id: pool.id, name: pool.name }))
     .sort((left, right) => left.name.localeCompare(right.name));
+  const readyAssetOptions = state.assets
+    .filter((asset) => asset.status === "ready")
+    .map((asset) => ({ id: asset.id, title: asset.title, status: asset.status }));
   const shows = state.showProfiles
     .slice()
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -36,7 +39,7 @@ export default async function SchedulePage() {
             Build the week in {timeZone}. Blocks target pools, start times are minute-accurate, durations use
             15-minute steps, and overlapping windows on the same weekday are rejected before save.
           </p>
-          <ScheduleBlockForm pools={poolOptions} shows={shows} />
+          <ScheduleBlockForm assets={readyAssetOptions} pools={poolOptions} shows={shows} />
         </Panel>
         <Panel title="Show profiles" eyebrow="Programming">
           <p className="subtle">
@@ -109,6 +112,7 @@ export default async function SchedulePage() {
                 <div className="subtle">
                   Unique library: {block.uniqueMinutes}m · Projected: {block.projectedMinutes}m
                   {block.insertCount > 0 ? ` · ${block.insertCount} insert${block.insertCount === 1 ? "" : "s"}` : ""}
+                  {block.cuepointCount > 0 ? ` · ${block.cuepointCount} cuepoint-triggered` : ""}
                 </div>
                 {block.queuePreview.length > 0 ? (
                   <div className="subtle">Queue preview: {block.queuePreview.join(" · ")}</div>
@@ -167,8 +171,11 @@ export default async function SchedulePage() {
             id: pool.id,
             name: pool.name,
             insertAssetId: pool.insertAssetId,
-            insertEveryItems: pool.insertEveryItems
+            insertEveryItems: pool.insertEveryItems,
+            audioLaneAssetId: pool.audioLaneAssetId,
+            audioLaneVolumePercent: pool.audioLaneVolumePercent
           }))}
+          assets={readyAssetOptions}
           showProfiles={shows}
           timeZone={timeZone}
         />

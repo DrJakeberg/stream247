@@ -17,7 +17,9 @@ import {
   resetOverlayDraftRecord,
   saveOverlayDraftRecord,
   saveOverlayScenePresetRecord,
+  updateAssetCurationRecords,
   updateDestinationRecord,
+  updateSourceFieldRecords,
   writeAppState
 } from "@stream247/db";
 
@@ -223,6 +225,8 @@ describe.sequential("database roundtrip", () => {
           cursorAssetId: "asset_1",
           insertAssetId: "asset_3",
           insertEveryItems: 3,
+          audioLaneAssetId: "asset_audio_bed",
+          audioLaneVolumePercent: 55,
           itemsSinceInsert: 2,
           updatedAt: "2026-04-04T10:00:00.000Z"
         }
@@ -250,7 +254,9 @@ describe.sequential("database roundtrip", () => {
           poolId: "pool_1",
           sourceName: "Source 1",
           repeatMode: "weekends" as const,
-          repeatGroupId: "repeat_weekend"
+          repeatGroupId: "repeat_weekend",
+          cuepointAssetId: "asset_3",
+          cuepointOffsetsSeconds: [600, 1800]
         }
       ],
       sources: [
@@ -391,6 +397,18 @@ describe.sequential("database roundtrip", () => {
         lastSuccessfulAssetId: "asset_1",
         selectionReasonCode: "scheduled_match" as const,
         fallbackTier: "scheduled" as const,
+        liveBridgeInputType: "hls" as const,
+        liveBridgeInputUrl: "https://live.example.com/master.m3u8",
+        liveBridgeLabel: "Guest takeover",
+        liveBridgeStatus: "active" as const,
+        liveBridgeRequestedAt: "2026-04-04T10:00:05.000Z",
+        liveBridgeStartedAt: "2026-04-04T10:00:06.000Z",
+        liveBridgeReleasedAt: "",
+        liveBridgeLastError: "",
+        cuepointWindowKey: "2026-04-04:block_1:480:120",
+        cuepointFiredKeys: ["2026-04-04:block_1:480:120:600"],
+        cuepointLastTriggeredAt: "2026-04-04T10:20:00.000Z",
+        cuepointLastAssetId: "asset_3",
         manualNextAssetId: "asset_2",
         manualNextRequestedAt: "2026-04-04T10:00:09.000Z",
         message: "Running"
@@ -421,10 +439,14 @@ describe.sequential("database roundtrip", () => {
     expect(reread.twitchScheduleSegments[0]?.segmentId).toBe("abc");
     expect(reread.pools[0]?.name).toBe("Pool One");
     expect(reread.pools[0]?.insertAssetId).toBe("asset_3");
+    expect(reread.pools[0]?.audioLaneAssetId).toBe("asset_audio_bed");
+    expect(reread.pools[0]?.audioLaneVolumePercent).toBe(55);
     expect(reread.showProfiles[0]?.name).toBe("Morning Replay");
     expect(reread.scheduleBlocks[0]?.showId).toBe("show_1");
     expect(reread.scheduleBlocks[0]?.repeatMode).toBe("weekends");
     expect(reread.scheduleBlocks[0]?.repeatGroupId).toBe("repeat_weekend");
+    expect(reread.scheduleBlocks[0]?.cuepointAssetId).toBe("asset_3");
+    expect(reread.scheduleBlocks[0]?.cuepointOffsetsSeconds).toEqual([600, 1800]);
     expect(reread.sources[0]?.connectorKind).toBe("youtube-channel");
     expect(reread.assets[0]?.durationSeconds).toBe(3600);
     expect(reread.assets[0]?.folderPath).toBe("youtube-channel/source-1");
@@ -441,6 +463,12 @@ describe.sequential("database roundtrip", () => {
     expect(reread.playout.previousAssetId).toBe("asset_0");
     expect(reread.playout.previousTitle).toBe("Asset Zero");
     expect(reread.playout.prefetchedAssetId).toBe("asset_2");
+    expect(reread.playout.liveBridgeInputType).toBe("hls");
+    expect(reread.playout.liveBridgeLabel).toBe("Guest takeover");
+    expect(reread.playout.liveBridgeStatus).toBe("active");
+    expect(reread.playout.cuepointWindowKey).toBe("2026-04-04:block_1:480:120");
+    expect(reread.playout.cuepointFiredKeys).toEqual(["2026-04-04:block_1:480:120:600"]);
+    expect(reread.playout.cuepointLastAssetId).toBe("asset_3");
     expect(reread.playout.manualNextAssetId).toBe("asset_2");
     expect(reread.playout.queuedAssetIds).toEqual(["asset_2", "asset_3"]);
     expect(reread.playout.queueItems[1]?.kind).toBe("insert");
@@ -610,5 +638,144 @@ describe.sequential("database roundtrip", () => {
     await deleteOverlayScenePresetRecord(savedPreset.id);
     const remainingPresets = await listOverlayScenePresetRecords();
     expect(remainingPresets.some((preset) => preset.id === savedPreset.id)).toBe(false);
+  }, 60_000);
+
+  it("updates asset curation fields without overwriting fresh ingest metadata", async () => {
+    await ensureDatabaseWithRetry();
+    const initial = await readAppState();
+
+    await writeAppState({
+      ...initial,
+      sources: [
+        {
+          id: "source_1",
+          name: "Source One",
+          type: "YouTube channel",
+          connectorKind: "youtube-channel",
+          enabled: true,
+          status: "Ready",
+          externalUrl: "https://youtube.com/@sourceone",
+          notes: "Worker healthy",
+          lastSyncedAt: "2026-04-05T10:00:00.000Z"
+        }
+      ],
+      assets: [
+        {
+          id: "asset_1",
+          sourceId: "source_1",
+          title: "Fresh ingest title",
+          path: "https://cdn.example.com/fresh.mp4",
+          folderPath: "worker/folder",
+          tags: ["worker-tag"],
+          status: "ready",
+          includeInProgramming: true,
+          externalId: "video-1",
+          categoryName: "Archive",
+          durationSeconds: 1234,
+          publishedAt: "2026-04-05T09:00:00.000Z",
+          fallbackPriority: 5,
+          isGlobalFallback: false,
+          createdAt: "2026-04-05T09:30:00.000Z",
+          updatedAt: "2026-04-05T10:00:00.000Z"
+        }
+      ]
+    });
+
+    await updateAssetCurationRecords([
+      {
+        id: "asset_1",
+        includeInProgramming: false,
+        folderPath: "manual/folder",
+        appendTags: ["curated"],
+        updatedAt: "2026-04-05T10:05:00.000Z"
+      }
+    ]);
+
+    const reread = await readAppState();
+    expect(reread.assets[0]).toMatchObject({
+      id: "asset_1",
+      title: "Fresh ingest title",
+      path: "https://cdn.example.com/fresh.mp4",
+      status: "ready",
+      durationSeconds: 1234,
+      externalId: "video-1",
+      categoryName: "Archive",
+      includeInProgramming: false,
+      folderPath: "manual/folder"
+    });
+    expect(reread.assets[0]?.tags).toEqual(["worker-tag", "curated"]);
+  }, 60_000);
+
+  it("updates selected source fields without overwriting unrelated source state", async () => {
+    await ensureDatabaseWithRetry();
+    const initial = await readAppState();
+
+    await writeAppState({
+      ...initial,
+      sources: [
+        {
+          id: "source_1",
+          name: "Source One",
+          type: "YouTube channel",
+          connectorKind: "youtube-channel",
+          enabled: true,
+          status: "Ready",
+          externalUrl: "https://youtube.com/@sourceone",
+          notes: "Worker healthy",
+          lastSyncedAt: "2026-04-05T10:00:00.000Z"
+        },
+        {
+          id: "source_2",
+          name: "Source Two",
+          type: "Twitch channel",
+          connectorKind: "twitch-channel",
+          enabled: true,
+          status: "Importing",
+          externalUrl: "https://twitch.tv/source-two",
+          notes: "Worker importing",
+          lastSyncedAt: "2026-04-05T10:10:00.000Z"
+        }
+      ]
+    });
+
+    await updateSourceFieldRecords([
+      {
+        id: "source_1",
+        enabled: false
+      }
+    ]);
+
+    let reread = await readAppState();
+    expect(reread.sources.find((source) => source.id === "source_1")).toMatchObject({
+      id: "source_1",
+      enabled: false,
+      status: "Ready",
+      notes: "Worker healthy",
+      lastSyncedAt: "2026-04-05T10:00:00.000Z"
+    });
+    expect(reread.sources.find((source) => source.id === "source_2")).toMatchObject({
+      id: "source_2",
+      enabled: true,
+      status: "Importing",
+      notes: "Worker importing",
+      lastSyncedAt: "2026-04-05T10:10:00.000Z"
+    });
+
+    await updateSourceFieldRecords([
+      {
+        id: "source_1",
+        status: "Sync queued",
+        notes: "Manual re-sync requested. The worker will refresh this source on the next cycle."
+      }
+    ]);
+
+    reread = await readAppState();
+    expect(reread.sources.find((source) => source.id === "source_1")).toMatchObject({
+      id: "source_1",
+      enabled: false,
+      status: "Sync queued",
+      notes: "Manual re-sync requested. The worker will refresh this source on the next cycle.",
+      lastSyncedAt: "2026-04-05T10:00:00.000Z"
+    });
   }, 60_000);
 });

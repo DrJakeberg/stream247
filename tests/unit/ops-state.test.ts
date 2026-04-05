@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { getCurrentScheduleMoment } from "@stream247/core";
 import type { AppState } from "../../apps/web/lib/server/state";
 import { getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
 import {
   getAssetPlaybackDiagnostics,
   getBroadcastSnapshot,
+  getCurrentScheduleItem,
   getFilteredIncidents,
   getPlayoutQueueAssets,
   getRuntimeDriftReport,
@@ -17,7 +19,9 @@ import {
 } from "../../apps/web/lib/server/state";
 
 function createState(overrides: Partial<AppState> = {}): AppState {
-  const currentDayOfWeek = new Date().getUTCDay();
+  const currentDayOfWeek = new Date(
+    `${getCurrentScheduleMoment({ now: new Date(), timeZone: "Europe/Berlin" }).date}T12:00:00.000Z`
+  ).getUTCDay();
   return {
     initialized: true,
     owner: {
@@ -106,6 +110,8 @@ function createState(overrides: Partial<AppState> = {}): AppState {
         cursorAssetId: "",
         insertAssetId: "",
         insertEveryItems: 0,
+        audioLaneAssetId: "asset-audio-bed",
+        audioLaneVolumePercent: 65,
         itemsSinceInsert: 0,
         updatedAt: ""
       }
@@ -131,7 +137,9 @@ function createState(overrides: Partial<AppState> = {}): AppState {
         durationMinutes: 1440,
         showId: "show-1",
         poolId: "pool-1",
-        sourceName: "YouTube Playlist"
+        sourceName: "YouTube Playlist",
+        cuepointAssetId: "asset-cue-sting",
+        cuepointOffsetsSeconds: [900, 1800]
       }
     ],
     sources: [
@@ -273,6 +281,18 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       overrideMode: "schedule",
       overrideAssetId: "",
       overrideUntil: "",
+      liveBridgeInputType: "",
+      liveBridgeInputUrl: "",
+      liveBridgeLabel: "",
+      liveBridgeStatus: "",
+      liveBridgeRequestedAt: "",
+      liveBridgeStartedAt: "",
+      liveBridgeReleasedAt: "",
+      liveBridgeLastError: "",
+      cuepointWindowKey: "",
+      cuepointFiredKeys: [],
+      cuepointLastTriggeredAt: "",
+      cuepointLastAssetId: "",
       manualNextAssetId: "",
       manualNextRequestedAt: "",
       insertAssetId: "",
@@ -533,6 +553,105 @@ describe("ops state helpers", () => {
     expect(snapshot.activeScenePayload.queueKind).toBe("standby");
     expect(snapshot.activeScenePayload.scene.resolvedPresetId).toBe("standby-board");
     expect(snapshot.activeScenePayload.nextTitle).toBeTruthy();
+  });
+
+  it("summarizes active audio lanes and cuepoint progress", () => {
+    const baseState = createState({
+      assets: [
+        ...createState().assets,
+        {
+          id: "asset-audio-bed",
+          sourceId: "source-1",
+          title: "Audio Bed",
+          path: "/tmp/audio-bed.mp3",
+          status: "ready",
+          includeInProgramming: true,
+          externalId: "",
+          categoryName: "Bed",
+          durationSeconds: 7200,
+          publishedAt: "",
+          fallbackPriority: 100,
+          isGlobalFallback: false,
+          createdAt: "",
+          updatedAt: ""
+        },
+        {
+          id: "asset-cue-sting",
+          sourceId: "source-1",
+          title: "Cue Sting",
+          path: "/tmp/cue-sting.mp4",
+          status: "ready",
+          includeInProgramming: true,
+          externalId: "",
+          categoryName: "Insert",
+          durationSeconds: 30,
+          publishedAt: "",
+          fallbackPriority: 100,
+          isGlobalFallback: false,
+          createdAt: "",
+          updatedAt: ""
+        }
+      ]
+    });
+    const currentScheduleItem = getCurrentScheduleItem(baseState);
+    const snapshot = getBroadcastSnapshot({
+      ...baseState,
+      playout: {
+        ...baseState.playout,
+        currentAssetId: "asset-1",
+        currentTitle: "Asset 1",
+        cuepointWindowKey: currentScheduleItem?.key || "",
+        cuepointFiredKeys: currentScheduleItem ? [`${currentScheduleItem.key}:900`] : [],
+        cuepointLastTriggeredAt: "2026-03-27T00:20:00.000Z",
+        cuepointLastAssetId: "asset-cue-sting"
+      }
+    });
+
+    expect(snapshot.audioLane.configured).toBe(true);
+    expect(snapshot.audioLane.title).toBe("Audio Bed");
+    expect(snapshot.audioLane.volumePercent).toBe(65);
+    expect(snapshot.cuepoints.configured).toBe(true);
+    expect(snapshot.cuepoints.assetTitle).toBe("Cue Sting");
+    expect(snapshot.cuepoints.offsetsSeconds).toEqual([900, 1800]);
+    expect(snapshot.cuepoints.totalCount).toBe(2);
+    expect(snapshot.cuepoints.windowKey).toBe(currentScheduleItem?.key || "");
+    expect(snapshot.cuepoints.lastTriggeredAt).toBe("2026-03-27T00:20:00.000Z");
+    expect(snapshot.cuepoints.lastAssetId).toBe("asset-cue-sting");
+  });
+
+  it("summarizes live bridge state without exposing the raw input URL", () => {
+    const snapshot = getBroadcastSnapshot(
+      createState({
+        playout: {
+          ...createState().playout,
+          currentAssetId: "",
+          currentTitle: "Guest Interview",
+          queueItems: [
+            {
+              id: "queue-live-0",
+              kind: "live",
+              assetId: "",
+              title: "Guest Interview",
+              subtitle: "Live Bridge",
+              scenePreset: "split-now-next",
+              position: 0
+            }
+          ],
+          liveBridgeInputType: "rtmp",
+          liveBridgeInputUrl: "rtmp://encoder.example.com/live/secret-key",
+          liveBridgeLabel: "Guest Interview",
+          liveBridgeStatus: "active",
+          liveBridgeRequestedAt: "2026-03-27T10:15:00.000Z",
+          liveBridgeStartedAt: "2026-03-27T10:16:00.000Z"
+        }
+      })
+    );
+
+    expect(snapshot.liveBridge.status).toBe("active");
+    expect(snapshot.liveBridge.inputSummary).toBe("RTMP · encoder.example.com");
+    expect(snapshot.liveBridge.inputSummary).not.toContain("secret-key");
+    expect(snapshot.queueItems[0]?.kind).toBe("live");
+    expect(snapshot.activeScenePayload.queueKind).toBe("live");
   });
 
   it("marks the active multi-output destination group in the live snapshot", () => {

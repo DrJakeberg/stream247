@@ -35,7 +35,9 @@ export function PoolForm(props: {
               name: String(formData.get("name") || ""),
               sourceIds,
               insertAssetId: String(formData.get("insertAssetId") || ""),
-              insertEveryItems: Number(formData.get("insertEveryItems") || 0)
+              insertEveryItems: Number(formData.get("insertEveryItems") || 0),
+              audioLaneAssetId: String(formData.get("audioLaneAssetId") || ""),
+              audioLaneVolumePercent: Number(formData.get("audioLaneVolumePercent") || 100)
             })
           });
 
@@ -91,7 +93,34 @@ export function PoolForm(props: {
           />
         </label>
       </div>
+      <div className="form-grid">
+        <label>
+          <span className="label">Audio lane asset</span>
+          <select defaultValue={props.pool?.audioLaneAssetId ?? ""} name="audioLaneAssetId">
+            <option value="">Use program audio</option>
+            {props.assets
+              .filter((asset) => asset.status === "ready")
+              .map((asset) => (
+                <option key={asset.id} value={asset.id}>
+                  {asset.title}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label>
+          <span className="label">Audio lane level (%)</span>
+          <input
+            defaultValue={props.pool?.audioLaneVolumePercent ?? 100}
+            min="0"
+            max="100"
+            name="audioLaneVolumePercent"
+            step="1"
+            type="number"
+          />
+        </label>
+      </div>
       <p className="subtle">Pools currently use persistent round-robin playback across all ready assets from the selected sources.</p>
+      <p className="subtle">Audio lanes replace the normal program audio during scheduled pool playback. Use ready local-library or direct-media assets for stable looped beds.</p>
       {error ? <p className="danger">{error}</p> : null}
       {message ? <p className="subtle">{message}</p> : null}
       <button className="button" disabled={isPending} type="submit">

@@ -16,10 +16,18 @@ export function PlayoutActionForm(props: {
   nextAssetId?: string;
   nextAssetTitle?: string;
   overrideMode: "schedule" | "asset" | "fallback";
+  liveBridgeStatus?: "idle" | "pending" | "active" | "releasing" | "error";
+  liveBridgeLabel?: string;
+  liveBridgeInputType?: "" | "rtmp" | "hls";
+  liveBridgeInputSummary?: string;
+  liveBridgeLastError?: string;
 }) {
   const [error, setError] = useState("");
   const [selectedAssetId, setSelectedAssetId] = useState(props.currentAssetId || props.assets[0]?.id || "");
   const [minutes, setMinutes] = useState("60");
+  const [liveBridgeInputType, setLiveBridgeInputType] = useState<"rtmp" | "hls">(props.liveBridgeInputType === "hls" ? "hls" : "rtmp");
+  const [liveBridgeUrl, setLiveBridgeUrl] = useState("");
+  const [liveBridgeLabel, setLiveBridgeLabel] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -126,6 +134,34 @@ export function PlayoutActionForm(props: {
         </label>
       </div>
 
+      <div className="form-grid">
+        <label>
+          <span className="label">Live Bridge input</span>
+          <select className="select" onChange={(event) => setLiveBridgeInputType(event.target.value === "hls" ? "hls" : "rtmp")} value={liveBridgeInputType}>
+            <option value="rtmp">RTMP / RTMPS</option>
+            <option value="hls">HLS</option>
+          </select>
+        </label>
+        <label>
+          <span className="label">Live Bridge label</span>
+          <input
+            maxLength={120}
+            onChange={(event) => setLiveBridgeLabel(event.target.value)}
+            placeholder={props.liveBridgeLabel || "Live Bridge"}
+            value={liveBridgeLabel}
+          />
+        </label>
+      </div>
+
+      <label>
+        <span className="label">Live Bridge URL</span>
+        <input
+          onChange={(event) => setLiveBridgeUrl(event.target.value)}
+          placeholder={props.liveBridgeInputSummary ? `Stored input: ${props.liveBridgeInputSummary}` : liveBridgeInputType === "hls" ? "https://example.com/live.m3u8" : "rtmp://encoder.example.com/live/key"}
+          value={liveBridgeUrl}
+        />
+      </label>
+
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button
           className="button"
@@ -190,6 +226,31 @@ export function PlayoutActionForm(props: {
         </button>
         <button
           className="button button-secondary"
+          disabled={isPending || !liveBridgeUrl.trim()}
+          onClick={() =>
+            startTransition(() =>
+              void runAction({
+                type: "bridge_start",
+                inputType: liveBridgeInputType,
+                inputUrl: liveBridgeUrl,
+                label: liveBridgeLabel
+              })
+            )
+          }
+          type="button"
+        >
+          Take live
+        </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending || !props.liveBridgeStatus || props.liveBridgeStatus === "idle"}
+          onClick={() => startTransition(() => void runAction({ type: "bridge_release" }))}
+          type="button"
+        >
+          Release live
+        </button>
+        <button
+          className="button button-secondary"
           disabled={isPending || !props.nextAssetId}
           onClick={() => startTransition(() => void runAction({ type: "remove_next" }))}
           type="button"
@@ -208,6 +269,14 @@ export function PlayoutActionForm(props: {
 
       {props.nextAssetTitle ? <p className="subtle">Next queued asset: {props.nextAssetTitle}</p> : null}
       {props.previousAssetTitle ? <p className="subtle">Previous completed asset: {props.previousAssetTitle}</p> : null}
+      {props.liveBridgeStatus && props.liveBridgeStatus !== "idle" ? (
+        <p className="subtle">
+          Live Bridge {props.liveBridgeStatus}
+          {props.liveBridgeLabel ? ` · ${props.liveBridgeLabel}` : ""}
+          {props.liveBridgeInputSummary ? ` · ${props.liveBridgeInputSummary}` : ""}
+        </p>
+      ) : null}
+      {props.liveBridgeLastError ? <p className="danger">{props.liveBridgeLastError}</p> : null}
       {error ? <p className="danger">{error}</p> : null}
     </div>
   );

@@ -8,16 +8,20 @@ import {
   addDaysToDateString,
   buildOverlayScenePayload,
   buildOverlayTextLinesFromScenePayload,
+  formatCuepointOffsetLabel,
   buildScheduleOccurrences,
   buildSchedulePreview,
   describePresenceStatus,
   getCurrentScheduleMoment,
   isCurrentScheduleTime,
+  normalizeLiveBridgeInputType,
   isLikelyTwitchChannelUrl,
   isLikelyTwitchVodUrl,
   isLikelyYouTubeChannelUrl,
   isLikelyYouTubePlaylistUrl,
   resolveOverlayScenePresetForQueueKind,
+  summarizeLiveBridgeInput,
+  type LiveBridgeInputType,
   toUtcIsoForLocalDateTime
 } from "@stream247/core";
 import {
@@ -49,6 +53,8 @@ import {
 } from "./on-air-scene.js";
 import { incrementQueueVersion, prioritizeManualNextAsset } from "./broadcast-queue.js";
 import { buildLocalLibraryAssetId, buildLocalLibraryFolderPath } from "./local-library.js";
+import { resolvePoolAudioLane, type ResolvedAudioLane } from "./audio-lanes.js";
+import { getCuepointInsertPlan } from "./cuepoints.js";
 import {
   buildFfmpegOutputTarget,
   getLegacyDestinationEnvConfig,
@@ -65,7 +71,9 @@ let playoutAssetId = "";
 let playoutDestinationId = "";
 let playoutDestinationIds: string[] = [];
 let playoutRuntimeTargets: DestinationRuntimeTarget[] = [];
-let playoutTargetKind: "asset" | "insert" | "standby" | "reconnect" | "" = "";
+let playoutTargetKind: "asset" | "insert" | "standby" | "reconnect" | "live" | "" = "";
+let playoutLiveBridgeInputUrl = "";
+let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
 let plannedStopReason = "";
 const WORKER_HEARTBEAT_STALE_MS = 120_000;
 const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
@@ -273,7 +281,75 @@ function getMediaOverlayFilter(textPath: string): string {
   return `drawtext=fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:textfile=${textPath}:reload=1:fontcolor=white:fontsize=20:box=1:boxcolor=0x00000099:boxborderw=10:x=32:y=h-th-32:line_spacing=8`;
 }
 
+type AudioLaneCommandConfig = {
+  input: string;
+  volumePercent: number;
+};
+
 function getFfmpegCommand(
+  input: string,
+  outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
+  overlayMode: OnAirOverlayMode,
+  audioLane: AudioLaneCommandConfig | null
+): string[] {
+  const command = [
+    "-hide_banner",
+    "-loglevel",
+    "warning",
+    "-y",
+    "-re",
+    "-i",
+    input
+  ];
+
+  if (audioLane) {
+    command.push("-stream_loop", "-1", "-i", audioLane.input);
+  }
+
+  if (overlayMode === "scene") {
+    const sceneInputIndex = audioLane ? 2 : 1;
+    command.push("-f", "image2pipe", "-framerate", "1", "-vcodec", "png", "-i", `pipe:${ON_AIR_SCENE_PIPE_FD}`);
+    command.push("-filter_complex", `[0:v][${sceneInputIndex}:v]overlay=0:0:format=auto[vout]`, "-map", "[vout]");
+    command.push("-map", audioLane ? "1:a:0" : "0:a?");
+  } else if (overlayMode === "text") {
+    command.push("-vf", getMediaOverlayFilter(onAirOverlayPath));
+    command.push("-map", "0:v:0", "-map", audioLane ? "1:a:0" : "0:a?");
+  } else {
+    command.push("-map", "0:v:0", "-map", audioLane ? "1:a:0" : "0:a?");
+  }
+
+  if (audioLane) {
+    command.push("-af", `volume=${Math.max(0, Math.min(1, audioLane.volumePercent / 100)).toFixed(3)}`, "-shortest");
+  }
+
+  command.push(
+    "-c:v",
+    "libx264",
+    "-preset",
+    process.env.FFMPEG_PRESET || "veryfast",
+    "-maxrate",
+    process.env.FFMPEG_MAXRATE || "4500k",
+    "-bufsize",
+    process.env.FFMPEG_BUFSIZE || "9000k",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    "60",
+    "-c:a",
+    "aac",
+    "-ar",
+    "44100",
+    "-b:a",
+    process.env.FFMPEG_AUDIO_BITRATE || "160k",
+    "-f",
+    outputTarget.muxer,
+    outputTarget.output
+  );
+
+  return command;
+}
+
+function getLiveBridgeFfmpegCommand(
   input: string,
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
   overlayMode: OnAirOverlayMode
@@ -283,7 +359,6 @@ function getFfmpegCommand(
     "-loglevel",
     "warning",
     "-y",
-    "-re",
     "-i",
     input
   ];
@@ -576,24 +651,36 @@ async function writeStandbySlate(
 async function writeOnAirOverlay(
   state: AppState,
   asset: AssetRecord | null,
-  queueKind: AppState["playout"]["queueItems"][number]["kind"] | "" = state.playout.queueItems[0]?.kind || "asset"
+  queueKind: AppState["playout"]["queueItems"][number]["kind"] | "" = state.playout.queueItems[0]?.kind || "asset",
+  overrides: {
+    currentTitle?: string;
+    nextTitle?: string;
+    nextTimeLabel?: string;
+    currentCategory?: string;
+    currentSourceName?: string;
+    queueTitles?: string[];
+  } = {}
 ): Promise<void> {
   const currentItem = getCurrentScheduleItem(state);
   const nextItem = getNextScheduleItem(state);
-  const queueTitles = state.playout.queuedAssetIds
-    .map((id) => state.assets.find((entry) => entry.id === id)?.title || "")
-    .filter(Boolean)
-    .slice(0, state.overlay.queuePreviewCount);
+  const queueTitles =
+    overrides.queueTitles ??
+    state.playout.queuedAssetIds
+      .map((id) => state.assets.find((entry) => entry.id === id)?.title || "")
+      .filter(Boolean)
+      .slice(0, state.overlay.queuePreviewCount);
   const lines = buildOverlayTextLinesFromScenePayload(
     buildWorkerScenePayload({
       state,
       queueKind,
-      currentTitle: asset?.title || state.playout.currentTitle || currentItem?.title || "Stand by",
-      nextTitle: nextItem?.title || "Scheduling next item",
-      nextTimeLabel: nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured",
-      currentCategory: currentItem?.categoryName || asset?.categoryName,
+      currentTitle: overrides.currentTitle || asset?.title || state.playout.currentTitle || currentItem?.title || "Stand by",
+      nextTitle: overrides.nextTitle || nextItem?.title || "Scheduling next item",
+      nextTimeLabel: overrides.nextTimeLabel || (nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured"),
+      currentCategory: overrides.currentCategory || currentItem?.categoryName || asset?.categoryName,
       currentSourceName:
-        currentItem?.sourceName || (asset ? state.sources.find((source) => source.id === asset.sourceId)?.name : ""),
+        overrides.currentSourceName ||
+        currentItem?.sourceName ||
+        (asset ? state.sources.find((source) => source.id === asset.sourceId)?.name : ""),
       queueTitles
     })
   );
@@ -1347,14 +1434,20 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
   if (!pool) {
     return null;
   }
-  const excludeInsertFromRotation = Boolean(pool.insertAssetId) && pool.insertEveryItems > 0;
+  const excludedAssetIds = new Set<string>();
+  if (pool.insertAssetId && pool.insertEveryItems > 0) {
+    excludedAssetIds.add(pool.insertAssetId);
+  }
+  if (pool.audioLaneAssetId) {
+    excludedAssetIds.add(pool.audioLaneAssetId);
+  }
 
   const eligibleAssets = state.assets.filter((asset) => {
     if (
       asset.status !== "ready" ||
       asset.id === skippedAssetId ||
       asset.includeInProgramming === false ||
-      (excludeInsertFromRotation && asset.id === pool.insertAssetId)
+      excludedAssetIds.has(asset.id)
     ) {
       return false;
     }
@@ -1392,14 +1485,20 @@ function getPoolPlaybackQueue(state: AppState, poolId: string, skippedAssetId: s
   if (!pool) {
     return [];
   }
-  const excludeInsertFromRotation = Boolean(pool.insertAssetId) && pool.insertEveryItems > 0;
+  const excludedAssetIds = new Set<string>();
+  if (pool.insertAssetId && pool.insertEveryItems > 0) {
+    excludedAssetIds.add(pool.insertAssetId);
+  }
+  if (pool.audioLaneAssetId) {
+    excludedAssetIds.add(pool.audioLaneAssetId);
+  }
 
   const eligibleAssets = state.assets.filter((asset) => {
     if (
       asset.status !== "ready" ||
       asset.id === skippedAssetId ||
       asset.includeInProgramming === false ||
-      (excludeInsertFromRotation && asset.id === pool.insertAssetId)
+      excludedAssetIds.has(asset.id)
     ) {
       return false;
     }
@@ -1579,6 +1678,14 @@ function buildRuntimeQueueItems(args: {
       subtitle: queueHead.subtitle,
       scenePreset: queueHead.scenePreset
     });
+  } else if (args.selection.queueKind === "live") {
+    pushItem({
+      kind: "live",
+      assetId: "",
+      title: queueHead.title,
+      subtitle: queueHead.subtitle,
+      scenePreset: queueHead.scenePreset
+    });
   } else if (args.selection.lifecycleStatus === "standby" || !args.selection.asset) {
     pushItem({
       kind: "standby",
@@ -1616,6 +1723,13 @@ function buildRuntimeQueueItems(args: {
 
 type SelectionResult = {
   asset: AssetRecord | null;
+  queueKind: AppState["playout"]["queueItems"][number]["kind"];
+  insertTrigger: "" | "manual" | "pool-interval" | "cuepoint";
+  cuepointKey: string;
+  cuepointOffsetSeconds: number;
+  liveBridgeInputUrl: string;
+  liveBridgeInputType: LiveBridgeInputType | "";
+  liveBridgeLabel: string;
   reason: string;
   lifecycleStatus: AppState["playout"]["status"];
   reasonCode: AppState["playout"]["selectionReasonCode"];
@@ -1644,7 +1758,13 @@ function buildQueueHeadForSelection(args: {
   if ((args.selection.reasonCode === "operator_insert" || args.selection.reasonCode === "scheduled_insert") && args.selection.asset) {
     return {
       title: args.selection.asset.title,
-      subtitle: `${args.selection.reasonCode === "operator_insert" ? "Insert" : "Automatic insert"} · ${
+      subtitle: `${
+        args.selection.reasonCode === "operator_insert"
+          ? "Insert"
+          : args.selection.insertTrigger === "cuepoint"
+            ? "Cuepoint insert"
+            : "Automatic insert"
+      } · ${
         buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem) || "Insert requested"
       }`,
       scenePreset: resolveOverlayScenePresetForQueueKind(args.state.overlay.scenePreset, "insert", {
@@ -1660,6 +1780,18 @@ function buildQueueHeadForSelection(args: {
       title: "Scheduled reconnect",
       subtitle: args.selection.reason,
       scenePreset: resolveOverlayScenePresetForQueueKind(args.state.overlay.scenePreset, "reconnect", {
+        insertScenePreset: args.state.overlay.insertScenePreset,
+        standbyScenePreset: args.state.overlay.standbyScenePreset,
+        reconnectScenePreset: args.state.overlay.reconnectScenePreset
+      })
+    };
+  }
+
+  if (args.selection.queueKind === "live") {
+    return {
+      title: args.selection.liveBridgeLabel || "Live Bridge",
+      subtitle: `${args.selection.reason} · ${summarizeLiveBridgeInput(args.selection.liveBridgeInputUrl)}`,
+      scenePreset: resolveOverlayScenePresetForQueueKind(args.state.overlay.scenePreset, "live", {
         insertScenePreset: args.state.overlay.insertScenePreset,
         standbyScenePreset: args.state.overlay.standbyScenePreset,
         reconnectScenePreset: args.state.overlay.reconnectScenePreset
@@ -1694,8 +1826,50 @@ function buildQueueHeadForSelection(args: {
 }
 
 function choosePlaybackCandidate(state: AppState): SelectionResult {
+  const createSelection = (
+    overrides: Omit<
+      SelectionResult,
+      "queueKind" | "insertTrigger" | "cuepointKey" | "cuepointOffsetSeconds" | "liveBridgeInputUrl" | "liveBridgeInputType" | "liveBridgeLabel"
+    > &
+      Partial<
+        Pick<
+          SelectionResult,
+          "queueKind" | "insertTrigger" | "cuepointKey" | "cuepointOffsetSeconds" | "liveBridgeInputUrl" | "liveBridgeInputType" | "liveBridgeLabel"
+        >
+      >
+  ): SelectionResult => ({
+    queueKind: "asset",
+    insertTrigger: "",
+    cuepointKey: "",
+    cuepointOffsetSeconds: 0,
+    liveBridgeInputUrl: "",
+    liveBridgeInputType: "",
+    liveBridgeLabel: "",
+    ...overrides
+  });
   const manualOverrideActive = isTimestampActive(state.playout.overrideUntil);
   const skippedAssetId = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
+  const liveBridgeActive =
+    state.playout.liveBridgeInputUrl !== "" &&
+    (state.playout.liveBridgeStatus === "pending" || state.playout.liveBridgeStatus === "active");
+
+  if (liveBridgeActive) {
+    return createSelection({
+      asset: null,
+      queueKind: "live",
+      liveBridgeInputUrl: state.playout.liveBridgeInputUrl,
+      liveBridgeInputType: normalizeLiveBridgeInputType(state.playout.liveBridgeInputType || "rtmp"),
+      liveBridgeLabel: state.playout.liveBridgeLabel || "Live Bridge",
+      reason:
+        state.playout.liveBridgeStatus === "pending"
+          ? "Live Bridge takeover is preparing the live input."
+          : "Live Bridge is on air. Scheduled playback will resume when the bridge is released.",
+      lifecycleStatus: state.playout.liveBridgeStatus === "pending" ? ("recovering" as const) : ("running" as const),
+      reasonCode: "live_bridge" as const,
+      fallbackTier: "operator" as const
+    });
+  }
+
   const activeInsertAsset =
     state.playout.insertAssetId !== ""
       ? state.assets.find(
@@ -1720,7 +1894,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
         : null;
 
   if (desiredAsset) {
-    return {
+    return createSelection({
       asset: desiredAsset,
       reason:
         state.playout.overrideMode === "fallback"
@@ -1729,12 +1903,14 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
       lifecycleStatus: "recovering" as const,
       reasonCode: "operator_override" as const,
       fallbackTier: "operator" as const
-    };
+    });
   }
 
   if (activeInsertAsset && state.playout.insertStatus !== "") {
-    return {
+    return createSelection({
       asset: activeInsertAsset,
+      queueKind: "insert",
+      insertTrigger: state.playout.selectionReasonCode === "operator_insert" ? "manual" : "",
       reason:
         state.playout.insertStatus === "pending"
           ? `Insert ${activeInsertAsset.title} is queued as the next on-air item.`
@@ -1742,20 +1918,20 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
       lifecycleStatus: state.playout.insertStatus === "pending" ? ("recovering" as const) : ("running" as const),
       reasonCode: "operator_insert" as const,
       fallbackTier: "operator" as const
-    };
+    });
   }
 
   if (
     manualNextAsset &&
     (state.playout.currentAssetId === "" || state.playout.restartRequestedAt !== "" || state.playout.status === "standby")
   ) {
-    return {
+    return createSelection({
       asset: manualNextAsset,
       reason: `Operator queued ${manualNextAsset.title} as the next on-air item.`,
       lifecycleStatus: "recovering" as const,
       reasonCode: "manual_next" as const,
       fallbackTier: "operator" as const
-    };
+    });
   }
 
   const currentScheduleItem = getCurrentScheduleItem(state);
@@ -1783,15 +1959,36 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
             asset.id !== skippedAssetId
         ) ?? null
       : null;
+  const cuepointInsertPlan = getCuepointInsertPlan({
+    state,
+    currentScheduleItem,
+    skippedAssetId
+  });
+
+  if (cuepointInsertPlan && state.playout.currentAssetId === "") {
+    return createSelection({
+      asset: cuepointInsertPlan.asset,
+      queueKind: "insert",
+      insertTrigger: "cuepoint",
+      cuepointKey: cuepointInsertPlan.cuepointKey,
+      cuepointOffsetSeconds: cuepointInsertPlan.offsetSeconds,
+      reason: `Cuepoint ${formatCuepointOffsetLabel(cuepointInsertPlan.offsetSeconds)} in ${cuepointInsertPlan.blockTitle} queued ${cuepointInsertPlan.asset.title}.`,
+      lifecycleStatus: "recovering" as const,
+      reasonCode: "scheduled_insert" as const,
+      fallbackTier: "scheduled" as const
+    });
+  }
 
   if (autoInsertAsset) {
-    return {
+    return createSelection({
       asset: autoInsertAsset,
+      queueKind: "insert",
+      insertTrigger: "pool-interval",
       reason: `Pool ${currentPool?.name || "schedule"} queued automatic insert ${autoInsertAsset.title}.`,
       lifecycleStatus: "recovering" as const,
       reasonCode: "scheduled_insert" as const,
       fallbackTier: "scheduled" as const
-    };
+    });
   }
 
   const currentPoolAsset =
@@ -1806,13 +2003,13 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
       : null;
 
   if (runningScheduledAsset && (!currentPool || !currentPool.sourceIds.includes(runningScheduledAsset.sourceId))) {
-    return {
+    return createSelection({
       asset: runningScheduledAsset,
       reason: `Current on-air asset ${runningScheduledAsset.title} will finish before the next scheduled block takes over.`,
       lifecycleStatus: "running" as const,
       reasonCode: "graceful_handoff" as const,
       fallbackTier: "scheduled" as const
-    };
+    });
   }
 
   const preferredAsset = currentScheduleItem?.poolId
@@ -1832,7 +2029,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
       });
 
   if (preferredAsset) {
-    return {
+    return createSelection({
       asset: preferredAsset,
       reason: currentScheduleItem
         ? `Scheduled block ${currentScheduleItem.title} is mapped to asset ${preferredAsset.title}.`
@@ -1840,7 +2037,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
       lifecycleStatus: "running" as const,
       reasonCode: "scheduled_match" as const,
       fallbackTier: "scheduled" as const
-    };
+    });
   }
 
   const globalFallback = [...state.assets]
@@ -1849,13 +2046,13 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 
   if (globalFallback) {
-    return {
+    return createSelection({
       asset: globalFallback,
       reason: `Global fallback asset ${globalFallback.title} is selected.`,
       lifecycleStatus: "recovering" as const,
       reasonCode: "global_fallback" as const,
       fallbackTier: "global-fallback" as const
-    };
+    });
   }
 
   const anyReadyAsset = [...state.assets]
@@ -1864,22 +2061,23 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 
   if (anyReadyAsset) {
-    return {
+    return createSelection({
       asset: anyReadyAsset,
       reason: `Fallback asset ${anyReadyAsset.title} is selected.`,
       lifecycleStatus: "recovering" as const,
       reasonCode: "generic_fallback" as const,
       fallbackTier: "generic-fallback" as const
-    };
+    });
   }
 
-  return {
+  return createSelection({
     asset: null,
+    queueKind: "standby",
     reason: "The playout engine could not find a ready asset to put on air.",
     lifecycleStatus: "failed" as const,
     reasonCode: "no_asset" as const,
     fallbackTier: "none" as const
-  };
+  });
 }
 
 async function stopPlayoutProcess(reason = ""): Promise<void> {
@@ -1894,6 +2092,8 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
     playoutDestinationIds = [];
     playoutRuntimeTargets = [];
     playoutTargetKind = "";
+    playoutLiveBridgeInputUrl = "";
+    playoutLiveBridgeInputType = "";
     return;
   }
 
@@ -1906,6 +2106,8 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
         playoutDestinationIds = [];
         playoutRuntimeTargets = [];
         playoutTargetKind = "";
+        playoutLiveBridgeInputUrl = "";
+        playoutLiveBridgeInputType = "";
       }
       resolve();
     };
@@ -1921,7 +2123,10 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
   });
 }
 
-function getDesiredTargetKind(selection: SelectionResult): "asset" | "insert" | "standby" | "reconnect" {
+function getDesiredTargetKind(selection: SelectionResult): "asset" | "insert" | "standby" | "reconnect" | "live" {
+  if (selection.queueKind === "live") {
+    return "live";
+  }
   if (selection.reasonCode === "operator_insert" || selection.reasonCode === "scheduled_insert") {
     return "insert";
   }
@@ -1962,11 +2167,27 @@ function isMatchingRunningTarget(args: {
     return playoutTargetKind === "insert" && playoutAssetId === desiredAsset.id;
   }
 
+  if (desiredKind === "live") {
+    return (
+      playoutTargetKind === "live" &&
+      playoutLiveBridgeInputUrl === args.selection.liveBridgeInputUrl &&
+      playoutLiveBridgeInputType === args.selection.liveBridgeInputType
+    );
+  }
+
   return playoutTargetKind === "standby" || playoutTargetKind === "reconnect";
 }
 
 async function startOrSwitchPlayout(args: {
   asset: AssetRecord | null;
+  liveBridge:
+    | {
+        inputUrl: string;
+        inputType: LiveBridgeInputType;
+        label: string;
+      }
+    | null;
+  audioLane: ResolvedAudioLane | null;
   destinations: StreamDestinationRecord[];
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>;
   lifecycleStatus: AppState["playout"]["status"];
@@ -1991,9 +2212,44 @@ async function startOrSwitchPlayout(args: {
   const cachedResolvedInput = cachedProbe?.status === "ready" ? cachedProbe.resolvedInput : "";
   const initialSceneFrame = args.overlayEnabled ? await prepareSceneRendererFrame() : null;
   const overlayMode: OnAirOverlayMode = !args.overlayEnabled ? "none" : initialSceneFrame ? "scene" : "text";
-  const command = args.asset
-    ? getFfmpegCommand(cachedResolvedInput || (await resolvePlayableInput(args.asset.path)), args.outputTarget, overlayMode)
-    : getStandbyFfmpegCommand(args.outputTarget, overlayMode);
+  let resolvedAudioLaneInput = "";
+
+  if (args.audioLane) {
+    try {
+      resolvedAudioLaneInput = await resolvePlayableInput(args.audioLane.asset.path);
+      await resolveIncident("playout.audio-lane.failed", "Audio lane input resolved successfully.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown audio lane resolution error.";
+      logRuntimeEvent("playout.audio-lane.fallback", {
+        poolId: args.audioLane.poolId,
+        assetId: args.audioLane.asset.id,
+        error: message
+      });
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Audio lane fell back to program audio",
+        message,
+        fingerprint: "playout.audio-lane.failed"
+      });
+    }
+  }
+
+  const command = args.liveBridge
+    ? getLiveBridgeFfmpegCommand(args.liveBridge.inputUrl, args.outputTarget, overlayMode)
+    : args.asset
+      ? getFfmpegCommand(
+          cachedResolvedInput || (await resolvePlayableInput(args.asset.path)),
+          args.outputTarget,
+          overlayMode,
+          resolvedAudioLaneInput && args.audioLane
+            ? {
+                input: resolvedAudioLaneInput,
+                volumePercent: args.audioLane.volumePercent
+              }
+            : null
+        )
+      : getStandbyFfmpegCommand(args.outputTarget, overlayMode);
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe", "pipe"]
   });
@@ -2003,18 +2259,24 @@ async function startOrSwitchPlayout(args: {
   playoutDestinationId = leadDestination.id;
   playoutDestinationIds = args.destinations.map((destination) => destination.id);
   playoutRuntimeTargets = args.runtimeTargets;
-  playoutTargetKind = args.asset
-    ? args.reasonCode === "operator_insert" || args.reasonCode === "scheduled_insert"
-      ? "insert"
-      : "asset"
-    : args.lifecycleStatus === "reconnecting"
-      ? "reconnect"
-      : "standby";
+  playoutTargetKind = args.liveBridge
+    ? "live"
+    : args.asset
+      ? args.reasonCode === "operator_insert" || args.reasonCode === "scheduled_insert"
+        ? "insert"
+        : "asset"
+      : args.lifecycleStatus === "reconnecting"
+        ? "reconnect"
+        : "standby";
+  playoutLiveBridgeInputUrl = args.liveBridge?.inputUrl ?? "";
+  playoutLiveBridgeInputType = args.liveBridge?.inputType ?? "";
 
   logRuntimeEvent("playout.process.start", {
     destinationIds: playoutDestinationIds,
     targetKind: playoutTargetKind,
     assetId: args.asset?.id ?? "",
+    liveInputType: args.liveBridge?.inputType ?? "",
+    audioLaneAssetId: args.audioLane?.asset.id ?? "",
     reasonCode: args.reasonCode,
     lifecycleStatus: args.lifecycleStatus
   });
@@ -2043,14 +2305,19 @@ async function startOrSwitchPlayout(args: {
       ? args.reasonCode === "operator_insert" || args.reasonCode === "scheduled_insert"
         ? "insert"
         : "asset"
-      : args.lifecycleStatus === "reconnecting"
-        ? "reconnect"
-        : "standby",
+      : args.liveBridge
+        ? "live"
+        : args.lifecycleStatus === "reconnecting"
+          ? "reconnect"
+          : "standby",
     transitionTargetAssetId: args.asset?.id ?? "",
-    transitionTargetTitle: args.asset?.title ?? (args.lifecycleStatus === "reconnecting" ? "Scheduled reconnect" : "Replay standby"),
+    transitionTargetTitle:
+      args.asset?.title ??
+      args.liveBridge?.label ??
+      (args.lifecycleStatus === "reconnecting" ? "Scheduled reconnect" : "Replay standby"),
     transitionReadyAt: "",
     currentAssetId: args.asset?.id ?? "",
-    currentTitle: args.asset?.title ?? "Replay standby",
+    currentTitle: args.asset?.title ?? args.liveBridge?.label ?? "Replay standby",
     desiredAssetId: args.asset?.id ?? "",
     currentDestinationId: leadDestination.id,
     restartRequestedAt: "",
@@ -2060,6 +2327,10 @@ async function startOrSwitchPlayout(args: {
     lastTransitionAt: startedAt,
     selectionReasonCode: args.reasonCode,
     fallbackTier: args.fallbackTier,
+    liveBridgeStatus: args.liveBridge ? "active" : args.lifecycleStatus === "switching" ? playout.liveBridgeStatus : playout.liveBridgeStatus,
+    liveBridgeStartedAt: args.liveBridge ? startedAt : playout.liveBridgeStartedAt,
+    liveBridgeReleasedAt: args.liveBridge ? "" : playout.liveBridgeReleasedAt,
+    liveBridgeLastError: args.liveBridge ? "" : playout.liveBridgeLastError,
     lastError: "",
     pendingAction: "",
     pendingActionRequestedAt: "",
@@ -2111,6 +2382,8 @@ async function startOrSwitchPlayout(args: {
     const lastDestinationId = playoutDestinationId;
     const lastDestinationIds = [...playoutDestinationIds];
     const lastRuntimeTargets = [...playoutRuntimeTargets];
+    const lastTargetKind = playoutTargetKind;
+    const lastLiveBridgeInputUrl = playoutLiveBridgeInputUrl;
     plannedStopReason = "";
     stopSceneRendererLoop();
     playoutProcess = null;
@@ -2119,6 +2392,8 @@ async function startOrSwitchPlayout(args: {
     playoutDestinationIds = [];
     playoutRuntimeTargets = [];
     playoutTargetKind = "";
+    playoutLiveBridgeInputUrl = "";
+    playoutLiveBridgeInputType = "";
     const exitedAt = new Date().toISOString();
     logRuntimeEvent("playout.process.exit", {
       exitCode: code ?? "",
@@ -2179,6 +2454,16 @@ async function startOrSwitchPlayout(args: {
         !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
           ? ""
           : playout.insertStatus,
+      liveBridgeStatus:
+        lastTargetKind === "live" && !wasPlanned && code !== 0
+          ? "error"
+          : lastTargetKind === "live" && wasPlanned
+            ? playout.liveBridgeStatus
+            : playout.liveBridgeStatus,
+      liveBridgeLastError:
+        lastTargetKind === "live" && !wasPlanned && code !== 0
+          ? `Live Bridge input exited with code ${String(code)}.`
+          : playout.liveBridgeLastError,
       selectionReasonCode:
         wasPlanned
           ? playout.selectionReasonCode
@@ -2203,6 +2488,15 @@ async function startOrSwitchPlayout(args: {
         fingerprint: "playout.ffmpeg.exit"
       });
       if (code !== 0) {
+        if (lastTargetKind === "live") {
+          void upsertIncident({
+            scope: "playout",
+            severity: "warning",
+            title: "Live Bridge input disconnected",
+            message: `Live Bridge input ${summarizeLiveBridgeInput(lastLiveBridgeInputUrl)} exited unexpectedly.`,
+            fingerprint: "playout.live-bridge.exit"
+          });
+        }
         void (async () => {
           const state = await readAppState();
           const lastErrorLine = state.playout.lastStderrSample || `FFmpeg exited with code ${String(code)}.`;
@@ -2284,7 +2578,7 @@ async function runPlayoutCycle(): Promise<void> {
   const outputTarget = buildFfmpegOutputTarget(activeDestinationGroup.targets);
   let selection: SelectionResult = choosePlaybackCandidate(state);
 
-  if (state.playout.insertStatus !== "" && selection.reasonCode !== "operator_insert") {
+  if (state.playout.insertStatus !== "" && selection.reasonCode !== "operator_insert" && selection.queueKind !== "live") {
     await updatePlayoutRuntime((playout) => ({
       ...playout,
       insertAssetId: "",
@@ -2357,7 +2651,18 @@ async function runPlayoutCycle(): Promise<void> {
   await resolveIncident("playout.output.missing", "Playout destination is configured.");
 
   if (state.playout.pendingAction === "refresh") {
-    if (playoutProcess && !playoutProcess.killed && state.playout.currentAssetId) {
+    if (playoutProcess && !playoutProcess.killed && state.playout.liveBridgeStatus === "active") {
+      if (state.overlay.enabled) {
+        await writeOnAirOverlay(state, null, "live", {
+          currentTitle: state.playout.liveBridgeLabel || state.playout.currentTitle || "Live Bridge",
+          currentCategory: "Live input",
+          currentSourceName: `Live Bridge · ${(state.playout.liveBridgeInputType || "rtmp").toUpperCase()}`,
+          nextTitle: state.playout.nextTitle || "Schedule resumes after live mode"
+        });
+      } else {
+        await writeStandbySlate(state, "live");
+      }
+    } else if (playoutProcess && !playoutProcess.killed && state.playout.currentAssetId) {
       const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
       if (currentAsset && state.overlay.enabled) {
         await writeOnAirOverlay(state, currentAsset, state.playout.queueItems[0]?.kind || "asset");
@@ -2395,10 +2700,15 @@ async function runPlayoutCycle(): Promise<void> {
     state = await readAppState();
   }
 
+  const liveBridgeActive =
+    state.playout.liveBridgeInputUrl !== "" &&
+    (state.playout.liveBridgeStatus === "pending" || state.playout.liveBridgeStatus === "active");
   const reconnectActive =
+    !liveBridgeActive &&
     state.playout.restartRequestedAt !== "" &&
     Date.now() - new Date(state.playout.restartRequestedAt).getTime() < PLAYOUT_RECONNECT_WINDOW_MS;
   const reconnectDue =
+    !liveBridgeActive &&
     !reconnectActive &&
     state.playout.processStartedAt !== "" &&
     Date.now() - new Date(state.playout.processStartedAt).getTime() >= PLAYOUT_RECONNECT_INTERVAL_MS;
@@ -2413,16 +2723,23 @@ async function runPlayoutCycle(): Promise<void> {
     state = await readAppState();
   }
 
-  if (reconnectActive || state.playout.restartRequestedAt !== "") {
+  if (!liveBridgeActive && (reconnectActive || state.playout.restartRequestedAt !== "")) {
     await writeStandbySlate(state, "reconnect");
     selection = {
       asset: null,
+      queueKind: "reconnect",
+      insertTrigger: "",
+      cuepointKey: "",
+      cuepointOffsetSeconds: 0,
+      liveBridgeInputUrl: "",
+      liveBridgeInputType: "",
+      liveBridgeLabel: "",
       reason: "Scheduled reconnect window is active. Standby slate is on air.",
       lifecycleStatus: "reconnecting" as const,
       reasonCode: "scheduled_reconnect" as const,
       fallbackTier: "standby" as const
     };
-  } else if (!selection.asset) {
+  } else if (selection.queueKind !== "live" && !selection.asset) {
     await upsertIncident({
       scope: "playout",
       severity: "warning",
@@ -2433,6 +2750,13 @@ async function runPlayoutCycle(): Promise<void> {
     await writeStandbySlate(state, "standby");
     selection = {
       asset: null,
+      queueKind: "standby",
+      insertTrigger: "",
+      cuepointKey: "",
+      cuepointOffsetSeconds: 0,
+      liveBridgeInputUrl: "",
+      liveBridgeInputType: "",
+      liveBridgeLabel: "",
       reason: "No playable asset is available. Standby replay slate is on air.",
       lifecycleStatus: "standby" as const,
       reasonCode: "standby" as const,
@@ -2440,7 +2764,21 @@ async function runPlayoutCycle(): Promise<void> {
     };
   }
 
-  if (selection.asset) {
+  if (selection.queueKind === "live") {
+    if (state.overlay.enabled) {
+      await writeOnAirOverlay(state, null, "live", {
+        currentTitle: selection.liveBridgeLabel || "Live Bridge",
+        currentCategory: "Live input",
+        currentSourceName: `Live Bridge · ${(selection.liveBridgeInputType || "rtmp").toUpperCase()}`,
+        nextTitle: getNextScheduleItem(state)?.title || "Schedule resumes after live mode",
+        nextTimeLabel: getNextScheduleItem(state)
+          ? `${getNextScheduleItem(state)?.startTime}-${getNextScheduleItem(state)?.endTime}`
+          : "No next block configured"
+      });
+    }
+    await resolveIncident("playout.no-asset", "Live Bridge is on air.");
+    await resolveIncident("playout.live-bridge.exit", "Live Bridge input is healthy.");
+  } else if (selection.asset) {
     if (state.overlay.enabled) {
       await writeOnAirOverlay(
         state,
@@ -2451,7 +2789,7 @@ async function runPlayoutCycle(): Promise<void> {
     await resolveIncident("playout.no-asset", "A playable asset is available again.");
   }
 
-  if (state.playout.crashLoopDetected && selection.asset && !state.playout.restartRequestedAt) {
+  if (state.playout.crashLoopDetected && (selection.asset || selection.queueKind === "live") && !state.playout.restartRequestedAt) {
     await stopPlayoutProcess("crash-loop-reset");
     await updatePlayoutRuntime((playout) => ({
       ...playout,
@@ -2489,8 +2827,14 @@ async function runPlayoutCycle(): Promise<void> {
 
   await resolveIncident("playout.crash-loop", "Playout crash-loop protection is not active.");
 
-  const restartRequested = Boolean(state.playout.restartRequestedAt);
+  const restartRequested = Boolean(state.playout.restartRequestedAt) && selection.queueKind !== "live";
   const currentScheduleItem = getCurrentScheduleItem(state);
+  const currentAudioLane = resolvePoolAudioLane({
+    state,
+    poolId: currentScheduleItem?.poolId,
+    queueKind: selection.queueKind,
+    reasonCode: selection.reasonCode
+  });
   const manualNextQueueAsset =
     state.playout.manualNextAssetId !== "" && state.playout.manualNextAssetId !== selection.asset?.id
       ? state.assets.find(
@@ -2503,14 +2847,18 @@ async function runPlayoutCycle(): Promise<void> {
       : null;
   const rawQueueAssets = prioritizeManualNextAsset(
     currentScheduleItem?.poolId &&
-    selection.asset &&
-    (
-      selection.reasonCode === "scheduled_match" ||
-      selection.reasonCode === "scheduled_insert" ||
-      selection.reasonCode === "graceful_handoff" ||
-      selection.reasonCode === "manual_next"
-    )
-      ? getPoolPlaybackQueue(state, currentScheduleItem.poolId, isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "", selection.asset.id)
+    (selection.queueKind === "live" ||
+      (selection.asset &&
+        (selection.reasonCode === "scheduled_match" ||
+          selection.reasonCode === "scheduled_insert" ||
+          selection.reasonCode === "graceful_handoff" ||
+          selection.reasonCode === "manual_next")))
+      ? getPoolPlaybackQueue(
+          state,
+          currentScheduleItem.poolId,
+          isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "",
+          selection.asset?.id ?? ""
+        )
       : [],
     manualNextQueueAsset
   );
@@ -2527,6 +2875,10 @@ async function runPlayoutCycle(): Promise<void> {
     selection,
     destinationIds: activeDestinationGroup.targets.map((entry) => entry.destination.id)
   });
+
+  if (!currentAudioLane) {
+    await resolveIncident("playout.audio-lane.failed", "Audio lane is not active.");
+  }
 
   if (prefetchStatus === "failed" && prefetchError) {
     await upsertIncident({
@@ -2556,6 +2908,15 @@ async function runPlayoutCycle(): Promise<void> {
     try {
       await startOrSwitchPlayout({
         asset: selection.asset,
+        liveBridge:
+          selection.queueKind === "live"
+            ? {
+                inputUrl: selection.liveBridgeInputUrl,
+                inputType: selection.liveBridgeInputType || "rtmp",
+                label: selection.liveBridgeLabel || "Live Bridge"
+              }
+            : null,
+        audioLane: currentAudioLane,
         destinations: activeDestinationGroup.targets.map((entry) => entry.destination),
         outputTarget,
         lifecycleStatus: selection.lifecycleStatus,
@@ -2598,6 +2959,8 @@ async function runPlayoutCycle(): Promise<void> {
         prefetchedAt: "",
         prefetchStatus: "",
         prefetchError: "",
+        liveBridgeStatus: selection.queueKind === "live" ? "error" : playout.liveBridgeStatus,
+        liveBridgeLastError: selection.queueKind === "live" ? message : playout.liveBridgeLastError,
         message
       }));
       return;
@@ -2606,6 +2969,15 @@ async function runPlayoutCycle(): Promise<void> {
     try {
       await startOrSwitchPlayout({
         asset: selection.asset,
+        liveBridge:
+          selection.queueKind === "live"
+            ? {
+                inputUrl: selection.liveBridgeInputUrl,
+                inputType: selection.liveBridgeInputType || "rtmp",
+                label: selection.liveBridgeLabel || "Live Bridge"
+              }
+            : null,
+        audioLane: currentAudioLane,
         destinations: activeDestinationGroup.targets.map((entry) => entry.destination),
         outputTarget,
         lifecycleStatus: "switching",
@@ -2647,10 +3019,19 @@ async function runPlayoutCycle(): Promise<void> {
         prefetchedAt: "",
         prefetchStatus: "",
         prefetchError: "",
+        liveBridgeStatus: selection.queueKind === "live" ? "error" : playout.liveBridgeStatus,
+        liveBridgeLastError: selection.queueKind === "live" ? message : playout.liveBridgeLastError,
         message
       }));
       return;
     }
+  } else if (selection.queueKind === "live" && state.overlay.enabled) {
+    await writeOnAirOverlay(state, null, "live", {
+      currentTitle: selection.liveBridgeLabel || "Live Bridge",
+      currentCategory: "Live input",
+      currentSourceName: `Live Bridge · ${(selection.liveBridgeInputType || "rtmp").toUpperCase()}`,
+      nextTitle: nextQueueItem?.title || "Schedule resumes after live mode"
+    });
   } else if (selection.asset && state.overlay.enabled) {
     await writeOnAirOverlay(
       state,
@@ -2665,6 +3046,12 @@ async function runPlayoutCycle(): Promise<void> {
   const transitionTargetKind = nextQueueItem?.kind ?? "";
   const transitionTargetAssetId = nextQueueItem?.assetId ?? "";
   const transitionTargetTitle = nextQueueItem?.title ?? "";
+  const cuepointWindowKey = currentScheduleItem?.key ?? "";
+  const cuepointFiredKeys =
+    cuepointWindowKey && state.playout.cuepointWindowKey === cuepointWindowKey ? [...state.playout.cuepointFiredKeys] : [];
+  if (selection.insertTrigger === "cuepoint" && selection.cuepointKey && !cuepointFiredKeys.includes(selection.cuepointKey)) {
+    cuepointFiredKeys.push(selection.cuepointKey);
+  }
   const transitionReadyAt =
     nextQueueItem?.kind === "asset"
       ? prefetchedAsset && nextQueueItem.assetId === prefetchedAsset.id
@@ -2698,13 +3085,15 @@ async function runPlayoutCycle(): Promise<void> {
     transitionReadyAt,
     queueVersion: incrementQueueVersion(playout.queueVersion, playout.queueItems, queueItems),
     currentAssetId: selection.asset?.id ?? "",
-    currentTitle: activeQueueItem?.title || selection.asset?.title || "Replay standby",
+    currentTitle: activeQueueItem?.title || selection.liveBridgeLabel || selection.asset?.title || "Replay standby",
     previousAssetId:
-      selection.asset && playout.currentAssetId !== "" && playout.currentAssetId !== selection.asset.id
+      (selection.asset && playout.currentAssetId !== "" && playout.currentAssetId !== selection.asset.id) ||
+      (selection.queueKind === "live" && playout.currentAssetId !== "")
         ? playout.currentAssetId
         : playout.previousAssetId,
     previousTitle:
-      selection.asset && playout.currentAssetId !== "" && playout.currentAssetId !== selection.asset.id
+      (selection.asset && playout.currentAssetId !== "" && playout.currentAssetId !== selection.asset.id) ||
+      (selection.queueKind === "live" && playout.currentAssetId !== "")
         ? playout.currentTitle
         : playout.previousTitle,
     desiredAssetId: selection.asset?.id ?? "",
@@ -2732,6 +3121,31 @@ async function runPlayoutCycle(): Promise<void> {
     restartRequestedAt: selection.reasonCode === "scheduled_reconnect" ? playout.restartRequestedAt : "",
     selectionReasonCode: selection.reasonCode,
     fallbackTier: selection.fallbackTier,
+    liveBridgeInputType: selection.queueKind === "live" ? selection.liveBridgeInputType : playout.liveBridgeInputType,
+    liveBridgeInputUrl: selection.queueKind === "live" ? selection.liveBridgeInputUrl : playout.liveBridgeInputUrl,
+    liveBridgeLabel: selection.queueKind === "live" ? selection.liveBridgeLabel : playout.liveBridgeLabel,
+    liveBridgeStatus:
+      selection.queueKind === "live"
+        ? "active"
+        : playout.liveBridgeStatus === "releasing"
+          ? ""
+          : playout.liveBridgeStatus,
+    liveBridgeStartedAt:
+      selection.queueKind === "live"
+        ? playout.liveBridgeStartedAt || new Date().toISOString()
+        : playout.liveBridgeStartedAt,
+    liveBridgeReleasedAt:
+      selection.queueKind === "live"
+        ? ""
+        : playout.liveBridgeStatus === "releasing"
+          ? new Date().toISOString()
+          : playout.liveBridgeReleasedAt,
+    liveBridgeLastError: selection.queueKind === "live" ? "" : playout.liveBridgeLastError,
+    cuepointWindowKey,
+    cuepointFiredKeys,
+    cuepointLastTriggeredAt:
+      selection.insertTrigger === "cuepoint" && selection.cuepointKey ? new Date().toISOString() : playout.cuepointLastTriggeredAt,
+    cuepointLastAssetId: selection.insertTrigger === "cuepoint" && selection.asset ? selection.asset.id : playout.cuepointLastAssetId,
     heartbeatAt: new Date().toISOString(),
     pendingAction: "",
     pendingActionRequestedAt: "",

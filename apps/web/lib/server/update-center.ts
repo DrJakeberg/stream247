@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 
 export type UpdateChannel = "stable" | "evaluation" | "mixed" | "custom";
@@ -49,8 +49,32 @@ export function detectUpdateChannel(tags: string[]): UpdateChannel {
   return "custom";
 }
 
+export async function resolveRepoPackagePath(startDir = process.cwd()): Promise<string> {
+  let currentDir = path.resolve(startDir);
+
+  while (true) {
+    const candidate = path.join(currentDir, "package.json");
+
+    try {
+      await access(candidate);
+      const packageJson = JSON.parse(await readFile(candidate, "utf8")) as { name?: string };
+      if (packageJson.name === "stream247") {
+        return candidate;
+      }
+    } catch {
+      // Continue walking upward until we either find the repo root or run out of parents.
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      throw new Error(`Could not resolve the stream247 package.json from ${startDir}.`);
+    }
+    currentDir = parentDir;
+  }
+}
+
 export async function getUpdateCenterState(): Promise<UpdateCenterState> {
-  const repoPackagePath = path.resolve(process.cwd(), "..", "..", "package.json");
+  const repoPackagePath = await resolveRepoPackagePath();
   const packageJson = JSON.parse(await readFile(repoPackagePath, "utf8")) as { version?: string };
 
   const imageTags = {

@@ -1,9 +1,12 @@
+import { isValidLiveBridgeInputUrl, normalizeLiveBridgeInputType } from "@stream247/core";
 import { appendAuditEvent, readAppState, updatePlayoutRuntime } from "@/lib/server/state";
 
 type BroadcastAction =
   | { type: "restart" | "hard_reload" }
   | { type: "refresh" | "rebuild_queue" }
   | { type: "force_reconnect" }
+  | { type: "bridge_start"; inputType?: "rtmp" | "hls"; inputUrl: string; label?: string }
+  | { type: "bridge_release" }
   | { type: "fallback" }
   | { type: "resume" }
   | { type: "trigger_insert"; assetId: string }
@@ -63,6 +66,9 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
   }
 
   if (action.type === "force_reconnect") {
+    if (state.playout.liveBridgeStatus === "pending" || state.playout.liveBridgeStatus === "active") {
+      throw new Error("Release Live Bridge before forcing a reconnect.");
+    }
     const message = "Manual reconnect requested. The encoder will enter the reconnect window on the next playout cycle.";
     await updatePlayoutRuntime((playout) => ({
       ...playout,
@@ -74,6 +80,62 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       message
     }));
     await appendAuditEvent("broadcast.reconnect.requested", "Manual reconnect was requested.");
+    return { ok: true, message };
+  }
+
+  if (action.type === "bridge_start") {
+    const inputType = normalizeLiveBridgeInputType(String(action.inputType || "rtmp"));
+    const inputUrl = String(action.inputUrl || "").trim();
+    const label = String(action.label || "").trim().slice(0, 120) || "Live Bridge";
+
+    if (!inputUrl) {
+      throw new Error("Provide a Live Bridge input URL.");
+    }
+
+    if (!isValidLiveBridgeInputUrl(inputUrl, inputType)) {
+      throw new Error(inputType === "rtmp" ? "Live Bridge RTMP input must use rtmp:// or rtmps://." : "Live Bridge HLS input must use http:// or https://.");
+    }
+
+    const message = `${label} is queued for live takeover.`;
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      status: "recovering",
+      restartRequestedAt: "",
+      heartbeatAt: now,
+      liveBridgeInputType: inputType,
+      liveBridgeInputUrl: inputUrl,
+      liveBridgeLabel: label,
+      liveBridgeStatus: "pending",
+      liveBridgeRequestedAt: now,
+      liveBridgeStartedAt: "",
+      liveBridgeReleasedAt: "",
+      liveBridgeLastError: "",
+      pendingAction: "",
+      pendingActionRequestedAt: "",
+      message
+    }));
+    await appendAuditEvent("broadcast.live-bridge.requested", `Live Bridge requested for ${label}.`);
+    return { ok: true, message };
+  }
+
+  if (action.type === "bridge_release") {
+    if (state.playout.liveBridgeStatus !== "pending" && state.playout.liveBridgeStatus !== "active" && state.playout.liveBridgeStatus !== "error") {
+      throw new Error("Live Bridge is not active.");
+    }
+
+    const label = state.playout.liveBridgeLabel || "Live Bridge";
+    const message = `${label} is releasing. Scheduled playback will resume on the next safe transition.`;
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      status: "recovering",
+      heartbeatAt: now,
+      liveBridgeStatus: "releasing",
+      liveBridgeReleasedAt: now,
+      pendingAction: "rebuild_queue",
+      pendingActionRequestedAt: now,
+      message
+    }));
+    await appendAuditEvent("broadcast.live-bridge.released", `Live Bridge release requested for ${label}.`);
     return { ok: true, message };
   }
 

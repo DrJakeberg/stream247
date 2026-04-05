@@ -98,6 +98,7 @@ export default async function DashboardPage() {
           <p className="subtle">
             Control mode: {state.playout.overrideMode}
             {overrideAsset ? ` · ${overrideAsset.title}` : ""}
+            {state.playout.liveBridgeStatus ? ` · Live Bridge ${state.playout.liveBridgeStatus}` : ""}
           </p>
         </article>
         <article className="metric">
@@ -213,6 +214,11 @@ export default async function DashboardPage() {
                 assets={state.assets.filter((asset) => asset.status === "ready").map((asset) => ({ id: asset.id, title: asset.title }))}
                 currentAssetId={currentAsset?.id}
                 overrideMode={state.playout.overrideMode}
+                liveBridgeStatus={(state.playout.liveBridgeStatus || "idle") as "idle" | "pending" | "active" | "releasing" | "error"}
+                liveBridgeLabel={state.playout.liveBridgeLabel}
+                liveBridgeInputType={state.playout.liveBridgeInputType}
+                liveBridgeInputSummary={state.playout.liveBridgeInputUrl ? "Configured live input" : ""}
+                liveBridgeLastError={state.playout.liveBridgeLastError}
               />
             </div>
             {openIncidents.length > 0 ? (

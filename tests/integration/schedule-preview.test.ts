@@ -222,6 +222,85 @@ describe("schedule preview", () => {
     expect(week[0]?.blocks[0]?.items.some((item) => item.repeated)).toBe(true);
   });
 
+  it("materializes cuepoint inserts and audio lane notes without rotating the bed asset", () => {
+    const week = buildMaterializedProgrammingWeek({
+      startDate: "2026-03-29",
+      blocks: [
+        {
+          id: "block_cue",
+          title: "Cuepoint Hour",
+          categoryName: "Replay",
+          dayOfWeek: 0,
+          startMinuteOfDay: 10 * 60,
+          durationMinutes: 90,
+          poolId: "pool_cue",
+          sourceName: "Cue Pool",
+          cuepointAssetId: "insert_1",
+          cuepointOffsetsSeconds: [1200]
+        }
+      ],
+      pools: [
+        {
+          id: "pool_cue",
+          name: "Cue Pool",
+          sourceIds: ["source_loop"],
+          cursorAssetId: "",
+          insertAssetId: "",
+          insertEveryItems: 0,
+          itemsSinceInsert: 0,
+          audioLaneAssetId: "audio_bed",
+          audioLaneVolumePercent: 55
+        }
+      ],
+      assets: [
+        {
+          id: "asset_a",
+          sourceId: "source_loop",
+          title: "Episode A",
+          status: "ready",
+          includeInProgramming: true,
+          durationSeconds: 30 * 60,
+          createdAt: "2026-03-01T00:00:00.000Z"
+        },
+        {
+          id: "asset_b",
+          sourceId: "source_loop",
+          title: "Episode B",
+          status: "ready",
+          includeInProgramming: true,
+          durationSeconds: 30 * 60,
+          createdAt: "2026-03-02T00:00:00.000Z"
+        },
+        {
+          id: "insert_1",
+          sourceId: "source_loop",
+          title: "Channel ID",
+          status: "ready",
+          includeInProgramming: true,
+          durationSeconds: 2 * 60,
+          createdAt: "2026-03-03T00:00:00.000Z"
+        },
+        {
+          id: "audio_bed",
+          sourceId: "source_loop",
+          title: "Audio Bed",
+          status: "ready",
+          includeInProgramming: true,
+          durationSeconds: 120 * 60,
+          createdAt: "2026-03-04T00:00:00.000Z"
+        }
+      ]
+    });
+
+    const block = week[0]?.blocks[0];
+    expect(block?.cuepointCount).toBe(1);
+    expect(block?.insertCount).toBe(1);
+    expect(block?.items.some((item) => item.insertTrigger === "cuepoint")).toBe(true);
+    expect(block?.notes.join(" ")).toContain("Audio lane replaces program audio");
+    expect(block?.queuePreview.some((entry) => entry.includes("Cuepoint insert"))).toBe(true);
+    expect(block?.items.some((item) => item.assetId === "audio_bed")).toBe(false);
+  });
+
   it("adds days to a local schedule date string", () => {
     expect(addDaysToDateString("2026-03-27", 2)).toBe("2026-03-29");
   });

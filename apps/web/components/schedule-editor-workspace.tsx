@@ -13,7 +13,15 @@ const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 type Props = {
   blocks: ScheduleBlock[];
   conflicts: string[];
-  pools: Array<{ id: string; name: string; insertAssetId: string; insertEveryItems: number }>;
+  pools: Array<{
+    id: string;
+    name: string;
+    insertAssetId: string;
+    insertEveryItems: number;
+    audioLaneAssetId: string;
+    audioLaneVolumePercent: number;
+  }>;
+  assets: Array<{ id: string; title: string; status: string }>;
   showProfiles: ShowProfileRecord[];
   timeZone: string;
   materializedDays: MaterializedProgrammingDay[];
@@ -24,6 +32,7 @@ export function ScheduleEditorWorkspace({
   blocks,
   conflicts,
   pools,
+  assets,
   showProfiles,
   timeZone,
   materializedDays,
@@ -198,12 +207,15 @@ export function ScheduleEditorWorkspace({
                 {show ? ` · Show: ${show.name}` : ""}
                 {conflictSet.has(block.id) ? " · Conflict detected" : ""}
                 {pool?.insertAssetId && pool.insertEveryItems > 0 ? ` · Insert every ${pool.insertEveryItems}` : ""}
+                {pool?.audioLaneAssetId ? ` · Audio lane ${pool.audioLaneVolumePercent}%` : ""}
+                {block.cuepointOffsetsSeconds?.length ? ` · ${block.cuepointOffsetsSeconds.length} cuepoint${block.cuepointOffsetsSeconds.length === 1 ? "" : "s"}` : ""}
               </div>
               {materialized ? (
                 <>
                   <div className="subtle">
                     Unique fill {materialized.uniqueMinutes}m · Projected {materialized.projectedMinutes}m
                     {materialized.insertCount > 0 ? ` · ${materialized.insertCount} insert${materialized.insertCount === 1 ? "" : "s"}` : ""}
+                    {materialized.cuepointCount > 0 ? ` · ${materialized.cuepointCount} cuepoint-triggered` : ""}
                   </div>
                   {materialized.queuePreview.length > 0 ? (
                     <div className="subtle">Queue preview: {materialized.queuePreview.join(" · ")}</div>
@@ -216,7 +228,7 @@ export function ScheduleEditorWorkspace({
                 </>
               ) : null}
               <div style={{ marginTop: 12 }}>
-                <ScheduleBlockForm block={block} pools={pools} shows={showProfiles} />
+                <ScheduleBlockForm assets={assets} block={block} pools={pools} shows={showProfiles} />
               </div>
               <div style={{ marginTop: 8 }}>
                 <ScheduleBlockDuplicateForm block={block} />
