@@ -106,6 +106,7 @@ export type AssetRecord = {
   title: string;
   path: string;
   status: "ready" | "pending" | "error";
+  includeInProgramming: boolean;
   externalId?: string;
   categoryName?: string;
   durationSeconds?: number;
@@ -1120,6 +1121,7 @@ function normalizeState(state: AppState): AppState {
     assets: Array.isArray(state.assets)
       ? dedupeById(state.assets).map((asset) => ({
           ...asset,
+          includeInProgramming: asset.includeInProgramming ?? true,
           externalId: asset.externalId ?? "",
           categoryName: asset.categoryName ?? "",
           durationSeconds: asset.durationSeconds ?? 0,
@@ -1368,6 +1370,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       title TEXT NOT NULL,
       path TEXT NOT NULL,
       status TEXT NOT NULL,
+      include_in_programming BOOLEAN NOT NULL DEFAULT TRUE,
       external_id TEXT NOT NULL DEFAULT '',
       category_name TEXT NOT NULL DEFAULT '',
       duration_seconds INTEGER NOT NULL DEFAULT 0,
@@ -1497,6 +1500,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS fallback_priority INTEGER NOT NULL DEFAULT 100;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS is_global_fallback BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS include_in_programming BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_by TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE;
@@ -2026,10 +2030,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     await client.query(
       `
         INSERT INTO assets (
-          id, source_id, title, path, status, external_id, category_name, duration_seconds, published_at,
+          id, source_id, title, path, status, include_in_programming, external_id, category_name, duration_seconds, published_at,
           fallback_priority, is_global_fallback, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       `,
       [
         asset.id,
@@ -2037,6 +2041,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         asset.title,
         asset.path,
         asset.status,
+        asset.includeInProgramming,
         asset.externalId ?? "",
         asset.categoryName ?? "",
         asset.durationSeconds ?? 0,
@@ -2367,6 +2372,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     title: string;
     path: string;
     status: AssetRecord["status"];
+    include_in_programming: boolean;
     external_id: string;
     category_name: string;
     duration_seconds: number;
@@ -2605,6 +2611,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       title: row.title,
       path: row.path,
       status: row.status,
+      includeInProgramming: row.include_in_programming,
       externalId: row.external_id || undefined,
       categoryName: row.category_name || undefined,
       durationSeconds: row.duration_seconds || undefined,
@@ -2884,16 +2891,37 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
   }
 
   await withSerializedStateWrite("replaceAssetsForSourceIds", async (client) => {
+    const existingResult = await client.query<{
+      id: string;
+      source_id: string;
+      path: string;
+      external_id: string;
+      include_in_programming: boolean;
+      fallback_priority: number;
+      is_global_fallback: boolean;
+    }>("SELECT id, source_id, path, external_id, include_in_programming, fallback_priority, is_global_fallback FROM assets WHERE source_id = ANY($1::text[])", [sourceIds]);
+
+    const existingById = new Map(existingResult.rows.map((row) => [row.id, row] as const));
+    const existingByExternal = new Map(
+      existingResult.rows.filter((row) => row.external_id).map((row) => [`${row.source_id}:${row.external_id}`, row] as const)
+    );
+    const existingByPath = new Map(existingResult.rows.map((row) => [`${row.source_id}:${row.path}`, row] as const));
+
     await client.query("DELETE FROM assets WHERE source_id = ANY($1::text[])", [sourceIds]);
 
     for (const asset of assets) {
+      const existing =
+        existingById.get(asset.id) ??
+        (asset.externalId ? existingByExternal.get(`${asset.sourceId}:${asset.externalId}`) : undefined) ??
+        existingByPath.get(`${asset.sourceId}:${asset.path}`);
+
       await client.query(
         `
           INSERT INTO assets (
-            id, source_id, title, path, status, external_id, category_name, duration_seconds, published_at,
+            id, source_id, title, path, status, include_in_programming, external_id, category_name, duration_seconds, published_at,
             fallback_priority, is_global_fallback, created_at, updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         `,
         [
           asset.id,
@@ -2901,6 +2929,52 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
           asset.title,
           asset.path,
           asset.status,
+          existing?.include_in_programming ?? asset.includeInProgramming,
+          asset.externalId ?? "",
+          asset.categoryName ?? "",
+          asset.durationSeconds ?? 0,
+          asset.publishedAt ?? "",
+          existing?.fallback_priority ?? asset.fallbackPriority,
+          existing?.is_global_fallback ?? asset.isGlobalFallback,
+          asset.createdAt,
+          asset.updatedAt
+        ]
+      );
+    }
+  });
+}
+
+export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
+  if (assets.length === 0) {
+    return;
+  }
+
+  await withSerializedStateWrite("updateAssetRecords", async (client) => {
+    for (const asset of assets) {
+      await client.query(
+        `
+          UPDATE assets
+          SET
+            title = $2,
+            path = $3,
+            status = $4,
+            include_in_programming = $5,
+            external_id = $6,
+            category_name = $7,
+            duration_seconds = $8,
+            published_at = $9,
+            fallback_priority = $10,
+            is_global_fallback = $11,
+            created_at = $12,
+            updated_at = $13
+          WHERE id = $1
+        `,
+        [
+          asset.id,
+          asset.title,
+          asset.path,
+          asset.status,
+          asset.includeInProgramming,
           asset.externalId ?? "",
           asset.categoryName ?? "",
           asset.durationSeconds ?? 0,

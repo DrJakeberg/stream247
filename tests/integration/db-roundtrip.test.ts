@@ -264,6 +264,7 @@ describe.sequential("database roundtrip", () => {
           title: "Asset One",
           path: "https://example.com/video.mp4",
           status: "ready" as const,
+          includeInProgramming: true,
           externalId: "video-1",
           categoryName: "Gaming",
           durationSeconds: 3600,

@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { AssetCurationForm } from "@/components/asset-curation-form";
 import { Panel } from "@/components/panel";
 import {
   getAssetPlaybackDiagnostics,
@@ -89,10 +90,18 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
             <div className="item">
               <strong>Fallback flags</strong>
               <div className="subtle">
-                Priority {asset.fallbackPriority} · {asset.isGlobalFallback ? "Global fallback" : "Regular catalog item"}
+                Priority {asset.fallbackPriority} · {asset.isGlobalFallback ? "Global fallback" : "Regular catalog item"} ·{" "}
+                {asset.includeInProgramming ? "included in programming" : "excluded from programming"}
               </div>
             </div>
           </div>
+        </Panel>
+
+        <Panel title="Asset curation" eyebrow="Programming">
+          <div className="subtle" style={{ marginBottom: 12 }}>
+            Exclude assets from automated pool rotation without deleting them, or promote them into the global fallback ladder.
+          </div>
+          <AssetCurationForm asset={asset} />
         </Panel>
 
         <Panel title="Programming context" eyebrow="Programming">
