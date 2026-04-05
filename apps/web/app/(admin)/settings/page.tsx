@@ -1,13 +1,17 @@
 export const dynamic = "force-dynamic";
 
 import { Panel } from "@/components/panel";
+import { ChannelBlueprintForm } from "@/components/channel-blueprint-form";
 import { SecretSettingsForm } from "@/components/secret-settings-form";
+import { TwoFactorSettingsForm } from "@/components/two-factor-settings-form";
+import { getAuthenticatedUser } from "@/lib/server/auth";
 import { getSystemReadiness } from "@/lib/server/readiness";
 import { getManagedAlertConfig, getManagedTwitchConfig, readAppState } from "@/lib/server/state";
 import { getUpdateCenterState } from "@/lib/server/update-center";
 
 export default async function SettingsPage() {
   const state = await readAppState();
+  const user = await getAuthenticatedUser();
   const twitchConfig = getManagedTwitchConfig(state);
   const alertConfig = getManagedAlertConfig(state);
   const readiness = await getSystemReadiness();
@@ -70,6 +74,24 @@ export default async function SettingsPage() {
         />
       </Panel>
 
+      <Panel title="Local account security" eyebrow="Access">
+        <p className="subtle">
+          Optional two-factor authentication is available for local accounts. Team members signing in through Twitch
+          SSO are not affected by this setting.
+        </p>
+        <TwoFactorSettingsForm
+          currentUser={user
+            ? {
+                email: user.email,
+                authProvider: user.authProvider,
+                twoFactorEnabled: Boolean(user.twoFactorEnabled),
+                hasPendingSecret: Boolean(user.twoFactorSecret && !user.twoFactorEnabled),
+                confirmedAt: user.twoFactorConfirmedAt || ""
+              }
+            : null}
+        />
+      </Panel>
+
       <Panel title="Current behavior" eyebrow="Secrets">
         <div className="list">
           <div className="item">
@@ -103,6 +125,10 @@ export default async function SettingsPage() {
             </div>
           </div>
         </div>
+      </Panel>
+
+      <Panel title="Channel Blueprints" eyebrow="Library">
+        <ChannelBlueprintForm />
       </Panel>
     </div>
   );

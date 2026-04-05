@@ -8,6 +8,8 @@ export function AssetCurationForm({ asset }: { asset: AssetRecord }) {
   const [includeInProgramming, setIncludeInProgramming] = useState(asset.includeInProgramming);
   const [isGlobalFallback, setIsGlobalFallback] = useState(asset.isGlobalFallback);
   const [fallbackPriority, setFallbackPriority] = useState(asset.fallbackPriority);
+  const [folderPath, setFolderPath] = useState(asset.folderPath || "");
+  const [tagsText, setTagsText] = useState((asset.tags || []).join(", "));
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -21,7 +23,12 @@ export function AssetCurationForm({ asset }: { asset: AssetRecord }) {
         id: asset.id,
         includeInProgramming,
         isGlobalFallback,
-        fallbackPriority
+        fallbackPriority,
+        folderPath,
+        tags: tagsText
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean)
       })
     });
 
@@ -81,6 +88,22 @@ export function AssetCurationForm({ asset }: { asset: AssetRecord }) {
           step={1}
           type="number"
           value={fallbackPriority}
+        />
+      </label>
+      <label>
+        <span className="label">Folder path</span>
+        <input
+          onChange={(event) => setFolderPath(event.target.value)}
+          placeholder="uploads/highlights"
+          value={folderPath}
+        />
+      </label>
+      <label>
+        <span className="label">Tags</span>
+        <input
+          onChange={(event) => setTagsText(event.target.value)}
+          placeholder="retro, marathon, sponsor-safe"
+          value={tagsText}
         />
       </label>
       {error ? <p className="danger">{error}</p> : null}

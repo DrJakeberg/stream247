@@ -31,6 +31,9 @@ jobs:
       - run: docker build -f docker/worker.Dockerfile -t stream247-worker:test .
       - run: pnpm test:fresh-db
       - run: pnpm test:fresh-compose
+      - run: pnpm test:queue-continuity
+      - run: pnpm dlx @playwright/test@1.56.1 install --with-deps chromium
+      - run: pnpm test:e2e:smoke
       - run: chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:test
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3

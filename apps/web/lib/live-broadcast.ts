@@ -1,3 +1,5 @@
+import type { OverlayScenePayload } from "@stream247/core";
+
 export type LiveAssetSummary = {
   id: string;
   title: string;
@@ -77,6 +79,7 @@ export type LivePlayoutSummary = {
   status: string;
   message: string;
   transitionState: string;
+  queueVersion: number;
   transitionTargetKind: "" | "asset" | "insert" | "standby" | "reconnect";
   transitionTargetAssetId: string;
   transitionTargetTitle: string;
@@ -91,6 +94,8 @@ export type LivePlayoutSummary = {
   overrideMode: string;
   overrideAssetId: string;
   overrideUntil: string;
+  manualNextAssetId: string;
+  manualNextRequestedAt: string;
   insertAssetId: string;
   insertRequestedAt: string;
   insertStatus: string;
@@ -98,6 +103,8 @@ export type LivePlayoutSummary = {
   skipUntil: string;
   currentAssetId: string;
   currentTitle: string;
+  previousAssetId: string;
+  previousTitle: string;
   desiredAssetId: string;
   nextAssetId: string;
   nextTitle: string;
@@ -192,6 +199,7 @@ export type BroadcastSnapshot = {
   playout: LivePlayoutSummary;
   overlay: LiveOverlaySummary;
   activeScene: LiveSceneSummary;
+  activeScenePayload: OverlayScenePayload;
   destination: LiveDestinationSummary | null;
   destinations: LiveDestinationSummary[];
   currentAsset: LiveAssetSummary | null;
@@ -211,6 +219,7 @@ export type PublicChannelSnapshot = {
   timeZone: string;
   overlay: LiveOverlaySummary;
   activeScene: LiveSceneSummary;
+  activeScenePayload: OverlayScenePayload;
   playout: Pick<LivePlayoutSummary, "status" | "message" | "currentTitle" | "transitionState" | "overrideMode">;
   currentAsset: LiveAssetSummary | null;
   nextAsset: LiveAssetSummary | null;

@@ -30,6 +30,7 @@ export type OverlayScenePreset =
   | "reconnect-board";
 
 export type OverlayQueueKind = "asset" | "insert" | "standby" | "reconnect" | "";
+export type OverlaySceneRenderTarget = "browser" | "on-air-text" | "on-air-scene";
 
 export type OverlaySurfaceStyle = "glass" | "solid" | "signal";
 export type OverlayPanelAnchor = "bottom" | "center";
@@ -57,6 +58,31 @@ export type OverlaySceneDefinition = {
   layers: OverlaySceneLayerDefinition[];
 };
 
+export type OverlayScenePayload = {
+  target: OverlaySceneRenderTarget;
+  queueKind: OverlayQueueKind;
+  scene: OverlaySceneDefinition;
+  channelName: string;
+  accentColor: string;
+  brandLine: string;
+  heroLabel: string;
+  heroTitle: string;
+  heroBody: string;
+  metaLine: string;
+  nextLabel: string;
+  nextTitle: string;
+  nextTimeLabel: string;
+  queueTitleLine: string;
+  queueTitles: string[];
+  scheduleLabel: string;
+  scheduleTitle: string;
+  scheduleBody: string;
+  scheduleAux: string;
+  tickerText: string;
+  emergencyBanner: string;
+  timeZone: string;
+};
+
 export type OverlaySceneSource = {
   scenePreset: OverlayScenePreset;
   insertScenePreset: OverlayScenePreset;
@@ -72,7 +98,10 @@ export type OverlaySceneSource = {
   showClock: boolean;
   showNextItem: boolean;
   showScheduleTeaser: boolean;
+  showCurrentCategory: boolean;
+  showSourceLabel: boolean;
   showQueuePreview: boolean;
+  queuePreviewCount: number;
   emergencyBanner: string;
   tickerText: string;
   layerOrder: OverlaySceneLayerKind[];
@@ -85,6 +114,8 @@ export type OverlayOptionDefinition<T extends string> = {
   description: string;
 };
 
+export type ScheduleRepeatMode = "single" | "daily" | "weekdays" | "weekends" | "custom";
+
 export type ScheduleBlock = {
   id: string;
   title: string;
@@ -95,6 +126,8 @@ export type ScheduleBlock = {
   showId?: string;
   poolId?: string;
   sourceName: string;
+  repeatMode?: ScheduleRepeatMode;
+  repeatGroupId?: string;
 };
 
 export type ShowProfile = {
@@ -118,6 +151,7 @@ export type SchedulePreview = {
     showId?: string;
     poolId?: string;
     sourceName: string;
+    repeatMode?: ScheduleRepeatMode;
     reason: string;
   }>;
 };
@@ -136,6 +170,8 @@ export type ScheduleOccurrence = {
   endTime: string;
   startMinuteOfDay: number;
   durationMinutes: number;
+  repeatMode?: ScheduleRepeatMode;
+  repeatGroupId?: string;
 };
 
 export type ScheduleDaySummary = {
@@ -145,6 +181,86 @@ export type ScheduleDaySummary = {
   firstStartMinute: number | null;
   lastEndMinute: number | null;
 };
+
+export type ScheduleRepeatModeDefinition = OverlayOptionDefinition<ScheduleRepeatMode>;
+
+export type MaterializedProgrammingItem = {
+  kind: "asset" | "insert";
+  assetId: string;
+  title: string;
+  durationMinutes: number;
+  startTime: string;
+  endTime: string;
+  overflow: boolean;
+  repeated: boolean;
+  estimatedDuration: boolean;
+};
+
+export type MaterializedProgrammingBlock = {
+  blockId: string;
+  title: string;
+  categoryName: string;
+  dayOfWeek: number;
+  startMinuteOfDay: number;
+  durationMinutes: number;
+  startTime: string;
+  endTime: string;
+  showId?: string;
+  poolId?: string;
+  sourceName: string;
+  repeatMode: ScheduleRepeatMode;
+  repeatLabel: string;
+  fillStatus: "balanced" | "underfilled" | "overflow" | "empty";
+  fillLabel: string;
+  poolName: string;
+  projectedMinutes: number;
+  overflowMinutes: number;
+  uniqueMinutes: number;
+  insertCount: number;
+  queuePreview: string[];
+  notes: string[];
+  items: MaterializedProgrammingItem[];
+};
+
+export type MaterializedProgrammingDay = {
+  date: string;
+  dayOfWeek: number;
+  totalScheduledMinutes: number;
+  totalProjectedMinutes: number;
+  blockCount: number;
+  underfilledCount: number;
+  overflowCount: number;
+  emptyCount: number;
+  blocks: MaterializedProgrammingBlock[];
+};
+
+export const SCHEDULE_REPEAT_MODE_OPTIONS: ScheduleRepeatModeDefinition[] = [
+  {
+    id: "single",
+    label: "Single day",
+    description: "Keep this block on one weekday only."
+  },
+  {
+    id: "daily",
+    label: "Daily",
+    description: "Create or treat this block as a seven-day repeat."
+  },
+  {
+    id: "weekdays",
+    label: "Weekdays",
+    description: "Repeat Monday through Friday."
+  },
+  {
+    id: "weekends",
+    label: "Weekends",
+    description: "Repeat on Saturday and Sunday."
+  },
+  {
+    id: "custom",
+    label: "Custom days",
+    description: "Choose your own weekday combination."
+  }
+];
 
 export const OVERLAY_SCENE_PRESETS: OverlayScenePresetDefinition[] = [
   {
@@ -282,6 +398,10 @@ export const DEFAULT_OVERLAY_SCENE_LAYER_ORDER: OverlaySceneLayerKind[] = [
   "ticker"
 ];
 
+const dayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const estimatedProgrammingDurationSeconds = 30 * 60;
+const maxMaterializedItemsPerBlock = 48;
+
 export function isOverlayScenePreset(value: string): value is OverlayScenePreset {
   return OVERLAY_SCENE_PRESETS.some((preset) => preset.id === value);
 }
@@ -300,6 +420,10 @@ export function normalizeOverlayPanelAnchor(value: string): OverlayPanelAnchor {
 
 export function normalizeOverlayTitleScale(value: string): OverlayTitleScale {
   return OVERLAY_TITLE_SCALES.some((entry) => entry.id === value) ? (value as OverlayTitleScale) : "balanced";
+}
+
+export function normalizeScheduleRepeatMode(value: string): ScheduleRepeatMode {
+  return SCHEDULE_REPEAT_MODE_OPTIONS.some((entry) => entry.id === value) ? (value as ScheduleRepeatMode) : "single";
 }
 
 export function normalizeOverlaySceneLayerOrder(value: unknown): OverlaySceneLayerKind[] {
@@ -399,6 +523,139 @@ export function buildOverlaySceneDefinition(args: {
   };
 }
 
+export function buildOverlayScenePayload(args: {
+  overlay: OverlaySceneSource & {
+    channelName: string;
+    replayLabel: string;
+    brandBadge: string;
+    accentColor: string;
+  };
+  queueKind: OverlayQueueKind;
+  target: OverlaySceneRenderTarget;
+  currentTitle: string;
+  currentCategory?: string;
+  currentSourceName?: string;
+  nextTitle: string;
+  nextTimeLabel?: string;
+  queueTitles?: string[];
+  modeSubtitle?: string;
+  timeZone?: string;
+}): OverlayScenePayload {
+  const scene = buildOverlaySceneDefinition({
+    overlay: args.overlay,
+    queueKind: args.queueKind
+  });
+  const heroLabel =
+    args.queueKind === "insert"
+      ? "Insert On Air"
+      : args.queueKind === "reconnect"
+        ? "Reconnect Window"
+        : args.queueKind === "standby"
+          ? "Standby"
+          : "Now Playing";
+  const heroBody =
+    args.modeSubtitle ||
+    resolveOverlayHeadlineForQueueKind(args.overlay.headline, args.queueKind, {
+      insertHeadline: args.overlay.insertHeadline,
+      standbyHeadline: args.overlay.standbyHeadline,
+      reconnectHeadline: args.overlay.reconnectHeadline
+    });
+  const nextLabel =
+    args.queueKind === "insert" ? "After Insert" : args.queueKind === "reconnect" ? "Returning With" : "Next";
+  const queueTitles = (args.queueTitles || []).filter(Boolean).slice(0, args.overlay.queuePreviewCount);
+  const metaLine = [
+    args.queueKind === "asset" && args.overlay.showCurrentCategory ? args.currentCategory || "" : "",
+    args.queueKind === "asset" && args.overlay.showSourceLabel ? args.currentSourceName || "" : ""
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const scheduleBody =
+    args.queueKind === "asset" ? args.currentCategory || "Always on air" : heroBody || "Programming will resume shortly";
+  const scheduleAux =
+    args.queueKind === "asset"
+      ? args.currentSourceName || "Source to be announced"
+      : args.nextTitle || "Programming will resume shortly";
+
+  return {
+    target: args.target,
+    queueKind: args.queueKind,
+    scene,
+    channelName: args.overlay.channelName,
+    accentColor: args.overlay.accentColor,
+    brandLine: buildOverlayBrandLine(args.overlay.replayLabel, args.overlay.brandBadge),
+    heroLabel,
+    heroTitle: args.currentTitle || "Stream247",
+    heroBody,
+    metaLine,
+    nextLabel,
+    nextTitle: args.nextTitle || "Schedule not available",
+    nextTimeLabel: args.nextTimeLabel || "No next block configured",
+    queueTitleLine: queueTitles.join(" · "),
+    queueTitles,
+    scheduleLabel: "Scene",
+    scheduleTitle: args.currentTitle || "Stand by",
+    scheduleBody,
+    scheduleAux,
+    tickerText: args.overlay.tickerText.trim(),
+    emergencyBanner: args.overlay.emergencyBanner.trim(),
+    timeZone: args.timeZone || "UTC"
+  };
+}
+
+export function buildOverlayTextLinesFromScenePayload(payload: OverlayScenePayload): string[] {
+  const tickerLine = payload.tickerText;
+
+  if (payload.scene.resolvedPresetId === "minimal-chip") {
+    return [payload.brandLine, `Now: ${payload.heroTitle}`, payload.metaLine, tickerLine].filter(Boolean);
+  }
+
+  if (payload.scene.resolvedPresetId === "bumper-board") {
+    return [
+      payload.brandLine,
+      payload.heroBody || "Insert on air",
+      `Insert: ${payload.heroTitle}`,
+      `Next: ${payload.nextTitle}`,
+      payload.queueTitleLine ? `After this: ${payload.queueTitleLine}` : "",
+      tickerLine
+    ].filter(Boolean);
+  }
+
+  if (payload.scene.resolvedPresetId === "reconnect-board") {
+    return [
+      payload.brandLine,
+      payload.heroBody || "Scheduled reconnect in progress",
+      `Resuming with: ${payload.nextTitle}`,
+      payload.queueTitleLine ? `Queue: ${payload.queueTitleLine}` : "",
+      tickerLine
+    ].filter(Boolean);
+  }
+
+  if (payload.scene.resolvedPresetId === "split-now-next") {
+    return [payload.brandLine, `Now: ${payload.heroTitle}`, `Next: ${payload.nextTitle}`, payload.metaLine, tickerLine].filter(Boolean);
+  }
+
+  if (payload.scene.resolvedPresetId === "standby-board") {
+    return [
+      payload.brandLine,
+      payload.heroBody || "Please wait, restream is starting",
+      `Current: ${payload.heroTitle}`,
+      `Next: ${payload.nextTitle}`,
+      payload.queueTitleLine ? `Later: ${payload.queueTitleLine}` : "",
+      tickerLine
+    ].filter(Boolean);
+  }
+
+  return [
+    payload.brandLine,
+    `Now: ${payload.heroTitle}`,
+    payload.metaLine,
+    `Next: ${payload.nextTitle}`,
+    payload.queueTitleLine ? `Queue: ${payload.queueTitleLine}` : "",
+    payload.queueKind === "standby" ? payload.heroBody || "Please wait, restream is starting" : "",
+    tickerLine
+  ].filter(Boolean);
+}
+
 export function buildOverlayTextLines(args: {
   scenePreset: OverlayScenePreset;
   replayLabel: string;
@@ -415,68 +672,53 @@ export function buildOverlayTextLines(args: {
   showSourceLabel?: boolean;
   showQueuePreview?: boolean;
 }): string[] {
-  const nowTitle = args.nowTitle || "Stand by";
-  const nextTitle = args.nextTitle || "Scheduling next item";
-  const queuePreview = (args.queueTitles || []).filter(Boolean).slice(0, 3).join(" · ");
-  const metaBits = [args.showCurrentCategory ? args.currentCategory || "" : "", args.showSourceLabel ? args.sourceName || "" : ""].filter(Boolean);
-  const brandLine = buildOverlayBrandLine(args.replayLabel, args.brandBadge);
-  const tickerLine = args.tickerText?.trim() || "";
-
-  if (args.scenePreset === "minimal-chip") {
-    return [brandLine, `Now: ${nowTitle}`, metaBits.join(" · "), tickerLine].filter(Boolean);
-  }
-
-  if (args.scenePreset === "bumper-board") {
-    return [
-      brandLine,
-      args.headline || "Insert on air",
-      `Insert: ${nowTitle}`,
-      `Next: ${nextTitle}`,
-      args.showQueuePreview && queuePreview ? `After this: ${queuePreview}` : "",
-      tickerLine
-    ].filter(Boolean);
-  }
-
-  if (args.scenePreset === "reconnect-board") {
-    return [
-      brandLine,
-      args.headline || "Scheduled reconnect in progress",
-      `Resuming with: ${nextTitle}`,
-      args.showQueuePreview && queuePreview ? `Queue: ${queuePreview}` : "",
-      tickerLine
-    ].filter(Boolean);
-  }
-
-  if (args.scenePreset === "split-now-next") {
-    return [
-      brandLine,
-      `Now: ${nowTitle}`,
-      `Next: ${nextTitle}`,
-      metaBits.join(" · "),
-      tickerLine
-    ].filter(Boolean);
-  }
-
-  if (args.scenePreset === "standby-board") {
-    return [
-      brandLine,
-      args.headline || "Please wait, restream is starting",
-      `Current: ${nowTitle}`,
-      `Next: ${nextTitle}`,
-      args.showQueuePreview && queuePreview ? `Later: ${queuePreview}` : "",
-      tickerLine
-    ].filter(Boolean);
-  }
-
-  return [
-    brandLine,
-    `Now: ${nowTitle}`,
-    metaBits.join(" · "),
-    `Next: ${nextTitle}`,
-    args.showQueuePreview && queuePreview ? `Queue: ${queuePreview}` : "",
-    args.standby ? args.headline || "Please wait, restream is starting" : "",
-    tickerLine
-  ].filter(Boolean);
+  return buildOverlayTextLinesFromScenePayload(
+    buildOverlayScenePayload({
+      overlay: {
+        channelName: "Stream247",
+        replayLabel: args.replayLabel,
+        brandBadge: args.brandBadge || "",
+        accentColor: "#0e6d5a",
+        scenePreset: args.scenePreset,
+        insertScenePreset: "bumper-board",
+        standbyScenePreset: "standby-board",
+        reconnectScenePreset: "reconnect-board",
+        headline: args.headline,
+        insertHeadline: args.headline,
+        standbyHeadline: args.headline,
+        reconnectHeadline: args.headline,
+        surfaceStyle: "glass",
+        panelAnchor: "bottom",
+        titleScale: "balanced",
+        showClock: true,
+        showNextItem: true,
+        showScheduleTeaser: true,
+        showQueuePreview: args.showQueuePreview ?? false,
+        queuePreviewCount: Math.max((args.queueTitles || []).length, 1),
+        emergencyBanner: "",
+        tickerText: args.tickerText || "",
+        layerOrder: DEFAULT_OVERLAY_SCENE_LAYER_ORDER,
+        disabledLayers: [],
+        showCurrentCategory: args.showCurrentCategory ?? false,
+        showSourceLabel: args.showSourceLabel ?? false
+      },
+      queueKind:
+        args.scenePreset === "bumper-board"
+          ? "insert"
+          : args.scenePreset === "reconnect-board"
+            ? "reconnect"
+            : args.standby
+              ? "standby"
+              : "asset",
+      target: "on-air-text",
+      currentTitle: args.nowTitle,
+      currentCategory: args.currentCategory,
+      currentSourceName: args.sourceName,
+      nextTitle: args.nextTitle,
+      queueTitles: args.queueTitles,
+      modeSubtitle: args.headline
+    })
+  );
 }
 
 export function isLikelyYouTubePlaylistUrl(value: string): boolean {
@@ -547,6 +789,40 @@ export function addDaysToDateString(value: string, days: number): string {
   const base = new Date(`${value}T00:00:00.000Z`);
   base.setUTCDate(base.getUTCDate() + days);
   return base.toISOString().slice(0, 10);
+}
+
+export function getRepeatDaysForMode(mode: ScheduleRepeatMode, anchorDayOfWeek = 1, customDays: number[] = []): number[] {
+  switch (normalizeScheduleRepeatMode(mode)) {
+    case "daily":
+      return [0, 1, 2, 3, 4, 5, 6];
+    case "weekdays":
+      return [1, 2, 3, 4, 5];
+    case "weekends":
+      return [0, 6];
+    case "custom":
+      return [...new Set(customDays.filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))].sort(
+        (left, right) => left - right
+      );
+    case "single":
+    default:
+      return [Math.max(0, Math.min(6, Math.trunc(anchorDayOfWeek)))];
+  }
+}
+
+export function describeScheduleRepeatMode(mode: ScheduleRepeatMode, anchorDayOfWeek = 1): string {
+  switch (normalizeScheduleRepeatMode(mode)) {
+    case "daily":
+      return "Daily";
+    case "weekdays":
+      return "Weekdays";
+    case "weekends":
+      return "Weekends";
+    case "custom":
+      return "Custom days";
+    case "single":
+    default:
+      return dayLabels[Math.max(0, Math.min(6, Math.trunc(anchorDayOfWeek)))] || "Single day";
+  }
 }
 
 export function parseTimeOfDay(value: string): number | null {
@@ -678,10 +954,254 @@ export function buildSchedulePreview(args: {
     poolId: occurrence.poolId,
     showId: occurrence.showId,
     sourceName: occurrence.sourceName,
-    reason: `Selected from ${occurrence.sourceName} for ${occurrence.durationMinutes} minutes.`
+    reason: `Selected from ${occurrence.sourceName} for ${occurrence.durationMinutes} minutes · ${describeScheduleRepeatMode(occurrence.repeatMode ?? "single", occurrence.dayOfWeek)}.`
   }));
 
   return { date: args.date, items };
+}
+
+type MaterializedPoolRecord = {
+  id: string;
+  name: string;
+  sourceIds: string[];
+  cursorAssetId: string;
+  insertAssetId: string;
+  insertEveryItems: number;
+  itemsSinceInsert: number;
+};
+
+type MaterializedAssetRecord = {
+  id: string;
+  sourceId: string;
+  title: string;
+  status: string;
+  includeInProgramming: boolean;
+  durationSeconds?: number;
+  publishedAt?: string;
+  createdAt: string;
+};
+
+function getMaterializedAssetDurationSeconds(asset: MaterializedAssetRecord): { durationSeconds: number; estimated: boolean } {
+  if (typeof asset.durationSeconds === "number" && asset.durationSeconds > 0) {
+    return {
+      durationSeconds: asset.durationSeconds,
+      estimated: false
+    };
+  }
+
+  return {
+    durationSeconds: estimatedProgrammingDurationSeconds,
+    estimated: true
+  };
+}
+
+function sortPoolAssets<T extends Pick<MaterializedAssetRecord, "publishedAt" | "createdAt" | "title">>(assets: T[]): T[] {
+  return assets.slice().sort((left, right) => {
+    const publishedDelta =
+      new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
+    if (publishedDelta !== 0) {
+      return publishedDelta;
+    }
+
+    return left.title.localeCompare(right.title);
+  });
+}
+
+function materializePoolWindow(args: {
+  block: ScheduleOccurrence;
+  pool: MaterializedPoolRecord | null;
+  assets: MaterializedAssetRecord[];
+  maxQueuePreviewItems: number;
+}): MaterializedProgrammingBlock {
+  const excludeInsertFromRegularRotation = Boolean(args.pool?.insertAssetId) && Math.max(args.pool?.insertEveryItems ?? 0, 0) > 0;
+  const poolName = args.pool?.name || args.block.sourceName || "Unassigned pool";
+  const eligibleAssets = args.pool
+    ? sortPoolAssets(
+        args.assets.filter(
+          (asset) =>
+            asset.status === "ready" &&
+            asset.includeInProgramming !== false &&
+            args.pool?.sourceIds.includes(asset.sourceId) &&
+            (!excludeInsertFromRegularRotation || asset.id !== args.pool?.insertAssetId)
+        )
+      )
+    : [];
+  const insertAsset =
+    args.pool?.insertAssetId && args.pool.insertEveryItems > 0
+      ? eligibleAssets.find((asset) => asset.id === args.pool?.insertAssetId) ??
+        args.assets.find(
+          (asset) => asset.id === args.pool?.insertAssetId && asset.status === "ready" && asset.includeInProgramming !== false
+        ) ??
+        null
+      : null;
+  const notes: string[] = [];
+
+  if (!args.pool) {
+    notes.push("No pool is linked to this block.");
+  }
+
+  if (eligibleAssets.length === 0) {
+    notes.push("The selected pool has no ready programming assets.");
+  }
+
+  let itemsSinceInsert = Math.max(args.pool?.itemsSinceInsert ?? 0, 0);
+  let currentIndex = args.pool?.cursorAssetId ? eligibleAssets.findIndex((asset) => asset.id === args.pool?.cursorAssetId) : -1;
+  const blockSeconds = Math.max(args.block.durationMinutes, 15) * 60;
+  const items: MaterializedProgrammingItem[] = [];
+  const queuePreview: string[] = [];
+  const assetUseCounts = new Map<string, number>();
+  let projectedSeconds = 0;
+  let uniqueSeconds = 0;
+  let insertCount = 0;
+  let estimatedDurationCount = 0;
+  let repeatedRegularAsset = false;
+
+  for (let safety = 0; safety < maxMaterializedItemsPerBlock && projectedSeconds < blockSeconds; safety += 1) {
+    if (eligibleAssets.length === 0) {
+      break;
+    }
+
+    const shouldInsert =
+      Boolean(insertAsset) &&
+      Math.max(args.pool?.insertEveryItems ?? 0, 0) > 0 &&
+      itemsSinceInsert >= Math.max(args.pool?.insertEveryItems ?? 0, 0);
+    const nextAsset =
+      shouldInsert
+        ? insertAsset
+        : eligibleAssets[(currentIndex + 1 + eligibleAssets.length) % eligibleAssets.length] ?? eligibleAssets[0];
+
+    if (!nextAsset) {
+      break;
+    }
+
+    if (!shouldInsert) {
+      currentIndex = eligibleAssets.findIndex((asset) => asset.id === nextAsset.id);
+    }
+
+    const { durationSeconds, estimated } = getMaterializedAssetDurationSeconds(nextAsset);
+    const itemStartSeconds = projectedSeconds;
+    projectedSeconds += durationSeconds;
+    const seenCount = assetUseCounts.get(nextAsset.id) ?? 0;
+    const repeated = !shouldInsert && seenCount > 0;
+    if (!shouldInsert && seenCount === 0) {
+      uniqueSeconds += durationSeconds;
+    }
+    if (!shouldInsert) {
+      assetUseCounts.set(nextAsset.id, seenCount + 1);
+      repeatedRegularAsset = repeatedRegularAsset || repeated;
+      itemsSinceInsert += 1;
+    } else {
+      insertCount += 1;
+      itemsSinceInsert = 0;
+    }
+    if (estimated) {
+      estimatedDurationCount += 1;
+    }
+
+    items.push({
+      kind: shouldInsert ? "insert" : "asset",
+      assetId: nextAsset.id,
+      title: nextAsset.title,
+      durationMinutes: Math.max(1, Math.ceil(durationSeconds / 60)),
+      startTime: formatMinuteOfDay(args.block.startMinuteOfDay + Math.floor(itemStartSeconds / 60)),
+      endTime: formatMinuteOfDay(args.block.startMinuteOfDay + Math.ceil(projectedSeconds / 60)),
+      overflow: projectedSeconds > blockSeconds,
+      repeated,
+      estimatedDuration: estimated
+    });
+
+    if (queuePreview.length < args.maxQueuePreviewItems) {
+      queuePreview.push(`${shouldInsert ? "Insert" : "Queue"} · ${nextAsset.title}`);
+    }
+  }
+
+  if (insertAsset && Math.max(args.pool?.insertEveryItems ?? 0, 0) > 0) {
+    notes.push(`Automatic insert every ${args.pool?.insertEveryItems} scheduled item${args.pool?.insertEveryItems === 1 ? "" : "s"}.`);
+  }
+
+  if (estimatedDurationCount > 0) {
+    notes.push(`${estimatedDurationCount} item${estimatedDurationCount === 1 ? "" : "s"} use a 30-minute estimate because natural length is missing.`);
+  }
+
+  const fillStatus =
+    items.length === 0
+      ? "empty"
+      : repeatedRegularAsset || projectedSeconds < blockSeconds
+        ? "underfilled"
+        : projectedSeconds > blockSeconds
+          ? "overflow"
+          : "balanced";
+  const overflowMinutes = Math.max(0, Math.ceil((projectedSeconds - blockSeconds) / 60));
+  const fillLabel =
+    fillStatus === "empty"
+      ? "No playable material"
+      : fillStatus === "underfilled"
+        ? "Repeats inside block"
+        : fillStatus === "overflow"
+          ? `Ends ${overflowMinutes}m late`
+          : "Balanced window";
+
+  return {
+    blockId: args.block.blockId,
+    title: args.block.title,
+    categoryName: args.block.categoryName,
+    dayOfWeek: args.block.dayOfWeek,
+    startMinuteOfDay: args.block.startMinuteOfDay,
+    durationMinutes: args.block.durationMinutes,
+    startTime: args.block.startTime,
+    endTime: args.block.endTime,
+    showId: args.block.showId,
+    poolId: args.block.poolId,
+    sourceName: args.block.sourceName,
+    repeatMode: normalizeScheduleRepeatMode(args.block.repeatMode ?? "single"),
+    repeatLabel: describeScheduleRepeatMode(args.block.repeatMode ?? "single", args.block.dayOfWeek),
+    fillStatus,
+    fillLabel,
+    poolName,
+    projectedMinutes: Math.ceil(projectedSeconds / 60),
+    overflowMinutes,
+    uniqueMinutes: Math.ceil(uniqueSeconds / 60),
+    insertCount,
+    queuePreview,
+    notes,
+    items
+  };
+}
+
+export function buildMaterializedProgrammingWeek(args: {
+  startDate: string;
+  blocks: ScheduleBlock[];
+  pools: MaterializedPoolRecord[];
+  assets: MaterializedAssetRecord[];
+  maxQueuePreviewItems?: number;
+}): MaterializedProgrammingDay[] {
+  return Array.from({ length: 7 }, (_, offset) => {
+    const date = addDaysToDateString(args.startDate, offset);
+    const occurrences = buildScheduleOccurrences({
+      date,
+      blocks: args.blocks
+    });
+    const blocks = occurrences.map((occurrence) =>
+      materializePoolWindow({
+        block: occurrence,
+        pool: args.pools.find((pool) => pool.id === occurrence.poolId) ?? null,
+        assets: args.assets,
+        maxQueuePreviewItems: args.maxQueuePreviewItems ?? 4
+      })
+    );
+
+    return {
+      date,
+      dayOfWeek: getDayOfWeekForDate(date),
+      totalScheduledMinutes: blocks.reduce((total, block) => total + block.durationMinutes, 0),
+      totalProjectedMinutes: blocks.reduce((total, block) => total + block.projectedMinutes, 0),
+      blockCount: blocks.length,
+      underfilledCount: blocks.filter((block) => block.fillStatus === "underfilled").length,
+      overflowCount: blocks.filter((block) => block.fillStatus === "overflow").length,
+      emptyCount: blocks.filter((block) => block.fillStatus === "empty").length,
+      blocks
+    };
+  });
 }
 
 export function getCurrentScheduleMoment(args: { now: Date; timeZone: string }) {
@@ -706,6 +1226,7 @@ export function validateScheduleBlock(block: {
   sourceName: string;
   showId?: string;
   poolId?: string;
+  repeatMode?: ScheduleRepeatMode;
   dayOfWeek: number;
   startMinuteOfDay: number;
   durationMinutes: number;
@@ -732,6 +1253,10 @@ export function validateScheduleBlock(block: {
 
   if (!Number.isInteger(block.durationMinutes) || block.durationMinutes < 15 || block.durationMinutes > 24 * 60) {
     return "Duration must be between 15 and 1440 minutes.";
+  }
+
+  if (block.repeatMode && !SCHEDULE_REPEAT_MODE_OPTIONS.some((entry) => entry.id === block.repeatMode)) {
+    return "Repeat behavior is invalid.";
   }
 
   return null;
@@ -847,7 +1372,9 @@ export function buildScheduleOccurrences(args: {
         startTime: formatMinuteOfDay(startMinutes),
         endTime: formatMinuteOfDay(endMinutes),
         startMinuteOfDay: startMinutes,
-        durationMinutes: block.durationMinutes
+        durationMinutes: block.durationMinutes,
+        repeatMode: normalizeScheduleRepeatMode(block.repeatMode ?? "single"),
+        repeatGroupId: block.repeatGroupId ?? ""
       };
     });
 }

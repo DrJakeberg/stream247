@@ -10,6 +10,10 @@ export function AssetLibraryBrowser(props: { assets: AssetRecord[]; sources: Sou
   const [sourceId, setSourceId] = useState("all");
   const [status, setStatus] = useState("all");
   const [programmingState, setProgrammingState] = useState("all");
+  const [folderFilter, setFolderFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
+  const [folderDraft, setFolderDraft] = useState("");
+  const [tagsDraft, setTagsDraft] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -37,11 +41,24 @@ export function AssetLibraryBrowser(props: { assets: AssetRecord[]; sources: Sou
       return false;
     }
 
+    if (folderFilter.trim() && !(asset.folderPath || "").toLowerCase().includes(folderFilter.trim().toLowerCase())) {
+      return false;
+    }
+
+    if (
+      tagFilter.trim() &&
+      !(asset.tags || []).some((tag) => tag.toLowerCase().includes(tagFilter.trim().toLowerCase()))
+    ) {
+      return false;
+    }
+
     if (!query.trim()) {
       return true;
     }
 
-    const haystack = [asset.title, asset.categoryName || "", asset.externalId || "", asset.path].join(" ").toLowerCase();
+    const haystack = [asset.title, asset.categoryName || "", asset.externalId || "", asset.path, asset.folderPath || "", ...(asset.tags || [])]
+      .join(" ")
+      .toLowerCase();
     return haystack.includes(query.trim().toLowerCase());
   });
 
@@ -50,11 +67,30 @@ export function AssetLibraryBrowser(props: { assets: AssetRecord[]; sources: Sou
     [props.assets, selectedIds]
   );
 
-  async function applyBulkAction(action: "include" | "exclude" | "mark_global_fallback" | "clear_global_fallback") {
+  async function applyBulkAction(
+    action:
+      | "include"
+      | "exclude"
+      | "mark_global_fallback"
+      | "clear_global_fallback"
+      | "set_folder"
+      | "clear_folder"
+      | "append_tags"
+      | "replace_tags"
+      | "clear_tags"
+  ) {
     const response = await fetch("/api/assets/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, assetIds: selectedIds })
+      body: JSON.stringify({
+        action,
+        assetIds: selectedIds,
+        folderPath: folderDraft,
+        tags: tagsDraft
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+      })
     });
 
     const payload = (await response.json()) as { message?: string };
@@ -104,6 +140,14 @@ export function AssetLibraryBrowser(props: { assets: AssetRecord[]; sources: Sou
             <option value="fallback">Global fallback only</option>
           </select>
         </label>
+        <label>
+          <span className="label">Folder</span>
+          <input onChange={(event) => setFolderFilter(event.target.value)} placeholder="uploads/highlights" value={folderFilter} />
+        </label>
+        <label>
+          <span className="label">Tag</span>
+          <input onChange={(event) => setTagFilter(event.target.value)} placeholder="retro or sponsor-safe" value={tagFilter} />
+        </label>
       </div>
       <div className="subtle">
         Showing {filteredAssets.length} of {props.assets.length} assets.
@@ -115,6 +159,16 @@ export function AssetLibraryBrowser(props: { assets: AssetRecord[]; sources: Sou
       </div>
       {error ? <p className="danger">{error}</p> : null}
       {message ? <p className="subtle">{message}</p> : null}
+      <div className="form-grid">
+        <label>
+          <span className="label">Bulk folder path</span>
+          <input onChange={(event) => setFolderDraft(event.target.value)} placeholder="uploads/season-1" value={folderDraft} />
+        </label>
+        <label>
+          <span className="label">Bulk tags</span>
+          <input onChange={(event) => setTagsDraft(event.target.value)} placeholder="retro, marathon, sponsor-safe" value={tagsDraft} />
+        </label>
+      </div>
       <div className="toggle-row">
         <button
           className="button"
@@ -164,6 +218,66 @@ export function AssetLibraryBrowser(props: { assets: AssetRecord[]; sources: Sou
         >
           Clear fallback
         </button>
+        <button
+          className="button secondary"
+          disabled={isPending || selectedIds.length === 0}
+          onClick={() => {
+            setError("");
+            setMessage("");
+            startTransition(() => void applyBulkAction("set_folder"));
+          }}
+          type="button"
+        >
+          Set folder
+        </button>
+        <button
+          className="button secondary"
+          disabled={isPending || selectedIds.length === 0}
+          onClick={() => {
+            setError("");
+            setMessage("");
+            startTransition(() => void applyBulkAction("clear_folder"));
+          }}
+          type="button"
+        >
+          Clear folder
+        </button>
+        <button
+          className="button secondary"
+          disabled={isPending || selectedIds.length === 0}
+          onClick={() => {
+            setError("");
+            setMessage("");
+            startTransition(() => void applyBulkAction("append_tags"));
+          }}
+          type="button"
+        >
+          Add tags
+        </button>
+        <button
+          className="button secondary"
+          disabled={isPending || selectedIds.length === 0}
+          onClick={() => {
+            setError("");
+            setMessage("");
+            startTransition(() => void applyBulkAction("replace_tags"));
+          }}
+          type="button"
+        >
+          Replace tags
+        </button>
+        <button
+          className="button secondary"
+          disabled={isPending || selectedIds.length === 0}
+          onClick={() => {
+            setError("");
+            setMessage("");
+            startTransition(() => void applyBulkAction("clear_tags"));
+          }}
+          type="button"
+        >
+          Clear tags
+        </button>
       </div>
       <div className="list">
         {filteredAssets.slice(0, 40).map((asset) => {
@@ -193,6 +307,9 @@ export function AssetLibraryBrowser(props: { assets: AssetRecord[]; sources: Sou
               <div className="subtle">
                 {asset.categoryName || "No source category"}
                 {asset.publishedAt ? ` · ${asset.publishedAt.slice(0, 10)}` : ""}
+              </div>
+              <div className="subtle">
+                Folder: {asset.folderPath || "root"} · Tags: {asset.tags && asset.tags.length > 0 ? asset.tags.join(", ") : "none"}
               </div>
               <div className="subtle">
                 {asset.includeInProgramming ? "Included in programming" : "Excluded from programming"} ·{" "}

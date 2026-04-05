@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { findUserById, readAppState, type UserRecord, type UserRole } from "./state";
 
 const sessionCookieName = "stream247_session";
+const twoFactorChallengeMaxAgeSeconds = 60 * 5;
 
 function getAuthSecret(): string {
   return process.env.APP_SECRET || "stream247-dev-secret";
@@ -60,6 +61,45 @@ export function parseSessionValue(value: string | undefined): string | null {
   }
 
   return parts[0] ?? null;
+}
+
+export function buildTwoFactorChallengeValue(userId: string): string {
+  const payload = `${userId}:${Date.now()}`;
+  return `${payload}:${signValue(payload)}`;
+}
+
+export function parseTwoFactorChallengeValue(value: string | undefined): { userId: string; issuedAt: number } | null {
+  if (!value) {
+    return null;
+  }
+
+  const parts = value.split(":");
+  if (parts.length < 3) {
+    return null;
+  }
+
+  const signature = parts.pop();
+  const issuedAtText = parts.pop();
+  const userId = parts.join(":");
+  const payload = `${userId}:${issuedAtText}`;
+
+  if (!signature || signValue(payload) !== signature) {
+    return null;
+  }
+
+  const issuedAt = Number(issuedAtText);
+  if (!userId || !Number.isFinite(issuedAt)) {
+    return null;
+  }
+
+  if (Date.now() - issuedAt > twoFactorChallengeMaxAgeSeconds * 1000) {
+    return null;
+  }
+
+  return {
+    userId,
+    issuedAt
+  };
 }
 
 export async function getAuthenticatedUserId(): Promise<string | null> {

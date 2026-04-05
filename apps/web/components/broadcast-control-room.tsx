@@ -65,7 +65,8 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                   : currentQueueItem?.subtitle || snapshot.playout.message}
               </div>
               <div className="subtle">
-                Transition {snapshot.playout.transitionState} · queue reason {snapshot.playout.selectionReasonCode || "none"}
+                Transition {snapshot.playout.transitionState} · queue reason {snapshot.playout.selectionReasonCode || "none"} · version{" "}
+                {snapshot.playout.queueVersion}
               </div>
             </div>
             <div className="item">
@@ -76,6 +77,9 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               <div className="subtle">
                 Transition target {snapshot.playout.transitionTargetKind || "none"} · ready {snapshot.playout.transitionReadyAt || "not ready"}
               </div>
+              {snapshot.playout.manualNextAssetId ? (
+                <div className="subtle">Manual next request is active for asset {snapshot.playout.manualNextAssetId}.</div>
+              ) : null}
               {nextQueueItem?.subtitle ? <div className="subtle">{nextQueueItem.subtitle}</div> : null}
               {snapshot.playout.prefetchError ? <div className="danger">{snapshot.playout.prefetchError}</div> : null}
             </div>
@@ -106,6 +110,10 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
           <PlayoutActionForm
             assets={props.assets}
             currentAssetId={snapshot.currentAsset?.id}
+            previousAssetId={snapshot.playout.previousAssetId}
+            previousAssetTitle={snapshot.playout.previousTitle}
+            nextAssetId={nextQueueItem?.asset?.id || snapshot.nextAsset?.id}
+            nextAssetTitle={nextQueueItem?.title || snapshot.nextAsset?.title}
             overrideMode={(snapshot.playout.overrideMode as "schedule" | "asset" | "fallback") || "schedule"}
           />
         </article>

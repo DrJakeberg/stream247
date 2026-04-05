@@ -2,7 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, readAppState, updateAssetRecords } from "@/lib/server/state";
 
-type BulkAction = "include" | "exclude" | "mark_global_fallback" | "clear_global_fallback";
+type BulkAction =
+  | "include"
+  | "exclude"
+  | "mark_global_fallback"
+  | "clear_global_fallback"
+  | "set_folder"
+  | "clear_folder"
+  | "append_tags"
+  | "replace_tags"
+  | "clear_tags";
+
+function normalizeTags(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return [...new Set(value.map((entry) => String(entry || "").trim()).filter(Boolean))].slice(0, 24);
+}
 
 export async function POST(request: NextRequest) {
   const unauthorized = await requireApiRoles(["owner", "admin", "operator"]);
@@ -10,15 +27,22 @@ export async function POST(request: NextRequest) {
     return unauthorized;
   }
 
-  const body = (await request.json()) as { action?: BulkAction; assetIds?: string[] };
+  const body = (await request.json()) as { action?: BulkAction; assetIds?: string[]; folderPath?: string; tags?: string[] };
   const action = body.action;
   const assetIds = Array.isArray(body.assetIds) ? [...new Set(body.assetIds.map((value) => String(value).trim()).filter(Boolean))] : [];
+  const folderPath = typeof body.folderPath === "string" ? body.folderPath.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") : "";
+  const tags = normalizeTags(body.tags);
 
   if (
     action !== "include" &&
     action !== "exclude" &&
     action !== "mark_global_fallback" &&
-    action !== "clear_global_fallback"
+    action !== "clear_global_fallback" &&
+    action !== "set_folder" &&
+    action !== "clear_folder" &&
+    action !== "append_tags" &&
+    action !== "replace_tags" &&
+    action !== "clear_tags"
   ) {
     return NextResponse.json({ message: "A valid bulk asset action is required." }, { status: 400 });
   }
@@ -31,6 +55,14 @@ export async function POST(request: NextRequest) {
   const selectedAssets = state.assets.filter((asset) => assetIds.includes(asset.id));
   if (selectedAssets.length !== assetIds.length) {
     return NextResponse.json({ message: "One or more selected assets no longer exist." }, { status: 404 });
+  }
+
+  if (action === "set_folder" && !folderPath) {
+    return NextResponse.json({ message: "Folder path is required for this bulk action." }, { status: 400 });
+  }
+
+  if ((action === "append_tags" || action === "replace_tags") && tags.length === 0) {
+    return NextResponse.json({ message: "Enter at least one tag for this bulk action." }, { status: 400 });
   }
 
   const now = new Date().toISOString();
@@ -63,6 +95,36 @@ export async function POST(request: NextRequest) {
           isGlobalFallback: false,
           updatedAt: now
         };
+      case "set_folder":
+        return {
+          ...asset,
+          folderPath,
+          updatedAt: now
+        };
+      case "clear_folder":
+        return {
+          ...asset,
+          folderPath: "",
+          updatedAt: now
+        };
+      case "append_tags":
+        return {
+          ...asset,
+          tags: [...new Set([...(asset.tags ?? []), ...tags])],
+          updatedAt: now
+        };
+      case "replace_tags":
+        return {
+          ...asset,
+          tags,
+          updatedAt: now
+        };
+      case "clear_tags":
+        return {
+          ...asset,
+          tags: [],
+          updatedAt: now
+        };
     }
   });
 
@@ -78,6 +140,16 @@ export async function POST(request: NextRequest) {
           ? `Excluded ${assetIds.length} asset(s) from programming.`
           : action === "mark_global_fallback"
             ? `Marked ${assetIds.length} asset(s) as global fallback candidates.`
-            : `Cleared global fallback flags on ${assetIds.length} asset(s).`
+            : action === "clear_global_fallback"
+              ? `Cleared global fallback flags on ${assetIds.length} asset(s).`
+              : action === "set_folder"
+                ? `Updated the folder path on ${assetIds.length} asset(s).`
+                : action === "clear_folder"
+                  ? `Cleared the folder path on ${assetIds.length} asset(s).`
+                  : action === "append_tags"
+                    ? `Added tags to ${assetIds.length} asset(s).`
+                    : action === "replace_tags"
+                      ? `Replaced tags on ${assetIds.length} asset(s).`
+                      : `Cleared tags on ${assetIds.length} asset(s).`
   });
 }

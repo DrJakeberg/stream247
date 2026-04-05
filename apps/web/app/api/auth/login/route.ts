@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { setSessionCookie, verifyPassword } from "@/lib/server/auth";
+import { buildTwoFactorChallengeValue, setSessionCookie, verifyPassword } from "@/lib/server/auth";
 import { findUserByEmail, readAppState, upsertUserRecord } from "@/lib/server/state";
 
 export async function POST(request: NextRequest) {
@@ -12,6 +12,17 @@ export async function POST(request: NextRequest) {
 
   if (!state.owner || state.owner.email !== email || !user || !verifyPassword(password, passwordHash)) {
     return NextResponse.json({ message: "Invalid email or password." }, { status: 401 });
+  }
+
+  if (user.authProvider === "local" && user.twoFactorEnabled && user.twoFactorSecret) {
+    return NextResponse.json(
+      {
+        ok: false,
+        requiresTwoFactor: true,
+        challengeToken: buildTwoFactorChallengeValue(user.id)
+      },
+      { status: 202 }
+    );
   }
 
   await upsertUserRecord({

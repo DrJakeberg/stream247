@@ -9,11 +9,12 @@ import { ScheduleDayCloneForm } from "@/components/schedule-day-clone-form";
 import { ScheduleWeekOverview } from "@/components/schedule-week-overview";
 import { ShowProfileDeleteForm } from "@/components/show-profile-delete-form";
 import { ShowProfileForm } from "@/components/show-profile-form";
-import { getSchedulePreview, getWorkspaceTimeZone, readAppState } from "@/lib/server/state";
+import { getMaterializedProgrammingWeekPreview, getSchedulePreview, getWorkspaceTimeZone, readAppState } from "@/lib/server/state";
 
 export default async function SchedulePage() {
   const state = await readAppState();
   const schedulePreview = getSchedulePreview(state);
+  const materializedWeek = getMaterializedProgrammingWeekPreview(state);
   const timeZone = getWorkspaceTimeZone();
   const conflicts = new Set(findScheduleConflicts(state.scheduleBlocks));
   const poolOptions = state.pools
@@ -24,6 +25,8 @@ export default async function SchedulePage() {
     .sort((left, right) => left.name.localeCompare(right.name));
   const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   type ScheduleItem = (typeof schedulePreview.items)[number];
+  const materializedToday = materializedWeek[0];
+  const liveQueue = state.playout.queueItems.slice(0, 5);
 
   return (
     <>
@@ -72,7 +75,7 @@ export default async function SchedulePage() {
             This is the programming shape of the full week. Use it to spot empty days, overloaded days, and when your
             first or last blocks start.
           </p>
-          <ScheduleWeekOverview blocks={state.scheduleBlocks} />
+          <ScheduleWeekOverview blocks={state.scheduleBlocks} materializedDays={materializedWeek} />
         </Panel>
         <Panel title="Quick-start templates" eyebrow="Programming">
           <p className="subtle">
@@ -88,13 +91,56 @@ export default async function SchedulePage() {
           <ScheduleDayCloneForm />
         </Panel>
 
-        <Panel title="Schedule preview" eyebrow="Programming">
+        <Panel title="Materialized fill preview" eyebrow="Programming">
           <p className="subtle">
-            The scheduler generates deterministic playout items with explainable reasons. Times are shown in {timeZone}.
+            The scheduler preview now follows pool rotation, insert rules, and natural asset lengths. Times are shown in {timeZone}.
           </p>
           <div className="list">
-            {schedulePreview.items.map((item: ScheduleItem) => (
-              <div className="item" key={item.id}>
+            {materializedToday?.blocks.map((block) => (
+              <div className="item" key={block.blockId}>
+                <div className="stats-row">
+                  <strong>{block.title}</strong>
+                  <span className={`programming-status-pill programming-status-${block.fillStatus}`}>{block.fillLabel}</span>
+                  <span className="subtle">{block.repeatLabel}</span>
+                </div>
+                <div className="subtle">
+                  {dayLabels[block.dayOfWeek]} · {block.startTime} to {block.endTime} · {block.poolName}
+                </div>
+                <div className="subtle">
+                  Unique library: {block.uniqueMinutes}m · Projected: {block.projectedMinutes}m
+                  {block.insertCount > 0 ? ` · ${block.insertCount} insert${block.insertCount === 1 ? "" : "s"}` : ""}
+                </div>
+                {block.queuePreview.length > 0 ? (
+                  <div className="subtle">Queue preview: {block.queuePreview.join(" · ")}</div>
+                ) : null}
+                {block.notes.map((note) => (
+                  <div className="subtle" key={note}>
+                    {note}
+                  </div>
+                ))}
+              </div>
+            ))}
+            {materializedToday?.blocks.length ? null : (
+              <div className="item">
+                <strong>No materialized items today</strong>
+                <div className="subtle">Add schedule blocks or ready assets to see fill behavior for the current programming day.</div>
+              </div>
+            )}
+          </div>
+          <div className="list" style={{ marginTop: 14 }}>
+            <div className="item">
+              <strong>Live queue context</strong>
+              <div className="subtle">Current on-air controls still win. This queue helps compare today&apos;s programming against the real runtime.</div>
+              {liveQueue.length > 0 ? (
+                <div className="subtle" style={{ marginTop: 8 }}>
+                  {liveQueue.map((item) => `${item.kind.toUpperCase()} · ${item.title}${item.subtitle ? ` (${item.subtitle})` : ""}`).join(" · ")}
+                </div>
+              ) : (
+                <div className="subtle" style={{ marginTop: 8 }}>No live queue items are currently published.</div>
+              )}
+            </div>
+            {schedulePreview.items.slice(0, 4).map((item: ScheduleItem) => (
+              <div className="item" key={`${item.id}-${item.startTime}`}>
                 <strong>{item.title}</strong>
                 <div className="subtle">
                   {dayLabels[item.dayOfWeek]} · {item.startTime} to {item.endTime} · {item.sourceName}
@@ -110,7 +156,19 @@ export default async function SchedulePage() {
         <ScheduleEditorWorkspace
           blocks={state.scheduleBlocks}
           conflicts={[...conflicts]}
-          pools={poolOptions}
+          materializedDays={materializedWeek}
+          liveQueueItems={liveQueue.map((item) => ({
+            id: item.id,
+            kind: item.kind,
+            title: item.title,
+            subtitle: item.subtitle
+          }))}
+          pools={state.pools.map((pool) => ({
+            id: pool.id,
+            name: pool.name,
+            insertAssetId: pool.insertAssetId,
+            insertEveryItems: pool.insertEveryItems
+          }))}
           showProfiles={shows}
           timeZone={timeZone}
         />

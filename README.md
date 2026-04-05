@@ -8,7 +8,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 
 - Docker-first self-hosted deployment with published GHCR images
 - setup wizard with owner account bootstrap
-- local login plus Twitch broadcaster connect and Twitch SSO team access
+- local login with optional two-factor authentication, plus Twitch broadcaster connect and Twitch SSO team access
 - PostgreSQL-backed runtime state
 - source ingestion for:
   - local media library
@@ -19,12 +19,15 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - guided source templates for local library, direct URLs, YouTube, and Twitch inputs
 - schedule management with:
   - weekly pool-based blocks
+  - explicit repeat sets for daily, weekday, weekend, or custom recurring blocks
   - minute-accurate blocks
   - overlap validation
   - drag-and-drop day timeline editing
   - resize-to-change-duration editing
   - duplicate existing blocks onto other weekdays
   - clone a full programming day onto additional empty weekdays
+  - materialized fill preview with repeat risk, overflow, empty-window, and insert-rule visibility
+  - queue-aware schedule preview alongside the live runtime queue
   - search, pool filters, show filters, and conflict-only views in the programming editor
 - pool management with:
   - source grouping
@@ -32,7 +35,9 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 - playout operations with:
   - FFmpeg RTMP output foundation
   - primary + backup RTMP destination slots
+  - deterministic queue state with current, next, previous, and transition-target visibility
   - queue-aware next-asset prefetch
+  - operator queue actions for play now, move next, remove next, and replay previous
   - graceful schedule handoff so running scheduled items can finish before the next block takes over
   - fallback asset selection
   - manual restart
@@ -59,6 +64,8 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 - viewer-facing pages with:
   - public schedule page
   - browser-source overlay page with live current/next updates
+  - one canonical Scene Studio payload shared across browser overlays, scene APIs, and playout overlay consumers
+  - on-air scene renderer v1 that captures the published browser scene into the FFmpeg playout path with safe text-overlay fallback
   - overlay studio with draft-save, reusable scene preset library, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, and publish-live scene controls
   - admin-managed replay branding, scene presets, and ticker/badge styling
 
@@ -68,6 +75,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 - more advanced playout transitions and scene-aware switchovers
 - deeper analytics views and richer incident correlation
 - inline override lanes in the schedule editor
+- cuepoint-style timed insert automation inside longer blocks
 
 ## Quick Start
 
@@ -159,6 +167,9 @@ docker compose --profile proxy up -d
 - `BACKUP_TWITCH_RTMP_URL`: backup Twitch-style RTMP URL
 - `BACKUP_TWITCH_STREAM_KEY`: backup Twitch-style stream key
 - `DESTINATION_FAILURE_COOLDOWN_SECONDS`: how long a failed destination stays on hold before the worker will retry it automatically
+- `SCENE_RENDER_BASE_URL`: optional internal base URL that the worker should use when capturing published Scene Studio overlays for on-air rendering; defaults to `INTERNAL_APP_URL`, then `APP_URL`, then `http://web:3000`
+- `SCENE_RENDER_INTERVAL_MS`: how often the worker refreshes captured on-air scene frames; defaults to `2000`
+- `SCENE_RENDER_CHROMIUM_PATH`: optional explicit Chromium binary path for the on-air scene renderer
 - `CHANNEL_TIMEZONE`: schedule timezone, for example `Europe/Berlin`
 - `DISCORD_WEBHOOK_URL`: Discord alert target
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL_TO`: email alerting
@@ -250,7 +261,7 @@ For production pinning, use `.env.production.example` or set the image tags expl
 
 ### Release Behavior
 
-- `push` to `main` validates, builds, smoke-tests, and publishes current images
+- `push` to `main` validates, runs queue continuity and browser smoke checks, and then publishes current images
 - `push` of `v*` tags runs the release workflow for versioned images
 - CI uses the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners
 - production should pin explicit release tags and not follow `latest`
@@ -297,6 +308,7 @@ Notes:
 
 - owner bootstrap via setup wizard
 - local session-based authentication
+- optional TOTP-based two-factor authentication for the local owner account
 - Twitch SSO team login
 - role-based access with `owner`, `admin`, `operator`, `moderator`, `viewer`
 - team access grants by Twitch login
@@ -323,8 +335,10 @@ Notes:
 - source-side asset counts and ready counts
 - asset detail pages with source origin, pool context, and runtime visibility
 - searchable asset library by title, source, status, and programming inclusion
-- asset curation controls for include/exclude from automatic programming
-- bulk asset actions for include, exclude, and global fallback promotion
+- asset curation controls for include/exclude from automatic programming, folder paths, and tags
+- bulk asset actions for include, exclude, fallback promotion, folder assignment, and tag management
+- local-library assets retain their relative folder structure in the catalog
+- `Channel Blueprints` can export and import Scene Studio, sources, programming, moderation, and destination metadata without exporting secrets or media files
 
 ### Scheduling
 
@@ -425,6 +439,10 @@ Notes:
 The intended validation path is:
 
 - `pnpm validate`
+- `pnpm test:fresh-db`
+- `pnpm test:fresh-compose`
+- `pnpm test:queue-continuity`
+- `pnpm test:e2e:smoke`
 - Docker image build
 - container smoke test
 
@@ -435,6 +453,10 @@ Current validation covers:
 - unit tests
 - integration tests
 - production build
+- fresh database bootstrap smoke
+- fresh compose bootstrap smoke
+- queue continuity smoke across short local-library assets
+- browser smoke for bootstrap, local 2FA login, broadcast controls, and Scene Studio publish
 - Docker builds
 - smoke test for the web image
 

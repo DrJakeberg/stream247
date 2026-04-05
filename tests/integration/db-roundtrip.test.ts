@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   applyOverlayScenePresetRecordToDraft,
+  createPoolRecord,
+  createScheduleBlocks,
   deleteOverlayScenePresetRecord,
   ensureDatabase,
   listOverlayScenePresetRecords,
@@ -140,6 +142,9 @@ describe.sequential("database roundtrip", () => {
           twitchUserId: "",
           twitchLogin: "",
           passwordHash: "hash",
+          twoFactorEnabled: true,
+          twoFactorSecret: "JBSWY3DPEHPK3PXP",
+          twoFactorConfirmedAt: "2026-04-04T10:06:00.000Z",
           createdAt: "2026-04-04T10:00:00.000Z",
           lastLoginAt: "2026-04-04T10:05:00.000Z"
         }
@@ -241,7 +246,9 @@ describe.sequential("database roundtrip", () => {
           durationMinutes: 120,
           showId: "show_1",
           poolId: "pool_1",
-          sourceName: "Source 1"
+          sourceName: "Source 1",
+          repeatMode: "weekends" as const,
+          repeatGroupId: "repeat_weekend"
         }
       ],
       sources: [
@@ -263,6 +270,8 @@ describe.sequential("database roundtrip", () => {
           sourceId: "source_1",
           title: "Asset One",
           path: "https://example.com/video.mp4",
+          folderPath: "youtube-channel/source-1",
+          tags: ["featured", "evergreen"],
           status: "ready" as const,
           includeInProgramming: true,
           externalId: "video-1",
@@ -334,12 +343,15 @@ describe.sequential("database roundtrip", () => {
         ...initial.playout,
         status: "running" as const,
         transitionState: "ready" as const,
+        queueVersion: 4,
         transitionTargetKind: "insert" as const,
         transitionTargetAssetId: "asset_3",
         transitionTargetTitle: "Channel ID",
         transitionReadyAt: "2026-04-04T10:00:11.000Z",
         currentAssetId: "asset_1",
         currentTitle: "Asset One",
+        previousAssetId: "asset_0",
+        previousTitle: "Asset Zero",
         desiredAssetId: "asset_1",
         nextAssetId: "asset_2",
         nextTitle: "Asset Two",
@@ -377,6 +389,8 @@ describe.sequential("database roundtrip", () => {
         lastSuccessfulAssetId: "asset_1",
         selectionReasonCode: "scheduled_match" as const,
         fallbackTier: "scheduled" as const,
+        manualNextAssetId: "asset_2",
+        manualNextRequestedAt: "2026-04-04T10:00:09.000Z",
         message: "Running"
       }
     };
@@ -407,20 +421,79 @@ describe.sequential("database roundtrip", () => {
     expect(reread.pools[0]?.insertAssetId).toBe("asset_3");
     expect(reread.showProfiles[0]?.name).toBe("Morning Replay");
     expect(reread.scheduleBlocks[0]?.showId).toBe("show_1");
+    expect(reread.scheduleBlocks[0]?.repeatMode).toBe("weekends");
+    expect(reread.scheduleBlocks[0]?.repeatGroupId).toBe("repeat_weekend");
     expect(reread.sources[0]?.connectorKind).toBe("youtube-channel");
     expect(reread.assets[0]?.durationSeconds).toBe(3600);
+    expect(reread.assets[0]?.folderPath).toBe("youtube-channel/source-1");
+    expect(reread.assets[0]?.tags).toEqual(["featured", "evergreen"]);
     expect(reread.sourceSyncRuns[0]?.status).toBe("success");
     expect(reread.destinations[0]?.streamKeyPresent).toBe(true);
     expect(reread.incidents[0]?.fingerprint).toBe("example");
     expect(reread.auditEvents[0]?.type).toBe("test.roundtrip");
     expect(reread.playout.transitionState).toBe("ready");
+    expect(reread.playout.queueVersion).toBe(4);
     expect(reread.playout.transitionTargetKind).toBe("insert");
     expect(reread.playout.transitionTargetAssetId).toBe("asset_3");
+    expect(reread.playout.previousAssetId).toBe("asset_0");
+    expect(reread.playout.previousTitle).toBe("Asset Zero");
     expect(reread.playout.prefetchedAssetId).toBe("asset_2");
+    expect(reread.playout.manualNextAssetId).toBe("asset_2");
     expect(reread.playout.queuedAssetIds).toEqual(["asset_2", "asset_3"]);
     expect(reread.playout.queueItems[1]?.kind).toBe("insert");
     expect(reread.playout.queueItems[1]?.assetId).toBe("asset_3");
+    expect(reread.users[0]?.twoFactorEnabled).toBe(true);
+    expect(reread.users[0]?.twoFactorSecret).toBe("JBSWY3DPEHPK3PXP");
   }, 60_000);
+
+  it("does not reseed an initialized database just because no users exist", async () => {
+    await ensureDatabaseWithRetry();
+    const seeded = await readAppState();
+    await writeAppState({
+      ...seeded,
+      initialized: false,
+      owner: null,
+      users: [],
+      teamAccessGrants: []
+    });
+    const initial = await readAppState();
+
+    expect(initial.users).toEqual([]);
+    expect(initial.owner).toBeNull();
+
+    await createPoolRecord({
+      id: "pool_queue_smoke",
+      name: "Queue Smoke Pool",
+      sourceIds: ["source-local-library"],
+      playbackMode: "round-robin",
+      cursorAssetId: "",
+      insertAssetId: "",
+      insertEveryItems: 0,
+      itemsSinceInsert: 0,
+      updatedAt: "2026-04-05T12:00:00.000Z"
+    });
+
+    await createScheduleBlocks([
+      {
+        id: "block_queue_smoke",
+        title: "Queue Smoke",
+        categoryName: "Smoke",
+        dayOfWeek: 0,
+        startMinuteOfDay: 0,
+        durationMinutes: 1440,
+        showId: "",
+        poolId: "pool_queue_smoke",
+        sourceName: "Local Media Library"
+      }
+    ]);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const rehydrated = await readAppState();
+    expect(rehydrated.pools.some((pool) => pool.id === "pool_queue_smoke")).toBe(true);
+    expect(rehydrated.scheduleBlocks.some((block) => block.id === "block_queue_smoke")).toBe(true);
+  });
 
   it("persists overlay drafts separately from the live scene and can publish/reset them", async () => {
     await ensureDatabaseWithRetry();

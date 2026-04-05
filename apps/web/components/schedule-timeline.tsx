@@ -1,6 +1,6 @@
 "use client";
 
-import { formatMinuteOfDay, type ScheduleBlock } from "@stream247/core";
+import { formatMinuteOfDay, type MaterializedProgrammingBlock, type ScheduleBlock } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import type { ShowProfileRecord } from "@/lib/server/state";
@@ -13,13 +13,22 @@ const dayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frid
 type Props = {
   blocks: ScheduleBlock[];
   conflicts: string[];
+  materializedBlocks?: Record<string, MaterializedProgrammingBlock | undefined>;
   showProfiles: ShowProfileRecord[];
   timeZone: string;
   activeDay?: number;
   onActiveDayChange?: (day: number) => void;
 };
 
-export function ScheduleTimeline({ blocks, conflicts, showProfiles, timeZone, activeDay, onActiveDayChange }: Props) {
+export function ScheduleTimeline({
+  blocks,
+  conflicts,
+  materializedBlocks,
+  showProfiles,
+  timeZone,
+  activeDay,
+  onActiveDayChange
+}: Props) {
   const [draggedId, setDraggedId] = useState("");
   const [internalActiveDay, setInternalActiveDay] = useState(1);
   const [error, setError] = useState("");
@@ -153,10 +162,13 @@ export function ScheduleTimeline({ blocks, conflicts, showProfiles, timeZone, ac
               const top = (block.startMinuteOfDay / minutesPerSlot) * slotHeight;
               const height = Math.max((block.durationMinutes / minutesPerSlot) * slotHeight - 4, 24);
               const show = showProfiles.find((entry) => entry.id === block.showId);
+              const materialized = materializedBlocks?.[block.id];
 
               return (
                 <button
-                  className={`schedule-block-card${conflictSet.has(block.id) ? " schedule-block-conflict" : ""}`}
+                  className={`schedule-block-card${conflictSet.has(block.id) ? " schedule-block-conflict" : ""}${
+                    materialized ? ` schedule-block-${materialized.fillStatus}` : ""
+                  }`}
                   draggable
                   key={block.id}
                   onDragEnd={() => setDraggedId("")}
@@ -184,6 +196,7 @@ export function ScheduleTimeline({ blocks, conflicts, showProfiles, timeZone, ac
                     {formatMinuteOfDay(block.startMinuteOfDay)} · {block.durationMinutes}m
                   </span>
                   <span>{block.sourceName}</span>
+                  {materialized ? <span>{materialized.fillLabel}</span> : null}
                   <span
                     className="subtle"
                     onMouseDown={(event) => {

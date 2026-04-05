@@ -1,7 +1,9 @@
 import {
   buildOverlayBrandLine,
   buildOverlaySceneDefinition,
+  buildOverlayScenePayload,
   buildOverlayTextLines,
+  buildOverlayTextLinesFromScenePayload,
   normalizeOverlaySceneLayerOrder,
   resolveOverlayHeadlineForQueueKind,
   resolveOverlayScenePresetForQueueKind
@@ -102,6 +104,60 @@ describe("overlay text lines", () => {
       "Queue: Archive Hour"
     ]);
   });
+
+  it("builds a canonical scene payload and renders text from it", () => {
+    const payload = buildOverlayScenePayload({
+      overlay: {
+        channelName: "Archive TV",
+        replayLabel: "Replay stream",
+        brandBadge: "Late Night",
+        accentColor: "#0e6d5a",
+        scenePreset: "split-now-next",
+        insertScenePreset: "bumper-board",
+        standbyScenePreset: "standby-board",
+        reconnectScenePreset: "reconnect-board",
+        headline: "Always on air",
+        insertHeadline: "Manual insert",
+        standbyHeadline: "Please wait",
+        reconnectHeadline: "Refreshing output",
+        surfaceStyle: "glass",
+        panelAnchor: "bottom",
+        titleScale: "balanced",
+        showClock: true,
+        showNextItem: true,
+        showScheduleTeaser: true,
+        showCurrentCategory: true,
+        showSourceLabel: true,
+        showQueuePreview: true,
+        queuePreviewCount: 2,
+        emergencyBanner: "",
+        tickerText: "Coming up next",
+        layerOrder: ["chip", "hero", "next", "queue", "schedule", "clock", "banner", "ticker"],
+        disabledLayers: []
+      },
+      queueKind: "asset",
+      target: "browser",
+      currentTitle: "Episode One",
+      currentCategory: "Gaming",
+      currentSourceName: "Archive Playlist",
+      nextTitle: "Episode Two",
+      nextTimeLabel: "10:00 to 12:00",
+      queueTitles: ["Episode Two", "Episode Three"],
+      timeZone: "Europe/Berlin"
+    });
+
+    expect(payload.scene.resolvedPresetId).toBe("split-now-next");
+    expect(payload.heroLabel).toBe("Now Playing");
+    expect(payload.metaLine).toBe("Gaming · Archive Playlist");
+    expect(payload.queueTitles).toEqual(["Episode Two", "Episode Three"]);
+    expect(buildOverlayTextLinesFromScenePayload(payload)).toEqual([
+      "Replay stream · Late Night",
+      "Now: Episode One",
+      "Next: Episode Two",
+      "Gaming · Archive Playlist",
+      "Coming up next"
+    ]);
+  });
 });
 
 describe("overlay scene definitions", () => {
@@ -135,7 +191,10 @@ describe("overlay scene definitions", () => {
         showClock: true,
         showNextItem: true,
         showScheduleTeaser: false,
+        showCurrentCategory: true,
+        showSourceLabel: true,
         showQueuePreview: true,
+        queuePreviewCount: 3,
         emergencyBanner: "",
         tickerText: "Always on air",
         layerOrder: ["hero", "chip", "next", "ticker", "clock", "queue", "schedule", "banner"],

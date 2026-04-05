@@ -7,6 +7,8 @@ coverage
 .env.local
 .DS_Store
 *.log
+playwright-report
+test-results
 data/postgres
 data/redis
 data/app
