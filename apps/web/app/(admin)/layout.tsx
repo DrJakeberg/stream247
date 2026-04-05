@@ -4,11 +4,14 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { requireAuthenticatedUser } from "@/lib/server/auth";
-import { readAppState } from "@/lib/server/state";
+import { getBroadcastSnapshot, readAppState } from "@/lib/server/state";
+import { AdminNavigation } from "@/components/admin-navigation";
+import { AdminStatusRail } from "@/components/admin-status-rail";
 import { LogoutButton } from "@/components/logout-button";
 
 export default async function AdminLayout({ children }: { children: ReactNode }) {
   const state = await readAppState();
+  const snapshot = getBroadcastSnapshot(state);
 
   if (!state.initialized) {
     redirect("/setup");
@@ -25,23 +28,22 @@ export default async function AdminLayout({ children }: { children: ReactNode })
             {user.displayName} · {user.role}
           </p>
         </div>
-        <nav className="nav">
-          <Link href="/broadcast">Broadcast</Link>
-          <Link href="/dashboard">Dashboard</Link>
-          <Link href="/ops">Ops</Link>
-          <Link href="/sources">Sources</Link>
-          <Link href="/schedule">Schedule</Link>
-          <Link href="/overlay-studio">Overlay</Link>
-          <Link href="/settings">Settings</Link>
-          <Link href="/moderation">Moderation</Link>
-          <Link href="/team">Team</Link>
-          <Link href="/channel">Public page</Link>
-        </nav>
+        <AdminNavigation />
+        <div style={{ marginTop: 24 }}>
+          <Link className="subtle-link" href="/channel" target="_blank">
+            Open public page
+          </Link>
+        </div>
         <div style={{ marginTop: 24 }}>
           <LogoutButton />
         </div>
       </aside>
-      <section className="content">{children}</section>
+      <section className="content">
+        <div className="content-stack">
+          <AdminStatusRail initialSnapshot={snapshot} />
+          {children}
+        </div>
+      </section>
     </main>
   );
 }
