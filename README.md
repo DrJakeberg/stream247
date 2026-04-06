@@ -10,6 +10,13 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 - setup wizard with owner account bootstrap
 - local login with optional two-factor authentication, plus Twitch broadcaster connect and Twitch SSO team access
 - PostgreSQL-backed runtime state
+- operator control-room IA with:
+  - `Broadcast` for live actions and on-air recovery
+  - `Dashboard` for readiness, incidents, and launch posture
+  - `Programming` for schedule authoring and fill preview
+  - `Library` for sources, uploads, pools, and catalog curation
+  - `Scene Studio` for viewer-facing scene draft and publish flow
+  - `Settings` for access, secrets, releases, and blueprints
 - source ingestion for:
   - local media library
   - local media uploads from the admin UI into the shared library
@@ -459,7 +466,7 @@ Notes:
 
 - public schedule page at `/channel`
 - browser-source overlay at `/overlay`
-- overlay studio in admin UI
+- `Scene Studio` in the admin UI
 - configurable replay label, channel name, headline, accent color, emergency banner, and now/next teaser toggles
 
 ### Guided Setup And Launch
@@ -508,7 +515,7 @@ Current validation covers:
 - fresh database bootstrap smoke
 - fresh compose bootstrap smoke
 - queue continuity smoke across short local-library assets
-- browser smoke for bootstrap, local 2FA login, broadcast controls, and Scene Studio publish
+- browser smoke for bootstrap, operator IA navigation, local 2FA login, broadcast controls, and Scene Studio publish
 - Docker builds
 - smoke test for the web image
 

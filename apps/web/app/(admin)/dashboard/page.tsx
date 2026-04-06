@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { selectActiveDestinationGroup } from "@stream247/core";
+import { AdminPageHeader } from "@/components/admin-page-header";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
 import { DestinationCreateForm } from "@/components/destination-create-form";
 import { DestinationSettingsForm } from "@/components/destination-settings-form";
@@ -53,14 +54,11 @@ export default async function DashboardPage() {
 
   return (
     <>
-      <section className="hero">
-        <span className="badge">Broadcast control</span>
-        <h2>Operate a 24/7 channel from a real initialized workspace.</h2>
-        <p>
-          The admin UI now reads persisted state, tracks initialization, and keeps moderation and Twitch readiness
-          visible.
-        </p>
-      </section>
+      <AdminPageHeader
+        description="Use Dashboard to decide whether the workspace is ready for sustained on-air operation. Broadcast remains the live action surface."
+        eyebrow="Dashboard"
+        title="Check readiness, integrations, and current channel posture."
+      />
 
       <section className="grid metrics">
         <article className="metric">
@@ -152,7 +150,7 @@ export default async function DashboardPage() {
             ))}
           </div>
         </Panel>
-        <Panel title="Output destinations" eyebrow="Broadcast">
+        <Panel title="Output destinations" eyebrow="Delivery">
           <p className="subtle">
             Stream247 can now fan one channel out to multiple active outputs. Healthy primary outputs are preferred
             together; backup outputs take over only when no primary output group is available.
@@ -185,7 +183,7 @@ export default async function DashboardPage() {
           </div>
         </Panel>
 
-        <Panel title="Alerts and drift" eyebrow="Ops">
+        <Panel title="Alerts and drift" eyebrow="Operations">
           <div className="list">
             <div className="item">
               <strong>Encoder runtime</strong>

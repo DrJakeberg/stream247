@@ -28,6 +28,14 @@ export default async function AdminLayout({ children }: { children: ReactNode })
             {user.displayName} · {user.role}
           </p>
         </div>
+        <section className="sidebar-card">
+          <span className="label">Operator model</span>
+          <strong>Dashboard for readiness. Broadcast for live actions.</strong>
+          <p className="subtle">
+            Library and Programming shape upcoming output, Scene Studio publishes the viewer-facing scene, and
+            Settings changes workspace-wide behavior.
+          </p>
+        </section>
         <AdminNavigation />
         <div style={{ marginTop: 24 }}>
           <Link className="subtle-link" href="/channel" target="_blank">
