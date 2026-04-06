@@ -38,8 +38,12 @@ fi
 echo "Checking Compose configuration..."
 docker compose config >/dev/null
 
-echo "Checking application validation..."
-PATH="/home/benjamin/.local/n/bin:/home/benjamin/.local/bin:$PATH" pnpm validate
+if [ "${RELEASE_PREFLIGHT_SKIP_VALIDATE:-0}" = "1" ]; then
+  echo "Skipping application validation because RELEASE_PREFLIGHT_SKIP_VALIDATE=1."
+else
+  echo "Checking application validation..."
+  PATH="/home/benjamin/.local/n/bin:/home/benjamin/.local/bin:$PATH" pnpm validate
+fi
 
 echo "Release preflight succeeded."
 echo "Next recommended steps:"

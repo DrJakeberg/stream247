@@ -19,6 +19,7 @@
     "test:live-bridge-smoke": "vitest run tests/unit/live-bridge.test.ts",
     "test:audio-cuepoint-smoke": "vitest run tests/unit/audio-lanes.test.ts tests/unit/cuepoints.test.ts",
     "test:queue-continuity": "bash ./scripts/queue-continuity-smoke.sh",
+    "test:runtime-parity": "bash ./scripts/runtime-parity-smoke.sh",
     "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "release:preflight": "./scripts/release-preflight.sh",
     "release:rehearse": "./scripts/upgrade-rehearsal.sh",

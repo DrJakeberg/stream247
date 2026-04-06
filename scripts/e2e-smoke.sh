@@ -9,6 +9,7 @@ ENV_FILE="$TMP_DIR/.env"
 OVERRIDE_FILE="$TMP_DIR/docker-compose.override.yml"
 ROOT_ENV_FILE="$WORKDIR/.env"
 ROOT_ENV_BACKUP="$TMP_DIR/root.env.backup"
+OUTPUT_DIR="$TMP_DIR/output"
 
 cleanup() {
   docker compose --project-name "$PROJECT_NAME" --env-file "$ENV_FILE" -f docker-compose.yml -f "$OVERRIDE_FILE" down -v >/dev/null 2>&1 || true
@@ -23,7 +24,7 @@ cleanup() {
 
 trap cleanup EXIT
 
-mkdir -p "$TMP_DIR/media" "$TMP_DIR/postgres" "$TMP_DIR/redis"
+mkdir -p "$TMP_DIR/media" "$TMP_DIR/postgres" "$TMP_DIR/redis" "$OUTPUT_DIR/primary" "$OUTPUT_DIR/secondary-a" "$OUTPUT_DIR/secondary-b"
 
 cat >"$ENV_FILE" <<EOF
 NODE_ENV=production
@@ -38,6 +39,8 @@ REDIS_URL=redis://redis:6379
 STREAM247_WEB_IMAGE=stream247-web:test
 STREAM247_WORKER_IMAGE=stream247-worker:test
 STREAM247_PLAYOUT_IMAGE=stream247-worker:test
+STREAM_OUTPUT_URL=/tmp/stream-output/primary
+STREAM_OUTPUT_KEY=primary.flv
 TRAEFIK_HOST=stream247.local
 TRAEFIK_ACME_EMAIL=devnull@example.com
 CHANNEL_TIMEZONE=Europe/Berlin
@@ -57,6 +60,7 @@ services:
   playout:
     volumes:
       - ${TMP_DIR}/media:/app/data/media
+      - ${OUTPUT_DIR}:/tmp/stream-output
   postgres:
     volumes:
       - ${TMP_DIR}/postgres:/var/lib/postgresql/data
@@ -85,4 +89,5 @@ wget -qO- "http://127.0.0.1:${PORT}/api/system/readiness" >/dev/null
 PLAYWRIGHT_BASE_URL="http://127.0.0.1:${PORT}" \
 E2E_OWNER_EMAIL="${E2E_OWNER_EMAIL:-owner@example.com}" \
 E2E_OWNER_PASSWORD="${E2E_OWNER_PASSWORD:-stream247-owner-pass}" \
+E2E_SECONDARY_OUTPUT_ROOT="/tmp/stream-output" \
 pnpm dlx @playwright/test@1.56.1 test tests/e2e/admin-smoke.spec.ts --config=playwright.config.ts --reporter=line

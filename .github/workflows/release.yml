@@ -25,6 +25,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile=false
       - run: pnpm validate
+      - run: cp .env.production.example .env
+      - run: RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
