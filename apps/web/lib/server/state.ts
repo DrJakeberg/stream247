@@ -1,10 +1,12 @@
 import {
+  DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
   buildOverlayScenePayload,
   buildMaterializedProgrammingWeek,
   getCuepointProgress,
   buildScheduleOccurrences,
   buildSchedulePreview,
   describePresenceStatus,
+  getDestinationFailureSecondsRemaining as getDestinationFailureHoldSecondsRemaining,
   getScheduleElapsedSeconds,
   getCurrentScheduleMoment,
   isCurrentScheduleTime,
@@ -613,6 +615,55 @@ function summarizeAsset(state: AppState, assetId: string): LiveAssetSummary | nu
   };
 }
 
+function getConfiguredDestinationFailureCooldownSeconds(): number {
+  const parsed = Number(process.env.DESTINATION_FAILURE_COOLDOWN_SECONDS || String(DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS));
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS;
+}
+
+function summarizeDestinationRecovery(
+  destination: StreamDestinationRecord,
+  active: boolean
+): Pick<LiveDestinationSummary, "recoveryState" | "recoverySummary" | "failureHoldSecondsRemaining"> {
+  const failureHoldSecondsRemaining = getDestinationFailureHoldSecondsRemaining(
+    destination.lastFailureAt,
+    getConfiguredDestinationFailureCooldownSeconds()
+  );
+
+  if (destination.status === "error" && failureHoldSecondsRemaining > 0) {
+    return {
+      recoveryState: "cooldown",
+      recoverySummary: `Cooling down after the latest output failure. Retry in ${failureHoldSecondsRemaining}s unless an operator clears the hold.`,
+      failureHoldSecondsRemaining
+    };
+  }
+
+  if (destination.status === "recovering") {
+    return {
+      recoveryState: "staged",
+      recoverySummary: active
+        ? "Recovered output is already back in the live destination group."
+        : "Recovered output is staged and will rejoin on the next natural transition or when an operator chooses Recover outputs now.",
+      failureHoldSecondsRemaining: 0
+    };
+  }
+
+  if (destination.status === "ready") {
+    return {
+      recoveryState: active ? "active" : "ready",
+      recoverySummary: active
+        ? "Output is currently carrying the live broadcast."
+        : "Output is healthy and available for the next active destination group.",
+      failureHoldSecondsRemaining: 0
+    };
+  }
+
+  return {
+    recoveryState: "missing-config",
+    recoverySummary: "Configure a valid RTMP URL and stream key before this output can join the live destination group.",
+    failureHoldSecondsRemaining: 0
+  };
+}
+
 function summarizeDestination(state: AppState): LiveDestinationSummary | null {
   const routing = selectActiveDestinationGroup(
     state.destinations.map((destination) => ({
@@ -634,6 +685,8 @@ function summarizeDestination(state: AppState): LiveDestinationSummary | null {
     return null;
   }
 
+  const active = routing.activeDestinationIds.includes(destination.id);
+
   return {
     id: destination.id,
     role: destination.role,
@@ -647,7 +700,8 @@ function summarizeDestination(state: AppState): LiveDestinationSummary | null {
     lastFailureAt: destination.lastFailureAt,
     failureCount: destination.failureCount,
     lastError: destination.lastError,
-    active: routing.activeDestinationIds.includes(destination.id)
+    active,
+    ...summarizeDestinationRecovery(destination, active)
   };
 }
 
@@ -665,21 +719,25 @@ function summarizeDestinations(state: AppState): LiveDestinationSummary[] {
   );
   return [...state.destinations]
     .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name))
-    .map((destination) => ({
-      id: destination.id,
-      role: destination.role,
-      priority: destination.priority,
-      name: destination.name,
-      status: destination.status,
-      notes: destination.notes,
-      rtmpUrl: destination.rtmpUrl,
-      streamKeyPresent: destination.streamKeyPresent,
-      streamKeySource: destination.streamKeySource || "missing",
-      lastFailureAt: destination.lastFailureAt,
-      failureCount: destination.failureCount,
-      lastError: destination.lastError,
-      active: routing.activeDestinationIds.includes(destination.id)
-    }));
+    .map((destination) => {
+      const active = routing.activeDestinationIds.includes(destination.id);
+      return {
+        id: destination.id,
+        role: destination.role,
+        priority: destination.priority,
+        name: destination.name,
+        status: destination.status,
+        notes: destination.notes,
+        rtmpUrl: destination.rtmpUrl,
+        streamKeyPresent: destination.streamKeyPresent,
+        streamKeySource: destination.streamKeySource || "missing",
+        lastFailureAt: destination.lastFailureAt,
+        failureCount: destination.failureCount,
+        lastError: destination.lastError,
+        active,
+        ...summarizeDestinationRecovery(destination, active)
+      };
+    });
 }
 
 function summarizeScheduleItem(

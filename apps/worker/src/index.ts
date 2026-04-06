@@ -5,6 +5,7 @@ import nodemailer from "nodemailer";
 import path from "node:path";
 import type { Writable } from "node:stream";
 import {
+  DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
   addDaysToDateString,
   buildOverlayScenePayload,
   buildOverlayTextLinesFromScenePayload,
@@ -12,7 +13,9 @@ import {
   buildScheduleOccurrences,
   buildSchedulePreview,
   describePresenceStatus,
+  getDestinationFailureSecondsRemaining as getDestinationFailureHoldSecondsRemaining,
   getCurrentScheduleMoment,
+  isDestinationFailureCoolingDown,
   isCurrentScheduleTime,
   normalizeLiveBridgeInputType,
   isLikelyTwitchChannelUrl,
@@ -81,7 +84,9 @@ const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
 const PLAYOUT_RECONNECT_INTERVAL_MS = Number(process.env.PLAYOUT_RECONNECT_HOURS || "24") * 60 * 60 * 1000;
 const PLAYOUT_RECONNECT_WINDOW_MS = Number(process.env.PLAYOUT_RECONNECT_SECONDS || "20") * 1000;
-const DESTINATION_FAILURE_COOLDOWN_MS = Number(process.env.DESTINATION_FAILURE_COOLDOWN_SECONDS || "300") * 1000;
+const DESTINATION_FAILURE_COOLDOWN_SECONDS = Number(
+  process.env.DESTINATION_FAILURE_COOLDOWN_SECONDS || String(DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS)
+);
 const NEXT_ASSET_PROBE_READY_TTL_MS = 5 * 60_000;
 const NEXT_ASSET_PROBE_FAILED_TTL_MS = 60_000;
 const standbySlatePath = "/tmp/stream247-standby.txt";
@@ -195,20 +200,11 @@ async function resolvePlayableInput(input: string): Promise<string> {
 }
 
 function isDestinationCoolingDown(destination: StreamDestinationRecord): boolean {
-  return (
-    destination.status === "error" &&
-    destination.lastFailureAt !== "" &&
-    Date.now() - new Date(destination.lastFailureAt).getTime() < DESTINATION_FAILURE_COOLDOWN_MS
-  );
+  return isDestinationFailureCoolingDown(destination.status, destination.lastFailureAt, DESTINATION_FAILURE_COOLDOWN_SECONDS);
 }
 
 function getDestinationFailureSecondsRemaining(destination: StreamDestinationRecord): number {
-  if (!isDestinationCoolingDown(destination)) {
-    return 0;
-  }
-
-  const elapsed = Date.now() - new Date(destination.lastFailureAt).getTime();
-  return Math.max(0, Math.ceil((DESTINATION_FAILURE_COOLDOWN_MS - elapsed) / 1000));
+  return getDestinationFailureHoldSecondsRemaining(destination.lastFailureAt, DESTINATION_FAILURE_COOLDOWN_SECONDS);
 }
 
 function isLikelyDestinationOutputError(line: string): boolean {
@@ -2138,46 +2134,86 @@ function getDesiredTargetKind(selection: SelectionResult): "asset" | "insert" | 
   return selection.lifecycleStatus === "reconnecting" ? "reconnect" : "standby";
 }
 
-function isMatchingRunningTarget(args: {
-  selection: SelectionResult;
-  destinationIds: string[];
-}): boolean {
+function isMatchingRunningSelection(selection: SelectionResult): boolean {
   if (!playoutProcess || playoutProcess.killed) {
     return false;
   }
 
-  const currentIds = [...playoutDestinationIds].sort();
-  const desiredIds = [...args.destinationIds].sort();
-  if (currentIds.length !== desiredIds.length || currentIds.some((value, index) => value !== desiredIds[index])) {
-    return false;
-  }
-
-  const desiredKind = getDesiredTargetKind(args.selection);
-  if (desiredKind === "asset") {
-    const desiredAsset = args.selection.asset;
+  const desiredKind = getDesiredTargetKind(selection);
+  if (desiredKind === "asset" || desiredKind === "insert") {
+    const desiredAsset = selection.asset;
     if (!desiredAsset) {
       return false;
     }
-    return playoutTargetKind === "asset" && playoutAssetId === desiredAsset.id;
-  }
-
-  if (desiredKind === "insert") {
-    const desiredAsset = args.selection.asset;
-    if (!desiredAsset) {
-      return false;
-    }
-    return playoutTargetKind === "insert" && playoutAssetId === desiredAsset.id;
+    return playoutTargetKind === desiredKind && playoutAssetId === desiredAsset.id;
   }
 
   if (desiredKind === "live") {
     return (
       playoutTargetKind === "live" &&
-      playoutLiveBridgeInputUrl === args.selection.liveBridgeInputUrl &&
-      playoutLiveBridgeInputType === args.selection.liveBridgeInputType
+      playoutLiveBridgeInputUrl === selection.liveBridgeInputUrl &&
+      playoutLiveBridgeInputType === selection.liveBridgeInputType
     );
   }
 
   return playoutTargetKind === "standby" || playoutTargetKind === "reconnect";
+}
+
+function isMatchingRunningTarget(args: {
+  selection: SelectionResult;
+  destinationIds: string[];
+}): boolean {
+  const currentIds = [...playoutDestinationIds].sort();
+  const desiredIds = [...args.destinationIds].sort();
+  if (currentIds.length !== desiredIds.length || currentIds.some((value, index) => value !== desiredIds[index])) {
+    return false;
+  }
+  return isMatchingRunningSelection(args.selection);
+}
+
+function shouldStageRecoveredDestination(destination: StreamDestinationRecord, streamTarget: string | null): boolean {
+  return (
+    Boolean(playoutProcess && !playoutProcess.killed) &&
+    playoutDestinationIds.length > 0 &&
+    !playoutDestinationIds.includes(destination.id) &&
+    Boolean(streamTarget) &&
+    !isDestinationCoolingDown(destination) &&
+    destination.lastFailureAt !== "" &&
+    (destination.status === "error" || destination.status === "recovering")
+  );
+}
+
+async function promoteRecoveringDestinations(reason: "manual" | "transition"): Promise<number> {
+  const state = await readAppState();
+  const recoveringDestinations = state.destinations.filter((destination) => destination.status === "recovering");
+  if (recoveringDestinations.length === 0) {
+    return 0;
+  }
+
+  const now = new Date().toISOString();
+  for (const destination of recoveringDestinations) {
+    await updateDestinationRecord({
+      ...destination,
+      status: "ready",
+      lastValidatedAt: now,
+      notes:
+        reason === "manual"
+          ? `${destination.role === "backup" ? "Backup" : "Primary"} destination is rejoining immediately after an operator recovery request.`
+          : `${destination.role === "backup" ? "Backup" : "Primary"} destination is rejoining on a natural transition after the recovery hold expired.`
+    });
+    await resolveIncident(
+      `playout.destination.${destination.id}.failed`,
+      reason === "manual"
+        ? "Operator requested immediate output recovery."
+        : "Destination recovered and will rejoin on the next natural transition."
+    );
+  }
+
+  logRuntimeEvent("destination.recovery.promoted", {
+    reason,
+    destinationIds: recoveringDestinations.map((destination) => destination.id)
+  });
+  return recoveringDestinations.length;
 }
 
 async function startOrSwitchPlayout(args: {
@@ -2530,18 +2566,30 @@ async function syncDestinations(): Promise<void> {
     const managedKey = managedKeys[destination.id] || "";
     const streamKeySource = managedKey ? "managed" : envConfig.key ? "env" : "missing";
     const coolingDown = destination.enabled && Boolean(streamTarget) && isDestinationCoolingDown(destination);
+    const stagedRecovery = destination.enabled && shouldStageRecoveredDestination(destination, streamTarget);
     const readyStatus = destination.enabled ? (streamTarget ? "ready" : "missing-config") : "missing-config";
+    const nextStatus = coolingDown ? "error" : stagedRecovery ? "recovering" : readyStatus;
+    if (stagedRecovery && destination.status !== "recovering") {
+      logRuntimeEvent("destination.recovery.staged", {
+        destinationId: destination.id,
+        role: destination.role
+      });
+    }
     await updateDestinationRecord({
       ...destination,
       streamKeyPresent: Boolean(managedKey || envConfig.key),
       streamKeySource,
-      status: coolingDown ? "error" : readyStatus,
+      status: nextStatus,
       lastValidatedAt: now,
-      lastError: coolingDown ? destination.lastError : readyStatus === "ready" ? "" : destination.lastError,
+      lastError: destination.lastError,
       notes: coolingDown
         ? `${
             destination.role === "backup" ? "Backup" : "Primary"
           } destination is cooling down after a recent output failure. Retry in ${getDestinationFailureSecondsRemaining(destination)}s.`
+        : stagedRecovery
+          ? `${
+              destination.role === "backup" ? "Backup" : "Primary"
+            } destination recovered, but it is staged until the next natural transition or an operator-triggered output recovery.`
         : streamTarget
           ? `${destination.role === "backup" ? "Backup" : "Primary"} destination is configured and ready for multi-output delivery.`
           : destination.id === "destination-backup"
@@ -2550,6 +2598,15 @@ async function syncDestinations(): Promise<void> {
               ? "Configure STREAM_OUTPUT_URL/KEY or save a managed primary stream key."
               : "Save a managed stream key for this destination to include it in multi-output delivery."
     });
+
+    if (!coolingDown && streamTarget && destination.lastFailureAt !== "") {
+      await resolveIncident(
+        `playout.destination.${destination.id}.failed`,
+        stagedRecovery
+          ? "Destination recovered and is staged for the next natural transition."
+          : "Destination recovered and is available for multi-output delivery again."
+      );
+    }
   }
 }
 
@@ -2568,6 +2625,14 @@ async function runPlayoutCycle(): Promise<void> {
       skipUntil: isTimestampActive(playout.skipUntil) ? playout.skipUntil : ""
     }));
     state = await readAppState();
+  }
+
+  const previewSelection = choosePlaybackCandidate(state);
+  if (playoutProcess && !playoutProcess.killed && !isMatchingRunningSelection(previewSelection)) {
+    const promotedCount = await promoteRecoveringDestinations("transition");
+    if (promotedCount > 0) {
+      state = await readAppState();
+    }
   }
 
   const managedDestinationKeys = await readManagedDestinationStreamKeys(state.destinations.map((entry) => entry.id));

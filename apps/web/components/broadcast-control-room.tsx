@@ -18,6 +18,9 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
   });
   const currentQueueItem = snapshot.queueItems[0] ?? null;
   const nextQueueItem = snapshot.queueItems[1] ?? null;
+  const activeDestinationCount = snapshot.destinations.filter((destination) => destination.active).length;
+  const stagedDestinationCount = snapshot.destinations.filter((destination) => destination.recoveryState === "staged").length;
+  const coolingDestinationCount = snapshot.destinations.filter((destination) => destination.recoveryState === "cooldown").length;
 
   return (
     <div className="stack-form">
@@ -44,8 +47,8 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
           <div>
             <span className="label">Destination</span>
             <strong>
-              {snapshot.destinations.filter((destination) => destination.active).length > 0
-                ? `${snapshot.destinations.filter((destination) => destination.active).length} active`
+              {activeDestinationCount > 0
+                ? `${activeDestinationCount} active`
                 : snapshot.destination?.status || "missing"}
             </strong>
           </div>
@@ -124,6 +127,8 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
             liveBridgeInputType={snapshot.liveBridge.inputType}
             liveBridgeInputSummary={snapshot.liveBridge.inputSummary}
             liveBridgeLastError={snapshot.liveBridge.lastError}
+            recoveringDestinationCount={stagedDestinationCount}
+            coolingDestinationCount={coolingDestinationCount}
           />
         </article>
 
@@ -204,6 +209,9 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                   : "Configure a destination before going on air."}
               </div>
               <div className="subtle">
+                {activeDestinationCount} active · {stagedDestinationCount} staged · {coolingDestinationCount} cooling down
+              </div>
+              <div className="subtle">
                 PID {snapshot.playout.processPid || "not running"} · restarts {snapshot.playout.restartCount} · crash loop{" "}
                 {snapshot.playout.crashLoopDetected ? "detected" : "clear"}
               </div>
@@ -222,6 +230,11 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                   {destination.streamKeySource}
                 </div>
                 <div className="subtle">{destination.notes}</div>
+                <div className="subtle">
+                  Recovery {destination.recoveryState}
+                  {destination.failureHoldSecondsRemaining > 0 ? ` · retry in ${destination.failureHoldSecondsRemaining}s` : ""}
+                </div>
+                <div className="subtle">{destination.recoverySummary}</div>
                 {destination.lastFailureAt ? (
                   <div className="subtle">
                     Last failure {destination.lastFailureAt} · count {destination.failureCount} · {destination.lastError || "No error sample captured."}

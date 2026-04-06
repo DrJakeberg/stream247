@@ -9,6 +9,7 @@ type BroadcastActionRequest = {
     | "refresh"
     | "rebuild_queue"
     | "force_reconnect"
+    | "recover_outputs"
     | "bridge_start"
     | "bridge_release"
     | "fallback"
