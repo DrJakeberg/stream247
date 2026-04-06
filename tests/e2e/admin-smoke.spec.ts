@@ -3,6 +3,7 @@ import { generateTotpCode } from "../../apps/web/lib/server/two-factor";
 
 const ownerEmail = process.env.E2E_OWNER_EMAIL || "owner@example.com";
 const ownerPassword = process.env.E2E_OWNER_PASSWORD || "stream247-owner-pass";
+const outputRoot = process.env.E2E_SECONDARY_OUTPUT_ROOT || "/tmp/stream-output";
 
 test.describe.configure({ mode: "serial" });
 
@@ -10,6 +11,7 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   const stamp = Date.now();
   const channelName = `Smoke Channel ${stamp}`;
   const customText = `Scene Studio V2 ${stamp}`;
+  const secondaryDestinationName = `Smoke Secondary Output ${stamp}`;
   const channelNameMatcher = new RegExp(channelName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 
   await page.goto("/setup");
@@ -23,6 +25,20 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await adminNav.getByRole("link", { name: "Dashboard", exact: true }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByRole("heading", { name: /Check readiness, integrations, and current channel posture/i })).toBeVisible();
+  const destinationForm = page.locator("form").filter({ has: page.getByRole("button", { name: "Add destination" }) }).first();
+  await destinationForm.getByLabel("Name").fill(secondaryDestinationName);
+  await destinationForm.getByLabel("RTMP URL").fill(`${outputRoot}/secondary-a`);
+  await destinationForm.getByLabel("Stream key").fill("secondary-a.flv");
+  await destinationForm.getByLabel("Notes").fill("CI smoke output");
+  const createDestinationResponse = page.waitForResponse(
+    (response) => response.url().includes("/api/destinations") && response.request().method() === "POST"
+  );
+  await destinationForm.getByRole("button", { name: "Add destination" }).click();
+  await expect((await createDestinationResponse).ok()).toBeTruthy();
+  await expect(destinationForm.getByText("Destination created.")).toBeVisible();
+  await expect(page.getByText(secondaryDestinationName)).toBeVisible();
+  await expect(page.getByText("2 active", { exact: true })).toBeVisible();
+  await expect(page.getByText(/2 active output\(s\) are ready\./i)).toBeVisible();
 
   await adminNav.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(page).toHaveURL(/\/settings$/);

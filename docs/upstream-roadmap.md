@@ -647,16 +647,16 @@ Resolve admin information-architecture drift and make the control-room experienc
 
 ## M15 — Coverage And Release Proof V2
 
-Status: planned
+Status: completed 2026-04-06
 
 **Objective**  
 Increase direct automated proof for the highest-risk parity features and release paths.
 
 **Capabilities Added**
 
-- broader browser workflow coverage
-- deeper runtime smokes for Multi-Output, Live Bridge, and audio/cuepoint flows
-- longer continuity and scene-publish proof before claiming stronger parity
+- broader browser workflow coverage that now proves secondary-output creation before the existing 2FA and Scene Studio publish flow
+- a runtime parity smoke that boots a fresh Compose stack and proves Multi-Output fanout, replace-mode audio lanes, cuepoint inserts, and `Live Bridge` takeover/release end to end
+- production-config release preflight gates in CI and release workflows after the outer `pnpm validate` job has already passed
 
 **Touched Subsystems**
 
@@ -678,7 +678,9 @@ Increase direct automated proof for the highest-risk parity features and release
 **Validation**
 
 - `pnpm validate`
-- expanded browser/runtime smokes
+- `pnpm test:fresh-compose`
+- `pnpm test:runtime-parity`
+- `pnpm test:e2e:smoke`
 - release preflight
 - soak/upgrade rehearsal where relevant
 

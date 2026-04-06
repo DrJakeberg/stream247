@@ -318,12 +318,14 @@ For production pinning, use `.env.production.example` or set the image tags expl
 
 ### Release Behavior
 
-- `push` to `main` validates, runs queue continuity and browser smoke checks, and then publishes current images
+- `push` to `main` validates, runs fresh-stack bootstrap checks, queue continuity, runtime parity, production-config release preflight, and browser smoke checks, and then publishes current images
 - `push` of `v*` tags runs the release workflow for versioned images
 - CI uses the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners
 - production should pin explicit release tags and not follow `latest`
 - release rehearsal helpers are available:
   - `pnpm release:preflight`
+  - `pnpm test:runtime-parity`
+  - `pnpm test:e2e:smoke`
   - `./scripts/upgrade-rehearsal.sh v1.0.3`
   - `./scripts/soak-monitor.sh --hours 24`
 
@@ -342,6 +344,8 @@ Before tagging a production release:
 2. Run:
    ```bash
    pnpm release:preflight
+   pnpm test:runtime-parity
+   pnpm test:e2e:smoke
    ```
 3. Rehearse the target version:
    ```bash
@@ -358,6 +362,7 @@ Notes:
 
 - set `CHECK_BASE_URL=http://127.0.0.1:3000` if your public `APP_URL` points through an external proxy or domain that is not reachable from the host running the scripts
 - set `SESSION_COOKIE="stream247_session=..."` if you want the soak monitor to fail on open critical incidents via the authenticated incidents API
+- local `pnpm release:preflight` runs a full `pnpm validate`; CI and release workflows only set `RELEASE_PREFLIGHT_SKIP_VALIDATE=1` after the outer job has already completed `pnpm validate`
 
 ## Feature Overview
 
@@ -501,7 +506,9 @@ The intended validation path is:
 - `pnpm test:fresh-db`
 - `pnpm test:fresh-compose`
 - `pnpm test:queue-continuity`
+- `pnpm test:runtime-parity`
 - `pnpm test:e2e:smoke`
+- `pnpm release:preflight`
 - Docker image build
 - container smoke test
 
@@ -515,7 +522,9 @@ Current validation covers:
 - fresh database bootstrap smoke
 - fresh compose bootstrap smoke
 - queue continuity smoke across short local-library assets
-- browser smoke for bootstrap, operator IA navigation, local 2FA login, broadcast controls, and Scene Studio publish
+- runtime parity smoke for Multi-Output fanout, audio-lane playback, cuepoint inserts, and Live Bridge takeover/release on a fresh Compose stack
+- browser smoke for bootstrap, operator IA navigation, secondary-output creation, local 2FA login, broadcast controls, and Scene Studio publish
+- production-config release preflight against pinned image tags and required Compose settings
 - Docker builds
 - smoke test for the web image
 

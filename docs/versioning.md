@@ -22,10 +22,12 @@ Do not auto-track `latest` for a 24/7 production channel.
 ## 1.0.3 Release Flow
 
 1. Ensure `main` is green in CI.
-   CI now covers queue continuity and browser smoke before `main` images publish.
+   CI now covers fresh DB/Compose bootstrap, queue continuity, runtime parity, production-config release preflight, and browser smoke before `main` images publish.
 2. Run:
    ```bash
+   cp .env.production.example .env
    pnpm release:preflight
+   pnpm test:runtime-parity
    pnpm test:e2e:smoke
    ./scripts/upgrade-rehearsal.sh v1.0.3
    ./scripts/soak-monitor.sh --hours 24
@@ -37,3 +39,8 @@ Do not auto-track `latest` for a 24/7 production channel.
    git push origin v1.0.3
    ```
 5. Let the `release.yml` workflow publish the pinned GHCR images for `v1.0.3`.
+
+Notes:
+
+- local `pnpm release:preflight` should keep its default full-validation behavior
+- CI and `release.yml` set `RELEASE_PREFLIGHT_SKIP_VALIDATE=1` only after the outer workflow job has already completed `pnpm validate`
