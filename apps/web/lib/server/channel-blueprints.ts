@@ -12,6 +12,8 @@ import {
 } from "@stream247/core";
 import {
   appendAuditEvent,
+  type AssetCollectionRecord,
+  type AssetRecord,
   listOverlayScenePresetRecords,
   readAppState,
   readOverlayStudioState,
@@ -29,6 +31,8 @@ import {
   type StreamDestinationRecord
 } from "./state";
 
+type BlueprintAssetReference = Pick<AssetRecord, "id" | "sourceId" | "title" | "path" | "externalId">;
+
 type BlueprintSourceRecord = Pick<
   SourceRecord,
   "id" | "name" | "type" | "connectorKind" | "enabled" | "externalUrl" | "notes"
@@ -44,7 +48,10 @@ type BlueprintPoolRecord = Pick<
   | "insertEveryItems"
   | "audioLaneAssetId"
   | "audioLaneVolumePercent"
->;
+> & {
+  insertAssetRef?: BlueprintAssetReference | null;
+  audioLaneAssetRef?: BlueprintAssetReference | null;
+};
 
 type BlueprintShowProfileRecord = Pick<
   ShowProfileRecord,
@@ -66,12 +73,29 @@ type BlueprintScheduleBlockRecord = Pick<
   | "repeatGroupId"
   | "cuepointAssetId"
   | "cuepointOffsetsSeconds"
->;
+> & {
+  cuepointAssetRef?: BlueprintAssetReference | null;
+};
+
+type BlueprintAssetCollectionRecord = Pick<AssetCollectionRecord, "id" | "name" | "description" | "color"> & {
+  items: BlueprintAssetReference[];
+};
 
 type BlueprintDestinationRecord = Pick<
   StreamDestinationRecord,
   "id" | "provider" | "role" | "priority" | "name" | "enabled" | "rtmpUrl" | "notes"
 >;
+
+export type BlueprintImportSectionState = {
+  library: boolean;
+  programming: boolean;
+  sceneStudio: boolean;
+  operations: boolean;
+};
+
+export type BlueprintImportOptions = {
+  sections?: Partial<BlueprintImportSectionState>;
+};
 
 export type ChannelBlueprintDocument = {
   schemaVersion: 1;
@@ -79,6 +103,7 @@ export type ChannelBlueprintDocument = {
   blueprintName: string;
   library: {
     sources: BlueprintSourceRecord[];
+    curatedSets: BlueprintAssetCollectionRecord[];
   };
   programming: {
     pools: BlueprintPoolRecord[];
@@ -102,11 +127,14 @@ type NormalizedBlueprint = {
   importedPools: PoolRecord[];
   importedShowProfiles: ShowProfileRecord[];
   importedScheduleBlocks: ScheduleBlockRecord[];
+  importedAssetCollections: AssetCollectionRecord[];
   importedDestinations: StreamDestinationRecord[];
   importedModeration: ModerationConfig;
   importedLiveOverlay: OverlaySettingsRecord;
   importedDraftOverlay: OverlaySettingsRecord;
   importedPresets: OverlayScenePresetRecord[];
+  warnings: string[];
+  sections: BlueprintImportSectionState;
 };
 
 function asString(value: unknown): string {
@@ -119,6 +147,63 @@ function normalizeStringArray(value: unknown): string[] {
   }
 
   return [...new Set(value.map((entry) => asString(entry)).filter(Boolean))];
+}
+
+function normalizeCollectionColor(value: unknown): string {
+  const candidate = asString(value).toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(candidate) ? candidate : "#0e6d5a";
+}
+
+function resolveImportSections(options?: BlueprintImportOptions): BlueprintImportSectionState {
+  return {
+    library: options?.sections?.library ?? true,
+    programming: options?.sections?.programming ?? true,
+    sceneStudio: options?.sections?.sceneStudio ?? true,
+    operations: options?.sections?.operations ?? true
+  };
+}
+
+function buildBlueprintAssetReference(asset: AssetRecord | undefined): BlueprintAssetReference | null {
+  if (!asset) {
+    return null;
+  }
+
+  return {
+    id: asset.id,
+    sourceId: asset.sourceId,
+    title: asset.title,
+    path: asset.path,
+    externalId: asset.externalId
+  };
+}
+
+function resolveBlueprintAssetReference(
+  assetId: string,
+  assetRef: BlueprintAssetReference | null | undefined,
+  targetAssets: AssetRecord[]
+): string {
+  const directMatch = targetAssets.find((asset) => asset.id === assetId);
+  if (directMatch) {
+    return directMatch.id;
+  }
+
+  if (assetRef?.sourceId && assetRef.externalId) {
+    const externalMatch = targetAssets.find(
+      (asset) => asset.sourceId === assetRef.sourceId && asset.externalId && asset.externalId === assetRef.externalId
+    );
+    if (externalMatch) {
+      return externalMatch.id;
+    }
+  }
+
+  if (assetRef?.sourceId && assetRef.path) {
+    const pathMatch = targetAssets.find((asset) => asset.sourceId === assetRef.sourceId && asset.path === assetRef.path);
+    if (pathMatch) {
+      return pathMatch.id;
+    }
+  }
+
+  return "";
 }
 
 function normalizeModerationConfig(value: unknown, fallback: ModerationConfig): ModerationConfig {
@@ -345,6 +430,49 @@ function normalizeBlueprintScheduleBlockRecord(value: unknown): ScheduleBlockRec
   };
 }
 
+function normalizeBlueprintAssetCollectionRecord(value: unknown): BlueprintAssetCollectionRecord | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<BlueprintAssetCollectionRecord>;
+  const id = asString(candidate.id);
+  const name = asString(candidate.name);
+  if (!id || !name) {
+    return null;
+  }
+
+  const items: BlueprintAssetReference[] = Array.isArray(candidate.items)
+    ? candidate.items.flatMap((item) => {
+        if (!item || typeof item !== "object") {
+          return [];
+        }
+        const assetCandidate = item as Partial<BlueprintAssetReference>;
+        const itemId = asString(assetCandidate.id);
+        if (!itemId) {
+          return [];
+        }
+        return [
+          {
+            id: itemId,
+            sourceId: asString(assetCandidate.sourceId),
+            title: asString(assetCandidate.title),
+            path: asString(assetCandidate.path),
+            externalId: asString(assetCandidate.externalId)
+          }
+        ];
+      })
+    : [];
+
+  return {
+    id,
+    name,
+    description: asString(candidate.description),
+    color: normalizeCollectionColor(candidate.color),
+    items
+  };
+}
+
 function normalizeBlueprintDestinationRecord(
   value: unknown,
   existing: StreamDestinationRecord[]
@@ -431,6 +559,7 @@ export function buildChannelBlueprintDocument(args: {
   exportedAt?: string;
 }): ChannelBlueprintDocument {
   const exportedAt = args.exportedAt || new Date().toISOString();
+  const assetsById = new Map(args.state.assets.map((asset) => [asset.id, asset] as const));
 
   return {
     schemaVersion: 1,
@@ -445,6 +574,15 @@ export function buildChannelBlueprintDocument(args: {
         enabled: source.enabled ?? true,
         externalUrl: source.externalUrl ?? "",
         notes: source.notes ?? ""
+      })),
+      curatedSets: args.state.assetCollections.map((collection) => ({
+        id: collection.id,
+        name: collection.name,
+        description: collection.description,
+        color: collection.color,
+        items: collection.assetIds
+          .map((assetId) => buildBlueprintAssetReference(assetsById.get(assetId)))
+          .filter((entry): entry is BlueprintAssetReference => Boolean(entry))
       }))
     },
     programming: {
@@ -456,7 +594,9 @@ export function buildChannelBlueprintDocument(args: {
         insertAssetId: pool.insertAssetId,
         insertEveryItems: pool.insertEveryItems,
         audioLaneAssetId: pool.audioLaneAssetId ?? "",
-        audioLaneVolumePercent: pool.audioLaneVolumePercent ?? 100
+        audioLaneVolumePercent: pool.audioLaneVolumePercent ?? 100,
+        insertAssetRef: buildBlueprintAssetReference(assetsById.get(pool.insertAssetId)),
+        audioLaneAssetRef: buildBlueprintAssetReference(assetsById.get(pool.audioLaneAssetId))
       })),
       showProfiles: args.state.showProfiles.map((show) => ({
         id: show.id,
@@ -479,7 +619,8 @@ export function buildChannelBlueprintDocument(args: {
         repeatMode: block.repeatMode,
         repeatGroupId: block.repeatGroupId ?? "",
         cuepointAssetId: block.cuepointAssetId ?? "",
-        cuepointOffsetsSeconds: [...(block.cuepointOffsetsSeconds ?? [])]
+        cuepointOffsetsSeconds: [...(block.cuepointOffsetsSeconds ?? [])],
+        cuepointAssetRef: buildBlueprintAssetReference(block.cuepointAssetId ? assetsById.get(block.cuepointAssetId) : undefined)
       }))
     },
     sceneStudio: {
@@ -507,6 +648,7 @@ export function normalizeChannelBlueprintDocument(args: {
   input: unknown;
   currentState: AppState;
   studio: OverlayStudioStateRecord;
+  options?: BlueprintImportOptions;
   now?: string;
 }): NormalizedBlueprint {
   const now = args.now || new Date().toISOString();
@@ -519,56 +661,189 @@ export function normalizeChannelBlueprintDocument(args: {
     throw new Error("Unsupported blueprint schema version.");
   }
 
-  const sources = Array.isArray(candidate.library?.sources)
-    ? candidate.library.sources.map(normalizeBlueprintSourceRecord).filter((entry): entry is BlueprintSourceRecord => Boolean(entry))
+  const sections = resolveImportSections(args.options);
+  const warnings: string[] = [];
+
+  const parsedSources = Array.isArray(candidate.library?.sources)
+    ? candidate.library.sources
+        .map(normalizeBlueprintSourceRecord)
+        .filter((entry): entry is BlueprintSourceRecord => Boolean(entry))
     : [];
-  const pools = Array.isArray(candidate.programming?.pools)
-    ? candidate.programming.pools.map((pool) => normalizeBlueprintPoolRecord(pool, now)).filter((entry): entry is PoolRecord => Boolean(entry))
+  const parsedCollections = Array.isArray(candidate.library?.curatedSets)
+    ? candidate.library.curatedSets
+        .map(normalizeBlueprintAssetCollectionRecord)
+        .filter((entry): entry is BlueprintAssetCollectionRecord => Boolean(entry))
     : [];
-  const showProfiles = Array.isArray(candidate.programming?.showProfiles)
+  const parsedPools = Array.isArray(candidate.programming?.pools)
+    ? candidate.programming.pools
+        .map((pool) => ({
+          raw: pool,
+          normalized: normalizeBlueprintPoolRecord(pool, now)
+        }))
+        .filter((entry): entry is { raw: BlueprintPoolRecord; normalized: PoolRecord } => Boolean(entry.normalized))
+    : [];
+  const parsedShowProfiles = Array.isArray(candidate.programming?.showProfiles)
     ? candidate.programming.showProfiles
         .map((show) => normalizeBlueprintShowProfileRecord(show, now))
         .filter((entry): entry is ShowProfileRecord => Boolean(entry))
     : [];
-  const scheduleBlocks = Array.isArray(candidate.programming?.scheduleBlocks)
+  const parsedScheduleBlocks = Array.isArray(candidate.programming?.scheduleBlocks)
     ? candidate.programming.scheduleBlocks
-        .map(normalizeBlueprintScheduleBlockRecord)
-        .filter((entry): entry is ScheduleBlockRecord => Boolean(entry))
+        .map((block) => ({
+          raw: block,
+          normalized: normalizeBlueprintScheduleBlockRecord(block)
+        }))
+        .filter((entry): entry is { raw: BlueprintScheduleBlockRecord; normalized: ScheduleBlockRecord } => Boolean(entry.normalized))
     : [];
-  const importedDestinations = Array.isArray(candidate.operations?.destinations)
-    ? candidate.operations.destinations
-        .map((destination) => normalizeBlueprintDestinationRecord(destination, args.currentState.destinations))
-        .filter((entry): entry is StreamDestinationRecord => Boolean(entry))
+
+  const importedSources: SourceRecord[] = sections.library
+    ? parsedSources.map((source) => ({
+        ...source,
+        status: source.enabled === false ? "Disabled in blueprint" : "Imported blueprint",
+        lastSyncedAt: ""
+      }))
+    : args.currentState.sources;
+  const targetSourceIds = new Set(importedSources.map((source) => source.id));
+  const targetAssets = sections.library
+    ? args.currentState.assets.filter((asset) => targetSourceIds.has(asset.sourceId))
+    : args.currentState.assets;
+
+  const importedPools: PoolRecord[] = sections.programming
+    ? parsedPools.map(({ raw, normalized }) => {
+        const sourceIds = normalized.sourceIds.filter((sourceId) => targetSourceIds.has(sourceId));
+        const droppedSourceIds = normalized.sourceIds.filter((sourceId) => !targetSourceIds.has(sourceId));
+        if (droppedSourceIds.length > 0) {
+          warnings.push(
+            `Pool ${normalized.name} skipped ${droppedSourceIds.length} source reference(s) because they are not available in this workspace import.`
+          );
+        }
+
+        const insertAssetId = resolveBlueprintAssetReference(
+          normalized.insertAssetId,
+          raw.insertAssetRef ?? null,
+          targetAssets
+        );
+        if (normalized.insertAssetId && !insertAssetId) {
+          warnings.push(
+            `Pool ${normalized.name} cleared its insert asset because the referenced media is not present locally.`
+          );
+        }
+
+        const audioLaneAssetId = resolveBlueprintAssetReference(
+          normalized.audioLaneAssetId,
+          raw.audioLaneAssetRef ?? null,
+          targetAssets
+        );
+        if (normalized.audioLaneAssetId && !audioLaneAssetId) {
+          warnings.push(
+            `Pool ${normalized.name} cleared its audio lane asset because the referenced media is not present locally.`
+          );
+        }
+
+        return {
+          ...normalized,
+          sourceIds,
+          insertAssetId,
+          audioLaneAssetId
+        };
+      })
+    : args.currentState.pools;
+  const importedShowProfiles = sections.programming ? parsedShowProfiles : args.currentState.showProfiles;
+  const importedShowProfileIds = new Set(importedShowProfiles.map((show) => show.id));
+  const importedPoolIds = new Set(importedPools.map((pool) => pool.id));
+  const importedScheduleBlocks: ScheduleBlockRecord[] = sections.programming
+    ? parsedScheduleBlocks.map(({ raw, normalized }) => {
+        const cuepointAssetId = resolveBlueprintAssetReference(
+          normalized.cuepointAssetId ?? "",
+          raw.cuepointAssetRef ?? null,
+          targetAssets
+        );
+        if (normalized.cuepointAssetId && !cuepointAssetId) {
+          warnings.push(
+            `Schedule block ${normalized.title} cleared its cuepoint asset because the referenced media is not present locally.`
+          );
+        }
+
+        const showId = normalized.showId && importedShowProfileIds.has(normalized.showId) ? normalized.showId : "";
+        if (normalized.showId && !showId) {
+          warnings.push(`Schedule block ${normalized.title} skipped a missing show profile reference.`);
+        }
+        const poolId = normalized.poolId && importedPoolIds.has(normalized.poolId) ? normalized.poolId : "";
+        if (normalized.poolId && !poolId) {
+          warnings.push(`Schedule block ${normalized.title} skipped a missing pool reference.`);
+        }
+
+        return {
+          ...normalized,
+          showId,
+          poolId,
+          cuepointAssetId
+        };
+      })
+    : args.currentState.scheduleBlocks;
+
+  const importedAssetCollections: AssetCollectionRecord[] = sections.library
+    ? parsedCollections.map((collection) => {
+        const resolvedAssetIds = collection.items
+          .map((item) => resolveBlueprintAssetReference(item.id, item, targetAssets))
+          .filter(Boolean);
+        if (collection.items.length > resolvedAssetIds.length) {
+          warnings.push(
+            `Curated set ${collection.name} matched ${resolvedAssetIds.length} of ${collection.items.length} item(s); media files are not transferred by blueprints.`
+          );
+        }
+        return {
+          id: collection.id,
+          name: collection.name,
+          description: collection.description,
+          color: collection.color,
+          assetIds: resolvedAssetIds,
+          createdAt: now,
+          updatedAt: now
+        };
+      })
+    : args.currentState.assetCollections;
+
+  const importedDestinations = sections.operations
+    ? Array.isArray(candidate.operations?.destinations)
+      ? candidate.operations.destinations
+          .map((destination) => normalizeBlueprintDestinationRecord(destination, args.currentState.destinations))
+          .filter((entry): entry is StreamDestinationRecord => Boolean(entry))
+      : []
+    : args.currentState.destinations;
+  const importedModeration = sections.operations
+    ? normalizeModerationConfig(candidate.operations?.moderation, args.currentState.moderation)
+    : args.currentState.moderation;
+  const importedLiveOverlay = sections.sceneStudio
+    ? normalizeOverlaySettings(candidate.sceneStudio?.liveOverlay, args.studio.liveOverlay, now)
+    : args.studio.liveOverlay;
+  const importedDraftOverlay = sections.sceneStudio
+    ? normalizeOverlaySettings(candidate.sceneStudio?.draftOverlay, importedLiveOverlay, now)
+    : args.studio.draftOverlay;
+  const importedPresets = sections.sceneStudio
+    ? Array.isArray(candidate.sceneStudio?.presets)
+      ? candidate.sceneStudio.presets
+          .map((preset) => normalizeBlueprintPresetRecord(preset, importedLiveOverlay, now))
+          .filter((entry): entry is OverlayScenePresetRecord => Boolean(entry))
+      : []
     : [];
-  const importedLiveOverlay = normalizeOverlaySettings(
-    candidate.sceneStudio?.liveOverlay,
-    args.studio.liveOverlay,
-    now
-  );
-  const importedDraftOverlay = normalizeOverlaySettings(
-    candidate.sceneStudio?.draftOverlay,
-    importedLiveOverlay,
-    now
-  );
-  const importedPresets = Array.isArray(candidate.sceneStudio?.presets)
-    ? candidate.sceneStudio.presets
-        .map((preset) => normalizeBlueprintPresetRecord(preset, importedLiveOverlay, now))
-        .filter((entry): entry is OverlayScenePresetRecord => Boolean(entry))
-    : [];
-  const importedModeration = normalizeModerationConfig(candidate.operations?.moderation, args.currentState.moderation);
-  const importedSources: SourceRecord[] = sources.map((source) => ({
-    ...source,
-    status: source.enabled === false ? "Disabled in blueprint" : "Imported blueprint",
-    lastSyncedAt: ""
-  }));
+
+  if (sections.library && targetAssets.length === 0 && parsedCollections.some((collection) => collection.items.length > 0)) {
+    warnings.push("No local assets matched the imported curated sets yet. Re-run the relevant source syncs after importing.");
+  }
+  if (sections.programming && !sections.library) {
+    warnings.push("Programming was imported without library sources. Pool and cuepoint asset references were kept only where this workspace already had matching media.");
+  }
 
   const blueprint = buildChannelBlueprintDocument({
     state: {
       ...args.currentState,
       sources: importedSources,
-      pools,
-      showProfiles,
-      scheduleBlocks,
+      assets: targetAssets,
+      assetCollections: importedAssetCollections,
+      pools: importedPools,
+      showProfiles: importedShowProfiles,
+      scheduleBlocks: importedScheduleBlocks,
       destinations: importedDestinations,
       moderation: importedModeration
     },
@@ -587,14 +862,17 @@ export function normalizeChannelBlueprintDocument(args: {
   return {
     blueprint,
     importedSources,
-    importedPools: pools,
-    importedShowProfiles: showProfiles,
-    importedScheduleBlocks: scheduleBlocks,
+    importedPools,
+    importedShowProfiles,
+    importedScheduleBlocks,
+    importedAssetCollections,
     importedDestinations,
     importedModeration,
     importedLiveOverlay,
     importedDraftOverlay,
-    importedPresets
+    importedPresets,
+    warnings: [...new Set(warnings)],
+    sections
   };
 }
 
@@ -608,32 +886,41 @@ export async function exportChannelBlueprint(): Promise<ChannelBlueprintDocument
   return buildChannelBlueprintDocument({ state, studio, presets });
 }
 
-export async function importChannelBlueprint(input: unknown): Promise<NormalizedBlueprint> {
+export async function importChannelBlueprint(input: unknown, options?: BlueprintImportOptions): Promise<NormalizedBlueprint> {
   const [currentState, studio] = await Promise.all([readAppState(), readOverlayStudioState()]);
   const normalized = normalizeChannelBlueprintDocument({
     input,
     currentState,
-    studio
+    studio,
+    options
   });
   const importedSourceIds = new Set(normalized.importedSources.map((source) => source.id));
-  const retainedAssets = currentState.assets.filter((asset) => importedSourceIds.has(asset.sourceId));
+  const importedAssets = normalized.sections.library
+    ? currentState.assets.filter((asset) => importedSourceIds.has(asset.sourceId))
+    : currentState.assets;
 
   await writeAppState({
     ...currentState,
     moderation: normalized.importedModeration,
-    overlay: normalized.importedLiveOverlay,
     sources: normalized.importedSources,
-    assets: retainedAssets,
+    assets: importedAssets,
+    assetCollections: normalized.importedAssetCollections,
+    overlay: normalized.importedLiveOverlay,
     pools: normalized.importedPools,
     showProfiles: normalized.importedShowProfiles,
     scheduleBlocks: normalized.importedScheduleBlocks,
     destinations: normalized.importedDestinations
   });
-  await saveOverlayDraftRecord(normalized.importedDraftOverlay, normalized.importedLiveOverlay.updatedAt);
-  await replaceOverlayScenePresetRecords(normalized.importedPresets);
+  if (normalized.sections.sceneStudio) {
+    await saveOverlayDraftRecord(normalized.importedDraftOverlay, normalized.importedLiveOverlay.updatedAt);
+    await replaceOverlayScenePresetRecords(normalized.importedPresets);
+  }
   await appendAuditEvent(
     "blueprint.imported",
-    `Imported channel blueprint ${normalized.blueprint.blueprintName} with ${normalized.importedSources.length} source(s), ${normalized.importedPools.length} pool(s), and ${normalized.importedScheduleBlocks.length} schedule block(s).`
+    `Imported channel blueprint ${normalized.blueprint.blueprintName} with sections ${Object.entries(normalized.sections)
+      .filter(([, enabled]) => enabled)
+      .map(([key]) => key)
+      .join(", ")}${normalized.warnings.length > 0 ? ` and ${normalized.warnings.length} warning(s)` : ""}.`
   );
 
   return normalized;

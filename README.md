@@ -17,6 +17,11 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - YouTube playlists and channels via `yt-dlp`
   - Twitch VODs and channels via `yt-dlp`
   - guided source templates for local library, direct URLs, YouTube, and Twitch inputs
+- library operations with:
+  - generated local thumbnails with deterministic metadata-card fallbacks
+  - grouped browsing by source, folder, tag, curated set, or status
+  - reusable curated sets with bulk add/remove workflows
+  - per-asset folder, tag, fallback, and programming curation
 - schedule management with:
   - weekly pool-based blocks
   - explicit repeat sets for daily, weekday, weekend, or custom recurring blocks
@@ -67,6 +72,10 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - SMTP email alerts
   - readiness and health endpoints
 - encrypted-at-rest managed secret storage for Twitch and alert credentials
+- `Channel Blueprints` with:
+  - export/import of Scene Studio, sources, curated sets, programming, moderation, and destination metadata
+  - selective import sections for library, programming, Scene Studio, and operations
+  - explicit import warnings when referenced media is not present locally
 - viewer-facing pages with:
   - public schedule page
   - browser-source overlay page with live current/next updates
@@ -85,7 +94,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 - deeper analytics views and richer incident correlation
 - inline override lanes in the schedule editor
 - richer audio mixing, crossfades, and layered audio routing beyond the current replace-mode audio lanes
-- thumbnails, richer grouped browsing, and more advanced reusable library/blueprint workflows
+- deeper cross-install media remapping automation and richer reusable programming packages beyond the current curated-set and selective-blueprint workflows
 
 ## Quick Start
 

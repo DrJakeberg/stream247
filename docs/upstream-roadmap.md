@@ -567,7 +567,7 @@ Strengthen queue continuity and output recovery beyond the first shipped queue a
 
 ## M13 — Library And Blueprints V2
 
-Status: planned
+Status: completed 2026-04-06
 
 **Objective**  
 Deepen library organization and make blueprint reuse safer across installs.
@@ -598,8 +598,8 @@ Deepen library organization and make blueprint reuse safer across installs.
 **Validation**
 
 - `pnpm validate`
-- blueprint/library tests
-- `pnpm test:fresh-db` when DB logic changes
+- `pnpm test:fresh-db`
+- `pnpm test:fresh-compose`
 
 **Rollback Posture**
 

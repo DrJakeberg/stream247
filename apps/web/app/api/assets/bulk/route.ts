@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateAssetCurationRecords } from "@/lib/server/state";
+import {
+  appendAuditEvent,
+  readAppState,
+  updateAssetCollectionMemberships,
+  updateAssetCurationRecords
+} from "@/lib/server/state";
 
 type BulkAction =
   | "include"
@@ -11,7 +16,9 @@ type BulkAction =
   | "clear_folder"
   | "append_tags"
   | "replace_tags"
-  | "clear_tags";
+  | "clear_tags"
+  | "add_to_curated_set"
+  | "remove_from_curated_set";
 
 function normalizeTags(value: unknown): string[] {
   if (!Array.isArray(value)) {
@@ -27,11 +34,18 @@ export async function POST(request: NextRequest) {
     return unauthorized;
   }
 
-  const body = (await request.json()) as { action?: BulkAction; assetIds?: string[]; folderPath?: string; tags?: string[] };
+  const body = (await request.json()) as {
+    action?: BulkAction;
+    assetIds?: string[];
+    folderPath?: string;
+    tags?: string[];
+    collectionId?: string;
+  };
   const action = body.action;
   const assetIds = Array.isArray(body.assetIds) ? [...new Set(body.assetIds.map((value) => String(value).trim()).filter(Boolean))] : [];
   const folderPath = typeof body.folderPath === "string" ? body.folderPath.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") : "";
   const tags = normalizeTags(body.tags);
+  const collectionId = typeof body.collectionId === "string" ? body.collectionId.trim() : "";
 
   if (
     action !== "include" &&
@@ -42,7 +56,9 @@ export async function POST(request: NextRequest) {
     action !== "clear_folder" &&
     action !== "append_tags" &&
     action !== "replace_tags" &&
-    action !== "clear_tags"
+    action !== "clear_tags" &&
+    action !== "add_to_curated_set" &&
+    action !== "remove_from_curated_set"
   ) {
     return NextResponse.json({ message: "A valid bulk asset action is required." }, { status: 400 });
   }
@@ -63,6 +79,38 @@ export async function POST(request: NextRequest) {
 
   if ((action === "append_tags" || action === "replace_tags") && tags.length === 0) {
     return NextResponse.json({ message: "Enter at least one tag for this bulk action." }, { status: 400 });
+  }
+
+  if ((action === "add_to_curated_set" || action === "remove_from_curated_set") && !collectionId) {
+    return NextResponse.json({ message: "Choose a curated set for this bulk action." }, { status: 400 });
+  }
+
+  if (
+    (action === "add_to_curated_set" || action === "remove_from_curated_set") &&
+    !state.assetCollections.some((collection) => collection.id === collectionId)
+  ) {
+    return NextResponse.json({ message: "The selected curated set no longer exists." }, { status: 404 });
+  }
+
+  if (action === "add_to_curated_set" || action === "remove_from_curated_set") {
+    await updateAssetCollectionMemberships([
+      {
+        collectionId,
+        assetIds,
+        mode: action === "add_to_curated_set" ? "append" : "remove",
+        updatedAt: new Date().toISOString()
+      }
+    ]);
+    await appendAuditEvent("asset.bulk.updated", `${action} applied to ${assetIds.length} asset(s).`);
+
+    const collectionName = state.assetCollections.find((collection) => collection.id === collectionId)?.name || collectionId;
+    return NextResponse.json({
+      ok: true,
+      message:
+        action === "add_to_curated_set"
+          ? `Added ${assetIds.length} asset(s) to ${collectionName}.`
+          : `Removed ${assetIds.length} asset(s) from ${collectionName}.`
+    });
   }
 
   const now = new Date().toISOString();

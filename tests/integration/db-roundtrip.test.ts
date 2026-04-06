@@ -292,6 +292,17 @@ describe.sequential("database roundtrip", () => {
           updatedAt: "2026-04-04T10:00:00.000Z"
         }
       ],
+      assetCollections: [
+        {
+          id: "collection_1",
+          name: "Roundtrip starters",
+          description: "Reusable kickoff bundle",
+          color: "#0e6d5a",
+          assetIds: ["asset_1"],
+          createdAt: "2026-04-04T10:00:00.000Z",
+          updatedAt: "2026-04-04T10:00:00.000Z"
+        }
+      ],
       sourceSyncRuns: [
         {
           id: "sync_1",
@@ -451,6 +462,8 @@ describe.sequential("database roundtrip", () => {
     expect(reread.assets[0]?.durationSeconds).toBe(3600);
     expect(reread.assets[0]?.folderPath).toBe("youtube-channel/source-1");
     expect(reread.assets[0]?.tags).toEqual(["featured", "evergreen"]);
+    expect(reread.assetCollections[0]?.name).toBe("Roundtrip starters");
+    expect(reread.assetCollections[0]?.assetIds).toEqual(["asset_1"]);
     expect(reread.sourceSyncRuns[0]?.status).toBe("success");
     expect(reread.destinations[0]?.streamKeyPresent).toBe(false);
     expect(reread.destinations[0]?.streamKeySource).toBe("missing");

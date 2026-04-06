@@ -67,6 +67,7 @@ import {
   type DestinationRuntimeTarget
 } from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
+import { ensureLocalAssetThumbnail } from "./asset-thumbnails.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
@@ -831,6 +832,14 @@ async function syncLocalMediaLibrary(): Promise<void> {
         }
       : asset;
   });
+
+  for (const asset of nextAssets) {
+    await ensureLocalAssetThumbnail({
+      assetId: asset.id,
+      inputPath: asset.path,
+      mediaRoot
+    });
+  }
 
   await upsertSources([
     {

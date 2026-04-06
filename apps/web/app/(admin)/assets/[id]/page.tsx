@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AssetCurationForm } from "@/components/asset-curation-form";
@@ -29,6 +30,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
   const nextScheduleItem = getNextScheduleItem(state);
   const isCurrent = state.playout.currentAssetId === asset.id;
   const isOverride = state.playout.overrideAssetId === asset.id;
+  const assetCollections = state.assetCollections.filter((collection) => collection.assetIds.includes(asset.id));
 
   return (
     <>
@@ -73,6 +75,37 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
       </section>
 
       <section className="grid two" style={{ marginTop: 24 }}>
+        <Panel title="Thumbnail and curated sets" eyebrow="Library">
+          <div className="stack-form">
+            <div className="asset-card-thumbnail">
+              <Image
+                alt={`Thumbnail for ${asset.title}`}
+                fill
+                loading="lazy"
+                sizes="(max-width: 900px) 100vw, 50vw"
+                src={`/api/assets/${asset.id}/thumbnail`}
+                unoptimized
+              />
+            </div>
+            <div className="subtle">
+              Local-library assets use generated preview thumbnails when available. Remote or unmatched media falls back
+              to a deterministic metadata card so the library stays readable across installs.
+            </div>
+            <div className="chip-grid">
+              {assetCollections.map((collection) => (
+                <span
+                  className="collection-chip collection-chip-static"
+                  key={collection.id}
+                  style={{ ["--collection-color" as string]: collection.color }}
+                >
+                  {collection.name}
+                </span>
+              ))}
+              {assetCollections.length === 0 ? <span className="subtle">No curated sets include this asset yet.</span> : null}
+            </div>
+          </div>
+        </Panel>
+
         <Panel title="Metadata" eyebrow="Catalog">
           <div className="stack-form">
             <div className="item">
@@ -96,6 +129,14 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
               <div className="subtle">{asset.tags && asset.tags.length > 0 ? asset.tags.join(", ") : "No tags assigned."}</div>
             </div>
             <div className="item">
+              <strong>Curated sets</strong>
+              <div className="subtle">
+                {assetCollections.length > 0
+                  ? assetCollections.map((collection) => collection.name).join(", ")
+                  : "No curated-set membership recorded."}
+              </div>
+            </div>
+            <div className="item">
               <strong>Fallback flags</strong>
               <div className="subtle">
                 Priority {asset.fallbackPriority} · {asset.isGlobalFallback ? "Global fallback" : "Regular catalog item"} ·{" "}
@@ -117,12 +158,12 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
             {pools.map((pool) => (
               <div className="item" key={pool.id}>
                 <strong>{pool.name}</strong>
-              <div className="subtle">
-                {pool.playbackMode} ·{" "}
-                {pool.cursorAssetId === asset.id ? "Current pool cursor asset" : "Available in pool rotation"}
+                <div className="subtle">
+                  {pool.playbackMode} ·{" "}
+                  {pool.cursorAssetId === asset.id ? "Current pool cursor asset" : "Available in pool rotation"}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
             {pools.length === 0 ? (
               <div className="item">
                 <strong>No pool membership</strong>
