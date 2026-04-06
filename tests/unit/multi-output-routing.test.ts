@@ -65,6 +65,42 @@ describe("multi-output routing", () => {
     expect(selection.leadDestinationId).toBe("destination-primary");
   });
 
+  it("keeps recovering primary outputs out of the active group until they are ready again", () => {
+    const selection = selectActiveDestinationGroup([
+      {
+        id: "destination-primary",
+        name: "Primary Twitch",
+        role: "primary",
+        priority: 0,
+        enabled: true,
+        streamKeyPresent: true,
+        status: "ready"
+      },
+      {
+        id: "destination-youtube",
+        name: "YouTube",
+        role: "primary",
+        priority: 1,
+        enabled: true,
+        streamKeyPresent: true,
+        status: "recovering"
+      },
+      {
+        id: "destination-backup",
+        name: "Backup",
+        role: "backup",
+        priority: 10,
+        enabled: true,
+        streamKeyPresent: true,
+        status: "ready"
+      }
+    ]);
+
+    expect(selection.mode).toBe("primary");
+    expect(selection.activeDestinationIds).toEqual(["destination-primary"]);
+    expect(selection.leadDestinationId).toBe("destination-primary");
+  });
+
   it("resolves runtime targets from env-backed and managed keys", () => {
     const result = selectDestinationRuntimeTargets({
       destinations: [

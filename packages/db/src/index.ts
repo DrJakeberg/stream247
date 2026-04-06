@@ -13,6 +13,7 @@ import {
   normalizeOverlaySurfaceStyle,
   normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
+  type DestinationRoutingStatus,
   type ModerationConfig,
   type OverlaySceneCustomLayer,
   type OverlaySceneLayerKind,
@@ -197,7 +198,7 @@ export type StreamDestinationRecord = {
   rtmpUrl: string;
   streamKeyPresent: boolean;
   streamKeySource?: "env" | "managed" | "missing";
-  status: "ready" | "missing-config" | "error";
+  status: DestinationRoutingStatus;
   notes: string;
   lastValidatedAt: string;
   lastFailureAt: string;

@@ -1,10 +1,11 @@
 import { isValidLiveBridgeInputUrl, normalizeLiveBridgeInputType } from "@stream247/core";
-import { appendAuditEvent, readAppState, updatePlayoutRuntime } from "@/lib/server/state";
+import { appendAuditEvent, readAppState, updateDestinationRecord, updatePlayoutRuntime } from "@/lib/server/state";
 
 type BroadcastAction =
   | { type: "restart" | "hard_reload" }
   | { type: "refresh" | "rebuild_queue" }
   | { type: "force_reconnect" }
+  | { type: "recover_outputs" }
   | { type: "bridge_start"; inputType?: "rtmp" | "hls"; inputUrl: string; label?: string }
   | { type: "bridge_release" }
   | { type: "fallback" }
@@ -80,6 +81,45 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       message
     }));
     await appendAuditEvent("broadcast.reconnect.requested", "Manual reconnect was requested.");
+    return { ok: true, message };
+  }
+
+  if (action.type === "recover_outputs") {
+    if (state.playout.liveBridgeStatus === "pending" || state.playout.liveBridgeStatus === "active") {
+      throw new Error("Release Live Bridge before forcing output recovery.");
+    }
+
+    const recoveringDestinations = state.destinations.filter((destination) => destination.status === "recovering");
+    if (recoveringDestinations.length === 0) {
+      throw new Error("No staged outputs are waiting to rejoin.");
+    }
+
+    for (const destination of recoveringDestinations) {
+      await updateDestinationRecord({
+        ...destination,
+        status: "ready",
+        lastValidatedAt: now,
+        notes: `${destination.role === "backup" ? "Backup" : "Primary"} destination will rejoin on the next playout cycle after the operator recovery request.`
+      });
+    }
+
+    const message =
+      recoveringDestinations.length === 1
+        ? `${recoveringDestinations[0]!.name} will rejoin on the next playout cycle.`
+        : `${recoveringDestinations.length} staged outputs will rejoin on the next playout cycle.`;
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      status: "recovering",
+      restartRequestedAt: now,
+      heartbeatAt: now,
+      pendingAction: "",
+      pendingActionRequestedAt: "",
+      message
+    }));
+    await appendAuditEvent(
+      "broadcast.output-recovery.requested",
+      `Operator requested immediate output recovery for ${recoveringDestinations.map((destination) => destination.name).join(", ")}.`
+    );
     return { ok: true, message };
   }
 

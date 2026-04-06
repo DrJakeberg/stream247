@@ -519,7 +519,7 @@ Deepen Scene Studio beyond fixed preset composition while keeping the product or
 
 ## M12 — Continuity And Recovery V2
 
-Status: planned
+Status: completed 2026-04-06
 
 **Objective**  
 Strengthen queue continuity and output recovery beyond the first shipped queue and multi-output milestones.
@@ -529,6 +529,8 @@ Strengthen queue continuity and output recovery beyond the first shipped queue a
 - lower restart pressure on normal transitions
 - clearer multi-output failure attribution and recovery visibility
 - stronger operator-safe recovery flows without changing the original control-room model
+- staged recovered destinations that rejoin on natural transitions unless operators request an immediate recovery cycle
+- per-destination cooldown and recovery summaries in broadcast snapshots and control-room output health
 
 **Touched Subsystems**
 
@@ -551,9 +553,13 @@ Strengthen queue continuity and output recovery beyond the first shipped queue a
 **Validation**
 
 - `pnpm validate`
+- `pnpm test:multi-output-smoke`
+- `pnpm test:live-bridge-smoke`
 - `pnpm test:fresh-db`
+- `docker build -f docker/web.Dockerfile -t stream247-web:test .`
+- `docker build -f docker/worker.Dockerfile -t stream247-worker:test .`
 - `pnpm test:fresh-compose`
-- targeted continuity/output smoke checks
+- `pnpm test:queue-continuity`
 
 **Rollback Posture**
 

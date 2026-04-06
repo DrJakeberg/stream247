@@ -165,6 +165,7 @@ export type OverlayOptionDefinition<T extends string> = {
 };
 
 export type ScheduleRepeatMode = "single" | "daily" | "weekdays" | "weekends" | "custom";
+export type DestinationRoutingStatus = "ready" | "recovering" | "missing-config" | "error";
 
 export type ScheduleBlock = {
   id: string;
@@ -1864,7 +1865,7 @@ export type DestinationRoutingRecord = {
   priority: number;
   enabled: boolean;
   streamKeyPresent: boolean;
-  status: "ready" | "missing-config" | "error";
+  status: DestinationRoutingStatus;
 };
 
 export type DestinationRoutingSelection = {
@@ -1873,12 +1874,48 @@ export type DestinationRoutingSelection = {
   leadDestinationId: string;
 };
 
+export const DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS = 300;
+
+export function getDestinationFailureSecondsRemaining(
+  lastFailureAt: string,
+  cooldownSeconds = DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
+  nowMs = Date.now()
+): number {
+  const normalizedCooldownSeconds = Number.isFinite(cooldownSeconds) && cooldownSeconds > 0
+    ? cooldownSeconds
+    : DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS;
+  if (!lastFailureAt) {
+    return 0;
+  }
+
+  const failureMs = new Date(lastFailureAt).getTime();
+  if (!Number.isFinite(failureMs)) {
+    return 0;
+  }
+
+  const remainingMs = normalizedCooldownSeconds * 1000 - (nowMs - failureMs);
+  if (remainingMs <= 0) {
+    return 0;
+  }
+
+  return Math.ceil(remainingMs / 1000);
+}
+
+export function isDestinationFailureCoolingDown(
+  status: DestinationRoutingStatus,
+  lastFailureAt: string,
+  cooldownSeconds = DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
+  nowMs = Date.now()
+): boolean {
+  return status === "error" && getDestinationFailureSecondsRemaining(lastFailureAt, cooldownSeconds, nowMs) > 0;
+}
+
 export function selectActiveDestinationGroup(destinations: DestinationRoutingRecord[]): DestinationRoutingSelection {
   const ordered = [...destinations]
     .filter((destination) => destination.enabled && destination.streamKeyPresent)
     .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name));
 
-  const primaryHealthy = ordered.filter((destination) => destination.role === "primary" && destination.status !== "error");
+  const primaryHealthy = ordered.filter((destination) => destination.role === "primary" && destination.status === "ready");
   if (primaryHealthy.length > 0) {
     return {
       mode: "primary",
@@ -1887,7 +1924,7 @@ export function selectActiveDestinationGroup(destinations: DestinationRoutingRec
     };
   }
 
-  const backupHealthy = ordered.filter((destination) => destination.role === "backup" && destination.status !== "error");
+  const backupHealthy = ordered.filter((destination) => destination.role === "backup" && destination.status === "ready");
   if (backupHealthy.length > 0) {
     return {
       mode: "backup",

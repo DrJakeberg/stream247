@@ -38,6 +38,7 @@ Current Stream247 repo truth:
   - pools, weekly scheduling, show profiles, templates, duplication, day cloning, and search/filtering
   - SSE-driven broadcast control room and live public overlay/channel pages
   - operator actions for restart, hard reload, fallback, insert, skip, resume, reconnect, and asset override
+  - staged multi-output recovery with per-destination cooldown visibility and an explicit operator-triggered rejoin path
   - persistent queue state with current, next, previous, and transition-target visibility
   - operator queue actions for play now, move next, remove next, and replay previous
   - overlay draft/publish, scene presets, layer order/visibility, positioned text/logo/image/embed/widget layers, built-in typography presets, ticker/badge controls, and a canonical scene payload shared by browser and playout consumers
@@ -59,9 +60,9 @@ Current Stream247 repo truth:
 | Stream designer / overlay designer | Public designer supports layered overlays, custom fonts, current media metadata, and more | Partial parity | overlay studio with presets, draft/publish workflow, positioned text/logo/image/embed/widget layers, built-in typography presets, shared scene payload contract, and an on-air scene renderer v1 | richer current-media widgets, remote/custom font handling, and broader designer depth remain partial | M11 | Do not copy Upstream visual design or naming |
 | Websites and widget embeds | Public help covers website embeds and StreamElements-style widgets/alerts | Partial parity | sandboxed website/widget scene layers now render inside the published browser overlay and shared scene contract | third-party CSP, iframe, and X-Frame-Options policies still limit real-world provider compatibility | M11 | Respect CSP, iframe, and X-Frame-Options limits |
 | Reusable playlists / designer presets | Public help supports saving and loading playlists and designer settings | Partial parity | overlay scene preset library and Channel Blueprint export/import now exist | still missing broader reusable programming packages and cross-install media remapping helpers | M13 | Use original `Channel Blueprints` naming |
-| RTMP destinations | Public docs cover custom RTMP and platform-specific outputs | Partial parity | built-in primary/backup outputs plus additional managed RTMP outputs | routing works, but per-output operator controls, failure attribution, and platform-specific guidance remain partial | M12 | Keep current primary/backup flow functional |
-| Multistream outputs | Public help says one stream can be sent to many platforms | Partial parity | multi-output delivery groups with health-aware primary/backup routing now exist | concurrent outputs exist, but recovery and operator proof remain partial and RTMP-focused | M12, M15 | Must not assume cloud delivery infrastructure |
-| Backup stream / uninterrupted failover | Public docs describe synchronized backup stream behavior | Partial parity | backup slot, cooldown-aware failover | recovery semantics and operator visibility still need hardening before stronger parity claims | M12 | Preserve simple fallback mode first |
+| RTMP destinations | Public docs cover custom RTMP and platform-specific outputs | Partial parity | built-in primary/backup outputs plus additional managed RTMP outputs, staged recovery, and per-destination cooldown visibility | routing works, but per-output platform guidance and broader recovery automation remain partial | M12, M15 | Keep current primary/backup flow functional |
+| Multistream outputs | Public help says one stream can be sent to many platforms | Partial parity | multi-output delivery groups with health-aware primary/backup routing plus staged recovered-output rejoin on natural transitions or operator request | concurrent outputs exist, but proof and platform breadth remain partial and RTMP-focused | M12, M15 | Must not assume cloud delivery infrastructure |
+| Backup stream / uninterrupted failover | Public docs describe synchronized backup stream behavior | Partial parity | backup slot, cooldown-aware failover, and staged rejoin of recovered outputs | deeper uninterrupted failover semantics still need stronger automated proof before stronger parity claims | M12, M15 | Preserve simple fallback mode first |
 | Live ingest / live studio equivalent | Public product exposes live studio/live source workflows | Partial parity | broadcast actions and worker runtime now support `Live Bridge` takeover from RTMP/RTMPS or HLS inputs with safe release back to the scheduled queue | still missing richer ingress source management, live-session recovery, and deeper live-first operator UX | M12, M14 | Keep input URLs sanitized in live admin snapshots |
 | Separate audio and video playlists / secondary audio | Public product advertises separate audio/video and secondary audio channel | Partial parity | pool-scoped replace-mode audio lanes can loop dedicated beds over scheduled playback | still missing richer mixing, crossfades, and independently curated full audio playlists | M12 | Keep the first implementation deterministic and self-hosted-friendly |
 | Timed inserts / stings / ads | Public product exposes stings/jingles/ads and cuepoint concepts | Partial parity | manual inserts, pool interval inserts, and safe-boundary cuepoint inserts now exist | still missing richer ad-rule families and mid-block creative tooling beyond safe boundaries | M12 | Build on current insert runtime instead of replacing it |
@@ -85,6 +86,7 @@ Current Stream247 repo truth:
 - operator actions for restart, fallback, reconnect, skip, insert, and asset override
 - operator queue actions for play now, move next, remove next, and replay previous
 - queue continuity smoke coverage for short local-library rotations plus browser smoke coverage for critical operator workflows
+- staged multi-output recovery that avoids immediate restarts when recovered destinations can wait for the next natural transition
 - encrypted secrets, incidents, alerts, readiness, and upgrade rehearsal
 - structured worker runtime event logging
 - asset folders/tags plus bulk curation workflows inside the library
@@ -103,7 +105,7 @@ These parity points are bounded. Stream247 does not yet match public Upstream be
 - operator-safe queue surgery
 - deterministic short-asset queue continuity with smoke coverage
 - destination management and failover
-- Multi-Output RTMP fanout with health-aware primary/backup routing
+- Multi-Output RTMP fanout with health-aware primary/backup routing plus staged recovered-output rejoin
 - `Live Bridge` takeover from RTMP/RTMPS or HLS inputs with controlled return to the scheduled queue
 - pool-scoped replace-mode audio lanes for scheduled playback
 - safe-boundary cuepoint inserts that preserve queue continuity

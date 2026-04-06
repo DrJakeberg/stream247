@@ -1,4 +1,5 @@
 import type {
+  DestinationRoutingStatus,
   OverlaySceneCustomLayer,
   OverlaySceneLayerKind,
   OverlayScenePayload,
@@ -23,7 +24,7 @@ export type LiveDestinationSummary = {
   role: "primary" | "backup";
   priority: number;
   name: string;
-  status: string;
+  status: DestinationRoutingStatus;
   notes: string;
   rtmpUrl: string;
   streamKeyPresent: boolean;
@@ -32,6 +33,9 @@ export type LiveDestinationSummary = {
   failureCount: number;
   lastError: string;
   active: boolean;
+  recoveryState: "active" | "staged" | "cooldown" | "ready" | "missing-config";
+  recoverySummary: string;
+  failureHoldSecondsRemaining: number;
 };
 
 export type LiveScheduleSummary = {

@@ -38,6 +38,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - Multi-Output RTMP delivery with multiple primary outputs plus backup outputs
   - per-destination managed stream keys with legacy env fallback for the built-in primary and backup outputs
   - health-aware destination fanout that keeps healthy primaries together and falls back to backups when needed
+  - staged output recovery that keeps recovered destinations out of the active group until the next natural transition or an explicit operator recovery request
   - Live Bridge takeover from RTMP/RTMPS or HLS inputs with controlled release back to scheduled playback
   - deterministic queue state with current, next, previous, and transition-target visibility
   - queue-aware next-asset prefetch
@@ -78,8 +79,8 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
 
 - Scene Studio now supports positioned text/logo/image/embed/widget layers and built-in typography presets, but deeper third-party widget compatibility still depends on CSP / iframe rules and broader cloud-style composition remains partial.
 - richer multi-scene composition inside the playout runtime beyond the current scene-presets + draft/publish workflow
-- more advanced playout transitions, stronger continuity/recovery behavior, and less restart-heavy normal switchovers
-- deeper per-output recovery controls and operator visibility beyond the current Multi-Output v1 routing
+- more advanced playout transitions, stronger continuity semantics, and less restart-heavy normal switchovers beyond the current staged output recovery model
+- deeper per-output platform guidance and recovery automation beyond the current failure attribution, cooldown visibility, and staged recovery controls
 - deeper Live Bridge session management and recovery UX
 - deeper analytics views and richer incident correlation
 - inline override lanes in the schedule editor
@@ -404,6 +405,7 @@ Notes:
 - scheduled daily reconnect window with controlled standby mode
 - Live Bridge RTMP/HLS takeover with safe release back to the scheduled queue
 - destination readiness state
+- staged destination recovery with cooldown visibility and an explicit operator-triggered rejoin path
 - unified broadcast action API for restart, refresh, queue rebuild, fallback, skip, resume, and pin-on-air actions
 - live admin status rail with on-air, next, destination, incident, and update state across admin pages
 - playout transition state with next-asset probe / prefetch visibility

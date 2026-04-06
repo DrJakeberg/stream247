@@ -21,6 +21,8 @@ export function PlayoutActionForm(props: {
   liveBridgeInputType?: "" | "rtmp" | "hls";
   liveBridgeInputSummary?: string;
   liveBridgeLastError?: string;
+  recoveringDestinationCount?: number;
+  coolingDestinationCount?: number;
 }) {
   const [error, setError] = useState("");
   const [selectedAssetId, setSelectedAssetId] = useState(props.currentAssetId || props.assets[0]?.id || "");
@@ -93,6 +95,21 @@ export function PlayoutActionForm(props: {
         </button>
         <button
           className="button button-secondary"
+          disabled={
+            isPending ||
+            !props.recoveringDestinationCount ||
+            props.recoveringDestinationCount < 1 ||
+            props.liveBridgeStatus === "pending" ||
+            props.liveBridgeStatus === "active" ||
+            props.liveBridgeStatus === "releasing"
+          }
+          onClick={() => startTransition(() => void runAction({ type: "recover_outputs" }))}
+          type="button"
+        >
+          Recover outputs now
+        </button>
+        <button
+          className="button button-secondary"
           disabled={isPending}
           onClick={() => startTransition(() => void runAction({ type: "fallback" }))}
           type="button"
@@ -116,6 +133,13 @@ export function PlayoutActionForm(props: {
           Resume schedule
         </button>
       </div>
+
+      {props.recoveringDestinationCount || props.coolingDestinationCount ? (
+        <p className="subtle" style={{ marginTop: 0 }}>
+          {props.recoveringDestinationCount ? `${props.recoveringDestinationCount} output(s) staged for the next transition.` : "No staged outputs."}{" "}
+          {props.coolingDestinationCount ? `${props.coolingDestinationCount} output(s) are still in cooldown.` : ""}
+        </p>
+      ) : null}
 
       <div className="form-grid">
         <label>
