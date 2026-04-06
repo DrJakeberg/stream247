@@ -6,7 +6,7 @@ const ownerPassword = process.env.E2E_OWNER_PASSWORD || "stream247-owner-pass";
 
 test.describe.configure({ mode: "serial" });
 
-test("bootstraps the workspace, enables 2FA, and publishes a live scene update", async ({ browser, page }) => {
+test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publishes a live scene update", async ({ browser, page }) => {
   const stamp = Date.now();
   const channelName = `Smoke Channel ${stamp}`;
   const customText = `Scene Studio V2 ${stamp}`;
@@ -17,9 +17,16 @@ test("bootstraps the workspace, enables 2FA, and publishes a live scene update",
   await page.getByLabel("Password").fill(ownerPassword);
   await page.getByRole("button", { name: "Create owner account" }).click();
   await expect(page).toHaveURL(/\/broadcast$/);
+  await expect(page.getByRole("heading", { name: /Operate the live 24\/7 output from one workspace/i })).toBeVisible();
+  const adminNav = page.getByRole("navigation", { name: "Admin" });
 
-  await page.getByRole("link", { name: "Settings" }).click();
+  await adminNav.getByRole("link", { name: "Dashboard", exact: true }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole("heading", { name: /Check readiness, integrations, and current channel posture/i })).toBeVisible();
+
+  await adminNav.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(page).toHaveURL(/\/settings$/);
+  await expect(page.getByRole("heading", { name: /Manage workspace security, credentials, releases, and blueprints/i })).toBeVisible();
   await page.getByLabel("Current password").fill(ownerPassword);
   await page.getByRole("button", { name: /Start two-factor setup|Rotate authenticator secret/ }).click();
   await expect(page.locator("strong", { hasText: "Authenticator secret" })).toBeVisible();
@@ -41,6 +48,7 @@ test("bootstraps the workspace, enables 2FA, and publishes a live scene update",
   await page.getByLabel("One-time code").fill(generateTotpCode(secret));
   await page.getByRole("button", { name: "Verify code" }).click();
   await expect(page).toHaveURL(/\/broadcast$/);
+  await expect(page.getByRole("heading", { name: /Operate the live 24\/7 output from one workspace/i })).toBeVisible();
 
   const refreshResponse = page.waitForResponse(
     (response) => response.url().includes("/api/broadcast/actions") && response.request().method() === "POST"
@@ -48,8 +56,13 @@ test("bootstraps the workspace, enables 2FA, and publishes a live scene update",
   await page.getByRole("button", { name: "Refresh scenes" }).click();
   await expect((await refreshResponse).ok()).toBeTruthy();
 
-  await page.getByRole("link", { name: "Overlay", exact: true }).click();
+  await adminNav.getByRole("link", { name: "Library", exact: true }).click();
+  await expect(page).toHaveURL(/\/sources$/);
+  await expect(page.getByRole("heading", { name: /Manage sources, uploads, pools, and the playable catalog/i })).toBeVisible();
+
+  await adminNav.getByRole("link", { name: "Scene Studio", exact: true }).click();
   await expect(page).toHaveURL(/\/overlay-studio$/);
+  await expect(page.getByRole("heading", { name: /Publish the viewer-facing scene without leaving the control room/i })).toBeVisible();
   await page.getByLabel("Channel name").fill(channelName);
   await page.getByLabel("Typography preset").selectOption("editorial-serif");
   await page.getByRole("button", { name: "Add Text Layer" }).click();

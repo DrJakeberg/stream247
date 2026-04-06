@@ -56,14 +56,20 @@ main {
 }
 
 .sidebar {
+  display: grid;
+  align-content: start;
+  gap: 22px;
   padding: 28px;
   border-right: 1px solid var(--line);
   background: rgba(255, 249, 239, 0.76);
   backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  min-height: 100vh;
 }
 
 .brand {
-  margin-bottom: 32px;
+  margin-bottom: 8px;
 }
 
 .brand h1 {
@@ -79,31 +85,79 @@ main {
 
 .nav {
   display: grid;
-  gap: 12px;
+  gap: 18px;
 }
 
-.nav a {
-  padding: 12px 14px;
-  border-radius: 14px;
+.nav-section {
+  display: grid;
+  gap: 10px;
+}
+
+.nav-section-header {
+  display: grid;
+  gap: 4px;
+}
+
+.nav-section-header p {
+  margin: 0;
+}
+
+.nav-section-body {
+  display: grid;
+  gap: 10px;
+}
+
+.nav-link {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(27, 26, 22, 0.05);
   background: transparent;
   transition:
     background 160ms ease,
+    border-color 160ms ease,
     color 160ms ease,
     transform 160ms ease;
 }
 
-.nav a:hover {
+.nav-link:hover {
   background: var(--surface);
+  border-color: rgba(14, 109, 90, 0.14);
   transform: translateX(2px);
 }
 
-.nav a.nav-link-active {
+.nav-link-active {
   background: rgba(14, 109, 90, 0.12);
+  border-color: rgba(14, 109, 90, 0.2);
   color: var(--brand-strong);
+}
+
+.nav-link-title {
+  font-weight: 600;
+}
+
+.nav-link-meta {
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.sidebar-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(27, 26, 22, 0.08);
+  background: rgba(255, 252, 246, 0.82);
+}
+
+.sidebar-card strong {
+  letter-spacing: -0.02em;
 }
 
 .content {
   padding: 28px;
+  min-width: 0;
 }
 
 .content-stack {
@@ -139,6 +193,11 @@ main {
 .hero p,
 .subtle {
   color: var(--muted);
+}
+
+.hero p {
+  margin-bottom: 0;
+  max-width: 70ch;
 }
 
 .subtle,
@@ -1151,6 +1210,12 @@ button.collection-chip {
   .sidebar {
     border-right: 0;
     border-bottom: 1px solid var(--line);
+    position: static;
+    min-height: auto;
+  }
+
+  .nav-section-body {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
 
   .scene-designer-grid {
@@ -1165,5 +1230,23 @@ button.collection-chip {
   .overlay-banner,
   .overlay-ticker {
     grid-column: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .content,
+  .sidebar,
+  .standalone {
+    padding: 18px;
+  }
+
+  .hero,
+  .metric,
+  .panel {
+    border-radius: 20px;
+  }
+
+  .nav-link {
+    min-height: 84px;
   }
 }

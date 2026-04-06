@@ -66,7 +66,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M11 Scene Studio V2 | Parity + UX | Next | Complete | Deepen Scene Studio beyond presets and fixed layer types | Richer positioned image/logo/embed/widget/text layers, safer font handling, and conservative public parity claims | `packages/core`, `packages/db`, `apps/web`, `apps/worker` | high | preserve current Scene Studio v1 payload and text/image fallback path |
 | M12 Continuity And Recovery V2 | Architecture + Ops | Next | Complete | Strengthen output recovery and reduce restart-heavy normal transitions | Continuity and multi-output recovery improve measurably without regressing queue or live-bridge visibility | `apps/worker`, `packages/db`, `apps/web/lib/server`, tests | very high | keep current queue engine and output routing available as the safe fallback |
 | M13 Library And Blueprints V2 | Parity + UX | Next | Complete | Deepen library operations and make blueprints safer to reuse across installs | Thumbnails, grouped browsing, curated sets, and selective blueprint import/remap guidance are available without overpromising media portability | `apps/web`, `apps/worker`, `packages/db`, docs | medium | keep current folder/tag curation and replace-style blueprint import path intact |
-| M14 Operator UX V2 | UX | Next | Planned | Resolve admin IA drift and make the control-room model more consistent | Broadcast, Dashboard, Scene Studio, Sources/Library, and Settings have clearer roles and more consistent naming | `apps/web`, docs, tests | medium | keep current routes and navigation labels working until the new IA is proven |
+| M14 Operator UX V2 | UX | Next | Complete | Resolve admin IA drift and make the control-room model more consistent | Broadcast, Dashboard, Scene Studio, Sources/Library, and Settings have clearer roles and more consistent naming | `apps/web`, docs, tests | medium | keep current routes and navigation labels working until the new IA is proven |
 | M15 Coverage And Release Proof V2 | Ops | Next | Planned | Prove the highest-risk parity features with broader automated coverage | Multi-output, Live Bridge, audio/cuepoint flows, and scene publish safety have direct runtime/browser proof beyond unit tests | tests, CI, scripts, docs | high | additive coverage only; do not remove current gates until replacements are green |
 
 ## Phase 2 — Post-M9 Audit Follow-Up
@@ -112,7 +112,7 @@ Phase 2 starts with `M10 Truth And Safety Fixes` and then continues into deeper 
 - `Complete` upgrade schedule editing into a denser `Programming Workspace` with materialized fill, repeats, queue-aware preview, and insert rules
 - `Complete` expand `Library` with folders, tags, bulk curation, and safer reusable catalog organization
 - `Complete` add `Channel Blueprints` as the original import/export system for full stream setups
-- `Next` resolve IA drift between `Broadcast`, `Dashboard`, `Scene Studio`, `Sources`, and `Settings`
+- `Complete` resolve IA drift between `Broadcast`, `Dashboard`, `Scene Studio`, `Library`, and `Settings`
 - `Complete` deepen Scene Studio beyond fixed preset composition while keeping original naming and UI
 - `Complete` deepen Library and `Channel Blueprints` with thumbnails, grouped browsing, curated sets, and selective import warnings
 - `Later` add tablet-friendly layout refinements and richer operator shortcuts
@@ -280,3 +280,10 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - Extended `Channel Blueprints` to include curated sets plus selective import sections, safer asset-reference remapping, and explicit warnings when referenced media is not present locally.
 - Kept the existing replace-style import behavior available per enabled section while documenting that media files themselves never move with the blueprint.
 - Validation completed: `pnpm validate`, `pnpm test:fresh-db`, and `pnpm test:fresh-compose` passed.
+
+### 2026-04-06 — M14 Operator UX V2
+
+- Grouped the admin workspace into `Control room`, `Programming`, and `Workspace` sections so `Broadcast`, `Dashboard`, `Library`, `Scene Studio`, and `Settings` have clearer operator roles without changing their routes.
+- Updated hero copy and page framing across the primary admin surfaces so readiness, live control, media preparation, viewer-scene publishing, and workspace-wide settings are described consistently.
+- Tightened sidebar, card, and mobile/tablet ergonomics, and expanded the browser smoke to prove the new operator IA before 2FA and Scene Studio publish actions continue.
+- Validation completed: `pnpm validate`, `docker build -f docker/web.Dockerfile -t stream247-web:test .`, and `pnpm test:e2e:smoke` passed.

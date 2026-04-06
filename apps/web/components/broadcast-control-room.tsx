@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { AdminPageHeader } from "@/components/admin-page-header";
 import type { BroadcastSnapshot } from "@/lib/live-broadcast";
 import { PlayoutActionForm } from "@/components/playout-action-form";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
@@ -24,13 +25,12 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
 
   return (
     <div className="stack-form">
-      <section className="hero hero-compact">
-        <span className="badge">Broadcast</span>
-        <h2>Operate the live 24/7 output from one workspace.</h2>
-        <p>
-          Current item, next queue, live scene payload, destination health, and operator actions update continuously
-          without reloading the page.
-        </p>
+      <AdminPageHeader
+        compact
+        description="Use Broadcast for live actions. Current item, next queue, destination health, and scene state update continuously without reloading the page."
+        eyebrow="Broadcast"
+        title="Operate the live 24/7 output from one workspace."
+      >
         <div className="status-rail">
           <div>
             <span className="label">Feed</span>
@@ -57,7 +57,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
             <strong>{connected ? "Live" : "Polling"}</strong>
           </div>
         </div>
-      </section>
+      </AdminPageHeader>
 
       <section className="grid two">
         <article className="panel">

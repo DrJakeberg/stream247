@@ -607,7 +607,7 @@ Deepen library organization and make blueprint reuse safer across installs.
 
 ## M14 — Operator UX V2
 
-Status: planned
+Status: completed 2026-04-06
 
 **Objective**  
 Resolve admin information-architecture drift and make the control-room experience more consistent.
