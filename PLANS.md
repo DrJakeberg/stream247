@@ -65,7 +65,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M10 Truth And Safety Fixes | Reliability + Ops | Now | Complete | Remove stale-write admin races, fix update-center version resolution, and bring docs back in sync with the actual product state | Asset curation and source admin flows only update intended fields, update center resolves the repo version safely in container and local layouts, regression tests exist for each bug class, and docs stop implying full parity | `apps/web/app/api/assets/*`, `apps/web/app/api/sources/*`, `apps/web/app/api/library/uploads/route.ts`, `apps/web/lib/server/update-center.ts`, `packages/db`, tests, docs | medium | revert to previous route handlers if needed; DB changes remain additive targeted writers |
 | M11 Scene Studio V2 | Parity + UX | Next | Complete | Deepen Scene Studio beyond presets and fixed layer types | Richer positioned image/logo/embed/widget/text layers, safer font handling, and conservative public parity claims | `packages/core`, `packages/db`, `apps/web`, `apps/worker` | high | preserve current Scene Studio v1 payload and text/image fallback path |
 | M12 Continuity And Recovery V2 | Architecture + Ops | Next | Complete | Strengthen output recovery and reduce restart-heavy normal transitions | Continuity and multi-output recovery improve measurably without regressing queue or live-bridge visibility | `apps/worker`, `packages/db`, `apps/web/lib/server`, tests | very high | keep current queue engine and output routing available as the safe fallback |
-| M13 Library And Blueprints V2 | Parity + UX | Next | Planned | Deepen library operations and make blueprints safer to reuse across installs | Thumbnails, grouped browsing, curated sets, and selective blueprint import/remap guidance are available without overpromising media portability | `apps/web`, `apps/worker`, `packages/db`, docs | medium | keep current folder/tag curation and replace-style blueprint import path intact |
+| M13 Library And Blueprints V2 | Parity + UX | Next | Complete | Deepen library operations and make blueprints safer to reuse across installs | Thumbnails, grouped browsing, curated sets, and selective blueprint import/remap guidance are available without overpromising media portability | `apps/web`, `apps/worker`, `packages/db`, docs | medium | keep current folder/tag curation and replace-style blueprint import path intact |
 | M14 Operator UX V2 | UX | Next | Planned | Resolve admin IA drift and make the control-room model more consistent | Broadcast, Dashboard, Scene Studio, Sources/Library, and Settings have clearer roles and more consistent naming | `apps/web`, docs, tests | medium | keep current routes and navigation labels working until the new IA is proven |
 | M15 Coverage And Release Proof V2 | Ops | Next | Planned | Prove the highest-risk parity features with broader automated coverage | Multi-output, Live Bridge, audio/cuepoint flows, and scene publish safety have direct runtime/browser proof beyond unit tests | tests, CI, scripts, docs | high | additive coverage only; do not remove current gates until replacements are green |
 
@@ -91,7 +91,7 @@ Phase 2 starts with `M10 Truth And Safety Fixes` and then continues into deeper 
 - `Complete` M8 Audio Lanes, Cuepoints, Advanced Inserts
 - `Now` M10 Truth And Safety Fixes
 - `Complete` M11 Scene Studio V2
-- `Next` M13 Library And Blueprints V2
+- `Complete` M13 Library And Blueprints V2
 - `Not Planned` visual cloning of Upstream UI or branding
 
 ## Architecture Work
@@ -114,6 +114,7 @@ Phase 2 starts with `M10 Truth And Safety Fixes` and then continues into deeper 
 - `Complete` add `Channel Blueprints` as the original import/export system for full stream setups
 - `Next` resolve IA drift between `Broadcast`, `Dashboard`, `Scene Studio`, `Sources`, and `Settings`
 - `Complete` deepen Scene Studio beyond fixed preset composition while keeping original naming and UI
+- `Complete` deepen Library and `Channel Blueprints` with thumbnails, grouped browsing, curated sets, and selective import warnings
 - `Later` add tablet-friendly layout refinements and richer operator shortcuts
 - `Not Planned` copying Upstream labels like “Stream Designer” or “Live Studio”
 
@@ -272,3 +273,10 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - Added clearer multi-output operator visibility with per-destination recovery state, cooldown timing, retained failure attribution, and a dedicated `Recover outputs now` control.
 - Kept Live Bridge and queue visibility intact while tightening destination recovery semantics in the worker and shared broadcast snapshots.
 - Validation completed: `pnpm validate`, `pnpm test:multi-output-smoke`, `pnpm test:live-bridge-smoke`, `pnpm test:fresh-db`, `docker build -f docker/web.Dockerfile -t stream247-web:test .`, `docker build -f docker/worker.Dockerfile -t stream247-worker:test .`, `pnpm test:fresh-compose`, and `pnpm test:queue-continuity` passed.
+
+### 2026-04-06 — M13 Library And Blueprints V2
+
+- Added generated library thumbnails with deterministic metadata-card fallbacks, grouped asset browsing, and reusable curated sets with bulk membership actions across the admin catalog.
+- Extended `Channel Blueprints` to include curated sets plus selective import sections, safer asset-reference remapping, and explicit warnings when referenced media is not present locally.
+- Kept the existing replace-style import behavior available per enabled section while documenting that media files themselves never move with the blueprint.
+- Validation completed: `pnpm validate`, `pnpm test:fresh-db`, and `pnpm test:fresh-compose` passed.

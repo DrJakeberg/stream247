@@ -159,7 +159,91 @@ function createState(): AppState {
         lastSyncedAt: "2026-04-05T10:00:00.000Z"
       }
     ],
-    assets: [],
+    assets: [
+      {
+        id: "asset_old",
+        sourceId: "source_youtube",
+        title: "Continuity Archive",
+        path: "/library/continuity-archive.mp4",
+        folderPath: "archives/mornings",
+        tags: ["replay", "featured"],
+        status: "ready",
+        includeInProgramming: true,
+        externalId: "continuity-archive",
+        categoryName: "Archives",
+        durationSeconds: 1800,
+        publishedAt: "2026-04-05T09:00:00.000Z",
+        fallbackPriority: 50,
+        isGlobalFallback: false,
+        createdAt: "2026-04-05T09:00:00.000Z",
+        updatedAt: "2026-04-05T10:00:00.000Z"
+      },
+      {
+        id: "asset_bumper",
+        sourceId: "source_youtube",
+        title: "Channel ID",
+        path: "/library/channel-id.mp4",
+        folderPath: "archives/utility",
+        tags: ["insert"],
+        status: "ready",
+        includeInProgramming: true,
+        externalId: "channel-id",
+        categoryName: "Utility",
+        durationSeconds: 15,
+        publishedAt: "2026-04-05T09:00:00.000Z",
+        fallbackPriority: 60,
+        isGlobalFallback: false,
+        createdAt: "2026-04-05T09:00:00.000Z",
+        updatedAt: "2026-04-05T10:00:00.000Z"
+      },
+      {
+        id: "asset_audio_bed",
+        sourceId: "source_youtube",
+        title: "Replay Bed",
+        path: "/library/replay-bed.mp3",
+        folderPath: "archives/audio",
+        tags: ["audio-bed"],
+        status: "ready",
+        includeInProgramming: true,
+        externalId: "replay-bed",
+        categoryName: "Utility",
+        durationSeconds: 900,
+        publishedAt: "2026-04-05T09:00:00.000Z",
+        fallbackPriority: 70,
+        isGlobalFallback: false,
+        createdAt: "2026-04-05T09:00:00.000Z",
+        updatedAt: "2026-04-05T10:00:00.000Z"
+      },
+      {
+        id: "asset_sting",
+        sourceId: "source_youtube",
+        title: "Replay Sting",
+        path: "/library/replay-sting.mp4",
+        folderPath: "archives/utility",
+        tags: ["cuepoint"],
+        status: "ready",
+        includeInProgramming: true,
+        externalId: "replay-sting",
+        categoryName: "Utility",
+        durationSeconds: 8,
+        publishedAt: "2026-04-05T09:00:00.000Z",
+        fallbackPriority: 80,
+        isGlobalFallback: false,
+        createdAt: "2026-04-05T09:00:00.000Z",
+        updatedAt: "2026-04-05T10:00:00.000Z"
+      }
+    ],
+    assetCollections: [
+      {
+        id: "collection_replay_starters",
+        name: "Replay Starters",
+        description: "Reusable replay utility kit",
+        color: "#0e6d5a",
+        assetIds: ["asset_old", "asset_bumper"],
+        createdAt: "2026-04-05T10:00:00.000Z",
+        updatedAt: "2026-04-05T10:00:00.000Z"
+      }
+    ],
     sourceSyncRuns: [],
     destinations: [createDestination()],
     incidents: [],
@@ -264,9 +348,12 @@ describe("channel blueprints", () => {
     expect(blueprint.schemaVersion).toBe(1);
     expect(blueprint.library.sources[0]).not.toHaveProperty("status");
     expect(blueprint.library.sources[0]).not.toHaveProperty("lastSyncedAt");
+    expect(blueprint.library.curatedSets).toHaveLength(1);
+    expect(blueprint.library.curatedSets[0]?.items.map((item) => item.id)).toEqual(["asset_old", "asset_bumper"]);
     expect(blueprint.operations.destinations[0]).not.toHaveProperty("streamKeyPresent");
     expect(blueprint.sceneStudio.draftOverlay.brandBadge).toBe("Draft badge");
     expect(blueprint.programming.pools[0]?.audioLaneAssetId).toBe("asset_audio_bed");
+    expect(blueprint.programming.pools[0]?.insertAssetRef?.externalId).toBe("channel-id");
     expect(blueprint.programming.scheduleBlocks[0]?.cuepointOffsetsSeconds).toEqual([600, 1800]);
   });
 
@@ -304,9 +391,11 @@ describe("channel blueprints", () => {
     expect(normalized.importedPools[0]?.audioLaneVolumePercent).toBe(42);
     expect(normalized.importedScheduleBlocks[0]?.cuepointAssetId).toBe("asset_sting");
     expect(normalized.importedScheduleBlocks[0]?.cuepointOffsetsSeconds).toEqual([600, 1800]);
+    expect(normalized.importedAssetCollections[0]?.assetIds).toEqual(["asset_old", "asset_bumper"]);
     expect(normalized.importedDestinations[0]?.streamKeyPresent).toBe(true);
     expect(normalized.importedPresets).toHaveLength(1);
     expect(normalized.importedDraftOverlay.brandBadge).toBe("Draft badge");
+    expect(normalized.warnings).toEqual([]);
   });
 
   it("does not leak one primary output key state into another imported primary destination", () => {
@@ -343,6 +432,106 @@ describe("channel blueprints", () => {
 
     expect(normalized.importedDestinations.find((destination) => destination.id === "destination-youtube")?.streamKeyPresent).toBe(
       false
+    );
+  });
+
+  it("clears missing media references and warns when curated-set items do not remap locally", () => {
+    const state = createState();
+    const studio = createStudio();
+    const blueprint = buildChannelBlueprintDocument({
+      state,
+      studio,
+      presets: [],
+      exportedAt: "2026-04-05T12:00:00.000Z"
+    });
+
+    blueprint.programming.pools[0]!.audioLaneAssetRef = {
+      id: "asset_missing_audio",
+      sourceId: "source_youtube",
+      title: "Missing Audio Bed",
+      path: "/library/missing-audio-bed.mp3",
+      externalId: "missing-audio-bed"
+    };
+    blueprint.programming.pools[0]!.audioLaneAssetId = "asset_missing_audio";
+    blueprint.programming.scheduleBlocks[0]!.cuepointAssetRef = {
+      id: "asset_missing_sting",
+      sourceId: "source_youtube",
+      title: "Missing Sting",
+      path: "/library/missing-sting.mp4",
+      externalId: "missing-sting"
+    };
+    blueprint.programming.scheduleBlocks[0]!.cuepointAssetId = "asset_missing_sting";
+    blueprint.library.curatedSets[0]!.items.push({
+      id: "asset_missing_collection_item",
+      sourceId: "source_youtube",
+      title: "Missing Curated Item",
+      path: "/library/missing-item.mp4",
+      externalId: "missing-item"
+    });
+
+    const normalized = normalizeChannelBlueprintDocument({
+      input: blueprint as ChannelBlueprintDocument,
+      currentState: state,
+      studio,
+      now: "2026-04-05T12:05:00.000Z"
+    });
+
+    expect(normalized.importedPools[0]?.audioLaneAssetId).toBe("");
+    expect(normalized.importedScheduleBlocks[0]?.cuepointAssetId).toBe("");
+    expect(normalized.importedAssetCollections[0]?.assetIds).toEqual(["asset_old", "asset_bumper"]);
+    expect(normalized.warnings).toEqual(
+      expect.arrayContaining([
+        "Pool Replay Pool cleared its audio lane asset because the referenced media is not present locally.",
+        "Schedule block Morning Replays cleared its cuepoint asset because the referenced media is not present locally.",
+        "Curated set Replay Starters matched 2 of 3 item(s); media files are not transferred by blueprints."
+      ])
+    );
+  });
+
+  it("keeps disabled sections untouched while still flagging programming-only imports", () => {
+    const state = createState();
+    const studio = createStudio();
+    const blueprint = buildChannelBlueprintDocument({
+      state: {
+        ...state,
+        sources: [
+          {
+            ...state.sources[0]!,
+            name: "Imported Library Source"
+          }
+        ]
+      },
+      studio,
+      presets: [],
+      exportedAt: "2026-04-05T12:00:00.000Z"
+    });
+
+    const normalized = normalizeChannelBlueprintDocument({
+      input: blueprint as ChannelBlueprintDocument,
+      currentState: state,
+      studio,
+      options: {
+        sections: {
+          library: false,
+          programming: true,
+          sceneStudio: false,
+          operations: false
+        }
+      },
+      now: "2026-04-05T12:05:00.000Z"
+    });
+
+    expect(normalized.sections).toEqual({
+      library: false,
+      programming: true,
+      sceneStudio: false,
+      operations: false
+    });
+    expect(normalized.importedSources[0]?.name).toBe("YouTube Archives");
+    expect(normalized.importedDestinations[0]?.name).toBe(state.destinations[0]?.name);
+    expect(normalized.importedModeration).toEqual(state.moderation);
+    expect(normalized.warnings).toContain(
+      "Programming was imported without library sources. Pool and cuepoint asset references were kept only where this workspace already had matching media."
     );
   });
 });

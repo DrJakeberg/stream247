@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
-import { exportChannelBlueprint, importChannelBlueprint } from "@/lib/server/channel-blueprints";
+import { exportChannelBlueprint, importChannelBlueprint, type BlueprintImportOptions } from "@/lib/server/channel-blueprints";
 
 function slugifyFileName(value: string): string {
   return value
@@ -33,10 +33,10 @@ export async function POST(request: NextRequest) {
     return unauthorized;
   }
 
-  const body = (await request.json()) as { blueprint?: unknown };
+  const body = (await request.json()) as { blueprint?: unknown; options?: BlueprintImportOptions };
 
   try {
-    const normalized = await importChannelBlueprint(body.blueprint ?? body);
+    const normalized = await importChannelBlueprint(body.blueprint ?? body, body.options);
     return NextResponse.json({
       ok: true,
       message: `Imported blueprint ${normalized.blueprint.blueprintName}.`,
@@ -45,8 +45,11 @@ export async function POST(request: NextRequest) {
         pools: normalized.importedPools.length,
         showProfiles: normalized.importedShowProfiles.length,
         scheduleBlocks: normalized.importedScheduleBlocks.length,
+        curatedSets: normalized.importedAssetCollections.length,
         presets: normalized.importedPresets.length
-      }
+      },
+      warnings: normalized.warnings,
+      sections: normalized.sections
     });
   } catch (error) {
     return NextResponse.json(

@@ -137,10 +137,11 @@ export default async function SourcesPage() {
       </Panel>
       <Panel title="Asset library" eyebrow="Catalog">
         <p className="subtle">
-          Search the current playable catalog by title, category, source, and status. This should make channel-scale
-          programming much easier than working from raw source rows alone.
+          Search the current playable catalog by title, category, source, folder, tag, and curated set. Grouped
+          browsing, generated thumbnails, and reusable curated sets now make the library safer to program from than
+          raw source rows alone.
         </p>
-        <AssetLibraryBrowser assets={state.assets} sources={state.sources} />
+        <AssetLibraryBrowser assetCollections={state.assetCollections} assets={state.assets} sources={state.sources} />
       </Panel>
     </div>
   );

@@ -129,6 +129,16 @@ export type AssetRecord = {
   updatedAt: string;
 };
 
+export type AssetCollectionRecord = {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+  assetIds: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AssetCurationUpdateRecord = {
   id: string;
   includeInProgramming?: boolean;
@@ -137,6 +147,13 @@ export type AssetCurationUpdateRecord = {
   folderPath?: string;
   tags?: string[];
   appendTags?: string[];
+  updatedAt?: string;
+};
+
+export type AssetCollectionMembershipUpdateRecord = {
+  collectionId: string;
+  assetIds: string[];
+  mode: "append" | "remove" | "replace";
   updatedAt?: string;
 };
 
@@ -431,6 +448,7 @@ export type AppState = {
   scheduleBlocks: ScheduleBlockRecord[];
   sources: SourceRecord[];
   assets: AssetRecord[];
+  assetCollections: AssetCollectionRecord[];
   sourceSyncRuns: SourceSyncRunRecord[];
   destinations: StreamDestinationRecord[];
   incidents: IncidentRecord[];
@@ -857,6 +875,21 @@ function normalizeAssetFolderPath(value: unknown): string {
     .replace(/^\/+|\/+$/g, "");
 }
 
+function normalizeAssetCollectionColor(value: unknown): string {
+  const candidate = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(candidate) ? candidate : "#0e6d5a";
+}
+
+function normalizeAssetCollectionName(value: unknown): string {
+  return String(value ?? "").trim().slice(0, 80) || "Curated set";
+}
+
+function normalizeAssetCollectionDescription(value: unknown): string {
+  return String(value ?? "").trim().slice(0, 240);
+}
+
 function parseAssetTagsJson(value: string): string[] {
   if (!value) {
     return [];
@@ -1032,6 +1065,7 @@ function defaultState(): AppState {
     scheduleBlocks: [],
     sources: [],
     assets: [],
+    assetCollections: [],
     sourceSyncRuns: [],
     destinations: [
       {
@@ -1246,6 +1280,35 @@ function normalizeState(state: AppState): AppState {
         }
       : null);
 
+  const normalizedAssets = Array.isArray(state.assets)
+    ? dedupeById(state.assets).map((asset) => ({
+        ...asset,
+        folderPath: asset.folderPath ?? "",
+        tags: normalizeAssetTags(asset.tags ?? []),
+        includeInProgramming: asset.includeInProgramming ?? true,
+        externalId: asset.externalId ?? "",
+        categoryName: asset.categoryName ?? "",
+        durationSeconds: asset.durationSeconds ?? 0,
+        publishedAt: asset.publishedAt ?? "",
+        fallbackPriority: asset.fallbackPriority ?? 100,
+        isGlobalFallback: asset.isGlobalFallback ?? false
+      }))
+    : [];
+  const assetIdSet = new Set(normalizedAssets.map((asset) => asset.id));
+  const normalizedAssetCollections = Array.isArray(state.assetCollections)
+    ? dedupeById(state.assetCollections).map((collection) => ({
+        ...collection,
+        name: normalizeAssetCollectionName(collection.name),
+        description: normalizeAssetCollectionDescription(collection.description),
+        color: normalizeAssetCollectionColor(collection.color),
+        assetIds: Array.isArray(collection.assetIds)
+          ? [...new Set(collection.assetIds.map((id) => String(id).trim()).filter((id) => assetIdSet.has(id)))]
+          : [],
+        createdAt: collection.createdAt ?? "",
+        updatedAt: collection.updatedAt ?? ""
+      }))
+    : [];
+
   return {
     ...defaults,
     ...state,
@@ -1339,20 +1402,8 @@ function normalizeState(state: AppState): AppState {
           enabled: source.enabled ?? true
         }))
       : [],
-    assets: Array.isArray(state.assets)
-      ? dedupeById(state.assets).map((asset) => ({
-          ...asset,
-          folderPath: asset.folderPath ?? "",
-          tags: normalizeAssetTags(asset.tags ?? []),
-          includeInProgramming: asset.includeInProgramming ?? true,
-          externalId: asset.externalId ?? "",
-          categoryName: asset.categoryName ?? "",
-          durationSeconds: asset.durationSeconds ?? 0,
-          publishedAt: asset.publishedAt ?? "",
-          fallbackPriority: asset.fallbackPriority ?? 100,
-          isGlobalFallback: asset.isGlobalFallback ?? false
-        }))
-      : [],
+    assets: normalizedAssets,
+    assetCollections: normalizedAssetCollections,
     sourceSyncRuns: Array.isArray((state as AppState & { sourceSyncRuns?: SourceSyncRunRecord[] }).sourceSyncRuns)
       ? dedupeById((state as AppState & { sourceSyncRuns?: SourceSyncRunRecord[] }).sourceSyncRuns ?? [])
           .sort((left, right) => new Date(right.finishedAt || right.startedAt).getTime() - new Date(left.finishedAt || left.startedAt).getTime())
@@ -1940,6 +1991,37 @@ if (!schemaMigrations.some((migration) => migration.id === schemaBaselineMigrati
   schemaMigrations.push(schemaBaselineMigration);
 }
 
+const libraryBlueprintsV2Migration: MigrationDefinition = {
+  id: "20260406_001_library_blueprints_v2",
+  description: "Add curated asset collections for library grouping and blueprint reuse.",
+  apply: async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS asset_collections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        color TEXT NOT NULL DEFAULT '#0e6d5a',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS asset_collection_items (
+        collection_id TEXT NOT NULL,
+        asset_id TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (collection_id, asset_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS asset_collection_items_asset_id_idx ON asset_collection_items (asset_id);
+      CREATE INDEX IF NOT EXISTS asset_collection_items_collection_id_position_idx ON asset_collection_items (collection_id, position);
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === libraryBlueprintsV2Migration.id)) {
+  schemaMigrations.push(libraryBlueprintsV2Migration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -2403,6 +2485,28 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     );
   }
 
+  await client.query("DELETE FROM asset_collection_items");
+  await client.query("DELETE FROM asset_collections");
+  for (const collection of next.assetCollections) {
+    await client.query(
+      `
+        INSERT INTO asset_collections (id, name, description, color, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `,
+      [collection.id, collection.name, collection.description, collection.color, collection.createdAt, collection.updatedAt]
+    );
+
+    for (const [index, assetId] of collection.assetIds.entries()) {
+      await client.query(
+        `
+          INSERT INTO asset_collection_items (collection_id, asset_id, position)
+          VALUES ($1, $2, $3)
+        `,
+        [collection.id, assetId, index]
+      );
+    }
+  }
+
   await client.query("DELETE FROM source_sync_runs");
   for (const run of next.sourceSyncRuns.slice(0, 250)) {
     await client.query(
@@ -2785,6 +2889,19 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     created_at: string;
     updated_at: string;
   }>("SELECT * FROM assets ORDER BY updated_at DESC");
+  const assetCollectionsResult = await client.query<{
+    id: string;
+    name: string;
+    description: string;
+    color: string;
+    created_at: string;
+    updated_at: string;
+  }>("SELECT * FROM asset_collections ORDER BY updated_at DESC, created_at DESC, name ASC");
+  const assetCollectionItemsResult = await client.query<{
+    collection_id: string;
+    asset_id: string;
+    position: number;
+  }>("SELECT * FROM asset_collection_items ORDER BY collection_id ASC, position ASC, asset_id ASC");
   const destinationsResult = await client.query<{
     id: string;
     provider: StreamDestinationRecord["provider"];
@@ -3050,6 +3167,17 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       publishedAt: row.published_at || undefined,
       fallbackPriority: row.fallback_priority,
       isGlobalFallback: row.is_global_fallback,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    })),
+    assetCollections: assetCollectionsResult.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      color: row.color,
+      assetIds: assetCollectionItemsResult.rows
+        .filter((item) => item.collection_id === row.id)
+        .map((item) => item.asset_id),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     })),
@@ -3579,6 +3707,126 @@ export async function updateAssetCurationRecords(updates: AssetCurationUpdateRec
       if (result.rowCount === 0) {
         throw new Error(`Asset not found: ${update.id}`);
       }
+    }
+  });
+}
+
+export async function upsertAssetCollectionRecords(collections: AssetCollectionRecord[]): Promise<void> {
+  if (collections.length === 0) {
+    return;
+  }
+
+  await withSerializedStateWrite("upsertAssetCollectionRecords", async (client) => {
+    const assetIdsResult = await client.query<{ id: string }>("SELECT id FROM assets");
+    const assetIdSet = new Set(assetIdsResult.rows.map((row) => row.id));
+    const now = new Date().toISOString();
+
+    for (const collection of collections) {
+      const assetIds = Array.isArray(collection.assetIds)
+        ? [...new Set(collection.assetIds.map((id) => String(id).trim()).filter((id) => assetIdSet.has(id)))]
+        : [];
+      const createdAt = collection.createdAt || now;
+      const updatedAt = collection.updatedAt || now;
+
+      await client.query(
+        `
+          INSERT INTO asset_collections (id, name, description, color, created_at, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6)
+          ON CONFLICT (id) DO UPDATE SET
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            color = EXCLUDED.color,
+            updated_at = EXCLUDED.updated_at
+        `,
+        [
+          collection.id,
+          normalizeAssetCollectionName(collection.name),
+          normalizeAssetCollectionDescription(collection.description),
+          normalizeAssetCollectionColor(collection.color),
+          createdAt,
+          updatedAt
+        ]
+      );
+
+      await client.query("DELETE FROM asset_collection_items WHERE collection_id = $1", [collection.id]);
+      for (const [index, assetId] of assetIds.entries()) {
+        await client.query(
+          `
+            INSERT INTO asset_collection_items (collection_id, asset_id, position)
+            VALUES ($1, $2, $3)
+          `,
+          [collection.id, assetId, index]
+        );
+      }
+    }
+  });
+}
+
+export async function deleteAssetCollectionRecord(id: string): Promise<void> {
+  if (!id) {
+    return;
+  }
+
+  await withSerializedStateWrite("deleteAssetCollectionRecord", async (client) => {
+    await client.query("DELETE FROM asset_collection_items WHERE collection_id = $1", [id]);
+    await client.query("DELETE FROM asset_collections WHERE id = $1", [id]);
+  });
+}
+
+export async function updateAssetCollectionMemberships(
+  updates: AssetCollectionMembershipUpdateRecord[]
+): Promise<void> {
+  if (updates.length === 0) {
+    return;
+  }
+
+  await withSerializedStateWrite("updateAssetCollectionMemberships", async (client) => {
+    for (const update of updates) {
+      const collectionId = String(update.collectionId || "").trim();
+      if (!collectionId) {
+        continue;
+      }
+
+      const collectionResult = await client.query<{ id: string }>("SELECT id FROM asset_collections WHERE id = $1", [collectionId]);
+      if (collectionResult.rowCount === 0) {
+        throw new Error(`Curated set not found: ${collectionId}`);
+      }
+
+      const currentResult = await client.query<{ asset_id: string }>(
+        "SELECT asset_id FROM asset_collection_items WHERE collection_id = $1 ORDER BY position ASC, asset_id ASC",
+        [collectionId]
+      );
+      const currentAssetIds = currentResult.rows.map((row) => row.asset_id);
+      const requestedAssetIds = [...new Set((update.assetIds ?? []).map((id) => String(id).trim()).filter(Boolean))];
+      const validResult =
+        requestedAssetIds.length > 0
+          ? await client.query<{ id: string }>("SELECT id FROM assets WHERE id = ANY($1::text[])", [requestedAssetIds])
+          : { rows: [] as Array<{ id: string }> };
+      const validAssetIdSet = new Set(validResult.rows.map((row) => row.id));
+      const validRequestedAssetIds = requestedAssetIds.filter((assetId) => validAssetIdSet.has(assetId));
+
+      const nextAssetIds =
+        update.mode === "replace"
+          ? validRequestedAssetIds
+          : update.mode === "remove"
+            ? currentAssetIds.filter((assetId) => !requestedAssetIds.includes(assetId))
+            : [...new Set([...currentAssetIds, ...validRequestedAssetIds])];
+
+      await client.query("DELETE FROM asset_collection_items WHERE collection_id = $1", [collectionId]);
+      for (const [index, assetId] of nextAssetIds.entries()) {
+        await client.query(
+          `
+            INSERT INTO asset_collection_items (collection_id, asset_id, position)
+            VALUES ($1, $2, $3)
+          `,
+          [collectionId, assetId, index]
+        );
+      }
+
+      await client.query("UPDATE asset_collections SET updated_at = $2 WHERE id = $1", [
+        collectionId,
+        update.updatedAt || new Date().toISOString()
+      ]);
     }
   });
 }

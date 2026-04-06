@@ -2,9 +2,19 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import type { BlueprintImportSectionState } from "@/lib/server/channel-blueprints";
+
+const DEFAULT_SECTIONS: BlueprintImportSectionState = {
+  library: true,
+  programming: true,
+  sceneStudio: true,
+  operations: true
+};
 
 export function ChannelBlueprintForm() {
   const [blueprintText, setBlueprintText] = useState("");
+  const [sections, setSections] = useState<BlueprintImportSectionState>(DEFAULT_SECTIONS);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -37,17 +47,25 @@ export function ChannelBlueprintForm() {
       throw new Error("Paste a valid blueprint JSON document before importing.");
     }
 
+    if (!Object.values(sections).some(Boolean)) {
+      throw new Error("Enable at least one import section before importing a blueprint.");
+    }
+
     const response = await fetch("/api/blueprints", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ blueprint: parsed })
+      body: JSON.stringify({
+        blueprint: parsed,
+        options: { sections }
+      })
     });
-    const payload = (await response.json()) as { message?: string };
+    const payload = (await response.json()) as { message?: string; warnings?: string[] };
     if (!response.ok) {
       throw new Error(payload.message || "Could not import channel blueprint.");
     }
 
     setBlueprintText("");
+    setWarnings(payload.warnings ?? []);
     router.refresh();
     return payload.message || "Channel blueprint imported.";
   }
@@ -55,8 +73,12 @@ export function ChannelBlueprintForm() {
   return (
     <div className="stack-form">
       <div className="subtle">
-        Channel Blueprints package Scene Studio, sources, pools, show profiles, schedule blocks, moderation, and
-        destination routing metadata without exporting secrets, tokens, incidents, or media files.
+        Channel Blueprints package Scene Studio, sources, curated sets, programming, moderation, and destination
+        routing metadata without exporting secrets, tokens, incidents, or media files.
+      </div>
+      <div className="subtle">
+        Media binaries never travel with the blueprint. Insert assets, audio beds, cuepoint assets, and curated-set
+        memberships only remap when matching media is already present locally in the target workspace.
       </div>
       <div className="toggle-row">
         <button
@@ -65,6 +87,7 @@ export function ChannelBlueprintForm() {
           onClick={() => {
             setError("");
             setMessage("");
+            setWarnings([]);
             startTransition(() =>
               void exportBlueprint()
                 .then(() => setMessage("Downloaded the current channel blueprint."))
@@ -76,12 +99,57 @@ export function ChannelBlueprintForm() {
           {isPending ? "Working..." : "Export channel blueprint"}
         </button>
       </div>
+      <div className="panel panel-compact">
+        <div className="stack-form">
+          <div>
+            <strong>Import sections</strong>
+            <div className="subtle">
+              Enabled sections replace the matching part of the current workspace. Leave a section disabled to keep the
+              existing local state untouched.
+            </div>
+          </div>
+          <div className="chip-grid">
+            <label className={`chip-toggle${sections.library ? " chip-toggle-active" : ""}`}>
+              <input
+                checked={sections.library}
+                onChange={(event) => setSections((current) => ({ ...current, library: event.target.checked }))}
+                type="checkbox"
+              />
+              <span>Library sources and curated sets</span>
+            </label>
+            <label className={`chip-toggle${sections.programming ? " chip-toggle-active" : ""}`}>
+              <input
+                checked={sections.programming}
+                onChange={(event) => setSections((current) => ({ ...current, programming: event.target.checked }))}
+                type="checkbox"
+              />
+              <span>Programming pools, shows, and schedule</span>
+            </label>
+            <label className={`chip-toggle${sections.sceneStudio ? " chip-toggle-active" : ""}`}>
+              <input
+                checked={sections.sceneStudio}
+                onChange={(event) => setSections((current) => ({ ...current, sceneStudio: event.target.checked }))}
+                type="checkbox"
+              />
+              <span>Scene Studio live, draft, and presets</span>
+            </label>
+            <label className={`chip-toggle${sections.operations ? " chip-toggle-active" : ""}`}>
+              <input
+                checked={sections.operations}
+                onChange={(event) => setSections((current) => ({ ...current, operations: event.target.checked }))}
+                type="checkbox"
+              />
+              <span>Moderation and destination routing</span>
+            </label>
+          </div>
+        </div>
+      </div>
       <label>
         <span className="label">Import blueprint JSON</span>
         <textarea
           className="textarea"
           onChange={(event) => setBlueprintText(event.target.value)}
-          placeholder='Paste a `.channel-blueprint.json` document here to replace the current library/programming configuration.'
+          placeholder='Paste a `.channel-blueprint.json` document here to replace the enabled sections of the current workspace.'
           rows={12}
           value={blueprintText}
         />
@@ -102,12 +170,25 @@ export function ChannelBlueprintForm() {
       </label>
       {error ? <p className="danger">{error}</p> : null}
       {message ? <p className="subtle">{message}</p> : null}
+      {warnings.length > 0 ? (
+        <div className="item">
+          <strong>Import warnings</strong>
+          <div className="stack-form" style={{ marginTop: 10 }}>
+            {warnings.map((warning) => (
+              <div className="warning" key={warning}>
+                {warning}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <button
         className="button secondary"
-        disabled={isPending || !blueprintText.trim()}
+        disabled={isPending || !blueprintText.trim() || !Object.values(sections).some(Boolean)}
         onClick={() => {
           setError("");
           setMessage("");
+          setWarnings([]);
           startTransition(() =>
             void importBlueprint()
               .then((nextMessage) => setMessage(nextMessage))
