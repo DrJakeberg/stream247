@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, readAppState, updateSourceFieldRecords } from "@/lib/server/state";
 
 const allowedExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm", ".avi", ".mp3", ".aac", ".flac", ".wav"]);
+const maxUploadCollisionRetries = 16;
 
 function getMediaRoot(): string {
   return process.env.MEDIA_LIBRARY_ROOT || path.join(process.cwd(), "data", "media");
@@ -53,6 +57,55 @@ async function markLocalLibraryForRescan() {
   ]);
 }
 
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === code;
+}
+
+async function removePartialUpload(filePath: string) {
+  try {
+    await fs.unlink(filePath);
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) {
+      throw error;
+    }
+  }
+}
+
+function buildUploadPath(targetRoot: string, safeName: string, attempt: number): string {
+  if (attempt === 0) {
+    return path.join(targetRoot, safeName);
+  }
+
+  const extension = path.extname(safeName);
+  const baseName = path.basename(safeName, extension);
+  return path.join(targetRoot, `${baseName}-${randomUUID().slice(0, 8)}${extension}`);
+}
+
+async function writeUploadedFile(targetRoot: string, file: File): Promise<string> {
+  const safeName = sanitizeFileName(file.name);
+
+  for (let attempt = 0; attempt <= maxUploadCollisionRetries; attempt += 1) {
+    const finalPath = buildUploadPath(targetRoot, safeName, attempt);
+
+    try {
+      await pipeline(
+        Readable.fromWeb(file.stream() as unknown as NodeReadableStream<Uint8Array>),
+        createWriteStream(finalPath, { flags: "wx" })
+      );
+      return finalPath;
+    } catch (error) {
+      if (hasErrorCode(error, "EEXIST")) {
+        continue;
+      }
+
+      await removePartialUpload(finalPath);
+      throw error;
+    }
+  }
+
+  throw new Error(`Failed to reserve a unique upload path for ${safeName}.`);
+}
+
 export async function POST(request: Request) {
   const unauthorized = await requireApiRoles(["owner", "admin", "operator"]);
   if (unauthorized) {
@@ -86,22 +139,7 @@ export async function POST(request: Request) {
   const storedPaths: string[] = [];
 
   for (const file of files) {
-    const safeName = sanitizeFileName(file.name);
-    const candidatePath = path.join(targetRoot, safeName);
-    const finalPath = await (async () => {
-      try {
-        await fs.access(candidatePath);
-        const extension = path.extname(safeName);
-        const baseName = path.basename(safeName, extension);
-        return path.join(targetRoot, `${baseName}-${randomUUID().slice(0, 8)}${extension}`);
-      } catch {
-        return candidatePath;
-      }
-    })();
-
-    const buffer = Buffer.from(await file.arrayBuffer());
-    await fs.writeFile(finalPath, buffer);
-    storedPaths.push(finalPath);
+    storedPaths.push(await writeUploadedFile(targetRoot, file));
   }
 
   await markLocalLibraryForRescan();
