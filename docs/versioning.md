@@ -23,7 +23,7 @@ Do not auto-track `latest` for a 24/7 production channel.
 
 1. Ensure `main` is green in CI.
    CI now covers fresh DB/Compose bootstrap, queue continuity, runtime parity, production-config release preflight, and browser smoke before `main` images publish.
-2. Run:
+2. Copy `.env.production.example` to `.env`, replace the required placeholder values, and then run:
    ```bash
    cp .env.production.example .env
    pnpm release:preflight
@@ -42,5 +42,6 @@ Do not auto-track `latest` for a 24/7 production channel.
 
 Notes:
 
+- `pnpm release:preflight` rejects blank required settings plus untouched `.env.example` and `.env.production.example` placeholder values
 - local `pnpm release:preflight` should keep its default full-validation behavior
 - CI and `release.yml` set `RELEASE_PREFLIGHT_SKIP_VALIDATE=1` only after the outer workflow job has already completed `pnpm validate`
