@@ -1804,6 +1804,65 @@ export function buildScheduleOccurrences(args: {
     });
 }
 
+export function findCurrentScheduleOccurrence(args: {
+  occurrences: ScheduleOccurrence[];
+  currentTime: string;
+}): ScheduleOccurrence | null {
+  return (
+    args.occurrences.find((item) =>
+      isCurrentScheduleTime({
+        startTime: item.startTime,
+        endTime: item.endTime,
+        currentTime: args.currentTime
+      })
+    ) ?? null
+  );
+}
+
+export function findNextScheduleOccurrence(args: {
+  occurrences: ScheduleOccurrence[];
+  currentTime: string;
+  currentOccurrence?: ScheduleOccurrence | null;
+}): ScheduleOccurrence | null {
+  if (args.occurrences.length === 0) {
+    return null;
+  }
+
+  const currentOccurrence = args.currentOccurrence ?? findCurrentScheduleOccurrence(args);
+  if (!currentOccurrence) {
+    return args.occurrences.find((item) => item.startTime > args.currentTime) ?? null;
+  }
+
+  const currentIndex = args.occurrences.findIndex((item) => item.key === currentOccurrence.key);
+  if (currentIndex === -1) {
+    return args.occurrences.find((item) => item.startTime > args.currentTime) ?? null;
+  }
+
+  return args.occurrences[currentIndex + 1] ?? null;
+}
+
+export function listUpcomingScheduleOccurrences(args: {
+  occurrences: ScheduleOccurrence[];
+  currentTime: string;
+  currentOccurrence?: ScheduleOccurrence | null;
+}): ScheduleOccurrence[] {
+  if (args.occurrences.length === 0) {
+    return [];
+  }
+
+  const currentOccurrence = args.currentOccurrence ?? findCurrentScheduleOccurrence(args);
+  if (!currentOccurrence) {
+    return args.occurrences.filter((item) => item.startTime > args.currentTime);
+  }
+
+  const currentIndex = args.occurrences.findIndex((item) => item.key === currentOccurrence.key);
+  if (currentIndex === -1) {
+    return args.occurrences.filter((item) => item.startTime > args.currentTime);
+  }
+
+  return args.occurrences.slice(currentIndex + 1);
+}
+
 function extractFormatterParts(args: { instant: Date; timeZone: string }) {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: args.timeZone,
