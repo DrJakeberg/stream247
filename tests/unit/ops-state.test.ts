@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getCurrentScheduleMoment } from "@stream247/core";
 import type { AppState } from "../../apps/web/lib/server/state";
 import { getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
@@ -7,6 +7,7 @@ import {
   getBroadcastSnapshot,
   getCurrentScheduleItem,
   getFilteredIncidents,
+  getNextScheduleItem,
   getPlayoutQueueAssets,
   getRuntimeDriftReport,
   getSourceConnectorDiagnostics,
@@ -312,6 +313,21 @@ function createState(overrides: Partial<AppState> = {}): AppState {
 }
 
 describe("ops state helpers", () => {
+  const originalTimeZone = process.env.CHANNEL_TIMEZONE;
+
+  beforeEach(() => {
+    process.env.CHANNEL_TIMEZONE = "UTC";
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    if (typeof originalTimeZone === "string") {
+      process.env.CHANNEL_TIMEZONE = originalTimeZone;
+    } else {
+      delete process.env.CHANNEL_TIMEZONE;
+    }
+  });
+
   it("filters incidents by status, scope, severity, and text", () => {
     const state = createState();
     const filtered = getFilteredIncidents(state, {
@@ -620,6 +636,120 @@ describe("ops state helpers", () => {
     expect(snapshot.cuepoints.windowKey).toBe(currentScheduleItem?.key || "");
     expect(snapshot.cuepoints.lastTriggeredAt).toBe("2026-03-27T00:20:00.000Z");
     expect(snapshot.cuepoints.lastAssetId).toBe("asset-cue-sting");
+  });
+
+  it("returns no current block before the first scheduled block and advertises the first future block as next", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-07T07:30:00.000Z"));
+    const state = createState({
+      scheduleBlocks: [
+        {
+          id: "block-1",
+          title: "Morning Show",
+          categoryName: "Just Chatting",
+          dayOfWeek: 2,
+          startMinuteOfDay: 8 * 60,
+          durationMinutes: 60,
+          showId: "show-1",
+          poolId: "pool-1",
+          sourceName: "YouTube Playlist"
+        },
+        {
+          id: "block-2",
+          title: "Noon Show",
+          categoryName: "Music",
+          dayOfWeek: 2,
+          startMinuteOfDay: 12 * 60,
+          durationMinutes: 60,
+          showId: "show-1",
+          poolId: "pool-1",
+          sourceName: "YouTube Playlist"
+        }
+      ]
+    });
+
+    expect(getCurrentScheduleItem(state)).toBeNull();
+    expect(getNextScheduleItem(state)?.title).toBe("Morning Show");
+
+    const snapshot = getBroadcastSnapshot(state);
+    expect(snapshot.currentScheduleItem).toBeNull();
+    expect(snapshot.nextScheduleItem?.title).toBe("Morning Show");
+  });
+
+  it("returns no current block during a mid-day gap and keeps the next teaser on the first future block", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-07T09:30:00.000Z"));
+    const state = createState({
+      scheduleBlocks: [
+        {
+          id: "block-1",
+          title: "Morning Show",
+          categoryName: "Just Chatting",
+          dayOfWeek: 2,
+          startMinuteOfDay: 8 * 60,
+          durationMinutes: 60,
+          showId: "show-1",
+          poolId: "pool-1",
+          sourceName: "YouTube Playlist"
+        },
+        {
+          id: "block-2",
+          title: "Noon Show",
+          categoryName: "Music",
+          dayOfWeek: 2,
+          startMinuteOfDay: 12 * 60,
+          durationMinutes: 60,
+          showId: "show-1",
+          poolId: "pool-1",
+          sourceName: "YouTube Playlist"
+        }
+      ]
+    });
+
+    expect(getCurrentScheduleItem(state)).toBeNull();
+    expect(getNextScheduleItem(state)?.title).toBe("Noon Show");
+
+    const snapshot = getBroadcastSnapshot(state);
+    expect(snapshot.currentScheduleItem).toBeNull();
+    expect(snapshot.nextScheduleItem?.title).toBe("Noon Show");
+  });
+
+  it("returns no current or next block after the final scheduled block has ended", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-07T14:30:00.000Z"));
+    const state = createState({
+      scheduleBlocks: [
+        {
+          id: "block-1",
+          title: "Morning Show",
+          categoryName: "Just Chatting",
+          dayOfWeek: 2,
+          startMinuteOfDay: 8 * 60,
+          durationMinutes: 60,
+          showId: "show-1",
+          poolId: "pool-1",
+          sourceName: "YouTube Playlist"
+        },
+        {
+          id: "block-2",
+          title: "Noon Show",
+          categoryName: "Music",
+          dayOfWeek: 2,
+          startMinuteOfDay: 12 * 60,
+          durationMinutes: 60,
+          showId: "show-1",
+          poolId: "pool-1",
+          sourceName: "YouTube Playlist"
+        }
+      ]
+    });
+
+    expect(getCurrentScheduleItem(state)).toBeNull();
+    expect(getNextScheduleItem(state)).toBeNull();
+
+    const snapshot = getBroadcastSnapshot(state);
+    expect(snapshot.currentScheduleItem).toBeNull();
+    expect(snapshot.nextScheduleItem).toBeNull();
   });
 
   it("summarizes live bridge state without exposing the raw input URL", () => {

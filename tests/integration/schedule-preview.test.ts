@@ -5,10 +5,13 @@ import {
   buildScheduleOccurrences,
   buildSchedulePreview,
   describeScheduleRepeatMode,
+  findCurrentScheduleOccurrence,
+  findNextScheduleOccurrence,
   findScheduleConflicts,
   getRepeatDaysForMode,
   getCurrentScheduleMoment,
   isCurrentScheduleTime,
+  listUpcomingScheduleOccurrences,
   summarizeScheduleWeek
 } from "@stream247/core";
 
@@ -111,6 +114,92 @@ describe("schedule preview", () => {
 
     expect(occurrences[0]?.key).toBe("2026-03-27:a:480:60");
     expect(occurrences[0]?.endTime).toBe("09:00");
+  });
+
+  it("selects current and next schedule occurrences by wall-clock time without wrapping gaps", () => {
+    const occurrences = buildScheduleOccurrences({
+      date: "2026-03-27",
+      blocks: [
+        {
+          id: "a",
+          title: "Morning",
+          categoryName: "Chatting",
+          dayOfWeek: 5,
+          startMinuteOfDay: 8 * 60,
+          durationMinutes: 60,
+          poolId: "pool-a",
+          sourceName: "Archive"
+        },
+        {
+          id: "b",
+          title: "Noon",
+          categoryName: "Music",
+          dayOfWeek: 5,
+          startMinuteOfDay: 12 * 60,
+          durationMinutes: 60,
+          poolId: "pool-b",
+          sourceName: "Playlist"
+        }
+      ]
+    });
+
+    const beforeFirstCurrent = findCurrentScheduleOccurrence({
+      occurrences,
+      currentTime: "07:30"
+    });
+    const beforeFirstNext = findNextScheduleOccurrence({
+      occurrences,
+      currentTime: "07:30",
+      currentOccurrence: beforeFirstCurrent
+    });
+    expect(beforeFirstCurrent).toBeNull();
+    expect(beforeFirstNext?.title).toBe("Morning");
+    expect(
+      listUpcomingScheduleOccurrences({
+        occurrences,
+        currentTime: "07:30",
+        currentOccurrence: beforeFirstCurrent
+      }).map((item) => item.title)
+    ).toEqual(["Morning", "Noon"]);
+
+    const midGapCurrent = findCurrentScheduleOccurrence({
+      occurrences,
+      currentTime: "09:30"
+    });
+    const midGapNext = findNextScheduleOccurrence({
+      occurrences,
+      currentTime: "09:30",
+      currentOccurrence: midGapCurrent
+    });
+    expect(midGapCurrent).toBeNull();
+    expect(midGapNext?.title).toBe("Noon");
+    expect(
+      listUpcomingScheduleOccurrences({
+        occurrences,
+        currentTime: "09:30",
+        currentOccurrence: midGapCurrent
+      }).map((item) => item.title)
+    ).toEqual(["Noon"]);
+
+    const afterLastCurrent = findCurrentScheduleOccurrence({
+      occurrences,
+      currentTime: "14:30"
+    });
+    expect(afterLastCurrent).toBeNull();
+    expect(
+      findNextScheduleOccurrence({
+        occurrences,
+        currentTime: "14:30",
+        currentOccurrence: afterLastCurrent
+      })
+    ).toBeNull();
+    expect(
+      listUpcomingScheduleOccurrences({
+        occurrences,
+        currentTime: "14:30",
+        currentOccurrence: afterLastCurrent
+      })
+    ).toEqual([]);
   });
 
   it("materializes programming windows with repeat and insert awareness", () => {

@@ -11,12 +11,13 @@ import {
   buildOverlayTextLinesFromScenePayload,
   formatCuepointOffsetLabel,
   buildScheduleOccurrences,
-  buildSchedulePreview,
   describePresenceStatus,
+  findCurrentScheduleOccurrence,
+  findNextScheduleOccurrence,
   getDestinationFailureSecondsRemaining as getDestinationFailureHoldSecondsRemaining,
   getCurrentScheduleMoment,
   isDestinationFailureCoolingDown,
-  isCurrentScheduleTime,
+  listUpcomingScheduleOccurrences,
   normalizeLiveBridgeInputType,
   isLikelyTwitchChannelUrl,
   isLikelyTwitchVodUrl,
@@ -624,15 +625,24 @@ async function writeStandbySlate(
   state: AppState,
   queueKind: AppState["playout"]["queueItems"][number]["kind"] | "" = state.playout.queueItems[0]?.kind || "standby"
 ): Promise<void> {
-  const currentItem = getCurrentScheduleItem(state);
-  const nextPreview = buildSchedulePreview({
-    date: getCurrentScheduleMoment({
-      now: new Date(),
-      timeZone: process.env.CHANNEL_TIMEZONE || "UTC"
-    }).date,
+  const scheduleMoment = getCurrentScheduleMoment({
+    now: new Date(),
+    timeZone: process.env.CHANNEL_TIMEZONE || "UTC"
+  });
+  const occurrences = buildScheduleOccurrences({
+    date: scheduleMoment.date,
     blocks: state.scheduleBlocks
-  }).items;
-  const nextItem = nextPreview.find((item) => item.id !== currentItem?.blockId) ?? null;
+  });
+  const currentItem = findCurrentScheduleOccurrence({
+    occurrences,
+    currentTime: scheduleMoment.time
+  });
+  const upcomingItems = listUpcomingScheduleOccurrences({
+    occurrences,
+    currentTime: scheduleMoment.time,
+    currentOccurrence: currentItem
+  });
+  const nextItem = upcomingItems[0] ?? null;
   const payload = buildWorkerScenePayload({
     state,
     queueKind,
@@ -641,7 +651,7 @@ async function writeStandbySlate(
     nextTimeLabel: nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured",
     currentCategory: currentItem?.categoryName,
     currentSourceName: currentItem?.sourceName,
-    queueTitles: nextPreview.slice(0, state.overlay.queuePreviewCount).map((item) => item.title)
+    queueTitles: upcomingItems.slice(0, state.overlay.queuePreviewCount).map((item) => item.title)
   });
   const lines = buildOverlayTextLinesFromScenePayload(payload);
   await fs.writeFile(standbySlatePath, `${lines.join("\n")}\n`, "utf8");
@@ -1393,22 +1403,13 @@ function getCurrentScheduleItem(state: AppState): ReturnType<typeof buildSchedul
     date: scheduleMoment.date,
     blocks: state.scheduleBlocks
   });
-  const currentTime = scheduleMoment.time;
-  return (
-    occurrences.find((item) =>
-      isCurrentScheduleTime({
-        startTime: item.startTime,
-        endTime: item.endTime,
-        currentTime
-      })
-    ) ??
-    occurrences[0] ??
-    null
-  );
+  return findCurrentScheduleOccurrence({
+    occurrences,
+    currentTime: scheduleMoment.time
+  });
 }
 
 function getNextScheduleItem(state: AppState): ReturnType<typeof buildScheduleOccurrences>[number] | null {
-  const current = getCurrentScheduleItem(state);
   const timeZone = process.env.CHANNEL_TIMEZONE || "UTC";
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
@@ -1419,21 +1420,15 @@ function getNextScheduleItem(state: AppState): ReturnType<typeof buildScheduleOc
     date: scheduleMoment.date,
     blocks: state.scheduleBlocks
   });
-
-  if (occurrences.length === 0) {
-    return null;
-  }
-
-  if (!current) {
-    return occurrences[0] ?? null;
-  }
-
-  const currentIndex = occurrences.findIndex((item) => item.key === current.key);
-  if (currentIndex === -1) {
-    return occurrences[0] ?? null;
-  }
-
-  return occurrences[(currentIndex + 1) % occurrences.length] ?? null;
+  const current = findCurrentScheduleOccurrence({
+    occurrences,
+    currentTime: scheduleMoment.time
+  });
+  return findNextScheduleOccurrence({
+    occurrences,
+    currentTime: scheduleMoment.time,
+    currentOccurrence: current
+  });
 }
 
 function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string): AssetRecord | null {

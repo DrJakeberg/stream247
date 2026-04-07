@@ -6,6 +6,8 @@ import {
   buildScheduleOccurrences,
   buildSchedulePreview,
   describePresenceStatus,
+  findCurrentScheduleOccurrence,
+  findNextScheduleOccurrence,
   getDestinationFailureSecondsRemaining as getDestinationFailureHoldSecondsRemaining,
   getScheduleElapsedSeconds,
   getCurrentScheduleMoment,
@@ -289,20 +291,13 @@ export function getCurrentScheduleItem(state: AppState) {
     date: scheduleMoment.date,
     blocks: state.scheduleBlocks
   });
-
-  return (
-    occurrences.find((item) =>
-      isCurrentScheduleTime({
-        startTime: item.startTime,
-        endTime: item.endTime,
-        currentTime: scheduleMoment.time
-      })
-    ) ?? occurrences[0] ?? null
-  );
+  return findCurrentScheduleOccurrence({
+    occurrences,
+    currentTime: scheduleMoment.time
+  });
 }
 
 export function getNextScheduleItem(state: AppState) {
-  const current = getCurrentScheduleItem(state);
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
     timeZone: getWorkspaceTimeZone()
@@ -311,21 +306,15 @@ export function getNextScheduleItem(state: AppState) {
     date: scheduleMoment.date,
     blocks: state.scheduleBlocks
   });
-
-  if (occurrences.length === 0) {
-    return null;
-  }
-
-  if (!current) {
-    return occurrences[0] ?? null;
-  }
-
-  const currentIndex = occurrences.findIndex((item) => item.key === current.key);
-  if (currentIndex === -1) {
-    return occurrences[0] ?? null;
-  }
-
-  return occurrences[(currentIndex + 1) % occurrences.length] ?? null;
+  const current = findCurrentScheduleOccurrence({
+    occurrences,
+    currentTime: scheduleMoment.time
+  });
+  return findNextScheduleOccurrence({
+    occurrences,
+    currentTime: scheduleMoment.time,
+    currentOccurrence: current
+  });
 }
 
 export function getRecentAuditEvents(state: AppState, limit = 20): AuditEvent[] {
