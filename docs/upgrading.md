@@ -22,6 +22,7 @@ Do not use `latest` for unattended production deployments.
    ```bash
    pnpm release:preflight
    ```
+   The preflight rejects blank required settings plus untouched `.env.example` and `.env.production.example` placeholder values, so replace those first.
 6. Update the pinned image tags in your Compose configuration, or rehearse the target version with:
    ```bash
    ./scripts/upgrade-rehearsal.sh v1.0.3
@@ -42,6 +43,7 @@ Useful overrides:
 
 - `CHECK_BASE_URL=http://127.0.0.1:3000` if `APP_URL` is externally routed and not directly reachable from the host
 - `SESSION_COOKIE="stream247_session=..."` if the soak monitor should also fail on open critical incidents from the authenticated incidents API
+- `RELEASE_PREFLIGHT_ENV_FILE=/path/to/production.env` if you want `pnpm release:preflight` to validate a staged env file without replacing the current `.env`
 
 ## Patch vs Minor Upgrades
 
