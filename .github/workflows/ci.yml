@@ -31,8 +31,9 @@ jobs:
       - run: docker build -f docker/worker.Dockerfile -t stream247-worker:test .
       - run: pnpm test:fresh-db
       - run: pnpm test:fresh-compose
-      - run: cp .env.production.example .env
-      - run: RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
+      - id: release-preflight-env
+        run: echo "path=$(./scripts/prepare-release-preflight-env.sh)" >> "$GITHUB_OUTPUT"
+      - run: RELEASE_PREFLIGHT_ENV_FILE="${{ steps.release-preflight-env.outputs.path }}" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: pnpm test:queue-continuity
       - run: pnpm test:runtime-parity

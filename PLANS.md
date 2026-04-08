@@ -79,6 +79,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M16.4 Final Stabilization Fixes | Reliability + Ops | Now | Complete | Resolve the remaining overnight-schedule and release-preflight review regressions | Overnight current blocks keep the correct next/upcoming teasers, quoted-empty env values fail preflight, proxy example values fail preflight when present, and regression coverage proves both behaviors | `packages/core`, `apps/web`, `apps/worker`, scripts, tests, docs | medium | revert helper/preflight tightening if an undiscovered deployment edge case appears |
 | M17.1 Scene Studio V2 Follow-Up Fixes | Reliability + Docs | Now | Complete | Resolve the post-M17 Scene Studio review regressions without widening feature scope | Metadata widgets keep canonical label fallback when no override is set, dedicated YouTube/Twitch embed endpoints remain allowed while normal page URLs stay blocked, agent workflow stops when no incomplete milestone remains, and gap-analysis docs no longer contradict shipped milestone status | `packages/core`, `apps/web`, tests, docs | low-medium | revert the follow-up helper and docs tightening if a new embed or workflow edge case appears |
 | M17.2 Scene Studio V2 Final Follow-Up Fixes | Reliability | Now | Complete | Close the remaining fresh-widget and protocol-relative Scene Studio review regressions | Fresh widget layers switch into metadata-card mode without carrying a default label override, protocol-relative remote URLs follow the same provider boundary rules as absolute remote URLs, and regression coverage proves both behaviors | `packages/core`, `apps/web`, tests, docs | low | revert the follow-up helper tightening if a new frame-source edge case appears |
+| M18 Release Workflow Preflight Alignment | Ops | Now | Complete | Align CI and release workflows with the hardened release-preflight gate | CI and tagged release workflows validate a staged non-placeholder production env instead of copying untouched example values, regression coverage proves the staged env passes preflight, and release docs remain accurate | `.github/workflows`, `scripts`, tests, `PLANS.md` | low | revert workflow/helper changes if the staged env path proves runner-specific |
 
 ## M17 Scene Studio V2
 
@@ -130,6 +131,46 @@ Use additional targeted widget/font/browser tests if the implementation adds the
 - docs updated anywhere supported provider scope, font behavior, or parity wording changes
 - `pnpm validate` and milestone-relevant smoke/browser checks pass
 - summary records supported scope, known provider limits, and any deliberate follow-up gaps
+
+## M18 Release Workflow Preflight Alignment
+
+Status: complete 2026-04-08
+
+**Scope**
+
+- align CI and tagged release workflows with the already-hardened release-preflight contract
+- stop feeding untouched `.env.production.example` values directly into `pnpm release:preflight`
+- add a small reusable helper that prepares a valid staged env file for automation-only preflight runs
+- keep operator-facing production docs conservative and unchanged unless the shipped behavior really differs
+
+**Acceptance Criteria**
+
+- CI and release workflows no longer rely on `cp .env.production.example .env` before `pnpm release:preflight`
+- a staged env file derived from `.env.production.example` is populated with explicit non-placeholder required values for workflow preflight use
+- regression coverage proves the staged env helper output passes `pnpm release:preflight` with `RELEASE_PREFLIGHT_SKIP_VALIDATE=1`
+- local operator guidance still requires replacing real production placeholders manually before live deployment
+
+**Touched Areas**
+
+- `.github/workflows`
+- `scripts`
+- release-preflight regression tests
+- `PLANS.md`
+
+**Validation Commands**
+
+```bash
+pnpm exec vitest run tests/unit/release-preflight.test.ts
+RELEASE_PREFLIGHT_ENV_FILE="$(./scripts/prepare-release-preflight-env.sh)" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
+pnpm validate
+```
+
+**Done Criteria**
+
+- workflow code complete for the scoped release-preflight alignment only
+- regression coverage added for the staged env helper path
+- docs remain accurate and do not imply placeholder configs should pass release preflight
+- `pnpm validate` and milestone-targeted release-preflight checks pass
 
 ## Phase 2 — Post-M9 Audit Follow-Up
 
@@ -405,3 +446,10 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - Updated fresh widget-layer defaults so switching a new widget into Scene data card mode no longer carries a placeholder label override; canonical `Now Playing`, `Next`, and `Later` labels can appear immediately unless the operator explicitly sets an override.
 - Reclassified protocol-relative frame URLs as remote sources, so `//youtube...`, `//player.twitch.tv...`, and other protocol-relative providers now follow the same supported, limited, or unsupported boundary rules as absolute remote URLs.
 - Validation completed: `pnpm exec vitest run tests/unit/overlay-scenes.test.ts tests/unit/overlay-settings-form.test.ts` and `pnpm validate` passed.
+
+### 2026-04-08 — M18 Release Workflow Preflight Alignment
+
+- Replaced the stale CI and tagged-release workflow pattern that copied `.env.production.example` directly into release preflight, because that workflow drifted out of sync with the stricter placeholder rejection already shipped in `scripts/release-preflight.sh`.
+- Added `scripts/prepare-release-preflight-env.sh` so automation can derive a temporary non-placeholder env file from `.env.production.example` without weakening the production gate or changing operator-facing deployment guidance.
+- Added regression coverage that proves the staged workflow env helper produces a release-preflight-safe env file and that the resulting file passes `pnpm release:preflight` with `RELEASE_PREFLIGHT_SKIP_VALIDATE=1`.
+- Validation completed: `pnpm exec vitest run tests/unit/release-preflight.test.ts`, `RELEASE_PREFLIGHT_ENV_FILE="$(./scripts/prepare-release-preflight-env.sh)" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight`, and `pnpm validate` passed.
