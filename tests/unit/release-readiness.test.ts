@@ -165,7 +165,7 @@ afterEach(() => {
 });
 
 describe("release readiness files", () => {
-  it("smoke-validates candidate release artifacts before any push step", () => {
+  it("publishes the already-smoke-tested candidate images instead of rebuilding release tags", () => {
     const workflow = readFileSync(releaseWorkflowPath, "utf8");
     const webCandidateBuild = workflow.indexOf("docker build -f docker/web.Dockerfile -t stream247-web:release-candidate .");
     const workerCandidateBuild = workflow.indexOf("docker build -f docker/worker.Dockerfile -t stream247-worker:release-candidate .");
@@ -174,18 +174,26 @@ describe("release readiness files", () => {
     const composeSmoke = workflow.indexOf(
       "STREAM247_FRESH_COMPOSE_WEB_IMAGE=stream247-web:release-candidate STREAM247_FRESH_COMPOSE_WORKER_IMAGE=stream247-worker:release-candidate STREAM247_FRESH_COMPOSE_PLAYOUT_IMAGE=stream247-playout:release-candidate pnpm test:fresh-compose"
     );
-    const firstPush = workflow.indexOf("push: true");
+    const webPublish = workflow.indexOf('source_image="stream247-web:release-candidate"');
+    const workerPublish = workflow.indexOf('source_image="stream247-worker:release-candidate"');
+    const playoutPublish = workflow.indexOf('source_image="stream247-playout:release-candidate"');
+    const firstPush = workflow.indexOf('docker image push "$tag"');
 
     expect(webCandidateBuild).toBeGreaterThan(-1);
     expect(workerCandidateBuild).toBeGreaterThan(webCandidateBuild);
     expect(playoutCandidateBuild).toBeGreaterThan(workerCandidateBuild);
     expect(webSmoke).toBeGreaterThan(playoutCandidateBuild);
     expect(composeSmoke).toBeGreaterThan(webSmoke);
+    expect(webPublish).toBeGreaterThan(composeSmoke);
+    expect(workerPublish).toBeGreaterThan(webPublish);
+    expect(playoutPublish).toBeGreaterThan(workerPublish);
     expect(firstPush).toBeGreaterThan(composeSmoke);
+    expect(workflow).not.toContain("docker/build-push-action@v6");
+    expect(workflow).toContain('target_id="$(docker image inspect "$tag" --format \'{{.Id}}\')"');
   });
 
   it("adds restart policies to the always-on production services", () => {
-    for (const serviceName of ["web", "worker", "playout", "postgres", "redis"]) {
+    for (const serviceName of ["traefik", "web", "worker", "playout", "postgres", "redis"]) {
       expect(extractComposeServiceBlock(serviceName)).toContain("restart: unless-stopped");
     }
   });
