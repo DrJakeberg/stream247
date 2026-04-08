@@ -123,15 +123,14 @@ These parity points are bounded. Stream247 does not yet match public Upstream be
 
 Top missing product capabilities:
 
-1. stale-write safety fixes for asset/source admin flows and deployment-safe update-center version lookup
-2. deeper scene composition: metadata-driven widgets, broader typography control, conservative custom-font handling, and richer scene-automation blocks
-3. deeper persistent queue and transition controller with less reliance on hard encoder restarts
-4. deeper `Channel Blueprints` support such as more automatic cross-install media remapping and richer reusable programming packages
-5. richer ad-rule families and deeper timed-insert tooling beyond the current safe-boundary cuepoint model
-6. broader browser-driven embed compatibility and provider-specific widget guidance beyond the current sandboxed layer model
-7. stronger per-output operator controls and destination-specific recovery UI
-8. richer audio routing, layered mixing, and crossfade behavior beyond the current replace-mode lanes
-9. longer-running soak coverage, broader browser E2E depth, and deeper `Live Bridge` source management
+1. deeper scene composition beyond the shipped metadata widgets, conservative local font handling, and current positioned-layer model
+2. deeper persistent queue and transition controller with less reliance on hard encoder restarts
+3. deeper `Channel Blueprints` support such as more automatic cross-install media remapping and richer reusable programming packages
+4. richer ad-rule families and deeper timed-insert tooling beyond the current safe-boundary cuepoint model
+5. broader browser-driven embed compatibility beyond the current explicit supported, limited, and unsupported provider guidance
+6. stronger per-output operator controls and destination-specific recovery UI
+7. richer audio routing, layered mixing, and crossfade behavior beyond the current replace-mode lanes
+8. longer-running soak coverage, broader browser E2E depth, and deeper `Live Bridge` source management
 
 ## Legal Constraints
 
@@ -162,7 +161,7 @@ Top missing product capabilities:
 
 ## Recommended Implementation Order
 
-`M10` through `M17` are now complete in the current repo.
+`M10` through `M17` are now complete in the current repo, but those completed milestones still leave broader product-depth gaps listed above.
 
 If follow-on work continues beyond the current roadmap, the next highest-value areas are:
 

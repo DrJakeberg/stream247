@@ -793,13 +793,32 @@ export function describeOverlaySceneFrameSupport(value: string): OverlaySceneFra
   try {
     const url = new URL(normalized);
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const path = url.pathname.toLowerCase();
 
-    if (host === "youtu.be" || host.endsWith("youtube.com")) {
+    if (["youtube.com", "m.youtube.com", "youtube-nocookie.com"].includes(host)) {
+      if (path.startsWith("/embed/")) {
+        return {
+          providerLabel: "YouTube",
+          status: "limited",
+          badgeLabel: "Limited",
+          guidance: "Dedicated YouTube embed endpoints may work, but provider iframe policies can still change. Validate the published overlay before relying on it."
+        };
+      }
+
       return {
         providerLabel: "YouTube",
         status: "unsupported",
         badgeLabel: "Unsupported",
         guidance: "YouTube pages are not a supported Scene Studio frame source. Use regular channel programming or a captured browser source instead."
+      };
+    }
+
+    if (host === "player.twitch.tv") {
+      return {
+        providerLabel: "Twitch",
+        status: "limited",
+        badgeLabel: "Limited",
+        guidance: "Dedicated Twitch player endpoints may work when their required parent-domain rules are satisfied. Validate the published overlay before relying on it."
       };
     }
 
@@ -937,12 +956,13 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
         fit: normalizeOverlaySceneCustomMediaFit(raw.fit)
       });
     } else if (raw.kind === "widget") {
+      const widgetMode = normalizeOverlaySceneCustomWidgetMode(raw.widgetMode);
       normalized.push({
         ...base,
         kind: "widget",
         url: sanitizeOverlaySceneUrl(raw.url),
-        title: String(raw.title || "").trim().slice(0, 80) || "Widget Layer",
-        widgetMode: normalizeOverlaySceneCustomWidgetMode(raw.widgetMode),
+        title: widgetMode === "metadata" ? String(raw.title || "").trim().slice(0, 80) : String(raw.title || "").trim().slice(0, 80) || "Widget Layer",
+        widgetMode,
         widgetDataKey: normalizeOverlaySceneCustomWidgetDataKey(raw.widgetDataKey)
       });
     } else {

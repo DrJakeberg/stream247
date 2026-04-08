@@ -6,7 +6,7 @@
 - Docs must stay in sync with behavior.
 - No new dependency may be added without a short reason in the summary.
 - Do not stop after a partial implementation if the next safe step is obvious.
-- Stop only for a hard blocker.
+- Stop only for a hard blocker, or when `PLANS.md` has no incomplete milestone remaining.
 
 ## Hard Blocker
 
@@ -28,8 +28,8 @@ A hard blocker is only one of the following:
 - summary written with changed files, risks, and follow-up items
 
 ## Workflow
-After completing a milestone, automatically continue with the next incomplete milestone.
+After completing a milestone, automatically continue with the next incomplete milestone when one exists in `PLANS.md`.
 Do not pause merely to summarize progress.
 Commit exactly one commit per completed milestone.
 Push the current branch after each successful milestone commit.
-Stop only for a hard blocker.
+Stop when `PLANS.md` has no incomplete milestone remaining, or when a hard blocker occurs.
