@@ -2,6 +2,8 @@
 
 import {
   OVERLAY_SCENE_CUSTOM_LAYER_KINDS,
+  OVERLAY_SCENE_CUSTOM_TEXT_FONT_MODES,
+  OVERLAY_SCENE_CUSTOM_WIDGET_DATA_KEYS,
   OVERLAY_SCENE_LAYERS,
   OVERLAY_PANEL_ANCHORS,
   OVERLAY_SCENE_PRESETS,
@@ -9,11 +11,14 @@ import {
   OVERLAY_TYPOGRAPHY_PRESETS,
   OVERLAY_TITLE_SCALES,
   buildOverlayScenePayload,
+  describeOverlaySceneFrameSupport,
   resolveOverlayHeadlineForQueueKind,
   type OverlayQueueKind,
   type OverlaySceneCustomMediaFit,
   type OverlaySceneCustomTextAlign,
+  type OverlaySceneCustomTextFontMode,
   type OverlaySceneCustomTextTone,
+  type OverlaySceneCustomWidgetDataKey,
   type OverlaySceneCustomLayerKind,
   type OverlaySceneLayerKind
 } from "@stream247/core";
@@ -60,7 +65,9 @@ function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): OverlayDra
       secondaryText: "",
       textTone: "headline",
       textAlign: "left",
-      useAccent: false
+      useAccent: false,
+      fontMode: "preset",
+      customFontFamily: ""
     };
   }
 
@@ -98,10 +105,28 @@ function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): OverlayDra
     };
   }
 
+  if (kind === "widget") {
+    return {
+      id,
+      kind,
+      name: "Widget Layer",
+      enabled: true,
+      xPercent: 56,
+      yPercent: 8,
+      widthPercent: 38,
+      heightPercent: 28,
+      opacityPercent: 100,
+      url: "",
+      title: "Widget frame",
+      widgetMode: "embed",
+      widgetDataKey: "current"
+    };
+  }
+
   return {
     id,
-    kind,
-    name: kind === "widget" ? "Widget Layer" : "Embed Layer",
+    kind: "embed",
+    name: "Embed Layer",
     enabled: true,
     xPercent: 56,
     yPercent: 8,
@@ -109,7 +134,7 @@ function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): OverlayDra
     heightPercent: 28,
     opacityPercent: 100,
     url: "",
-    title: kind === "widget" ? "Widget frame" : "Embed frame"
+    title: "Embed frame"
   };
 }
 
@@ -628,8 +653,9 @@ export function OverlaySettingsForm(props: {
             <div className="item">
               <span className="label">Positioned layers</span>
               <div className="subtle">
-                Add custom text, logo, image, website, or widget layers on top of the preset layout. Stream247 keeps these layers on built-in font stacks
-                and only accepts local or http/https URLs for image and embed sources.
+                Add custom text, logo, image, website, or widget layers on top of the preset layout. Text layers can switch to safe local font
+                stacks, metadata widgets can read from the canonical scene payload, and browser frames remain limited by each provider&apos;s iframe
+                and CSP rules.
               </div>
               <div className="inline-form" style={{ marginTop: 12 }}>
                 {OVERLAY_SCENE_CUSTOM_LAYER_KINDS.map((layerKind) => (
@@ -829,6 +855,46 @@ export function OverlaySettingsForm(props: {
                             />
                             <span>Use accent color</span>
                           </label>
+                          <label>
+                            <span className="label">Text font</span>
+                            <select
+                              onChange={(event) =>
+                                updateCustomLayer(layer.id, (current) =>
+                                  current.kind === "text"
+                                    ? { ...current, fontMode: event.target.value as OverlaySceneCustomTextFontMode }
+                                    : current
+                                )
+                              }
+                              value={layer.fontMode}
+                            >
+                              {OVERLAY_SCENE_CUSTOM_TEXT_FONT_MODES.map((mode) => (
+                                <option key={mode.id} value={mode.id}>
+                                  {mode.label}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="subtle">
+                              {OVERLAY_SCENE_CUSTOM_TEXT_FONT_MODES.find((mode) => mode.id === layer.fontMode)?.description}
+                            </span>
+                          </label>
+                          {layer.fontMode === "custom-local" ? (
+                            <label>
+                              <span className="label">Custom local font stack</span>
+                              <input
+                                onChange={(event) =>
+                                  updateCustomLayer(layer.id, (current) =>
+                                    current.kind === "text" ? { ...current, customFontFamily: event.target.value } : current
+                                  )
+                                }
+                                placeholder="Aptos, Segoe UI, Helvetica Neue"
+                                value={layer.customFontFamily}
+                              />
+                              <span className="subtle">
+                                Stream247 does not download remote fonts. This stack only resolves when those font families already exist on the
+                                browser host or worker image.
+                              </span>
+                            </label>
+                          ) : null}
                         </div>
                       ) : null}
 
@@ -878,6 +944,72 @@ export function OverlaySettingsForm(props: {
 
                       {layer.kind === "embed" || layer.kind === "widget" ? (
                         <div className="form-grid" style={{ marginTop: 12 }}>
+                          {layer.kind === "widget" ? (
+                            <label>
+                              <span className="label">Widget mode</span>
+                              <select
+                                onChange={(event) =>
+                                  updateCustomLayer(layer.id, (current) =>
+                                    current.kind === "widget"
+                                      ? { ...current, widgetMode: event.target.value === "metadata" ? "metadata" : "embed" }
+                                      : current
+                                  )
+                                }
+                                value={layer.widgetMode}
+                              >
+                                <option value="embed">Browser widget frame</option>
+                                <option value="metadata">Scene data card</option>
+                              </select>
+                              <span className="subtle">
+                                Metadata cards render from the canonical Scene Studio payload. Browser widget frames still depend on provider iframe
+                                support.
+                              </span>
+                            </label>
+                          ) : null}
+                          {layer.kind === "widget" && layer.widgetMode === "metadata" ? (
+                            <>
+                              <label>
+                                <span className="label">Scene data</span>
+                                <select
+                                  onChange={(event) =>
+                                    updateCustomLayer(layer.id, (current) =>
+                                      current.kind === "widget"
+                                        ? { ...current, widgetDataKey: event.target.value as OverlaySceneCustomWidgetDataKey }
+                                        : current
+                                    )
+                                  }
+                                  value={layer.widgetDataKey}
+                                >
+                                  {OVERLAY_SCENE_CUSTOM_WIDGET_DATA_KEYS.map((entry) => (
+                                    <option key={entry.id} value={entry.id}>
+                                      {entry.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <span className="subtle">
+                                  {OVERLAY_SCENE_CUSTOM_WIDGET_DATA_KEYS.find((entry) => entry.id === layer.widgetDataKey)?.description}
+                                </span>
+                              </label>
+                              <label>
+                                <span className="label">Widget label override</span>
+                                <input
+                                  onChange={(event) =>
+                                    updateCustomLayer(layer.id, (current) =>
+                                      current.kind === "widget" ? { ...current, title: event.target.value } : current
+                                    )
+                                  }
+                                  placeholder="Optional label override"
+                                  value={layer.title}
+                                />
+                              </label>
+                              <div className="subtle" style={{ gridColumn: "1 / -1" }}>
+                                This widget stays inside the published Scene Studio contract and mirrors browser plus on-air scene data without a
+                                third-party iframe.
+                              </div>
+                            </>
+                          ) : null}
+                          {layer.kind === "embed" || (layer.kind === "widget" && layer.widgetMode === "embed") ? (
+                            <>
                           <label>
                             <span className="label">Embed URL</span>
                             <input
@@ -889,6 +1021,9 @@ export function OverlaySettingsForm(props: {
                               placeholder="https://example.com/embed"
                               value={layer.url}
                             />
+                            <span className="subtle">
+                              {describeOverlaySceneFrameSupport(layer.url).badgeLabel} · {describeOverlaySceneFrameSupport(layer.url).providerLabel}
+                            </span>
                           </label>
                           <label>
                             <span className="label">Frame title</span>
@@ -901,6 +1036,11 @@ export function OverlaySettingsForm(props: {
                               value={layer.title}
                             />
                           </label>
+                          <div className="subtle" style={{ gridColumn: "1 / -1" }}>
+                            {describeOverlaySceneFrameSupport(layer.url).guidance}
+                          </div>
+                            </>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>

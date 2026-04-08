@@ -41,7 +41,7 @@ Current Stream247 repo truth:
   - staged multi-output recovery with per-destination cooldown visibility and an explicit operator-triggered rejoin path
   - persistent queue state with current, next, previous, and transition-target visibility
   - operator queue actions for play now, move next, remove next, and replay previous
-  - overlay draft/publish, scene presets, layer order/visibility, positioned text/logo/image/embed/widget layers, built-in typography presets, ticker/badge controls, and a canonical scene payload shared by browser and playout consumers
+  - overlay draft/publish, scene presets, layer order/visibility, positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, built-in typography presets, conservative local font-stack overrides, ticker/badge controls, and a canonical scene payload shared by browser and playout consumers
   - optional two-factor authentication for local owner accounts
   - browser smoke coverage for setup bootstrap, secondary-output creation, local 2FA login, on-air controls, and Scene Studio publish
   - runtime parity smoke coverage for Multi-Output fanout, replace-mode audio lanes, cuepoint inserts, and `Live Bridge` takeover/release on a fresh Compose stack
@@ -59,8 +59,8 @@ Current Stream247 repo truth:
 | 24/7 prerecorded streaming | Public product positioning and help docs clearly center on permanent pre-recorded live channels | Parity | README, worker runtime, playout docs | keep strengthening reliability | M3 | Must stay self-hosted, Docker-first |
 | Scheduling and repeat behavior | Public docs/blog describe scheduling, repeat every day, and reliable automation | Partial parity | schedule blocks, templates, repeat sets, materialized fill preview, queue-aware editor, show profiles, and safe-boundary cuepoint inserts | still needs deeper long-form ad rule families, stronger recurring editing, and denser calendar ergonomics | M12, M14 | Preserve current weekly block model and extend it |
 | Live playback controls | Public pages and docs show live controls, refresh/hard reload, and playlist control | Partial parity | broadcast workspace and broadcast actions | core controls exist, but deeper queue surgery, jump/rewind-style controls, and denser operator workflow remain partial | M12, M14 | Keep original naming as `On-Air Controls` |
-| Stream designer / overlay designer | Public designer supports layered overlays, custom fonts, current media metadata, and more | Partial parity | overlay studio with presets, draft/publish workflow, positioned text/logo/image/embed/widget layers, built-in typography presets, shared scene payload contract, and an on-air scene renderer v1 | richer current-media widgets, remote/custom font handling, and broader designer depth remain partial | M11 | Do not copy Upstream visual design or naming |
-| Websites and widget embeds | Public help covers website embeds and StreamElements-style widgets/alerts | Partial parity | sandboxed website/widget scene layers now render inside the published browser overlay and shared scene contract | third-party CSP, iframe, and X-Frame-Options policies still limit real-world provider compatibility | M11 | Respect CSP, iframe, and X-Frame-Options limits |
+| Stream designer / overlay designer | Public designer supports layered overlays, custom fonts, current media metadata, and more | Partial parity | overlay studio with presets, draft/publish workflow, positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, conservative local font-stack overrides, shared scene payload contract, and an on-air scene renderer v1 | broader scene automation and cloud-style composition depth remain partial | M17 | Do not copy Upstream visual design or naming |
+| Websites and widget embeds | Public help covers website embeds and StreamElements-style widgets/alerts | Partial parity | sandboxed website/widget scene layers now render inside the published browser overlay and shared scene contract, with explicit supported, limited, and unsupported provider guidance | third-party CSP, iframe, and X-Frame-Options policies still limit real-world provider compatibility | M17 | Respect CSP, iframe, and X-Frame-Options limits |
 | Reusable playlists / designer presets | Public help supports saving and loading playlists and designer settings | Partial parity | overlay scene preset library plus selective `Channel Blueprint` export/import now exist | still missing deeper reusable programming bundles and more automatic cross-install media remapping | M13 | Use original `Channel Blueprints` naming |
 | RTMP destinations | Public docs cover custom RTMP and platform-specific outputs | Partial parity | built-in primary/backup outputs plus additional managed RTMP outputs, staged recovery, and per-destination cooldown visibility | routing works, but per-output platform guidance and broader recovery automation remain partial | M12, M15 | Keep current primary/backup flow functional |
 | Multistream outputs | Public help says one stream can be sent to many platforms | Partial parity | multi-output delivery groups with health-aware primary/backup routing plus staged recovered-output rejoin on natural transitions or operator request, with runtime parity smoke proof for simultaneous primary fanout on a fresh Compose stack | concurrent outputs exist, but platform breadth remains partial and RTMP-focused | M12, M15 | Must not assume cloud delivery infrastructure |
@@ -102,7 +102,7 @@ These parity points are bounded. Stream247 does not yet match public Upstream be
 
 ## Partial Parity
 
-- scene/overlay system with positioned layers and built-in typography presets
+- scene/overlay system with positioned layers, metadata widgets, and conservative local font-stack overrides
 - scene contract unification across browser and playout consumers
 - reusable presets
 - media library and uploads
@@ -162,18 +162,9 @@ Top missing product capabilities:
 
 ## Recommended Implementation Order
 
-`M10` through `M15` are now complete in the current repo.
+`M10` through `M17` are now complete in the current repo.
 
-If follow-on work continues beyond the current roadmap, the next planned milestone is `M17 Scene Studio V2`.
-
-Its conservative scope should stay limited to:
-
-1. metadata-driven `Scene Studio` widgets for current, next, or queue-facing broadcast data
-2. broader typography controls plus conservative custom-font handling with explicit fallbacks
-3. clearer supported and unsupported embed/provider guidance where browser security policies limit compatibility
-4. scene-authoring depth that does not imply full upstream parity or broad third-party widget support
-
-After that milestone, the next highest-value areas remain:
+If follow-on work continues beyond the current roadmap, the next highest-value areas are:
 
 1. richer continuity/recovery semantics and destination-specific guidance beyond the current staged recovery proof
 2. broader audio mixing, crossfades, and deeper ad-rule families beyond replace-mode lanes and safe-boundary cuepoints

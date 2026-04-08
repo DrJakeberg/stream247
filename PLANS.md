@@ -78,13 +78,11 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M16.3 Release Preflight Hardening | Ops | Now | Complete | Reject placeholder production configs before release | Release preflight fails on blank/example values, regression tests cover the gate, and docs describe the stricter checks accurately | scripts, tests, docs | low | revert preflight validation tightening if it blocks valid pinned configs |
 | M16.4 Final Stabilization Fixes | Reliability + Ops | Now | Complete | Resolve the remaining overnight-schedule and release-preflight review regressions | Overnight current blocks keep the correct next/upcoming teasers, quoted-empty env values fail preflight, proxy example values fail preflight when present, and regression coverage proves both behaviors | `packages/core`, `apps/web`, `apps/worker`, scripts, tests, docs | medium | revert helper/preflight tightening if an undiscovered deployment edge case appears |
 
-## Next Planned Milestone
+## M17 Scene Studio V2
 
-The historical `M11 Scene Studio V2` implementation completed on 2026-04-06. The next planned implementation pass remains in the same product area because the highest-value remaining gap is still deeper `Scene Studio` behavior. This section is a forward-looking execution brief only. It does not reopen the completed `M11` record above and does not claim full upstream parity.
+The historical `M11 Scene Studio V2` implementation completed on 2026-04-06. `M17` is the follow-on pass that deepens the same product area without reopening or rewriting the completed `M11` record. The scope remains bounded and does not claim full upstream parity.
 
-### M17 Scene Studio V2
-
-Status: planned next after `M16.4`
+Status: complete 2026-04-08
 
 **Scope**
 
@@ -153,7 +151,7 @@ Phase 2 starts with `M10 Truth And Safety Fixes` and then continues into deeper 
 - `Complete` M8 Audio Lanes, Cuepoints, Advanced Inserts
 - `Now` M10 Truth And Safety Fixes
 - `Complete` M11 Scene Studio V2
-- `Next` M17 Scene Studio V2
+- `Complete` M17 Scene Studio V2
 - `Complete` M13 Library And Blueprints V2
 - `Not Planned` visual cloning of Upstream UI or branding
 
@@ -385,3 +383,10 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - Added overnight regression coverage for helper selection plus broadcast snapshot behavior so web and worker standby consumers keep the correct upcoming block after `23:00-01:00` style schedules.
 - Tightened release preflight again so quoted-empty required values fail like blank values, and Traefik proxy settings fail when they still carry documented example defaults.
 - Validation completed: `pnpm exec vitest run tests/integration/schedule-preview.test.ts tests/unit/ops-state.test.ts tests/unit/release-preflight.test.ts`, `RELEASE_PREFLIGHT_ENV_FILE=<temp> RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight`, `pnpm test:fresh-compose`, and `pnpm validate` passed.
+
+### 2026-04-08 — M17 Scene Studio V2
+
+- Added metadata-driven Scene Studio widgets for current, next, and queue-facing broadcast data so published scenes can display canonical snapshot data without relying on third-party iframes.
+- Added conservative local font-stack overrides for positioned text layers with explicit fallback behavior; Stream247 still does not download remote fonts and only resolves font family names already present on the browser host or worker image.
+- Tightened embed and browser-widget guidance so local paths are treated as the reliable self-hosted path, generic third-party frames are marked limited, and known unsupported YouTube/Twitch page URLs render as blocked placeholders instead of pretending to be supported.
+- Validation completed: targeted `overlay-scenes` regression tests, `pnpm test:fresh-db`, `pnpm test:fresh-compose`, `pnpm test:e2e:smoke`, Docker image builds, and `pnpm validate` passed.

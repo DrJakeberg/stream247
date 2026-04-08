@@ -1092,7 +1092,8 @@ button.collection-chip {
 
 .overlay-custom-layer-text,
 .overlay-custom-layer-media,
-.overlay-custom-layer-embed {
+.overlay-custom-layer-embed,
+.overlay-custom-layer-widget-data {
   border-radius: 22px;
   overflow: hidden;
 }
@@ -1155,6 +1156,18 @@ button.collection-chip {
   backdrop-filter: blur(12px);
 }
 
+.overlay-custom-layer-widget-data {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(8, 15, 13, 0.72), rgba(8, 15, 13, 0.46)),
+    color-mix(in srgb, var(--overlay-accent) 18%, rgba(8, 15, 13, 0.46));
+  backdrop-filter: blur(12px);
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 20px 22px;
+}
+
 .overlay-custom-layer-image,
 .overlay-custom-layer-iframe,
 .overlay-custom-layer-placeholder {
@@ -1200,6 +1213,57 @@ button.collection-chip {
   font-size: 0.72rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.overlay-custom-layer-support-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: rgba(8, 15, 13, 0.72);
+}
+
+.overlay-custom-layer-support-supported {
+  color: #dff7ee;
+  background: color-mix(in srgb, #1d7a58 68%, rgba(8, 15, 13, 0.72));
+}
+
+.overlay-custom-layer-support-limited {
+  color: #f7f1e6;
+  background: color-mix(in srgb, #7d5b1b 58%, rgba(8, 15, 13, 0.72));
+}
+
+.overlay-custom-layer-support-unsupported {
+  color: #fbe4e7;
+  background: color-mix(in srgb, #8b1e2d 68%, rgba(8, 15, 13, 0.72));
+}
+
+.overlay-custom-layer-widget-label {
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(245, 242, 234, 0.74);
+}
+
+.overlay-custom-layer-widget-title {
+  font-size: clamp(1.2rem, 2vw, 2.2rem);
+  line-height: 1.02;
+  font-weight: 700;
+}
+
+.overlay-custom-layer-widget-body,
+.overlay-custom-layer-widget-secondary {
+  color: rgba(245, 242, 234, 0.76);
+  line-height: 1.3;
+}
+
+.overlay-custom-layer-widget-secondary {
+  font-size: 0.92rem;
 }
 
 @media (max-width: 900px) {

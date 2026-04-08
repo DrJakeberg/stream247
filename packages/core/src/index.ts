@@ -43,6 +43,10 @@ export type OverlaySceneCustomLayerKind = "text" | "logo" | "image" | "embed" | 
 export type OverlaySceneCustomTextTone = "headline" | "body" | "caption";
 export type OverlaySceneCustomTextAlign = "left" | "center" | "right";
 export type OverlaySceneCustomMediaFit = "contain" | "cover";
+export type OverlaySceneCustomTextFontMode = "preset" | "safe-sans" | "safe-serif" | "safe-mono" | "custom-local";
+export type OverlaySceneCustomWidgetMode = "embed" | "metadata";
+export type OverlaySceneCustomWidgetDataKey = "current" | "next" | "queue";
+export type OverlaySceneFrameSupportStatus = "supported" | "limited" | "unsupported";
 
 type OverlaySceneCustomLayerBase = {
   id: string;
@@ -63,6 +67,8 @@ export type OverlaySceneCustomTextLayer = OverlaySceneCustomLayerBase & {
   textTone: OverlaySceneCustomTextTone;
   textAlign: OverlaySceneCustomTextAlign;
   useAccent: boolean;
+  fontMode: OverlaySceneCustomTextFontMode;
+  customFontFamily: string;
 };
 
 export type OverlaySceneCustomMediaLayer = OverlaySceneCustomLayerBase & {
@@ -73,15 +79,24 @@ export type OverlaySceneCustomMediaLayer = OverlaySceneCustomLayerBase & {
 };
 
 export type OverlaySceneCustomEmbedLayer = OverlaySceneCustomLayerBase & {
-  kind: "embed" | "widget";
+  kind: "embed";
   url: string;
   title: string;
+};
+
+export type OverlaySceneCustomWidgetLayer = OverlaySceneCustomLayerBase & {
+  kind: "widget";
+  url: string;
+  title: string;
+  widgetMode: OverlaySceneCustomWidgetMode;
+  widgetDataKey: OverlaySceneCustomWidgetDataKey;
 };
 
 export type OverlaySceneCustomLayer =
   | OverlaySceneCustomTextLayer
   | OverlaySceneCustomMediaLayer
-  | OverlaySceneCustomEmbedLayer;
+  | OverlaySceneCustomEmbedLayer
+  | OverlaySceneCustomWidgetLayer;
 
 export type OverlayScenePresetDefinition = {
   id: OverlayScenePreset;
@@ -129,6 +144,20 @@ export type OverlayScenePayload = {
   tickerText: string;
   emergencyBanner: string;
   timeZone: string;
+};
+
+export type OverlaySceneFrameSupport = {
+  providerLabel: string;
+  status: OverlaySceneFrameSupportStatus;
+  badgeLabel: string;
+  guidance: string;
+};
+
+export type OverlaySceneMetadataWidgetContent = {
+  label: string;
+  title: string;
+  body: string;
+  secondary: string;
 };
 
 export type OverlaySceneSource = {
@@ -419,6 +448,52 @@ export const OVERLAY_TYPOGRAPHY_PRESETS: OverlayOptionDefinition<OverlayTypograp
   }
 ];
 
+export const OVERLAY_SCENE_CUSTOM_TEXT_FONT_MODES: OverlayOptionDefinition<OverlaySceneCustomTextFontMode>[] = [
+  {
+    id: "preset",
+    label: "Scene preset",
+    description: "Follow the overlay-wide typography preset."
+  },
+  {
+    id: "safe-sans",
+    label: "Broadcast Sans",
+    description: "Use a conservative local sans stack without loading remote fonts."
+  },
+  {
+    id: "safe-serif",
+    label: "Broadcast Serif",
+    description: "Use a conservative local serif stack without loading remote fonts."
+  },
+  {
+    id: "safe-mono",
+    label: "Broadcast Mono",
+    description: "Use a conservative local monospace stack without loading remote fonts."
+  },
+  {
+    id: "custom-local",
+    label: "Custom local stack",
+    description: "Use only font family names already installed in the browser or worker environment."
+  }
+];
+
+export const OVERLAY_SCENE_CUSTOM_WIDGET_DATA_KEYS: OverlayOptionDefinition<OverlaySceneCustomWidgetDataKey>[] = [
+  {
+    id: "current",
+    label: "Current block",
+    description: "Show the current title, category, and live scene metadata."
+  },
+  {
+    id: "next",
+    label: "Next block",
+    description: "Show the upcoming title and schedule window."
+  },
+  {
+    id: "queue",
+    label: "Queue preview",
+    description: "Show the later queue line from the current broadcast snapshot."
+  }
+];
+
 export const OVERLAY_SCENE_CUSTOM_LAYER_KINDS: OverlayOptionDefinition<OverlaySceneCustomLayerKind>[] = [
   {
     id: "text",
@@ -530,6 +605,18 @@ export function normalizeOverlayTypographyPreset(value: string): OverlayTypograp
   return OVERLAY_TYPOGRAPHY_PRESETS.some((entry) => entry.id === value) ? (value as OverlayTypographyPreset) : "studio-sans";
 }
 
+function normalizeOverlaySceneCustomTextFontMode(value: unknown): OverlaySceneCustomTextFontMode {
+  return OVERLAY_SCENE_CUSTOM_TEXT_FONT_MODES.some((entry) => entry.id === value) ? (value as OverlaySceneCustomTextFontMode) : "preset";
+}
+
+function normalizeOverlaySceneCustomWidgetMode(value: unknown): OverlaySceneCustomWidgetMode {
+  return value === "metadata" ? "metadata" : "embed";
+}
+
+function normalizeOverlaySceneCustomWidgetDataKey(value: unknown): OverlaySceneCustomWidgetDataKey {
+  return value === "next" || value === "queue" ? value : "current";
+}
+
 export function normalizeScheduleRepeatMode(value: string): ScheduleRepeatMode {
   return SCHEDULE_REPEAT_MODE_OPTIONS.some((entry) => entry.id === value) ? (value as ScheduleRepeatMode) : "single";
 }
@@ -601,6 +688,25 @@ function sanitizeOverlaySceneUrl(value: unknown): string {
   }
 }
 
+function sanitizeOverlaySceneCustomFontFamily(value: unknown): string {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (/[;{}<>\\\n\r]/.test(trimmed) || /url\s*\(|@import/i.test(trimmed)) {
+    return "";
+  }
+
+  const families = trimmed
+    .split(",")
+    .map((entry) => entry.trim().replace(/^['"]+|['"]+$/g, "").replace(/\s+/g, " "))
+    .filter((entry) => entry.length > 0 && entry.length <= 48 && /^[a-z0-9 ._'-]+$/i.test(entry))
+    .slice(0, 6);
+
+  return families.join(", ").slice(0, 240);
+}
+
 function sanitizeOverlaySceneCustomLayerId(value: unknown, index: number): string {
   const cleaned = String(value || "")
     .trim()
@@ -625,6 +731,153 @@ function normalizeOverlaySceneCustomTextAlign(value: unknown): OverlaySceneCusto
 
 function normalizeOverlaySceneCustomMediaFit(value: unknown): OverlaySceneCustomMediaFit {
   return value === "cover" ? "cover" : "contain";
+}
+
+function getOverlayTypographyPresetFontStack(value: OverlayTypographyPreset): string {
+  if (value === "editorial-serif") {
+    return `"Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif`;
+  }
+
+  if (value === "signal-mono") {
+    return `"IBM Plex Mono", ui-monospace, monospace`;
+  }
+
+  return `Inter, "Segoe UI", ui-sans-serif, system-ui, sans-serif`;
+}
+
+export function resolveOverlaySceneCustomTextFontStack(args: {
+  fontMode: OverlaySceneCustomTextFontMode;
+  customFontFamily?: string;
+  typographyPreset: OverlayTypographyPreset;
+}): string | null {
+  if (args.fontMode === "preset") {
+    return null;
+  }
+
+  if (args.fontMode === "safe-serif") {
+    return getOverlayTypographyPresetFontStack("editorial-serif");
+  }
+
+  if (args.fontMode === "safe-mono") {
+    return getOverlayTypographyPresetFontStack("signal-mono");
+  }
+
+  if (args.fontMode === "custom-local") {
+    const sanitized = sanitizeOverlaySceneCustomFontFamily(args.customFontFamily);
+    return sanitized ? `${sanitized}, ${getOverlayTypographyPresetFontStack(args.typographyPreset)}` : getOverlayTypographyPresetFontStack(args.typographyPreset);
+  }
+
+  return getOverlayTypographyPresetFontStack("studio-sans");
+}
+
+export function describeOverlaySceneFrameSupport(value: string): OverlaySceneFrameSupport {
+  const normalized = sanitizeOverlaySceneUrl(value);
+  if (!normalized) {
+    return {
+      providerLabel: "No source",
+      status: "limited",
+      badgeLabel: "Needs URL",
+      guidance: "Enter a local path or https URL before Scene Studio can evaluate browser-frame support."
+    };
+  }
+
+  if (normalized.startsWith("/")) {
+    return {
+      providerLabel: "Local overlay source",
+      status: "supported",
+      badgeLabel: "Self-hosted",
+      guidance: "Local and same-origin browser frames are the most reliable Scene Studio embeds."
+    };
+  }
+
+  try {
+    const url = new URL(normalized);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+
+    if (host === "youtu.be" || host.endsWith("youtube.com")) {
+      return {
+        providerLabel: "YouTube",
+        status: "unsupported",
+        badgeLabel: "Unsupported",
+        guidance: "YouTube pages are not a supported Scene Studio frame source. Use regular channel programming or a captured browser source instead."
+      };
+    }
+
+    if (host.endsWith("twitch.tv")) {
+      return {
+        providerLabel: "Twitch",
+        status: "unsupported",
+        badgeLabel: "Unsupported",
+        guidance: "Twitch pages and players are not a supported Scene Studio frame source here. Use Live Bridge or scheduled sources instead."
+      };
+    }
+
+    if (host.endsWith("streamelements.com")) {
+      return {
+        providerLabel: "StreamElements",
+        status: "limited",
+        badgeLabel: "Limited",
+        guidance: "Use the provider's dedicated embed endpoint when available. Third-party iframe or CSP rules can still block rendering."
+      };
+    }
+
+    if (host.endsWith("streamlabs.com")) {
+      return {
+        providerLabel: "Streamlabs",
+        status: "limited",
+        badgeLabel: "Limited",
+        guidance: "Only dedicated widget embed endpoints are expected to work, and third-party iframe policies can still block rendering."
+      };
+    }
+
+    return {
+      providerLabel: url.host,
+      status: "limited",
+      badgeLabel: "Limited",
+      guidance: "Remote websites render only when their own iframe and CSP policies allow it. Validate each provider in the published overlay."
+    };
+  } catch {
+    return {
+      providerLabel: "Unknown source",
+      status: "unsupported",
+      badgeLabel: "Unsupported",
+      guidance: "The frame URL is invalid or unsupported."
+    };
+  }
+}
+
+export function buildOverlaySceneMetadataWidgetContent(args: {
+  payload: OverlayScenePayload;
+  widgetDataKey: OverlaySceneCustomWidgetDataKey;
+  labelOverride?: string;
+}): OverlaySceneMetadataWidgetContent {
+  const labelOverride = String(args.labelOverride || "").trim();
+
+  if (args.widgetDataKey === "next") {
+    return {
+      label: labelOverride || args.payload.nextLabel || "Next",
+      title: args.payload.nextTitle || "No next block configured",
+      body: args.payload.nextTimeLabel || "Schedule timing not available",
+      secondary: args.payload.scheduleAux || ""
+    };
+  }
+
+  if (args.widgetDataKey === "queue") {
+    const queueTitle = args.payload.queueTitles[0] || args.payload.queueTitleLine || "Queue preview pending";
+    return {
+      label: labelOverride || "Later",
+      title: queueTitle,
+      body: args.payload.queueTitles.slice(1).join(" · ") || args.payload.scheduleAux || "Playout will add queue detail once it is confirmed.",
+      secondary: args.payload.queueTitleLine || ""
+    };
+  }
+
+  return {
+    label: labelOverride || args.payload.heroLabel || "Now Playing",
+    title: args.payload.heroTitle || "Current block unavailable",
+    body: args.payload.metaLine || args.payload.heroBody || "Current scene metadata will appear here.",
+    secondary: args.payload.heroBody && args.payload.heroBody !== args.payload.metaLine ? args.payload.heroBody : ""
+  };
 }
 
 export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneCustomLayer[] {
@@ -671,7 +924,9 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
         secondaryText: String(raw.secondaryText || "").trim().slice(0, 220),
         textTone: normalizeOverlaySceneCustomTextTone(raw.textTone),
         textAlign: normalizeOverlaySceneCustomTextAlign(raw.textAlign),
-        useAccent: raw.useAccent === true
+        useAccent: raw.useAccent === true,
+        fontMode: normalizeOverlaySceneCustomTextFontMode(raw.fontMode),
+        customFontFamily: sanitizeOverlaySceneCustomFontFamily(raw.customFontFamily)
       });
     } else if (raw.kind === "logo" || raw.kind === "image") {
       normalized.push({
@@ -681,12 +936,21 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
         altText: String(raw.altText || "").trim().slice(0, 120),
         fit: normalizeOverlaySceneCustomMediaFit(raw.fit)
       });
+    } else if (raw.kind === "widget") {
+      normalized.push({
+        ...base,
+        kind: "widget",
+        url: sanitizeOverlaySceneUrl(raw.url),
+        title: String(raw.title || "").trim().slice(0, 80) || "Widget Layer",
+        widgetMode: normalizeOverlaySceneCustomWidgetMode(raw.widgetMode),
+        widgetDataKey: normalizeOverlaySceneCustomWidgetDataKey(raw.widgetDataKey)
+      });
     } else {
       normalized.push({
         ...base,
-        kind: raw.kind,
+        kind: "embed",
         url: sanitizeOverlaySceneUrl(raw.url),
-        title: String(raw.title || "").trim().slice(0, 80) || `${raw.kind[0].toUpperCase()}${raw.kind.slice(1)} Layer`
+        title: String(raw.title || "").trim().slice(0, 80) || "Embed Layer"
       });
     }
 

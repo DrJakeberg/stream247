@@ -88,12 +88,12 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - browser-source overlay page with live current/next updates
   - one canonical Scene Studio payload shared across browser overlays, scene APIs, and playout overlay consumers
   - on-air scene renderer v1 that captures the published browser scene into the FFmpeg playout path with safe text-overlay fallback
-  - overlay studio with draft-save, reusable scene preset library, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, built-in typography presets, positioned text/logo/image/embed/widget layers, and publish-live scene controls
+  - overlay studio with draft-save, reusable scene preset library, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, built-in typography presets, conservative local font-stack overrides, positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, and publish-live scene controls
   - admin-managed replay branding, scene presets, and ticker/badge styling
 
 ## What Is Not Done Yet
 
-- Scene Studio now supports positioned text/logo/image/embed/widget layers and built-in typography presets, but deeper third-party widget compatibility still depends on CSP / iframe rules and broader cloud-style composition remains partial.
+- Scene Studio now supports positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, built-in typography presets, and conservative local font-stack overrides, but deeper third-party widget compatibility still depends on CSP / iframe rules and broader cloud-style composition remains partial.
 - richer multi-scene composition inside the playout runtime beyond the current scene-presets + draft/publish workflow
 - more advanced playout transitions, stronger continuity semantics, and less restart-heavy normal switchovers beyond the current staged output recovery model
 - deeper per-output platform guidance and recovery automation beyond the current failure attribution, cooldown visibility, and staged recovery controls

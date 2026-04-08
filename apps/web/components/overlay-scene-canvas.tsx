@@ -1,6 +1,13 @@
 "use client";
 
-import type { OverlaySceneCustomLayer, OverlaySceneLayerKind, OverlayScenePayload } from "@stream247/core";
+import {
+  buildOverlaySceneMetadataWidgetContent,
+  describeOverlaySceneFrameSupport,
+  resolveOverlaySceneCustomTextFontStack,
+  type OverlaySceneCustomLayer,
+  type OverlaySceneLayerKind,
+  type OverlayScenePayload
+} from "@stream247/core";
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 
@@ -131,13 +138,23 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
     } satisfies CSSProperties;
 
     if (layer.kind === "text") {
+      const fontFamily = resolveOverlaySceneCustomTextFontStack({
+        fontMode: layer.fontMode,
+        customFontFamily: layer.customFontFamily,
+        typographyPreset: props.payload.scene.typographyPreset
+      });
       return (
         <div
           className={`overlay-custom-layer overlay-custom-layer-text overlay-custom-layer-text-${layer.textTone} overlay-custom-layer-align-${layer.textAlign}${
             layer.useAccent ? " overlay-custom-layer-accent" : ""
           }`}
           key={layer.id}
-          style={style}
+          style={
+            {
+              ...style,
+              ...(fontFamily ? { fontFamily } : {})
+            } satisfies CSSProperties
+          }
         >
           <div className="overlay-custom-layer-text-primary">{layer.text || layer.name}</div>
           {layer.secondaryText ? <div className="overlay-custom-layer-text-secondary">{layer.secondaryText}</div> : null}
@@ -167,11 +184,37 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
       );
     }
 
+    if (layer.kind === "widget" && layer.widgetMode === "metadata") {
+      const widget = buildOverlaySceneMetadataWidgetContent({
+        payload: props.payload,
+        widgetDataKey: layer.widgetDataKey,
+        labelOverride: layer.title
+      });
+
+      return (
+        <div className="overlay-custom-layer overlay-custom-layer-widget-data" key={layer.id} style={style}>
+          <div className="overlay-custom-layer-embed-badge">Scene Widget</div>
+          <div className="overlay-custom-layer-widget-label">{widget.label}</div>
+          <div className="overlay-custom-layer-widget-title">{widget.title}</div>
+          <div className="overlay-custom-layer-widget-body">{widget.body}</div>
+          {widget.secondary ? <div className="overlay-custom-layer-widget-secondary">{widget.secondary}</div> : null}
+        </div>
+      );
+    }
+
     if (layer.kind === "embed" || layer.kind === "widget") {
+      const support = describeOverlaySceneFrameSupport(layer.url);
       return (
         <div className="overlay-custom-layer overlay-custom-layer-embed" key={layer.id} style={style}>
           <div className="overlay-custom-layer-embed-badge">{layer.kind === "widget" ? "Widget" : "Embed"}</div>
+          <div className={`overlay-custom-layer-support-badge overlay-custom-layer-support-${support.status}`}>{support.badgeLabel}</div>
           {layer.url ? (
+            support.status === "unsupported" ? (
+              <div className="overlay-custom-layer-placeholder">
+                <strong>{support.providerLabel}</strong>
+                <span>{support.guidance}</span>
+              </div>
+            ) : (
             <iframe
               className="overlay-custom-layer-iframe"
               loading="lazy"
@@ -180,6 +223,7 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
               src={layer.url}
               title={layer.title}
             />
+            )
           ) : (
             <div className="overlay-custom-layer-placeholder">
               <strong>{layer.name}</strong>
