@@ -365,10 +365,38 @@ describe("overlay scene definitions", () => {
       })
     );
   });
+
+  it("keeps metadata widget titles empty so canonical labels can fall back", () => {
+    const [widget] = normalizeOverlaySceneCustomLayers([
+      {
+        id: "current-card",
+        kind: "widget",
+        name: "Current Card",
+        enabled: true,
+        xPercent: 58,
+        yPercent: 12,
+        widthPercent: 28,
+        heightPercent: 24,
+        opacityPercent: 100,
+        widgetMode: "metadata",
+        widgetDataKey: "current",
+        title: ""
+      }
+    ]);
+
+    expect(widget).toEqual(
+      expect.objectContaining({
+        kind: "widget",
+        widgetMode: "metadata",
+        widgetDataKey: "current",
+        title: ""
+      })
+    );
+  });
 });
 
 describe("overlay scene frame support", () => {
-  it("treats local paths as supported and known third-party pages conservatively", () => {
+  it("treats local paths as supported, dedicated embed endpoints as limited, and page URLs conservatively", () => {
     expect(describeOverlaySceneFrameSupport("/overlay/widget")).toEqual(
       expect.objectContaining({
         status: "supported",
@@ -376,10 +404,31 @@ describe("overlay scene frame support", () => {
       })
     );
 
+    expect(describeOverlaySceneFrameSupport("https://www.youtube.com/embed/test")).toEqual(
+      expect.objectContaining({
+        status: "limited",
+        providerLabel: "YouTube"
+      })
+    );
+
     expect(describeOverlaySceneFrameSupport("https://www.youtube.com/watch?v=test")).toEqual(
       expect.objectContaining({
         status: "unsupported",
         providerLabel: "YouTube"
+      })
+    );
+
+    expect(describeOverlaySceneFrameSupport("https://player.twitch.tv/?channel=test&parent=stream247.example.com")).toEqual(
+      expect.objectContaining({
+        status: "limited",
+        providerLabel: "Twitch"
+      })
+    );
+
+    expect(describeOverlaySceneFrameSupport("https://www.twitch.tv/testchannel")).toEqual(
+      expect.objectContaining({
+        status: "unsupported",
+        providerLabel: "Twitch"
       })
     );
 
@@ -444,5 +493,48 @@ describe("overlay metadata widgets", () => {
       body: "Episode Three",
       secondary: "Episode Two · Episode Three"
     });
+  });
+
+  it("falls back to canonical labels when no override is set", () => {
+    const payload = buildOverlayScenePayload({
+      overlay: {
+        ...createOverlaySource(),
+        channelName: "Archive TV",
+        replayLabel: "Replay stream",
+        brandBadge: "Late Night",
+        accentColor: "#0e6d5a"
+      },
+      queueKind: "asset",
+      target: "browser",
+      currentTitle: "Episode One",
+      nextTitle: "Episode Two",
+      nextTimeLabel: "10:00 to 12:00",
+      queueTitles: ["Episode Two", "Episode Three", "Episode Four"],
+      timeZone: "Europe/Berlin"
+    });
+
+    expect(
+      buildOverlaySceneMetadataWidgetContent({
+        payload,
+        widgetDataKey: "current",
+        labelOverride: ""
+      }).label
+    ).toBe("Now Playing");
+
+    expect(
+      buildOverlaySceneMetadataWidgetContent({
+        payload,
+        widgetDataKey: "next",
+        labelOverride: ""
+      }).label
+    ).toBe("Next");
+
+    expect(
+      buildOverlaySceneMetadataWidgetContent({
+        payload,
+        widgetDataKey: "queue",
+        labelOverride: ""
+      }).label
+    ).toBe("Later");
   });
 });
