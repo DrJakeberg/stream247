@@ -1,15 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const rootDir = path.resolve(__dirname, "../..");
+const rootEnvPath = path.join(rootDir, ".env");
 const scriptPath = path.join(rootDir, "scripts", "release-preflight.sh");
 const prepareEnvScriptPath = path.join(rootDir, "scripts", "prepare-release-preflight-env.sh");
 const tempDirs: string[] = [];
+let rootEnvBackupPath: string | null = null;
 
-function createDockerStub(tempDir: string) {
+function createDockerStub(tempDir: string, options?: { requireRootEnvDuringConfig?: boolean }) {
   const binDir = path.join(tempDir, "bin");
   const dockerLog = path.join(tempDir, "docker.log");
   mkdirSync(binDir, { recursive: true });
@@ -17,6 +19,16 @@ function createDockerStub(tempDir: string) {
     path.join(binDir, "docker"),
     `#!/usr/bin/env sh
 printf '%s\\n' "$*" >> "${dockerLog}"
+if [ "${options?.requireRootEnvDuringConfig ? "1" : "0"}" = "1" ]; then
+  case "$*" in
+    *"compose --env-file "*config*)
+      if [ ! -f "${rootEnvPath}" ]; then
+        echo "expected ${rootEnvPath} to exist during compose config" >&2
+        exit 1
+      fi
+      ;;
+  esac
+fi
 exit 0
 `
   );
@@ -27,8 +39,8 @@ exit 0
   };
 }
 
-function runReleasePreflightFile(envFile: string, tempDir: string) {
-  const { binDir, dockerLog } = createDockerStub(tempDir);
+function runReleasePreflightFile(envFile: string, tempDir: string, options?: { requireRootEnvDuringConfig?: boolean }) {
+  const { binDir, dockerLog } = createDockerStub(tempDir, options);
 
   try {
     const output = execFileSync("sh", [scriptPath], {
@@ -88,7 +100,22 @@ function prepareReleasePreflightEnv(sourceEnvFile?: string) {
   return { envFile, tempDir };
 }
 
+function moveRootEnvOutOfTheWay(tempDir: string) {
+  if (!existsSync(rootEnvPath)) {
+    rootEnvBackupPath = null;
+    return;
+  }
+
+  rootEnvBackupPath = path.join(tempDir, "root.env.backup");
+  renameSync(rootEnvPath, rootEnvBackupPath);
+}
+
 afterEach(() => {
+  if (rootEnvBackupPath && existsSync(rootEnvBackupPath)) {
+    renameSync(rootEnvBackupPath, rootEnvPath);
+  }
+  rootEnvBackupPath = null;
+
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop() as string, { force: true, recursive: true });
   }
@@ -220,5 +247,39 @@ STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
     const result = runReleasePreflightFile(prepared.envFile, prepared.tempDir);
     expect(result.status).toBe(0);
     expect(result.output).toContain("Release preflight succeeded.");
+  });
+
+  it("uses the selected staged env file for compose validation even when the root .env is absent", () => {
+    const prepared = prepareReleasePreflightEnv();
+    moveRootEnvOutOfTheWay(prepared.tempDir);
+
+    expect(existsSync(rootEnvPath)).toBe(false);
+
+    const result = runReleasePreflightFile(prepared.envFile, prepared.tempDir, {
+      requireRootEnvDuringConfig: true
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Release preflight succeeded.");
+    expect(result.dockerLog).toContain(`compose --env-file ${prepared.envFile} config`);
+    expect(existsSync(rootEnvPath)).toBe(false);
+  });
+
+  it("still rejects placeholder production values when the root .env is absent", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "stream247-release-preflight-placeholder-"));
+    tempDirs.push(tempDir);
+
+    moveRootEnvOutOfTheWay(tempDir);
+
+    const envFile = path.join(tempDir, "placeholder.env");
+    writeFileSync(envFile, readFileSync(path.join(rootDir, ".env.production.example"), "utf8"));
+
+    const result = runReleasePreflightFile(envFile, tempDir, {
+      requireRootEnvDuringConfig: true
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("APP_URL still uses an example or placeholder value");
+    expect(existsSync(rootEnvPath)).toBe(false);
   });
 });

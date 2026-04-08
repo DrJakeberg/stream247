@@ -80,6 +80,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M17.1 Scene Studio V2 Follow-Up Fixes | Reliability + Docs | Now | Complete | Resolve the post-M17 Scene Studio review regressions without widening feature scope | Metadata widgets keep canonical label fallback when no override is set, dedicated YouTube/Twitch embed endpoints remain allowed while normal page URLs stay blocked, agent workflow stops when no incomplete milestone remains, and gap-analysis docs no longer contradict shipped milestone status | `packages/core`, `apps/web`, tests, docs | low-medium | revert the follow-up helper and docs tightening if a new embed or workflow edge case appears |
 | M17.2 Scene Studio V2 Final Follow-Up Fixes | Reliability | Now | Complete | Close the remaining fresh-widget and protocol-relative Scene Studio review regressions | Fresh widget layers switch into metadata-card mode without carrying a default label override, protocol-relative remote URLs follow the same provider boundary rules as absolute remote URLs, and regression coverage proves both behaviors | `packages/core`, `apps/web`, tests, docs | low | revert the follow-up helper tightening if a new frame-source edge case appears |
 | M18 Release Workflow Preflight Alignment | Ops | Now | Complete | Align CI and release workflows with the hardened release-preflight gate | CI and tagged release workflows validate a staged non-placeholder production env instead of copying untouched example values, regression coverage proves the staged env passes preflight, and release docs remain accurate | `.github/workflows`, `scripts`, tests, `PLANS.md` | low | revert workflow/helper changes if the staged env path proves runner-specific |
+| M18.1 Release Preflight Compose Env Alignment | Ops | Now | Complete | Align compose config validation with `RELEASE_PREFLIGHT_ENV_FILE` in CI and other staged checks | `pnpm release:preflight` succeeds with a staged env file even when the repo root lacks `.env`, compose validation uses the selected env safely, placeholder checks stay strict, and regression coverage proves both staged and placeholder paths | `scripts`, tests, `PLANS.md` | low | revert the temporary compose-env mirroring if it causes an undiscovered local edge case |
 
 ## M17 Scene Studio V2
 
@@ -171,6 +172,45 @@ pnpm validate
 - regression coverage added for the staged env helper path
 - docs remain accurate and do not imply placeholder configs should pass release preflight
 - `pnpm validate` and milestone-targeted release-preflight checks pass
+
+## M18.1 Release Preflight Compose Env Alignment
+
+Status: complete 2026-04-08
+
+**Scope**
+
+- make `scripts/release-preflight.sh` handle `RELEASE_PREFLIGHT_ENV_FILE` consistently during `docker compose config`
+- avoid CI-only failures when the selected env file is valid but the repo root `.env` is absent
+- preserve the stricter placeholder and blank-value checks already shipped in `release-preflight.sh`
+- keep the fix local to release-preflight and its regression coverage
+
+**Acceptance Criteria**
+
+- `pnpm release:preflight` can validate a staged env file via `RELEASE_PREFLIGHT_ENV_FILE` even if the repo root `.env` does not exist
+- `docker compose config` runs against the selected env values instead of failing on missing root `.env`
+- strict rejection of placeholder, quoted-empty, and example production values remains intact
+- CI and release workflows can continue using the staged temporary env path added in `M18`
+
+**Touched Areas**
+
+- `scripts/release-preflight.sh`
+- release-preflight regression tests
+- `PLANS.md`
+
+**Validation Commands**
+
+```bash
+pnpm exec vitest run tests/unit/release-preflight.test.ts
+backup_env="$(mktemp "${TMPDIR:-/tmp}/stream247-root-env-backup.XXXXXX")"; mv .env "$backup_env"; tmp_env="$(./scripts/prepare-release-preflight-env.sh)"; cleanup(){ rm -f "$tmp_env"; if [ -f "$backup_env" ]; then mv "$backup_env" .env; fi; }; trap cleanup EXIT; RELEASE_PREFLIGHT_ENV_FILE="$tmp_env" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
+pnpm validate
+```
+
+**Done Criteria**
+
+- release-preflight compose validation is self-contained for staged env-file runs
+- regression coverage proves the missing-root-`.env` case and placeholder rejection case
+- no production checks are weakened
+- `pnpm validate` and milestone-targeted preflight checks pass
 
 ## Phase 2 — Post-M9 Audit Follow-Up
 
@@ -453,3 +493,10 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - Added `scripts/prepare-release-preflight-env.sh` so automation can derive a temporary non-placeholder env file from `.env.production.example` without weakening the production gate or changing operator-facing deployment guidance.
 - Added regression coverage that proves the staged workflow env helper produces a release-preflight-safe env file and that the resulting file passes `pnpm release:preflight` with `RELEASE_PREFLIGHT_SKIP_VALIDATE=1`.
 - Validation completed: `pnpm exec vitest run tests/unit/release-preflight.test.ts`, `RELEASE_PREFLIGHT_ENV_FILE="$(./scripts/prepare-release-preflight-env.sh)" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight`, and `pnpm validate` passed.
+
+### 2026-04-08 — M18.1 Release Preflight Compose Env Alignment
+
+- Updated `scripts/release-preflight.sh` so staged `RELEASE_PREFLIGHT_ENV_FILE` runs temporarily mirror the selected env file into the repo-root `.env` path only for the duration of `docker compose config`, then restore or remove that temporary file on exit.
+- This keeps Compose validation aligned with the selected staged env file even when CI has no root `.env`, without weakening placeholder, quoted-empty, or proxy-example rejection in the earlier preflight checks.
+- Added regression coverage for the missing-root-`.env` case, including a compose-validation path that now passes with the staged env file and a placeholder path that still fails before Compose validation can weaken the gate.
+- Validation completed: `pnpm exec vitest run tests/unit/release-preflight.test.ts`, `backup_env="$(mktemp "${TMPDIR:-/tmp}/stream247-root-env-backup.XXXXXX")"; mv .env "$backup_env"; tmp_env="$(./scripts/prepare-release-preflight-env.sh)"; cleanup(){ rm -f "$tmp_env"; if [ -f "$backup_env" ]; then mv "$backup_env" .env; fi; }; trap cleanup EXIT; RELEASE_PREFLIGHT_ENV_FILE="$tmp_env" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight`, and `pnpm validate` passed.
