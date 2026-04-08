@@ -7,6 +7,23 @@ cd "$ROOT_DIR"
 ENV_FILE="${RELEASE_PREFLIGHT_ENV_FILE:-.env}"
 DEV_ENV_EXAMPLE="$ROOT_DIR/.env.example"
 PROD_ENV_EXAMPLE="$ROOT_DIR/.env.production.example"
+ROOT_ENV_FILE="$ROOT_DIR/.env"
+TEMP_ROOT_ENV_ACTIVE=0
+TEMP_ROOT_ENV_BACKUP_FILE=""
+
+cleanup_temporary_root_env() {
+  if [ "$TEMP_ROOT_ENV_ACTIVE" != "1" ]; then
+    return
+  fi
+
+  rm -f "$ROOT_ENV_FILE"
+
+  if [ -n "$TEMP_ROOT_ENV_BACKUP_FILE" ] && [ -f "$TEMP_ROOT_ENV_BACKUP_FILE" ]; then
+    mv "$TEMP_ROOT_ENV_BACKUP_FILE" "$ROOT_ENV_FILE"
+  fi
+}
+
+trap cleanup_temporary_root_env EXIT HUP INT TERM
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "Missing $ENV_FILE. Copy .env.example or .env.production.example first."
@@ -150,6 +167,22 @@ validate_proxy_settings_if_configured() {
   fi
 }
 
+prepare_compose_root_env_if_needed() {
+  case "$ENV_FILE" in
+    .env|"$ROOT_ENV_FILE")
+      return
+      ;;
+  esac
+
+  if [ -f "$ROOT_ENV_FILE" ]; then
+    TEMP_ROOT_ENV_BACKUP_FILE="$(mktemp "${TMPDIR:-/tmp}/stream247-release-preflight-root-env.XXXXXX")"
+    mv "$ROOT_ENV_FILE" "$TEMP_ROOT_ENV_BACKUP_FILE"
+  fi
+
+  TEMP_ROOT_ENV_ACTIVE=1
+  cp "$ENV_FILE" "$ROOT_ENV_FILE"
+}
+
 echo "Running release preflight for Stream247 using $ENV_FILE..."
 
 for key in APP_URL APP_SECRET POSTGRES_PASSWORD DATABASE_URL; do
@@ -166,6 +199,7 @@ if grep -Eq '^STREAM247_(WEB|WORKER|PLAYOUT)_IMAGE=.*:latest$' "$ENV_FILE"; then
 fi
 
 echo "Checking Compose configuration..."
+prepare_compose_root_env_if_needed
 docker compose --env-file "$ENV_FILE" config >/dev/null
 
 if [ "${RELEASE_PREFLIGHT_SKIP_VALIDATE:-0}" = "1" ]; then
