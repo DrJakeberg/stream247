@@ -1,6 +1,6 @@
 # Upstream Gap Analysis For Stream247
 
-Updated: 2026-04-06
+Updated: 2026-04-08
 
 ## Goal And Method
 
@@ -124,7 +124,7 @@ These parity points are bounded. Stream247 does not yet match public Upstream be
 Top missing product capabilities:
 
 1. stale-write safety fixes for asset/source admin flows and deployment-safe update-center version lookup
-2. deeper scene composition: metadata-driven widgets, broader typography control, and richer scene-automation blocks
+2. deeper scene composition: metadata-driven widgets, broader typography control, conservative custom-font handling, and richer scene-automation blocks
 3. deeper persistent queue and transition controller with less reliance on hard encoder restarts
 4. deeper `Channel Blueprints` support such as more automatic cross-install media remapping and richer reusable programming packages
 5. richer ad-rule families and deeper timed-insert tooling beyond the current safe-boundary cuepoint model
@@ -164,10 +164,18 @@ Top missing product capabilities:
 
 `M10` through `M15` are now complete in the current repo.
 
-If follow-on work continues beyond the current roadmap, the next highest-value areas are:
+If follow-on work continues beyond the current roadmap, the next planned milestone is `M17 Scene Studio V2`.
 
-1. deeper scene-composition automation and broader third-party widget compatibility
-2. richer continuity/recovery semantics and destination-specific guidance beyond the current staged recovery proof
-3. broader audio mixing, crossfades, and deeper ad-rule families beyond replace-mode lanes and safe-boundary cuepoints
-4. stronger blueprint/media portability across installs
-5. longer-running soak coverage and broader end-to-end browser workflows
+Its conservative scope should stay limited to:
+
+1. metadata-driven `Scene Studio` widgets for current, next, or queue-facing broadcast data
+2. broader typography controls plus conservative custom-font handling with explicit fallbacks
+3. clearer supported and unsupported embed/provider guidance where browser security policies limit compatibility
+4. scene-authoring depth that does not imply full upstream parity or broad third-party widget support
+
+After that milestone, the next highest-value areas remain:
+
+1. richer continuity/recovery semantics and destination-specific guidance beyond the current staged recovery proof
+2. broader audio mixing, crossfades, and deeper ad-rule families beyond replace-mode lanes and safe-boundary cuepoints
+3. stronger blueprint/media portability across installs
+4. longer-running soak coverage and broader end-to-end browser workflows

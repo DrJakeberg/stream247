@@ -687,3 +687,34 @@ Increase direct automated proof for the highest-risk parity features and release
 **Rollback Posture**
 
 - add coverage incrementally without removing existing guards until replacements are green
+
+## Next Planned Follow-On — M17 Scene Studio V2
+
+Status: planned after M16.4 stabilization
+
+An earlier `M11` pass shipped on 2026-04-06. The highest-value remaining gap is still deeper `Scene Studio` behavior, so the next planned implementation pass is tracked separately as `M17`. This is a bounded follow-on milestone, not a claim of full upstream parity.
+
+**Objective**  
+Incrementally deepen `Scene Studio` around metadata-driven widgets, conservative font handling, and clearer embed/provider limits while preserving the current publish-safe contract.
+
+**Planned Scope**
+
+- current, next, or queue-driven scene widgets that read from the canonical broadcast/public snapshot contract
+- broader typography controls and conservative custom-font handling with explicit fallbacks
+- clearer supported and unsupported cases for embeds and browser widgets where third-party security policies limit compatibility
+- scene-authoring depth that fits the current original `Scene Studio` workflow without replacing the existing contract
+
+**Acceptance Criteria**
+
+- at least one additional metadata-driven widget path is shipped and covered
+- any new font behavior is explicit about safe loading, persistence, and fallback behavior
+- docs and tests describe supported provider scope conservatively
+- browser and on-air consumers remain contract-aligned
+
+**Validation**
+
+- `pnpm validate`
+- `pnpm test:fresh-db`
+- `pnpm test:fresh-compose`
+- `pnpm test:e2e:smoke`
+- Docker image builds for touched surfaces
