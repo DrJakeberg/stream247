@@ -1,10 +1,14 @@
 import {
   buildOverlayBrandLine,
+  buildOverlaySceneMetadataWidgetContent,
   buildOverlaySceneDefinition,
   buildOverlayScenePayload,
   buildOverlayTextLines,
   buildOverlayTextLinesFromScenePayload,
+  describeOverlaySceneFrameSupport,
   normalizeOverlaySceneLayerOrder,
+  normalizeOverlaySceneCustomLayers,
+  resolveOverlaySceneCustomTextFontStack,
   resolveOverlayHeadlineForQueueKind,
   resolveOverlayScenePresetForQueueKind,
   type OverlaySceneSource
@@ -262,7 +266,9 @@ describe("overlay scene definitions", () => {
             secondaryText: "Smarter layers",
             textTone: "headline",
             textAlign: "center",
-            useAccent: true
+            useAccent: true,
+            fontMode: "custom-local",
+            customFontFamily: "Aptos, Segoe UI"
           },
           {
             id: "unsafe-widget",
@@ -275,7 +281,9 @@ describe("overlay scene definitions", () => {
             heightPercent: 22,
             opacityPercent: 100,
             url: "javascript:alert(1)",
-            title: "Unsafe widget"
+            title: "Unsafe widget",
+            widgetMode: "embed",
+            widgetDataKey: "current"
           }
         ]
       }),
@@ -290,14 +298,151 @@ describe("overlay scene definitions", () => {
         text: "Scene Studio V2",
         secondaryText: "Smarter layers",
         textAlign: "center",
-        useAccent: true
+        useAccent: true,
+        fontMode: "custom-local",
+        customFontFamily: "Aptos, Segoe UI"
       }),
       expect.objectContaining({
         id: "unsafe-widget",
         kind: "widget",
         url: "",
-        title: "Unsafe widget"
+        title: "Unsafe widget",
+        widgetMode: "embed",
+        widgetDataKey: "current"
       })
     ]);
+  });
+
+  it("normalizes metadata widgets and strips unsafe custom font stacks", () => {
+    const [widget, text] = normalizeOverlaySceneCustomLayers([
+      {
+        id: "next-card",
+        kind: "widget",
+        name: "Next Card",
+        enabled: true,
+        xPercent: 58,
+        yPercent: 12,
+        widthPercent: 28,
+        heightPercent: 24,
+        opacityPercent: 100,
+        widgetMode: "metadata",
+        widgetDataKey: "next",
+        title: "Up Next"
+      },
+      {
+        id: "font-test",
+        kind: "text",
+        name: "Font Test",
+        enabled: true,
+        xPercent: 5,
+        yPercent: 8,
+        widthPercent: 42,
+        heightPercent: 18,
+        opacityPercent: 92,
+        text: "Scene Studio V2",
+        secondaryText: "",
+        textTone: "headline",
+        textAlign: "left",
+        useAccent: false,
+        fontMode: "custom-local",
+        customFontFamily: "url(https://bad.example/font.woff2)"
+      }
+    ]);
+
+    expect(widget).toEqual(
+      expect.objectContaining({
+        kind: "widget",
+        widgetMode: "metadata",
+        widgetDataKey: "next",
+        title: "Up Next"
+      })
+    );
+    expect(text).toEqual(
+      expect.objectContaining({
+        kind: "text",
+        fontMode: "custom-local",
+        customFontFamily: ""
+      })
+    );
+  });
+});
+
+describe("overlay scene frame support", () => {
+  it("treats local paths as supported and known third-party pages conservatively", () => {
+    expect(describeOverlaySceneFrameSupport("/overlay/widget")).toEqual(
+      expect.objectContaining({
+        status: "supported",
+        badgeLabel: "Self-hosted"
+      })
+    );
+
+    expect(describeOverlaySceneFrameSupport("https://www.youtube.com/watch?v=test")).toEqual(
+      expect.objectContaining({
+        status: "unsupported",
+        providerLabel: "YouTube"
+      })
+    );
+
+    expect(describeOverlaySceneFrameSupport("https://widgets.example.com/frame")).toEqual(
+      expect.objectContaining({
+        status: "limited",
+        badgeLabel: "Limited"
+      })
+    );
+  });
+});
+
+describe("overlay scene typography helpers", () => {
+  it("resolves custom local stacks with preset fallbacks", () => {
+    expect(
+      resolveOverlaySceneCustomTextFontStack({
+        fontMode: "custom-local",
+        customFontFamily: "Aptos, Segoe UI",
+        typographyPreset: "editorial-serif"
+      })
+    ).toContain("Aptos, Segoe UI");
+
+    expect(
+      resolveOverlaySceneCustomTextFontStack({
+        fontMode: "preset",
+        customFontFamily: "Ignored",
+        typographyPreset: "studio-sans"
+      })
+    ).toBeNull();
+  });
+});
+
+describe("overlay metadata widgets", () => {
+  it("builds queue-aware metadata widget copy from the canonical scene payload", () => {
+    const payload = buildOverlayScenePayload({
+      overlay: {
+        ...createOverlaySource(),
+        channelName: "Archive TV",
+        replayLabel: "Replay stream",
+        brandBadge: "Late Night",
+        accentColor: "#0e6d5a"
+      },
+      queueKind: "asset",
+      target: "browser",
+      currentTitle: "Episode One",
+      currentCategory: "Gaming",
+      currentSourceName: "Archive Playlist",
+      nextTitle: "Episode Two",
+      nextTimeLabel: "10:00 to 12:00",
+      queueTitles: ["Episode Two", "Episode Three", "Episode Four"],
+      timeZone: "Europe/Berlin"
+    });
+
+    expect(
+      buildOverlaySceneMetadataWidgetContent({
+        payload,
+        widgetDataKey: "queue"
+      })
+    ).toEqual({
+      label: "Later",
+      title: "Episode Two",
+      body: "Episode Three",
+      secondary: "Episode Two · Episode Three"
+    });
   });
 });

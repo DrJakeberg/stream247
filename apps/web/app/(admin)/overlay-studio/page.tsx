@@ -27,9 +27,10 @@ export default async function OverlayStudioPage() {
           <p className="subtle">
             Use <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> as a browser source in OBS
             or another scene tool. Draft changes stay inside the studio until you publish them, and the same live
-            scene settings also drive the on-air replay text overlay inside the FFmpeg playout path. Positioned
-            embeds remain conservative: third-party CSP and iframe policies still decide whether a website or widget
-            can actually render.
+            scene settings also drive the on-air replay text overlay inside the FFmpeg playout path. Metadata widgets
+            stay inside that canonical scene payload, custom font stacks resolve only against fonts already installed
+            on the browser host or worker image, and positioned embeds remain conservative: third-party CSP and iframe
+            policies still decide whether a website or widget can actually render.
           </p>
           <OverlaySettingsForm
             basedOnUpdatedAt={studioState.basedOnUpdatedAt}

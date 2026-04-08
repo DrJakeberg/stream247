@@ -688,16 +688,16 @@ Increase direct automated proof for the highest-risk parity features and release
 
 - add coverage incrementally without removing existing guards until replacements are green
 
-## Next Planned Follow-On — M17 Scene Studio V2
+## M17 — Scene Studio V2
 
-Status: planned after M16.4 stabilization
+Status: completed 2026-04-08
 
-An earlier `M11` pass shipped on 2026-04-06. The highest-value remaining gap is still deeper `Scene Studio` behavior, so the next planned implementation pass is tracked separately as `M17`. This is a bounded follow-on milestone, not a claim of full upstream parity.
+An earlier `M11` pass shipped on 2026-04-06. `M17` is the bounded follow-on pass that deepens the same `Scene Studio` area without claiming full upstream parity.
 
 **Objective**  
 Incrementally deepen `Scene Studio` around metadata-driven widgets, conservative font handling, and clearer embed/provider limits while preserving the current publish-safe contract.
 
-**Planned Scope**
+**Capabilities Added**
 
 - current, next, or queue-driven scene widgets that read from the canonical broadcast/public snapshot contract
 - broader typography controls and conservative custom-font handling with explicit fallbacks
