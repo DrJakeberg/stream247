@@ -28,6 +28,8 @@ A hard blocker is only one of the following:
 - summary written with changed files, risks, and follow-up items
 
 ## Workflow
-After completing one milestone, automatically continue with the next milestone marked Now.
-Do not pause merely to report progress.
-Pause only for a hard blocker or when all Now milestones are complete and validated.
+After completing a milestone, automatically continue with the next incomplete milestone.
+Do not pause merely to summarize progress.
+Commit exactly one commit per completed milestone.
+Push the current branch after each successful milestone commit.
+Stop only for a hard blocker.

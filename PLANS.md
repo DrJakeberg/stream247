@@ -78,6 +78,59 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M16.3 Release Preflight Hardening | Ops | Now | Complete | Reject placeholder production configs before release | Release preflight fails on blank/example values, regression tests cover the gate, and docs describe the stricter checks accurately | scripts, tests, docs | low | revert preflight validation tightening if it blocks valid pinned configs |
 | M16.4 Final Stabilization Fixes | Reliability + Ops | Now | Complete | Resolve the remaining overnight-schedule and release-preflight review regressions | Overnight current blocks keep the correct next/upcoming teasers, quoted-empty env values fail preflight, proxy example values fail preflight when present, and regression coverage proves both behaviors | `packages/core`, `apps/web`, `apps/worker`, scripts, tests, docs | medium | revert helper/preflight tightening if an undiscovered deployment edge case appears |
 
+## Next Planned Milestone
+
+The historical `M11 Scene Studio V2` implementation completed on 2026-04-06. The next planned implementation pass remains in the same product area because the highest-value remaining gap is still deeper `Scene Studio` behavior. This section is a forward-looking execution brief only. It does not reopen the completed `M11` record above and does not claim full upstream parity.
+
+### M17 Scene Studio V2
+
+Status: planned next after `M16.4`
+
+**Scope**
+
+- add metadata-driven `Scene Studio` widgets for current, next, or queue-facing broadcast data from the existing canonical snapshot contract
+- deepen typography controls and conservative custom-font handling without weakening the current publish-safe path
+- clarify browser-safe embed and widget behavior where CSP, iframe, or third-party provider limits prevent broader compatibility
+- deepen scene authoring only where it fits the current original `Scene Studio` model and existing on-air contract
+
+**Acceptance Criteria**
+
+- at least one additional metadata-driven scene widget path exists beyond the current static positioned layers
+- any new font or typography behavior has an explicit safe loading and fallback policy for browser and on-air use
+- embed and widget behavior is explicit about supported and unsupported provider cases in code, tests, and docs
+- published-scene browser and on-air consumers still share one canonical scene contract
+- docs remain conservative and avoid implying full public-feature parity with Upstream
+
+**Touched Areas**
+
+- `packages/core`
+- `packages/db`
+- `apps/web`
+- `apps/worker`
+- browser and unit/integration tests
+- `README.md` and scene-related docs
+
+**Validation Commands**
+
+```bash
+pnpm validate
+pnpm test:fresh-db
+pnpm test:fresh-compose
+pnpm test:e2e:smoke
+docker build -f docker/web.Dockerfile -t stream247-web:test .
+docker build -f docker/worker.Dockerfile -t stream247-worker:test .
+```
+
+Use additional targeted widget/font/browser tests if the implementation adds them.
+
+**Done Criteria**
+
+- code complete for the scoped `Scene Studio` work only
+- regression coverage added for each new widget, font, or embed behavior
+- docs updated anywhere supported provider scope, font behavior, or parity wording changes
+- `pnpm validate` and milestone-relevant smoke/browser checks pass
+- summary records supported scope, known provider limits, and any deliberate follow-up gaps
+
 ## Phase 2 — Post-M9 Audit Follow-Up
 
 The first milestone set shipped meaningful parity progress, but a fresh audit found three categories of follow-up work:
@@ -100,6 +153,7 @@ Phase 2 starts with `M10 Truth And Safety Fixes` and then continues into deeper 
 - `Complete` M8 Audio Lanes, Cuepoints, Advanced Inserts
 - `Now` M10 Truth And Safety Fixes
 - `Complete` M11 Scene Studio V2
+- `Next` M17 Scene Studio V2
 - `Complete` M13 Library And Blueprints V2
 - `Not Planned` visual cloning of Upstream UI or branding
 
