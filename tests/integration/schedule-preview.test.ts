@@ -202,6 +202,65 @@ describe("schedule preview", () => {
     ).toEqual([]);
   });
 
+  it("keeps later daytime items upcoming when the current block crosses midnight", () => {
+    const occurrences = buildScheduleOccurrences({
+      date: "2026-04-08",
+      blocks: [
+        {
+          id: "overnight",
+          title: "Overnight Replay",
+          categoryName: "Archive",
+          dayOfWeek: 3,
+          startMinuteOfDay: 23 * 60,
+          durationMinutes: 120,
+          poolId: "pool-overnight",
+          sourceName: "Archive"
+        },
+        {
+          id: "daytime",
+          title: "Daytime Show",
+          categoryName: "Talk",
+          dayOfWeek: 3,
+          startMinuteOfDay: 8 * 60,
+          durationMinutes: 60,
+          poolId: "pool-daytime",
+          sourceName: "Studio"
+        },
+        {
+          id: "afternoon",
+          title: "Afternoon Loop",
+          categoryName: "Music",
+          dayOfWeek: 3,
+          startMinuteOfDay: 13 * 60,
+          durationMinutes: 90,
+          poolId: "pool-afternoon",
+          sourceName: "Playlist"
+        }
+      ]
+    });
+
+    const current = findCurrentScheduleOccurrence({
+      occurrences,
+      currentTime: "00:30"
+    });
+
+    expect(current?.title).toBe("Overnight Replay");
+    expect(
+      findNextScheduleOccurrence({
+        occurrences,
+        currentTime: "00:30",
+        currentOccurrence: current
+      })?.title
+    ).toBe("Daytime Show");
+    expect(
+      listUpcomingScheduleOccurrences({
+        occurrences,
+        currentTime: "00:30",
+        currentOccurrence: current
+      }).map((item) => item.title)
+    ).toEqual(["Daytime Show", "Afternoon Loop"]);
+  });
+
   it("materializes programming windows with repeat and insert awareness", () => {
     const week = buildMaterializedProgrammingWeek({
       startDate: "2026-03-30",

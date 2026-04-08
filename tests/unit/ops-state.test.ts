@@ -752,6 +752,55 @@ describe("ops state helpers", () => {
     expect(snapshot.nextScheduleItem).toBeNull();
   });
 
+  it("keeps the first later daytime block as next when the current block crosses midnight", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-08T00:30:00.000Z"));
+    const state = createState({
+      scheduleBlocks: [
+        {
+          id: "block-overnight",
+          title: "Overnight Replay",
+          categoryName: "Archive",
+          dayOfWeek: 3,
+          startMinuteOfDay: 23 * 60,
+          durationMinutes: 120,
+          showId: "show-1",
+          poolId: "pool-1",
+          sourceName: "YouTube Playlist"
+        },
+        {
+          id: "block-daytime",
+          title: "Daytime Show",
+          categoryName: "Talk",
+          dayOfWeek: 3,
+          startMinuteOfDay: 8 * 60,
+          durationMinutes: 60,
+          showId: "show-1",
+          poolId: "pool-1",
+          sourceName: "YouTube Playlist"
+        },
+        {
+          id: "block-afternoon",
+          title: "Afternoon Loop",
+          categoryName: "Music",
+          dayOfWeek: 3,
+          startMinuteOfDay: 13 * 60,
+          durationMinutes: 90,
+          showId: "show-1",
+          poolId: "pool-1",
+          sourceName: "YouTube Playlist"
+        }
+      ]
+    });
+
+    expect(getCurrentScheduleItem(state)?.title).toBe("Overnight Replay");
+    expect(getNextScheduleItem(state)?.title).toBe("Daytime Show");
+
+    const snapshot = getBroadcastSnapshot(state);
+    expect(snapshot.currentScheduleItem?.title).toBe("Overnight Replay");
+    expect(snapshot.nextScheduleItem?.title).toBe("Daytime Show");
+  });
+
   it("summarizes live bridge state without exposing the raw input URL", () => {
     const snapshot = getBroadcastSnapshot(
       createState({

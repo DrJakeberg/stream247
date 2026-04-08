@@ -42,18 +42,35 @@ read_env_value() {
   ' "$file_path"
 }
 
+normalize_env_value() {
+  value="$(printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+  case "$value" in
+    \"*\")
+      value="${value#\"}"
+      value="${value%\"}"
+      ;;
+    \'*\')
+      value="${value#\'}"
+      value="${value%\'}"
+      ;;
+  esac
+
+  printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
 is_placeholder_value() {
   key="$1"
-  value="$2"
+  value="$(normalize_env_value "$2")"
 
   if [ -f "$DEV_ENV_EXAMPLE" ] && dev_example_value="$(read_env_value "$key" "$DEV_ENV_EXAMPLE" 2>/dev/null)"; then
-    if [ "$value" = "$dev_example_value" ]; then
+    if [ "$value" = "$(normalize_env_value "$dev_example_value")" ]; then
       return 0
     fi
   fi
 
   if [ -f "$PROD_ENV_EXAMPLE" ] && prod_example_value="$(read_env_value "$key" "$PROD_ENV_EXAMPLE" 2>/dev/null)"; then
-    if [ "$value" = "$prod_example_value" ]; then
+    if [ "$value" = "$(normalize_env_value "$prod_example_value")" ]; then
       return 0
     fi
   fi
@@ -75,13 +92,60 @@ require_production_setting() {
     exit 1
   fi
 
-  if [ -z "$value" ]; then
+  normalized_value="$(normalize_env_value "$value")"
+
+  if [ -z "$normalized_value" ]; then
     echo "Invalid required setting in $ENV_FILE: ${key} is blank."
     exit 1
   fi
 
-  if is_placeholder_value "$key" "$value"; then
+  if is_placeholder_value "$key" "$normalized_value"; then
     echo "Invalid required setting in $ENV_FILE: ${key} still uses an example or placeholder value."
+    exit 1
+  fi
+}
+
+validate_proxy_settings_if_configured() {
+  proxy_host=""
+  proxy_email=""
+  proxy_host_present=0
+  proxy_email_present=0
+
+  if proxy_host_value="$(read_env_value "TRAEFIK_HOST" "$ENV_FILE" 2>/dev/null)"; then
+    proxy_host_present=1
+    proxy_host="$(normalize_env_value "$proxy_host_value")"
+  fi
+
+  if proxy_email_value="$(read_env_value "TRAEFIK_ACME_EMAIL" "$ENV_FILE" 2>/dev/null)"; then
+    proxy_email_present=1
+    proxy_email="$(normalize_env_value "$proxy_email_value")"
+  fi
+
+  if [ "$proxy_host_present" -eq 0 ] && [ "$proxy_email_present" -eq 0 ]; then
+    return
+  fi
+
+  if [ -z "$proxy_host" ] && [ -z "$proxy_email" ]; then
+    return
+  fi
+
+  if [ -z "$proxy_host" ]; then
+    echo "Invalid proxy setting in $ENV_FILE: TRAEFIK_HOST is blank."
+    exit 1
+  fi
+
+  if [ -z "$proxy_email" ]; then
+    echo "Invalid proxy setting in $ENV_FILE: TRAEFIK_ACME_EMAIL is blank."
+    exit 1
+  fi
+
+  if is_placeholder_value "TRAEFIK_HOST" "$proxy_host"; then
+    echo "Invalid proxy setting in $ENV_FILE: TRAEFIK_HOST still uses an example or placeholder value."
+    exit 1
+  fi
+
+  if is_placeholder_value "TRAEFIK_ACME_EMAIL" "$proxy_email"; then
+    echo "Invalid proxy setting in $ENV_FILE: TRAEFIK_ACME_EMAIL still uses an example or placeholder value."
     exit 1
   fi
 }
@@ -91,6 +155,8 @@ echo "Running release preflight for Stream247 using $ENV_FILE..."
 for key in APP_URL APP_SECRET POSTGRES_PASSWORD DATABASE_URL; do
   require_production_setting "$key"
 done
+
+validate_proxy_settings_if_configured
 
 echo "Checking image pinning policy..."
 if grep -Eq '^STREAM247_(WEB|WORKER|PLAYOUT)_IMAGE=.*:latest$' "$ENV_FILE"; then

@@ -22,7 +22,7 @@ Do not use `latest` for unattended production deployments.
    ```bash
    pnpm release:preflight
    ```
-   The preflight rejects blank required settings plus untouched `.env.example` and `.env.production.example` placeholder values, so replace those first.
+   The preflight rejects blank or quoted-empty required settings plus untouched `.env.example` and `.env.production.example` placeholder values, including Traefik example defaults when proxy settings are present, so replace those first.
 6. Update the pinned image tags in your Compose configuration, or rehearse the target version with:
    ```bash
    ./scripts/upgrade-rehearsal.sh v1.0.3

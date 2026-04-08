@@ -149,7 +149,7 @@ For pinned production deployment, start from:
 cp .env.production.example .env
 ```
 
-`pnpm release:preflight` now rejects untouched example values, blank secrets/passwords, and `localhost` or `*.example.com` production URLs, so replace the required placeholders before using it as a release gate.
+`pnpm release:preflight` now rejects untouched example values, quoted-empty secrets/passwords, and proxy placeholders such as `TRAEFIK_HOST=stream247.example.com` or `TRAEFIK_ACME_EMAIL=admin@example.com`, so replace the required defaults before using it as a release gate.
 
 In most cases you only need to set these before first start:
 
@@ -365,7 +365,7 @@ Notes:
 - set `CHECK_BASE_URL=http://127.0.0.1:3000` if your public `APP_URL` points through an external proxy or domain that is not reachable from the host running the scripts
 - set `SESSION_COOKIE="stream247_session=..."` if you want the soak monitor to fail on open critical incidents via the authenticated incidents API
 - set `RELEASE_PREFLIGHT_ENV_FILE=/path/to/production.env` if you want to validate a staged env file without replacing the local `.env`
-- `pnpm release:preflight` only passes with non-blank production values; copied `.env.example` or `.env.production.example` placeholders must be replaced first
+- `pnpm release:preflight` only passes with non-blank production values; copied `.env.example` or `.env.production.example` placeholders, quoted-empty required settings, and Traefik example defaults must be replaced first
 - local `pnpm release:preflight` runs a full `pnpm validate`; CI and release workflows only set `RELEASE_PREFLIGHT_SKIP_VALIDATE=1` after the outer job has already completed `pnpm validate`
 
 ## Feature Overview

@@ -42,6 +42,6 @@ Do not auto-track `latest` for a 24/7 production channel.
 
 Notes:
 
-- `pnpm release:preflight` rejects blank required settings plus untouched `.env.example` and `.env.production.example` placeholder values
+- `pnpm release:preflight` rejects blank or quoted-empty required settings plus untouched `.env.example` and `.env.production.example` placeholder values, including Traefik example defaults when proxy settings are present
 - local `pnpm release:preflight` should keep its default full-validation behavior
 - CI and `release.yml` set `RELEASE_PREFLIGHT_SKIP_VALIDATE=1` only after the outer workflow job has already completed `pnpm validate`
