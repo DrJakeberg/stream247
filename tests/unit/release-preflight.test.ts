@@ -87,6 +87,36 @@ STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
     expect(result.output).toContain("APP_SECRET is blank");
   });
 
+  it("rejects quoted double-empty required production settings", () => {
+    const result = runReleasePreflight(`
+APP_URL=https://stream247.mycorp.net
+APP_SECRET=""
+POSTGRES_PASSWORD=super-secret-db-password
+DATABASE_URL=postgresql://stream247:super-secret-db-password@postgres:5432/stream247
+STREAM247_WEB_IMAGE=ghcr.io/drjakeberg/stream247-web:v1.0.3
+STREAM247_WORKER_IMAGE=ghcr.io/drjakeberg/stream247-worker:v1.0.3
+STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
+`);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("APP_SECRET is blank");
+  });
+
+  it("rejects quoted single-empty required production settings", () => {
+    const result = runReleasePreflight(`
+APP_URL=https://stream247.mycorp.net
+APP_SECRET=super-secret-app-secret-0123456789
+POSTGRES_PASSWORD=''
+DATABASE_URL=postgresql://stream247:super-secret-db-password@postgres:5432/stream247
+STREAM247_WEB_IMAGE=ghcr.io/drjakeberg/stream247-web:v1.0.3
+STREAM247_WORKER_IMAGE=ghcr.io/drjakeberg/stream247-worker:v1.0.3
+STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
+`);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("POSTGRES_PASSWORD is blank");
+  });
+
   it("rejects untouched production example configs", () => {
     const result = runReleasePreflight(readFileSync(path.join(rootDir, ".env.production.example"), "utf8"));
 
@@ -101,12 +131,48 @@ STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
     expect(result.output).toContain("APP_URL still uses an example or placeholder value");
   });
 
+  it("rejects proxy host placeholder values when Traefik settings are present", () => {
+    const result = runReleasePreflight(`
+APP_URL=https://stream247.mycorp.net
+APP_SECRET=super-secret-app-secret-0123456789
+POSTGRES_PASSWORD=super-secret-db-password
+DATABASE_URL=postgresql://stream247:super-secret-db-password@postgres:5432/stream247
+TRAEFIK_HOST=stream247.example.com
+TRAEFIK_ACME_EMAIL=ops@mycorp.net
+STREAM247_WEB_IMAGE=ghcr.io/drjakeberg/stream247-web:v1.0.3
+STREAM247_WORKER_IMAGE=ghcr.io/drjakeberg/stream247-worker:v1.0.3
+STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
+`);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("TRAEFIK_HOST still uses an example or placeholder value");
+  });
+
+  it("rejects proxy email placeholder values when Traefik settings are present", () => {
+    const result = runReleasePreflight(`
+APP_URL=https://stream247.mycorp.net
+APP_SECRET=super-secret-app-secret-0123456789
+POSTGRES_PASSWORD=super-secret-db-password
+DATABASE_URL=postgresql://stream247:super-secret-db-password@postgres:5432/stream247
+TRAEFIK_HOST=stream247.mycorp.net
+TRAEFIK_ACME_EMAIL=admin@example.com
+STREAM247_WEB_IMAGE=ghcr.io/drjakeberg/stream247-web:v1.0.3
+STREAM247_WORKER_IMAGE=ghcr.io/drjakeberg/stream247-worker:v1.0.3
+STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
+`);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("TRAEFIK_ACME_EMAIL still uses an example or placeholder value");
+  });
+
   it("accepts pinned production values and forwards the selected env file to docker compose", () => {
     const result = runReleasePreflight(`
 APP_URL=https://stream247.mycorp.net
 APP_SECRET=super-secret-app-secret-0123456789
 POSTGRES_PASSWORD=super-secret-db-password
 DATABASE_URL=postgresql://stream247:super-secret-db-password@postgres:5432/stream247
+TRAEFIK_HOST=stream247.mycorp.net
+TRAEFIK_ACME_EMAIL=ops@mycorp.net
 STREAM247_WEB_IMAGE=ghcr.io/drjakeberg/stream247-web:v1.0.3
 STREAM247_WORKER_IMAGE=ghcr.io/drjakeberg/stream247-worker:v1.0.3
 STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3

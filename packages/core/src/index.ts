@@ -1804,6 +1804,11 @@ export function buildScheduleOccurrences(args: {
     });
 }
 
+function parseScheduleTimeToMinuteOfDay(value: string): number {
+  const [hours, minutes] = value.split(":").map((entry) => Number(entry) || 0);
+  return Math.max(0, Math.min(24 * 60 - 1, hours * 60 + minutes));
+}
+
 export function findCurrentScheduleOccurrence(args: {
   occurrences: ScheduleOccurrence[];
   currentTime: string;
@@ -1824,21 +1829,7 @@ export function findNextScheduleOccurrence(args: {
   currentTime: string;
   currentOccurrence?: ScheduleOccurrence | null;
 }): ScheduleOccurrence | null {
-  if (args.occurrences.length === 0) {
-    return null;
-  }
-
-  const currentOccurrence = args.currentOccurrence ?? findCurrentScheduleOccurrence(args);
-  if (!currentOccurrence) {
-    return args.occurrences.find((item) => item.startTime > args.currentTime) ?? null;
-  }
-
-  const currentIndex = args.occurrences.findIndex((item) => item.key === currentOccurrence.key);
-  if (currentIndex === -1) {
-    return args.occurrences.find((item) => item.startTime > args.currentTime) ?? null;
-  }
-
-  return args.occurrences[currentIndex + 1] ?? null;
+  return listUpcomingScheduleOccurrences(args)[0] ?? null;
 }
 
 export function listUpcomingScheduleOccurrences(args: {
@@ -1850,17 +1841,11 @@ export function listUpcomingScheduleOccurrences(args: {
     return [];
   }
 
+  const currentMinuteOfDay = parseScheduleTimeToMinuteOfDay(args.currentTime);
   const currentOccurrence = args.currentOccurrence ?? findCurrentScheduleOccurrence(args);
-  if (!currentOccurrence) {
-    return args.occurrences.filter((item) => item.startTime > args.currentTime);
-  }
-
-  const currentIndex = args.occurrences.findIndex((item) => item.key === currentOccurrence.key);
-  if (currentIndex === -1) {
-    return args.occurrences.filter((item) => item.startTime > args.currentTime);
-  }
-
-  return args.occurrences.slice(currentIndex + 1);
+  return args.occurrences.filter(
+    (item) => item.startMinuteOfDay > currentMinuteOfDay && item.key !== currentOccurrence?.key
+  );
 }
 
 function extractFormatterParts(args: { instant: Date; timeZone: string }) {
