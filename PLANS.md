@@ -81,6 +81,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M17.2 Scene Studio V2 Final Follow-Up Fixes | Reliability | Now | Complete | Close the remaining fresh-widget and protocol-relative Scene Studio review regressions | Fresh widget layers switch into metadata-card mode without carrying a default label override, protocol-relative remote URLs follow the same provider boundary rules as absolute remote URLs, and regression coverage proves both behaviors | `packages/core`, `apps/web`, tests, docs | low | revert the follow-up helper tightening if a new frame-source edge case appears |
 | M18 Release Workflow Preflight Alignment | Ops | Now | Complete | Align CI and release workflows with the hardened release-preflight gate | CI and tagged release workflows validate a staged non-placeholder production env instead of copying untouched example values, regression coverage proves the staged env passes preflight, and release docs remain accurate | `.github/workflows`, `scripts`, tests, `PLANS.md` | low | revert workflow/helper changes if the staged env path proves runner-specific |
 | M18.1 Release Preflight Compose Env Alignment | Ops | Now | Complete | Align compose config validation with `RELEASE_PREFLIGHT_ENV_FILE` in CI and other staged checks | `pnpm release:preflight` succeeds with a staged env file even when the repo root lacks `.env`, compose validation uses the selected env safely, placeholder checks stay strict, and regression coverage proves both staged and placeholder paths | `scripts`, tests, `PLANS.md` | low | revert the temporary compose-env mirroring if it causes an undiscovered local edge case |
+| M19 Release Readiness Hardening | Ops | Now | Complete | Close the remaining release-readiness gaps across tagged publishing, rehearsal/soak gates, image pinning, and production restarts | Tagged release artifacts are smoke-validated before push, rehearsal and soak gates require actual broadcast readiness, quoted `:latest` image refs fail preflight, production Compose services restart automatically, and regression coverage proves the tightened release path | `.github/workflows`, `docker-compose.yml`, `scripts`, tests, docs, `PLANS.md` | medium | revert workflow/runbook tightening if a documented deployment edge case appears and keep the stricter checks disabled only with an explicit follow-up |
 
 ## M17 Scene Studio V2
 
@@ -212,6 +213,58 @@ pnpm validate
 - no production checks are weakened
 - `pnpm validate` and milestone-targeted preflight checks pass
 
+## M19 Release Readiness Hardening
+
+Status: complete 2026-04-08
+
+**Scope**
+
+- gate tagged GHCR publishing behind local smoke validation of the exact release-candidate images
+- require `broadcastReady=true` in release rehearsal and soak gates instead of treating field presence as success
+- normalize quoted image refs before rejecting mutable `:latest` tags in release preflight
+- add restart policies for the production Compose services used in the documented 24/7 deployment path
+- keep release docs aligned with the stricter gates and always-on deployment posture
+
+**Acceptance Criteria**
+
+- `.github/workflows/release.yml` smoke-validates local release-candidate images before any final tagged push step
+- `scripts/upgrade-rehearsal.sh` fails until `/api/system/readiness` reports `broadcastReady=true`
+- `scripts/soak-monitor.sh` fails on non-ready broadcast state or non-ready destinations instead of logging them only
+- `scripts/release-preflight.sh` rejects quoted and unquoted `:latest` image refs equally
+- `docker-compose.yml` includes restart policies for `web`, `worker`, `playout`, `postgres`, and `redis`
+
+**Touched Areas**
+
+- `.github/workflows/release.yml`
+- `docker-compose.yml`
+- `scripts/release-preflight.sh`
+- `scripts/upgrade-rehearsal.sh`
+- `scripts/soak-monitor.sh`
+- release-readiness regression tests
+- release and deployment docs
+- `PLANS.md`
+
+**Validation Commands**
+
+```bash
+pnpm exec vitest run tests/unit/release-preflight.test.ts tests/unit/release-readiness.test.ts
+tmp_env="$(./scripts/prepare-release-preflight-env.sh)"; trap 'rm -f "$tmp_env"' EXIT; RELEASE_PREFLIGHT_ENV_FILE="$tmp_env" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
+docker build -f docker/web.Dockerfile -t stream247-web:release-candidate .
+docker build -f docker/worker.Dockerfile -t stream247-worker:release-candidate .
+docker build -f docker/worker.Dockerfile -t stream247-playout:release-candidate .
+chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:release-candidate
+STREAM247_FRESH_COMPOSE_WEB_IMAGE=stream247-web:release-candidate STREAM247_FRESH_COMPOSE_WORKER_IMAGE=stream247-worker:release-candidate STREAM247_FRESH_COMPOSE_PLAYOUT_IMAGE=stream247-playout:release-candidate pnpm test:fresh-compose
+pnpm validate
+```
+
+**Done Criteria**
+
+- tagged release publishing is gated by local candidate-image smoke validation
+- rehearsal/soak scripts fail on non-broadcast-ready states
+- mutable quoted image refs no longer bypass release preflight
+- production Compose services restart automatically after daemon or host restarts
+- docs stay accurate about the stricter release path and restart behavior
+
 ## Phase 2 — Post-M9 Audit Follow-Up
 
 The first milestone set shipped meaningful parity progress, but a fresh audit found three categories of follow-up work:
@@ -316,6 +369,13 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-04-08 — M19 Release Readiness Hardening
+
+- Reworked the tagged release workflow so local release-candidate `web`, `worker`, and `playout` images are built and smoke-validated before any final versioned GHCR push step runs.
+- Tightened `upgrade-rehearsal.sh` and `soak-monitor.sh` so both gates now require `/api/system/readiness` to report `broadcastReady=true` and a ready destination instead of treating those fields as informational only.
+- Hardened `release-preflight.sh` so quoted and unquoted mutable `:latest` image refs fail equally, and added `restart: unless-stopped` to the documented always-on production Compose services.
+- Validation completed: `pnpm exec vitest run tests/unit/release-preflight.test.ts tests/unit/release-readiness.test.ts`, `RELEASE_PREFLIGHT_ENV_FILE=<temp> RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight`, candidate `docker build` checks for `web`, `worker`, and `playout`, `./docker/smoke-test.sh stream247-web:release-candidate`, candidate-image `pnpm test:fresh-compose`, and `pnpm validate` passed.
 
 ### 2026-04-05 — M0 Planning And Execution Guardrails
 

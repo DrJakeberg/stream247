@@ -183,6 +183,24 @@ prepare_compose_root_env_if_needed() {
   cp "$ENV_FILE" "$ROOT_ENV_FILE"
 }
 
+validate_image_pinning() {
+  key="$1"
+
+  if ! raw_value="$(read_env_value "$key" "$ENV_FILE" 2>/dev/null)"; then
+    return
+  fi
+
+  normalized_value="$(normalize_env_value "$raw_value")"
+
+  case "$normalized_value" in
+    *:latest)
+      echo "Production preflight failed: ${key} still points to mutable tag :latest."
+      echo "Pin explicit release tags before production rollout."
+      exit 1
+      ;;
+  esac
+}
+
 echo "Running release preflight for Stream247 using $ENV_FILE..."
 
 for key in APP_URL APP_SECRET POSTGRES_PASSWORD DATABASE_URL; do
@@ -192,11 +210,9 @@ done
 validate_proxy_settings_if_configured
 
 echo "Checking image pinning policy..."
-if grep -Eq '^STREAM247_(WEB|WORKER|PLAYOUT)_IMAGE=.*:latest$' "$ENV_FILE"; then
-  echo "Production preflight failed: image tags still point to :latest."
-  echo "Pin explicit release tags before production rollout."
-  exit 1
-fi
+for key in STREAM247_WEB_IMAGE STREAM247_WORKER_IMAGE STREAM247_PLAYOUT_IMAGE; do
+  validate_image_pinning "$key"
+done
 
 echo "Checking Compose configuration..."
 prepare_compose_root_env_if_needed

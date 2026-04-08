@@ -63,11 +63,17 @@ check_readiness() {
     if (!(data.status === "ok" || data.status === "degraded")) {
       issues.push(`readiness.status=${data.status}`);
     }
+    if (data.broadcastReady !== true) {
+      issues.push(`broadcastReady=${String(data.broadcastReady)}`);
+    }
     if (data.services?.worker === "not-ready") {
       issues.push("worker=not-ready");
     }
     if (data.services?.playout === "not-ready") {
       issues.push("playout=not-ready");
+    }
+    if ((data.services?.destination ?? "unknown") !== "ok") {
+      issues.push(`destination=${data.services?.destination ?? "unknown"}`);
     }
     if (data.playout?.crashLoopDetected) {
       issues.push("playout.crashLoopDetected=true");

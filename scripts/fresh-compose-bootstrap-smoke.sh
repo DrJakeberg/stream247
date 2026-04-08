@@ -9,6 +9,9 @@ ENV_FILE="$TMP_DIR/.env"
 OVERRIDE_FILE="$TMP_DIR/docker-compose.override.yml"
 ROOT_ENV_FILE="$WORKDIR/.env"
 ROOT_ENV_BACKUP="$TMP_DIR/root.env.backup"
+WEB_IMAGE="${STREAM247_FRESH_COMPOSE_WEB_IMAGE:-stream247-web:test}"
+WORKER_IMAGE="${STREAM247_FRESH_COMPOSE_WORKER_IMAGE:-stream247-worker:test}"
+PLAYOUT_IMAGE="${STREAM247_FRESH_COMPOSE_PLAYOUT_IMAGE:-$WORKER_IMAGE}"
 
 cleanup() {
   docker compose --project-name "$PROJECT_NAME" --env-file "$ENV_FILE" -f docker-compose.yml -f "$OVERRIDE_FILE" down -v >/dev/null 2>&1 || true
@@ -35,9 +38,9 @@ POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247
 DATABASE_URL=postgresql://stream247:stream247@postgres:5432/stream247
 REDIS_URL=redis://redis:6379
-STREAM247_WEB_IMAGE=stream247-web:test
-STREAM247_WORKER_IMAGE=stream247-worker:test
-STREAM247_PLAYOUT_IMAGE=stream247-worker:test
+STREAM247_WEB_IMAGE=${WEB_IMAGE}
+STREAM247_WORKER_IMAGE=${WORKER_IMAGE}
+STREAM247_PLAYOUT_IMAGE=${PLAYOUT_IMAGE}
 TRAEFIK_HOST=stream247.local
 TRAEFIK_ACME_EMAIL=devnull@example.com
 CHANNEL_TIMEZONE=Europe/Berlin

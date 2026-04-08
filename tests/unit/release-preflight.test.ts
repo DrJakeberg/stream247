@@ -215,6 +215,36 @@ STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
     expect(result.output).toContain("TRAEFIK_ACME_EMAIL still uses an example or placeholder value");
   });
 
+  it("rejects unquoted mutable latest image tags", () => {
+    const result = runReleasePreflight(`
+APP_URL=https://stream247.mycorp.net
+APP_SECRET=super-secret-app-secret-0123456789
+POSTGRES_PASSWORD=super-secret-db-password
+DATABASE_URL=postgresql://stream247:super-secret-db-password@postgres:5432/stream247
+STREAM247_WEB_IMAGE=ghcr.io/drjakeberg/stream247-web:latest
+STREAM247_WORKER_IMAGE=ghcr.io/drjakeberg/stream247-worker:v1.0.3
+STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
+`);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("STREAM247_WEB_IMAGE still points to mutable tag :latest");
+  });
+
+  it("rejects quoted mutable latest image tags", () => {
+    const result = runReleasePreflight(`
+APP_URL=https://stream247.mycorp.net
+APP_SECRET=super-secret-app-secret-0123456789
+POSTGRES_PASSWORD=super-secret-db-password
+DATABASE_URL=postgresql://stream247:super-secret-db-password@postgres:5432/stream247
+STREAM247_WEB_IMAGE="ghcr.io/drjakeberg/stream247-web:v1.0.3"
+STREAM247_WORKER_IMAGE='ghcr.io/drjakeberg/stream247-worker:latest'
+STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
+`);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("STREAM247_WORKER_IMAGE still points to mutable tag :latest");
+  });
+
   it("accepts pinned production values and forwards the selected env file to docker compose", () => {
     const result = runReleasePreflight(`
 APP_URL=https://stream247.mycorp.net

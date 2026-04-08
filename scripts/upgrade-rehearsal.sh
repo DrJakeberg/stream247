@@ -108,7 +108,7 @@ wait_for_broadcast_readiness() {
         const fs = require("fs");
         const raw = fs.readFileSync(0, "utf8");
         const data = JSON.parse(raw);
-        if ((data.status === "ok" || data.status === "degraded") && typeof data.broadcastReady === "boolean") {
+        if ((data.status === "ok" || data.status === "degraded") && data.broadcastReady === true) {
           process.exit(0);
         }
         process.exit(1);
@@ -120,7 +120,7 @@ wait_for_broadcast_readiness() {
     sleep 5
   done
 
-  echo "Readiness endpoint did not become ready enough for rehearsal checks."
+  echo "Readiness endpoint did not become broadcast-ready enough for rehearsal checks."
   return 1
 }
 

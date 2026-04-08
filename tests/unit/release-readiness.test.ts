@@ -1,0 +1,240 @@
+import { execFileSync } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+
+const rootDir = path.resolve(__dirname, "../..");
+const rootEnvPath = path.join(rootDir, ".env");
+const releaseWorkflowPath = path.join(rootDir, ".github", "workflows", "release.yml");
+const composePath = path.join(rootDir, "docker-compose.yml");
+const upgradeScriptPath = path.join(rootDir, "scripts", "upgrade-rehearsal.sh");
+const soakScriptPath = path.join(rootDir, "scripts", "soak-monitor.sh");
+const tempDirs: string[] = [];
+let rootEnvBackupPath: string | null = null;
+
+type CurlResponse = {
+  body: string;
+  status?: number;
+};
+
+function rememberTempDir(prefix: string) {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(tempDir);
+  return tempDir;
+}
+
+function writeRootEnv(contents: string) {
+  const tempDir = rememberTempDir("stream247-release-readiness-root-");
+  if (existsSync(rootEnvPath)) {
+    rootEnvBackupPath = path.join(tempDir, "root.env.backup");
+    renameSync(rootEnvPath, rootEnvBackupPath);
+  } else {
+    rootEnvBackupPath = null;
+  }
+
+  writeFileSync(rootEnvPath, contents);
+}
+
+function createDockerStub(tempDir: string) {
+  const binDir = path.join(tempDir, "bin");
+  const dockerLog = path.join(tempDir, "docker.log");
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(
+    path.join(binDir, "docker"),
+    `#!/usr/bin/env sh
+printf '%s\\n' "$*" >> "${dockerLog}"
+exit 0
+`
+  );
+  chmodSync(path.join(binDir, "docker"), 0o755);
+  return { binDir, dockerLog };
+}
+
+function createSleepStub(binDir: string) {
+  writeFileSync(
+    path.join(binDir, "sleep"),
+    `#!/usr/bin/env sh
+exit 0
+`
+  );
+  chmodSync(path.join(binDir, "sleep"), 0o755);
+}
+
+function createCurlStub(binDir: string, tempDir: string, responses: CurlResponse[]) {
+  const responseDir = path.join(tempDir, "curl-responses");
+  const counterFile = path.join(tempDir, "curl-count");
+  mkdirSync(responseDir, { recursive: true });
+
+  responses.forEach((response, index) => {
+    writeFileSync(path.join(responseDir, `${index}.body`), response.body);
+    writeFileSync(path.join(responseDir, `${index}.status`), String(response.status ?? 0));
+  });
+
+  writeFileSync(
+    path.join(binDir, "curl"),
+    `#!/usr/bin/env sh
+count_file="${counterFile}"
+index="$(cat "$count_file" 2>/dev/null || echo 0)"
+max_index=${responses.length - 1}
+if [ "$index" -gt "$max_index" ]; then
+  index="$max_index"
+fi
+cat "${responseDir}/$index.body"
+echo $((index + 1)) > "$count_file"
+exit "$(cat "${responseDir}/$index.status")"
+`
+  );
+  chmodSync(path.join(binDir, "curl"), 0o755);
+}
+
+function runShellScript(scriptPath: string, args: string[], responses: CurlResponse[]) {
+  const tempDir = rememberTempDir("stream247-release-readiness-script-");
+  const { binDir, dockerLog } = createDockerStub(tempDir);
+  createSleepStub(binDir);
+  createCurlStub(binDir, tempDir, responses);
+
+  try {
+    const output = execFileSync("sh", [scriptPath, ...args], {
+      cwd: rootDir,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CHECK_BASE_URL: "http://127.0.0.1:3000",
+        PATH: `${binDir}:${process.env.PATH}`
+      },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    return {
+      status: 0,
+      output,
+      dockerLog: existsSync(dockerLog) ? readFileSync(dockerLog, "utf8") : ""
+    };
+  } catch (error) {
+    const execError = error as { status?: number; stdout?: string | Buffer; stderr?: string | Buffer };
+    return {
+      status: execError.status ?? 1,
+      output: `${execError.stdout?.toString() ?? ""}${execError.stderr?.toString() ?? ""}`,
+      dockerLog: existsSync(dockerLog) ? readFileSync(dockerLog, "utf8") : ""
+    };
+  }
+}
+
+function extractComposeServiceBlock(serviceName: string) {
+  const compose = readFileSync(composePath, "utf8");
+  const lines = compose.split("\n");
+  const start = lines.findIndex((line) => line === `  ${serviceName}:`);
+  if (start === -1) {
+    return "";
+  }
+
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^  [a-z0-9-]+:$/.test(lines[index])) {
+      end = index;
+      break;
+    }
+  }
+
+  return lines.slice(start, end).join("\n");
+}
+
+afterEach(() => {
+  if (existsSync(rootEnvPath)) {
+    rmSync(rootEnvPath, { force: true });
+  }
+
+  if (rootEnvBackupPath && existsSync(rootEnvBackupPath)) {
+    renameSync(rootEnvBackupPath, rootEnvPath);
+  }
+  rootEnvBackupPath = null;
+
+  while (tempDirs.length > 0) {
+    rmSync(tempDirs.pop() as string, { force: true, recursive: true });
+  }
+});
+
+describe("release readiness files", () => {
+  it("smoke-validates candidate release artifacts before any push step", () => {
+    const workflow = readFileSync(releaseWorkflowPath, "utf8");
+    const webCandidateBuild = workflow.indexOf("docker build -f docker/web.Dockerfile -t stream247-web:release-candidate .");
+    const workerCandidateBuild = workflow.indexOf("docker build -f docker/worker.Dockerfile -t stream247-worker:release-candidate .");
+    const playoutCandidateBuild = workflow.indexOf("docker build -f docker/worker.Dockerfile -t stream247-playout:release-candidate .");
+    const webSmoke = workflow.indexOf("./docker/smoke-test.sh stream247-web:release-candidate");
+    const composeSmoke = workflow.indexOf(
+      "STREAM247_FRESH_COMPOSE_WEB_IMAGE=stream247-web:release-candidate STREAM247_FRESH_COMPOSE_WORKER_IMAGE=stream247-worker:release-candidate STREAM247_FRESH_COMPOSE_PLAYOUT_IMAGE=stream247-playout:release-candidate pnpm test:fresh-compose"
+    );
+    const firstPush = workflow.indexOf("push: true");
+
+    expect(webCandidateBuild).toBeGreaterThan(-1);
+    expect(workerCandidateBuild).toBeGreaterThan(webCandidateBuild);
+    expect(playoutCandidateBuild).toBeGreaterThan(workerCandidateBuild);
+    expect(webSmoke).toBeGreaterThan(playoutCandidateBuild);
+    expect(composeSmoke).toBeGreaterThan(webSmoke);
+    expect(firstPush).toBeGreaterThan(composeSmoke);
+  });
+
+  it("adds restart policies to the always-on production services", () => {
+    for (const serviceName of ["web", "worker", "playout", "postgres", "redis"]) {
+      expect(extractComposeServiceBlock(serviceName)).toContain("restart: unless-stopped");
+    }
+  });
+});
+
+describe("release readiness scripts", () => {
+  it("upgrade rehearsal fails until the channel is actually broadcast-ready", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\nAPP_SECRET=test\nPOSTGRES_PASSWORD=test\nDATABASE_URL=postgresql://stream247:test@postgres:5432/stream247\n`);
+
+    const result = runShellScript(upgradeScriptPath, ["v1.0.3"], [
+      { body: '{"status":"ok"}\n' },
+      {
+        body: '{"status":"ok","broadcastReady":false,"services":{"worker":"ok","playout":"ok","destination":"not-ready"},"playout":{"selectionReasonCode":"fallback","fallbackTier":"standby","crashLoopDetected":false}}\n'
+      }
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("did not become broadcast-ready enough");
+  });
+
+  it("upgrade rehearsal succeeds when readiness is broadcast-ready", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\nAPP_SECRET=test\nPOSTGRES_PASSWORD=test\nDATABASE_URL=postgresql://stream247:test@postgres:5432/stream247\n`);
+
+    const readyResponse =
+      '{"status":"ok","broadcastReady":true,"services":{"worker":"ok","playout":"ok","destination":"ok"},"playout":{"selectionReasonCode":"scheduled","fallbackTier":"none","crashLoopDetected":false}}\n';
+    const result = runShellScript(upgradeScriptPath, ["v1.0.3"], [
+      { body: '{"status":"ok"}\n' },
+      { body: readyResponse },
+      { body: readyResponse }
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("broadcastReady=true");
+    expect(result.dockerLog).toContain("compose --env-file");
+    expect(result.dockerLog).toContain("pull");
+    expect(result.dockerLog).toContain("up -d");
+  });
+
+  it("soak monitor fails when broadcast readiness is false or destinations are not ready", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
+
+    const result = runShellScript(soakScriptPath, ["--hours", "24", "--interval-seconds", "0"], [
+      {
+        body: '{"status":"ok","broadcastReady":false,"services":{"worker":"ok","playout":"ok","destination":"not-ready"},"playout":{"selectionReasonCode":"fallback","fallbackTier":"standby","crashLoopDetected":false}}\n'
+      }
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("broadcastReady=false");
+    expect(result.output).toContain("destination=not-ready");
+  });
+});
