@@ -781,7 +781,9 @@ export function describeOverlaySceneFrameSupport(value: string): OverlaySceneFra
     };
   }
 
-  if (normalized.startsWith("/")) {
+  const resolvedValue = normalized.startsWith("//") ? `https:${normalized}` : normalized;
+
+  if (resolvedValue.startsWith("/") && !resolvedValue.startsWith("//")) {
     return {
       providerLabel: "Local overlay source",
       status: "supported",
@@ -791,7 +793,7 @@ export function describeOverlaySceneFrameSupport(value: string): OverlaySceneFra
   }
 
   try {
-    const url = new URL(normalized);
+    const url = new URL(resolvedValue);
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
     const path = url.pathname.toLowerCase();
 
@@ -956,13 +958,12 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
         fit: normalizeOverlaySceneCustomMediaFit(raw.fit)
       });
     } else if (raw.kind === "widget") {
-      const widgetMode = normalizeOverlaySceneCustomWidgetMode(raw.widgetMode);
       normalized.push({
         ...base,
         kind: "widget",
         url: sanitizeOverlaySceneUrl(raw.url),
-        title: widgetMode === "metadata" ? String(raw.title || "").trim().slice(0, 80) : String(raw.title || "").trim().slice(0, 80) || "Widget Layer",
-        widgetMode,
+        title: String(raw.title || "").trim().slice(0, 80),
+        widgetMode: normalizeOverlaySceneCustomWidgetMode(raw.widgetMode),
         widgetDataKey: normalizeOverlaySceneCustomWidgetDataKey(raw.widgetDataKey)
       });
     } else {
