@@ -221,7 +221,7 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
               referrerPolicy="no-referrer"
               sandbox="allow-same-origin allow-scripts"
               src={layer.url}
-              title={layer.title}
+              title={layer.title || layer.name || (layer.kind === "widget" ? "Widget frame" : "Embed frame")}
             />
             )
           ) : (

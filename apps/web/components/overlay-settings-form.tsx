@@ -18,13 +18,14 @@ import {
   type OverlaySceneCustomTextAlign,
   type OverlaySceneCustomTextFontMode,
   type OverlaySceneCustomTextTone,
-  type OverlaySceneCustomWidgetDataKey,
   type OverlaySceneCustomLayerKind,
+  type OverlaySceneCustomWidgetDataKey,
   type OverlaySceneLayerKind
 } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { OverlaySceneCanvas } from "@/components/overlay-scene-canvas";
+import { createDefaultCustomLayer } from "@/lib/overlay-studio-defaults";
 import type { OverlayScenePresetRecord, OverlaySettingsRecord } from "@/lib/server/state";
 
 type OverlayPreviewSeed = {
@@ -38,105 +39,6 @@ type OverlayPreviewSeed = {
 };
 
 type OverlayDraftCustomLayer = OverlaySettingsRecord["customLayers"][number];
-
-function createSceneCustomLayerId() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-
-  return `layer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): OverlayDraftCustomLayer {
-  const id = createSceneCustomLayerId();
-
-  if (kind === "text") {
-    return {
-      id,
-      kind,
-      name: "Text Layer",
-      enabled: true,
-      xPercent: 4,
-      yPercent: 10,
-      widthPercent: 34,
-      heightPercent: 16,
-      opacityPercent: 100,
-      text: "Fresh scene copy",
-      secondaryText: "",
-      textTone: "headline",
-      textAlign: "left",
-      useAccent: false,
-      fontMode: "preset",
-      customFontFamily: ""
-    };
-  }
-
-  if (kind === "logo") {
-    return {
-      id,
-      kind,
-      name: "Logo Layer",
-      enabled: true,
-      xPercent: 76,
-      yPercent: 8,
-      widthPercent: 16,
-      heightPercent: 12,
-      opacityPercent: 100,
-      url: "",
-      altText: "",
-      fit: "contain"
-    };
-  }
-
-  if (kind === "image") {
-    return {
-      id,
-      kind,
-      name: "Image Layer",
-      enabled: true,
-      xPercent: 62,
-      yPercent: 10,
-      widthPercent: 28,
-      heightPercent: 24,
-      opacityPercent: 100,
-      url: "",
-      altText: "",
-      fit: "cover"
-    };
-  }
-
-  if (kind === "widget") {
-    return {
-      id,
-      kind,
-      name: "Widget Layer",
-      enabled: true,
-      xPercent: 56,
-      yPercent: 8,
-      widthPercent: 38,
-      heightPercent: 28,
-      opacityPercent: 100,
-      url: "",
-      title: "Widget frame",
-      widgetMode: "embed",
-      widgetDataKey: "current"
-    };
-  }
-
-  return {
-    id,
-    kind: "embed",
-    name: "Embed Layer",
-    enabled: true,
-    xPercent: 56,
-    yPercent: 8,
-    widthPercent: 38,
-    heightPercent: 28,
-    opacityPercent: 100,
-    url: "",
-    title: "Embed frame"
-  };
-}
 
 function overlaySignature(overlay: OverlaySettingsRecord): string {
   return JSON.stringify({

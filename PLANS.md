@@ -78,6 +78,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M16.3 Release Preflight Hardening | Ops | Now | Complete | Reject placeholder production configs before release | Release preflight fails on blank/example values, regression tests cover the gate, and docs describe the stricter checks accurately | scripts, tests, docs | low | revert preflight validation tightening if it blocks valid pinned configs |
 | M16.4 Final Stabilization Fixes | Reliability + Ops | Now | Complete | Resolve the remaining overnight-schedule and release-preflight review regressions | Overnight current blocks keep the correct next/upcoming teasers, quoted-empty env values fail preflight, proxy example values fail preflight when present, and regression coverage proves both behaviors | `packages/core`, `apps/web`, `apps/worker`, scripts, tests, docs | medium | revert helper/preflight tightening if an undiscovered deployment edge case appears |
 | M17.1 Scene Studio V2 Follow-Up Fixes | Reliability + Docs | Now | Complete | Resolve the post-M17 Scene Studio review regressions without widening feature scope | Metadata widgets keep canonical label fallback when no override is set, dedicated YouTube/Twitch embed endpoints remain allowed while normal page URLs stay blocked, agent workflow stops when no incomplete milestone remains, and gap-analysis docs no longer contradict shipped milestone status | `packages/core`, `apps/web`, tests, docs | low-medium | revert the follow-up helper and docs tightening if a new embed or workflow edge case appears |
+| M17.2 Scene Studio V2 Final Follow-Up Fixes | Reliability | Now | Complete | Close the remaining fresh-widget and protocol-relative Scene Studio review regressions | Fresh widget layers switch into metadata-card mode without carrying a default label override, protocol-relative remote URLs follow the same provider boundary rules as absolute remote URLs, and regression coverage proves both behaviors | `packages/core`, `apps/web`, tests, docs | low | revert the follow-up helper tightening if a new frame-source edge case appears |
 
 ## M17 Scene Studio V2
 
@@ -398,3 +399,9 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - Refined provider detection so dedicated YouTube embed URLs and `player.twitch.tv` endpoints stay available as limited browser-frame sources, while normal YouTube and Twitch page URLs remain blocked as unsupported Scene Studio frame sources.
 - Restored an explicit terminal stop condition in `AGENTS.md` for the case where `PLANS.md` has no incomplete milestone remaining, and reconciled the gap-analysis missing-features list with the milestones already marked complete.
 - Validation completed: `pnpm exec vitest run tests/unit/overlay-scenes.test.ts` and `pnpm validate` passed.
+
+### 2026-04-08 — M17.2 Scene Studio V2 Final Follow-Up Fixes
+
+- Updated fresh widget-layer defaults so switching a new widget into Scene data card mode no longer carries a placeholder label override; canonical `Now Playing`, `Next`, and `Later` labels can appear immediately unless the operator explicitly sets an override.
+- Reclassified protocol-relative frame URLs as remote sources, so `//youtube...`, `//player.twitch.tv...`, and other protocol-relative providers now follow the same supported, limited, or unsupported boundary rules as absolute remote URLs.
+- Validation completed: `pnpm exec vitest run tests/unit/overlay-scenes.test.ts tests/unit/overlay-settings-form.test.ts` and `pnpm validate` passed.

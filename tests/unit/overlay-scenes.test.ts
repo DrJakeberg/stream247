@@ -439,6 +439,36 @@ describe("overlay scene frame support", () => {
       })
     );
   });
+
+  it("applies remote provider rules to protocol-relative frame URLs", () => {
+    expect(describeOverlaySceneFrameSupport("//www.youtube.com/watch?v=test")).toEqual(
+      expect.objectContaining({
+        status: "unsupported",
+        providerLabel: "YouTube"
+      })
+    );
+
+    expect(describeOverlaySceneFrameSupport("//www.youtube.com/embed/test")).toEqual(
+      expect.objectContaining({
+        status: "limited",
+        providerLabel: "YouTube"
+      })
+    );
+
+    expect(describeOverlaySceneFrameSupport("//player.twitch.tv/?channel=test&parent=stream247.example.com")).toEqual(
+      expect.objectContaining({
+        status: "limited",
+        providerLabel: "Twitch"
+      })
+    );
+
+    expect(describeOverlaySceneFrameSupport("//widgets.example.com/frame")).toEqual(
+      expect.objectContaining({
+        status: "limited",
+        badgeLabel: "Limited"
+      })
+    );
+  });
 });
 
 describe("overlay scene typography helpers", () => {
