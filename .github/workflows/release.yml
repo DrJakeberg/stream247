@@ -15,7 +15,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v3
       - uses: pnpm/action-setup@v4
         with:
           version: 10.6.1
@@ -28,16 +27,6 @@ jobs:
       - id: release-preflight-env
         run: echo "path=$(./scripts/prepare-release-preflight-env.sh)" >> "$GITHUB_OUTPUT"
       - run: RELEASE_PREFLIGHT_ENV_FILE="${{ steps.release-preflight-env.outputs.path }}" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
-      - run: docker build -f docker/web.Dockerfile -t stream247-web:release-candidate .
-      - run: docker build -f docker/worker.Dockerfile -t stream247-worker:release-candidate .
-      - run: docker build -f docker/worker.Dockerfile -t stream247-playout:release-candidate .
-      - run: chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:release-candidate
-      - run: STREAM247_FRESH_COMPOSE_WEB_IMAGE=stream247-web:release-candidate STREAM247_FRESH_COMPOSE_WORKER_IMAGE=stream247-worker:release-candidate STREAM247_FRESH_COMPOSE_PLAYOUT_IMAGE=stream247-playout:release-candidate pnpm test:fresh-compose
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta-web
         uses: docker/metadata-action@v5
         with:
@@ -59,24 +48,70 @@ jobs:
           tags: |
             type=ref,event=tag
             type=raw,value=latest
-      - uses: docker/build-push-action@v6
+      - run: docker build -f docker/web.Dockerfile -t stream247-web:release-candidate .
+      - run: docker build -f docker/worker.Dockerfile -t stream247-worker:release-candidate .
+      - run: docker build -f docker/worker.Dockerfile -t stream247-playout:release-candidate .
+      - run: chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:release-candidate
+      - run: STREAM247_FRESH_COMPOSE_WEB_IMAGE=stream247-web:release-candidate STREAM247_FRESH_COMPOSE_WORKER_IMAGE=stream247-worker:release-candidate STREAM247_FRESH_COMPOSE_PLAYOUT_IMAGE=stream247-playout:release-candidate pnpm test:fresh-compose
+      - uses: docker/login-action@v3
         with:
-          context: .
-          file: docker/web.Dockerfile
-          push: true
-          tags: ${{ steps.meta-web.outputs.tags }}
-          labels: ${{ steps.meta-web.outputs.labels }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/worker.Dockerfile
-          push: true
-          tags: ${{ steps.meta-worker.outputs.tags }}
-          labels: ${{ steps.meta-worker.outputs.labels }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/worker.Dockerfile
-          push: true
-          tags: ${{ steps.meta-playout.outputs.tags }}
-          labels: ${{ steps.meta-playout.outputs.labels }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish tested web release tags
+        env:
+          TARGET_TAGS: ${{ steps.meta-web.outputs.tags }}
+        run: |
+          set -euo pipefail
+          source_image="stream247-web:release-candidate"
+          source_id="$(docker image inspect "$source_image" --format '{{.Id}}')"
+          while IFS= read -r tag; do
+            if [ -z "$tag" ]; then
+              continue
+            fi
+            docker image tag "$source_image" "$tag"
+            target_id="$(docker image inspect "$tag" --format '{{.Id}}')"
+            if [ "$target_id" != "$source_id" ]; then
+              echo "Retagged image id for $tag does not match the smoke-tested candidate."
+              exit 1
+            fi
+            docker image push "$tag"
+          done <<< "$TARGET_TAGS"
+      - name: Publish tested worker release tags
+        env:
+          TARGET_TAGS: ${{ steps.meta-worker.outputs.tags }}
+        run: |
+          set -euo pipefail
+          source_image="stream247-worker:release-candidate"
+          source_id="$(docker image inspect "$source_image" --format '{{.Id}}')"
+          while IFS= read -r tag; do
+            if [ -z "$tag" ]; then
+              continue
+            fi
+            docker image tag "$source_image" "$tag"
+            target_id="$(docker image inspect "$tag" --format '{{.Id}}')"
+            if [ "$target_id" != "$source_id" ]; then
+              echo "Retagged image id for $tag does not match the smoke-tested candidate."
+              exit 1
+            fi
+            docker image push "$tag"
+          done <<< "$TARGET_TAGS"
+      - name: Publish tested playout release tags
+        env:
+          TARGET_TAGS: ${{ steps.meta-playout.outputs.tags }}
+        run: |
+          set -euo pipefail
+          source_image="stream247-playout:release-candidate"
+          source_id="$(docker image inspect "$source_image" --format '{{.Id}}')"
+          while IFS= read -r tag; do
+            if [ -z "$tag" ]; then
+              continue
+            fi
+            docker image tag "$source_image" "$tag"
+            target_id="$(docker image inspect "$tag" --format '{{.Id}}')"
+            if [ "$target_id" != "$source_id" ]; then
+              echo "Retagged image id for $tag does not match the smoke-tested candidate."
+              exit 1
+            fi
+            docker image push "$tag"
+          done <<< "$TARGET_TAGS"

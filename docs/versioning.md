@@ -38,7 +38,7 @@ Do not auto-track `latest` for a 24/7 production channel.
    git tag -a v1.0.3 -m "Stream247 1.0.3"
    git push origin v1.0.3
    ```
-5. Let the `release.yml` workflow build local release-candidate images, smoke-validate them, and only then publish the pinned GHCR images for `v1.0.3`.
+5. Let the `release.yml` workflow build local release-candidate images, smoke-validate them, and only then retag and publish those same tested images as the pinned GHCR artifacts for `v1.0.3`.
 
 Notes:
 

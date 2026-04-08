@@ -2,6 +2,7 @@ services:
   traefik:
     image: traefik:v3.4
     profiles: ["proxy"]
+    restart: unless-stopped
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false

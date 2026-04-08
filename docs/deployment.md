@@ -150,9 +150,9 @@ Recommended pre-release commands:
 - `push` of `v*` tags:
   - build local release-candidate images
   - smoke-test them before push
-  - versioned GHCR images
+  - retag and publish those same tested images as the versioned GHCR artifacts
 
-Production `web`, `worker`, `playout`, `postgres`, and `redis` services now use `restart: unless-stopped` in `docker-compose.yml` so the documented always-on Compose stack recovers after daemon and host restarts.
+Production `traefik`, `web`, `worker`, `playout`, `postgres`, and `redis` services now use `restart: unless-stopped` in `docker-compose.yml`, so the documented always-on Compose paths, including `docker compose --profile proxy up -d`, recover their stack processes after daemon and host restarts.
 
 CI currently builds against the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners.
 

@@ -321,7 +321,7 @@ For production pinning, use `.env.production.example` or set the image tags expl
 ### Release Behavior
 
 - `push` to `main` validates, runs fresh-stack bootstrap checks, queue continuity, runtime parity, production-config release preflight, and browser smoke checks, and then publishes current images
-- `push` of `v*` tags builds local release-candidate images, smoke-validates them, and only then publishes versioned GHCR images
+- `push` of `v*` tags builds local release-candidate images, smoke-validates them, and only then retags and publishes those same tested images as versioned GHCR artifacts
 - CI uses the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners
 - production should pin explicit release tags and not follow `latest`
 - release rehearsal helpers are available:

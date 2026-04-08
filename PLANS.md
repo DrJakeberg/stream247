@@ -82,6 +82,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M18 Release Workflow Preflight Alignment | Ops | Now | Complete | Align CI and release workflows with the hardened release-preflight gate | CI and tagged release workflows validate a staged non-placeholder production env instead of copying untouched example values, regression coverage proves the staged env passes preflight, and release docs remain accurate | `.github/workflows`, `scripts`, tests, `PLANS.md` | low | revert workflow/helper changes if the staged env path proves runner-specific |
 | M18.1 Release Preflight Compose Env Alignment | Ops | Now | Complete | Align compose config validation with `RELEASE_PREFLIGHT_ENV_FILE` in CI and other staged checks | `pnpm release:preflight` succeeds with a staged env file even when the repo root lacks `.env`, compose validation uses the selected env safely, placeholder checks stay strict, and regression coverage proves both staged and placeholder paths | `scripts`, tests, `PLANS.md` | low | revert the temporary compose-env mirroring if it causes an undiscovered local edge case |
 | M19 Release Readiness Hardening | Ops | Now | Complete | Close the remaining release-readiness gaps across tagged publishing, rehearsal/soak gates, image pinning, and production restarts | Tagged release artifacts are smoke-validated before push, rehearsal and soak gates require actual broadcast readiness, quoted `:latest` image refs fail preflight, production Compose services restart automatically, and regression coverage proves the tightened release path | `.github/workflows`, `docker-compose.yml`, `scripts`, tests, docs, `PLANS.md` | medium | revert workflow/runbook tightening if a documented deployment edge case appears and keep the stricter checks disabled only with an explicit follow-up |
+| M19.1 Release Artifact Parity And Proxy Restart Hardening | Ops | Now | Complete | Ensure tagged release publishing pushes the already-tested artifacts and that the proxy deployment path restarts cleanly | Tagged releases retag and push the smoke-tested local candidate images instead of rebuilding, Traefik has restart coverage in the proxy profile, release docs describe only the tested guarantees, and regression coverage proves the tightened workflow shape | `.github/workflows`, `docker-compose.yml`, tests, docs, `PLANS.md` | medium | revert the release retag/push flow and proxy restart note only if runner-local publishing proves incompatible with GHCR |
 
 ## M17 Scene Studio V2
 
@@ -265,6 +266,53 @@ pnpm validate
 - production Compose services restart automatically after daemon or host restarts
 - docs stay accurate about the stricter release path and restart behavior
 
+## M19.1 Release Artifact Parity And Proxy Restart Hardening
+
+Status: complete 2026-04-08
+
+**Scope**
+
+- push the exact smoke-tested local release-candidate images for tagged releases instead of rebuilding them after validation
+- add restart coverage for `traefik` so the documented proxy deployment path matches the Compose recovery guarantees
+- keep release docs precise about what the workflow actually proves and publishes
+
+**Acceptance Criteria**
+
+- `.github/workflows/release.yml` no longer rebuilds release-tag artifacts after the candidate smoke gates pass
+- the tagged publish path retags and pushes the already-tested local candidate images, or otherwise proves artifact identity before publish
+- `docker-compose.yml` includes restart coverage for `traefik` alongside the existing always-on production services
+- `README.md`, `docs/deployment.md`, and `docs/versioning.md` describe the published release artifacts and proxy restart guarantees accurately without overclaiming
+
+**Touched Areas**
+
+- `.github/workflows/release.yml`
+- `docker-compose.yml`
+- release-readiness regression tests
+- release docs
+- `PLANS.md`
+
+**Validation Commands**
+
+```bash
+pnpm exec vitest run tests/unit/release-preflight.test.ts tests/unit/release-readiness.test.ts
+docker build -f docker/web.Dockerfile -t stream247-web:release-candidate .
+docker build -f docker/worker.Dockerfile -t stream247-worker:release-candidate .
+docker build -f docker/worker.Dockerfile -t stream247-playout:release-candidate .
+chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:release-candidate
+STREAM247_FRESH_COMPOSE_WEB_IMAGE=stream247-web:release-candidate STREAM247_FRESH_COMPOSE_WORKER_IMAGE=stream247-worker:release-candidate STREAM247_FRESH_COMPOSE_PLAYOUT_IMAGE=stream247-playout:release-candidate pnpm test:fresh-compose
+docker image tag stream247-web:release-candidate stream247-web:release-parity-check && test "$(docker image inspect stream247-web:release-candidate --format '{{.Id}}')" = "$(docker image inspect stream247-web:release-parity-check --format '{{.Id}}')" && docker image rm stream247-web:release-parity-check
+docker image tag stream247-worker:release-candidate stream247-worker:release-parity-check && test "$(docker image inspect stream247-worker:release-candidate --format '{{.Id}}')" = "$(docker image inspect stream247-worker:release-parity-check --format '{{.Id}}')" && docker image rm stream247-worker:release-parity-check
+docker image tag stream247-playout:release-candidate stream247-playout:release-parity-check && test "$(docker image inspect stream247-playout:release-candidate --format '{{.Id}}')" = "$(docker image inspect stream247-playout:release-parity-check --format '{{.Id}}')" && docker image rm stream247-playout:release-parity-check
+pnpm validate
+```
+
+**Done Criteria**
+
+- tagged release publishing is artifact-identical to the smoke-tested candidate images
+- proxy-profile Traefik ingress now matches the documented restart guarantees
+- release docs stay conservative about tested artifact identity and automatic recovery scope
+- `pnpm validate` and milestone-targeted release checks pass
+
 ## Phase 2 — Post-M9 Audit Follow-Up
 
 The first milestone set shipped meaningful parity progress, but a fresh audit found three categories of follow-up work:
@@ -369,6 +417,13 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-04-08 — M19.1 Release Artifact Parity And Proxy Restart Hardening
+
+- Reworked `release.yml` so tagged publishes now retag and push the already-smoke-tested local candidate images instead of rebuilding from source after the smoke gate, which closes the remaining mutable-base and package-drift gap between rehearsal and release.
+- Added `restart: unless-stopped` for `traefik` so the documented `docker compose --profile proxy up -d` deployment path now matches the restart guarantees described in the release and deployment docs.
+- Tightened the release-readiness regression checks so they assert the workflow no longer uses `docker/build-push-action` for tagged publishing and that proxy-profile restart coverage includes `traefik`.
+- Validation completed: `pnpm exec vitest run tests/unit/release-preflight.test.ts tests/unit/release-readiness.test.ts`, candidate `docker build` checks for `web`, `worker`, and `playout`, `./docker/smoke-test.sh stream247-web:release-candidate`, candidate-image `pnpm test:fresh-compose`, local retag parity checks for `web`, `worker`, and `playout`, and `pnpm validate` passed.
 
 ### 2026-04-08 — M19 Release Readiness Hardening
 
