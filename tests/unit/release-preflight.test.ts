@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const rootDir = path.resolve(__dirname, "../..");
 const scriptPath = path.join(rootDir, "scripts", "release-preflight.sh");
+const prepareEnvScriptPath = path.join(rootDir, "scripts", "prepare-release-preflight-env.sh");
 const tempDirs: string[] = [];
 
 function createDockerStub(tempDir: string) {
@@ -26,13 +27,7 @@ exit 0
   };
 }
 
-function runReleasePreflight(envContents: string) {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "stream247-release-preflight-"));
-  tempDirs.push(tempDir);
-
-  const envFile = path.join(tempDir, "release.env");
-  writeFileSync(envFile, envContents);
-
+function runReleasePreflightFile(envFile: string, tempDir: string) {
   const { binDir, dockerLog } = createDockerStub(tempDir);
 
   try {
@@ -63,6 +58,34 @@ function runReleasePreflight(envContents: string) {
       envFile
     };
   }
+}
+
+function runReleasePreflight(envContents: string) {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "stream247-release-preflight-"));
+  tempDirs.push(tempDir);
+
+  const envFile = path.join(tempDir, "release.env");
+  writeFileSync(envFile, envContents);
+
+  return runReleasePreflightFile(envFile, tempDir);
+}
+
+function prepareReleasePreflightEnv(sourceEnvFile?: string) {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "stream247-release-preflight-helper-"));
+  tempDirs.push(tempDir);
+
+  const args = sourceEnvFile ? [prepareEnvScriptPath, sourceEnvFile] : [prepareEnvScriptPath];
+  const envFile = execFileSync("sh", args, {
+    cwd: rootDir,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TMPDIR: tempDir
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  }).trim();
+
+  return { envFile, tempDir };
 }
 
 afterEach(() => {
@@ -181,5 +204,21 @@ STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
     expect(result.status).toBe(0);
     expect(result.output).toContain("Release preflight succeeded.");
     expect(result.dockerLog).toContain(`compose --env-file ${result.envFile} config`);
+  });
+
+  it("prepares a staged workflow env from the production example that passes preflight", () => {
+    const prepared = prepareReleasePreflightEnv();
+    const envContents = readFileSync(prepared.envFile, "utf8");
+
+    expect(envContents).toContain("APP_URL=https://stream247-ci.test");
+    expect(envContents).toContain("APP_SECRET=ci-release-preflight-secret-0123456789");
+    expect(envContents).toContain("POSTGRES_PASSWORD=ci-release-preflight-db-password");
+    expect(envContents).toContain("DATABASE_URL=postgresql://stream247:ci-release-preflight-db-password@postgres:5432/stream247");
+    expect(envContents).toContain("TRAEFIK_HOST=stream247-ci.test");
+    expect(envContents).toContain("TRAEFIK_ACME_EMAIL=ops@stream247-ci.test");
+
+    const result = runReleasePreflightFile(prepared.envFile, prepared.tempDir);
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Release preflight succeeded.");
   });
 });
