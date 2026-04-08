@@ -31,13 +31,14 @@ Do not use `latest` for unattended production deployments.
 8. Restart the stack.
 9. Check:
    - `/api/health`
-   - `/api/system/readiness`
+   - `/api/system/readiness` and confirm `broadcastReady=true`
    - `/ops`
    - current broadcast state
 10. For production candidates, run:
     ```bash
     ./scripts/soak-monitor.sh --hours 24
     ```
+    The soak gate now fails if broadcast readiness drops or never becomes ready.
 
 Useful overrides:
 

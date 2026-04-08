@@ -148,8 +148,11 @@ Recommended pre-release commands:
   - smoke-test
   - publish `latest` and branch/SHA-tagged images
 - `push` of `v*` tags:
-  - release workflow
+  - build local release-candidate images
+  - smoke-test them before push
   - versioned GHCR images
+
+Production `web`, `worker`, `playout`, `postgres`, and `redis` services now use `restart: unless-stopped` in `docker-compose.yml` so the documented always-on Compose stack recovers after daemon and host restarts.
 
 CI currently builds against the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners.
 

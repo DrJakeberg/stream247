@@ -38,10 +38,11 @@ Do not auto-track `latest` for a 24/7 production channel.
    git tag -a v1.0.3 -m "Stream247 1.0.3"
    git push origin v1.0.3
    ```
-5. Let the `release.yml` workflow publish the pinned GHCR images for `v1.0.3`.
+5. Let the `release.yml` workflow build local release-candidate images, smoke-validate them, and only then publish the pinned GHCR images for `v1.0.3`.
 
 Notes:
 
 - `pnpm release:preflight` rejects blank or quoted-empty required settings plus untouched `.env.example` and `.env.production.example` placeholder values, including Traefik example defaults when proxy settings are present
 - local `pnpm release:preflight` should keep its default full-validation behavior
 - CI and `release.yml` set `RELEASE_PREFLIGHT_SKIP_VALIDATE=1` only after the outer workflow job has already completed `pnpm validate`
+- `./scripts/upgrade-rehearsal.sh` and `./scripts/soak-monitor.sh` are expected to observe `broadcastReady=true`; a merely reachable or degraded-but-not-broadcast-ready stack is not a release-ready result

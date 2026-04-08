@@ -321,7 +321,7 @@ For production pinning, use `.env.production.example` or set the image tags expl
 ### Release Behavior
 
 - `push` to `main` validates, runs fresh-stack bootstrap checks, queue continuity, runtime parity, production-config release preflight, and browser smoke checks, and then publishes current images
-- `push` of `v*` tags runs the release workflow for versioned images
+- `push` of `v*` tags builds local release-candidate images, smoke-validates them, and only then publishes versioned GHCR images
 - CI uses the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners
 - production should pin explicit release tags and not follow `latest`
 - release rehearsal helpers are available:
@@ -357,7 +357,7 @@ Before tagging a production release:
    ```bash
    ./scripts/soak-monitor.sh --hours 24
    ```
-5. Review `/ops`, `/api/health`, and `/api/system/readiness`.
+5. Review `/ops`, `/api/health`, and `/api/system/readiness`, and confirm `/api/system/readiness` reports `broadcastReady=true`.
 6. Tag only after the rehearsal and soak are clean.
 
 Notes:
@@ -366,6 +366,7 @@ Notes:
 - set `SESSION_COOKIE="stream247_session=..."` if you want the soak monitor to fail on open critical incidents via the authenticated incidents API
 - set `RELEASE_PREFLIGHT_ENV_FILE=/path/to/production.env` if you want to validate a staged env file without replacing the local `.env`
 - `pnpm release:preflight` only passes with non-blank production values; copied `.env.example` or `.env.production.example` placeholders, quoted-empty required settings, and Traefik example defaults must be replaced first
+- the rehearsal and soak scripts are release gates now: both expect a broadcast-ready channel, not just a merely reachable stack
 - local `pnpm release:preflight` runs a full `pnpm validate`; CI and release workflows only set `RELEASE_PREFLIGHT_SKIP_VALIDATE=1` after the outer job has already completed `pnpm validate`
 
 ## Feature Overview
