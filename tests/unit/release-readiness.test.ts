@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const rootDir = path.resolve(__dirname, "../..");
 const rootEnvPath = path.join(rootDir, ".env");
+const ciWorkflowPath = path.join(rootDir, ".github", "workflows", "ci.yml");
 const releaseWorkflowPath = path.join(rootDir, ".github", "workflows", "release.yml");
 const composePath = path.join(rootDir, "docker-compose.yml");
 const upgradeScriptPath = path.join(rootDir, "scripts", "upgrade-rehearsal.sh");
@@ -238,6 +239,24 @@ afterEach(() => {
 });
 
 describe("release readiness files", () => {
+  it("publishes and verifies the full main snapshot artifact set for rehearsal", () => {
+    const workflow = readFileSync(ciWorkflowPath, "utf8");
+    const mainSnapshotTagCount = (workflow.match(/type=sha,prefix=main-/g) ?? []).length;
+    const playoutMetadata = workflow.indexOf("images: ghcr.io/drjakeberg/stream247-playout");
+    const lastBuildPush = workflow.lastIndexOf("uses: docker/build-push-action@v6");
+    const verifyStep = workflow.indexOf("name: Verify published main snapshot artifacts");
+
+    expect(mainSnapshotTagCount).toBe(3);
+    expect(playoutMetadata).toBeGreaterThan(-1);
+    expect(verifyStep).toBeGreaterThan(lastBuildPush);
+    expect(workflow).toContain('wait_for_manifest stream247-web "main-${SOURCE_SHA}"');
+    expect(workflow).toContain('wait_for_manifest stream247-worker "main-${SOURCE_SHA}"');
+    expect(workflow).toContain('wait_for_manifest stream247-playout "main-${SOURCE_SHA}"');
+    expect(workflow).toContain(
+      'echo "Published image ghcr.io/drjakeberg/${image}:${tag} was not registry-visible after push."'
+    );
+  });
+
   it("publishes the already-smoke-tested main snapshot images instead of rebuilding release tags", () => {
     const workflow = readFileSync(releaseWorkflowPath, "utf8");
     const sourceSha = workflow.indexOf('SOURCE_SHA="${GITHUB_SHA::7}"');
