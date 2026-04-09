@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import nodemailer from "nodemailer";
 import path from "node:path";
@@ -69,6 +69,7 @@ import {
 } from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
 import { ensureLocalAssetThumbnail } from "./asset-thumbnails.js";
+import { execFileText } from "./process-utils.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
@@ -104,22 +105,11 @@ type QueueProbeCacheEntry = {
 const queueProbeCache = new Map<string, QueueProbeCacheEntry>();
 let sceneRendererAbortController: AbortController | null = null;
 const renderedSceneFramePath = "/tmp/stream247-scene.png";
+const SCENE_RENDER_CAPTURE_TIMEOUT_MS = 10_000;
+const SCENE_RENDER_CAPTURE_KILL_GRACE_MS = 1_000;
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
-}
-
-function execFileText(file: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { maxBuffer: 1024 * 1024 * 20 }, (error, stdout, stderr) => {
-      if (error) {
-        reject(new Error(stderr.trim() || error.message));
-        return;
-      }
-
-      resolve(stdout.trim());
-    });
-  });
 }
 
 function getManagedString(state: AppState, key: keyof AppState["managedConfig"], envFallback = ""): string {
@@ -490,7 +480,12 @@ async function captureRenderedSceneFrame(): Promise<Buffer> {
       url: getSceneRendererOverlayUrl(process.env),
       outputPath: renderedSceneFramePath,
       viewport
-    })
+    }),
+    {
+      timeoutMs: SCENE_RENDER_CAPTURE_TIMEOUT_MS,
+      killProcessGroup: true,
+      forceKillAfterMs: SCENE_RENDER_CAPTURE_KILL_GRACE_MS
+    }
   );
   return fs.readFile(renderedSceneFramePath);
 }
