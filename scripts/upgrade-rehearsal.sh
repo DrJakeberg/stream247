@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 TARGET_VERSION="${1:-}"
 if [ -z "$TARGET_VERSION" ]; then
   echo "Usage: scripts/upgrade-rehearsal.sh <target-version>"
-  echo "Example: scripts/upgrade-rehearsal.sh v1.0.0"
+  echo "Example: scripts/upgrade-rehearsal.sh 1.0.0"
   exit 1
 fi
 
@@ -35,9 +35,49 @@ sanitize_url() {
   printf "%s" "$1" | sed 's#/*$##'
 }
 
+normalize_release_tag() {
+  case "$1" in
+  v*)
+    printf "%s" "$1"
+    ;;
+  *)
+    printf "v%s" "$1"
+    ;;
+  esac
+}
+
 extract_env_value() {
   key="$1"
   sed -n "s/^${key}=//p" .env | tail -n 1
+}
+
+registry_image_exists() {
+  image="$1"
+  tag="$2"
+  docker manifest inspect "ghcr.io/drjakeberg/${image}:${tag}" >/dev/null 2>&1
+}
+
+resolve_rehearsal_image_tag() {
+  target_release_tag="$1"
+
+  if [ -n "${UPGRADE_REHEARSAL_IMAGE_TAG:-}" ]; then
+    printf "%s" "$UPGRADE_REHEARSAL_IMAGE_TAG"
+    return 0
+  fi
+
+  if registry_image_exists stream247-web "$target_release_tag" &&
+    registry_image_exists stream247-worker "$target_release_tag" &&
+    registry_image_exists stream247-playout "$target_release_tag"; then
+    printf "%s" "$target_release_tag"
+    return 0
+  fi
+
+  if source_sha="$(git rev-parse --short=7 HEAD 2>/dev/null)"; then
+    printf "main-%s" "$source_sha"
+    return 0
+  fi
+
+  printf "%s" "$target_release_tag"
 }
 
 CHECK_BASE_URL="${CHECK_BASE_URL:-}"
@@ -45,6 +85,9 @@ APP_URL="$(sanitize_url "${CHECK_BASE_URL:-$(extract_env_value APP_URL)}")"
 if [ -z "$APP_URL" ]; then
   APP_URL="http://localhost:3000"
 fi
+
+TARGET_RELEASE_TAG="$(normalize_release_tag "$TARGET_VERSION")"
+REHEARSAL_IMAGE_TAG="$(resolve_rehearsal_image_tag "$TARGET_RELEASE_TAG")"
 
 tmp_env="$(mktemp)"
 trap 'rm -f "$tmp_env"' EXIT
@@ -54,9 +97,9 @@ set_image_tag() {
   key="$1"
   image="$2"
   if grep -q "^${key}=" "$tmp_env"; then
-    sed -i "s#^${key}=.*#${key}=ghcr.io/drjakeberg/${image}:${TARGET_VERSION}#" "$tmp_env"
+    sed -i "s#^${key}=.*#${key}=ghcr.io/drjakeberg/${image}:${REHEARSAL_IMAGE_TAG}#" "$tmp_env"
   else
-    printf "%s=%s\n" "$key" "ghcr.io/drjakeberg/${image}:${TARGET_VERSION}" >>"$tmp_env"
+    printf "%s=%s\n" "$key" "ghcr.io/drjakeberg/${image}:${REHEARSAL_IMAGE_TAG}" >>"$tmp_env"
   fi
 }
 
@@ -67,6 +110,14 @@ set_image_tag STREAM247_PLAYOUT_IMAGE stream247-playout
 export COMPOSE_ENV_FILES="$tmp_env"
 
 echo "Running upgrade rehearsal against ${TARGET_VERSION}..."
+echo "Resolved release tag: ${TARGET_RELEASE_TAG}"
+if [ -n "${UPGRADE_REHEARSAL_IMAGE_TAG:-}" ]; then
+  echo "Using rehearsal artifact source: explicit image tag ${REHEARSAL_IMAGE_TAG}"
+elif [ "$REHEARSAL_IMAGE_TAG" = "$TARGET_RELEASE_TAG" ]; then
+  echo "Using rehearsal artifact source: published release tag ${REHEARSAL_IMAGE_TAG}"
+else
+  echo "Using rehearsal artifact source: pre-release main snapshot ${REHEARSAL_IMAGE_TAG}"
+fi
 echo "Using temporary image pins from ${tmp_env}"
 
 echo "Pulling target images..."

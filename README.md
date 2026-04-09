@@ -321,7 +321,7 @@ For production pinning, use `.env.production.example` or set the image tags expl
 ### Release Behavior
 
 - `push` to `main` validates, runs fresh-stack bootstrap checks, queue continuity, runtime parity, production-config release preflight, and browser smoke checks, and then publishes current images
-- `push` of `v*` tags builds local release-candidate images, smoke-validates them, and only then retags and publishes those same tested images as versioned GHCR artifacts
+- `push` of `v*` tags pulls the CI-published `main-<sha>` candidate images for the tagged commit, smoke-validates them, and only then retags and publishes those same tested images as versioned GHCR artifacts
 - CI uses the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners
 - production should pin explicit release tags and not follow `latest`
 - release rehearsal helpers are available:
@@ -365,7 +365,9 @@ Notes:
 - set `CHECK_BASE_URL=http://127.0.0.1:3000` if your public `APP_URL` points through an external proxy or domain that is not reachable from the host running the scripts
 - set `SESSION_COOKIE="stream247_session=..."` if you want the soak monitor to fail on open critical incidents via the authenticated incidents API
 - set `RELEASE_PREFLIGHT_ENV_FILE=/path/to/production.env` if you want to validate a staged env file without replacing the local `.env`
+- set `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force rehearsal against a specific pre-release snapshot tag instead of the script's automatic selection
 - `pnpm release:preflight` only passes with non-blank production values; copied `.env.example` or `.env.production.example` placeholders, quoted-empty required settings, and Traefik example defaults must be replaced first
+- `./scripts/upgrade-rehearsal.sh` now uses the published `v*` images when they already exist, and otherwise falls back to the CI-published `main-<sha>` snapshot for the current commit before the release tag is created
 - the rehearsal and soak scripts are release gates now: both expect a broadcast-ready channel, not just a merely reachable stack
 - local `pnpm release:preflight` runs a full `pnpm validate`; CI and release workflows only set `RELEASE_PREFLIGHT_SKIP_VALIDATE=1` after the outer job has already completed `pnpm validate`
 

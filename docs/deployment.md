@@ -148,9 +148,11 @@ Recommended pre-release commands:
   - smoke-test
   - publish `latest` and branch/SHA-tagged images
 - `push` of `v*` tags:
-  - build local release-candidate images
+  - pull the CI-published `main-<sha>` snapshot images for the tagged commit
   - smoke-test them before push
   - retag and publish those same tested images as the versioned GHCR artifacts
+
+`./scripts/upgrade-rehearsal.sh <target-version>` follows the same artifact model. If the requested `v*` images already exist, it rehearses against them directly. Before the version tag exists, it falls back to the CI-published `main-<sha>` snapshot for the current commit. Set `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot explicitly.
 
 Production `traefik`, `web`, `worker`, `playout`, `postgres`, and `redis` services now use `restart: unless-stopped` in `docker-compose.yml`, so the documented always-on Compose paths, including `docker compose --profile proxy up -d`, recover their stack processes after daemon and host restarts.
 
