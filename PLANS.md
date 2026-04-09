@@ -83,6 +83,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M18.1 Release Preflight Compose Env Alignment | Ops | Now | Complete | Align compose config validation with `RELEASE_PREFLIGHT_ENV_FILE` in CI and other staged checks | `pnpm release:preflight` succeeds with a staged env file even when the repo root lacks `.env`, compose validation uses the selected env safely, placeholder checks stay strict, and regression coverage proves both staged and placeholder paths | `scripts`, tests, `PLANS.md` | low | revert the temporary compose-env mirroring if it causes an undiscovered local edge case |
 | M19 Release Readiness Hardening | Ops | Now | Complete | Close the remaining release-readiness gaps across tagged publishing, rehearsal/soak gates, image pinning, and production restarts | Tagged release artifacts are smoke-validated before push, rehearsal and soak gates require actual broadcast readiness, quoted `:latest` image refs fail preflight, production Compose services restart automatically, and regression coverage proves the tightened release path | `.github/workflows`, `docker-compose.yml`, `scripts`, tests, docs, `PLANS.md` | medium | revert workflow/runbook tightening if a documented deployment edge case appears and keep the stricter checks disabled only with an explicit follow-up |
 | M19.1 Release Artifact Parity And Proxy Restart Hardening | Ops | Now | Complete | Ensure tagged release publishing pushes the already-tested artifacts and that the proxy deployment path restarts cleanly | Tagged releases retag and push the smoke-tested local candidate images instead of rebuilding, Traefik has restart coverage in the proxy profile, release docs describe only the tested guarantees, and regression coverage proves the tightened workflow shape | `.github/workflows`, `docker-compose.yml`, tests, docs, `PLANS.md` | medium | revert the release retag/push flow and proxy restart note only if runner-local publishing proves incompatible with GHCR |
+| M19.2 Release Rehearsal Pre-Tag Artifact Alignment | Ops | Now | Complete | Align pre-tag rehearsal with a real artifact source that exists before version tags are created | `upgrade-rehearsal.sh` uses published `main-<sha>` snapshot artifacts when the target release tag is not available yet, tagged releases promote those same tested `main-<sha>` images instead of rebuilding, and docs plus regression coverage describe the pre-tag flow accurately | `scripts`, `.github/workflows`, tests, docs, `PLANS.md` | medium | revert to the previous tag-only rehearsal path only if pre-release `main-<sha>` publication disappears and document the release limitation explicitly |
 
 ## M17 Scene Studio V2
 
@@ -313,6 +314,48 @@ pnpm validate
 - release docs stay conservative about tested artifact identity and automatic recovery scope
 - `pnpm validate` and milestone-targeted release checks pass
 
+## M19.2 Release Rehearsal Pre-Tag Artifact Alignment
+
+Status: complete 2026-04-09
+
+**Scope**
+
+- make `scripts/upgrade-rehearsal.sh` resolve a pre-release artifact source that exists before `v*` tags are created
+- keep tagged publishing aligned with the same artifact identity model instead of rebuilding different artifacts later
+- document the pre-tag rehearsal path conservatively so the release runbook stays internally consistent
+
+**Acceptance Criteria**
+
+- `scripts/upgrade-rehearsal.sh <target-version>` no longer requires `ghcr.io/...:vX.Y.Z` to exist before the release tag is created
+- unreleased targets rehearse against CI-published `main-<sha>` snapshot images for the current commit unless an explicit override is supplied
+- published release tags still rehearse against the real `v*` images when those tags already exist
+- `.github/workflows/release.yml` smoke-tests and promotes the same `main-<sha>` snapshot images instead of rebuilding from source after the rehearsal model has switched
+- release docs explain the `main-<sha>` pre-tag snapshot path without overstating release safety
+
+**Touched Areas**
+
+- `scripts/upgrade-rehearsal.sh`
+- `.github/workflows/release.yml`
+- release-readiness regression tests
+- release docs
+- `PLANS.md`
+
+**Validation Commands**
+
+```bash
+pnpm exec vitest run tests/unit/release-readiness.test.ts
+pnpm validate
+pnpm release:preflight
+./scripts/upgrade-rehearsal.sh 1.1.0
+```
+
+**Done Criteria**
+
+- pre-tag rehearsal uses a real pre-release artifact source that already exists before tagging
+- tagged publishing promotes the same rehearsed artifact lineage instead of rebuilding different digests
+- docs stay internally consistent about pre-tag rehearsal and release publication
+- `pnpm validate`, release preflight, and the milestone-targeted rehearsal checks pass
+
 ## Phase 2 — Post-M9 Audit Follow-Up
 
 The first milestone set shipped meaningful parity progress, but a fresh audit found three categories of follow-up work:
@@ -417,6 +460,13 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-04-09 — M19.2 Release Rehearsal Pre-Tag Artifact Alignment
+
+- Reworked `scripts/upgrade-rehearsal.sh` so unreleased target versions now resolve to the CI-published `main-<sha>` snapshot for the current commit, while already-published releases continue to rehearse against their `v*` tags and operators can still force an explicit image tag when needed.
+- Reworked `release.yml` so tagged releases now pull, smoke-test, and promote the same `main-<sha>` snapshot artifacts instead of rebuilding new local candidates after the pre-tag rehearsal model has moved to commit snapshots.
+- Tightened the release-readiness regression coverage so it now proves both unreleased-target rehearsal against `main-<sha>` and published-tag rehearsal against `v*`, while also asserting that the release workflow no longer rebuilds candidate images in the tag job.
+- Validation completed: `pnpm exec vitest run tests/unit/release-readiness.test.ts`, `pnpm validate`, `pnpm release:preflight`, and `./scripts/upgrade-rehearsal.sh 1.1.0` passed.
 
 ### 2026-04-08 — M19.1 Release Artifact Parity And Proxy Restart Hardening
 

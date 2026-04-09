@@ -32,13 +32,14 @@ Do not auto-track `latest` for a 24/7 production channel.
    ./scripts/upgrade-rehearsal.sh v1.0.3
    ./scripts/soak-monitor.sh --hours 24
    ```
+   Before `v1.0.3` exists in GHCR, `./scripts/upgrade-rehearsal.sh v1.0.3` automatically rehearses against the already-published `main-<sha>` snapshot for the current commit. Set `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot explicitly.
 3. Commit any final release-note or versioning adjustments.
 4. Create and push the release tag:
    ```bash
    git tag -a v1.0.3 -m "Stream247 1.0.3"
    git push origin v1.0.3
    ```
-5. Let the `release.yml` workflow build local release-candidate images, smoke-validate them, and only then retag and publish those same tested images as the pinned GHCR artifacts for `v1.0.3`.
+5. Let the `release.yml` workflow pull the `main-<sha>` snapshot images for the tagged commit, smoke-validate them, and only then retag and publish those same tested images as the pinned GHCR artifacts for `v1.0.3`.
 
 Notes:
 

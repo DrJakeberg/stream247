@@ -34,6 +34,10 @@ type CurlResponse = {
   status?: number;
 };
 
+type DockerStubOptions = {
+  manifestAvailableRefs?: string[];
+};
+
 function rememberTempDir(prefix: string) {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(tempDir);
@@ -85,14 +89,40 @@ function writeRootEnv(contents: string) {
   writeManagedRootEnv(rootEnvPath, rootEnvState, contents);
 }
 
-function createDockerStub(tempDir: string) {
+function createDockerStub(tempDir: string, options: DockerStubOptions = {}) {
   const binDir = path.join(tempDir, "bin");
   const dockerLog = path.join(tempDir, "docker.log");
+  const manifestRefsPath = path.join(tempDir, "manifest-refs.txt");
   mkdirSync(binDir, { recursive: true });
+  writeFileSync(manifestRefsPath, `${(options.manifestAvailableRefs ?? []).join("\n")}\n`);
   writeFileSync(
     path.join(binDir, "docker"),
     `#!/usr/bin/env sh
-printf '%s\\n' "$*" >> "${dockerLog}"
+all_args="$*"
+if [ "\${1:-}" = "manifest" ] && [ "\${2:-}" = "inspect" ]; then
+  printf '%s\\n' "$all_args" >> "${dockerLog}"
+  if grep -Fx "\${3:-}" "${manifestRefsPath}" >/dev/null 2>&1; then
+    exit 0
+  fi
+  exit 1
+fi
+
+if [ "\${1:-}" = "compose" ]; then
+  env_file=""
+  while [ "\$#" -gt 0 ]; do
+    if [ "\$1" = "--env-file" ] && [ "\$#" -ge 2 ]; then
+      env_file="\$2"
+      shift 2
+      continue
+    fi
+    shift
+  done
+  if [ -n "$env_file" ] && [ -f "$env_file" ]; then
+    grep '^STREAM247_.*_IMAGE=' "$env_file" | sed 's/^/ENV:/' >> "${dockerLog}" || true
+  fi
+fi
+
+printf '%s\\n' "$all_args" >> "${dockerLog}"
 exit 0
 `
   );
@@ -137,9 +167,14 @@ exit "$(cat "${responseDir}/$index.status")"
   chmodSync(path.join(binDir, "curl"), 0o755);
 }
 
-function runShellScript(scriptPath: string, args: string[], responses: CurlResponse[]) {
+function runShellScript(
+  scriptPath: string,
+  args: string[],
+  responses: CurlResponse[],
+  options: { docker?: DockerStubOptions; env?: Record<string, string> } = {}
+) {
   const tempDir = rememberTempDir("stream247-release-readiness-script-");
-  const { binDir, dockerLog } = createDockerStub(tempDir);
+  const { binDir, dockerLog } = createDockerStub(tempDir, options.docker);
   createSleepStub(binDir);
   createCurlStub(binDir, tempDir, responses);
 
@@ -150,6 +185,7 @@ function runShellScript(scriptPath: string, args: string[], responses: CurlRespo
       env: {
         ...process.env,
         CHECK_BASE_URL: "http://127.0.0.1:3000",
+        ...options.env,
         PATH: `${binDir}:${process.env.PATH}`
       },
       stdio: ["ignore", "pipe", "pipe"]
@@ -202,11 +238,12 @@ afterEach(() => {
 });
 
 describe("release readiness files", () => {
-  it("publishes the already-smoke-tested candidate images instead of rebuilding release tags", () => {
+  it("publishes the already-smoke-tested main snapshot images instead of rebuilding release tags", () => {
     const workflow = readFileSync(releaseWorkflowPath, "utf8");
-    const webCandidateBuild = workflow.indexOf("docker build -f docker/web.Dockerfile -t stream247-web:release-candidate .");
-    const workerCandidateBuild = workflow.indexOf("docker build -f docker/worker.Dockerfile -t stream247-worker:release-candidate .");
-    const playoutCandidateBuild = workflow.indexOf("docker build -f docker/worker.Dockerfile -t stream247-playout:release-candidate .");
+    const sourceSha = workflow.indexOf('SOURCE_SHA="${GITHUB_SHA::7}"');
+    const webCandidatePull = workflow.indexOf('docker pull "ghcr.io/drjakeberg/stream247-web:main-${SOURCE_SHA}"');
+    const workerCandidatePull = workflow.indexOf('docker pull "ghcr.io/drjakeberg/stream247-worker:main-${SOURCE_SHA}"');
+    const playoutCandidatePull = workflow.indexOf('docker pull "ghcr.io/drjakeberg/stream247-playout:main-${SOURCE_SHA}"');
     const webSmoke = workflow.indexOf("./docker/smoke-test.sh stream247-web:release-candidate");
     const composeSmoke = workflow.indexOf(
       "STREAM247_FRESH_COMPOSE_WEB_IMAGE=stream247-web:release-candidate STREAM247_FRESH_COMPOSE_WORKER_IMAGE=stream247-worker:release-candidate STREAM247_FRESH_COMPOSE_PLAYOUT_IMAGE=stream247-playout:release-candidate pnpm test:fresh-compose"
@@ -216,16 +253,18 @@ describe("release readiness files", () => {
     const playoutPublish = workflow.indexOf('source_image="stream247-playout:release-candidate"');
     const firstPush = workflow.indexOf('docker image push "$tag"');
 
-    expect(webCandidateBuild).toBeGreaterThan(-1);
-    expect(workerCandidateBuild).toBeGreaterThan(webCandidateBuild);
-    expect(playoutCandidateBuild).toBeGreaterThan(workerCandidateBuild);
-    expect(webSmoke).toBeGreaterThan(playoutCandidateBuild);
+    expect(sourceSha).toBeGreaterThan(-1);
+    expect(webCandidatePull).toBeGreaterThan(sourceSha);
+    expect(workerCandidatePull).toBeGreaterThan(webCandidatePull);
+    expect(playoutCandidatePull).toBeGreaterThan(workerCandidatePull);
+    expect(webSmoke).toBeGreaterThan(playoutCandidatePull);
     expect(composeSmoke).toBeGreaterThan(webSmoke);
     expect(webPublish).toBeGreaterThan(composeSmoke);
     expect(workerPublish).toBeGreaterThan(webPublish);
     expect(playoutPublish).toBeGreaterThan(workerPublish);
     expect(firstPush).toBeGreaterThan(composeSmoke);
     expect(workflow).not.toContain("docker/build-push-action@v6");
+    expect(workflow).not.toContain("docker build -f docker/web.Dockerfile -t stream247-web:release-candidate .");
     expect(workflow).toContain('target_id="$(docker image inspect "$tag" --format \'{{.Id}}\')"');
   });
 
@@ -277,6 +316,71 @@ describe("root env preservation helpers", () => {
 });
 
 describe("release readiness scripts", () => {
+  it("upgrade rehearsal uses the current main snapshot for unreleased target versions", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\nAPP_SECRET=test\nPOSTGRES_PASSWORD=test\nDATABASE_URL=postgresql://stream247:test@postgres:5432/stream247\n`);
+
+    const sourceSha = execFileSync("git", ["rev-parse", "--short=7", "HEAD"], {
+      cwd: rootDir,
+      encoding: "utf8"
+    }).trim();
+    const readyResponse =
+      '{"status":"ok","broadcastReady":true,"services":{"worker":"ok","playout":"ok","destination":"ok"},"playout":{"selectionReasonCode":"scheduled","fallbackTier":"none","crashLoopDetected":false}}\n';
+    const result = runShellScript(
+      upgradeScriptPath,
+      ["1.1.0"],
+      [{ body: '{"status":"ok"}\n' }, { body: readyResponse }, { body: readyResponse }],
+      {
+        docker: {
+          manifestAvailableRefs: []
+        }
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(`Using rehearsal artifact source: pre-release main snapshot main-${sourceSha}`);
+    expect(result.dockerLog).toContain(
+      `ENV:STREAM247_WEB_IMAGE=ghcr.io/drjakeberg/stream247-web:main-${sourceSha}`
+    );
+    expect(result.dockerLog).toContain(
+      `ENV:STREAM247_WORKER_IMAGE=ghcr.io/drjakeberg/stream247-worker:main-${sourceSha}`
+    );
+    expect(result.dockerLog).toContain(
+      `ENV:STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:main-${sourceSha}`
+    );
+  });
+
+  it("upgrade rehearsal uses the published release tag when it already exists", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\nAPP_SECRET=test\nPOSTGRES_PASSWORD=test\nDATABASE_URL=postgresql://stream247:test@postgres:5432/stream247\n`);
+
+    const readyResponse =
+      '{"status":"ok","broadcastReady":true,"services":{"worker":"ok","playout":"ok","destination":"ok"},"playout":{"selectionReasonCode":"scheduled","fallbackTier":"none","crashLoopDetected":false}}\n';
+    const result = runShellScript(
+      upgradeScriptPath,
+      ["1.0.3"],
+      [{ body: '{"status":"ok"}\n' }, { body: readyResponse }, { body: readyResponse }],
+      {
+        docker: {
+          manifestAvailableRefs: [
+            "ghcr.io/drjakeberg/stream247-web:v1.0.3",
+            "ghcr.io/drjakeberg/stream247-worker:v1.0.3",
+            "ghcr.io/drjakeberg/stream247-playout:v1.0.3"
+          ]
+        }
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Resolved release tag: v1.0.3");
+    expect(result.output).toContain("Using rehearsal artifact source: published release tag v1.0.3");
+    expect(result.dockerLog).toContain("ENV:STREAM247_WEB_IMAGE=ghcr.io/drjakeberg/stream247-web:v1.0.3");
+    expect(result.dockerLog).toContain(
+      "ENV:STREAM247_WORKER_IMAGE=ghcr.io/drjakeberg/stream247-worker:v1.0.3"
+    );
+    expect(result.dockerLog).toContain(
+      "ENV:STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3"
+    );
+  });
+
   it("upgrade rehearsal fails until the channel is actually broadcast-ready", () => {
     writeRootEnv(`APP_URL=http://127.0.0.1:3000\nAPP_SECRET=test\nPOSTGRES_PASSWORD=test\nDATABASE_URL=postgresql://stream247:test@postgres:5432/stream247\n`);
 
