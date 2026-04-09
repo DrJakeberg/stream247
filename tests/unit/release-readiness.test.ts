@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const rootDir = path.resolve(__dirname, "../..");
 const rootEnvPath = path.join(rootDir, ".env");
@@ -20,7 +20,14 @@ const composePath = path.join(rootDir, "docker-compose.yml");
 const upgradeScriptPath = path.join(rootDir, "scripts", "upgrade-rehearsal.sh");
 const soakScriptPath = path.join(rootDir, "scripts", "soak-monitor.sh");
 const tempDirs: string[] = [];
-let rootEnvBackupPath: string | null = null;
+
+type RootEnvTestState = {
+  backupPath: string | null;
+  existedBeforeTest: boolean;
+  managedByTest: boolean;
+};
+
+let rootEnvState: RootEnvTestState;
 
 type CurlResponse = {
   body: string;
@@ -33,16 +40,49 @@ function rememberTempDir(prefix: string) {
   return tempDir;
 }
 
-function writeRootEnv(contents: string) {
-  const tempDir = rememberTempDir("stream247-release-readiness-root-");
-  if (existsSync(rootEnvPath)) {
-    rootEnvBackupPath = path.join(tempDir, "root.env.backup");
-    renameSync(rootEnvPath, rootEnvBackupPath);
-  } else {
-    rootEnvBackupPath = null;
+function createRootEnvTestState(rootPath: string): RootEnvTestState {
+  return {
+    backupPath: null,
+    existedBeforeTest: existsSync(rootPath),
+    managedByTest: false
+  };
+}
+
+function writeManagedRootEnv(rootPath: string, state: RootEnvTestState, contents: string) {
+  if (!state.managedByTest) {
+    if (state.existedBeforeTest && existsSync(rootPath)) {
+      const tempDir = rememberTempDir("stream247-release-readiness-root-");
+      state.backupPath = path.join(tempDir, "root.env.backup");
+      renameSync(rootPath, state.backupPath);
+    }
+
+    state.managedByTest = true;
+  } else if (existsSync(rootPath)) {
+    rmSync(rootPath, { force: true });
   }
 
-  writeFileSync(rootEnvPath, contents);
+  writeFileSync(rootPath, contents);
+}
+
+function restoreManagedRootEnv(rootPath: string, state: RootEnvTestState) {
+  if (!state.managedByTest) {
+    return;
+  }
+
+  if (existsSync(rootPath)) {
+    rmSync(rootPath, { force: true });
+  }
+
+  if (state.backupPath && existsSync(state.backupPath)) {
+    renameSync(state.backupPath, rootPath);
+  }
+
+  state.backupPath = null;
+  state.managedByTest = false;
+}
+
+function writeRootEnv(contents: string) {
+  writeManagedRootEnv(rootEnvPath, rootEnvState, contents);
 }
 
 function createDockerStub(tempDir: string) {
@@ -149,15 +189,12 @@ function extractComposeServiceBlock(serviceName: string) {
   return lines.slice(start, end).join("\n");
 }
 
-afterEach(() => {
-  if (existsSync(rootEnvPath)) {
-    rmSync(rootEnvPath, { force: true });
-  }
+beforeEach(() => {
+  rootEnvState = createRootEnvTestState(rootEnvPath);
+});
 
-  if (rootEnvBackupPath && existsSync(rootEnvBackupPath)) {
-    renameSync(rootEnvBackupPath, rootEnvPath);
-  }
-  rootEnvBackupPath = null;
+afterEach(() => {
+  restoreManagedRootEnv(rootEnvPath, rootEnvState);
 
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop() as string, { force: true, recursive: true });
@@ -196,6 +233,46 @@ describe("release readiness files", () => {
     for (const serviceName of ["traefik", "web", "worker", "playout", "postgres", "redis"]) {
       expect(extractComposeServiceBlock(serviceName)).toContain("restart: unless-stopped");
     }
+  });
+});
+
+describe("root env preservation helpers", () => {
+  it("leaves an untouched pre-existing root env in place", () => {
+    const tempDir = rememberTempDir("stream247-release-readiness-helper-");
+    const envPath = path.join(tempDir, ".env");
+    writeFileSync(envPath, "APP_URL=https://example.test\n");
+
+    const state = createRootEnvTestState(envPath);
+    restoreManagedRootEnv(envPath, state);
+
+    expect(readFileSync(envPath, "utf8")).toBe("APP_URL=https://example.test\n");
+  });
+
+  it("restores the original root env after a test-managed replacement", () => {
+    const tempDir = rememberTempDir("stream247-release-readiness-helper-");
+    const envPath = path.join(tempDir, ".env");
+    writeFileSync(envPath, "APP_URL=https://original.test\n");
+
+    const state = createRootEnvTestState(envPath);
+    writeManagedRootEnv(envPath, state, "APP_URL=https://test-double.test\n");
+    expect(readFileSync(envPath, "utf8")).toBe("APP_URL=https://test-double.test\n");
+
+    restoreManagedRootEnv(envPath, state);
+
+    expect(readFileSync(envPath, "utf8")).toBe("APP_URL=https://original.test\n");
+  });
+
+  it("removes a test-created root env when none existed before", () => {
+    const tempDir = rememberTempDir("stream247-release-readiness-helper-");
+    const envPath = path.join(tempDir, ".env");
+
+    const state = createRootEnvTestState(envPath);
+    writeManagedRootEnv(envPath, state, "APP_URL=https://ephemeral.test\n");
+    expect(existsSync(envPath)).toBe(true);
+
+    restoreManagedRootEnv(envPath, state);
+
+    expect(existsSync(envPath)).toBe(false);
   });
 });
 
