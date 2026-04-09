@@ -84,6 +84,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M19 Release Readiness Hardening | Ops | Now | Complete | Close the remaining release-readiness gaps across tagged publishing, rehearsal/soak gates, image pinning, and production restarts | Tagged release artifacts are smoke-validated before push, rehearsal and soak gates require actual broadcast readiness, quoted `:latest` image refs fail preflight, production Compose services restart automatically, and regression coverage proves the tightened release path | `.github/workflows`, `docker-compose.yml`, `scripts`, tests, docs, `PLANS.md` | medium | revert workflow/runbook tightening if a documented deployment edge case appears and keep the stricter checks disabled only with an explicit follow-up |
 | M19.1 Release Artifact Parity And Proxy Restart Hardening | Ops | Now | Complete | Ensure tagged release publishing pushes the already-tested artifacts and that the proxy deployment path restarts cleanly | Tagged releases retag and push the smoke-tested local candidate images instead of rebuilding, Traefik has restart coverage in the proxy profile, release docs describe only the tested guarantees, and regression coverage proves the tightened workflow shape | `.github/workflows`, `docker-compose.yml`, tests, docs, `PLANS.md` | medium | revert the release retag/push flow and proxy restart note only if runner-local publishing proves incompatible with GHCR |
 | M19.2 Release Rehearsal Pre-Tag Artifact Alignment | Ops | Now | Complete | Align pre-tag rehearsal with a real artifact source that exists before version tags are created | `upgrade-rehearsal.sh` uses published `main-<sha>` snapshot artifacts when the target release tag is not available yet, tagged releases promote those same tested `main-<sha>` images instead of rebuilding, and docs plus regression coverage describe the pre-tag flow accurately | `scripts`, `.github/workflows`, tests, docs, `PLANS.md` | medium | revert to the previous tag-only rehearsal path only if pre-release `main-<sha>` publication disappears and document the release limitation explicitly |
+| M19.3 Main Artifact Publication Parity | Ops | Now | Complete | Prove that successful `main` publishes expose the full rehearsal artifact set, including playout, under the exact `main-<sha>` tags that pre-tag rehearsal consumes | `main` CI publishes and then verifies registry-visible `web`, `worker`, and `playout` `main-<sha>` images, regression coverage proves that contract, and release guidance remains aligned with the same snapshot naming model | `.github/workflows`, tests, `PLANS.md` | low-medium | revert the post-push registry visibility check only if GHCR proves incompatible with deterministic snapshot verification and document the limitation explicitly |
 
 ## M17 Scene Studio V2
 
@@ -356,6 +357,45 @@ pnpm release:preflight
 - docs stay internally consistent about pre-tag rehearsal and release publication
 - `pnpm validate`, release preflight, and the milestone-targeted rehearsal checks pass
 
+## M19.3 Main Artifact Publication Parity
+
+Status: complete 2026-04-09
+
+**Scope**
+
+- ensure the normal `main` publication path proves all three pre-release snapshot artifacts are registry-visible after publish
+- keep the `main-<sha>` naming contract aligned with `scripts/upgrade-rehearsal.sh` for `web`, `worker`, and `playout`
+- add regression coverage so the `playout` snapshot path cannot silently drift from the rehearsal lookup contract
+
+**Acceptance Criteria**
+
+- `.github/workflows/ci.yml` publishes `web`, `worker`, and `playout` under `main-<short-sha>` on successful `main` pushes
+- the `main` CI run now fails if any of those just-pushed `main-<short-sha>` tags are not registry-resolvable after publish
+- `tests/unit/release-readiness.test.ts` proves the `main` workflow publishes and verifies the full rehearsal artifact set
+- release guidance remains accurate without claiming more than the workflow now proves
+
+**Touched Areas**
+
+- `.github/workflows/ci.yml`
+- release-readiness regression tests
+- `PLANS.md`
+
+**Validation Commands**
+
+```bash
+pnpm exec vitest run tests/unit/release-readiness.test.ts
+pnpm validate
+```
+
+Use GitHub Actions logs or direct `docker manifest inspect` checks as additional evidence when investigating a specific `main-<sha>` publication mismatch.
+
+**Done Criteria**
+
+- successful `main` publishes now prove the full `main-<sha>` rehearsal artifact set is registry-visible
+- workflow naming stays aligned with `upgrade-rehearsal.sh`
+- regression coverage protects the `web`/`worker`/`playout` snapshot contract
+- `pnpm validate` and milestone-targeted release-readiness tests pass
+
 ## Phase 2 — Post-M9 Audit Follow-Up
 
 The first milestone set shipped meaningful parity progress, but a fresh audit found three categories of follow-up work:
@@ -460,6 +500,13 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-04-09 — M19.3 Main Artifact Publication Parity
+
+- Tightened `.github/workflows/ci.yml` so successful `main` publishes now wait for GHCR to resolve the just-pushed `stream247-web`, `stream247-worker`, and `stream247-playout` `main-<sha>` tags before the run can complete green.
+- Added release-readiness regression coverage that proves the `main` workflow still emits all three `main-<sha>` snapshot tags and verifies those exact rehearsal tags after publish.
+- Verified the current `76a0ed0` publication shape from repo logic and GitHub Actions logs: the `main` publish path names and pushes `web`, `worker`, and `playout` under `main-76a0ed0`, and the workflow now fails if any of those refs are not registry-visible after push.
+- Validation completed: `pnpm exec vitest run tests/unit/release-readiness.test.ts`, `pnpm validate`, and direct `docker manifest inspect` checks for `ghcr.io/drjakeberg/stream247-{web,worker,playout}:main-76a0ed0` passed.
 
 ### 2026-04-09 — M19.2 Release Rehearsal Pre-Tag Artifact Alignment
 

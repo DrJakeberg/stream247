@@ -94,3 +94,27 @@ jobs:
           push: true
           tags: ${{ steps.meta-playout.outputs.tags }}
           labels: ${{ steps.meta-playout.outputs.labels }}
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        name: Verify published main snapshot artifacts
+        run: |
+          set -euo pipefail
+          SOURCE_SHA="${GITHUB_SHA::7}"
+          wait_for_manifest() {
+            image="$1"
+            tag="$2"
+            attempts=12
+            while [ "$attempts" -gt 0 ]; do
+              if docker manifest inspect "ghcr.io/drjakeberg/${image}:${tag}" >/dev/null 2>&1; then
+                return 0
+              fi
+              attempts=$((attempts - 1))
+              if [ "$attempts" -eq 0 ]; then
+                echo "Published image ghcr.io/drjakeberg/${image}:${tag} was not registry-visible after push."
+                return 1
+              fi
+              sleep 10
+            done
+          }
+          wait_for_manifest stream247-web "main-${SOURCE_SHA}"
+          wait_for_manifest stream247-worker "main-${SOURCE_SHA}"
+          wait_for_manifest stream247-playout "main-${SOURCE_SHA}"
