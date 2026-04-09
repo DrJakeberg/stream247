@@ -346,6 +346,46 @@ describe("ops state helpers", () => {
     expect(result.status).toBe("healthy");
   });
 
+  it("keeps worker heartbeat healthy across the normal reconciliation window", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-09T18:00:46.000Z"));
+
+    const result = getWorkerHealth(
+      createState({
+        auditEvents: [
+          {
+            id: "audit-1",
+            type: "worker.cycle",
+            message: "done",
+            createdAt: "2026-04-09T17:58:13.424Z"
+          }
+        ]
+      })
+    );
+
+    expect(result.status).toBe("healthy");
+  });
+
+  it("marks worker heartbeat stale after the extended reconciliation window", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-09T18:02:14.000Z"));
+
+    const result = getWorkerHealth(
+      createState({
+        auditEvents: [
+          {
+            id: "audit-1",
+            type: "worker.cycle",
+            message: "done",
+            createdAt: "2026-04-09T17:58:13.424Z"
+          }
+        ]
+      })
+    );
+
+    expect(result.status).toBe("stale");
+  });
+
   it("reports schedule drift when current asset source differs from schedule source", () => {
     const state = createState({
       sources: [

@@ -2,6 +2,8 @@ import { selectActiveDestinationGroup } from "@stream247/core";
 import { getDatabaseHealth } from "@stream247/db";
 import { readAppState } from "./state";
 
+const WORKER_HEARTBEAT_STALE_MS = 180_000;
+
 export async function getSystemReadiness() {
   try {
     const state = await readAppState();
@@ -35,7 +37,7 @@ export async function getSystemReadiness() {
         : "degraded"
       : "not-ready";
     const workerStatus =
-      workerHeartbeatAt > 0 ? (now - workerHeartbeatAt < 120_000 ? "ok" : "degraded") : "not-ready";
+      workerHeartbeatAt > 0 ? (now - workerHeartbeatAt < WORKER_HEARTBEAT_STALE_MS ? "ok" : "degraded") : "not-ready";
     let playoutStatus: "ok" | "degraded" | "not-ready" = "not-ready";
     if (recentHeartbeat > 0 && now - recentHeartbeat < 60_000) {
       playoutStatus =

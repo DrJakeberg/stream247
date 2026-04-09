@@ -81,7 +81,10 @@ let playoutTargetKind: "asset" | "insert" | "standby" | "reconnect" | "live" | "
 let playoutLiveBridgeInputUrl = "";
 let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
 let plannedStopReason = "";
-const WORKER_HEARTBEAT_STALE_MS = 120_000;
+// Worker reconciliation can legitimately run for a little over two minutes when
+// source sync and Twitch reconciliation happen in one cycle, so keep the stale
+// window above the steady-state cadence to avoid false healthcheck failures.
+const WORKER_HEARTBEAT_STALE_MS = 180_000;
 const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;

@@ -1140,6 +1140,7 @@ export function getSourceReferences(state: AppState, sourceId: string) {
 }
 
 export function getWorkerHealth(state: AppState) {
+  const WORKER_HEARTBEAT_STALE_MS = 180_000;
   const lastWorkerCycle = state.auditEvents.find((event) => event.type === "worker.cycle") ?? null;
   const lastRunAt = lastWorkerCycle?.createdAt || "";
   const ageMs = lastRunAt ? Date.now() - new Date(lastRunAt).getTime() : Number.POSITIVE_INFINITY;
@@ -1152,7 +1153,7 @@ export function getWorkerHealth(state: AppState) {
     };
   }
 
-  if (ageMs > 120_000) {
+  if (ageMs > WORKER_HEARTBEAT_STALE_MS) {
     return {
       status: "stale" as const,
       summary: "Worker heartbeat is stale. Reconciliation may be stuck.",
