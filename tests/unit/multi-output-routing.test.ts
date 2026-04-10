@@ -176,4 +176,19 @@ describe("multi-output routing", () => {
 
     expect(matched).toEqual(["destination-youtube"]);
   });
+
+  it("can disable single-target fallback when reclassifying an unexpected exit", () => {
+    const matched = matchDestinationFailuresInLog(
+      "[vist#0:1/h264 @ 0x75004d07e1c0] Resumed reading at pts 269.950 with rate 1.050 after a lag of 0.316s",
+      [
+        {
+          destination: createDestination(),
+          target: "rtmp://live.twitch.tv/app/env-key"
+        }
+      ],
+      { allowSingleTargetFallback: false }
+    );
+
+    expect(matched).toEqual([]);
+  });
 });

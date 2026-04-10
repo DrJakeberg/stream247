@@ -69,6 +69,7 @@ import {
 } from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
 import { ensureLocalAssetThumbnail } from "./asset-thumbnails.js";
+import { describeFfmpegExit, buildFfmpegInputArgs, isLikelyDestinationOutputError } from "./ffmpeg-runtime.js";
 import { execFileText } from "./process-utils.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
@@ -202,23 +203,6 @@ function getDestinationFailureSecondsRemaining(destination: StreamDestinationRec
   return getDestinationFailureHoldSecondsRemaining(destination.lastFailureAt, DESTINATION_FAILURE_COOLDOWN_SECONDS);
 }
 
-function isLikelyDestinationOutputError(line: string): boolean {
-  const sample = line.toLowerCase();
-  return [
-    "broken pipe",
-    "connection refused",
-    "connection reset",
-    "error writing trailer",
-    "input/output error",
-    "i/o error",
-    "av_interleaved_write_frame",
-    "failed to update header",
-    "server returned 4",
-    "server returned 5",
-    "end of file"
-  ].some((token) => sample.includes(token));
-}
-
 async function markDestinationFailure(destinationId: string, errorMessage: string): Promise<void> {
   if (!destinationId) {
     return;
@@ -283,18 +267,10 @@ function getFfmpegCommand(
   overlayMode: OnAirOverlayMode,
   audioLane: AudioLaneCommandConfig | null
 ): string[] {
-  const command = [
-    "-hide_banner",
-    "-loglevel",
-    "warning",
-    "-y",
-    "-re",
-    "-i",
-    input
-  ];
+  const command = ["-hide_banner", "-loglevel", "warning", "-y", ...buildFfmpegInputArgs({ input, realtime: true })];
 
   if (audioLane) {
-    command.push("-stream_loop", "-1", "-i", audioLane.input);
+    command.push(...buildFfmpegInputArgs({ input: audioLane.input, loop: true }));
   }
 
   if (overlayMode === "scene") {
@@ -345,14 +321,7 @@ function getLiveBridgeFfmpegCommand(
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
   overlayMode: OnAirOverlayMode
 ): string[] {
-  const command = [
-    "-hide_banner",
-    "-loglevel",
-    "warning",
-    "-y",
-    "-i",
-    input
-  ];
+  const command = ["-hide_banner", "-loglevel", "warning", "-y", ...buildFfmpegInputArgs({ input })];
 
   if (overlayMode === "scene") {
     command.push("-f", "image2pipe", "-framerate", "1", "-vcodec", "png", "-i", `pipe:${ON_AIR_SCENE_PIPE_FD}`);
@@ -2417,9 +2386,10 @@ async function startOrSwitchPlayout(args: {
     }
   });
 
-  child.on("exit", (code) => {
+  child.on("exit", (code, signal) => {
     const wasPlanned = plannedStopReason !== "";
-    const lastDestinationId = playoutDestinationId;
+    const exitedCleanly = code === 0 && !signal;
+    const exitReason = describeFfmpegExit(code, signal ?? null);
     const lastDestinationIds = [...playoutDestinationIds];
     const lastRuntimeTargets = [...playoutRuntimeTargets];
     const lastTargetKind = playoutTargetKind;
@@ -2437,6 +2407,8 @@ async function startOrSwitchPlayout(args: {
     const exitedAt = new Date().toISOString();
     logRuntimeEvent("playout.process.exit", {
       exitCode: code ?? "",
+      exitSignal: signal ?? "",
+      exitReason,
       planned: wasPlanned,
       destinationIds: lastDestinationIds,
       exitedAt
@@ -2444,7 +2416,7 @@ async function startOrSwitchPlayout(args: {
     void updatePlayoutRuntime((playout) => ({
       ...playout,
       status:
-        wasPlanned || code === 0
+        wasPlanned || exitedCleanly
           ? "idle"
           : playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
             ? "degraded"
@@ -2458,13 +2430,13 @@ async function startOrSwitchPlayout(args: {
       processStartedAt: "",
       lastSuccessfulStartAt:
         wasPlanned ||
-        code === 0 ||
+        exitedCleanly ||
         (playout.processStartedAt !== "" && Date.now() - new Date(playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS)
           ? playout.processStartedAt
           : playout.lastSuccessfulStartAt,
       lastSuccessfulAssetId:
         wasPlanned ||
-        code === 0 ||
+        exitedCleanly ||
         (playout.processStartedAt !== "" && Date.now() - new Date(playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS)
           ? playout.currentAssetId
           : playout.lastSuccessfulAssetId,
@@ -2472,15 +2444,15 @@ async function startOrSwitchPlayout(args: {
       restartCount: playout.restartCount + 1,
       crashCountWindow:
         wasPlanned ||
-        code === 0 ||
+        exitedCleanly ||
         (playout.processStartedAt !== "" && Date.now() - new Date(playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS)
           ? 0
           : playout.crashCountWindow + 1,
-      crashLoopDetected: !wasPlanned && code !== 0 && playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD,
-      currentAssetId: wasPlanned || code === 0 ? "" : playout.currentAssetId,
-      currentTitle: wasPlanned || code === 0 ? "" : playout.currentTitle,
-      desiredAssetId: wasPlanned || code === 0 ? "" : playout.desiredAssetId,
-      lastError: wasPlanned || code === 0 ? playout.lastError : `FFmpeg exited with code ${String(code)}.`,
+      crashLoopDetected: !wasPlanned && !exitedCleanly && playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD,
+      currentAssetId: wasPlanned || exitedCleanly ? "" : playout.currentAssetId,
+      currentTitle: wasPlanned || exitedCleanly ? "" : playout.currentTitle,
+      desiredAssetId: wasPlanned || exitedCleanly ? "" : playout.desiredAssetId,
+      lastError: wasPlanned || exitedCleanly ? playout.lastError : `FFmpeg ${exitReason}.`,
       transitionState: "idle",
       insertAssetId:
         !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
@@ -2495,39 +2467,39 @@ async function startOrSwitchPlayout(args: {
           ? ""
           : playout.insertStatus,
       liveBridgeStatus:
-        lastTargetKind === "live" && !wasPlanned && code !== 0
+        lastTargetKind === "live" && !wasPlanned && !exitedCleanly
           ? "error"
           : lastTargetKind === "live" && wasPlanned
             ? playout.liveBridgeStatus
             : playout.liveBridgeStatus,
       liveBridgeLastError:
-        lastTargetKind === "live" && !wasPlanned && code !== 0
-          ? `Live Bridge input exited with code ${String(code)}.`
+        lastTargetKind === "live" && !wasPlanned && !exitedCleanly
+          ? `Live Bridge input ${exitReason}.`
           : playout.liveBridgeLastError,
       selectionReasonCode:
         wasPlanned
           ? playout.selectionReasonCode
-          : code !== 0 && playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
+          : !exitedCleanly && playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
             ? "ffmpeg_crash_loop"
             : playout.selectionReasonCode,
       message:
         wasPlanned
           ? "Playout stopped for a planned transition."
-          : code === 0
+          : exitedCleanly
             ? "Playout process stopped cleanly."
             : playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
               ? "Playout entered crash-loop protection."
-              : "Playout process exited unexpectedly."
+              : `Playout process ${exitReason}.`
     }));
     if (!wasPlanned) {
       void upsertIncident({
         scope: "playout",
-        severity: code === 0 ? "info" : "critical",
+        severity: exitedCleanly ? "info" : "critical",
         title: "FFmpeg process exited",
-        message: `FFmpeg exited with code ${String(code)}.`,
+        message: `FFmpeg ${exitReason}.`,
         fingerprint: "playout.ffmpeg.exit"
       });
-      if (code !== 0) {
+      if (!exitedCleanly) {
         if (lastTargetKind === "live") {
           void upsertIncident({
             scope: "playout",
@@ -2539,14 +2511,12 @@ async function startOrSwitchPlayout(args: {
         }
         void (async () => {
           const state = await readAppState();
-          const lastErrorLine = state.playout.lastStderrSample || `FFmpeg exited with code ${String(code)}.`;
+          const lastErrorLine = state.playout.lastStderrSample || `FFmpeg ${exitReason}.`;
           if (isLikelyDestinationOutputError(lastErrorLine)) {
-            const destinationIds = matchDestinationFailuresInLog(lastErrorLine, lastRuntimeTargets);
+            const destinationIds = matchDestinationFailuresInLog(lastErrorLine, lastRuntimeTargets, { allowSingleTargetFallback: false });
             for (const destinationId of destinationIds) {
               await markDestinationFailure(destinationId, lastErrorLine);
             }
-          } else if (lastRuntimeTargets.length === 1 && lastDestinationId) {
-            await markDestinationFailure(lastDestinationId, lastErrorLine);
           }
         })();
       }
