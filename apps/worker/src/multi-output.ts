@@ -131,7 +131,11 @@ function buildDestinationErrorNeedles(destination: StreamDestinationRecord): str
   return needles.filter(Boolean).map((entry) => entry.toLowerCase());
 }
 
-export function matchDestinationFailuresInLog(line: string, targets: DestinationRuntimeTarget[]): string[] {
+export function matchDestinationFailuresInLog(
+  line: string,
+  targets: DestinationRuntimeTarget[],
+  options: { allowSingleTargetFallback?: boolean } = {}
+): string[] {
   const sample = line.toLowerCase();
   const matchedIds = targets
     .filter((entry) => buildDestinationErrorNeedles(entry.destination).some((needle) => sample.includes(needle)))
@@ -141,5 +145,5 @@ export function matchDestinationFailuresInLog(line: string, targets: Destination
     return [...new Set(matchedIds)];
   }
 
-  return targets.length === 1 ? [targets[0]!.destination.id] : [];
+  return options.allowSingleTargetFallback !== false && targets.length === 1 ? [targets[0]!.destination.id] : [];
 }
