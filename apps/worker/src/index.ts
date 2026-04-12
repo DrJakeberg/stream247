@@ -69,7 +69,13 @@ import {
 } from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
 import { ensureLocalAssetThumbnail } from "./asset-thumbnails.js";
-import { describeFfmpegExit, buildFfmpegInputArgs, isLikelyDestinationOutputError } from "./ffmpeg-runtime.js";
+import {
+  describeFfmpegExit,
+  buildFfmpegInputArgs,
+  isLikelyDestinationOutputError,
+  shouldRequestImmediatePlayoutRetry,
+  shouldSkipInitialSceneCapture
+} from "./ffmpeg-runtime.js";
 import { execFileText } from "./process-utils.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
@@ -111,6 +117,8 @@ let sceneRendererAbortController: AbortController | null = null;
 const renderedSceneFramePath = "/tmp/stream247-scene.png";
 const SCENE_RENDER_CAPTURE_TIMEOUT_MS = 10_000;
 const SCENE_RENDER_CAPTURE_KILL_GRACE_MS = 1_000;
+const PLAYOUT_RECOVERY_SCENE_CAPTURE_SKIP_WINDOW_MS = 60_000;
+let wakePlayoutLoop: (() => void) | null = null;
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -2205,6 +2213,9 @@ async function startOrSwitchPlayout(args: {
   fallbackTier: AppState["playout"]["fallbackTier"];
   overlayEnabled: boolean;
   runtimeTargets: DestinationRuntimeTarget[];
+  runtimeStatus: AppState["playout"]["status"];
+  runtimeHeartbeatAt: string;
+  runtimeLastExitCode: string;
 }): Promise<void> {
   const switching = playoutProcess && !playoutProcess.killed;
   if (switching) {
@@ -2219,7 +2230,21 @@ async function startOrSwitchPlayout(args: {
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
   const cachedProbe = args.asset ? getFreshProbeCache(args.asset.id) : null;
   const cachedResolvedInput = cachedProbe?.status === "ready" ? cachedProbe.resolvedInput : "";
-  const initialSceneFrame = args.overlayEnabled ? await prepareSceneRendererFrame() : null;
+  const skipInitialSceneCapture = shouldSkipInitialSceneCapture({
+    overlayEnabled: args.overlayEnabled,
+    switching: Boolean(switching),
+    playoutStatus: args.runtimeStatus,
+    lastExitCode: args.runtimeLastExitCode,
+    heartbeatAt: args.runtimeHeartbeatAt,
+    windowMs: PLAYOUT_RECOVERY_SCENE_CAPTURE_SKIP_WINDOW_MS
+  });
+  if (skipInitialSceneCapture) {
+    logRuntimeEvent("scene.render.recovery.skip", {
+      reasonCode: args.reasonCode,
+      runtimeStatus: args.runtimeStatus
+    });
+  }
+  const initialSceneFrame = args.overlayEnabled && !skipInitialSceneCapture ? await prepareSceneRendererFrame() : null;
   const overlayMode: OnAirOverlayMode = !args.overlayEnabled ? "none" : initialSceneFrame ? "scene" : "text";
   let resolvedAudioLaneInput = "";
 
@@ -2413,84 +2438,77 @@ async function startOrSwitchPlayout(args: {
       destinationIds: lastDestinationIds,
       exitedAt
     });
-    void updatePlayoutRuntime((playout) => ({
-      ...playout,
-      status:
-        wasPlanned || exitedCleanly
-          ? "idle"
-          : playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
-            ? "degraded"
-            : "failed",
-      heartbeatAt: exitedAt,
-      transitionTargetKind: "",
-      transitionTargetAssetId: "",
-      transitionTargetTitle: "",
-      transitionReadyAt: "",
-      processPid: 0,
-      processStartedAt: "",
-      lastSuccessfulStartAt:
-        wasPlanned ||
-        exitedCleanly ||
-        (playout.processStartedAt !== "" && Date.now() - new Date(playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS)
-          ? playout.processStartedAt
-          : playout.lastSuccessfulStartAt,
-      lastSuccessfulAssetId:
-        wasPlanned ||
-        exitedCleanly ||
-        (playout.processStartedAt !== "" && Date.now() - new Date(playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS)
-          ? playout.currentAssetId
-          : playout.lastSuccessfulAssetId,
-      lastExitCode: String(code ?? ""),
-      restartCount: playout.restartCount + 1,
-      crashCountWindow:
-        wasPlanned ||
-        exitedCleanly ||
-        (playout.processStartedAt !== "" && Date.now() - new Date(playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS)
-          ? 0
-          : playout.crashCountWindow + 1,
-      crashLoopDetected: !wasPlanned && !exitedCleanly && playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD,
-      currentAssetId: wasPlanned || exitedCleanly ? "" : playout.currentAssetId,
-      currentTitle: wasPlanned || exitedCleanly ? "" : playout.currentTitle,
-      desiredAssetId: wasPlanned || exitedCleanly ? "" : playout.desiredAssetId,
-      lastError: wasPlanned || exitedCleanly ? playout.lastError : `FFmpeg ${exitReason}.`,
-      transitionState: "idle",
-      insertAssetId:
-        !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
-          ? ""
-          : playout.insertAssetId,
-      insertRequestedAt:
-        !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
-          ? ""
-          : playout.insertRequestedAt,
-      insertStatus:
-        !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
-          ? ""
-          : playout.insertStatus,
-      liveBridgeStatus:
-        lastTargetKind === "live" && !wasPlanned && !exitedCleanly
-          ? "error"
-          : lastTargetKind === "live" && wasPlanned
-            ? playout.liveBridgeStatus
-            : playout.liveBridgeStatus,
-      liveBridgeLastError:
-        lastTargetKind === "live" && !wasPlanned && !exitedCleanly
-          ? `Live Bridge input ${exitReason}.`
-          : playout.liveBridgeLastError,
-      selectionReasonCode:
-        wasPlanned
-          ? playout.selectionReasonCode
-          : !exitedCleanly && playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
-            ? "ffmpeg_crash_loop"
-            : playout.selectionReasonCode,
-      message:
-        wasPlanned
+    let crashLoopDetectedAfterExit = false;
+    const runtimeUpdate = updatePlayoutRuntime((playout) => {
+      const ranPastCrashWindow =
+        playout.processStartedAt !== "" && Date.now() - new Date(playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS;
+      const nextCrashCountWindow = wasPlanned || exitedCleanly || ranPastCrashWindow ? 0 : playout.crashCountWindow + 1;
+      crashLoopDetectedAfterExit = !wasPlanned && !exitedCleanly && nextCrashCountWindow >= PLAYOUT_CRASH_LOOP_THRESHOLD;
+
+      return {
+        ...playout,
+        status: wasPlanned || exitedCleanly ? "idle" : crashLoopDetectedAfterExit ? "degraded" : "failed",
+        heartbeatAt: exitedAt,
+        transitionTargetKind: "",
+        transitionTargetAssetId: "",
+        transitionTargetTitle: "",
+        transitionReadyAt: "",
+        processPid: 0,
+        processStartedAt: "",
+        lastSuccessfulStartAt: wasPlanned || exitedCleanly || ranPastCrashWindow ? playout.processStartedAt : playout.lastSuccessfulStartAt,
+        lastSuccessfulAssetId: wasPlanned || exitedCleanly || ranPastCrashWindow ? playout.currentAssetId : playout.lastSuccessfulAssetId,
+        lastExitCode: String(code ?? signal ?? ""),
+        restartCount: playout.restartCount + 1,
+        crashCountWindow: nextCrashCountWindow,
+        crashLoopDetected: crashLoopDetectedAfterExit,
+        currentAssetId: wasPlanned || exitedCleanly ? "" : playout.currentAssetId,
+        currentTitle: wasPlanned || exitedCleanly ? "" : playout.currentTitle,
+        desiredAssetId: wasPlanned || exitedCleanly ? "" : playout.desiredAssetId,
+        lastError: wasPlanned || exitedCleanly ? playout.lastError : `FFmpeg ${exitReason}.`,
+        transitionState: "idle",
+        insertAssetId:
+          !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
+            ? ""
+            : playout.insertAssetId,
+        insertRequestedAt:
+          !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
+            ? ""
+            : playout.insertRequestedAt,
+        insertStatus:
+          !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
+            ? ""
+            : playout.insertStatus,
+        liveBridgeStatus:
+          lastTargetKind === "live" && !wasPlanned && !exitedCleanly
+            ? "error"
+            : lastTargetKind === "live" && wasPlanned
+              ? playout.liveBridgeStatus
+              : playout.liveBridgeStatus,
+        liveBridgeLastError:
+          lastTargetKind === "live" && !wasPlanned && !exitedCleanly
+            ? `Live Bridge input ${exitReason}.`
+            : playout.liveBridgeLastError,
+        selectionReasonCode: wasPlanned ? playout.selectionReasonCode : crashLoopDetectedAfterExit ? "ffmpeg_crash_loop" : playout.selectionReasonCode,
+        message: wasPlanned
           ? "Playout stopped for a planned transition."
           : exitedCleanly
             ? "Playout process stopped cleanly."
-            : playout.crashCountWindow + 1 >= PLAYOUT_CRASH_LOOP_THRESHOLD
+            : crashLoopDetectedAfterExit
               ? "Playout entered crash-loop protection."
               : `Playout process ${exitReason}.`
-    }));
+      };
+    });
+    void runtimeUpdate
+      .then(() => {
+        if (shouldRequestImmediatePlayoutRetry({ planned: wasPlanned, crashLoopDetected: crashLoopDetectedAfterExit })) {
+          requestImmediatePlayoutCycle("ffmpeg-exit");
+        }
+      })
+      .catch((error) => {
+        logRuntimeEvent("playout.runtime.update.failed", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
     if (!wasPlanned) {
       void upsertIncident({
         scope: "playout",
@@ -2963,7 +2981,10 @@ async function runPlayoutCycle(): Promise<void> {
         reasonCode: selection.reasonCode,
         fallbackTier: selection.fallbackTier,
         overlayEnabled: state.overlay.enabled,
-        runtimeTargets: activeDestinationGroup.targets
+        runtimeTargets: activeDestinationGroup.targets,
+        runtimeStatus: state.playout.status,
+        runtimeHeartbeatAt: state.playout.heartbeatAt,
+        runtimeLastExitCode: state.playout.lastExitCode
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout start error.";
@@ -3024,7 +3045,10 @@ async function runPlayoutCycle(): Promise<void> {
         reasonCode: selection.reasonCode,
         fallbackTier: selection.fallbackTier,
         overlayEnabled: state.overlay.enabled,
-        runtimeTargets: activeDestinationGroup.targets
+        runtimeTargets: activeDestinationGroup.targets,
+        runtimeStatus: state.playout.status,
+        runtimeHeartbeatAt: state.playout.heartbeatAt,
+        runtimeLastExitCode: state.playout.lastExitCode
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout switch error.";
@@ -3655,6 +3679,41 @@ async function runHealthcheck(mode: "worker" | "playout"): Promise<void> {
   }
 }
 
+function requestImmediatePlayoutCycle(reason: string): void {
+  const wake = wakePlayoutLoop;
+  if (!wake) {
+    return;
+  }
+
+  logRuntimeEvent("playout.loop.wake", { reason });
+  wake();
+}
+
+async function waitForNextLoop(mode: "worker" | "playout", delay: number): Promise<void> {
+  if (mode !== "playout") {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let timeout: NodeJS.Timeout;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      if (wakePlayoutLoop === finish) {
+        wakePlayoutLoop = null;
+      }
+      resolve();
+    };
+    timeout = setTimeout(finish, delay);
+    wakePlayoutLoop = finish;
+  });
+}
+
 async function runLoop(mode: "worker" | "playout"): Promise<void> {
   const run = mode === "worker" ? runWorkerCycle : runPlayoutCycle;
   const delay = mode === "worker" ? 30_000 : 15_000;
@@ -3678,7 +3737,7 @@ async function runLoop(mode: "worker" | "playout"): Promise<void> {
       await sendAlert(`${mode} loop crashed`, message);
     }
 
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    await waitForNextLoop(mode, delay);
   }
 }
 

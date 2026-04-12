@@ -26,6 +26,35 @@ function isRemoteHttpInput(input: string): boolean {
   }
 }
 
+export function shouldRequestImmediatePlayoutRetry(args: { planned: boolean; crashLoopDetected: boolean }): boolean {
+  return !args.planned && !args.crashLoopDetected;
+}
+
+export function shouldSkipInitialSceneCapture(args: {
+  overlayEnabled: boolean;
+  switching: boolean;
+  playoutStatus: string;
+  lastExitCode: string;
+  heartbeatAt: string;
+  nowMs?: number;
+  windowMs?: number;
+}): boolean {
+  if (!args.overlayEnabled || args.switching || !args.lastExitCode || !args.heartbeatAt) {
+    return false;
+  }
+
+  if (args.playoutStatus !== "failed" && args.playoutStatus !== "idle" && args.playoutStatus !== "recovering") {
+    return false;
+  }
+
+  const heartbeatMs = new Date(args.heartbeatAt).getTime();
+  if (!Number.isFinite(heartbeatMs)) {
+    return false;
+  }
+
+  return (args.nowMs ?? Date.now()) - heartbeatMs <= (args.windowMs ?? 60_000);
+}
+
 export function buildFfmpegInputArgs(args: {
   input: string;
   realtime?: boolean;
