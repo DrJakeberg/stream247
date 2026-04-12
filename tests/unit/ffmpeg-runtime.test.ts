@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildFfmpegInputArgs, describeFfmpegExit, isLikelyDestinationOutputError } from "../../apps/worker/src/ffmpeg-runtime";
+import {
+  buildFfmpegInputArgs,
+  describeFfmpegExit,
+  isLikelyDestinationOutputError,
+  shouldRequestImmediatePlayoutRetry,
+  shouldSkipInitialSceneCapture
+} from "../../apps/worker/src/ffmpeg-runtime";
 
 describe("ffmpeg runtime helpers", () => {
   it("adds reconnect flags for remote HTTP inputs", () => {
@@ -60,5 +66,55 @@ describe("ffmpeg runtime helpers", () => {
 
   it("reports signal exits explicitly", () => {
     expect(describeFfmpegExit(null, "SIGTERM")).toBe("was terminated by signal SIGTERM");
+  });
+
+  it("requests an immediate retry for recoverable unplanned exits", () => {
+    expect(shouldRequestImmediatePlayoutRetry({ planned: false, crashLoopDetected: false })).toBe(true);
+    expect(shouldRequestImmediatePlayoutRetry({ planned: true, crashLoopDetected: false })).toBe(false);
+    expect(shouldRequestImmediatePlayoutRetry({ planned: false, crashLoopDetected: true })).toBe(false);
+  });
+
+  it("skips blocking scene capture only for recent recovery starts", () => {
+    const heartbeatAt = "2026-04-10T14:23:52.626Z";
+    expect(
+      shouldSkipInitialSceneCapture({
+        overlayEnabled: true,
+        switching: false,
+        playoutStatus: "failed",
+        lastExitCode: "",
+        heartbeatAt,
+        nowMs: new Date("2026-04-10T14:24:07.000Z").getTime()
+      })
+    ).toBe(false);
+    expect(
+      shouldSkipInitialSceneCapture({
+        overlayEnabled: true,
+        switching: false,
+        playoutStatus: "failed",
+        lastExitCode: "SIGBUS",
+        heartbeatAt,
+        nowMs: new Date("2026-04-10T14:24:07.000Z").getTime()
+      })
+    ).toBe(true);
+    expect(
+      shouldSkipInitialSceneCapture({
+        overlayEnabled: true,
+        switching: true,
+        playoutStatus: "failed",
+        lastExitCode: "SIGBUS",
+        heartbeatAt,
+        nowMs: new Date("2026-04-10T14:24:07.000Z").getTime()
+      })
+    ).toBe(false);
+    expect(
+      shouldSkipInitialSceneCapture({
+        overlayEnabled: true,
+        switching: false,
+        playoutStatus: "failed",
+        lastExitCode: "SIGBUS",
+        heartbeatAt,
+        nowMs: new Date("2026-04-10T14:26:00.000Z").getTime()
+      })
+    ).toBe(false);
   });
 });
