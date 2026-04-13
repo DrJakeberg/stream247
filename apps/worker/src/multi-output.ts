@@ -114,8 +114,26 @@ export function buildFfmpegOutputTarget(targets: DestinationRuntimeTarget[]): {
 
   return {
     muxer: "tee",
-    output: targets.map((entry) => `[onfail=ignore:f=flv:use_fifo=1]${entry.target}`).join("|")
+    output: targets.map((entry) => `${buildTeeOutputOptions(entry.target)}${entry.target}`).join("|")
   };
+}
+
+function buildTeeOutputOptions(target: string): string {
+  const options = ["onfail=ignore", "f=flv", "use_fifo=1"];
+  if (isLocalFileOutputTarget(target)) {
+    options.push("flush_packets=1");
+  }
+  return `[${options.join(":")}]`;
+}
+
+function isLocalFileOutputTarget(target: string): boolean {
+  const normalizedTarget = target.trim();
+  return (
+    normalizedTarget.startsWith("/") ||
+    normalizedTarget.startsWith("./") ||
+    normalizedTarget.startsWith("../") ||
+    normalizedTarget.startsWith("file:")
+  );
 }
 
 function buildDestinationErrorNeedles(destination: StreamDestinationRecord): string[] {

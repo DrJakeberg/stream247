@@ -155,6 +155,34 @@ describe("multi-output routing", () => {
     expect(output.output).toContain("[onfail=ignore:f=flv:use_fifo=1]rtmp://a.rtmp.youtube.com/live2/managed-key");
   });
 
+  it("flushes local file tee outputs while preserving fifo buffering", () => {
+    const output = buildFfmpegOutputTarget([
+      {
+        destination: createDestination(),
+        target: "/tmp/stream-output/primary/primary.flv"
+      },
+      {
+        destination: createDestination({
+          id: "destination-secondary",
+          provider: "custom-rtmp",
+          name: "Secondary",
+          priority: 1,
+          rtmpUrl: "/tmp/stream-output/secondary",
+          streamKeySource: "managed"
+        }),
+        target: "/tmp/stream-output/secondary/secondary.flv"
+      }
+    ]);
+
+    expect(output.muxer).toBe("tee");
+    expect(output.output).toContain(
+      "[onfail=ignore:f=flv:use_fifo=1:flush_packets=1]/tmp/stream-output/primary/primary.flv"
+    );
+    expect(output.output).toContain(
+      "[onfail=ignore:f=flv:use_fifo=1:flush_packets=1]/tmp/stream-output/secondary/secondary.flv"
+    );
+  });
+
   it("maps destination-specific FFmpeg errors back to destination ids", () => {
     const matched = matchDestinationFailuresInLog("Connection reset while writing to a.rtmp.youtube.com", [
       {
