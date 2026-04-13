@@ -5,6 +5,7 @@ coverage
 .turbo
 .env
 .env.local
+stack.env
 .DS_Store
 *.log
 playwright-report

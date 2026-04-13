@@ -126,7 +126,7 @@ Production Compose is intended to pull from:
 - `ghcr.io/drjakeberg/stream247-playout:<tag>`
 
 `.env.example` uses `latest` for evaluation.
-`.env.production.example` pins `v1.0.3` for stable deployment.
+`.env.production.example` pins `v1.1.0` for stable deployment.
 See:
 
 - `docs/versioning.md`
