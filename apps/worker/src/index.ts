@@ -2361,10 +2361,18 @@ async function startOrSwitchPlayout(args: {
     lastTransitionAt: startedAt,
     selectionReasonCode: args.reasonCode,
     fallbackTier: args.fallbackTier,
-    liveBridgeStatus: args.liveBridge ? "active" : args.lifecycleStatus === "switching" ? playout.liveBridgeStatus : playout.liveBridgeStatus,
-    liveBridgeStartedAt: args.liveBridge ? startedAt : playout.liveBridgeStartedAt,
-    liveBridgeReleasedAt: args.liveBridge ? "" : playout.liveBridgeReleasedAt,
-    liveBridgeLastError: args.liveBridge ? "" : playout.liveBridgeLastError,
+    liveBridgeStatus: args.liveBridge
+      ? playout.liveBridgeStatus === "releasing"
+        ? "releasing"
+        : "active"
+      : playout.liveBridgeStatus,
+    liveBridgeStartedAt: args.liveBridge ? playout.liveBridgeStartedAt || startedAt : playout.liveBridgeStartedAt,
+    liveBridgeReleasedAt: args.liveBridge
+      ? playout.liveBridgeStatus === "releasing"
+        ? playout.liveBridgeReleasedAt
+        : ""
+      : playout.liveBridgeReleasedAt,
+    liveBridgeLastError: args.liveBridge && playout.liveBridgeStatus !== "releasing" ? "" : playout.liveBridgeLastError,
     lastError: "",
     pendingAction: "",
     pendingActionRequestedAt: "",
@@ -3189,7 +3197,9 @@ async function runPlayoutCycle(): Promise<void> {
     liveBridgeLabel: selection.queueKind === "live" ? selection.liveBridgeLabel : playout.liveBridgeLabel,
     liveBridgeStatus:
       selection.queueKind === "live"
-        ? "active"
+        ? playout.liveBridgeStatus === "releasing"
+          ? "releasing"
+          : "active"
         : playout.liveBridgeStatus === "releasing"
           ? ""
           : playout.liveBridgeStatus,
@@ -3199,11 +3209,13 @@ async function runPlayoutCycle(): Promise<void> {
         : playout.liveBridgeStartedAt,
     liveBridgeReleasedAt:
       selection.queueKind === "live"
-        ? ""
+        ? playout.liveBridgeStatus === "releasing"
+          ? playout.liveBridgeReleasedAt
+          : ""
         : playout.liveBridgeStatus === "releasing"
           ? new Date().toISOString()
           : playout.liveBridgeReleasedAt,
-    liveBridgeLastError: selection.queueKind === "live" ? "" : playout.liveBridgeLastError,
+    liveBridgeLastError: selection.queueKind === "live" && playout.liveBridgeStatus !== "releasing" ? "" : playout.liveBridgeLastError,
     cuepointWindowKey,
     cuepointFiredKeys,
     cuepointLastTriggeredAt:
