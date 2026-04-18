@@ -2,14 +2,45 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const rootDir = path.resolve(__dirname, "../..");
 const rootEnvPath = path.join(rootDir, ".env");
+const rootEnvLockPath = path.join(os.tmpdir(), "stream247-release-root-env.lock");
 const scriptPath = path.join(rootDir, "scripts", "release-preflight.sh");
 const prepareEnvScriptPath = path.join(rootDir, "scripts", "prepare-release-preflight-env.sh");
 const tempDirs: string[] = [];
 let rootEnvBackupPath: string | null = null;
+let rootEnvLockHeld = false;
+
+function acquireRootEnvLock() {
+  const deadline = Date.now() + 30_000;
+
+  while (Date.now() < deadline) {
+    try {
+      mkdirSync(rootEnvLockPath);
+      rootEnvLockHeld = true;
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") {
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+
+  throw new Error(`Timed out waiting for ${rootEnvLockPath}`);
+}
+
+function releaseRootEnvLock() {
+  if (!rootEnvLockHeld) {
+    return;
+  }
+
+  rmSync(rootEnvLockPath, { force: true, recursive: true });
+  rootEnvLockHeld = false;
+}
 
 function createDockerStub(tempDir: string, options?: { requireRootEnvDuringConfig?: boolean }) {
   const binDir = path.join(tempDir, "bin");
@@ -110,6 +141,10 @@ function moveRootEnvOutOfTheWay(tempDir: string) {
   renameSync(rootEnvPath, rootEnvBackupPath);
 }
 
+beforeEach(() => {
+  acquireRootEnvLock();
+});
+
 afterEach(() => {
   if (rootEnvBackupPath && existsSync(rootEnvBackupPath)) {
     renameSync(rootEnvBackupPath, rootEnvPath);
@@ -119,6 +154,8 @@ afterEach(() => {
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop() as string, { force: true, recursive: true });
   }
+
+  releaseRootEnvLock();
 });
 
 describe("release preflight", () => {

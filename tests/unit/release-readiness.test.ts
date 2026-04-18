@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const rootDir = path.resolve(__dirname, "../..");
 const rootEnvPath = path.join(rootDir, ".env");
+const rootEnvLockPath = path.join(os.tmpdir(), "stream247-release-root-env.lock");
 const ciWorkflowPath = path.join(rootDir, ".github", "workflows", "ci.yml");
 const releaseWorkflowPath = path.join(rootDir, ".github", "workflows", "release.yml");
 const composePath = path.join(rootDir, "docker-compose.yml");
@@ -22,6 +23,7 @@ const workerDockerfilePath = path.join(rootDir, "docker", "worker.Dockerfile");
 const upgradeScriptPath = path.join(rootDir, "scripts", "upgrade-rehearsal.sh");
 const soakScriptPath = path.join(rootDir, "scripts", "soak-monitor.sh");
 const tempDirs: string[] = [];
+let rootEnvLockHeld = false;
 
 type RootEnvTestState = {
   backupPath: string | null;
@@ -39,6 +41,35 @@ type CurlResponse = {
 type DockerStubOptions = {
   manifestAvailableRefs?: string[];
 };
+
+function acquireRootEnvLock() {
+  const deadline = Date.now() + 30_000;
+
+  while (Date.now() < deadline) {
+    try {
+      mkdirSync(rootEnvLockPath);
+      rootEnvLockHeld = true;
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") {
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+
+  throw new Error(`Timed out waiting for ${rootEnvLockPath}`);
+}
+
+function releaseRootEnvLock() {
+  if (!rootEnvLockHeld) {
+    return;
+  }
+
+  rmSync(rootEnvLockPath, { force: true, recursive: true });
+  rootEnvLockHeld = false;
+}
 
 function rememberTempDir(prefix: string) {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -228,6 +259,7 @@ function extractComposeServiceBlock(serviceName: string) {
 }
 
 beforeEach(() => {
+  acquireRootEnvLock();
   rootEnvState = createRootEnvTestState(rootEnvPath);
 });
 
@@ -237,6 +269,8 @@ afterEach(() => {
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop() as string, { force: true, recursive: true });
   }
+
+  releaseRootEnvLock();
 });
 
 describe("release readiness files", () => {
