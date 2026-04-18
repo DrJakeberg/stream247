@@ -156,6 +156,8 @@ Recommended pre-release commands:
 
 Production `traefik`, `web`, `worker`, `playout`, `postgres`, and `redis` services now use `restart: unless-stopped` in `docker-compose.yml`, so the documented always-on Compose paths, including `docker compose --profile proxy up -d`, recover their stack processes after daemon and host restarts.
 
+The worker-family image uses a small init process before Node so long-running playout containers reap short-lived Chromium scene-renderer children. Worker and playout Docker healthchecks also use a longer timeout than web checks because FFmpeg and scene rendering can briefly saturate the playout container during normal broadcast operation.
+
 CI currently builds against the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners.
 
 ## Current Capability Notes

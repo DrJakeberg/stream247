@@ -18,6 +18,7 @@ const rootEnvPath = path.join(rootDir, ".env");
 const ciWorkflowPath = path.join(rootDir, ".github", "workflows", "ci.yml");
 const releaseWorkflowPath = path.join(rootDir, ".github", "workflows", "release.yml");
 const composePath = path.join(rootDir, "docker-compose.yml");
+const workerDockerfilePath = path.join(rootDir, "docker", "worker.Dockerfile");
 const upgradeScriptPath = path.join(rootDir, "scripts", "upgrade-rehearsal.sh");
 const soakScriptPath = path.join(rootDir, "scripts", "soak-monitor.sh");
 const tempDirs: string[] = [];
@@ -292,6 +293,18 @@ describe("release readiness files", () => {
       expect(extractComposeServiceBlock(serviceName)).toContain("restart: unless-stopped");
     }
   });
+
+  it("runs worker-family containers under an init process for child reaping", () => {
+    const dockerfile = readFileSync(workerDockerfilePath, "utf8");
+
+    expect(dockerfile).toContain("apk add --no-cache chromium ffmpeg yt-dlp python3 ttf-dejavu tini");
+    expect(dockerfile).toContain('ENTRYPOINT ["/sbin/tini", "--"]');
+  });
+
+  it("gives worker-family healthchecks enough time under playout load", () => {
+    expect(extractComposeServiceBlock("worker")).toContain("timeout: 30s");
+    expect(extractComposeServiceBlock("playout")).toContain("timeout: 30s");
+  });
 });
 
 describe("root env preservation helpers", () => {
@@ -437,12 +450,16 @@ describe("release readiness scripts", () => {
 
     const result = runShellScript(soakScriptPath, ["--hours", "24", "--interval-seconds", "0"], [
       {
-        body: '{"status":"ok","broadcastReady":false,"services":{"worker":"ok","playout":"ok","destination":"not-ready"},"playout":{"selectionReasonCode":"fallback","fallbackTier":"standby","crashLoopDetected":false}}\n'
+        body: '{"status":"ok","broadcastReady":false,"services":{"worker":"ok","playout":"ok","destination":"not-ready"},"playout":{"status":"failed","selectionReasonCode":"fallback","fallbackTier":"standby","crashLoopDetected":false,"crashCountWindow":2,"restartCount":725,"lastExitCode":"SIGBUS","currentAssetId":"asset_current"}}\n'
       }
     ]);
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("broadcastReady=false");
     expect(result.output).toContain("destination=not-ready");
+    expect(result.output).toContain("playoutStatus=failed");
+    expect(result.output).toContain("lastExitCode=SIGBUS");
+    expect(result.output).toContain("restartCount=725");
+    expect(result.output).toContain("crashCountWindow=2");
   });
 });
