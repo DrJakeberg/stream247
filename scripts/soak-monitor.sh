@@ -60,6 +60,13 @@ check_readiness() {
     const raw = fs.readFileSync(0, "utf8");
     const data = JSON.parse(raw);
     const issues = [];
+    const playoutDetails = [
+      `playoutStatus=${data.playout?.status ?? "unknown"}`,
+      `lastExitCode=${data.playout?.lastExitCode ?? ""}`,
+      `restartCount=${data.playout?.restartCount ?? "unknown"}`,
+      `crashCountWindow=${data.playout?.crashCountWindow ?? "unknown"}`,
+      `currentAsset=${data.playout?.currentAssetId ?? ""}`
+    ];
     if (!(data.status === "ok" || data.status === "degraded")) {
       issues.push(`readiness.status=${data.status}`);
     }
@@ -79,7 +86,7 @@ check_readiness() {
       issues.push("playout.crashLoopDetected=true");
     }
     if (issues.length > 0) {
-      console.error(issues.join(", "));
+      console.error([...issues, ...playoutDetails].join(", "));
       process.exit(1);
     }
     console.log([
@@ -89,7 +96,8 @@ check_readiness() {
       `playout=${data.services?.playout ?? "unknown"}`,
       `destination=${data.services?.destination ?? "unknown"}`,
       `reason=${data.playout?.selectionReasonCode ?? ""}`,
-      `fallback=${data.playout?.fallbackTier ?? ""}`
+      `fallback=${data.playout?.fallbackTier ?? ""}`,
+      ...playoutDetails
     ].join(" "));
   '
 }

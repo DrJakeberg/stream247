@@ -38,6 +38,8 @@
 - inspect `fallbackTier`
 - inspect destination readiness
 - inspect last FFmpeg stderr sample
+- inspect `restartCount`, `lastExitCode`, and `crashCountWindow` in `/api/system/readiness` or the soak monitor log
+- if the playout container accumulates zombie Chromium or crashpad processes, recreate it after deploying an image that runs Node under the configured init process
 
 ### Crash-loop protection active
 

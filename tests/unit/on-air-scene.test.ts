@@ -39,26 +39,20 @@ describe("on-air scene helpers", () => {
   });
 
   it("builds chromium capture args for transparent overlay screenshots", () => {
-    expect(
-      buildChromiumSceneCaptureArgs({
-        url: "http://web:3000/overlay?chromeless=1",
-        outputPath: "/tmp/stream247-scene.png",
-        viewport: {
-          width: 1280,
-          height: 720
-        }
-      })
-    ).toContain("--default-background-color=00000000");
-    expect(
-      buildChromiumSceneCaptureArgs({
-        url: "http://web:3000/overlay?chromeless=1",
-        outputPath: "/tmp/stream247-scene.png",
-        viewport: {
-          width: 1280,
-          height: 720
-        }
-      })
-    ).toContain("--window-size=1280,720");
+    const args = buildChromiumSceneCaptureArgs({
+      url: "http://web:3000/overlay?chromeless=1",
+      outputPath: "/tmp/stream247-scene.png",
+      viewport: {
+        width: 1280,
+        height: 720
+      }
+    });
+
+    expect(args).toContain("--default-background-color=00000000");
+    expect(args).toContain("--window-size=1280,720");
+    expect(args).toContain("--disable-crash-reporter");
+    expect(args).toContain("--disable-crashpad");
+    expect(args).toContain("--no-zygote");
   });
 
   it("returns chromium binary candidates in preference order", () => {

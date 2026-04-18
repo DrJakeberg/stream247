@@ -41,9 +41,12 @@ export function buildChromiumSceneCaptureArgs(args: {
   return [
     "--headless",
     "--disable-gpu",
+    "--disable-crash-reporter",
+    "--disable-crashpad",
     "--hide-scrollbars",
     "--disable-dev-shm-usage",
     "--no-sandbox",
+    "--no-zygote",
     `--window-size=${args.viewport.width},${args.viewport.height}`,
     "--default-background-color=00000000",
     "--run-all-compositor-stages-before-draw",
