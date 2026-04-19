@@ -30,6 +30,26 @@ type TestDatabase = {
   databaseUrl: string;
 };
 
+const persistentProgramFeedRuntimeMigrationId = "20260419_001_persistent_program_feed_runtime";
+const persistentProgramFeedRuntimeColumns = [
+  "uplink_status",
+  "uplink_input_mode",
+  "uplink_started_at",
+  "uplink_heartbeat_at",
+  "uplink_destination_ids",
+  "uplink_restart_count",
+  "uplink_unplanned_restart_count",
+  "uplink_last_exit_code",
+  "uplink_last_exit_reason",
+  "uplink_last_exit_planned",
+  "uplink_reconnect_until",
+  "program_feed_status",
+  "program_feed_updated_at",
+  "program_feed_playlist_path",
+  "program_feed_target_seconds",
+  "program_feed_buffered_seconds"
+].sort();
+
 async function runDocker(args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("docker", args);
   return stdout.trim();
@@ -120,6 +140,22 @@ describe.sequential("database roundtrip", () => {
       await runDocker(["rm", "-f", testDatabase.containerName]).catch(() => {});
     }
   });
+
+  async function executeSql(sql: string): Promise<string> {
+    return runDocker([
+      "exec",
+      testDatabase.containerName,
+      "psql",
+      "-U",
+      "stream247",
+      "-d",
+      "stream247",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-Atc",
+      sql
+    ]);
+  }
 
   it("boots a fresh schema migration and roundtrips the full app state", async () => {
     await ensureDatabaseWithRetry();
@@ -547,6 +583,54 @@ describe.sequential("database roundtrip", () => {
     const postUpdate = await readAppState();
     expect(managedKeys["destination-youtube"]).toBe("managed-youtube-key");
     expect(postUpdate.destinations.find((destination) => destination.id === "destination-youtube")?.streamKeySource).toBe("managed");
+  }, 60_000);
+
+  it("upgrades existing playout runtime rows with persistent uplink and program feed columns", async () => {
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      ALTER TABLE playout_runtime
+        DROP COLUMN IF EXISTS uplink_status,
+        DROP COLUMN IF EXISTS uplink_input_mode,
+        DROP COLUMN IF EXISTS uplink_started_at,
+        DROP COLUMN IF EXISTS uplink_heartbeat_at,
+        DROP COLUMN IF EXISTS uplink_destination_ids,
+        DROP COLUMN IF EXISTS uplink_restart_count,
+        DROP COLUMN IF EXISTS uplink_unplanned_restart_count,
+        DROP COLUMN IF EXISTS uplink_last_exit_code,
+        DROP COLUMN IF EXISTS uplink_last_exit_reason,
+        DROP COLUMN IF EXISTS uplink_last_exit_planned,
+        DROP COLUMN IF EXISTS uplink_reconnect_until,
+        DROP COLUMN IF EXISTS program_feed_status,
+        DROP COLUMN IF EXISTS program_feed_updated_at,
+        DROP COLUMN IF EXISTS program_feed_playlist_path,
+        DROP COLUMN IF EXISTS program_feed_target_seconds,
+        DROP COLUMN IF EXISTS program_feed_buffered_seconds;
+      DELETE FROM schema_migrations WHERE id = '${persistentProgramFeedRuntimeMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const columns = (
+      await executeSql(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'playout_runtime'
+          AND column_name IN (${persistentProgramFeedRuntimeColumns.map((column) => `'${column}'`).join(", ")})
+        ORDER BY column_name;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+    const migrationApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id = '${persistentProgramFeedRuntimeMigrationId}';`
+    );
+    const state = await readAppState();
+
+    expect(columns).toEqual(persistentProgramFeedRuntimeColumns);
+    expect(migrationApplied).toBe("1");
+    expect(state.playout.uplinkStatus).toBe("");
+    expect(state.playout.programFeedBufferedSeconds).toBe(0);
   }, 60_000);
 
   it("does not reseed an initialized database just because no users exist", async () => {

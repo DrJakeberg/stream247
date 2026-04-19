@@ -72,6 +72,7 @@
 
 - confirm `STREAM247_RELAY_ENABLED=1` and the `relay`, `playout`, and `uplink` containers are running
 - confirm `STREAM247_UPLINK_INPUT_MODE=hls` unless you intentionally rolled back to the older MediaMTX relay input
+- if an upgraded worker logs `column "uplink_status" of relation "playout_runtime" does not exist`, deploy a build that includes the persistent program-feed upgrade migration before restarting the soak
 - inspect `program-feed.input`, `uplink.output.missing`, `uplink.process.exit`, and `uplink.ffmpeg.stderr` incidents
 - check `/api/system/readiness` for `uplink.unplannedRestartCount` and `programFeed.status`
 - verify at least one enabled primary or backup destination has a valid RTMP URL and stream key

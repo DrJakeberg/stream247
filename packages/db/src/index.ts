@@ -2102,6 +2102,35 @@ if (!schemaMigrations.some((migration) => migration.id === libraryBlueprintsV2Mi
   schemaMigrations.push(libraryBlueprintsV2Migration);
 }
 
+const persistentProgramFeedRuntimeMigration: MigrationDefinition = {
+  id: "20260419_001_persistent_program_feed_runtime",
+  description: "Add persistent uplink and program feed runtime columns.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_status TEXT NOT NULL DEFAULT '';
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_input_mode TEXT NOT NULL DEFAULT '';
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_started_at TEXT NOT NULL DEFAULT '';
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_heartbeat_at TEXT NOT NULL DEFAULT '';
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_destination_ids TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_restart_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_unplanned_restart_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_last_exit_code TEXT NOT NULL DEFAULT '';
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_last_exit_reason TEXT NOT NULL DEFAULT '';
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_last_exit_planned BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_reconnect_until TEXT NOT NULL DEFAULT '';
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS program_feed_status TEXT NOT NULL DEFAULT '';
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS program_feed_updated_at TEXT NOT NULL DEFAULT '';
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS program_feed_playlist_path TEXT NOT NULL DEFAULT '';
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS program_feed_target_seconds INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS program_feed_buffered_seconds INTEGER NOT NULL DEFAULT 0;
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === persistentProgramFeedRuntimeMigration.id)) {
+  schemaMigrations.push(persistentProgramFeedRuntimeMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
