@@ -1,5 +1,6 @@
 import { selectActiveDestinationGroup, type DestinationRoutingRecord } from "@stream247/core";
 import type { StreamDestinationRecord } from "@stream247/db";
+import type { FfmpegOutputTarget } from "./ffmpeg-runtime.js";
 
 export type DestinationRuntimeTarget = {
   destination: StreamDestinationRecord;
@@ -94,10 +95,7 @@ export function selectDestinationRuntimeTargets(args: {
   };
 }
 
-export function buildFfmpegOutputTarget(targets: DestinationRuntimeTarget[]): {
-  muxer: "flv" | "tee";
-  output: string;
-} {
+export function buildFfmpegOutputTarget(targets: DestinationRuntimeTarget[]): FfmpegOutputTarget {
   if (targets.length === 0) {
     return {
       muxer: "flv",

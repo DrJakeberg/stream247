@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildUplinkFfmpegCommand,
   buildFfmpegInputArgs,
   describeFfmpegExit,
+  getRelayInputUrl,
+  getRelayPublishUrl,
   getPlayoutReconnectConfig,
+  isRelayModeEnabled,
   isLikelyDestinationOutputError,
   shouldRequestImmediatePlayoutRetry,
   shouldSkipInitialSceneCapture
@@ -26,6 +30,37 @@ describe("ffmpeg runtime helpers", () => {
       intervalHours: 48,
       windowSeconds: 20
     });
+  });
+
+  it("resolves relay mode and relay endpoints from env", () => {
+    expect(isRelayModeEnabled({})).toBe(false);
+    expect(isRelayModeEnabled({ STREAM247_RELAY_ENABLED: "1" })).toBe(true);
+    expect(getRelayPublishUrl({})).toBe("rtmp://relay:1935/live/program");
+    expect(getRelayInputUrl({ STREAM247_RELAY_INPUT_URL: "rtmp://relay:1935/live/custom" })).toBe(
+      "rtmp://relay:1935/live/custom"
+    );
+  });
+
+  it("builds a copy-mode uplink command from relay input to the active output target", () => {
+    expect(
+      buildUplinkFfmpegCommand("rtmp://relay:1935/live/program", {
+        muxer: "tee",
+        output: "[onfail=ignore:f=flv]rtmp://example/live/key|[onfail=ignore:f=flv]/tmp/out.flv"
+      })
+    ).toEqual([
+      "-hide_banner",
+      "-loglevel",
+      "warning",
+      "-fflags",
+      "+genpts",
+      "-i",
+      "rtmp://relay:1935/live/program",
+      "-c",
+      "copy",
+      "-f",
+      "tee",
+      "[onfail=ignore:f=flv]rtmp://example/live/key|[onfail=ignore:f=flv]/tmp/out.flv"
+    ]);
   });
 
   it("adds reconnect flags for remote HTTP inputs", () => {

@@ -56,7 +56,7 @@ Stream247 works around three high-level state concepts:
 
 ## Broadcast Runtime
 
-The current playout model is FFmpeg-based and supervisor-driven.
+The current playout model is FFmpeg-based and supervisor-driven. In relay mode, program playout publishes only to the local RTMP relay, while a separate uplink worker reads that relay and owns the external RTMP destinations.
 
 Persisted playout runtime fields include:
 
@@ -171,7 +171,8 @@ The runtime now supports multiple concurrent RTMP outputs per channel.
 - `backup` destinations take over only when no healthy primary group is available
 - the built-in `destination-primary` and `destination-backup` records can still use env-based stream keys
 - additional destinations store managed stream keys encrypted at rest in PostgreSQL
-- the worker resolves the active destination group and builds a tee-muxer output when more than one destination is active
+- direct mode lets playout resolve the active destination group and build a tee-muxer output when more than one destination is active
+- relay mode moves that destination-group output to the uplink worker, keeping playout focused on producing the local program feed
 
 ## Overlay Model
 

@@ -45,6 +45,9 @@ TRAEFIK_HOST=stream247.local
 TRAEFIK_ACME_EMAIL=devnull@example.com
 CHANNEL_TIMEZONE=Europe/Berlin
 MEDIA_LIBRARY_ROOT=/app/data/media
+STREAM247_RELAY_ENABLED=1
+STREAM247_RELAY_OUTPUT_URL=rtmp://relay:1935/live/program
+STREAM247_RELAY_INPUT_URL=rtmp://relay:1935/live/program
 EOF
 
 cat >"$OVERRIDE_FILE" <<EOF
@@ -88,6 +91,8 @@ RUNNING_SERVICES="$(
 )"
 
 printf '%s\n' "$RUNNING_SERVICES" | grep -q '^worker$'
+printf '%s\n' "$RUNNING_SERVICES" | grep -q '^relay$'
 printf '%s\n' "$RUNNING_SERVICES" | grep -q '^playout$'
+printf '%s\n' "$RUNNING_SERVICES" | grep -q '^uplink$'
 
 wget -qO- "http://127.0.0.1:${PORT}/api/system/readiness" >/dev/null
