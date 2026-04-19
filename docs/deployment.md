@@ -158,11 +158,16 @@ Production `traefik`, `web`, `worker`, `playout`, `postgres`, and `redis` servic
 
 The worker-family image uses a small init process before Node so long-running playout containers reap short-lived Chromium scene-renderer children. Worker and playout Docker healthchecks also use a longer timeout than web checks because FFmpeg and scene rendering can briefly saturate the playout container during normal broadcast operation.
 
+Planned output reconnects default to every 48 hours. Set `PLAYOUT_RECONNECT_HOURS` only when the deployment needs a different Twitch reconnect cadence; `PLAYOUT_RECONNECT_SECONDS` controls the short standby window used during that planned reconnect.
+
+Twitch VOD playback is cache-backed by default. The worker stores verified Twitch archive media under `MEDIA_LIBRARY_ROOT/.stream247-cache/twitch`, preserves the original Twitch URL on the asset record, and keeps the internal cache out of local library scans. If a Twitch VOD cannot be cached, playout uses the standby slate instead of attempting unstable remote archive playback. Set `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1` only as a temporary rollback.
+
 CI currently builds against the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners.
 
 ## Current Capability Notes
 
 - local media, direct media URLs, YouTube playlists/channels, and Twitch VODs/channels are ingestible today
+- Twitch VOD playout uses verified local cache files by default and falls back to standby when cache preparation fails
 - YouTube and Twitch ingestion rely on `yt-dlp`
 - schedule blocks support weekly CRUD, reusable show profiles, multi-day creation, overlap validation, drag/drop repositioning, resize-to-change-duration editing, weekly coverage summaries, and quick-start programming templates
 - pools are first-class programming units for round-robin playout selection

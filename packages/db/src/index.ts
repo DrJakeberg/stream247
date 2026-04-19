@@ -115,6 +115,10 @@ export type AssetRecord = {
   sourceId: string;
   title: string;
   path: string;
+  cachePath?: string;
+  cacheStatus?: "" | "missing" | "ready" | "failed";
+  cacheUpdatedAt?: string;
+  cacheError?: string;
   folderPath?: string;
   tags?: string[];
   status: "ready" | "pending" | "error";
@@ -1286,6 +1290,10 @@ function normalizeState(state: AppState): AppState {
         folderPath: asset.folderPath ?? "",
         tags: normalizeAssetTags(asset.tags ?? []),
         includeInProgramming: asset.includeInProgramming ?? true,
+        cachePath: asset.cachePath ?? "",
+        cacheStatus: asset.cacheStatus ?? "",
+        cacheUpdatedAt: asset.cacheUpdatedAt ?? "",
+        cacheError: asset.cacheError ?? "",
         externalId: asset.externalId ?? "",
         categoryName: asset.categoryName ?? "",
         durationSeconds: asset.durationSeconds ?? 0,
@@ -1674,6 +1682,10 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       source_id TEXT NOT NULL,
       title TEXT NOT NULL,
       path TEXT NOT NULL,
+      cache_path TEXT NOT NULL DEFAULT '',
+      cache_status TEXT NOT NULL DEFAULT '',
+      cache_updated_at TEXT NOT NULL DEFAULT '',
+      cache_error TEXT NOT NULL DEFAULT '',
       folder_path TEXT NOT NULL DEFAULT '',
       tags_json TEXT NOT NULL DEFAULT '[]',
       status TEXT NOT NULL,
@@ -1913,6 +1925,10 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS category_name TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS duration_seconds INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS published_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS cache_path TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS cache_status TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS cache_updated_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS cache_error TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS folder_path TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS tags_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
@@ -2459,16 +2475,21 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     await client.query(
       `
         INSERT INTO assets (
-          id, source_id, title, path, folder_path, tags_json, status, include_in_programming, external_id, category_name,
-          duration_seconds, published_at, fallback_priority, is_global_fallback, created_at, updated_at
+          id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
+          include_in_programming, external_id, category_name, duration_seconds, published_at, fallback_priority,
+          is_global_fallback, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
       `,
       [
         asset.id,
         asset.sourceId,
         asset.title,
         asset.path,
+        asset.cachePath ?? "",
+        asset.cacheStatus ?? "",
+        asset.cacheUpdatedAt ?? "",
+        asset.cacheError ?? "",
         asset.folderPath ?? "",
         JSON.stringify(normalizeAssetTags(asset.tags ?? [])),
         asset.status,
@@ -2876,6 +2897,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     source_id: string;
     title: string;
     path: string;
+    cache_path: string;
+    cache_status: AssetRecord["cacheStatus"];
+    cache_updated_at: string;
+    cache_error: string;
     folder_path: string;
     tags_json: string;
     status: AssetRecord["status"];
@@ -3157,6 +3182,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       sourceId: row.source_id,
       title: row.title,
       path: row.path,
+      cachePath: row.cache_path || undefined,
+      cacheStatus: row.cache_status || undefined,
+      cacheUpdatedAt: row.cache_updated_at || undefined,
+      cacheError: row.cache_error || undefined,
       folderPath: row.folder_path || "",
       tags: parseAssetTagsJson(row.tags_json),
       status: row.status,
@@ -3542,13 +3571,17 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
       source_id: string;
       path: string;
       external_id: string;
+      cache_path: string;
+      cache_status: AssetRecord["cacheStatus"];
+      cache_updated_at: string;
+      cache_error: string;
       folder_path: string;
       tags_json: string;
       include_in_programming: boolean;
       fallback_priority: number;
       is_global_fallback: boolean;
     }>(
-      "SELECT id, source_id, path, external_id, folder_path, tags_json, include_in_programming, fallback_priority, is_global_fallback FROM assets WHERE source_id = ANY($1::text[])",
+      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, include_in_programming, fallback_priority, is_global_fallback FROM assets WHERE source_id = ANY($1::text[])",
       [sourceIds]
     );
 
@@ -3569,16 +3602,21 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
       await client.query(
         `
           INSERT INTO assets (
-            id, source_id, title, path, folder_path, tags_json, status, include_in_programming, external_id, category_name,
-            duration_seconds, published_at, fallback_priority, is_global_fallback, created_at, updated_at
+            id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
+            include_in_programming, external_id, category_name, duration_seconds, published_at, fallback_priority,
+            is_global_fallback, created_at, updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         `,
         [
           asset.id,
           asset.sourceId,
           asset.title,
           asset.path,
+          asset.cachePath ?? existing?.cache_path ?? "",
+          asset.cacheStatus ?? existing?.cache_status ?? "",
+          asset.cacheUpdatedAt ?? existing?.cache_updated_at ?? "",
+          asset.cacheError ?? existing?.cache_error ?? "",
           existing?.folder_path ?? asset.folderPath ?? "",
           existing?.tags_json ?? JSON.stringify(normalizeAssetTags(asset.tags ?? [])),
           asset.status,
@@ -3610,24 +3648,32 @@ export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
           SET
             title = $2,
             path = $3,
-            folder_path = $4,
-            tags_json = $5,
-            status = $6,
-            include_in_programming = $7,
-            external_id = $8,
-            category_name = $9,
-            duration_seconds = $10,
-            published_at = $11,
-            fallback_priority = $12,
-            is_global_fallback = $13,
-            created_at = $14,
-            updated_at = $15
+            cache_path = $4,
+            cache_status = $5,
+            cache_updated_at = $6,
+            cache_error = $7,
+            folder_path = $8,
+            tags_json = $9,
+            status = $10,
+            include_in_programming = $11,
+            external_id = $12,
+            category_name = $13,
+            duration_seconds = $14,
+            published_at = $15,
+            fallback_priority = $16,
+            is_global_fallback = $17,
+            created_at = $18,
+            updated_at = $19
           WHERE id = $1
         `,
         [
           asset.id,
           asset.title,
           asset.path,
+          asset.cachePath ?? "",
+          asset.cacheStatus ?? "",
+          asset.cacheUpdatedAt ?? "",
+          asset.cacheError ?? "",
           asset.folderPath ?? "",
           JSON.stringify(normalizeAssetTags(asset.tags ?? [])),
           asset.status,

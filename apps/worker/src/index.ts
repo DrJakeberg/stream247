@@ -37,6 +37,7 @@ import {
   replaceTwitchScheduleSegments,
   resolveIncident,
   updateDestinationRecord,
+  updateAssetRecords,
   updatePlayoutRuntime,
   updatePoolCursor,
   updateTwitchConnectionRecord,
@@ -72,11 +73,18 @@ import { ensureLocalAssetThumbnail } from "./asset-thumbnails.js";
 import {
   describeFfmpegExit,
   buildFfmpegInputArgs,
+  getPlayoutReconnectConfig,
   isLikelyDestinationOutputError,
   shouldRequestImmediatePlayoutRetry,
   shouldSkipInitialSceneCapture
 } from "./ffmpeg-runtime.js";
 import { execFileText } from "./process-utils.js";
+import {
+  ensureTwitchVodCache,
+  getTwitchVodCacheConfig,
+  isInternalMediaCachePath,
+  isTwitchVodAsset
+} from "./twitch-vod-cache.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
@@ -95,8 +103,10 @@ const WORKER_HEARTBEAT_STALE_MS = 180_000;
 const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
-const PLAYOUT_RECONNECT_INTERVAL_MS = Number(process.env.PLAYOUT_RECONNECT_HOURS || "24") * 60 * 60 * 1000;
-const PLAYOUT_RECONNECT_WINDOW_MS = Number(process.env.PLAYOUT_RECONNECT_SECONDS || "20") * 1000;
+const PLAYOUT_RECONNECT_CONFIG = getPlayoutReconnectConfig(process.env);
+const PLAYOUT_RECONNECT_INTERVAL_MS = PLAYOUT_RECONNECT_CONFIG.intervalMs;
+const PLAYOUT_RECONNECT_INTERVAL_HOURS = PLAYOUT_RECONNECT_CONFIG.intervalHours;
+const PLAYOUT_RECONNECT_WINDOW_MS = PLAYOUT_RECONNECT_CONFIG.windowMs;
 const DESTINATION_FAILURE_COOLDOWN_SECONDS = Number(
   process.env.DESTINATION_FAILURE_COOLDOWN_SECONDS || String(DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS)
 );
@@ -201,6 +211,46 @@ async function resolvePlayableInput(input: string): Promise<string> {
   }
 
   return directUrl;
+}
+
+async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: AssetRecord; input: string }> {
+  const mediaRoot = getMediaRoot();
+  const cacheConfig = getTwitchVodCacheConfig(process.env, mediaRoot);
+
+  if (!isTwitchVodAsset(asset)) {
+    return {
+      asset,
+      input: await resolvePlayableInput(asset.path)
+    };
+  }
+
+  const result = await ensureTwitchVodCache(asset, cacheConfig);
+  const updatedAsset: AssetRecord = {
+    ...asset,
+    cachePath: result.cachePath,
+    cacheStatus: result.status,
+    cacheUpdatedAt: result.cacheUpdatedAt,
+    cacheError: result.cacheError,
+    updatedAt: result.cacheUpdatedAt
+  };
+  await updateAssetRecords([updatedAsset]);
+
+  if (result.status === "ready") {
+    await resolveIncident("playout.twitch-cache.failed", "Twitch VOD cache is ready.");
+    return {
+      asset: updatedAsset,
+      input: result.cachePath
+    };
+  }
+
+  if (cacheConfig.allowRemoteFallback) {
+    return {
+      asset: updatedAsset,
+      input: await resolvePlayableInput(asset.path)
+    };
+  }
+
+  throw new Error(`Twitch VOD cache is ${result.status}: ${result.cacheError || "local cache file is not ready."}`);
 }
 
 function isDestinationCoolingDown(destination: StreamDestinationRecord): boolean {
@@ -762,6 +812,9 @@ async function walkMediaFiles(root: string): Promise<string[]> {
     const files = await Promise.all(
       entries.map(async (entry) => {
         const absolutePath = path.join(root, entry.name);
+        if (isInternalMediaCachePath(absolutePath, getMediaRoot())) {
+          return [];
+        }
         if (entry.isDirectory()) {
           return walkMediaFiles(absolutePath);
         }
@@ -1560,16 +1613,16 @@ async function getPlayableQueuedAssets(queueAssets: AssetRecord[]): Promise<{
     }
 
     try {
-      const resolvedInput = await resolvePlayableInput(asset.path);
+      const prepared = await resolveAssetPlaybackInput(asset);
       queueProbeCache.set(asset.id, {
         status: "ready",
         checkedAt: Date.now(),
-        resolvedInput,
+        resolvedInput: prepared.input,
         error: ""
       });
-      prefetchedAsset = prefetchedAsset ?? asset;
+      prefetchedAsset = prefetchedAsset ?? prepared.asset;
       prefetchStatus = "ready";
-      playableQueue.push(asset);
+      playableQueue.push(prepared.asset);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown queue prefetch error.";
       queueProbeCache.set(asset.id, {
@@ -2197,6 +2250,7 @@ async function promoteRecoveringDestinations(reason: "manual" | "transition"): P
 
 async function startOrSwitchPlayout(args: {
   asset: AssetRecord | null;
+  resolvedAssetInput?: string;
   liveBridge:
     | {
         inputUrl: string;
@@ -2273,7 +2327,7 @@ async function startOrSwitchPlayout(args: {
     ? getLiveBridgeFfmpegCommand(args.liveBridge.inputUrl, args.outputTarget, overlayMode)
     : args.asset
       ? getFfmpegCommand(
-          cachedResolvedInput || (await resolvePlayableInput(args.asset.path)),
+          args.resolvedAssetInput || cachedResolvedInput || (await resolveAssetPlaybackInput(args.asset)).input,
           args.outputTarget,
           overlayMode,
           resolvedAudioLaneInput && args.audioLane
@@ -2783,7 +2837,7 @@ async function runPlayoutCycle(): Promise<void> {
     await updatePlayoutRuntime((playout) => ({
       ...playout,
       restartRequestedAt: new Date().toISOString(),
-      message: "Scheduled 24h reconnect is starting."
+      message: `Scheduled ${PLAYOUT_RECONNECT_INTERVAL_HOURS}h reconnect is starting.`
     }));
     state = await readAppState();
   }
@@ -2827,6 +2881,42 @@ async function runPlayoutCycle(): Promise<void> {
       reasonCode: "standby" as const,
       fallbackTier: "standby" as const
     };
+  }
+
+  let resolvedSelectionInput = "";
+  if (selection.asset) {
+    try {
+      const prepared = await resolveAssetPlaybackInput(selection.asset);
+      selection = {
+        ...selection,
+        asset: prepared.asset
+      };
+      resolvedSelectionInput = prepared.input;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown Twitch VOD cache preparation error.";
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Twitch VOD cache preparation failed",
+        message,
+        fingerprint: "playout.twitch-cache.failed"
+      });
+      await writeStandbySlate(state, "standby");
+      selection = {
+        asset: null,
+        queueKind: "standby",
+        insertTrigger: "",
+        cuepointKey: "",
+        cuepointOffsetSeconds: 0,
+        liveBridgeInputUrl: "",
+        liveBridgeInputType: "",
+        liveBridgeLabel: "",
+        reason: "Twitch VOD cache is not ready. Standby replay slate is on air.",
+        lifecycleStatus: "standby" as const,
+        reasonCode: "standby" as const,
+        fallbackTier: "standby" as const
+      };
+    }
   }
 
   if (selection.queueKind === "live") {
@@ -2973,6 +3063,7 @@ async function runPlayoutCycle(): Promise<void> {
     try {
       await startOrSwitchPlayout({
         asset: selection.asset,
+        resolvedAssetInput: resolvedSelectionInput,
         liveBridge:
           selection.queueKind === "live"
             ? {
@@ -3037,6 +3128,7 @@ async function runPlayoutCycle(): Promise<void> {
     try {
       await startOrSwitchPlayout({
         asset: selection.asset,
+        resolvedAssetInput: resolvedSelectionInput,
         liveBridge:
           selection.queueKind === "live"
             ? {

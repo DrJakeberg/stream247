@@ -115,6 +115,8 @@ Current source connectors:
 
 Assets are normalized into a PostgreSQL-backed catalog and then selected by the playout runtime.
 
+Twitch VOD assets keep their original Twitch URL as the source path, but the worker prepares a verified local cache file before using the asset for playout. Cache metadata is stored on the asset record, and the internal `.stream247-cache` tree is excluded from local-library discovery so cached archive files do not become duplicate programming assets.
+
 ## Scheduling
 
 The schedule model is block-based and timezone-aware.

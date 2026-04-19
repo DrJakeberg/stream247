@@ -26,6 +26,28 @@ function isRemoteHttpInput(input: string): boolean {
   }
 }
 
+function readPositiveNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function getPlayoutReconnectConfig(env: NodeJS.ProcessEnv = process.env): {
+  intervalHours: number;
+  intervalMs: number;
+  windowSeconds: number;
+  windowMs: number;
+} {
+  const intervalHours = readPositiveNumber(env.PLAYOUT_RECONNECT_HOURS, 48);
+  const windowSeconds = readPositiveNumber(env.PLAYOUT_RECONNECT_SECONDS, 20);
+
+  return {
+    intervalHours,
+    intervalMs: intervalHours * 60 * 60 * 1000,
+    windowSeconds,
+    windowMs: windowSeconds * 1000
+  };
+}
+
 export function shouldRequestImmediatePlayoutRetry(args: { planned: boolean; crashLoopDetected: boolean }): boolean {
   return !args.planned && !args.crashLoopDetected;
 }
