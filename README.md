@@ -192,9 +192,14 @@ docker compose --profile proxy up -d
 - `TWITCH_VOD_CACHE_ENABLED`: cache Twitch VOD media locally before playout; defaults to `1`
 - `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK`: allow direct remote Twitch playback if cache preparation fails; defaults to `0`
 - `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`: maximum time for a Twitch VOD cache download; defaults to `7200`
-- `STREAM247_RELAY_ENABLED`: send program playout to the local relay and publish externally from the uplink worker; defaults to `1` in the example Compose env
-- `STREAM247_RELAY_OUTPUT_URL`: local relay publish URL used by the playout process
-- `STREAM247_RELAY_INPUT_URL`: local relay read URL used by the uplink process
+- `STREAM247_RELAY_ENABLED`: split program production from external publishing; defaults to `1` in the example Compose env
+- `STREAM247_UPLINK_INPUT_MODE`: `hls` keeps the uplink on a buffered local program feed; set `rtmp` only to roll back to the older MediaMTX relay input
+- `STREAM247_PROGRAM_FEED_DIR`: local HLS program-feed directory shared by `playout` and `uplink`
+- `STREAM247_PROGRAM_FEED_TARGET_SECONDS`: target HLS segment length; defaults to `2`
+- `STREAM247_PROGRAM_FEED_LIST_SIZE`: live playlist segment count; defaults to `30` for about 60 seconds of buffer
+- `STREAM247_PROGRAM_FEED_FAILOVER_SECONDS`: extra stale-feed grace before health reports the feed as stale; defaults to `10`
+- `STREAM247_RELAY_OUTPUT_URL`: legacy local relay publish URL used by the playout process when `STREAM247_UPLINK_INPUT_MODE=rtmp`
+- `STREAM247_RELAY_INPUT_URL`: legacy local relay read URL used by the uplink process when `STREAM247_UPLINK_INPUT_MODE=rtmp`
 - `STREAM_OUTPUT_URL`: built-in primary RTMP output URL override
 - `STREAM_OUTPUT_KEY`: built-in primary RTMP key override
 - `BACKUP_STREAM_OUTPUT_URL`: built-in backup RTMP output URL
@@ -438,7 +443,7 @@ Notes:
 ### Playout And Broadcast Ops
 
 - FFmpeg-based RTMP playout foundation
-- local relay/uplink split for production Compose, with the uplink owning external output sessions and scheduled reconnects
+- buffered local program-feed/uplink split for production Compose, with the uplink owning external output sessions and scheduled reconnects
 - pool-based round-robin playout selection
 - standby replay slate when no playable asset is available
 - scheduled 48-hour reconnect window with controlled standby mode

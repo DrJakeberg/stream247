@@ -71,6 +71,8 @@
 ### Uplink is not publishing
 
 - confirm `STREAM247_RELAY_ENABLED=1` and the `relay`, `playout`, and `uplink` containers are running
-- inspect `uplink.output.missing`, `uplink.process.exit`, and `uplink.ffmpeg.stderr` incidents
+- confirm `STREAM247_UPLINK_INPUT_MODE=hls` unless you intentionally rolled back to the older MediaMTX relay input
+- inspect `program-feed.input`, `uplink.output.missing`, `uplink.process.exit`, and `uplink.ffmpeg.stderr` incidents
+- check `/api/system/readiness` for `uplink.unplannedRestartCount` and `programFeed.status`
 - verify at least one enabled primary or backup destination has a valid RTMP URL and stream key
 - use `STREAM247_RELAY_ENABLED=0` only as a rollback because it returns external publishing to the playout process

@@ -108,6 +108,8 @@ services:
     command: ["node", "apps/worker/dist/index.js", "uplink"]
     env_file:
       - .env
+    volumes:
+      - ./data/media:/app/data/media
     healthcheck:
       test: ["CMD", "node", "apps/worker/dist/index.js", "healthcheck", "uplink"]
       interval: 30s

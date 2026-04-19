@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildProgramFeedOutputTarget,
   buildUplinkFfmpegCommand,
   buildFfmpegInputArgs,
   describeFfmpegExit,
+  getProgramFeedConfig,
   getRelayInputUrl,
   getRelayPublishUrl,
   getPlayoutReconnectConfig,
+  getUplinkInputMode,
   isRelayModeEnabled,
   isLikelyDestinationOutputError,
+  isLikelyProgramFeedInputError,
   shouldRequestImmediatePlayoutRetry,
   shouldSkipInitialSceneCapture
 } from "../../apps/worker/src/ffmpeg-runtime";
@@ -35,10 +39,38 @@ describe("ffmpeg runtime helpers", () => {
   it("resolves relay mode and relay endpoints from env", () => {
     expect(isRelayModeEnabled({})).toBe(false);
     expect(isRelayModeEnabled({ STREAM247_RELAY_ENABLED: "1" })).toBe(true);
+    expect(getUplinkInputMode({})).toBe("hls");
+    expect(getUplinkInputMode({ STREAM247_UPLINK_INPUT_MODE: "rtmp" })).toBe("rtmp");
     expect(getRelayPublishUrl({})).toBe("rtmp://relay:1935/live/program");
     expect(getRelayInputUrl({ STREAM247_RELAY_INPUT_URL: "rtmp://relay:1935/live/custom" })).toBe(
       "rtmp://relay:1935/live/custom"
     );
+  });
+
+  it("builds the default buffered HLS program feed target", () => {
+    const config = getProgramFeedConfig({}, "/app/data/media");
+    expect(config).toMatchObject({
+      directory: "/app/data/media/.stream247-program-feed",
+      playlistPath: "/app/data/media/.stream247-program-feed/program.m3u8",
+      targetSeconds: 2,
+      listSize: 30,
+      bufferedSeconds: 60,
+      failoverSeconds: 10
+    });
+    expect(buildProgramFeedOutputTarget(config, "run-1")).toEqual({
+      muxer: "hls",
+      output: "/app/data/media/.stream247-program-feed/program.m3u8",
+      outputArgs: [
+        "-hls_time",
+        "2",
+        "-hls_list_size",
+        "30",
+        "-hls_flags",
+        "append_list+delete_segments+program_date_time+independent_segments+omit_endlist",
+        "-hls_segment_filename",
+        "/app/data/media/.stream247-program-feed/segment-run-1-%05d.ts"
+      ]
+    });
   });
 
   it("builds a copy-mode uplink command from relay input to the active output target", () => {
@@ -60,6 +92,52 @@ describe("ffmpeg runtime helpers", () => {
       "-f",
       "tee",
       "[onfail=ignore:f=flv]rtmp://example/live/key|[onfail=ignore:f=flv]/tmp/out.flv"
+    ]);
+  });
+
+  it("builds a transcoding uplink command for the local HLS program feed", () => {
+    expect(
+      buildUplinkFfmpegCommand(
+        "/app/data/media/.stream247-program-feed/program.m3u8",
+        {
+          muxer: "flv",
+          output: "rtmp://live.twitch.tv/app/key"
+        },
+        { inputMode: "hls", env: {} }
+      )
+    ).toEqual([
+      "-hide_banner",
+      "-loglevel",
+      "warning",
+      "-fflags",
+      "+genpts",
+      "-i",
+      "/app/data/media/.stream247-program-feed/program.m3u8",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-maxrate",
+      "4500k",
+      "-bufsize",
+      "9000k",
+      "-pix_fmt",
+      "yuv420p",
+      "-g",
+      "60",
+      "-tune",
+      "zerolatency",
+      "-bf",
+      "0",
+      "-c:a",
+      "aac",
+      "-ar",
+      "44100",
+      "-b:a",
+      "160k",
+      "-f",
+      "flv",
+      "rtmp://live.twitch.tv/app/key"
     ]);
   });
 
@@ -117,6 +195,11 @@ describe("ffmpeg runtime helpers", () => {
   it("still classifies real output/write failures as destination failures", () => {
     expect(isLikelyDestinationOutputError("Connection reset while writing to a.rtmp.youtube.com")).toBe(true);
     expect(isLikelyDestinationOutputError("av_interleaved_write_frame(): Broken pipe")).toBe(true);
+  });
+
+  it("classifies local HLS feed input stalls separately from destination failures", () => {
+    expect(isLikelyProgramFeedInputError("Error opening input /app/data/media/.stream247-program-feed/program.m3u8")).toBe(true);
+    expect(isLikelyProgramFeedInputError("Failed to reload playlist 0")).toBe(true);
   });
 
   it("reports signal exits explicitly", () => {

@@ -161,7 +161,7 @@ The worker-family image uses a small init process before Node so long-running pl
 
 Planned output reconnects default to every 48 hours. Set `PLAYOUT_RECONNECT_HOURS` only when the deployment needs a different Twitch reconnect cadence; `PLAYOUT_RECONNECT_SECONDS` controls the short standby window used during that planned reconnect.
 
-Production Compose enables the relay/uplink split by default. `playout` publishes the current program to `STREAM247_RELAY_OUTPUT_URL`, the `relay` service keeps that local RTMP endpoint inside the stack, and the `uplink` worker reads `STREAM247_RELAY_INPUT_URL` before publishing to the configured primary/backup outputs. Set `STREAM247_RELAY_ENABLED=0` only as a rollback to the previous direct playout-to-destination path.
+Production Compose enables the program-feed/uplink split by default. `playout` writes a rolling HLS feed under `STREAM247_PROGRAM_FEED_DIR`, and the `uplink` worker reads that local feed before publishing to the configured primary/backup outputs. The default `STREAM247_PROGRAM_FEED_TARGET_SECONDS=2` and `STREAM247_PROGRAM_FEED_LIST_SIZE=30` keep about 60 seconds of feed buffer so normal asset boundaries do not close the external RTMP session. Set `STREAM247_UPLINK_INPUT_MODE=rtmp` only to roll back to the older MediaMTX relay input, and set `STREAM247_RELAY_ENABLED=0` only as a rollback to the previous direct playout-to-destination path.
 
 Twitch VOD playback is cache-backed by default. The worker stores verified Twitch archive media under `MEDIA_LIBRARY_ROOT/.stream247-cache/twitch`, preserves the original Twitch URL on the asset record, and keeps the internal cache out of local library scans. If a Twitch VOD cannot be cached, playout uses the standby slate instead of attempting unstable remote archive playback. Set `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1` only as a temporary rollback.
 
@@ -171,7 +171,7 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 
 - local media, direct media URLs, YouTube playlists/channels, and Twitch VODs/channels are ingestible today
 - Twitch VOD playout uses verified local cache files by default and falls back to standby when cache preparation fails
-- relay/uplink mode separates program playout restarts from the external RTMP publishing worker
+- program-feed/uplink mode separates program playout restarts and asset boundaries from the external RTMP publishing worker
 - YouTube and Twitch ingestion rely on `yt-dlp`
 - schedule blocks support weekly CRUD, reusable show profiles, multi-day creation, overlap validation, drag/drop repositioning, resize-to-change-duration editing, weekly coverage summaries, and quick-start programming templates
 - pools are first-class programming units for round-robin playout selection

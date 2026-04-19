@@ -53,6 +53,20 @@ END_TIME=$(( $(date +%s) + TOTAL_SECONDS ))
 echo "Starting soak monitor for ${HOURS}h at ${APP_URL}" | tee -a "$LOG_FILE"
 echo "Writing log to ${LOG_FILE}" | tee -a "$LOG_FILE"
 
+BASELINE_UPLINK_UNPLANNED_RESTARTS="$(
+  curl -fsS "${APP_URL}/api/system/readiness" 2>/dev/null | node -e '
+    const fs = require("fs");
+    try {
+      const data = JSON.parse(fs.readFileSync(0, "utf8"));
+      console.log(Number(data.uplink?.unplannedRestartCount ?? 0));
+    } catch {
+      console.log(0);
+    }
+  ' 2>/dev/null || echo 0
+)"
+export BASELINE_UPLINK_UNPLANNED_RESTARTS
+echo "Baseline uplink unplanned restarts: ${BASELINE_UPLINK_UNPLANNED_RESTARTS}" | tee -a "$LOG_FILE"
+
 check_readiness() {
   response="$(curl -fsS "${APP_URL}/api/system/readiness")"
   printf "%s" "$response" | node -e '
@@ -65,8 +79,13 @@ check_readiness() {
       `lastExitCode=${data.playout?.lastExitCode ?? ""}`,
       `restartCount=${data.playout?.restartCount ?? "unknown"}`,
       `crashCountWindow=${data.playout?.crashCountWindow ?? "unknown"}`,
-      `currentAsset=${data.playout?.currentAssetId ?? ""}`
+      `currentAsset=${data.playout?.currentAssetId ?? ""}`,
+      `uplinkStatus=${data.uplink?.status ?? "unknown"}`,
+      `uplinkUnplannedRestarts=${data.uplink?.unplannedRestartCount ?? "unknown"}`,
+      `programFeed=${data.programFeed?.status ?? "unknown"}`
     ];
+    const baselineUplinkUnplannedRestarts = Number(process.env.BASELINE_UPLINK_UNPLANNED_RESTARTS ?? "0");
+    const currentUplinkUnplannedRestarts = Number(data.uplink?.unplannedRestartCount ?? 0);
     if (!(data.status === "ok" || data.status === "degraded")) {
       issues.push(`readiness.status=${data.status}`);
     }
@@ -79,11 +98,26 @@ check_readiness() {
     if (data.services?.playout === "not-ready") {
       issues.push("playout=not-ready");
     }
+    if (data.services?.uplink === "not-ready") {
+      issues.push("uplink=not-ready");
+    }
+    if (data.services?.programFeed === "not-ready") {
+      issues.push("programFeed=not-ready");
+    }
     if ((data.services?.destination ?? "unknown") !== "ok") {
       issues.push(`destination=${data.services?.destination ?? "unknown"}`);
     }
     if (data.playout?.crashLoopDetected) {
       issues.push("playout.crashLoopDetected=true");
+    }
+    if (data.programFeed?.status === "stale" || data.programFeed?.status === "failed") {
+      issues.push(`programFeed=${data.programFeed.status}`);
+    }
+    if (data.uplink?.status === "failed") {
+      issues.push("uplink=failed");
+    }
+    if (currentUplinkUnplannedRestarts > baselineUplinkUnplannedRestarts) {
+      issues.push(`uplinkUnplannedRestarts=${currentUplinkUnplannedRestarts}`);
     }
     if (issues.length > 0) {
       console.error([...issues, ...playoutDetails].join(", "));
@@ -94,6 +128,8 @@ check_readiness() {
       `broadcastReady=${String(data.broadcastReady)}`,
       `worker=${data.services?.worker ?? "unknown"}`,
       `playout=${data.services?.playout ?? "unknown"}`,
+      `uplink=${data.services?.uplink ?? "unknown"}`,
+      `programFeed=${data.services?.programFeed ?? "unknown"}`,
       `destination=${data.services?.destination ?? "unknown"}`,
       `reason=${data.playout?.selectionReasonCode ?? ""}`,
       `fallback=${data.playout?.fallbackTier ?? ""}`,

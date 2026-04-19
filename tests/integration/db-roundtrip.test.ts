@@ -426,6 +426,22 @@ describe.sequential("database roundtrip", () => {
         cuepointLastAssetId: "asset_3",
         manualNextAssetId: "asset_2",
         manualNextRequestedAt: "2026-04-04T10:00:09.000Z",
+        uplinkStatus: "running" as const,
+        uplinkInputMode: "hls" as const,
+        uplinkStartedAt: "2026-04-04T10:00:01.000Z",
+        uplinkHeartbeatAt: "2026-04-04T10:00:21.000Z",
+        uplinkDestinationIds: ["destination-primary", "destination-youtube"],
+        uplinkRestartCount: 2,
+        uplinkUnplannedRestartCount: 0,
+        uplinkLastExitCode: "",
+        uplinkLastExitReason: "",
+        uplinkLastExitPlanned: false,
+        uplinkReconnectUntil: "",
+        programFeedStatus: "fresh" as const,
+        programFeedUpdatedAt: "2026-04-04T10:00:19.000Z",
+        programFeedPlaylistPath: "/app/data/media/.stream247-program-feed/program.m3u8",
+        programFeedTargetSeconds: 2,
+        programFeedBufferedSeconds: 60,
         message: "Running"
       }
     };
@@ -491,6 +507,12 @@ describe.sequential("database roundtrip", () => {
     expect(reread.playout.cuepointFiredKeys).toEqual(["2026-04-04:block_1:480:120:600"]);
     expect(reread.playout.cuepointLastAssetId).toBe("asset_3");
     expect(reread.playout.manualNextAssetId).toBe("asset_2");
+    expect(reread.playout.uplinkStatus).toBe("running");
+    expect(reread.playout.uplinkInputMode).toBe("hls");
+    expect(reread.playout.uplinkDestinationIds).toEqual(["destination-primary", "destination-youtube"]);
+    expect(reread.playout.uplinkRestartCount).toBe(2);
+    expect(reread.playout.programFeedStatus).toBe("fresh");
+    expect(reread.playout.programFeedBufferedSeconds).toBe(60);
     expect(reread.playout.queuedAssetIds).toEqual(["asset_2", "asset_3"]);
     expect(reread.playout.queueItems[1]?.kind).toBe("insert");
     expect(reread.playout.queueItems[1]?.assetId).toBe("asset_3");

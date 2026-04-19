@@ -433,6 +433,22 @@ export type PlayoutRuntimeRecord = {
   skipUntil: string;
   pendingAction: "" | "refresh" | "rebuild_queue";
   pendingActionRequestedAt: string;
+  uplinkStatus: "" | "idle" | "waiting-for-feed" | "running" | "scheduled-reconnect" | "failed";
+  uplinkInputMode: "" | "hls" | "rtmp";
+  uplinkStartedAt: string;
+  uplinkHeartbeatAt: string;
+  uplinkDestinationIds: string[];
+  uplinkRestartCount: number;
+  uplinkUnplannedRestartCount: number;
+  uplinkLastExitCode: string;
+  uplinkLastExitReason: string;
+  uplinkLastExitPlanned: boolean;
+  uplinkReconnectUntil: string;
+  programFeedStatus: "" | "bootstrapping" | "fresh" | "stale" | "failed";
+  programFeedUpdatedAt: string;
+  programFeedPlaylistPath: string;
+  programFeedTargetSeconds: number;
+  programFeedBufferedSeconds: number;
   message: string;
 };
 
@@ -1177,6 +1193,22 @@ function defaultState(): AppState {
       skipUntil: "",
       pendingAction: "",
       pendingActionRequestedAt: "",
+      uplinkStatus: "",
+      uplinkInputMode: "",
+      uplinkStartedAt: "",
+      uplinkHeartbeatAt: "",
+      uplinkDestinationIds: [],
+      uplinkRestartCount: 0,
+      uplinkUnplannedRestartCount: 0,
+      uplinkLastExitCode: "",
+      uplinkLastExitReason: "",
+      uplinkLastExitPlanned: false,
+      uplinkReconnectUntil: "",
+      programFeedStatus: "",
+      programFeedUpdatedAt: "",
+      programFeedPlaylistPath: "",
+      programFeedTargetSeconds: 0,
+      programFeedBufferedSeconds: 0,
       message: "Playout engine has not started yet."
     }
   };
@@ -1815,7 +1847,23 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       skip_until TEXT NOT NULL DEFAULT '',
       pending_action TEXT NOT NULL DEFAULT '',
       pending_action_requested_at TEXT NOT NULL DEFAULT '',
-      message TEXT NOT NULL DEFAULT 'Playout engine has not started yet.'
+      message TEXT NOT NULL DEFAULT 'Playout engine has not started yet.',
+      uplink_status TEXT NOT NULL DEFAULT '',
+      uplink_input_mode TEXT NOT NULL DEFAULT '',
+      uplink_started_at TEXT NOT NULL DEFAULT '',
+      uplink_heartbeat_at TEXT NOT NULL DEFAULT '',
+      uplink_destination_ids TEXT NOT NULL DEFAULT '[]',
+      uplink_restart_count INTEGER NOT NULL DEFAULT 0,
+      uplink_unplanned_restart_count INTEGER NOT NULL DEFAULT 0,
+      uplink_last_exit_code TEXT NOT NULL DEFAULT '',
+      uplink_last_exit_reason TEXT NOT NULL DEFAULT '',
+      uplink_last_exit_planned BOOLEAN NOT NULL DEFAULT FALSE,
+      uplink_reconnect_until TEXT NOT NULL DEFAULT '',
+      program_feed_status TEXT NOT NULL DEFAULT '',
+      program_feed_updated_at TEXT NOT NULL DEFAULT '',
+      program_feed_playlist_path TEXT NOT NULL DEFAULT '',
+      program_feed_target_seconds INTEGER NOT NULL DEFAULT 0,
+      program_feed_buffered_seconds INTEGER NOT NULL DEFAULT 0
     );
   `);
 
@@ -1988,6 +2036,22 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS skip_until TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS pending_action TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS pending_action_requested_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_status TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_input_mode TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_started_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_heartbeat_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_destination_ids TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_restart_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_unplanned_restart_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_last_exit_code TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_last_exit_reason TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_last_exit_planned BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_reconnect_until TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS program_feed_status TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS program_feed_updated_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS program_feed_playlist_path TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS program_feed_target_seconds INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS program_feed_buffered_seconds INTEGER NOT NULL DEFAULT 0;
   `);
 
   await client.query(`
@@ -2637,9 +2701,11 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         crash_count_window, crash_loop_detected, last_error, last_stderr_sample, selection_reason_code, fallback_tier, override_mode,
         override_asset_id, override_until, live_bridge_input_type, live_bridge_input_url, live_bridge_label, live_bridge_status, live_bridge_requested_at, live_bridge_started_at,
         live_bridge_released_at, live_bridge_last_error, cuepoint_window_key, cuepoint_fired_keys, cuepoint_last_triggered_at, cuepoint_last_asset_id, manual_next_asset_id, manual_next_requested_at, insert_asset_id, insert_requested_at, insert_status, skip_asset_id, skip_until,
-        pending_action, pending_action_requested_at, message
+        pending_action, pending_action_requested_at, message, uplink_status, uplink_input_mode, uplink_started_at, uplink_heartbeat_at, uplink_destination_ids,
+        uplink_restart_count, uplink_unplanned_restart_count, uplink_last_exit_code, uplink_last_exit_reason, uplink_last_exit_planned, uplink_reconnect_until,
+        program_feed_status, program_feed_updated_at, program_feed_playlist_path, program_feed_target_seconds, program_feed_buffered_seconds
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74, $75, $76, $77, $78)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         transition_state = EXCLUDED.transition_state,
@@ -2702,7 +2768,23 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         skip_until = EXCLUDED.skip_until,
         pending_action = EXCLUDED.pending_action,
         pending_action_requested_at = EXCLUDED.pending_action_requested_at,
-        message = EXCLUDED.message
+        message = EXCLUDED.message,
+        uplink_status = EXCLUDED.uplink_status,
+        uplink_input_mode = EXCLUDED.uplink_input_mode,
+        uplink_started_at = EXCLUDED.uplink_started_at,
+        uplink_heartbeat_at = EXCLUDED.uplink_heartbeat_at,
+        uplink_destination_ids = EXCLUDED.uplink_destination_ids,
+        uplink_restart_count = EXCLUDED.uplink_restart_count,
+        uplink_unplanned_restart_count = EXCLUDED.uplink_unplanned_restart_count,
+        uplink_last_exit_code = EXCLUDED.uplink_last_exit_code,
+        uplink_last_exit_reason = EXCLUDED.uplink_last_exit_reason,
+        uplink_last_exit_planned = EXCLUDED.uplink_last_exit_planned,
+        uplink_reconnect_until = EXCLUDED.uplink_reconnect_until,
+        program_feed_status = EXCLUDED.program_feed_status,
+        program_feed_updated_at = EXCLUDED.program_feed_updated_at,
+        program_feed_playlist_path = EXCLUDED.program_feed_playlist_path,
+        program_feed_target_seconds = EXCLUDED.program_feed_target_seconds,
+        program_feed_buffered_seconds = EXCLUDED.program_feed_buffered_seconds
     `,
     [
       playout.status,
@@ -2766,7 +2848,23 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
       playout.skipUntil,
       playout.pendingAction,
       playout.pendingActionRequestedAt,
-      playout.message
+      playout.message,
+      playout.uplinkStatus,
+      playout.uplinkInputMode,
+      playout.uplinkStartedAt,
+      playout.uplinkHeartbeatAt,
+      JSON.stringify(playout.uplinkDestinationIds ?? []),
+      playout.uplinkRestartCount,
+      playout.uplinkUnplannedRestartCount,
+      playout.uplinkLastExitCode,
+      playout.uplinkLastExitReason,
+      playout.uplinkLastExitPlanned,
+      playout.uplinkReconnectUntil,
+      playout.programFeedStatus,
+      playout.programFeedUpdatedAt,
+      playout.programFeedPlaylistPath,
+      playout.programFeedTargetSeconds,
+      playout.programFeedBufferedSeconds
     ]
   );
 }
@@ -3034,6 +3132,22 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     skip_until: string;
     pending_action: PlayoutRuntimeRecord["pendingAction"];
     pending_action_requested_at: string;
+    uplink_status: PlayoutRuntimeRecord["uplinkStatus"];
+    uplink_input_mode: PlayoutRuntimeRecord["uplinkInputMode"];
+    uplink_started_at: string;
+    uplink_heartbeat_at: string;
+    uplink_destination_ids: string;
+    uplink_restart_count: number;
+    uplink_unplanned_restart_count: number;
+    uplink_last_exit_code: string;
+    uplink_last_exit_reason: string;
+    uplink_last_exit_planned: boolean;
+    uplink_reconnect_until: string;
+    program_feed_status: PlayoutRuntimeRecord["programFeedStatus"];
+    program_feed_updated_at: string;
+    program_feed_playlist_path: string;
+    program_feed_target_seconds: number;
+    program_feed_buffered_seconds: number;
     message: string;
   }>("SELECT * FROM playout_runtime WHERE singleton_id = 1");
 
@@ -3327,6 +3441,23 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           skipUntil: playoutRow.skip_until,
           pendingAction: (playoutRow.pending_action as PlayoutRuntimeRecord["pendingAction"]) || "",
           pendingActionRequestedAt: playoutRow.pending_action_requested_at || "",
+          uplinkStatus: playoutRow.uplink_status || "",
+          uplinkInputMode:
+            playoutRow.uplink_input_mode === "hls" || playoutRow.uplink_input_mode === "rtmp" ? playoutRow.uplink_input_mode : "",
+          uplinkStartedAt: playoutRow.uplink_started_at || "",
+          uplinkHeartbeatAt: playoutRow.uplink_heartbeat_at || "",
+          uplinkDestinationIds: JSON.parse(playoutRow.uplink_destination_ids || "[]") as string[],
+          uplinkRestartCount: playoutRow.uplink_restart_count ?? 0,
+          uplinkUnplannedRestartCount: playoutRow.uplink_unplanned_restart_count ?? 0,
+          uplinkLastExitCode: playoutRow.uplink_last_exit_code || "",
+          uplinkLastExitReason: playoutRow.uplink_last_exit_reason || "",
+          uplinkLastExitPlanned: playoutRow.uplink_last_exit_planned ?? false,
+          uplinkReconnectUntil: playoutRow.uplink_reconnect_until || "",
+          programFeedStatus: playoutRow.program_feed_status || "",
+          programFeedUpdatedAt: playoutRow.program_feed_updated_at || "",
+          programFeedPlaylistPath: playoutRow.program_feed_playlist_path || "",
+          programFeedTargetSeconds: playoutRow.program_feed_target_seconds ?? 0,
+          programFeedBufferedSeconds: playoutRow.program_feed_buffered_seconds ?? 0,
           message: playoutRow.message
         }
       : defaults.playout

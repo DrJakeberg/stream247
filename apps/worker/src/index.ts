@@ -71,14 +71,19 @@ import {
 import { logRuntimeEvent } from "./runtime-log.js";
 import { ensureLocalAssetThumbnail } from "./asset-thumbnails.js";
 import {
+  appendFfmpegOutputArgs,
+  buildProgramFeedOutputTarget,
   buildUplinkFfmpegCommand,
   describeFfmpegExit,
   buildFfmpegInputArgs,
+  getProgramFeedConfig,
   getRelayInputUrl,
   getRelayPublishUrl,
   getPlayoutReconnectConfig,
+  getUplinkInputMode,
   isRelayModeEnabled,
   isLikelyDestinationOutputError,
+  isLikelyProgramFeedInputError,
   shouldRequestImmediatePlayoutRetry,
   shouldSkipInitialSceneCapture
 } from "./ffmpeg-runtime.js";
@@ -118,6 +123,7 @@ const PLAYOUT_RECONNECT_INTERVAL_MS = PLAYOUT_RECONNECT_CONFIG.intervalMs;
 const PLAYOUT_RECONNECT_INTERVAL_HOURS = PLAYOUT_RECONNECT_CONFIG.intervalHours;
 const PLAYOUT_RECONNECT_WINDOW_MS = PLAYOUT_RECONNECT_CONFIG.windowMs;
 const STREAM247_RELAY_ENABLED = isRelayModeEnabled(process.env);
+const STREAM247_UPLINK_INPUT_MODE = getUplinkInputMode(process.env);
 const STREAM247_RELAY_DESTINATION_ID = "relay-local";
 const DESTINATION_FAILURE_COOLDOWN_SECONDS = Number(
   process.env.DESTINATION_FAILURE_COOLDOWN_SECONDS || String(DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS)
@@ -179,6 +185,69 @@ function getSmtpConfig(state: AppState) {
 
 function getMediaRoot(): string {
   return process.env.MEDIA_LIBRARY_ROOT || path.join(process.cwd(), "data", "media");
+}
+
+function isProgramFeedMode(): boolean {
+  return STREAM247_RELAY_ENABLED && STREAM247_UPLINK_INPUT_MODE === "hls";
+}
+
+function getProgramFeedRuntimeConfig() {
+  return getProgramFeedConfig(process.env, getMediaRoot());
+}
+
+function createProgramFeedRunId(): string {
+  return `${Date.now()}-${process.pid}`;
+}
+
+async function ensureProgramFeedDirectory(): Promise<void> {
+  const config = getProgramFeedRuntimeConfig();
+  await fs.mkdir(config.directory, { recursive: true });
+}
+
+async function readProgramFeedRuntimeStatus(): Promise<{
+  status: AppState["playout"]["programFeedStatus"];
+  updatedAt: string;
+  playlistPath: string;
+  targetSeconds: number;
+  bufferedSeconds: number;
+}> {
+  const config = getProgramFeedRuntimeConfig();
+
+  try {
+    const stat = await fs.stat(config.playlistPath);
+    const updatedAt = stat.mtime.toISOString();
+    const ageMs = Math.max(0, Date.now() - stat.mtime.getTime());
+    const staleMs = (config.bufferedSeconds + config.failoverSeconds) * 1000;
+    return {
+      status: ageMs <= staleMs ? "fresh" : "stale",
+      updatedAt,
+      playlistPath: config.playlistPath,
+      targetSeconds: config.targetSeconds,
+      bufferedSeconds: config.bufferedSeconds
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return {
+      status: code === "ENOENT" ? "bootstrapping" : "failed",
+      updatedAt: "",
+      playlistPath: config.playlistPath,
+      targetSeconds: config.targetSeconds,
+      bufferedSeconds: config.bufferedSeconds
+    };
+  }
+}
+
+async function updateProgramFeedRuntimeStatus(): Promise<Awaited<ReturnType<typeof readProgramFeedRuntimeStatus>>> {
+  const feed = await readProgramFeedRuntimeStatus();
+  await updatePlayoutRuntime((playout) => ({
+    ...playout,
+    programFeedStatus: feed.status,
+    programFeedUpdatedAt: feed.updatedAt,
+    programFeedPlaylistPath: feed.playlistPath,
+    programFeedTargetSeconds: feed.targetSeconds,
+    programFeedBufferedSeconds: feed.bufferedSeconds
+  }));
+  return feed;
 }
 
 function isDirectMediaUrl(value: string): boolean {
@@ -324,18 +393,22 @@ async function markDestinationFailure(destinationId: string, errorMessage: strin
 
 function getRelayDestinationRecord(): StreamDestinationRecord {
   const now = new Date().toISOString();
+  const programFeedMode = isProgramFeedMode();
+  const runtimeUrl = programFeedMode ? getProgramFeedRuntimeConfig().playlistPath : getRelayPublishUrl(process.env);
   return {
     id: STREAM247_RELAY_DESTINATION_ID,
     provider: "custom-rtmp",
     role: "primary",
     priority: -1,
-    name: "Local relay",
+    name: programFeedMode ? "Local HLS program feed" : "Local relay",
     enabled: true,
-    rtmpUrl: getRelayPublishUrl(process.env),
+    rtmpUrl: runtimeUrl,
     streamKeyPresent: true,
     streamKeySource: "env",
     status: "ready",
-    notes: "Local relay target used between program playout and the persistent uplink.",
+    notes: programFeedMode
+      ? "Buffered local HLS feed used between program playout and the persistent uplink."
+      : "Local relay target used between program playout and the persistent uplink.",
     lastValidatedAt: now,
     lastFailureAt: "",
     failureCount: 0,
@@ -347,11 +420,15 @@ function getRelayRuntimeTarget(): DestinationRuntimeTarget {
   const destination = getRelayDestinationRecord();
   return {
     destination,
-    target: getRelayPublishUrl(process.env)
+    target: destination.rtmpUrl
   };
 }
 
 function getRelayOutputTarget(): ReturnType<typeof buildFfmpegOutputTarget> {
+  if (isProgramFeedMode()) {
+    return buildProgramFeedOutputTarget(getProgramFeedRuntimeConfig(), createProgramFeedRunId());
+  }
+
   return {
     muxer: "flv",
     output: getRelayPublishUrl(process.env)
@@ -408,16 +485,18 @@ function getFfmpegCommand(
     "yuv420p",
     "-g",
     "60",
+    "-tune",
+    "zerolatency",
+    "-bf",
+    "0",
     "-c:a",
     "aac",
     "-ar",
     "44100",
     "-b:a",
-    process.env.FFMPEG_AUDIO_BITRATE || "160k",
-    "-f",
-    outputTarget.muxer,
-    outputTarget.output
+    process.env.FFMPEG_AUDIO_BITRATE || "160k"
   );
+  appendFfmpegOutputArgs(command, outputTarget);
 
   return command;
 }
@@ -452,16 +531,18 @@ function getLiveBridgeFfmpegCommand(
     "yuv420p",
     "-g",
     "60",
+    "-tune",
+    "zerolatency",
+    "-bf",
+    "0",
     "-c:a",
     "aac",
     "-ar",
     "44100",
     "-b:a",
-    process.env.FFMPEG_AUDIO_BITRATE || "160k",
-    "-f",
-    outputTarget.muxer,
-    outputTarget.output
+    process.env.FFMPEG_AUDIO_BITRATE || "160k"
   );
+  appendFfmpegOutputArgs(command, outputTarget);
 
   return command;
 }
@@ -513,17 +594,19 @@ function getStandbyFfmpegCommand(
     "yuv420p",
     "-g",
     "60",
+    "-tune",
+    "zerolatency",
+    "-bf",
+    "0",
     "-c:a",
     "aac",
     "-ar",
     "44100",
     "-b:a",
     process.env.FFMPEG_AUDIO_BITRATE || "160k",
-    "-shortest",
-    "-f",
-    outputTarget.muxer,
-    outputTarget.output
+    "-shortest"
   );
+  appendFfmpegOutputArgs(command, outputTarget);
 
   return command;
 }
@@ -2407,6 +2490,10 @@ async function startOrSwitchPlayout(args: {
     }
   }
 
+  if (isProgramFeedMode()) {
+    await ensureProgramFeedDirectory();
+  }
+
   const command = args.liveBridge
     ? getLiveBridgeFfmpegCommand(args.liveBridge.inputUrl, args.outputTarget, overlayMode)
     : args.asset
@@ -2455,6 +2542,7 @@ async function startOrSwitchPlayout(args: {
 
   const pid = child.pid ?? 0;
   const startedAt = new Date().toISOString();
+  const programFeedConfig = isProgramFeedMode() ? getProgramFeedRuntimeConfig() : null;
 
   if (overlayMode === "scene" && initialSceneFrame && isWritablePipe(child.stdio[ON_AIR_SCENE_PIPE_FD])) {
     startSceneRendererLoop(child.stdio[ON_AIR_SCENE_PIPE_FD], initialSceneFrame);
@@ -2511,6 +2599,9 @@ async function startOrSwitchPlayout(args: {
         : ""
       : playout.liveBridgeReleasedAt,
     liveBridgeLastError: args.liveBridge && playout.liveBridgeStatus !== "releasing" ? "" : playout.liveBridgeLastError,
+    programFeedPlaylistPath: programFeedConfig?.playlistPath ?? playout.programFeedPlaylistPath,
+    programFeedTargetSeconds: programFeedConfig?.targetSeconds ?? playout.programFeedTargetSeconds,
+    programFeedBufferedSeconds: programFeedConfig?.bufferedSeconds ?? playout.programFeedBufferedSeconds,
     lastError: "",
     pendingAction: "",
     pendingActionRequestedAt: "",
@@ -2648,6 +2739,13 @@ async function startOrSwitchPlayout(args: {
     });
     void runtimeUpdate
       .then(() => {
+        if (isProgramFeedMode()) {
+          void updateProgramFeedRuntimeStatus().catch((error) => {
+            logRuntimeEvent("program_feed.status.update.failed", {
+              error: error instanceof Error ? error.message : String(error)
+            });
+          });
+        }
         if (shouldRequestImmediatePlayoutRetry({ planned: wasPlanned, crashLoopDetected: crashLoopDetectedAfterExit })) {
           requestImmediatePlayoutCycle("ffmpeg-exit");
         }
@@ -2783,6 +2881,10 @@ async function runPlayoutCycle(): Promise<void> {
   const playoutTargets = STREAM247_RELAY_ENABLED ? [relayTarget] : activeDestinationGroup.targets;
   const destination = STREAM247_RELAY_ENABLED ? relayTarget.destination : activeDestinationGroup.leadDestination;
   const outputTarget = STREAM247_RELAY_ENABLED ? getRelayOutputTarget() : buildFfmpegOutputTarget(activeDestinationGroup.targets);
+  if (isProgramFeedMode()) {
+    await ensureProgramFeedDirectory();
+    await updateProgramFeedRuntimeStatus();
+  }
   let selection: SelectionResult = choosePlaybackCandidate(state);
 
   if (state.playout.insertStatus !== "" && selection.reasonCode !== "operator_insert" && selection.queueKind !== "live") {
@@ -3454,8 +3556,12 @@ async function startUplink(args: {
   runtimeTargets: DestinationRuntimeTarget[];
 }): Promise<void> {
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
-  const inputUrl = getRelayInputUrl(process.env);
-  const command = buildUplinkFfmpegCommand(inputUrl, args.outputTarget);
+  const inputMode = STREAM247_UPLINK_INPUT_MODE;
+  const inputUrl = inputMode === "hls" ? getProgramFeedRuntimeConfig().playlistPath : getRelayInputUrl(process.env);
+  const command = buildUplinkFfmpegCommand(inputUrl, args.outputTarget, {
+    inputMode,
+    env: process.env
+  });
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -3467,9 +3573,23 @@ async function startUplink(args: {
   uplinkStartedAt = startedAt;
 
   logRuntimeEvent("uplink.process.start", {
+    inputMode,
     inputUrl,
     destinationIds: uplinkDestinationIds
   });
+
+  await updatePlayoutRuntime((playout) => ({
+    ...playout,
+    uplinkStatus: "running",
+    uplinkInputMode: inputMode,
+    uplinkStartedAt: startedAt,
+    uplinkHeartbeatAt: startedAt,
+    uplinkDestinationIds,
+    uplinkReconnectUntil,
+    uplinkLastExitCode: "",
+    uplinkLastExitReason: "",
+    uplinkLastExitPlanned: false
+  }));
 
   for (const destination of args.destinations) {
     await updateDestinationRecord({
@@ -3491,6 +3611,23 @@ async function startUplink(args: {
       message: line.slice(0, 400)
     });
 
+    const feedInputError = inputMode === "hls" && isLikelyProgramFeedInputError(line);
+    if (feedInputError) {
+      void upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Program feed input stalled",
+        message: line.slice(0, 400),
+        fingerprint: "program-feed.input"
+      });
+      void updateProgramFeedRuntimeStatus().catch((error) => {
+        logRuntimeEvent("program_feed.status.update.failed", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+      return;
+    }
+
     if (line.toLowerCase().includes("error")) {
       void upsertIncident({
         scope: "playout",
@@ -3510,7 +3647,8 @@ async function startUplink(args: {
   });
 
   child.on("exit", (code, signal) => {
-    const wasPlanned = plannedUplinkStopReason !== "";
+    const stopReason = plannedUplinkStopReason;
+    const wasPlanned = stopReason !== "";
     const exitReason = describeFfmpegExit(code, signal ?? null);
     const lastDestinationIds = [...uplinkDestinationIds];
     const lastRuntimeTargets = [...uplinkRuntimeTargets];
@@ -3525,6 +3663,24 @@ async function startUplink(args: {
       exitReason,
       planned: wasPlanned,
       destinationIds: lastDestinationIds
+    });
+
+    void updatePlayoutRuntime((playout) => ({
+      ...playout,
+      uplinkStatus: stopReason === "scheduled-reconnect" ? "scheduled-reconnect" : wasPlanned ? "idle" : "failed",
+      uplinkStartedAt: "",
+      uplinkHeartbeatAt: new Date().toISOString(),
+      uplinkDestinationIds: lastDestinationIds,
+      uplinkRestartCount: playout.uplinkRestartCount + 1,
+      uplinkUnplannedRestartCount: playout.uplinkUnplannedRestartCount + (wasPlanned ? 0 : 1),
+      uplinkLastExitCode: String(code ?? signal ?? ""),
+      uplinkLastExitReason: exitReason,
+      uplinkLastExitPlanned: wasPlanned,
+      uplinkReconnectUntil
+    })).catch((error) => {
+      logRuntimeEvent("uplink.runtime.update.failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
 
     if (!wasPlanned) {
@@ -3556,6 +3712,12 @@ async function runUplinkCycle(): Promise<void> {
     if (uplinkProcess && !uplinkProcess.killed) {
       await stopUplinkProcess("relay-disabled");
     }
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      uplinkStatus: "idle",
+      uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
+      uplinkHeartbeatAt: new Date().toISOString()
+    }));
     await appendAuditEvent("uplink.cycle", "Uplink relay mode is disabled.");
     return;
   }
@@ -3570,9 +3732,18 @@ async function runUplinkCycle(): Promise<void> {
   const outputTarget = buildFfmpegOutputTarget(activeDestinationGroup.targets);
   const destinationIds = activeDestinationGroup.targets.map((entry) => entry.destination.id);
   const now = Date.now();
+  const programFeed = isProgramFeedMode() ? await updateProgramFeedRuntimeStatus() : null;
 
   if (activeDestinationGroup.targets.length === 0 || !outputTarget.output) {
     await stopUplinkProcess("destination-missing");
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      uplinkStatus: "failed",
+      uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
+      uplinkHeartbeatAt: new Date().toISOString(),
+      uplinkDestinationIds: [],
+      uplinkReconnectUntil: ""
+    }));
     await upsertIncident({
       scope: "playout",
       severity: "warning",
@@ -3585,6 +3756,20 @@ async function runUplinkCycle(): Promise<void> {
   }
 
   await resolveIncident("uplink.output.missing", "Persistent uplink destination is configured.");
+  if (programFeed && !uplinkProcess && programFeed.status !== "fresh") {
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      uplinkStatus: "waiting-for-feed",
+      uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
+      uplinkHeartbeatAt: new Date().toISOString(),
+      uplinkDestinationIds: destinationIds
+    }));
+    await appendAuditEvent("uplink.cycle", `Uplink is waiting for a fresh program feed (${programFeed.status}).`);
+    return;
+  }
+  if (programFeed?.status === "fresh") {
+    await resolveIncident("program-feed.input", "Program feed is fresh.");
+  }
 
   const reconnectActive = uplinkReconnectUntil !== "" && now < new Date(uplinkReconnectUntil).getTime();
   const reconnectDue =
@@ -3598,6 +3783,14 @@ async function runUplinkCycle(): Promise<void> {
   }
 
   if (reconnectActive) {
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      uplinkStatus: "scheduled-reconnect",
+      uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
+      uplinkHeartbeatAt: new Date().toISOString(),
+      uplinkDestinationIds: destinationIds,
+      uplinkReconnectUntil
+    }));
     await appendAuditEvent("uplink.cycle", `Scheduled ${PLAYOUT_RECONNECT_INTERVAL_HOURS}h uplink reconnect window is active.`);
     return;
   }
@@ -3616,6 +3809,15 @@ async function runUplinkCycle(): Promise<void> {
       outputTarget,
       runtimeTargets: activeDestinationGroup.targets
     });
+  } else {
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      uplinkStatus: "running",
+      uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
+      uplinkHeartbeatAt: new Date().toISOString(),
+      uplinkDestinationIds: destinationIds,
+      uplinkReconnectUntil
+    }));
   }
 
   await appendAuditEvent("uplink.cycle", "Persistent uplink cycle completed.");
@@ -4057,6 +4259,14 @@ async function runHealthcheck(mode: RuntimeMode): Promise<void> {
 
     if (now - new Date(lastUplinkCycle).getTime() > PLAYOUT_HEARTBEAT_STALE_MS) {
       throw new Error("Uplink heartbeat is stale.");
+    }
+
+    if (state.playout.uplinkStatus === "failed") {
+      throw new Error(`Uplink failed: ${state.playout.uplinkLastExitReason || "unknown error"}`);
+    }
+
+    if (state.playout.programFeedStatus === "failed") {
+      throw new Error("Program feed is failed.");
     }
 
     return;

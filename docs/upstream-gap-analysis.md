@@ -1,6 +1,6 @@
 # Upstream Gap Analysis For Stream247
 
-Updated: 2026-04-08
+Updated: 2026-04-19
 
 ## Goal And Method
 
@@ -46,7 +46,7 @@ Current Stream247 repo truth:
   - browser smoke coverage for setup bootstrap, secondary-output creation, local 2FA login, on-air controls, and Scene Studio publish
   - runtime parity smoke coverage for Multi-Output fanout, replace-mode audio lanes, cuepoint inserts, and `Live Bridge` takeover/release on a fresh Compose stack
   - production-config release preflight checks in CI and release workflows after outer application validation
-  - incidents, drift, readiness, alerts, encrypted managed secrets, and backup RTMP failover
+  - incidents, drift, readiness, alerts, encrypted managed secrets, backup RTMP failover, cache-backed Twitch VOD playback, and a buffered local program-feed/uplink split for external RTMP continuity
 - current architectural risks remain concentrated in:
   - `apps/worker/src/index.ts`
   - `packages/db/src/index.ts`
@@ -70,7 +70,7 @@ Current Stream247 repo truth:
 | Timed inserts / stings / ads | Public product exposes stings/jingles/ads and cuepoint concepts | Partial parity | manual inserts, pool interval inserts, and safe-boundary cuepoint inserts now exist, with runtime parity smoke proof that cuepoint inserts fire during real playout rotation | still missing richer ad-rule families and mid-block creative tooling beyond safe boundaries | M12, M15 | Build on current insert runtime instead of replacing it |
 | Advanced media library | Public blog/help shows advanced media library and upload-oriented workflows | Partial parity | uploads, sources, asset library, generated thumbnails, grouped browsing, curated sets, bulk source actions, and bulk asset curation | deeper asset operations, richer portability, and optional object-storage workflows still remain partial | M13 | Stay local-disk-first, later optional object storage |
 | Team / operator workflow | Public product highlights team access and collaborative operations | Partial parity | team roles, Twitch SSO, grouped control-room IA, responsive admin navigation, and broadcast workspace | clearer workspace roles and better tablet/mobile ergonomics now exist, but broader collaborative tooling and denser queue workflows remain partial | M14 | Do not clone UI, keep original control-room model |
-| Reliability and recovery | Public docs cover refresh/hard reload, backup streams, platform limits, and guidance | Partial parity | incidents, drift, health, upgrade rehearsal, soak, backup destination, runtime parity smoke coverage, and production-config release preflight gates | deeper continuity semantics and richer structured recovery flows still remain partial | M10, M12, M15 | Keep release rehearsal and soak scripts as baseline |
+| Reliability and recovery | Public docs cover refresh/hard reload, backup streams, platform limits, and guidance | Partial parity | incidents, drift, health, upgrade rehearsal, soak, backup destination, runtime parity smoke coverage, cache-backed Twitch VODs, buffered local program feed, and production-config release preflight gates | deeper continuity semantics and richer structured recovery flows still remain partial | M10, M12, M15 | Keep release rehearsal and soak scripts as baseline |
 | Platform integration guidance | Public help includes platform-specific RTMP, YouTube setup, stream key changes, duration limits | Partial parity | deployment, twitch-setup, versioning docs | add stronger destination-specific runbooks, recovery guidance, and UI hints | M12, M15 | Avoid unsupported platform claims |
 
 ## Current Parity

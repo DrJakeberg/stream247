@@ -3,6 +3,7 @@ import { getDatabaseHealth } from "@stream247/db";
 import { readAppState } from "./state";
 
 const WORKER_HEARTBEAT_STALE_MS = 180_000;
+const RUNTIME_HEARTBEAT_STALE_MS = 60_000;
 
 export async function getSystemReadiness() {
   try {
@@ -11,6 +12,9 @@ export async function getSystemReadiness() {
     const recentHeartbeat = state.playout.heartbeatAt ? new Date(state.playout.heartbeatAt).getTime() : 0;
     const workerHeartbeat = state.auditEvents.find((event) => event.type === "worker.cycle")?.createdAt ?? "";
     const workerHeartbeatAt = workerHeartbeat ? new Date(workerHeartbeat).getTime() : 0;
+    const relayEnabled = process.env.STREAM247_RELAY_ENABLED === "1";
+    const hlsProgramFeedEnabled = relayEnabled && process.env.STREAM247_UPLINK_INPUT_MODE !== "rtmp";
+    const uplinkHeartbeatAt = state.playout.uplinkHeartbeatAt ? new Date(state.playout.uplinkHeartbeatAt).getTime() : 0;
     const now = Date.now();
     const routing = selectActiveDestinationGroup(
       state.destinations.map((destination) => ({
@@ -51,11 +55,37 @@ export async function getSystemReadiness() {
     } else if (state.playout.status !== "idle") {
       playoutStatus = "not-ready";
     }
+    const uplinkStatus =
+      !relayEnabled
+        ? "ok"
+        : state.playout.uplinkStatus === "running" && uplinkHeartbeatAt > 0 && now - uplinkHeartbeatAt < RUNTIME_HEARTBEAT_STALE_MS
+        ? "ok"
+        : state.playout.uplinkStatus === "scheduled-reconnect"
+          ? "degraded"
+          : "not-ready";
+    const programFeedStatus =
+      !hlsProgramFeedEnabled || state.playout.programFeedStatus === "fresh"
+        ? "ok"
+        : state.playout.programFeedStatus === "stale"
+          ? "degraded"
+          : "not-ready";
     const hasReadyAsset = state.assets.some((asset) => asset.status === "ready");
     const broadcastReady =
-      state.initialized && persistence === "ok" && workerStatus === "ok" && playoutStatus !== "not-ready" && destinationStatus === "ok" && hasReadyAsset;
+      state.initialized &&
+      persistence === "ok" &&
+      workerStatus === "ok" &&
+      playoutStatus !== "not-ready" &&
+      uplinkStatus !== "not-ready" &&
+      programFeedStatus !== "not-ready" &&
+      destinationStatus === "ok" &&
+      hasReadyAsset;
     const status =
-      persistence === "ok" && workerStatus === "ok" && playoutStatus === "ok" && destinationStatus === "ok"
+      persistence === "ok" &&
+      workerStatus === "ok" &&
+      playoutStatus === "ok" &&
+      uplinkStatus === "ok" &&
+      programFeedStatus === "ok" &&
+      destinationStatus === "ok"
         ? "ok"
         : "degraded";
 
@@ -75,6 +105,8 @@ export async function getSystemReadiness() {
         web: "ok",
         worker: workerStatus,
         playout: playoutStatus,
+        uplink: uplinkStatus,
+        programFeed: programFeedStatus,
         persistence,
         destination: destinationStatus
       },
@@ -88,6 +120,26 @@ export async function getSystemReadiness() {
         fallbackTier: state.playout.fallbackTier,
         currentAssetId: state.playout.currentAssetId,
         currentDestinationId: state.playout.currentDestinationId
+      },
+      uplink: {
+        status: state.playout.uplinkStatus || "idle",
+        inputMode: state.playout.uplinkInputMode || (hlsProgramFeedEnabled ? "hls" : "rtmp"),
+        heartbeatAt: state.playout.uplinkHeartbeatAt,
+        startedAt: state.playout.uplinkStartedAt,
+        destinationIds: state.playout.uplinkDestinationIds,
+        restartCount: state.playout.uplinkRestartCount,
+        unplannedRestartCount: state.playout.uplinkUnplannedRestartCount,
+        lastExitCode: state.playout.uplinkLastExitCode,
+        lastExitReason: state.playout.uplinkLastExitReason,
+        lastExitPlanned: state.playout.uplinkLastExitPlanned,
+        reconnectUntil: state.playout.uplinkReconnectUntil
+      },
+      programFeed: {
+        status: state.playout.programFeedStatus || (hlsProgramFeedEnabled ? "bootstrapping" : ""),
+        updatedAt: state.playout.programFeedUpdatedAt,
+        playlistPath: state.playout.programFeedPlaylistPath,
+        targetSeconds: state.playout.programFeedTargetSeconds,
+        bufferedSeconds: state.playout.programFeedBufferedSeconds
       },
       destination:
         destination ?? {
@@ -119,6 +171,8 @@ export async function getSystemReadiness() {
         web: "ok",
         worker: "not-ready",
         playout: "not-ready",
+        uplink: "not-ready",
+        programFeed: "not-ready",
         persistence: "error",
         destination: "not-ready"
       },
@@ -132,6 +186,26 @@ export async function getSystemReadiness() {
         fallbackTier: "none",
         currentAssetId: "",
         currentDestinationId: ""
+      },
+      uplink: {
+        status: "failed",
+        inputMode: "",
+        heartbeatAt: "",
+        startedAt: "",
+        destinationIds: [],
+        restartCount: 0,
+        unplannedRestartCount: 0,
+        lastExitCode: "",
+        lastExitReason: "",
+        lastExitPlanned: false,
+        reconnectUntil: ""
+      },
+      programFeed: {
+        status: "failed",
+        updatedAt: "",
+        playlistPath: "",
+        targetSeconds: 0,
+        bufferedSeconds: 0
       },
       error: message
     };

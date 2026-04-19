@@ -340,6 +340,10 @@ describe("release readiness files", () => {
     expect(extractComposeServiceBlock("playout")).toContain("timeout: 30s");
     expect(extractComposeServiceBlock("uplink")).toContain("timeout: 30s");
   });
+
+  it("mounts media storage into uplink so it can read the HLS program feed", () => {
+    expect(extractComposeServiceBlock("uplink")).toContain("./data/media:/app/data/media");
+  });
 });
 
 describe("root env preservation helpers", () => {
@@ -496,5 +500,23 @@ describe("release readiness scripts", () => {
     expect(result.output).toContain("lastExitCode=SIGBUS");
     expect(result.output).toContain("restartCount=725");
     expect(result.output).toContain("crashCountWindow=2");
+  });
+
+  it("soak monitor fails on new unplanned uplink restarts", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
+
+    const healthyResponse =
+      '{"status":"ok","broadcastReady":true,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":1,"lastExitCode":"","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":0},"programFeed":{"status":"fresh"}}\n';
+    const restartedResponse =
+      '{"status":"degraded","broadcastReady":true,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":1,"lastExitCode":"","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":1},"programFeed":{"status":"fresh"}}\n';
+
+    const result = runShellScript(soakScriptPath, ["--hours", "24", "--interval-seconds", "0"], [
+      { body: healthyResponse },
+      { body: restartedResponse }
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("uplinkUnplannedRestarts=1");
+    expect(result.output).toContain("uplinkStatus=running");
   });
 });
