@@ -19,7 +19,7 @@ Do not auto-track `latest` for a 24/7 production channel.
 - verify readiness and ops state after every upgrade
 - keep rollback instructions and the previous image tags available
 
-## 1.1.1 Release Flow
+## 1.1.2 Release Flow
 
 1. Ensure `main` is green in CI.
    CI now covers fresh DB/Compose bootstrap, queue continuity, runtime parity, production-config release preflight, and browser smoke before `main` images publish.
@@ -29,17 +29,17 @@ Do not auto-track `latest` for a 24/7 production channel.
    pnpm release:preflight
    pnpm test:runtime-parity
    pnpm test:e2e:smoke
-   ./scripts/upgrade-rehearsal.sh v1.1.1
+   ./scripts/upgrade-rehearsal.sh v1.1.2
    ./scripts/soak-monitor.sh --hours 24
    ```
-   Before `v1.1.1` exists in GHCR, `./scripts/upgrade-rehearsal.sh v1.1.1` automatically rehearses against the already-published `main-<sha>` snapshot for the current commit. Set `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot explicitly.
+   Before `v1.1.2` exists in GHCR, `./scripts/upgrade-rehearsal.sh v1.1.2` automatically rehearses against the already-published `main-<sha>` snapshot for the current commit. Set `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot explicitly.
 3. Commit any final release-note or versioning adjustments.
 4. Create and push the release tag:
    ```bash
-   git tag -a v1.1.1 -m "Stream247 1.1.1"
-   git push origin v1.1.1
+   git tag -a v1.1.2 -m "Stream247 1.1.2"
+   git push origin v1.1.2
    ```
-5. Let the `release.yml` workflow pull the `main-<sha>` snapshot images for the tagged commit, smoke-validate them, and only then retag and publish those same tested images as the pinned GHCR artifacts for `v1.1.1`.
+5. Let the `release.yml` workflow pull the `main-<sha>` snapshot images for the tagged commit, smoke-validate them, and only then retag and publish those same tested images as the pinned GHCR artifacts for `v1.1.2`.
 
 Notes:
 
