@@ -278,6 +278,10 @@ describe.sequential("database roundtrip", () => {
           sourceId: "source_1",
           title: "Asset One",
           path: "https://example.com/video.mp4",
+          cachePath: "/app/data/media/.stream247-cache/twitch/source_1/video-1.mp4",
+          cacheStatus: "ready" as const,
+          cacheUpdatedAt: "2026-04-04T10:00:30.000Z",
+          cacheError: "",
           folderPath: "youtube-channel/source-1",
           tags: ["featured", "evergreen"],
           status: "ready" as const,
@@ -460,6 +464,10 @@ describe.sequential("database roundtrip", () => {
     expect(reread.scheduleBlocks[0]?.cuepointOffsetsSeconds).toEqual([600, 1800]);
     expect(reread.sources[0]?.connectorKind).toBe("youtube-channel");
     expect(reread.assets[0]?.durationSeconds).toBe(3600);
+    expect(reread.assets[0]?.cachePath).toBe("/app/data/media/.stream247-cache/twitch/source_1/video-1.mp4");
+    expect(reread.assets[0]?.cacheStatus).toBe("ready");
+    expect(reread.assets[0]?.cacheUpdatedAt).toBe("2026-04-04T10:00:30.000Z");
+    expect(reread.assets[0]?.cacheError).toBe("");
     expect(reread.assets[0]?.folderPath).toBe("youtube-channel/source-1");
     expect(reread.assets[0]?.tags).toEqual(["featured", "evergreen"]);
     expect(reread.assetCollections[0]?.name).toBe("Roundtrip starters");

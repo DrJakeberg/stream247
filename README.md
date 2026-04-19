@@ -22,7 +22,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - local media uploads from the admin UI into the shared library
   - direct media URLs
   - YouTube playlists and channels via `yt-dlp`
-  - Twitch VODs and channels via `yt-dlp`
+  - Twitch VODs and channels via `yt-dlp`, with local cache-backed playout for Twitch archives
   - guided source templates for local library, direct URLs, YouTube, and Twitch inputs
 - library operations with:
   - generated local thumbnails with deterministic metadata-card fallbacks
@@ -188,6 +188,9 @@ docker compose --profile proxy up -d
 - `TWITCH_CLIENT_SECRET`: Twitch application client secret
 - `TWITCH_STREAM_KEY`: Twitch stream key for RTMP output
 - `TWITCH_RTMP_URL`: defaults to `rtmp://live.twitch.tv/app`
+- `TWITCH_VOD_CACHE_ENABLED`: cache Twitch VOD media locally before playout; defaults to `1`
+- `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK`: allow direct remote Twitch playback if cache preparation fails; defaults to `0`
+- `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`: maximum time for a Twitch VOD cache download; defaults to `7200`
 - `STREAM_OUTPUT_URL`: built-in primary RTMP output URL override
 - `STREAM_OUTPUT_KEY`: built-in primary RTMP key override
 - `BACKUP_STREAM_OUTPUT_URL`: built-in backup RTMP output URL
@@ -195,6 +198,8 @@ docker compose --profile proxy up -d
 - `BACKUP_TWITCH_RTMP_URL`: built-in backup Twitch-style RTMP URL
 - `BACKUP_TWITCH_STREAM_KEY`: built-in backup Twitch-style stream key
 - `DESTINATION_FAILURE_COOLDOWN_SECONDS`: how long a failed destination stays on hold before the worker will retry it automatically
+- `PLAYOUT_RECONNECT_HOURS`: interval for planned Twitch/output reconnect windows; defaults to `48`
+- `PLAYOUT_RECONNECT_SECONDS`: duration of the planned reconnect standby window; defaults to `20`
 - `SCENE_RENDER_BASE_URL`: optional internal base URL that the worker should use when capturing published Scene Studio overlays for on-air rendering; defaults to `INTERNAL_APP_URL`, then `APP_URL`, then `http://web:3000`
 - `SCENE_RENDER_INTERVAL_MS`: how often the worker refreshes captured on-air scene frames; defaults to `2000`
 - `SCENE_RENDER_CHROMIUM_PATH`: optional explicit Chromium binary path for the on-air scene renderer
@@ -430,7 +435,7 @@ Notes:
 - FFmpeg-based RTMP playout foundation
 - pool-based round-robin playout selection
 - standby replay slate when no playable asset is available
-- scheduled daily reconnect window with controlled standby mode
+- scheduled 48-hour reconnect window with controlled standby mode
 - Live Bridge RTMP/HLS takeover with safe release back to the scheduled queue
 - destination readiness state
 - staged destination recovery with cooldown visibility and an explicit operator-triggered rejoin path
@@ -548,6 +553,13 @@ Current validation covers:
 - put files into `data/media`
 - or add a direct media URL / YouTube playlist / YouTube channel / Twitch VOD / Twitch channel source
 - check worker incidents if ingestion failed
+
+### Twitch VOD stays on standby
+
+- keep `TWITCH_VOD_CACHE_ENABLED=1` so Twitch archives are downloaded and verified before playout
+- inspect worker/playout incidents for Twitch cache failures
+- confirm the media volume has enough free space for `data/media/.stream247-cache/twitch`
+- use `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1` only as a temporary rollback because it restores unstable remote VOD playback
 
 ### Stream output is not ready
 

@@ -39,6 +39,7 @@
 - inspect destination readiness
 - inspect last FFmpeg stderr sample
 - inspect `restartCount`, `lastExitCode`, and `crashCountWindow` in `/api/system/readiness` or the soak monitor log
+- distinguish planned reconnects from recovery: planned reconnects report `selectionReasonCode=scheduled_reconnect`, while FFmpeg failures usually increment `restartCount` with a signal or exit code such as `SIGBUS`
 - if the playout container accumulates zombie Chromium or crashpad processes, recreate it after deploying an image that runs Node under the configured init process
 
 ### Crash-loop protection active
@@ -63,4 +64,6 @@
 
 - verify local media exists or remote sources ingest correctly
 - confirm source incidents
+- for Twitch VOD assets, inspect `playout.twitch-cache.failed` incidents and confirm `MEDIA_LIBRARY_ROOT/.stream247-cache/twitch` is writable with enough free space
+- keep remote Twitch fallback disabled unless you intentionally accept direct remote VOD playback risk
 - confirm fallback assets exist
