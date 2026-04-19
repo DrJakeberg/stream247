@@ -71,9 +71,13 @@ import {
 import { logRuntimeEvent } from "./runtime-log.js";
 import { ensureLocalAssetThumbnail } from "./asset-thumbnails.js";
 import {
+  buildUplinkFfmpegCommand,
   describeFfmpegExit,
   buildFfmpegInputArgs,
+  getRelayInputUrl,
+  getRelayPublishUrl,
   getPlayoutReconnectConfig,
+  isRelayModeEnabled,
   isLikelyDestinationOutputError,
   shouldRequestImmediatePlayoutRetry,
   shouldSkipInitialSceneCapture
@@ -96,6 +100,12 @@ let playoutTargetKind: "asset" | "insert" | "standby" | "reconnect" | "live" | "
 let playoutLiveBridgeInputUrl = "";
 let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
 let plannedStopReason = "";
+let uplinkProcess: ChildProcess | null = null;
+let uplinkDestinationIds: string[] = [];
+let uplinkRuntimeTargets: DestinationRuntimeTarget[] = [];
+let uplinkStartedAt = "";
+let uplinkReconnectUntil = "";
+let plannedUplinkStopReason = "";
 // Worker reconciliation can legitimately run for a little over two minutes when
 // source sync and Twitch reconciliation happen in one cycle, so keep the stale
 // window above the steady-state cadence to avoid false healthcheck failures.
@@ -107,6 +117,8 @@ const PLAYOUT_RECONNECT_CONFIG = getPlayoutReconnectConfig(process.env);
 const PLAYOUT_RECONNECT_INTERVAL_MS = PLAYOUT_RECONNECT_CONFIG.intervalMs;
 const PLAYOUT_RECONNECT_INTERVAL_HOURS = PLAYOUT_RECONNECT_CONFIG.intervalHours;
 const PLAYOUT_RECONNECT_WINDOW_MS = PLAYOUT_RECONNECT_CONFIG.windowMs;
+const STREAM247_RELAY_ENABLED = isRelayModeEnabled(process.env);
+const STREAM247_RELAY_DESTINATION_ID = "relay-local";
 const DESTINATION_FAILURE_COOLDOWN_SECONDS = Number(
   process.env.DESTINATION_FAILURE_COOLDOWN_SECONDS || String(DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS)
 );
@@ -308,6 +320,42 @@ async function markDestinationFailure(destinationId: string, errorMessage: strin
     message: nextError,
     fingerprint: `playout.destination.${destination.id}.failed`
   });
+}
+
+function getRelayDestinationRecord(): StreamDestinationRecord {
+  const now = new Date().toISOString();
+  return {
+    id: STREAM247_RELAY_DESTINATION_ID,
+    provider: "custom-rtmp",
+    role: "primary",
+    priority: -1,
+    name: "Local relay",
+    enabled: true,
+    rtmpUrl: getRelayPublishUrl(process.env),
+    streamKeyPresent: true,
+    streamKeySource: "env",
+    status: "ready",
+    notes: "Local relay target used between program playout and the persistent uplink.",
+    lastValidatedAt: now,
+    lastFailureAt: "",
+    failureCount: 0,
+    lastError: ""
+  };
+}
+
+function getRelayRuntimeTarget(): DestinationRuntimeTarget {
+  const destination = getRelayDestinationRecord();
+  return {
+    destination,
+    target: getRelayPublishUrl(process.env)
+  };
+}
+
+function getRelayOutputTarget(): ReturnType<typeof buildFfmpegOutputTarget> {
+  return {
+    muxer: "flv",
+    output: getRelayPublishUrl(process.env)
+  };
 }
 
 function getMediaOverlayFilter(textPath: string): string {
@@ -2153,6 +2201,41 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
   });
 }
 
+async function stopUplinkProcess(reason = ""): Promise<void> {
+  plannedUplinkStopReason = reason;
+  const currentProcess = uplinkProcess;
+
+  if (!currentProcess || currentProcess.killed) {
+    plannedUplinkStopReason = "";
+    uplinkProcess = null;
+    uplinkDestinationIds = [];
+    uplinkRuntimeTargets = [];
+    uplinkStartedAt = "";
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const finalize = () => {
+      if (uplinkProcess === currentProcess) {
+        uplinkProcess = null;
+        uplinkDestinationIds = [];
+        uplinkRuntimeTargets = [];
+        uplinkStartedAt = "";
+      }
+      resolve();
+    };
+
+    currentProcess.once("exit", finalize);
+    currentProcess.kill("SIGTERM");
+
+    setTimeout(() => {
+      if (currentProcess.exitCode === null && !currentProcess.killed) {
+        currentProcess.kill("SIGKILL");
+      }
+    }, 5_000);
+  });
+}
+
 function getDesiredTargetKind(selection: SelectionResult): "asset" | "insert" | "standby" | "reconnect" | "live" {
   if (selection.queueKind === "live") {
     return "live";
@@ -2261,6 +2344,7 @@ async function startOrSwitchPlayout(args: {
   audioLane: ResolvedAudioLane | null;
   destinations: StreamDestinationRecord[];
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>;
+  updateDestinations?: boolean;
   lifecycleStatus: AppState["playout"]["status"];
   reason: string;
   reasonCode: AppState["playout"]["selectionReasonCode"];
@@ -2433,14 +2517,16 @@ async function startOrSwitchPlayout(args: {
     message: args.reason
   }));
 
-  for (const destination of args.destinations) {
-    await updateDestinationRecord({
-      ...destination,
-      status: "ready",
-      lastValidatedAt: startedAt,
-      lastError: "",
-      notes: `${destination.role === "backup" ? "Backup" : "Primary"} destination is active in the current multi-output group.`
-    });
+  if (args.updateDestinations !== false) {
+    for (const destination of args.destinations) {
+      await updateDestinationRecord({
+        ...destination,
+        status: "ready",
+        lastValidatedAt: startedAt,
+        lastError: "",
+        notes: `${destination.role === "backup" ? "Backup" : "Primary"} destination is active in the current multi-output group.`
+      });
+    }
   }
 
   child.stderr?.on("data", (chunk) => {
@@ -2693,8 +2779,10 @@ async function runPlayoutCycle(): Promise<void> {
     managedKeys: managedDestinationKeys,
     env: process.env
   });
-  const destination = activeDestinationGroup.leadDestination;
-  const outputTarget = buildFfmpegOutputTarget(activeDestinationGroup.targets);
+  const relayTarget = getRelayRuntimeTarget();
+  const playoutTargets = STREAM247_RELAY_ENABLED ? [relayTarget] : activeDestinationGroup.targets;
+  const destination = STREAM247_RELAY_ENABLED ? relayTarget.destination : activeDestinationGroup.leadDestination;
+  const outputTarget = STREAM247_RELAY_ENABLED ? getRelayOutputTarget() : buildFfmpegOutputTarget(activeDestinationGroup.targets);
   let selection: SelectionResult = choosePlaybackCandidate(state);
 
   if (state.playout.insertStatus !== "" && selection.reasonCode !== "operator_insert" && selection.queueKind !== "live") {
@@ -2732,7 +2820,7 @@ async function runPlayoutCycle(): Promise<void> {
     }
   }
 
-  if (!destination || activeDestinationGroup.targets.length === 0 || !outputTarget.output) {
+  if (!destination || playoutTargets.length === 0 || !outputTarget.output) {
     await stopPlayoutProcess("destination-missing");
     await upsertIncident({
       scope: "playout",
@@ -2823,10 +2911,12 @@ async function runPlayoutCycle(): Promise<void> {
     state.playout.liveBridgeInputUrl !== "" &&
     (state.playout.liveBridgeStatus === "pending" || state.playout.liveBridgeStatus === "active");
   const reconnectActive =
+    !STREAM247_RELAY_ENABLED &&
     !liveBridgeActive &&
     state.playout.restartRequestedAt !== "" &&
     Date.now() - new Date(state.playout.restartRequestedAt).getTime() < PLAYOUT_RECONNECT_WINDOW_MS;
   const reconnectDue =
+    !STREAM247_RELAY_ENABLED &&
     !liveBridgeActive &&
     !reconnectActive &&
     state.playout.processStartedAt !== "" &&
@@ -3028,7 +3118,7 @@ async function runPlayoutCycle(): Promise<void> {
   const nextQueueItem = queueItems[1] ?? null;
   const targetAlreadyRunning = isMatchingRunningTarget({
     selection,
-    destinationIds: activeDestinationGroup.targets.map((entry) => entry.destination.id)
+    destinationIds: playoutTargets.map((entry) => entry.destination.id)
   });
 
   if (!currentAudioLane) {
@@ -3073,14 +3163,15 @@ async function runPlayoutCycle(): Promise<void> {
               }
             : null,
         audioLane: currentAudioLane,
-        destinations: activeDestinationGroup.targets.map((entry) => entry.destination),
+        destinations: playoutTargets.map((entry) => entry.destination),
         outputTarget,
+        updateDestinations: !STREAM247_RELAY_ENABLED,
         lifecycleStatus: selection.lifecycleStatus,
         reason: selection.reason,
         reasonCode: selection.reasonCode,
         fallbackTier: selection.fallbackTier,
         overlayEnabled: state.overlay.enabled,
-        runtimeTargets: activeDestinationGroup.targets,
+        runtimeTargets: playoutTargets,
         runtimeStatus: state.playout.status,
         runtimeHeartbeatAt: state.playout.heartbeatAt,
         runtimeLastExitCode: state.playout.lastExitCode
@@ -3138,14 +3229,15 @@ async function runPlayoutCycle(): Promise<void> {
               }
             : null,
         audioLane: currentAudioLane,
-        destinations: activeDestinationGroup.targets.map((entry) => entry.destination),
+        destinations: playoutTargets.map((entry) => entry.destination),
         outputTarget,
+        updateDestinations: !STREAM247_RELAY_ENABLED,
         lifecycleStatus: "switching",
         reason: selection.reason,
         reasonCode: selection.reasonCode,
         fallbackTier: selection.fallbackTier,
         overlayEnabled: state.overlay.enabled,
-        runtimeTargets: activeDestinationGroup.targets,
+        runtimeTargets: playoutTargets,
         runtimeStatus: state.playout.status,
         runtimeHeartbeatAt: state.playout.heartbeatAt,
         runtimeLastExitCode: state.playout.lastExitCode
@@ -3344,6 +3436,189 @@ async function runPlayoutCycle(): Promise<void> {
       resetItemsSinceInsert: true
     });
   }
+}
+
+function isMatchingRunningUplink(destinationIds: string[]): boolean {
+  if (!uplinkProcess || uplinkProcess.killed) {
+    return false;
+  }
+
+  const currentIds = [...uplinkDestinationIds].sort();
+  const desiredIds = [...destinationIds].sort();
+  return currentIds.length === desiredIds.length && currentIds.every((value, index) => value === desiredIds[index]);
+}
+
+async function startUplink(args: {
+  destinations: StreamDestinationRecord[];
+  outputTarget: ReturnType<typeof buildFfmpegOutputTarget>;
+  runtimeTargets: DestinationRuntimeTarget[];
+}): Promise<void> {
+  const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
+  const inputUrl = getRelayInputUrl(process.env);
+  const command = buildUplinkFfmpegCommand(inputUrl, args.outputTarget);
+  const child = spawn(ffmpegBinary, command, {
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const startedAt = new Date().toISOString();
+
+  uplinkProcess = child;
+  uplinkDestinationIds = args.destinations.map((destination) => destination.id);
+  uplinkRuntimeTargets = args.runtimeTargets;
+  uplinkStartedAt = startedAt;
+
+  logRuntimeEvent("uplink.process.start", {
+    inputUrl,
+    destinationIds: uplinkDestinationIds
+  });
+
+  for (const destination of args.destinations) {
+    await updateDestinationRecord({
+      ...destination,
+      status: "ready",
+      lastValidatedAt: startedAt,
+      lastError: "",
+      notes: `${destination.role === "backup" ? "Backup" : "Primary"} destination is active in the persistent uplink group.`
+    });
+  }
+
+  child.stderr?.on("data", (chunk) => {
+    const line = chunk.toString().trim();
+    if (!line) {
+      return;
+    }
+
+    logRuntimeEvent("uplink.ffmpeg.stderr", {
+      message: line.slice(0, 400)
+    });
+
+    if (line.toLowerCase().includes("error")) {
+      void upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Uplink FFmpeg reported an error",
+        message: line.slice(0, 400),
+        fingerprint: "uplink.ffmpeg.stderr"
+      });
+    }
+
+    if (isLikelyDestinationOutputError(line)) {
+      const destinationIds = matchDestinationFailuresInLog(line, uplinkRuntimeTargets);
+      for (const destinationId of destinationIds) {
+        void markDestinationFailure(destinationId, line);
+      }
+    }
+  });
+
+  child.on("exit", (code, signal) => {
+    const wasPlanned = plannedUplinkStopReason !== "";
+    const exitReason = describeFfmpegExit(code, signal ?? null);
+    const lastDestinationIds = [...uplinkDestinationIds];
+    const lastRuntimeTargets = [...uplinkRuntimeTargets];
+    plannedUplinkStopReason = "";
+    uplinkProcess = null;
+    uplinkDestinationIds = [];
+    uplinkRuntimeTargets = [];
+    uplinkStartedAt = "";
+    logRuntimeEvent("uplink.process.exit", {
+      exitCode: code ?? "",
+      exitSignal: signal ?? "",
+      exitReason,
+      planned: wasPlanned,
+      destinationIds: lastDestinationIds
+    });
+
+    if (!wasPlanned) {
+      void upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Persistent uplink restarted",
+        message: `Uplink FFmpeg ${exitReason}. The uplink loop will reconnect independently of program playout.`,
+        fingerprint: "uplink.process.exit"
+      });
+
+      void (async () => {
+        const lastErrorLine = `Uplink FFmpeg ${exitReason}.`;
+        if (isLikelyDestinationOutputError(lastErrorLine)) {
+          const destinationIds = matchDestinationFailuresInLog(lastErrorLine, lastRuntimeTargets, {
+            allowSingleTargetFallback: false
+          });
+          for (const destinationId of destinationIds) {
+            await markDestinationFailure(destinationId, lastErrorLine);
+          }
+        }
+      })();
+    }
+  });
+}
+
+async function runUplinkCycle(): Promise<void> {
+  if (!STREAM247_RELAY_ENABLED) {
+    if (uplinkProcess && !uplinkProcess.killed) {
+      await stopUplinkProcess("relay-disabled");
+    }
+    await appendAuditEvent("uplink.cycle", "Uplink relay mode is disabled.");
+    return;
+  }
+
+  const state = await readAppState();
+  const managedDestinationKeys = await readManagedDestinationStreamKeys(state.destinations.map((entry) => entry.id));
+  const activeDestinationGroup = selectDestinationRuntimeTargets({
+    destinations: state.destinations,
+    managedKeys: managedDestinationKeys,
+    env: process.env
+  });
+  const outputTarget = buildFfmpegOutputTarget(activeDestinationGroup.targets);
+  const destinationIds = activeDestinationGroup.targets.map((entry) => entry.destination.id);
+  const now = Date.now();
+
+  if (activeDestinationGroup.targets.length === 0 || !outputTarget.output) {
+    await stopUplinkProcess("destination-missing");
+    await upsertIncident({
+      scope: "playout",
+      severity: "warning",
+      title: "Persistent uplink destination is not configured",
+      message: "Configure at least one enabled output with an RTMP URL and stream key so the uplink can publish from the local relay.",
+      fingerprint: "uplink.output.missing"
+    });
+    await appendAuditEvent("uplink.cycle", "Uplink destination is not configured.");
+    return;
+  }
+
+  await resolveIncident("uplink.output.missing", "Persistent uplink destination is configured.");
+
+  const reconnectActive = uplinkReconnectUntil !== "" && now < new Date(uplinkReconnectUntil).getTime();
+  const reconnectDue =
+    !reconnectActive && uplinkStartedAt !== "" && now - new Date(uplinkStartedAt).getTime() >= PLAYOUT_RECONNECT_INTERVAL_MS;
+
+  if (reconnectDue) {
+    uplinkReconnectUntil = new Date(now + PLAYOUT_RECONNECT_WINDOW_MS).toISOString();
+    await stopUplinkProcess("scheduled-reconnect");
+    await appendAuditEvent("uplink.cycle", `Scheduled ${PLAYOUT_RECONNECT_INTERVAL_HOURS}h uplink reconnect started.`);
+    return;
+  }
+
+  if (reconnectActive) {
+    await appendAuditEvent("uplink.cycle", `Scheduled ${PLAYOUT_RECONNECT_INTERVAL_HOURS}h uplink reconnect window is active.`);
+    return;
+  }
+
+  if (uplinkReconnectUntil !== "") {
+    uplinkReconnectUntil = "";
+  }
+
+  if (!isMatchingRunningUplink(destinationIds)) {
+    if (uplinkProcess && !uplinkProcess.killed) {
+      await stopUplinkProcess("destination-change");
+    }
+
+    await startUplink({
+      destinations: activeDestinationGroup.targets.map((entry) => entry.destination),
+      outputTarget,
+      runtimeTargets: activeDestinationGroup.targets
+    });
+  }
+
+  await appendAuditEvent("uplink.cycle", "Persistent uplink cycle completed.");
 }
 
 async function sendDiscordAlert(message: string): Promise<void> {
@@ -3751,7 +4026,9 @@ async function runWorkerCycle(): Promise<void> {
   await appendAuditEvent("worker.cycle", "Worker reconciliation cycle completed.");
 }
 
-async function runHealthcheck(mode: "worker" | "playout"): Promise<void> {
+type RuntimeMode = "worker" | "playout" | "uplink";
+
+async function runHealthcheck(mode: RuntimeMode): Promise<void> {
   const state = await readAppState();
   const now = Date.now();
 
@@ -3763,6 +4040,23 @@ async function runHealthcheck(mode: "worker" | "playout"): Promise<void> {
 
     if (now - new Date(lastWorkerCycle).getTime() > WORKER_HEARTBEAT_STALE_MS) {
       throw new Error("Worker heartbeat is stale.");
+    }
+
+    return;
+  }
+
+  if (mode === "uplink") {
+    if (!STREAM247_RELAY_ENABLED) {
+      return;
+    }
+
+    const lastUplinkCycle = state.auditEvents.find((event) => event.type === "uplink.cycle")?.createdAt ?? "";
+    if (!lastUplinkCycle) {
+      throw new Error("No uplink heartbeat has been recorded yet.");
+    }
+
+    if (now - new Date(lastUplinkCycle).getTime() > PLAYOUT_HEARTBEAT_STALE_MS) {
+      throw new Error("Uplink heartbeat is stale.");
     }
 
     return;
@@ -3793,7 +4087,7 @@ function requestImmediatePlayoutCycle(reason: string): void {
   wake();
 }
 
-async function waitForNextLoop(mode: "worker" | "playout", delay: number): Promise<void> {
+async function waitForNextLoop(mode: RuntimeMode, delay: number): Promise<void> {
   if (mode !== "playout") {
     await new Promise((resolve) => setTimeout(resolve, delay));
     return;
@@ -3818,8 +4112,8 @@ async function waitForNextLoop(mode: "worker" | "playout", delay: number): Promi
   });
 }
 
-async function runLoop(mode: "worker" | "playout"): Promise<void> {
-  const run = mode === "worker" ? runWorkerCycle : runPlayoutCycle;
+async function runLoop(mode: RuntimeMode): Promise<void> {
+  const run = mode === "worker" ? runWorkerCycle : mode === "uplink" ? runUplinkCycle : runPlayoutCycle;
   const delay = mode === "worker" ? 30_000 : 15_000;
 
   for (;;) {
@@ -3848,7 +4142,7 @@ async function runLoop(mode: "worker" | "playout"): Promise<void> {
 const command = process.argv[2] || "worker";
 
 if (command === "healthcheck") {
-  const healthcheckMode = process.argv[3] === "playout" ? "playout" : "worker";
+  const healthcheckMode: RuntimeMode = process.argv[3] === "playout" ? "playout" : process.argv[3] === "uplink" ? "uplink" : "worker";
   runHealthcheck(healthcheckMode).catch((error) => {
     logRuntimeEvent("worker.healthcheck.failed", {
       mode: healthcheckMode,
@@ -3857,7 +4151,7 @@ if (command === "healthcheck") {
     process.exit(1);
   });
 } else {
-  const mode = command === "playout" ? "playout" : "worker";
+  const mode: RuntimeMode = command === "playout" ? "playout" : command === "uplink" ? "uplink" : "worker";
   runLoop(mode).catch((error) => {
     logRuntimeEvent("worker.process.failed", {
       mode,

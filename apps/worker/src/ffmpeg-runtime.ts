@@ -31,6 +31,11 @@ function readPositiveNumber(value: string | undefined, fallback: number): number
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+export type FfmpegOutputTarget = {
+  muxer: "flv" | "tee";
+  output: string;
+};
+
 export function getPlayoutReconnectConfig(env: NodeJS.ProcessEnv = process.env): {
   intervalHours: number;
   intervalMs: number;
@@ -46,6 +51,18 @@ export function getPlayoutReconnectConfig(env: NodeJS.ProcessEnv = process.env):
     windowSeconds,
     windowMs: windowSeconds * 1000
   };
+}
+
+export function isRelayModeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.STREAM247_RELAY_ENABLED === "1";
+}
+
+export function getRelayPublishUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return env.STREAM247_RELAY_OUTPUT_URL || "rtmp://relay:1935/live/program";
+}
+
+export function getRelayInputUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return env.STREAM247_RELAY_INPUT_URL || getRelayPublishUrl(env);
 }
 
 export function shouldRequestImmediatePlayoutRetry(args: { planned: boolean; crashLoopDetected: boolean }): boolean {
@@ -129,4 +146,21 @@ export function describeFfmpegExit(code: number | null, signal: NodeJS.Signals |
   }
 
   return "exited unexpectedly";
+}
+
+export function buildUplinkFfmpegCommand(input: string, outputTarget: FfmpegOutputTarget): string[] {
+  return [
+    "-hide_banner",
+    "-loglevel",
+    "warning",
+    "-fflags",
+    "+genpts",
+    "-i",
+    input,
+    "-c",
+    "copy",
+    "-f",
+    outputTarget.muxer,
+    outputTarget.output
+  ];
 }

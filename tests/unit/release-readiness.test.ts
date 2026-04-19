@@ -323,7 +323,7 @@ describe("release readiness files", () => {
   });
 
   it("adds restart policies to the always-on production services", () => {
-    for (const serviceName of ["traefik", "web", "worker", "playout", "postgres", "redis"]) {
+    for (const serviceName of ["traefik", "web", "worker", "relay", "playout", "uplink", "postgres", "redis"]) {
       expect(extractComposeServiceBlock(serviceName)).toContain("restart: unless-stopped");
     }
   });
@@ -338,6 +338,7 @@ describe("release readiness files", () => {
   it("gives worker-family healthchecks enough time under playout load", () => {
     expect(extractComposeServiceBlock("worker")).toContain("timeout: 30s");
     expect(extractComposeServiceBlock("playout")).toContain("timeout: 30s");
+    expect(extractComposeServiceBlock("uplink")).toContain("timeout: 30s");
   });
 });
 

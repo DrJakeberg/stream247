@@ -210,7 +210,7 @@ done
 validate_proxy_settings_if_configured
 
 echo "Checking image pinning policy..."
-for key in STREAM247_WEB_IMAGE STREAM247_WORKER_IMAGE STREAM247_PLAYOUT_IMAGE; do
+for key in STREAM247_WEB_IMAGE STREAM247_WORKER_IMAGE STREAM247_PLAYOUT_IMAGE STREAM247_RELAY_IMAGE; do
   validate_image_pinning "$key"
 done
 

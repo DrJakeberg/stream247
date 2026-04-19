@@ -47,6 +47,7 @@ It ships as Docker / Docker Compose, publishes images through GitHub Actions and
   - optional audio-lane beds that replace program audio during scheduled pool playback
 - playout operations with:
   - FFmpeg RTMP output foundation
+  - local RTMP relay plus persistent uplink mode so program playout is separated from the external Twitch/output session
   - Multi-Output RTMP delivery with multiple primary outputs plus backup outputs
   - per-destination managed stream keys with legacy env fallback for the built-in primary and backup outputs
   - health-aware destination fanout that keeps healthy primaries together and falls back to backups when needed
@@ -191,6 +192,9 @@ docker compose --profile proxy up -d
 - `TWITCH_VOD_CACHE_ENABLED`: cache Twitch VOD media locally before playout; defaults to `1`
 - `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK`: allow direct remote Twitch playback if cache preparation fails; defaults to `0`
 - `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`: maximum time for a Twitch VOD cache download; defaults to `7200`
+- `STREAM247_RELAY_ENABLED`: send program playout to the local relay and publish externally from the uplink worker; defaults to `1` in the example Compose env
+- `STREAM247_RELAY_OUTPUT_URL`: local relay publish URL used by the playout process
+- `STREAM247_RELAY_INPUT_URL`: local relay read URL used by the uplink process
 - `STREAM_OUTPUT_URL`: built-in primary RTMP output URL override
 - `STREAM_OUTPUT_KEY`: built-in primary RTMP key override
 - `BACKUP_STREAM_OUTPUT_URL`: built-in backup RTMP output URL
@@ -319,6 +323,7 @@ See [docs/deployment.md](docs/deployment.md) for the deployment-focused guide.
 - `ghcr.io/drjakeberg/stream247-web`
 - `ghcr.io/drjakeberg/stream247-worker`
 - `ghcr.io/drjakeberg/stream247-playout`
+- `bluenviron/mediamtx` for the local RTMP relay service
 
 The default `.env.example` already points Compose at the `latest` GHCR tags.
 For production pinning, use `.env.production.example` or set the image tags explicitly to the target release.
@@ -433,6 +438,7 @@ Notes:
 ### Playout And Broadcast Ops
 
 - FFmpeg-based RTMP playout foundation
+- local relay/uplink split for production Compose, with the uplink owning external output sessions and scheduled reconnects
 - pool-based round-robin playout selection
 - standby replay slate when no playable asset is available
 - scheduled 48-hour reconnect window with controlled standby mode

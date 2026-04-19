@@ -9,6 +9,7 @@ Example:
 - `ghcr.io/drjakeberg/stream247-web:v1.1.1`
 - `ghcr.io/drjakeberg/stream247-worker:v1.1.1`
 - `ghcr.io/drjakeberg/stream247-playout:v1.1.1`
+- `bluenviron/mediamtx:1.15.4`
 
 Do not use `latest` for unattended production deployments.
 

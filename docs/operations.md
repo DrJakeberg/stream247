@@ -67,3 +67,10 @@
 - for Twitch VOD assets, inspect `playout.twitch-cache.failed` incidents and confirm `MEDIA_LIBRARY_ROOT/.stream247-cache/twitch` is writable with enough free space
 - keep remote Twitch fallback disabled unless you intentionally accept direct remote VOD playback risk
 - confirm fallback assets exist
+
+### Uplink is not publishing
+
+- confirm `STREAM247_RELAY_ENABLED=1` and the `relay`, `playout`, and `uplink` containers are running
+- inspect `uplink.output.missing`, `uplink.process.exit`, and `uplink.ffmpeg.stderr` incidents
+- verify at least one enabled primary or backup destination has a valid RTMP URL and stream key
+- use `STREAM247_RELAY_ENABLED=0` only as a rollback because it returns external publishing to the playout process

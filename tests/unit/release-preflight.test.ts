@@ -168,6 +168,7 @@ DATABASE_URL=postgresql://stream247:super-secret-db-password@postgres:5432/strea
 STREAM247_WEB_IMAGE=ghcr.io/drjakeberg/stream247-web:v1.0.3
 STREAM247_WORKER_IMAGE=ghcr.io/drjakeberg/stream247-worker:v1.0.3
 STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
+STREAM247_RELAY_IMAGE=bluenviron/mediamtx:1.15.4
 `);
 
     expect(result.status).toBe(1);
@@ -308,6 +309,7 @@ STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
     expect(envContents).toContain("APP_SECRET=ci-release-preflight-secret-0123456789");
     expect(envContents).toContain("POSTGRES_PASSWORD=ci-release-preflight-db-password");
     expect(envContents).toContain("DATABASE_URL=postgresql://stream247:ci-release-preflight-db-password@postgres:5432/stream247");
+    expect(envContents).toContain("STREAM247_RELAY_IMAGE=bluenviron/mediamtx:1.15.4");
     expect(envContents).toContain("TRAEFIK_HOST=stream247-ci.test");
     expect(envContents).toContain("TRAEFIK_ACME_EMAIL=ops@stream247-ci.test");
 
