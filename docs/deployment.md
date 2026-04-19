@@ -127,7 +127,7 @@ Production Compose is intended to pull from:
 - `bluenviron/mediamtx:<tag>` for the local RTMP relay
 
 `.env.example` uses `latest` for evaluation.
-`.env.production.example` pins `v1.1.1` for stable deployment.
+`.env.production.example` pins `v1.1.2` for stable deployment.
 See:
 
 - `docs/versioning.md`

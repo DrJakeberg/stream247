@@ -4,6 +4,18 @@
 
 - No unreleased changes currently tracked.
 
+## 1.1.2 - 2026-04-19
+
+### Added
+
+- added cache-backed Twitch VOD playback so archive assets are verified locally before playout uses them
+- added a persistent local relay/uplink publishing mode so program playout failures no longer directly own the external RTMP session
+
+### Changed
+
+- moved scheduled output reconnect ownership to the uplink path, keeping the default Twitch reconnect cadence at 48 hours
+- updated production pins and release guidance for the relay/uplink runtime
+
 ## 1.0.3 - 2026-04-03
 
 ### Fixed
