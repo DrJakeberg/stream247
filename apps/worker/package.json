@@ -2,6 +2,7 @@
   "name": "worker",
   "private": true,
   "version": "1.1.2",
+  "license": "SEE LICENSE IN ../../LICENSE",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",

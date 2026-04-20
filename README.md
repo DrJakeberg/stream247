@@ -4,6 +4,32 @@ Stream247 is a self-hosted platform for running a Twitch-first 24/7 channel from
 
 It ships as Docker / Docker Compose, publishes images through GitHub Actions and GHCR, and gives operators a browser-based admin UI for scheduling, playout control, Twitch sync, moderation policy, and incident handling.
 
+## License Model
+
+Stream247 is source-available software. It is not open source or OSI-approved.
+
+Non-commercial use is allowed under the license in `LICENSE`. You may copy,
+fork, modify, self-host, and redistribute modified forks for non-commercial
+use.
+
+Commercial use requires a separate written commercial license from the project
+owner. Commercial use includes monetized streams, ad-supported streams, paid
+services, managed hosting or SaaS, agency use, consulting-for-pay use, and
+internal business use that supports commercial operations. See
+`COMMERCIAL-LICENSE.md`.
+
+Every public stream produced, automated, scheduled, controlled, or otherwise
+operated with Stream247 must include a visible repository link. The minimum
+acceptable location is the stream description, a channel panel, or an
+equivalent always-visible public page associated with the stream. See
+`ATTRIBUTION.md`.
+
+The current repository state and future releases use this source-available
+non-commercial license unless a later release says otherwise. Earlier
+Stream247 releases that were already published under Apache-2.0 remain
+governed by the terms under which they were published; those earlier grants
+are not retroactively revoked.
+
 ## What It Does Today
 
 - Docker-first self-hosted deployment with published GHCR images
@@ -606,4 +632,5 @@ Current validation covers:
 
 ## License
 
-Apache-2.0
+Stream247 Source-Available Non-Commercial License 1.0. See `LICENSE`,
+`COMMERCIAL-LICENSE.md`, and `ATTRIBUTION.md`.
