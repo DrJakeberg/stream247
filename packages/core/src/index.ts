@@ -48,6 +48,105 @@ export type OverlaySceneCustomWidgetMode = "embed" | "metadata";
 export type OverlaySceneCustomWidgetDataKey = "current" | "next" | "queue";
 export type OverlaySceneFrameSupportStatus = "supported" | "limited" | "unsupported";
 
+export type StreamOutputProfileId = "720p30" | "1080p30" | "480p30" | "360p30" | "custom";
+
+export type StreamOutputProfile = {
+  id: StreamOutputProfileId;
+  label: string;
+  width: number;
+  height: number;
+  fps: number;
+};
+
+export type StreamOutputSettings = {
+  profileId: StreamOutputProfileId;
+  width: number;
+  height: number;
+  fps: number;
+};
+
+type StreamOutputSettingsInput = {
+  profileId?: unknown;
+  width?: unknown;
+  height?: unknown;
+  fps?: unknown;
+};
+
+export const STREAM_OUTPUT_PROFILES: StreamOutputProfile[] = [
+  { id: "720p30", label: "720p30", width: 1280, height: 720, fps: 30 },
+  { id: "1080p30", label: "1080p30", width: 1920, height: 1080, fps: 30 },
+  { id: "480p30", label: "480p30", width: 854, height: 480, fps: 30 },
+  { id: "360p30", label: "360p30", width: 640, height: 360, fps: 30 },
+  { id: "custom", label: "Custom", width: 1280, height: 720, fps: 30 }
+];
+
+export const DEFAULT_STREAM_OUTPUT_SETTINGS: StreamOutputSettings = {
+  profileId: "720p30",
+  width: 1280,
+  height: 720,
+  fps: 30
+};
+
+function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
+export function normalizeStreamOutputProfileId(value: unknown): StreamOutputProfileId {
+  const candidate = String(value ?? "");
+  return STREAM_OUTPUT_PROFILES.some((profile) => profile.id === candidate)
+    ? (candidate as StreamOutputProfileId)
+    : DEFAULT_STREAM_OUTPUT_SETTINGS.profileId;
+}
+
+export function normalizeStreamOutputSettings(value?: StreamOutputSettingsInput | null): StreamOutputSettings {
+  const profileId = normalizeStreamOutputProfileId(value?.profileId);
+  const profile = STREAM_OUTPUT_PROFILES.find((entry) => entry.id === profileId) ?? STREAM_OUTPUT_PROFILES[0]!;
+
+  if (profileId !== "custom") {
+    return {
+      profileId,
+      width: profile.width,
+      height: profile.height,
+      fps: profile.fps
+    };
+  }
+
+  return {
+    profileId,
+    width: clampInteger(value?.width, profile.width, 640, 3840),
+    height: clampInteger(value?.height, profile.height, 360, 2160),
+    fps: clampInteger(value?.fps, profile.fps, 1, 60)
+  };
+}
+
+export function resolveStreamOutputSettings(args?: {
+  settings?: StreamOutputSettingsInput | null;
+  env?: Record<string, string | undefined>;
+}): StreamOutputSettings {
+  const base = normalizeStreamOutputSettings(args?.settings);
+  const env = args?.env ?? {};
+  const hasEnvOverride =
+    env.STREAM_OUTPUT_WIDTH !== undefined ||
+    env.STREAM_OUTPUT_HEIGHT !== undefined ||
+    env.STREAM_OUTPUT_FPS !== undefined;
+
+  if (!hasEnvOverride) {
+    return base;
+  }
+
+  return normalizeStreamOutputSettings({
+    profileId: "custom",
+    width: env.STREAM_OUTPUT_WIDTH === undefined ? base.width : env.STREAM_OUTPUT_WIDTH,
+    height: env.STREAM_OUTPUT_HEIGHT === undefined ? base.height : env.STREAM_OUTPUT_HEIGHT,
+    fps: env.STREAM_OUTPUT_FPS === undefined ? base.fps : env.STREAM_OUTPUT_FPS
+  });
+}
+
 type OverlaySceneCustomLayerBase = {
   id: string;
   kind: OverlaySceneCustomLayerKind;

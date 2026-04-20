@@ -91,6 +91,7 @@ Belongs in `.env`:
 - optional fallback Twitch client credentials
 - optional fallback SMTP credentials
 - optional fallback Discord webhook URL
+- optional deployment-level output overrides (`STREAM_OUTPUT_WIDTH`, `STREAM_OUTPUT_HEIGHT`, `STREAM_OUTPUT_FPS`)
 
 Does not belong in `.env`:
 
@@ -100,6 +101,7 @@ Does not belong in `.env`:
 - operator overrides
 - overlay settings
 - incidents and acknowledgements
+- saved output profile settings
 
 Those are runtime settings managed from the UI and stored in PostgreSQL.
 
@@ -166,6 +168,8 @@ Production Compose enables the program-feed/uplink split by default. `playout` w
 Readiness and the soak monitor now separate Twitch/output continuity from short local playout failures in HLS program-feed mode. If `uplink` is running, the destination is ready, the program feed is fresh, and crash-loop protection is not active, a local `playout` failure is treated as a transient for `STREAM247_PLAYOUT_TRANSIENT_GRACE_SECONDS` seconds. The default grace is the larger of 20 seconds or `STREAM247_PROGRAM_FEED_FAILOVER_SECONDS`. Uplink failures, stale program feeds, destination degradation, crash loops, and new unplanned uplink restarts still fail the soak.
 
 Twitch VOD playback is cache-backed by default. The worker stores verified Twitch archive media under `MEDIA_LIBRARY_ROOT/.stream247-cache/twitch`, preserves the original Twitch URL on the asset record, and keeps the internal cache out of local library scans. If a Twitch VOD cannot be cached, playout uses the standby slate instead of attempting unstable remote archive playback. Set `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1` only as a temporary rollback.
+
+Output settings are available in `/output` with built-in profiles for 720p30, 1080p30, 480p30, and 360p30 plus a custom mode. The saved profile is stored in PostgreSQL and applies when the playout worker starts its next FFmpeg process. Deployment-level `STREAM_OUTPUT_WIDTH`, `STREAM_OUTPUT_HEIGHT`, and `STREAM_OUTPUT_FPS` override the saved profile for standby slate generation, scene-renderer capture size, and FFmpeg output normalization. `SCENE_RENDER_WIDTH` and `SCENE_RENDER_HEIGHT` still have precedence for scene capture if you need a temporary render-specific override. Set `STREAM_SCALE_ENABLED=0` only as a rollback if the scale/pad/fps filter causes unexpected encoder load.
 
 CI currently builds against the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners.
 

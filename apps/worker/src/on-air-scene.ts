@@ -1,3 +1,8 @@
+import {
+  resolveStreamOutputSettings,
+  type StreamOutputSettings
+} from "@stream247/core";
+
 export type OnAirOverlayMode = "none" | "text" | "scene";
 
 export const ON_AIR_SCENE_PIPE_FD = 3;
@@ -10,9 +15,13 @@ export function getSceneRendererOverlayUrl(env: NodeJS.ProcessEnv): string {
   return `${getSceneRendererBaseUrl(env)}/overlay?chromeless=1`;
 }
 
-export function getSceneRendererViewport(env: NodeJS.ProcessEnv): { width: number; height: number } {
-  const width = Number(env.SCENE_RENDER_WIDTH || "1280") || 1280;
-  const height = Number(env.SCENE_RENDER_HEIGHT || "720") || 720;
+export function getSceneRendererViewport(
+  env: NodeJS.ProcessEnv,
+  outputSettings?: StreamOutputSettings | null
+): { width: number; height: number } {
+  const output = resolveStreamOutputSettings({ settings: outputSettings, env });
+  const width = Number(env.SCENE_RENDER_WIDTH || output.width) || output.width;
+  const height = Number(env.SCENE_RENDER_HEIGHT || output.height) || output.height;
   return {
     width: Math.max(640, width),
     height: Math.max(360, height)

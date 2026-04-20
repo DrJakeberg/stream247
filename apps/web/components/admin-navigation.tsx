@@ -30,6 +30,7 @@ const SECTIONS = [
     description: "Security, policy, and reusable channel setup.",
     items: [
       { href: "/settings", label: "Settings", meta: "Access, secrets, blueprints" },
+      { href: "/output", label: "Output", meta: "Resolution and FPS" },
       { href: "/moderation", label: "Moderation", meta: "Presence policy" },
       { href: "/team", label: "Team", meta: "Access grants" }
     ]

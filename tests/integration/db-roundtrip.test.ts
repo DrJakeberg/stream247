@@ -19,6 +19,7 @@ import {
   saveOverlayScenePresetRecord,
   updateAssetCurationRecords,
   updateDestinationRecord,
+  updateOutputSettingsRecord,
   updateSourceFieldRecords,
   writeAppState
 } from "@stream247/db";
@@ -49,6 +50,8 @@ const persistentProgramFeedRuntimeColumns = [
   "program_feed_target_seconds",
   "program_feed_buffered_seconds"
 ].sort();
+const outputProfilesMigrationId = "20260420_001_output_profiles";
+const outputSettingsColumns = ["singleton_id", "profile_id", "width", "height", "fps", "updated_at"].sort();
 
 async function runDocker(args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("docker", args);
@@ -230,6 +233,13 @@ describe.sequential("database roundtrip", () => {
         ...initial.managedConfig,
         twitchClientId: "client-id",
         twitchClientSecret: "client-secret",
+        updatedAt: "2026-04-04T10:00:00.000Z"
+      },
+      output: {
+        profileId: "1080p30" as const,
+        width: 1920,
+        height: 1080,
+        fps: 30,
         updatedAt: "2026-04-04T10:00:00.000Z"
       },
       twitch: {
@@ -502,6 +512,7 @@ describe.sequential("database roundtrip", () => {
     expect(reread.overlay.disabledLayers).toEqual(["schedule"]);
     expect(reread.overlay.tickerText).toBe("Roundtrip preview ticker");
     expect(reread.managedConfig.twitchClientId).toBe("client-id");
+    expect(reread.output).toEqual(nextState.output);
     expect(reread.twitch.broadcasterLogin).toBe("roundtrip");
     expect(reread.twitchScheduleSegments[0]?.segmentId).toBe("abc");
     expect(reread.pools[0]?.name).toBe("Pool One");
@@ -583,6 +594,21 @@ describe.sequential("database roundtrip", () => {
     const postUpdate = await readAppState();
     expect(managedKeys["destination-youtube"]).toBe("managed-youtube-key");
     expect(postUpdate.destinations.find((destination) => destination.id === "destination-youtube")?.streamKeySource).toBe("managed");
+
+    await updateOutputSettingsRecord({
+      profileId: "360p30",
+      width: 640,
+      height: 360,
+      fps: 30,
+      updatedAt: "2026-04-04T10:03:00.000Z"
+    });
+    expect((await readAppState()).output).toEqual({
+      profileId: "360p30",
+      width: 640,
+      height: 360,
+      fps: 30,
+      updatedAt: "2026-04-04T10:03:00.000Z"
+    });
   }, 60_000);
 
   it("upgrades existing playout runtime rows with persistent uplink and program feed columns", async () => {
@@ -631,6 +657,40 @@ describe.sequential("database roundtrip", () => {
     expect(migrationApplied).toBe("1");
     expect(state.playout.uplinkStatus).toBe("");
     expect(state.playout.programFeedBufferedSeconds).toBe(0);
+  }, 60_000);
+
+  it("upgrades existing databases with output profile settings", async () => {
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      DROP TABLE IF EXISTS output_settings;
+      DELETE FROM schema_migrations WHERE id = '${outputProfilesMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const columns = (
+      await executeSql(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'output_settings'
+        ORDER BY column_name;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+    const migrationApplied = await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${outputProfilesMigrationId}';`);
+    const state = await readAppState();
+
+    expect(columns).toEqual(outputSettingsColumns);
+    expect(migrationApplied).toBe("1");
+    expect(state.output).toEqual({
+      profileId: "720p30",
+      width: 1280,
+      height: 720,
+      fps: 30,
+      updatedAt: ""
+    });
   }, 60_000);
 
   it("does not reseed an initialized database just because no users exist", async () => {

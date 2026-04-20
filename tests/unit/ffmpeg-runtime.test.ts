@@ -16,6 +16,12 @@ import {
   shouldRequestImmediatePlayoutRetry,
   shouldSkipInitialSceneCapture
 } from "../../apps/worker/src/ffmpeg-runtime";
+import {
+  getOutputGopSize,
+  getOutputVideoFilter,
+  getWorkerStreamOutputSettings,
+  isStreamScaleEnabled
+} from "../../apps/worker/src/output-settings";
 
 describe("ffmpeg runtime helpers", () => {
   it("defaults scheduled reconnects to 48 hours", () => {
@@ -74,6 +80,36 @@ describe("ffmpeg runtime helpers", () => {
         "/app/data/media/.stream247-program-feed/segment-run-1-%05d.ts"
       ]
     });
+  });
+
+  it("resolves stream output profiles and builds the scale/pad/fps video filter", () => {
+    const settings = getWorkerStreamOutputSettings(
+      {
+        STREAM_OUTPUT_WIDTH: "640",
+        STREAM_OUTPUT_HEIGHT: "360",
+        STREAM_OUTPUT_FPS: "30"
+      },
+      {
+        profileId: "1080p30",
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        updatedAt: "2026-04-20T10:00:00.000Z"
+      }
+    );
+
+    expect(settings).toEqual({
+      profileId: "custom",
+      width: 640,
+      height: 360,
+      fps: 30
+    });
+    expect(getOutputVideoFilter(settings)).toBe(
+      "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:color=black,fps=30,setsar=1"
+    );
+    expect(getOutputGopSize(settings)).toBe("60");
+    expect(isStreamScaleEnabled({})).toBe(true);
+    expect(isStreamScaleEnabled({ STREAM_SCALE_ENABLED: "0" })).toBe(false);
   });
 
   it("builds a copy-mode uplink command from relay input to the active output target", () => {

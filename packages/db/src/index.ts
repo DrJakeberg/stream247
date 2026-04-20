@@ -11,12 +11,14 @@ import {
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
+  normalizeStreamOutputSettings,
   normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
   type DestinationRoutingStatus,
   type ModerationConfig,
   type OverlaySceneCustomLayer,
   type OverlaySceneLayerKind,
+  type StreamOutputProfileId,
   type OverlayTypographyPreset
 } from "@stream247/core";
 
@@ -358,6 +360,14 @@ export type ManagedConfigRecord = {
   updatedAt: string;
 };
 
+export type OutputSettingsRecord = {
+  profileId: StreamOutputProfileId;
+  width: number;
+  height: number;
+  fps: number;
+  updatedAt: string;
+};
+
 export type BroadcastQueueItemRecord = {
   id: string;
   kind: "asset" | "insert" | "standby" | "reconnect" | "live";
@@ -474,6 +484,7 @@ export type AppState = {
   presenceWindows: ModeratorPresenceWindowRecord[];
   overlay: OverlaySettingsRecord;
   managedConfig: ManagedConfigRecord;
+  output: OutputSettingsRecord;
   twitch: TwitchConnection;
   twitchScheduleSegments: TwitchScheduleSegmentRecord[];
   pools: PoolRecord[];
@@ -530,6 +541,14 @@ type OverlaySettingsRow = {
 
 type OverlayDraftRow = OverlaySettingsRow & {
   based_on_updated_at: string;
+};
+
+type OutputSettingsRow = {
+  profile_id: StreamOutputProfileId;
+  width: number;
+  height: number;
+  fps: number;
+  updated_at: string;
 };
 
 type OverlayScenePresetRow = {
@@ -610,6 +629,15 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
   };
 }
 
+function normalizeOutputSettingsRecord(output?: Partial<OutputSettingsRecord> | null): OutputSettingsRecord {
+  const defaults = defaultState().output;
+  const normalized = normalizeStreamOutputSettings(output ?? defaults);
+  return {
+    ...normalized,
+    updatedAt: String(output?.updatedAt ?? defaults.updatedAt ?? "")
+  };
+}
+
 function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: OverlaySettingsRecord): OverlaySettingsRecord {
   return row
     ? normalizeOverlaySettingsRecord({
@@ -642,6 +670,18 @@ function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: Ov
         customLayers: JSON.parse(row.custom_layers_json || "[]") as OverlaySceneCustomLayer[],
         emergencyBanner: row.emergency_banner,
         tickerText: row.ticker_text,
+        updatedAt: row.updated_at
+      })
+    : fallback;
+}
+
+function mapOutputRowToRecord(row: OutputSettingsRow | undefined, fallback: OutputSettingsRecord): OutputSettingsRecord {
+  return row
+    ? normalizeOutputSettingsRecord({
+        profileId: row.profile_id,
+        width: row.width,
+        height: row.height,
+        fps: row.fps,
         updatedAt: row.updated_at
       })
     : fallback;
@@ -1117,6 +1157,13 @@ function defaultState(): AppState {
       alertEmailTo: "",
       updatedAt: ""
     },
+    output: {
+      profileId: "720p30",
+      width: 1280,
+      height: 720,
+      fps: 30,
+      updatedAt: ""
+    },
     twitch: {
       status: "not-connected",
       broadcasterId: "",
@@ -1441,6 +1488,7 @@ function normalizeState(state: AppState): AppState {
       ...defaults.managedConfig,
       ...(state.managedConfig ?? {})
     },
+    output: normalizeOutputSettingsRecord((state as AppState & { output?: Partial<OutputSettingsRecord> }).output ?? defaults.output),
     twitch: {
       ...defaults.twitch,
       ...(state.twitch ?? {})
@@ -1683,6 +1731,15 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     CREATE TABLE IF NOT EXISTS managed_config (
       singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
       encrypted_payload TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS output_settings (
+      singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+      profile_id TEXT NOT NULL DEFAULT '720p30',
+      width INTEGER NOT NULL DEFAULT 1280,
+      height INTEGER NOT NULL DEFAULT 720,
+      fps INTEGER NOT NULL DEFAULT 30,
       updated_at TEXT NOT NULL DEFAULT ''
     );
 
@@ -2194,6 +2251,27 @@ if (!schemaMigrations.some((migration) => migration.id === persistentProgramFeed
   schemaMigrations.push(persistentProgramFeedRuntimeMigration);
 }
 
+const outputProfilesMigration: MigrationDefinition = {
+  id: "20260420_001_output_profiles",
+  description: "Add channel-level output profile settings.",
+  apply: async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS output_settings (
+        singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+        profile_id TEXT NOT NULL DEFAULT '720p30',
+        width INTEGER NOT NULL DEFAULT 1280,
+        height INTEGER NOT NULL DEFAULT 720,
+        fps INTEGER NOT NULL DEFAULT 30,
+        updated_at TEXT NOT NULL DEFAULT ''
+      );
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === outputProfilesMigration.id)) {
+  schemaMigrations.push(outputProfilesMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -2437,6 +2515,20 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         updated_at = EXCLUDED.updated_at
     `,
     [encryptManagedConfig(next.managedConfig), next.managedConfig.updatedAt]
+  );
+
+  await client.query(
+    `
+      INSERT INTO output_settings (singleton_id, profile_id, width, height, fps, updated_at)
+      VALUES (1, $1, $2, $3, $4, $5)
+      ON CONFLICT (singleton_id) DO UPDATE SET
+        profile_id = EXCLUDED.profile_id,
+        width = EXCLUDED.width,
+        height = EXCLUDED.height,
+        fps = EXCLUDED.fps,
+        updated_at = EXCLUDED.updated_at
+    `,
+    [next.output.profileId, next.output.width, next.output.height, next.output.fps, next.output.updatedAt]
   );
 
   await client.query(
@@ -3012,6 +3104,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     encrypted_payload: string;
     updated_at: string;
   }>("SELECT * FROM managed_config WHERE singleton_id = 1");
+  const outputResult = await client.query<OutputSettingsRow>("SELECT * FROM output_settings WHERE singleton_id = 1");
   const twitchResult = await client.query<{
     status: TwitchConnection["status"];
     broadcaster_id: string;
@@ -3254,6 +3347,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   const moderationRow = moderationResult.rows[0];
   const overlayRow = overlayResult.rows[0];
   const managedConfigRow = managedConfigResult.rows[0];
+  const outputRow = outputResult.rows[0];
   const twitchRow = twitchResult.rows[0];
   const playoutRow = playoutResult.rows[0];
   const decryptedManagedConfig = managedConfigRow ? decryptManagedConfig(managedConfigRow.encrypted_payload) : null;
@@ -3314,6 +3408,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           updatedAt: managedConfigRow?.updated_at || decryptedManagedConfig.updatedAt
         }
       : defaults.managedConfig,
+    output: mapOutputRowToRecord(outputRow, defaults.output),
     twitch: twitchRow
       ? {
           status: twitchRow.status,
@@ -4232,6 +4327,25 @@ export async function updateManagedConfigRecord(config: ManagedConfigRecord): Pr
           updated_at = EXCLUDED.updated_at
       `,
       [encryptManagedConfig(config), config.updatedAt]
+    );
+  });
+}
+
+export async function updateOutputSettingsRecord(output: OutputSettingsRecord): Promise<void> {
+  await withSerializedStateWrite("updateOutputSettingsRecord", async (client) => {
+    const normalized = normalizeOutputSettingsRecord(output);
+    await client.query(
+      `
+        INSERT INTO output_settings (singleton_id, profile_id, width, height, fps, updated_at)
+        VALUES (1, $1, $2, $3, $4, $5)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          profile_id = EXCLUDED.profile_id,
+          width = EXCLUDED.width,
+          height = EXCLUDED.height,
+          fps = EXCLUDED.fps,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [normalized.profileId, normalized.width, normalized.height, normalized.fps, normalized.updatedAt]
     );
   });
 }

@@ -46,6 +46,7 @@ import {
   upsertIncident,
   type AppState,
   type AssetRecord,
+  type OutputSettingsRecord,
   type StreamDestinationRecord
 } from "@stream247/db";
 import {
@@ -98,6 +99,14 @@ import {
 } from "./twitch-vod-cache.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
+import {
+  getOutputGopSize,
+  getOutputScaleFactor,
+  getOutputVideoFilter,
+  getWorkerStreamOutputSettings,
+  isStreamScaleEnabled,
+  type WorkerStreamOutputSettings
+} from "./output-settings.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
@@ -455,8 +464,17 @@ function getRelayOutputTarget(): ReturnType<typeof buildFfmpegOutputTarget> {
   };
 }
 
-function getMediaOverlayFilter(textPath: string): string {
-  return `drawtext=fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:textfile=${textPath}:reload=1:fontcolor=white:fontsize=20:box=1:boxcolor=0x00000099:boxborderw=10:x=32:y=h-th-32:line_spacing=8`;
+function joinVideoFilters(filters: Array<string | null | undefined>): string {
+  return filters.filter(Boolean).join(",");
+}
+
+function getMediaOverlayFilter(textPath: string, output: WorkerStreamOutputSettings): string {
+  const scale = getOutputScaleFactor(output);
+  const fontSize = Math.max(14, Math.round(20 * scale));
+  const borderWidth = Math.max(6, Math.round(10 * scale));
+  const margin = Math.max(20, Math.round(32 * scale));
+  const lineSpacing = Math.max(5, Math.round(8 * scale));
+  return `drawtext=fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:textfile=${textPath}:reload=1:fontcolor=white:fontsize=${fontSize}:box=1:boxcolor=0x00000099:boxborderw=${borderWidth}:x=${margin}:y=h-th-${margin}:line_spacing=${lineSpacing}`;
 }
 
 type AudioLaneCommandConfig = {
@@ -468,9 +486,11 @@ function getFfmpegCommand(
   input: string,
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
   overlayMode: OnAirOverlayMode,
-  audioLane: AudioLaneCommandConfig | null
+  audioLane: AudioLaneCommandConfig | null,
+  output: WorkerStreamOutputSettings
 ): string[] {
   const command = ["-hide_banner", "-loglevel", "warning", "-y", ...buildFfmpegInputArgs({ input, realtime: true })];
+  const outputVideoFilter = isStreamScaleEnabled(process.env) ? getOutputVideoFilter(output) : "";
 
   if (audioLane) {
     command.push(...buildFfmpegInputArgs({ input: audioLane.input, loop: true }));
@@ -479,12 +499,22 @@ function getFfmpegCommand(
   if (overlayMode === "scene") {
     const sceneInputIndex = audioLane ? 2 : 1;
     command.push("-f", "image2pipe", "-framerate", "1", "-vcodec", "png", "-i", `pipe:${ON_AIR_SCENE_PIPE_FD}`);
-    command.push("-filter_complex", `[0:v][${sceneInputIndex}:v]overlay=0:0:format=auto[vout]`, "-map", "[vout]");
+    command.push(
+      "-filter_complex",
+      outputVideoFilter
+        ? `[0:v]${outputVideoFilter}[base];[base][${sceneInputIndex}:v]overlay=0:0:format=auto[vout]`
+        : `[0:v][${sceneInputIndex}:v]overlay=0:0:format=auto[vout]`,
+      "-map",
+      "[vout]"
+    );
     command.push("-map", audioLane ? "1:a:0" : "0:a?");
   } else if (overlayMode === "text") {
-    command.push("-vf", getMediaOverlayFilter(onAirOverlayPath));
+    command.push("-vf", joinVideoFilters([outputVideoFilter, getMediaOverlayFilter(onAirOverlayPath, output)]));
     command.push("-map", "0:v:0", "-map", audioLane ? "1:a:0" : "0:a?");
   } else {
+    if (outputVideoFilter) {
+      command.push("-vf", outputVideoFilter);
+    }
     command.push("-map", "0:v:0", "-map", audioLane ? "1:a:0" : "0:a?");
   }
 
@@ -504,7 +534,7 @@ function getFfmpegCommand(
     "-pix_fmt",
     "yuv420p",
     "-g",
-    "60",
+    getOutputGopSize(output),
     "-tune",
     "zerolatency",
     "-bf",
@@ -524,17 +554,31 @@ function getFfmpegCommand(
 function getLiveBridgeFfmpegCommand(
   input: string,
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
-  overlayMode: OnAirOverlayMode
+  overlayMode: OnAirOverlayMode,
+  output: WorkerStreamOutputSettings
 ): string[] {
   const command = ["-hide_banner", "-loglevel", "warning", "-y", ...buildFfmpegInputArgs({ input })];
+  const outputVideoFilter = isStreamScaleEnabled(process.env) ? getOutputVideoFilter(output) : "";
 
   if (overlayMode === "scene") {
     command.push("-f", "image2pipe", "-framerate", "1", "-vcodec", "png", "-i", `pipe:${ON_AIR_SCENE_PIPE_FD}`);
-    command.push("-filter_complex", "[0:v][1:v]overlay=0:0:format=auto[vout]", "-map", "[vout]", "-map", "0:a?");
+    command.push(
+      "-filter_complex",
+      outputVideoFilter
+        ? `[0:v]${outputVideoFilter}[base];[base][1:v]overlay=0:0:format=auto[vout]`
+        : "[0:v][1:v]overlay=0:0:format=auto[vout]",
+      "-map",
+      "[vout]",
+      "-map",
+      "0:a?"
+    );
   } else if (overlayMode === "text") {
-    command.push("-vf", getMediaOverlayFilter(onAirOverlayPath));
+    command.push("-vf", joinVideoFilters([outputVideoFilter, getMediaOverlayFilter(onAirOverlayPath, output)]));
     command.push("-map", "0:v:0", "-map", "0:a?");
   } else {
+    if (outputVideoFilter) {
+      command.push("-vf", outputVideoFilter);
+    }
     command.push("-map", "0:v:0", "-map", "0:a?");
   }
 
@@ -550,7 +594,7 @@ function getLiveBridgeFfmpegCommand(
     "-pix_fmt",
     "yuv420p",
     "-g",
-    "60",
+    getOutputGopSize(output),
     "-tune",
     "zerolatency",
     "-bf",
@@ -569,8 +613,10 @@ function getLiveBridgeFfmpegCommand(
 
 function getStandbyFfmpegCommand(
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
-  overlayMode: OnAirOverlayMode
+  overlayMode: OnAirOverlayMode,
+  output: WorkerStreamOutputSettings
 ): string[] {
+  const scale = getOutputScaleFactor(output);
   const command = [
     "-hide_banner",
     "-loglevel",
@@ -580,7 +626,7 @@ function getStandbyFfmpegCommand(
     "-f",
     "lavfi",
     "-i",
-    "color=c=0x0b1f18:s=1280x720:r=30",
+    `color=c=0x0b1f18:s=${output.width}x${output.height}:r=${output.fps}`,
     "-f",
     "lavfi",
     "-i",
@@ -593,7 +639,7 @@ function getStandbyFfmpegCommand(
   } else {
     command.push(
       "-vf",
-      `drawtext=fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:textfile=${standbySlatePath}:reload=1:fontcolor=white:fontsize=34:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=12`,
+      `drawtext=fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:textfile=${standbySlatePath}:reload=1:fontcolor=white:fontsize=${Math.max(20, Math.round(34 * scale))}:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=${Math.max(8, Math.round(12 * scale))}`,
       "-map",
       "0:v:0",
       "-map",
@@ -613,7 +659,7 @@ function getStandbyFfmpegCommand(
     "-pix_fmt",
     "yuv420p",
     "-g",
-    "60",
+    getOutputGopSize(output),
     "-tune",
     "zerolatency",
     "-bf",
@@ -652,9 +698,9 @@ function isWritablePipe(value: unknown): value is Writable {
   return Boolean(value) && typeof (value as Writable).write === "function";
 }
 
-async function captureRenderedSceneFrame(): Promise<Buffer> {
+async function captureRenderedSceneFrame(outputSettings: WorkerStreamOutputSettings): Promise<Buffer> {
   const chromiumBinary = await resolveChromiumBinary();
-  const viewport = getSceneRendererViewport(process.env);
+  const viewport = getSceneRendererViewport(process.env, outputSettings);
   await execFileText(
     chromiumBinary,
     buildChromiumSceneCaptureArgs({
@@ -671,13 +717,13 @@ async function captureRenderedSceneFrame(): Promise<Buffer> {
   return fs.readFile(renderedSceneFramePath);
 }
 
-async function prepareSceneRendererFrame(): Promise<Buffer | null> {
+async function prepareSceneRendererFrame(outputSettings: WorkerStreamOutputSettings): Promise<Buffer | null> {
   if (!shouldUseSceneRenderer()) {
     return null;
   }
 
   try {
-    const frame = await captureRenderedSceneFrame();
+    const frame = await captureRenderedSceneFrame(outputSettings);
     await resolveIncident("playout.scene-render.failed", "On-air scene renderer is healthy.");
     return frame;
   } catch (error) {
@@ -699,7 +745,11 @@ function stopSceneRendererLoop(): void {
   sceneRendererAbortController = null;
 }
 
-function startSceneRendererLoop(targetPipe: Writable, initialFrame: Buffer): void {
+function startSceneRendererLoop(
+  targetPipe: Writable,
+  initialFrame: Buffer,
+  outputSettings: WorkerStreamOutputSettings
+): void {
   stopSceneRendererLoop();
   const controller = new AbortController();
   const intervalMs = getSceneRendererIntervalMs(process.env);
@@ -718,7 +768,7 @@ function startSceneRendererLoop(targetPipe: Writable, initialFrame: Buffer): voi
       }
 
       try {
-        currentFrame = await captureRenderedSceneFrame();
+        currentFrame = await captureRenderedSceneFrame(outputSettings);
         await resolveIncident("playout.scene-render.failed", "On-air scene renderer is healthy.");
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown on-air scene renderer error.";
@@ -2465,6 +2515,7 @@ async function startOrSwitchPlayout(args: {
   reasonCode: AppState["playout"]["selectionReasonCode"];
   fallbackTier: AppState["playout"]["fallbackTier"];
   overlayEnabled: boolean;
+  outputSettings: OutputSettingsRecord;
   runtimeTargets: DestinationRuntimeTarget[];
   runtimeStatus: AppState["playout"]["status"];
   runtimeHeartbeatAt: string;
@@ -2497,7 +2548,8 @@ async function startOrSwitchPlayout(args: {
       runtimeStatus: args.runtimeStatus
     });
   }
-  const initialSceneFrame = args.overlayEnabled && !skipInitialSceneCapture ? await prepareSceneRendererFrame() : null;
+  const outputSettings = getWorkerStreamOutputSettings(process.env, args.outputSettings);
+  const initialSceneFrame = args.overlayEnabled && !skipInitialSceneCapture ? await prepareSceneRendererFrame(outputSettings) : null;
   const overlayMode: OnAirOverlayMode = !args.overlayEnabled ? "none" : initialSceneFrame ? "scene" : "text";
   let resolvedAudioLaneInput = "";
 
@@ -2532,7 +2584,7 @@ async function startOrSwitchPlayout(args: {
       ? args.resolvedAssetInput || cachedResolvedInput || (await resolveAssetPlaybackInput(args.asset)).input
       : "";
   const command = args.liveBridge
-    ? getLiveBridgeFfmpegCommand(args.liveBridge.inputUrl, args.outputTarget, overlayMode)
+    ? getLiveBridgeFfmpegCommand(args.liveBridge.inputUrl, args.outputTarget, overlayMode, outputSettings)
     : args.asset
       ? getFfmpegCommand(
           resolvedProgramInput,
@@ -2543,9 +2595,10 @@ async function startOrSwitchPlayout(args: {
                 input: resolvedAudioLaneInput,
                 volumePercent: args.audioLane.volumePercent
               }
-            : null
+            : null,
+          outputSettings
         )
-      : getStandbyFfmpegCommand(args.outputTarget, overlayMode);
+      : getStandbyFfmpegCommand(args.outputTarget, overlayMode, outputSettings);
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe", "pipe"]
   });
@@ -2585,7 +2638,7 @@ async function startOrSwitchPlayout(args: {
   const programFeedConfig = isProgramFeedMode() ? getProgramFeedRuntimeConfig() : null;
 
   if (overlayMode === "scene" && initialSceneFrame && isWritablePipe(child.stdio[ON_AIR_SCENE_PIPE_FD])) {
-    startSceneRendererLoop(child.stdio[ON_AIR_SCENE_PIPE_FD], initialSceneFrame);
+    startSceneRendererLoop(child.stdio[ON_AIR_SCENE_PIPE_FD], initialSceneFrame, outputSettings);
   } else {
     stopSceneRendererLoop();
   }
@@ -3352,6 +3405,7 @@ async function runPlayoutCycle(): Promise<void> {
         reasonCode: selection.reasonCode,
         fallbackTier: selection.fallbackTier,
         overlayEnabled: state.overlay.enabled,
+        outputSettings: state.output,
         runtimeTargets: playoutTargets,
         runtimeStatus: state.playout.status,
         runtimeHeartbeatAt: state.playout.heartbeatAt,
@@ -3418,6 +3472,7 @@ async function runPlayoutCycle(): Promise<void> {
         reasonCode: selection.reasonCode,
         fallbackTier: selection.fallbackTier,
         overlayEnabled: state.overlay.enabled,
+        outputSettings: state.output,
         runtimeTargets: playoutTargets,
         runtimeStatus: state.playout.status,
         runtimeHeartbeatAt: state.playout.heartbeatAt,

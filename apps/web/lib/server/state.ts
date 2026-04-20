@@ -57,6 +57,7 @@ import {
   updateManagedConfigRecord,
   updateModerationConfigRecord,
   updateOverlaySettingsRecord,
+  updateOutputSettingsRecord,
   readAppState,
   replaceAllScheduleBlocks,
   replaceTwitchScheduleSegments,
@@ -105,6 +106,7 @@ import {
   type UserRole,
   type OverlayScenePresetRecord,
   type OverlaySettingsRecord,
+  type OutputSettingsRecord,
   type ManagedConfigRecord
 } from "@stream247/db";
 import type {
@@ -138,6 +140,7 @@ export type {
   OverlayStudioStateRecord,
   OverlayScenePresetRecord,
   OverlaySettingsRecord,
+  OutputSettingsRecord,
   ManagedConfigRecord,
   ScheduleBlockRecord,
   SourceSyncRunRecord,
@@ -179,6 +182,7 @@ export {
   updateManagedConfigRecord,
   updateModerationConfigRecord,
   updateOverlaySettingsRecord,
+  updateOutputSettingsRecord,
   readAppState,
   replaceAllScheduleBlocks,
   replaceTwitchScheduleSegments,

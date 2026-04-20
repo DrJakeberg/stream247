@@ -920,6 +920,39 @@ button.collection-chip {
 }
 
 .overlay-page {
+  --overlay-output-width: 1280px;
+  --overlay-output-height: 720px;
+  --overlay-gap: 18px;
+  --overlay-card-padding: 20px;
+  --overlay-card-large-padding: 26px;
+  --overlay-card-xl-padding: 32px;
+  --overlay-title-margin-top: 10px;
+  --overlay-title-margin-bottom: 8px;
+  --overlay-chip-padding-y: 10px;
+  --overlay-chip-padding-x: 14px;
+  --overlay-chip-font-size: 0.85rem;
+  --overlay-banner-padding-y: 14px;
+  --overlay-banner-padding-x: 18px;
+  --overlay-ticker-padding-y: 12px;
+  --overlay-ticker-padding-x: 18px;
+  --overlay-ticker-font-size: 0.88rem;
+  --overlay-custom-text-padding-y: 18px;
+  --overlay-custom-text-padding-x: 20px;
+  --overlay-custom-widget-padding-y: 20px;
+  --overlay-custom-widget-padding-x: 22px;
+  --overlay-title-compact-min: 1.65rem;
+  --overlay-title-compact-max: 2.7rem;
+  --overlay-title-balanced-min: 2rem;
+  --overlay-title-balanced-max: 3.8rem;
+  --overlay-title-cinematic-min: 2.4rem;
+  --overlay-title-cinematic-max: 5rem;
+  --overlay-custom-headline-min: 1.5rem;
+  --overlay-custom-headline-max: 2.6rem;
+  --overlay-custom-body-min: 1rem;
+  --overlay-custom-body-max: 1.4rem;
+  --overlay-custom-caption-size: 0.92rem;
+  --overlay-custom-widget-title-min: 1.2rem;
+  --overlay-custom-widget-title-max: 2.2rem;
   min-height: 100vh;
   padding: 28px;
   background:
@@ -934,7 +967,8 @@ button.collection-chip {
 }
 
 .overlay-page.overlay-page-chromeless .overlay-frame {
-  min-height: 100vh;
+  width: var(--overlay-output-width);
+  min-height: var(--overlay-output-height);
   max-width: none;
 }
 
@@ -942,7 +976,7 @@ button.collection-chip {
   min-height: calc(100vh - 56px);
   display: grid;
   grid-template-columns: 1.2fr 0.8fr;
-  gap: 18px;
+  gap: var(--overlay-gap);
   align-content: end;
   position: relative;
   overflow: hidden;
@@ -981,7 +1015,7 @@ button.collection-chip {
 
 .overlay-frame-bumper .overlay-card-large,
 .overlay-frame-reconnect .overlay-card-large {
-  padding: 32px;
+  padding: var(--overlay-card-xl-padding);
 }
 
 .overlay-frame-bumper .overlay-card-large {
@@ -1009,16 +1043,16 @@ button.collection-chip {
 }
 
 .overlay-card {
-  padding: 20px;
+  padding: var(--overlay-card-padding);
 }
 
 .overlay-card-large {
   grid-column: 1 / 2;
-  padding: 26px;
+  padding: var(--overlay-card-large-padding);
 }
 
 .overlay-card-large h1 {
-  margin: 10px 0 8px;
+  margin: var(--overlay-title-margin-top) 0 var(--overlay-title-margin-bottom);
   font-size: clamp(2rem, 4vw, 3.8rem);
   line-height: 0.95;
 }
@@ -1053,15 +1087,15 @@ button.collection-chip {
 }
 
 .overlay-title-compact .overlay-card-large h1 {
-  font-size: clamp(1.65rem, 2.9vw, 2.7rem);
+  font-size: clamp(var(--overlay-title-compact-min), 2.9vw, var(--overlay-title-compact-max));
 }
 
 .overlay-title-balanced .overlay-card-large h1 {
-  font-size: clamp(2rem, 4vw, 3.8rem);
+  font-size: clamp(var(--overlay-title-balanced-min), 4vw, var(--overlay-title-balanced-max));
 }
 
 .overlay-title-cinematic .overlay-card-large h1 {
-  font-size: clamp(2.4rem, 5.4vw, 5rem);
+  font-size: clamp(var(--overlay-title-cinematic-min), 5.4vw, var(--overlay-title-cinematic-max));
 }
 
 .overlay-card-large p {
@@ -1073,8 +1107,8 @@ button.collection-chip {
 .overlay-clock {
   display: inline-flex;
   width: fit-content;
-  padding: 10px 14px;
-  font-size: 0.85rem;
+  padding: var(--overlay-chip-padding-y) var(--overlay-chip-padding-x);
+  font-size: var(--overlay-chip-font-size);
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -1106,15 +1140,15 @@ button.collection-chip {
 
 .overlay-banner {
   grid-column: 1 / -1;
-  padding: 14px 18px;
+  padding: var(--overlay-banner-padding-y) var(--overlay-banner-padding-x);
   font-weight: 600;
   background: color-mix(in srgb, #8b1e2d 72%, rgba(8, 15, 13, 0.58));
 }
 
 .overlay-ticker {
   grid-column: 1 / -1;
-  padding: 12px 18px;
-  font-size: 0.88rem;
+  padding: var(--overlay-ticker-padding-y) var(--overlay-ticker-padding-x);
+  font-size: var(--overlay-ticker-font-size);
   letter-spacing: 0.04em;
   color: rgba(245, 242, 234, 0.82);
 }
@@ -1134,7 +1168,7 @@ button.collection-chip {
 }
 
 .overlay-custom-layer-text {
-  padding: 18px 20px;
+  padding: var(--overlay-custom-text-padding-y) var(--overlay-custom-text-padding-x);
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(8, 15, 13, 0.52);
   backdrop-filter: blur(14px);
@@ -1144,19 +1178,19 @@ button.collection-chip {
 }
 
 .overlay-custom-layer-text-headline .overlay-custom-layer-text-primary {
-  font-size: clamp(1.5rem, 2.6vw, 2.6rem);
+  font-size: clamp(var(--overlay-custom-headline-min), 2.6vw, var(--overlay-custom-headline-max));
   line-height: 0.96;
   font-weight: 700;
 }
 
 .overlay-custom-layer-text-body .overlay-custom-layer-text-primary {
-  font-size: clamp(1rem, 1.6vw, 1.4rem);
+  font-size: clamp(var(--overlay-custom-body-min), 1.6vw, var(--overlay-custom-body-max));
   line-height: 1.2;
   font-weight: 600;
 }
 
 .overlay-custom-layer-text-caption .overlay-custom-layer-text-primary {
-  font-size: 0.92rem;
+  font-size: var(--overlay-custom-caption-size);
   line-height: 1.25;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1164,7 +1198,7 @@ button.collection-chip {
 
 .overlay-custom-layer-text-secondary {
   color: rgba(245, 242, 234, 0.72);
-  font-size: 0.92rem;
+  font-size: var(--overlay-custom-caption-size);
   line-height: 1.3;
 }
 
@@ -1200,7 +1234,7 @@ button.collection-chip {
   display: grid;
   align-content: center;
   gap: 8px;
-  padding: 20px 22px;
+  padding: var(--overlay-custom-widget-padding-y) var(--overlay-custom-widget-padding-x);
 }
 
 .overlay-custom-layer-image,
@@ -1286,7 +1320,7 @@ button.collection-chip {
 }
 
 .overlay-custom-layer-widget-title {
-  font-size: clamp(1.2rem, 2vw, 2.2rem);
+  font-size: clamp(var(--overlay-custom-widget-title-min), 2vw, var(--overlay-custom-widget-title-max));
   line-height: 1.02;
   font-weight: 700;
 }

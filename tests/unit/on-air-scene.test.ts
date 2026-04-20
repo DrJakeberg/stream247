@@ -33,6 +33,22 @@ describe("on-air scene helpers", () => {
       width: 640,
       height: 360
     });
+    expect(getSceneRendererViewport({
+      STREAM_OUTPUT_WIDTH: "1920",
+      STREAM_OUTPUT_HEIGHT: "1080"
+    })).toEqual({
+      width: 1920,
+      height: 1080
+    });
+    expect(getSceneRendererViewport({
+      STREAM_OUTPUT_WIDTH: "1920",
+      STREAM_OUTPUT_HEIGHT: "1080",
+      SCENE_RENDER_WIDTH: "1280",
+      SCENE_RENDER_HEIGHT: "720"
+    })).toEqual({
+      width: 1280,
+      height: 720
+    });
     expect(getSceneRendererIntervalMs({
       SCENE_RENDER_INTERVAL_MS: "250"
     })).toBe(1000);
