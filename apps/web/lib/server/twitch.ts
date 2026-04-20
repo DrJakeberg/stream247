@@ -33,7 +33,13 @@ export async function getTwitchAuthorizeUrl(
   const scope =
     kind === "team-login"
       ? ["user:read:email"].join(" ")
-      : ["channel:manage:broadcast", "channel:manage:schedule", "moderator:manage:chat_settings"].join(" ");
+      : [
+          "channel:manage:broadcast",
+          "channel:manage:schedule",
+          "moderator:manage:chat_settings",
+          "moderator:read:followers",
+          "channel:read:subscriptions"
+        ].join(" ");
 
   const params = new URLSearchParams({
     client_id: clientId,

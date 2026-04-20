@@ -108,6 +108,7 @@ import {
   type WorkerStreamOutputSettings
 } from "./output-settings.js";
 import { TwitchChatBridge } from "./twitch-engagement.js";
+import { syncTwitchEventSubSubscriptions } from "./twitch-eventsub.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
@@ -140,6 +141,7 @@ const PLAYOUT_RECONNECT_CONFIG = getPlayoutReconnectConfig(process.env);
 const PLAYOUT_RECONNECT_INTERVAL_MS = PLAYOUT_RECONNECT_CONFIG.intervalMs;
 const PLAYOUT_RECONNECT_INTERVAL_HOURS = PLAYOUT_RECONNECT_CONFIG.intervalHours;
 const PLAYOUT_RECONNECT_WINDOW_MS = PLAYOUT_RECONNECT_CONFIG.windowMs;
+const TWITCH_EVENTSUB_SYNC_INTERVAL_MS = 10 * 60_000;
 const STREAM247_RELAY_ENABLED = isRelayModeEnabled(process.env);
 const STREAM247_UPLINK_INPUT_MODE = getUplinkInputMode(process.env);
 const STREAM247_RELAY_DESTINATION_ID = "relay-local";
@@ -165,6 +167,8 @@ const SCENE_RENDER_CAPTURE_TIMEOUT_MS = 10_000;
 const SCENE_RENDER_CAPTURE_KILL_GRACE_MS = 1_000;
 const PLAYOUT_RECOVERY_SCENE_CAPTURE_SKIP_WINDOW_MS = 60_000;
 let wakePlayoutLoop: (() => void) | null = null;
+let twitchEventSubLastSyncKey = "";
+let twitchEventSubNextSyncAt = 0;
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -922,7 +926,7 @@ async function writeOnAirOverlay(
       state,
       queueKind,
       currentTitle: overrides.currentTitle || buildAssetDisplayTitle(asset) || state.playout.currentTitle || currentItem?.title || "Stand by",
-      nextTitle: overrides.nextTitle || nextItem?.title || "Scheduling next item",
+      nextTitle: overrides.nextTitle || nextItem?.title || "Coming up next",
       nextScheduleItem: nextItem,
       nextTimeLabel: overrides.nextTimeLabel || (nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured"),
       currentCategory: overrides.currentCategory || currentItem?.categoryName || asset?.categoryName,
@@ -4356,6 +4360,72 @@ async function reconcileTwitch(): Promise<void> {
   }
 }
 
+async function reconcileTwitchEventSub(): Promise<void> {
+  const state = await readAppState();
+  const clientId = getTwitchClientId(state);
+  const clientSecret = getTwitchClientSecret(state);
+  const syncKey = [
+    state.engagement.alertsEnabled ? "alerts-on" : "alerts-off",
+    process.env.STREAM_ALERTS_ENABLED === "1" ? "runtime-on" : "runtime-off",
+    state.twitch.status,
+    state.twitch.broadcasterId,
+    clientId,
+    process.env.APP_URL || "",
+    process.env.TWITCH_EVENTSUB_SECRET ? "secret-set" : "secret-missing"
+  ].join("|");
+  const now = Date.now();
+  if (syncKey === twitchEventSubLastSyncKey && now < twitchEventSubNextSyncAt) {
+    return;
+  }
+
+  twitchEventSubLastSyncKey = syncKey;
+  twitchEventSubNextSyncAt = now + TWITCH_EVENTSUB_SYNC_INTERVAL_MS;
+
+  try {
+    const result = await syncTwitchEventSubSubscriptions({
+      state,
+      env: process.env,
+      clientId,
+      clientSecret
+    });
+
+    if (result.status === "skipped") {
+      if (result.enabled) {
+        await upsertIncident({
+          scope: "twitch",
+          severity: "warning",
+          title: "Twitch EventSub registration skipped",
+          message: `EventSub alerts are enabled, but registration skipped: ${result.reason || "unknown reason"}.`,
+          fingerprint: "twitch.eventsub.sync.skipped"
+        });
+      } else {
+        await resolveIncident("twitch.eventsub.sync.failed", "Twitch EventSub alerts are disabled.");
+        await resolveIncident("twitch.eventsub.sync.skipped", "Twitch EventSub alerts are disabled.");
+      }
+      return;
+    }
+
+    await resolveIncident("twitch.eventsub.sync.failed", "Twitch EventSub synchronization succeeded.");
+    await resolveIncident("twitch.eventsub.sync.skipped", "Twitch EventSub configuration is complete.");
+    if (result.created.length > 0 || result.deleted.length > 0) {
+      await appendAuditEvent(
+        "twitch.eventsub.sync",
+        `EventSub ${result.status}; created=${result.created.join(",") || "none"} deleted=${result.deleted.length}.`
+      );
+    }
+  } catch (error) {
+    twitchEventSubNextSyncAt = Date.now() + 2 * 60_000;
+    const message = error instanceof Error ? error.message : "Unknown Twitch EventSub sync error.";
+    await upsertIncident({
+      scope: "twitch",
+      severity: "warning",
+      title: "Twitch EventSub synchronization failed",
+      message,
+      fingerprint: "twitch.eventsub.sync.failed"
+    });
+  }
+}
+
 async function runWorkerCycle(): Promise<void> {
   await syncDestinations();
   await syncLocalMediaLibrary();
@@ -4363,6 +4433,7 @@ async function runWorkerCycle(): Promise<void> {
   await syncYoutubePlaylistSources();
   await syncTwitchVodSources();
   await reconcileTwitch();
+  await reconcileTwitchEventSub();
   await twitchChatBridge.sync(await readAppState(), process.env);
   await appendAuditEvent("worker.cycle", "Worker reconciliation cycle completed.");
 }

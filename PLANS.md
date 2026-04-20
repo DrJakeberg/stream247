@@ -69,6 +69,20 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M14 Operator UX V2 | UX | Next | Complete | Resolve admin IA drift and make the control-room model more consistent | Broadcast, Dashboard, Scene Studio, Sources/Library, and Settings have clearer roles and more consistent naming | `apps/web`, docs, tests | medium | keep current routes and navigation labels working until the new IA is proven |
 | M15 Coverage And Release Proof V2 | Ops | Next | Complete | Prove the highest-risk parity features with broader automated coverage | Multi-output, Live Bridge, audio/cuepoint flows, and scene publish safety have direct runtime/browser proof beyond unit tests | tests, CI, scripts, docs | high | additive coverage only; do not remove current gates until replacements are green |
 
+## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
+
+This phase addresses the concrete product-quality problems identified in the 2026-04-20 audit: wrong labels visible to stream viewers, missing metadata editing, pool-level schedule blindness, hardcoded output settings, missing engagement features, and the need for a modern UI. The full product direction, UX strategy, and supporting data model designs live in `docs/redesign-and-product-plan.md`, `docs/video-planning-and-metadata-model.md`, and `docs/in-stream-overlay-and-output-strategy.md`.
+
+| Milestone | Type | Priority | Status | Goal | Acceptance | Touched Areas | Risk | Rollback |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| M21 Overlay Text Correctness | Reliability + UX | Now | Complete | Fix pool names and empty brackets visible in the live stream, add title prefix and hashtags schema | Overlay never shows raw pool names or `[]` brackets to viewers, `nextTitle` resolves to an actual video title, `desiredTitle` for Twitch uses `titlePrefix + title + hashtags`, new asset schema fields exist | `apps/worker`, `packages/core`, `packages/db`, `apps/web/app/overlay`, tests, docs | low–medium | schema changes are additive; fallback remains neutral as "Coming up next" if lookahead fails |
+| M22 Metadata V2 And Per-Video Edit | UX + Data | Now | Complete | Add per-video metadata edit form in library; wire title prefix, hashtags, and category override to Twitch sync and overlay display | Operators can edit title, title_prefix, category, hashtags per video from the library UI; saved values appear in the overlay and Twitch title; PATCH route uses targeted writers | `apps/web`, `packages/db`, tests | low | additive schema only; PATCH route falls back to existing values if new fields are absent |
+| M23 Schedule Video-Level Visibility | UX + Data | Next | Complete | Expand schedule preview to include per-block video-level lookahead titles; add video-level timeline expansion on the schedule page | Schedule preview API returns `videoSlots` per block; schedule page shows expandable video title timeline; broadcast snapshot `nextTitle` uses pool lookahead instead of block title | `apps/web`, `packages/core`, tests | medium | API change is additive; UI expansion falls back to block title if pool has no eligible assets |
+| M24 Output Profiles And Stream Settings | Architecture + UX | Next | Complete | Add first-class resolution/FPS settings, output profiles, and tie overlay viewport to output dimensions | Admin output settings page with profile selector (720p30, 1080p30, 480p30, 360p30, custom); `STREAM_OUTPUT_WIDTH/HEIGHT/FPS` env vars drive standby slate, renderer viewport, and FFmpeg scale filter; 360p overlay scales legibly | `apps/worker`, `apps/web`, `packages/db`, `docker-compose.yml`, `.env*.example`, tests, docs | medium | all new env vars have safe defaults matching current hardcoded values; scale filter is opt-in; full safe-area clamping is not yet implemented |
+| M25 In-Stream Engagement Layer | Parity + UX | Later | Complete | Add chat overlay and follow/sub alerts composited into the live stream output | Twitch IRC chat appears as scrollable overlay in the stream; follow/sub EventSub alerts show as timed animations in the stream; engagement admin section controls position, style, and rate; works at 360p | `apps/worker`, `apps/web`, `packages/db`, overlay page, tests, docs | high | engagement layer is additive and disabled by default; EventSub auto-registration was completed in the M28 audit follow-up |
+| M26 UI Redesign V1 | UX | Later | Complete | Modernize the admin UI with consistent navigation, form ergonomics, stacked field layouts, and long-title safety across all surfaces | Navigation matches redesign IA (`Control Room`, `Programming`, `Stream Studio`, `Workspace`); no layout breakage from long titles; all multi-field forms use stacked layout; existing routes preserved; browser smoke confirms redesigned surfaces | `apps/web`, tests, docs | medium | keep current route structure intact; redesign is UI layer only |
+| M27 Container Reliability And Ops | Ops | Later | Complete | Audit and harden container health, SSE connection tracking, and long-run memory behavior | SSE connections in `web` are tracked and cleaned up on disconnect; soak monitor reports container restart counts; long-run playout memory baseline is documented; health check intervals are tuned | `apps/web`, `apps/worker`, `docker-compose.yml`, scripts, tests, docs | low–medium | additive health and monitoring changes only; no playout pipeline changes |
+
 ## Stabilization Pass — Post-M15 Review
 
 | Milestone | Type | Priority | Status | Goal | Acceptance | Touched Areas | Risk | Rollback |
@@ -488,6 +502,388 @@ pnpm release:preflight
 
 Use the targeted checks only when the milestone changes runtime, persistence, delivery, or release behavior.
 
+## M21 Overlay Text Correctness
+
+Status: complete
+
+**Scope**
+
+- Fix `nextTitle` in `buildWorkerScenePayload` to resolve one step forward from the next schedule block's pool cursor instead of using the schedule block title or the "Scheduling next item" literal
+- Fix `currentTitle` to include `title_prefix` when set on the current asset
+- Fix `desiredTitle` in the Twitch metadata sync to use `[titlePrefix + " " + title]` and append hashtags from the new `hashtags_json` field
+- Fix empty `[]` bracket containers in the overlay page renderer by guarding every badge/label component with a non-empty content check
+- Fix the text-based overlay fallback to never emit lines that are prefix-only (e.g. `"Next: "` with no value, `"Queue: []"`)
+- Add additive schema migrations: `title_prefix TEXT NOT NULL DEFAULT ''` and `hashtags_json TEXT NOT NULL DEFAULT '[]'` and `platform_notes TEXT NOT NULL DEFAULT ''` to the `assets` table
+- Add a `lookaheadVideoTitleFromPool` helper in `packages/core` or `apps/worker`
+
+**Acceptance Criteria**
+
+- Overlay text never shows a raw pool name or a raw JSON array `[]` to viewers
+- `nextTitle` in the broadcast snapshot and overlay payload resolves to the first predicted video title in the next schedule block's pool (or the pool cursor lookahead for the current block if within it), never to the block title
+- Twitch `desiredTitle` is `[prefix] title [#hashtag1 #hashtag2]` when prefix and hashtags are set, truncated to 140 characters
+- All badge, chip, and label containers in the overlay page conditionally render only when their content is non-empty
+- New `title_prefix`, `hashtags_json`, and `platform_notes` columns exist in the `assets` table after migration
+- A unit test proves that `buildOverlayTextLinesFromScenePayload` with empty `queueTitles`, empty `categoryName`, and empty `sourceName` produces no line containing `"[]"`
+
+**Touched Areas**
+
+- `apps/worker/src/index.ts`
+- `packages/core/src/index.ts`
+- `packages/db/src/index.ts` (schema migration)
+- `apps/web/app/overlay/page.tsx` (overlay page component guards)
+- tests: unit tests for overlay text lines, lookahead helper, and Twitch title construction
+- docs: update `docs/upstream-gap-analysis.md` to reflect fix
+
+**Dependencies**
+
+- None. This is the first milestone in Phase 3 and has no predecessors.
+
+**Risks**
+
+- The pool lookahead may return a stale cursor prediction if the pool cursor was recently advanced; this is acceptable as an estimate (label text, not authoritative playout state)
+- If the assets list in `AppState` is not loaded when building the overlay, the lookahead falls back to the block title gracefully
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm test:fresh-db
+pnpm exec vitest run tests/unit/overlay-scenes.test.ts
+pnpm --filter worker build
+pnpm --filter db build
+```
+
+---
+
+## M22 Metadata V2 And Per-Video Edit
+
+Status: complete
+
+**Scope**
+
+- Extend `PATCH /api/assets/[id]` to accept `title`, `titlePrefix`, `categoryName`, `hashtagsJson`, `platformNotes`, `includeInProgramming`, `fallbackPriority` using targeted SQL writers
+- Add a per-video metadata edit panel to the assets/library page with stacked form fields: title, title prefix, category, hashtags (tag input), operator notes, include in programming toggle, fallback priority
+- Ensure the edit panel never uses inline compressed layout — all fields are stacked
+- Verify that saving the panel does not overwrite unrelated fields (targeted writer safety from M10)
+
+**Acceptance Criteria**
+
+- Operators can open a per-video edit panel from the library and save title, titlePrefix, categoryName, hashtagsJson, platformNotes
+- The `PATCH /api/assets/[id]` route uses targeted UPDATE SET for only the fields included in the request body
+- Long video titles do not break the edit panel layout
+- After saving, the Twitch metadata sync picks up the updated prefix and hashtags on the next sync cycle
+- Browser smoke includes opening the asset edit panel and saving a title prefix
+
+**Touched Areas**
+
+- `apps/web/app/api/assets/[id]/route.ts`
+- `apps/web/app/(admin)/assets/` page and components
+- tests: unit tests for targeted asset update, browser smoke update
+- docs: update library section in `docs/redesign-and-product-plan.md`
+
+**Dependencies**
+
+- M21 must be complete (provides `title_prefix`, `hashtags_json` schema fields)
+
+**Risks**
+
+- The existing asset curation UI may have state management that needs reworking to support the new panel; scope carefully to avoid rewriting the full page
+- Stale-write safety: ensure the PATCH handler does not accept a full asset object and write every field — only accept a subset
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm test:fresh-db
+pnpm test:e2e:smoke
+pnpm --filter web typecheck
+```
+
+---
+
+## M23 Schedule Video-Level Visibility
+
+Status: complete
+
+**Scope**
+
+- Extend the schedule preview API (`/api/schedule/preview`) to include a `videoSlots` array per block: asset id, predicted title, estimated duration, predicted start offset within the block
+- The lookahead is computed from the pool cursor, wrapping as needed to fill the block duration; use the same `lookaheadVideoTitleFromPool` helper from M21
+- Add a timeline expansion toggle to the schedule page: when expanded, each block row shows a horizontal timeline with video slot segments (proportional width, title truncated with tooltip)
+- Update the broadcast snapshot's `nextTitle` to use the pool cursor lookahead result (aligns with M21 fix, this milestone adds the schedule page UI)
+- Long video titles in the timeline use truncate + tooltip, never overflow the block container
+
+**Acceptance Criteria**
+
+- The schedule preview API returns `videoSlots` for blocks backed by a pool with eligible assets
+- The schedule page can expand any block to show a video-level timeline
+- Video titles in the timeline are truncated at the segment boundary with full title shown in a tooltip
+- Empty pools or pools with no eligible assets show a "No videos in pool" message in the timeline
+- The broadcast page "Next" card shows a video title, not a block title
+
+**Touched Areas**
+
+- `apps/web/app/api/schedule/preview/route.ts`
+- `apps/web/app/(admin)/schedule/` page and components
+- `packages/core/src/index.ts` (lookahead helper reuse)
+- tests: unit tests for the extended preview API, schedule timeline component
+
+**Dependencies**
+
+- M21 (lookahead helper), M22 (per-video titles available in library)
+
+**Risks**
+
+- Pool cursor is a live value; the predicted video sequence may differ from actual playback if the cursor advances between preview generation and playout
+- Very large pools with many assets may produce slow lookahead computation; bound the lookahead to a maximum of 20 slots
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm test:fresh-db
+pnpm exec vitest run tests/unit/schedule-preview.test.ts
+pnpm --filter web typecheck
+```
+
+---
+
+## M24 Output Profiles And Stream Settings
+
+Status: complete
+
+**Scope**
+
+- Add `STREAM_OUTPUT_WIDTH`, `STREAM_OUTPUT_HEIGHT`, and `STREAM_OUTPUT_FPS` env vars with safe defaults matching the current hardcoded values (1280, 720, 30)
+- Replace the hardcoded `1280x720:r=30` standby slate with values derived from these vars
+- Update `getSceneRendererViewport` to read `STREAM_OUTPUT_WIDTH/HEIGHT` in addition to `SCENE_RENDER_WIDTH/HEIGHT` (with `SCENE_RENDER_*` taking precedence for explicit overrides)
+- Add a `-vf scale=${width}:${height}` filter to the main video playout FFmpeg commands so input videos at any resolution are normalized to the output resolution (with letterbox padding for mismatched aspect ratios)
+- Add named output profiles (720p30, 1080p30, 480p30, 360p30) as a channel-level setting stored in the database
+- Add an Output settings admin page with a profile selector and custom mode fields
+- Add CSS scaling variables to the overlay page so text and badges scale proportionally when `STREAM_OUTPUT_HEIGHT` is less than 720
+- Update `stack.env.example` and deployment docs with the new env vars
+
+**Acceptance Criteria**
+
+- Setting `STREAM_OUTPUT_WIDTH=1920 STREAM_OUTPUT_HEIGHT=1080` produces a 1080p standby slate and a 1080p scene renderer viewport
+- Setting `STREAM_OUTPUT_HEIGHT=360` results in a legible overlay (no text smaller than ~10px effective size)
+- Input videos at 360p are scaled to the configured output resolution with letterbox padding
+- The Output admin page shows a profile dropdown; selecting a profile stores it and the worker applies it on next start
+- `pnpm release:preflight` still passes with the new env vars defaulted
+- No regression in `pnpm test:fresh-compose` or queue continuity smoke
+
+**Touched Areas**
+
+- `apps/worker/src/on-air-scene.ts`
+- `apps/worker/src/index.ts` (FFmpeg commands)
+- `apps/web/app/(admin)/` (new Output settings page)
+- `apps/web/app/overlay/page.tsx` (CSS scaling variables)
+- `packages/db/src/index.ts` (output profile channel setting)
+- `stack.env.example`, `docs/deployment.md`, `docs/in-stream-overlay-and-output-strategy.md`
+- tests: unit tests for viewport resolution, FFmpeg command builder, profile storage
+
+**Dependencies**
+
+- M21 (overlay viewport alignment needed before safe area fix)
+
+**Risks**
+
+- The scale filter adds a small CPU overhead per frame; on low-spec hosts this may increase latency; provide a `STREAM_SCALE_ENABLED=1` opt-in flag
+- Aspect ratio padding changes the visual appearance of content that was previously passed through at native resolution; document this clearly
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm test:fresh-db
+pnpm test:fresh-compose
+pnpm test:queue-continuity
+pnpm exec vitest run tests/unit/on-air-scene.test.ts
+pnpm --filter worker build
+```
+
+---
+
+## M25 In-Stream Engagement Layer
+
+Status: complete
+
+**Scope**
+
+- Add a Twitch IRC chat connection in the worker (reuse existing Twitch auth) that pushes incoming messages to a short in-memory ring buffer
+- Add `/api/overlay/events` SSE endpoint that streams chat messages and alert events to the overlay page
+- Add a chat overlay component to the overlay page that renders incoming messages, with quiet/active/flood display modes
+- Add Twitch EventSub webhook handling for `channel.follow` and `channel.subscribe` events; automatic registration is covered by M28
+- Add an alert animation component to the overlay page for follow and sub alerts
+- Add an `Overlays` admin section with controls for chat overlay and alert settings (position, style, rate, enable/disable)
+- Engagement features are disabled by default (`STREAM_CHAT_OVERLAY_ENABLED=0`, `STREAM_ALERTS_ENABLED=0`)
+
+**Acceptance Criteria**
+
+- Chat messages from Twitch IRC appear in the composited stream overlay within 3 seconds of being sent
+- Follow alerts show a timed animation in the stream on Twitch EventSub `channel.follow` events
+- Sub alerts show a timed animation in the stream on Twitch EventSub `channel.subscribe` events
+- Chat and alerts work at 360p output (no text clipping or layout breakage)
+- All engagement features are disabled by default and require explicit opt-in
+- The Overlays admin section shows current state (connected/disconnected, recent events)
+- Disabling chat overlay or alerts takes effect within one Chromium capture cycle (max `SCENE_RENDER_INTERVAL_MS`)
+
+**Touched Areas**
+
+- `apps/worker/src/index.ts` (IRC chat)
+- `apps/web/app/api/overlay/events/route.ts` (SSE endpoint and EventSub webhook receiver)
+- `apps/web/app/(admin)/overlays/` (new admin section)
+- `apps/web/app/overlay/page.tsx` (chat and alert components)
+- `packages/db/src/index.ts` (engagement settings)
+- `stack.env.example`, `docs/in-stream-overlay-and-output-strategy.md`
+- tests: unit tests for IRC message buffer, EventSub handler, SSE event routing; browser smoke for overlay events
+
+**Dependencies**
+
+- M21 (overlay pipeline must be clean before adding engagement layer)
+- M24 (360p scaling must be in place before engagement layer rendering is tested at low resolution)
+
+**Risks**
+
+- EventSub requires a publicly reachable HTTPS `APP_URL`; document that localhost installs cannot receive EventSub webhooks
+- IRC and EventSub connections add two new persistent outgoing connections from the worker; monitor for connection leak
+- Rate-limiting chat messages is critical to prevent overlay spam during busy streams; implement the flood protection mode before shipping
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm test:fresh-db
+pnpm test:fresh-compose
+pnpm test:e2e:smoke
+pnpm --filter worker build
+pnpm --filter web typecheck
+```
+
+---
+
+## M26 UI Redesign V1
+
+Status: complete
+
+**Scope**
+
+- Implement the updated navigation structure from `docs/redesign-and-product-plan.md` section C: `Control Room`, `Programming`, `Stream Studio`, `Workspace` top-level groups
+- Add `Overlays` page under `Stream Studio` (built in M25)
+- Add `Output` page under `Stream Studio` (built in M24)
+- Apply consistent long-title safety across all admin surfaces: `truncate` for single-line labels, `line-clamp-2` for card content, stacked layout for all multi-field forms
+- Modernize card, table, and form styles: cleaner spacing, consistent color usage, better contrast
+- Fix all known layout breakage sites: overlay designer layer names, schedule block editor, source list long names
+- Preserve all existing routes (no breaking URL changes)
+- Update browser smoke to cover redesigned navigation paths
+
+**Acceptance Criteria**
+
+- Navigation matches the redesign IA groupings
+- No layout overflow, breakage, or clipping with video titles of 80–140 characters
+- All multi-field forms use stacked layout (label above input, full width)
+- Existing browser smoke passes on all redesigned pages
+- `pnpm validate` and Docker image builds pass
+
+**Touched Areas**
+
+- `apps/web/app/(admin)/` (navigation layout, all page components)
+- `apps/web/components/` (shared card, form, badge components)
+- tests: browser smoke update
+- docs: update `docs/redesign-and-product-plan.md` with completed redesign notes
+
+**Dependencies**
+
+- M22, M23, M24, M25 should be complete or nearly complete to avoid redesign churn
+
+**Risks**
+
+- Scope creep: define "V1" strictly as layout/navigation/typography/safety, not a full component library rewrite
+- Test coverage: the browser smoke must cover enough pages to catch regressions early
+
+**Validation**
+
+```bash
+pnpm validate
+docker build -f docker/web.Dockerfile -t stream247-web:test .
+pnpm test:e2e:smoke
+pnpm --filter web typecheck
+```
+
+---
+
+## M27 Container Reliability And Ops
+
+Status: complete
+
+**Scope**
+
+- Audit SSE connection handling in `apps/web`: ensure every SSE response sets appropriate `Connection: close` behavior on client disconnect and that the Node.js process does not accumulate unclosed file descriptors under connection churn
+- Add SSE connection count to the `/api/system/readiness` response so operators can see how many active overlay/broadcast connections exist
+- Extend the soak monitor to report per-container restart counts and flag unexpected restarts as soak failures
+- Document the long-run Chromium memory growth baseline from existing DUT soak runs
+- Tune worker and playout health check intervals based on DUT soak observations
+
+**Acceptance Criteria**
+
+- SSE connections are explicitly cleaned up on `res.on('close', ...)` in all SSE route handlers
+- `/api/system/readiness` includes `sseConnections: number` in its response
+- `scripts/soak-monitor.sh` reports container restart counts and fails if `web`, `worker`, or `playout` restarted more than once during the soak window
+- Long-run Chromium memory profile is documented in `docs/operations.md`
+
+**Touched Areas**
+
+- `apps/web/app/api/broadcast/stream/route.ts` and other SSE routes
+- `apps/web/lib/server/` (SSE connection tracking)
+- `scripts/soak-monitor.sh`
+- `docs/operations.md`
+- tests: SSE cleanup unit test
+
+**Dependencies**
+
+- None (can run alongside any product milestone)
+
+**Risks**
+
+- Low risk — all changes are additive monitoring and cleanup; no playout pipeline changes
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm --filter web typecheck
+pnpm exec vitest run tests/unit/
+./scripts/soak-monitor.sh --hours 1    # abbreviated local check
+```
+
+---
+
+## M28 Phase 3 Audit Stabilization
+
+Status: complete
+
+**Scope**
+
+- Add automatic Twitch EventSub webhook registration for `channel.follow` and `channel.subscribe` when alert runtime is enabled, Twitch is connected, `APP_URL` is public HTTPS, and `TWITCH_EVENTSUB_SECRET` plus Twitch client credentials are configured
+- Verify existing EventSub subscriptions before creating new ones, and delete only Stream247-owned follow/sub webhook subscriptions when alerts are disabled
+- Replace the final viewer-facing "Scheduling next item" fallback with "Coming up next"
+- Align Phase 3 docs with the shipped M21-M27 state and caveats found in the acceptance audit
+
+**Caveats**
+
+- Twitch accounts connected before M28 may need to reconnect once so the app receives `moderator:read:followers` and `channel:read:subscriptions`; no manual Twitch CLI subscription step is required after that
+- Full overlay safe-area clamping for arbitrary positioned layers remains future work; M24 shipped output profiles, viewport alignment, and scaling
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/engagement.test.ts
+pnpm exec vitest run tests/unit/overlay-scenes.test.ts
+pnpm validate
+```
+
+---
+
 ## Rollback Notes
 
 - Docs-only milestones roll back by reverting the doc commit.
@@ -495,6 +891,9 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - Scene rendering work must preserve the current text-overlay path until the new renderer is proven stable.
 - Queue/transition milestones must preserve a safe compatibility path until continuity tests are green.
 - Multi-output milestones must keep current primary/backup delivery usable as the default fallback mode.
+- Phase 3 schema changes (M21: `title_prefix`, `hashtags_json`, `platform_notes`) are additive only; rollback by reverting migration and worker/web code while leaving the DB columns in place.
+- Output profile feature (M24) is fully opt-in; `STREAM_OUTPUT_*` env vars default to current hardcoded values so no behavioral change without explicit configuration.
+- Engagement layer (M25) is disabled by default; rollback by setting `STREAM_CHAT_OVERLAY_ENABLED=0` and `STREAM_ALERTS_ENABLED=0`.
 
 ## Strict Done Definition
 
@@ -506,6 +905,52 @@ Use the targeted checks only when the milestone changes runtime, persistence, de
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-04-20 — M28 Phase 3 Audit Stabilization
+
+- Added worker-side Twitch EventSub synchronization for follow/sub alert webhooks with duplicate detection and safe cleanup when alert runtime is disabled.
+- Replaced the remaining on-air fallback string with "Coming up next" and covered it with focused overlay text tests.
+- Marked M21-M27 complete after their implementation commits and documented the acceptance-audit caveats: EventSub requires the new OAuth scopes on reconnect, and full safe-area clamping is still future work.
+
+### 2026-04-20 — M27 Container Reliability And Ops
+
+- Added shared SSE connection tracking and included `sseConnections` in readiness output so web connection churn is observable.
+- Extended the soak monitor to report container restart counts and fail on unexpected web/worker/playout restarts.
+- Documented the current long-run memory and FD baseline in operations docs.
+
+### 2026-04-20 — M26 UI Redesign V1
+
+- Refreshed admin navigation into the Phase 3 IA groups while preserving existing routes.
+- Added long-title safety and shared layout polish across the redesigned admin shell.
+- Extended the admin smoke flow to cover Output and Overlays navigation.
+
+### 2026-04-20 — M25 In-Stream Engagement Layer
+
+- Added opt-in Twitch IRC chat ingest, engagement settings, `/api/overlay/events` SSE, and composited chat/alert overlay rendering.
+- Added EventSub webhook receiving for follow/sub alerts and an Overlays admin section for runtime controls.
+- Caveat closed by M28: webhook subscription registration is now automatic when the Twitch connection and public callback config are valid.
+
+### 2026-04-20 — M24 Output Profiles And Stream Settings
+
+- Added output profile persistence, admin controls, `STREAM_OUTPUT_WIDTH/HEIGHT/FPS`, viewport alignment, and optional FFmpeg scale/pad behavior.
+- Updated overlay scaling for lower output heights and added persistence/runtime tests.
+- Caveat: full safe-area container/clamping for arbitrary positioned layers is not yet implemented.
+
+### 2026-04-20 — M23 Schedule Video-Level Visibility
+
+- Added `videoSlots` lookahead to schedule preview and displayed expandable video timelines on the schedule page.
+- Updated broadcast snapshot next-title behavior to prefer pool lookahead titles.
+
+### 2026-04-20 — M22 Metadata V2 And Per-Video Edit
+
+- Added per-asset metadata editing for title, title prefix, category, hashtags, notes, programming inclusion, and fallback priority.
+- Extended targeted asset updates and Twitch title formatting tests to cover the new fields.
+
+### 2026-04-20 — M21 Overlay Text Correctness
+
+- Added title prefix, hashtag, and platform notes asset schema fields and preserved them through persistence.
+- Fixed overlay next-title lookahead, Twitch title formatting, and empty/`[]` label rendering.
+- Added focused overlay text and Twitch metadata tests.
 
 ### 2026-04-09 — M19.3 Main Artifact Publication Parity
 

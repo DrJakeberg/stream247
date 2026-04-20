@@ -6,7 +6,9 @@ import {
   isEngagementChatRuntimeEnabled,
   normalizeEngagementSettings
 } from "@stream247/core";
+import type { AppState } from "@stream247/db";
 import { createChatRateLimiter, createRingBuffer, parseTwitchIrcMessage } from "../../apps/worker/src/twitch-engagement";
+import { syncTwitchEventSubSubscriptions } from "../../apps/worker/src/twitch-eventsub";
 
 const { mockAppendEngagementEventRecord, mockGetBroadcastSnapshot, mockReadAppState } = vi.hoisted(() => ({
   mockAppendEngagementEventRecord: vi.fn(),
@@ -37,7 +39,7 @@ vi.mock("@/lib/server/sse", async () => vi.importActual("../../apps/web/lib/serv
 
 import { GET, POST } from "../../apps/web/app/api/overlay/events/route";
 
-const envKeys = ["NODE_ENV", "STREAM_ALERTS_ENABLED", "STREAM_CHAT_OVERLAY_ENABLED", "TWITCH_EVENTSUB_SECRET"] as const;
+const envKeys = ["NODE_ENV", "APP_URL", "STREAM_ALERTS_ENABLED", "STREAM_CHAT_OVERLAY_ENABLED", "TWITCH_EVENTSUB_SECRET"] as const;
 const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 
 function restoreEnv() {
@@ -57,6 +59,29 @@ function baseEngagement(overrides: Partial<typeof DEFAULT_ENGAGEMENT_SETTINGS> =
     ...overrides,
     updatedAt: ""
   };
+}
+
+function baseEventSubState(overrides: { alertsEnabled?: boolean; twitch?: Partial<AppState["twitch"]> } = {}): AppState {
+  return {
+    engagement: baseEngagement({ alertsEnabled: overrides.alertsEnabled ?? true }),
+    twitch: {
+      status: "connected",
+      broadcasterId: "broadcaster-1",
+      broadcasterLogin: "stream247",
+      accessToken: "user-token",
+      refreshToken: "refresh-token",
+      connectedAt: "",
+      tokenExpiresAt: "",
+      lastRefreshAt: "",
+      lastMetadataSyncAt: "",
+      lastSyncedTitle: "",
+      lastSyncedCategoryName: "",
+      lastSyncedCategoryId: "",
+      lastScheduleSyncAt: "",
+      error: "",
+      ...overrides.twitch
+    }
+  } as AppState;
 }
 
 function signedEventSubRequest(body: string, secret = "eventsub-secret", headers: Record<string, string> = {}) {
@@ -145,6 +170,215 @@ describe("engagement layer helpers", () => {
     expect(limiter.allow(2_000)).toBe(true);
     expect(limiter.allow(3_000)).toBe(false);
     expect(limiter.allow(61_001)).toBe(true);
+  });
+
+  it("auto-registers missing follow and subscription EventSub webhooks when alerts are enabled", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "https://id.twitch.tv/oauth2/token") {
+        return new Response(JSON.stringify({ access_token: "app-token" }), { status: 200 });
+      }
+      if (url === "https://api.twitch.tv/helix/eventsub/subscriptions" && init?.method !== "POST") {
+        return new Response(JSON.stringify({ data: [], pagination: {} }), { status: 200 });
+      }
+      if (url === "https://api.twitch.tv/helix/eventsub/subscriptions" && init?.method === "POST") {
+        return new Response(JSON.stringify({ data: [{ id: "created" }] }), { status: 202 });
+      }
+      return new Response("", { status: 500 });
+    });
+
+    const result = await syncTwitchEventSubSubscriptions({
+      state: baseEventSubState(),
+      env: {
+        APP_URL: "https://stream247.example",
+        STREAM_ALERTS_ENABLED: "1",
+        TWITCH_EVENTSUB_SECRET: "eventsub-secret"
+      },
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+
+    const createBodies = fetchMock.mock.calls
+      .filter(([url, init]) => String(url) === "https://api.twitch.tv/helix/eventsub/subscriptions" && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+
+    expect(result.created).toEqual(["channel.follow", "channel.subscribe"]);
+    expect(createBodies).toEqual([
+      {
+        type: "channel.follow",
+        version: "2",
+        condition: {
+          broadcaster_user_id: "broadcaster-1",
+          moderator_user_id: "broadcaster-1"
+        },
+        transport: {
+          method: "webhook",
+          callback: "https://stream247.example/api/overlay/events",
+          secret: "eventsub-secret"
+        }
+      },
+      {
+        type: "channel.subscribe",
+        version: "1",
+        condition: {
+          broadcaster_user_id: "broadcaster-1"
+        },
+        transport: {
+          method: "webhook",
+          callback: "https://stream247.example/api/overlay/events",
+          secret: "eventsub-secret"
+        }
+      }
+    ]);
+  });
+
+  it("does not create duplicate EventSub subscriptions when matching webhooks already exist", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "https://id.twitch.tv/oauth2/token") {
+        return new Response(JSON.stringify({ access_token: "app-token" }), { status: 200 });
+      }
+      if (url === "https://api.twitch.tv/helix/eventsub/subscriptions" && init?.method !== "POST") {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "follow-existing",
+                type: "channel.follow",
+                version: "2",
+                condition: {
+                  broadcaster_user_id: "broadcaster-1",
+                  moderator_user_id: "broadcaster-1"
+                },
+                transport: {
+                  method: "webhook",
+                  callback: "https://stream247.example/api/overlay/events"
+                }
+              },
+              {
+                id: "subscribe-existing",
+                type: "channel.subscribe",
+                version: "1",
+                condition: {
+                  broadcaster_user_id: "broadcaster-1"
+                },
+                transport: {
+                  method: "webhook",
+                  callback: "https://stream247.example/api/overlay/events"
+                }
+              }
+            ],
+            pagination: {}
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response("", { status: 500 });
+    });
+
+    const result = await syncTwitchEventSubSubscriptions({
+      state: baseEventSubState(),
+      env: {
+        APP_URL: "https://stream247.example",
+        STREAM_ALERTS_ENABLED: "1",
+        TWITCH_EVENTSUB_SECRET: "eventsub-secret"
+      },
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+
+    const createCalls = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url) === "https://api.twitch.tv/helix/eventsub/subscriptions" && init?.method === "POST"
+    );
+    expect(result.created).toEqual([]);
+    expect(result.existing).toEqual(["channel.follow", "channel.subscribe"]);
+    expect(createCalls).toEqual([]);
+  });
+
+  it("cleans up owned EventSub webhooks when alert runtime is disabled", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "https://id.twitch.tv/oauth2/token") {
+        return new Response(JSON.stringify({ access_token: "app-token" }), { status: 200 });
+      }
+      if (url === "https://api.twitch.tv/helix/eventsub/subscriptions") {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "follow-owned",
+                type: "channel.follow",
+                version: "2",
+                condition: {
+                  broadcaster_user_id: "broadcaster-1",
+                  moderator_user_id: "broadcaster-1"
+                },
+                transport: {
+                  method: "webhook",
+                  callback: "https://stream247.example/api/overlay/events"
+                }
+              },
+              {
+                id: "follow-other-callback",
+                type: "channel.follow",
+                version: "2",
+                condition: {
+                  broadcaster_user_id: "broadcaster-1",
+                  moderator_user_id: "broadcaster-1"
+                },
+                transport: {
+                  method: "webhook",
+                  callback: "https://other.example/api/overlay/events"
+                }
+              }
+            ],
+            pagination: {}
+          }),
+          { status: 200 }
+        );
+      }
+      if (url === "https://api.twitch.tv/helix/eventsub/subscriptions?id=follow-owned" && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      return new Response("", { status: 500 });
+    });
+
+    const result = await syncTwitchEventSubSubscriptions({
+      state: baseEventSubState(),
+      env: {
+        APP_URL: "https://stream247.example",
+        STREAM_ALERTS_ENABLED: "0"
+      },
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+
+    expect(result).toMatchObject({
+      status: "cleaned-up",
+      deleted: ["follow-owned"]
+    });
+  });
+
+  it("skips EventSub registration when Twitch is not connected", async () => {
+    const fetchMock = vi.fn();
+
+    const result = await syncTwitchEventSubSubscriptions({
+      state: baseEventSubState({ twitch: { status: "not-connected", broadcasterId: "" } }),
+      env: {
+        APP_URL: "https://stream247.example",
+        STREAM_ALERTS_ENABLED: "1",
+        TWITCH_EVENTSUB_SECRET: "eventsub-secret"
+      },
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+
+    expect(result).toMatchObject({ status: "skipped", reason: "twitch-not-connected" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

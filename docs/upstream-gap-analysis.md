@@ -1,6 +1,6 @@
 # Upstream Gap Analysis For Stream247
 
-Updated: 2026-04-19
+Updated: 2026-04-20
 
 ## Goal And Method
 
@@ -57,9 +57,9 @@ Current Stream247 repo truth:
 | Capability | Public Upstream Evidence | Stream247 Status | Repo Evidence | Gap | Recommended Milestone | Constraints / Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | 24/7 prerecorded streaming | Public product positioning and help docs clearly center on permanent pre-recorded live channels | Parity | README, worker runtime, playout docs | keep strengthening reliability | M3 | Must stay self-hosted, Docker-first |
-| Scheduling and repeat behavior | Public docs/blog describe scheduling, repeat every day, and reliable automation | Partial parity | schedule blocks, templates, repeat sets, materialized fill preview, queue-aware editor, show profiles, and safe-boundary cuepoint inserts | still needs deeper long-form ad rule families, stronger recurring editing, and denser calendar ergonomics | M12, M14 | Preserve current weekly block model and extend it |
-| Live playback controls | Public pages and docs show live controls, refresh/hard reload, and playlist control | Partial parity | broadcast workspace and broadcast actions | core controls exist, but deeper queue surgery, jump/rewind-style controls, and denser operator workflow remain partial | M12, M14 | Keep original naming as `On-Air Controls` |
-| Stream designer / overlay designer | Public designer supports layered overlays, custom fonts, current media metadata, and more | Partial parity | overlay studio with presets, draft/publish workflow, positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, conservative local font-stack overrides, shared scene payload contract, and an on-air scene renderer v1 | broader scene automation and cloud-style composition depth remain partial | M17 | Do not copy Upstream visual design or naming |
+| Scheduling and repeat behavior | Public docs/blog describe scheduling, repeat every day, and reliable automation | Partial parity | schedule blocks, templates, repeat sets, materialized fill preview, queue-aware editor, show profiles, and safe-boundary cuepoint inserts | planning is still pool-level, not video-level; operators cannot see which specific video plays in a slot; video-level timeline and broadcast next-title fix are M21/M23 | M21, M23 | Preserve current weekly block model and extend it |
+| Live playback controls | Public pages and docs show live controls, refresh/hard reload, and playlist control | Partial parity | broadcast workspace and broadcast actions | the "next" card in broadcast shows pool/block titles rather than real video titles (M21 fix); deeper queue surgery and denser operator workflow remain partial | M21, M23 | Keep original naming as `On-Air Controls` |
+| Stream designer / overlay designer | Public designer supports layered overlays, custom fonts, current media metadata, and more | Partial parity | overlay studio with presets, draft/publish workflow, positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, conservative local font-stack overrides, shared scene payload contract, and an on-air scene renderer v1 | overlay shows empty `[]` containers and pool names to viewers (active bug, M21 fix); broader scene automation and cloud-style composition depth remain partial | M21, M26 | Do not copy Upstream visual design or naming |
 | Websites and widget embeds | Public help covers website embeds and StreamElements-style widgets/alerts | Partial parity | sandboxed website/widget scene layers now render inside the published browser overlay and shared scene contract, with explicit supported, limited, and unsupported provider guidance | third-party CSP, iframe, and X-Frame-Options policies still limit real-world provider compatibility | M17 | Respect CSP, iframe, and X-Frame-Options limits |
 | Reusable playlists / designer presets | Public help supports saving and loading playlists and designer settings | Partial parity | overlay scene preset library plus selective `Channel Blueprint` export/import now exist | still missing deeper reusable programming bundles and more automatic cross-install media remapping | M13 | Use original `Channel Blueprints` naming |
 | RTMP destinations | Public docs cover custom RTMP and platform-specific outputs | Partial parity | built-in primary/backup outputs plus additional managed RTMP outputs, staged recovery, and per-destination cooldown visibility | routing works, but per-output platform guidance and broader recovery automation remain partial | M12, M15 | Keep current primary/backup flow functional |
@@ -119,18 +119,41 @@ These parity points are bounded. Stream247 does not yet match public Upstream be
 - reliability and validation gates
 - local account security
 
+## Fixed In Phase 3
+
+The 2026-04-20 audit identified several viewer-visible and operator-visible gaps. These are now fixed in M21-M28:
+
+1. **Pool names in overlay and broadcast snapshot**: `nextTitle` now prefers pool cursor lookahead and falls back safely instead of showing block/pool names.
+2. **Old "Scheduling next item" fallback**: The remaining viewer-facing fallback is now "Coming up next".
+3. **Empty `[]` bracket containers in overlay**: Overlay text builders and badge/label renderers filter empty strings and raw `[]` values.
+4. **Missing title prefix and hashtag fields**: Assets now have additive `title_prefix`, `hashtags_json`, and `platform_notes` fields, and Twitch title sync uses prefix/title/hashtags.
+5. **No per-video metadata edit form**: The library now has per-video metadata editing with targeted writes.
+6. **Pool-level schedule blindness**: Schedule preview now includes video-level `videoSlots`, and the schedule page shows an expandable title timeline.
+7. **Hardcoded output dimensions**: Output profiles and `STREAM_OUTPUT_WIDTH/HEIGHT/FPS` now drive standby slate, renderer viewport, and optional scale/pad behavior.
+8. **No engagement layer**: Chat overlay, follow/sub alert rendering, EventSub receiving, and EventSub auto-registration are now implemented and disabled by default.
+
+## Known Active Caveats
+
+1. **EventSub authorization migration**: Twitch accounts connected before M28 may need one reconnect so the app receives `moderator:read:followers` and `channel:read:subscriptions`; after that, Stream247 registers follow/sub EventSub webhooks automatically.
+2. **Safe-area clamping**: M24 implemented output profile sizing and overlay scaling, but not full safe-area clamping for arbitrary positioned Scene Studio layers.
+3. **Donation/bits/channel-point alerts**: Follow and subscription alerts exist; richer alert families remain future work.
+4. **Twitch timestamp-derived category changes**: Category sync is still asset/block level, not per timestamp segment inside long videos.
+
 ## Missing Features
 
-Top missing product capabilities:
+Top missing product capabilities (not active bugs, but gap vs. product goals):
 
-1. deeper scene composition beyond the shipped metadata widgets, conservative local font handling, and current positioned-layer model
-2. deeper persistent queue and transition controller with less reliance on hard encoder restarts
-3. deeper `Channel Blueprints` support such as more automatic cross-install media remapping and richer reusable programming packages
-4. richer ad-rule families and deeper timed-insert tooling beyond the current safe-boundary cuepoint model
-5. broader browser-driven embed compatibility beyond the current explicit supported, limited, and unsupported provider guidance
-6. stronger per-output operator controls and destination-specific recovery UI
-7. richer audio routing, layered mixing, and crossfade behavior beyond the current replace-mode lanes
-8. longer-running soak coverage, broader browser E2E depth, and deeper `Live Bridge` source management
+1. full overlay safe-area clamping for arbitrary positioned layers and engagement widgets
+2. donation/bits/channel-point alert families beyond follow/sub alerts
+3. deeper scene composition beyond the shipped metadata widgets, conservative local font handling, and current positioned-layer model
+4. deeper persistent queue and transition controller with less reliance on hard encoder restarts
+5. deeper `Channel Blueprints` support such as more automatic cross-install media remapping and richer reusable programming packages
+6. richer ad-rule families and deeper timed-insert tooling beyond the current safe-boundary cuepoint model
+7. broader browser-driven embed compatibility beyond the current explicit supported, limited, and unsupported provider guidance
+8. stronger per-output operator controls and destination-specific recovery UI
+9. richer audio routing, layered mixing, and crossfade behavior beyond the current replace-mode lanes
+10. longer-running soak coverage, broader browser E2E depth, and deeper `Live Bridge` source management
+11. Twitch timestamp-based per-segment category updates during long video playback
 
 ## Legal Constraints
 
@@ -161,11 +184,17 @@ Top missing product capabilities:
 
 ## Recommended Implementation Order
 
-`M10` through `M17` are now complete in the current repo, but those completed milestones still leave broader product-depth gaps listed above.
+`M10` through `M28` are now complete in the current repo. Phase 3 shipped the viewer-facing overlay, metadata, planning, output, engagement, redesign, and ops stabilization work identified in the 2026-04-20 audit.
 
-If follow-on work continues beyond the current roadmap, the next highest-value areas are:
+Recommended order after Phase 3:
 
-1. richer continuity/recovery semantics and destination-specific guidance beyond the current staged recovery proof
-2. broader audio mixing, crossfades, and deeper ad-rule families beyond replace-mode lanes and safe-boundary cuepoints
-3. stronger blueprint/media portability across installs
-4. longer-running soak coverage and broader end-to-end browser workflows
+1. **Validate M28 on a public deployment** — confirm `APP_URL` is HTTPS, reconnect Twitch if the connection predates the new EventSub scopes, and verify follow/sub alerts register without manual Twitch CLI steps.
+2. **Close the safe-area caveat** — add explicit safe-area containers/clamping for arbitrary positioned Scene Studio and engagement layers.
+3. **Pick the next product gap intentionally** — donation/bits alerts, per-segment Twitch category sync, or deeper output/destination controls are candidates; do not start mini-games or live-status widgets until explicitly selected.
+
+Beyond Phase 3:
+- richer continuity/recovery semantics and destination-specific guidance
+- broader audio mixing, crossfades, and deeper ad-rule families
+- stronger blueprint/media portability across installs
+- Twitch timestamp-based per-segment category updates during video playback
+- longer-running soak coverage and broader end-to-end browser workflows

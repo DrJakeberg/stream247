@@ -203,6 +203,28 @@ describe("overlay text lines", () => {
     expect(buildOverlayTextLinesFromScenePayload(payload).some((line) => line.includes("[]"))).toBe(false);
   });
 
+  it("uses neutral upcoming copy instead of the old scheduling placeholder", () => {
+    const payload = buildOverlayScenePayload({
+      overlay: {
+        ...createOverlaySource(),
+        channelName: "Archive TV",
+        replayLabel: "Replay stream",
+        brandBadge: "",
+        accentColor: "#0e6d5a"
+      },
+      queueKind: "asset",
+      target: "browser",
+      currentTitle: "Episode One",
+      nextTitle: "Coming up next",
+      queueTitles: [],
+      timeZone: "Europe/Berlin"
+    });
+    const lines = buildOverlayTextLinesFromScenePayload(payload);
+
+    expect(lines).toContain("Next: Coming up next");
+    expect(lines.join("\n")).not.toContain("Scheduling next item");
+  });
+
   it("builds live bridge scene copy", () => {
     const payload = buildOverlayScenePayload({
       overlay: {
