@@ -1,6 +1,7 @@
 "use client";
 
 import type { PublicChannelSnapshot } from "@/lib/live-broadcast";
+import { EngagementOverlay } from "@/components/engagement-overlay";
 import { OverlaySceneCanvas } from "@/components/overlay-scene-canvas";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
 import type { CSSProperties } from "react";
@@ -66,6 +67,7 @@ export function LiveOverlay(props: {
       }
     >
       <OverlaySceneCanvas payload={snapshot.activeScenePayload} />
+      <EngagementOverlay initialEngagement={snapshot.engagement} />
     </main>
   );
 }

@@ -92,6 +92,7 @@ Belongs in `.env`:
 - optional fallback SMTP credentials
 - optional fallback Discord webhook URL
 - optional deployment-level output overrides (`STREAM_OUTPUT_WIDTH`, `STREAM_OUTPUT_HEIGHT`, `STREAM_OUTPUT_FPS`)
+- optional engagement flags (`STREAM_CHAT_OVERLAY_ENABLED`, `STREAM_ALERTS_ENABLED`, `TWITCH_EVENTSUB_SECRET`)
 
 Does not belong in `.env`:
 
@@ -171,6 +172,8 @@ Twitch VOD playback is cache-backed by default. The worker stores verified Twitc
 
 Output settings are available in `/output` with built-in profiles for 720p30, 1080p30, 480p30, and 360p30 plus a custom mode. The saved profile is stored in PostgreSQL and applies when the playout worker starts its next FFmpeg process. Deployment-level `STREAM_OUTPUT_WIDTH`, `STREAM_OUTPUT_HEIGHT`, and `STREAM_OUTPUT_FPS` override the saved profile for standby slate generation, scene-renderer capture size, and FFmpeg output normalization. `SCENE_RENDER_WIDTH` and `SCENE_RENDER_HEIGHT` still have precedence for scene capture if you need a temporary render-specific override. Set `STREAM_SCALE_ENABLED=0` only as a rollback if the scale/pad/fps filter causes unexpected encoder load.
 
+In-stream engagement is available from `/overlays` and is disabled by default. Both the database setting and the deployment flag must be enabled before anything renders in the captured overlay: set `STREAM_CHAT_OVERLAY_ENABLED=1` for Twitch IRC chat and `STREAM_ALERTS_ENABLED=1` for follow/sub alerts. EventSub webhooks post to `/api/overlay/events`; production deployments should set `TWITCH_EVENTSUB_SECRET` and must expose `APP_URL` over reachable HTTPS for Twitch to deliver follow/sub notifications. Localhost-only installs can use the admin preview and chat settings, but cannot receive Twitch EventSub webhooks from the public internet.
+
 CI currently builds against the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners.
 
 ## Current Capability Notes
@@ -184,6 +187,7 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 - sources can be edited in place and the asset catalog can be searched by title, source, and status
 - playout supports operator restart, temporary fallback, asset pinning, skip-current, and resume-schedule actions
 - overlay is currently a browser-source page with replay labeling, current/next context, and admin-managed branding
+- optional chat and follow/sub engagement overlays render through the same captured browser overlay when explicitly enabled
 - email and Discord alert delivery are both implemented
 - managed secret storage in `/settings` is implemented for Twitch and alert credentials
 - setup and dashboard expose a guided go-live checklist based on the current workspace state

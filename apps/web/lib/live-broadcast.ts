@@ -1,5 +1,9 @@
 import type {
   DestinationRoutingStatus,
+  EngagementChatDisplayMode,
+  EngagementEventKind,
+  EngagementOverlayPosition,
+  EngagementOverlayStyle,
   OverlaySceneCustomLayer,
   OverlaySceneLayerKind,
   OverlayScenePayload,
@@ -229,6 +233,34 @@ export type LiveOverlaySummary = {
   updatedAt: string;
 };
 
+export type LiveEngagementSettingsSummary = {
+  chatEnabled: boolean;
+  alertsEnabled: boolean;
+  chatRuntimeEnabled: boolean;
+  alertsRuntimeEnabled: boolean;
+  chatMode: EngagementChatDisplayMode;
+  chatPosition: EngagementOverlayPosition;
+  alertPosition: EngagementOverlayPosition;
+  style: EngagementOverlayStyle;
+  maxMessages: number;
+  rateLimitPerMinute: number;
+  updatedAt: string;
+};
+
+export type LiveEngagementEventSummary = {
+  id: string;
+  kind: EngagementEventKind;
+  actor: string;
+  message: string;
+  createdAt: string;
+};
+
+export type LiveEngagementSummary = {
+  settings: LiveEngagementSettingsSummary;
+  chatStatus: "disabled" | "connected" | "disconnected";
+  recentEvents: LiveEngagementEventSummary[];
+};
+
 export type LiveSceneLayerSummary = {
   kind: OverlaySceneLayerKind;
   label: string;
@@ -255,6 +287,7 @@ export type BroadcastSnapshot = {
   audioLane: LiveAudioLaneSummary;
   cuepoints: LiveCuepointSummary;
   overlay: LiveOverlaySummary;
+  engagement: LiveEngagementSummary;
   activeScene: LiveSceneSummary;
   activeScenePayload: OverlayScenePayload;
   destination: LiveDestinationSummary | null;
@@ -275,6 +308,7 @@ export type PublicChannelSnapshot = {
   generatedAt: string;
   timeZone: string;
   overlay: LiveOverlaySummary;
+  engagement: LiveEngagementSummary;
   activeScene: LiveSceneSummary;
   activeScenePayload: OverlayScenePayload;
   playout: Pick<LivePlayoutSummary, "status" | "message" | "currentTitle" | "transitionState" | "overrideMode">;

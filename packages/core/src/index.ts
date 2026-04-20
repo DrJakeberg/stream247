@@ -65,11 +65,54 @@ export type StreamOutputSettings = {
   fps: number;
 };
 
+export type EngagementChatDisplayMode = "quiet" | "active" | "flood";
+export type EngagementOverlayPosition = "bottom-left" | "bottom-right" | "top-left" | "top-right";
+export type EngagementOverlayStyle = "compact" | "card";
+export type EngagementEventKind = "chat" | "follow" | "subscribe" | "status";
+
+export type EngagementSettings = {
+  chatEnabled: boolean;
+  alertsEnabled: boolean;
+  chatMode: EngagementChatDisplayMode;
+  chatPosition: EngagementOverlayPosition;
+  alertPosition: EngagementOverlayPosition;
+  style: EngagementOverlayStyle;
+  maxMessages: number;
+  rateLimitPerMinute: number;
+};
+
+export type EngagementEvent = {
+  id: string;
+  kind: EngagementEventKind;
+  actor: string;
+  message: string;
+  createdAt: string;
+};
+
 type StreamOutputSettingsInput = {
   profileId?: unknown;
   width?: unknown;
   height?: unknown;
   fps?: unknown;
+};
+
+type EngagementSettingsInput = {
+  chatEnabled?: unknown;
+  alertsEnabled?: unknown;
+  chatMode?: unknown;
+  chatPosition?: unknown;
+  alertPosition?: unknown;
+  style?: unknown;
+  maxMessages?: unknown;
+  rateLimitPerMinute?: unknown;
+};
+
+type EngagementEventInput = {
+  id?: unknown;
+  kind?: unknown;
+  actor?: unknown;
+  message?: unknown;
+  createdAt?: unknown;
 };
 
 export const STREAM_OUTPUT_PROFILES: StreamOutputProfile[] = [
@@ -87,6 +130,17 @@ export const DEFAULT_STREAM_OUTPUT_SETTINGS: StreamOutputSettings = {
   fps: 30
 };
 
+export const DEFAULT_ENGAGEMENT_SETTINGS: EngagementSettings = {
+  chatEnabled: false,
+  alertsEnabled: false,
+  chatMode: "quiet",
+  chatPosition: "bottom-left",
+  alertPosition: "top-right",
+  style: "compact",
+  maxMessages: 5,
+  rateLimitPerMinute: 30
+};
+
 function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -94,6 +148,22 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
   }
 
   return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+      return true;
+    }
+    if (normalized === "" || normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+      return false;
+    }
+  }
+  return fallback;
 }
 
 export function normalizeStreamOutputProfileId(value: unknown): StreamOutputProfileId {
@@ -145,6 +215,62 @@ export function resolveStreamOutputSettings(args?: {
     height: env.STREAM_OUTPUT_HEIGHT === undefined ? base.height : env.STREAM_OUTPUT_HEIGHT,
     fps: env.STREAM_OUTPUT_FPS === undefined ? base.fps : env.STREAM_OUTPUT_FPS
   });
+}
+
+export function normalizeEngagementChatDisplayMode(value: unknown): EngagementChatDisplayMode {
+  return value === "active" || value === "flood" || value === "quiet" ? value : DEFAULT_ENGAGEMENT_SETTINGS.chatMode;
+}
+
+export function normalizeEngagementOverlayPosition(value: unknown): EngagementOverlayPosition {
+  return value === "bottom-right" || value === "top-left" || value === "top-right" || value === "bottom-left"
+    ? value
+    : DEFAULT_ENGAGEMENT_SETTINGS.chatPosition;
+}
+
+export function normalizeEngagementOverlayStyle(value: unknown): EngagementOverlayStyle {
+  return value === "card" || value === "compact" ? value : DEFAULT_ENGAGEMENT_SETTINGS.style;
+}
+
+export function normalizeEngagementEventKind(value: unknown): EngagementEventKind {
+  return value === "follow" || value === "subscribe" || value === "status" || value === "chat" ? value : "status";
+}
+
+export function normalizeEngagementSettings(value?: EngagementSettingsInput | null): EngagementSettings {
+  const defaults = DEFAULT_ENGAGEMENT_SETTINGS;
+  return {
+    chatEnabled: normalizeBoolean(value?.chatEnabled, defaults.chatEnabled),
+    alertsEnabled: normalizeBoolean(value?.alertsEnabled, defaults.alertsEnabled),
+    chatMode: normalizeEngagementChatDisplayMode(value?.chatMode),
+    chatPosition: normalizeEngagementOverlayPosition(value?.chatPosition),
+    alertPosition: normalizeEngagementOverlayPosition(value?.alertPosition),
+    style: normalizeEngagementOverlayStyle(value?.style),
+    maxMessages: clampInteger(value?.maxMessages, defaults.maxMessages, 1, 12),
+    rateLimitPerMinute: clampInteger(value?.rateLimitPerMinute, defaults.rateLimitPerMinute, 1, 120)
+  };
+}
+
+export function normalizeEngagementEvent(value: EngagementEventInput): EngagementEvent {
+  return {
+    id: String(value.id ?? "").trim().slice(0, 80),
+    kind: normalizeEngagementEventKind(value.kind),
+    actor: String(value.actor ?? "").trim().slice(0, 80),
+    message: String(value.message ?? "").trim().slice(0, 280),
+    createdAt: String(value.createdAt ?? "").trim()
+  };
+}
+
+export function isEngagementChatRuntimeEnabled(
+  settings: EngagementSettingsInput | null | undefined,
+  env: Record<string, string | undefined>
+): boolean {
+  return normalizeEngagementSettings(settings).chatEnabled && env.STREAM_CHAT_OVERLAY_ENABLED === "1";
+}
+
+export function isEngagementAlertsRuntimeEnabled(
+  settings: EngagementSettingsInput | null | undefined,
+  env: Record<string, string | undefined>
+): boolean {
+  return normalizeEngagementSettings(settings).alertsEnabled && env.STREAM_ALERTS_ENABLED === "1";
 }
 
 type OverlaySceneCustomLayerBase = {

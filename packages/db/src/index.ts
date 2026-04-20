@@ -6,6 +6,8 @@ import {
   createDefaultModerationConfig,
   normalizeAudioLaneVolumePercent,
   normalizeCuepointOffsetsSeconds,
+  normalizeEngagementEvent,
+  normalizeEngagementSettings,
   normalizeOverlayPanelAnchor,
   normalizeOverlaySceneCustomLayers,
   normalizeOverlaySceneLayerOrder,
@@ -15,6 +17,10 @@ import {
   normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
   type DestinationRoutingStatus,
+  type EngagementChatDisplayMode,
+  type EngagementEventKind,
+  type EngagementOverlayPosition,
+  type EngagementOverlayStyle,
   type ModerationConfig,
   type OverlaySceneCustomLayer,
   type OverlaySceneLayerKind,
@@ -368,6 +374,26 @@ export type OutputSettingsRecord = {
   updatedAt: string;
 };
 
+export type EngagementSettingsRecord = {
+  chatEnabled: boolean;
+  alertsEnabled: boolean;
+  chatMode: EngagementChatDisplayMode;
+  chatPosition: EngagementOverlayPosition;
+  alertPosition: EngagementOverlayPosition;
+  style: EngagementOverlayStyle;
+  maxMessages: number;
+  rateLimitPerMinute: number;
+  updatedAt: string;
+};
+
+export type EngagementEventRecord = {
+  id: string;
+  kind: EngagementEventKind;
+  actor: string;
+  message: string;
+  createdAt: string;
+};
+
 export type BroadcastQueueItemRecord = {
   id: string;
   kind: "asset" | "insert" | "standby" | "reconnect" | "live";
@@ -485,6 +511,8 @@ export type AppState = {
   overlay: OverlaySettingsRecord;
   managedConfig: ManagedConfigRecord;
   output: OutputSettingsRecord;
+  engagement: EngagementSettingsRecord;
+  engagementEvents: EngagementEventRecord[];
   twitch: TwitchConnection;
   twitchScheduleSegments: TwitchScheduleSegmentRecord[];
   pools: PoolRecord[];
@@ -549,6 +577,26 @@ type OutputSettingsRow = {
   height: number;
   fps: number;
   updated_at: string;
+};
+
+type EngagementSettingsRow = {
+  chat_enabled: boolean;
+  alerts_enabled: boolean;
+  chat_mode: EngagementChatDisplayMode;
+  chat_position: EngagementOverlayPosition;
+  alert_position: EngagementOverlayPosition;
+  style: EngagementOverlayStyle;
+  max_messages: number;
+  rate_limit_per_minute: number;
+  updated_at: string;
+};
+
+type EngagementEventRow = {
+  id: string;
+  kind: EngagementEventKind;
+  actor: string;
+  message: string;
+  created_at: string;
 };
 
 type OverlayScenePresetRow = {
@@ -638,6 +686,26 @@ function normalizeOutputSettingsRecord(output?: Partial<OutputSettingsRecord> | 
   };
 }
 
+function normalizeEngagementSettingsRecord(engagement?: Partial<EngagementSettingsRecord> | null): EngagementSettingsRecord {
+  const defaults = defaultState().engagement;
+  const normalized = normalizeEngagementSettings(engagement ?? defaults);
+  return {
+    ...normalized,
+    updatedAt: String(engagement?.updatedAt ?? defaults.updatedAt ?? "")
+  };
+}
+
+function normalizeEngagementEventRecord(event: Partial<EngagementEventRecord>): EngagementEventRecord {
+  const normalized = normalizeEngagementEvent(event);
+  return {
+    id: normalized.id || createId("engagement"),
+    kind: normalized.kind,
+    actor: normalized.actor,
+    message: normalized.message,
+    createdAt: normalized.createdAt || new Date().toISOString()
+  };
+}
+
 function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: OverlaySettingsRecord): OverlaySettingsRecord {
   return row
     ? normalizeOverlaySettingsRecord({
@@ -685,6 +753,35 @@ function mapOutputRowToRecord(row: OutputSettingsRow | undefined, fallback: Outp
         updatedAt: row.updated_at
       })
     : fallback;
+}
+
+function mapEngagementSettingsRowToRecord(
+  row: EngagementSettingsRow | undefined,
+  fallback: EngagementSettingsRecord
+): EngagementSettingsRecord {
+  return row
+    ? normalizeEngagementSettingsRecord({
+        chatEnabled: row.chat_enabled,
+        alertsEnabled: row.alerts_enabled,
+        chatMode: row.chat_mode,
+        chatPosition: row.chat_position,
+        alertPosition: row.alert_position,
+        style: row.style,
+        maxMessages: row.max_messages,
+        rateLimitPerMinute: row.rate_limit_per_minute,
+        updatedAt: row.updated_at
+      })
+    : fallback;
+}
+
+function mapEngagementEventRowToRecord(row: EngagementEventRow): EngagementEventRecord {
+  return normalizeEngagementEventRecord({
+    id: row.id,
+    kind: row.kind,
+    actor: row.actor,
+    message: row.message,
+    createdAt: row.created_at
+  });
 }
 
 function overlaySettingsEqual(left: OverlaySettingsRecord, right: OverlaySettingsRecord): boolean {
@@ -1164,6 +1261,18 @@ function defaultState(): AppState {
       fps: 30,
       updatedAt: ""
     },
+    engagement: {
+      chatEnabled: false,
+      alertsEnabled: false,
+      chatMode: "quiet",
+      chatPosition: "bottom-left",
+      alertPosition: "top-right",
+      style: "compact",
+      maxMessages: 5,
+      rateLimitPerMinute: 30,
+      updatedAt: ""
+    },
+    engagementEvents: [],
     twitch: {
       status: "not-connected",
       broadcasterId: "",
@@ -1489,6 +1598,14 @@ function normalizeState(state: AppState): AppState {
       ...(state.managedConfig ?? {})
     },
     output: normalizeOutputSettingsRecord((state as AppState & { output?: Partial<OutputSettingsRecord> }).output ?? defaults.output),
+    engagement: normalizeEngagementSettingsRecord(
+      (state as AppState & { engagement?: Partial<EngagementSettingsRecord> }).engagement ?? defaults.engagement
+    ),
+    engagementEvents: Array.isArray((state as AppState & { engagementEvents?: Partial<EngagementEventRecord>[] }).engagementEvents)
+      ? (state as AppState & { engagementEvents?: Partial<EngagementEventRecord>[] }).engagementEvents
+          .map((event) => normalizeEngagementEventRecord(event))
+          .slice(0, 100)
+      : [],
     twitch: {
       ...defaults.twitch,
       ...(state.twitch ?? {})
@@ -1741,6 +1858,27 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       height INTEGER NOT NULL DEFAULT 720,
       fps INTEGER NOT NULL DEFAULT 30,
       updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS engagement_settings (
+      singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+      chat_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      alerts_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      chat_mode TEXT NOT NULL DEFAULT 'quiet',
+      chat_position TEXT NOT NULL DEFAULT 'bottom-left',
+      alert_position TEXT NOT NULL DEFAULT 'top-right',
+      style TEXT NOT NULL DEFAULT 'compact',
+      max_messages INTEGER NOT NULL DEFAULT 5,
+      rate_limit_per_minute INTEGER NOT NULL DEFAULT 30,
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS engagement_events (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      actor TEXT NOT NULL DEFAULT '',
+      message TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS twitch_connection (
@@ -2272,6 +2410,39 @@ if (!schemaMigrations.some((migration) => migration.id === outputProfilesMigrati
   schemaMigrations.push(outputProfilesMigration);
 }
 
+const engagementLayerMigration: MigrationDefinition = {
+  id: "20260420_002_engagement_layer",
+  description: "Add in-stream engagement settings and recent event storage.",
+  apply: async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS engagement_settings (
+        singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+        chat_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        alerts_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        chat_mode TEXT NOT NULL DEFAULT 'quiet',
+        chat_position TEXT NOT NULL DEFAULT 'bottom-left',
+        alert_position TEXT NOT NULL DEFAULT 'top-right',
+        style TEXT NOT NULL DEFAULT 'compact',
+        max_messages INTEGER NOT NULL DEFAULT 5,
+        rate_limit_per_minute INTEGER NOT NULL DEFAULT 30,
+        updated_at TEXT NOT NULL DEFAULT ''
+      );
+
+      CREATE TABLE IF NOT EXISTS engagement_events (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        actor TEXT NOT NULL DEFAULT '',
+        message TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === engagementLayerMigration.id)) {
+  schemaMigrations.push(engagementLayerMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -2530,6 +2701,53 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     `,
     [next.output.profileId, next.output.width, next.output.height, next.output.fps, next.output.updatedAt]
   );
+
+  await client.query(
+    `
+      INSERT INTO engagement_settings (
+        singleton_id, chat_enabled, alerts_enabled, chat_mode, chat_position, alert_position, style, max_messages, rate_limit_per_minute, updated_at
+      )
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ON CONFLICT (singleton_id) DO UPDATE SET
+        chat_enabled = EXCLUDED.chat_enabled,
+        alerts_enabled = EXCLUDED.alerts_enabled,
+        chat_mode = EXCLUDED.chat_mode,
+        chat_position = EXCLUDED.chat_position,
+        alert_position = EXCLUDED.alert_position,
+        style = EXCLUDED.style,
+        max_messages = EXCLUDED.max_messages,
+        rate_limit_per_minute = EXCLUDED.rate_limit_per_minute,
+        updated_at = EXCLUDED.updated_at
+    `,
+    [
+      next.engagement.chatEnabled,
+      next.engagement.alertsEnabled,
+      next.engagement.chatMode,
+      next.engagement.chatPosition,
+      next.engagement.alertPosition,
+      next.engagement.style,
+      next.engagement.maxMessages,
+      next.engagement.rateLimitPerMinute,
+      next.engagement.updatedAt
+    ]
+  );
+
+  await client.query("DELETE FROM engagement_events");
+  for (const event of next.engagementEvents.slice(0, 100)) {
+    const normalized = normalizeEngagementEventRecord(event);
+    await client.query(
+      `
+        INSERT INTO engagement_events (id, kind, actor, message, created_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (id) DO UPDATE SET
+          kind = EXCLUDED.kind,
+          actor = EXCLUDED.actor,
+          message = EXCLUDED.message,
+          created_at = EXCLUDED.created_at
+      `,
+      [normalized.id, normalized.kind, normalized.actor, normalized.message, normalized.createdAt]
+    );
+  }
 
   await client.query(
     `
@@ -3105,6 +3323,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     updated_at: string;
   }>("SELECT * FROM managed_config WHERE singleton_id = 1");
   const outputResult = await client.query<OutputSettingsRow>("SELECT * FROM output_settings WHERE singleton_id = 1");
+  const engagementResult = await client.query<EngagementSettingsRow>("SELECT * FROM engagement_settings WHERE singleton_id = 1");
+  const engagementEventsResult = await client.query<EngagementEventRow>(
+    "SELECT * FROM engagement_events ORDER BY created_at DESC LIMIT 100"
+  );
   const twitchResult = await client.query<{
     status: TwitchConnection["status"];
     broadcaster_id: string;
@@ -3348,6 +3570,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   const overlayRow = overlayResult.rows[0];
   const managedConfigRow = managedConfigResult.rows[0];
   const outputRow = outputResult.rows[0];
+  const engagementRow = engagementResult.rows[0];
   const twitchRow = twitchResult.rows[0];
   const playoutRow = playoutResult.rows[0];
   const decryptedManagedConfig = managedConfigRow ? decryptManagedConfig(managedConfigRow.encrypted_payload) : null;
@@ -3409,6 +3632,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
         }
       : defaults.managedConfig,
     output: mapOutputRowToRecord(outputRow, defaults.output),
+    engagement: mapEngagementSettingsRowToRecord(engagementRow, defaults.engagement),
+    engagementEvents: engagementEventsResult.rows.map(mapEngagementEventRowToRecord),
     twitch: twitchRow
       ? {
           status: twitchRow.status,
@@ -4348,6 +4573,80 @@ export async function updateOutputSettingsRecord(output: OutputSettingsRecord): 
       [normalized.profileId, normalized.width, normalized.height, normalized.fps, normalized.updatedAt]
     );
   });
+}
+
+export async function updateEngagementSettingsRecord(engagement: EngagementSettingsRecord): Promise<void> {
+  await withSerializedStateWrite("updateEngagementSettingsRecord", async (client) => {
+    const normalized = normalizeEngagementSettingsRecord(engagement);
+    await client.query(
+      `
+        INSERT INTO engagement_settings (
+          singleton_id, chat_enabled, alerts_enabled, chat_mode, chat_position, alert_position, style, max_messages, rate_limit_per_minute, updated_at
+        )
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          chat_enabled = EXCLUDED.chat_enabled,
+          alerts_enabled = EXCLUDED.alerts_enabled,
+          chat_mode = EXCLUDED.chat_mode,
+          chat_position = EXCLUDED.chat_position,
+          alert_position = EXCLUDED.alert_position,
+          style = EXCLUDED.style,
+          max_messages = EXCLUDED.max_messages,
+          rate_limit_per_minute = EXCLUDED.rate_limit_per_minute,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        normalized.chatEnabled,
+        normalized.alertsEnabled,
+        normalized.chatMode,
+        normalized.chatPosition,
+        normalized.alertPosition,
+        normalized.style,
+        normalized.maxMessages,
+        normalized.rateLimitPerMinute,
+        normalized.updatedAt
+      ]
+    );
+  });
+}
+
+export async function appendEngagementEventRecord(event: Partial<EngagementEventRecord>): Promise<EngagementEventRecord> {
+  return withSerializedStateWrite("appendEngagementEventRecord", async (client) => {
+    const normalized = normalizeEngagementEventRecord(event);
+    await client.query(
+      `
+        INSERT INTO engagement_events (id, kind, actor, message, created_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (id) DO UPDATE SET
+          kind = EXCLUDED.kind,
+          actor = EXCLUDED.actor,
+          message = EXCLUDED.message,
+          created_at = EXCLUDED.created_at
+      `,
+      [normalized.id, normalized.kind, normalized.actor, normalized.message, normalized.createdAt]
+    );
+    await client.query(`
+      DELETE FROM engagement_events
+      WHERE id NOT IN (
+        SELECT id FROM engagement_events ORDER BY created_at DESC LIMIT 100
+      )
+    `);
+    return normalized;
+  });
+}
+
+export async function readEngagementEventRecords(limit = 50): Promise<EngagementEventRecord[]> {
+  await ensureDatabase();
+  const client = await getPool().connect();
+  try {
+    const result = await client.query<EngagementEventRow>(
+      "SELECT * FROM engagement_events ORDER BY created_at DESC LIMIT $1",
+      [Math.max(1, Math.min(100, Math.round(limit)))]
+    );
+    return result.rows.map(mapEngagementEventRowToRecord);
+  } finally {
+    client.release();
+  }
 }
 
 export async function updateOverlaySettingsRecord(overlay: OverlaySettingsRecord): Promise<void> {

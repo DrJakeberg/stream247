@@ -107,6 +107,7 @@ import {
   isStreamScaleEnabled,
   type WorkerStreamOutputSettings
 } from "./output-settings.js";
+import { TwitchChatBridge } from "./twitch-engagement.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
@@ -132,6 +133,7 @@ let plannedUplinkStopReason = "";
 const WORKER_HEARTBEAT_STALE_MS = 180_000;
 type WorkerScheduleOccurrence = ReturnType<typeof buildScheduleOccurrences>[number];
 const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
+const twitchChatBridge = new TwitchChatBridge();
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
 const PLAYOUT_RECONNECT_CONFIG = getPlayoutReconnectConfig(process.env);
@@ -4361,6 +4363,7 @@ async function runWorkerCycle(): Promise<void> {
   await syncYoutubePlaylistSources();
   await syncTwitchVodSources();
   await reconcileTwitch();
+  await twitchChatBridge.sync(await readAppState(), process.env);
   await appendAuditEvent("worker.cycle", "Worker reconciliation cycle completed.");
 }
 

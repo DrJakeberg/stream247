@@ -1,5 +1,6 @@
 import {
   DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
+  DEFAULT_ENGAGEMENT_SETTINGS,
   buildOverlayScenePayload,
   buildMaterializedProgrammingWeek,
   buildSchedulePreviewVideoSlots,
@@ -24,11 +25,15 @@ import {
   isLikelyTwitchVodUrl,
   isLikelyYouTubeChannelUrl,
   isLikelyYouTubePlaylistUrl,
+  isEngagementAlertsRuntimeEnabled,
+  isEngagementChatRuntimeEnabled,
+  normalizeEngagementSettings,
   summarizeLiveBridgeInput,
   type OverlaySceneRenderTarget
 } from "@stream247/core";
 import {
   appendAuditEvent,
+  appendEngagementEventRecord,
   appendPresenceWindowRecord,
   applyOverlayScenePresetRecordToDraft,
   createPoolRecord,
@@ -54,6 +59,7 @@ import {
   saveOverlayDraftRecord,
   saveOverlayScenePresetRecord,
   updateDestinationRecord,
+  updateEngagementSettingsRecord,
   updateManagedConfigRecord,
   updateModerationConfigRecord,
   updateOverlaySettingsRecord,
@@ -89,6 +95,8 @@ import {
   type AssetCollectionMembershipUpdateRecord,
   type AssetMetadataUpdateRecord,
   type AuditEvent,
+  type EngagementEventRecord,
+  type EngagementSettingsRecord,
   type IncidentRecord,
   type ModeratorPresenceWindowRecord,
   type OwnerAccount,
@@ -115,6 +123,7 @@ import type {
   LiveAudioLaneSummary,
   LiveCuepointSummary,
   LiveDestinationSummary,
+  LiveEngagementSummary,
   LiveIncidentSummary,
   LiveOverlaySummary,
   LivePlayoutSummary,
@@ -131,6 +140,8 @@ export type {
   AssetCollectionMembershipUpdateRecord,
   AssetMetadataUpdateRecord,
   AuditEvent,
+  EngagementEventRecord,
+  EngagementSettingsRecord,
   IncidentRecord,
   ModeratorPresenceWindowRecord,
   OwnerAccount,
@@ -155,6 +166,7 @@ export type {
 export {
   acknowledgeIncident,
   appendAuditEvent,
+  appendEngagementEventRecord,
   appendPresenceWindowRecord,
   applyOverlayScenePresetRecordToDraft,
   createPoolRecord,
@@ -179,6 +191,7 @@ export {
   saveOverlayDraftRecord,
   saveOverlayScenePresetRecord,
   updateDestinationRecord,
+  updateEngagementSettingsRecord,
   updateManagedConfigRecord,
   updateModerationConfigRecord,
   updateOverlaySettingsRecord,
@@ -847,6 +860,49 @@ function summarizeOverlay(overlay: OverlaySettingsRecord): LiveOverlaySummary {
   };
 }
 
+function summarizeEngagement(state: AppState): LiveEngagementSummary {
+  const rawEngagement = (state as Partial<AppState>).engagement;
+  const engagement = normalizeEngagementSettings(rawEngagement ?? DEFAULT_ENGAGEMENT_SETTINGS);
+  const engagementEvents = Array.isArray((state as Partial<AppState>).engagementEvents)
+    ? ((state as Partial<AppState>).engagementEvents as EngagementEventRecord[])
+    : [];
+  const chatRuntimeEnabled = isEngagementChatRuntimeEnabled(engagement, process.env);
+  const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(engagement, process.env);
+  const latestStatus = engagementEvents.find((event) => event.kind === "status" && event.actor === "chat") ?? null;
+  const chatStatus = !chatRuntimeEnabled
+    ? "disabled"
+    : latestStatus?.message === "connected"
+      ? "connected"
+      : "disconnected";
+
+  return {
+    settings: {
+      chatEnabled: engagement.chatEnabled,
+      alertsEnabled: engagement.alertsEnabled,
+      chatRuntimeEnabled,
+      alertsRuntimeEnabled,
+      chatMode: engagement.chatMode,
+      chatPosition: engagement.chatPosition,
+      alertPosition: engagement.alertPosition,
+      style: engagement.style,
+      maxMessages: engagement.maxMessages,
+      rateLimitPerMinute: engagement.rateLimitPerMinute,
+      updatedAt: rawEngagement?.updatedAt ?? ""
+    },
+    chatStatus,
+    recentEvents: engagementEvents
+      .filter((event) => event.kind !== "status")
+      .slice(0, 25)
+      .map((event) => ({
+        id: event.id,
+        kind: event.kind,
+        actor: event.actor,
+        message: event.message,
+        createdAt: event.createdAt
+      }))
+  };
+}
+
 function buildOverlaySceneSource(overlay: OverlaySettingsRecord) {
   return {
     channelName: overlay.channelName,
@@ -1104,6 +1160,7 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
     audioLane: summarizeAudioLane(state, currentScheduleItem),
     cuepoints: summarizeCuepoints(state, currentScheduleItem),
     overlay: summarizeOverlay(state.overlay),
+    engagement: summarizeEngagement(state),
     activeScene: activeScenePayload.scene,
     activeScenePayload,
     destination: summarizeDestination(state),
@@ -1128,6 +1185,7 @@ export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot
     generatedAt: snapshot.generatedAt,
     timeZone: snapshot.timeZone,
     overlay: snapshot.overlay,
+    engagement: snapshot.engagement,
     activeScene: snapshot.activeScene,
     activeScenePayload: snapshot.activeScenePayload,
     playout: {

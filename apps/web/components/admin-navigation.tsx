@@ -21,6 +21,7 @@ const SECTIONS = [
     items: [
       { href: "/schedule", label: "Programming", meta: "Blocks, repeats, fill" },
       { href: "/sources", label: "Library", meta: "Sources, uploads, pools" },
+      { href: "/overlays", label: "Overlays", meta: "Chat and stream alerts" },
       { href: "/overlay-studio", label: "Scene Studio", meta: "Publish viewer scenes" }
     ]
   },

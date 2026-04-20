@@ -19,6 +19,7 @@ import {
   saveOverlayScenePresetRecord,
   updateAssetCurationRecords,
   updateDestinationRecord,
+  updateEngagementSettingsRecord,
   updateOutputSettingsRecord,
   updateSourceFieldRecords,
   writeAppState
@@ -52,6 +53,20 @@ const persistentProgramFeedRuntimeColumns = [
 ].sort();
 const outputProfilesMigrationId = "20260420_001_output_profiles";
 const outputSettingsColumns = ["singleton_id", "profile_id", "width", "height", "fps", "updated_at"].sort();
+const engagementLayerMigrationId = "20260420_002_engagement_layer";
+const engagementSettingsColumns = [
+  "singleton_id",
+  "chat_enabled",
+  "alerts_enabled",
+  "chat_mode",
+  "chat_position",
+  "alert_position",
+  "style",
+  "max_messages",
+  "rate_limit_per_minute",
+  "updated_at"
+].sort();
+const engagementEventsColumns = ["id", "kind", "actor", "message", "created_at"].sort();
 
 async function runDocker(args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("docker", args);
@@ -242,6 +257,33 @@ describe.sequential("database roundtrip", () => {
         fps: 30,
         updatedAt: "2026-04-04T10:00:00.000Z"
       },
+      engagement: {
+        chatEnabled: true,
+        alertsEnabled: true,
+        chatMode: "active" as const,
+        chatPosition: "bottom-right" as const,
+        alertPosition: "top-left" as const,
+        style: "card" as const,
+        maxMessages: 8,
+        rateLimitPerMinute: 45,
+        updatedAt: "2026-04-04T10:00:00.000Z"
+      },
+      engagementEvents: [
+        {
+          id: "engagement_chat_1",
+          kind: "chat" as const,
+          actor: "viewer",
+          message: "hello stream",
+          createdAt: "2026-04-04T10:01:00.000Z"
+        },
+        {
+          id: "engagement_follow_1",
+          kind: "follow" as const,
+          actor: "newviewer",
+          message: "newviewer followed the channel.",
+          createdAt: "2026-04-04T10:02:00.000Z"
+        }
+      ],
       twitch: {
         ...initial.twitch,
         status: "connected" as const,
@@ -513,6 +555,8 @@ describe.sequential("database roundtrip", () => {
     expect(reread.overlay.tickerText).toBe("Roundtrip preview ticker");
     expect(reread.managedConfig.twitchClientId).toBe("client-id");
     expect(reread.output).toEqual(nextState.output);
+    expect(reread.engagement).toEqual(nextState.engagement);
+    expect(reread.engagementEvents.map((event) => event.id)).toEqual(["engagement_follow_1", "engagement_chat_1"]);
     expect(reread.twitch.broadcasterLogin).toBe("roundtrip");
     expect(reread.twitchScheduleSegments[0]?.segmentId).toBe("abc");
     expect(reread.pools[0]?.name).toBe("Pool One");
@@ -609,6 +653,29 @@ describe.sequential("database roundtrip", () => {
       fps: 30,
       updatedAt: "2026-04-04T10:03:00.000Z"
     });
+
+    await updateEngagementSettingsRecord({
+      chatEnabled: true,
+      alertsEnabled: false,
+      chatMode: "flood",
+      chatPosition: "top-right",
+      alertPosition: "bottom-left",
+      style: "compact",
+      maxMessages: 12,
+      rateLimitPerMinute: 90,
+      updatedAt: "2026-04-04T10:04:00.000Z"
+    });
+    expect((await readAppState()).engagement).toEqual({
+      chatEnabled: true,
+      alertsEnabled: false,
+      chatMode: "flood",
+      chatPosition: "top-right",
+      alertPosition: "bottom-left",
+      style: "compact",
+      maxMessages: 12,
+      rateLimitPerMinute: 90,
+      updatedAt: "2026-04-04T10:04:00.000Z"
+    });
   }, 60_000);
 
   it("upgrades existing playout runtime rows with persistent uplink and program feed columns", async () => {
@@ -691,6 +758,48 @@ describe.sequential("database roundtrip", () => {
       fps: 30,
       updatedAt: ""
     });
+  }, 60_000);
+
+  it("upgrades existing databases with engagement settings and event storage", async () => {
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      DROP TABLE IF EXISTS engagement_events;
+      DROP TABLE IF EXISTS engagement_settings;
+      DELETE FROM schema_migrations WHERE id = '${engagementLayerMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const settingsColumns = (
+      await executeSql(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'engagement_settings'
+        ORDER BY column_name;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+    const eventColumns = (
+      await executeSql(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'engagement_events'
+        ORDER BY column_name;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+    const migrationApplied = await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${engagementLayerMigrationId}';`);
+    const state = await readAppState();
+
+    expect(settingsColumns).toEqual(engagementSettingsColumns);
+    expect(eventColumns).toEqual(engagementEventsColumns);
+    expect(migrationApplied).toBe("1");
+    expect(state.engagement.chatEnabled).toBe(false);
+    expect(state.engagement.alertsEnabled).toBe(false);
+    expect(state.engagementEvents).toEqual([]);
   }, 60_000);
 
   it("does not reseed an initialized database just because no users exist", async () => {
