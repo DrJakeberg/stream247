@@ -95,6 +95,7 @@ import {
   isInternalMediaCachePath,
   isTwitchVodAsset
 } from "./twitch-vod-cache.js";
+import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
@@ -118,6 +119,7 @@ let plannedUplinkStopReason = "";
 // source sync and Twitch reconciliation happen in one cycle, so keep the stale
 // window above the steady-state cadence to avoid false healthcheck failures.
 const WORKER_HEARTBEAT_STALE_MS = 180_000;
+type WorkerScheduleOccurrence = ReturnType<typeof buildScheduleOccurrences>[number];
 const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
@@ -745,11 +747,18 @@ function buildWorkerScenePayload(args: {
   queueKind: AppState["playout"]["queueItems"][number]["kind"] | "";
   currentTitle: string;
   nextTitle: string;
+  nextScheduleItem?: WorkerScheduleOccurrence | null;
   nextTimeLabel?: string;
   currentCategory?: string;
   currentSourceName?: string;
   queueTitles?: string[];
 }){
+  const nextScheduleTitle = args.nextScheduleItem?.title ?? "";
+  const resolvedNextTitle =
+    args.nextScheduleItem && (!args.nextTitle || args.nextTitle === nextScheduleTitle)
+      ? resolveScheduleOccurrenceOverlayTitle(args.state, args.nextScheduleItem) || nextScheduleTitle
+      : args.nextTitle;
+
   return buildOverlayScenePayload({
     overlay: {
       channelName: args.state.overlay.channelName,
@@ -786,7 +795,7 @@ function buildWorkerScenePayload(args: {
     currentTitle: args.currentTitle,
     currentCategory: args.currentCategory,
     currentSourceName: args.currentSourceName,
-    nextTitle: args.nextTitle,
+    nextTitle: resolvedNextTitle,
     nextTimeLabel: args.nextTimeLabel,
     queueTitles: args.queueTitles,
     timeZone: process.env.CHANNEL_TIMEZONE || "UTC"
@@ -820,6 +829,7 @@ async function writeStandbySlate(
     queueKind,
     currentTitle: currentItem?.title || "Stand by",
     nextTitle: nextItem ? nextItem.title : "Programming will resume shortly",
+    nextScheduleItem: nextItem,
     nextTimeLabel: nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured",
     currentCategory: currentItem?.categoryName,
     currentSourceName: currentItem?.sourceName,
@@ -856,6 +866,7 @@ async function writeOnAirOverlay(
       queueKind,
       currentTitle: overrides.currentTitle || asset?.title || state.playout.currentTitle || currentItem?.title || "Stand by",
       nextTitle: overrides.nextTitle || nextItem?.title || "Scheduling next item",
+      nextScheduleItem: nextItem,
       nextTimeLabel: overrides.nextTimeLabel || (nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured"),
       currentCategory: overrides.currentCategory || currentItem?.categoryName || asset?.categoryName,
       currentSourceName:
@@ -1606,10 +1617,10 @@ function getNextScheduleItem(state: AppState): ReturnType<typeof buildScheduleOc
   });
 }
 
-function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string): AssetRecord | null {
+function getPoolEligibleAssets(state: AppState, poolId: string, skippedAssetId = ""): AssetRecord[] {
   const pool = state.pools.find((entry) => entry.id === poolId);
   if (!pool) {
-    return null;
+    return [];
   }
   const excludedAssetIds = new Set<string>();
   if (pool.insertAssetId && pool.insertEveryItems > 0) {
@@ -1619,31 +1630,62 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
     excludedAssetIds.add(pool.audioLaneAssetId);
   }
 
-  const eligibleAssets = state.assets.filter((asset) => {
-    if (
-      asset.status !== "ready" ||
-      asset.id === skippedAssetId ||
-      asset.includeInProgramming === false ||
-      excludedAssetIds.has(asset.id)
-    ) {
-      return false;
-    }
+  return state.assets
+    .filter((asset) => {
+      if (
+        asset.status !== "ready" ||
+        asset.id === skippedAssetId ||
+        asset.includeInProgramming === false ||
+        excludedAssetIds.has(asset.id)
+      ) {
+        return false;
+      }
 
-    return pool.sourceIds.includes(asset.sourceId);
-  });
+      return pool.sourceIds.includes(asset.sourceId);
+    })
+    .sort((left, right) => {
+      const publishedDelta =
+        new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
+      if (publishedDelta !== 0) {
+        return publishedDelta;
+      }
+
+      return left.title.localeCompare(right.title);
+    });
+}
+
+function lookaheadVideoTitleFromPool(state: AppState, poolId: string): string {
+  const pool = state.pools.find((entry) => entry.id === poolId);
+  if (!pool) {
+    return "";
+  }
+  const eligibleAssets = getPoolEligibleAssets(state, poolId);
+  if (eligibleAssets.length === 0) {
+    return "";
+  }
+
+  const cursorIndex = pool.cursorAssetId ? eligibleAssets.findIndex((asset) => asset.id === pool.cursorAssetId) : -1;
+  return (eligibleAssets[(cursorIndex + 1) % eligibleAssets.length] ?? eligibleAssets[0])?.title ?? "";
+}
+
+function resolveScheduleOccurrenceOverlayTitle(state: AppState, item: WorkerScheduleOccurrence | null): string {
+  if (!item) {
+    return "";
+  }
+
+  return item.poolId ? lookaheadVideoTitleFromPool(state, item.poolId) || item.title : item.title;
+}
+
+function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string): AssetRecord | null {
+  const pool = state.pools.find((entry) => entry.id === poolId);
+  if (!pool) {
+    return null;
+  }
+  const eligibleAssets = getPoolEligibleAssets(state, poolId, skippedAssetId);
 
   if (eligibleAssets.length === 0) {
     return null;
   }
-
-  eligibleAssets.sort((left, right) => {
-    const publishedDelta = new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
-    if (publishedDelta !== 0) {
-      return publishedDelta;
-    }
-
-    return left.title.localeCompare(right.title);
-  });
 
   if (!pool.cursorAssetId) {
     return eligibleAssets[0] ?? null;
@@ -1662,40 +1704,11 @@ function getPoolPlaybackQueue(state: AppState, poolId: string, skippedAssetId: s
   if (!pool) {
     return [];
   }
-  const excludedAssetIds = new Set<string>();
-  if (pool.insertAssetId && pool.insertEveryItems > 0) {
-    excludedAssetIds.add(pool.insertAssetId);
-  }
-  if (pool.audioLaneAssetId) {
-    excludedAssetIds.add(pool.audioLaneAssetId);
-  }
-
-  const eligibleAssets = state.assets.filter((asset) => {
-    if (
-      asset.status !== "ready" ||
-      asset.id === skippedAssetId ||
-      asset.includeInProgramming === false ||
-      excludedAssetIds.has(asset.id)
-    ) {
-      return false;
-    }
-
-    return pool.sourceIds.includes(asset.sourceId);
-  });
+  const eligibleAssets = getPoolEligibleAssets(state, poolId, skippedAssetId);
 
   if (eligibleAssets.length === 0) {
     return [];
   }
-
-  eligibleAssets.sort((left, right) => {
-    const publishedDelta =
-      new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
-    if (publishedDelta !== 0) {
-      return publishedDelta;
-    }
-
-    return left.title.localeCompare(right.title);
-  });
 
   const primaryReferenceId = currentAssetId || pool.cursorAssetId;
   let startIndex = primaryReferenceId ? eligibleAssets.findIndex((asset) => asset.id === primaryReferenceId) : -1;
@@ -4123,7 +4136,9 @@ async function reconcileTwitch(): Promise<void> {
     twitchAccessToken = await refreshBroadcasterAccessToken();
   }
 
-  const desiredTitle = currentAsset?.title || currentScheduleItem?.title || state.playout.currentTitle;
+  const desiredTitle = currentAsset
+    ? buildTwitchMetadataTitle(currentAsset, currentScheduleItem?.title || state.playout.currentTitle)
+    : currentScheduleItem?.title || state.playout.currentTitle;
   let desiredCategoryId = getTwitchDefaultCategoryId(state);
   let desiredCategoryName = currentAsset?.categoryName || currentScheduleItem?.categoryName || "";
   const categoryCache = new Map<string, { id: string; name: string } | null>();

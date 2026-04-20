@@ -15,6 +15,15 @@ type OverlaySceneCanvasProps = {
   payload: OverlayScenePayload;
 };
 
+function visibleOverlayText(value: unknown): string {
+  const trimmed = String(value ?? "").trim();
+  return trimmed && trimmed !== "[]" ? trimmed : "";
+}
+
+function joinVisibleOverlayText(values: unknown[], separator: string): string {
+  return values.map((value) => visibleOverlayText(value)).filter(Boolean).join(separator);
+}
+
 export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
   const [now, setNow] = useState(() => new Date());
 
@@ -46,41 +55,46 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
 
   function renderLayer(kind: OverlaySceneLayerKind) {
     if (kind === "chip") {
-      return (
-        <div className="overlay-chip" key={kind}>
-          {props.payload.brandLine} · {props.payload.channelName} · {props.payload.heroLabel}
-        </div>
-      );
+      const chipText = joinVisibleOverlayText([props.payload.brandLine, props.payload.channelName, props.payload.heroLabel], " · ");
+      return chipText ? <div className="overlay-chip" key={kind}>{chipText}</div> : null;
     }
 
     if (kind === "hero") {
+      const heroLabel = visibleOverlayText(props.payload.heroLabel);
+      const heroTitle = visibleOverlayText(props.payload.heroTitle) || "Stream247";
+      const heroBody = visibleOverlayText(props.payload.heroBody);
+      const metaLine = visibleOverlayText(props.payload.metaLine);
       return (
         <div className="overlay-card overlay-card-large" key={kind}>
-          <div className="label">{props.payload.heroLabel}</div>
-          <h1>{props.payload.heroTitle || "Stream247"}</h1>
-          <p>{props.payload.heroBody}</p>
-          {props.payload.metaLine ? <div className="subtle">{props.payload.metaLine}</div> : null}
+          {heroLabel ? <div className="label">{heroLabel}</div> : null}
+          <h1>{heroTitle}</h1>
+          {heroBody ? <p>{heroBody}</p> : null}
+          {metaLine ? <div className="subtle">{metaLine}</div> : null}
         </div>
       );
     }
 
     if (kind === "next") {
+      const nextLabel = visibleOverlayText(props.payload.nextLabel);
+      const nextTitle = visibleOverlayText(props.payload.nextTitle) || "Schedule not available";
+      const nextTimeLabel = visibleOverlayText(props.payload.nextTimeLabel);
       return (
         <div className="overlay-card" key={kind}>
-          <div className="label">{props.payload.nextLabel}</div>
-          <strong>{props.payload.nextTitle || "Schedule not available"}</strong>
-          <div className="subtle">{props.payload.nextTimeLabel || "No next block configured"}</div>
+          {nextLabel ? <div className="label">{nextLabel}</div> : null}
+          <strong>{nextTitle}</strong>
+          {nextTimeLabel ? <div className="subtle">{nextTimeLabel}</div> : null}
         </div>
       );
     }
 
     if (kind === "queue") {
+      const queueTitles = props.payload.queueTitles.map((title) => visibleOverlayText(title)).filter(Boolean);
       return (
         <div className="overlay-card" key={kind}>
           <div className="label">Later</div>
           <strong>
-            {props.payload.queueTitles.length > 0
-              ? props.payload.queueTitles.join(" → ")
+            {queueTitles.length > 0
+              ? queueTitles.join(" → ")
               : "Queue preview will appear here once playout confirms it."}
           </strong>
         </div>
@@ -88,12 +102,16 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
     }
 
     if (kind === "schedule") {
+      const scheduleLabel = visibleOverlayText(props.payload.scheduleLabel);
+      const scheduleTitle = visibleOverlayText(props.payload.scheduleTitle) || "Stand by";
+      const scheduleBody = visibleOverlayText(props.payload.scheduleBody);
+      const scheduleAux = visibleOverlayText(props.payload.scheduleAux);
       return (
         <div className="overlay-card" key={kind}>
-          <div className="label">{props.payload.scheduleLabel}</div>
-          <strong>{props.payload.scheduleTitle || "Stand by"}</strong>
-          <div className="subtle">{props.payload.scheduleBody}</div>
-          {props.payload.scheduleAux ? <div className="subtle">{props.payload.scheduleAux}</div> : null}
+          {scheduleLabel ? <div className="label">{scheduleLabel}</div> : null}
+          <strong>{scheduleTitle}</strong>
+          {scheduleBody ? <div className="subtle">{scheduleBody}</div> : null}
+          {scheduleAux ? <div className="subtle">{scheduleAux}</div> : null}
         </div>
       );
     }
@@ -114,11 +132,13 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
     }
 
     if (kind === "banner") {
-      return <div className="overlay-banner" key={kind}>{props.payload.emergencyBanner}</div>;
+      const emergencyBanner = visibleOverlayText(props.payload.emergencyBanner);
+      return emergencyBanner ? <div className="overlay-banner" key={kind}>{emergencyBanner}</div> : null;
     }
 
     if (kind === "ticker") {
-      return <div className="overlay-ticker" key={kind}>{props.payload.tickerText}</div>;
+      const tickerText = visibleOverlayText(props.payload.tickerText);
+      return tickerText ? <div className="overlay-ticker" key={kind}>{tickerText}</div> : null;
     }
 
     return null;
@@ -138,6 +158,11 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
     } satisfies CSSProperties;
 
     if (layer.kind === "text") {
+      const primaryText = visibleOverlayText(layer.text) || visibleOverlayText(layer.name);
+      const secondaryText = visibleOverlayText(layer.secondaryText);
+      if (!primaryText && !secondaryText) {
+        return null;
+      }
       const fontFamily = resolveOverlaySceneCustomTextFontStack({
         fontMode: layer.fontMode,
         customFontFamily: layer.customFontFamily,
@@ -156,8 +181,8 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
             } satisfies CSSProperties
           }
         >
-          <div className="overlay-custom-layer-text-primary">{layer.text || layer.name}</div>
-          {layer.secondaryText ? <div className="overlay-custom-layer-text-secondary">{layer.secondaryText}</div> : null}
+          {primaryText ? <div className="overlay-custom-layer-text-primary">{primaryText}</div> : null}
+          {secondaryText ? <div className="overlay-custom-layer-text-secondary">{secondaryText}</div> : null}
         </div>
       );
     }
@@ -190,14 +215,18 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
         widgetDataKey: layer.widgetDataKey,
         labelOverride: layer.title
       });
+      const widgetLabel = visibleOverlayText(widget.label);
+      const widgetTitle = visibleOverlayText(widget.title);
+      const widgetBody = visibleOverlayText(widget.body);
+      const widgetSecondary = visibleOverlayText(widget.secondary);
 
       return (
         <div className="overlay-custom-layer overlay-custom-layer-widget-data" key={layer.id} style={style}>
           <div className="overlay-custom-layer-embed-badge">Scene Widget</div>
-          <div className="overlay-custom-layer-widget-label">{widget.label}</div>
-          <div className="overlay-custom-layer-widget-title">{widget.title}</div>
-          <div className="overlay-custom-layer-widget-body">{widget.body}</div>
-          {widget.secondary ? <div className="overlay-custom-layer-widget-secondary">{widget.secondary}</div> : null}
+          {widgetLabel ? <div className="overlay-custom-layer-widget-label">{widgetLabel}</div> : null}
+          {widgetTitle ? <div className="overlay-custom-layer-widget-title">{widgetTitle}</div> : null}
+          {widgetBody ? <div className="overlay-custom-layer-widget-body">{widgetBody}</div> : null}
+          {widgetSecondary ? <div className="overlay-custom-layer-widget-secondary">{widgetSecondary}</div> : null}
         </div>
       );
     }

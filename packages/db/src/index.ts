@@ -121,6 +121,9 @@ export type AssetRecord = {
   cacheError?: string;
   folderPath?: string;
   tags?: string[];
+  titlePrefix?: string;
+  hashtagsJson?: string;
+  platformNotes?: string;
   status: "ready" | "pending" | "error";
   includeInProgramming: boolean;
   externalId?: string;
@@ -1321,6 +1324,9 @@ function normalizeState(state: AppState): AppState {
         ...asset,
         folderPath: asset.folderPath ?? "",
         tags: normalizeAssetTags(asset.tags ?? []),
+        titlePrefix: asset.titlePrefix ?? "",
+        hashtagsJson: asset.hashtagsJson ?? "[]",
+        platformNotes: asset.platformNotes ?? "",
         includeInProgramming: asset.includeInProgramming ?? true,
         cachePath: asset.cachePath ?? "",
         cacheStatus: asset.cacheStatus ?? "",
@@ -1720,6 +1726,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       cache_error TEXT NOT NULL DEFAULT '',
       folder_path TEXT NOT NULL DEFAULT '',
       tags_json TEXT NOT NULL DEFAULT '[]',
+      title_prefix TEXT NOT NULL DEFAULT '',
+      hashtags_json TEXT NOT NULL DEFAULT '[]',
+      platform_notes TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL,
       include_in_programming BOOLEAN NOT NULL DEFAULT TRUE,
       external_id TEXT NOT NULL DEFAULT '',
@@ -1979,6 +1988,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS cache_error TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS folder_path TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS tags_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS title_prefix TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS hashtags_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS platform_notes TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_state TEXT NOT NULL DEFAULT 'idle';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS queue_version INTEGER NOT NULL DEFAULT 0;
@@ -2569,10 +2581,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       `
         INSERT INTO assets (
           id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
-          include_in_programming, external_id, category_name, duration_seconds, published_at, fallback_priority,
-          is_global_fallback, created_at, updated_at
+          title_prefix, hashtags_json, platform_notes, include_in_programming, external_id, category_name, duration_seconds, published_at,
+          fallback_priority, is_global_fallback, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
       `,
       [
         asset.id,
@@ -2586,6 +2598,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         asset.folderPath ?? "",
         JSON.stringify(normalizeAssetTags(asset.tags ?? [])),
         asset.status,
+        asset.titlePrefix ?? "",
+        asset.hashtagsJson ?? "[]",
+        asset.platformNotes ?? "",
         asset.includeInProgramming,
         asset.externalId ?? "",
         asset.categoryName ?? "",
@@ -3030,6 +3045,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     cache_error: string;
     folder_path: string;
     tags_json: string;
+    title_prefix: string;
+    hashtags_json: string;
+    platform_notes: string;
     status: AssetRecord["status"];
     include_in_programming: boolean;
     external_id: string;
@@ -3331,6 +3349,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       cacheError: row.cache_error || undefined,
       folderPath: row.folder_path || "",
       tags: parseAssetTagsJson(row.tags_json),
+      titlePrefix: row.title_prefix || "",
+      hashtagsJson: row.hashtags_json || "[]",
+      platformNotes: row.platform_notes || "",
       status: row.status,
       includeInProgramming: row.include_in_programming,
       externalId: row.external_id || undefined,
@@ -3737,11 +3758,14 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
       cache_error: string;
       folder_path: string;
       tags_json: string;
+      title_prefix: string;
+      hashtags_json: string;
+      platform_notes: string;
       include_in_programming: boolean;
       fallback_priority: number;
       is_global_fallback: boolean;
     }>(
-      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, include_in_programming, fallback_priority, is_global_fallback FROM assets WHERE source_id = ANY($1::text[])",
+      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, include_in_programming, fallback_priority, is_global_fallback FROM assets WHERE source_id = ANY($1::text[])",
       [sourceIds]
     );
 
@@ -3763,10 +3787,10 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
         `
           INSERT INTO assets (
             id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
-            include_in_programming, external_id, category_name, duration_seconds, published_at, fallback_priority,
-            is_global_fallback, created_at, updated_at
+            title_prefix, hashtags_json, platform_notes, include_in_programming, external_id, category_name, duration_seconds, published_at,
+            fallback_priority, is_global_fallback, created_at, updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
         `,
         [
           asset.id,
@@ -3780,6 +3804,9 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
           existing?.folder_path ?? asset.folderPath ?? "",
           existing?.tags_json ?? JSON.stringify(normalizeAssetTags(asset.tags ?? [])),
           asset.status,
+          existing?.title_prefix ?? asset.titlePrefix ?? "",
+          existing?.hashtags_json ?? asset.hashtagsJson ?? "[]",
+          existing?.platform_notes ?? asset.platformNotes ?? "",
           existing?.include_in_programming ?? asset.includeInProgramming,
           asset.externalId ?? "",
           asset.categoryName ?? "",
@@ -3815,15 +3842,18 @@ export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
             folder_path = $8,
             tags_json = $9,
             status = $10,
-            include_in_programming = $11,
-            external_id = $12,
-            category_name = $13,
-            duration_seconds = $14,
-            published_at = $15,
-            fallback_priority = $16,
-            is_global_fallback = $17,
-            created_at = $18,
-            updated_at = $19
+            title_prefix = $11,
+            hashtags_json = $12,
+            platform_notes = $13,
+            include_in_programming = $14,
+            external_id = $15,
+            category_name = $16,
+            duration_seconds = $17,
+            published_at = $18,
+            fallback_priority = $19,
+            is_global_fallback = $20,
+            created_at = $21,
+            updated_at = $22
           WHERE id = $1
         `,
         [
@@ -3837,6 +3867,9 @@ export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
           asset.folderPath ?? "",
           JSON.stringify(normalizeAssetTags(asset.tags ?? [])),
           asset.status,
+          asset.titlePrefix ?? "",
+          asset.hashtagsJson ?? "[]",
+          asset.platformNotes ?? "",
           asset.includeInProgramming,
           asset.externalId ?? "",
           asset.categoryName ?? "",

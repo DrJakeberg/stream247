@@ -1004,7 +1004,7 @@ export function resolveOverlayScenePresetForQueueKind(
 }
 
 export function buildOverlayBrandLine(replayLabel: string, brandBadge = ""): string {
-  const parts = [replayLabel || "Replay stream", brandBadge].map((part) => part.trim()).filter(Boolean);
+  const parts = [normalizeOverlayVisibleText(replayLabel) || "Replay stream", normalizeOverlayVisibleText(brandBadge)].filter(Boolean);
   return parts.join(" · ");
 }
 
@@ -1028,6 +1028,11 @@ export function resolveOverlayHeadlineForQueueKind(
   return String(headline || "Always on air").trim() || "Always on air";
 }
 
+function normalizeOverlayVisibleText(value: unknown): string {
+  const trimmed = String(value ?? "").trim();
+  return trimmed && trimmed !== "[]" ? trimmed : "";
+}
+
 export function buildOverlaySceneDefinition(args: {
   overlay: OverlaySceneSource;
   queueKind: OverlayQueueKind;
@@ -1049,8 +1054,8 @@ export function buildOverlaySceneDefinition(args: {
     queue: args.overlay.showQueuePreview,
     schedule: args.overlay.showScheduleTeaser,
     clock: args.overlay.showClock,
-    banner: Boolean(args.overlay.emergencyBanner.trim()),
-    ticker: Boolean(args.overlay.tickerText.trim())
+    banner: Boolean(normalizeOverlayVisibleText(args.overlay.emergencyBanner)),
+    ticker: Boolean(normalizeOverlayVisibleText(args.overlay.tickerText))
   };
 
   return {
@@ -1116,102 +1121,116 @@ export function buildOverlayScenePayload(args: {
         : args.queueKind === "live"
           ? "After Live"
           : "Next";
-  const queueTitles = (args.queueTitles || []).filter(Boolean).slice(0, args.overlay.queuePreviewCount);
+  const currentTitle = normalizeOverlayVisibleText(args.currentTitle);
+  const currentCategory = normalizeOverlayVisibleText(args.currentCategory);
+  const currentSourceName = normalizeOverlayVisibleText(args.currentSourceName);
+  const nextTitle = normalizeOverlayVisibleText(args.nextTitle);
+  const channelName = normalizeOverlayVisibleText(args.overlay.channelName) || "Stream247";
+  const queueTitles = (args.queueTitles || [])
+    .map((title) => normalizeOverlayVisibleText(title))
+    .filter(Boolean)
+    .slice(0, args.overlay.queuePreviewCount);
   const metaLine = [
-    (args.queueKind === "asset" || args.queueKind === "live") && args.overlay.showCurrentCategory ? args.currentCategory || "" : "",
-    (args.queueKind === "asset" || args.queueKind === "live") && args.overlay.showSourceLabel ? args.currentSourceName || "" : ""
+    (args.queueKind === "asset" || args.queueKind === "live") && args.overlay.showCurrentCategory ? currentCategory : "",
+    (args.queueKind === "asset" || args.queueKind === "live") && args.overlay.showSourceLabel ? currentSourceName : ""
   ]
     .filter(Boolean)
     .join(" · ");
   const scheduleBody =
     args.queueKind === "asset"
-      ? args.currentCategory || "Always on air"
+      ? currentCategory || "Always on air"
       : args.queueKind === "live"
         ? heroBody || "Live bridge is on air."
         : heroBody || "Programming will resume shortly";
   const scheduleAux =
     args.queueKind === "asset"
-      ? args.currentSourceName || "Source to be announced"
+      ? currentSourceName || "Source to be announced"
       : args.queueKind === "live"
-        ? args.nextTitle || "Schedule resumes after live mode"
-      : args.nextTitle || "Programming will resume shortly";
+        ? nextTitle || "Schedule resumes after live mode"
+      : nextTitle || "Programming will resume shortly";
 
   return {
     target: args.target,
     queueKind: args.queueKind,
     scene,
-    channelName: args.overlay.channelName,
+    channelName,
     accentColor: args.overlay.accentColor,
     brandLine: buildOverlayBrandLine(args.overlay.replayLabel, args.overlay.brandBadge),
     heroLabel,
-    heroTitle: args.currentTitle || "Stream247",
+    heroTitle: currentTitle || "Stream247",
     heroBody,
     metaLine,
     nextLabel,
-    nextTitle: args.nextTitle || "Schedule not available",
-    nextTimeLabel: args.nextTimeLabel || "No next block configured",
+    nextTitle: nextTitle || "Schedule not available",
+    nextTimeLabel: normalizeOverlayVisibleText(args.nextTimeLabel) || "No next block configured",
     queueTitleLine: queueTitles.join(" · "),
     queueTitles,
     scheduleLabel: "Scene",
-    scheduleTitle: args.currentTitle || "Stand by",
+    scheduleTitle: currentTitle || "Stand by",
     scheduleBody,
     scheduleAux,
-    tickerText: args.overlay.tickerText.trim(),
-    emergencyBanner: args.overlay.emergencyBanner.trim(),
+    tickerText: normalizeOverlayVisibleText(args.overlay.tickerText),
+    emergencyBanner: normalizeOverlayVisibleText(args.overlay.emergencyBanner),
     timeZone: args.timeZone || "UTC"
   };
 }
 
 export function buildOverlayTextLinesFromScenePayload(payload: OverlayScenePayload): string[] {
-  const tickerLine = payload.tickerText;
+  const brandLine = normalizeOverlayVisibleText(payload.brandLine);
+  const heroTitle = normalizeOverlayVisibleText(payload.heroTitle);
+  const heroBody = normalizeOverlayVisibleText(payload.heroBody);
+  const metaLine = normalizeOverlayVisibleText(payload.metaLine);
+  const nextTitle = normalizeOverlayVisibleText(payload.nextTitle);
+  const queueTitleLine = normalizeOverlayVisibleText(payload.queueTitleLine);
+  const tickerLine = normalizeOverlayVisibleText(payload.tickerText);
 
   if (payload.scene.resolvedPresetId === "minimal-chip") {
-    return [payload.brandLine, `Now: ${payload.heroTitle}`, payload.metaLine, tickerLine].filter(Boolean);
+    return [brandLine, heroTitle ? `Now: ${heroTitle}` : "", metaLine, tickerLine].filter(Boolean);
   }
 
   if (payload.scene.resolvedPresetId === "bumper-board") {
     return [
-      payload.brandLine,
-      payload.heroBody || "Insert on air",
-      `Insert: ${payload.heroTitle}`,
-      `Next: ${payload.nextTitle}`,
-      payload.queueTitleLine ? `After this: ${payload.queueTitleLine}` : "",
+      brandLine,
+      heroBody || "Insert on air",
+      heroTitle ? `Insert: ${heroTitle}` : "",
+      nextTitle ? `Next: ${nextTitle}` : "",
+      queueTitleLine ? `After this: ${queueTitleLine}` : "",
       tickerLine
     ].filter(Boolean);
   }
 
   if (payload.scene.resolvedPresetId === "reconnect-board") {
     return [
-      payload.brandLine,
-      payload.heroBody || "Scheduled reconnect in progress",
-      `Resuming with: ${payload.nextTitle}`,
-      payload.queueTitleLine ? `Queue: ${payload.queueTitleLine}` : "",
+      brandLine,
+      heroBody || "Scheduled reconnect in progress",
+      nextTitle ? `Resuming with: ${nextTitle}` : "",
+      queueTitleLine ? `Queue: ${queueTitleLine}` : "",
       tickerLine
     ].filter(Boolean);
   }
 
   if (payload.scene.resolvedPresetId === "split-now-next") {
-    return [payload.brandLine, `Now: ${payload.heroTitle}`, `Next: ${payload.nextTitle}`, payload.metaLine, tickerLine].filter(Boolean);
+    return [brandLine, heroTitle ? `Now: ${heroTitle}` : "", nextTitle ? `Next: ${nextTitle}` : "", metaLine, tickerLine].filter(Boolean);
   }
 
   if (payload.scene.resolvedPresetId === "standby-board") {
     return [
-      payload.brandLine,
-      payload.heroBody || "Please wait, restream is starting",
-      `Current: ${payload.heroTitle}`,
-      `Next: ${payload.nextTitle}`,
-      payload.queueTitleLine ? `Later: ${payload.queueTitleLine}` : "",
+      brandLine,
+      heroBody || "Please wait, restream is starting",
+      heroTitle ? `Current: ${heroTitle}` : "",
+      nextTitle ? `Next: ${nextTitle}` : "",
+      queueTitleLine ? `Later: ${queueTitleLine}` : "",
       tickerLine
     ].filter(Boolean);
   }
 
   return [
-    payload.brandLine,
-    `Now: ${payload.heroTitle}`,
-    payload.metaLine,
-    `Next: ${payload.nextTitle}`,
-    payload.queueTitleLine ? `Queue: ${payload.queueTitleLine}` : "",
-    payload.queueKind === "standby" ? payload.heroBody || "Please wait, restream is starting" : "",
+    brandLine,
+    heroTitle ? `Now: ${heroTitle}` : "",
+    metaLine,
+    nextTitle ? `Next: ${nextTitle}` : "",
+    queueTitleLine ? `Queue: ${queueTitleLine}` : "",
+    payload.queueKind === "standby" ? heroBody || "Please wait, restream is starting" : "",
     tickerLine
   ].filter(Boolean);
 }

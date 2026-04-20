@@ -177,6 +177,32 @@ describe("overlay text lines", () => {
     ]);
   });
 
+  it("does not emit placeholder array tokens when scene text fields are empty", () => {
+    const payload = buildOverlayScenePayload({
+      overlay: {
+        ...createOverlaySource({
+          headline: "[]",
+          tickerText: "[]"
+        }),
+        channelName: "[]",
+        replayLabel: "[]",
+        brandBadge: "[]",
+        accentColor: "#0e6d5a"
+      },
+      queueKind: "asset",
+      target: "browser",
+      currentTitle: "[]",
+      currentCategory: "[]",
+      currentSourceName: "[]",
+      nextTitle: "[]",
+      nextTimeLabel: "[]",
+      queueTitles: ["[]", ""],
+      timeZone: "Europe/Berlin"
+    });
+
+    expect(buildOverlayTextLinesFromScenePayload(payload).some((line) => line.includes("[]"))).toBe(false);
+  });
+
   it("builds live bridge scene copy", () => {
     const payload = buildOverlayScenePayload({
       overlay: {
