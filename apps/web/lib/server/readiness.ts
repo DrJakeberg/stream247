@@ -4,6 +4,20 @@ import { readAppState } from "./state";
 
 const WORKER_HEARTBEAT_STALE_MS = 180_000;
 const RUNTIME_HEARTBEAT_STALE_MS = 60_000;
+const MIN_PLAYOUT_TRANSIENT_GRACE_SECONDS = 20;
+
+function readPositiveNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getPlayoutTransientGraceSeconds(): number {
+  const failoverSeconds = readPositiveNumber(process.env.STREAM247_PROGRAM_FEED_FAILOVER_SECONDS, 10);
+  return readPositiveNumber(
+    process.env.STREAM247_PLAYOUT_TRANSIENT_GRACE_SECONDS,
+    Math.max(MIN_PLAYOUT_TRANSIENT_GRACE_SECONDS, failoverSeconds)
+  );
+}
 
 export async function getSystemReadiness() {
   try {
@@ -42,19 +56,6 @@ export async function getSystemReadiness() {
       : "not-ready";
     const workerStatus =
       workerHeartbeatAt > 0 ? (now - workerHeartbeatAt < WORKER_HEARTBEAT_STALE_MS ? "ok" : "degraded") : "not-ready";
-    let playoutStatus: "ok" | "degraded" | "not-ready" = "not-ready";
-    if (recentHeartbeat > 0 && now - recentHeartbeat < 60_000) {
-      playoutStatus =
-        state.playout.status === "failed"
-          ? "not-ready"
-          : state.playout.status === "degraded" || state.playout.crashLoopDetected
-            ? "degraded"
-            : "ok";
-    } else if (state.playout.status === "degraded") {
-      playoutStatus = "degraded";
-    } else if (state.playout.status !== "idle") {
-      playoutStatus = "not-ready";
-    }
     const uplinkStatus =
       !relayEnabled
         ? "ok"
@@ -69,6 +70,32 @@ export async function getSystemReadiness() {
         : state.playout.programFeedStatus === "stale"
           ? "degraded"
           : "not-ready";
+    const playoutTransientGraceSeconds = getPlayoutTransientGraceSeconds();
+    const playoutTransientGraceMs = playoutTransientGraceSeconds * 1000;
+    const playoutTransient =
+      hlsProgramFeedEnabled &&
+      state.playout.status === "failed" &&
+      recentHeartbeat > 0 &&
+      now - recentHeartbeat <= playoutTransientGraceMs &&
+      !state.playout.crashLoopDetected &&
+      uplinkStatus === "ok" &&
+      programFeedStatus === "ok" &&
+      destinationStatus === "ok";
+    let playoutStatus: "ok" | "degraded" | "not-ready" = "not-ready";
+    if (recentHeartbeat > 0 && now - recentHeartbeat < 60_000) {
+      playoutStatus =
+        state.playout.status === "failed"
+          ? playoutTransient
+            ? "degraded"
+            : "not-ready"
+          : state.playout.status === "degraded" || state.playout.crashLoopDetected
+            ? "degraded"
+            : "ok";
+    } else if (state.playout.status === "degraded") {
+      playoutStatus = "degraded";
+    } else if (state.playout.status !== "idle") {
+      playoutStatus = "not-ready";
+    }
     const hasReadyAsset = state.assets.some((asset) => asset.status === "ready");
     const broadcastReady =
       state.initialized &&
@@ -119,7 +146,9 @@ export async function getSystemReadiness() {
         selectionReasonCode: state.playout.selectionReasonCode,
         fallbackTier: state.playout.fallbackTier,
         currentAssetId: state.playout.currentAssetId,
-        currentDestinationId: state.playout.currentDestinationId
+        currentDestinationId: state.playout.currentDestinationId,
+        transient: playoutTransient,
+        transientGraceSeconds: playoutTransientGraceSeconds
       },
       uplink: {
         status: state.playout.uplinkStatus || "idle",
@@ -185,7 +214,9 @@ export async function getSystemReadiness() {
         selectionReasonCode: "",
         fallbackTier: "none",
         currentAssetId: "",
-        currentDestinationId: ""
+        currentDestinationId: "",
+        transient: false,
+        transientGraceSeconds: getPlayoutTransientGraceSeconds()
       },
       uplink: {
         status: "failed",

@@ -12,6 +12,7 @@ import {
   isRelayModeEnabled,
   isLikelyDestinationOutputError,
   isLikelyProgramFeedInputError,
+  isNaturalPlayoutBoundary,
   shouldRequestImmediatePlayoutRetry,
   shouldSkipInitialSceneCapture
 } from "../../apps/worker/src/ffmpeg-runtime";
@@ -65,8 +66,10 @@ describe("ffmpeg runtime helpers", () => {
         "2",
         "-hls_list_size",
         "30",
+        "-hls_start_number_source",
+        "epoch_us",
         "-hls_flags",
-        "append_list+delete_segments+program_date_time+independent_segments+omit_endlist",
+        "append_list+delete_segments+program_date_time+independent_segments+omit_endlist+temp_file+discont_start",
         "-hls_segment_filename",
         "/app/data/media/.stream247-program-feed/segment-run-1-%05d.ts"
       ]
@@ -110,7 +113,13 @@ describe("ffmpeg runtime helpers", () => {
       "-loglevel",
       "warning",
       "-fflags",
-      "+genpts",
+      "+genpts+discardcorrupt",
+      "-err_detect",
+      "ignore_err",
+      "-max_reload",
+      "10",
+      "-m3u8_hold_counters",
+      "1200",
       "-i",
       "/app/data/media/.stream247-program-feed/program.m3u8",
       "-c:v",
@@ -210,6 +219,15 @@ describe("ffmpeg runtime helpers", () => {
     expect(shouldRequestImmediatePlayoutRetry({ planned: false, crashLoopDetected: false })).toBe(true);
     expect(shouldRequestImmediatePlayoutRetry({ planned: true, crashLoopDetected: false })).toBe(false);
     expect(shouldRequestImmediatePlayoutRetry({ planned: false, crashLoopDetected: true })).toBe(false);
+    expect(shouldRequestImmediatePlayoutRetry({ planned: false, naturalBoundary: true, crashLoopDetected: false })).toBe(true);
+    expect(shouldRequestImmediatePlayoutRetry({ planned: true, naturalBoundary: true, crashLoopDetected: false })).toBe(false);
+  });
+
+  it("classifies clean asset and insert exits as natural playout boundaries", () => {
+    expect(isNaturalPlayoutBoundary({ targetKind: "asset", code: 0, signal: null })).toBe(true);
+    expect(isNaturalPlayoutBoundary({ targetKind: "insert", code: 0, signal: null })).toBe(true);
+    expect(isNaturalPlayoutBoundary({ targetKind: "asset", code: 128, signal: null })).toBe(false);
+    expect(isNaturalPlayoutBoundary({ targetKind: "live", code: 0, signal: null })).toBe(false);
   });
 
   it("skips blocking scene capture only for recent recovery starts", () => {

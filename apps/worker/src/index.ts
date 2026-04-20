@@ -84,6 +84,7 @@ import {
   isRelayModeEnabled,
   isLikelyDestinationOutputError,
   isLikelyProgramFeedInputError,
+  isNaturalPlayoutBoundary,
   shouldRequestImmediatePlayoutRetry,
   shouldSkipInitialSceneCapture
 } from "./ffmpeg-runtime.js";
@@ -102,6 +103,8 @@ let playoutDestinationId = "";
 let playoutDestinationIds: string[] = [];
 let playoutRuntimeTargets: DestinationRuntimeTarget[] = [];
 let playoutTargetKind: "asset" | "insert" | "standby" | "reconnect" | "live" | "" = "";
+let playoutResolvedInput = "";
+let playoutLastStderrSample = "";
 let playoutLiveBridgeInputUrl = "";
 let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
 let plannedStopReason = "";
@@ -261,6 +264,19 @@ function isDirectMediaUrl(value: string): boolean {
 
 function isResolvableRemoteVideoUrl(value: string): boolean {
   return isLikelyYouTubePlaylistUrl(value) || isLikelyTwitchVodUrl(value) || value.includes("youtube.com/watch");
+}
+
+function summarizePlaybackInput(input: string): string {
+  if (!input) {
+    return "";
+  }
+
+  try {
+    const url = new URL(input);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return input;
+  }
 }
 
 async function resolvePlayableInput(input: string): Promise<string> {
@@ -2253,6 +2269,8 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
     playoutDestinationIds = [];
     playoutRuntimeTargets = [];
     playoutTargetKind = "";
+    playoutResolvedInput = "";
+    playoutLastStderrSample = "";
     playoutLiveBridgeInputUrl = "";
     playoutLiveBridgeInputType = "";
     return;
@@ -2267,6 +2285,8 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
         playoutDestinationIds = [];
         playoutRuntimeTargets = [];
         playoutTargetKind = "";
+        playoutResolvedInput = "";
+        playoutLastStderrSample = "";
         playoutLiveBridgeInputUrl = "";
         playoutLiveBridgeInputType = "";
       }
@@ -2494,11 +2514,16 @@ async function startOrSwitchPlayout(args: {
     await ensureProgramFeedDirectory();
   }
 
+  const resolvedProgramInput = args.liveBridge
+    ? args.liveBridge.inputUrl
+    : args.asset
+      ? args.resolvedAssetInput || cachedResolvedInput || (await resolveAssetPlaybackInput(args.asset)).input
+      : "";
   const command = args.liveBridge
     ? getLiveBridgeFfmpegCommand(args.liveBridge.inputUrl, args.outputTarget, overlayMode)
     : args.asset
       ? getFfmpegCommand(
-          args.resolvedAssetInput || cachedResolvedInput || (await resolveAssetPlaybackInput(args.asset)).input,
+          resolvedProgramInput,
           args.outputTarget,
           overlayMode,
           resolvedAudioLaneInput && args.audioLane
@@ -2527,6 +2552,8 @@ async function startOrSwitchPlayout(args: {
       : args.lifecycleStatus === "reconnecting"
         ? "reconnect"
         : "standby";
+  playoutResolvedInput = resolvedProgramInput;
+  playoutLastStderrSample = "";
   playoutLiveBridgeInputUrl = args.liveBridge?.inputUrl ?? "";
   playoutLiveBridgeInputType = args.liveBridge?.inputType ?? "";
 
@@ -2534,6 +2561,7 @@ async function startOrSwitchPlayout(args: {
     destinationIds: playoutDestinationIds,
     targetKind: playoutTargetKind,
     assetId: args.asset?.id ?? "",
+    input: summarizePlaybackInput(playoutResolvedInput),
     liveInputType: args.liveBridge?.inputType ?? "",
     audioLaneAssetId: args.audioLane?.asset.id ?? "",
     reasonCode: args.reasonCode,
@@ -2608,6 +2636,11 @@ async function startOrSwitchPlayout(args: {
     message: args.reason
   }));
 
+  if (args.asset) {
+    await resolveIncident(`playout.ffmpeg.exit.${args.asset.id}`, `Asset ${args.asset.title} started successfully.`);
+  }
+  await resolveIncident("playout.ffmpeg.exit", "Playout process started successfully.");
+
   if (args.updateDestinations !== false) {
     for (const destination of args.destinations) {
       await updateDestinationRecord({
@@ -2626,9 +2659,10 @@ async function startOrSwitchPlayout(args: {
       return;
     }
 
+    playoutLastStderrSample = line.slice(0, 400);
     void updatePlayoutRuntime((playout) => ({
       ...playout,
-      lastStderrSample: line.slice(0, 400),
+      lastStderrSample: playoutLastStderrSample,
       heartbeatAt: new Date().toISOString()
     }));
 
@@ -2657,6 +2691,18 @@ async function startOrSwitchPlayout(args: {
     const lastDestinationIds = [...playoutDestinationIds];
     const lastRuntimeTargets = [...playoutRuntimeTargets];
     const lastTargetKind = playoutTargetKind;
+    const lastAssetId = playoutAssetId;
+    const lastResolvedInput = playoutResolvedInput;
+    const lastInputSummary = summarizePlaybackInput(lastResolvedInput);
+    const lastStderrSample = playoutLastStderrSample;
+    const naturalBoundary =
+      !wasPlanned &&
+      isNaturalPlayoutBoundary({
+        targetKind: lastTargetKind,
+        code,
+        signal: signal ?? null
+      });
+    const nonFailureExit = wasPlanned || exitedCleanly;
     const lastLiveBridgeInputUrl = playoutLiveBridgeInputUrl;
     plannedStopReason = "";
     stopSceneRendererLoop();
@@ -2666,6 +2712,8 @@ async function startOrSwitchPlayout(args: {
     playoutDestinationIds = [];
     playoutRuntimeTargets = [];
     playoutTargetKind = "";
+    playoutResolvedInput = "";
+    playoutLastStderrSample = "";
     playoutLiveBridgeInputUrl = "";
     playoutLiveBridgeInputType = "";
     const exitedAt = new Date().toISOString();
@@ -2673,7 +2721,12 @@ async function startOrSwitchPlayout(args: {
       exitCode: code ?? "",
       exitSignal: signal ?? "",
       exitReason,
-      planned: wasPlanned,
+      planned: wasPlanned || naturalBoundary,
+      naturalBoundary,
+      targetKind: lastTargetKind,
+      assetId: lastAssetId,
+      input: lastInputSummary,
+      lastStderrSample,
       destinationIds: lastDestinationIds,
       exitedAt
     });
@@ -2681,12 +2734,13 @@ async function startOrSwitchPlayout(args: {
     const runtimeUpdate = updatePlayoutRuntime((playout) => {
       const ranPastCrashWindow =
         playout.processStartedAt !== "" && Date.now() - new Date(playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS;
-      const nextCrashCountWindow = wasPlanned || exitedCleanly || ranPastCrashWindow ? 0 : playout.crashCountWindow + 1;
-      crashLoopDetectedAfterExit = !wasPlanned && !exitedCleanly && nextCrashCountWindow >= PLAYOUT_CRASH_LOOP_THRESHOLD;
+      const nextCrashCountWindow = nonFailureExit || ranPastCrashWindow ? 0 : playout.crashCountWindow + 1;
+      crashLoopDetectedAfterExit = !nonFailureExit && nextCrashCountWindow >= PLAYOUT_CRASH_LOOP_THRESHOLD;
+      const failureMessage = lastStderrSample ? `FFmpeg ${exitReason}. Last stderr: ${lastStderrSample}` : `FFmpeg ${exitReason}.`;
 
       return {
         ...playout,
-        status: wasPlanned || exitedCleanly ? "idle" : crashLoopDetectedAfterExit ? "degraded" : "failed",
+        status: nonFailureExit ? "idle" : crashLoopDetectedAfterExit ? "degraded" : "failed",
         heartbeatAt: exitedAt,
         transitionTargetKind: "",
         transitionTargetAssetId: "",
@@ -2694,16 +2748,16 @@ async function startOrSwitchPlayout(args: {
         transitionReadyAt: "",
         processPid: 0,
         processStartedAt: "",
-        lastSuccessfulStartAt: wasPlanned || exitedCleanly || ranPastCrashWindow ? playout.processStartedAt : playout.lastSuccessfulStartAt,
-        lastSuccessfulAssetId: wasPlanned || exitedCleanly || ranPastCrashWindow ? playout.currentAssetId : playout.lastSuccessfulAssetId,
+        lastSuccessfulStartAt: nonFailureExit || ranPastCrashWindow ? playout.processStartedAt : playout.lastSuccessfulStartAt,
+        lastSuccessfulAssetId: nonFailureExit || ranPastCrashWindow ? playout.currentAssetId : playout.lastSuccessfulAssetId,
         lastExitCode: String(code ?? signal ?? ""),
         restartCount: playout.restartCount + 1,
         crashCountWindow: nextCrashCountWindow,
         crashLoopDetected: crashLoopDetectedAfterExit,
-        currentAssetId: wasPlanned || exitedCleanly ? "" : playout.currentAssetId,
-        currentTitle: wasPlanned || exitedCleanly ? "" : playout.currentTitle,
-        desiredAssetId: wasPlanned || exitedCleanly ? "" : playout.desiredAssetId,
-        lastError: wasPlanned || exitedCleanly ? playout.lastError : `FFmpeg ${exitReason}.`,
+        currentAssetId: nonFailureExit ? "" : playout.currentAssetId,
+        currentTitle: nonFailureExit ? "" : playout.currentTitle,
+        desiredAssetId: nonFailureExit ? "" : playout.desiredAssetId,
+        lastError: nonFailureExit ? playout.lastError : failureMessage,
         transitionState: "idle",
         insertAssetId:
           !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
@@ -2730,6 +2784,8 @@ async function startOrSwitchPlayout(args: {
         selectionReasonCode: wasPlanned ? playout.selectionReasonCode : crashLoopDetectedAfterExit ? "ffmpeg_crash_loop" : playout.selectionReasonCode,
         message: wasPlanned
           ? "Playout stopped for a planned transition."
+          : naturalBoundary
+            ? "Playout reached a natural asset boundary and is selecting the next item."
           : exitedCleanly
             ? "Playout process stopped cleanly."
             : crashLoopDetectedAfterExit
@@ -2746,7 +2802,13 @@ async function startOrSwitchPlayout(args: {
             });
           });
         }
-        if (shouldRequestImmediatePlayoutRetry({ planned: wasPlanned, crashLoopDetected: crashLoopDetectedAfterExit })) {
+        if (
+          shouldRequestImmediatePlayoutRetry({
+            planned: wasPlanned,
+            naturalBoundary,
+            crashLoopDetected: crashLoopDetectedAfterExit
+          })
+        ) {
           requestImmediatePlayoutCycle("ffmpeg-exit");
         }
       })
@@ -2755,13 +2817,18 @@ async function startOrSwitchPlayout(args: {
           error: error instanceof Error ? error.message : String(error)
         });
       });
-    if (!wasPlanned) {
+    if (!wasPlanned && !naturalBoundary) {
+      const incidentMessage = lastStderrSample
+        ? `FFmpeg ${exitReason}. Last stderr: ${lastStderrSample}`
+        : `FFmpeg ${exitReason}.`;
       void upsertIncident({
         scope: "playout",
         severity: exitedCleanly ? "info" : "critical",
-        title: "FFmpeg process exited",
-        message: `FFmpeg ${exitReason}.`,
-        fingerprint: "playout.ffmpeg.exit"
+        title: lastAssetId && !exitedCleanly ? "Playout asset failed" : "FFmpeg process exited",
+        message: lastAssetId
+          ? `${incidentMessage} Asset ${lastAssetId}${lastInputSummary ? ` (${lastInputSummary})` : ""}.`
+          : incidentMessage,
+        fingerprint: lastAssetId ? `playout.ffmpeg.exit.${lastAssetId}` : "playout.ffmpeg.exit"
       });
       if (!exitedCleanly) {
         if (lastTargetKind === "live") {

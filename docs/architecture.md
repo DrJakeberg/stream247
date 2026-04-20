@@ -56,7 +56,7 @@ Stream247 works around three high-level state concepts:
 
 ## Broadcast Runtime
 
-The current playout model is FFmpeg-based and supervisor-driven. In relay mode, program playout publishes to a buffered local HLS program feed by default, while a separate uplink worker reads that feed and owns the external RTMP destinations. `STREAM247_UPLINK_INPUT_MODE=rtmp` keeps the older MediaMTX relay input available as an explicit rollback path.
+The current playout model is FFmpeg-based and supervisor-driven. In relay mode, program playout publishes to a buffered local HLS program feed by default, while a separate uplink worker reads that feed and owns the external RTMP destinations. HLS feed handoffs use temporary segment writes, discontinuity markers, and epoch-based segment numbers; the uplink demuxer tolerates corrupt or discontinuous local feed packets so normal asset boundaries do not close the external RTMP session. `STREAM247_UPLINK_INPUT_MODE=rtmp` keeps the older MediaMTX relay input available as an explicit rollback path.
 
 Persisted playout runtime fields include:
 

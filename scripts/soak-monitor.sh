@@ -86,16 +86,28 @@ check_readiness() {
     ];
     const baselineUplinkUnplannedRestarts = Number(process.env.BASELINE_UPLINK_UNPLANNED_RESTARTS ?? "0");
     const currentUplinkUnplannedRestarts = Number(data.uplink?.unplannedRestartCount ?? 0);
+    const programFeedFresh = data.services?.programFeed === "ok" && data.programFeed?.status === "fresh";
+    const uplinkHealthy = data.services?.uplink === "ok" && data.uplink?.status === "running";
+    const destinationOk = data.services?.destination === "ok";
+    const playoutTransient =
+      data.playout?.transient === true ||
+      (data.services?.playout === "not-ready" &&
+        data.playout?.status === "failed" &&
+        !data.playout?.crashLoopDetected &&
+        programFeedFresh &&
+        uplinkHealthy &&
+        destinationOk);
+    playoutDetails.push(`playoutTransient=${String(playoutTransient)}`);
     if (!(data.status === "ok" || data.status === "degraded")) {
       issues.push(`readiness.status=${data.status}`);
     }
-    if (data.broadcastReady !== true) {
+    if (data.broadcastReady !== true && !playoutTransient) {
       issues.push(`broadcastReady=${String(data.broadcastReady)}`);
     }
     if (data.services?.worker === "not-ready") {
       issues.push("worker=not-ready");
     }
-    if (data.services?.playout === "not-ready") {
+    if (data.services?.playout === "not-ready" && !playoutTransient) {
       issues.push("playout=not-ready");
     }
     if (data.services?.uplink === "not-ready") {

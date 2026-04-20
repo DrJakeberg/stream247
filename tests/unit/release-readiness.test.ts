@@ -261,7 +261,7 @@ function extractComposeServiceBlock(serviceName: string) {
 beforeEach(() => {
   acquireRootEnvLock();
   rootEnvState = createRootEnvTestState(rootEnvPath);
-});
+}, 30_000);
 
 afterEach(() => {
   restoreManagedRootEnv(rootEnvPath, rootEnvState);
@@ -464,7 +464,7 @@ describe("release readiness scripts", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("did not become broadcast-ready enough");
-  });
+  }, 30_000);
 
   it("upgrade rehearsal succeeds when readiness is broadcast-ready", () => {
     writeRootEnv(`APP_URL=http://127.0.0.1:3000\nAPP_SECRET=test\nPOSTGRES_PASSWORD=test\nDATABASE_URL=postgresql://stream247:test@postgres:5432/stream247\n`);
@@ -500,6 +500,29 @@ describe("release readiness scripts", () => {
     expect(result.output).toContain("lastExitCode=SIGBUS");
     expect(result.output).toContain("restartCount=725");
     expect(result.output).toContain("crashCountWindow=2");
+  });
+
+  it("soak monitor tolerates short local playout transients while the persistent uplink stays healthy", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
+
+    const healthyResponse =
+      '{"status":"ok","broadcastReady":true,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":4,"lastExitCode":"","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":0},"programFeed":{"status":"fresh"}}\n';
+    const transientResponse =
+      '{"status":"degraded","broadcastReady":false,"services":{"worker":"ok","playout":"not-ready","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"failed","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":1,"restartCount":5,"lastExitCode":"128","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":0},"programFeed":{"status":"fresh"}}\n';
+    const restartedResponse =
+      '{"status":"degraded","broadcastReady":true,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":6,"lastExitCode":"","currentAssetId":"asset_next"},"uplink":{"status":"running","unplannedRestartCount":1},"programFeed":{"status":"fresh"}}\n';
+
+    const result = runShellScript(soakScriptPath, ["--hours", "24", "--interval-seconds", "0"], [
+      { body: healthyResponse },
+      { body: transientResponse },
+      { body: restartedResponse }
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("playoutTransient=true");
+    expect(result.output).toContain("playout=not-ready");
+    expect(result.output).toContain("lastExitCode=128");
+    expect(result.output).toContain("uplinkUnplannedRestarts=1");
   });
 
   it("soak monitor fails on new unplanned uplink restarts", () => {

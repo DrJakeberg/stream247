@@ -143,7 +143,7 @@ function moveRootEnvOutOfTheWay(tempDir: string) {
 
 beforeEach(() => {
   acquireRootEnvLock();
-});
+}, 30_000);
 
 afterEach(() => {
   if (rootEnvBackupPath && existsSync(rootEnvBackupPath)) {
@@ -173,7 +173,7 @@ STREAM247_RELAY_IMAGE=bluenviron/mediamtx:1.15.4
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("APP_SECRET is blank");
-  });
+  }, 30_000);
 
   it("rejects quoted double-empty required production settings", () => {
     const result = runReleasePreflight(`

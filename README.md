@@ -198,6 +198,7 @@ docker compose --profile proxy up -d
 - `STREAM247_PROGRAM_FEED_TARGET_SECONDS`: target HLS segment length; defaults to `2`
 - `STREAM247_PROGRAM_FEED_LIST_SIZE`: live playlist segment count; defaults to `30` for about 60 seconds of buffer
 - `STREAM247_PROGRAM_FEED_FAILOVER_SECONDS`: extra stale-feed grace before health reports the feed as stale; defaults to `10`
+- `STREAM247_PLAYOUT_TRANSIENT_GRACE_SECONDS`: readiness/soak grace for short local playout failures while the HLS program feed, uplink, and destination remain healthy; defaults to the larger of `20` or `STREAM247_PROGRAM_FEED_FAILOVER_SECONDS`
 - `STREAM247_RELAY_OUTPUT_URL`: legacy local relay publish URL used by the playout process when `STREAM247_UPLINK_INPUT_MODE=rtmp`
 - `STREAM247_RELAY_INPUT_URL`: legacy local relay read URL used by the uplink process when `STREAM247_UPLINK_INPUT_MODE=rtmp`
 - `STREAM_OUTPUT_URL`: built-in primary RTMP output URL override

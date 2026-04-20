@@ -124,8 +124,10 @@ export function buildProgramFeedOutputTarget(config: ProgramFeedConfig, runId: s
       String(config.targetSeconds),
       "-hls_list_size",
       String(config.listSize),
+      "-hls_start_number_source",
+      "epoch_us",
       "-hls_flags",
-      "append_list+delete_segments+program_date_time+independent_segments+omit_endlist",
+      "append_list+delete_segments+program_date_time+independent_segments+omit_endlist+temp_file+discont_start",
       "-hls_segment_filename",
       config.segmentPattern.replace("%s", runId)
     ]
@@ -136,8 +138,32 @@ export function appendFfmpegOutputArgs(command: string[], outputTarget: FfmpegOu
   command.push(...(outputTarget.outputArgs ?? []), "-f", outputTarget.muxer, outputTarget.output);
 }
 
-export function shouldRequestImmediatePlayoutRetry(args: { planned: boolean; crashLoopDetected: boolean }): boolean {
-  return !args.planned && !args.crashLoopDetected;
+export function isNaturalPlayoutBoundary(args: {
+  targetKind: "asset" | "insert" | "standby" | "reconnect" | "live" | "";
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}): boolean {
+  return (args.targetKind === "asset" || args.targetKind === "insert") && args.code === 0 && !args.signal;
+}
+
+export function shouldRequestImmediatePlayoutRetry(args: {
+  planned: boolean;
+  naturalBoundary?: boolean;
+  crashLoopDetected: boolean;
+}): boolean {
+  if (args.crashLoopDetected) {
+    return false;
+  }
+
+  if (args.planned) {
+    return false;
+  }
+
+  if (args.naturalBoundary) {
+    return true;
+  }
+
+  return true;
 }
 
 export function shouldSkipInitialSceneCapture(args: {
@@ -236,10 +262,14 @@ export function buildUplinkFfmpegCommand(
     "-loglevel",
     "warning",
     "-fflags",
-    "+genpts",
-    "-i",
-    input
+    inputMode === "hls" ? "+genpts+discardcorrupt" : "+genpts"
   ];
+
+  if (inputMode === "hls") {
+    command.push("-err_detect", "ignore_err", "-max_reload", "10", "-m3u8_hold_counters", "1200");
+  }
+
+  command.push("-i", input);
 
   if (inputMode === "rtmp") {
     command.push("-c", "copy");
