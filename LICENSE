@@ -1,0 +1,85 @@
+Stream247 Source-Available Non-Commercial License 1.0
+
+Copyright (c) 2026 DrJakeberg
+
+This license applies to the current Stream247 repository state and future
+releases unless a later release says otherwise. Earlier Stream247 releases
+that were already published under Apache-2.0 remain governed by the terms
+under which they were published.
+
+1. Permission
+
+Subject to this license, you may copy, fork, use, run, self-host, modify,
+prepare derivative works of, and redistribute Stream247 and modified forks
+for Non-Commercial Purposes.
+
+2. Non-Commercial Purposes
+
+"Non-Commercial Purposes" means personal, educational, hobby, research,
+community, or internal non-commercial use that is not intended for, directed
+toward, or connected with commercial advantage or monetary compensation.
+
+Commercial use is not allowed under this license. Commercial use includes,
+without limitation:
+
+- monetized streams;
+- ad-supported streams;
+- paid services;
+- managed hosting, software-as-a-service, or platform-as-a-service offerings;
+- agency use;
+- consulting-for-pay use;
+- selling support, setup, integration, operation, or customization services;
+- using Stream247 for a customer, client, employer, or commercial project;
+- internal business use that supports commercial operations.
+
+To use Stream247 commercially, you must obtain a separate written commercial
+license from the project owner before that use begins.
+
+3. Redistribution And Modified Forks
+
+You may redistribute Stream247 or a modified fork only under this license or
+under a separate written license from the project owner. You must include this
+license, preserve copyright notices, and clearly mark material changes you
+made.
+
+4. Public Stream Attribution
+
+Every public stream produced, automated, scheduled, controlled, or otherwise
+operated with Stream247 must include a visible repository link:
+
+https://github.com/DrJakeberg/stream247
+
+The minimum acceptable location is the stream description, channel panel, or
+an equivalent always-visible public page associated with the stream. The link
+must be reasonably easy for viewers to find. This requirement applies to
+public streams even when the stream is non-commercial.
+
+5. No Runtime Enforcement
+
+This license is enforced by its legal terms. Stream247 does not need to add
+runtime license checks or phone-home behavior to enforce this license.
+
+6. Third-Party Materials
+
+Third-party dependencies, tools, images, examples, and other materials remain
+under their own licenses. This license does not grant rights that the project
+owner does not have.
+
+7. Trademarks
+
+This license does not grant permission to use the project owner's names,
+logos, trademarks, or branding except as necessary for attribution and to
+describe the origin of the software.
+
+8. No Warranty
+
+Stream247 is provided "as is", without warranty of any kind, express or
+implied, including warranties of merchantability, fitness for a particular
+purpose, and non-infringement. You are responsible for operating your own
+deployment safely and lawfully.
+
+9. Limitation Of Liability
+
+To the maximum extent permitted by law, the project owner and contributors
+will not be liable for any claim, damages, or other liability arising from or
+related to Stream247 or its use, whether in contract, tort, or otherwise.
