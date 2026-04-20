@@ -30,10 +30,9 @@ export default async function AdminLayout({ children }: { children: ReactNode })
         </div>
         <section className="sidebar-card">
           <span className="label">Operator model</span>
-          <strong>Dashboard for readiness. Broadcast for live actions.</strong>
+          <strong>Control Room for live work. Stream Studio for what viewers see.</strong>
           <p className="subtle">
-            Library and Programming shape upcoming output, Scene Studio publishes the viewer-facing scene, and
-            Settings changes workspace-wide behavior.
+            Programming shapes the week and media library, while Workspace owns access, policy, and reusable channel setup.
           </p>
         </section>
         <AdminNavigation />

@@ -178,6 +178,7 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 
 ## Current Capability Notes
 
+- Admin navigation is grouped by operator workflow: `Control Room` for live operations and health, `Programming` for schedule/library work, `Stream Studio` for scenes/overlays/output, and `Workspace` for settings, moderation, and team access.
 - local media, direct media URLs, YouTube playlists/channels, and Twitch VODs/channels are ingestible today
 - Twitch VOD playout uses verified local cache files by default and falls back to standby when cache preparation fails
 - program-feed/uplink mode separates program playout restarts and asset boundaries from the external RTMP publishing worker

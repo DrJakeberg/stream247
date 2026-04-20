@@ -21,6 +21,18 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await expect(page).toHaveURL(/\/broadcast$/);
   await expect(page.getByRole("heading", { name: /Operate the live 24\/7 output from one workspace/i })).toBeVisible();
   const adminNav = page.getByRole("navigation", { name: "Admin" });
+  await expect(adminNav.getByText("Control Room", { exact: true })).toBeVisible();
+  await expect(adminNav.getByText("Programming", { exact: true })).toBeVisible();
+  await expect(adminNav.getByText("Stream Studio", { exact: true })).toBeVisible();
+  await expect(adminNav.getByText("Workspace", { exact: true })).toBeVisible();
+
+  await adminNav.getByRole("link", { name: "Output", exact: true }).click();
+  await expect(page).toHaveURL(/\/output$/);
+  await expect(page.getByRole("heading", { name: /Set the stream resolution and frame rate/i })).toBeVisible();
+
+  await adminNav.getByRole("link", { name: "Overlays", exact: true }).click();
+  await expect(page).toHaveURL(/\/overlays$/);
+  await expect(page.getByRole("heading", { name: /Manage in-stream engagement/i })).toBeVisible();
 
   await adminNav.getByRole("link", { name: "Dashboard", exact: true }).click();
   await expect(page).toHaveURL(/\/dashboard$/);

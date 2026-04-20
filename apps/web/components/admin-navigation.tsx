@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 const SECTIONS = [
   {
     id: "control-room",
-    label: "Control room",
+    label: "Control Room",
     description: "Readiness, on-air actions, and current runtime state.",
     items: [
       { href: "/broadcast", label: "Broadcast", meta: "On-air controls" },
@@ -17,21 +17,28 @@ const SECTIONS = [
   {
     id: "programming",
     label: "Programming",
-    description: "Shape upcoming output, media, and viewer scenes.",
+    description: "Shape upcoming output, pools, and playable media.",
     items: [
-      { href: "/schedule", label: "Programming", meta: "Blocks, repeats, fill" },
-      { href: "/sources", label: "Library", meta: "Sources, uploads, pools" },
+      { href: "/schedule", label: "Schedule", meta: "Blocks, repeats, timeline" },
+      { href: "/sources", label: "Library", meta: "Sources, uploads, pools" }
+    ]
+  },
+  {
+    id: "stream-studio",
+    label: "Stream Studio",
+    description: "Compose viewer scenes, dynamic overlays, and output shape.",
+    items: [
+      { href: "/overlay-studio", label: "Scene Studio", meta: "Publish viewer scenes" },
       { href: "/overlays", label: "Overlays", meta: "Chat and stream alerts" },
-      { href: "/overlay-studio", label: "Scene Studio", meta: "Publish viewer scenes" }
+      { href: "/output", label: "Output", meta: "Resolution and FPS" }
     ]
   },
   {
     id: "workspace",
     label: "Workspace",
-    description: "Security, policy, and reusable channel setup.",
+    description: "Security, moderation policy, and reusable setup.",
     items: [
       { href: "/settings", label: "Settings", meta: "Access, secrets, blueprints" },
-      { href: "/output", label: "Output", meta: "Resolution and FPS" },
       { href: "/moderation", label: "Moderation", meta: "Presence policy" },
       { href: "/team", label: "Team", meta: "Access grants" }
     ]

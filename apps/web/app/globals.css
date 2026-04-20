@@ -3,11 +3,15 @@
   --bg-accent: #e6dcc8;
   --surface: rgba(255, 252, 246, 0.9);
   --surface-strong: #fff9ef;
+  --surface-panel: rgba(255, 252, 246, 0.92);
+  --surface-muted: rgba(241, 232, 216, 0.72);
   --text: #1b1a16;
   --muted: #655f50;
   --line: rgba(27, 26, 22, 0.1);
   --brand: #0e6d5a;
   --brand-strong: #0c5546;
+  --focus: rgba(14, 109, 90, 0.28);
+  --shadow-card: 0 16px 46px rgba(32, 29, 21, 0.1);
   --warning: #a04a16;
   --danger: #9e2430;
 }
@@ -21,16 +25,15 @@ body {
   margin: 0;
   padding: 0;
   background:
-    radial-gradient(circle at top left, rgba(230, 220, 200, 0.9), transparent 36%),
-    linear-gradient(180deg, #f8f3ea 0%, #efe6d8 100%);
+    radial-gradient(circle at top left, rgba(14, 109, 90, 0.14), transparent 28%),
+    radial-gradient(circle at 80% 8%, rgba(160, 74, 22, 0.12), transparent 30%),
+    linear-gradient(180deg, #fbf5e9 0%, #efe2cf 100%);
   color: var(--text);
   font-family:
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
+    Aptos,
+    "Avenir Next",
+    "Gill Sans",
+    "Trebuchet MS",
     sans-serif;
 }
 
@@ -51,7 +54,7 @@ main {
 
 .shell {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 304px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -61,11 +64,14 @@ main {
   gap: 22px;
   padding: 28px;
   border-right: 1px solid var(--line);
-  background: rgba(255, 249, 239, 0.76);
-  backdrop-filter: blur(12px);
+  background:
+    linear-gradient(180deg, rgba(255, 249, 239, 0.92), rgba(242, 232, 215, 0.78)),
+    radial-gradient(circle at top, rgba(14, 109, 90, 0.12), transparent 46%);
+  backdrop-filter: blur(18px);
   position: sticky;
   top: 0;
   min-height: 100vh;
+  min-width: 0;
 }
 
 .brand {
@@ -104,16 +110,17 @@ main {
 
 .nav-section-body {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .nav-link {
   display: grid;
   gap: 4px;
-  padding: 14px 16px;
+  min-width: 0;
+  padding: 13px 15px;
   border-radius: 18px;
   border: 1px solid rgba(27, 26, 22, 0.05);
-  background: transparent;
+  background: rgba(255, 252, 246, 0.42);
   transition:
     background 160ms ease,
     border-color 160ms ease,
@@ -131,6 +138,7 @@ main {
   background: rgba(14, 109, 90, 0.12);
   border-color: rgba(14, 109, 90, 0.2);
   color: var(--brand-strong);
+  box-shadow: inset 3px 0 0 var(--brand);
 }
 
 .nav-link-title {
@@ -145,10 +153,11 @@ main {
 .sidebar-card {
   display: grid;
   gap: 8px;
+  min-width: 0;
   padding: 16px;
   border-radius: 20px;
   border: 1px solid rgba(27, 26, 22, 0.08);
-  background: rgba(255, 252, 246, 0.82);
+  background: rgba(255, 252, 246, 0.84);
 }
 
 .sidebar-card strong {
@@ -170,9 +179,10 @@ main {
 .metric {
   border: 1px solid var(--line);
   border-radius: 24px;
-  background: var(--surface);
+  background: var(--surface-panel);
   backdrop-filter: blur(10px);
-  box-shadow: 0 12px 40px rgba(32, 29, 21, 0.08);
+  box-shadow: var(--shadow-card);
+  min-width: 0;
 }
 
 .hero {
@@ -253,6 +263,8 @@ main {
 }
 
 .item {
+  min-width: 0;
+  overflow: hidden;
   padding: 14px;
   border-radius: 16px;
   background: var(--surface-strong);
@@ -377,6 +389,10 @@ textarea {
   min-width: 0;
 }
 
+.stack-form .grid.two {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .inline-form {
   display: flex;
   flex-wrap: wrap;
@@ -462,7 +478,7 @@ textarea {
 .form-grid {
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .chip-grid {
@@ -476,6 +492,7 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  max-width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -485,6 +502,12 @@ textarea {
 
 .chip-toggle input {
   width: auto;
+}
+
+.chip-toggle span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chip-toggle-active {
@@ -723,6 +746,7 @@ button.collection-chip {
   box-shadow: 0 10px 24px rgba(32, 29, 21, 0.08);
   cursor: grab;
   pointer-events: auto;
+  overflow: hidden;
 }
 
 .schedule-block-card span {
@@ -748,7 +772,50 @@ button.collection-chip {
 
 .truncate-title {
   display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.line-clamp-2,
+.item .subtle,
+.asset-card-body .subtle,
+.admin-status-chip .subtle,
+.sidebar-card p,
+.schedule-block-card span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   overflow-wrap: anywhere;
+}
+
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.nav-link-title,
+.nav-link-meta,
+.panel h3,
+.item > strong,
+.asset-card-body > strong,
+.admin-status-chip strong,
+.status-rail strong,
+.source-cell strong,
+.preset-card strong,
+.schedule-block-card strong,
+.schedule-block-card span,
+.overlay-custom-layer-widget-title {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .asset-path {
