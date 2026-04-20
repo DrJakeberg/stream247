@@ -228,6 +228,7 @@ export type SchedulePreview = {
     title: string;
     startTime: string;
     endTime: string;
+    durationMinutes: number;
     categoryName: string;
     dayOfWeek: number;
     showId?: string;
@@ -235,7 +236,36 @@ export type SchedulePreview = {
     sourceName: string;
     repeatMode?: ScheduleRepeatMode;
     reason: string;
+    videoSlots: SchedulePreviewVideoSlot[];
   }>;
+};
+
+export type SchedulePreviewVideoSlot = {
+  assetId: string;
+  title: string;
+  estimatedDurationSeconds: number;
+  startOffsetSeconds: number;
+  estimatedDuration: boolean;
+};
+
+export type SchedulePreviewPoolRecord = {
+  id: string;
+  sourceIds: string[];
+  cursorAssetId?: string;
+  insertAssetId?: string;
+  audioLaneAssetId?: string;
+};
+
+export type SchedulePreviewAssetRecord = {
+  id: string;
+  sourceId: string;
+  title: string;
+  titlePrefix?: string;
+  status: string;
+  includeInProgramming: boolean;
+  durationSeconds?: number;
+  publishedAt?: string;
+  createdAt: string;
 };
 
 export type ScheduleOccurrence = {
@@ -1524,21 +1554,159 @@ export function describePresenceStatus(args: {
 export function buildSchedulePreview(args: {
   date: string;
   blocks: ScheduleBlock[];
+  pools?: SchedulePreviewPoolRecord[];
+  assets?: SchedulePreviewAssetRecord[];
+  maxVideoSlotsPerBlock?: number;
 }): SchedulePreview {
-  const items = buildScheduleOccurrences(args).map((occurrence) => ({
-    id: occurrence.blockId,
-    title: occurrence.title,
-    startTime: occurrence.startTime,
-    endTime: occurrence.endTime,
-    categoryName: occurrence.categoryName,
-    dayOfWeek: occurrence.dayOfWeek,
-    poolId: occurrence.poolId,
-    showId: occurrence.showId,
-    sourceName: occurrence.sourceName,
-    reason: `Selected from ${occurrence.sourceName} for ${occurrence.durationMinutes} minutes · ${describeScheduleRepeatMode(occurrence.repeatMode ?? "single", occurrence.dayOfWeek)}.`
-  }));
+  const items = buildScheduleOccurrences(args).map((occurrence) => {
+    const pool = args.pools?.find((entry) => entry.id === occurrence.poolId) ?? null;
+
+    return {
+      id: occurrence.blockId,
+      title: occurrence.title,
+      startTime: occurrence.startTime,
+      endTime: occurrence.endTime,
+      durationMinutes: occurrence.durationMinutes,
+      categoryName: occurrence.categoryName,
+      dayOfWeek: occurrence.dayOfWeek,
+      poolId: occurrence.poolId,
+      showId: occurrence.showId,
+      sourceName: occurrence.sourceName,
+      repeatMode: occurrence.repeatMode,
+      reason: `Selected from ${occurrence.sourceName} for ${occurrence.durationMinutes} minutes · ${describeScheduleRepeatMode(occurrence.repeatMode ?? "single", occurrence.dayOfWeek)}.`,
+      videoSlots: buildSchedulePreviewVideoSlots({
+        block: occurrence,
+        pool,
+        assets: args.assets ?? [],
+        maxSlots: args.maxVideoSlotsPerBlock ?? 20
+      })
+    };
+  });
 
   return { date: args.date, items };
+}
+
+function buildSchedulePreviewAssetTitle(asset: Pick<SchedulePreviewAssetRecord, "title" | "titlePrefix">): string {
+  return [asset.titlePrefix?.trim() || "", asset.title.trim()].filter(Boolean).join(" ");
+}
+
+function getSchedulePreviewAssetDurationSeconds(asset: SchedulePreviewAssetRecord): {
+  durationSeconds: number;
+  estimated: boolean;
+} {
+  if (typeof asset.durationSeconds === "number" && asset.durationSeconds > 0) {
+    return {
+      durationSeconds: asset.durationSeconds,
+      estimated: false
+    };
+  }
+
+  return {
+    durationSeconds: estimatedProgrammingDurationSeconds,
+    estimated: true
+  };
+}
+
+function sortSchedulePreviewAssets<T extends Pick<SchedulePreviewAssetRecord, "publishedAt" | "createdAt" | "title">>(
+  assets: T[]
+): T[] {
+  return assets.slice().sort((left, right) => {
+    const publishedDelta =
+      new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
+    if (publishedDelta !== 0) {
+      return publishedDelta;
+    }
+
+    return left.title.localeCompare(right.title);
+  });
+}
+
+function getSchedulePreviewEligibleAssets(
+  pool: SchedulePreviewPoolRecord | null,
+  assets: SchedulePreviewAssetRecord[]
+): SchedulePreviewAssetRecord[] {
+  if (!pool) {
+    return [];
+  }
+
+  const excludedAssetIds = new Set<string>();
+  if (pool.insertAssetId) {
+    excludedAssetIds.add(pool.insertAssetId);
+  }
+  if (pool.audioLaneAssetId) {
+    excludedAssetIds.add(pool.audioLaneAssetId);
+  }
+
+  return sortSchedulePreviewAssets(
+    assets.filter(
+      (asset) =>
+        asset.status === "ready" &&
+        asset.includeInProgramming !== false &&
+        pool.sourceIds.includes(asset.sourceId) &&
+        !excludedAssetIds.has(asset.id)
+    )
+  );
+}
+
+export function lookaheadVideoTitleFromPool(args: {
+  pool: SchedulePreviewPoolRecord | null;
+  assets: SchedulePreviewAssetRecord[];
+  offset?: number;
+}): string {
+  const eligibleAssets = getSchedulePreviewEligibleAssets(args.pool, args.assets);
+  if (eligibleAssets.length === 0) {
+    return "";
+  }
+
+  const cursorIndex = args.pool?.cursorAssetId ? eligibleAssets.findIndex((asset) => asset.id === args.pool?.cursorAssetId) : -1;
+  const offset = Math.max(1, Math.floor(args.offset ?? 1));
+  const asset = eligibleAssets[(cursorIndex + offset + eligibleAssets.length) % eligibleAssets.length] ?? eligibleAssets[0];
+  return asset ? buildSchedulePreviewAssetTitle(asset) : "";
+}
+
+export function buildSchedulePreviewVideoSlots(args: {
+  block: ScheduleOccurrence;
+  pool: SchedulePreviewPoolRecord | null;
+  assets: SchedulePreviewAssetRecord[];
+  maxSlots?: number;
+}): SchedulePreviewVideoSlot[] {
+  if (!args.pool) {
+    return [];
+  }
+
+  const eligibleAssets = getSchedulePreviewEligibleAssets(args.pool, args.assets);
+  if (eligibleAssets.length === 0) {
+    return [];
+  }
+
+  const blockSeconds = Math.max(args.block.durationMinutes, 1) * 60;
+  const maxSlots = Math.max(1, Math.min(20, Math.floor(args.maxSlots ?? 20)));
+  let cursorIndex = args.pool.cursorAssetId ? eligibleAssets.findIndex((asset) => asset.id === args.pool?.cursorAssetId) : -1;
+  let projectedSeconds = 0;
+  const slots: SchedulePreviewVideoSlot[] = [];
+
+  for (let safety = 0; safety < maxSlots && projectedSeconds < blockSeconds; safety += 1) {
+    const asset = eligibleAssets[(cursorIndex + 1 + eligibleAssets.length) % eligibleAssets.length] ?? eligibleAssets[0];
+    if (!asset) {
+      break;
+    }
+
+    cursorIndex = eligibleAssets.findIndex((entry) => entry.id === asset.id);
+    const { durationSeconds, estimated } = getSchedulePreviewAssetDurationSeconds(asset);
+    const visibleDurationSeconds = Math.max(1, Math.min(durationSeconds, blockSeconds - projectedSeconds));
+
+    slots.push({
+      assetId: asset.id,
+      title: buildSchedulePreviewAssetTitle(asset),
+      estimatedDurationSeconds: visibleDurationSeconds,
+      startOffsetSeconds: projectedSeconds,
+      estimatedDuration: estimated
+    });
+
+    projectedSeconds += durationSeconds;
+  }
+
+  return slots;
 }
 
 type MaterializedPoolRecord = {

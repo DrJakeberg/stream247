@@ -413,6 +413,41 @@ textarea {
   color: var(--text);
 }
 
+.schedule-video-timeline-panel {
+  margin-top: 12px;
+}
+
+.schedule-video-timeline {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(14, 109, 90, 0.08);
+}
+
+.schedule-video-slot {
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid rgba(14, 109, 90, 0.18);
+  padding: 10px 12px;
+  color: var(--brand-strong);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.schedule-video-slot:last-child {
+  border-right: 0;
+}
+
+.schedule-video-slot span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .toggle-row {
   display: flex;
   flex-wrap: wrap;

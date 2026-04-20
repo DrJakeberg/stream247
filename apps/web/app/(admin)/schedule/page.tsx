@@ -7,6 +7,7 @@ import { ScheduleEditorWorkspace } from "@/components/schedule-editor-workspace"
 import { ScheduleBlockForm } from "@/components/schedule-block-form";
 import { ScheduleDayCloneForm } from "@/components/schedule-day-clone-form";
 import { ScheduleWeekOverview } from "@/components/schedule-week-overview";
+import { ScheduleVideoTimeline } from "@/components/schedule-video-timeline";
 import { ShowProfileDeleteForm } from "@/components/show-profile-delete-form";
 import { ShowProfileForm } from "@/components/show-profile-form";
 import { getMaterializedProgrammingWeekPreview, getSchedulePreview, getWorkspaceTimeZone, readAppState } from "@/lib/server/state";
@@ -27,7 +28,6 @@ export default async function SchedulePage() {
     .slice()
     .sort((left, right) => left.name.localeCompare(right.name));
   const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  type ScheduleItem = (typeof schedulePreview.items)[number];
   const materializedToday = materializedWeek[0];
   const liveQueue = state.playout.queueItems.slice(0, 5);
 
@@ -143,15 +143,14 @@ export default async function SchedulePage() {
                 <div className="subtle" style={{ marginTop: 8 }}>No live queue items are currently published.</div>
               )}
             </div>
-            {schedulePreview.items.slice(0, 4).map((item: ScheduleItem) => (
-              <div className="item" key={`${item.id}-${item.startTime}`}>
-                <strong>{item.title}</strong>
-                <div className="subtle">
-                  {dayLabels[item.dayOfWeek]} · {item.startTime} to {item.endTime} · {item.sourceName}
-                </div>
-                <div className="subtle">{item.reason}</div>
+            <div className="item">
+              <strong>Video-level timeline</strong>
+              <div className="subtle">
+                Expand any block to inspect the predicted pool sequence. The preview follows the current pool cursor and
+                wraps through eligible videos when a block is longer than the ready library window.
               </div>
-            ))}
+            </div>
+            <ScheduleVideoTimeline dayLabels={dayLabels} items={schedulePreview.items} />
           </div>
         </Panel>
       </section>

@@ -2,6 +2,7 @@ import {
   DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
   buildOverlayScenePayload,
   buildMaterializedProgrammingWeek,
+  buildSchedulePreviewVideoSlots,
   getCuepointProgress,
   buildScheduleOccurrences,
   buildSchedulePreview,
@@ -217,7 +218,9 @@ export function getSchedulePreview(state: AppState) {
 
   return buildSchedulePreview({
     date: scheduleMoment.date,
-    blocks: state.scheduleBlocks
+    blocks: state.scheduleBlocks,
+    pools: state.pools,
+    assets: state.assets
   });
 }
 
@@ -622,6 +625,25 @@ function buildAssetDisplayTitle(asset: Pick<AssetRecord, "title" | "titlePrefix"
   return [asset?.titlePrefix?.trim() || "", asset?.title?.trim() || ""].filter(Boolean).join(" ").trim();
 }
 
+function getScheduleOccurrenceLookaheadTitle(
+  state: AppState,
+  item: ReturnType<typeof getNextScheduleItem> | null
+): string {
+  if (!item?.poolId) {
+    return "";
+  }
+
+  const pool = state.pools.find((entry) => entry.id === item.poolId) ?? null;
+  const [slot] = buildSchedulePreviewVideoSlots({
+    block: item,
+    pool,
+    assets: state.assets,
+    maxSlots: 1
+  });
+
+  return slot?.title || "";
+}
+
 function getConfiguredDestinationFailureCooldownSeconds(): number {
   const parsed = Number(process.env.DESTINATION_FAILURE_COOLDOWN_SECONDS || String(DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS));
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS;
@@ -869,6 +891,7 @@ export function buildActiveScenePayload(
   const nextAsset = state.assets.find((asset) => asset.id === state.playout.nextAssetId) ?? null;
   const currentAssetTitle = buildAssetDisplayTitle(currentAsset);
   const nextAssetTitle = buildAssetDisplayTitle(nextAsset);
+  const nextScheduleLookaheadTitle = getScheduleOccurrenceLookaheadTitle(state, nextScheduleItem);
   const queueKind = options.queueKind ?? state.playout.queueItems[0]?.kind ?? "asset";
   const queuePreviewStart = state.playout.queueItems[0] ? 1 : 0;
   const queueTitles = state.playout.queueItems
@@ -896,7 +919,7 @@ export function buildActiveScenePayload(
       queueKind === "live"
         ? `Live Bridge · ${(state.playout.liveBridgeInputType || "rtmp").toUpperCase()}`
         : currentSourceName,
-    nextTitle: nextAssetTitle || state.playout.nextTitle || nextScheduleItem?.title || "Schedule not available",
+    nextTitle: nextAssetTitle || nextScheduleLookaheadTitle || state.playout.nextTitle || nextScheduleItem?.title || "Schedule not available",
     nextTimeLabel: nextScheduleItem ? `${nextScheduleItem.startTime} to ${nextScheduleItem.endTime}` : "No next block configured",
     queueTitles,
     timeZone: getWorkspaceTimeZone()

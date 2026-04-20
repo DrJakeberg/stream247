@@ -48,6 +48,83 @@ describe("schedule preview", () => {
     expect(preview.items[1]?.endTime).toBe("00:00");
   });
 
+  it("adds pool-cursor video lookahead slots to schedule preview blocks", () => {
+    const preview = buildSchedulePreview({
+      date: "2026-03-27",
+      blocks: [
+        {
+          id: "prime",
+          title: "Prime Block",
+          categoryName: "Gaming",
+          dayOfWeek: 5,
+          startMinuteOfDay: 20 * 60,
+          durationMinutes: 45,
+          poolId: "pool-prime",
+          sourceName: "Prime Pool"
+        }
+      ],
+      pools: [
+        {
+          id: "pool-prime",
+          sourceIds: ["source-local"],
+          cursorAssetId: "asset-a"
+        }
+      ],
+      assets: [
+        {
+          id: "asset-a",
+          sourceId: "source-local",
+          title: "Program A",
+          titlePrefix: "Replay:",
+          status: "ready",
+          includeInProgramming: true,
+          durationSeconds: 10 * 60,
+          createdAt: "2026-03-27T08:00:00.000Z"
+        },
+        {
+          id: "asset-b",
+          sourceId: "source-local",
+          title: "Program B",
+          status: "ready",
+          includeInProgramming: true,
+          durationSeconds: 15 * 60,
+          createdAt: "2026-03-27T09:00:00.000Z"
+        },
+        {
+          id: "asset-c",
+          sourceId: "source-local",
+          title: "Program C",
+          status: "ready",
+          includeInProgramming: true,
+          durationSeconds: 20 * 60,
+          createdAt: "2026-03-27T10:00:00.000Z"
+        }
+      ]
+    });
+
+    expect(preview.items[0]?.durationMinutes).toBe(45);
+    expect(preview.items[0]?.videoSlots).toEqual([
+      expect.objectContaining({
+        assetId: "asset-b",
+        title: "Program B",
+        startOffsetSeconds: 0,
+        estimatedDurationSeconds: 15 * 60
+      }),
+      expect.objectContaining({
+        assetId: "asset-c",
+        title: "Program C",
+        startOffsetSeconds: 15 * 60,
+        estimatedDurationSeconds: 20 * 60
+      }),
+      expect.objectContaining({
+        assetId: "asset-a",
+        title: "Replay: Program A",
+        startOffsetSeconds: 35 * 60,
+        estimatedDurationSeconds: 10 * 60
+      })
+    ]);
+  });
+
   it("derives the local date and time for a configured timezone", () => {
     const moment = getCurrentScheduleMoment({
       now: new Date("2026-03-27T22:30:00.000Z"),

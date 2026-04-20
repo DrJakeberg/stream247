@@ -18,6 +18,7 @@ import {
   getCurrentScheduleMoment,
   isDestinationFailureCoolingDown,
   listUpcomingScheduleOccurrences,
+  lookaheadVideoTitleFromPool as lookaheadPoolVideoTitle,
   normalizeLiveBridgeInputType,
   isLikelyTwitchChannelUrl,
   isLikelyTwitchVodUrl,
@@ -1660,16 +1661,10 @@ function getPoolEligibleAssets(state: AppState, poolId: string, skippedAssetId =
 
 function lookaheadVideoTitleFromPool(state: AppState, poolId: string): string {
   const pool = state.pools.find((entry) => entry.id === poolId);
-  if (!pool) {
-    return "";
-  }
-  const eligibleAssets = getPoolEligibleAssets(state, poolId);
-  if (eligibleAssets.length === 0) {
-    return "";
-  }
-
-  const cursorIndex = pool.cursorAssetId ? eligibleAssets.findIndex((asset) => asset.id === pool.cursorAssetId) : -1;
-  return buildAssetDisplayTitle(eligibleAssets[(cursorIndex + 1) % eligibleAssets.length] ?? eligibleAssets[0]);
+  return lookaheadPoolVideoTitle({
+    pool: pool ?? null,
+    assets: state.assets
+  });
 }
 
 function resolveScheduleOccurrenceOverlayTitle(state: AppState, item: WorkerScheduleOccurrence | null): string {
