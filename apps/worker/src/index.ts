@@ -95,6 +95,7 @@ import {
   isInternalMediaCachePath,
   isTwitchVodAsset
 } from "./twitch-vod-cache.js";
+import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
@@ -857,14 +858,17 @@ async function writeOnAirOverlay(
   const queueTitles =
     overrides.queueTitles ??
     state.playout.queuedAssetIds
-      .map((id) => state.assets.find((entry) => entry.id === id)?.title || "")
+      .map((id) => {
+        const queuedAsset = state.assets.find((entry) => entry.id === id);
+        return buildAssetDisplayTitle(queuedAsset);
+      })
       .filter(Boolean)
       .slice(0, state.overlay.queuePreviewCount);
   const lines = buildOverlayTextLinesFromScenePayload(
     buildWorkerScenePayload({
       state,
       queueKind,
-      currentTitle: overrides.currentTitle || asset?.title || state.playout.currentTitle || currentItem?.title || "Stand by",
+      currentTitle: overrides.currentTitle || buildAssetDisplayTitle(asset) || state.playout.currentTitle || currentItem?.title || "Stand by",
       nextTitle: overrides.nextTitle || nextItem?.title || "Scheduling next item",
       nextScheduleItem: nextItem,
       nextTimeLabel: overrides.nextTimeLabel || (nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured"),
@@ -1665,7 +1669,7 @@ function lookaheadVideoTitleFromPool(state: AppState, poolId: string): string {
   }
 
   const cursorIndex = pool.cursorAssetId ? eligibleAssets.findIndex((asset) => asset.id === pool.cursorAssetId) : -1;
-  return (eligibleAssets[(cursorIndex + 1) % eligibleAssets.length] ?? eligibleAssets[0])?.title ?? "";
+  return buildAssetDisplayTitle(eligibleAssets[(cursorIndex + 1) % eligibleAssets.length] ?? eligibleAssets[0]);
 }
 
 function resolveScheduleOccurrenceOverlayTitle(state: AppState, item: WorkerScheduleOccurrence | null): string {
@@ -1898,7 +1902,7 @@ function buildRuntimeQueueItems(args: {
     pushItem({
       kind: "asset",
       assetId: asset.id,
-      title: asset.title,
+      title: buildAssetDisplayTitle(asset),
       subtitle: buildAssetQueueSubtitle(args.state, asset, null),
       scenePreset: resolveOverlayScenePresetForQueueKind(args.state.overlay.scenePreset, "asset", {
         insertScenePreset: args.state.overlay.insertScenePreset,
@@ -1933,7 +1937,7 @@ function buildQueueHeadForSelection(args: {
 }) {
   if (args.selection.reasonCode === "manual_next" && args.selection.asset) {
     return {
-      title: args.selection.asset.title,
+      title: buildAssetDisplayTitle(args.selection.asset),
       subtitle: `Queued next by operator · ${
         buildAssetQueueSubtitle(args.state, args.selection.asset, args.currentScheduleItem) || "Operator queue request"
       }`,
@@ -1947,7 +1951,7 @@ function buildQueueHeadForSelection(args: {
 
   if ((args.selection.reasonCode === "operator_insert" || args.selection.reasonCode === "scheduled_insert") && args.selection.asset) {
     return {
-      title: args.selection.asset.title,
+      title: buildAssetDisplayTitle(args.selection.asset),
       subtitle: `${
         args.selection.reasonCode === "operator_insert"
           ? "Insert"
@@ -2002,7 +2006,7 @@ function buildQueueHeadForSelection(args: {
   }
 
   return {
-    title: args.selection.asset.title,
+    title: buildAssetDisplayTitle(args.selection.asset),
     subtitle:
       args.selection.reasonCode === "graceful_handoff"
         ? `Finishing current item · ${buildAssetQueueSubtitle(args.state, args.selection.asset, null) || "Schedule handoff pending"}`
@@ -2613,12 +2617,12 @@ async function startOrSwitchPlayout(args: {
           : "standby",
     transitionTargetAssetId: args.asset?.id ?? "",
     transitionTargetTitle:
-      args.asset?.title ??
-      args.liveBridge?.label ??
+      buildAssetDisplayTitle(args.asset) ||
+      args.liveBridge?.label ||
       (args.lifecycleStatus === "reconnecting" ? "Scheduled reconnect" : "Replay standby"),
     transitionReadyAt: "",
     currentAssetId: args.asset?.id ?? "",
-    currentTitle: args.asset?.title ?? args.liveBridge?.label ?? "Replay standby",
+    currentTitle: buildAssetDisplayTitle(args.asset) || args.liveBridge?.label || "Replay standby",
     desiredAssetId: args.asset?.id ?? "",
     currentDestinationId: leadDestination.id,
     restartRequestedAt: "",
@@ -3522,7 +3526,7 @@ async function runPlayoutCycle(): Promise<void> {
     transitionReadyAt,
     queueVersion: incrementQueueVersion(playout.queueVersion, playout.queueItems, queueItems),
     currentAssetId: selection.asset?.id ?? "",
-    currentTitle: activeQueueItem?.title || selection.liveBridgeLabel || selection.asset?.title || "Replay standby",
+    currentTitle: activeQueueItem?.title || selection.liveBridgeLabel || buildAssetDisplayTitle(selection.asset) || "Replay standby",
     previousAssetId:
       (selection.asset && playout.currentAssetId !== "" && playout.currentAssetId !== selection.asset.id) ||
       (selection.queueKind === "live" && playout.currentAssetId !== "")
@@ -3535,7 +3539,7 @@ async function runPlayoutCycle(): Promise<void> {
         : playout.previousTitle,
     desiredAssetId: selection.asset?.id ?? "",
     nextAssetId: nextQueueItem?.assetId ?? prefetchedAsset?.id ?? "",
-    nextTitle: nextQueueItem?.title ?? prefetchedAsset?.title ?? "",
+    nextTitle: nextQueueItem?.title ?? buildAssetDisplayTitle(prefetchedAsset),
     queuedAssetIds: playableQueue.map((asset) => asset.id),
     queueItems,
     insertAssetId: selection.reasonCode === "operator_insert" && selection.asset ? selection.asset.id : playout.insertAssetId,
@@ -3550,7 +3554,7 @@ async function runPlayoutCycle(): Promise<void> {
           ? playout.insertStatus
           : playout.insertStatus,
     prefetchedAssetId: prefetchedAsset?.id ?? "",
-    prefetchedTitle: prefetchedAsset?.title ?? "",
+    prefetchedTitle: buildAssetDisplayTitle(prefetchedAsset),
     prefetchedAt: computedPrefetchedAt,
     prefetchStatus,
     prefetchError,

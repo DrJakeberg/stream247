@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AssetCurationForm } from "@/components/asset-curation-form";
+import { AssetMetadataForm } from "@/components/asset-metadata-form";
 import { Panel } from "@/components/panel";
 import {
   getAssetPlaybackDiagnostics,
@@ -31,6 +32,17 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
   const isCurrent = state.playout.currentAssetId === asset.id;
   const isOverride = state.playout.overrideAssetId === asset.id;
   const assetCollections = state.assetCollections.filter((collection) => collection.assetIds.includes(asset.id));
+  const categorySuggestions = [
+    ...new Set(state.assets.map((entry) => entry.categoryName?.trim() || "").filter(Boolean))
+  ].sort((left, right) => left.localeCompare(right));
+  const hashtags = (() => {
+    try {
+      const parsed = JSON.parse(asset.hashtagsJson || "[]") as unknown;
+      return Array.isArray(parsed) ? parsed.map((entry) => String(entry).trim()).filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  })();
 
   return (
     <>
@@ -109,8 +121,24 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
         <Panel title="Metadata" eyebrow="Catalog">
           <div className="stack-form">
             <div className="item">
+              <strong>Title prefix</strong>
+              <div className="subtle">{asset.titlePrefix || "No title prefix configured."}</div>
+            </div>
+            <div className="item">
               <strong>Category</strong>
               <div className="subtle">{asset.categoryName || "No category metadata recorded."}</div>
+            </div>
+            <div className="item">
+              <strong>Hashtags</strong>
+              <div className="subtle">
+                {hashtags.length > 0
+                  ? hashtags.map((tag) => `#${tag.replace(/^#+/, "")}`).join(", ")
+                  : "No Twitch hashtags configured."}
+              </div>
+            </div>
+            <div className="item">
+              <strong>Operator notes</strong>
+              <div className="subtle">{asset.platformNotes || "No platform notes recorded."}</div>
             </div>
             <div className="item">
               <strong>External id</strong>
@@ -144,6 +172,14 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
               </div>
             </div>
           </div>
+        </Panel>
+
+        <Panel title="Stream metadata" eyebrow="Publishing">
+          <div className="subtle" style={{ marginBottom: 12 }}>
+            These fields drive the on-air overlay title, Twitch stream title, and per-video category override without
+            rewriting ingestion-owned source metadata.
+          </div>
+          <AssetMetadataForm asset={asset} categorySuggestions={categorySuggestions} />
         </Panel>
 
         <Panel title="Asset curation" eyebrow="Programming">

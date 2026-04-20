@@ -157,6 +157,16 @@ export type AssetCurationUpdateRecord = {
   updatedAt?: string;
 };
 
+export type AssetMetadataUpdateRecord = {
+  id: string;
+  title?: string;
+  titlePrefix?: string;
+  categoryName?: string;
+  hashtagsJson?: string;
+  platformNotes?: string;
+  updatedAt?: string;
+};
+
 export type AssetCollectionMembershipUpdateRecord = {
   collectionId: string;
   assetIds: string[];
@@ -896,6 +906,47 @@ function normalizeAssetFolderPath(value: unknown): string {
     .trim()
     .replace(/\\/g, "/")
     .replace(/^\/+|\/+$/g, "");
+}
+
+function normalizeAssetTitle(value: unknown): string {
+  return String(value ?? "").trim().slice(0, 200);
+}
+
+function normalizeAssetTitlePrefix(value: unknown): string {
+  return String(value ?? "").trim().slice(0, 20);
+}
+
+function normalizeAssetCategoryName(value: unknown): string {
+  return String(value ?? "").trim().slice(0, 120);
+}
+
+function normalizeAssetPlatformNotes(value: unknown): string {
+  return String(value ?? "").trim().slice(0, 1000);
+}
+
+function normalizeAssetHashtagsJson(value: unknown): string {
+  if (typeof value !== "string") {
+    return "[]";
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return "[]";
+    }
+
+    const normalized = parsed
+      .map((entry) =>
+        String(entry ?? "")
+          .trim()
+          .replace(/^#+/, "")
+          .replace(/\s+/g, "")
+      )
+      .filter(Boolean);
+    return JSON.stringify([...new Set(normalized)].slice(0, 12));
+  } catch {
+    return "[]";
+  }
 }
 
 function normalizeAssetCollectionColor(value: unknown): string {
@@ -3933,6 +3984,56 @@ export async function updateAssetCurationRecords(updates: AssetCurationUpdateRec
             : normalizeAssetTags([...currentTags, ...(update.appendTags ?? [])]);
         setClauses.push(`tags_json = $${values.length + 1}`);
         values.push(JSON.stringify(nextTags));
+      }
+
+      if (setClauses.length === 0) {
+        continue;
+      }
+
+      setClauses.push(`updated_at = $${values.length + 1}`);
+      values.push(update.updatedAt ?? new Date().toISOString());
+
+      const result = await client.query(`UPDATE assets SET ${setClauses.join(", ")} WHERE id = $1`, values);
+      if (result.rowCount === 0) {
+        throw new Error(`Asset not found: ${update.id}`);
+      }
+    }
+  });
+}
+
+export async function updateAssetMetadataRecords(updates: AssetMetadataUpdateRecord[]): Promise<void> {
+  if (updates.length === 0) {
+    return;
+  }
+
+  await withSerializedStateWrite("updateAssetMetadataRecords", async (client) => {
+    for (const update of updates) {
+      const values: unknown[] = [update.id];
+      const setClauses: string[] = [];
+
+      if (update.title !== undefined) {
+        setClauses.push(`title = $${values.length + 1}`);
+        values.push(normalizeAssetTitle(update.title));
+      }
+
+      if (update.titlePrefix !== undefined) {
+        setClauses.push(`title_prefix = $${values.length + 1}`);
+        values.push(normalizeAssetTitlePrefix(update.titlePrefix));
+      }
+
+      if (update.categoryName !== undefined) {
+        setClauses.push(`category_name = $${values.length + 1}`);
+        values.push(normalizeAssetCategoryName(update.categoryName));
+      }
+
+      if (update.hashtagsJson !== undefined) {
+        setClauses.push(`hashtags_json = $${values.length + 1}`);
+        values.push(normalizeAssetHashtagsJson(update.hashtagsJson));
+      }
+
+      if (update.platformNotes !== undefined) {
+        setClauses.push(`platform_notes = $${values.length + 1}`);
+        values.push(normalizeAssetPlatformNotes(update.platformNotes));
       }
 
       if (setClauses.length === 0) {

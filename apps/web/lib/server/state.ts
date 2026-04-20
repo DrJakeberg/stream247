@@ -63,6 +63,7 @@ import {
   replaceAssetsForSourceIds,
   updateAssetCurationRecords,
   updateAssetCollectionMemberships,
+  updateAssetMetadataRecords,
   updateAssetRecords,
   updatePlayoutRuntime,
   updatePoolCursor,
@@ -84,6 +85,7 @@ import {
   type AssetCollectionRecord,
   type AssetRecord,
   type AssetCollectionMembershipUpdateRecord,
+  type AssetMetadataUpdateRecord,
   type AuditEvent,
   type IncidentRecord,
   type ModeratorPresenceWindowRecord,
@@ -124,6 +126,7 @@ export type {
   AssetCollectionRecord,
   AssetRecord,
   AssetCollectionMembershipUpdateRecord,
+  AssetMetadataUpdateRecord,
   AuditEvent,
   IncidentRecord,
   ModeratorPresenceWindowRecord,
@@ -182,6 +185,7 @@ export {
   resolveIncident,
   updateAssetCurationRecords,
   updateAssetCollectionMemberships,
+  updateAssetMetadataRecords,
   updateAssetRecords,
   updateAppState,
   updateOwnerAndInitialized,
@@ -614,6 +618,10 @@ function summarizeAsset(state: AppState, assetId: string): LiveAssetSummary | nu
   };
 }
 
+function buildAssetDisplayTitle(asset: Pick<AssetRecord, "title" | "titlePrefix"> | null | undefined): string {
+  return [asset?.titlePrefix?.trim() || "", asset?.title?.trim() || ""].filter(Boolean).join(" ").trim();
+}
+
 function getConfiguredDestinationFailureCooldownSeconds(): number {
   const parsed = Number(process.env.DESTINATION_FAILURE_COOLDOWN_SECONDS || String(DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS));
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS;
@@ -859,6 +867,8 @@ export function buildActiveScenePayload(
   const nextScheduleItem = getNextScheduleItem(state);
   const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
   const nextAsset = state.assets.find((asset) => asset.id === state.playout.nextAssetId) ?? null;
+  const currentAssetTitle = buildAssetDisplayTitle(currentAsset);
+  const nextAssetTitle = buildAssetDisplayTitle(nextAsset);
   const queueKind = options.queueKind ?? state.playout.queueItems[0]?.kind ?? "asset";
   const queuePreviewStart = state.playout.queueItems[0] ? 1 : 0;
   const queueTitles = state.playout.queueItems
@@ -877,7 +887,7 @@ export function buildActiveScenePayload(
     target: options.target ?? "browser",
     currentTitle:
       queueKind === "asset"
-        ? currentScheduleItem?.title || currentAsset?.title || state.playout.currentTitle || overlay.channelName || "Stream247"
+        ? currentAssetTitle || state.playout.currentTitle || currentScheduleItem?.title || overlay.channelName || "Stream247"
         : queueKind === "live"
           ? queueHead?.title || state.playout.liveBridgeLabel || state.playout.currentTitle || "Live Bridge"
         : queueHead?.title || state.playout.currentTitle || overlay.headline || "Replay stream",
@@ -886,7 +896,7 @@ export function buildActiveScenePayload(
       queueKind === "live"
         ? `Live Bridge · ${(state.playout.liveBridgeInputType || "rtmp").toUpperCase()}`
         : currentSourceName,
-    nextTitle: nextScheduleItem?.title || nextAsset?.title || "Schedule not available",
+    nextTitle: nextAssetTitle || state.playout.nextTitle || nextScheduleItem?.title || "Schedule not available",
     nextTimeLabel: nextScheduleItem ? `${nextScheduleItem.startTime} to ${nextScheduleItem.endTime}` : "No next block configured",
     queueTitles,
     timeZone: getWorkspaceTimeZone()

@@ -5,13 +5,15 @@ const {
   mockAppendAuditEvent,
   mockReadAppState,
   mockUpdateAssetCollectionMemberships,
-  mockUpdateAssetCurationRecords
+  mockUpdateAssetCurationRecords,
+  mockUpdateAssetMetadataRecords
 } = vi.hoisted(() => ({
   mockRequireApiRoles: vi.fn(),
   mockAppendAuditEvent: vi.fn(),
   mockReadAppState: vi.fn(),
   mockUpdateAssetCollectionMemberships: vi.fn(),
-  mockUpdateAssetCurationRecords: vi.fn()
+  mockUpdateAssetCurationRecords: vi.fn(),
+  mockUpdateAssetMetadataRecords: vi.fn()
 }));
 
 vi.mock("@/lib/server/auth", () => ({
@@ -35,10 +37,12 @@ vi.mock("@/lib/server/state", () => ({
   appendAuditEvent: mockAppendAuditEvent,
   readAppState: mockReadAppState,
   updateAssetCollectionMemberships: mockUpdateAssetCollectionMemberships,
-  updateAssetCurationRecords: mockUpdateAssetCurationRecords
+  updateAssetCurationRecords: mockUpdateAssetCurationRecords,
+  updateAssetMetadataRecords: mockUpdateAssetMetadataRecords
 }));
 
 import { PUT } from "../../apps/web/app/api/assets/route";
+import { PATCH } from "../../apps/web/app/api/assets/[id]/route";
 import { POST as bulkUpdateAssets } from "../../apps/web/app/api/assets/bulk/route";
 
 describe("asset API safety regressions", () => {
@@ -48,6 +52,7 @@ describe("asset API safety regressions", () => {
     mockAppendAuditEvent.mockResolvedValue(undefined);
     mockUpdateAssetCollectionMemberships.mockResolvedValue(undefined);
     mockUpdateAssetCurationRecords.mockResolvedValue(undefined);
+    mockUpdateAssetMetadataRecords.mockResolvedValue(undefined);
   });
 
   it("updates only curation fields for single-asset edits", async () => {
@@ -104,6 +109,70 @@ describe("asset API safety regressions", () => {
     expect(payload).not.toHaveProperty("title");
     expect(payload).not.toHaveProperty("path");
     expect(payload).not.toHaveProperty("status");
+  });
+
+  it("updates only metadata fields for per-video metadata edits", async () => {
+    mockReadAppState.mockResolvedValue({
+      assetCollections: [],
+      assets: [
+        {
+          id: "asset_1",
+          sourceId: "source_1",
+          title: "Fresh worker title",
+          titlePrefix: "",
+          hashtagsJson: "[]",
+          platformNotes: "",
+          path: "/tmp/fresh-worker-path.mp4",
+          folderPath: "worker/folder",
+          tags: ["fresh"],
+          status: "ready",
+          includeInProgramming: true,
+          externalId: "external-1",
+          categoryName: "Archive",
+          durationSeconds: 1200,
+          publishedAt: "2026-04-05T10:00:00.000Z",
+          fallbackPriority: 5,
+          isGlobalFallback: false,
+          createdAt: "2026-04-05T10:00:00.000Z",
+          updatedAt: "2026-04-05T10:00:00.000Z"
+        }
+      ]
+    });
+
+    const response = await PATCH(
+      new Request("http://localhost/api/assets/asset_1", {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: "Edited stream title",
+          titlePrefix: "Replay:",
+          categoryName: "Gaming",
+          hashtagsJson: JSON.stringify(["stream247", "#vod replay"]),
+          platformNotes: "Use the safe thumbnail."
+        }),
+        headers: {
+          "content-type": "application/json"
+        }
+      }),
+      { params: Promise.resolve({ id: "asset_1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateAssetMetadataRecords).toHaveBeenCalledTimes(1);
+    const payload = mockUpdateAssetMetadataRecords.mock.calls[0]?.[0]?.[0];
+    expect(payload).toMatchObject({
+      id: "asset_1",
+      title: "Edited stream title",
+      titlePrefix: "Replay:",
+      categoryName: "Gaming",
+      hashtagsJson: JSON.stringify(["stream247", "vodreplay"]),
+      platformNotes: "Use the safe thumbnail."
+    });
+    expect(payload).not.toHaveProperty("path");
+    expect(payload).not.toHaveProperty("status");
+    expect(payload).not.toHaveProperty("cachePath");
+    expect(payload).not.toHaveProperty("includeInProgramming");
+    expect(payload).not.toHaveProperty("fallbackPriority");
+    expect(mockUpdateAssetCurationRecords).not.toHaveBeenCalled();
   });
 
   it("uses append-tags curation updates without rewriting whole asset rows", async () => {

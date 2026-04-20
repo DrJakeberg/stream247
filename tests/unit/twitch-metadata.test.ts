@@ -1,5 +1,17 @@
+import { buildAssetDisplayTitle } from "../../apps/worker/src/asset-display-title";
 import { buildTwitchMetadataTitle, parseAssetHashtagsJson } from "../../apps/worker/src/twitch-metadata";
 import { describe, expect, it } from "vitest";
+
+describe("asset display title", () => {
+  it("prepends title prefix for overlay-facing asset labels without hashtags", () => {
+    expect(
+      buildAssetDisplayTitle({
+        titlePrefix: "Replay:",
+        title: "Runtime program"
+      })
+    ).toBe("Replay: Runtime program");
+  });
+});
 
 describe("Twitch metadata title", () => {
   it("combines asset prefix, title, and parsed hashtags within Twitch's title limit", () => {
