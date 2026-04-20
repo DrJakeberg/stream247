@@ -2,6 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { isEngagementAlertsRuntimeEnabled } from "@stream247/core";
 import { appendEngagementEventRecord, getBroadcastSnapshot, readAppState } from "@/lib/server/state";
+import { createSseResponse } from "@/lib/server/sse";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,60 +21,6 @@ type EventSubPayload = {
     tier?: string;
   };
 };
-
-function createEngagementSseResponse(request: Request) {
-  const encoder = new TextEncoder();
-  let snapshotInterval: NodeJS.Timeout | null = null;
-  let heartbeatInterval: NodeJS.Timeout | null = null;
-
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const push = async () => {
-        try {
-          const snapshot = getBroadcastSnapshot(await readAppState()).engagement;
-          controller.enqueue(encoder.encode(`event: engagement\ndata: ${JSON.stringify(snapshot)}\n\n`));
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Unknown engagement SSE error.";
-          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ message })}\n\n`));
-        }
-      };
-
-      await push();
-      snapshotInterval = setInterval(() => void push(), 1000);
-      heartbeatInterval = setInterval(() => controller.enqueue(encoder.encode(": keep-alive\n\n")), 15000);
-
-      request.signal.addEventListener(
-        "abort",
-        () => {
-          if (snapshotInterval) {
-            clearInterval(snapshotInterval);
-          }
-          if (heartbeatInterval) {
-            clearInterval(heartbeatInterval);
-          }
-          controller.close();
-        },
-        { once: true }
-      );
-    },
-    cancel() {
-      if (snapshotInterval) {
-        clearInterval(snapshotInterval);
-      }
-      if (heartbeatInterval) {
-        clearInterval(heartbeatInterval);
-      }
-    }
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive"
-    }
-  });
-}
 
 function verifyEventSubSignature(request: Request, rawBody: string): boolean {
   const secret = process.env.TWITCH_EVENTSUB_SECRET || "";
@@ -105,7 +52,10 @@ function eventSubKind(subscriptionType: string | undefined): "follow" | "subscri
 }
 
 export async function GET(request: Request) {
-  return createEngagementSseResponse(request);
+  return createSseResponse(request, "engagement", async () => getBroadcastSnapshot(await readAppState()).engagement, {
+    snapshotIntervalMs: 1000,
+    errorMessage: "Unknown engagement SSE error."
+  });
 }
 
 export async function POST(request: Request) {

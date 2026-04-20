@@ -1,5 +1,6 @@
 import { selectActiveDestinationGroup } from "@stream247/core";
 import { getDatabaseHealth } from "@stream247/db";
+import { getActiveSseConnectionCount } from "./sse";
 import { readAppState } from "./state";
 
 const WORKER_HEARTBEAT_STALE_MS = 180_000;
@@ -122,6 +123,7 @@ export async function getSystemReadiness() {
       initialized: state.initialized,
       hasOwner: Boolean(state.owner),
       hasTwitchConnection: state.twitch.status === "connected",
+      sseConnections: getActiveSseConnectionCount(),
       timestamps: {
         workerHeartbeatAt: workerHeartbeat,
         playoutHeartbeatAt: state.playout.heartbeatAt,
@@ -190,6 +192,7 @@ export async function getSystemReadiness() {
       initialized: false,
       hasOwner: false,
       hasTwitchConnection: false,
+      sseConnections: getActiveSseConnectionCount(),
       timestamps: {
         workerHeartbeatAt: "",
         playoutHeartbeatAt: "",

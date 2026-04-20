@@ -67,10 +67,10 @@ services:
       - ./data/media:/app/data/media
     healthcheck:
       test: ["CMD", "node", "apps/worker/dist/index.js", "healthcheck", "worker"]
-      interval: 30s
-      timeout: 30s
+      interval: 45s
+      timeout: 45s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
@@ -91,10 +91,10 @@ services:
       - ./data/media:/app/data/media
     healthcheck:
       test: ["CMD", "node", "apps/worker/dist/index.js", "healthcheck", "playout"]
-      interval: 30s
-      timeout: 30s
+      interval: 45s
+      timeout: 45s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     depends_on:
       relay:
         condition: service_started
@@ -112,10 +112,10 @@ services:
       - ./data/media:/app/data/media
     healthcheck:
       test: ["CMD", "node", "apps/worker/dist/index.js", "healthcheck", "uplink"]
-      interval: 30s
-      timeout: 30s
+      interval: 45s
+      timeout: 45s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     depends_on:
       relay:
         condition: service_started

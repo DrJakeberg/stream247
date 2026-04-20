@@ -33,6 +33,8 @@ vi.mock("@/lib/server/state", () => ({
   readAppState: mockReadAppState
 }));
 
+vi.mock("@/lib/server/sse", async () => vi.importActual("../../apps/web/lib/server/sse"));
+
 import { GET, POST } from "../../apps/web/app/api/overlay/events/route";
 
 const envKeys = ["NODE_ENV", "STREAM_ALERTS_ENABLED", "STREAM_CHAT_OVERLAY_ENABLED", "TWITCH_EVENTSUB_SECRET"] as const;

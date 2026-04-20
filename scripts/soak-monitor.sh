@@ -34,6 +34,12 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  CONTAINER_RESTART_MONITORING=1
+else
+  CONTAINER_RESTART_MONITORING=0
+fi
+
 CHECK_BASE_URL="${CHECK_BASE_URL:-}"
 APP_URL="$(printf "%s" "${CHECK_BASE_URL:-$(sed -n 's/^APP_URL=//p' .env | tail -n 1)}" | sed 's#/*$##')"
 if [ -z "$APP_URL" ]; then
@@ -53,6 +59,47 @@ END_TIME=$(( $(date +%s) + TOTAL_SECONDS ))
 echo "Starting soak monitor for ${HOURS}h at ${APP_URL}" | tee -a "$LOG_FILE"
 echo "Writing log to ${LOG_FILE}" | tee -a "$LOG_FILE"
 
+container_restart_count() {
+  service="$1"
+  if [ "$CONTAINER_RESTART_MONITORING" -ne 1 ]; then
+    printf "unknown"
+    return 0
+  fi
+
+  container_id="$(docker compose ps -q "$service" 2>/dev/null | head -n 1 || true)"
+  if [ -z "$container_id" ]; then
+    printf "unknown"
+    return 0
+  fi
+
+  count="$(docker inspect --format '{{.RestartCount}}' "$container_id" 2>/dev/null || true)"
+  case "$count" in
+    ''|*[!0-9]*)
+      printf "unknown"
+      ;;
+    *)
+      printf "%s" "$count"
+      ;;
+  esac
+}
+
+collect_container_restart_counts() {
+  printf "web=%s worker=%s playout=%s" \
+    "$(container_restart_count web)" \
+    "$(container_restart_count worker)" \
+    "$(container_restart_count playout)"
+}
+
+restart_count_for_service() {
+  service="$1"
+  counts="$2"
+  printf "%s\n" "$counts" | tr ' ' '\n' | sed -n "s/^${service}=//p" | tail -n 1
+}
+
+BASELINE_CONTAINER_RESTART_COUNTS="$(collect_container_restart_counts)"
+export BASELINE_CONTAINER_RESTART_COUNTS
+echo "Baseline container restarts: ${BASELINE_CONTAINER_RESTART_COUNTS}" | tee -a "$LOG_FILE"
+
 BASELINE_UPLINK_UNPLANNED_RESTARTS="$(
   curl -fsS "${APP_URL}/api/system/readiness" 2>/dev/null | node -e '
     const fs = require("fs");
@@ -66,6 +113,32 @@ BASELINE_UPLINK_UNPLANNED_RESTARTS="$(
 )"
 export BASELINE_UPLINK_UNPLANNED_RESTARTS
 echo "Baseline uplink unplanned restarts: ${BASELINE_UPLINK_UNPLANNED_RESTARTS}" | tee -a "$LOG_FILE"
+
+check_container_restarts() {
+  current_counts="$(collect_container_restart_counts)"
+  issues=""
+
+  for service in web worker playout; do
+    baseline_count="$(restart_count_for_service "$service" "$BASELINE_CONTAINER_RESTART_COUNTS")"
+    current_count="$(restart_count_for_service "$service" "$current_counts")"
+    case "${baseline_count}:${current_count}" in
+      *[!0-9:]*|:*|*:)
+        continue
+        ;;
+    esac
+    delta=$((current_count - baseline_count))
+    if [ "$delta" -gt 1 ]; then
+      issues="${issues}${issues:+, }${service}Restarts=${current_count}(+${delta})"
+    fi
+  done
+
+  if [ -n "$issues" ]; then
+    echo "$issues" >&2
+    return 1
+  fi
+
+  echo "containerRestarts=${current_counts}"
+}
 
 check_readiness() {
   response="$(curl -fsS "${APP_URL}/api/system/readiness")"
@@ -145,6 +218,7 @@ check_readiness() {
       `destination=${data.services?.destination ?? "unknown"}`,
       `reason=${data.playout?.selectionReasonCode ?? ""}`,
       `fallback=${data.playout?.fallbackTier ?? ""}`,
+      `sseConnections=${data.sseConnections ?? "unknown"}`,
       ...playoutDetails
     ].join(" "));
   '
@@ -186,7 +260,14 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
     exit 1
   fi
 
-  echo "${NOW} ${readiness_line} ${incidents_line}" | tee -a "$LOG_FILE"
+  if container_restart_line="$(check_container_restarts 2>&1)"; then
+    :
+  else
+    echo "${NOW} container-restart-check-failed ${container_restart_line}" | tee -a "$LOG_FILE"
+    exit 1
+  fi
+
+  echo "${NOW} ${readiness_line} ${incidents_line} ${container_restart_line}" | tee -a "$LOG_FILE"
   sleep "$INTERVAL"
 done
 

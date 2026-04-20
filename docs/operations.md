@@ -16,6 +16,8 @@
 - transition state and next-asset probe status
 - crash-loop protection state
 - open critical incidents
+- active SSE connections reported as `sseConnections` in `/api/system/readiness`
+- container restart deltas in the soak monitor log
 
 ## Common Operator Actions
 
@@ -42,6 +44,7 @@
 - distinguish planned reconnects from recovery: planned reconnects report `selectionReasonCode=scheduled_reconnect`, while FFmpeg failures usually increment `restartCount` with a signal or exit code such as `SIGBUS`, `128`, or `8`
 - in HLS program-feed mode, treat `playoutTransient=true` as a local playout recovery window, not a Twitch reconnect, as long as `uplinkStatus=running`, `programFeed=fresh`, `destination=ok`, and `uplinkUnplannedRestarts` has not increased
 - if the playout container accumulates zombie Chromium or crashpad processes, recreate it after deploying an image that runs Node under the configured init process
+- if the soak monitor reports `container-restart-check-failed`, inspect `docker compose ps`, `docker inspect --format '{{.RestartCount}}'`, and recent logs for `web`, `worker`, and `playout` before restarting the soak
 
 ### Crash-loop protection active
 
@@ -79,3 +82,14 @@
 - if HLS warnings mention corrupt packets, discontinuities, or non-monotonic DTS but `uplink.unplannedRestartCount` stays unchanged and the feed remains fresh, investigate the local asset/input that caused the playout exit instead of reconnecting Twitch manually
 - verify at least one enabled primary or backup destination has a valid RTMP URL and stream key
 - use `STREAM247_RELAY_ENABLED=0` only as a rollback because it returns external publishing to the playout process
+
+## Long-Run Container Baseline
+
+Existing DUT soak notes after the persistent program-feed rollout showed the `web`, `worker`, `playout`, and `uplink` containers staying healthy with Docker restart counts at zero during the observed long run. The remaining failures were playout-runtime transients, not container restarts or Twitch uplink reconnects.
+
+For future long runs, treat the baseline as:
+
+- `web`, `worker`, and `playout` Docker restart counts should remain unchanged; the soak monitor fails if any of them increases by more than one during the soak window.
+- `uplink.unplannedRestartCount` should remain unchanged; any increase means the Twitch-facing RTMP session probably reconnected outside the planned 48-hour reconnect.
+- `sseConnections` may rise while operators keep Broadcast, Channel, or Overlay pages open, but it should return to zero after those clients disconnect.
+- Chromium renderer memory should be checked from the playout container with `docker stats` during multi-day soaks; sustained growth plus stale scene renderer children is actionable, while stable RSS with no restart-count increase is the expected baseline.

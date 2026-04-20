@@ -40,6 +40,7 @@ type CurlResponse = {
 
 type DockerStubOptions = {
   manifestAvailableRefs?: string[];
+  restartCounts?: Partial<Record<"web" | "worker" | "playout", number[]>>;
 };
 
 function acquireRootEnvLock() {
@@ -126,18 +127,33 @@ function createDockerStub(tempDir: string, options: DockerStubOptions = {}) {
   const binDir = path.join(tempDir, "bin");
   const dockerLog = path.join(tempDir, "docker.log");
   const manifestRefsPath = path.join(tempDir, "manifest-refs.txt");
+  const restartCountsDir = path.join(tempDir, "restart-counts");
   mkdirSync(binDir, { recursive: true });
+  mkdirSync(restartCountsDir, { recursive: true });
   writeFileSync(manifestRefsPath, `${(options.manifestAvailableRefs ?? []).join("\n")}\n`);
+  for (const [service, counts] of Object.entries(options.restartCounts ?? {})) {
+    writeFileSync(path.join(restartCountsDir, `${service}.txt`), `${counts.join("\n")}\n`);
+  }
   writeFileSync(
     path.join(binDir, "docker"),
     `#!/usr/bin/env sh
 all_args="$*"
+last_arg=""
+for arg in "$@"; do
+  last_arg="$arg"
+done
 if [ "\${1:-}" = "manifest" ] && [ "\${2:-}" = "inspect" ]; then
   printf '%s\\n' "$all_args" >> "${dockerLog}"
   if grep -Fx "\${3:-}" "${manifestRefsPath}" >/dev/null 2>&1; then
     exit 0
   fi
   exit 1
+fi
+
+if [ "\${1:-}" = "compose" ] && [ "\${2:-}" = "ps" ]; then
+  printf '%s\\n' "$all_args" >> "${dockerLog}"
+  printf '%s-container\\n' "$last_arg"
+  exit 0
 fi
 
 if [ "\${1:-}" = "compose" ]; then
@@ -153,6 +169,26 @@ if [ "\${1:-}" = "compose" ]; then
   if [ -n "$env_file" ] && [ -f "$env_file" ]; then
     grep '^STREAM247_.*_IMAGE=' "$env_file" | sed 's/^/ENV:/' >> "${dockerLog}" || true
   fi
+fi
+
+if [ "\${1:-}" = "inspect" ]; then
+  printf '%s\\n' "$all_args" >> "${dockerLog}"
+  service="\${last_arg%-container}"
+  sequence_file="${restartCountsDir}/\${service}.txt"
+  index_file="${restartCountsDir}/\${service}.index"
+  if [ ! -f "$sequence_file" ]; then
+    printf '0\\n'
+    exit 0
+  fi
+  index="$(cat "$index_file" 2>/dev/null || echo 0)"
+  line_number=$((index + 1))
+  value="$(sed -n "\${line_number}p" "$sequence_file")"
+  if [ -z "$value" ]; then
+    value="$(tail -n 1 "$sequence_file")"
+  fi
+  echo $((index + 1)) > "$index_file"
+  printf '%s\\n' "$value"
+  exit 0
 fi
 
 printf '%s\\n' "$all_args" >> "${dockerLog}"
@@ -336,9 +372,12 @@ describe("release readiness files", () => {
   });
 
   it("gives worker-family healthchecks enough time under playout load", () => {
-    expect(extractComposeServiceBlock("worker")).toContain("timeout: 30s");
-    expect(extractComposeServiceBlock("playout")).toContain("timeout: 30s");
-    expect(extractComposeServiceBlock("uplink")).toContain("timeout: 30s");
+    for (const serviceName of ["worker", "playout", "uplink"]) {
+      const serviceBlock = extractComposeServiceBlock(serviceName);
+      expect(serviceBlock).toContain("interval: 45s");
+      expect(serviceBlock).toContain("timeout: 45s");
+      expect(serviceBlock).toContain("start_period: 60s");
+    }
   });
 
   it("mounts media storage into uplink so it can read the HLS program feed", () => {
@@ -541,5 +580,31 @@ describe("release readiness scripts", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("uplinkUnplannedRestarts=1");
     expect(result.output).toContain("uplinkStatus=running");
+  });
+
+  it("soak monitor reports container restart counts and fails after repeated restarts", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
+
+    const healthyResponse =
+      '{"status":"ok","broadcastReady":true,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":1,"lastExitCode":"","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":0},"programFeed":{"status":"fresh"}}\n';
+
+    const result = runShellScript(
+      soakScriptPath,
+      ["--hours", "24", "--interval-seconds", "0"],
+      [{ body: healthyResponse }, { body: healthyResponse }],
+      {
+        docker: {
+          restartCounts: {
+            web: [0, 2],
+            worker: [0, 0],
+            playout: [0, 0]
+          }
+        }
+      }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Baseline container restarts: web=0 worker=0 playout=0");
+    expect(result.output).toContain("container-restart-check-failed webRestarts=2(+2)");
   });
 });
