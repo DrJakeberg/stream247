@@ -872,7 +872,7 @@ Status: complete
 **Caveats**
 
 - Twitch accounts connected before M28 may need to reconnect once so the app receives `moderator:read:followers` and `channel:read:subscriptions`; no manual Twitch CLI subscription step is required after that
-- Full overlay safe-area clamping for arbitrary positioned layers remains future work; M24 shipped output profiles, viewport alignment, and scaling
+- Safe-area clamping shipped later in M31; M24 still only covered output profiles, viewport alignment, and scaling at the time it landed
 
 **Validation**
 
@@ -899,7 +899,7 @@ Reference documents:
 | --- | --- | --- | --- | --- |
 | M29 | Feature fix | Now | Complete | React component primitives + `!here` chat command dispatch |
 | M30 | UX | Now | Complete | Navigation cleanup shipped: split Library and Pools, moved Sources to Workspace, removed sidebar descriptions |
-| M31 | Feature fix | Next | Incomplete | Overlay safe-area clamping and CSS variable wiring |
+| M31 | Feature fix | Now | Complete | Overlay safe-area clamping and CSS variable wiring |
 | M32 | Feature | Next | Incomplete | Donation and bits alerts (Twitch EventSub `channel.cheer` + channel-point) |
 | M33 | Feature | Later | Incomplete | Multi-quality simultaneous RTMP output |
 | M34 | Docs | Now | Incomplete | Delete legacy docs, merge redundant docs, final doc set |
@@ -1032,7 +1032,7 @@ pnpm validate
 
 ## M31 Overlay Safe-Area Clamping
 
-Status: incomplete
+Status: complete 2026-04-21
 
 **Goal**
 
@@ -1076,6 +1076,11 @@ pnpm validate
 
 - Medium. CSS changes to the overlay can cause visual regressions in the in-stream output. Test all output profiles.
 - Engagement layer position options (bottom-left, bottom-right, top-left, top-right) must still work after safe-area containers are applied.
+
+**Progress Notes**
+
+- Completed 2026-04-21. `globals.css` now computes safe-area variables from the active output width and height, consumes `--overlay-output-width` and `--overlay-output-height` in the public overlay layout, and enforces a 12px minimum text floor through `calc(... * var(--overlay-scale))` font sizing.
+- Positioned custom Scene Studio layers now clamp into the safe-area coordinate space by default, and engagement chat/alert positions use the same safe-area insets instead of raw card padding.
 
 ---
 
@@ -1298,7 +1303,7 @@ pnpm validate
 
 - Added worker-side Twitch EventSub synchronization for follow/sub alert webhooks with duplicate detection and safe cleanup when alert runtime is disabled.
 - Replaced the remaining on-air fallback string with "Coming up next" and covered it with focused overlay text tests.
-- Marked M21-M27 complete after their implementation commits and documented the acceptance-audit caveats: EventSub requires the new OAuth scopes on reconnect, and full safe-area clamping is still future work.
+- Marked M21-M27 complete after their implementation commits and documented the acceptance-audit caveats: EventSub requires the new OAuth scopes on reconnect, and safe-area clamping was still pending at that point.
 
 ### 2026-04-20 — M27 Container Reliability And Ops
 
@@ -1322,7 +1327,7 @@ pnpm validate
 
 - Added output profile persistence, admin controls, `STREAM_OUTPUT_WIDTH/HEIGHT/FPS`, viewport alignment, and optional FFmpeg scale/pad behavior.
 - Updated overlay scaling for lower output heights and added persistence/runtime tests.
-- Caveat: full safe-area container/clamping for arbitrary positioned layers is not yet implemented.
+- Caveat at ship time: full safe-area container/clamping for arbitrary positioned layers was not yet implemented; resolved later in M31.
 
 ### 2026-04-20 — M23 Schedule Video-Level Visibility
 

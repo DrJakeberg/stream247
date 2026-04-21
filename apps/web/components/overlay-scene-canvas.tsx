@@ -11,6 +11,7 @@ import {
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { Badge } from "@/components/ui/Badge";
+import { resolveOverlayCustomLayerStyle } from "@/lib/overlay-layout";
 
 type OverlaySceneCanvasProps = {
   payload: OverlayScenePayload;
@@ -154,13 +155,7 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
       return null;
     }
 
-    const style = {
-      left: `${layer.xPercent}%`,
-      top: `${layer.yPercent}%`,
-      width: `${layer.widthPercent}%`,
-      height: `${layer.heightPercent}%`,
-      opacity: layer.opacityPercent / 100
-    } satisfies CSSProperties;
+    const style = resolveOverlayCustomLayerStyle(layer) as CSSProperties;
 
     if (layer.kind === "text") {
       const primaryText = visibleOverlayText(layer.text) || visibleOverlayText(layer.name);

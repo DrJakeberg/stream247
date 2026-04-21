@@ -14,6 +14,24 @@
   --shadow-card: 0 16px 46px rgba(32, 29, 21, 0.1);
   --warning: #a04a16;
   --danger: #9e2430;
+  --overlay-output-width: 1280px;
+  --overlay-output-height: 720px;
+  --overlay-width: var(--overlay-output-width);
+  --overlay-height: var(--overlay-output-height);
+  --overlay-scale: 1;
+  --overlay-font-floor: max(12px, calc(14px * var(--overlay-scale)));
+  --safe-area-top: calc(var(--overlay-height) * 0.05);
+  --safe-area-right: calc(var(--overlay-width) * 0.05);
+  --safe-area-bottom: calc(var(--overlay-height) * 0.05);
+  --safe-area-left: calc(var(--overlay-width) * 0.05);
+  --safe-area-top-percent: 5%;
+  --safe-area-right-percent: 5%;
+  --safe-area-bottom-percent: 5%;
+  --safe-area-left-percent: 5%;
+  --overlay-safe-area-width: calc(var(--overlay-width) - var(--safe-area-left) - var(--safe-area-right));
+  --overlay-safe-area-height: calc(var(--overlay-height) - var(--safe-area-top) - var(--safe-area-bottom));
+  --overlay-safe-area-width-percent: 90%;
+  --overlay-safe-area-height-percent: 90%;
 }
 
 * {
@@ -1136,6 +1154,15 @@ button.collection-chip {
 .overlay-page {
   --overlay-output-width: 1280px;
   --overlay-output-height: 720px;
+  --overlay-width: var(--overlay-output-width);
+  --overlay-height: var(--overlay-output-height);
+  --overlay-font-floor: max(12px, calc(14px * var(--overlay-scale)));
+  --safe-area-top: calc(var(--overlay-height) * 0.05);
+  --safe-area-right: calc(var(--overlay-width) * 0.05);
+  --safe-area-bottom: calc(var(--overlay-height) * 0.05);
+  --safe-area-left: calc(var(--overlay-width) * 0.05);
+  --overlay-safe-area-width: calc(var(--overlay-width) - var(--safe-area-left) - var(--safe-area-right));
+  --overlay-safe-area-height: calc(var(--overlay-height) - var(--safe-area-top) - var(--safe-area-bottom));
   --overlay-gap: 18px;
   --overlay-card-padding: 20px;
   --overlay-card-large-padding: 26px;
@@ -1144,29 +1171,14 @@ button.collection-chip {
   --overlay-title-margin-bottom: 8px;
   --overlay-chip-padding-y: 10px;
   --overlay-chip-padding-x: 14px;
-  --overlay-chip-font-size: 0.85rem;
   --overlay-banner-padding-y: 14px;
   --overlay-banner-padding-x: 18px;
   --overlay-ticker-padding-y: 12px;
   --overlay-ticker-padding-x: 18px;
-  --overlay-ticker-font-size: 0.88rem;
   --overlay-custom-text-padding-y: 18px;
   --overlay-custom-text-padding-x: 20px;
   --overlay-custom-widget-padding-y: 20px;
   --overlay-custom-widget-padding-x: 22px;
-  --overlay-title-compact-min: 1.65rem;
-  --overlay-title-compact-max: 2.7rem;
-  --overlay-title-balanced-min: 2rem;
-  --overlay-title-balanced-max: 3.8rem;
-  --overlay-title-cinematic-min: 2.4rem;
-  --overlay-title-cinematic-max: 5rem;
-  --overlay-custom-headline-min: 1.5rem;
-  --overlay-custom-headline-max: 2.6rem;
-  --overlay-custom-body-min: 1rem;
-  --overlay-custom-body-max: 1.4rem;
-  --overlay-custom-caption-size: 0.92rem;
-  --overlay-custom-widget-title-min: 1.2rem;
-  --overlay-custom-widget-title-max: 2.2rem;
   min-height: 100vh;
   padding: 28px;
   background:
@@ -1179,6 +1191,12 @@ button.collection-chip {
 .overlay-page.overlay-page-chromeless {
   padding: 0;
   background: transparent;
+}
+
+.overlay-page .overlay-frame {
+  width: min(100%, var(--overlay-output-width));
+  min-height: var(--overlay-output-height);
+  padding: var(--safe-area-top) var(--safe-area-right) var(--safe-area-bottom) var(--safe-area-left);
 }
 
 .overlay-page.overlay-page-chromeless .overlay-frame {
@@ -1201,7 +1219,7 @@ button.collection-chip {
 .engagement-alert {
   position: absolute;
   z-index: 5;
-  max-width: min(34vw, 420px);
+  max-width: min(34vw, 420px, var(--overlay-safe-area-width));
   pointer-events: none;
   color: #fffaf0;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.42);
@@ -1209,26 +1227,26 @@ button.collection-chip {
 
 .engagement-chat-bottom-left,
 .engagement-alert-bottom-left {
-  left: var(--overlay-card-padding);
-  bottom: var(--overlay-card-padding);
+  left: var(--safe-area-left);
+  bottom: var(--safe-area-bottom);
 }
 
 .engagement-chat-bottom-right,
 .engagement-alert-bottom-right {
-  right: var(--overlay-card-padding);
-  bottom: var(--overlay-card-padding);
+  right: var(--safe-area-right);
+  bottom: var(--safe-area-bottom);
 }
 
 .engagement-chat-top-left,
 .engagement-alert-top-left {
-  left: var(--overlay-card-padding);
-  top: var(--overlay-card-padding);
+  left: var(--safe-area-left);
+  top: var(--safe-area-top);
 }
 
 .engagement-chat-top-right,
 .engagement-alert-top-right {
-  right: var(--overlay-card-padding);
-  top: var(--overlay-card-padding);
+  right: var(--safe-area-right);
+  top: var(--safe-area-top);
 }
 
 .engagement-chat {
@@ -1254,7 +1272,7 @@ button.collection-chip {
 .engagement-alert span {
   display: block;
   color: color-mix(in srgb, var(--overlay-accent) 80%, #fffaf0);
-  font-size: var(--overlay-chip-font-size);
+  font-size: max(var(--overlay-font-floor), calc(14px * var(--overlay-scale)));
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1263,7 +1281,7 @@ button.collection-chip {
 .engagement-chat-message p,
 .engagement-alert p {
   margin: 3px 0 0;
-  font-size: var(--overlay-ticker-font-size);
+  font-size: max(var(--overlay-font-floor), calc(15px * var(--overlay-scale)));
   line-height: 1.25;
 }
 
@@ -1277,7 +1295,7 @@ button.collection-chip {
 }
 
 .engagement-alert {
-  min-width: min(32vw, 360px);
+  width: min(32vw, 360px, var(--overlay-safe-area-width));
   padding: var(--overlay-banner-padding-y) var(--overlay-banner-padding-x);
   animation: engagement-pop 7s ease both;
 }
@@ -1285,7 +1303,7 @@ button.collection-chip {
 .engagement-alert strong {
   display: block;
   margin-top: 4px;
-  font-size: clamp(var(--overlay-custom-body-min), 2vw, var(--overlay-custom-headline-max));
+  font-size: max(var(--overlay-font-floor), calc(30px * var(--overlay-scale)));
   line-height: 1;
 }
 
@@ -1387,7 +1405,7 @@ button.collection-chip {
 
 .overlay-card-large h1 {
   margin: var(--overlay-title-margin-top) 0 var(--overlay-title-margin-bottom);
-  font-size: clamp(2rem, 4vw, 3.8rem);
+  font-size: max(var(--overlay-font-floor), calc(44px * var(--overlay-scale)));
   line-height: 0.95;
 }
 
@@ -1421,20 +1439,34 @@ button.collection-chip {
 }
 
 .overlay-title-compact .overlay-card-large h1 {
-  font-size: clamp(var(--overlay-title-compact-min), 2.9vw, var(--overlay-title-compact-max));
+  font-size: max(var(--overlay-font-floor), calc(30px * var(--overlay-scale)));
 }
 
 .overlay-title-balanced .overlay-card-large h1 {
-  font-size: clamp(var(--overlay-title-balanced-min), 4vw, var(--overlay-title-balanced-max));
+  font-size: max(var(--overlay-font-floor), calc(44px * var(--overlay-scale)));
 }
 
 .overlay-title-cinematic .overlay-card-large h1 {
-  font-size: clamp(var(--overlay-title-cinematic-min), 5.4vw, var(--overlay-title-cinematic-max));
+  font-size: max(var(--overlay-font-floor), calc(58px * var(--overlay-scale)));
 }
 
 .overlay-card-large p {
   margin: 0;
   color: rgba(245, 242, 234, 0.76);
+  font-size: max(var(--overlay-font-floor), calc(17px * var(--overlay-scale)));
+}
+
+.overlay-card strong {
+  font-size: max(var(--overlay-font-floor), calc(24px * var(--overlay-scale)));
+  line-height: 1.05;
+}
+
+.overlay-page .label {
+  font-size: max(12px, calc(12px * var(--overlay-scale)));
+}
+
+.overlay-page .subtle {
+  font-size: max(var(--overlay-font-floor), calc(15px * var(--overlay-scale)));
 }
 
 .overlay-chip,
@@ -1442,7 +1474,7 @@ button.collection-chip {
   display: inline-flex;
   width: fit-content;
   padding: var(--overlay-chip-padding-y) var(--overlay-chip-padding-x);
-  font-size: var(--overlay-chip-font-size);
+  font-size: max(var(--overlay-font-floor), calc(14px * var(--overlay-scale)));
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -1482,7 +1514,7 @@ button.collection-chip {
 .overlay-ticker {
   grid-column: 1 / -1;
   padding: var(--overlay-ticker-padding-y) var(--overlay-ticker-padding-x);
-  font-size: var(--overlay-ticker-font-size);
+  font-size: max(var(--overlay-font-floor), calc(15px * var(--overlay-scale)));
   letter-spacing: 0.04em;
   color: rgba(245, 242, 234, 0.82);
 }
@@ -1512,19 +1544,19 @@ button.collection-chip {
 }
 
 .overlay-custom-layer-text-headline .overlay-custom-layer-text-primary {
-  font-size: clamp(var(--overlay-custom-headline-min), 2.6vw, var(--overlay-custom-headline-max));
+  font-size: max(var(--overlay-font-floor), calc(30px * var(--overlay-scale)));
   line-height: 0.96;
   font-weight: 700;
 }
 
 .overlay-custom-layer-text-body .overlay-custom-layer-text-primary {
-  font-size: clamp(var(--overlay-custom-body-min), 1.6vw, var(--overlay-custom-body-max));
+  font-size: max(var(--overlay-font-floor), calc(16px * var(--overlay-scale)));
   line-height: 1.2;
   font-weight: 600;
 }
 
 .overlay-custom-layer-text-caption .overlay-custom-layer-text-primary {
-  font-size: var(--overlay-custom-caption-size);
+  font-size: max(12px, calc(13px * var(--overlay-scale)));
   line-height: 1.25;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1532,7 +1564,7 @@ button.collection-chip {
 
 .overlay-custom-layer-text-secondary {
   color: rgba(245, 242, 234, 0.72);
-  font-size: var(--overlay-custom-caption-size);
+  font-size: max(12px, calc(13px * var(--overlay-scale)));
   line-height: 1.3;
 }
 
@@ -1605,6 +1637,14 @@ button.collection-chip {
   color: rgba(245, 242, 234, 0.78);
 }
 
+.overlay-custom-layer-placeholder strong {
+  font-size: max(var(--overlay-font-floor), calc(20px * var(--overlay-scale)));
+}
+
+.overlay-custom-layer-placeholder span {
+  font-size: max(var(--overlay-font-floor), calc(14px * var(--overlay-scale)));
+}
+
 .overlay-custom-layer-embed-badge {
   position: absolute;
   top: 10px;
@@ -1613,7 +1653,7 @@ button.collection-chip {
   padding: 6px 10px;
   border-radius: 999px;
   background: rgba(8, 15, 13, 0.72);
-  font-size: 0.72rem;
+  font-size: max(12px, calc(12px * var(--overlay-scale)));
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -1625,7 +1665,7 @@ button.collection-chip {
   z-index: 1;
   padding: 6px 10px;
   border-radius: 999px;
-  font-size: 0.72rem;
+  font-size: max(12px, calc(12px * var(--overlay-scale)));
   letter-spacing: 0.12em;
   text-transform: uppercase;
   background: rgba(8, 15, 13, 0.72);
@@ -1647,14 +1687,14 @@ button.collection-chip {
 }
 
 .overlay-custom-layer-widget-label {
-  font-size: 0.78rem;
+  font-size: max(12px, calc(12px * var(--overlay-scale)));
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: rgba(245, 242, 234, 0.74);
 }
 
 .overlay-custom-layer-widget-title {
-  font-size: clamp(var(--overlay-custom-widget-title-min), 2vw, var(--overlay-custom-widget-title-max));
+  font-size: max(var(--overlay-font-floor), calc(24px * var(--overlay-scale)));
   line-height: 1.02;
   font-weight: 700;
 }
@@ -1662,11 +1702,12 @@ button.collection-chip {
 .overlay-custom-layer-widget-body,
 .overlay-custom-layer-widget-secondary {
   color: rgba(245, 242, 234, 0.76);
+  font-size: max(var(--overlay-font-floor), calc(15px * var(--overlay-scale)));
   line-height: 1.3;
 }
 
 .overlay-custom-layer-widget-secondary {
-  font-size: 0.92rem;
+  font-size: max(var(--overlay-font-floor), calc(14px * var(--overlay-scale)));
 }
 
 @media (max-width: 900px) {
