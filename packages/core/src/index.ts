@@ -68,11 +68,13 @@ export type StreamOutputSettings = {
 export type EngagementChatDisplayMode = "quiet" | "active" | "flood";
 export type EngagementOverlayPosition = "bottom-left" | "bottom-right" | "top-left" | "top-right";
 export type EngagementOverlayStyle = "compact" | "card";
-export type EngagementEventKind = "chat" | "follow" | "subscribe" | "status";
+export type EngagementEventKind = "chat" | "follow" | "subscribe" | "cheer" | "channel-point" | "status";
 
 export type EngagementSettings = {
   chatEnabled: boolean;
   alertsEnabled: boolean;
+  donationsEnabled: boolean;
+  channelPointsEnabled: boolean;
   chatMode: EngagementChatDisplayMode;
   chatPosition: EngagementOverlayPosition;
   alertPosition: EngagementOverlayPosition;
@@ -99,6 +101,8 @@ type StreamOutputSettingsInput = {
 type EngagementSettingsInput = {
   chatEnabled?: unknown;
   alertsEnabled?: unknown;
+  donationsEnabled?: unknown;
+  channelPointsEnabled?: unknown;
   chatMode?: unknown;
   chatPosition?: unknown;
   alertPosition?: unknown;
@@ -133,6 +137,8 @@ export const DEFAULT_STREAM_OUTPUT_SETTINGS: StreamOutputSettings = {
 export const DEFAULT_ENGAGEMENT_SETTINGS: EngagementSettings = {
   chatEnabled: false,
   alertsEnabled: false,
+  donationsEnabled: true,
+  channelPointsEnabled: true,
   chatMode: "quiet",
   chatPosition: "bottom-left",
   alertPosition: "top-right",
@@ -232,7 +238,14 @@ export function normalizeEngagementOverlayStyle(value: unknown): EngagementOverl
 }
 
 export function normalizeEngagementEventKind(value: unknown): EngagementEventKind {
-  return value === "follow" || value === "subscribe" || value === "status" || value === "chat" ? value : "status";
+  return value === "follow" ||
+    value === "subscribe" ||
+    value === "cheer" ||
+    value === "channel-point" ||
+    value === "status" ||
+    value === "chat"
+    ? value
+    : "status";
 }
 
 export function normalizeEngagementSettings(value?: EngagementSettingsInput | null): EngagementSettings {
@@ -240,6 +253,8 @@ export function normalizeEngagementSettings(value?: EngagementSettingsInput | nu
   return {
     chatEnabled: normalizeBoolean(value?.chatEnabled, defaults.chatEnabled),
     alertsEnabled: normalizeBoolean(value?.alertsEnabled, defaults.alertsEnabled),
+    donationsEnabled: normalizeBoolean(value?.donationsEnabled, defaults.donationsEnabled),
+    channelPointsEnabled: normalizeBoolean(value?.channelPointsEnabled, defaults.channelPointsEnabled),
     chatMode: normalizeEngagementChatDisplayMode(value?.chatMode),
     chatPosition: normalizeEngagementOverlayPosition(value?.chatPosition),
     alertPosition: normalizeEngagementOverlayPosition(value?.alertPosition),
@@ -271,6 +286,22 @@ export function isEngagementAlertsRuntimeEnabled(
   env: Record<string, string | undefined>
 ): boolean {
   return normalizeEngagementSettings(settings).alertsEnabled && env.STREAM_ALERTS_ENABLED === "1";
+}
+
+export function isEngagementDonationAlertsRuntimeEnabled(
+  settings: EngagementSettingsInput | null | undefined,
+  env: Record<string, string | undefined>
+): boolean {
+  const normalized = normalizeEngagementSettings(settings);
+  return normalized.donationsEnabled && isEngagementAlertsRuntimeEnabled(normalized, env);
+}
+
+export function isEngagementChannelPointsRuntimeEnabled(
+  settings: EngagementSettingsInput | null | undefined,
+  env: Record<string, string | undefined>
+): boolean {
+  const normalized = normalizeEngagementSettings(settings);
+  return normalized.channelPointsEnabled && isEngagementAlertsRuntimeEnabled(normalized, env);
 }
 
 type OverlaySceneCustomLayerBase = {

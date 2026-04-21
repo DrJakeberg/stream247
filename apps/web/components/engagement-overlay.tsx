@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { LiveEngagementEventSummary, LiveEngagementSummary } from "@/lib/live-broadcast";
 
 function isAlertEvent(event: LiveEngagementEventSummary): boolean {
-  return event.kind === "follow" || event.kind === "subscribe";
+  return event.kind === "follow" || event.kind === "subscribe" || event.kind === "cheer" || event.kind === "channel-point";
 }
 
 function classForPosition(base: string, position: string): string {
@@ -40,6 +40,17 @@ export function EngagementOverlay({ initialEngagement }: { initialEngagement: Li
     return () => eventSource.close();
   }, []);
 
+  const alertLabel =
+    latestAlert?.kind === "follow"
+      ? "New follow"
+      : latestAlert?.kind === "subscribe"
+        ? "New subscription"
+        : latestAlert?.kind === "cheer"
+          ? "New cheer"
+          : latestAlert?.kind === "channel-point"
+            ? "Channel points redeemed"
+            : "";
+
   return (
     <>
       {engagement.settings.chatRuntimeEnabled && chatEvents.length > 0 ? (
@@ -67,7 +78,7 @@ export function EngagementOverlay({ initialEngagement }: { initialEngagement: Li
           ].join(" ")}
           key={latestAlert.id}
         >
-          <span>{latestAlert.kind === "follow" ? "New follow" : "New subscription"}</span>
+          <span>{alertLabel}</span>
           <strong>{latestAlert.actor}</strong>
           <p>{latestAlert.message}</p>
         </aside>

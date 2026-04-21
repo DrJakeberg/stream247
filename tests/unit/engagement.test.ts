@@ -4,7 +4,9 @@ import {
   DEFAULT_ENGAGEMENT_SETTINGS,
   createDefaultModerationConfig,
   isEngagementAlertsRuntimeEnabled,
+  isEngagementChannelPointsRuntimeEnabled,
   isEngagementChatRuntimeEnabled,
+  isEngagementDonationAlertsRuntimeEnabled,
   normalizeEngagementSettings
 } from "@stream247/core";
 import type { AppState } from "@stream247/db";
@@ -67,9 +69,14 @@ function baseEngagement(overrides: Partial<typeof DEFAULT_ENGAGEMENT_SETTINGS> =
   };
 }
 
-function baseEventSubState(overrides: { alertsEnabled?: boolean; twitch?: Partial<AppState["twitch"]> } = {}): AppState {
+function baseEventSubState(
+  overrides: {
+    engagement?: Partial<typeof DEFAULT_ENGAGEMENT_SETTINGS>;
+    twitch?: Partial<AppState["twitch"]>;
+  } = {}
+): AppState {
   return {
-    engagement: baseEngagement({ alertsEnabled: overrides.alertsEnabled ?? true }),
+    engagement: baseEngagement({ alertsEnabled: true, ...overrides.engagement }),
     twitch: {
       status: "connected",
       broadcasterId: "broadcaster-1",
@@ -129,12 +136,14 @@ describe("engagement layer helpers", () => {
   });
 
   it("keeps chat and alerts disabled unless both settings and env gates are enabled", () => {
-    const settings = baseEngagement({ alertsEnabled: true, chatEnabled: true });
+    const settings = baseEngagement({ alertsEnabled: true, chatEnabled: true, donationsEnabled: true, channelPointsEnabled: true });
 
     expect(isEngagementChatRuntimeEnabled(settings, { STREAM_CHAT_OVERLAY_ENABLED: "0" })).toBe(false);
     expect(isEngagementChatRuntimeEnabled(settings, { STREAM_CHAT_OVERLAY_ENABLED: "1" })).toBe(true);
     expect(isEngagementAlertsRuntimeEnabled(settings, { STREAM_ALERTS_ENABLED: "0" })).toBe(false);
     expect(isEngagementAlertsRuntimeEnabled(settings, { STREAM_ALERTS_ENABLED: "1" })).toBe(true);
+    expect(isEngagementDonationAlertsRuntimeEnabled(settings, { STREAM_ALERTS_ENABLED: "1" })).toBe(true);
+    expect(isEngagementChannelPointsRuntimeEnabled(settings, { STREAM_ALERTS_ENABLED: "1" })).toBe(true);
   });
 
   it("normalizes string booleans without accidentally enabling engagement", () => {
@@ -142,9 +151,18 @@ describe("engagement layer helpers", () => {
       alertsEnabled: false,
       chatEnabled: false
     });
-    expect(normalizeEngagementSettings({ alertsEnabled: "true", chatEnabled: "1" })).toMatchObject({
+    expect(
+      normalizeEngagementSettings({
+        alertsEnabled: "true",
+        chatEnabled: "1",
+        donationsEnabled: "1",
+        channelPointsEnabled: "true"
+      })
+    ).toMatchObject({
       alertsEnabled: true,
-      chatEnabled: true
+      chatEnabled: true,
+      donationsEnabled: true,
+      channelPointsEnabled: true
     });
   });
 
@@ -264,7 +282,7 @@ describe("engagement layer helpers", () => {
     expect(limiter.allow(61_001)).toBe(true);
   });
 
-  it("auto-registers missing follow and subscription EventSub webhooks when alerts are enabled", async () => {
+  it("auto-registers missing follow, subscription, cheer, and channel-point EventSub webhooks when alerts are enabled", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       if (url === "https://id.twitch.tv/oauth2/token") {
@@ -295,7 +313,12 @@ describe("engagement layer helpers", () => {
       .filter(([url, init]) => String(url) === "https://api.twitch.tv/helix/eventsub/subscriptions" && init?.method === "POST")
       .map(([, init]) => JSON.parse(String(init?.body)));
 
-    expect(result.created).toEqual(["channel.follow", "channel.subscribe"]);
+    expect(result.created).toEqual([
+      "channel.follow",
+      "channel.subscribe",
+      "channel.cheer",
+      "channel.channel_points_custom_reward_redemption.add"
+    ]);
     expect(createBodies).toEqual([
       {
         type: "channel.follow",
@@ -312,6 +335,30 @@ describe("engagement layer helpers", () => {
       },
       {
         type: "channel.subscribe",
+        version: "1",
+        condition: {
+          broadcaster_user_id: "broadcaster-1"
+        },
+        transport: {
+          method: "webhook",
+          callback: "https://stream247.example/api/overlay/events",
+          secret: "eventsub-secret"
+        }
+      },
+      {
+        type: "channel.cheer",
+        version: "1",
+        condition: {
+          broadcaster_user_id: "broadcaster-1"
+        },
+        transport: {
+          method: "webhook",
+          callback: "https://stream247.example/api/overlay/events",
+          secret: "eventsub-secret"
+        }
+      },
+      {
+        type: "channel.channel_points_custom_reward_redemption.add",
         version: "1",
         condition: {
           broadcaster_user_id: "broadcaster-1"
@@ -359,6 +406,42 @@ describe("engagement layer helpers", () => {
                   method: "webhook",
                   callback: "https://stream247.example/api/overlay/events"
                 }
+              },
+              {
+                id: "subscribe-existing",
+                type: "channel.subscribe",
+                version: "1",
+                condition: {
+                  broadcaster_user_id: "broadcaster-1"
+                },
+                transport: {
+                  method: "webhook",
+                  callback: "https://stream247.example/api/overlay/events"
+                }
+              },
+              {
+                id: "cheer-existing",
+                type: "channel.cheer",
+                version: "1",
+                condition: {
+                  broadcaster_user_id: "broadcaster-1"
+                },
+                transport: {
+                  method: "webhook",
+                  callback: "https://stream247.example/api/overlay/events"
+                }
+              },
+              {
+                id: "channel-points-existing",
+                type: "channel.channel_points_custom_reward_redemption.add",
+                version: "1",
+                condition: {
+                  broadcaster_user_id: "broadcaster-1"
+                },
+                transport: {
+                  method: "webhook",
+                  callback: "https://stream247.example/api/overlay/events"
+                }
               }
             ],
             pagination: {}
@@ -385,8 +468,109 @@ describe("engagement layer helpers", () => {
       ([url, init]) => String(url) === "https://api.twitch.tv/helix/eventsub/subscriptions" && init?.method === "POST"
     );
     expect(result.created).toEqual([]);
-    expect(result.existing).toEqual(["channel.follow", "channel.subscribe"]);
+    expect(result.existing).toEqual([
+      "channel.follow",
+      "channel.subscribe",
+      "channel.cheer",
+      "channel.channel_points_custom_reward_redemption.add"
+    ]);
     expect(createCalls).toEqual([]);
+  });
+
+  it("cleans up owned cheer and channel-point subscriptions when their per-type toggles are disabled", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "https://id.twitch.tv/oauth2/token") {
+        return new Response(JSON.stringify({ access_token: "app-token" }), { status: 200 });
+      }
+      if (url === "https://api.twitch.tv/helix/eventsub/subscriptions" && init?.method !== "DELETE") {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "follow-existing",
+                type: "channel.follow",
+                version: "2",
+                condition: {
+                  broadcaster_user_id: "broadcaster-1",
+                  moderator_user_id: "broadcaster-1"
+                },
+                transport: {
+                  method: "webhook",
+                  callback: "https://stream247.example/api/overlay/events"
+                }
+              },
+              {
+                id: "subscribe-existing",
+                type: "channel.subscribe",
+                version: "1",
+                condition: {
+                  broadcaster_user_id: "broadcaster-1"
+                },
+                transport: {
+                  method: "webhook",
+                  callback: "https://stream247.example/api/overlay/events"
+                }
+              },
+              {
+                id: "cheer-existing",
+                type: "channel.cheer",
+                version: "1",
+                condition: {
+                  broadcaster_user_id: "broadcaster-1"
+                },
+                transport: {
+                  method: "webhook",
+                  callback: "https://stream247.example/api/overlay/events"
+                }
+              },
+              {
+                id: "channel-points-existing",
+                type: "channel.channel_points_custom_reward_redemption.add",
+                version: "1",
+                condition: {
+                  broadcaster_user_id: "broadcaster-1"
+                },
+                transport: {
+                  method: "webhook",
+                  callback: "https://stream247.example/api/overlay/events"
+                }
+              }
+            ],
+            pagination: {}
+          }),
+          { status: 200 }
+        );
+      }
+      if (
+        (url === "https://api.twitch.tv/helix/eventsub/subscriptions?id=cheer-existing" ||
+          url === "https://api.twitch.tv/helix/eventsub/subscriptions?id=channel-points-existing") &&
+        init?.method === "DELETE"
+      ) {
+        return new Response(null, { status: 204 });
+      }
+      return new Response("", { status: 500 });
+    });
+
+    const result = await syncTwitchEventSubSubscriptions({
+      state: baseEventSubState({
+        engagement: {
+          donationsEnabled: false,
+          channelPointsEnabled: false
+        }
+      }),
+      env: {
+        APP_URL: "https://stream247.example",
+        STREAM_ALERTS_ENABLED: "1",
+        TWITCH_EVENTSUB_SECRET: "eventsub-secret"
+      },
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+
+    expect(result.existing).toEqual(["channel.follow", "channel.subscribe"]);
+    expect(result.deleted).toEqual(["cheer-existing", "channel-points-existing"]);
   });
 
   it("cleans up owned EventSub webhooks when alert runtime is disabled", async () => {
@@ -516,6 +700,42 @@ describe("engagement EventSub and SSE routes", () => {
     );
   });
 
+  it("accepts signed cheer notifications and stores alert events", async () => {
+    const body = JSON.stringify({
+      subscription: { type: "channel.cheer" },
+      event: { user_name: "Bits Hero", bits: 250, message: "Lets go" }
+    });
+
+    const response = await POST(signedEventSubRequest(body));
+
+    expect(response.status).toBe(200);
+    expect(mockAppendEngagementEventRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "cheer",
+        actor: "Bits Hero",
+        message: "Bits Hero cheered 250 bits. Lets go"
+      })
+    );
+  });
+
+  it("accepts signed channel-point notifications and stores alert events", async () => {
+    const body = JSON.stringify({
+      subscription: { type: "channel.channel_points_custom_reward_redemption.add" },
+      event: { user_name: "Reward Fan", reward: { title: "Hydrate" }, user_input: "Big sip" }
+    });
+
+    const response = await POST(signedEventSubRequest(body));
+
+    expect(response.status).toBe(200);
+    expect(mockAppendEngagementEventRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "channel-point",
+        actor: "Reward Fan",
+        message: "Reward Fan redeemed Hydrate. Big sip"
+      })
+    );
+  });
+
   it("returns the EventSub challenge after signature verification", async () => {
     const body = JSON.stringify({ challenge: "challenge-token" });
 
@@ -550,13 +770,48 @@ describe("engagement EventSub and SSE routes", () => {
     expect(mockAppendEngagementEventRecord).not.toHaveBeenCalled();
   });
 
+  it("ignores cheer notifications when bits alerts are disabled", async () => {
+    mockReadAppState.mockResolvedValue({
+      engagement: baseEngagement({ alertsEnabled: true, donationsEnabled: false }),
+      engagementEvents: []
+    });
+    const body = JSON.stringify({ subscription: { type: "channel.cheer" }, event: { user_name: "Bits Hero", bits: 100 } });
+
+    const response = await POST(signedEventSubRequest(body));
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ ignored: true, reason: "donations-disabled" });
+    expect(mockAppendEngagementEventRecord).not.toHaveBeenCalled();
+  });
+
+  it("ignores channel-point notifications when channel-point alerts are disabled", async () => {
+    mockReadAppState.mockResolvedValue({
+      engagement: baseEngagement({ alertsEnabled: true, channelPointsEnabled: false }),
+      engagementEvents: []
+    });
+    const body = JSON.stringify({
+      subscription: { type: "channel.channel_points_custom_reward_redemption.add" },
+      event: { user_name: "Reward Fan", reward: { title: "Hydrate" } }
+    });
+
+    const response = await POST(signedEventSubRequest(body));
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ ignored: true, reason: "channel-points-disabled" });
+    expect(mockAppendEngagementEventRecord).not.toHaveBeenCalled();
+  });
+
   it("streams the current engagement snapshot over SSE", async () => {
     const engagement = {
       settings: {
         chatEnabled: true,
         alertsEnabled: true,
+        donationsEnabled: true,
+        channelPointsEnabled: true,
         chatRuntimeEnabled: true,
         alertsRuntimeEnabled: true,
+        donationsRuntimeEnabled: true,
+        channelPointsRuntimeEnabled: true,
         chatMode: "active",
         chatPosition: "bottom-left",
         alertPosition: "top-right",

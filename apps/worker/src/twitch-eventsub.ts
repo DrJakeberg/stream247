@@ -1,9 +1,17 @@
-import { isEngagementAlertsRuntimeEnabled } from "@stream247/core";
+import {
+  isEngagementAlertsRuntimeEnabled,
+  isEngagementChannelPointsRuntimeEnabled,
+  isEngagementDonationAlertsRuntimeEnabled
+} from "@stream247/core";
 import type { AppState } from "@stream247/db";
 
 type FetchLike = typeof fetch;
 
-type EventSubSubscriptionType = "channel.follow" | "channel.subscribe";
+type EventSubSubscriptionType =
+  | "channel.follow"
+  | "channel.subscribe"
+  | "channel.cheer"
+  | "channel.channel_points_custom_reward_redemption.add";
 
 type EventSubSubscriptionDefinition = {
   type: EventSubSubscriptionType;
@@ -47,8 +55,41 @@ export const REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS: EventSubSubscriptionDefinit
     condition: (broadcasterId) => ({
       broadcaster_user_id: broadcasterId
     })
+  },
+  {
+    type: "channel.cheer",
+    version: "1",
+    condition: (broadcasterId) => ({
+      broadcaster_user_id: broadcasterId
+    })
+  },
+  {
+    type: "channel.channel_points_custom_reward_redemption.add",
+    version: "1",
+    condition: (broadcasterId) => ({
+      broadcaster_user_id: broadcasterId
+    })
   }
 ];
+
+function resolveDesiredEventSubSubscriptions(args: {
+  state: AppState;
+  env: Record<string, string | undefined>;
+}): EventSubSubscriptionDefinition[] {
+  if (!isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env)) {
+    return [];
+  }
+
+  return REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS.filter((definition) => {
+    if (definition.type === "channel.cheer") {
+      return isEngagementDonationAlertsRuntimeEnabled(args.state.engagement, args.env);
+    }
+    if (definition.type === "channel.channel_points_custom_reward_redemption.add") {
+      return isEngagementChannelPointsRuntimeEnabled(args.state.engagement, args.env);
+    }
+    return true;
+  });
+}
 
 function emptyResult(enabled: boolean, reason: string): TwitchEventSubSyncResult {
   return {
@@ -248,6 +289,7 @@ export async function syncTwitchEventSubSubscriptions(args: {
   const broadcasterId = args.state.twitch.broadcasterId.trim();
   const callbackUrl = resolveTwitchEventSubCallbackUrl(args.env);
   const secret = (args.env.TWITCH_EVENTSUB_SECRET || "").trim();
+  const desiredSubscriptions = resolveDesiredEventSubSubscriptions(args);
 
   if (args.state.twitch.status !== "connected" || !broadcasterId) {
     return emptyResult(enabled, "twitch-not-connected");
@@ -307,7 +349,29 @@ export async function syncTwitchEventSubSubscriptions(args: {
 
   const existing: EventSubSubscriptionType[] = [];
   const created: EventSubSubscriptionType[] = [];
-  for (const definition of REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS) {
+  const deleted: string[] = [];
+  for (const subscription of ownedSubscriptions) {
+    const stillDesired = desiredSubscriptions.some((definition) =>
+      subscriptionMatchesDefinition({
+        subscription,
+        definition,
+        broadcasterId,
+        callbackUrl
+      })
+    );
+    if (stillDesired || !subscription.id) {
+      continue;
+    }
+    await deleteEventSubSubscription({
+      id: subscription.id,
+      accessToken,
+      clientId: args.clientId,
+      fetchImpl
+    });
+    deleted.push(subscription.id);
+  }
+
+  for (const definition of desiredSubscriptions) {
     const hasExisting = ownedSubscriptions.some((subscription) =>
       subscriptionMatchesDefinition({
         subscription,
@@ -338,7 +402,7 @@ export async function syncTwitchEventSubSubscriptions(args: {
     status: "registered",
     enabled,
     created,
-    deleted: [],
+    deleted,
     existing
   };
 }

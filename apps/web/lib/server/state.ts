@@ -26,7 +26,9 @@ import {
   isLikelyYouTubeChannelUrl,
   isLikelyYouTubePlaylistUrl,
   isEngagementAlertsRuntimeEnabled,
+  isEngagementChannelPointsRuntimeEnabled,
   isEngagementChatRuntimeEnabled,
+  isEngagementDonationAlertsRuntimeEnabled,
   normalizeEngagementSettings,
   summarizeLiveBridgeInput,
   type OverlaySceneRenderTarget
@@ -868,6 +870,8 @@ function summarizeEngagement(state: AppState): LiveEngagementSummary {
     : [];
   const chatRuntimeEnabled = isEngagementChatRuntimeEnabled(engagement, process.env);
   const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(engagement, process.env);
+  const donationsRuntimeEnabled = isEngagementDonationAlertsRuntimeEnabled(engagement, process.env);
+  const channelPointsRuntimeEnabled = isEngagementChannelPointsRuntimeEnabled(engagement, process.env);
   const latestStatus = engagementEvents.find((event) => event.kind === "status" && event.actor === "chat") ?? null;
   const chatStatus = !chatRuntimeEnabled
     ? "disabled"
@@ -879,8 +883,12 @@ function summarizeEngagement(state: AppState): LiveEngagementSummary {
     settings: {
       chatEnabled: engagement.chatEnabled,
       alertsEnabled: engagement.alertsEnabled,
+      donationsEnabled: engagement.donationsEnabled,
+      channelPointsEnabled: engagement.channelPointsEnabled,
       chatRuntimeEnabled,
       alertsRuntimeEnabled,
+      donationsRuntimeEnabled,
+      channelPointsRuntimeEnabled,
       chatMode: engagement.chatMode,
       chatPosition: engagement.chatPosition,
       alertPosition: engagement.alertPosition,

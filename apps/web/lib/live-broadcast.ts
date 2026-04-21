@@ -236,8 +236,12 @@ export type LiveOverlaySummary = {
 export type LiveEngagementSettingsSummary = {
   chatEnabled: boolean;
   alertsEnabled: boolean;
+  donationsEnabled: boolean;
+  channelPointsEnabled: boolean;
   chatRuntimeEnabled: boolean;
   alertsRuntimeEnabled: boolean;
+  donationsRuntimeEnabled: boolean;
+  channelPointsRuntimeEnabled: boolean;
   chatMode: EngagementChatDisplayMode;
   chatPosition: EngagementOverlayPosition;
   alertPosition: EngagementOverlayPosition;

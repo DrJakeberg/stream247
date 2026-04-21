@@ -11,6 +11,8 @@ import {
 type EngagementSettingsRequest = {
   chatEnabled?: unknown;
   alertsEnabled?: unknown;
+  donationsEnabled?: unknown;
+  channelPointsEnabled?: unknown;
   chatMode?: unknown;
   chatPosition?: unknown;
   alertPosition?: unknown;
@@ -54,6 +56,8 @@ export async function PUT(request: Request) {
     "overlay.engagement.updated",
     `Updated engagement overlay settings: chat ${engagement.chatEnabled ? "enabled" : "disabled"}, alerts ${
       engagement.alertsEnabled ? "enabled" : "disabled"
+    }, bits ${engagement.donationsEnabled ? "enabled" : "disabled"}, channel points ${
+      engagement.channelPointsEnabled ? "enabled" : "disabled"
     }.`
   );
 

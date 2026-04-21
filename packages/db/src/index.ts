@@ -377,6 +377,8 @@ export type OutputSettingsRecord = {
 export type EngagementSettingsRecord = {
   chatEnabled: boolean;
   alertsEnabled: boolean;
+  donationsEnabled: boolean;
+  channelPointsEnabled: boolean;
   chatMode: EngagementChatDisplayMode;
   chatPosition: EngagementOverlayPosition;
   alertPosition: EngagementOverlayPosition;
@@ -582,6 +584,8 @@ type OutputSettingsRow = {
 type EngagementSettingsRow = {
   chat_enabled: boolean;
   alerts_enabled: boolean;
+  donations_enabled: boolean;
+  channel_points_enabled: boolean;
   chat_mode: EngagementChatDisplayMode;
   chat_position: EngagementOverlayPosition;
   alert_position: EngagementOverlayPosition;
@@ -763,6 +767,8 @@ function mapEngagementSettingsRowToRecord(
     ? normalizeEngagementSettingsRecord({
         chatEnabled: row.chat_enabled,
         alertsEnabled: row.alerts_enabled,
+        donationsEnabled: row.donations_enabled,
+        channelPointsEnabled: row.channel_points_enabled,
         chatMode: row.chat_mode,
         chatPosition: row.chat_position,
         alertPosition: row.alert_position,
@@ -1264,6 +1270,8 @@ function defaultState(): AppState {
     engagement: {
       chatEnabled: false,
       alertsEnabled: false,
+      donationsEnabled: true,
+      channelPointsEnabled: true,
       chatMode: "quiet",
       chatPosition: "bottom-left",
       alertPosition: "top-right",
@@ -1864,6 +1872,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
       chat_enabled BOOLEAN NOT NULL DEFAULT FALSE,
       alerts_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      donations_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      channel_points_enabled BOOLEAN NOT NULL DEFAULT TRUE,
       chat_mode TEXT NOT NULL DEFAULT 'quiet',
       chat_position TEXT NOT NULL DEFAULT 'bottom-left',
       alert_position TEXT NOT NULL DEFAULT 'top-right',
@@ -2419,6 +2429,8 @@ const engagementLayerMigration: MigrationDefinition = {
         singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
         chat_enabled BOOLEAN NOT NULL DEFAULT FALSE,
         alerts_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        donations_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        channel_points_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         chat_mode TEXT NOT NULL DEFAULT 'quiet',
         chat_position TEXT NOT NULL DEFAULT 'bottom-left',
         alert_position TEXT NOT NULL DEFAULT 'top-right',
@@ -2441,6 +2453,21 @@ const engagementLayerMigration: MigrationDefinition = {
 
 if (!schemaMigrations.some((migration) => migration.id === engagementLayerMigration.id)) {
   schemaMigrations.push(engagementLayerMigration);
+}
+
+const engagementAlertTypesMigration: MigrationDefinition = {
+  id: "20260421_001_engagement_alert_types",
+  description: "Add per-type cheer and channel-point engagement alert toggles.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE engagement_settings ADD COLUMN IF NOT EXISTS donations_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+      ALTER TABLE engagement_settings ADD COLUMN IF NOT EXISTS channel_points_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === engagementAlertTypesMigration.id)) {
+  schemaMigrations.push(engagementAlertTypesMigration);
 }
 
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
@@ -2705,12 +2732,14 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   await client.query(
     `
       INSERT INTO engagement_settings (
-        singleton_id, chat_enabled, alerts_enabled, chat_mode, chat_position, alert_position, style, max_messages, rate_limit_per_minute, updated_at
+        singleton_id, chat_enabled, alerts_enabled, donations_enabled, channel_points_enabled, chat_mode, chat_position, alert_position, style, max_messages, rate_limit_per_minute, updated_at
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT (singleton_id) DO UPDATE SET
         chat_enabled = EXCLUDED.chat_enabled,
         alerts_enabled = EXCLUDED.alerts_enabled,
+        donations_enabled = EXCLUDED.donations_enabled,
+        channel_points_enabled = EXCLUDED.channel_points_enabled,
         chat_mode = EXCLUDED.chat_mode,
         chat_position = EXCLUDED.chat_position,
         alert_position = EXCLUDED.alert_position,
@@ -2722,6 +2751,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     [
       next.engagement.chatEnabled,
       next.engagement.alertsEnabled,
+      next.engagement.donationsEnabled,
+      next.engagement.channelPointsEnabled,
       next.engagement.chatMode,
       next.engagement.chatPosition,
       next.engagement.alertPosition,
@@ -4581,12 +4612,14 @@ export async function updateEngagementSettingsRecord(engagement: EngagementSetti
     await client.query(
       `
         INSERT INTO engagement_settings (
-          singleton_id, chat_enabled, alerts_enabled, chat_mode, chat_position, alert_position, style, max_messages, rate_limit_per_minute, updated_at
+          singleton_id, chat_enabled, alerts_enabled, donations_enabled, channel_points_enabled, chat_mode, chat_position, alert_position, style, max_messages, rate_limit_per_minute, updated_at
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (singleton_id) DO UPDATE SET
           chat_enabled = EXCLUDED.chat_enabled,
           alerts_enabled = EXCLUDED.alerts_enabled,
+          donations_enabled = EXCLUDED.donations_enabled,
+          channel_points_enabled = EXCLUDED.channel_points_enabled,
           chat_mode = EXCLUDED.chat_mode,
           chat_position = EXCLUDED.chat_position,
           alert_position = EXCLUDED.alert_position,
@@ -4598,6 +4631,8 @@ export async function updateEngagementSettingsRecord(engagement: EngagementSetti
       [
         normalized.chatEnabled,
         normalized.alertsEnabled,
+        normalized.donationsEnabled,
+        normalized.channelPointsEnabled,
         normalized.chatMode,
         normalized.chatPosition,
         normalized.alertPosition,

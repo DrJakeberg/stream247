@@ -900,7 +900,7 @@ Reference documents:
 | M29 | Feature fix | Now | Complete | React component primitives + `!here` chat command dispatch |
 | M30 | UX | Now | Complete | Navigation cleanup shipped: split Library and Pools, moved Sources to Workspace, removed sidebar descriptions |
 | M31 | Feature fix | Now | Complete | Overlay safe-area clamping and CSS variable wiring |
-| M32 | Feature | Next | Incomplete | Donation and bits alerts (Twitch EventSub `channel.cheer` + channel-point) |
+| M32 | Feature | Next | Complete | Donation and bits alerts shipped: Twitch EventSub `channel.cheer` + channel-point redemptions |
 | M33 | Feature | Later | Incomplete | Multi-quality simultaneous RTMP output |
 | M34 | Docs | Now | Incomplete | Delete legacy docs, merge redundant docs, final doc set |
 | M35 | Feature | Next | Incomplete | Twitch LIVE badge with viewer count in Broadcast page |
@@ -1086,22 +1086,27 @@ pnpm validate
 
 ## M32 Donation And Bits Alerts
 
-Status: incomplete
+Status: complete
 
 **Goal**
 
-Implement Twitch EventSub `channel.cheer` and `channel.channel_points_custom_reward_redemption.add` alerts. Add a "donations/bits" section to the Overlays admin page. Until M32 ships, add a "not yet available" placeholder in the Overlays UI.
+Implement Twitch EventSub `channel.cheer` and `channel.channel_points_custom_reward_redemption.add` alerts. Add a "donations/bits" section to the Overlays admin page.
 
 **Scope**
 
 - Add `channel.cheer` and `channel.channel_points_custom_reward_redemption.add` to `REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS` in `apps/worker/src/twitch-eventsub.ts`
 - Add webhook handling for these event types in `apps/web/app/api/overlay/events/route.ts`
 - Add alert rendering in `apps/web/components/engagement-overlay.tsx` for cheer and channel-point events
-- Add controls in `apps/web/(admin)/overlays/page.tsx` for cheer and channel-point alerts (enable/disable, position, style)
+- Add controls in `apps/web/app/(admin)/overlays/page.tsx` for cheer and channel-point alerts (enable/disable, shared position/style)
 - Store alert preferences per-type in `engagement_settings` (add `donations_enabled` and `channel_points_enabled` columns)
 - Additive schema migration
 
-**Before M32 ships:** Add a visible "Donation and bits alerts — coming soon" placeholder in the Overlays admin section. Do not leave the section entirely absent.
+**Progress notes**
+
+- Completed on 2026-04-21.
+- Added per-type `donations_enabled` and `channel_points_enabled` settings with additive migration coverage.
+- EventSub sync now registers and safely cleans up cheer/channel-point subscriptions without creating duplicates.
+- Broadcasters connected before M32 must reconnect once so `bits:read` and `channel:read:redemptions` are granted.
 
 **Touched areas**
 

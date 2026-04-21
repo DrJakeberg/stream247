@@ -54,10 +54,13 @@ const persistentProgramFeedRuntimeColumns = [
 const outputProfilesMigrationId = "20260420_001_output_profiles";
 const outputSettingsColumns = ["singleton_id", "profile_id", "width", "height", "fps", "updated_at"].sort();
 const engagementLayerMigrationId = "20260420_002_engagement_layer";
+const engagementAlertTypesMigrationId = "20260421_001_engagement_alert_types";
 const engagementSettingsColumns = [
   "singleton_id",
   "chat_enabled",
   "alerts_enabled",
+  "donations_enabled",
+  "channel_points_enabled",
   "chat_mode",
   "chat_position",
   "alert_position",
@@ -260,6 +263,8 @@ describe.sequential("database roundtrip", () => {
       engagement: {
         chatEnabled: true,
         alertsEnabled: true,
+        donationsEnabled: true,
+        channelPointsEnabled: true,
         chatMode: "active" as const,
         chatPosition: "bottom-right" as const,
         alertPosition: "top-left" as const,
@@ -657,6 +662,8 @@ describe.sequential("database roundtrip", () => {
     await updateEngagementSettingsRecord({
       chatEnabled: true,
       alertsEnabled: false,
+      donationsEnabled: true,
+      channelPointsEnabled: true,
       chatMode: "flood",
       chatPosition: "top-right",
       alertPosition: "bottom-left",
@@ -668,6 +675,8 @@ describe.sequential("database roundtrip", () => {
     expect((await readAppState()).engagement).toEqual({
       chatEnabled: true,
       alertsEnabled: false,
+      donationsEnabled: true,
+      channelPointsEnabled: true,
       chatMode: "flood",
       chatPosition: "top-right",
       alertPosition: "bottom-left",
@@ -766,6 +775,7 @@ describe.sequential("database roundtrip", () => {
       DROP TABLE IF EXISTS engagement_events;
       DROP TABLE IF EXISTS engagement_settings;
       DELETE FROM schema_migrations WHERE id = '${engagementLayerMigrationId}';
+      DELETE FROM schema_migrations WHERE id = '${engagementAlertTypesMigrationId}';
     `);
 
     await resetDatabaseConnectionsForTests();
@@ -792,13 +802,19 @@ describe.sequential("database roundtrip", () => {
       .split("\n")
       .filter(Boolean);
     const migrationApplied = await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${engagementLayerMigrationId}';`);
+    const alertTypesMigrationApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id = '${engagementAlertTypesMigrationId}';`
+    );
     const state = await readAppState();
 
     expect(settingsColumns).toEqual(engagementSettingsColumns);
     expect(eventColumns).toEqual(engagementEventsColumns);
     expect(migrationApplied).toBe("1");
+    expect(alertTypesMigrationApplied).toBe("1");
     expect(state.engagement.chatEnabled).toBe(false);
     expect(state.engagement.alertsEnabled).toBe(false);
+    expect(state.engagement.donationsEnabled).toBe(true);
+    expect(state.engagement.channelPointsEnabled).toBe(true);
     expect(state.engagementEvents).toEqual([]);
   }, 60_000);
 

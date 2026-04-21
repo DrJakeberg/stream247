@@ -24,7 +24,7 @@ Phase 3 fixed the highest-impact upstream data issues:
 1. Title data now prefers video-level pool lookahead and uses the neutral fallback "Coming up next"
 2. The overlay page and text builders suppress empty strings and raw `[]` values
 3. Output profiles align the overlay viewport with the configured output dimensions
-4. Chat and follow/sub alert widgets are injected into the same captured overlay page
+4. Chat plus follow/sub/cheer/channel-point alert widgets are injected into the same captured overlay page
 
 Remaining caveat: full safe-area clamping for arbitrary positioned layers is not implemented yet. Output sizing and scaling are implemented; safe-area constraints should be handled in a later focused milestone.
 
@@ -233,9 +233,9 @@ Font-size presets, background variants, username toggles, and badge toggles rema
 
 ### Follow and Subscription Alerts
 
-**Data source**: Twitch EventSub webhook for `channel.follow` and `channel.subscribe` events.
+**Data source**: Twitch EventSub webhook for `channel.follow`, `channel.subscribe`, `channel.cheer`, and `channel.channel_points_custom_reward_redemption.add` events.
 
-EventSub requires a public HTTPS webhook endpoint. Stream247 uses `${APP_URL}/api/overlay/events` as the callback and `TWITCH_EVENTSUB_SECRET` for webhook signature verification. The worker auto-registers `channel.follow` and `channel.subscribe` subscriptions when all of these are true:
+EventSub requires a public HTTPS webhook endpoint. Stream247 uses `${APP_URL}/api/overlay/events` as the callback and `TWITCH_EVENTSUB_SECRET` for webhook signature verification. The worker auto-registers the enabled engagement subscriptions when all of these are true:
 
 - alerts are enabled in the database and `STREAM_ALERTS_ENABLED=1`
 - Twitch is connected with a broadcaster ID
@@ -243,12 +243,12 @@ EventSub requires a public HTTPS webhook endpoint. Stream247 uses `${APP_URL}/ap
 - `APP_URL` starts with `https://`
 - `TWITCH_EVENTSUB_SECRET` is set
 
-The worker lists existing EventSub subscriptions before creating anything, so it does not create duplicates for the same callback/type/condition. If alerts are turned off, it deletes only matching Stream247-owned follow/sub webhook subscriptions for the configured callback and broadcaster.
+The worker lists existing EventSub subscriptions before creating anything, so it does not create duplicates for the same callback/type/condition. If alerts are turned off, or a per-type toggle is turned off, it deletes only matching Stream247-owned engagement webhook subscriptions for the configured callback and broadcaster.
 
-Twitch webhook EventSub APIs require an app access token for create/list/delete calls. The connected broadcaster must also have granted the app the required scopes: `moderator:read:followers` for `channel.follow` and `channel:read:subscriptions` for `channel.subscribe`. Accounts connected before this behavior shipped may need to reconnect once to grant those scopes. No manual Twitch CLI subscription step is required for normal operation.
+Twitch webhook EventSub APIs require an app access token for create/list/delete calls. The connected broadcaster must also have granted the app the required scopes: `moderator:read:followers` for `channel.follow`, `channel:read:subscriptions` for `channel.subscribe`, `bits:read` for `channel.cheer`, and `channel:read:redemptions` for `channel.channel_points_custom_reward_redemption.add`. Accounts connected before M32 may need to reconnect once to grant the new scopes. No manual Twitch CLI subscription step is required for normal operation.
 
 **Alert component behavior**:
-- New follower/sub event arrives at `/api/overlay/events` via Twitch EventSub webhook
+- New follow/sub/cheer/channel-point event arrives at `/api/overlay/events` via Twitch EventSub webhook
 - The web route verifies the signature, stores an engagement event, and the SSE endpoint streams the updated engagement snapshot
 - Overlay page receives the event snapshot and shows an alert animation
 - Alert displays for 5 seconds (configurable), then dismisses
@@ -256,12 +256,12 @@ Twitch webhook EventSub APIs require an app access token for create/list/delete 
 
 **Alert component controls** (in Overlays admin section):
 - Enable/disable alerts as one feature gate
+- Enable/disable bits / cheer alerts
+- Enable/disable channel point redemption alerts
 - Position: bottom-left, bottom-right, top-left, top-right
 - Style: compact or card
 
-Per-alert-type toggles, custom sounds, custom animation styles, and duration controls remain future UI work.
-
-**Note on donation/bits alerts**: These require Twitch EventSub `channel.cheer` and `channel.channel_points_custom_reward_redemption.add` subscriptions. Full implementation remains a later milestone.
+Custom sounds, custom animation styles, and duration controls remain future UI work.
 
 ### Engagement Widget Status in Overlay Admin
 
@@ -272,7 +272,6 @@ The `Overlays` page in admin navigation includes:
 
 ### What M25 Does Not Include
 
-- Donation/bits alerts
 - Stream interaction games or polls (later milestone)
 - Custom alert media (images, sound files — later)
 - OBS-compatible overlay URL mode (the overlay page is already accessible at `/overlay` for external use, but it is not the primary design target)
@@ -308,3 +307,10 @@ The `Overlays` page in admin navigation includes:
 - Worker auto-registers `channel.follow` and `channel.subscribe` webhook subscriptions when alert runtime is enabled and Twitch/public callback config is valid
 - Worker verifies existing subscriptions before creating new ones
 - Worker safely deletes Stream247-owned follow/sub subscriptions when alerts are disabled
+
+### M32 — Cheer And Channel-Point Alerts
+
+- Worker extends EventSub sync to `channel.cheer` and `channel.channel_points_custom_reward_redemption.add`
+- Overlays admin exposes bits / cheer and channel point toggles on top of the shared alert position/style controls
+- Webhook ingestion stores cheer and channel-point engagement events, and the in-stream overlay renders them with the same alert pipeline
+- Broadcasters connected before M32 must reconnect once so `bits:read` and `channel:read:redemptions` are granted

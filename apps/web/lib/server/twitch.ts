@@ -36,6 +36,8 @@ export async function getTwitchAuthorizeUrl(
       : [
           "channel:manage:broadcast",
           "channel:manage:schedule",
+          "bits:read",
+          "channel:read:redemptions",
           "moderator:manage:chat_settings",
           "moderator:read:followers",
           "channel:read:subscriptions"

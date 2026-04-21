@@ -130,13 +130,13 @@ The 2026-04-20 audit identified several viewer-visible and operator-visible gaps
 5. **No per-video metadata edit form**: The library now has per-video metadata editing with targeted writes.
 6. **Pool-level schedule blindness**: Schedule preview now includes video-level `videoSlots`, and the schedule page shows an expandable title timeline.
 7. **Hardcoded output dimensions**: Output profiles and `STREAM_OUTPUT_WIDTH/HEIGHT/FPS` now drive standby slate, renderer viewport, and optional scale/pad behavior.
-8. **No engagement layer**: Chat overlay, follow/sub alert rendering, EventSub receiving, and EventSub auto-registration are now implemented and disabled by default.
+8. **No engagement layer**: Chat overlay, follow/sub/cheer/channel-point alert rendering, EventSub receiving, and EventSub auto-registration are now implemented and disabled by default.
 
 ## Known Active Caveats
 
-1. **EventSub authorization migration**: Twitch accounts connected before M28 may need one reconnect so the app receives `moderator:read:followers` and `channel:read:subscriptions`; after that, Stream247 registers follow/sub EventSub webhooks automatically.
+1. **EventSub authorization migration**: Twitch accounts connected before M32 may need one reconnect so the app receives `moderator:read:followers`, `channel:read:subscriptions`, `bits:read`, and `channel:read:redemptions`; after that, Stream247 registers follow/sub/cheer/channel-point EventSub webhooks automatically.
 2. **Safe-area clamping**: M24 implemented output profile sizing and overlay scaling, but not full safe-area clamping for arbitrary positioned Scene Studio layers.
-3. **Donation/bits/channel-point alerts**: Follow and subscription alerts exist; richer alert families remain future work.
+3. **Channel-point prerequisite**: `channel.channel_points_custom_reward_redemption.add` only fires when the broadcaster account has at least one custom reward configured.
 4. **Twitch timestamp-derived category changes**: Category sync is still asset/block level, not per timestamp segment inside long videos.
 
 ## Missing Features
@@ -144,16 +144,16 @@ The 2026-04-20 audit identified several viewer-visible and operator-visible gaps
 Top missing product capabilities (not active bugs, but gap vs. product goals):
 
 1. full overlay safe-area clamping for arbitrary positioned layers and engagement widgets
-2. donation/bits/channel-point alert families beyond follow/sub alerts
-3. deeper scene composition beyond the shipped metadata widgets, conservative local font handling, and current positioned-layer model
-4. deeper persistent queue and transition controller with less reliance on hard encoder restarts
-5. deeper `Channel Blueprints` support such as more automatic cross-install media remapping and richer reusable programming packages
-6. richer ad-rule families and deeper timed-insert tooling beyond the current safe-boundary cuepoint model
-7. broader browser-driven embed compatibility beyond the current explicit supported, limited, and unsupported provider guidance
-8. stronger per-output operator controls and destination-specific recovery UI
-9. richer audio routing, layered mixing, and crossfade behavior beyond the current replace-mode lanes
-10. longer-running soak coverage, broader browser E2E depth, and deeper `Live Bridge` source management
-11. Twitch timestamp-based per-segment category updates during long video playback
+2. deeper scene composition beyond the shipped metadata widgets, conservative local font handling, and current positioned-layer model
+3. deeper persistent queue and transition controller with less reliance on hard encoder restarts
+4. deeper `Channel Blueprints` support such as more automatic cross-install media remapping and richer reusable programming packages
+5. richer ad-rule families and deeper timed-insert tooling beyond the current safe-boundary cuepoint model
+6. broader browser-driven embed compatibility beyond the current explicit supported, limited, and unsupported provider guidance
+7. stronger per-output operator controls and destination-specific recovery UI
+8. richer audio routing, layered mixing, and crossfade behavior beyond the current replace-mode lanes
+9. longer-running soak coverage, broader browser E2E depth, and deeper `Live Bridge` source management
+10. Twitch timestamp-based per-segment category updates during long video playback
+11. custom alert media, sounds, timing controls, and richer engagement layouts beyond the shipped compact/card alert path
 
 ## Legal Constraints
 
@@ -188,9 +188,9 @@ Top missing product capabilities (not active bugs, but gap vs. product goals):
 
 Recommended order after Phase 3:
 
-1. **Validate M28 on a public deployment** — confirm `APP_URL` is HTTPS, reconnect Twitch if the connection predates the new EventSub scopes, and verify follow/sub alerts register without manual Twitch CLI steps.
+1. **Validate live engagement on a public deployment** — confirm `APP_URL` is HTTPS, reconnect Twitch if the connection predates the new EventSub scopes, and verify follow/sub/cheer/channel-point alerts register without manual Twitch CLI steps.
 2. **Close the safe-area caveat** — add explicit safe-area containers/clamping for arbitrary positioned Scene Studio and engagement layers.
-3. **Pick the next product gap intentionally** — donation/bits alerts, per-segment Twitch category sync, or deeper output/destination controls are candidates; do not start mini-games or live-status widgets until explicitly selected.
+3. **Pick the next product gap intentionally** — per-segment Twitch category sync, deeper output/destination controls, or richer alert presentation are candidates; do not start mini-games or live-status widgets until explicitly selected.
 
 Beyond Phase 3:
 - richer continuity/recovery semantics and destination-specific guidance

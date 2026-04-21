@@ -12,6 +12,8 @@ const styles: EngagementOverlayStyle[] = ["compact", "card"];
 export function EngagementSettingsForm({ engagement }: { engagement: EngagementSettingsRecord }) {
   const [chatEnabled, setChatEnabled] = useState(engagement.chatEnabled);
   const [alertsEnabled, setAlertsEnabled] = useState(engagement.alertsEnabled);
+  const [donationsEnabled, setDonationsEnabled] = useState(engagement.donationsEnabled);
+  const [channelPointsEnabled, setChannelPointsEnabled] = useState(engagement.channelPointsEnabled);
   const [chatMode, setChatMode] = useState(engagement.chatMode);
   const [chatPosition, setChatPosition] = useState(engagement.chatPosition);
   const [alertPosition, setAlertPosition] = useState(engagement.alertPosition);
@@ -30,6 +32,8 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
       body: JSON.stringify({
         chatEnabled,
         alertsEnabled,
+        donationsEnabled,
+        channelPointsEnabled,
         chatMode,
         chatPosition,
         alertPosition,
@@ -65,6 +69,18 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
       <label className="checkbox-row">
         <input checked={alertsEnabled} onChange={(event) => setAlertsEnabled(event.target.checked)} type="checkbox" />
         <span>Enable follow and subscription alerts</span>
+      </label>
+      <label className="checkbox-row">
+        <input checked={donationsEnabled} onChange={(event) => setDonationsEnabled(event.target.checked)} type="checkbox" />
+        <span>Enable bits / cheer alerts</span>
+      </label>
+      <label className="checkbox-row">
+        <input
+          checked={channelPointsEnabled}
+          onChange={(event) => setChannelPointsEnabled(event.target.checked)}
+          type="checkbox"
+        />
+        <span>Enable channel point redemption alerts</span>
       </label>
 
       <div className="form-grid">
@@ -127,6 +143,9 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
       <p className="subtle">
         These switches are still gated by deployment flags. Set `STREAM_CHAT_OVERLAY_ENABLED=1` and
         `STREAM_ALERTS_ENABLED=1` before enabling them on a live channel.
+      </p>
+      <p className="subtle">
+        Bits and channel point alerts also require one Twitch reconnect after M32 so the broadcaster token includes the new scopes.
       </p>
       {error ? <p className="danger">{error}</p> : null}
       {message ? <p className="subtle">{message}</p> : null}
