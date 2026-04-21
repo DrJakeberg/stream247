@@ -93,3 +93,35 @@ For future long runs, treat the baseline as:
 - `uplink.unplannedRestartCount` should remain unchanged; any increase means the Twitch-facing RTMP session probably reconnected outside the planned 48-hour reconnect.
 - `sseConnections` may rise while operators keep Broadcast, Channel, or Overlay pages open, but it should return to zero after those clients disconnect.
 - Chromium renderer memory should be checked from the playout container with `docker stats` during multi-day soaks; sustained growth plus stale scene renderer children is actionable, while stable RSS with no restart-count increase is the expected baseline.
+
+## Backup And Restore
+
+### What To Back Up
+
+- PostgreSQL database
+- active deployment env file such as `.env` or `stack.env`
+- `data/media`
+
+Redis is not a primary durability source and does not need to be treated as a release-critical backup target.
+
+### Before Every Upgrade
+
+Create a PostgreSQL dump and copy the active env file.
+
+Minimum expectation:
+
+- database backup exists
+- current image tags are known
+- media library is preserved
+
+### Restore Flow
+
+1. Stop the stack.
+2. Restore the active env file.
+3. Restore the PostgreSQL dump.
+4. Restore `data/media` if needed.
+5. Start the previously known-good image tags.
+6. Confirm:
+   - setup is not shown again
+   - `/api/system/readiness` returns expected service states
+   - `/dashboard` and `/ops` show the prior runtime state

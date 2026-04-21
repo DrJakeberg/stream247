@@ -1,6 +1,6 @@
 # Agent Rules
 
-- Read `AGENTS.md`, `PLANS.md`, `IMPLEMENT.md`, and `docs/upstream-gap-analysis.md` before any non-trivial change.
+- Read `AGENTS.md`, `PLANS.md`, `IMPLEMENT.md`, and `docs/full-product-reset-audit.md` before any non-trivial change.
 - All non-trivial work must begin with plan review and milestone selection from `PLANS.md`.
 - Changed behavior requires tests or a written justification in the summary.
 - Docs must stay in sync with behavior.

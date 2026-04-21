@@ -71,7 +71,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
 
-This phase addresses the concrete product-quality problems identified in the 2026-04-20 audit: wrong labels visible to stream viewers, missing metadata editing, pool-level schedule blindness, hardcoded output settings, missing engagement features, and the need for a modern UI. The full product direction, UX strategy, and supporting data model designs live in `docs/redesign-and-product-plan.md`, `docs/video-planning-and-metadata-model.md`, and `docs/in-stream-overlay-and-output-strategy.md`.
+This phase addresses the concrete product-quality problems identified in the 2026-04-20 audit: wrong labels visible to stream viewers, missing metadata editing, pool-level schedule blindness, hardcoded output settings, missing engagement features, and the need for a modern UI. The surviving reset references are `docs/full-product-reset-audit.md`, `docs/full-product-reset-plan.md`, and `docs/ui-redesign-spec.md`.
 
 | Milestone | Type | Priority | Status | Goal | Acceptance | Touched Areas | Risk | Rollback |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -303,7 +303,7 @@ Status: complete 2026-04-08
 - `.github/workflows/release.yml` no longer rebuilds release-tag artifacts after the candidate smoke gates pass
 - the tagged publish path retags and pushes the already-tested local candidate images, or otherwise proves artifact identity before publish
 - `docker-compose.yml` includes restart coverage for `traefik` alongside the existing always-on production services
-- `README.md`, `docs/deployment.md`, and `docs/versioning.md` describe the published release artifacts and proxy restart guarantees accurately without overclaiming
+- `README.md` and `docs/deployment.md` describe the published release artifacts and proxy restart guarantees accurately without overclaiming
 
 **Touched Areas**
 
@@ -532,7 +532,7 @@ Status: complete
 - `packages/db/src/index.ts` (schema migration)
 - `apps/web/app/overlay/page.tsx` (overlay page component guards)
 - tests: unit tests for overlay text lines, lookahead helper, and Twitch title construction
-- docs: update `docs/upstream-gap-analysis.md` to reflect fix
+- docs: update the active audit and product docs to reflect the fix
 
 **Dependencies**
 
@@ -579,7 +579,7 @@ Status: complete
 - `apps/web/app/api/assets/[id]/route.ts`
 - `apps/web/app/(admin)/assets/` page and components
 - tests: unit tests for targeted asset update, browser smoke update
-- docs: update library section in `docs/redesign-and-product-plan.md`
+- docs: update the active product docs for the library workflow
 
 **Dependencies**
 
@@ -679,7 +679,7 @@ Status: complete
 - `apps/web/app/(admin)/` (new Output settings page)
 - `apps/web/app/overlay/page.tsx` (CSS scaling variables)
 - `packages/db/src/index.ts` (output profile channel setting)
-- `stack.env.example`, `docs/deployment.md`, `docs/in-stream-overlay-and-output-strategy.md`
+- `stack.env.example`, `docs/deployment.md`
 - tests: unit tests for viewport resolution, FFmpeg command builder, profile storage
 
 **Dependencies**
@@ -735,7 +735,7 @@ Status: complete
 - `apps/web/app/(admin)/overlays/` (new admin section)
 - `apps/web/app/overlay/page.tsx` (chat and alert components)
 - `packages/db/src/index.ts` (engagement settings)
-- `stack.env.example`, `docs/in-stream-overlay-and-output-strategy.md`
+- `stack.env.example`, `docs/deployment.md`, `docs/twitch-setup.md`
 - tests: unit tests for IRC message buffer, EventSub handler, SSE event routing; browser smoke for overlay events
 
 **Dependencies**
@@ -768,7 +768,7 @@ Status: complete
 
 **Scope**
 
-- Implement the updated navigation structure from `docs/redesign-and-product-plan.md` section C: `Control Room`, `Programming`, `Stream Studio`, `Workspace` top-level groups
+- Implement the updated navigation structure from `docs/ui-redesign-spec.md`: `Control Room`, `Programming`, `Stream Studio`, `Workspace` top-level groups
 - Add `Overlays` page under `Stream Studio` (built in M25)
 - Add `Output` page under `Stream Studio` (built in M24)
 - Apply consistent long-title safety across all admin surfaces: `truncate` for single-line labels, `line-clamp-2` for card content, stacked layout for all multi-field forms
@@ -790,7 +790,7 @@ Status: complete
 - `apps/web/app/(admin)/` (navigation layout, all page components)
 - `apps/web/components/` (shared card, form, badge components)
 - tests: browser smoke update
-- docs: update `docs/redesign-and-product-plan.md` with completed redesign notes
+- docs: update `docs/ui-redesign-spec.md` and active product docs with completed redesign notes
 
 **Dependencies**
 
@@ -901,8 +901,8 @@ Reference documents:
 | M30 | UX | Now | Complete | Navigation cleanup shipped: split Library and Pools, moved Sources to Workspace, removed sidebar descriptions |
 | M31 | Feature fix | Now | Complete | Overlay safe-area clamping and CSS variable wiring |
 | M32 | Feature | Next | Complete | Donation and bits alerts shipped: Twitch EventSub `channel.cheer` + channel-point redemptions |
-| M33 | Feature | Later | Incomplete | Multi-quality simultaneous RTMP output |
-| M34 | Docs | Now | Incomplete | Delete legacy docs, merge redundant docs, final doc set |
+| M33 | Feature | Later | Complete | Multi-quality simultaneous RTMP output |
+| M34 | Docs | Now | Complete | Delete legacy docs, merge redundant docs, final doc set |
 | M35 | Feature | Next | Incomplete | Twitch LIVE badge with viewer count in Broadcast page |
 
 ---
@@ -1142,7 +1142,7 @@ pnpm validate
 
 ## M33 Multi-Quality Simultaneous Output
 
-Status: incomplete
+Status: complete 2026-04-21
 
 **Goal**
 
@@ -1195,11 +1195,16 @@ pnpm validate
 - CPU/resource impact of multiple simultaneous encode processes must be documented.
 - Rollback: keep single-profile path as the default; per-destination profiles are additive.
 
+**Progress Notes**
+
+- Completed 2026-04-21. Destinations now persist `outputProfileId`, the admin Output page exposes per-destination rendition selection, and the worker groups active destinations by effective output settings so mixed renditions can run in parallel from the shared relay/program feed.
+- The default path is still single-rendition `inherit`, and fixed profiles below the stream profile are the intended production use. Pinning a destination above the stream profile works but upscales the shared feed and increases encoder CPU cost.
+
 ---
 
 ## M34 Documentation Cleanup
 
-Status: incomplete
+Status: complete 2026-04-21
 
 **Goal**
 
@@ -1236,6 +1241,11 @@ pnpm validate
 **Risks**
 
 - Low. Pure documentation changes. The only risk is breaking a link that another doc depends on.
+
+**Progress Notes**
+
+- Completed 2026-04-21. The final `/docs` set now keeps the active operator references plus the Phase 4 reset artifacts, with legacy planning and competitive-analysis files removed from the shipped documentation surface.
+- `docs/operations.md` now owns backup/restore guidance, `docs/deployment.md` now owns release-channel and upgrade guidance, and `README.md` no longer presents `/overlay` as an external OBS/browser-source surface.
 
 ---
 
@@ -1389,7 +1399,7 @@ pnpm validate
 
 ### 2026-04-05 — M0 Planning And Execution Guardrails
 
-- Completed the planning baseline by creating `AGENTS.md`, `PLANS.md`, `IMPLEMENT.md`, `docs/upstream-gap-analysis.md`, and `docs/upstream-roadmap.md`.
+- Completed the planning baseline by creating `AGENTS.md`, `PLANS.md`, `IMPLEMENT.md`, and the initial audit/roadmap docs that were later superseded by the Phase 4 reset set.
 - Marked these docs as the canonical execution surface for non-trivial work.
 - Superseded the older gap-analysis path so there is one authoritative roadmap direction going forward.
 - Validation completed: `pnpm validate` passed.

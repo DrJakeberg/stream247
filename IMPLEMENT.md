@@ -8,7 +8,7 @@
    - `AGENTS.md`
    - `PLANS.md`
    - `IMPLEMENT.md`
-   - `docs/upstream-gap-analysis.md`
+   - `docs/full-product-reset-audit.md`
 2. Select exactly one milestone from `PLANS.md`.
 3. Restate the milestone acceptance before changing code.
 4. Keep the diff scoped to that milestone.

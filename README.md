@@ -112,7 +112,7 @@ are not retroactively revoked.
   - explicit import warnings when referenced media is not present locally
 - viewer-facing pages with:
   - public schedule page
-  - browser-source overlay page with live current/next updates
+  - the internal `/overlay` route used by Stream247's own in-stream scene and overlay pipeline
   - one canonical Scene Studio payload shared across browser overlays, scene APIs, and playout overlay consumers
   - on-air scene renderer v1 that captures the published browser scene into the FFmpeg playout path with safe text-overlay fallback
   - overlay studio with draft-save, reusable scene preset library, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, built-in typography presets, conservative local font-stack overrides, positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, and publish-live scene controls
@@ -375,10 +375,19 @@ For production pinning, use `.env.production.example` or set the image tags expl
 
 Operational docs:
 
-- [docs/upgrading.md](docs/upgrading.md)
-- [docs/backup-and-restore.md](docs/backup-and-restore.md)
+- [docs/architecture.md](docs/architecture.md)
+- [docs/deployment.md](docs/deployment.md)
 - [docs/operations.md](docs/operations.md)
-- [docs/versioning.md](docs/versioning.md)
+- [docs/twitch-setup.md](docs/twitch-setup.md)
+- [docs/moderation-policies.md](docs/moderation-policies.md)
+
+Phase 4 working docs:
+
+- [docs/full-product-reset-audit.md](docs/full-product-reset-audit.md)
+- [docs/full-product-reset-plan.md](docs/full-product-reset-plan.md)
+- [docs/legacy-removal-list.md](docs/legacy-removal-list.md)
+- [docs/ui-redesign-spec.md](docs/ui-redesign-spec.md)
+- [docs/docs-reset-plan.md](docs/docs-reset-plan.md)
 
 ## Release Readiness Workflow
 
