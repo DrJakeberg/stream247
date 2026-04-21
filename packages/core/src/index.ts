@@ -49,6 +49,7 @@ export type OverlaySceneCustomWidgetDataKey = "current" | "next" | "queue";
 export type OverlaySceneFrameSupportStatus = "supported" | "limited" | "unsupported";
 
 export type StreamOutputProfileId = "720p30" | "1080p30" | "480p30" | "360p30" | "custom";
+export type DestinationOutputProfileId = "inherit" | Exclude<StreamOutputProfileId, "custom">;
 
 export type StreamOutputProfile = {
   id: StreamOutputProfileId;
@@ -98,6 +99,12 @@ type StreamOutputSettingsInput = {
   fps?: unknown;
 };
 
+type DestinationOutputSettingsInput = {
+  destinationProfileId?: unknown;
+  streamSettings?: StreamOutputSettingsInput | null;
+  env?: Record<string, string | undefined>;
+};
+
 type EngagementSettingsInput = {
   chatEnabled?: unknown;
   alertsEnabled?: unknown;
@@ -125,6 +132,14 @@ export const STREAM_OUTPUT_PROFILES: StreamOutputProfile[] = [
   { id: "480p30", label: "480p30", width: 854, height: 480, fps: 30 },
   { id: "360p30", label: "360p30", width: 640, height: 360, fps: 30 },
   { id: "custom", label: "Custom", width: 1280, height: 720, fps: 30 }
+];
+
+export const DESTINATION_OUTPUT_PROFILES: Array<{ id: DestinationOutputProfileId; label: string }> = [
+  { id: "inherit", label: "Use stream profile" },
+  ...STREAM_OUTPUT_PROFILES.filter((profile) => profile.id !== "custom").map((profile) => ({
+    id: profile.id as DestinationOutputProfileId,
+    label: profile.label
+  }))
 ];
 
 export const DEFAULT_STREAM_OUTPUT_SETTINGS: StreamOutputSettings = {
@@ -179,6 +194,13 @@ export function normalizeStreamOutputProfileId(value: unknown): StreamOutputProf
     : DEFAULT_STREAM_OUTPUT_SETTINGS.profileId;
 }
 
+export function normalizeDestinationOutputProfileId(value: unknown): DestinationOutputProfileId {
+  const candidate = String(value ?? "");
+  return DESTINATION_OUTPUT_PROFILES.some((profile) => profile.id === candidate)
+    ? (candidate as DestinationOutputProfileId)
+    : "inherit";
+}
+
 export function normalizeStreamOutputSettings(value?: StreamOutputSettingsInput | null): StreamOutputSettings {
   const profileId = normalizeStreamOutputProfileId(value?.profileId);
   const profile = STREAM_OUTPUT_PROFILES.find((entry) => entry.id === profileId) ?? STREAM_OUTPUT_PROFILES[0]!;
@@ -220,6 +242,20 @@ export function resolveStreamOutputSettings(args?: {
     width: env.STREAM_OUTPUT_WIDTH === undefined ? base.width : env.STREAM_OUTPUT_WIDTH,
     height: env.STREAM_OUTPUT_HEIGHT === undefined ? base.height : env.STREAM_OUTPUT_HEIGHT,
     fps: env.STREAM_OUTPUT_FPS === undefined ? base.fps : env.STREAM_OUTPUT_FPS
+  });
+}
+
+export function resolveDestinationOutputSettings(args?: DestinationOutputSettingsInput): StreamOutputSettings {
+  const destinationProfileId = normalizeDestinationOutputProfileId(args?.destinationProfileId);
+  if (destinationProfileId === "inherit") {
+    return resolveStreamOutputSettings({
+      settings: args?.streamSettings,
+      env: args?.env
+    });
+  }
+
+  return normalizeStreamOutputSettings({
+    profileId: destinationProfileId
   });
 }
 

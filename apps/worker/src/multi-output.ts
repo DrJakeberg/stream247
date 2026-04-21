@@ -1,10 +1,26 @@
-import { selectActiveDestinationGroup, type DestinationRoutingRecord } from "@stream247/core";
-import type { StreamDestinationRecord } from "@stream247/db";
+import {
+  normalizeDestinationOutputProfileId,
+  resolveDestinationOutputSettings,
+  selectActiveDestinationGroup,
+  type DestinationOutputProfileId,
+  type DestinationRoutingRecord,
+  type StreamOutputSettings
+} from "@stream247/core";
+import type { OutputSettingsRecord, StreamDestinationRecord } from "@stream247/db";
 import type { FfmpegOutputTarget } from "./ffmpeg-runtime.js";
 
 export type DestinationRuntimeTarget = {
   destination: StreamDestinationRecord;
   target: string;
+};
+
+export type DestinationRuntimeTargetGroup = {
+  key: string;
+  label: string;
+  profileId: DestinationOutputProfileId;
+  settings: StreamOutputSettings;
+  targets: DestinationRuntimeTarget[];
+  leadDestination: StreamDestinationRecord | null;
 };
 
 export function getLegacyDestinationEnvConfig(
@@ -114,6 +130,48 @@ export function buildFfmpegOutputTarget(targets: DestinationRuntimeTarget[]): Ff
     muxer: "tee",
     output: targets.map((entry) => `${buildTeeOutputOptions(entry.target)}${entry.target}`).join("|")
   };
+}
+
+export function buildOutputSettingsKey(settings: StreamOutputSettings): string {
+  return `${settings.width}x${settings.height}@${settings.fps}`;
+}
+
+export function groupDestinationRuntimeTargetsByOutputProfile(args: {
+  targets: DestinationRuntimeTarget[];
+  streamOutput: OutputSettingsRecord;
+  env: NodeJS.ProcessEnv;
+}): DestinationRuntimeTargetGroup[] {
+  const groups = new Map<string, DestinationRuntimeTargetGroup>();
+
+  for (const entry of args.targets) {
+    const profileId = normalizeDestinationOutputProfileId(entry.destination.outputProfileId);
+    const settings = resolveDestinationOutputSettings({
+      destinationProfileId: profileId,
+      streamSettings: args.streamOutput,
+      env: args.env
+    });
+    const key = buildOutputSettingsKey(settings);
+    const existing = groups.get(key);
+
+    if (existing) {
+      existing.targets.push(entry);
+      if (!existing.leadDestination) {
+        existing.leadDestination = entry.destination;
+      }
+      continue;
+    }
+
+    groups.set(key, {
+      key,
+      label: `${settings.width}x${settings.height}@${settings.fps}`,
+      profileId,
+      settings,
+      targets: [entry],
+      leadDestination: entry.destination
+    });
+  }
+
+  return [...groups.values()];
 }
 
 function buildTeeOutputOptions(target: string): string {

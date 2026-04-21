@@ -1155,7 +1155,16 @@ Support sending the stream to multiple destinations at different output profiles
 - Update the admin Output page to show per-destination profile configuration
 - Update the multi-output pipeline in `apps/worker/src/multi-output.ts`
 
-**Note:** This is the most architecturally complex Phase 4 milestone. The correct approach depends on whether parallel FFmpeg encode processes or a MediaMTX relay fanout is used. Scope this milestone carefully before starting implementation. A design note should be added to this section before work begins.
+**Note:** This is the most architecturally complex Phase 4 milestone. The correct approach depends on whether parallel FFmpeg encode processes or a MediaMTX relay fanout is used. Scope this milestone carefully before starting implementation.
+
+**Design note**
+
+- Keep the existing relay/program-feed fanout as the shared source of truth.
+- Each destination resolves to either the inherited stream profile or a fixed named destination profile.
+- Destinations that resolve to the same effective rendition share one uplink FFmpeg process and one tee muxer output.
+- Mixed effective renditions spawn parallel uplink FFmpeg processes from the shared relay/program feed.
+- The single-rendition path remains the default when every active destination inherits the same output settings.
+- Pinning a destination above the stream profile upscales the shared feed and increases CPU cost; prefer inherit or lower fixed presets unless there is a clear reason.
 
 **Touched areas**
 

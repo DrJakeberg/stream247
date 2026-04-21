@@ -83,7 +83,7 @@ type BlueprintAssetCollectionRecord = Pick<AssetCollectionRecord, "id" | "name" 
 
 type BlueprintDestinationRecord = Pick<
   StreamDestinationRecord,
-  "id" | "provider" | "role" | "priority" | "name" | "enabled" | "rtmpUrl" | "notes"
+  "id" | "provider" | "role" | "priority" | "outputProfileId" | "name" | "enabled" | "rtmpUrl" | "notes"
 >;
 
 export type BlueprintImportSectionState = {
@@ -510,6 +510,9 @@ function normalizeBlueprintDestinationRecord(
         : role === "backup"
           ? 10
           : 0,
+    outputProfileId: candidate.outputProfileId === "1080p30" || candidate.outputProfileId === "720p30" || candidate.outputProfileId === "480p30" || candidate.outputProfileId === "360p30"
+      ? candidate.outputProfileId
+      : "inherit",
     name,
     enabled: typeof candidate.enabled === "boolean" ? candidate.enabled : true,
     rtmpUrl,
@@ -635,6 +638,7 @@ export function buildChannelBlueprintDocument(args: {
         provider: destination.provider,
         role: destination.role,
         priority: destination.priority,
+        outputProfileId: destination.outputProfileId ?? "inherit",
         name: destination.name,
         enabled: destination.enabled,
         rtmpUrl: destination.rtmpUrl,

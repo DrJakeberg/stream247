@@ -13,10 +13,12 @@ import {
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
+  normalizeDestinationOutputProfileId,
   normalizeStreamOutputSettings,
   normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
   type DestinationRoutingStatus,
+  type DestinationOutputProfileId,
   type EngagementChatDisplayMode,
   type EngagementEventKind,
   type EngagementOverlayPosition,
@@ -235,6 +237,7 @@ export type StreamDestinationRecord = {
   provider: "twitch" | "custom-rtmp";
   role: "primary" | "backup";
   priority: number;
+  outputProfileId?: DestinationOutputProfileId;
   name: string;
   enabled: boolean;
   rtmpUrl: string;
@@ -831,6 +834,7 @@ function normalizeDestinationRecords(destinations: StreamDestinationRecord[], de
       ...destination,
       role: (destination.role === "backup" ? "backup" : "primary") as StreamDestinationRecord["role"],
       priority: typeof destination.priority === "number" ? destination.priority : destination.role === "backup" ? 10 : 0,
+      outputProfileId: normalizeDestinationOutputProfileId(destination.outputProfileId),
       streamKeySource:
         destination.streamKeySource === "env" ||
         destination.streamKeySource === "managed" ||
@@ -1311,6 +1315,7 @@ function defaultState(): AppState {
         provider: "twitch",
         role: "primary",
         priority: 0,
+        outputProfileId: "inherit",
         name: "Primary Twitch Output",
         enabled: true,
         rtmpUrl: process.env.STREAM_OUTPUT_URL || process.env.TWITCH_RTMP_URL || "rtmp://live.twitch.tv/app",
@@ -1328,6 +1333,7 @@ function defaultState(): AppState {
         provider: "custom-rtmp",
         role: "backup",
         priority: 10,
+        outputProfileId: "inherit",
         name: "Backup RTMP Output",
         enabled: Boolean(process.env.BACKUP_STREAM_OUTPUT_URL || process.env.BACKUP_TWITCH_RTMP_URL),
         rtmpUrl: process.env.BACKUP_STREAM_OUTPUT_URL || process.env.BACKUP_TWITCH_RTMP_URL || "",
@@ -2014,6 +2020,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       provider TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'primary',
       priority INTEGER NOT NULL DEFAULT 0,
+      output_profile_id TEXT NOT NULL DEFAULT 'inherit',
       name TEXT NOT NULL,
       enabled BOOLEAN NOT NULL DEFAULT TRUE,
       rtmp_url TEXT NOT NULL DEFAULT '',
@@ -2145,6 +2152,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'primary';
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS output_profile_id TEXT NOT NULL DEFAULT 'inherit';
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS encrypted_stream_key TEXT NOT NULL DEFAULT '';
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS last_failure_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS failure_count INTEGER NOT NULL DEFAULT 0;
@@ -2468,6 +2476,20 @@ const engagementAlertTypesMigration: MigrationDefinition = {
 
 if (!schemaMigrations.some((migration) => migration.id === engagementAlertTypesMigration.id)) {
   schemaMigrations.push(engagementAlertTypesMigration);
+}
+
+const destinationOutputProfilesMigration: MigrationDefinition = {
+  id: "20260421_002_destination_output_profiles",
+  description: "Add per-destination output profile assignment.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE stream_destinations ADD COLUMN IF NOT EXISTS output_profile_id TEXT NOT NULL DEFAULT 'inherit';
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === destinationOutputProfilesMigration.id)) {
+  schemaMigrations.push(destinationOutputProfilesMigration);
 }
 
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
@@ -3063,16 +3085,17 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     await client.query(
       `
         INSERT INTO stream_destinations (
-          id, provider, role, priority, name, enabled, rtmp_url, stream_key_present, encrypted_stream_key, status, notes,
+          id, provider, role, priority, output_profile_id, name, enabled, rtmp_url, stream_key_present, encrypted_stream_key, status, notes,
           last_validated_at, last_failure_at, failure_count, last_error
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       `,
       [
         destination.id,
         destination.provider,
         destination.role,
         destination.priority,
+        normalizeDestinationOutputProfileId(destination.outputProfileId),
         destination.name,
         destination.enabled,
         destination.rtmpUrl,
@@ -3474,6 +3497,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     provider: StreamDestinationRecord["provider"];
     role: StreamDestinationRecord["role"];
     priority: number;
+    output_profile_id: string;
     name: string;
     enabled: boolean;
     rtmp_url: string;
@@ -3797,6 +3821,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
         provider: row.provider,
         role: row.role,
         priority: row.priority ?? (row.role === "backup" ? 10 : 0),
+        outputProfileId: normalizeDestinationOutputProfileId(row.output_profile_id),
         name: row.name,
         enabled: row.enabled,
         rtmpUrl: row.rtmp_url,
@@ -4860,14 +4885,15 @@ export async function updateDestinationRecord(
     await client.query(
       `
         INSERT INTO stream_destinations (
-          id, provider, role, priority, name, enabled, rtmp_url, stream_key_present, encrypted_stream_key, status, notes,
+          id, provider, role, priority, output_profile_id, name, enabled, rtmp_url, stream_key_present, encrypted_stream_key, status, notes,
           last_validated_at, last_failure_at, failure_count, last_error
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         ON CONFLICT (id) DO UPDATE
         SET provider = EXCLUDED.provider,
             role = EXCLUDED.role,
             priority = EXCLUDED.priority,
+            output_profile_id = EXCLUDED.output_profile_id,
             name = EXCLUDED.name,
             enabled = EXCLUDED.enabled,
             rtmp_url = EXCLUDED.rtmp_url,
@@ -4885,6 +4911,7 @@ export async function updateDestinationRecord(
         destination.provider,
         destination.role,
         destination.priority,
+        normalizeDestinationOutputProfileId(destination.outputProfileId),
         destination.name,
         destination.enabled,
         destination.rtmpUrl,

@@ -1,5 +1,6 @@
 "use client";
 
+import { DESTINATION_OUTPUT_PROFILES, type DestinationOutputProfileId } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { StreamDestinationRecord } from "@/lib/server/state";
@@ -12,6 +13,7 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
   const [provider, setProvider] = useState(destination.provider);
   const [role, setRole] = useState(destination.role);
   const [priority, setPriority] = useState(String(destination.priority));
+  const [outputProfileId, setOutputProfileId] = useState<DestinationOutputProfileId>(destination.outputProfileId ?? "inherit");
   const [name, setName] = useState(destination.name);
   const [rtmpUrl, setRtmpUrl] = useState(destination.rtmpUrl);
   const [notes, setNotes] = useState(destination.notes);
@@ -31,6 +33,7 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
         provider,
         role,
         priority: Number(priority) || 0,
+        outputProfileId,
         enabled: nextEnabled,
         name,
         rtmpUrl,
@@ -78,6 +81,7 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
       <div className="stats-row">
         <span className="badge">{destination.role}</span>
         <span className="subtle">Priority {destination.priority}</span>
+        <span className="subtle">profile {destination.outputProfileId ?? "inherit"}</span>
         <span className="subtle">{destination.streamKeyPresent ? "stream key present" : "stream key missing"}</span>
         <span className="subtle">key source {destination.streamKeySource || "missing"}</span>
       </div>
@@ -115,6 +119,21 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
           <span className="label">Priority</span>
           <input min={0} onChange={(event) => setPriority(event.target.value)} type="number" value={priority} />
         </label>
+        <label>
+          <span className="label">Output profile</span>
+          <select
+            onChange={(event) => setOutputProfileId(event.target.value as DestinationOutputProfileId)}
+            value={outputProfileId}
+          >
+            {DESTINATION_OUTPUT_PROFILES.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="grid two">
         <label>
           <span className="label">RTMP URL</span>
           <input onChange={(event) => setRtmpUrl(event.target.value)} placeholder="rtmp://..." value={rtmpUrl} />

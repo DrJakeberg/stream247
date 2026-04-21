@@ -49,6 +49,7 @@ function createDestination(overrides: Partial<StreamDestinationRecord> = {}): St
     provider: "twitch",
     role: "primary",
     priority: 0,
+    outputProfileId: "inherit",
     name: "Primary Twitch Output",
     enabled: true,
     rtmpUrl: "rtmp://live.example.com/app",
@@ -351,6 +352,7 @@ describe("channel blueprints", () => {
     expect(blueprint.library.curatedSets).toHaveLength(1);
     expect(blueprint.library.curatedSets[0]?.items.map((item) => item.id)).toEqual(["asset_old", "asset_bumper"]);
     expect(blueprint.operations.destinations[0]).not.toHaveProperty("streamKeyPresent");
+    expect(blueprint.operations.destinations[0]?.outputProfileId).toBe("inherit");
     expect(blueprint.sceneStudio.draftOverlay.brandBadge).toBe("Draft badge");
     expect(blueprint.programming.pools[0]?.audioLaneAssetId).toBe("asset_audio_bed");
     expect(blueprint.programming.pools[0]?.insertAssetRef?.externalId).toBe("channel-id");
@@ -393,6 +395,7 @@ describe("channel blueprints", () => {
     expect(normalized.importedScheduleBlocks[0]?.cuepointOffsetsSeconds).toEqual([600, 1800]);
     expect(normalized.importedAssetCollections[0]?.assetIds).toEqual(["asset_old", "asset_bumper"]);
     expect(normalized.importedDestinations[0]?.streamKeyPresent).toBe(true);
+    expect(normalized.importedDestinations[0]?.outputProfileId).toBe("inherit");
     expect(normalized.importedPresets).toHaveLength(1);
     expect(normalized.importedDraftOverlay.brandBadge).toBe("Draft badge");
     expect(normalized.warnings).toEqual([]);
@@ -432,6 +435,45 @@ describe("channel blueprints", () => {
 
     expect(normalized.importedDestinations.find((destination) => destination.id === "destination-youtube")?.streamKeyPresent).toBe(
       false
+    );
+  });
+
+  it("preserves fixed destination output profile assignments in imported blueprints", () => {
+    const state = createState();
+    const studio = createStudio();
+    const blueprint = buildChannelBlueprintDocument({
+      state: {
+        ...state,
+        destinations: [
+          createDestination(),
+          createDestination({
+            id: "destination-youtube",
+            provider: "custom-rtmp",
+            role: "primary",
+            priority: 1,
+            outputProfileId: "360p30",
+            name: "YouTube",
+            rtmpUrl: "rtmp://a.rtmp.youtube.com/live2"
+          })
+        ]
+      },
+      studio,
+      presets: [],
+      exportedAt: "2026-04-05T12:00:00.000Z"
+    });
+
+    const normalized = normalizeChannelBlueprintDocument({
+      input: blueprint as ChannelBlueprintDocument,
+      currentState: state,
+      studio,
+      now: "2026-04-05T12:05:00.000Z"
+    });
+
+    expect(blueprint.operations.destinations.find((destination) => destination.id === "destination-youtube")?.outputProfileId).toBe(
+      "360p30"
+    );
+    expect(normalized.importedDestinations.find((destination) => destination.id === "destination-youtube")?.outputProfileId).toBe(
+      "360p30"
     );
   });
 

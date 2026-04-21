@@ -65,11 +65,13 @@ import { resolvePoolAudioLane, type ResolvedAudioLane } from "./audio-lanes.js";
 import { getCuepointInsertPlan } from "./cuepoints.js";
 import {
   buildFfmpegOutputTarget,
+  groupDestinationRuntimeTargetsByOutputProfile,
   getLegacyDestinationEnvConfig,
   matchDestinationFailuresInLog,
   resolveDestinationStreamTarget,
   selectDestinationRuntimeTargets,
-  type DestinationRuntimeTarget
+  type DestinationRuntimeTarget,
+  type DestinationRuntimeTargetGroup
 } from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
 import { ensureLocalAssetThumbnail } from "./asset-thumbnails.js";
@@ -123,12 +125,8 @@ let playoutLastStderrSample = "";
 let playoutLiveBridgeInputUrl = "";
 let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
 let plannedStopReason = "";
-let uplinkProcess: ChildProcess | null = null;
-let uplinkDestinationIds: string[] = [];
-let uplinkRuntimeTargets: DestinationRuntimeTarget[] = [];
-let uplinkStartedAt = "";
+let uplinkProcesses: UplinkProcessRuntime[] = [];
 let uplinkReconnectUntil = "";
-let plannedUplinkStopReason = "";
 // Worker reconciliation can legitimately run for a little over two minutes when
 // source sync and Twitch reconciliation happen in one cycle, so keep the stale
 // window above the steady-state cadence to avoid false healthcheck failures.
@@ -169,6 +167,16 @@ type QueueProbeCacheEntry = {
   checkedAt: number;
   resolvedInput: string;
   error: string;
+};
+
+type UplinkProcessRuntime = {
+  key: string;
+  process: ChildProcess;
+  destinationIds: string[];
+  runtimeTargets: DestinationRuntimeTarget[];
+  outputSettings: WorkerStreamOutputSettings;
+  startedAt: string;
+  plannedStopReason: string;
 };
 
 const queueProbeCache = new Map<string, QueueProbeCacheEntry>();
@@ -479,6 +487,42 @@ function getRelayOutputTarget(): ReturnType<typeof buildFfmpegOutputTarget> {
     muxer: "flv",
     output: getRelayPublishUrl(process.env)
   };
+}
+
+function getRunningUplinkProcesses(): UplinkProcessRuntime[] {
+  return uplinkProcesses.filter((entry) => !entry.process.killed && entry.process.exitCode === null);
+}
+
+function getRunningUplinkDestinationIds(): string[] {
+  return [...new Set(getRunningUplinkProcesses().flatMap((entry) => entry.destinationIds))];
+}
+
+function getRunningUplinkStartedAt(): string {
+  return (
+    [...getRunningUplinkProcesses()]
+      .map((entry) => entry.startedAt)
+      .filter(Boolean)
+      .sort()[0] ?? ""
+  );
+}
+
+function isMatchingRunningUplinkGroup(group: DestinationRuntimeTargetGroup): boolean {
+  const desiredDestinationIds = [...group.targets.map((entry) => entry.destination.id)].sort();
+  return getRunningUplinkProcesses().some((entry) => {
+    if (entry.key !== group.key) {
+      return false;
+    }
+
+    const currentDestinationIds = [...entry.destinationIds].sort();
+    return (
+      currentDestinationIds.length === desiredDestinationIds.length &&
+      currentDestinationIds.every((value, index) => value === desiredDestinationIds[index])
+    );
+  });
+}
+
+function findRunningUplinkProcessByKey(key: string): UplinkProcessRuntime | null {
+  return getRunningUplinkProcesses().find((entry) => entry.key === key) ?? null;
 }
 
 function joinVideoFilters(filters: Array<string | null | undefined>): string {
@@ -2383,39 +2427,37 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
   });
 }
 
-async function stopUplinkProcess(reason = ""): Promise<void> {
-  plannedUplinkStopReason = reason;
-  const currentProcess = uplinkProcess;
+async function stopUplinkProcess(entry: UplinkProcessRuntime, reason = ""): Promise<void> {
+  entry.plannedStopReason = reason;
 
-  if (!currentProcess || currentProcess.killed) {
-    plannedUplinkStopReason = "";
-    uplinkProcess = null;
-    uplinkDestinationIds = [];
-    uplinkRuntimeTargets = [];
-    uplinkStartedAt = "";
+  if (!entry.process || entry.process.killed || entry.process.exitCode !== null) {
+    uplinkProcesses = uplinkProcesses.filter((candidate) => candidate !== entry);
+    entry.plannedStopReason = "";
     return;
   }
 
   await new Promise<void>((resolve) => {
     const finalize = () => {
-      if (uplinkProcess === currentProcess) {
-        uplinkProcess = null;
-        uplinkDestinationIds = [];
-        uplinkRuntimeTargets = [];
-        uplinkStartedAt = "";
-      }
+      uplinkProcesses = uplinkProcesses.filter((candidate) => candidate !== entry);
       resolve();
     };
 
-    currentProcess.once("exit", finalize);
-    currentProcess.kill("SIGTERM");
+    entry.process.once("exit", finalize);
+    entry.process.kill("SIGTERM");
 
     setTimeout(() => {
-      if (currentProcess.exitCode === null && !currentProcess.killed) {
-        currentProcess.kill("SIGKILL");
+      if (entry.process.exitCode === null && !entry.process.killed) {
+        entry.process.kill("SIGKILL");
       }
     }, 5_000);
   });
+}
+
+async function stopAllUplinkProcesses(reason = ""): Promise<void> {
+  const running = [...getRunningUplinkProcesses()];
+  for (const entry of running) {
+    await stopUplinkProcess(entry, reason);
+  }
 }
 
 function getDesiredTargetKind(selection: SelectionResult): "asset" | "insert" | "standby" | "reconnect" | "live" {
@@ -3691,64 +3733,62 @@ async function runPlayoutCycle(): Promise<void> {
   }
 }
 
-function isMatchingRunningUplink(destinationIds: string[]): boolean {
-  if (!uplinkProcess || uplinkProcess.killed) {
-    return false;
-  }
-
-  const currentIds = [...uplinkDestinationIds].sort();
-  const desiredIds = [...destinationIds].sort();
-  return currentIds.length === desiredIds.length && currentIds.every((value, index) => value === desiredIds[index]);
-}
-
-async function startUplink(args: {
-  destinations: StreamDestinationRecord[];
-  outputTarget: ReturnType<typeof buildFfmpegOutputTarget>;
-  runtimeTargets: DestinationRuntimeTarget[];
-}): Promise<void> {
+async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> {
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
   const inputMode = STREAM247_UPLINK_INPUT_MODE;
   const inputUrl = inputMode === "hls" ? getProgramFeedRuntimeConfig().playlistPath : getRelayInputUrl(process.env);
-  const command = buildUplinkFfmpegCommand(inputUrl, args.outputTarget, {
+  const outputTarget = buildFfmpegOutputTarget(group.targets);
+  const command = buildUplinkFfmpegCommand(inputUrl, outputTarget, {
     inputMode,
-    env: process.env
+    env: process.env,
+    outputSettings: group.settings
   });
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe"]
   });
   const startedAt = new Date().toISOString();
+  const runtime: UplinkProcessRuntime = {
+    key: group.key,
+    process: child,
+    destinationIds: group.targets.map((entry) => entry.destination.id),
+    runtimeTargets: group.targets,
+    outputSettings: group.settings,
+    startedAt,
+    plannedStopReason: ""
+  };
 
-  uplinkProcess = child;
-  uplinkDestinationIds = args.destinations.map((destination) => destination.id);
-  uplinkRuntimeTargets = args.runtimeTargets;
-  uplinkStartedAt = startedAt;
+  uplinkProcesses = [...uplinkProcesses.filter((entry) => entry.key !== group.key), runtime];
+  const runningDestinationIds = getRunningUplinkDestinationIds();
 
   logRuntimeEvent("uplink.process.start", {
     inputMode,
     inputUrl,
-    destinationIds: uplinkDestinationIds
+    destinationIds: runtime.destinationIds,
+    outputProfile: group.label
   });
 
   await updatePlayoutRuntime((playout) => ({
     ...playout,
     uplinkStatus: "running",
     uplinkInputMode: inputMode,
-    uplinkStartedAt: startedAt,
+    uplinkStartedAt: getRunningUplinkStartedAt() || startedAt,
     uplinkHeartbeatAt: startedAt,
-    uplinkDestinationIds,
+    uplinkDestinationIds: runningDestinationIds,
     uplinkReconnectUntil,
     uplinkLastExitCode: "",
     uplinkLastExitReason: "",
     uplinkLastExitPlanned: false
   }));
 
-  for (const destination of args.destinations) {
+  for (const destination of group.targets.map((entry) => entry.destination)) {
     await updateDestinationRecord({
       ...destination,
       status: "ready",
       lastValidatedAt: startedAt,
       lastError: "",
-      notes: `${destination.role === "backup" ? "Backup" : "Primary"} destination is active in the persistent uplink group.`
+      notes: `${
+        destination.role === "backup" ? "Backup" : "Primary"
+      } destination is active in the persistent uplink group at ${group.label}.`
     });
   }
 
@@ -3790,7 +3830,7 @@ async function startUplink(args: {
     }
 
     if (isLikelyDestinationOutputError(line)) {
-      const destinationIds = matchDestinationFailuresInLog(line, uplinkRuntimeTargets);
+      const destinationIds = matchDestinationFailuresInLog(line, runtime.runtimeTargets);
       for (const destinationId of destinationIds) {
         void markDestinationFailure(destinationId, line);
       }
@@ -3798,30 +3838,37 @@ async function startUplink(args: {
   });
 
   child.on("exit", (code, signal) => {
-    const stopReason = plannedUplinkStopReason;
+    const stopReason = runtime.plannedStopReason;
     const wasPlanned = stopReason !== "";
     const exitReason = describeFfmpegExit(code, signal ?? null);
-    const lastDestinationIds = [...uplinkDestinationIds];
-    const lastRuntimeTargets = [...uplinkRuntimeTargets];
-    plannedUplinkStopReason = "";
-    uplinkProcess = null;
-    uplinkDestinationIds = [];
-    uplinkRuntimeTargets = [];
-    uplinkStartedAt = "";
+    const lastDestinationIds = [...runtime.destinationIds];
+    const lastRuntimeTargets = [...runtime.runtimeTargets];
+    runtime.plannedStopReason = "";
+    uplinkProcesses = uplinkProcesses.filter((entry) => entry !== runtime);
+    const remainingDestinationIds = getRunningUplinkDestinationIds();
+    const nextStartedAt = getRunningUplinkStartedAt();
     logRuntimeEvent("uplink.process.exit", {
       exitCode: code ?? "",
       exitSignal: signal ?? "",
       exitReason,
       planned: wasPlanned,
-      destinationIds: lastDestinationIds
+      destinationIds: lastDestinationIds,
+      outputProfile: group.label
     });
 
     void updatePlayoutRuntime((playout) => ({
       ...playout,
-      uplinkStatus: stopReason === "scheduled-reconnect" ? "scheduled-reconnect" : wasPlanned ? "idle" : "failed",
-      uplinkStartedAt: "",
+      uplinkStatus:
+        stopReason === "scheduled-reconnect"
+          ? "scheduled-reconnect"
+          : getRunningUplinkProcesses().length > 0
+            ? "running"
+            : wasPlanned
+              ? "idle"
+              : "failed",
+      uplinkStartedAt: nextStartedAt,
       uplinkHeartbeatAt: new Date().toISOString(),
-      uplinkDestinationIds: lastDestinationIds,
+      uplinkDestinationIds: remainingDestinationIds.length > 0 ? remainingDestinationIds : lastDestinationIds,
       uplinkRestartCount: playout.uplinkRestartCount + 1,
       uplinkUnplannedRestartCount: playout.uplinkUnplannedRestartCount + (wasPlanned ? 0 : 1),
       uplinkLastExitCode: String(code ?? signal ?? ""),
@@ -3839,7 +3886,7 @@ async function startUplink(args: {
         scope: "playout",
         severity: "warning",
         title: "Persistent uplink restarted",
-        message: `Uplink FFmpeg ${exitReason}. The uplink loop will reconnect independently of program playout.`,
+        message: `Uplink FFmpeg ${exitReason} for ${group.label}. The uplink loop will reconnect independently of program playout.`,
         fingerprint: "uplink.process.exit"
       });
 
@@ -3860,14 +3907,14 @@ async function startUplink(args: {
 
 async function runUplinkCycle(): Promise<void> {
   if (!STREAM247_RELAY_ENABLED) {
-    if (uplinkProcess && !uplinkProcess.killed) {
-      await stopUplinkProcess("relay-disabled");
-    }
+    await stopAllUplinkProcesses("relay-disabled");
     await updatePlayoutRuntime((playout) => ({
       ...playout,
       uplinkStatus: "idle",
+      uplinkStartedAt: "",
       uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
-      uplinkHeartbeatAt: new Date().toISOString()
+      uplinkHeartbeatAt: new Date().toISOString(),
+      uplinkDestinationIds: []
     }));
     await appendAuditEvent("uplink.cycle", "Uplink relay mode is disabled.");
     return;
@@ -3880,16 +3927,21 @@ async function runUplinkCycle(): Promise<void> {
     managedKeys: managedDestinationKeys,
     env: process.env
   });
-  const outputTarget = buildFfmpegOutputTarget(activeDestinationGroup.targets);
+  const destinationGroups = groupDestinationRuntimeTargetsByOutputProfile({
+    targets: activeDestinationGroup.targets,
+    streamOutput: state.output,
+    env: process.env
+  });
   const destinationIds = activeDestinationGroup.targets.map((entry) => entry.destination.id);
   const now = Date.now();
   const programFeed = isProgramFeedMode() ? await updateProgramFeedRuntimeStatus() : null;
 
-  if (activeDestinationGroup.targets.length === 0 || !outputTarget.output) {
-    await stopUplinkProcess("destination-missing");
+  if (activeDestinationGroup.targets.length === 0 || destinationGroups.length === 0) {
+    await stopAllUplinkProcesses("destination-missing");
     await updatePlayoutRuntime((playout) => ({
       ...playout,
       uplinkStatus: "failed",
+      uplinkStartedAt: "",
       uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
       uplinkHeartbeatAt: new Date().toISOString(),
       uplinkDestinationIds: [],
@@ -3907,10 +3959,11 @@ async function runUplinkCycle(): Promise<void> {
   }
 
   await resolveIncident("uplink.output.missing", "Persistent uplink destination is configured.");
-  if (programFeed && !uplinkProcess && programFeed.status !== "fresh") {
+  if (programFeed && getRunningUplinkProcesses().length === 0 && programFeed.status !== "fresh") {
     await updatePlayoutRuntime((playout) => ({
       ...playout,
       uplinkStatus: "waiting-for-feed",
+      uplinkStartedAt: "",
       uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
       uplinkHeartbeatAt: new Date().toISOString(),
       uplinkDestinationIds: destinationIds
@@ -3924,11 +3977,13 @@ async function runUplinkCycle(): Promise<void> {
 
   const reconnectActive = uplinkReconnectUntil !== "" && now < new Date(uplinkReconnectUntil).getTime();
   const reconnectDue =
-    !reconnectActive && uplinkStartedAt !== "" && now - new Date(uplinkStartedAt).getTime() >= PLAYOUT_RECONNECT_INTERVAL_MS;
+    !reconnectActive &&
+    getRunningUplinkStartedAt() !== "" &&
+    now - new Date(getRunningUplinkStartedAt()).getTime() >= PLAYOUT_RECONNECT_INTERVAL_MS;
 
   if (reconnectDue) {
     uplinkReconnectUntil = new Date(now + PLAYOUT_RECONNECT_WINDOW_MS).toISOString();
-    await stopUplinkProcess("scheduled-reconnect");
+    await stopAllUplinkProcesses("scheduled-reconnect");
     await appendAuditEvent("uplink.cycle", `Scheduled ${PLAYOUT_RECONNECT_INTERVAL_HOURS}h uplink reconnect started.`);
     return;
   }
@@ -3937,6 +3992,7 @@ async function runUplinkCycle(): Promise<void> {
     await updatePlayoutRuntime((playout) => ({
       ...playout,
       uplinkStatus: "scheduled-reconnect",
+      uplinkStartedAt: getRunningUplinkStartedAt(),
       uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
       uplinkHeartbeatAt: new Date().toISOString(),
       uplinkDestinationIds: destinationIds,
@@ -3950,26 +4006,34 @@ async function runUplinkCycle(): Promise<void> {
     uplinkReconnectUntil = "";
   }
 
-  if (!isMatchingRunningUplink(destinationIds)) {
-    if (uplinkProcess && !uplinkProcess.killed) {
-      await stopUplinkProcess("destination-change");
+  for (const running of getRunningUplinkProcesses()) {
+    if (!destinationGroups.some((group) => isMatchingRunningUplinkGroup(group) && running.key === group.key)) {
+      await stopUplinkProcess(running, "destination-change");
+    }
+  }
+
+  for (const group of destinationGroups) {
+    const existing = findRunningUplinkProcessByKey(group.key);
+    if (existing && !isMatchingRunningUplinkGroup(group)) {
+      await stopUplinkProcess(existing, "destination-change");
     }
 
-    await startUplink({
-      destinations: activeDestinationGroup.targets.map((entry) => entry.destination),
-      outputTarget,
-      runtimeTargets: activeDestinationGroup.targets
-    });
-  } else {
-    await updatePlayoutRuntime((playout) => ({
-      ...playout,
-      uplinkStatus: "running",
-      uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
-      uplinkHeartbeatAt: new Date().toISOString(),
-      uplinkDestinationIds: destinationIds,
-      uplinkReconnectUntil
-    }));
+    if (!isMatchingRunningUplinkGroup(group)) {
+      await startUplink(group);
+    }
   }
+
+  const runningDestinationIds = getRunningUplinkDestinationIds();
+  const runningStartedAt = getRunningUplinkStartedAt();
+  await updatePlayoutRuntime((playout) => ({
+    ...playout,
+    uplinkStatus: "running",
+    uplinkStartedAt: runningStartedAt,
+    uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
+    uplinkHeartbeatAt: new Date().toISOString(),
+    uplinkDestinationIds: runningDestinationIds.length > 0 ? runningDestinationIds : destinationIds,
+    uplinkReconnectUntil
+  }));
 
   await appendAuditEvent("uplink.cycle", "Persistent uplink cycle completed.");
 }

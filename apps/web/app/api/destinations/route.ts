@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { normalizeDestinationOutputProfileId } from "@stream247/core";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
 import {
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
     provider?: unknown;
     role?: unknown;
     priority?: unknown;
+    outputProfileId?: unknown;
     name?: string;
     enabled?: boolean;
     rtmpUrl?: string;
@@ -79,6 +81,7 @@ export async function POST(request: NextRequest) {
     provider: normalizeProvider(body.provider),
     role,
     priority,
+    outputProfileId: normalizeDestinationOutputProfileId(body.outputProfileId),
     name,
     enabled: typeof body.enabled === "boolean" ? body.enabled : true,
     rtmpUrl,
@@ -109,6 +112,7 @@ export async function PUT(request: NextRequest) {
     provider?: unknown;
     role?: unknown;
     priority?: unknown;
+    outputProfileId?: unknown;
     name?: string;
     rtmpUrl?: string;
     notes?: string;
@@ -153,6 +157,10 @@ export async function PUT(request: NextRequest) {
     provider: body.provider !== undefined ? normalizeProvider(body.provider) : existing.provider,
     role: body.role !== undefined ? normalizeRole(body.role) : existing.role,
     priority: normalizePriority(body.priority, existing.priority),
+    outputProfileId:
+      body.outputProfileId !== undefined
+        ? normalizeDestinationOutputProfileId(body.outputProfileId)
+        : normalizeDestinationOutputProfileId(existing.outputProfileId),
     enabled: effectiveEnabled,
     name: nextName && nextName.length > 0 ? nextName : existing.name,
     rtmpUrl: effectiveRtmpUrl,

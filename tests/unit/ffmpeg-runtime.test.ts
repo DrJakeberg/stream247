@@ -134,6 +134,62 @@ describe("ffmpeg runtime helpers", () => {
     ]);
   });
 
+  it("transcodes relay input when a destination-specific output profile is requested", () => {
+    expect(
+      buildUplinkFfmpegCommand(
+        "rtmp://relay:1935/live/program",
+        {
+          muxer: "flv",
+          output: "rtmp://live.example.com/app/key"
+        },
+        {
+          outputSettings: {
+            profileId: "360p30",
+            width: 640,
+            height: 360,
+            fps: 30
+          },
+          env: {}
+        }
+      )
+    ).toEqual([
+      "-hide_banner",
+      "-loglevel",
+      "warning",
+      "-fflags",
+      "+genpts",
+      "-i",
+      "rtmp://relay:1935/live/program",
+      "-vf",
+      "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:color=black,fps=30,setsar=1",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-maxrate",
+      "1200k",
+      "-bufsize",
+      "2400k",
+      "-pix_fmt",
+      "yuv420p",
+      "-g",
+      "60",
+      "-tune",
+      "zerolatency",
+      "-bf",
+      "0",
+      "-c:a",
+      "aac",
+      "-ar",
+      "44100",
+      "-b:a",
+      "160k",
+      "-f",
+      "flv",
+      "rtmp://live.example.com/app/key"
+    ]);
+  });
+
   it("builds a transcoding uplink command for the local HLS program feed", () => {
     expect(
       buildUplinkFfmpegCommand(

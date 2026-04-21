@@ -1,4 +1,6 @@
 import path from "node:path";
+import type { StreamOutputSettings } from "@stream247/core";
+import { getOutputGopSize, getOutputVideoFilter, isStreamScaleEnabled } from "./output-settings.js";
 
 const OUTPUT_FAILURE_NEEDLES = [
   "broken pipe",
@@ -250,13 +252,66 @@ export function describeFfmpegExit(code: number | null, signal: NodeJS.Signals |
   return "exited unexpectedly";
 }
 
+function getOutputRateControlSettings(output: StreamOutputSettings | null, env: NodeJS.ProcessEnv): {
+  maxrate: string;
+  bufsize: string;
+  audioBitrate: string;
+} {
+  if (env.FFMPEG_MAXRATE || env.FFMPEG_BUFSIZE || env.FFMPEG_AUDIO_BITRATE) {
+    return {
+      maxrate: env.FFMPEG_MAXRATE || "4500k",
+      bufsize: env.FFMPEG_BUFSIZE || "9000k",
+      audioBitrate: env.FFMPEG_AUDIO_BITRATE || "160k"
+    };
+  }
+
+  if (!output) {
+    return {
+      maxrate: "4500k",
+      bufsize: "9000k",
+      audioBitrate: "160k"
+    };
+  }
+
+  if (output.height >= 1080 || output.width >= 1920) {
+    return {
+      maxrate: "6000k",
+      bufsize: "12000k",
+      audioBitrate: "160k"
+    };
+  }
+
+  if (output.height >= 720 || output.width >= 1280) {
+    return {
+      maxrate: "4500k",
+      bufsize: "9000k",
+      audioBitrate: "160k"
+    };
+  }
+
+  if (output.height >= 480 || output.width >= 854) {
+    return {
+      maxrate: "2500k",
+      bufsize: "5000k",
+      audioBitrate: "160k"
+    };
+  }
+
+  return {
+    maxrate: "1200k",
+    bufsize: "2400k",
+    audioBitrate: "160k"
+  };
+}
+
 export function buildUplinkFfmpegCommand(
   input: string,
   outputTarget: FfmpegOutputTarget,
-  options: { inputMode?: UplinkInputMode; env?: NodeJS.ProcessEnv } = {}
+  options: { inputMode?: UplinkInputMode; env?: NodeJS.ProcessEnv; outputSettings?: StreamOutputSettings | null } = {}
 ): string[] {
   const inputMode = options.inputMode ?? "rtmp";
   const env = options.env ?? process.env;
+  const outputSettings = options.outputSettings ?? null;
   const command = [
     "-hide_banner",
     "-loglevel",
@@ -271,11 +326,17 @@ export function buildUplinkFfmpegCommand(
 
   command.push("-i", input);
 
-  if (inputMode === "rtmp") {
+  if (inputMode === "rtmp" && !outputSettings) {
     command.push("-c", "copy");
     appendFfmpegOutputArgs(command, outputTarget);
     return command;
   }
+
+  const outputVideoFilter = outputSettings && isStreamScaleEnabled(env) ? getOutputVideoFilter(outputSettings) : "";
+  if (outputVideoFilter) {
+    command.push("-vf", outputVideoFilter);
+  }
+  const rateControl = getOutputRateControlSettings(outputSettings, env);
 
   command.push(
     "-c:v",
@@ -283,13 +344,13 @@ export function buildUplinkFfmpegCommand(
     "-preset",
     env.FFMPEG_PRESET || "veryfast",
     "-maxrate",
-    env.FFMPEG_MAXRATE || "4500k",
+    rateControl.maxrate,
     "-bufsize",
-    env.FFMPEG_BUFSIZE || "9000k",
+    rateControl.bufsize,
     "-pix_fmt",
     "yuv420p",
     "-g",
-    "60",
+    outputSettings ? getOutputGopSize(outputSettings) : "60",
     "-tune",
     "zerolatency",
     "-bf",
@@ -299,7 +360,7 @@ export function buildUplinkFfmpegCommand(
     "-ar",
     "44100",
     "-b:a",
-    env.FFMPEG_AUDIO_BITRATE || "160k"
+    rateControl.audioBitrate
   );
   appendFfmpegOutputArgs(command, outputTarget);
   return command;

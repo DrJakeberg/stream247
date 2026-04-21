@@ -52,6 +52,7 @@ const persistentProgramFeedRuntimeColumns = [
   "program_feed_buffered_seconds"
 ].sort();
 const outputProfilesMigrationId = "20260420_001_output_profiles";
+const destinationOutputProfilesMigrationId = "20260421_002_destination_output_profiles";
 const outputSettingsColumns = ["singleton_id", "profile_id", "width", "height", "fps", "updated_at"].sort();
 const engagementLayerMigrationId = "20260420_002_engagement_layer";
 const engagementAlertTypesMigrationId = "20260421_001_engagement_alert_types";
@@ -419,6 +420,7 @@ describe.sequential("database roundtrip", () => {
           provider: "twitch" as const,
           role: "primary" as const,
           priority: 0,
+          outputProfileId: "inherit" as const,
           name: "Primary",
           enabled: true,
           rtmpUrl: "rtmp://live.twitch.tv/app",
@@ -587,6 +589,7 @@ describe.sequential("database roundtrip", () => {
     expect(reread.sourceSyncRuns[0]?.status).toBe("success");
     expect(reread.destinations[0]?.streamKeyPresent).toBe(false);
     expect(reread.destinations[0]?.streamKeySource).toBe("missing");
+    expect(reread.destinations[0]?.outputProfileId).toBe("inherit");
     expect(reread.incidents[0]?.fingerprint).toBe("example");
     expect(reread.auditEvents[0]?.type).toBe("test.roundtrip");
     expect(reread.playout.transitionState).toBe("ready");
@@ -622,6 +625,7 @@ describe.sequential("database roundtrip", () => {
         provider: "custom-rtmp",
         role: "primary",
         priority: 1,
+        outputProfileId: "360p30",
         name: "YouTube Output",
         enabled: true,
         rtmpUrl: "rtmp://a.rtmp.youtube.com/live2",
@@ -643,6 +647,7 @@ describe.sequential("database roundtrip", () => {
     const postUpdate = await readAppState();
     expect(managedKeys["destination-youtube"]).toBe("managed-youtube-key");
     expect(postUpdate.destinations.find((destination) => destination.id === "destination-youtube")?.streamKeySource).toBe("managed");
+    expect(postUpdate.destinations.find((destination) => destination.id === "destination-youtube")?.outputProfileId).toBe("360p30");
 
     await updateOutputSettingsRecord({
       profileId: "360p30",
@@ -767,6 +772,37 @@ describe.sequential("database roundtrip", () => {
       fps: 30,
       updatedAt: ""
     });
+  }, 60_000);
+
+  it("upgrades existing databases with per-destination output profile settings", async () => {
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      ALTER TABLE stream_destinations DROP COLUMN IF EXISTS output_profile_id;
+      DELETE FROM schema_migrations WHERE id = '${destinationOutputProfilesMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const columns = (
+      await executeSql(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'stream_destinations'
+          AND column_name = 'output_profile_id'
+        ORDER BY column_name;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+    const migrationApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id = '${destinationOutputProfilesMigrationId}';`
+    );
+    const state = await readAppState();
+
+    expect(columns).toEqual(["output_profile_id"]);
+    expect(migrationApplied).toBe("1");
+    expect(state.destinations.every((destination) => destination.outputProfileId === "inherit")).toBe(true);
   }, 60_000);
 
   it("upgrades existing databases with engagement settings and event storage", async () => {

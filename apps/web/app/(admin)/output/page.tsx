@@ -1,7 +1,8 @@
 export const dynamic = "force-dynamic";
 
-import { resolveStreamOutputSettings } from "@stream247/core";
+import { resolveDestinationOutputSettings, resolveStreamOutputSettings } from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
+import { DestinationOutputProfileForm } from "@/components/destination-output-profile-form";
 import { OutputSettingsForm } from "@/components/output-settings-form";
 import { Panel } from "@/components/panel";
 import { readAppState } from "@/lib/server/state";
@@ -13,6 +14,10 @@ export default async function OutputPage() {
     process.env.STREAM_OUTPUT_WIDTH !== undefined ||
     process.env.STREAM_OUTPUT_HEIGHT !== undefined ||
     process.env.STREAM_OUTPUT_FPS !== undefined;
+  const effectiveOutputLabel = `${effectiveOutput.width}x${effectiveOutput.height}@${effectiveOutput.fps}`;
+  const orderedDestinations = [...state.destinations].sort(
+    (left, right) => left.priority - right.priority || left.name.localeCompare(right.name)
+  );
 
   return (
     <div className="stack-form">
@@ -53,9 +58,45 @@ export default async function OutputPage() {
                 encoder load.
               </div>
             </div>
+            <div className="item">
+              <strong>Parallel renditions</strong>
+              <div className="subtle">
+                Destinations can inherit the stream profile or pin a lower fixed profile. Rendering above the stream
+                profile upscales the shared program feed and increases CPU cost.
+              </div>
+            </div>
           </div>
         </Panel>
       </div>
+
+      <Panel title="Per-destination renditions" eyebrow="Delivery">
+        <div className="list">
+          {orderedDestinations.map((destination) => {
+            const effectiveDestinationOutput = resolveDestinationOutputSettings({
+              destinationProfileId: destination.outputProfileId,
+              streamSettings: state.output,
+              env: process.env
+            });
+            const effectiveDestinationLabel = `${effectiveDestinationOutput.width}x${effectiveDestinationOutput.height}@${effectiveDestinationOutput.fps}`;
+            return (
+              <div className="item" key={destination.id}>
+                <strong>{destination.name}</strong>
+                <div className="subtle">
+                  {destination.role} · priority {destination.priority} · {destination.rtmpUrl || "No RTMP URL configured"}
+                </div>
+                <div className="subtle">
+                  Assigned profile {destination.outputProfileId ?? "inherit"} · effective {effectiveDestinationLabel}
+                </div>
+                <DestinationOutputProfileForm
+                  destination={destination}
+                  effectiveLabel={effectiveDestinationLabel}
+                  streamProfileLabel={effectiveOutputLabel}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </Panel>
     </div>
   );
 }
