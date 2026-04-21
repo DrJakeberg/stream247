@@ -106,14 +106,14 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
       title: "Playable assets",
       detail: readyAssets > 0 ? `${readyAssets} ready asset(s) are available.` : "Wait for ingestion or add local media until at least one asset is ready.",
       status: readyAssets > 0 ? "ready" : "action",
-      href: "/sources"
+      href: "/library"
     },
     {
       id: "pools",
       title: "Programming pools",
       detail: hasPools ? `${state.pools.length} pool(s) available for scheduling.` : "Create at least one pool so schedule blocks can target a programming unit.",
       status: hasPools ? "ready" : "action",
-      href: "/sources"
+      href: "/pools"
     },
     {
       id: "schedule",

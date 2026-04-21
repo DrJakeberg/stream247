@@ -21,10 +21,52 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await expect(page).toHaveURL(/\/broadcast$/);
   await expect(page.getByRole("heading", { name: /Operate the live 24\/7 output from one workspace/i })).toBeVisible();
   const adminNav = page.getByRole("navigation", { name: "Admin" });
-  await expect(adminNav.getByText("Control Room", { exact: true })).toBeVisible();
+  await expect(adminNav.getByText("Live", { exact: true })).toBeVisible();
   await expect(adminNav.getByText("Programming", { exact: true })).toBeVisible();
   await expect(adminNav.getByText("Stream Studio", { exact: true })).toBeVisible();
   await expect(adminNav.getByText("Workspace", { exact: true })).toBeVisible();
+  for (const [label, href] of [
+    ["Broadcast", "/broadcast"],
+    ["Dashboard", "/dashboard"],
+    ["Schedule", "/schedule"],
+    ["Pools", "/pools"],
+    ["Library", "/library"],
+    ["Scene Studio", "/overlay-studio"],
+    ["Overlays", "/overlays"],
+    ["Output", "/output"],
+    ["Sources", "/sources"],
+    ["Team", "/team"],
+    ["Settings", "/settings"]
+  ] as const) {
+    const link = adminNav.getByRole("link", { name: label, exact: true });
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("href", href);
+    await expect(link).toHaveAttribute("title", label);
+  }
+
+  await page.goto("/ops");
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole("heading", { name: /Check readiness, integrations, and current channel posture/i })).toBeVisible();
+
+  await adminNav.getByRole("link", { name: "Schedule", exact: true }).click();
+  await expect(page).toHaveURL(/\/schedule$/);
+  await expect(page.getByText("Add schedule block", { exact: true })).toBeVisible();
+
+  await adminNav.getByRole("link", { name: "Pools", exact: true }).click();
+  await expect(page).toHaveURL(/\/pools$/);
+  await expect(page.getByRole("heading", { name: /Manage programming pools/i })).toBeVisible();
+
+  await adminNav.getByRole("link", { name: "Library", exact: true }).click();
+  await expect(page).toHaveURL(/\/library$/);
+  await expect(page.getByRole("heading", { name: /Browse the playable catalog and upload local media/i })).toBeVisible();
+
+  await adminNav.getByRole("link", { name: "Sources", exact: true }).click();
+  await expect(page).toHaveURL(/\/sources$/);
+  await expect(page.getByRole("heading", { name: /Manage ingest pipelines and source connectors/i })).toBeVisible();
+
+  await adminNav.getByRole("link", { name: "Team", exact: true }).click();
+  await expect(page).toHaveURL(/\/team$/);
+  await expect(page.getByText("Twitch team access", { exact: true })).toBeVisible();
 
   await adminNav.getByRole("link", { name: "Output", exact: true }).click();
   await expect(page).toHaveURL(/\/output$/);
@@ -83,10 +125,6 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   );
   await page.getByRole("button", { name: "Refresh scenes" }).click();
   await expect((await refreshResponse).ok()).toBeTruthy();
-
-  await adminNav.getByRole("link", { name: "Library", exact: true }).click();
-  await expect(page).toHaveURL(/\/sources$/);
-  await expect(page.getByRole("heading", { name: /Manage sources, uploads, pools, and the playable catalog/i })).toBeVisible();
 
   await adminNav.getByRole("link", { name: "Scene Studio", exact: true }).click();
   await expect(page).toHaveURL(/\/overlay-studio$/);

@@ -898,7 +898,7 @@ Reference documents:
 | Milestone | Type | Priority | Status | Goal |
 | --- | --- | --- | --- | --- |
 | M29 | Feature fix | Now | Complete | React component primitives + `!here` chat command dispatch |
-| M30 | UX | Now | Incomplete | Navigation cleanup: split Library, move Sources, remove sidebar descriptions |
+| M30 | UX | Now | Complete | Navigation cleanup shipped: split Library and Pools, moved Sources to Workspace, removed sidebar descriptions |
 | M31 | Feature fix | Next | Incomplete | Overlay safe-area clamping and CSS variable wiring |
 | M32 | Feature | Next | Incomplete | Donation and bits alerts (Twitch EventSub `channel.cheer` + channel-point) |
 | M33 | Feature | Later | Incomplete | Multi-quality simultaneous RTMP output |
@@ -969,7 +969,7 @@ pnpm validate
 
 ## M30 Navigation Cleanup
 
-Status: incomplete
+Status: complete 2026-04-21
 
 **Goal**
 
@@ -979,7 +979,7 @@ Implement the target navigation structure from `docs/ui-redesign-spec.md`: split
 
 - Remove the `description` field from all nav section objects in `apps/web/components/admin-navigation.tsx`
 - Add `title` attribute to all nav link elements for tooltip on truncation
-- Implement the new 12-item, 4-section navigation structure
+- Implement the new 4-section, 11-link navigation structure
 - Create `/library` route serving asset and upload management (currently at `/sources`)
 - Create `/pools` route serving pool management (currently nested inside the sources page)
 - Narrow `/sources` to ingest pipeline management only (YouTube, Twitch, direct URL, upload sources)
@@ -1001,7 +1001,7 @@ Implement the target navigation structure from `docs/ui-redesign-spec.md`: split
 
 - Sidebar has no description paragraphs under section headers
 - All nav items have `title` attribute
-- Navigation matches the 12-item spec: Broadcast, Dashboard (Live); Schedule, Pools, Library (Programming); Scene Studio, Overlays, Output (Stream Studio); Sources, Team, Settings (Workspace)
+- Navigation matches the 11-link spec: Broadcast, Dashboard (Live); Schedule, Pools, Library (Programming); Scene Studio, Overlays, Output (Stream Studio); Sources, Team, Settings (Workspace)
 - `/ops` redirects to `/dashboard`
 - Incidents are visible on the Dashboard page
 - `/pools` shows pool management and works correctly
@@ -1023,6 +1023,10 @@ pnpm validate
 - Medium. Route changes require updating all internal links that reference `/sources` for assets. Audit all `href="/sources"` references before creating the new routes.
 - Redirect from `/ops` must not break any existing bookmark or external link. Use 301.
 - Pool management page may need to be extracted from the sources page component — check component coupling before splitting.
+
+**Progress Notes**
+
+- Completed 2026-04-21. The sidebar now uses the 4-section, 11-link IA from `docs/ui-redesign-spec.md`, `/library` and `/pools` are standalone admin routes, `/sources` is narrowed to ingest pipelines, Dashboard owns incident history, and `/ops` permanently redirects to `/dashboard`.
 
 ---
 

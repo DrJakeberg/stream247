@@ -96,28 +96,24 @@ main {
 
 .nav-section {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .nav-section-header {
-  display: grid;
-  gap: 4px;
-}
-
-.nav-section-header p {
-  margin: 0;
+  display: block;
 }
 
 .nav-section-body {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .nav-link {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: center;
   min-width: 0;
-  padding: 13px 15px;
+  min-height: 36px;
+  padding: 10px 12px;
   border-radius: 18px;
   border: 1px solid rgba(27, 26, 22, 0.05);
   background: rgba(255, 252, 246, 0.42);
@@ -143,11 +139,9 @@ main {
 
 .nav-link-title {
   font-weight: 600;
-}
-
-.nav-link-meta {
-  font-size: 0.88rem;
-  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-card {
@@ -954,7 +948,6 @@ button.collection-chip {
 }
 
 .nav-link-title,
-.nav-link-meta,
 .panel h3,
 .item > strong,
 .asset-card-body > strong,

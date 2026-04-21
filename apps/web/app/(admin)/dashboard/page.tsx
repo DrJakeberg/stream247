@@ -5,7 +5,6 @@ import { AdminPageHeader } from "@/components/admin-page-header";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
 import { DestinationCreateForm } from "@/components/destination-create-form";
 import { DestinationSettingsForm } from "@/components/destination-settings-form";
-import Link from "next/link";
 import { IncidentActionForm } from "@/components/incident-action-form";
 import { Panel } from "@/components/panel";
 import { PlayoutActionForm } from "@/components/playout-action-form";
@@ -30,6 +29,9 @@ export default async function DashboardPage() {
   const presenceStatus = getPresenceStatus(state);
   const activeWindows = getActivePresenceWindows(state);
   const openIncidents = state.incidents.filter((incident) => incident.status === "open");
+  const recentIncidents = [...state.incidents]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, 8);
   const activeDestination = state.destinations.find((entry) => entry.id === state.playout.currentDestinationId) ?? state.destinations[0];
   const orderedDestinations = [...state.destinations].sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name));
   const activeDestinationIds = new Set(
@@ -183,7 +185,7 @@ export default async function DashboardPage() {
           </div>
         </Panel>
 
-        <Panel title="Alerts and drift" eyebrow="Operations">
+        <Panel title="Alerts and drift" eyebrow="Runtime">
           <div className="list">
             <div className="item">
               <strong>Encoder runtime</strong>
@@ -299,14 +301,43 @@ export default async function DashboardPage() {
                 Use <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> in a browser source.
               </div>
             </div>
-            <div className="item">
-              <strong>Ops workspace</strong>
-              <div className="subtle">Use the dedicated ops page for incident history, filters, drift checks, and recent audit activity.</div>
-              <div className="subtle">
-                <Link href="/ops">Open the ops view</Link>
-              </div>
-            </div>
             <TwitchConnectPanel authorizeUrl={twitchAuthorizeUrl} />
+          </div>
+        </Panel>
+      </section>
+
+      <section style={{ marginTop: 24 }}>
+        <Panel title="Incident history" eyebrow="Incidents">
+          <div className="list">
+            {recentIncidents.length > 0 ? (
+              recentIncidents.map((incident) => (
+                <div className="item" key={incident.id}>
+                  <strong>
+                    {incident.severity.toUpperCase()} · {incident.scope} · {incident.title}
+                  </strong>
+                  <div className="subtle">{incident.message}</div>
+                  <div className="subtle">
+                    Status {incident.status} · created {incident.createdAt} · updated {incident.updatedAt}
+                  </div>
+                  <div className="subtle">
+                    {incident.acknowledgedAt
+                      ? `Acknowledged by ${incident.acknowledgedBy || "unknown"} at ${incident.acknowledgedAt}`
+                      : "Not acknowledged."}
+                  </div>
+                  {incident.resolvedAt ? <div className="subtle">Resolved at {incident.resolvedAt}</div> : null}
+                  <IncidentActionForm
+                    acknowledgedAt={incident.acknowledgedAt}
+                    fingerprint={incident.fingerprint}
+                    status={incident.status}
+                  />
+                </div>
+              ))
+            ) : (
+              <div className="item">
+                <strong>No incidents recorded</strong>
+                <div className="subtle">Incident history will appear here once the worker or playout runtime emits one.</div>
+              </div>
+            )}
           </div>
         </Panel>
       </section>

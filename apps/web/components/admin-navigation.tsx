@@ -1,74 +1,31 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
-
-const SECTIONS = [
-  {
-    id: "control-room",
-    label: "Control Room",
-    description: "Readiness, on-air actions, and current runtime state.",
-    items: [
-      { href: "/broadcast", label: "Broadcast", meta: "On-air controls" },
-      { href: "/dashboard", label: "Dashboard", meta: "Readiness and overview" },
-      { href: "/ops", label: "Operations", meta: "Incidents and drift" }
-    ]
-  },
-  {
-    id: "programming",
-    label: "Programming",
-    description: "Shape upcoming output, pools, and playable media.",
-    items: [
-      { href: "/schedule", label: "Schedule", meta: "Blocks, repeats, timeline" },
-      { href: "/sources", label: "Library", meta: "Sources, uploads, pools" }
-    ]
-  },
-  {
-    id: "stream-studio",
-    label: "Stream Studio",
-    description: "Compose viewer scenes, dynamic overlays, and output shape.",
-    items: [
-      { href: "/overlay-studio", label: "Scene Studio", meta: "Publish viewer scenes" },
-      { href: "/overlays", label: "Overlays", meta: "Chat and stream alerts" },
-      { href: "/output", label: "Output", meta: "Resolution and FPS" }
-    ]
-  },
-  {
-    id: "workspace",
-    label: "Workspace",
-    description: "Security, moderation policy, and reusable setup.",
-    items: [
-      { href: "/settings", label: "Settings", meta: "Access, secrets, blueprints" },
-      { href: "/moderation", label: "Moderation", meta: "Presence policy" },
-      { href: "/team", label: "Team", meta: "Access grants" }
-    ]
-  }
-];
+import { ADMIN_NAV_SECTIONS } from "@/lib/admin-navigation";
 
 export function AdminNavigation() {
   const pathname = usePathname();
 
   return (
     <nav aria-label="Admin" className="nav">
-      {SECTIONS.map((section) => (
+      {ADMIN_NAV_SECTIONS.map((section) => (
         <section className="nav-section" key={section.id}>
           <div className="nav-section-header">
             <span className="label">{section.label}</span>
-            <p className="subtle">{section.description}</p>
           </div>
           <div className="nav-section-body">
             {section.items.map((item) => {
               const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
               return (
-                <Link
-                  key={item.href}
+                <a
                   aria-label={item.label}
                   className={isActive ? "nav-link nav-link-active" : "nav-link"}
                   href={item.href}
+                  key={item.href}
+                  title={item.label}
                 >
                   <span className="nav-link-title">{item.label}</span>
-                  <span className="nav-link-meta">{item.meta}</span>
-                </Link>
+                </a>
               );
             })}
           </div>
