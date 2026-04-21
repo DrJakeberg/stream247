@@ -903,7 +903,7 @@ Reference documents:
 | M32 | Feature | Next | Complete | Donation and bits alerts shipped: Twitch EventSub `channel.cheer` + channel-point redemptions |
 | M33 | Feature | Later | Complete | Multi-quality simultaneous RTMP output |
 | M34 | Docs | Now | Complete | Delete legacy docs, merge redundant docs, final doc set |
-| M35 | Feature | Next | Incomplete | Twitch LIVE badge with viewer count in Broadcast page |
+| M35 | Feature | Next | Complete | Twitch LIVE badge with viewer count in Broadcast page |
 
 ---
 
@@ -1251,7 +1251,7 @@ pnpm validate
 
 ## M35 Twitch Live Status Widget
 
-Status: incomplete
+Status: complete 2026-04-21
 
 **Goal**
 
@@ -1291,6 +1291,11 @@ pnpm validate
 - Low. Read-only Twitch API call. Uses existing app token pattern.
 - Rate limit: `GET /helix/streams` allows 800 requests per minute per app token. A 60-second poll is well within limits.
 - Must not affect broadcast reliability if the Twitch API is slow or unavailable — poll must be non-blocking and fail silently.
+
+**Progress Notes**
+
+- Completed 2026-04-21. The worker now polls Twitch `helix/streams` with the existing client-credentials app-token flow every 60 seconds and persists a lightweight `live | offline | unknown` snapshot plus viewer count on the Twitch connection state.
+- Broadcast SSE snapshots now expose that live-state summary, and the Broadcast header renders a `StatusChip` showing `LIVE <count>`, `OFFLINE`, or `UNKNOWN` without adding a new auth flow or operator-only error mode.
 
 ---
 

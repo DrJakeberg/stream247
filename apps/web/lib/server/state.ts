@@ -132,6 +132,7 @@ import type {
   LiveQueueItemSummary,
   LiveBridgeSummary,
   LiveScheduleSummary,
+  LiveTwitchStatusSummary,
   PublicChannelSnapshot
 } from "@/lib/live-broadcast";
 
@@ -1153,6 +1154,14 @@ function summarizeCuepoints(
   };
 }
 
+function summarizeTwitchLiveStatus(state: AppState): LiveTwitchStatusSummary {
+  return {
+    status: state.twitch.status === "connected" ? state.twitch.liveStatus : "unknown",
+    viewerCount: state.twitch.status === "connected" ? state.twitch.viewerCount : 0,
+    broadcasterLogin: state.twitch.broadcasterLogin
+  };
+}
+
 export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
   const currentScheduleItem = getCurrentScheduleItem(state);
   const nextScheduleItem = getNextScheduleItem(state);
@@ -1163,6 +1172,7 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
     generatedAt: new Date().toISOString(),
     timeZone: getWorkspaceTimeZone(),
     workerHealth: getWorkerHealth(state),
+    twitch: summarizeTwitchLiveStatus(state),
     playout: summarizePlayout(state.playout),
     liveBridge: summarizeLiveBridge(state.playout),
     audioLane: summarizeAudioLane(state, currentScheduleItem),

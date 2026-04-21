@@ -121,6 +121,8 @@ export async function exchangeTwitchCode(code: string) {
     lastSyncedCategoryName: "",
     lastSyncedCategoryId: "",
     lastScheduleSyncAt: "",
+    liveStatus: "unknown",
+    viewerCount: 0,
     error: ""
   });
 

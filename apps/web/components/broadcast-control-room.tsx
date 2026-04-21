@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { AdminPageHeader } from "@/components/admin-page-header";
+import { getBroadcastLiveStatusLabel, getBroadcastLiveStatusTone } from "@/components/broadcast-live-status";
 import type { BroadcastSnapshot } from "@/lib/live-broadcast";
 import { PlayoutActionForm } from "@/components/playout-action-form";
+import { StatusChip } from "@/components/ui/StatusChip";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
 
 type AssetOption = {
@@ -31,6 +33,9 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
         eyebrow="Broadcast"
         title="Operate the live 24/7 output from one workspace."
       >
+        <div className="stats-row">
+          <StatusChip status={getBroadcastLiveStatusTone(snapshot.twitch)} label={getBroadcastLiveStatusLabel(snapshot.twitch)} />
+        </div>
         <div className="status-rail">
           <div>
             <span className="label">Feed</span>

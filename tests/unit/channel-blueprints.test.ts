@@ -101,6 +101,8 @@ function createState(): AppState {
       lastSyncedCategoryName: "",
       lastSyncedCategoryId: "",
       lastScheduleSyncAt: "",
+      liveStatus: "unknown",
+      viewerCount: 0,
       error: ""
     },
     twitchScheduleSegments: [],

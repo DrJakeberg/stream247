@@ -91,6 +91,8 @@ function baseEventSubState(
       lastSyncedCategoryName: "",
       lastSyncedCategoryId: "",
       lastScheduleSyncAt: "",
+      liveStatus: "unknown",
+      viewerCount: 0,
       error: "",
       ...overrides.twitch
     }

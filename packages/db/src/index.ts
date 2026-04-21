@@ -76,6 +76,8 @@ export type TwitchConnection = {
   lastSyncedCategoryName: string;
   lastSyncedCategoryId: string;
   lastScheduleSyncAt: string;
+  liveStatus: "live" | "offline" | "unknown";
+  viewerCount: number;
   error: string;
 };
 
@@ -1299,6 +1301,8 @@ function defaultState(): AppState {
       lastSyncedCategoryName: "",
       lastSyncedCategoryId: "",
       lastScheduleSyncAt: "",
+      liveStatus: "unknown",
+      viewerCount: 0,
       error: ""
     },
     twitchScheduleSegments: [],
@@ -1622,7 +1626,12 @@ function normalizeState(state: AppState): AppState {
       : [],
     twitch: {
       ...defaults.twitch,
-      ...(state.twitch ?? {})
+      ...(state.twitch ?? {}),
+      liveStatus:
+        state.twitch?.liveStatus === "live" || state.twitch?.liveStatus === "offline" || state.twitch?.liveStatus === "unknown"
+          ? state.twitch.liveStatus
+          : defaults.twitch.liveStatus,
+      viewerCount: Math.max(0, Number(state.twitch?.viewerCount ?? defaults.twitch.viewerCount) || defaults.twitch.viewerCount)
     },
     twitchScheduleSegments: Array.isArray(state.twitchScheduleSegments) ? state.twitchScheduleSegments : [],
     users: Array.isArray(state.users) ? dedupeById(state.users) : [],
@@ -1912,6 +1921,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       last_synced_category_name TEXT NOT NULL DEFAULT '',
       last_synced_category_id TEXT NOT NULL DEFAULT '',
       last_schedule_sync_at TEXT NOT NULL DEFAULT '',
+      live_status TEXT NOT NULL DEFAULT 'unknown',
+      viewer_count INTEGER NOT NULL DEFAULT 0,
       error TEXT NOT NULL DEFAULT ''
     );
 
@@ -2147,6 +2158,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_synced_category_name TEXT NOT NULL DEFAULT '';
     ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_synced_category_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS last_schedule_sync_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS live_status TEXT NOT NULL DEFAULT 'unknown';
+    ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS viewer_count INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS connector_kind TEXT NOT NULL DEFAULT 'local-library';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS external_url TEXT NOT NULL DEFAULT '';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
@@ -2492,6 +2505,28 @@ if (!schemaMigrations.some((migration) => migration.id === destinationOutputProf
   schemaMigrations.push(destinationOutputProfilesMigration);
 }
 
+const twitchLiveStatusMigration: MigrationDefinition = {
+  id: "20260421_003_twitch_live_status",
+  description: "Persist Twitch live/offline status and viewer counts.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS live_status TEXT NOT NULL DEFAULT 'unknown';
+      ALTER TABLE twitch_connection ADD COLUMN IF NOT EXISTS viewer_count INTEGER NOT NULL DEFAULT 0;
+      UPDATE twitch_connection
+      SET
+        live_status = CASE
+          WHEN live_status IN ('live', 'offline', 'unknown') THEN live_status
+          ELSE 'unknown'
+        END,
+        viewer_count = GREATEST(COALESCE(viewer_count, 0), 0)
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === twitchLiveStatusMigration.id)) {
+  schemaMigrations.push(twitchLiveStatusMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -2806,9 +2841,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     `
       INSERT INTO twitch_connection (
         singleton_id, status, broadcaster_id, broadcaster_login, access_token, refresh_token, connected_at, token_expires_at,
-        last_refresh_at, last_metadata_sync_at, last_synced_title, last_synced_category_name, last_synced_category_id, last_schedule_sync_at, error
+        last_refresh_at, last_metadata_sync_at, last_synced_title, last_synced_category_name, last_synced_category_id,
+        last_schedule_sync_at, live_status, viewer_count, error
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         broadcaster_id = EXCLUDED.broadcaster_id,
@@ -2823,6 +2859,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         last_synced_category_name = EXCLUDED.last_synced_category_name,
         last_synced_category_id = EXCLUDED.last_synced_category_id,
         last_schedule_sync_at = EXCLUDED.last_schedule_sync_at,
+        live_status = EXCLUDED.live_status,
+        viewer_count = EXCLUDED.viewer_count,
         error = EXCLUDED.error
     `,
     [
@@ -2839,6 +2877,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       next.twitch.lastSyncedCategoryName,
       next.twitch.lastSyncedCategoryId,
       next.twitch.lastScheduleSyncAt,
+      next.twitch.liveStatus,
+      next.twitch.viewerCount,
       next.twitch.error
     ]
   );
@@ -3395,6 +3435,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     last_synced_category_name: string;
     last_synced_category_id: string;
     last_schedule_sync_at: string;
+    live_status: TwitchConnection["liveStatus"];
+    viewer_count: number;
     error: string;
   }>("SELECT * FROM twitch_connection WHERE singleton_id = 1");
   const twitchScheduleSegmentsResult = await client.query<{
@@ -3704,6 +3746,11 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           lastSyncedCategoryName: twitchRow.last_synced_category_name,
           lastSyncedCategoryId: twitchRow.last_synced_category_id,
           lastScheduleSyncAt: twitchRow.last_schedule_sync_at,
+          liveStatus:
+            twitchRow.live_status === "live" || twitchRow.live_status === "offline" || twitchRow.live_status === "unknown"
+              ? twitchRow.live_status
+              : "unknown",
+          viewerCount: Math.max(0, Number(twitchRow.viewer_count) || 0),
           error: twitchRow.error
         }
       : defaults.twitch,
@@ -4964,9 +5011,10 @@ export async function updateTwitchConnectionRecord(twitch: TwitchConnection): Pr
       `
         INSERT INTO twitch_connection (
           singleton_id, status, broadcaster_id, broadcaster_login, access_token, refresh_token, connected_at, token_expires_at,
-          last_refresh_at, last_metadata_sync_at, last_synced_title, last_synced_category_name, last_synced_category_id, last_schedule_sync_at, error
+          last_refresh_at, last_metadata_sync_at, last_synced_title, last_synced_category_name, last_synced_category_id,
+          last_schedule_sync_at, live_status, viewer_count, error
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         ON CONFLICT (singleton_id) DO UPDATE SET
           status = EXCLUDED.status,
           broadcaster_id = EXCLUDED.broadcaster_id,
@@ -4981,6 +5029,8 @@ export async function updateTwitchConnectionRecord(twitch: TwitchConnection): Pr
           last_synced_category_name = EXCLUDED.last_synced_category_name,
           last_synced_category_id = EXCLUDED.last_synced_category_id,
           last_schedule_sync_at = EXCLUDED.last_schedule_sync_at,
+          live_status = EXCLUDED.live_status,
+          viewer_count = EXCLUDED.viewer_count,
           error = EXCLUDED.error
       `,
       [
@@ -4997,6 +5047,8 @@ export async function updateTwitchConnectionRecord(twitch: TwitchConnection): Pr
         twitch.lastSyncedCategoryName,
         twitch.lastSyncedCategoryId,
         twitch.lastScheduleSyncAt,
+        twitch.liveStatus,
+        twitch.viewerCount,
         twitch.error
       ]
     );

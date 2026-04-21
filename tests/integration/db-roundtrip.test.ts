@@ -298,7 +298,9 @@ describe.sequential("database roundtrip", () => {
         accessToken: "token",
         refreshToken: "refresh",
         connectedAt: "2026-04-04T10:00:00.000Z",
-        tokenExpiresAt: "2026-04-04T12:00:00.000Z"
+        tokenExpiresAt: "2026-04-04T12:00:00.000Z",
+        liveStatus: "offline" as const,
+        viewerCount: 0
       },
       twitchScheduleSegments: [
         {
@@ -565,6 +567,8 @@ describe.sequential("database roundtrip", () => {
     expect(reread.engagement).toEqual(nextState.engagement);
     expect(reread.engagementEvents.map((event) => event.id)).toEqual(["engagement_follow_1", "engagement_chat_1"]);
     expect(reread.twitch.broadcasterLogin).toBe("roundtrip");
+    expect(reread.twitch.liveStatus).toBe("offline");
+    expect(reread.twitch.viewerCount).toBe(0);
     expect(reread.twitchScheduleSegments[0]?.segmentId).toBe("abc");
     expect(reread.pools[0]?.name).toBe("Pool One");
     expect(reread.pools[0]?.insertAssetId).toBe("asset_3");

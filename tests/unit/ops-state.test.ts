@@ -102,6 +102,8 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       lastSyncedCategoryName: "Just Chatting",
       lastSyncedCategoryId: "509658",
       lastScheduleSyncAt: "",
+      liveStatus: "unknown",
+      viewerCount: 0,
       error: ""
     },
     twitchScheduleSegments: [],
@@ -612,6 +614,22 @@ describe("ops state helpers", () => {
     expect(snapshot.activeScenePayload.queueKind).toBe("standby");
     expect(snapshot.activeScenePayload.scene.resolvedPresetId).toBe("standby-board");
     expect(snapshot.activeScenePayload.nextTitle).toBeTruthy();
+  });
+
+  it("includes Twitch live status and viewer count in the live snapshot", () => {
+    const snapshot = getBroadcastSnapshot(
+      createState({
+        twitch: {
+          ...createState().twitch,
+          liveStatus: "live",
+          viewerCount: 42
+        }
+      })
+    );
+
+    expect(snapshot.twitch.status).toBe("live");
+    expect(snapshot.twitch.viewerCount).toBe(42);
+    expect(snapshot.twitch.broadcasterLogin).toBe("owner");
   });
 
   it("summarizes active audio lanes and cuepoint progress", () => {

@@ -112,6 +112,7 @@ import {
 } from "./output-settings.js";
 import { TwitchChatBridge } from "./twitch-engagement.js";
 import { syncTwitchEventSubSubscriptions } from "./twitch-eventsub.js";
+import { fetchTwitchLiveStatus } from "./twitch-live-status.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
@@ -151,6 +152,7 @@ const PLAYOUT_RECONNECT_INTERVAL_MS = PLAYOUT_RECONNECT_CONFIG.intervalMs;
 const PLAYOUT_RECONNECT_INTERVAL_HOURS = PLAYOUT_RECONNECT_CONFIG.intervalHours;
 const PLAYOUT_RECONNECT_WINDOW_MS = PLAYOUT_RECONNECT_CONFIG.windowMs;
 const TWITCH_EVENTSUB_SYNC_INTERVAL_MS = 10 * 60_000;
+const TWITCH_LIVE_STATUS_SYNC_INTERVAL_MS = 60_000;
 const STREAM247_RELAY_ENABLED = isRelayModeEnabled(process.env);
 const STREAM247_UPLINK_INPUT_MODE = getUplinkInputMode(process.env);
 const STREAM247_RELAY_DESTINATION_ID = "relay-local";
@@ -188,6 +190,8 @@ const PLAYOUT_RECOVERY_SCENE_CAPTURE_SKIP_WINDOW_MS = 60_000;
 let wakePlayoutLoop: (() => void) | null = null;
 let twitchEventSubLastSyncKey = "";
 let twitchEventSubNextSyncAt = 0;
+let twitchLiveStatusLastSyncKey = "";
+let twitchLiveStatusNextSyncAt = 0;
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -4435,6 +4439,63 @@ async function reconcileTwitch(): Promise<void> {
   }
 }
 
+async function reconcileTwitchLiveStatus(): Promise<void> {
+  const state = await readAppState();
+  const clientId = getTwitchClientId(state);
+  const clientSecret = getTwitchClientSecret(state);
+  const broadcasterId = state.twitch.broadcasterId.trim();
+  const syncKey = [state.twitch.status, broadcasterId, clientId, clientSecret].join("|");
+  const now = Date.now();
+
+  if (syncKey === twitchLiveStatusLastSyncKey && now < twitchLiveStatusNextSyncAt) {
+    return;
+  }
+
+  twitchLiveStatusLastSyncKey = syncKey;
+  twitchLiveStatusNextSyncAt = now + TWITCH_LIVE_STATUS_SYNC_INTERVAL_MS;
+
+  if (state.twitch.status !== "connected" || !broadcasterId || !clientId || !clientSecret) {
+    if (state.twitch.liveStatus !== "unknown" || state.twitch.viewerCount !== 0) {
+      await updateTwitchConnectionRecord({
+        ...state.twitch,
+        liveStatus: "unknown",
+        viewerCount: 0
+      });
+    }
+    return;
+  }
+
+  try {
+    const snapshot = await fetchTwitchLiveStatus({
+      broadcasterId,
+      clientId,
+      clientSecret
+    });
+
+    if (state.twitch.liveStatus === snapshot.liveStatus && state.twitch.viewerCount === snapshot.viewerCount) {
+      return;
+    }
+
+    await updateTwitchConnectionRecord({
+      ...state.twitch,
+      liveStatus: snapshot.liveStatus,
+      viewerCount: snapshot.viewerCount
+    });
+  } catch (error) {
+    if (state.twitch.liveStatus !== "unknown" || state.twitch.viewerCount !== 0) {
+      await updateTwitchConnectionRecord({
+        ...state.twitch,
+        liveStatus: "unknown",
+        viewerCount: 0
+      });
+    }
+
+    logRuntimeEvent("twitch.live-status.sync.failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
 async function reconcileTwitchEventSub(): Promise<void> {
   const state = await readAppState();
   const clientId = getTwitchClientId(state);
@@ -4508,6 +4569,7 @@ async function runWorkerCycle(): Promise<void> {
   await syncYoutubePlaylistSources();
   await syncTwitchVodSources();
   await reconcileTwitch();
+  await reconcileTwitchLiveStatus();
   await reconcileTwitchEventSub();
   await twitchChatBridge.sync(await readAppState(), process.env);
   await appendAuditEvent("worker.cycle", "Worker reconciliation cycle completed.");

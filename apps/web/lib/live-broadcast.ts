@@ -73,6 +73,12 @@ export type LiveWorkerHealth = {
   lastRunAt: string;
 };
 
+export type LiveTwitchStatusSummary = {
+  status: "live" | "offline" | "unknown";
+  viewerCount: number;
+  broadcasterLogin: string;
+};
+
 export type LiveBridgeSummary = {
   configured: boolean;
   status: "idle" | "pending" | "active" | "releasing" | "error";
@@ -286,6 +292,7 @@ export type BroadcastSnapshot = {
   generatedAt: string;
   timeZone: string;
   workerHealth: LiveWorkerHealth;
+  twitch: LiveTwitchStatusSummary;
   playout: LivePlayoutSummary;
   liveBridge: LiveBridgeSummary;
   audioLane: LiveAudioLaneSummary;
