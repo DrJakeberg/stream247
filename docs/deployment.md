@@ -130,7 +130,7 @@ Production Compose is intended to pull from:
 - `bluenviron/mediamtx:<tag>` for the local RTMP relay
 
 `.env.example` uses `latest` for evaluation.
-`.env.production.example` pins `v1.5.0` for stable deployment.
+`.env.production.example` pins `v1.5.1` for stable deployment.
 See `docs/operations.md` for the runbook and backup procedures.
 
 ## Release Channels And Tags
@@ -155,9 +155,9 @@ Use pinned GHCR image tags in production.
 
 Example:
 
-- `ghcr.io/drjakeberg/stream247-web:v1.5.0`
-- `ghcr.io/drjakeberg/stream247-worker:v1.5.0`
-- `ghcr.io/drjakeberg/stream247-playout:v1.5.0`
+- `ghcr.io/drjakeberg/stream247-web:v1.5.1`
+- `ghcr.io/drjakeberg/stream247-worker:v1.5.1`
+- `ghcr.io/drjakeberg/stream247-playout:v1.5.1`
 - `bluenviron/mediamtx:1.15.4`
 
 Do not use `latest` for unattended production deployments.
@@ -175,9 +175,9 @@ Do not use `latest` for unattended production deployments.
    The preflight rejects blank or quoted-empty required settings plus untouched `.env.example` and `.env.production.example` placeholder values, including Traefik example defaults when proxy settings are present, so replace those first.
 6. Update the pinned image tags in your Compose configuration, or rehearse the target version with:
    ```bash
-   ./scripts/upgrade-rehearsal.sh v1.5.0
+   ./scripts/upgrade-rehearsal.sh v1.5.1
    ```
-   Before a new release tag exists, the rehearsal automatically uses the CI-published `main-<sha>` snapshot for the current commit instead of requiring `ghcr.io/...:v1.5.0` to exist already.
+   Before a new release tag exists, the rehearsal automatically uses the CI-published `main-<sha>` snapshot for the current commit instead of requiring `ghcr.io/...:v1.5.1` to exist already.
 7. Pull the new images.
 8. Restart the stack.
 9. Check:

@@ -3,7 +3,7 @@ import { getDatabaseHealth } from "@stream247/db";
 import { getActiveSseConnectionCount } from "./sse";
 import { readAppState } from "./state";
 
-const WORKER_HEARTBEAT_STALE_MS = 180_000;
+const WORKER_HEARTBEAT_STALE_MS = 240_000;
 const RUNTIME_HEARTBEAT_STALE_MS = 60_000;
 const MIN_PLAYOUT_TRANSIENT_GRACE_SECONDS = 20;
 

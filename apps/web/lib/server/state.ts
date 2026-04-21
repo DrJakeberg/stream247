@@ -1253,7 +1253,7 @@ export function getSourceReferences(state: AppState, sourceId: string) {
 }
 
 export function getWorkerHealth(state: AppState) {
-  const WORKER_HEARTBEAT_STALE_MS = 180_000;
+  const WORKER_HEARTBEAT_STALE_MS = 240_000;
   const lastWorkerCycle = state.auditEvents.find((event) => event.type === "worker.cycle") ?? null;
   const lastRunAt = lastWorkerCycle?.createdAt || "";
   const ageMs = lastRunAt ? Date.now() - new Date(lastRunAt).getTime() : Number.POSITIVE_INFINITY;

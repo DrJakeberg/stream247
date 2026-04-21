@@ -350,7 +350,7 @@ describe("ops state helpers", () => {
 
   it("keeps worker heartbeat healthy across the normal reconciliation window", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-09T18:00:46.000Z"));
+    vi.setSystemTime(new Date("2026-04-09T18:01:26.424Z"));
 
     const result = getWorkerHealth(
       createState({
