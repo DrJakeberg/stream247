@@ -1,6 +1,6 @@
 import tls from "node:tls";
 import { randomUUID } from "node:crypto";
-import { isEngagementChatRuntimeEnabled } from "@stream247/core";
+import { createDefaultModerationConfig, isEngagementChatRuntimeEnabled, parseModeratorCheckIn } from "@stream247/core";
 import type { AppState, EngagementEventRecord } from "@stream247/db";
 import { appendEngagementEventRecord } from "@stream247/db";
 
@@ -8,6 +8,13 @@ export type TwitchChatMessage = {
   id: string;
   actor: string;
   message: string;
+  isModerator: boolean;
+};
+
+type ModeratorPresenceWindow = NonNullable<ReturnType<typeof parseModeratorCheckIn>>;
+
+type TwitchChatBridgeOptions = {
+  onModeratorPresenceCheckIn?: (window: ModeratorPresenceWindow) => Promise<void> | void;
 };
 
 export function createRingBuffer<T>(capacity: number) {
@@ -44,6 +51,10 @@ export function parseTwitchIrcMessage(line: string): TwitchChatMessage | null {
   );
   const actor = (tags["display-name"] || "").replace(/\\s/g, " ").trim() || match.groups.source.split("!")[0] || "Viewer";
   const message = match.groups.message.trim();
+  const badges = String(tags.badges || "");
+  const isModerator =
+    tags.mod === "1" ||
+    badges.split(",").some((badge) => badge.startsWith("broadcaster/") || badge.startsWith("moderator/"));
   if (!message) {
     return null;
   }
@@ -51,8 +62,26 @@ export function parseTwitchIrcMessage(line: string): TwitchChatMessage | null {
   return {
     id: tags.id || `chat-${randomUUID()}`,
     actor,
-    message
+    message,
+    isModerator
   };
+}
+
+export function parseModeratorPresenceWindowFromChatMessage(args: {
+  chatMessage: TwitchChatMessage;
+  now: Date;
+  config: AppState["moderation"];
+}): ModeratorPresenceWindow | null {
+  if (!args.chatMessage.isModerator) {
+    return null;
+  }
+
+  return parseModeratorCheckIn({
+    actor: args.chatMessage.actor,
+    input: args.chatMessage.message,
+    now: args.now,
+    config: args.config
+  });
 }
 
 export function createChatRateLimiter(limitPerMinute: number) {
@@ -93,6 +122,12 @@ export class TwitchChatBridge {
   private buffer = "";
   private readonly messages = createRingBuffer<EngagementEventRecord>(50);
   private limiter = createChatRateLimiter(30);
+  private moderationConfig: AppState["moderation"] = createDefaultModerationConfig();
+  private readonly onModeratorPresenceCheckIn?: TwitchChatBridgeOptions["onModeratorPresenceCheckIn"];
+
+  constructor(options: TwitchChatBridgeOptions = {}) {
+    this.onModeratorPresenceCheckIn = options.onModeratorPresenceCheckIn;
+  }
 
   getRecentMessages(): EngagementEventRecord[] {
     return this.messages.values();
@@ -102,6 +137,7 @@ export class TwitchChatBridge {
     const enabled = isEngagementChatRuntimeEnabled(state.engagement, env);
     const channel = state.twitch.broadcasterLogin.toLowerCase();
     const accessToken = state.twitch.accessToken;
+    this.moderationConfig = state.moderation;
     if (!enabled || !channel || !accessToken) {
       await this.disconnect("disabled");
       return;
@@ -164,7 +200,18 @@ export class TwitchChatBridge {
         continue;
       }
 
-      if (!this.limiter.allow(Date.now())) {
+      const now = new Date();
+      const presenceWindow = parseModeratorPresenceWindowFromChatMessage({
+        chatMessage: message,
+        now,
+        config: this.moderationConfig
+      });
+      if (presenceWindow) {
+        void this.onModeratorPresenceCheckIn?.(presenceWindow);
+        continue;
+      }
+
+      if (!this.limiter.allow(now.getTime())) {
         continue;
       }
 
@@ -173,7 +220,7 @@ export class TwitchChatBridge {
         kind: "chat",
         actor: message.actor,
         message: message.message,
-        createdAt: new Date().toISOString()
+        createdAt: now.toISOString()
       };
       this.messages.push(event);
       void appendEngagementEventRecord(event);

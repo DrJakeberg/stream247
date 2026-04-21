@@ -884,6 +884,383 @@ pnpm validate
 
 ---
 
+## Phase 4 — Cleanup, Component System, And Remaining Features
+
+Phase 4 addresses the gaps identified in the 2026-04-21 product reset audit. Milestones are ordered by risk and dependency: critical behavior fixes first, navigation second, component system third, docs cleanup fourth, then feature additions.
+
+Reference documents:
+- `docs/full-product-reset-audit.md` — what exists and what is broken
+- `docs/full-product-reset-plan.md` — target product state
+- `docs/legacy-removal-list.md` — remove/keep/replace decisions
+- `docs/ui-redesign-spec.md` — component and navigation implementation spec
+- `docs/docs-reset-plan.md` — doc cleanup plan
+
+| Milestone | Type | Priority | Status | Goal |
+| --- | --- | --- | --- | --- |
+| M29 | Feature fix | Now | Complete | React component primitives + `!here` chat command dispatch |
+| M30 | UX | Now | Incomplete | Navigation cleanup: split Library, move Sources, remove sidebar descriptions |
+| M31 | Feature fix | Next | Incomplete | Overlay safe-area clamping and CSS variable wiring |
+| M32 | Feature | Next | Incomplete | Donation and bits alerts (Twitch EventSub `channel.cheer` + channel-point) |
+| M33 | Feature | Later | Incomplete | Multi-quality simultaneous RTMP output |
+| M34 | Docs | Now | Incomplete | Delete legacy docs, merge redundant docs, final doc set |
+| M35 | Feature | Next | Incomplete | Twitch LIVE badge with viewer count in Broadcast page |
+
+---
+
+## M29 React Component Primitives And Chat Command Dispatch
+
+Status: complete 2026-04-21
+
+**Goal**
+
+Create the typed React component primitive layer (`Button`, `Card`, `Badge`, `Input`, `Select`, `PageHeader`, `StatusChip`) that makes the existing CSS system safe to use. Simultaneously fix the broken `!here` moderation command by implementing the IRC chat command parser in `TwitchChatBridge`.
+
+These are bundled because both are "the thing that was promised but doesn't actually work" fixes.
+
+**Scope**
+
+- Create `apps/web/components/ui/Badge.tsx` — never renders when content is empty, whitespace, or `"[]"`; all variants map to existing CSS classes
+- Create `apps/web/components/ui/Button.tsx` — primary/secondary/danger/ghost variants; loading state; maps to existing CSS classes
+- Create `apps/web/components/ui/Card.tsx` — padding variants, optional header/footer
+- Create `apps/web/components/ui/Input.tsx` — stacked label layout, hint/error, optional char count
+- Create `apps/web/components/ui/Select.tsx` — stacked label layout, native `<select>`
+- Create `apps/web/components/ui/PageHeader.tsx` — title, subtitle, optional actions slot
+- Create `apps/web/components/ui/StatusChip.tsx` — status variants (ok/degraded/not-ready/unknown/live/offline)
+- Update `apps/web/components/overlay-scene-canvas.tsx` to use `Badge` primitive
+- Add a command parser to `apps/worker/src/twitch-engagement.ts` that scans incoming IRC messages for command patterns
+- Wire the `!here [minutes]` command to update the moderation presence window in the DB
+- The IRC bridge does not need to send chat replies for M29 — update the DB state only
+
+**Touched areas**
+
+- `apps/web/components/ui/` (new directory, 7 new files)
+- `apps/web/components/overlay-scene-canvas.tsx`
+- `apps/worker/src/twitch-engagement.ts`
+- `apps/worker/src/index.ts` (wire command handler registration)
+- `packages/db/src/index.ts` (verify updatePresenceWindow or equivalent exists)
+
+**Acceptance criteria**
+
+- All 7 primitives exist in `apps/web/components/ui/`
+- `Badge` never renders when children is empty/whitespace/`"[]"`
+- `Input` and `Select` always use stacked label layout
+- `overlay-scene-canvas.tsx` uses `Badge` primitive
+- An operator sending `!here 30` in Twitch chat updates the moderation presence window in the DB
+- `/api/moderation/presence` reflects the updated window after the command fires
+- Existing emote-only automation triggers correctly after a presence update via chat command
+- `pnpm validate` passes
+- Existing browser smoke tests pass
+- Unit test for the command parser (valid command, invalid command, wrong prefix, missing minutes)
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/
+pnpm validate
+```
+
+**Risks**
+
+- Low for component primitives. The CSS classes already exist. Components are wrappers.
+- Low for chat command dispatch. IRC connection exists. DB logic exists. This is wiring.
+- Risk of regression: existing badge rendering in `overlay-scene-canvas.tsx` must not change behavior — the `Badge` primitive enforces the same guard that `visibleOverlayText` currently provides.
+
+---
+
+## M30 Navigation Cleanup
+
+Status: incomplete
+
+**Goal**
+
+Implement the target navigation structure from `docs/ui-redesign-spec.md`: split the Library nav item, move Sources to Workspace, add Pools as a standalone Programming item, remove the Operations nav item (merge incidents into Dashboard), remove sidebar section description paragraphs.
+
+**Scope**
+
+- Remove the `description` field from all nav section objects in `apps/web/components/admin-navigation.tsx`
+- Add `title` attribute to all nav link elements for tooltip on truncation
+- Implement the new 12-item, 4-section navigation structure
+- Create `/library` route serving asset and upload management (currently at `/sources`)
+- Create `/pools` route serving pool management (currently nested inside the sources page)
+- Narrow `/sources` to ingest pipeline management only (YouTube, Twitch, direct URL, upload sources)
+- Add 301 redirect from `/ops` to `/dashboard`
+- Move incidents display from the Operations page to Dashboard page
+- Update `apps/web/(admin)/dashboard/page.tsx` to include an incidents section
+
+**Touched areas**
+
+- `apps/web/components/admin-navigation.tsx`
+- `apps/web/app/(admin)/layout.tsx`
+- `apps/web/app/(admin)/dashboard/page.tsx` (add incidents)
+- `apps/web/app/(admin)/ops/page.tsx` (replace content with redirect)
+- `apps/web/app/(admin)/library/` (new route, move asset/upload content from `/sources`)
+- `apps/web/app/(admin)/pools/` (new route, move pool content from `/sources`)
+- `apps/web/app/(admin)/sources/` (narrow to ingest pipeline content only)
+
+**Acceptance criteria**
+
+- Sidebar has no description paragraphs under section headers
+- All nav items have `title` attribute
+- Navigation matches the 12-item spec: Broadcast, Dashboard (Live); Schedule, Pools, Library (Programming); Scene Studio, Overlays, Output (Stream Studio); Sources, Team, Settings (Workspace)
+- `/ops` redirects to `/dashboard`
+- Incidents are visible on the Dashboard page
+- `/pools` shows pool management and works correctly
+- `/library` shows asset and upload management and works correctly
+- `/sources` shows ingest pipeline management only
+- No broken links or navigation dead-ends
+- `pnpm validate` passes
+- Browser smoke test covers all 12 navigation items
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/browser/
+pnpm validate
+```
+
+**Risks**
+
+- Medium. Route changes require updating all internal links that reference `/sources` for assets. Audit all `href="/sources"` references before creating the new routes.
+- Redirect from `/ops` must not break any existing bookmark or external link. Use 301.
+- Pool management page may need to be extracted from the sources page component — check component coupling before splitting.
+
+---
+
+## M31 Overlay Safe-Area Clamping
+
+Status: incomplete
+
+**Goal**
+
+Implement the safe-area CSS variables that were planned in M24 but deferred. Wire up `--overlay-output-width` and `--overlay-output-height` in `globals.css`. Ensure all positioned overlay layers and engagement widgets respect safe-area boundaries by default.
+
+**Scope**
+
+- Add `--safe-area-top/right/bottom/left` CSS custom properties to `:root` in `apps/web/app/globals.css`, computed from `--overlay-height` and `--overlay-width`
+- Verify `--overlay-output-width` and `--overlay-output-height` (set in `live-overlay.tsx`) are consumed in the CSS
+- Audit all positioned overlay components and add safe-area-aware container defaults
+- Verify all overlay text components use `calc(Xpx * var(--overlay-scale))` for font sizes — fix any that do not
+- Enforce minimum font size floor: `max(12px, calc(14px * var(--overlay-scale)))`
+- Engagement layer (chat overlay, alerts) positions must respect safe-area containers
+
+**Touched areas**
+
+- `apps/web/app/globals.css`
+- `apps/web/components/live-overlay.tsx`
+- `apps/web/components/overlay-scene-canvas.tsx`
+- `apps/web/components/engagement-overlay.tsx`
+- `apps/web/app/overlay/page.tsx`
+
+**Acceptance criteria**
+
+- Safe-area CSS variables exist in `:root` and are computed correctly for all output profiles
+- `--overlay-output-width` and `--overlay-output-height` are consumed by the CSS (not just set)
+- No positioned overlay layer renders outside the safe area by default on any output profile (720p, 480p, 360p, 1080p)
+- At 360p output, all overlay text is legible (minimum 12px rendered)
+- Chat overlay and alert components render within the safe area
+- `pnpm validate` passes
+- Visual review at 360p, 720p, and 1080p output profiles
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/overlay-scenes.test.ts
+pnpm validate
+```
+
+**Risks**
+
+- Medium. CSS changes to the overlay can cause visual regressions in the in-stream output. Test all output profiles.
+- Engagement layer position options (bottom-left, bottom-right, top-left, top-right) must still work after safe-area containers are applied.
+
+---
+
+## M32 Donation And Bits Alerts
+
+Status: incomplete
+
+**Goal**
+
+Implement Twitch EventSub `channel.cheer` and `channel.channel_points_custom_reward_redemption.add` alerts. Add a "donations/bits" section to the Overlays admin page. Until M32 ships, add a "not yet available" placeholder in the Overlays UI.
+
+**Scope**
+
+- Add `channel.cheer` and `channel.channel_points_custom_reward_redemption.add` to `REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS` in `apps/worker/src/twitch-eventsub.ts`
+- Add webhook handling for these event types in `apps/web/app/api/overlay/events/route.ts`
+- Add alert rendering in `apps/web/components/engagement-overlay.tsx` for cheer and channel-point events
+- Add controls in `apps/web/(admin)/overlays/page.tsx` for cheer and channel-point alerts (enable/disable, position, style)
+- Store alert preferences per-type in `engagement_settings` (add `donations_enabled` and `channel_points_enabled` columns)
+- Additive schema migration
+
+**Before M32 ships:** Add a visible "Donation and bits alerts — coming soon" placeholder in the Overlays admin section. Do not leave the section entirely absent.
+
+**Touched areas**
+
+- `apps/worker/src/twitch-eventsub.ts`
+- `apps/web/app/api/overlay/events/route.ts`
+- `apps/web/components/engagement-overlay.tsx`
+- `apps/web/(admin)/overlays/page.tsx`
+- `packages/db/src/index.ts` (additive migration for `donations_enabled`, `channel_points_enabled`)
+
+**Acceptance criteria**
+
+- Cheer events received from Twitch EventSub display as alerts in the in-stream overlay
+- Channel-point redemption events display as alerts
+- Overlays admin page has controls for donation/channel-point alerts
+- Existing follow/sub alerts continue to work
+- `pnpm validate` passes
+- `pnpm test:fresh-compose` passes (behavioral parity)
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/engagement.test.ts
+pnpm test:fresh-compose
+pnpm validate
+```
+
+**Risks**
+
+- Medium. New EventSub subscription types require new broadcaster OAuth scopes. Document the reconnect requirement clearly.
+- `channel.channel_points_custom_reward_redemption.add` requires a custom reward to be configured on the Twitch channel. Test with a real Twitch broadcaster account.
+
+---
+
+## M33 Multi-Quality Simultaneous Output
+
+Status: incomplete
+
+**Goal**
+
+Support sending the stream to multiple destinations at different output profiles simultaneously (e.g., 720p to Twitch + 360p to YouTube).
+
+**Scope**
+
+- Add per-destination output profile assignment in destination settings
+- When multiple destinations have different output profiles, spawn a separate scale+encode process per destination (or use a transcoding relay layer)
+- Update the admin Output page to show per-destination profile configuration
+- Update the multi-output pipeline in `apps/worker/src/multi-output.ts`
+
+**Note:** This is the most architecturally complex Phase 4 milestone. The correct approach depends on whether parallel FFmpeg encode processes or a MediaMTX relay fanout is used. Scope this milestone carefully before starting implementation. A design note should be added to this section before work begins.
+
+**Touched areas**
+
+- `apps/worker/src/multi-output.ts`
+- `apps/worker/src/ffmpeg-runtime.ts`
+- `apps/worker/src/index.ts`
+- `packages/db/src/index.ts` (per-destination output profile storage)
+- `apps/web/(admin)/output/page.tsx`
+
+**Acceptance criteria**
+
+- Two active destinations can run at different output profiles simultaneously
+- Stream quality to each destination matches its configured profile
+- Admin UI shows per-destination profile selection
+- Primary/backup routing continues to work with per-destination profiles
+- `pnpm test:fresh-compose` passes
+
+**Validation**
+
+```bash
+pnpm test:fresh-compose
+pnpm validate
+```
+
+**Risks**
+
+- High. Architectural change to the playout pipeline. Plan carefully before implementing.
+- CPU/resource impact of multiple simultaneous encode processes must be documented.
+- Rollback: keep single-profile path as the default; per-destination profiles are additive.
+
+---
+
+## M34 Documentation Cleanup
+
+Status: incomplete
+
+**Goal**
+
+Execute the doc reset defined in `docs/docs-reset-plan.md`. Delete legacy docs, merge redundant docs, produce the minimal final doc set.
+
+**Scope**
+
+- Delete: `docs/stream247-upstream-gyre-gap-analysis.md`, `docs/redesign-and-product-plan.md`, `docs/video-planning-and-metadata-model.md`, `docs/in-stream-overlay-and-output-strategy.md`, `docs/upstream-gap-analysis.md`, `docs/upstream-roadmap.md`
+- Merge `docs/backup-and-restore.md` content into `docs/operations.md`, then delete `docs/backup-and-restore.md`
+- Merge `docs/upgrading.md` content into `docs/deployment.md`, then delete `docs/upgrading.md`
+- Merge `docs/versioning.md` content into `docs/deployment.md`, then delete `docs/versioning.md`
+- Audit `README.md` and remove any language suggesting `/overlay` can be used as an OBS overlay URL
+- Audit remaining docs for references to deleted files and update or remove those references
+- Update `docs/upstream-gap-analysis.md` replacement language in any files that reference it, pointing to `docs/full-product-reset-audit.md` instead
+
+**Touched areas**
+
+- `docs/` (11 files deleted or merged)
+- `README.md`
+
+**Acceptance criteria**
+
+- `docs/` contains the final doc set from `docs/docs-reset-plan.md`
+- No doc references another doc that no longer exists
+- `README.md` does not suggest `/overlay` is an OBS overlay URL
+- `pnpm validate` passes (no code changes, but validate confirms nothing broke)
+
+**Validation**
+
+```bash
+pnpm validate
+```
+
+**Risks**
+
+- Low. Pure documentation changes. The only risk is breaking a link that another doc depends on.
+
+---
+
+## M35 Twitch Live Status Widget
+
+Status: incomplete
+
+**Goal**
+
+Show a prominent "LIVE" badge with viewer count in the Broadcast page when the connected Twitch broadcaster is currently live. Show "OFFLINE" when not live.
+
+**Scope**
+
+- Add a Twitch API poll in the worker: `GET /helix/streams?user_id=${broadcasterId}` every 60 seconds
+- Store the result (`live | offline | unknown`) in broadcast state (app state or broadcast snapshot)
+- Expose it through the broadcast state SSE snapshot
+- Add a `StatusChip` component (using the M29 primitive) to `apps/web/components/broadcast-control-room.tsx` showing live status and viewer count
+- Use the existing Twitch app access token for the poll — no new auth flow
+
+**Touched areas**
+
+- `apps/worker/src/index.ts` (add poll loop) or extract to `apps/worker/src/twitch-sync.ts`
+- `packages/db/src/index.ts` (add `twitchLiveStatus` and `twitchViewerCount` to broadcast snapshot)
+- `apps/web/components/broadcast-control-room.tsx`
+
+**Acceptance criteria**
+
+- Broadcast page shows "LIVE [viewer count]" when the Twitch channel is live
+- Broadcast page shows "OFFLINE" when the Twitch channel is not live
+- State reflects actual Twitch status within 2 minutes of a go-live or go-offline event
+- Shows "unknown" when Twitch is not connected — never an error state
+- `pnpm validate` passes
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/
+pnpm validate
+```
+
+**Risks**
+
+- Low. Read-only Twitch API call. Uses existing app token pattern.
+- Rate limit: `GET /helix/streams` allows 800 requests per minute per app token. A 60-second poll is well within limits.
+- Must not affect broadcast reliability if the Twitch API is slow or unavailable — poll must be non-blocking and fail silently.
+
+---
+
 ## Rollback Notes
 
 - Docs-only milestones roll back by reverting the doc commit.
@@ -905,6 +1282,13 @@ pnpm validate
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-04-21 — M29 React Component Primitives And Chat Command Dispatch
+
+- Added the first typed `apps/web/components/ui/` primitive layer with `Badge`, `Button`, `Card`, `Input`, `Select`, `PageHeader`, and `StatusChip`, keeping the existing CSS system as the source of truth instead of introducing a new design dependency.
+- Switched `overlay-scene-canvas.tsx` to the guarded `Badge` primitive for widget/embed badges so empty or placeholder badge text is centrally suppressed.
+- Wired Twitch IRC moderator commands into the existing moderation presence model: `!here`/`here` now update presence windows from chat, are restricted to moderator/broadcaster messages, and are consumed before viewer-facing chat overlay storage.
+- Added unit coverage for the badge guard and chat-command parsing, and re-ran unit, validate, and browser smoke coverage after the worker/web changes.
 
 ### 2026-04-20 — M28 Phase 3 Audit Stabilization
 

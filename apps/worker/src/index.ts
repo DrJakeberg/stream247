@@ -32,6 +32,7 @@ import {
 import {
   appendSourceSyncRuns,
   appendAuditEvent,
+  appendPresenceWindowRecord,
   readManagedDestinationStreamKeys,
   replaceAssetsForSourceIds,
   readAppState,
@@ -134,7 +135,17 @@ let plannedUplinkStopReason = "";
 const WORKER_HEARTBEAT_STALE_MS = 180_000;
 type WorkerScheduleOccurrence = ReturnType<typeof buildScheduleOccurrences>[number];
 const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
-const twitchChatBridge = new TwitchChatBridge();
+const twitchChatBridge = new TwitchChatBridge({
+  async onModeratorPresenceCheckIn(window) {
+    await appendPresenceWindowRecord({
+      actor: window.actor,
+      minutes: window.minutes,
+      createdAt: window.createdAt.toISOString(),
+      expiresAt: window.expiresAt.toISOString()
+    });
+    await appendAuditEvent("moderation.checkin", `${window.actor} checked in for ${window.minutes} minutes via Twitch chat.`);
+  }
+});
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
 const PLAYOUT_RECONNECT_CONFIG = getPlayoutReconnectConfig(process.env);

@@ -519,6 +519,160 @@ textarea {
   padding: 16px;
 }
 
+.card-lg {
+  padding: 28px;
+}
+
+.card-section-header,
+.card-section-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.card-section-header {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.card-section-footer {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.field-stack {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.field-stack-full {
+  width: 100%;
+}
+
+.field-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.field-hint,
+.field-count {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.field-hint {
+  overflow-wrap: anywhere;
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.page-header-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.page-header-copy {
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.page-header-copy h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.page-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.button-danger {
+  background: var(--danger);
+}
+
+.button-ghost {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.button-size-sm {
+  padding: 10px 14px;
+}
+
+.button-size-lg {
+  padding: 14px 18px;
+}
+
+.button-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: button-spin 0.9s linear infinite;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.status-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status-chip-ok,
+.status-chip-live {
+  color: var(--brand-strong);
+  background: rgba(14, 109, 90, 0.12);
+}
+
+.status-chip-degraded,
+.status-chip-not-ready {
+  color: var(--warning);
+  background: rgba(160, 74, 22, 0.14);
+}
+
+.status-chip-offline,
+.status-chip-unknown {
+  color: var(--muted);
+  background: rgba(27, 26, 22, 0.08);
+}
+
+@keyframes button-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .collection-chip {
   --collection-color: var(--brand);
   display: inline-flex;

@@ -10,6 +10,7 @@ import {
 } from "@stream247/core";
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
+import { Badge } from "@/components/ui/Badge";
 
 type OverlaySceneCanvasProps = {
   payload: OverlayScenePayload;
@@ -22,6 +23,10 @@ function visibleOverlayText(value: unknown): string {
 
 function joinVisibleOverlayText(values: unknown[], separator: string): string {
   return values.map((value) => visibleOverlayText(value)).filter(Boolean).join(separator);
+}
+
+function badgeVariantForSupportStatus(status: "supported" | "limited" | "unsupported"): "ready" | "warning" | "danger" {
+  return status === "supported" ? "ready" : status === "limited" ? "warning" : "danger";
 }
 
 export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
@@ -222,7 +227,7 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
 
       return (
         <div className="overlay-custom-layer overlay-custom-layer-widget-data" key={layer.id} style={style}>
-          <div className="overlay-custom-layer-embed-badge">Scene Widget</div>
+          <Badge className="overlay-custom-layer-embed-badge">Scene Widget</Badge>
           {widgetLabel ? <div className="overlay-custom-layer-widget-label">{widgetLabel}</div> : null}
           {widgetTitle ? <div className="overlay-custom-layer-widget-title">{widgetTitle}</div> : null}
           {widgetBody ? <div className="overlay-custom-layer-widget-body">{widgetBody}</div> : null}
@@ -235,8 +240,13 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
       const support = describeOverlaySceneFrameSupport(layer.url);
       return (
         <div className="overlay-custom-layer overlay-custom-layer-embed" key={layer.id} style={style}>
-          <div className="overlay-custom-layer-embed-badge">{layer.kind === "widget" ? "Widget" : "Embed"}</div>
-          <div className={`overlay-custom-layer-support-badge overlay-custom-layer-support-${support.status}`}>{support.badgeLabel}</div>
+          <Badge className="overlay-custom-layer-embed-badge">{layer.kind === "widget" ? "Widget" : "Embed"}</Badge>
+          <Badge
+            className={`overlay-custom-layer-support-badge overlay-custom-layer-support-${support.status}`}
+            variant={badgeVariantForSupportStatus(support.status)}
+          >
+            {support.badgeLabel}
+          </Badge>
           {layer.url ? (
             support.status === "unsupported" ? (
               <div className="overlay-custom-layer-placeholder">

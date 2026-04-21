@@ -2,12 +2,18 @@ import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_ENGAGEMENT_SETTINGS,
+  createDefaultModerationConfig,
   isEngagementAlertsRuntimeEnabled,
   isEngagementChatRuntimeEnabled,
   normalizeEngagementSettings
 } from "@stream247/core";
 import type { AppState } from "@stream247/db";
-import { createChatRateLimiter, createRingBuffer, parseTwitchIrcMessage } from "../../apps/worker/src/twitch-engagement";
+import {
+  createChatRateLimiter,
+  createRingBuffer,
+  parseModeratorPresenceWindowFromChatMessage,
+  parseTwitchIrcMessage
+} from "../../apps/worker/src/twitch-engagement";
 import { syncTwitchEventSubSubscriptions } from "../../apps/worker/src/twitch-eventsub";
 
 const { mockAppendEngagementEventRecord, mockGetBroadcastSnapshot, mockReadAppState } = vi.hoisted(() => ({
@@ -150,8 +156,94 @@ describe("engagement layer helpers", () => {
     expect(message).toEqual({
       id: "chat-1",
       actor: "Test Viewer",
-      message: "Hello chat"
+      message: "Hello chat",
+      isModerator: false
     });
+  });
+
+  it("parses a valid moderator presence command from Twitch chat", () => {
+    const window = parseModeratorPresenceWindowFromChatMessage({
+      chatMessage: {
+        id: "chat-1",
+        actor: "Moderator",
+        message: "!here 45",
+        isModerator: true
+      },
+      now: new Date("2026-04-20T10:00:00.000Z"),
+      config: {
+        ...createDefaultModerationConfig(),
+        requirePrefix: true
+      }
+    });
+
+    expect(window?.minutes).toBe(45);
+    expect(window?.expiresAt.toISOString()).toBe("2026-04-20T10:45:00.000Z");
+  });
+
+  it("rejects chat presence commands that do not match the configured keyword", () => {
+    const window = parseModeratorPresenceWindowFromChatMessage({
+      chatMessage: {
+        id: "chat-2",
+        actor: "Moderator",
+        message: "!checkin 45",
+        isModerator: true
+      },
+      now: new Date("2026-04-20T10:00:00.000Z"),
+      config: {
+        ...createDefaultModerationConfig(),
+        requirePrefix: true
+      }
+    });
+
+    expect(window).toBeNull();
+  });
+
+  it("rejects chat presence commands with the wrong prefix requirement", () => {
+    const window = parseModeratorPresenceWindowFromChatMessage({
+      chatMessage: {
+        id: "chat-3",
+        actor: "Moderator",
+        message: "here 30",
+        isModerator: true
+      },
+      now: new Date("2026-04-20T10:00:00.000Z"),
+      config: {
+        ...createDefaultModerationConfig(),
+        requirePrefix: true
+      }
+    });
+
+    expect(window).toBeNull();
+  });
+
+  it("uses the default minutes when the moderator command omits a duration", () => {
+    const window = parseModeratorPresenceWindowFromChatMessage({
+      chatMessage: {
+        id: "chat-4",
+        actor: "Moderator",
+        message: "here",
+        isModerator: true
+      },
+      now: new Date("2026-04-20T10:00:00.000Z"),
+      config: createDefaultModerationConfig()
+    });
+
+    expect(window?.minutes).toBe(createDefaultModerationConfig().defaultMinutes);
+  });
+
+  it("ignores moderator presence commands from non-moderator chat accounts", () => {
+    const window = parseModeratorPresenceWindowFromChatMessage({
+      chatMessage: {
+        id: "chat-5",
+        actor: "Viewer",
+        message: "here 30",
+        isModerator: false
+      },
+      now: new Date("2026-04-20T10:00:00.000Z"),
+      config: createDefaultModerationConfig()
+    });
+
+    expect(window).toBeNull();
   });
 
   it("keeps only the configured ring-buffer capacity", () => {
