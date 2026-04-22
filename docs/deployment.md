@@ -5,7 +5,7 @@
 Recommended production shape:
 
 - Linux host
-- Docker Compose
+- Docker Compose managed through Portainer on DT
 - reverse proxy in front of `web`
 - optional built-in Traefik profile for HTTPS and Let's Encrypt
 - persistent storage for:
@@ -14,6 +14,16 @@ Recommended production shape:
   - `data/media`
 
 Stream247 is currently designed as a self-hosted single-workspace deployment.
+
+## Deployment Control Planes
+
+Stream247 uses three distinct control surfaces:
+
+- the repo is the source of truth for code, Compose files, scripts, and pinned example image refs
+- Portainer on DT is the deployment control plane that applies stack changes
+- DUT is the validation target for readiness checks, rehearsals, and long soaks
+
+Editing the local `docker-compose.yml` or `.env.production.example` does not change production by itself. Production changes happen when the DT Portainer stack is updated and redeployed with the intended image refs.
 
 ## Deploy Steps
 
@@ -57,7 +67,7 @@ Stream247 is currently designed as a self-hosted single-workspace deployment.
 9. Optional:
    - enter `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` during setup
    - or add them later in `/settings`
-10. Connect Twitch from the dashboard if you want Twitch metadata sync, Twitch schedule sync, or team SSO.
+10. Open `Live → Status` and use `Connect Twitch` if you want Twitch metadata sync, Twitch schedule sync, or team SSO.
 11. Add playable media:
    - files in `data/media`
    - direct media URL sources
@@ -133,6 +143,32 @@ Production Compose is intended to pull from:
 `.env.production.example` pins `v1.5.1` for stable deployment.
 See `docs/operations.md` for the runbook and backup procedures.
 
+## Canonical Release And Rollout Flow
+
+Every release follows the same order:
+
+1. **Prepare and validate in the repo**
+   - run `pnpm validate`
+   - run `pnpm release:preflight`
+   - run `./scripts/upgrade-rehearsal.sh <target-version>`
+   - fix failing gates before tagging
+2. **Publish GHCR artifacts**
+   - `main` publishes `main-<sha>` snapshot images
+   - `v*` tags publish the versioned release images
+3. **Update the DT Portainer stack**
+   - change the stack environment so the image refs match the intended release tags
+   - redeploy the stack from Portainer on DT
+4. **Verify DT matches the pinned release**
+   - run `./scripts/portainer-stack-check.sh` with read-only Portainer API credentials
+   - confirm the running DT stack resolves to the same image digests as `.env.production.example`
+5. **Validate on DUT**
+   - SSH to DUT and run readiness checks against the active deployment path
+   - run `./scripts/upgrade-rehearsal.sh <target-version>` from the DUT repo path against the active stack
+   - start `./scripts/soak-monitor.sh --hours 24` in `tmux` on DUT
+6. **Promote or roll back**
+   - keep the Portainer deployment only after DUT stays healthy
+   - if DUT fails, restore the prior pinned image refs in Portainer and redeploy the previous known-good stack
+
 ## Release Channels And Tags
 
 - `latest`: development and evaluation only
@@ -168,24 +204,31 @@ Do not use `latest` for unattended production deployments.
 2. Create a PostgreSQL backup.
 3. Back up `.env` or the active deployment env file.
 4. Confirm `data/media` is intact.
-5. Run:
+5. In the repo, run:
    ```bash
    pnpm release:preflight
    ```
    The preflight rejects blank or quoted-empty required settings plus untouched `.env.example` and `.env.production.example` placeholder values, including Traefik example defaults when proxy settings are present, so replace those first.
-6. Update the pinned image tags in your Compose configuration, or rehearse the target version with:
+6. Rehearse the target version with:
    ```bash
    ./scripts/upgrade-rehearsal.sh v1.5.1
    ```
    Before a new release tag exists, the rehearsal automatically uses the CI-published `main-<sha>` snapshot for the current commit instead of requiring `ghcr.io/...:v1.5.1` to exist already.
-7. Pull the new images.
-8. Restart the stack.
-9. Check:
+7. After the release images exist, update the DT Portainer stack image refs to the target release tags and redeploy the stack from Portainer.
+8. Verify the DT stack matches the intended pinned refs:
+   ```bash
+   PORTAINER_URL=https://portainer.example.com \
+   PORTAINER_API_KEY=... \
+   PORTAINER_ENVIRONMENT_ID=1 \
+   PORTAINER_STACK_NAME=stream247 \
+   ./scripts/portainer-stack-check.sh
+   ```
+9. On DUT, check:
    - `/api/health`
    - `/api/system/readiness` and confirm `broadcastReady=true`
-   - `/ops`
+   - `Live → Status`
    - current broadcast state
-10. For production candidates, run:
+10. For production candidates, run on DUT from the repo path:
     ```bash
     ./scripts/soak-monitor.sh --hours 24
     ```
@@ -197,6 +240,7 @@ Useful overrides:
 - `SESSION_COOKIE="stream247_session=..."` if the soak monitor should also fail on open critical incidents from the authenticated incidents API
 - `RELEASE_PREFLIGHT_ENV_FILE=/path/to/production.env` if you want `pnpm release:preflight` to validate a staged env file without replacing the current `.env`
 - `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot tag during rehearsal
+- `PORTAINER_URL`, `PORTAINER_API_KEY`, `PORTAINER_ENVIRONMENT_ID`, and `PORTAINER_STACK_NAME` for `./scripts/portainer-stack-check.sh`
 
 ### Patch vs Minor Upgrades
 
@@ -208,9 +252,9 @@ Useful overrides:
 
 If the new version is unhealthy:
 
-1. Stop the stack.
-2. Restore the previous pinned image tags.
-3. Restart.
+1. Revert the DT Portainer stack image refs to the previous known-good release tags.
+2. Redeploy the stack from Portainer.
+3. Confirm DUT returns to green readiness.
 4. If the database schema is incompatible, restore the PostgreSQL backup as well.
 
 ## Release Flow
@@ -226,6 +270,42 @@ If the new version is unhealthy:
   - retag and publish those same tested images as the versioned GHCR artifacts
 
 `./scripts/upgrade-rehearsal.sh <target-version>` follows the same artifact model. If the requested `v*` images already exist, it rehearses against them directly. Before the version tag exists, it falls back to the CI-published `main-<sha>` snapshot for the current commit. Set `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot explicitly.
+
+## Portainer Stack Check
+
+`./scripts/portainer-stack-check.sh` is a read-only verification step for the DT control plane.
+
+It compares the image refs pinned in `.env.production.example` against the image digests actually running in the named Portainer-managed stack. The script checks:
+
+- `web` against `STREAM247_WEB_IMAGE`
+- `worker` and `uplink` against `STREAM247_WORKER_IMAGE`
+- `playout` against `STREAM247_PLAYOUT_IMAGE`
+- `relay` against `STREAM247_RELAY_IMAGE`
+
+Required environment variables for a real check:
+
+- `PORTAINER_URL`
+- `PORTAINER_API_KEY`
+- `PORTAINER_ENVIRONMENT_ID`
+- `PORTAINER_STACK_NAME`
+
+Dry-run example:
+
+```bash
+./scripts/portainer-stack-check.sh --dry-run
+```
+
+Real check example:
+
+```bash
+PORTAINER_URL=https://portainer.example.com \
+PORTAINER_API_KEY=... \
+PORTAINER_ENVIRONMENT_ID=1 \
+PORTAINER_STACK_NAME=stream247 \
+./scripts/portainer-stack-check.sh
+```
+
+The script does not update, redeploy, or restart anything. It only reports whether the currently running DT stack matches the pinned release env file.
 
 Production `traefik`, `web`, `worker`, `relay`, `playout`, `uplink`, `postgres`, and `redis` services now use `restart: unless-stopped` in `docker-compose.yml`, so the documented always-on Compose paths, including `docker compose --profile proxy up -d`, recover their stack processes after daemon and host restarts.
 
