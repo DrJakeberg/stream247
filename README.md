@@ -4,6 +4,8 @@ Stream247 is a self-hosted platform for running a Twitch-first 24/7 channel from
 
 It ships as Docker / Docker Compose, publishes images through GitHub Actions and GHCR, and gives operators a browser-based admin UI for scheduling, playout control, Twitch sync, moderation policy, and incident handling.
 
+The `/overlay` route is internal output for Stream247's own 24/7 broadcast pipeline. It is not a standalone overlay product or a reusable embed surface.
+
 ## License Model
 
 Stream247 is source-available software. It is not open source or OSI-approved.
@@ -120,7 +122,7 @@ are not retroactively revoked.
 
 ## What Is Not Done Yet
 
-- Scene Studio now supports positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, built-in typography presets, and conservative local font-stack overrides, but deeper third-party widget compatibility still depends on CSP / iframe rules and broader cloud-style composition remains partial.
+- Scene Studio now supports positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, built-in typography presets, and conservative local font-stack overrides, but deeper remote-widget compatibility still depends on CSP / iframe rules and broader cloud-style composition remains partial.
 - richer multi-scene composition inside the playout runtime beyond the current scene-presets + draft/publish workflow
 - more advanced playout transitions, stronger continuity semantics, and less restart-heavy normal switchovers beyond the current staged output recovery model
 - deeper per-output platform guidance and recovery automation beyond the current failure attribution, cooldown visibility, and staged recovery controls
@@ -529,7 +531,7 @@ Notes:
 ### Overlay And Viewer Pages
 
 - public schedule page at `/channel`
-- browser-source overlay at `/overlay`
+- internal overlay route at `/overlay`
 - `Scene Studio` in the admin UI
 - configurable replay label, channel name, headline, accent color, emergency banner, and now/next teaser toggles
 

@@ -26,7 +26,7 @@ export default async function SetupPage() {
         <span className="badge">First-run setup</span>
         <h2>Deploy the stack, open the browser, bootstrap the workspace.</h2>
         <p>
-          Create the owner account first. You can still keep third-party credentials in `.env`, but Stream247 also
+          Create the owner account first. You can still keep external-service credentials in `.env`, but Stream247 also
           supports encrypted managed credentials after bootstrap.
         </p>
       </section>

@@ -102,15 +102,15 @@ This is a visual/tab organization change, not a data model change.
 
 ## External Overlay Assumptions
 
-Stream247's overlay is an in-stream visual layer captured by Chromium and composited by FFmpeg. It is not an OBS overlay URL product.
+Stream247's overlay is an in-stream visual layer captured by Chromium and composited by FFmpeg. It is internal broadcast output, not a standalone overlay product.
 
 The following assumptions should be cleaned up:
 
 | Assumption | Where | Fix |
 |---|---|---|
-| `/overlay` page is usable as an external stream overlay | docs and URL availability | Add `noindex` meta. Remove from any public-facing docs. Keep URL for Chromium capture. |
+| `/overlay` page is presented like a reusable public overlay surface | docs and URL availability | Add `noindex` meta. Remove from any public-facing docs. Keep URL for Chromium capture. |
 | Overlay page is "accessible at `/overlay` for external use" | `docs/in-stream-overlay-and-output-strategy.md` | This doc will be deleted (M34). New overlay-model doc should state clearly: in-stream only. |
-| Overlay can be "pasted into OBS" | README or docs | Audit README and remove any such language. |
+| Overlay is described like a reusable scene input | README or docs | Audit README and remove any such language. |
 
 ---
 

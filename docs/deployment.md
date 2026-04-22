@@ -108,7 +108,7 @@ Those are runtime settings managed from the UI and stored in PostgreSQL.
 
 Important current limitation:
 
-- third-party secrets can now be stored encrypted at rest in PostgreSQL from the admin UI
+- external-service secrets can now be stored encrypted at rest in PostgreSQL from the admin UI
 - `.env` is still supported as bootstrap/fallback input for self-hosted deployments
 - stream keys remain deployment-time secrets in `.env`
 - infrastructure and reverse-proxy settings always stay in `.env`
@@ -256,7 +256,7 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 - pools are first-class programming units for round-robin playout selection
 - sources can be edited in place and the asset catalog can be searched by title, source, and status
 - playout supports operator restart, temporary fallback, asset pinning, skip-current, and resume-schedule actions
-- overlay is currently a browser-source page with replay labeling, current/next context, and admin-managed branding
+- overlay is Stream247's internal browser capture surface with replay labeling, current/next context, and admin-managed branding
 - optional chat and follow/sub engagement overlays render through the same captured browser overlay when explicitly enabled
 - email and Discord alert delivery are both implemented
 - managed secret storage in `/settings` is implemented for Twitch and alert credentials

@@ -26,7 +26,7 @@ export const sourceConnectorDefinitions: SourceConnectorDefinition[] = [
     label: "Local media library",
     shortLabel: "Local library",
     description: "Play files already stored on this server from the shared media folder.",
-    helper: "Best for self-hosted operators who want a simple, stable local catalog without relying on third-party URLs.",
+    helper: "Best for self-hosted operators who want a simple, stable local catalog without relying on upstream URLs.",
     urlLabel: "Media folder",
     placeholder: "",
     example: "Uses ./data/media automatically",

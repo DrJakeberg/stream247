@@ -291,14 +291,15 @@ export default async function DashboardPage() {
               </div>
             </div>
             <div className="item">
-              <strong>Overlay browser source</strong>
+              <strong>Overlay output</strong>
               <div className="subtle">
                 {state.overlay.enabled
                   ? `${state.overlay.channelName} · ${state.overlay.headline}`
                   : "Overlay is currently disabled."}
               </div>
               <div className="subtle">
-                Use <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> in a browser source.
+                Stream247 captures <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> as the
+                internal overlay output.
               </div>
             </div>
             <TwitchConnectPanel authorizeUrl={twitchAuthorizeUrl} />

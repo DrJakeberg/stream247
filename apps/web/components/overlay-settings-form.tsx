@@ -355,7 +355,7 @@ export function OverlaySettingsForm(props: {
               onChange={(event) => setDraftField("enabled", event.target.checked)}
               type="checkbox"
             />
-            <label htmlFor="overlay-enabled">Enable browser-source overlay</label>
+            <label htmlFor="overlay-enabled">Enable overlay output</label>
           </div>
 
           <div className="form-grid">
@@ -906,7 +906,7 @@ export function OverlaySettingsForm(props: {
                               </label>
                               <div className="subtle" style={{ gridColumn: "1 / -1" }}>
                                 This widget stays inside the published Scene Studio contract and mirrors browser plus on-air scene data without a
-                                third-party iframe.
+                                remote iframe.
                               </div>
                             </>
                           ) : null}

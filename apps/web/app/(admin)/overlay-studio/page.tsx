@@ -17,7 +17,7 @@ export default async function OverlayStudioPage() {
   return (
     <div className="stack-form">
       <AdminPageHeader
-        description="Scene Studio controls the published viewer-facing scene. Draft changes stay isolated until you publish them to the public overlay and the on-air renderer."
+        description="Scene Studio controls the published viewer-facing scene. Draft changes stay isolated until you publish them to Stream247's internal overlay output and the on-air renderer."
         eyebrow="Scene Studio"
         title="Publish the viewer-facing scene without leaving the control room."
       />
@@ -25,11 +25,11 @@ export default async function OverlayStudioPage() {
       <div className="grid two">
         <Panel title="Scene Studio controls" eyebrow="Scene Studio">
           <p className="subtle">
-            Use <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> as a browser source in OBS
-            or another scene tool. Draft changes stay inside the studio until you publish them, and the same live
+            Stream247 captures <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> as its
+            internal overlay output. Draft changes stay inside the studio until you publish them, and the same live
             scene settings also drive the on-air replay text overlay inside the FFmpeg playout path. Metadata widgets
             stay inside that canonical scene payload, custom font stacks resolve only against fonts already installed
-            on the browser host or worker image, and positioned embeds remain conservative: third-party CSP and iframe
+            on the browser host or worker image, and positioned embeds remain conservative: remote CSP and iframe
             policies still decide whether a website or widget can actually render.
           </p>
           <OverlaySettingsForm
@@ -105,7 +105,7 @@ export default async function OverlayStudioPage() {
               </div>
             </div>
             <div className="item">
-              <strong>Public browser source</strong>
+              <strong>Internal overlay output</strong>
               <div className="subtle">
                 <Link href="/overlay">Open overlay page</Link>
               </div>

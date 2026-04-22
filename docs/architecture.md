@@ -176,7 +176,7 @@ The runtime now supports multiple concurrent RTMP outputs per channel.
 
 ## Overlay Model
 
-Overlay is currently implemented as a browser-source page, not native FFmpeg scene composition.
+Overlay is implemented as Stream247's internal browser capture surface. Chromium captures `/overlay?chromeless=1`, and the published scene feeds the on-air overlay path.
 
 Current overlay capabilities:
 
@@ -188,7 +188,7 @@ Current overlay capabilities:
 - now/next teaser toggle
 - schedule teaser toggle
 
-The admin UI manages these settings; the public overlay page renders them for OBS/browser-source usage.
+The admin UI manages these settings; the public overlay page renders them for Stream247's internal overlay capture flow.
 
 ## Alerting And Incidents
 

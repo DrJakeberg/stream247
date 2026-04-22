@@ -106,4 +106,4 @@ That creates an explicit moderator presence window. While such a window is activ
 ## Current Limitations
 
 - Twitch integration is Twitch-first, not multi-destination
-- overlay is not yet a native Twitch-scene/plans system; it is a browser-source overlay page
+- overlay is not yet a native Twitch-scene/plans system; it remains Stream247's internal browser capture surface
