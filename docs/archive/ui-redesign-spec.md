@@ -2,7 +2,7 @@
 
 Updated: 2026-04-21
 
-This document is the concrete implementation spec for the Phase 4 UI cleanup. It is intended to be specific enough that Codex can implement from it without ambiguity. The companion navigation changes are in `docs/full-product-reset-plan.md`. The milestone that implements this is M29 (component primitives) and M30 (navigation cleanup).
+This document is the concrete implementation spec for the Phase 4 UI cleanup. It is intended to be specific enough that Codex can implement from it without ambiguity. The companion navigation changes are in `docs/archive/full-product-reset-plan.md`. The milestone that implements this is M29 (component primitives) and M30 (navigation cleanup).
 
 ---
 

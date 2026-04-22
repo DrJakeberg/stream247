@@ -2,7 +2,7 @@
 
 Updated: 2026-04-21
 
-This document defines the target state for Stream247 after Phase 4. It describes what the product should be, how it should be organized, and how the key systems should work. The audit that motivated this plan is in `docs/full-product-reset-audit.md`. The implementation milestones are in `PLANS.md` under Phase 4.
+This document defines the target state for Stream247 after Phase 4. It describes what the product should be, how it should be organized, and how the key systems should work. The audit that motivated this plan is in `docs/archive/full-product-reset-audit.md`. The implementation milestones are in `PLANS.md` under Phase 4.
 
 ---
 
@@ -246,7 +246,7 @@ The current operations model is substantially correct. Key components:
 
 Target: 6 core operational docs + 3 planning files = 9 permanent files. Phase 4 planning docs are temporary.
 
-The full target doc set and merge/delete plan is in `docs/docs-reset-plan.md`.
+The full target doc set and merge/delete plan is in `docs/archive/docs-reset-plan.md`.
 
 Key principle: docs describe what exists. Planning docs describe what is planned. The two must never be mixed. After Phase 4, no doc in `/docs` should describe an incomplete feature as if it were real.
 

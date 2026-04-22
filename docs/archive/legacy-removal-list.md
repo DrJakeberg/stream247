@@ -11,7 +11,7 @@ This document is the hard remove/keep/replace list for Phase 4. It covers docume
 | File | Decision | Reason |
 |---|---|---|
 | `docs/stream247-upstream-gyre-gap-analysis.md` | **DELETE IMMEDIATELY** | Two-paragraph redirect stub. Contains no content. References `upstream-gap-analysis.md` and `upstream-roadmap.md`. |
-| `docs/redesign-and-product-plan.md` | **DELETE** (M34) | Phase 3 planning artifact. All milestones shipped. Mixes future and past tense. Actively misleads readers about what is built vs planned. Replace with `docs/full-product-reset-plan.md`. |
+| `docs/redesign-and-product-plan.md` | **DELETE** (M34) | Phase 3 planning artifact. All milestones shipped. Mixes future and past tense. Actively misleads readers about what is built vs planned. Replace with `docs/archive/full-product-reset-plan.md`. |
 | `docs/video-planning-and-metadata-model.md` | **DELETE** (M34) | Implementation notes for M21/M22/M23. All shipped. Replace with accurate product docs in `docs/overlay-model.md` and `docs/stream-configuration.md` when those are written. |
 | `docs/in-stream-overlay-and-output-strategy.md` | **DELETE** (M34) | Implementation notes for M21/M24/M25. All shipped. Same replacement path as above. |
 | `docs/upstream-gap-analysis.md` | **DELETE** (M34) | Internal competitive analysis. Not product documentation. Should not be in a public repo's docs folder. |
@@ -24,11 +24,11 @@ This document is the hard remove/keep/replace list for Phase 4. It covers docume
 | `docs/upgrading.md` | **MERGE INTO `deployment.md`** (M34) | Adds an "Upgrading" section. File becomes redundant after merge. |
 | `docs/versioning.md` | **MERGE INTO `deployment.md`** (M34) | Adds a "Release Channels" section. File becomes redundant after merge. |
 | `docs/moderation-policies.md` | **KEEP** | Active policy reference for the `!here` command and presence windows. |
-| `docs/full-product-reset-audit.md` | **KEEP** (this file) | Current audit. Should be revisited after Phase 4 ships. |
-| `docs/full-product-reset-plan.md` | **KEEP** | Phase 4 target state. Active planning reference. |
-| `docs/legacy-removal-list.md` | **KEEP** (this file) | Decision record for Phase 4 cleanup. |
-| `docs/ui-redesign-spec.md` | **KEEP** | Implementation spec for M29/M30 component and navigation work. |
-| `docs/docs-reset-plan.md` | **KEEP** | Defines the final doc set. Active reference for M34. |
+| `docs/archive/full-product-reset-audit.md` | **KEEP** (this file) | Current audit. Should be revisited after Phase 4 ships. |
+| `docs/archive/full-product-reset-plan.md` | **KEEP** | Phase 4 target state. Active planning reference. |
+| `docs/archive/legacy-removal-list.md` | **KEEP** (this file) | Decision record for Phase 4 cleanup. |
+| `docs/archive/ui-redesign-spec.md` | **KEEP** | Implementation spec for M29/M30 component and navigation work. |
+| `docs/archive/docs-reset-plan.md` | **KEEP** | Defines the final doc set. Active reference for M34. |
 
 ---
 

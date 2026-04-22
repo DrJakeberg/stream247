@@ -382,13 +382,13 @@ Operational docs:
 - [docs/twitch-setup.md](docs/twitch-setup.md)
 - [docs/moderation-policies.md](docs/moderation-policies.md)
 
-Phase 4 working docs:
+Archived Phase 4 planning docs:
 
-- [docs/full-product-reset-audit.md](docs/full-product-reset-audit.md)
-- [docs/full-product-reset-plan.md](docs/full-product-reset-plan.md)
-- [docs/legacy-removal-list.md](docs/legacy-removal-list.md)
-- [docs/ui-redesign-spec.md](docs/ui-redesign-spec.md)
-- [docs/docs-reset-plan.md](docs/docs-reset-plan.md)
+- [docs/archive/full-product-reset-audit.md](docs/archive/full-product-reset-audit.md)
+- [docs/archive/full-product-reset-plan.md](docs/archive/full-product-reset-plan.md)
+- [docs/archive/legacy-removal-list.md](docs/archive/legacy-removal-list.md)
+- [docs/archive/ui-redesign-spec.md](docs/archive/ui-redesign-spec.md)
+- [docs/archive/docs-reset-plan.md](docs/archive/docs-reset-plan.md)
 
 ## Release Readiness Workflow
 

@@ -2,7 +2,7 @@
 
 Updated: 2026-04-21
 
-This document is the honest audit that precedes the Phase 4 reset. It does not describe plans. It describes what exists today, what works, what is broken, what is legacy, and what is confusing. The companion planning document is `docs/full-product-reset-plan.md`.
+This document is the honest audit that precedes the Phase 4 reset. It does not describe plans. It describes what exists today, what works, what is broken, what is legacy, and what is confusing. The companion planning document is `docs/archive/full-product-reset-plan.md`.
 
 ---
 

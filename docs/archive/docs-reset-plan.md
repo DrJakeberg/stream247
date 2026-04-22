@@ -22,7 +22,7 @@ This document defines the final documentation structure for Stream247 after Phas
 | File | Reason |
 |---|---|
 | `docs/stream247-upstream-gyre-gap-analysis.md` | Two-paragraph stub. Zero content. |
-| `docs/redesign-and-product-plan.md` | Phase 3 planning artifact. Replaced by `docs/full-product-reset-plan.md`. |
+| `docs/redesign-and-product-plan.md` | Phase 3 planning artifact. Replaced by `docs/archive/full-product-reset-plan.md`. |
 | `docs/video-planning-and-metadata-model.md` | Implementation notes for completed M21/M22/M23. |
 | `docs/in-stream-overlay-and-output-strategy.md` | Implementation notes for completed M21/M24/M25. |
 | `docs/upstream-gap-analysis.md` | Internal competitive analysis. Not product documentation. |
@@ -56,11 +56,11 @@ After merging, delete the source files.
 
 | File | Notes |
 |---|---|
-| `docs/full-product-reset-audit.md` | Revisit after Phase 4 complete; may become redundant |
-| `docs/full-product-reset-plan.md` | Active target-state reference through Phase 4 |
-| `docs/legacy-removal-list.md` | Active cleanup decision record through Phase 4 |
-| `docs/ui-redesign-spec.md` | Active implementation spec through M29/M30 |
-| `docs/docs-reset-plan.md` | This file; archive after M34 completes |
+| `docs/archive/full-product-reset-audit.md` | Revisit after Phase 4 complete; may become redundant |
+| `docs/archive/full-product-reset-plan.md` | Active target-state reference through Phase 4 |
+| `docs/archive/legacy-removal-list.md` | Active cleanup decision record through Phase 4 |
+| `docs/archive/ui-redesign-spec.md` | Active implementation spec through M29/M30 |
+| `docs/archive/docs-reset-plan.md` | This file; archive after M34 completes |
 
 ---
 
@@ -89,11 +89,11 @@ After merging, delete the source files.
 
 | File | Responsibility |
 |---|---|
-| `docs/full-product-reset-audit.md` | Phase 4 entry-state audit |
-| `docs/full-product-reset-plan.md` | Phase 4 target product state |
-| `docs/legacy-removal-list.md` | Phase 4 remove/keep/replace decisions |
-| `docs/ui-redesign-spec.md` | Phase 4 component and navigation spec |
-| `docs/docs-reset-plan.md` | This file |
+| `docs/archive/full-product-reset-audit.md` | Phase 4 entry-state audit |
+| `docs/archive/full-product-reset-plan.md` | Phase 4 target product state |
+| `docs/archive/legacy-removal-list.md` | Phase 4 remove/keep/replace decisions |
+| `docs/archive/ui-redesign-spec.md` | Phase 4 component and navigation spec |
+| `docs/archive/docs-reset-plan.md` | This file |
 
 **Total after M34: 6 core docs + 3 planning files + 5 phase-4 artifacts = 14 files.** Down from 20+ today.
 
