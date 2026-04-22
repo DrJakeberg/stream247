@@ -1,11 +1,49 @@
-import { expect, test } from "@playwright/test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { expect, test, type Page } from "@playwright/test";
 import { generateTotpCode } from "../../apps/web/lib/server/two-factor";
 
 const ownerEmail = process.env.E2E_OWNER_EMAIL || "owner@example.com";
 const ownerPassword = process.env.E2E_OWNER_PASSWORD || "stream247-owner-pass";
 const outputRoot = process.env.E2E_SECONDARY_OUTPUT_ROOT || "/tmp/stream-output";
+const secretCachePath = path.join(
+  os.tmpdir(),
+  `stream247-admin-smoke-${ownerEmail.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-2fa.txt`
+);
 
 test.describe.configure({ mode: "serial" });
+
+async function ensureSignedIn(page: Page) {
+  await page.goto("/setup");
+
+  const setupButton = page.getByRole("button", { name: "Create owner account" });
+  if (await setupButton.isVisible().catch(() => false)) {
+    await page.getByLabel("Owner email").fill(ownerEmail);
+    await page.getByLabel("Password").fill(ownerPassword);
+    await setupButton.click();
+    await expect(page).toHaveURL(/\/live(?:\?tab=status)?$/);
+    return;
+  }
+
+  await page.goto("/login");
+  await page.getByLabel("Owner email").fill(ownerEmail);
+  await page.getByLabel("Password").fill(ownerPassword);
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  const oneTimeCode = page.getByLabel("One-time code");
+  if (await oneTimeCode.isVisible().catch(() => false)) {
+    if (!fs.existsSync(secretCachePath)) {
+      throw new Error(`2FA secret cache missing at ${secretCachePath}`);
+    }
+
+    const cachedSecret = fs.readFileSync(secretCachePath, "utf8").trim();
+    await oneTimeCode.fill(generateTotpCode(cachedSecret));
+    await page.getByRole("button", { name: "Verify code" }).click();
+  }
+
+  await expect(page).toHaveURL(/\/live(?:\?tab=control|status)?$/);
+}
 
 test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publishes a live scene update", async ({ browser, page }) => {
   const stamp = Date.now();
@@ -14,11 +52,7 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   const secondaryDestinationName = `Smoke Secondary Output ${stamp}`;
   const channelNameMatcher = new RegExp(channelName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 
-  await page.goto("/setup");
-  await page.getByLabel("Owner email").fill(ownerEmail);
-  await page.getByLabel("Password").fill(ownerPassword);
-  await page.getByRole("button", { name: "Create owner account" }).click();
-  await expect(page).toHaveURL(/\/live(?:\?tab=status)?$/);
+  await ensureSignedIn(page);
   const adminNav = page.getByRole("navigation", { name: "Admin" });
   await expect(adminNav).toBeVisible();
   await expect(page.getByText("Workspaces", { exact: true })).toBeVisible();
@@ -41,8 +75,8 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
 
   await adminNav.getByRole("link", { name: "Program", exact: true }).click();
   await expect(page).toHaveURL(/\/program(?:\?tab=schedule)?$/);
-  await expect(page.getByText("Add schedule block", { exact: true })).toBeVisible();
   const programTabs = page.getByRole("tablist", { name: "Program tabs" });
+  await expect(page.getByRole("heading", { name: "Add schedule block", exact: true })).toBeVisible();
 
   await programTabs.getByRole("tab", { name: "Pools", exact: true }).click();
   await expect(page).toHaveURL(/\/program\?tab=pools$/);
@@ -109,6 +143,7 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
 
   const secret = (await page.locator("code").first().textContent())?.trim() || "";
   expect(secret).toMatch(/^[A-Z2-7]{16,}$/);
+  fs.writeFileSync(secretCachePath, `${secret}\n`, "utf8");
 
   await page.getByLabel("Confirm 6-digit code").fill(generateTotpCode(secret));
   await page.getByRole("button", { name: "Confirm and enable 2FA" }).click();
