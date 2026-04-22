@@ -58,7 +58,7 @@ export default async function SetupPage() {
           </div>
           <TwitchConnectPanel authorizeUrl={twitchAuthorizeUrl} />
         </Panel>
-        <Panel title="Go-live checklist" eyebrow="Before launch">
+        <Panel title="Readiness checklist" eyebrow="Before launch">
           <p className="subtle">
             Stream247 can explain what is still missing before the channel is truly ready, even before the first
             broadcast starts.

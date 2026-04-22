@@ -88,7 +88,7 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
           </div>
         </Panel>
 
-        <Panel title="Programming references" eyebrow="Programming">
+        <Panel title="Program references" eyebrow="Program">
           <div className="list">
             {references.pools.map((pool) => (
               <div className="item" key={pool.id}>

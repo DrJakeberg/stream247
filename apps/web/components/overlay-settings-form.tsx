@@ -191,7 +191,7 @@ export function OverlaySettingsForm(props: {
           : "Replay standby";
 
   const previewNextTitle =
-    previewMode === "reconnect" ? props.preview.currentTitle : props.preview.nextTitle || "Programming resumes shortly";
+    previewMode === "reconnect" ? props.preview.currentTitle : props.preview.nextTitle || "Program resumes shortly";
   const previewPayload = buildOverlayScenePayload({
     overlay: draft,
     queueKind: previewMode,
@@ -863,7 +863,7 @@ export function OverlaySettingsForm(props: {
                                 <option value="metadata">Scene data card</option>
                               </select>
                               <span className="subtle">
-                                Metadata cards render from the canonical Scene Studio payload. Browser widget frames still depend on provider iframe
+                                Metadata cards render from the canonical Scene payload. Browser widget frames still depend on provider iframe
                                 support.
                               </span>
                             </label>
@@ -905,7 +905,7 @@ export function OverlaySettingsForm(props: {
                                 />
                               </label>
                               <div className="subtle" style={{ gridColumn: "1 / -1" }}>
-                                This widget stays inside the published Scene Studio contract and mirrors browser plus on-air scene data without a
+                                This widget stays inside the published Scene contract and mirrors browser plus on-air scene data without a
                                 remote iframe.
                               </div>
                             </>

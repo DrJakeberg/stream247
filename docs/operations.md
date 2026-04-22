@@ -91,7 +91,7 @@ For future long runs, treat the baseline as:
 
 - `web`, `worker`, and `playout` Docker restart counts should remain unchanged; the soak monitor fails if any of them increases by more than one during the soak window.
 - `uplink.unplannedRestartCount` should remain unchanged; any increase means the Twitch-facing RTMP session probably reconnected outside the planned 48-hour reconnect.
-- `sseConnections` may rise while operators keep Broadcast, Channel, or Overlay pages open, but it should return to zero after those clients disconnect.
+- `sseConnections` may rise while operators keep Live, Channel, or Overlay pages open, but it should return to zero after those clients disconnect.
 - Chromium renderer memory should be checked from the playout container with `docker stats` during multi-day soaks; sustained growth plus stale scene renderer children is actionable, while stable RSS with no restart-count increase is the expected baseline.
 
 ## Backup And Restore

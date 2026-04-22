@@ -14,14 +14,14 @@ export const ADMIN_NAV_SECTIONS: AdminNavigationSection[] = [
     id: "live",
     label: "Live",
     items: [
-      { href: "/broadcast", label: "Broadcast" },
-      { href: "/dashboard", label: "Dashboard" },
+      { href: "/broadcast", label: "Control" },
+      { href: "/dashboard", label: "Status" },
       { href: "/moderation", label: "Moderation" }
     ]
   },
   {
     id: "programming",
-    label: "Programming",
+    label: "Program",
     items: [
       { href: "/schedule", label: "Schedule" },
       { href: "/pools", label: "Pools" },
@@ -30,16 +30,16 @@ export const ADMIN_NAV_SECTIONS: AdminNavigationSection[] = [
   },
   {
     id: "stream-studio",
-    label: "Stream Studio",
+    label: "Studio",
     items: [
-      { href: "/overlay-studio", label: "Scene Studio" },
-      { href: "/overlays", label: "Overlays" },
+      { href: "/overlay-studio", label: "Scene" },
+      { href: "/overlays", label: "Engagement" },
       { href: "/output", label: "Output" }
     ]
   },
   {
     id: "workspace",
-    label: "Workspace",
+    label: "Admin",
     items: [
       { href: "/sources", label: "Sources" },
       { href: "/team", label: "Team" },

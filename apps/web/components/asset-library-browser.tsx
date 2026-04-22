@@ -350,7 +350,7 @@ export function AssetLibraryBrowser(props: {
           </select>
         </label>
         <label>
-          <span className="label">Programming</span>
+          <span className="label">Program</span>
           <select onChange={(event) => setProgrammingState(event.target.value)} value={programmingState}>
             <option value="all">All assets</option>
             <option value="included">Included in programming</option>

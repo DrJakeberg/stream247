@@ -1,8 +1,8 @@
 # Moderation Policies
 
-## Moderator Presence Window
+## Moderation Presence
 
-Admins can enable a policy that keeps chat in emote-only mode when no moderator is considered present.
+Admins can enable a policy that keeps chat in emote-only mode when no moderation presence is considered active.
 
 Supported controls:
 
@@ -13,13 +13,13 @@ Supported controls:
 - decide whether expiry re-enables emote-only mode
 - allow only broadcaster or moderator check-ins
 
-When the feature is enabled, moderator presence is treated as a timed check-in window. Active and recent windows are visible on the Moderation page, and the Live header shows a presence chip while a window is active.
+When the feature is enabled, moderation presence is treated as a timed check-in window. Active and recent entries are visible on the Moderation page, and the Live header shows a presence chip while a window is active.
 
 ## Default Example
 
 - command: `here`
 - input: `!here 30`
-- result: moderator presence valid for 30 minutes
+- result: moderation presence valid for 30 minutes
 
 ## Clamp Rules
 

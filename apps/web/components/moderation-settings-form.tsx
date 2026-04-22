@@ -50,7 +50,7 @@ export function ModerationSettingsForm({ config }: { config: ModerationConfig })
     >
       <label className="toggle-row">
         <input defaultChecked={config.enabled} name="enabled" type="checkbox" />
-        <span>Enable moderator presence policy</span>
+        <span>Enable moderation presence policy</span>
       </label>
       <label>
         <span className="label">Command keyword</span>
@@ -79,7 +79,7 @@ export function ModerationSettingsForm({ config }: { config: ModerationConfig })
       </p>
       <label className="toggle-row">
         <input defaultChecked={config.fallbackEmoteOnly} name="fallbackEmoteOnly" type="checkbox" />
-        <span>Fallback to emote-only when no moderator window is active</span>
+        <span>Fallback to emote-only when no moderation presence is active</span>
       </label>
       {message ? <p>{message}</p> : null}
       {error ? <p className="danger">{error}</p> : null}

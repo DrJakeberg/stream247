@@ -39,12 +39,11 @@ are not retroactively revoked.
 - local login with optional two-factor authentication, plus Twitch broadcaster connect and Twitch SSO team access
 - PostgreSQL-backed runtime state
 - operator control-room IA with:
-  - `Broadcast` for live actions and on-air recovery
-  - `Dashboard` for readiness, incidents, and launch posture
-  - `Programming` for schedule authoring and fill preview
+  - `Live` for control, status, and moderation
+  - `Program` for schedule authoring and fill preview
   - `Library` for sources, uploads, pools, and catalog curation
-  - `Scene Studio` for viewer-facing scene draft and publish flow
-  - `Settings` for access, secrets, releases, and blueprints
+  - `Studio` for scene, engagement, and output configuration
+  - `Admin` for access, secrets, releases, and blueprints
 - source ingestion for:
   - local media library
   - local media uploads from the admin UI into the shared library
@@ -109,20 +108,20 @@ are not retroactively revoked.
   - readiness and health endpoints
 - encrypted-at-rest managed secret storage for Twitch and alert credentials
 - `Channel Blueprints` with:
-  - export/import of Scene Studio, sources, curated sets, programming, moderation, and destination metadata
-  - selective import sections for library, programming, Scene Studio, and operations
+  - export/import of Scene, sources, curated sets, program data, moderation, and destination metadata
+  - selective import sections for library, program data, Scene, and operations
   - explicit import warnings when referenced media is not present locally
 - viewer-facing pages with:
   - public schedule page
   - the internal `/overlay` route used by Stream247's own in-stream scene and overlay pipeline
-  - one canonical Scene Studio payload shared across browser overlays, scene APIs, and playout overlay consumers
+- one canonical Scene payload shared across overlay capture, scene APIs, and playout overlay consumers
   - on-air scene renderer v1 that captures the published browser scene into the FFmpeg playout path with safe text-overlay fallback
   - overlay studio with draft-save, reusable scene preset library, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, built-in typography presets, conservative local font-stack overrides, positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, and publish-live scene controls
   - admin-managed replay branding, scene presets, and ticker/badge styling
 
 ## What Is Not Done Yet
 
-- Scene Studio now supports positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, built-in typography presets, and conservative local font-stack overrides, but deeper remote-widget compatibility still depends on CSP / iframe rules and broader cloud-style composition remains partial.
+- Scene now supports positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, built-in typography presets, and conservative local font-stack overrides, but deeper remote-widget compatibility still depends on CSP / iframe rules and broader cloud-style composition remains partial.
 - richer multi-scene composition inside the playout runtime beyond the current scene-presets + draft/publish workflow
 - more advanced playout transitions, stronger continuity semantics, and less restart-heavy normal switchovers beyond the current staged output recovery model
 - deeper per-output platform guidance and recovery automation beyond the current failure attribution, cooldown visibility, and staged recovery controls
@@ -238,7 +237,7 @@ docker compose --profile proxy up -d
 - `DESTINATION_FAILURE_COOLDOWN_SECONDS`: how long a failed destination stays on hold before the worker will retry it automatically
 - `PLAYOUT_RECONNECT_HOURS`: interval for planned Twitch/output reconnect windows; defaults to `48`
 - `PLAYOUT_RECONNECT_SECONDS`: duration of the planned reconnect standby window; defaults to `20`
-- `SCENE_RENDER_BASE_URL`: optional internal base URL that the worker should use when capturing published Scene Studio overlays for on-air rendering; defaults to `INTERNAL_APP_URL`, then `APP_URL`, then `http://web:3000`
+- `SCENE_RENDER_BASE_URL`: optional internal base URL that the worker should use when capturing published Scene overlays for on-air rendering; defaults to `INTERNAL_APP_URL`, then `APP_URL`, then `http://web:3000`
 - `SCENE_RENDER_INTERVAL_MS`: how often the worker refreshes captured on-air scene frames; defaults to `2000`
 - `SCENE_RENDER_CHROMIUM_PATH`: optional explicit Chromium binary path for the on-air scene renderer
 - `CHANNEL_TIMEZONE`: schedule timezone, for example `Europe/Berlin`
@@ -256,7 +255,7 @@ docker compose --profile proxy up -d
 
 ### What Does Not Belong In `.env`
 
-- moderator presence policy
+- moderation presence policy
 - schedule blocks
 - operator overrides
 - sources and assets
@@ -460,7 +459,7 @@ Notes:
 - asset curation controls for include/exclude from automatic programming, folder paths, and tags
 - bulk asset actions for include, exclude, fallback promotion, folder assignment, and tag management
 - local-library assets retain their relative folder structure in the catalog
-- `Channel Blueprints` can export and import Scene Studio, sources, programming, moderation, and destination metadata without exporting secrets or media files
+- `Channel Blueprints` can export and import Scene, program data, moderation, and destination metadata without exporting secrets or media files
 
 ### Scheduling
 
@@ -472,13 +471,13 @@ Notes:
 - reusable show profiles with default title/category/duration/color
 - multi-day block creation
 - weekly coverage overview
-- quick-start programming templates
+- quick-start program templates
 - day timeline with drag-and-drop rescheduling
 - resize-to-change-duration editing
 - filterable programming editor with search, pool/show filters, and conflict focus
 - public-facing schedule page
 
-### Playout And Broadcast Ops
+### Playout And Live Ops
 
 - FFmpeg-based RTMP playout foundation
 - buffered local program-feed/uplink split for production Compose, with the uplink owning external output sessions and scheduled reconnects
@@ -511,7 +510,7 @@ Notes:
 
 ### Moderation
 
-- explicit moderator presence windows such as `!here 30`
+- explicit moderation presence windows such as `!here 30`
 - configurable moderation policy in admin UI
 - emote-only fallback when no active moderator window is present
 
@@ -532,14 +531,14 @@ Notes:
 
 - public schedule page at `/channel`
 - internal overlay route at `/overlay`
-- `Scene Studio` in the admin UI
+- `Scene` in the Studio workspace
 - configurable replay label, channel name, headline, accent color, emergency banner, and now/next teaser toggles
 
 ### Guided Setup And Launch
 
 - owner bootstrap wizard
 - optional Twitch client credential capture during setup
-- guided go-live checklist in setup and dashboard
+- guided readiness view in setup and status
 - readiness-oriented launch guidance for destination, assets, pools, schedule, and overlay
 - settings-side update center with pinned-tag visibility, release channel hints, and preflight/runbook guidance
 
@@ -584,7 +583,7 @@ Current validation covers:
 - fresh compose bootstrap smoke
 - queue continuity smoke across short local-library assets
 - runtime parity smoke for Multi-Output fanout, audio-lane playback, cuepoint inserts, and Live Bridge takeover/release on a fresh Compose stack
-- browser smoke for bootstrap, operator IA navigation, secondary-output creation, local 2FA login, broadcast controls, and Scene Studio publish
+- browser smoke for bootstrap, operator IA navigation, secondary-output creation, local 2FA login, live controls, and Scene publish
 - production-config release preflight against pinned image tags and required Compose settings
 - Docker builds
 - smoke test for the web image

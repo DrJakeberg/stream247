@@ -23,7 +23,7 @@ export default async function OverlaysPage() {
     <div className="stack-form">
       <AdminPageHeader
         description="Control the live chat and Twitch alert layers that are composited into the stream overlay."
-        eyebrow="Overlays"
+        eyebrow="Engagement"
         title="Manage in-stream engagement."
       />
 

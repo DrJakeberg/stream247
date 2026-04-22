@@ -174,7 +174,7 @@ export async function POST(request: NextRequest) {
     }
   } catch (error) {
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : "Could not apply programming template." },
+      { message: error instanceof Error ? error.message : "Could not apply program template." },
       { status: 400 }
     );
   }
@@ -184,5 +184,5 @@ export async function POST(request: NextRequest) {
     `${user?.displayName || user?.email || "Unknown user"} applied ${template}${replaceExisting ? " and replaced the week" : ""}.`
   );
 
-  return NextResponse.json({ ok: true, message: "Programming template applied." });
+  return NextResponse.json({ ok: true, message: "Program template applied." });
 }

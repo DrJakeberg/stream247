@@ -31,7 +31,7 @@ export default async function ModerationPage() {
   const { moderation: config } = state;
 
   return (
-    <Panel title="Moderator presence policy" eyebrow="Moderation">
+    <Panel title="Moderation presence policy" eyebrow="Moderation">
       <p className="subtle">
         This policy allows a moderator to check in with a command such as{" "}
         <code>
@@ -55,7 +55,7 @@ export default async function ModerationPage() {
           <div className="subtle">
             {latestCheckIn
               ? `${latestCheckIn.actor} until ${latestCheckIn.expiresAt}`
-              : "No active moderator window"}
+              : "No active moderation presence"}
           </div>
         </div>
       </div>
@@ -84,7 +84,7 @@ export default async function ModerationPage() {
             ) : (
               <tr>
                 <td className="subtle" colSpan={5}>
-                  No moderator presence windows have been recorded yet.
+                  No moderation presence entries have been recorded yet.
                 </td>
               </tr>
             )}

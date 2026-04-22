@@ -7,7 +7,7 @@ export function GoLiveChecklist(props: { items: GoLiveChecklistItem[] }) {
   return (
     <div className="stack-form">
       <div className="subtle">
-        {readyCount} of {props.items.length} launch steps are ready.
+        {readyCount} of {props.items.length} readiness steps are ready.
       </div>
       <div className="list">
         {props.items.map((item) => (

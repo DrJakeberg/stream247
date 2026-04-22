@@ -29,8 +29,8 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
     <div className="stack-form">
       <AdminPageHeader
         compact
-        description="Use Broadcast for live actions. Current item, next queue, destination health, and scene state update continuously without reloading the page."
-        eyebrow="Broadcast"
+        description="Use Live control for on-air actions. Current item, next queue, destination health, and scene state update continuously without reloading the page."
+        eyebrow="Live"
         title="Operate the live 24/7 output from one workspace."
       >
         <div className="stats-row">
@@ -42,7 +42,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               title={
                 snapshot.presence.actor
                   ? `${snapshot.presence.actor} active for ${snapshot.presence.remainingMinutes} more minute(s)`
-                  : "Moderator presence active"
+                  : "Moderation presence active"
               }
             >
               <StatusChip status="ok" label={`Here ${snapshot.presence.remainingMinutes}m`} />

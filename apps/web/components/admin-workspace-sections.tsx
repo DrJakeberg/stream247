@@ -98,7 +98,7 @@ export function SourcesWorkspacePanels({ state }: { state: AppState }) {
 export function PoolsWorkspacePanels({ state }: { state: AppState }) {
   return (
     <>
-      <Panel title="Create pool" eyebrow="Programming">
+      <Panel title="Create pool" eyebrow="Program">
         <p className="subtle">
           Pools are the scheduler&apos;s programming units. Group ready assets from one or more sources and apply insert
           or audio-lane behavior here.
@@ -106,7 +106,7 @@ export function PoolsWorkspacePanels({ state }: { state: AppState }) {
         <PoolForm assets={state.assets} sources={state.sources} />
       </Panel>
 
-      <Panel title="Pools" eyebrow="Programming">
+      <Panel title="Pools" eyebrow="Program">
         <div className="list">
           {state.pools.map((pool) => (
             <div className="item" key={pool.id}>

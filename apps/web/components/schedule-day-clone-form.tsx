@@ -42,11 +42,11 @@ export function ScheduleDayCloneForm() {
 
           const payload = (await response.json()) as { message?: string };
           if (!response.ok) {
-            setError(payload.message ?? "Could not clone programming day.");
+            setError(payload.message ?? "Could not clone schedule day.");
             return;
           }
 
-          setMessage(payload.message ?? "Programming day cloned.");
+          setMessage(payload.message ?? "Schedule day cloned.");
           router.refresh();
         });
       }}
@@ -102,7 +102,7 @@ export function ScheduleDayCloneForm() {
       {message ? <p>{message}</p> : null}
       {error ? <p className="danger">{error}</p> : null}
       <button className="button secondary" disabled={isPending || targetDayOfWeeks.length === 0} type="submit">
-        {isPending ? "Cloning..." : "Clone programming day"}
+        {isPending ? "Cloning..." : "Clone schedule day"}
       </button>
     </form>
   );

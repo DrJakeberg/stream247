@@ -21,7 +21,7 @@ export default async function SettingsPage() {
   return (
     <div className="stack-form">
       <AdminPageHeader
-        description="Settings changes workspace-wide behavior: release posture, managed credentials, security defaults, and portable blueprints. Live channel actions stay in Broadcast."
+        description="Settings change workspace-wide behavior: release posture, managed credentials, security defaults, and portable blueprints. Live channel actions stay in Live."
         eyebrow="Settings"
         title="Manage workspace security, credentials, releases, and blueprints."
       />
@@ -49,7 +49,7 @@ export default async function SettingsPage() {
             <div className="item">
               <strong>Production checklist</strong>
               <div className="subtle">{updateCenter.pinnedImages ? "Images are pinned away from latest." : "Production should not run on latest image tags."}</div>
-              <div className="subtle">{readiness.broadcastReady ? "Broadcast readiness is currently green." : "Broadcast readiness is currently degraded."}</div>
+              <div className="subtle">{readiness.broadcastReady ? "Readiness is currently green." : "Readiness is currently degraded."}</div>
               <div className="subtle">Run `pnpm release:preflight` before upgrades and `pnpm release:rehearse vX.Y.Z` before major changes.</div>
             </div>
             <div className="item">
@@ -100,7 +100,7 @@ export default async function SettingsPage() {
           />
         </Panel>
 
-        <Panel title="Workspace defaults" eyebrow="Settings">
+        <Panel title="Admin defaults" eyebrow="Settings">
           <div className="list">
             <div className="item">
               <strong>Twitch OAuth</strong>

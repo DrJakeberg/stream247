@@ -73,7 +73,7 @@ export function ChannelBlueprintForm() {
   return (
     <div className="stack-form">
       <div className="subtle">
-        Channel Blueprints package Scene Studio, sources, curated sets, programming, moderation, and destination
+        Channel Blueprints package Scene, sources, curated sets, program data, moderation, and destination
         routing metadata without exporting secrets, tokens, incidents, or media files.
       </div>
       <div className="subtle">
@@ -123,7 +123,7 @@ export function ChannelBlueprintForm() {
                 onChange={(event) => setSections((current) => ({ ...current, programming: event.target.checked }))}
                 type="checkbox"
               />
-              <span>Programming pools, shows, and schedule</span>
+              <span>Program pools, shows, and schedule</span>
             </label>
             <label className={`chip-toggle${sections.sceneStudio ? " chip-toggle-active" : ""}`}>
               <input
@@ -131,7 +131,7 @@ export function ChannelBlueprintForm() {
                 onChange={(event) => setSections((current) => ({ ...current, sceneStudio: event.target.checked }))}
                 type="checkbox"
               />
-              <span>Scene Studio live, draft, and presets</span>
+              <span>Scene live, draft, and presets</span>
             </label>
             <label className={`chip-toggle${sections.operations ? " chip-toggle-active" : ""}`}>
               <input

@@ -101,7 +101,7 @@ Generic output overrides also work:
 
 If enabled, moderators can check in with commands such as `!here 30`.
 
-That creates an explicit moderator presence window. While such a window is active, Stream247 can keep chat out of emote-only mode. When the window expires, Stream247 can return to the configured fallback moderation mode.
+That creates an explicit moderation presence window. While such a window is active, Stream247 can keep chat out of emote-only mode. When the window expires, Stream247 can return to the configured fallback moderation mode.
 
 ## Current Limitations
 

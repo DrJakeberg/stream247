@@ -96,7 +96,7 @@ Belongs in `.env`:
 
 Does not belong in `.env`:
 
-- moderator presence settings
+- moderation presence settings
 - schedule blocks
 - sources and assets
 - operator overrides
@@ -247,12 +247,12 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 
 ## Current Capability Notes
 
-- Admin navigation is grouped by operator workflow: `Control Room` for live operations and health, `Programming` for schedule/library work, `Stream Studio` for scenes/overlays/output, and `Workspace` for settings, moderation, and team access.
+- Admin navigation is grouped by operator workflow: `Live` for control, status, and moderation, `Program` for schedule/library work, `Studio` for scene/engagement/output, and `Admin` for settings, moderation policy, and team access.
 - local media, direct media URLs, YouTube playlists/channels, and Twitch VODs/channels are ingestible today
 - Twitch VOD playout uses verified local cache files by default and falls back to standby when cache preparation fails
 - program-feed/uplink mode separates program playout restarts and asset boundaries from the external RTMP publishing worker
 - YouTube and Twitch ingestion rely on `yt-dlp`
-- schedule blocks support weekly CRUD, reusable show profiles, multi-day creation, overlap validation, drag/drop repositioning, resize-to-change-duration editing, weekly coverage summaries, and quick-start programming templates
+- schedule blocks support weekly CRUD, reusable show profiles, multi-day creation, overlap validation, drag/drop repositioning, resize-to-change-duration editing, weekly coverage summaries, and quick-start program templates
 - pools are first-class programming units for round-robin playout selection
 - sources can be edited in place and the asset catalog can be searched by title, source, and status
 - playout supports operator restart, temporary fallback, asset pinning, skip-current, and resume-schedule actions
@@ -260,4 +260,4 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 - optional chat and follow/sub engagement overlays render through the same captured browser overlay when explicitly enabled
 - email and Discord alert delivery are both implemented
 - managed secret storage in `/settings` is implemented for Twitch and alert credentials
-- setup and dashboard expose a guided go-live checklist based on the current workspace state
+- setup and status expose a guided readiness view based on the current workspace state

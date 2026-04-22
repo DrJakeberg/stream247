@@ -34,14 +34,14 @@ export default async function SchedulePage() {
   return (
     <>
       <section className="grid two">
-        <Panel title="Add schedule block" eyebrow="Programming">
+        <Panel title="Add schedule block" eyebrow="Program">
           <p className="subtle">
             Build the week in {timeZone}. Blocks target pools, start times are minute-accurate, durations use
             15-minute steps, and overlapping windows on the same weekday are rejected before save.
           </p>
           <ScheduleBlockForm assets={readyAssetOptions} pools={poolOptions} shows={shows} />
         </Panel>
-        <Panel title="Show profiles" eyebrow="Programming">
+        <Panel title="Show profiles" eyebrow="Program">
           <p className="subtle">
             Show profiles sit above individual blocks. Use them to standardize titles, default category, duration, and
             color across the week.
@@ -73,20 +73,20 @@ export default async function SchedulePage() {
             ) : null}
           </div>
         </Panel>
-        <Panel title="Weekly coverage" eyebrow="Programming">
+        <Panel title="Weekly coverage" eyebrow="Program">
           <p className="subtle">
             This is the programming shape of the full week. Use it to spot empty days, overloaded days, and when your
             first or last blocks start.
           </p>
           <ScheduleWeekOverview blocks={state.scheduleBlocks} materializedDays={materializedWeek} />
         </Panel>
-        <Panel title="Quick-start templates" eyebrow="Programming">
+        <Panel title="Quick-start templates" eyebrow="Program">
           <p className="subtle">
             Use templates to bootstrap a full week quickly, then fine-tune individual days in the editor below.
           </p>
           <ProgrammingTemplateForm pools={poolOptions} />
         </Panel>
-        <Panel title="Clone a programming day" eyebrow="Programming">
+        <Panel title="Clone a schedule day" eyebrow="Program">
           <p className="subtle">
             Copy one fully built weekday onto additional empty weekdays in a single step. This is useful for weekday
             patterns before you fine-tune exceptions.
@@ -94,7 +94,7 @@ export default async function SchedulePage() {
           <ScheduleDayCloneForm />
         </Panel>
 
-        <Panel title="Materialized fill preview" eyebrow="Programming">
+        <Panel title="Materialized fill preview" eyebrow="Program">
           <p className="subtle">
             The scheduler preview now follows pool rotation, insert rules, and natural asset lengths. Times are shown in {timeZone}.
           </p>
@@ -155,7 +155,7 @@ export default async function SchedulePage() {
         </Panel>
       </section>
 
-      <Panel title="Programming editor" eyebrow="Editor">
+      <Panel title="Program editor" eyebrow="Editor">
         <ScheduleEditorWorkspace
           blocks={state.scheduleBlocks}
           conflicts={[...conflicts]}

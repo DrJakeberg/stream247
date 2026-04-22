@@ -12,7 +12,12 @@ describe("admin navigation", () => {
   it("surfaces moderation in the live section and removes the old ops route", () => {
     const liveSection = ADMIN_NAV_SECTIONS.find((section) => section.id === "live");
 
-    expect(liveSection?.items.map((item) => item.href)).toEqual(["/broadcast", "/dashboard", "/moderation"]);
+    expect(ADMIN_NAV_SECTIONS.map((section) => section.label)).toEqual(["Live", "Program", "Studio", "Admin"]);
+    expect(liveSection?.items).toEqual([
+      { href: "/broadcast", label: "Control" },
+      { href: "/dashboard", label: "Status" },
+      { href: "/moderation", label: "Moderation" }
+    ]);
     expect(ADMIN_NAV_SECTIONS.flatMap((section) => section.items).some((item) => item.href === "/ops")).toBe(false);
   });
 

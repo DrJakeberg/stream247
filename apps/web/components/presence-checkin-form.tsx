@@ -44,7 +44,7 @@ export function PresenceCheckInForm() {
       <input defaultValue="admin" name="actor" placeholder="actor" />
       <input defaultValue="!here 30" name="input" placeholder="!here 30" />
       <button className="button button-secondary" disabled={isPending} type="submit">
-        {isPending ? "Checking in..." : "Create presence window"}
+        {isPending ? "Checking in..." : "Create moderation presence"}
       </button>
       {message ? <span>{message}</span> : null}
       {error ? <span className="danger">{error}</span> : null}

@@ -57,8 +57,8 @@ export default async function DashboardPage() {
   return (
     <>
       <AdminPageHeader
-        description="Use Dashboard to decide whether the workspace is ready for sustained on-air operation. Broadcast remains the live action surface."
-        eyebrow="Dashboard"
+        description="Use Live status to decide whether the workspace is ready for sustained on-air operation. Live control remains the action surface."
+        eyebrow="Readiness"
         title="Check readiness, integrations, and current channel posture."
       />
 
@@ -87,7 +87,7 @@ export default async function DashboardPage() {
           ) : null}
         </article>
         <article className="metric">
-          <span className="label">Moderator window</span>
+          <span className="label">Moderation presence</span>
           <div className="value">{presenceStatus.chatMode === "normal" ? "Active" : "Fallback"}</div>
           <p className="subtle">{presenceStatus.summary}</p>
         </article>
@@ -132,7 +132,7 @@ export default async function DashboardPage() {
       </section>
 
       <section className="grid two" style={{ marginTop: 24 }}>
-        <Panel title="Go-live readiness" eyebrow="Launch">
+        <Panel title="Readiness" eyebrow="Launch">
           <p className="subtle">
             This checklist is the fastest way to understand whether the channel is configured well enough for reliable
             24/7 operation.
@@ -249,15 +249,15 @@ export default async function DashboardPage() {
               </div>
             )}
             <div className="item">
-              <strong>Active moderator windows</strong>
+              <strong>Active moderation presence</strong>
               <div className="subtle">
                 {activeWindows.length > 0
                   ? `${activeWindows.length} active check-in window(s).`
-                  : "No moderator presence windows are active."}
+                  : "No moderation presence is active."}
               </div>
             </div>
             <div className="item">
-              <strong>Broadcast destination</strong>
+              <strong>Live destination</strong>
               <div className="subtle">
                 {activeDestination
                   ? `${activeDestination.status} · ${activeDestination.notes}`

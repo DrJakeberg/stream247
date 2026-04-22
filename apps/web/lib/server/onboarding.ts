@@ -87,7 +87,7 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
     },
     {
       id: "destination",
-      title: "Broadcast destination",
+      title: "Live destination",
       detail: hasDestination
         ? `${routing.activeDestinationIds.length || 1} active output(s) are ready. Lead destination: ${destination?.name || "Destination"}.`
         : "Configure at least one primary or backup RTMP output with a stream key so the playout runtime has somewhere to stream.",
@@ -110,7 +110,7 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
     },
     {
       id: "pools",
-      title: "Programming pools",
+      title: "Program pools",
       detail: hasPools ? `${state.pools.length} pool(s) available for scheduling.` : "Create at least one pool so schedule blocks can target a programming unit.",
       status: hasPools ? "ready" : "action",
       href: "/pools"

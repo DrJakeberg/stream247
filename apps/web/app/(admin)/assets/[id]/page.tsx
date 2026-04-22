@@ -182,14 +182,14 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
           <AssetMetadataForm asset={asset} categorySuggestions={categorySuggestions} />
         </Panel>
 
-        <Panel title="Asset curation" eyebrow="Programming">
+        <Panel title="Asset curation" eyebrow="Program">
           <div className="subtle" style={{ marginBottom: 12 }}>
             Exclude assets from automated pool rotation without deleting them, or promote them into the global fallback ladder.
           </div>
           <AssetCurationForm asset={asset} />
         </Panel>
 
-        <Panel title="Programming context" eyebrow="Programming">
+        <Panel title="Program context" eyebrow="Program">
           <div className="list">
             {pools.map((pool) => (
               <div className="item" key={pool.id}>

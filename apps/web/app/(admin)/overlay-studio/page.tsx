@@ -17,13 +17,13 @@ export default async function OverlayStudioPage() {
   return (
     <div className="stack-form">
       <AdminPageHeader
-        description="Scene Studio controls the published viewer-facing scene. Draft changes stay isolated until you publish them to Stream247's internal overlay output and the on-air renderer."
-        eyebrow="Scene Studio"
+        description="Scene controls the published viewer-facing scene. Draft changes stay isolated until you publish them to Stream247's internal overlay output and the on-air renderer."
+        eyebrow="Scene"
         title="Publish the viewer-facing scene without leaving the control room."
       />
 
       <div className="grid two">
-        <Panel title="Scene Studio controls" eyebrow="Scene Studio">
+        <Panel title="Scene controls" eyebrow="Scene">
           <p className="subtle">
             Stream247 captures <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> as its
             internal overlay output. Draft changes stay inside the studio until you publish them, and the same live

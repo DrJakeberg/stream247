@@ -37,7 +37,7 @@ export function ProgrammingTemplateForm(props: { pools: PoolOption[] }) {
 
           const payload = (await response.json()) as { message?: string };
           if (!response.ok) {
-            setError(payload.message ?? "Could not apply programming template.");
+            setError(payload.message ?? "Could not apply program template.");
             return;
           }
 
@@ -47,7 +47,7 @@ export function ProgrammingTemplateForm(props: { pools: PoolOption[] }) {
       }}
     >
       <label>
-        <span className="label">Programming template</span>
+        <span className="label">Program template</span>
         <select
           name="template"
           onChange={(event) => setTemplate(event.target.value)}

@@ -17,7 +17,7 @@ Persisted domains include:
 - initialization and owner bootstrap state
 - managed encrypted integration credentials
 - users, Twitch identities, and team access grants
-- moderation settings and presence windows
+- moderation settings and moderation presence
 - overlay settings
 - sources and assets
 - schedule blocks
@@ -54,7 +54,7 @@ Stream247 works around three high-level state concepts:
 - reconciled state:
   - worker/playout logic continuously moves actual state toward desired state
 
-## Broadcast Runtime
+## Live Runtime
 
 The current playout model is FFmpeg-based and supervisor-driven. In relay mode, program playout publishes to a buffered local HLS program feed by default, while a separate uplink worker reads that feed and owns the external RTMP destinations. HLS feed handoffs use temporary segment writes, discontinuity markers, and epoch-based segment numbers; the uplink demuxer tolerates corrupt or discontinuous local feed packets so normal asset boundaries do not close the external RTMP session. `STREAM247_UPLINK_INPUT_MODE=rtmp` keeps the older MediaMTX relay input available as an explicit rollback path.
 
@@ -131,7 +131,7 @@ Current schedule capabilities:
 - reusable show profiles above raw blocks
 - multi-day block creation
 - weekly coverage summaries
-- quick-start programming templates
+- quick-start program templates
 - public schedule preview
 - drag/drop day timeline repositioning
 - resize-to-change-duration editing
