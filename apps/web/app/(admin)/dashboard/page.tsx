@@ -7,7 +7,6 @@ import { DestinationCreateForm } from "@/components/destination-create-form";
 import { DestinationSettingsForm } from "@/components/destination-settings-form";
 import { IncidentActionForm } from "@/components/incident-action-form";
 import { Panel } from "@/components/panel";
-import { PlayoutActionForm } from "@/components/playout-action-form";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
 import { getGoLiveChecklist } from "@/lib/server/onboarding";
 import {
@@ -210,16 +209,9 @@ export default async function DashboardPage() {
               <div className="subtle">
                 Queue: {queuedAssets.length > 0 ? queuedAssets.slice(0, 3).map((asset) => asset.title).join(" → ") : "no queued assets"}
               </div>
-              <PlayoutActionForm
-                assets={state.assets.filter((asset) => asset.status === "ready").map((asset) => ({ id: asset.id, title: asset.title }))}
-                currentAssetId={currentAsset?.id}
-                overrideMode={state.playout.overrideMode}
-                liveBridgeStatus={(state.playout.liveBridgeStatus || "idle") as "idle" | "pending" | "active" | "releasing" | "error"}
-                liveBridgeLabel={state.playout.liveBridgeLabel}
-                liveBridgeInputType={state.playout.liveBridgeInputType}
-                liveBridgeInputSummary={state.playout.liveBridgeInputUrl ? "Configured live input" : ""}
-                liveBridgeLastError={state.playout.liveBridgeLastError}
-              />
+              <div className="subtle" style={{ marginTop: 12 }}>
+                Use Live control for skip, fallback, restart, override, replay, and Live Bridge actions. This status view stays read-only.
+              </div>
             </div>
             {openIncidents.length > 0 ? (
               openIncidents.slice(0, 4).map((incident) => (
