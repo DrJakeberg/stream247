@@ -25,5 +25,8 @@ describe("admin navigation", () => {
     expect(adminNavigationSource).not.toContain("<a");
     expect(adminNavigationSource).toContain('item.href === "/live" && snapshot.presence.active');
     expect(adminNavigationSource).toContain('className="nav-link-dot"');
+    expect(adminNavigationSource).toContain("getBroadcastLiveStatusLabel(snapshot.twitch)");
+    expect(adminNavigationSource).toContain("<StatusChip");
+    expect(adminNavigationSource).toContain('className="nav-link-status-chip"');
   });
 });

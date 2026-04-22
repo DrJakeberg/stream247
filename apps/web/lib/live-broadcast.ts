@@ -79,6 +79,7 @@ export type LiveTwitchStatusSummary = {
   status: "live" | "offline" | "unknown";
   viewerCount: number;
   broadcasterLogin: string;
+  startedAt: string;
 };
 
 export type LiveBridgeSummary = {

@@ -1205,7 +1205,8 @@ function summarizeTwitchLiveStatus(state: AppState): LiveTwitchStatusSummary {
   return {
     status: state.twitch.status === "connected" ? state.twitch.liveStatus : "unknown",
     viewerCount: state.twitch.status === "connected" ? state.twitch.viewerCount : 0,
-    broadcasterLogin: state.twitch.broadcasterLogin
+    broadcasterLogin: state.twitch.broadcasterLogin,
+    startedAt: state.twitch.status === "connected" ? state.twitch.startedAt || "" : ""
   };
 }
 

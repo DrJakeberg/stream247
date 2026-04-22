@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { getBroadcastLiveStatusLabel, getBroadcastLiveStatusTone } from "@/components/broadcast-live-status";
+import { StatusChip } from "@/components/ui/StatusChip";
 import type { BroadcastSnapshot } from "@/lib/live-broadcast";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
 import { ADMIN_WORKSPACES } from "@/lib/admin-navigation";
@@ -18,6 +20,7 @@ export function AdminNavigation(props: { initialSnapshot: BroadcastSnapshot }) {
     <nav aria-label="Admin" className="nav">
       {ADMIN_WORKSPACES.map((item) => {
         const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const showLiveStatusChip = item.href === "/live";
         const showPresenceDot = item.href === "/live" && snapshot.presence.active;
         return (
           <Link
@@ -28,7 +31,16 @@ export function AdminNavigation(props: { initialSnapshot: BroadcastSnapshot }) {
             title={item.label}
           >
             <span className="nav-link-title">{item.label}</span>
-            {showPresenceDot ? <span aria-hidden="true" className="nav-link-dot" /> : null}
+            <span className="nav-link-meta">
+              {showLiveStatusChip ? (
+                <StatusChip
+                  className="nav-link-status-chip"
+                  label={getBroadcastLiveStatusLabel(snapshot.twitch)}
+                  status={getBroadcastLiveStatusTone(snapshot.twitch)}
+                />
+              ) : null}
+              {showPresenceDot ? <span aria-hidden="true" className="nav-link-dot" /> : null}
+            </span>
           </Link>
         );
       })}

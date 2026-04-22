@@ -3,6 +3,7 @@ type FetchLike = typeof fetch;
 export type TwitchLiveStatusSnapshot = {
   liveStatus: "live" | "offline" | "unknown";
   viewerCount: number;
+  startedAt: string;
 };
 
 const TWITCH_LIVE_STATUS_REQUEST_TIMEOUT_MS = 10_000;
@@ -46,19 +47,22 @@ export function parseTwitchLiveStatusPayload(payload: {
   data?: Array<{
     type?: string;
     viewer_count?: number;
+    started_at?: string;
   }>;
 }): TwitchLiveStatusSnapshot {
   const stream = payload.data?.find((entry) => entry.type === "live");
   if (!stream) {
     return {
       liveStatus: "offline",
-      viewerCount: 0
+      viewerCount: 0,
+      startedAt: ""
     };
   }
 
   return {
     liveStatus: "live",
-    viewerCount: Math.max(0, Number(stream.viewer_count) || 0)
+    viewerCount: Math.max(0, Number(stream.viewer_count) || 0),
+    startedAt: String(stream.started_at ?? "")
   };
 }
 
@@ -93,6 +97,7 @@ export async function fetchTwitchLiveStatus(args: {
     data?: Array<{
       type?: string;
       viewer_count?: number;
+      started_at?: string;
     }>;
   };
 

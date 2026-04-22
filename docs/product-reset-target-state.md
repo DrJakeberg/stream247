@@ -128,6 +128,7 @@ Structured data for overlay + metadata:
 
 - **Twitch channel live status** is always visible in the sidebar (chip: live / offline / unknown) and in the Live workspace header (live + uptime + viewer count).
 - **Playout live status** (is the worker playing content right now?) is a separate chip in the Live workspace header.
+- **Uptime comes from Twitch Helix `started_at`**, carried through the existing live-status poll and SSE snapshot. No separate preview or secondary polling path is introduced for this.
 - **Small live video preview is deferred**, not scheduled. Rationale: an embedded Twitch player is bandwidth-heavy and flashes the operator's own viewership, and an overlay snapshot is not a substitute. A future milestone can justify it against measured operator need. Until then, the text status chip + viewer count + uptime is v1.
 - **Live status polling** continues via `apps/worker/src/twitch-live-status.ts`. State flows through the existing SSE feed.
 

@@ -617,13 +617,14 @@ describe("ops state helpers", () => {
     expect(snapshot.activeScenePayload.nextTitle).toBeTruthy();
   });
 
-  it("includes Twitch live status and viewer count in the live snapshot", () => {
+  it("includes Twitch live status, uptime origin, and viewer count in the live snapshot", () => {
     const snapshot = getBroadcastSnapshot(
       createState({
         twitch: {
           ...createState().twitch,
           liveStatus: "live",
-          viewerCount: 42
+          viewerCount: 42,
+          startedAt: "2026-04-22T09:00:00.000Z"
         }
       })
     );
@@ -631,6 +632,7 @@ describe("ops state helpers", () => {
     expect(snapshot.twitch.status).toBe("live");
     expect(snapshot.twitch.viewerCount).toBe(42);
     expect(snapshot.twitch.broadcasterLogin).toBe("owner");
+    expect(snapshot.twitch.startedAt).toBe("2026-04-22T09:00:00.000Z");
   });
 
   it("summarizes the active moderation presence window with clamp metadata", () => {

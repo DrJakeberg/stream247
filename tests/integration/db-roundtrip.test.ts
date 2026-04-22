@@ -54,6 +54,7 @@ const persistentProgramFeedRuntimeColumns = [
 const outputProfilesMigrationId = "20260420_001_output_profiles";
 const destinationOutputProfilesMigrationId = "20260421_002_destination_output_profiles";
 const engagementGameMigrationId = "20260422_001_engagement_game";
+const twitchLiveStartedAtMigrationId = "20260422_002_twitch_live_started_at";
 const outputSettingsColumns = ["singleton_id", "profile_id", "width", "height", "fps", "updated_at"].sort();
 const engagementLayerMigrationId = "20260420_002_engagement_layer";
 const engagementAlertTypesMigrationId = "20260421_001_engagement_alert_types";
@@ -318,7 +319,8 @@ describe.sequential("database roundtrip", () => {
         connectedAt: "2026-04-04T10:00:00.000Z",
         tokenExpiresAt: "2026-04-04T12:00:00.000Z",
         liveStatus: "offline" as const,
-        viewerCount: 0
+        viewerCount: 0,
+        startedAt: "2026-04-04T09:30:00.000Z"
       },
       twitchScheduleSegments: [
         {
@@ -596,6 +598,7 @@ describe.sequential("database roundtrip", () => {
     expect(reread.twitch.broadcasterLogin).toBe("roundtrip");
     expect(reread.twitch.liveStatus).toBe("offline");
     expect(reread.twitch.viewerCount).toBe(0);
+    expect(reread.twitch.startedAt).toBe("2026-04-04T09:30:00.000Z");
     expect(reread.twitchScheduleSegments[0]?.segmentId).toBe("abc");
     expect(reread.pools[0]?.name).toBe("Pool One");
     expect(reread.pools[0]?.insertAssetId).toBe("asset_3");
@@ -922,6 +925,36 @@ describe.sequential("database roundtrip", () => {
       updatedAt: ""
     });
     expect(state.engagementEvents).toEqual([]);
+  }, 60_000);
+
+  it("adds Twitch live started-at storage for workspace uptime displays", async () => {
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      ALTER TABLE twitch_connection DROP COLUMN IF EXISTS started_at;
+      DELETE FROM schema_migrations WHERE id = '${twitchLiveStartedAtMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const columns = (
+      await executeSql(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'twitch_connection' AND column_name = 'started_at'
+        ORDER BY column_name;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+    const migrationApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id = '${twitchLiveStartedAtMigrationId}';`
+    );
+    const state = await readAppState();
+
+    expect(columns).toEqual(["started_at"]);
+    expect(migrationApplied).toBe("1");
+    expect(state.twitch.startedAt).toBe("");
   }, 60_000);
 
   it("does not reseed an initialized database just because no users exist", async () => {

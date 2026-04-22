@@ -4470,11 +4470,12 @@ async function reconcileTwitchLiveStatus(): Promise<void> {
   twitchLiveStatusNextSyncAt = now + TWITCH_LIVE_STATUS_SYNC_INTERVAL_MS;
 
   if (state.twitch.status !== "connected" || !broadcasterId || !clientId || !clientSecret) {
-    if (state.twitch.liveStatus !== "unknown" || state.twitch.viewerCount !== 0) {
+    if (state.twitch.liveStatus !== "unknown" || state.twitch.viewerCount !== 0 || state.twitch.startedAt) {
       await updateTwitchConnectionRecord({
         ...state.twitch,
         liveStatus: "unknown",
-        viewerCount: 0
+        viewerCount: 0,
+        startedAt: ""
       });
     }
     return;
@@ -4487,21 +4488,27 @@ async function reconcileTwitchLiveStatus(): Promise<void> {
       clientSecret
     });
 
-    if (state.twitch.liveStatus === snapshot.liveStatus && state.twitch.viewerCount === snapshot.viewerCount) {
+    if (
+      state.twitch.liveStatus === snapshot.liveStatus &&
+      state.twitch.viewerCount === snapshot.viewerCount &&
+      (state.twitch.startedAt || "") === snapshot.startedAt
+    ) {
       return;
     }
 
     await updateTwitchConnectionRecord({
       ...state.twitch,
       liveStatus: snapshot.liveStatus,
-      viewerCount: snapshot.viewerCount
+      viewerCount: snapshot.viewerCount,
+      startedAt: snapshot.startedAt
     });
   } catch (error) {
-    if (state.twitch.liveStatus !== "unknown" || state.twitch.viewerCount !== 0) {
+    if (state.twitch.liveStatus !== "unknown" || state.twitch.viewerCount !== 0 || state.twitch.startedAt) {
       await updateTwitchConnectionRecord({
         ...state.twitch,
         liveStatus: "unknown",
-        viewerCount: 0
+        viewerCount: 0,
+        startedAt: ""
       });
     }
 

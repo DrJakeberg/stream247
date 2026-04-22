@@ -205,10 +205,23 @@ main {
   white-space: normal;
 }
 
+.nav-link-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.nav-link-status-chip {
+  font-size: 0.78rem;
+  padding: 6px 10px;
+}
+
 .nav-link-dot {
   width: 9px;
   height: 9px;
-  margin-top: 5px;
+  margin-top: 0;
   flex: 0 0 auto;
   border-radius: 999px;
   background: var(--brand);

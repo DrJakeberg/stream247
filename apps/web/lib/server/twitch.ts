@@ -123,6 +123,7 @@ export async function exchangeTwitchCode(code: string) {
     lastScheduleSyncAt: "",
     liveStatus: "unknown",
     viewerCount: 0,
+    startedAt: "",
     error: ""
   });
 

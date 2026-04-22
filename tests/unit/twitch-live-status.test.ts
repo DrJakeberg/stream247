@@ -5,11 +5,12 @@ describe("twitch live status helpers", () => {
   it("parses live Helix stream payloads with viewer counts", () => {
     expect(
       parseTwitchLiveStatusPayload({
-        data: [{ type: "live", viewer_count: 87 }]
+        data: [{ type: "live", viewer_count: 87, started_at: "2026-04-22T10:00:00.000Z" }]
       })
     ).toEqual({
       liveStatus: "live",
-      viewerCount: 87
+      viewerCount: 87,
+      startedAt: "2026-04-22T10:00:00.000Z"
     });
   });
 
@@ -20,7 +21,8 @@ describe("twitch live status helpers", () => {
       })
     ).toEqual({
       liveStatus: "offline",
-      viewerCount: 0
+      viewerCount: 0,
+      startedAt: ""
     });
   });
 
@@ -34,7 +36,7 @@ describe("twitch live status helpers", () => {
         })
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ data: [{ type: "live", viewer_count: 19 }] }), {
+        new Response(JSON.stringify({ data: [{ type: "live", viewer_count: 19, started_at: "2026-04-22T10:00:00.000Z" }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
@@ -49,7 +51,8 @@ describe("twitch live status helpers", () => {
       })
     ).resolves.toEqual({
       liveStatus: "live",
-      viewerCount: 19
+      viewerCount: 19,
+      startedAt: "2026-04-22T10:00:00.000Z"
     });
 
     expect(fetchImpl).toHaveBeenCalledTimes(2);
