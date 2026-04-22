@@ -1,4 +1,5 @@
 import { selectActiveDestinationGroup } from "@stream247/core";
+import { buildWorkspaceHref } from "../workspace-navigation";
 import type { AppState } from "./state";
 import { getManagedTwitchConfig } from "./state";
 
@@ -73,7 +74,7 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
         ? "Twitch client id and client secret are available for OAuth and sync."
         : "Save Twitch client credentials in setup or settings to enable broadcaster connect and team SSO.",
       status: hasTwitchCredentials ? "ready" : "action",
-      href: state.initialized ? "/settings" : "/setup"
+      href: state.initialized ? buildWorkspaceHref("admin", "settings") : "/setup"
     },
     {
       id: "twitch-connect",
@@ -83,7 +84,7 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
           ? `Connected as ${state.twitch.broadcasterLogin || state.twitch.broadcasterId}.`
           : "Connect the broadcaster account so metadata, schedule sync, and team access can work.",
       status: state.twitch.status === "connected" ? "ready" : "action",
-      href: "/dashboard"
+      href: buildWorkspaceHref("live", "status")
     },
     {
       id: "destination",
@@ -92,28 +93,28 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
         ? `${routing.activeDestinationIds.length || 1} active output(s) are ready. Lead destination: ${destination?.name || "Destination"}.`
         : "Configure at least one primary or backup RTMP output with a stream key so the playout runtime has somewhere to stream.",
       status: hasDestination ? "ready" : "action",
-      href: "/dashboard"
+      href: buildWorkspaceHref("live", "status")
     },
     {
       id: "sources",
       title: "Content sources",
       detail: hasSources ? `${state.sources.length} source(s) configured.` : "Add at least one YouTube, Twitch, direct-media, or local source.",
       status: hasSources ? "ready" : "action",
-      href: "/sources"
+      href: buildWorkspaceHref("program", "sources")
     },
     {
       id: "assets",
       title: "Playable assets",
       detail: readyAssets > 0 ? `${readyAssets} ready asset(s) are available.` : "Wait for ingestion or add local media until at least one asset is ready.",
       status: readyAssets > 0 ? "ready" : "action",
-      href: "/library"
+      href: buildWorkspaceHref("program", "library")
     },
     {
       id: "pools",
       title: "Program pools",
       detail: hasPools ? `${state.pools.length} pool(s) available for scheduling.` : "Create at least one pool so schedule blocks can target a programming unit.",
       status: hasPools ? "ready" : "action",
-      href: "/pools"
+      href: buildWorkspaceHref("program", "pools")
     },
     {
       id: "schedule",
@@ -122,7 +123,7 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
         ? `${state.scheduleBlocks.length} schedule block(s) are configured.`
         : "Add blocks or apply a schedule template so the worker can build a full week of programming.",
       status: hasScheduleBlocks ? "ready" : "action",
-      href: "/schedule"
+      href: buildWorkspaceHref("program", "schedule")
     },
     {
       id: "overlay",
@@ -131,7 +132,7 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
         ? `${state.overlay.channelName} overlay is enabled.`
         : "Optional, but recommended: enable the overlay so viewers can see current/next replay context.",
       status: state.overlay.enabled ? "ready" : "optional",
-      href: "/overlay-studio"
+      href: buildWorkspaceHref("studio", "scene")
     }
   ];
 }

@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { Panel } from "@/components/panel";
 import { SourceActionsForm } from "@/components/source-actions-form";
 import { SourceSyncForm } from "@/components/source-sync-form";
@@ -205,7 +206,7 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
                 </div>
                 <div className="subtle asset-path">{asset.path}</div>
                 <div style={{ marginTop: 8 }}>
-                  <Link className="subtle-link" href={`/assets/${asset.id}`}>
+                  <Link className="subtle-link" href={buildWorkspaceHref("program", "library", { assetId: asset.id })}>
                     Open asset detail
                   </Link>
                 </div>

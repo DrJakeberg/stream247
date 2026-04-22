@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { AssetLibraryBrowser } from "@/components/asset-library-browser";
 import { LibraryUploadForm } from "@/components/library-upload-form";
 import { Panel } from "@/components/panel";
@@ -74,7 +75,7 @@ export function SourcesWorkspacePanels({ state }: { state: AppState }) {
                     <span className="subtle">{snapshot.openIncidentCount} open incident(s)</span>
                   </div>
                   <div className="stats-row">
-                    <Link className="subtle-link" href={`/sources/${source.id}`}>
+                    <Link className="subtle-link" href={buildWorkspaceHref("program", "sources", { sourceId: source.id })}>
                       Open detail
                     </Link>
                   </div>

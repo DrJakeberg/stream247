@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 
 export function SetupForm() {
   const [error, setError] = useState("");
@@ -34,7 +35,7 @@ export function SetupForm() {
             return;
           }
 
-          router.replace("/broadcast");
+          router.replace(buildWorkspaceHref("live", "status"));
         });
       }}
     >

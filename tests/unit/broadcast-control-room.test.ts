@@ -9,7 +9,7 @@ const broadcastControlRoomSource = readFileSync(
 
 describe("broadcast control room", () => {
   it("links the active moderation presence chip to the moderation workspace", () => {
-    expect(broadcastControlRoomSource).toContain('href="/moderation"');
+    expect(broadcastControlRoomSource).toContain('href={buildWorkspaceHref("live", "moderation")}');
     expect(broadcastControlRoomSource).toContain("snapshot.presence.active");
     expect(broadcastControlRoomSource).toContain('label={`Here ${snapshot.presence.remainingMinutes}m`}');
   });

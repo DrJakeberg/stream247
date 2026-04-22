@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { AssetCurationForm } from "@/components/asset-curation-form";
 import { AssetMetadataForm } from "@/components/asset-metadata-form";
 import { Panel } from "@/components/panel";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import {
   getAssetPlaybackDiagnostics,
   getCurrentScheduleItem,
@@ -229,7 +230,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
             </div>
             {sourceSnapshot.latestRun?.errorMessage ? <div className="danger">{sourceSnapshot.latestRun.errorMessage}</div> : null}
             {source ? (
-              <Link className="subtle-link" href={`/sources/${source.id}`}>
+              <Link className="subtle-link" href={buildWorkspaceHref("program", "sources", { sourceId: source.id })}>
                 Open source detail
               </Link>
             ) : null}

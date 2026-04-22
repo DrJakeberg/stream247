@@ -5,6 +5,7 @@ import { GoLiveChecklist } from "@/components/go-live-checklist";
 import { Panel } from "@/components/panel";
 import { SetupForm } from "@/components/setup-form";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { getGoLiveChecklist } from "@/lib/server/onboarding";
 import { readAppState } from "@/lib/server/state";
 import { getAuthenticatedUser } from "@/lib/server/auth";
@@ -17,7 +18,7 @@ export default async function SetupPage() {
   const checklist = getGoLiveChecklist(state);
 
   if (state.initialized) {
-    redirect(user ? "/dashboard" : "/login");
+    redirect(user ? buildWorkspaceHref("live") : "/login");
   }
 
   return (

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { AdminPageHeader } from "@/components/admin-page-header";
 import { getBroadcastLiveStatusLabel, getBroadcastLiveStatusTone } from "@/components/broadcast-live-status";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import type { BroadcastSnapshot } from "@/lib/live-broadcast";
 import { PlayoutActionForm } from "@/components/playout-action-form";
 import { StatusChip } from "@/components/ui/StatusChip";
@@ -38,7 +39,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
           {snapshot.presence.active ? (
             <Link
               className="subtle-link"
-              href="/moderation"
+              href={buildWorkspaceHref("live", "moderation")}
               title={
                 snapshot.presence.actor
                   ? `${snapshot.presence.actor} active for ${snapshot.presence.remainingMinutes} more minute(s)`
@@ -303,7 +304,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               {snapshot.overlay.tickerText ? <div className="subtle">{snapshot.overlay.tickerText}</div> : null}
               {snapshot.overlay.emergencyBanner ? <div className="danger">{snapshot.overlay.emergencyBanner}</div> : null}
               <div className="subtle-link-row" style={{ marginTop: 8 }}>
-                <Link className="subtle-link" href="/overlay-studio">
+                <Link className="subtle-link" href={buildWorkspaceHref("studio", "scene")}>
                   Open overlay studio
                 </Link>
                 <Link className="subtle-link" href="/overlay" target="_blank">

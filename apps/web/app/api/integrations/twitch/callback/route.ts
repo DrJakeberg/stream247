@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { exchangeTwitchCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
 
 export async function GET(request: NextRequest) {
@@ -7,12 +8,12 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     await recordTwitchError(`Twitch authorization failed: ${error}.`);
-    return NextResponse.redirect(getAbsoluteAppUrl("/dashboard"));
+    return NextResponse.redirect(getAbsoluteAppUrl(buildWorkspaceHref("live", "status")));
   }
 
   if (!code) {
     await recordTwitchError("Twitch callback did not include an authorization code.");
-    return NextResponse.redirect(getAbsoluteAppUrl("/dashboard"));
+    return NextResponse.redirect(getAbsoluteAppUrl(buildWorkspaceHref("live", "status")));
   }
 
   try {
@@ -22,5 +23,5 @@ export async function GET(request: NextRequest) {
     await recordTwitchError(message);
   }
 
-  return NextResponse.redirect(getAbsoluteAppUrl("/dashboard"));
+  return NextResponse.redirect(getAbsoluteAppUrl(buildWorkspaceHref("live", "status")));
 }

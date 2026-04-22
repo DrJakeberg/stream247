@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { Panel } from "@/components/panel";
 import { LoginForm } from "@/components/login-form";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { getAuthenticatedUser } from "@/lib/server/auth";
 import { readAppState } from "@/lib/server/state";
 import { TwitchLoginPanel } from "@/components/twitch-login-panel";
@@ -19,7 +20,7 @@ export default async function LoginPage() {
   const user = await getAuthenticatedUser();
 
   if (user) {
-    redirect("/dashboard");
+    redirect(buildWorkspaceHref("live"));
   }
 
   return (

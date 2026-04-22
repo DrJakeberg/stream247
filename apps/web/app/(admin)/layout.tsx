@@ -32,7 +32,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
           <span className="label">Workspaces</span>
           <strong>Live covers control, status, and moderation for the current run.</strong>
           <p className="subtle">
-            Program owns the schedule, pools, library, and sources. Studio controls scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+            Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
           </p>
         </section>
         <AdminNavigation initialSnapshot={snapshot} />

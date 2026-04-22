@@ -2,6 +2,7 @@ import { scryptSync, timingSafeEqual, randomBytes, createHmac } from "node:crypt
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
+import { buildWorkspaceHref } from "../workspace-navigation";
 import { findUserById, readAppState, type UserRecord, type UserRole } from "./state";
 
 const sessionCookieName = "stream247_session";
@@ -125,7 +126,7 @@ export async function requireAuthenticatedUser(): Promise<UserRecord> {
 export async function requireRoles(roles: UserRole[]): Promise<UserRecord> {
   const user = await requireAuthenticatedUser();
   if (!roles.includes(user.role)) {
-    redirect("/dashboard");
+    redirect(buildWorkspaceHref("live"));
   }
   return user;
 }

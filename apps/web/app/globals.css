@@ -112,6 +112,39 @@ main {
   gap: 18px;
 }
 
+.workspace-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.workspace-tab-link {
+  border: 1px solid rgba(27, 26, 22, 0.08);
+  border-radius: 999px;
+  color: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 10px 14px;
+  text-decoration: none;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.workspace-tab-link:hover {
+  background: var(--surface);
+  border-color: rgba(14, 109, 90, 0.14);
+  transform: translateY(-1px);
+}
+
+.workspace-tab-link-active {
+  background: rgba(14, 109, 90, 0.1);
+  border-color: rgba(14, 109, 90, 0.22);
+  color: var(--brand-strong);
+}
+
 .nav-section {
   display: grid;
   gap: 8px;

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { setSessionCookie } from "@/lib/server/auth";
 import { exchangeTwitchLoginCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
 
@@ -19,7 +20,7 @@ export async function GET(request: NextRequest) {
   try {
     const user = await exchangeTwitchLoginCode(code);
     await setSessionCookie(user.id);
-    return NextResponse.redirect(getAbsoluteAppUrl("/dashboard"));
+    return NextResponse.redirect(getAbsoluteAppUrl(buildWorkspaceHref("live")));
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "Unknown Twitch login callback failure.";
     await recordTwitchError(message);
