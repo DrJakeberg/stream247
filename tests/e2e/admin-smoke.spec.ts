@@ -53,6 +53,8 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   const channelNameMatcher = new RegExp(channelName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 
   await ensureSignedIn(page);
+  await page.goto("/live?tab=status");
+  await expect(page).toHaveURL(/\/live\?tab=status$/);
   const adminNav = page.getByRole("navigation", { name: "Admin" });
   await expect(adminNav).toBeVisible();
   await expect(page.getByText("Workspaces", { exact: true })).toBeVisible();
@@ -76,7 +78,8 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await adminNav.getByRole("link", { name: "Program", exact: true }).click();
   await expect(page).toHaveURL(/\/program(?:\?tab=schedule)?$/);
   const programTabs = page.getByRole("tablist", { name: "Program tabs" });
-  await expect(page.getByRole("heading", { name: "Add schedule block", exact: true })).toBeVisible();
+  await expect(programTabs).toBeVisible();
+  await expect(programTabs.getByRole("tab", { name: "Schedule", exact: true })).toBeVisible();
 
   await programTabs.getByRole("tab", { name: "Pools", exact: true }).click();
   await expect(page).toHaveURL(/\/program\?tab=pools$/);
