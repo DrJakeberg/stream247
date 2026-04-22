@@ -15,6 +15,15 @@ export type PresenceWindow = {
   createdAt: Date;
 };
 
+export type PresenceClampReason = "accepted" | "default" | "minimum" | "maximum";
+
+export type ModeratorCheckInResult = PresenceWindow & {
+  requestedMinutes: number | null;
+  appliedMinutes: number;
+  clampReason: PresenceClampReason;
+  commandInput: string;
+};
+
 export type PresenceStatus = {
   active: boolean;
   chatMode: "normal" | "emote-only";
@@ -1797,6 +1806,26 @@ export function parseModeratorCheckIn(args: {
   now: Date;
   config: ModerationConfig;
 }): PresenceWindow | null {
+  const result = resolveModeratorCheckIn(args);
+
+  if (!result) {
+    return null;
+  }
+
+  return {
+    actor: result.actor,
+    minutes: result.minutes,
+    createdAt: result.createdAt,
+    expiresAt: result.expiresAt
+  };
+}
+
+export function resolveModeratorCheckIn(args: {
+  actor: string;
+  input: string;
+  now: Date;
+  config: ModerationConfig;
+}): ModeratorCheckInResult | null {
   const { actor, input, now, config } = args;
 
   if (!config.enabled) {
@@ -1810,20 +1839,58 @@ export function parseModeratorCheckIn(args: {
     return null;
   }
 
-  const rawMinutes = match[1] ? Number(match[1]) : config.defaultMinutes;
+  const requestedMinutes = match[1] ? Number(match[1]) : null;
+  const rawMinutes = requestedMinutes ?? config.defaultMinutes;
 
   if (!Number.isFinite(rawMinutes)) {
     return null;
   }
 
   const minutes = Math.min(config.maxMinutes, Math.max(config.minMinutes, rawMinutes));
+  const clampReason: PresenceClampReason =
+    requestedMinutes === null
+      ? "default"
+      : requestedMinutes < config.minMinutes
+        ? "minimum"
+        : requestedMinutes > config.maxMinutes
+          ? "maximum"
+          : "accepted";
 
   return {
     actor,
     minutes,
+    appliedMinutes: minutes,
+    requestedMinutes,
+    clampReason,
+    commandInput: input.trim(),
     createdAt: now,
     expiresAt: new Date(now.getTime() + minutes * 60_000)
   };
+}
+
+export function formatPresenceClampReply(args: {
+  commandInput: string;
+  appliedMinutes: number;
+  requestedMinutes: number | null;
+  clampReason: PresenceClampReason;
+  config: Pick<ModerationConfig, "defaultMinutes" | "minMinutes" | "maxMinutes">;
+}): string {
+  const commandInput = stripInvisibleCharacters(args.commandInput).trim();
+  const suffix = `window set to ${args.appliedMinutes} min`;
+
+  if (args.clampReason === "minimum") {
+    return `received ${commandInput}, minimum is ${args.config.minMinutes}; ${suffix}`;
+  }
+
+  if (args.clampReason === "maximum") {
+    return `received ${commandInput}, maximum is ${args.config.maxMinutes}; ${suffix}`;
+  }
+
+  if (args.clampReason === "default") {
+    return `received ${commandInput}, default is ${args.config.defaultMinutes}; ${suffix}`;
+  }
+
+  return `presence window set to ${args.appliedMinutes} min`;
 }
 
 export function describePresenceStatus(args: {

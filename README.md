@@ -509,7 +509,7 @@ Notes:
 
 ### Moderation
 
-- explicit moderator presence windows such as `here 30`
+- explicit moderator presence windows such as `!here 30`
 - configurable moderation policy in admin UI
 - emote-only fallback when no active moderator window is present
 

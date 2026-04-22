@@ -35,7 +35,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
             Programming owns the schedule, pools, library, and sources. Stream Studio controls scenes, overlays, and output.
           </p>
         </section>
-        <AdminNavigation />
+        <AdminNavigation initialSnapshot={snapshot} />
         <div style={{ marginTop: 24 }}>
           <Link className="subtle-link" href="/channel" target="_blank">
             Open public page

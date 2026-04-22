@@ -9,6 +9,7 @@ import {
   getFilteredIncidents,
   getNextScheduleItem,
   getPlayoutQueueAssets,
+  getRecentPresenceWindows,
   getRuntimeDriftReport,
   getSourceConnectorDiagnostics,
   getSourceHealthSnapshot,
@@ -630,6 +631,65 @@ describe("ops state helpers", () => {
     expect(snapshot.twitch.status).toBe("live");
     expect(snapshot.twitch.viewerCount).toBe(42);
     expect(snapshot.twitch.broadcasterLogin).toBe("owner");
+  });
+
+  it("summarizes the active moderation presence window with clamp metadata", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-22T10:00:00.000Z"));
+
+    const snapshot = getBroadcastSnapshot(
+      createState({
+        presenceWindows: [
+          {
+            actor: "Moderator",
+            minutes: 10,
+            requestedMinutes: 5,
+            appliedMinutes: 10,
+            clampReason: "minimum",
+            createdAt: "2026-04-22T09:55:00.000Z",
+            expiresAt: "2026-04-22T10:10:00.000Z"
+          }
+        ]
+      })
+    );
+
+    expect(snapshot.presence.active).toBe(true);
+    expect(snapshot.presence.actor).toBe("Moderator");
+    expect(snapshot.presence.requestedMinutes).toBe(5);
+    expect(snapshot.presence.appliedMinutes).toBe(10);
+    expect(snapshot.presence.clampReason).toBe("minimum");
+    expect(snapshot.presence.remainingMinutes).toBe(10);
+  });
+
+  it("keeps recent moderation presence windows sorted newest-first even after expiry", () => {
+    const recentWindows = getRecentPresenceWindows(
+      createState({
+        presenceWindows: [
+          {
+            actor: "Older",
+            minutes: 30,
+            requestedMinutes: 30,
+            appliedMinutes: 30,
+            clampReason: "accepted",
+            createdAt: "2026-04-22T09:00:00.000Z",
+            expiresAt: "2026-04-22T09:30:00.000Z"
+          },
+          {
+            actor: "Newest",
+            minutes: 30,
+            requestedMinutes: null,
+            appliedMinutes: 30,
+            clampReason: "default",
+            createdAt: "2026-04-22T10:00:00.000Z",
+            expiresAt: "2026-04-22T10:30:00.000Z"
+          }
+        ]
+      })
+    );
+
+    expect(recentWindows.map((window) => window.actor)).toEqual(["Newest", "Older"]);
+    expect(recentWindows[0]?.clampReason).toBe("default");
+    expect(recentWindows[1]?.requestedMinutes).toBe(30);
   });
 
   it("summarizes active audio lanes and cuepoint progress", () => {

@@ -129,6 +129,7 @@ import type {
   LiveEngagementSummary,
   LiveIncidentSummary,
   LiveOverlaySummary,
+  LivePresenceSummary,
   LivePlayoutSummary,
   LiveQueueItemSummary,
   LiveBridgeSummary,
@@ -275,6 +276,12 @@ export function getPresenceStatus(state: AppState) {
 export function getActivePresenceWindows(state: AppState): ModeratorPresenceWindowRecord[] {
   const now = new Date();
   return state.presenceWindows.filter((window) => new Date(window.expiresAt) > now);
+}
+
+export function getRecentPresenceWindows(state: AppState, limit = 10): ModeratorPresenceWindowRecord[] {
+  return [...state.presenceWindows]
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, limit);
 }
 
 export function getManagedConfigValue<K extends keyof ManagedConfigRecord>(
@@ -1166,6 +1173,25 @@ function summarizeTwitchLiveStatus(state: AppState): LiveTwitchStatusSummary {
   };
 }
 
+function summarizePresence(state: AppState): LivePresenceSummary {
+  const now = new Date();
+  const activeWindow = getActivePresenceWindows(state)
+    .sort((left, right) => new Date(right.expiresAt).getTime() - new Date(left.expiresAt).getTime())
+    .at(0);
+  const status = getPresenceStatus(state);
+
+  return {
+    active: status.active,
+    actor: activeWindow?.actor ?? "",
+    requestedMinutes: activeWindow?.requestedMinutes ?? null,
+    appliedMinutes: activeWindow?.appliedMinutes ?? activeWindow?.minutes ?? 0,
+    clampReason: activeWindow?.clampReason ?? "",
+    expiresAt: activeWindow?.expiresAt ?? "",
+    remainingMinutes: activeWindow ? Math.max(0, Math.ceil((new Date(activeWindow.expiresAt).getTime() - now.getTime()) / 60_000)) : 0,
+    summary: status.summary
+  };
+}
+
 export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
   const currentScheduleItem = getCurrentScheduleItem(state);
   const nextScheduleItem = getNextScheduleItem(state);
@@ -1183,6 +1209,7 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
     cuepoints: summarizeCuepoints(state, currentScheduleItem),
     overlay: summarizeOverlay(state.overlay),
     engagement: summarizeEngagement(state),
+    presence: summarizePresence(state),
     activeScene: activeScenePayload.scene,
     activeScenePayload,
     destination: summarizeDestination(state),

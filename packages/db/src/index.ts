@@ -18,6 +18,7 @@ import {
   normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
   stripInvisibleCharacters,
+  type PresenceClampReason,
   type DestinationRoutingStatus,
   type DestinationOutputProfileId,
   type EngagementChatDisplayMode,
@@ -94,6 +95,9 @@ export type TwitchScheduleSegmentRecord = {
 export type ModeratorPresenceWindowRecord = {
   actor: string;
   minutes: number;
+  requestedMinutes?: number | null;
+  appliedMinutes?: number;
+  clampReason?: PresenceClampReason | "";
   createdAt: string;
   expiresAt: string;
 };
@@ -1130,6 +1134,10 @@ function parseAssetTagsJson(value: string): string[] {
   }
 }
 
+function normalizePresenceClampReason(value: unknown): PresenceClampReason | "" {
+  return value === "accepted" || value === "default" || value === "minimum" || value === "maximum" ? value : "";
+}
+
 function getDatabaseUrl(): string {
   return process.env.DATABASE_URL || "postgresql://stream247:stream247@postgres:5432/stream247";
 }
@@ -1626,7 +1634,29 @@ function normalizeState(state: AppState): AppState {
     twitchScheduleSegments: Array.isArray(state.twitchScheduleSegments) ? state.twitchScheduleSegments : [],
     users: Array.isArray(state.users) ? dedupeById(state.users) : [],
     teamAccessGrants: Array.isArray(state.teamAccessGrants) ? dedupeById(state.teamAccessGrants) : [],
-    presenceWindows: Array.isArray(state.presenceWindows) ? state.presenceWindows : [],
+    presenceWindows: Array.isArray(state.presenceWindows)
+      ? state.presenceWindows
+          .map((window) => {
+            const appliedMinutes = Math.max(1, Math.round(Number(window.appliedMinutes ?? window.minutes ?? 0) || 0));
+            const requestedMinutesValue = window.requestedMinutes;
+            const requestedMinutes =
+              typeof requestedMinutesValue === "number" && Number.isFinite(requestedMinutesValue)
+                ? Math.max(1, Math.round(requestedMinutesValue))
+                : null;
+
+            return {
+              actor: sanitizeStoredText(window.actor, 80) || "unknown",
+              minutes: appliedMinutes,
+              requestedMinutes,
+              appliedMinutes,
+              clampReason: normalizePresenceClampReason(window.clampReason),
+              createdAt: String(window.createdAt ?? ""),
+              expiresAt: String(window.expiresAt ?? "")
+            };
+          })
+          .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+          .slice(0, 100)
+      : [],
     pools: Array.isArray(state.pools)
       ? dedupeById(state.pools).map((pool) => ({
           ...pool,
@@ -1776,6 +1806,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     CREATE TABLE IF NOT EXISTS presence_windows (
       actor TEXT NOT NULL,
       minutes INTEGER NOT NULL,
+      requested_minutes INTEGER,
+      applied_minutes INTEGER NOT NULL DEFAULT 0,
+      clamp_reason TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       expires_at TEXT PRIMARY KEY
     );
@@ -2517,6 +2550,32 @@ if (!schemaMigrations.some((migration) => migration.id === twitchLiveStatusMigra
   schemaMigrations.push(twitchLiveStatusMigration);
 }
 
+const presenceWindowMetadataMigration: MigrationDefinition = {
+  id: "20260422_001_presence_window_metadata",
+  description: "Store requested/applied presence durations and clamp reasons for moderator check-ins.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE presence_windows ADD COLUMN IF NOT EXISTS requested_minutes INTEGER;
+      ALTER TABLE presence_windows ADD COLUMN IF NOT EXISTS applied_minutes INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE presence_windows ADD COLUMN IF NOT EXISTS clamp_reason TEXT NOT NULL DEFAULT '';
+      UPDATE presence_windows
+      SET
+        applied_minutes = CASE
+          WHEN COALESCE(applied_minutes, 0) > 0 THEN applied_minutes
+          ELSE minutes
+        END,
+        clamp_reason = CASE
+          WHEN clamp_reason IN ('accepted', 'default', 'minimum', 'maximum') THEN clamp_reason
+          ELSE ''
+        END
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === presenceWindowMetadataMigration.id)) {
+  schemaMigrations.push(presenceWindowMetadataMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -2929,10 +2988,20 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   for (const window of next.presenceWindows) {
     await client.query(
       `
-        INSERT INTO presence_windows (actor, minutes, created_at, expires_at)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO presence_windows (
+          actor, minutes, requested_minutes, applied_minutes, clamp_reason, created_at, expires_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
       `,
-      [window.actor, window.minutes, window.createdAt, window.expiresAt]
+      [
+        window.actor,
+        window.minutes,
+        window.requestedMinutes ?? null,
+        window.appliedMinutes ?? window.minutes,
+        normalizePresenceClampReason(window.clampReason),
+        window.createdAt,
+        window.expiresAt
+      ]
     );
   }
 
@@ -3398,9 +3467,15 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   }>(
     "SELECT enabled, command, default_minutes, min_minutes, max_minutes, require_prefix, fallback_emote_only FROM moderation_settings WHERE singleton_id = 1"
   );
-  const presenceResult = await client.query<{ actor: string; minutes: number; created_at: string; expires_at: string }>(
-    "SELECT * FROM presence_windows ORDER BY created_at DESC"
-  );
+  const presenceResult = await client.query<{
+    actor: string;
+    minutes: number;
+    requested_minutes: number | null;
+    applied_minutes: number;
+    clamp_reason: string;
+    created_at: string;
+    expires_at: string;
+  }>("SELECT * FROM presence_windows ORDER BY created_at DESC LIMIT 100");
   const overlayResult = await client.query<OverlaySettingsRow>("SELECT * FROM overlay_settings WHERE singleton_id = 1");
   const managedConfigResult = await client.query<{
     encrypted_payload: string;
@@ -3707,7 +3782,10 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       : defaults.moderation,
     presenceWindows: presenceResult.rows.map((row) => ({
       actor: row.actor,
-      minutes: row.minutes,
+      minutes: row.applied_minutes || row.minutes,
+      requestedMinutes: row.requested_minutes,
+      appliedMinutes: row.applied_minutes || row.minutes,
+      clampReason: normalizePresenceClampReason(row.clamp_reason),
       createdAt: row.created_at,
       expiresAt: row.expires_at
     })),
@@ -5172,14 +5250,32 @@ export async function updateModerationConfigRecord(config: ModerationConfig): Pr
 
 export async function appendPresenceWindowRecord(window: ModeratorPresenceWindowRecord): Promise<void> {
   await withSerializedStateWrite("appendPresenceWindowRecord", async (client) => {
-    await client.query("DELETE FROM presence_windows WHERE expires_at <= $1", [new Date().toISOString()]);
     await client.query(
       `
-        INSERT INTO presence_windows (actor, minutes, created_at, expires_at)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO presence_windows (
+          actor, minutes, requested_minutes, applied_minutes, clamp_reason, created_at, expires_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
       `,
-      [window.actor, window.minutes, window.createdAt, window.expiresAt]
+      [
+        window.actor,
+        window.minutes,
+        window.requestedMinutes ?? null,
+        window.appliedMinutes ?? window.minutes,
+        normalizePresenceClampReason(window.clampReason),
+        window.createdAt,
+        window.expiresAt
+      ]
     );
+    await client.query(`
+      DELETE FROM presence_windows
+      WHERE expires_at IN (
+        SELECT expires_at
+        FROM presence_windows
+        ORDER BY created_at DESC
+        OFFSET 100
+      )
+    `);
   });
 }
 

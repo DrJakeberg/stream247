@@ -74,6 +74,9 @@ export function ModerationSettingsForm({ config }: { config: ModerationConfig })
           <input defaultValue={config.maxMinutes} min={1} name="maxMinutes" type="number" />
         </label>
       </div>
+      <p className="subtle">
+        Omitted durations use the default. Requests below the minimum clamp up, and requests above the maximum clamp down.
+      </p>
       <label className="toggle-row">
         <input defaultChecked={config.fallbackEmoteOnly} name="fallbackEmoteOnly" type="checkbox" />
         <span>Fallback to emote-only when no moderator window is active</span>

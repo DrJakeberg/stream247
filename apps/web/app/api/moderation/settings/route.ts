@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { stripInvisibleCharacters } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, updateModerationConfigRecord } from "@/lib/server/state";
 
@@ -18,7 +19,7 @@ export async function PUT(request: NextRequest) {
     fallbackEmoteOnly?: boolean;
   };
 
-  const command = (body.command ?? "here").trim();
+  const command = stripInvisibleCharacters(String(body.command ?? "here")).trim().slice(0, 32);
   const defaultMinutes = Number(body.defaultMinutes ?? 30);
   const minMinutes = Number(body.minMinutes ?? 5);
   const maxMinutes = Number(body.maxMinutes ?? 240);

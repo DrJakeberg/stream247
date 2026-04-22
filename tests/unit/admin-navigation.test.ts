@@ -21,5 +21,7 @@ describe("admin navigation", () => {
     expect(adminNavigationSource).toContain("pathname === item.href || pathname.startsWith(`${item.href}/`)");
     expect(adminNavigationSource).toContain("<Link");
     expect(adminNavigationSource).not.toContain("<a");
+    expect(adminNavigationSource).toContain('item.href === "/moderation" && snapshot.presence.active');
+    expect(adminNavigationSource).toContain('className="nav-link-dot"');
   });
 });

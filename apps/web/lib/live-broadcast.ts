@@ -7,6 +7,7 @@ import type {
   OverlaySceneCustomLayer,
   OverlaySceneLayerKind,
   OverlayScenePayload,
+  PresenceClampReason,
   OverlayTypographyPreset
 } from "@stream247/core";
 
@@ -271,6 +272,17 @@ export type LiveEngagementSummary = {
   recentEvents: LiveEngagementEventSummary[];
 };
 
+export type LivePresenceSummary = {
+  active: boolean;
+  actor: string;
+  requestedMinutes: number | null;
+  appliedMinutes: number;
+  clampReason: PresenceClampReason | "";
+  expiresAt: string;
+  remainingMinutes: number;
+  summary: string;
+};
+
 export type LiveSceneLayerSummary = {
   kind: OverlaySceneLayerKind;
   label: string;
@@ -299,6 +311,7 @@ export type BroadcastSnapshot = {
   cuepoints: LiveCuepointSummary;
   overlay: LiveOverlaySummary;
   engagement: LiveEngagementSummary;
+  presence: LivePresenceSummary;
   activeScene: LiveSceneSummary;
   activeScenePayload: OverlayScenePayload;
   destination: LiveDestinationSummary | null;

@@ -1,6 +1,11 @@
 import tls from "node:tls";
 import { randomUUID } from "node:crypto";
-import { createDefaultModerationConfig, isEngagementChatRuntimeEnabled, parseModeratorCheckIn } from "@stream247/core";
+import {
+  createDefaultModerationConfig,
+  formatPresenceClampReply,
+  isEngagementChatRuntimeEnabled,
+  resolveModeratorCheckIn
+} from "@stream247/core";
 import type { AppState, EngagementEventRecord } from "@stream247/db";
 import { appendEngagementEventRecord } from "@stream247/db";
 
@@ -11,7 +16,7 @@ export type TwitchChatMessage = {
   isModerator: boolean;
 };
 
-type ModeratorPresenceWindow = NonNullable<ReturnType<typeof parseModeratorCheckIn>>;
+type ModeratorPresenceWindow = NonNullable<ReturnType<typeof resolveModeratorCheckIn>>;
 
 type TwitchChatBridgeOptions = {
   onModeratorPresenceCheckIn?: (window: ModeratorPresenceWindow) => Promise<void> | void;
@@ -76,7 +81,7 @@ export function parseModeratorPresenceWindowFromChatMessage(args: {
     return null;
   }
 
-  return parseModeratorCheckIn({
+  return resolveModeratorCheckIn({
     actor: args.chatMessage.actor,
     input: args.chatMessage.message,
     now: args.now,
@@ -184,6 +189,14 @@ export class TwitchChatBridge {
     }
   }
 
+  private sendChatMessage(message: string): void {
+    if (!this.socket || this.socket.destroyed || !this.channel) {
+      return;
+    }
+
+    this.socket.write(`PRIVMSG #${this.channel} :${message}\r\n`);
+  }
+
   private handleChunk(chunk: string): void {
     this.buffer += chunk;
     const lines = this.buffer.split(/\r?\n/);
@@ -207,6 +220,15 @@ export class TwitchChatBridge {
         config: this.moderationConfig
       });
       if (presenceWindow) {
+        this.sendChatMessage(
+          formatPresenceClampReply({
+            commandInput: message.message,
+            requestedMinutes: presenceWindow.requestedMinutes,
+            appliedMinutes: presenceWindow.appliedMinutes,
+            clampReason: presenceWindow.clampReason,
+            config: this.moderationConfig
+          })
+        );
         void this.onModeratorPresenceCheckIn?.(presenceWindow);
         continue;
       }

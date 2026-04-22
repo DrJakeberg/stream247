@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_ENGAGEMENT_SETTINGS,
   createDefaultModerationConfig,
+  formatPresenceClampReply,
   isEngagementAlertsRuntimeEnabled,
   isEngagementChannelPointsRuntimeEnabled,
   isEngagementChatRuntimeEnabled,
@@ -14,7 +15,8 @@ import {
   createChatRateLimiter,
   createRingBuffer,
   parseModeratorPresenceWindowFromChatMessage,
-  parseTwitchIrcMessage
+  parseTwitchIrcMessage,
+  TwitchChatBridge
 } from "../../apps/worker/src/twitch-engagement";
 import { syncTwitchEventSubSubscriptions } from "../../apps/worker/src/twitch-eventsub";
 
@@ -197,6 +199,9 @@ describe("engagement layer helpers", () => {
     });
 
     expect(window?.minutes).toBe(45);
+    expect(window?.requestedMinutes).toBe(45);
+    expect(window?.appliedMinutes).toBe(45);
+    expect(window?.clampReason).toBe("accepted");
     expect(window?.expiresAt.toISOString()).toBe("2026-04-20T10:45:00.000Z");
   });
 
@@ -249,6 +254,67 @@ describe("engagement layer helpers", () => {
     });
 
     expect(window?.minutes).toBe(createDefaultModerationConfig().defaultMinutes);
+    expect(window?.requestedMinutes).toBeNull();
+    expect(window?.clampReason).toBe("default");
+  });
+
+  it("clamps low moderator requests and formats the reply for chat", () => {
+    const write = vi.fn();
+    const onModeratorPresenceCheckIn = vi.fn();
+    const bridge = new TwitchChatBridge({ onModeratorPresenceCheckIn });
+
+    bridge["socket"] = { write, destroyed: false } as never;
+    bridge["channel"] = "stream247";
+    bridge["moderationConfig"] = {
+      ...createDefaultModerationConfig(),
+      requirePrefix: true,
+      minMinutes: 10,
+      maxMinutes: 60
+    };
+
+    bridge["handleChunk"](
+      "@badge-info=;badges=moderator/1;display-name=Mod;id=chat-1;mod=1 :mod!mod@mod.tmi.twitch.tv PRIVMSG #stream247 :!here 5\r\n"
+    );
+
+    expect(write).toHaveBeenCalledWith("PRIVMSG #stream247 :received !here 5, minimum is 10; window set to 10 min\r\n");
+    expect(onModeratorPresenceCheckIn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: "Mod",
+        requestedMinutes: 5,
+        appliedMinutes: 10,
+        clampReason: "minimum"
+      })
+    );
+  });
+
+  it("formats clamp replies consistently from the parsed chat window", () => {
+    const window = parseModeratorPresenceWindowFromChatMessage({
+      chatMessage: {
+        id: "chat-6",
+        actor: "Moderator",
+        message: "!here 9999",
+        isModerator: true
+      },
+      now: new Date("2026-04-20T10:00:00.000Z"),
+      config: {
+        ...createDefaultModerationConfig(),
+        requirePrefix: true,
+        maxMinutes: 60
+      }
+    });
+
+    expect(
+      formatPresenceClampReply({
+        commandInput: window?.commandInput ?? "",
+        requestedMinutes: window?.requestedMinutes ?? null,
+        appliedMinutes: window?.appliedMinutes ?? 0,
+        clampReason: window?.clampReason ?? "accepted",
+        config: {
+          ...createDefaultModerationConfig(),
+          maxMinutes: 60
+        }
+      })
+    ).toBe("received !here 9999, maximum is 60; window set to 60 min");
   });
 
   it("ignores moderator presence commands from non-moderator chat accounts", () => {

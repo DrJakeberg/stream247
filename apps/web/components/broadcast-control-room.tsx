@@ -35,6 +35,19 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
       >
         <div className="stats-row">
           <StatusChip status={getBroadcastLiveStatusTone(snapshot.twitch)} label={getBroadcastLiveStatusLabel(snapshot.twitch)} />
+          {snapshot.presence.active ? (
+            <Link
+              className="subtle-link"
+              href="/moderation"
+              title={
+                snapshot.presence.actor
+                  ? `${snapshot.presence.actor} active for ${snapshot.presence.remainingMinutes} more minute(s)`
+                  : "Moderator presence active"
+              }
+            >
+              <StatusChip status="ok" label={`Here ${snapshot.presence.remainingMinutes}m`} />
+            </Link>
+          ) : null}
         </div>
         <div className="status-rail">
           <div>

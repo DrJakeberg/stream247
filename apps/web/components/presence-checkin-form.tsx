@@ -36,13 +36,13 @@ export function PresenceCheckInForm() {
             return;
           }
 
-          setMessage(`Presence active until ${payload.window?.expiresAt ?? "unknown"}.`);
+          setMessage(payload.message ?? `Presence active until ${payload.window?.expiresAt ?? "unknown"}.`);
           router.refresh();
         });
       }}
     >
       <input defaultValue="admin" name="actor" placeholder="actor" />
-      <input defaultValue="here 30" name="input" placeholder="here 30" />
+      <input defaultValue="!here 30" name="input" placeholder="!here 30" />
       <button className="button button-secondary" disabled={isPending} type="submit">
         {isPending ? "Checking in..." : "Create presence window"}
       </button>

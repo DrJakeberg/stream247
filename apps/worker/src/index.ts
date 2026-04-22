@@ -139,10 +139,16 @@ const twitchChatBridge = new TwitchChatBridge({
     await appendPresenceWindowRecord({
       actor: window.actor,
       minutes: window.minutes,
+      requestedMinutes: window.requestedMinutes,
+      appliedMinutes: window.appliedMinutes,
+      clampReason: window.clampReason,
       createdAt: window.createdAt.toISOString(),
       expiresAt: window.expiresAt.toISOString()
     });
-    await appendAuditEvent("moderation.checkin", `${window.actor} checked in for ${window.minutes} minutes via Twitch chat.`);
+    await appendAuditEvent(
+      "moderation.checkin",
+      `${window.actor} checked in for ${window.appliedMinutes} minutes via Twitch chat (${window.clampReason}).`
+    );
   }
 });
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;

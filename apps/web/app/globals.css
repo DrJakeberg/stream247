@@ -129,6 +129,8 @@ main {
 .nav-link {
   display: flex;
   align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
   min-width: 0;
   min-height: 36px;
   padding: 10px 12px;
@@ -157,9 +159,20 @@ main {
 
 .nav-link-title {
   font-weight: 600;
+  flex: 1 1 auto;
   line-height: 1.35;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+.nav-link-dot {
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--brand);
+  box-shadow: 0 0 0 4px rgba(14, 109, 90, 0.12);
 }
 
 .sidebar-card {
