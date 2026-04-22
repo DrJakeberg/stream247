@@ -2,6 +2,7 @@ import type {
   DestinationRoutingStatus,
   EngagementChatDisplayMode,
   EngagementEventKind,
+  EngagementGameMode,
   EngagementOverlayPosition,
   EngagementOverlayStyle,
   OverlaySceneCustomLayer,
@@ -245,6 +246,11 @@ export type LiveEngagementSettingsSummary = {
   alertsEnabled: boolean;
   donationsEnabled: boolean;
   channelPointsEnabled: boolean;
+  gameEnabled: boolean;
+  soloModeEnabled: boolean;
+  smallGroupModeEnabled: boolean;
+  crowdModeEnabled: boolean;
+  gameWindowMinutes: number;
   chatRuntimeEnabled: boolean;
   alertsRuntimeEnabled: boolean;
   donationsRuntimeEnabled: boolean;
@@ -258,6 +264,27 @@ export type LiveEngagementSettingsSummary = {
   updatedAt: string;
 };
 
+export type LiveEngagementGameOptionSummary = {
+  id: string;
+  label: string;
+  votes: number;
+  isLeading: boolean;
+};
+
+export type LiveEngagementGameSummary = {
+  enabled: boolean;
+  runtimeEnabled: boolean;
+  mode: EngagementGameMode | "";
+  activeChatterCount: number;
+  windowMinutes: number;
+  title: string;
+  prompt: string;
+  detail: string;
+  options: LiveEngagementGameOptionSummary[];
+  modeChangedAt: string;
+  updatedAt: string;
+};
+
 export type LiveEngagementEventSummary = {
   id: string;
   kind: EngagementEventKind;
@@ -268,6 +295,7 @@ export type LiveEngagementEventSummary = {
 
 export type LiveEngagementSummary = {
   settings: LiveEngagementSettingsSummary;
+  game: LiveEngagementGameSummary;
   chatStatus: "disabled" | "connected" | "disconnected";
   recentEvents: LiveEngagementEventSummary[];
 };

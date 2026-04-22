@@ -79,12 +79,18 @@ export type EngagementChatDisplayMode = "quiet" | "active" | "flood";
 export type EngagementOverlayPosition = "bottom-left" | "bottom-right" | "top-left" | "top-right";
 export type EngagementOverlayStyle = "compact" | "card";
 export type EngagementEventKind = "chat" | "follow" | "subscribe" | "cheer" | "channel-point" | "status";
+export type EngagementGameMode = "solo" | "small-group" | "crowd";
 
 export type EngagementSettings = {
   chatEnabled: boolean;
   alertsEnabled: boolean;
   donationsEnabled: boolean;
   channelPointsEnabled: boolean;
+  gameEnabled: boolean;
+  soloModeEnabled: boolean;
+  smallGroupModeEnabled: boolean;
+  crowdModeEnabled: boolean;
+  gameWindowMinutes: number;
   chatMode: EngagementChatDisplayMode;
   chatPosition: EngagementOverlayPosition;
   alertPosition: EngagementOverlayPosition;
@@ -99,6 +105,28 @@ export type EngagementEvent = {
   actor: string;
   message: string;
   createdAt: string;
+};
+
+export type EngagementGameRuntime = {
+  mode: EngagementGameMode | "";
+  activeChatterCount: number;
+  modeChangedAt: string;
+  updatedAt: string;
+};
+
+export type EngagementGameOptionSummary = {
+  id: string;
+  label: string;
+  votes: number;
+  isLeading: boolean;
+};
+
+export type EngagementGameOverlayState = {
+  mode: EngagementGameMode | "";
+  title: string;
+  prompt: string;
+  detail: string;
+  options: EngagementGameOptionSummary[];
 };
 
 type StreamOutputSettingsInput = {
@@ -119,6 +147,11 @@ type EngagementSettingsInput = {
   alertsEnabled?: unknown;
   donationsEnabled?: unknown;
   channelPointsEnabled?: unknown;
+  gameEnabled?: unknown;
+  soloModeEnabled?: unknown;
+  smallGroupModeEnabled?: unknown;
+  crowdModeEnabled?: unknown;
+  gameWindowMinutes?: unknown;
   chatMode?: unknown;
   chatPosition?: unknown;
   alertPosition?: unknown;
@@ -163,6 +196,11 @@ export const DEFAULT_ENGAGEMENT_SETTINGS: EngagementSettings = {
   alertsEnabled: false,
   donationsEnabled: true,
   channelPointsEnabled: true,
+  gameEnabled: false,
+  soloModeEnabled: true,
+  smallGroupModeEnabled: true,
+  crowdModeEnabled: true,
+  gameWindowMinutes: 10,
   chatMode: "quiet",
   chatPosition: "bottom-left",
   alertPosition: "top-right",
@@ -304,6 +342,10 @@ export function normalizeEngagementEventKind(value: unknown): EngagementEventKin
     : "status";
 }
 
+export function normalizeEngagementGameMode(value: unknown): EngagementGameMode | "" {
+  return value === "solo" || value === "small-group" || value === "crowd" ? value : "";
+}
+
 export function normalizeEngagementSettings(value?: EngagementSettingsInput | null): EngagementSettings {
   const defaults = DEFAULT_ENGAGEMENT_SETTINGS;
   return {
@@ -311,6 +353,11 @@ export function normalizeEngagementSettings(value?: EngagementSettingsInput | nu
     alertsEnabled: normalizeBoolean(value?.alertsEnabled, defaults.alertsEnabled),
     donationsEnabled: normalizeBoolean(value?.donationsEnabled, defaults.donationsEnabled),
     channelPointsEnabled: normalizeBoolean(value?.channelPointsEnabled, defaults.channelPointsEnabled),
+    gameEnabled: normalizeBoolean(value?.gameEnabled, defaults.gameEnabled),
+    soloModeEnabled: normalizeBoolean(value?.soloModeEnabled, defaults.soloModeEnabled),
+    smallGroupModeEnabled: normalizeBoolean(value?.smallGroupModeEnabled, defaults.smallGroupModeEnabled),
+    crowdModeEnabled: normalizeBoolean(value?.crowdModeEnabled, defaults.crowdModeEnabled),
+    gameWindowMinutes: clampInteger(value?.gameWindowMinutes, defaults.gameWindowMinutes, 1, 30),
     chatMode: normalizeEngagementChatDisplayMode(value?.chatMode),
     chatPosition: normalizeEngagementOverlayPosition(value?.chatPosition),
     alertPosition: normalizeEngagementOverlayPosition(value?.alertPosition),
@@ -358,6 +405,149 @@ export function isEngagementChannelPointsRuntimeEnabled(
 ): boolean {
   const normalized = normalizeEngagementSettings(settings);
   return normalized.channelPointsEnabled && isEngagementAlertsRuntimeEnabled(normalized, env);
+}
+
+export function hasEnabledEngagementGameModes(settings: EngagementSettingsInput | null | undefined): boolean {
+  const normalized = normalizeEngagementSettings(settings);
+  return normalized.soloModeEnabled || normalized.smallGroupModeEnabled || normalized.crowdModeEnabled;
+}
+
+export function isEngagementGameRuntimeEnabled(
+  settings: EngagementSettingsInput | null | undefined,
+  env: Record<string, string | undefined>
+): boolean {
+  const normalized = normalizeEngagementSettings(settings);
+  return normalized.gameEnabled && hasEnabledEngagementGameModes(normalized) && isEngagementChatRuntimeEnabled(normalized, env);
+}
+
+export function getEngagementGameWindowMs(settings: EngagementSettingsInput | null | undefined): number {
+  return normalizeEngagementSettings(settings).gameWindowMinutes * 60_000;
+}
+
+export function resolveEngagementGameModeForActiveChatters(
+  settings: EngagementSettingsInput | null | undefined,
+  activeChatterCount: number
+): EngagementGameMode | "" {
+  const normalized = normalizeEngagementSettings(settings);
+  if (!normalized.gameEnabled || activeChatterCount <= 0) {
+    return "";
+  }
+
+  if (activeChatterCount >= 10 && normalized.crowdModeEnabled) {
+    return "crowd";
+  }
+
+  if (activeChatterCount >= 2 && normalized.smallGroupModeEnabled) {
+    return "small-group";
+  }
+
+  if (normalized.soloModeEnabled) {
+    return "solo";
+  }
+
+  if (normalized.smallGroupModeEnabled) {
+    return "small-group";
+  }
+
+  if (normalized.crowdModeEnabled) {
+    return "crowd";
+  }
+
+  return "";
+}
+
+export function normalizeEngagementGameRuntime(value?: Partial<EngagementGameRuntime> | null): EngagementGameRuntime {
+  return {
+    mode: normalizeEngagementGameMode(value?.mode),
+    activeChatterCount: Math.max(0, Math.round(Number(value?.activeChatterCount ?? 0) || 0)),
+    modeChangedAt: stripInvisibleCharacters(String(value?.modeChangedAt ?? "")).trim(),
+    updatedAt: stripInvisibleCharacters(String(value?.updatedAt ?? "")).trim()
+  };
+}
+
+function buildLeadingVoteOptions(options: Array<{ id: string; label: string; votes: number }>): EngagementGameOptionSummary[] {
+  const leadingVotes = Math.max(0, ...options.map((option) => option.votes));
+  return options.map((option) => ({
+    ...option,
+    isLeading: leadingVotes > 0 && option.votes === leadingVotes
+  }));
+}
+
+export function buildEngagementGameOverlayState(args: {
+  settings: EngagementSettingsInput | null | undefined;
+  runtime: Partial<EngagementGameRuntime> | null | undefined;
+  recentEvents: Array<Partial<EngagementEvent>> | null | undefined;
+}): EngagementGameOverlayState {
+  const settings = normalizeEngagementSettings(args.settings);
+  const runtime = normalizeEngagementGameRuntime(args.runtime);
+  const recentChatEvents = Array.isArray(args.recentEvents)
+    ? args.recentEvents.map((event) => normalizeEngagementEvent(event)).filter((event) => event.kind === "chat")
+    : [];
+
+  if (!settings.gameEnabled || !hasEnabledEngagementGameModes(settings) || runtime.mode === "" || runtime.activeChatterCount <= 0) {
+    return {
+      mode: "",
+      title: "",
+      prompt: "",
+      detail: "",
+      options: []
+    };
+  }
+
+  const latestChatEvent = recentChatEvents[0] ?? null;
+  if (runtime.mode === "solo") {
+    const latestActor = latestChatEvent?.actor || "Your first chatter";
+    const prompt = recentChatEvents.length % 2 === 0 ? "Echo the hype in chat" : "Drop one emote that matches the scene";
+    return {
+      mode: "solo",
+      title: "Solo mode",
+      prompt,
+      detail: `${latestActor} is carrying the room. Keep the stream moving with one quick reply.`,
+      options: []
+    };
+  }
+
+  if (runtime.mode === "small-group") {
+    const voteOptions = buildLeadingVoteOptions(
+      [
+        { id: "fire", label: "🔥 Hype", votes: 0 },
+        { id: "blue", label: "💙 Chill", votes: 0 },
+        { id: "party", label: "🎉 Party", votes: 0 }
+      ].map((option) => ({
+        ...option,
+        votes: recentChatEvents.reduce((count, event) => count + (event.message.includes(option.label.split(" ")[0] || "") ? 1 : 0), 0)
+      }))
+    );
+    return {
+      mode: "small-group",
+      title: "Small-group mode",
+      prompt: "Quick emoji vote",
+      detail: `Watching ${runtime.activeChatterCount} active chatters over the last ${settings.gameWindowMinutes} minutes.`,
+      options: voteOptions
+    };
+  }
+
+  const predictionOptions = buildLeadingVoteOptions(
+    [
+      { id: "vote-a", token: "!a", label: "!A Hold", votes: 0 },
+      { id: "vote-b", token: "!b", label: "!B Push", votes: 0 },
+      { id: "vote-c", token: "!c", label: "!C Chaos", votes: 0 }
+    ].map((option) => ({
+      ...option,
+      votes: recentChatEvents.reduce(
+        (count, event) => count + (new RegExp(`(^|\\s)${option.token.replace("!", "\\!")}($|\\s)`, "i").test(event.message) ? 1 : 0),
+        0
+      )
+    }))
+  );
+
+  return {
+    mode: "crowd",
+    title: "Crowd mode",
+    prompt: "Prediction board",
+    detail: `${runtime.activeChatterCount} chatters are active. Let the room pick the next beat with !A, !B, or !C.`,
+    options: predictionOptions
+  };
 }
 
 type OverlaySceneCustomLayerBase = {

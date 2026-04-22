@@ -22,10 +22,11 @@ describe("studio workspace", () => {
     expect(overlaySettingsFormSource).toContain("Publish review");
   });
 
-  it("scaffolds chatter-participation game settings without claiming they are live yet", () => {
+  it("ships the chatter-participation game controls in the Studio engagement form", () => {
     expect(engagementSettingsFormSource).toContain("Chatter-participation game");
-    expect(engagementSettingsFormSource).toContain("Mode automation ships in M47");
+    expect(engagementSettingsFormSource).toContain("Enable chatter-participation game");
     expect(engagementSettingsFormSource).toContain("Solo mode");
+    expect(engagementSettingsFormSource).toContain("Small-group mode");
     expect(engagementSettingsFormSource).toContain("Crowd mode");
   });
 

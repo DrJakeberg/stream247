@@ -1,6 +1,7 @@
 import {
   DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
   DEFAULT_ENGAGEMENT_SETTINGS,
+  buildEngagementGameOverlayState,
   buildOverlayScenePayload,
   buildMaterializedProgrammingWeek,
   buildSchedulePreviewVideoSlots,
@@ -29,6 +30,7 @@ import {
   isEngagementChannelPointsRuntimeEnabled,
   isEngagementChatRuntimeEnabled,
   isEngagementDonationAlertsRuntimeEnabled,
+  isEngagementGameRuntimeEnabled,
   normalizeEngagementSettings,
   stripInvisibleCharacters,
   summarizeLiveBridgeInput,
@@ -62,6 +64,7 @@ import {
   saveOverlayDraftRecord,
   saveOverlayScenePresetRecord,
   updateDestinationRecord,
+  updateEngagementGameRuntimeRecord,
   updateEngagementSettingsRecord,
   updateManagedConfigRecord,
   updateModerationConfigRecord,
@@ -99,6 +102,7 @@ import {
   type AssetMetadataUpdateRecord,
   type AuditEvent,
   type EngagementEventRecord,
+  type EngagementGameRuntimeRecord,
   type EngagementSettingsRecord,
   type IncidentRecord,
   type ModeratorPresenceWindowRecord,
@@ -146,6 +150,7 @@ export type {
   AssetMetadataUpdateRecord,
   AuditEvent,
   EngagementEventRecord,
+  EngagementGameRuntimeRecord,
   EngagementSettingsRecord,
   IncidentRecord,
   ModeratorPresenceWindowRecord,
@@ -196,6 +201,7 @@ export {
   saveOverlayDraftRecord,
   saveOverlayScenePresetRecord,
   updateDestinationRecord,
+  updateEngagementGameRuntimeRecord,
   updateEngagementSettingsRecord,
   updateManagedConfigRecord,
   updateModerationConfigRecord,
@@ -877,6 +883,12 @@ function summarizeOverlay(overlay: OverlaySettingsRecord): LiveOverlaySummary {
 function summarizeEngagement(state: AppState): LiveEngagementSummary {
   const rawEngagement = (state as Partial<AppState>).engagement;
   const engagement = normalizeEngagementSettings(rawEngagement ?? DEFAULT_ENGAGEMENT_SETTINGS);
+  const engagementGameRuntime = (state as Partial<AppState>).engagementGame ?? {
+    mode: "",
+    activeChatterCount: 0,
+    modeChangedAt: "",
+    updatedAt: ""
+  };
   const engagementEvents = Array.isArray((state as Partial<AppState>).engagementEvents)
     ? ((state as Partial<AppState>).engagementEvents as EngagementEventRecord[])
     : [];
@@ -884,12 +896,18 @@ function summarizeEngagement(state: AppState): LiveEngagementSummary {
   const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(engagement, process.env);
   const donationsRuntimeEnabled = isEngagementDonationAlertsRuntimeEnabled(engagement, process.env);
   const channelPointsRuntimeEnabled = isEngagementChannelPointsRuntimeEnabled(engagement, process.env);
+  const gameRuntimeEnabled = isEngagementGameRuntimeEnabled(engagement, process.env);
   const latestStatus = engagementEvents.find((event) => event.kind === "status" && event.actor === "chat") ?? null;
   const chatStatus = !chatRuntimeEnabled
     ? "disabled"
     : latestStatus?.message === "connected"
       ? "connected"
       : "disconnected";
+  const game = buildEngagementGameOverlayState({
+    settings: engagement,
+    runtime: engagementGameRuntime,
+    recentEvents: engagementEvents
+  });
 
   return {
     settings: {
@@ -897,6 +915,11 @@ function summarizeEngagement(state: AppState): LiveEngagementSummary {
       alertsEnabled: engagement.alertsEnabled,
       donationsEnabled: engagement.donationsEnabled,
       channelPointsEnabled: engagement.channelPointsEnabled,
+      gameEnabled: engagement.gameEnabled,
+      soloModeEnabled: engagement.soloModeEnabled,
+      smallGroupModeEnabled: engagement.smallGroupModeEnabled,
+      crowdModeEnabled: engagement.crowdModeEnabled,
+      gameWindowMinutes: engagement.gameWindowMinutes,
       chatRuntimeEnabled,
       alertsRuntimeEnabled,
       donationsRuntimeEnabled,
@@ -909,10 +932,23 @@ function summarizeEngagement(state: AppState): LiveEngagementSummary {
       rateLimitPerMinute: engagement.rateLimitPerMinute,
       updatedAt: rawEngagement?.updatedAt ?? ""
     },
+    game: {
+      enabled: engagement.gameEnabled,
+      runtimeEnabled: gameRuntimeEnabled,
+      mode: game.mode,
+      activeChatterCount: engagementGameRuntime.activeChatterCount,
+      windowMinutes: engagement.gameWindowMinutes,
+      title: game.title,
+      prompt: game.prompt,
+      detail: game.detail,
+      options: game.options,
+      modeChangedAt: engagementGameRuntime.modeChangedAt || "",
+      updatedAt: engagementGameRuntime.updatedAt || rawEngagement?.updatedAt || ""
+    },
     chatStatus,
     recentEvents: engagementEvents
       .filter((event) => event.kind !== "status")
-      .slice(0, 25)
+      .slice(0, 50)
       .map((event) => ({
         id: event.id,
         kind: event.kind,

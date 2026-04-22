@@ -1545,7 +1545,7 @@ button.collection-chip {
   overflow: hidden;
 }
 
-.engagement-chat,
+.engagement-stack,
 .engagement-alert {
   position: absolute;
   z-index: 5;
@@ -1555,37 +1555,48 @@ button.collection-chip {
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.42);
 }
 
-.engagement-chat-bottom-left,
+.engagement-stack-bottom-left,
 .engagement-alert-bottom-left {
   left: var(--safe-area-left);
   bottom: var(--safe-area-bottom);
 }
 
-.engagement-chat-bottom-right,
+.engagement-stack-bottom-right,
 .engagement-alert-bottom-right {
   right: var(--safe-area-right);
   bottom: var(--safe-area-bottom);
 }
 
-.engagement-chat-top-left,
+.engagement-stack-top-left,
 .engagement-alert-top-left {
   left: var(--safe-area-left);
   top: var(--safe-area-top);
 }
 
-.engagement-chat-top-right,
+.engagement-stack-top-right,
 .engagement-alert-top-right {
   right: var(--safe-area-right);
   top: var(--safe-area-top);
 }
 
-.engagement-chat {
+.engagement-stack {
   display: grid;
   gap: max(6px, calc(var(--overlay-gap) * 0.45));
 }
 
+.engagement-stack-bottom-left,
+.engagement-stack-bottom-right {
+  align-content: end;
+}
+
+.engagement-chat,
+.engagement-game {
+  max-width: min(34vw, 420px, var(--overlay-safe-area-width));
+}
+
 .engagement-chat-message,
-.engagement-alert {
+.engagement-alert,
+.engagement-game {
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 18px;
   background: rgba(8, 15, 13, 0.62);
@@ -1599,7 +1610,8 @@ button.collection-chip {
 }
 
 .engagement-chat-message span,
-.engagement-alert span {
+.engagement-alert span,
+.engagement-game span {
   display: block;
   color: color-mix(in srgb, var(--overlay-accent) 80%, #fffaf0);
   font-size: max(var(--overlay-font-floor), calc(14px * var(--overlay-scale)));
@@ -1609,7 +1621,8 @@ button.collection-chip {
 }
 
 .engagement-chat-message p,
-.engagement-alert p {
+.engagement-alert p,
+.engagement-game p {
   margin: 3px 0 0;
   font-size: max(var(--overlay-font-floor), calc(15px * var(--overlay-scale)));
   line-height: 1.25;
@@ -1635,6 +1648,48 @@ button.collection-chip {
   margin-top: 4px;
   font-size: max(var(--overlay-font-floor), calc(30px * var(--overlay-scale)));
   line-height: 1;
+}
+
+.engagement-game {
+  display: grid;
+  gap: 8px;
+  padding: var(--overlay-banner-padding-y) var(--overlay-banner-padding-x);
+  animation: engagement-rise 0.38s ease both;
+}
+
+.engagement-game strong {
+  display: block;
+  margin-top: 4px;
+  font-size: max(var(--overlay-font-floor), calc(24px * var(--overlay-scale)));
+  line-height: 1.1;
+}
+
+.engagement-game-options {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.engagement-game-options li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--overlay-accent) 10%, rgba(255, 255, 255, 0.04));
+  font-size: max(var(--overlay-font-floor), calc(14px * var(--overlay-scale)));
+}
+
+.engagement-game-options li strong {
+  margin-top: 0;
+  font-size: max(var(--overlay-font-floor), calc(18px * var(--overlay-scale)));
+}
+
+.engagement-game-option-leading {
+  border: 1px solid color-mix(in srgb, var(--overlay-accent) 66%, rgba(255, 255, 255, 0.3));
 }
 
 @keyframes engagement-rise {

@@ -20,6 +20,7 @@ type ModeratorPresenceWindow = NonNullable<ReturnType<typeof resolveModeratorChe
 
 type TwitchChatBridgeOptions = {
   onModeratorPresenceCheckIn?: (window: ModeratorPresenceWindow) => Promise<void> | void;
+  onChatMessage?: (message: TwitchChatMessage & { createdAt: string }) => Promise<void> | void;
 };
 
 export function createRingBuffer<T>(capacity: number) {
@@ -129,9 +130,11 @@ export class TwitchChatBridge {
   private limiter = createChatRateLimiter(30);
   private moderationConfig: AppState["moderation"] = createDefaultModerationConfig();
   private readonly onModeratorPresenceCheckIn?: TwitchChatBridgeOptions["onModeratorPresenceCheckIn"];
+  private readonly onChatMessage?: TwitchChatBridgeOptions["onChatMessage"];
 
   constructor(options: TwitchChatBridgeOptions = {}) {
     this.onModeratorPresenceCheckIn = options.onModeratorPresenceCheckIn;
+    this.onChatMessage = options.onChatMessage;
   }
 
   getRecentMessages(): EngagementEventRecord[] {
@@ -245,6 +248,10 @@ export class TwitchChatBridge {
         createdAt: now.toISOString()
       };
       this.messages.push(event);
+      void this.onChatMessage?.({
+        ...message,
+        createdAt: event.createdAt
+      });
       void appendEngagementEventRecord(event);
     }
   }

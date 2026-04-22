@@ -53,6 +53,7 @@ const persistentProgramFeedRuntimeColumns = [
 ].sort();
 const outputProfilesMigrationId = "20260420_001_output_profiles";
 const destinationOutputProfilesMigrationId = "20260421_002_destination_output_profiles";
+const engagementGameMigrationId = "20260422_001_engagement_game";
 const outputSettingsColumns = ["singleton_id", "profile_id", "width", "height", "fps", "updated_at"].sort();
 const engagementLayerMigrationId = "20260420_002_engagement_layer";
 const engagementAlertTypesMigrationId = "20260421_001_engagement_alert_types";
@@ -62,6 +63,11 @@ const engagementSettingsColumns = [
   "alerts_enabled",
   "donations_enabled",
   "channel_points_enabled",
+  "game_enabled",
+  "solo_mode_enabled",
+  "small_group_mode_enabled",
+  "crowd_mode_enabled",
+  "game_window_minutes",
   "chat_mode",
   "chat_position",
   "alert_position",
@@ -70,6 +76,7 @@ const engagementSettingsColumns = [
   "rate_limit_per_minute",
   "updated_at"
 ].sort();
+const engagementGameRuntimeColumns = ["singleton_id", "active_chatter_count", "mode", "mode_changed_at", "updated_at"].sort();
 const engagementEventsColumns = ["id", "kind", "actor", "message", "created_at"].sort();
 
 async function runDocker(args: string[]): Promise<string> {
@@ -266,6 +273,11 @@ describe.sequential("database roundtrip", () => {
         alertsEnabled: true,
         donationsEnabled: true,
         channelPointsEnabled: true,
+        gameEnabled: true,
+        soloModeEnabled: true,
+        smallGroupModeEnabled: true,
+        crowdModeEnabled: false,
+        gameWindowMinutes: 12,
         chatMode: "active" as const,
         chatPosition: "bottom-right" as const,
         alertPosition: "top-left" as const,
@@ -273,6 +285,12 @@ describe.sequential("database roundtrip", () => {
         maxMessages: 8,
         rateLimitPerMinute: 45,
         updatedAt: "2026-04-04T10:00:00.000Z"
+      },
+      engagementGame: {
+        mode: "small-group" as const,
+        activeChatterCount: 6,
+        modeChangedAt: "2026-04-04T10:03:00.000Z",
+        updatedAt: "2026-04-04T10:04:00.000Z"
       },
       engagementEvents: [
         {
@@ -569,6 +587,7 @@ describe.sequential("database roundtrip", () => {
     expect(reread.managedConfig.twitchClientId).toBe("client-id");
     expect(reread.output).toEqual(nextState.output);
     expect(reread.engagement).toEqual(nextState.engagement);
+    expect(reread.engagementGame).toEqual(nextState.engagementGame);
     expect(reread.engagementEvents.map((event) => event.id)).toEqual(["engagement_follow_1", "engagement_chat_1"]);
     expect(reread.engagementEvents[0]?.actor).toBe("newviewer");
     expect(reread.engagementEvents[0]?.message).toBe("newviewer followed the channel.");
@@ -686,6 +705,11 @@ describe.sequential("database roundtrip", () => {
       alertsEnabled: false,
       donationsEnabled: true,
       channelPointsEnabled: true,
+      gameEnabled: true,
+      soloModeEnabled: true,
+      smallGroupModeEnabled: false,
+      crowdModeEnabled: true,
+      gameWindowMinutes: 15,
       chatMode: "flood",
       chatPosition: "top-right",
       alertPosition: "bottom-left",
@@ -699,6 +723,11 @@ describe.sequential("database roundtrip", () => {
       alertsEnabled: false,
       donationsEnabled: true,
       channelPointsEnabled: true,
+      gameEnabled: true,
+      soloModeEnabled: true,
+      smallGroupModeEnabled: false,
+      crowdModeEnabled: true,
+      gameWindowMinutes: 15,
       chatMode: "flood",
       chatPosition: "top-right",
       alertPosition: "bottom-left",
@@ -825,10 +854,12 @@ describe.sequential("database roundtrip", () => {
   it("upgrades existing databases with engagement settings and event storage", async () => {
     await ensureDatabaseWithRetry();
     await executeSql(`
+      DROP TABLE IF EXISTS engagement_game_runtime;
       DROP TABLE IF EXISTS engagement_events;
       DROP TABLE IF EXISTS engagement_settings;
       DELETE FROM schema_migrations WHERE id = '${engagementLayerMigrationId}';
       DELETE FROM schema_migrations WHERE id = '${engagementAlertTypesMigrationId}';
+      DELETE FROM schema_migrations WHERE id = '${engagementGameMigrationId}';
     `);
 
     await resetDatabaseConnectionsForTests();
@@ -854,20 +885,42 @@ describe.sequential("database roundtrip", () => {
     )
       .split("\n")
       .filter(Boolean);
+    const runtimeColumns = (
+      await executeSql(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'engagement_game_runtime'
+        ORDER BY column_name;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
     const migrationApplied = await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${engagementLayerMigrationId}';`);
     const alertTypesMigrationApplied = await executeSql(
       `SELECT COUNT(*) FROM schema_migrations WHERE id = '${engagementAlertTypesMigrationId}';`
     );
+    const gameMigrationApplied = await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${engagementGameMigrationId}';`);
     const state = await readAppState();
 
     expect(settingsColumns).toEqual(engagementSettingsColumns);
+    expect(runtimeColumns).toEqual(engagementGameRuntimeColumns);
     expect(eventColumns).toEqual(engagementEventsColumns);
     expect(migrationApplied).toBe("1");
     expect(alertTypesMigrationApplied).toBe("1");
+    expect(gameMigrationApplied).toBe("1");
     expect(state.engagement.chatEnabled).toBe(false);
     expect(state.engagement.alertsEnabled).toBe(false);
     expect(state.engagement.donationsEnabled).toBe(true);
     expect(state.engagement.channelPointsEnabled).toBe(true);
+    expect(state.engagement.gameEnabled).toBe(false);
+    expect(state.engagement.smallGroupModeEnabled).toBe(true);
+    expect(state.engagement.gameWindowMinutes).toBe(10);
+    expect(state.engagementGame).toEqual({
+      mode: "",
+      activeChatterCount: 0,
+      modeChangedAt: "",
+      updatedAt: ""
+    });
     expect(state.engagementEvents).toEqual([]);
   }, 60_000);
 

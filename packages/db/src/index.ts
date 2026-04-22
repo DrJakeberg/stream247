@@ -7,6 +7,8 @@ import {
   normalizeAudioLaneVolumePercent,
   normalizeCuepointOffsetsSeconds,
   normalizeEngagementEvent,
+  normalizeEngagementGameMode,
+  normalizeEngagementGameRuntime,
   normalizeEngagementSettings,
   normalizeOverlayPanelAnchor,
   normalizeOverlaySceneCustomLayers,
@@ -22,6 +24,8 @@ import {
   type DestinationRoutingStatus,
   type DestinationOutputProfileId,
   type EngagementChatDisplayMode,
+  type EngagementGameMode,
+  type EngagementGameRuntime,
   type EngagementEventKind,
   type EngagementOverlayPosition,
   type EngagementOverlayStyle,
@@ -389,6 +393,11 @@ export type EngagementSettingsRecord = {
   alertsEnabled: boolean;
   donationsEnabled: boolean;
   channelPointsEnabled: boolean;
+  gameEnabled: boolean;
+  soloModeEnabled: boolean;
+  smallGroupModeEnabled: boolean;
+  crowdModeEnabled: boolean;
+  gameWindowMinutes: number;
   chatMode: EngagementChatDisplayMode;
   chatPosition: EngagementOverlayPosition;
   alertPosition: EngagementOverlayPosition;
@@ -397,6 +406,8 @@ export type EngagementSettingsRecord = {
   rateLimitPerMinute: number;
   updatedAt: string;
 };
+
+export type EngagementGameRuntimeRecord = EngagementGameRuntime;
 
 export type EngagementEventRecord = {
   id: string;
@@ -524,6 +535,7 @@ export type AppState = {
   managedConfig: ManagedConfigRecord;
   output: OutputSettingsRecord;
   engagement: EngagementSettingsRecord;
+  engagementGame: EngagementGameRuntimeRecord;
   engagementEvents: EngagementEventRecord[];
   twitch: TwitchConnection;
   twitchScheduleSegments: TwitchScheduleSegmentRecord[];
@@ -596,12 +608,24 @@ type EngagementSettingsRow = {
   alerts_enabled: boolean;
   donations_enabled: boolean;
   channel_points_enabled: boolean;
+  game_enabled: boolean;
+  solo_mode_enabled: boolean;
+  small_group_mode_enabled: boolean;
+  crowd_mode_enabled: boolean;
+  game_window_minutes: number;
   chat_mode: EngagementChatDisplayMode;
   chat_position: EngagementOverlayPosition;
   alert_position: EngagementOverlayPosition;
   style: EngagementOverlayStyle;
   max_messages: number;
   rate_limit_per_minute: number;
+  updated_at: string;
+};
+
+type EngagementGameRuntimeRow = {
+  active_chatter_count: number;
+  mode: EngagementGameMode | "";
+  mode_changed_at: string;
   updated_at: string;
 };
 
@@ -709,6 +733,19 @@ function normalizeEngagementSettingsRecord(engagement?: Partial<EngagementSettin
   };
 }
 
+function normalizeEngagementGameRuntimeRecord(
+  runtime?: Partial<EngagementGameRuntimeRecord> | null
+): EngagementGameRuntimeRecord {
+  const defaults = defaultState().engagementGame;
+  const normalized = normalizeEngagementGameRuntime(runtime ?? defaults);
+  return {
+    mode: normalized.mode,
+    activeChatterCount: normalized.activeChatterCount,
+    modeChangedAt: normalized.modeChangedAt,
+    updatedAt: normalized.updatedAt
+  };
+}
+
 function normalizeEngagementEventRecord(event: Partial<EngagementEventRecord>): EngagementEventRecord {
   const normalized = normalizeEngagementEvent(event);
   return {
@@ -779,12 +816,31 @@ function mapEngagementSettingsRowToRecord(
         alertsEnabled: row.alerts_enabled,
         donationsEnabled: row.donations_enabled,
         channelPointsEnabled: row.channel_points_enabled,
+        gameEnabled: row.game_enabled,
+        soloModeEnabled: row.solo_mode_enabled,
+        smallGroupModeEnabled: row.small_group_mode_enabled,
+        crowdModeEnabled: row.crowd_mode_enabled,
+        gameWindowMinutes: row.game_window_minutes,
         chatMode: row.chat_mode,
         chatPosition: row.chat_position,
         alertPosition: row.alert_position,
         style: row.style,
         maxMessages: row.max_messages,
         rateLimitPerMinute: row.rate_limit_per_minute,
+        updatedAt: row.updated_at
+      })
+    : fallback;
+}
+
+function mapEngagementGameRuntimeRowToRecord(
+  row: EngagementGameRuntimeRow | undefined,
+  fallback: EngagementGameRuntimeRecord
+): EngagementGameRuntimeRecord {
+  return row
+    ? normalizeEngagementGameRuntimeRecord({
+        activeChatterCount: row.active_chatter_count,
+        mode: normalizeEngagementGameMode(row.mode),
+        modeChangedAt: row.mode_changed_at,
         updatedAt: row.updated_at
       })
     : fallback;
@@ -1291,12 +1347,23 @@ function defaultState(): AppState {
       alertsEnabled: false,
       donationsEnabled: true,
       channelPointsEnabled: true,
+      gameEnabled: false,
+      soloModeEnabled: true,
+      smallGroupModeEnabled: true,
+      crowdModeEnabled: true,
+      gameWindowMinutes: 10,
       chatMode: "quiet",
       chatPosition: "bottom-left",
       alertPosition: "top-right",
       style: "compact",
       maxMessages: 5,
       rateLimitPerMinute: 30,
+      updatedAt: ""
+    },
+    engagementGame: {
+      mode: "",
+      activeChatterCount: 0,
+      modeChangedAt: "",
       updatedAt: ""
     },
     engagementEvents: [],
@@ -1617,6 +1684,9 @@ function normalizeState(state: AppState): AppState {
     engagement: normalizeEngagementSettingsRecord(
       (state as AppState & { engagement?: Partial<EngagementSettingsRecord> }).engagement ?? defaults.engagement
     ),
+    engagementGame: normalizeEngagementGameRuntimeRecord(
+      (state as AppState & { engagementGame?: Partial<EngagementGameRuntimeRecord> }).engagementGame ?? defaults.engagementGame
+    ),
     engagementEvents: Array.isArray((state as AppState & { engagementEvents?: Partial<EngagementEventRecord>[] }).engagementEvents)
       ? (state as AppState & { engagementEvents?: Partial<EngagementEventRecord>[] }).engagementEvents
           .map((event) => normalizeEngagementEventRecord(event))
@@ -1912,12 +1982,25 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       alerts_enabled BOOLEAN NOT NULL DEFAULT FALSE,
       donations_enabled BOOLEAN NOT NULL DEFAULT TRUE,
       channel_points_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      game_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      solo_mode_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      small_group_mode_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      crowd_mode_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      game_window_minutes INTEGER NOT NULL DEFAULT 10,
       chat_mode TEXT NOT NULL DEFAULT 'quiet',
       chat_position TEXT NOT NULL DEFAULT 'bottom-left',
       alert_position TEXT NOT NULL DEFAULT 'top-right',
       style TEXT NOT NULL DEFAULT 'compact',
       max_messages INTEGER NOT NULL DEFAULT 5,
       rate_limit_per_minute INTEGER NOT NULL DEFAULT 30,
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS engagement_game_runtime (
+      singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+      active_chatter_count INTEGER NOT NULL DEFAULT 0,
+      mode TEXT NOT NULL DEFAULT '',
+      mode_changed_at TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT ''
     );
 
@@ -2514,6 +2597,32 @@ if (!schemaMigrations.some((migration) => migration.id === engagementAlertTypesM
   schemaMigrations.push(engagementAlertTypesMigration);
 }
 
+const engagementGameMigration: MigrationDefinition = {
+  id: "20260422_001_engagement_game",
+  description: "Add chatter-participation game settings and runtime storage.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE engagement_settings ADD COLUMN IF NOT EXISTS game_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE engagement_settings ADD COLUMN IF NOT EXISTS solo_mode_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+      ALTER TABLE engagement_settings ADD COLUMN IF NOT EXISTS small_group_mode_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+      ALTER TABLE engagement_settings ADD COLUMN IF NOT EXISTS crowd_mode_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+      ALTER TABLE engagement_settings ADD COLUMN IF NOT EXISTS game_window_minutes INTEGER NOT NULL DEFAULT 10;
+
+      CREATE TABLE IF NOT EXISTS engagement_game_runtime (
+        singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+        active_chatter_count INTEGER NOT NULL DEFAULT 0,
+        mode TEXT NOT NULL DEFAULT '',
+        mode_changed_at TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT ''
+      );
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === engagementGameMigration.id)) {
+  schemaMigrations.push(engagementGameMigration);
+}
+
 const destinationOutputProfilesMigration: MigrationDefinition = {
   id: "20260421_002_destination_output_profiles",
   description: "Add per-destination output profile assignment.",
@@ -2838,14 +2947,19 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   await client.query(
     `
       INSERT INTO engagement_settings (
-        singleton_id, chat_enabled, alerts_enabled, donations_enabled, channel_points_enabled, chat_mode, chat_position, alert_position, style, max_messages, rate_limit_per_minute, updated_at
+        singleton_id, chat_enabled, alerts_enabled, donations_enabled, channel_points_enabled, game_enabled, solo_mode_enabled, small_group_mode_enabled, crowd_mode_enabled, game_window_minutes, chat_mode, chat_position, alert_position, style, max_messages, rate_limit_per_minute, updated_at
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       ON CONFLICT (singleton_id) DO UPDATE SET
         chat_enabled = EXCLUDED.chat_enabled,
         alerts_enabled = EXCLUDED.alerts_enabled,
         donations_enabled = EXCLUDED.donations_enabled,
         channel_points_enabled = EXCLUDED.channel_points_enabled,
+        game_enabled = EXCLUDED.game_enabled,
+        solo_mode_enabled = EXCLUDED.solo_mode_enabled,
+        small_group_mode_enabled = EXCLUDED.small_group_mode_enabled,
+        crowd_mode_enabled = EXCLUDED.crowd_mode_enabled,
+        game_window_minutes = EXCLUDED.game_window_minutes,
         chat_mode = EXCLUDED.chat_mode,
         chat_position = EXCLUDED.chat_position,
         alert_position = EXCLUDED.alert_position,
@@ -2859,6 +2973,11 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       next.engagement.alertsEnabled,
       next.engagement.donationsEnabled,
       next.engagement.channelPointsEnabled,
+      next.engagement.gameEnabled,
+      next.engagement.soloModeEnabled,
+      next.engagement.smallGroupModeEnabled,
+      next.engagement.crowdModeEnabled,
+      next.engagement.gameWindowMinutes,
       next.engagement.chatMode,
       next.engagement.chatPosition,
       next.engagement.alertPosition,
@@ -2866,6 +2985,24 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       next.engagement.maxMessages,
       next.engagement.rateLimitPerMinute,
       next.engagement.updatedAt
+    ]
+  );
+
+  await client.query(
+    `
+      INSERT INTO engagement_game_runtime (singleton_id, active_chatter_count, mode, mode_changed_at, updated_at)
+      VALUES (1, $1, $2, $3, $4)
+      ON CONFLICT (singleton_id) DO UPDATE SET
+        active_chatter_count = EXCLUDED.active_chatter_count,
+        mode = EXCLUDED.mode,
+        mode_changed_at = EXCLUDED.mode_changed_at,
+        updated_at = EXCLUDED.updated_at
+    `,
+    [
+      next.engagementGame.activeChatterCount,
+      next.engagementGame.mode,
+      next.engagementGame.modeChangedAt,
+      next.engagementGame.updatedAt
     ]
   );
 
@@ -3483,6 +3620,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   }>("SELECT * FROM managed_config WHERE singleton_id = 1");
   const outputResult = await client.query<OutputSettingsRow>("SELECT * FROM output_settings WHERE singleton_id = 1");
   const engagementResult = await client.query<EngagementSettingsRow>("SELECT * FROM engagement_settings WHERE singleton_id = 1");
+  const engagementGameResult = await client.query<EngagementGameRuntimeRow>(
+    "SELECT * FROM engagement_game_runtime WHERE singleton_id = 1"
+  );
   const engagementEventsResult = await client.query<EngagementEventRow>(
     "SELECT * FROM engagement_events ORDER BY created_at DESC LIMIT 100"
   );
@@ -3733,6 +3873,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   const managedConfigRow = managedConfigResult.rows[0];
   const outputRow = outputResult.rows[0];
   const engagementRow = engagementResult.rows[0];
+  const engagementGameRow = engagementGameResult.rows[0];
   const twitchRow = twitchResult.rows[0];
   const playoutRow = playoutResult.rows[0];
   const decryptedManagedConfig = managedConfigRow ? decryptManagedConfig(managedConfigRow.encrypted_payload) : null;
@@ -3798,6 +3939,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       : defaults.managedConfig,
     output: mapOutputRowToRecord(outputRow, defaults.output),
     engagement: mapEngagementSettingsRowToRecord(engagementRow, defaults.engagement),
+    engagementGame: mapEngagementGameRuntimeRowToRecord(engagementGameRow, defaults.engagementGame),
     engagementEvents: engagementEventsResult.rows.map(mapEngagementEventRowToRecord),
     twitch: twitchRow
       ? {
@@ -4752,14 +4894,19 @@ export async function updateEngagementSettingsRecord(engagement: EngagementSetti
     await client.query(
       `
         INSERT INTO engagement_settings (
-          singleton_id, chat_enabled, alerts_enabled, donations_enabled, channel_points_enabled, chat_mode, chat_position, alert_position, style, max_messages, rate_limit_per_minute, updated_at
+          singleton_id, chat_enabled, alerts_enabled, donations_enabled, channel_points_enabled, game_enabled, solo_mode_enabled, small_group_mode_enabled, crowd_mode_enabled, game_window_minutes, chat_mode, chat_position, alert_position, style, max_messages, rate_limit_per_minute, updated_at
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         ON CONFLICT (singleton_id) DO UPDATE SET
           chat_enabled = EXCLUDED.chat_enabled,
           alerts_enabled = EXCLUDED.alerts_enabled,
           donations_enabled = EXCLUDED.donations_enabled,
           channel_points_enabled = EXCLUDED.channel_points_enabled,
+          game_enabled = EXCLUDED.game_enabled,
+          solo_mode_enabled = EXCLUDED.solo_mode_enabled,
+          small_group_mode_enabled = EXCLUDED.small_group_mode_enabled,
+          crowd_mode_enabled = EXCLUDED.crowd_mode_enabled,
+          game_window_minutes = EXCLUDED.game_window_minutes,
           chat_mode = EXCLUDED.chat_mode,
           chat_position = EXCLUDED.chat_position,
           alert_position = EXCLUDED.alert_position,
@@ -4773,6 +4920,11 @@ export async function updateEngagementSettingsRecord(engagement: EngagementSetti
         normalized.alertsEnabled,
         normalized.donationsEnabled,
         normalized.channelPointsEnabled,
+        normalized.gameEnabled,
+        normalized.soloModeEnabled,
+        normalized.smallGroupModeEnabled,
+        normalized.crowdModeEnabled,
+        normalized.gameWindowMinutes,
         normalized.chatMode,
         normalized.chatPosition,
         normalized.alertPosition,
@@ -4781,6 +4933,24 @@ export async function updateEngagementSettingsRecord(engagement: EngagementSetti
         normalized.rateLimitPerMinute,
         normalized.updatedAt
       ]
+    );
+  });
+}
+
+export async function updateEngagementGameRuntimeRecord(runtime: Partial<EngagementGameRuntimeRecord>): Promise<void> {
+  await withSerializedStateWrite("updateEngagementGameRuntimeRecord", async (client) => {
+    const normalized = normalizeEngagementGameRuntimeRecord(runtime);
+    await client.query(
+      `
+        INSERT INTO engagement_game_runtime (singleton_id, active_chatter_count, mode, mode_changed_at, updated_at)
+        VALUES (1, $1, $2, $3, $4)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          active_chatter_count = EXCLUDED.active_chatter_count,
+          mode = EXCLUDED.mode,
+          mode_changed_at = EXCLUDED.mode_changed_at,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [normalized.activeChatterCount, normalized.mode, normalized.modeChangedAt, normalized.updatedAt]
     );
   });
 }

@@ -39,6 +39,7 @@ import {
   replaceTwitchScheduleSegments,
   resolveIncident,
   updateDestinationRecord,
+  updateEngagementGameRuntimeRecord,
   updateAssetRecords,
   updatePlayoutRuntime,
   updatePoolCursor,
@@ -102,6 +103,7 @@ import {
 } from "./twitch-vod-cache.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
+import { EngagementGameTracker } from "./engagement-game.js";
 import {
   getOutputGopSize,
   getOutputScaleFactor,
@@ -134,6 +136,7 @@ let uplinkReconnectUntil = "";
 const WORKER_HEARTBEAT_STALE_MS = 240_000;
 type WorkerScheduleOccurrence = ReturnType<typeof buildScheduleOccurrences>[number];
 const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
+const engagementGameTracker = new EngagementGameTracker();
 const twitchChatBridge = new TwitchChatBridge({
   async onModeratorPresenceCheckIn(window) {
     await appendPresenceWindowRecord({
@@ -149,6 +152,12 @@ const twitchChatBridge = new TwitchChatBridge({
       "moderation.checkin",
       `${window.actor} checked in for ${window.appliedMinutes} minutes via Twitch chat (${window.clampReason}).`
     );
+  },
+  onChatMessage(message) {
+    engagementGameTracker.recordChatMessage({
+      actor: message.actor,
+      createdAt: message.createdAt
+    });
   }
 });
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
@@ -4568,6 +4577,16 @@ async function reconcileTwitchEventSub(): Promise<void> {
   }
 }
 
+async function reconcileEngagementGame(): Promise<void> {
+  const state = await readAppState();
+  const snapshot = engagementGameTracker.getSnapshot(state.engagement, new Date());
+  if (!engagementGameTracker.isSnapshotChanged(snapshot)) {
+    return;
+  }
+
+  await updateEngagementGameRuntimeRecord(snapshot);
+}
+
 async function runWorkerCycle(): Promise<void> {
   await syncDestinations();
   await syncLocalMediaLibrary();
@@ -4578,6 +4597,7 @@ async function runWorkerCycle(): Promise<void> {
   await reconcileTwitchLiveStatus();
   await reconcileTwitchEventSub();
   await twitchChatBridge.sync(await readAppState(), process.env);
+  await reconcileEngagementGame();
   await appendAuditEvent("worker.cycle", "Worker reconciliation cycle completed.");
 }
 

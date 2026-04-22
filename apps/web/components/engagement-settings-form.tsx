@@ -15,6 +15,11 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
   const [alertsEnabled, setAlertsEnabled] = useState(engagement.alertsEnabled);
   const [donationsEnabled, setDonationsEnabled] = useState(engagement.donationsEnabled);
   const [channelPointsEnabled, setChannelPointsEnabled] = useState(engagement.channelPointsEnabled);
+  const [gameEnabled, setGameEnabled] = useState(engagement.gameEnabled);
+  const [soloModeEnabled, setSoloModeEnabled] = useState(engagement.soloModeEnabled);
+  const [smallGroupModeEnabled, setSmallGroupModeEnabled] = useState(engagement.smallGroupModeEnabled);
+  const [crowdModeEnabled, setCrowdModeEnabled] = useState(engagement.crowdModeEnabled);
+  const [gameWindowMinutes, setGameWindowMinutes] = useState(String(engagement.gameWindowMinutes));
   const [chatMode, setChatMode] = useState(engagement.chatMode);
   const [chatPosition, setChatPosition] = useState(engagement.chatPosition);
   const [alertPosition, setAlertPosition] = useState(engagement.alertPosition);
@@ -35,6 +40,11 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
         alertsEnabled,
         donationsEnabled,
         channelPointsEnabled,
+        gameEnabled,
+        soloModeEnabled,
+        smallGroupModeEnabled,
+        crowdModeEnabled,
+        gameWindowMinutes,
         chatMode,
         chatPosition,
         alertPosition,
@@ -171,31 +181,45 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
         <div className="item">
           <span className="label">Chatter-participation game</span>
           <div className="subtle">
-            Mode automation ships in M47. This section locks the intended Studio surface now so operators stop hunting for a second engagement page later.
+            The game shares the Twitch IRC runtime with the chat rail. Keep `STREAM_CHAT_OVERLAY_ENABLED=1` and chat enabled when you want the mode selector to stay live.
           </div>
-          <fieldset className="form-grid" disabled style={{ marginTop: 12 }}>
-            <label>
-              <span className="label">Automatic mode</span>
-              <select defaultValue="solo">
-                <option value="solo">Solo mode</option>
-                <option value="small-group">Small-group mode</option>
-                <option value="crowd">Crowd mode</option>
-              </select>
+          <div className="form-grid" style={{ marginTop: 12 }}>
+            <label className="checkbox-row">
+              <input checked={gameEnabled} onChange={(event) => setGameEnabled(event.target.checked)} type="checkbox" />
+              <span>Enable chatter-participation game</span>
             </label>
             <label>
               <span className="label">Active chatter window (minutes)</span>
-              <input defaultValue="5" min={1} type="number" />
+              <input
+                max={30}
+                min={1}
+                onChange={(event) => setGameWindowMinutes(event.target.value)}
+                type="number"
+                value={gameWindowMinutes}
+              />
+            </label>
+            <label className="checkbox-row">
+              <input checked={soloModeEnabled} onChange={(event) => setSoloModeEnabled(event.target.checked)} type="checkbox" />
+              <span>Solo mode</span>
+            </label>
+            <label className="checkbox-row">
+              <input
+                checked={smallGroupModeEnabled}
+                onChange={(event) => setSmallGroupModeEnabled(event.target.checked)}
+                type="checkbox"
+              />
+              <span>Small-group mode</span>
+            </label>
+            <label className="checkbox-row">
+              <input checked={crowdModeEnabled} onChange={(event) => setCrowdModeEnabled(event.target.checked)} type="checkbox" />
+              <span>Crowd mode</span>
             </label>
             <label>
-              <span className="label">Small-group threshold</span>
-              <input defaultValue="2" min={1} type="number" />
+              <span className="label">Mode automation</span>
+              <div className="subtle">Solo handles one chatter, Small-group handles 2-9, Crowd takes over at 10+, with worker-side hysteresis to prevent flapping.</div>
             </label>
-            <label>
-              <span className="label">Crowd threshold</span>
-              <input defaultValue="10" min={2} type="number" />
-            </label>
-          </fieldset>
-          <div className="subtle">Solo mode, Small-group mode, and Crowd mode become live once M47 adds runtime state and overlay widgets.</div>
+          </div>
+          <div className="subtle">Disable any mode you do not want auto-selected. If chat goes quiet or every mode is disabled, the game widget stays off-air.</div>
         </div>
       </div>
 

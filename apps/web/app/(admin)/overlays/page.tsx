@@ -22,7 +22,7 @@ export default async function OverlaysPage() {
   return (
     <div className="stack-form">
       <AdminPageHeader
-        description="Control the live chat rail, Twitch alert types, and the next chatter-participation surface that all render through the same captured overlay."
+        description="Control the live chat rail, Twitch alert types, and the chatter-participation game that all render through the same captured overlay."
         eyebrow="Engagement"
         title="Manage in-stream engagement from one tab."
       />
@@ -71,6 +71,14 @@ export default async function OverlaysPage() {
                       .map((event) => `${event.kind}: ${event.actor || "Viewer"} ${event.message ? `- ${event.message}` : ""}`)
                       .join(" · ")
                   : "No recent chat or alert events."}
+              </div>
+            </div>
+            <div className="item">
+              <strong>Game mode</strong>
+              <div className="subtle">
+                {engagement.game.runtimeEnabled && engagement.game.mode
+                  ? `${engagement.game.title} is live with ${engagement.game.activeChatterCount} active chatters in the last ${engagement.game.windowMinutes} minutes.`
+                  : "Disabled by settings, disabled chat runtime, or no active chatters in the current window."}
               </div>
             </div>
             <div className="item">

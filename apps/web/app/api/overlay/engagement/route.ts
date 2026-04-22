@@ -13,6 +13,11 @@ type EngagementSettingsRequest = {
   alertsEnabled?: unknown;
   donationsEnabled?: unknown;
   channelPointsEnabled?: unknown;
+  gameEnabled?: unknown;
+  soloModeEnabled?: unknown;
+  smallGroupModeEnabled?: unknown;
+  crowdModeEnabled?: unknown;
+  gameWindowMinutes?: unknown;
   chatMode?: unknown;
   chatPosition?: unknown;
   alertPosition?: unknown;
@@ -58,7 +63,7 @@ export async function PUT(request: Request) {
       engagement.alertsEnabled ? "enabled" : "disabled"
     }, bits ${engagement.donationsEnabled ? "enabled" : "disabled"}, channel points ${
       engagement.channelPointsEnabled ? "enabled" : "disabled"
-    }.`
+    }, game ${engagement.gameEnabled ? "enabled" : "disabled"} (${engagement.gameWindowMinutes}m window).`
   );
 
   return NextResponse.json({ ok: true, engagement, message: "Engagement overlay settings updated." });

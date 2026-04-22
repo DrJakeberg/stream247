@@ -27,6 +27,7 @@ export function EngagementOverlay({ initialEngagement }: { initialEngagement: Li
     [engagement.recentEvents, engagement.settings.maxMessages]
   );
   const latestAlert = engagement.recentEvents.find((event) => isAlertEvent(event) && isRecentEvent(event)) ?? null;
+  const showGame = engagement.game.runtimeEnabled && engagement.game.mode !== "";
 
   useEffect(() => {
     const eventSource = new EventSource("/api/overlay/events");
@@ -53,21 +54,37 @@ export function EngagementOverlay({ initialEngagement }: { initialEngagement: Li
 
   return (
     <>
-      {engagement.settings.chatRuntimeEnabled && chatEvents.length > 0 ? (
-        <aside
-          className={[
-            classForPosition("engagement-chat", engagement.settings.chatPosition),
-            `engagement-chat-${engagement.settings.chatMode}`,
-            `engagement-chat-${engagement.settings.style}`
-          ].join(" ")}
-        >
-          {chatEvents.map((event) => (
-            <div className="engagement-chat-message" key={event.id}>
-              <span>{event.actor}</span>
-              <p>{event.message}</p>
-            </div>
-          ))}
-        </aside>
+      {(showGame || (engagement.settings.chatRuntimeEnabled && chatEvents.length > 0)) ? (
+        <div className={classForPosition("engagement-stack", engagement.settings.chatPosition)}>
+          {showGame ? (
+            <aside className={["engagement-game", `engagement-game-${engagement.settings.style}`].join(" ")}>
+              <span>{engagement.game.title}</span>
+              <strong>{engagement.game.prompt}</strong>
+              <p>{engagement.game.detail}</p>
+              {engagement.game.options.length > 0 ? (
+                <ul className="engagement-game-options">
+                  {engagement.game.options.map((option) => (
+                    <li className={option.isLeading ? "engagement-game-option-leading" : ""} key={option.id}>
+                      <span>{option.label}</span>
+                      <strong>{option.votes}</strong>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </aside>
+          ) : null}
+
+          {engagement.settings.chatRuntimeEnabled && chatEvents.length > 0 ? (
+            <aside className={[`engagement-chat-${engagement.settings.chatMode}`, `engagement-chat-${engagement.settings.style}`, "engagement-chat"].join(" ")}>
+              {chatEvents.map((event) => (
+                <div className="engagement-chat-message" key={event.id}>
+                  <span>{event.actor}</span>
+                  <p>{event.message}</p>
+                </div>
+              ))}
+            </aside>
+          ) : null}
+        </div>
       ) : null}
 
       {engagement.settings.alertsRuntimeEnabled && latestAlert ? (
