@@ -8,7 +8,12 @@ import { WorkspaceTabs } from "@/components/workspace-tabs";
 import { resolveWorkspaceTabId } from "@/lib/workspace-navigation";
 
 export default async function ProgramWorkspacePage(props: {
-  searchParams: Promise<{ tab?: string | string[] }>;
+  searchParams: Promise<{
+    tab?: string | string[];
+    lens?: string | string[];
+    day?: string | string[];
+    assetId?: string | string[];
+  }>;
 }) {
   const searchParams = await props.searchParams;
   const tab = resolveWorkspaceTabId("program", searchParams.tab);
@@ -16,7 +21,7 @@ export default async function ProgramWorkspacePage(props: {
   return (
     <div className="stack-form">
       <WorkspaceTabs activeTabId={tab} workspaceId="program" />
-      {tab === "schedule" ? <SchedulePage /> : null}
+      {tab === "schedule" ? <SchedulePage searchParams={Promise.resolve(searchParams)} /> : null}
       {tab === "pools" ? <PoolsPage /> : null}
       {tab === "library" ? <LibraryPage /> : null}
       {tab === "sources" ? <SourcesPage /> : null}

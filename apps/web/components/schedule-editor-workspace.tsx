@@ -1,11 +1,16 @@
 "use client";
 
+import Link from "next/link";
 import { formatMinuteOfDay, type MaterializedProgrammingDay, type ScheduleBlock } from "@stream247/core";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { buildAssetDisplayTitle, isReplayTitlePrefix } from "@/lib/asset-metadata";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { ScheduleBlockDeleteForm } from "@/components/schedule-block-delete-form";
 import { ScheduleBlockDuplicateForm } from "@/components/schedule-block-duplicate-form";
 import { ScheduleBlockForm } from "@/components/schedule-block-form";
 import { ScheduleTimeline } from "@/components/schedule-timeline";
+import { EmptyState } from "@/components/ui/EmptyState";
 import type { ShowProfileRecord } from "@/lib/server/state";
 
 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -22,10 +27,19 @@ type Props = {
     audioLaneVolumePercent: number;
   }>;
   assets: Array<{ id: string; title: string; status: string }>;
+  assetCatalog: Array<{
+    id: string;
+    title: string;
+    titlePrefix: string;
+    categoryName: string;
+    durationSeconds: number;
+  }>;
   showProfiles: ShowProfileRecord[];
   timeZone: string;
   materializedDays: MaterializedProgrammingDay[];
   liveQueueItems: Array<{ id: string; kind: string; title: string; subtitle: string }>;
+  initialDay?: number;
+  selectedAssetId?: string;
 };
 
 export function ScheduleEditorWorkspace({
@@ -33,18 +47,23 @@ export function ScheduleEditorWorkspace({
   conflicts,
   pools,
   assets,
+  assetCatalog,
   showProfiles,
   timeZone,
   materializedDays,
-  liveQueueItems
+  liveQueueItems,
+  initialDay = 1,
+  selectedAssetId
 }: Props) {
-  const [activeDay, setActiveDay] = useState<number>(1);
+  const router = useRouter();
+  const [activeDay, setActiveDay] = useState<number>(initialDay);
   const [query, setQuery] = useState("");
   const [poolId, setPoolId] = useState("");
   const [showId, setShowId] = useState("");
   const [conflictsOnly, setConflictsOnly] = useState(false);
   const conflictSet = new Set(conflicts);
   const normalizedQuery = query.trim().toLowerCase();
+  const assetById = new Map(assetCatalog.map((asset) => [asset.id, asset]));
 
   const filteredBlocks = blocks.filter((block) => {
     if (poolId && block.poolId !== poolId) {
@@ -77,6 +96,18 @@ export function ScheduleEditorWorkspace({
   const dayUnderfilled = activeMaterializedDay?.underfilledCount ?? 0;
   const dayOverflow = activeMaterializedDay?.overflowCount ?? 0;
   const dayEmpty = activeMaterializedDay?.emptyCount ?? 0;
+
+  function handleActiveDayChange(nextDay: number) {
+    setActiveDay(nextDay);
+    router.replace(
+      buildWorkspaceHref("program", "schedule", {
+        lens: "day",
+        day: String(nextDay),
+        assetId: selectedAssetId || undefined
+      }),
+      { scroll: false }
+    );
+  }
 
   return (
     <div className="stack-form">
@@ -179,7 +210,7 @@ export function ScheduleEditorWorkspace({
         blocks={filteredBlocks}
         conflicts={conflicts}
         materializedBlocks={Object.fromEntries(materializedByBlockId)}
-        onActiveDayChange={setActiveDay}
+        onActiveDayChange={handleActiveDayChange}
         showProfiles={showProfiles}
         timeZone={timeZone}
       />
@@ -220,6 +251,61 @@ export function ScheduleEditorWorkspace({
                   {materialized.queuePreview.length > 0 ? (
                     <div className="subtle">Queue preview: {materialized.queuePreview.join(" · ")}</div>
                   ) : null}
+                  {materialized.items.length > 0 ? (
+                    <div className="program-sequence-list" style={{ marginTop: 12 }}>
+                      {materialized.items.map((item) => {
+                        const asset = assetById.get(item.assetId);
+                        const replayEnabled = isReplayTitlePrefix(asset?.titlePrefix);
+
+                        return (
+                          <Link
+                            className="program-sequence-item"
+                            href={buildWorkspaceHref("program", "schedule", {
+                              lens: "day",
+                              day: String(activeDay),
+                              assetId: item.assetId
+                            })}
+                            key={`${block.id}-${item.assetId}-${item.startTime}`}
+                          >
+                            <div>
+                              <strong>{buildAssetDisplayTitle(asset, item.title)}</strong>
+                              <div className="subtle">
+                                {item.startTime} to {item.endTime} · {item.durationMinutes}m
+                                {asset?.categoryName ? ` · ${asset.categoryName}` : block.categoryName ? ` · ${block.categoryName}` : ""}
+                              </div>
+                            </div>
+                            <div className="program-item-flags">
+                              {replayEnabled ? (
+                                <span className="programming-status-pill programming-status-overflow">Replay</span>
+                              ) : null}
+                              {item.kind === "insert" ? (
+                                <span className="programming-status-pill programming-status-underfilled">Insert</span>
+                              ) : null}
+                              {item.repeated ? (
+                                <span className="programming-status-pill programming-status-balanced">Repeated</span>
+                              ) : null}
+                              {item.estimatedDuration ? (
+                                <span className="programming-status-pill programming-status-empty">Estimated</span>
+                              ) : null}
+                              {item.overflow ? (
+                                <span className="programming-status-pill programming-status-empty">Overflow</span>
+                              ) : null}
+                            </div>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      action={
+                        <Link className="button secondary" href={buildWorkspaceHref("program", block.poolId ? "pools" : "library")}>
+                          {block.poolId ? "Open pools" : "Open library"}
+                        </Link>
+                      }
+                      description="This block has no playable asset slots yet. Check the linked pool cursor or the ready library inventory."
+                      title="No playable video slots"
+                    />
+                  )}
                   {materialized.notes.map((note) => (
                     <div className="subtle" key={note}>
                       {note}
@@ -240,10 +326,10 @@ export function ScheduleEditorWorkspace({
           );
         })}
         {visibleBlocks.length === 0 ? (
-          <div className="item">
-            <strong>No blocks match this view</strong>
-            <div className="subtle">Adjust the day or filters to bring matching programming blocks back into view.</div>
-          </div>
+          <EmptyState
+            description="Adjust the day or filters to bring matching programming blocks back into view."
+            title="No blocks match this view"
+          />
         ) : null}
       </div>
     </div>

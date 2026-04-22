@@ -6,6 +6,12 @@ import { notFound } from "next/navigation";
 import { AssetCurationForm } from "@/components/asset-curation-form";
 import { AssetMetadataForm } from "@/components/asset-metadata-form";
 import { Panel } from "@/components/panel";
+import {
+  buildAssetDisplayTitle,
+  getShowProfileCategoryOptions,
+  isReplayTitlePrefix,
+  parseAssetHashtagsJson
+} from "@/lib/asset-metadata";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import {
   getAssetPlaybackDiagnostics,
@@ -33,23 +39,15 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
   const isCurrent = state.playout.currentAssetId === asset.id;
   const isOverride = state.playout.overrideAssetId === asset.id;
   const assetCollections = state.assetCollections.filter((collection) => collection.assetIds.includes(asset.id));
-  const categorySuggestions = [
-    ...new Set(state.assets.map((entry) => entry.categoryName?.trim() || "").filter(Boolean))
-  ].sort((left, right) => left.localeCompare(right));
-  const hashtags = (() => {
-    try {
-      const parsed = JSON.parse(asset.hashtagsJson || "[]") as unknown;
-      return Array.isArray(parsed) ? parsed.map((entry) => String(entry).trim()).filter(Boolean) : [];
-    } catch {
-      return [];
-    }
-  })();
+  const categoryOptions = getShowProfileCategoryOptions(state.showProfiles);
+  const hashtags = parseAssetHashtagsJson(asset.hashtagsJson);
+  const replayEnabled = isReplayTitlePrefix(asset.titlePrefix);
 
   return (
     <>
       <section className="hero">
         <span className="badge">Asset detail</span>
-        <h2>{asset.title}</h2>
+        <h2>{buildAssetDisplayTitle(asset, asset.title)}</h2>
         <p>
           Inspect asset metadata, source origin, runtime relevance, and programming context before using it in manual
           overrides or schedule planning.
@@ -122,8 +120,14 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
         <Panel title="Metadata" eyebrow="Catalog">
           <div className="stack-form">
             <div className="item">
-              <strong>Title prefix</strong>
-              <div className="subtle">{asset.titlePrefix || "No title prefix configured."}</div>
+              <strong>Replay</strong>
+              <div className="subtle">
+                {replayEnabled
+                  ? "Replay prefix is enabled for broadcast title composition."
+                  : asset.titlePrefix
+                    ? `Legacy prefix preserved: ${asset.titlePrefix}`
+                    : "Replay prefix is off."}
+              </div>
             </div>
             <div className="item">
               <strong>Category</strong>
@@ -180,7 +184,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
             These fields drive the on-air overlay title, Twitch stream title, and per-video category override without
             rewriting ingestion-owned source metadata.
           </div>
-          <AssetMetadataForm asset={asset} categorySuggestions={categorySuggestions} />
+          <AssetMetadataForm asset={asset} categoryOptions={categoryOptions} />
         </Panel>
 
         <Panel title="Asset curation" eyebrow="Program">
