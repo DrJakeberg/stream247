@@ -5,16 +5,18 @@ export function AdminPageHeader({
   title,
   description,
   children,
-  compact = false
+  compact = false,
+  className = ""
 }: {
   eyebrow: string;
   title: string;
   description: string;
   children?: ReactNode;
   compact?: boolean;
+  className?: string;
 }) {
   return (
-    <section className={compact ? "hero hero-compact" : "hero"}>
+    <section className={[compact ? "hero hero-compact" : "hero", className].filter(Boolean).join(" ")}>
       <span className="badge">{eyebrow}</span>
       <h2>{title}</h2>
       <p>{description}</p>

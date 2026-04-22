@@ -25,6 +25,8 @@ import {
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { OverlaySceneCanvas } from "@/components/overlay-scene-canvas";
+import { useToast } from "@/components/ui/Toast";
+import { buildOverlayPublishReviewSections, type OverlayPublishReviewSection } from "@/lib/overlay-publish-review";
 import { createDefaultCustomLayer } from "@/lib/overlay-studio-defaults";
 import type { OverlayScenePresetRecord, OverlaySettingsRecord } from "@/lib/server/state";
 
@@ -74,6 +76,61 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
   });
 }
 
+function ScenePublishReviewDialog(props: {
+  open: boolean;
+  sections: OverlayPublishReviewSection[];
+  isPending: boolean;
+  onClose: () => void;
+  onPublish: () => void;
+}) {
+  if (!props.open) {
+    return null;
+  }
+
+  return (
+    <div aria-modal="true" className="studio-dialog-backdrop" role="dialog">
+      <section className="studio-dialog">
+        <div className="studio-dialog-header">
+          <div>
+            <span className="label">Publish review</span>
+            <h3>Review scene changes before publishing</h3>
+          </div>
+          <button aria-label="Close publish review" className="button secondary" onClick={props.onClose} type="button">
+            Close
+          </button>
+        </div>
+        <div className="studio-dialog-body">
+          {props.sections.length > 0 ? (
+            props.sections.map((section) => (
+              <div className="item" key={section.title}>
+                <strong>{section.title}</strong>
+                <ul className="studio-review-list">
+                  {section.items.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          ) : (
+            <div className="item">
+              <strong>No pending changes</strong>
+              <div className="subtle">Live and draft already match.</div>
+            </div>
+          )}
+        </div>
+        <div className="studio-dialog-actions">
+          <button className="button secondary" onClick={props.onClose} type="button">
+            Keep editing
+          </button>
+          <button className="button" disabled={props.isPending || props.sections.length === 0} onClick={props.onPublish} type="button">
+            {props.isPending ? "Publishing..." : "Publish live"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function OverlaySettingsForm(props: {
   liveOverlay: OverlaySettingsRecord;
   draftOverlay: OverlaySettingsRecord;
@@ -83,17 +140,20 @@ export function OverlaySettingsForm(props: {
   preview: OverlayPreviewSeed;
 }) {
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
   const [previewMode, setPreviewMode] = useState<OverlayQueueKind>("asset");
   const [draft, setDraft] = useState<OverlaySettingsRecord>(props.draftOverlay);
   const [scenePresets, setScenePresets] = useState<OverlayScenePresetRecord[]>(props.scenePresets);
   const [presetName, setPresetName] = useState("");
   const [presetDescription, setPresetDescription] = useState("");
+  const [isPublishReviewOpen, setIsPublishReviewOpen] = useState(false);
   const router = useRouter();
+  const { pushToast } = useToast();
   const hasLocalChanges = overlaySignature(draft) !== overlaySignature(props.draftOverlay);
   const canPublish = hasLocalChanges || props.hasUnpublishedChanges;
   const canReset = hasLocalChanges || props.hasUnpublishedChanges;
+  const reviewSections = buildOverlayPublishReviewSections(props.liveOverlay, draft);
+  const emergencyBannerActive = Boolean(draft.emergencyBanner.trim() || props.liveOverlay.emergencyBanner.trim());
 
   const setDraftField = <K extends keyof OverlaySettingsRecord>(key: K, value: OverlaySettingsRecord[K]) => {
     setDraft((current) => ({
@@ -143,6 +203,107 @@ export function OverlaySettingsForm(props: {
       };
     });
   };
+
+  const toggleDraftEmergencyBanner = () => {
+    setDraft((current) => ({
+      ...current,
+      emergencyBanner: current.emergencyBanner.trim()
+        ? ""
+        : current.emergencyBanner || props.liveOverlay.emergencyBanner || "Emergency update in progress"
+    }));
+  };
+
+  async function saveDraft() {
+    const response = await fetch("/api/overlay", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(draft)
+    });
+
+    const payload = (await response.json()) as { message?: string; draftOverlay?: OverlaySettingsRecord };
+    if (!response.ok) {
+      const nextError = payload.message ?? "Could not save overlay settings.";
+      setError(nextError);
+      pushToast({
+        title: "Could not save the scene draft",
+        description: nextError,
+        tone: "error"
+      });
+      return;
+    }
+
+    if (payload.draftOverlay) {
+      setDraft(payload.draftOverlay);
+    }
+    pushToast({
+      title: "Scene draft saved",
+      description: payload.message ?? "Scene draft updated.",
+      tone: "success"
+    });
+    router.refresh();
+  }
+
+  async function publishLive() {
+    const response = await fetch("/api/overlay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "publish", draft })
+    });
+
+    const payload = (await response.json()) as { message?: string; draftOverlay?: OverlaySettingsRecord };
+    if (!response.ok) {
+      const nextError = payload.message ?? "Could not publish scene changes.";
+      setError(nextError);
+      pushToast({
+        title: "Could not publish the scene",
+        description: nextError,
+        tone: "error"
+      });
+      return;
+    }
+
+    if (payload.draftOverlay) {
+      setDraft(payload.draftOverlay);
+    }
+    setIsPublishReviewOpen(false);
+    pushToast({
+      title: "Scene published live",
+      description: payload.message ?? "Scene changes are now live.",
+      tone: "success"
+    });
+    router.refresh();
+  }
+
+  async function resetDraft() {
+    const response = await fetch("/api/overlay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reset" })
+    });
+
+    const payload = (await response.json()) as { message?: string; draftOverlay?: OverlaySettingsRecord };
+    if (!response.ok) {
+      const nextError = payload.message ?? "Could not reset the scene draft.";
+      setError(nextError);
+      pushToast({
+        title: "Could not reset the scene draft",
+        description: nextError,
+        tone: "error"
+      });
+      return;
+    }
+
+    if (payload.draftOverlay) {
+      setDraft(payload.draftOverlay);
+    }
+    setIsPublishReviewOpen(false);
+    pushToast({
+      title: "Scene draft reset",
+      description: payload.message ?? "Draft reset to the live scene.",
+      tone: "success"
+    });
+    router.refresh();
+  }
 
   const moveLayer = (kind: OverlaySceneLayerKind, direction: -1 | 1) => {
     setDraft((current) => {
@@ -208,7 +369,6 @@ export function OverlaySettingsForm(props: {
 
   const saveScenePreset = () => {
     setError("");
-    setMessage("");
 
     startTransition(async () => {
       const response = await fetch("/api/presets", {
@@ -227,20 +387,29 @@ export function OverlaySettingsForm(props: {
         presets?: OverlayScenePresetRecord[];
       };
       if (!response.ok) {
-        setError(payload.message ?? "Could not save scene preset.");
+        const nextError = payload.message ?? "Could not save scene preset.";
+        setError(nextError);
+        pushToast({
+          title: "Could not save the scene preset",
+          description: nextError,
+          tone: "error"
+        });
         return;
       }
 
       setScenePresets(payload.presets ?? []);
       setPresetName("");
       setPresetDescription("");
-      setMessage(payload.message ?? "Scene preset saved.");
+      pushToast({
+        title: "Scene preset saved",
+        description: payload.message ?? "The current draft is now reusable.",
+        tone: "success"
+      });
     });
   };
 
   const applyScenePreset = (presetId: string) => {
     setError("");
-    setMessage("");
 
     startTransition(async () => {
       const response = await fetch("/api/presets", {
@@ -260,7 +429,13 @@ export function OverlaySettingsForm(props: {
         };
       };
       if (!response.ok) {
-        setError(payload.message ?? "Could not apply scene preset.");
+        const nextError = payload.message ?? "Could not apply scene preset.";
+        setError(nextError);
+        pushToast({
+          title: "Could not apply the scene preset",
+          description: nextError,
+          tone: "error"
+        });
         return;
       }
 
@@ -268,14 +443,17 @@ export function OverlaySettingsForm(props: {
         setDraft(payload.studioState.draftOverlay);
       }
       setScenePresets(payload.presets ?? []);
-      setMessage(payload.message ?? "Scene preset applied to draft.");
+      pushToast({
+        title: "Scene preset applied",
+        description: payload.message ?? "The preset has been loaded into the draft.",
+        tone: "success"
+      });
       router.refresh();
     });
   };
 
   const deleteScenePreset = (presetId: string) => {
     setError("");
-    setMessage("");
 
     startTransition(async () => {
       const response = await fetch("/api/presets", {
@@ -292,12 +470,22 @@ export function OverlaySettingsForm(props: {
         presets?: OverlayScenePresetRecord[];
       };
       if (!response.ok) {
-        setError(payload.message ?? "Could not delete scene preset.");
+        const nextError = payload.message ?? "Could not delete scene preset.";
+        setError(nextError);
+        pushToast({
+          title: "Could not delete the scene preset",
+          description: nextError,
+          tone: "error"
+        });
         return;
       }
 
       setScenePresets(payload.presets ?? []);
-      setMessage(payload.message ?? "Scene preset deleted.");
+      pushToast({
+        title: "Scene preset deleted",
+        description: payload.message ?? "The preset has been removed from the library.",
+        tone: "success"
+      });
     });
   };
 
@@ -307,29 +495,51 @@ export function OverlaySettingsForm(props: {
       onSubmit={(event) => {
         event.preventDefault();
         setError("");
-        setMessage("");
-
-        startTransition(async () => {
-          const response = await fetch("/api/overlay", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(draft)
-          });
-
-          const payload = (await response.json()) as { message?: string; draftOverlay?: OverlaySettingsRecord };
-          if (!response.ok) {
-            setError(payload.message ?? "Could not save overlay settings.");
-            return;
-          }
-
-          if (payload.draftOverlay) {
-            setDraft(payload.draftOverlay);
-          }
-          setMessage(payload.message ?? "Overlay settings updated.");
-          router.refresh();
-        });
+        startTransition(() => void saveDraft());
       }}
     >
+      <div className={`scene-workspace-toolbar${emergencyBannerActive ? " scene-workspace-toolbar-alert" : ""}`}>
+        <div>
+          <span className="label">Scene draft</span>
+          <strong>{canPublish ? "Pending changes" : "Live and draft match"}</strong>
+          <div className="subtle">Draft is based on live scene updated at {props.basedOnUpdatedAt || "unknown"}.</div>
+        </div>
+        <div className="inline-form">
+          <button className="button secondary" onClick={toggleDraftEmergencyBanner} title="Toggle the draft emergency banner." type="button">
+            {draft.emergencyBanner.trim() ? "Clear emergency banner" : "Activate emergency banner"}
+          </button>
+          <button
+            className="button secondary"
+            disabled={isPending || !hasLocalChanges}
+            title={hasLocalChanges ? "Save the current draft changes." : "There are no local draft changes to save yet."}
+            type="submit"
+          >
+            {isPending ? "Saving..." : "Save draft"}
+          </button>
+          <button
+            className="button"
+            disabled={isPending || !canPublish}
+            onClick={() => setIsPublishReviewOpen(true)}
+            title={canPublish ? "Review the draft diff before publishing." : "Live and draft already match."}
+            type="button"
+          >
+            Review changes
+          </button>
+          <button
+            className="button secondary"
+            disabled={isPending || !canReset}
+            onClick={() => {
+              setError("");
+              startTransition(() => void resetDraft());
+            }}
+            title={canReset ? "Reset the draft back to the live scene." : "The draft already matches the live scene."}
+            type="button"
+          >
+            {isPending ? "Resetting..." : "Reset to live"}
+          </button>
+        </div>
+      </div>
+
       <div className="scene-designer-grid">
         <div className="scene-designer-preview">
           <div className="scene-preview-toolbar">
@@ -342,6 +552,7 @@ export function OverlaySettingsForm(props: {
             </select>
           </div>
           <div className="scene-preview-shell">
+            <div aria-hidden="true" className="scene-preview-safe-area" />
             <OverlaySceneCanvas payload={previewPayload} />
           </div>
         </div>
@@ -623,6 +834,19 @@ export function OverlaySettingsForm(props: {
                             type="number"
                             value={layer.opacityPercent}
                           />
+                        </label>
+                        <label className="toggle-row">
+                          <input
+                            checked={layer.allowOutsideSafeArea}
+                            onChange={(event) =>
+                              updateCustomLayer(layer.id, (current) => ({
+                                ...current,
+                                allowOutsideSafeArea: event.target.checked
+                              }))
+                            }
+                            type="checkbox"
+                          />
+                          <span>Allow outside safe area</span>
                         </label>
                         <label>
                           <span className="label">X position (%)</span>
@@ -1105,72 +1329,16 @@ export function OverlaySettingsForm(props: {
       </div>
 
       {error ? <p className="danger">{error}</p> : null}
-      {message ? <p className="subtle">{message}</p> : null}
-      <div className="inline-form">
-        <button className="button secondary" disabled={isPending || !hasLocalChanges} type="submit">
-          {isPending ? "Saving..." : "Save draft"}
-        </button>
-        <button
-          className="button"
-          disabled={isPending || !canPublish}
-          onClick={() => {
-            setError("");
-            setMessage("");
-            startTransition(async () => {
-              const response = await fetch("/api/overlay", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: "publish", draft })
-              });
-
-              const payload = (await response.json()) as { message?: string; draftOverlay?: OverlaySettingsRecord };
-              if (!response.ok) {
-                setError(payload.message ?? "Could not publish scene changes.");
-                return;
-              }
-
-              if (payload.draftOverlay) {
-                setDraft(payload.draftOverlay);
-              }
-              setMessage(payload.message ?? "Scene changes published live.");
-              router.refresh();
-            });
-          }}
-          type="button"
-        >
-          {isPending ? "Publishing..." : "Publish live"}
-        </button>
-        <button
-          className="button secondary"
-          disabled={isPending || !canReset}
-          onClick={() => {
-            setError("");
-            setMessage("");
-            startTransition(async () => {
-              const response = await fetch("/api/overlay", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: "reset" })
-              });
-
-              const payload = (await response.json()) as { message?: string; draftOverlay?: OverlaySettingsRecord };
-              if (!response.ok) {
-                setError(payload.message ?? "Could not reset the scene draft.");
-                return;
-              }
-
-              if (payload.draftOverlay) {
-                setDraft(payload.draftOverlay);
-              }
-              setMessage(payload.message ?? "Draft reset to the live scene.");
-              router.refresh();
-            });
-          }}
-          type="button"
-        >
-          {isPending ? "Resetting..." : "Reset to live"}
-        </button>
-      </div>
+      <ScenePublishReviewDialog
+        isPending={isPending}
+        onClose={() => setIsPublishReviewOpen(false)}
+        onPublish={() => {
+          setError("");
+          startTransition(() => void publishLive());
+        }}
+        open={isPublishReviewOpen}
+        sections={reviewSections}
+      />
     </form>
   );
 }

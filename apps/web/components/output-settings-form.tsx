@@ -3,6 +3,7 @@
 import { STREAM_OUTPUT_PROFILES, normalizeStreamOutputSettings, type StreamOutputProfileId } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { useToast } from "@/components/ui/Toast";
 import type { OutputSettingsRecord } from "@/lib/server/state";
 
 function profileDefaults(profileId: StreamOutputProfileId) {
@@ -15,10 +16,10 @@ export function OutputSettingsForm({ output }: { output: OutputSettingsRecord })
   const [width, setWidth] = useState(String(initial.width));
   const [height, setHeight] = useState(String(initial.height));
   const [fps, setFps] = useState(String(initial.fps));
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  const { pushToast } = useToast();
 
   function selectProfile(nextProfileId: StreamOutputProfileId) {
     setProfileId(nextProfileId);
@@ -44,11 +45,21 @@ export function OutputSettingsForm({ output }: { output: OutputSettingsRecord })
     const payload = (await response.json()) as { message?: string };
 
     if (!response.ok) {
-      setError(payload.message ?? "Could not update output settings.");
+      const nextError = payload.message ?? "Could not update output settings.";
+      setError(nextError);
+      pushToast({
+        title: "Could not save the output profile",
+        description: nextError,
+        tone: "error"
+      });
       return;
     }
 
-    setMessage(payload.message ?? "Output settings updated.");
+    pushToast({
+      title: "Output profile saved",
+      description: payload.message ?? "Output settings updated.",
+      tone: "success"
+    });
     router.refresh();
   }
 
@@ -58,7 +69,6 @@ export function OutputSettingsForm({ output }: { output: OutputSettingsRecord })
       onSubmit={(event) => {
         event.preventDefault();
         setError("");
-        setMessage("");
         startTransition(() => void save());
       }}
     >
@@ -115,8 +125,7 @@ export function OutputSettingsForm({ output }: { output: OutputSettingsRecord })
         setting for deployment-level control.
       </p>
       {error ? <p className="danger">{error}</p> : null}
-      {message ? <p className="subtle">{message}</p> : null}
-      <button className="button" disabled={isPending} type="submit">
+      <button className="button" disabled={isPending} title="Save the current stream output profile." type="submit">
         {isPending ? "Saving..." : "Save output settings"}
       </button>
     </form>

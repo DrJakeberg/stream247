@@ -22,9 +22,9 @@ export default async function OutputPage() {
   return (
     <div className="stack-form">
       <AdminPageHeader
-        description="Control the channel frame size and FPS used by standby, on-air scene rendering, and FFmpeg output normalization."
+        description="Control the stream output profile, per-destination overrides, and the destination health states that feed the live delivery path."
         eyebrow="Output"
-        title="Set the stream resolution and frame rate."
+        title="Set the stream output profile and destination overrides."
       />
 
       <div className="grid two">

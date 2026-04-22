@@ -370,6 +370,7 @@ type OverlaySceneCustomLayerBase = {
   widthPercent: number;
   heightPercent: number;
   opacityPercent: number;
+  allowOutsideSafeArea: boolean;
 };
 
 export type OverlaySceneCustomTextLayer = OverlaySceneCustomLayerBase & {
@@ -1276,7 +1277,8 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
       yPercent: clampOverlaySceneNumber(raw.yPercent, 0, 90, raw.kind === "text" ? 10 : 8),
       widthPercent: clampOverlaySceneNumber(raw.widthPercent, 10, 100, raw.kind === "text" ? 34 : 26),
       heightPercent: clampOverlaySceneNumber(raw.heightPercent, 8, 100, raw.kind === "text" ? 18 : 20),
-      opacityPercent: clampOverlaySceneNumber(raw.opacityPercent, 5, 100, 100)
+      opacityPercent: clampOverlaySceneNumber(raw.opacityPercent, 5, 100, 100),
+      allowOutsideSafeArea: raw.allowOutsideSafeArea === true
     } satisfies OverlaySceneCustomLayerBase;
 
     if (raw.kind === "text") {

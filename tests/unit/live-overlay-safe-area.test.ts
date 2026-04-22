@@ -24,6 +24,7 @@ describe("live overlay safe-area wiring", () => {
       widthPercent: 32,
       heightPercent: 24,
       opacityPercent: 125,
+      allowOutsideSafeArea: false,
       text: "Runtime parity",
       secondaryText: "",
       textTone: "headline",
@@ -40,5 +41,31 @@ describe("live overlay safe-area wiring", () => {
     expect(style.width).toBe("calc(var(--overlay-safe-area-width-percent) * 18 / 100)");
     expect(style.height).toBe("calc(var(--overlay-safe-area-height-percent) * 12 / 100)");
     expect(style.opacity).toBe(1);
+  });
+
+  it("lets opted-out custom layers position against the full overlay frame", () => {
+    const layer: OverlaySceneCustomLayer = {
+      id: "layer-edge",
+      kind: "image",
+      name: "Sponsor",
+      enabled: true,
+      xPercent: 82,
+      yPercent: 88,
+      widthPercent: 32,
+      heightPercent: 24,
+      opacityPercent: 90,
+      allowOutsideSafeArea: true,
+      url: "/sponsor.png",
+      altText: "Sponsor",
+      fit: "contain"
+    };
+
+    const style = resolveOverlayCustomLayerStyle(layer);
+
+    expect(style.left).toBe("82%");
+    expect(style.top).toBe("88%");
+    expect(style.width).toBe("18%");
+    expect(style.height).toBe("12%");
+    expect(style.opacity).toBe(0.9);
   });
 });

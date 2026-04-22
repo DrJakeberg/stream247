@@ -11,7 +11,8 @@ describe("overlay settings form widget defaults", () => {
         kind: "widget",
         title: "",
         widgetMode: "embed",
-        widgetDataKey: "current"
+        widgetDataKey: "current",
+        allowOutsideSafeArea: false
       })
     );
 

@@ -25,6 +25,7 @@ export function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): Ove
       widthPercent: 34,
       heightPercent: 16,
       opacityPercent: 100,
+      allowOutsideSafeArea: false,
       text: "Fresh scene copy",
       secondaryText: "",
       textTone: "headline",
@@ -46,6 +47,7 @@ export function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): Ove
       widthPercent: 16,
       heightPercent: 12,
       opacityPercent: 100,
+      allowOutsideSafeArea: false,
       url: "",
       altText: "",
       fit: "contain"
@@ -63,6 +65,7 @@ export function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): Ove
       widthPercent: 28,
       heightPercent: 24,
       opacityPercent: 100,
+      allowOutsideSafeArea: false,
       url: "",
       altText: "",
       fit: "cover"
@@ -80,6 +83,7 @@ export function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): Ove
       widthPercent: 38,
       heightPercent: 28,
       opacityPercent: 100,
+      allowOutsideSafeArea: false,
       url: "",
       title: "",
       widgetMode: "embed",
@@ -97,6 +101,7 @@ export function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): Ove
     widthPercent: 38,
     heightPercent: 28,
     opacityPercent: 100,
+    allowOutsideSafeArea: false,
     url: "",
     title: "Embed frame"
   };

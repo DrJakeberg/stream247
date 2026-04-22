@@ -13,11 +13,15 @@ export default async function OverlayStudioPage() {
   const currentItem = getCurrentScheduleItem(state);
   const nextItem = getNextScheduleItem(state);
   const previewQueueTitles = state.playout.queueItems.slice(1, 5).map((item) => item.title).filter(Boolean);
+  const emergencyBannerActive = Boolean(
+    studioState.liveOverlay.emergencyBanner.trim() || studioState.draftOverlay.emergencyBanner.trim()
+  );
 
   return (
     <div className="stack-form">
       <AdminPageHeader
-        description="Scene controls the published viewer-facing scene. Draft changes stay isolated until you publish them to Stream247's internal overlay output and the on-air renderer."
+        className={emergencyBannerActive ? "scene-header-alert" : ""}
+        description="Scene controls the published viewer-facing scene. Draft changes stay isolated until you review and publish them to Stream247's internal overlay output and the on-air renderer."
         eyebrow="Scene"
         title="Publish the viewer-facing scene without leaving the control room."
       />

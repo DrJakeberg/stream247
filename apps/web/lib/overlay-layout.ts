@@ -41,6 +41,16 @@ export function resolveOverlayCustomLayerStyle(layer: OverlaySceneCustomLayer): 
   const widthPercent = clampPercent(layer.widthPercent, 0, 100 - xPercent);
   const heightPercent = clampPercent(layer.heightPercent, 0, 100 - yPercent);
 
+  if (layer.allowOutsideSafeArea) {
+    return {
+      left: `${xPercent}%`,
+      top: `${yPercent}%`,
+      width: `${widthPercent}%`,
+      height: `${heightPercent}%`,
+      opacity: clampPercent(layer.opacityPercent, 0, 100) / 100
+    };
+  }
+
   return {
     left: `calc(var(--safe-area-left-percent) + (var(--overlay-safe-area-width-percent) * ${xPercent} / 100))`,
     top: `calc(var(--safe-area-top-percent) + (var(--overlay-safe-area-height-percent) * ${yPercent} / 100))`,
