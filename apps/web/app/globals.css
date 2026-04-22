@@ -128,7 +128,7 @@ main {
 
 .nav-link {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   min-width: 0;
   min-height: 36px;
   padding: 10px 12px;
@@ -157,9 +157,9 @@ main {
 
 .nav-link-title {
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .sidebar-card {

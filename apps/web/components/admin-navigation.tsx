@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ADMIN_NAV_SECTIONS } from "@/lib/admin-navigation";
 
@@ -17,7 +18,7 @@ export function AdminNavigation() {
             {section.items.map((item) => {
               const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
               return (
-                <a
+                <Link
                   aria-label={item.label}
                   className={isActive ? "nav-link nav-link-active" : "nav-link"}
                   href={item.href}
@@ -25,7 +26,7 @@ export function AdminNavigation() {
                   title={item.label}
                 >
                   <span className="nav-link-title">{item.label}</span>
-                </a>
+                </Link>
               );
             })}
           </div>

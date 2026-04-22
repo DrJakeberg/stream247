@@ -15,7 +15,8 @@ export const ADMIN_NAV_SECTIONS: AdminNavigationSection[] = [
     label: "Live",
     items: [
       { href: "/broadcast", label: "Broadcast" },
-      { href: "/dashboard", label: "Dashboard" }
+      { href: "/dashboard", label: "Dashboard" },
+      { href: "/moderation", label: "Moderation" }
     ]
   },
   {

@@ -29,10 +29,10 @@ export default async function AdminLayout({ children }: { children: ReactNode })
           </p>
         </div>
         <section className="sidebar-card">
-          <span className="label">Operator model</span>
-          <strong>Control Room for live work. Stream Studio for what viewers see.</strong>
+          <span className="label">Operator flow</span>
+          <strong>Broadcast is the live action surface. Dashboard and Moderation keep the run healthy.</strong>
           <p className="subtle">
-            Programming shapes the week and media library, while Workspace owns access, policy, and reusable channel setup.
+            Programming owns the schedule, pools, library, and sources. Stream Studio controls scenes, overlays, and output.
           </p>
         </section>
         <AdminNavigation />
