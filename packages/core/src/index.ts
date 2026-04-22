@@ -187,6 +187,17 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
+const invisibleUnicodePattern =
+  /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00AD\u200B-\u200D\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+
+export function stripInvisibleCharacters(value: string): string {
+  return String(value ?? "").normalize("NFC").replace(invisibleUnicodePattern, "");
+}
+
+function sanitizeTextValue(value: unknown, maxLength: number): string {
+  return stripInvisibleCharacters(String(value ?? "")).trim().slice(0, maxLength);
+}
+
 export function normalizeStreamOutputProfileId(value: unknown): StreamOutputProfileId {
   const candidate = String(value ?? "");
   return STREAM_OUTPUT_PROFILES.some((profile) => profile.id === candidate)
@@ -302,11 +313,11 @@ export function normalizeEngagementSettings(value?: EngagementSettingsInput | nu
 
 export function normalizeEngagementEvent(value: EngagementEventInput): EngagementEvent {
   return {
-    id: String(value.id ?? "").trim().slice(0, 80),
+    id: sanitizeTextValue(value.id, 80),
     kind: normalizeEngagementEventKind(value.kind),
-    actor: String(value.actor ?? "").trim().slice(0, 80),
-    message: String(value.message ?? "").trim().slice(0, 280),
-    createdAt: String(value.createdAt ?? "").trim()
+    actor: sanitizeTextValue(value.actor, 80),
+    message: sanitizeTextValue(value.message, 280),
+    createdAt: stripInvisibleCharacters(String(value.createdAt ?? "")).trim()
   };
 }
 
@@ -1250,7 +1261,7 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
     const base = {
       id,
       kind: raw.kind,
-      name: String(raw.name || "").trim().slice(0, 80) || `${raw.kind[0].toUpperCase()}${raw.kind.slice(1)} Layer`,
+      name: sanitizeTextValue(raw.name, 80) || `${raw.kind[0].toUpperCase()}${raw.kind.slice(1)} Layer`,
       enabled: raw.enabled !== false,
       xPercent: clampOverlaySceneNumber(raw.xPercent, 0, 90, raw.kind === "text" ? 4 : 62),
       yPercent: clampOverlaySceneNumber(raw.yPercent, 0, 90, raw.kind === "text" ? 10 : 8),
@@ -1263,8 +1274,8 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
       normalized.push({
         ...base,
         kind: "text",
-        text: String(raw.text || "").trim().slice(0, 180),
-        secondaryText: String(raw.secondaryText || "").trim().slice(0, 220),
+        text: sanitizeTextValue(raw.text, 180),
+        secondaryText: sanitizeTextValue(raw.secondaryText, 220),
         textTone: normalizeOverlaySceneCustomTextTone(raw.textTone),
         textAlign: normalizeOverlaySceneCustomTextAlign(raw.textAlign),
         useAccent: raw.useAccent === true,
@@ -1276,7 +1287,7 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
         ...base,
         kind: raw.kind,
         url: sanitizeOverlaySceneUrl(raw.url),
-        altText: String(raw.altText || "").trim().slice(0, 120),
+        altText: sanitizeTextValue(raw.altText, 120),
         fit: normalizeOverlaySceneCustomMediaFit(raw.fit)
       });
     } else if (raw.kind === "widget") {
@@ -1284,7 +1295,7 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
         ...base,
         kind: "widget",
         url: sanitizeOverlaySceneUrl(raw.url),
-        title: String(raw.title || "").trim().slice(0, 80),
+        title: sanitizeTextValue(raw.title, 80),
         widgetMode: normalizeOverlaySceneCustomWidgetMode(raw.widgetMode),
         widgetDataKey: normalizeOverlaySceneCustomWidgetDataKey(raw.widgetDataKey)
       });
@@ -1293,7 +1304,7 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
         ...base,
         kind: "embed",
         url: sanitizeOverlaySceneUrl(raw.url),
-        title: String(raw.title || "").trim().slice(0, 80) || "Embed Layer"
+        title: sanitizeTextValue(raw.title, 80) || "Embed Layer"
       });
     }
 
@@ -1336,22 +1347,23 @@ export function resolveOverlayHeadlineForQueueKind(
   overrides?: Partial<Pick<OverlaySceneSource, "insertHeadline" | "standbyHeadline" | "reconnectHeadline">>
 ): string {
   if (queueKind === "insert") {
-    return String(overrides?.insertHeadline || "Insert on air").trim() || "Insert on air";
+    return sanitizeTextValue(overrides?.insertHeadline || "Insert on air", 120) || "Insert on air";
   }
 
   if (queueKind === "reconnect") {
-    return String(overrides?.reconnectHeadline || "Scheduled reconnect in progress").trim() || "Scheduled reconnect in progress";
+    return sanitizeTextValue(overrides?.reconnectHeadline || "Scheduled reconnect in progress", 120) || "Scheduled reconnect in progress";
   }
 
   if (queueKind === "standby") {
-    return String(overrides?.standbyHeadline || headline || "Please wait, restream is starting").trim() || "Please wait, restream is starting";
+    return sanitizeTextValue(overrides?.standbyHeadline || headline || "Please wait, restream is starting", 120) ||
+      "Please wait, restream is starting";
   }
 
-  return String(headline || "Always on air").trim() || "Always on air";
+  return sanitizeTextValue(headline || "Always on air", 120) || "Always on air";
 }
 
 function normalizeOverlayVisibleText(value: unknown): string {
-  const trimmed = String(value ?? "").trim();
+  const trimmed = stripInvisibleCharacters(String(value ?? "")).trim();
   return trimmed && trimmed !== "[]" ? trimmed : "";
 }
 
@@ -1879,7 +1891,9 @@ export function buildSchedulePreview(args: {
 }
 
 function buildSchedulePreviewAssetTitle(asset: Pick<SchedulePreviewAssetRecord, "title" | "titlePrefix">): string {
-  return [asset.titlePrefix?.trim() || "", asset.title.trim()].filter(Boolean).join(" ");
+  return [stripInvisibleCharacters(asset.titlePrefix || "").trim(), stripInvisibleCharacters(asset.title).trim()]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function getSchedulePreviewAssetDurationSeconds(asset: SchedulePreviewAssetRecord): {

@@ -17,6 +17,7 @@ import {
   normalizeStreamOutputSettings,
   normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
+  stripInvisibleCharacters,
   type DestinationRoutingStatus,
   type DestinationOutputProfileId,
   type EngagementChatDisplayMode,
@@ -658,18 +659,18 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
   return {
     ...defaults,
     ...overlay,
-    channelName: String(overlay.channelName ?? defaults.channelName).trim().slice(0, 80) || defaults.channelName,
-    headline: String(overlay.headline ?? defaults.headline).trim().slice(0, 120) || defaults.headline,
-    insertHeadline: String(overlay.insertHeadline ?? defaults.insertHeadline).trim().slice(0, 120) || defaults.insertHeadline,
-    standbyHeadline: String(overlay.standbyHeadline ?? defaults.standbyHeadline).trim().slice(0, 120) || defaults.standbyHeadline,
-    reconnectHeadline: String(overlay.reconnectHeadline ?? defaults.reconnectHeadline).trim().slice(0, 120) || defaults.reconnectHeadline,
-    replayLabel: String(overlay.replayLabel ?? defaults.replayLabel).trim().slice(0, 80) || defaults.replayLabel,
-    brandBadge: String(overlay.brandBadge ?? defaults.brandBadge).trim().slice(0, 48),
+    channelName: sanitizeStoredText(overlay.channelName ?? defaults.channelName, 80) || defaults.channelName,
+    headline: sanitizeStoredText(overlay.headline ?? defaults.headline, 120) || defaults.headline,
+    insertHeadline: sanitizeStoredText(overlay.insertHeadline ?? defaults.insertHeadline, 120) || defaults.insertHeadline,
+    standbyHeadline: sanitizeStoredText(overlay.standbyHeadline ?? defaults.standbyHeadline, 120) || defaults.standbyHeadline,
+    reconnectHeadline: sanitizeStoredText(overlay.reconnectHeadline ?? defaults.reconnectHeadline, 120) || defaults.reconnectHeadline,
+    replayLabel: sanitizeStoredText(overlay.replayLabel ?? defaults.replayLabel, 80) || defaults.replayLabel,
+    brandBadge: sanitizeStoredText(overlay.brandBadge ?? defaults.brandBadge, 48),
     scenePreset: normalizeOverlayScenePreset(String(overlay.scenePreset ?? defaults.scenePreset)),
     insertScenePreset: normalizeOverlayScenePreset(String(overlay.insertScenePreset ?? defaults.insertScenePreset)),
     standbyScenePreset: normalizeOverlayScenePreset(String(overlay.standbyScenePreset ?? defaults.standbyScenePreset)),
     reconnectScenePreset: normalizeOverlayScenePreset(String(overlay.reconnectScenePreset ?? defaults.reconnectScenePreset)),
-    accentColor: String(overlay.accentColor ?? defaults.accentColor).trim().slice(0, 20) || defaults.accentColor,
+    accentColor: sanitizeStoredText(overlay.accentColor ?? defaults.accentColor, 20) || defaults.accentColor,
     surfaceStyle: normalizeOverlaySurfaceStyle(String(overlay.surfaceStyle ?? defaults.surfaceStyle)),
     panelAnchor: normalizeOverlayPanelAnchor(String(overlay.panelAnchor ?? defaults.panelAnchor)),
     titleScale: normalizeOverlayTitleScale(String(overlay.titleScale ?? defaults.titleScale)),
@@ -680,8 +681,8 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
       (overlay.disabledLayers ?? []).includes(kind)
     ),
     customLayers: normalizeOverlaySceneCustomLayers(overlay.customLayers ?? defaults.customLayers),
-    emergencyBanner: String(overlay.emergencyBanner ?? defaults.emergencyBanner).trim().slice(0, 180),
-    tickerText: String(overlay.tickerText ?? defaults.tickerText).trim().slice(0, 180),
+    emergencyBanner: sanitizeStoredText(overlay.emergencyBanner ?? defaults.emergencyBanner, 180),
+    tickerText: sanitizeStoredText(overlay.tickerText ?? defaults.tickerText, 180),
     updatedAt: overlay.updatedAt ?? defaults.updatedAt
   };
 }
@@ -804,8 +805,8 @@ function overlaySettingsEqual(left: OverlaySettingsRecord, right: OverlaySetting
 function normalizeOverlayScenePresetRecord(record: OverlayScenePresetRecord): OverlayScenePresetRecord {
   return {
     id: record.id,
-    name: String(record.name || "").trim().slice(0, 80) || "Untitled preset",
-    description: String(record.description || "").trim().slice(0, 220),
+    name: sanitizeStoredText(record.name, 80) || "Untitled preset",
+    description: sanitizeStoredText(record.description, 220),
     overlay: normalizeOverlaySettingsRecord(record.overlay),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt
@@ -1057,20 +1058,24 @@ function normalizeAssetFolderPath(value: unknown): string {
     .replace(/^\/+|\/+$/g, "");
 }
 
+function sanitizeStoredText(value: unknown, maxLength: number): string {
+  return stripInvisibleCharacters(String(value ?? "")).trim().slice(0, maxLength);
+}
+
 function normalizeAssetTitle(value: unknown): string {
-  return String(value ?? "").trim().slice(0, 200);
+  return sanitizeStoredText(value, 200);
 }
 
 function normalizeAssetTitlePrefix(value: unknown): string {
-  return String(value ?? "").trim().slice(0, 20);
+  return sanitizeStoredText(value, 20);
 }
 
 function normalizeAssetCategoryName(value: unknown): string {
-  return String(value ?? "").trim().slice(0, 120);
+  return sanitizeStoredText(value, 120);
 }
 
 function normalizeAssetPlatformNotes(value: unknown): string {
-  return String(value ?? "").trim().slice(0, 1000);
+  return sanitizeStoredText(value, 1000);
 }
 
 function normalizeAssetHashtagsJson(value: unknown): string {
@@ -1086,7 +1091,7 @@ function normalizeAssetHashtagsJson(value: unknown): string {
 
     const normalized = parsed
       .map((entry) =>
-        String(entry ?? "")
+        stripInvisibleCharacters(String(entry ?? ""))
           .trim()
           .replace(/^#+/, "")
           .replace(/\s+/g, "")
@@ -1106,11 +1111,11 @@ function normalizeAssetCollectionColor(value: unknown): string {
 }
 
 function normalizeAssetCollectionName(value: unknown): string {
-  return String(value ?? "").trim().slice(0, 80) || "Curated set";
+  return sanitizeStoredText(value, 80) || "Curated set";
 }
 
 function normalizeAssetCollectionDescription(value: unknown): string {
-  return String(value ?? "").trim().slice(0, 240);
+  return sanitizeStoredText(value, 240);
 }
 
 function parseAssetTagsJson(value: string): string[] {
@@ -1547,18 +1552,19 @@ function normalizeState(state: AppState): AppState {
   const normalizedAssets = Array.isArray(state.assets)
     ? dedupeById(state.assets).map((asset) => ({
         ...asset,
+        title: normalizeAssetTitle(asset.title),
         folderPath: asset.folderPath ?? "",
         tags: normalizeAssetTags(asset.tags ?? []),
-        titlePrefix: asset.titlePrefix ?? "",
-        hashtagsJson: asset.hashtagsJson ?? "[]",
-        platformNotes: asset.platformNotes ?? "",
+        titlePrefix: normalizeAssetTitlePrefix(asset.titlePrefix ?? ""),
+        hashtagsJson: normalizeAssetHashtagsJson(asset.hashtagsJson ?? "[]"),
+        platformNotes: normalizeAssetPlatformNotes(asset.platformNotes ?? ""),
         includeInProgramming: asset.includeInProgramming ?? true,
         cachePath: asset.cachePath ?? "",
         cacheStatus: asset.cacheStatus ?? "",
         cacheUpdatedAt: asset.cacheUpdatedAt ?? "",
         cacheError: asset.cacheError ?? "",
         externalId: asset.externalId ?? "",
-        categoryName: asset.categoryName ?? "",
+        categoryName: normalizeAssetCategoryName(asset.categoryName ?? ""),
         durationSeconds: asset.durationSeconds ?? 0,
         publishedAt: asset.publishedAt ?? "",
         fallbackPriority: asset.fallbackPriority ?? 100,
@@ -1589,27 +1595,11 @@ function normalizeState(state: AppState): AppState {
       ...(state.moderation ?? {})
     },
     overlay: {
-      ...defaults.overlay,
-      ...(state.overlay ?? {}),
-      scenePreset: normalizeOverlayScenePreset(String(state.overlay?.scenePreset ?? defaults.overlay.scenePreset)),
-      insertScenePreset: normalizeOverlayScenePreset(String(state.overlay?.insertScenePreset ?? defaults.overlay.insertScenePreset)),
-      standbyScenePreset: normalizeOverlayScenePreset(String(state.overlay?.standbyScenePreset ?? defaults.overlay.standbyScenePreset)),
-      reconnectScenePreset: normalizeOverlayScenePreset(String(state.overlay?.reconnectScenePreset ?? defaults.overlay.reconnectScenePreset)),
-      headline: String(state.overlay?.headline ?? defaults.overlay.headline).trim().slice(0, 120) || defaults.overlay.headline,
-      insertHeadline: String(state.overlay?.insertHeadline ?? defaults.overlay.insertHeadline).trim().slice(0, 120) || defaults.overlay.insertHeadline,
-      standbyHeadline: String(state.overlay?.standbyHeadline ?? defaults.overlay.standbyHeadline).trim().slice(0, 120) || defaults.overlay.standbyHeadline,
-      reconnectHeadline:
-        String(state.overlay?.reconnectHeadline ?? defaults.overlay.reconnectHeadline).trim().slice(0, 120) ||
-        defaults.overlay.reconnectHeadline,
-      surfaceStyle: normalizeOverlaySurfaceStyle(String(state.overlay?.surfaceStyle ?? defaults.overlay.surfaceStyle)),
-      panelAnchor: normalizeOverlayPanelAnchor(String(state.overlay?.panelAnchor ?? defaults.overlay.panelAnchor)),
-      titleScale: normalizeOverlayTitleScale(String(state.overlay?.titleScale ?? defaults.overlay.titleScale)),
-      typographyPreset: normalizeOverlayTypographyPreset(String(state.overlay?.typographyPreset ?? defaults.overlay.typographyPreset)),
-      layerOrder: normalizeOverlaySceneLayerOrder(state.overlay?.layerOrder ?? defaults.overlay.layerOrder),
-      disabledLayers: normalizeOverlaySceneLayerOrder(state.overlay?.disabledLayers ?? []).filter((kind) =>
-        (state.overlay?.disabledLayers ?? []).includes(kind)
-      ),
-      customLayers: normalizeOverlaySceneCustomLayers(state.overlay?.customLayers ?? defaults.overlay.customLayers)
+      ...normalizeOverlaySettingsRecord({
+        ...defaults.overlay,
+        ...(state.overlay ?? {})
+      }),
+      updatedAt: state.overlay?.updatedAt ?? defaults.overlay.updatedAt
     },
     managedConfig: {
       ...defaults.managedConfig,
@@ -4083,7 +4073,7 @@ export async function resetDatabaseConnectionsForTests(): Promise<void> {
 
 export async function writeAppState(state: AppState): Promise<void> {
   await withSerializedStateWrite("writeAppState", async (client) => {
-    await persistState(client, state);
+    await persistState(client, normalizeState(state));
   });
 }
 
@@ -4269,7 +4259,7 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
         [
           asset.id,
           asset.sourceId,
-          asset.title,
+          normalizeAssetTitle(asset.title),
           asset.path,
           asset.cachePath ?? existing?.cache_path ?? "",
           asset.cacheStatus ?? existing?.cache_status ?? "",
@@ -4278,12 +4268,12 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
           existing?.folder_path ?? asset.folderPath ?? "",
           existing?.tags_json ?? JSON.stringify(normalizeAssetTags(asset.tags ?? [])),
           asset.status,
-          existing?.title_prefix ?? asset.titlePrefix ?? "",
-          existing?.hashtags_json ?? asset.hashtagsJson ?? "[]",
-          existing?.platform_notes ?? asset.platformNotes ?? "",
+          normalizeAssetTitlePrefix(existing?.title_prefix ?? asset.titlePrefix ?? ""),
+          normalizeAssetHashtagsJson(existing?.hashtags_json ?? asset.hashtagsJson ?? "[]"),
+          normalizeAssetPlatformNotes(existing?.platform_notes ?? asset.platformNotes ?? ""),
           existing?.include_in_programming ?? asset.includeInProgramming,
           asset.externalId ?? "",
-          asset.categoryName ?? "",
+          normalizeAssetCategoryName(asset.categoryName ?? ""),
           asset.durationSeconds ?? 0,
           asset.publishedAt ?? "",
           existing?.fallback_priority ?? asset.fallbackPriority,
@@ -4332,7 +4322,7 @@ export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
         `,
         [
           asset.id,
-          asset.title,
+          normalizeAssetTitle(asset.title),
           asset.path,
           asset.cachePath ?? "",
           asset.cacheStatus ?? "",
@@ -4341,12 +4331,12 @@ export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
           asset.folderPath ?? "",
           JSON.stringify(normalizeAssetTags(asset.tags ?? [])),
           asset.status,
-          asset.titlePrefix ?? "",
-          asset.hashtagsJson ?? "[]",
-          asset.platformNotes ?? "",
+          normalizeAssetTitlePrefix(asset.titlePrefix ?? ""),
+          normalizeAssetHashtagsJson(asset.hashtagsJson ?? "[]"),
+          normalizeAssetPlatformNotes(asset.platformNotes ?? ""),
           asset.includeInProgramming,
           asset.externalId ?? "",
-          asset.categoryName ?? "",
+          normalizeAssetCategoryName(asset.categoryName ?? ""),
           asset.durationSeconds ?? 0,
           asset.publishedAt ?? "",
           asset.fallbackPriority,

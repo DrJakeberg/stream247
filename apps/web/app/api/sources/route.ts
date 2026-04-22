@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   isLikelyTwitchChannelUrl,
   isLikelyTwitchVodUrl,
+  stripInvisibleCharacters,
   isLikelyYouTubeChannelUrl,
   isLikelyYouTubePlaylistUrl
 } from "@stream247/core";
@@ -90,9 +91,10 @@ export async function POST(request: NextRequest) {
     externalUrl?: string;
   };
 
-  const name = (body.name ?? "").trim();
+  const normalizeText = (value: unknown, maxLength = 400) => stripInvisibleCharacters(String(value ?? "")).trim().slice(0, maxLength);
+  const name = normalizeText(body.name, 120);
   const connectorKind = normalizeConnectorKind(body.connectorKind);
-  const externalUrl = connectorKind === "local-library" ? "" : (body.externalUrl ?? "").trim();
+  const externalUrl = connectorKind === "local-library" ? "" : normalizeText(body.externalUrl, 400);
 
   if (!name) {
     return NextResponse.json({ message: "Source name is required." }, { status: 400 });
@@ -133,10 +135,11 @@ export async function PUT(request: NextRequest) {
     enabled?: boolean;
   };
 
-  const id = (body.id ?? "").trim();
-  const name = (body.name ?? "").trim();
+  const normalizeText = (value: unknown, maxLength = 400) => stripInvisibleCharacters(String(value ?? "")).trim().slice(0, maxLength);
+  const id = normalizeText(body.id, 80);
+  const name = normalizeText(body.name, 120);
   const connectorKind = normalizeConnectorKind(body.connectorKind);
-  const externalUrl = connectorKind === "local-library" ? "" : (body.externalUrl ?? "").trim();
+  const externalUrl = connectorKind === "local-library" ? "" : normalizeText(body.externalUrl, 400);
 
   if (!id) {
     return NextResponse.json({ message: "Source id is required." }, { status: 400 });
@@ -159,10 +162,10 @@ export async function PUT(request: NextRequest) {
     await updateSourceFieldRecords([
       {
         id: existing.id,
-      name,
-      type: typeByConnector[connectorKind],
-      connectorKind,
-      enabled: body.enabled ?? existing.enabled ?? true,
+        name,
+        type: typeByConnector[connectorKind],
+        connectorKind,
+        enabled: body.enabled ?? existing.enabled ?? true,
         externalUrl
       }
     ]);
@@ -184,7 +187,7 @@ export async function DELETE(request: NextRequest) {
   }
 
   const body = (await request.json()) as { id?: string };
-  const id = (body.id ?? "").trim();
+  const id = stripInvisibleCharacters(String(body.id ?? "")).trim().slice(0, 80);
   if (!id) {
     return NextResponse.json({ message: "Source id is required." }, { status: 400 });
   }

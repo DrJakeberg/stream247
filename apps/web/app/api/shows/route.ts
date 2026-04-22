@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { stripInvisibleCharacters } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
 import {
   appendAuditEvent,
@@ -16,13 +17,14 @@ function normalizeBody(body: {
   color?: string;
   description?: string;
 }) {
+  const normalizeText = (value: unknown, maxLength = 200) => stripInvisibleCharacters(String(value ?? "")).trim().slice(0, maxLength);
   return {
-    id: (body.id ?? "").trim(),
-    name: (body.name ?? "").trim(),
-    categoryName: (body.categoryName ?? "").trim(),
+    id: normalizeText(body.id, 80),
+    name: normalizeText(body.name, 120),
+    categoryName: normalizeText(body.categoryName, 120),
     defaultDurationMinutes: Number(body.defaultDurationMinutes ?? 60),
-    color: (body.color ?? "").trim() || "#0e6d5a",
-    description: (body.description ?? "").trim()
+    color: normalizeText(body.color, 20) || "#0e6d5a",
+    description: normalizeText(body.description, 240)
   };
 }
 
@@ -127,7 +129,7 @@ export async function DELETE(request: NextRequest) {
   }
 
   const body = (await request.json()) as { id?: string };
-  const id = (body.id ?? "").trim();
+  const id = stripInvisibleCharacters(String(body.id ?? "")).trim().slice(0, 80);
   if (!id) {
     return NextResponse.json({ message: "Show id is required." }, { status: 400 });
   }

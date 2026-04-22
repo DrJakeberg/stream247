@@ -175,6 +175,63 @@ describe("asset API safety regressions", () => {
     expect(mockUpdateAssetCurationRecords).not.toHaveBeenCalled();
   });
 
+  it("sanitizes invisible characters from metadata edits and route ids", async () => {
+    mockReadAppState.mockResolvedValue({
+      assetCollections: [],
+      assets: [
+        {
+          id: "asset_1",
+          sourceId: "source_1",
+          title: "Fresh worker title",
+          titlePrefix: "",
+          hashtagsJson: "[]",
+          platformNotes: "",
+          path: "/tmp/fresh-worker-path.mp4",
+          folderPath: "worker/folder",
+          tags: ["fresh"],
+          status: "ready",
+          includeInProgramming: true,
+          externalId: "external-1",
+          categoryName: "Archive",
+          durationSeconds: 1200,
+          publishedAt: "2026-04-05T10:00:00.000Z",
+          fallbackPriority: 5,
+          isGlobalFallback: false,
+          createdAt: "2026-04-05T10:00:00.000Z",
+          updatedAt: "2026-04-05T10:00:00.000Z"
+        }
+      ]
+    });
+
+    const response = await PATCH(
+      new Request("http://localhost/api/assets/asset_1", {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: "Edited\u200B stream title",
+          titlePrefix: "Re\uFEFFplay:",
+          categoryName: "Gam\u200Ding",
+          hashtagsJson: JSON.stringify(["stream\u200B247", "#vod\u2066 replay"]),
+          platformNotes: "Use\u2069 the safe thumbnail."
+        }),
+        headers: {
+          "content-type": "application/json"
+        }
+      }),
+      { params: Promise.resolve({ id: "asset_1\u200B" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateAssetMetadataRecords).toHaveBeenCalledTimes(1);
+    expect(mockUpdateAssetMetadataRecords.mock.calls[0]?.[0]?.[0]).toMatchObject({
+      id: "asset_1",
+      title: "Edited stream title",
+      titlePrefix: "Replay:",
+      categoryName: "Gaming",
+      hashtagsJson: JSON.stringify(["stream247", "vodreplay"]),
+      platformNotes: "Use the safe thumbnail."
+    });
+  });
+
   it("uses append-tags curation updates without rewriting whole asset rows", async () => {
     mockReadAppState.mockResolvedValue({
       assetCollections: [],

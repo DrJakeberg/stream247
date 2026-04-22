@@ -1,4 +1,4 @@
-import { normalizeAudioLaneVolumePercent } from "@stream247/core";
+import { normalizeAudioLaneVolumePercent, stripInvisibleCharacters } from "@stream247/core";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, createPoolRecord, deletePoolRecord, readAppState, updatePoolRecord } from "@/lib/server/state";
@@ -12,13 +12,14 @@ function normalizeBody(body: {
   audioLaneAssetId?: string;
   audioLaneVolumePercent?: number;
 }) {
+  const normalizeText = (value: unknown, maxLength = 200) => stripInvisibleCharacters(String(value ?? "")).trim().slice(0, maxLength);
   return {
-    id: (body.id ?? "").trim(),
-    name: (body.name ?? "").trim(),
-    sourceIds: Array.isArray(body.sourceIds) ? body.sourceIds.map((value) => String(value).trim()).filter(Boolean) : [],
-    insertAssetId: String(body.insertAssetId ?? "").trim(),
+    id: normalizeText(body.id, 80),
+    name: normalizeText(body.name, 120),
+    sourceIds: Array.isArray(body.sourceIds) ? body.sourceIds.map((value) => normalizeText(value, 80)).filter(Boolean) : [],
+    insertAssetId: normalizeText(body.insertAssetId, 80),
     insertEveryItems: Math.max(0, Math.min(100, Number(body.insertEveryItems ?? 0) || 0)),
-    audioLaneAssetId: String(body.audioLaneAssetId ?? "").trim(),
+    audioLaneAssetId: normalizeText(body.audioLaneAssetId, 80),
     audioLaneVolumePercent: normalizeAudioLaneVolumePercent(Number(body.audioLaneVolumePercent ?? 100) || 100)
   };
 }

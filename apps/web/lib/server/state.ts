@@ -30,6 +30,7 @@ import {
   isEngagementChatRuntimeEnabled,
   isEngagementDonationAlertsRuntimeEnabled,
   normalizeEngagementSettings,
+  stripInvisibleCharacters,
   summarizeLiveBridgeInput,
   type OverlaySceneRenderTarget
 } from "@stream247/core";
@@ -642,7 +643,10 @@ function summarizeAsset(state: AppState, assetId: string): LiveAssetSummary | nu
 }
 
 function buildAssetDisplayTitle(asset: Pick<AssetRecord, "title" | "titlePrefix"> | null | undefined): string {
-  return [asset?.titlePrefix?.trim() || "", asset?.title?.trim() || ""].filter(Boolean).join(" ").trim();
+  return [stripInvisibleCharacters(asset?.titlePrefix || "").trim(), stripInvisibleCharacters(asset?.title || "").trim()]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
 }
 
 function getScheduleOccurrenceLookaheadTitle(

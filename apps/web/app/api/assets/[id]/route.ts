@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { stripInvisibleCharacters } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
 import {
   appendAuditEvent,
@@ -17,11 +18,11 @@ type AssetMetadataRequest = {
 };
 
 function normalizeText(value: unknown, maxLength: number): string {
-  return String(value ?? "").trim().slice(0, maxLength);
+  return stripInvisibleCharacters(String(value ?? "")).trim().slice(0, maxLength);
 }
 
 function normalizeHashtagValue(value: unknown): string {
-  return String(value ?? "")
+  return stripInvisibleCharacters(String(value ?? ""))
     .trim()
     .replace(/^#+/, "")
     .replace(/\s+/g, "");
@@ -67,7 +68,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   const { id } = await params;
-  const assetId = id.trim();
+  const assetId = normalizeText(id, 80);
   if (!assetId) {
     return NextResponse.json({ message: "Asset id is required." }, { status: 400 });
   }

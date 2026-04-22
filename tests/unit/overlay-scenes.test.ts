@@ -203,6 +203,37 @@ describe("overlay text lines", () => {
     expect(buildOverlayTextLinesFromScenePayload(payload).some((line) => line.includes("[]"))).toBe(false);
   });
 
+  it("removes invisible characters from rendered overlay text lines", () => {
+    const payload = buildOverlayScenePayload({
+      overlay: {
+        ...createOverlaySource({
+          headline: "Always\u200B on air",
+          tickerText: "Coming\u2066 up next\u2069"
+        }),
+        channelName: "Archive\uFEFF TV",
+        replayLabel: "Replay\u200D stream",
+        brandBadge: "Late\u200B Night",
+        accentColor: "#0e6d5a"
+      },
+      queueKind: "asset",
+      target: "browser",
+      currentTitle: "Episode\u200B One",
+      currentCategory: "Gam\u2066ing\u2069",
+      currentSourceName: "Archive\u200B Playlist",
+      nextTitle: "Episode\u200B Two",
+      queueTitles: ["Episode\u200B Two"],
+      timeZone: "Europe/Berlin"
+    });
+
+    expect(buildOverlayTextLinesFromScenePayload(payload)).toEqual([
+      "Replay stream · Late Night",
+      "Now: Episode One",
+      "Next: Episode Two",
+      "Gaming · Archive Playlist",
+      "Coming up next"
+    ]);
+  });
+
   it("uses neutral upcoming copy instead of the old scheduling placeholder", () => {
     const payload = buildOverlayScenePayload({
       overlay: {

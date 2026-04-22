@@ -11,6 +11,15 @@ describe("asset display title", () => {
       })
     ).toBe("Replay: Runtime program");
   });
+
+  it("removes invisible characters from overlay-facing asset labels", () => {
+    expect(
+      buildAssetDisplayTitle({
+        titlePrefix: "Re\u200Bplay:",
+        title: "Runtime\u2066 program\u2069"
+      })
+    ).toBe("Replay: Runtime program");
+  });
 });
 
 describe("Twitch metadata title", () => {
@@ -43,5 +52,18 @@ describe("Twitch metadata title", () => {
 
   it("parses hashtag arrays into prefixed strings", () => {
     expect(parseAssetHashtagsJson(JSON.stringify(["alpha", "#beta", "two words"]))).toEqual(["#alpha", "#beta", "#twowords"]);
+  });
+
+  it("strips invisible characters from title parts and hashtags", () => {
+    const title = buildTwitchMetadataTitle(
+      {
+        titlePrefix: "LI\u200BVE",
+        title: "Runtime\u2066 program\u2069",
+        hashtagsJson: JSON.stringify(["stre\u200bam247", "#vod\uFEFF replay"])
+      },
+      "Fallback"
+    );
+
+    expect(title).toBe("LIVE Runtime program #stream247 #vodreplay");
   });
 });

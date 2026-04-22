@@ -4,6 +4,7 @@ import {
   normalizeOverlaySceneCustomLayers,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
+  stripInvisibleCharacters,
   normalizeOverlaySurfaceStyle,
   normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale
@@ -51,22 +52,22 @@ type OverlayPayload = Partial<{
 
 function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnType<typeof readOverlayStudioState>>["draftOverlay"], updatedAt: string) {
   const disabledLayersSource = payload.disabledLayers ?? base.disabledLayers;
+  const normalizeText = (value: unknown, maxLength: number) => stripInvisibleCharacters(String(value ?? "")).trim().slice(0, maxLength);
   return {
     ...base,
     enabled: payload.enabled ?? base.enabled,
-    channelName: (payload.channelName ?? base.channelName).trim().slice(0, 80) || "Stream247",
-    headline: (payload.headline ?? base.headline).trim().slice(0, 120) || "Always on air",
-    insertHeadline: (payload.insertHeadline ?? base.insertHeadline).trim().slice(0, 120) || "Insert on air",
-    standbyHeadline:
-      (payload.standbyHeadline ?? base.standbyHeadline).trim().slice(0, 120) || "Please wait, restream is starting",
+    channelName: normalizeText(payload.channelName ?? base.channelName, 80) || "Stream247",
+    headline: normalizeText(payload.headline ?? base.headline, 120) || "Always on air",
+    insertHeadline: normalizeText(payload.insertHeadline ?? base.insertHeadline, 120) || "Insert on air",
+    standbyHeadline: normalizeText(payload.standbyHeadline ?? base.standbyHeadline, 120) || "Please wait, restream is starting",
     reconnectHeadline:
-      (payload.reconnectHeadline ?? base.reconnectHeadline).trim().slice(0, 120) || "Scheduled reconnect in progress",
-    brandBadge: (payload.brandBadge ?? base.brandBadge).trim().slice(0, 48),
+      normalizeText(payload.reconnectHeadline ?? base.reconnectHeadline, 120) || "Scheduled reconnect in progress",
+    brandBadge: normalizeText(payload.brandBadge ?? base.brandBadge, 48),
     scenePreset: normalizeOverlayScenePreset(String(payload.scenePreset ?? base.scenePreset)),
     insertScenePreset: normalizeOverlayScenePreset(String(payload.insertScenePreset ?? base.insertScenePreset)),
     standbyScenePreset: normalizeOverlayScenePreset(String(payload.standbyScenePreset ?? base.standbyScenePreset)),
     reconnectScenePreset: normalizeOverlayScenePreset(String(payload.reconnectScenePreset ?? base.reconnectScenePreset)),
-    accentColor: (payload.accentColor ?? base.accentColor).trim().slice(0, 20) || "#0e6d5a",
+    accentColor: normalizeText(payload.accentColor ?? base.accentColor, 20) || "#0e6d5a",
     surfaceStyle: normalizeOverlaySurfaceStyle(String(payload.surfaceStyle ?? base.surfaceStyle)),
     panelAnchor: normalizeOverlayPanelAnchor(String(payload.panelAnchor ?? base.panelAnchor)),
     titleScale: normalizeOverlayTitleScale(String(payload.titleScale ?? base.titleScale)),
@@ -81,9 +82,9 @@ function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnTyp
     layerOrder: normalizeOverlaySceneLayerOrder(payload.layerOrder ?? base.layerOrder),
     disabledLayers: normalizeOverlaySceneLayerOrder(disabledLayersSource).filter((kind) => disabledLayersSource.includes(kind)),
     customLayers: normalizeOverlaySceneCustomLayers(payload.customLayers ?? base.customLayers),
-    emergencyBanner: (payload.emergencyBanner ?? base.emergencyBanner).trim().slice(0, 180),
-    tickerText: (payload.tickerText ?? base.tickerText).trim().slice(0, 180),
-    replayLabel: (payload.replayLabel ?? base.replayLabel).trim().slice(0, 80) || "Replay stream",
+    emergencyBanner: normalizeText(payload.emergencyBanner ?? base.emergencyBanner, 180),
+    tickerText: normalizeText(payload.tickerText ?? base.tickerText, 180),
+    replayLabel: normalizeText(payload.replayLabel ?? base.replayLabel, 80) || "Replay stream",
     updatedAt
   };
 }

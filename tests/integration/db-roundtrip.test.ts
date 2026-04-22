@@ -231,12 +231,12 @@ describe.sequential("database roundtrip", () => {
       overlay: {
         ...initial.overlay,
         enabled: true,
-        channelName: "Roundtrip TV",
-        replayLabel: "Replay",
-        insertHeadline: "Custom insert break",
-        standbyHeadline: "Stand by for the next archive block",
-        reconnectHeadline: "Refreshing the live output",
-        brandBadge: "Archive Channel",
+        channelName: "Roundtrip\u200B TV",
+        replayLabel: "Re\uFEFFplay",
+        insertHeadline: "Custom\u200B insert break",
+        standbyHeadline: "Stand by\u2066 for the next archive block",
+        reconnectHeadline: "Refreshing the\u200D live output",
+        brandBadge: "Archive\u200B Channel",
         insertScenePreset: "minimal-chip",
         standbyScenePreset: "standby-board",
         reconnectScenePreset: "reconnect-board",
@@ -245,7 +245,7 @@ describe.sequential("database roundtrip", () => {
         titleScale: "cinematic",
         layerOrder: ["hero", "chip", "next", "queue", "schedule", "clock", "banner", "ticker"],
         disabledLayers: ["schedule"],
-        tickerText: "Roundtrip preview ticker",
+        tickerText: "Roundtrip\u2069 preview ticker",
         updatedAt: "2026-04-04T10:00:00.000Z"
       },
       managedConfig: {
@@ -278,15 +278,15 @@ describe.sequential("database roundtrip", () => {
         {
           id: "engagement_chat_1",
           kind: "chat" as const,
-          actor: "viewer",
-          message: "hello stream",
+          actor: "view\u200Ber",
+          message: "hello\u2066 stream\u2069",
           createdAt: "2026-04-04T10:01:00.000Z"
         },
         {
           id: "engagement_follow_1",
           kind: "follow" as const,
-          actor: "newviewer",
-          message: "newviewer followed the channel.",
+          actor: "new\u200Bviewer",
+          message: "newviewer followed the\uFEFF channel.",
           createdAt: "2026-04-04T10:02:00.000Z"
         }
       ],
@@ -372,7 +372,10 @@ describe.sequential("database roundtrip", () => {
         {
           id: "asset_1",
           sourceId: "source_1",
-          title: "Asset One",
+          title: "Asset\u200B One",
+          titlePrefix: "Re\uFEFFplay:",
+          hashtagsJson: JSON.stringify(["stream\u200B247", "#vod\u2066 replay"]),
+          platformNotes: "Use\u2069 the safe thumbnail.",
           path: "https://example.com/video.mp4",
           cachePath: "/app/data/media/.stream247-cache/twitch/source_1/video-1.mp4",
           cacheStatus: "ready" as const,
@@ -383,7 +386,7 @@ describe.sequential("database roundtrip", () => {
           status: "ready" as const,
           includeInProgramming: true,
           externalId: "video-1",
-          categoryName: "Gaming",
+          categoryName: "Gam\u200Ding",
           durationSeconds: 3600,
           publishedAt: "2026-04-01T10:00:00.000Z",
           fallbackPriority: 1,
@@ -549,6 +552,7 @@ describe.sequential("database roundtrip", () => {
     expect(reread.initialized).toBe(true);
     expect(reread.owner?.email).toBe("owner@example.com");
     expect(reread.overlay.channelName).toBe("Roundtrip TV");
+    expect(reread.overlay.replayLabel).toBe("Replay");
     expect(reread.overlay.insertHeadline).toBe("Custom insert break");
     expect(reread.overlay.standbyHeadline).toBe("Stand by for the next archive block");
     expect(reread.overlay.reconnectHeadline).toBe("Refreshing the live output");
@@ -566,6 +570,10 @@ describe.sequential("database roundtrip", () => {
     expect(reread.output).toEqual(nextState.output);
     expect(reread.engagement).toEqual(nextState.engagement);
     expect(reread.engagementEvents.map((event) => event.id)).toEqual(["engagement_follow_1", "engagement_chat_1"]);
+    expect(reread.engagementEvents[0]?.actor).toBe("newviewer");
+    expect(reread.engagementEvents[0]?.message).toBe("newviewer followed the channel.");
+    expect(reread.engagementEvents[1]?.actor).toBe("viewer");
+    expect(reread.engagementEvents[1]?.message).toBe("hello stream");
     expect(reread.twitch.broadcasterLogin).toBe("roundtrip");
     expect(reread.twitch.liveStatus).toBe("offline");
     expect(reread.twitch.viewerCount).toBe(0);
@@ -582,6 +590,11 @@ describe.sequential("database roundtrip", () => {
     expect(reread.scheduleBlocks[0]?.cuepointOffsetsSeconds).toEqual([600, 1800]);
     expect(reread.sources[0]?.connectorKind).toBe("youtube-channel");
     expect(reread.assets[0]?.durationSeconds).toBe(3600);
+    expect(reread.assets[0]?.title).toBe("Asset One");
+    expect(reread.assets[0]?.titlePrefix).toBe("Replay:");
+    expect(reread.assets[0]?.hashtagsJson).toBe(JSON.stringify(["stream247", "vodreplay"]));
+    expect(reread.assets[0]?.platformNotes).toBe("Use the safe thumbnail.");
+    expect(reread.assets[0]?.categoryName).toBe("Gaming");
     expect(reread.assets[0]?.cachePath).toBe("/app/data/media/.stream247-cache/twitch/source_1/video-1.mp4");
     expect(reread.assets[0]?.cacheStatus).toBe("ready");
     expect(reread.assets[0]?.cacheUpdatedAt).toBe("2026-04-04T10:00:30.000Z");

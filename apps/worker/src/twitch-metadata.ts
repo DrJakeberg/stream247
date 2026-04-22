@@ -1,3 +1,4 @@
+import { stripInvisibleCharacters } from "@stream247/core";
 import type { AssetRecord } from "@stream247/db";
 
 type TwitchMetadataAsset = Pick<AssetRecord, "title" | "titlePrefix" | "hashtagsJson">;
@@ -10,7 +11,7 @@ export function parseAssetHashtagsJson(value: string | undefined): string[] {
     }
 
     return parsed
-      .map((entry) => String(entry).trim().replace(/^#+/, "").replace(/\s+/g, ""))
+      .map((entry) => stripInvisibleCharacters(String(entry ?? "")).trim().replace(/^#+/, "").replace(/\s+/g, ""))
       .filter(Boolean)
       .map((entry) => `#${entry}`);
   } catch {
@@ -19,10 +20,10 @@ export function parseAssetHashtagsJson(value: string | undefined): string[] {
 }
 
 export function buildTwitchMetadataTitle(asset: TwitchMetadataAsset | null, fallbackTitle: string): string {
-  const baseTitle = String(asset?.title || fallbackTitle || "").trim();
-  const title = [asset?.titlePrefix?.trim() || "", baseTitle, ...parseAssetHashtagsJson(asset?.hashtagsJson)]
+  const baseTitle = stripInvisibleCharacters(String(asset?.title || fallbackTitle || "")).trim();
+  const title = [stripInvisibleCharacters(asset?.titlePrefix || "").trim(), baseTitle, ...parseAssetHashtagsJson(asset?.hashtagsJson)]
     .filter(Boolean)
     .join(" ");
 
-  return title.slice(0, 140).trim();
+  return stripInvisibleCharacters(title).trim().slice(0, 140).trim();
 }

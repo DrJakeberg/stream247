@@ -159,6 +159,52 @@ describe("source API safety regressions", () => {
     ]);
   });
 
+  it("sanitizes invisible characters from source edits", async () => {
+    mockReadAppState.mockResolvedValue({
+      sources: [
+        {
+          id: "source_1",
+          name: "Worker name",
+          type: "YouTube channel",
+          connectorKind: "youtube-channel",
+          enabled: true,
+          status: "Sync queued",
+          externalUrl: "https://youtube.com/@worker",
+          notes: "Worker updated note",
+          lastSyncedAt: "2026-04-05T11:00:00.000Z"
+        }
+      ]
+    });
+
+    const response = await updateSource(
+      new Request("http://localhost/api/sources", {
+        method: "PUT",
+        body: JSON.stringify({
+          id: "source_1\u200B",
+          name: "Edited\u200B source",
+          connectorKind: "youtube-channel",
+          externalUrl: "https://youtube.com/@ed\u200Bited",
+          enabled: false
+        }),
+        headers: {
+          "content-type": "application/json"
+        }
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateSourceFieldRecords).toHaveBeenCalledWith([
+      {
+        id: "source_1",
+        name: "Edited source",
+        type: "YouTube channel",
+        connectorKind: "youtube-channel",
+        enabled: false,
+        externalUrl: "https://youtube.com/@edited"
+      }
+    ]);
+  });
+
   it("bulk updates only the selected sources", async () => {
     mockReadAppState.mockResolvedValue({
       sources: [

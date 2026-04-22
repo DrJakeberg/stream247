@@ -4,6 +4,7 @@ import {
   buildOverlaySceneMetadataWidgetContent,
   describeOverlaySceneFrameSupport,
   resolveOverlaySceneCustomTextFontStack,
+  stripInvisibleCharacters,
   type OverlaySceneCustomLayer,
   type OverlaySceneLayerKind,
   type OverlayScenePayload
@@ -18,7 +19,7 @@ type OverlaySceneCanvasProps = {
 };
 
 function visibleOverlayText(value: unknown): string {
-  const trimmed = String(value ?? "").trim();
+  const trimmed = stripInvisibleCharacters(String(value ?? "")).trim();
   return trimmed && trimmed !== "[]" ? trimmed : "";
 }
 
