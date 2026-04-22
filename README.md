@@ -38,10 +38,9 @@ are not retroactively revoked.
 - setup wizard with owner account bootstrap
 - local login with optional two-factor authentication, plus Twitch broadcaster connect and Twitch SSO team access
 - PostgreSQL-backed runtime state
-- operator control-room IA with:
+- operator workspace IA with:
   - `Live` for control, status, and moderation
-  - `Program` for schedule authoring and fill preview
-  - `Library` for sources, uploads, pools, and catalog curation
+  - `Program` for schedule, pools, library, and sources
   - `Studio` for scene, engagement, and output configuration
   - `Admin` for access, secrets, releases, and blueprints
 - source ingestion for:
@@ -157,7 +156,7 @@ are not retroactively revoked.
    - enter `TWITCH_CLIENT_SECRET`
 9. Or add/update encrypted managed credentials later in:
    - `/settings`
-10. Connect Twitch from the dashboard if you want broadcaster sync and Twitch SSO.
+10. Open `Live → Status` and use `Connect Twitch` if you want broadcaster sync and Twitch SSO.
 11. Add media by either:
    - placing files into `data/media`
    - adding direct media URLs
@@ -325,7 +324,7 @@ If you need `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`, follow this section o
 4. Copy the generated Client ID into `TWITCH_CLIENT_ID`.
 5. Generate, reveal, or regenerate the Client Secret and store it in `TWITCH_CLIENT_SECRET`.
 6. Restart the stack after changing `.env`.
-7. Use the dashboard for:
+7. Use `Live → Status` for:
    - broadcaster connect
    - Twitch SSO sign-in for team members
 
@@ -381,14 +380,7 @@ Operational docs:
 - [docs/operations.md](docs/operations.md)
 - [docs/twitch-setup.md](docs/twitch-setup.md)
 - [docs/moderation-policies.md](docs/moderation-policies.md)
-
-Archived Phase 4 planning docs:
-
-- [docs/archive/full-product-reset-audit.md](docs/archive/full-product-reset-audit.md)
-- [docs/archive/full-product-reset-plan.md](docs/archive/full-product-reset-plan.md)
-- [docs/archive/legacy-removal-list.md](docs/archive/legacy-removal-list.md)
-- [docs/archive/ui-redesign-spec.md](docs/archive/ui-redesign-spec.md)
-- [docs/archive/docs-reset-plan.md](docs/archive/docs-reset-plan.md)
+- [docs/ui.md](docs/ui.md)
 
 ## Release Readiness Workflow
 
@@ -409,7 +401,7 @@ Before tagging a production release:
    ```bash
    ./scripts/soak-monitor.sh --hours 24
    ```
-5. Review `/ops`, `/api/health`, and `/api/system/readiness`, and confirm `/api/system/readiness` reports `broadcastReady=true`.
+5. Review `Live → Status`, `/api/health`, and `/api/system/readiness`, and confirm `/api/system/readiness` reports `broadcastReady=true`.
 6. Tag only after the rehearsal and soak are clean.
 
 Notes:
@@ -613,7 +605,7 @@ Current validation covers:
 
 - verify `TWITCH_STREAM_KEY` or `STREAM_OUTPUT_KEY`
 - verify `TWITCH_RTMP_URL` or `STREAM_OUTPUT_URL`
-- inspect destination state and incidents on the dashboard
+- inspect destination state and incidents in `Live → Status`
 
 ### Email alerts do not send
 

@@ -1,5 +1,17 @@
 # Architecture
 
+## Product Boundaries
+
+Stream247 is a self-hosted single-channel 24/7 broadcast product. It is built for one operator or a small internal team running one always-on channel, not for multi-tenant hosting or a reusable overlay service.
+
+Explicit non-goals:
+
+- no multi-tenant or multi-channel control plane
+- no external overlay SaaS or third-party embed product
+- no in-app video editing or post-production workflow
+- no Kubernetes-native rewrite or cloud-control-plane redesign
+- no public API product direction beyond the internal web client
+
 ## Service Topology
 
 - `web`: Next.js admin UI, public pages, and API routes
@@ -35,6 +47,29 @@ Legacy `data/app/state.json` is only treated as a one-time migration source when
 - development Compose remains build-based
 - `main` pushes publish current GHCR images after validation
 - `v*` tags publish versioned GHCR images
+
+## Operator Workspaces
+
+The admin UI is organized around four workspaces:
+
+- `Live` at `/live`
+  - `?tab=control`
+  - `?tab=status`
+  - `?tab=moderation`
+- `Program` at `/program`
+  - `?tab=schedule`
+  - `?tab=pools`
+  - `?tab=library`
+  - `?tab=sources`
+- `Studio` at `/studio`
+  - `?tab=scene`
+  - `?tab=engagement`
+  - `?tab=output`
+- `Admin` at `/admin`
+  - `?tab=settings`
+  - `?tab=team`
+
+Legacy routes remain as redirects where needed, but the workspace URLs above are the canonical surfaces.
 
 ## Runtime Model
 
@@ -178,6 +213,8 @@ The runtime now supports multiple concurrent RTMP outputs per channel.
 
 Overlay is implemented as Stream247's internal browser capture surface. Chromium captures `/overlay?chromeless=1`, and the published scene feeds the on-air overlay path.
 
+The overlay is internal output for Stream247's own 24/7 broadcast. It is not an external overlay product or a reusable third-party embed surface.
+
 Current overlay capabilities:
 
 - channel name
@@ -195,7 +232,7 @@ The admin UI manages these settings; the public overlay page renders them for St
 Current operational domains:
 
 - incidents
-- incident history filters in the ops view
+- incident history and readiness context in `Live → Status`
 - acknowledgements
 - resolution state
 - runtime drift checks

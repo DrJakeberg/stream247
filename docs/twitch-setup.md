@@ -35,7 +35,7 @@ Both redirect URLs must be registered on the same Twitch application:
    - enter them during `/setup`
    - save them later in `/settings`
 7. Restart the stack only if you changed `.env`.
-8. Open the Stream247 dashboard and complete:
+8. Open `Live → Status` in the admin UI and complete:
    - `Connect Twitch` for the broadcaster connection
    - `Sign in with Twitch` for team members
 

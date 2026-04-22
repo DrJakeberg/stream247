@@ -2,8 +2,9 @@
 
 ## Primary Surfaces
 
-- `/dashboard` for current broadcast state and operator actions
-- `/ops` for incidents, drift checks, and audit visibility
+- `/live?tab=control` for current broadcast state and operator actions
+- `/live?tab=status` for incidents, drift checks, destination health, and audit visibility
+- `/live?tab=moderation` for moderation presence and check-in history
 - `/api/health` for basic service health
 - `/api/system/readiness` for broadcast readiness and drift-relevant status
 
@@ -35,7 +36,7 @@
 
 ### Playout degraded
 
-- open `/ops`
+- open `/live?tab=status`
 - inspect `selectionReasonCode`
 - inspect `fallbackTier`
 - inspect destination readiness
@@ -62,7 +63,7 @@
 
 - confirm broadcaster connection
 - check managed credentials or `.env` fallback
-- review Twitch incidents in `/ops`
+- review Twitch incidents in `/live?tab=status`
 
 ### No playable asset
 
@@ -124,4 +125,4 @@ Minimum expectation:
 6. Confirm:
    - setup is not shown again
    - `/api/system/readiness` returns expected service states
-   - `/dashboard` and `/ops` show the prior runtime state
+   - `/live?tab=control` and `/live?tab=status` show the prior runtime state
