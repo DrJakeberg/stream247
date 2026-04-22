@@ -12,7 +12,7 @@ const secretCachePath = path.join(
   `stream247-admin-smoke-${ownerEmail.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-2fa.txt`
 );
 
-test.describe.configure({ mode: "serial" });
+test.describe.configure({ mode: "serial", retries: 0 });
 
 async function ensureSignedIn(page: Page) {
   await page.goto("/setup");
@@ -180,7 +180,12 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await page.getByLabel("Secondary text").fill("CI smoke overlay");
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
   await expect(page.getByText("Scene draft saved.")).toBeVisible();
-  await page.getByRole("button", { name: "Publish live" }).click();
+  const publishLiveButton = page.getByRole("button", { name: "Publish live", exact: true });
+  if (!(await publishLiveButton.isVisible().catch(() => false))) {
+    await page.getByRole("button", { name: "Review changes", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Review scene changes before publishing", exact: true })).toBeVisible();
+  }
+  await publishLiveButton.click();
   await expect(page.getByText("Scene changes published live.")).toBeVisible();
 
   const publicOverlay = await browser.newPage();
