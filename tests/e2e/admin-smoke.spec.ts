@@ -18,25 +18,16 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await page.getByLabel("Owner email").fill(ownerEmail);
   await page.getByLabel("Password").fill(ownerPassword);
   await page.getByRole("button", { name: "Create owner account" }).click();
-  await expect(page).toHaveURL(/\/broadcast$/);
-  await expect(page.getByRole("heading", { name: /Operate the live 24\/7 output from one workspace/i })).toBeVisible();
+  await expect(page).toHaveURL(/\/live(?:\?tab=status)?$/);
   const adminNav = page.getByRole("navigation", { name: "Admin" });
-  await expect(adminNav.getByText("Live", { exact: true })).toBeVisible();
-  await expect(adminNav.getByText("Programming", { exact: true })).toBeVisible();
-  await expect(adminNav.getByText("Stream Studio", { exact: true })).toBeVisible();
-  await expect(adminNav.getByText("Workspace", { exact: true })).toBeVisible();
+  await expect(adminNav).toBeVisible();
+  await expect(page.getByText("Workspaces", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Check readiness, integrations, and current channel posture/i })).toBeVisible();
   for (const [label, href] of [
-    ["Broadcast", "/broadcast"],
-    ["Dashboard", "/dashboard"],
-    ["Schedule", "/schedule"],
-    ["Pools", "/pools"],
-    ["Library", "/library"],
-    ["Scene Studio", "/overlay-studio"],
-    ["Overlays", "/overlays"],
-    ["Output", "/output"],
-    ["Sources", "/sources"],
-    ["Team", "/team"],
-    ["Settings", "/settings"]
+    ["Live", "/live"],
+    ["Program", "/program"],
+    ["Studio", "/studio"],
+    ["Admin", "/admin"]
   ] as const) {
     const link = adminNav.getByRole("link", { name: label, exact: true });
     await expect(link).toBeVisible();
@@ -45,39 +36,54 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   }
 
   await page.goto("/ops");
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page).toHaveURL(/\/live(?:\?tab=status)?$/);
   await expect(page.getByRole("heading", { name: /Check readiness, integrations, and current channel posture/i })).toBeVisible();
 
-  await adminNav.getByRole("link", { name: "Schedule", exact: true }).click();
-  await expect(page).toHaveURL(/\/schedule$/);
+  await adminNav.getByRole("link", { name: "Program", exact: true }).click();
+  await expect(page).toHaveURL(/\/program(?:\?tab=schedule)?$/);
   await expect(page.getByText("Add schedule block", { exact: true })).toBeVisible();
+  const programTabs = page.getByRole("tablist", { name: "Program tabs" });
 
-  await adminNav.getByRole("link", { name: "Pools", exact: true }).click();
-  await expect(page).toHaveURL(/\/pools$/);
+  await programTabs.getByRole("tab", { name: "Pools", exact: true }).click();
+  await expect(page).toHaveURL(/\/program\?tab=pools$/);
   await expect(page.getByRole("heading", { name: /Manage programming pools/i })).toBeVisible();
 
-  await adminNav.getByRole("link", { name: "Library", exact: true }).click();
-  await expect(page).toHaveURL(/\/library$/);
+  await programTabs.getByRole("tab", { name: "Library", exact: true }).click();
+  await expect(page).toHaveURL(/\/program\?tab=library$/);
   await expect(page.getByRole("heading", { name: /Browse the playable catalog and upload local media/i })).toBeVisible();
 
-  await adminNav.getByRole("link", { name: "Sources", exact: true }).click();
-  await expect(page).toHaveURL(/\/sources$/);
+  await programTabs.getByRole("tab", { name: "Sources", exact: true }).click();
+  await expect(page).toHaveURL(/\/program\?tab=sources$/);
   await expect(page.getByRole("heading", { name: /Manage ingest pipelines and source connectors/i })).toBeVisible();
 
-  await adminNav.getByRole("link", { name: "Team", exact: true }).click();
-  await expect(page).toHaveURL(/\/team$/);
-  await expect(page.getByText("Twitch team access", { exact: true })).toBeVisible();
+  await adminNav.getByRole("link", { name: "Studio", exact: true }).click();
+  await expect(page).toHaveURL(/\/studio(?:\?tab=scene)?$/);
+  await expect(page.getByRole("heading", { name: /Publish the viewer-facing scene without leaving the control room/i })).toBeVisible();
+  const studioTabs = page.getByRole("tablist", { name: "Studio tabs" });
 
-  await adminNav.getByRole("link", { name: "Output", exact: true }).click();
-  await expect(page).toHaveURL(/\/output$/);
-  await expect(page.getByRole("heading", { name: /Set the stream resolution and frame rate/i })).toBeVisible();
-
-  await adminNav.getByRole("link", { name: "Overlays", exact: true }).click();
-  await expect(page).toHaveURL(/\/overlays$/);
+  await studioTabs.getByRole("tab", { name: "Engagement", exact: true }).click();
+  await expect(page).toHaveURL(/\/studio\?tab=engagement$/);
   await expect(page.getByRole("heading", { name: /Manage in-stream engagement/i })).toBeVisible();
 
-  await adminNav.getByRole("link", { name: "Dashboard", exact: true }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await studioTabs.getByRole("tab", { name: "Output", exact: true }).click();
+  await expect(page).toHaveURL(/\/studio\?tab=output$/);
+  await expect(page.getByRole("heading", { name: "Output profile", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save output settings", exact: true })).toBeVisible();
+
+  await adminNav.getByRole("link", { name: "Admin", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin(?:\?tab=settings)?$/);
+  await expect(page.getByRole("heading", { name: /Manage workspace security, credentials, releases, and blueprints/i })).toBeVisible();
+  const adminTabs = page.getByRole("tablist", { name: "Admin tabs" });
+
+  await adminTabs.getByRole("tab", { name: "Team", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\?tab=team$/);
+  await expect(page.getByText("Twitch team access", { exact: true })).toBeVisible();
+
+  await adminNav.getByRole("link", { name: "Live", exact: true }).click();
+  await expect(page).toHaveURL(/\/live(?:\?tab=control)?$/);
+  const liveTabs = page.getByRole("tablist", { name: "Live tabs" });
+  await liveTabs.getByRole("tab", { name: "Status", exact: true }).click();
+  await expect(page).toHaveURL(/\/live\?tab=status$/);
   await expect(page.getByRole("heading", { name: /Check readiness, integrations, and current channel posture/i })).toBeVisible();
   const destinationForm = page.locator("form").filter({ has: page.getByRole("button", { name: "Add destination" }) }).first();
   await destinationForm.getByLabel("Name").fill(secondaryDestinationName);
@@ -94,8 +100,8 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await expect(page.getByText("2 active", { exact: true })).toBeVisible();
   await expect(page.getByText(/2 active output\(s\) are ready\./i)).toBeVisible();
 
-  await adminNav.getByRole("link", { name: "Settings", exact: true }).click();
-  await expect(page).toHaveURL(/\/settings$/);
+  await adminNav.getByRole("link", { name: "Admin", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin(?:\?tab=settings)?$/);
   await expect(page.getByRole("heading", { name: /Manage workspace security, credentials, releases, and blueprints/i })).toBeVisible();
   await page.getByLabel("Current password").fill(ownerPassword);
   await page.getByRole("button", { name: /Start two-factor setup|Rotate authenticator secret/ }).click();
@@ -117,7 +123,7 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await expect(page.getByLabel("One-time code")).toBeVisible();
   await page.getByLabel("One-time code").fill(generateTotpCode(secret));
   await page.getByRole("button", { name: "Verify code" }).click();
-  await expect(page).toHaveURL(/\/broadcast$/);
+  await expect(page).toHaveURL(/\/live(?:\?tab=control)?$/);
   await expect(page.getByRole("heading", { name: /Operate the live 24\/7 output from one workspace/i })).toBeVisible();
 
   const refreshResponse = page.waitForResponse(
@@ -126,8 +132,8 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await page.getByRole("button", { name: "Refresh scenes" }).click();
   await expect((await refreshResponse).ok()).toBeTruthy();
 
-  await adminNav.getByRole("link", { name: "Scene Studio", exact: true }).click();
-  await expect(page).toHaveURL(/\/overlay-studio$/);
+  await adminNav.getByRole("link", { name: "Studio", exact: true }).click();
+  await expect(page).toHaveURL(/\/studio(?:\?tab=scene)?$/);
   await expect(page.getByRole("heading", { name: /Publish the viewer-facing scene without leaving the control room/i })).toBeVisible();
   await page.getByLabel("Channel name").fill(channelName);
   await page.getByLabel("Typography preset").selectOption("editorial-serif");
