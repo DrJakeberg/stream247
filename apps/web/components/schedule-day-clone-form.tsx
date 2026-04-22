@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { useToast } from "@/components/ui/Toast";
 
 const dayOptions = [
   { value: 0, label: "Sunday" },
@@ -16,17 +17,16 @@ const dayOptions = [
 export function ScheduleDayCloneForm() {
   const [sourceDayOfWeek, setSourceDayOfWeek] = useState(1);
   const [targetDayOfWeeks, setTargetDayOfWeeks] = useState<number[]>([2, 3, 4, 5]);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  const { pushToast } = useToast();
 
   return (
     <form
       className="stack-form"
       onSubmit={(event) => {
         event.preventDefault();
-        setMessage("");
         setError("");
 
         startTransition(async () => {
@@ -42,11 +42,13 @@ export function ScheduleDayCloneForm() {
 
           const payload = (await response.json()) as { message?: string };
           if (!response.ok) {
-            setError(payload.message ?? "Could not clone schedule day.");
+            const nextError = payload.message ?? "Could not clone schedule day.";
+            setError(nextError);
+            pushToast({ title: "Schedule day could not be cloned.", description: nextError, tone: "error" });
             return;
           }
 
-          setMessage(payload.message ?? "Schedule day cloned.");
+          pushToast({ title: payload.message ?? "Schedule day cloned.", tone: "success" });
           router.refresh();
         });
       }}
@@ -99,7 +101,6 @@ export function ScheduleDayCloneForm() {
         </div>
       </div>
       <p className="subtle">For safety this only clones onto empty target weekdays. Existing days must be cleared first.</p>
-      {message ? <p>{message}</p> : null}
       {error ? <p className="danger">{error}</p> : null}
       <button className="button secondary" disabled={isPending || targetDayOfWeeks.length === 0} type="submit">
         {isPending ? "Cloning..." : "Clone schedule day"}

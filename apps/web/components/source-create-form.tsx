@@ -2,16 +2,17 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { useToast } from "@/components/ui/Toast";
 import { getSourceConnectorDefinition, sourceConnectorDefinitions, type SourceConnectorKind } from "@/lib/source-connectors";
 
 export function SourceCreateForm() {
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
   const [connectorKind, setConnectorKind] = useState<SourceConnectorKind>("twitch-channel");
   const [name, setName] = useState("Twitch Archive");
   const [externalUrl, setExternalUrl] = useState("");
   const router = useRouter();
+  const { pushToast } = useToast();
 
   const connector = getSourceConnectorDefinition(connectorKind);
 
@@ -19,7 +20,6 @@ export function SourceCreateForm() {
     const nextConnector = getSourceConnectorDefinition(nextKind);
     setConnectorKind(nextKind);
     setError("");
-    setMessage("");
     setName((current) => (current.trim() === "" || current === connector.suggestedName ? nextConnector.suggestedName : current));
     setExternalUrl((current) => {
       if (!nextConnector.requiresUrl) {
@@ -36,7 +36,6 @@ export function SourceCreateForm() {
       onSubmit={(event) => {
         event.preventDefault();
         setError("");
-        setMessage("");
 
         startTransition(async () => {
           const response = await fetch("/api/sources", {
@@ -51,11 +50,13 @@ export function SourceCreateForm() {
 
           const payload = (await response.json()) as { message?: string };
           if (!response.ok) {
-            setError(payload.message ?? "Could not save source.");
+            const nextError = payload.message ?? "Could not save source.";
+            setError(nextError);
+            pushToast({ title: "Source could not be saved.", description: nextError, tone: "error" });
             return;
           }
 
-          setMessage(payload.message ?? "Source saved.");
+          pushToast({ title: payload.message ?? "Source saved.", tone: "success" });
           if (connector.requiresUrl) {
             setExternalUrl("");
           }
@@ -129,7 +130,6 @@ export function SourceCreateForm() {
       )}
 
       {error ? <p className="danger">{error}</p> : null}
-      {message ? <p className="subtle">{message}</p> : null}
       <button className="button" disabled={isPending} type="submit">
         {isPending ? "Saving..." : "Add source"}
       </button>

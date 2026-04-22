@@ -11,6 +11,7 @@ import {
 } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { useToast } from "@/components/ui/Toast";
 import type { ShowProfileRecord } from "@/lib/server/state";
 
 type Props = {
@@ -31,7 +32,6 @@ const dayOptions = [
 ];
 
 export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const [selectedDays, setSelectedDays] = useState<number[]>(block ? [block.dayOfWeek] : [1]);
@@ -45,6 +45,7 @@ export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
   );
   const [applyToRepeatSet, setApplyToRepeatSet] = useState(Boolean(block?.repeatGroupId));
   const router = useRouter();
+  const { pushToast } = useToast();
 
   const isEditing = Boolean(block);
   const resolvedCreateDays = isEditing
@@ -58,7 +59,6 @@ export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
       className="stack-form"
       onSubmit={(event) => {
         event.preventDefault();
-        setMessage("");
         setError("");
 
         const formData = new FormData(event.currentTarget);
@@ -91,11 +91,13 @@ export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
 
           const body = (await response.json()) as { message?: string };
           if (!response.ok) {
-            setError(body.message ?? "Could not save schedule block.");
+            const nextError = body.message ?? "Could not save schedule block.";
+            setError(nextError);
+            pushToast({ title: "Schedule block could not be saved.", description: nextError, tone: "error" });
             return;
           }
 
-          setMessage(body.message ?? "Schedule block saved.");
+          pushToast({ title: body.message ?? "Schedule block saved.", tone: "success" });
           router.refresh();
         });
       }}
@@ -314,7 +316,6 @@ export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
       <p className="subtle">
         Cuepoints trigger safe-boundary inserts after the configured second offset has passed. They never cut the current asset mid-file.
       </p>
-      {message ? <p>{message}</p> : null}
       {error ? <p className="danger">{error}</p> : null}
       <button className="button" disabled={isPending} type="submit">
         {isPending ? "Saving..." : isEditing ? "Update block" : "Add block"}

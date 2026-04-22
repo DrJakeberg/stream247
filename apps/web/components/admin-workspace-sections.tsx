@@ -8,6 +8,7 @@ import { PoolForm } from "@/components/pool-form";
 import { SourceActionsForm } from "@/components/source-actions-form";
 import { SourceBulkActionsForm } from "@/components/source-bulk-actions-form";
 import { SourceCreateForm } from "@/components/source-create-form";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { getSourceHealthSnapshot, type AppState } from "@/lib/server/state";
 
 function buildSourceAssetCounts(state: AppState) {
@@ -85,10 +86,10 @@ export function SourcesWorkspacePanels({ state }: { state: AppState }) {
             );
           })}
           {state.sources.length === 0 ? (
-            <div className="item">
-              <strong>No sources configured yet</strong>
-              <div className="subtle">Add a YouTube, Twitch, direct-media, or local-library source to start ingestion.</div>
-            </div>
+            <EmptyState
+              description="Add a YouTube, Twitch, direct-media, or local-library source to start ingestion."
+              title="No sources configured yet"
+            />
           ) : null}
         </div>
       </Panel>
@@ -138,10 +139,10 @@ export function PoolsWorkspacePanels({ state }: { state: AppState }) {
             </div>
           ))}
           {state.pools.length === 0 ? (
-            <div className="item">
-              <strong>No pools configured yet</strong>
-              <div className="subtle">Create pools to schedule different source groups across the week.</div>
-            </div>
+            <EmptyState
+              description="Create pools to schedule different source groups across the week."
+              title="No pools configured yet"
+            />
           ) : null}
         </div>
       </Panel>

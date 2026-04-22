@@ -112,6 +112,7 @@ main {
   gap: 18px;
 }
 
+.tabs,
 .workspace-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -119,6 +120,7 @@ main {
   margin-bottom: 20px;
 }
 
+.tabs-link,
 .workspace-tab-link {
   border: 1px solid rgba(27, 26, 22, 0.08);
   border-radius: 999px;
@@ -133,12 +135,17 @@ main {
     transform 160ms ease;
 }
 
-.workspace-tab-link:hover {
+.tabs-link:hover,
+.workspace-tab-link:hover,
+.tabs-link:focus-visible,
+.workspace-tab-link:focus-visible {
   background: var(--surface);
   border-color: rgba(14, 109, 90, 0.14);
   transform: translateY(-1px);
+  outline: none;
 }
 
+.tabs-link-active,
 .workspace-tab-link-active {
   background: rgba(14, 109, 90, 0.1);
   border-color: rgba(14, 109, 90, 0.22);
@@ -631,6 +638,78 @@ textarea {
 .field-error {
   color: var(--danger);
   font-size: 0.85rem;
+}
+
+.empty-state {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border: 1px dashed rgba(27, 26, 22, 0.16);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.54);
+}
+
+.empty-state p {
+  margin: 0;
+}
+
+.empty-state-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.toast-viewport {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 1200;
+  display: grid;
+  gap: 12px;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(27, 26, 22, 0.08);
+  background: rgba(255, 249, 239, 0.96);
+  box-shadow: var(--shadow-card);
+  pointer-events: auto;
+}
+
+.toast-success {
+  border-color: rgba(14, 109, 90, 0.2);
+}
+
+.toast-error {
+  border-color: rgba(158, 36, 48, 0.2);
+}
+
+.toast-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.toast-copy p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.toast-dismiss {
+  width: auto;
+  min-width: 32px;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
 }
 
 .page-header-row {

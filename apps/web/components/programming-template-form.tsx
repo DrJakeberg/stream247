@@ -2,15 +2,16 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { useToast } from "@/components/ui/Toast";
 
 type PoolOption = { id: string; name: string };
 
 export function ProgrammingTemplateForm(props: { pools: PoolOption[] }) {
   const [template, setTemplate] = useState("always-on-single-pool");
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  const { pushToast } = useToast();
 
   return (
     <form
@@ -18,7 +19,6 @@ export function ProgrammingTemplateForm(props: { pools: PoolOption[] }) {
       onSubmit={(event) => {
         event.preventDefault();
         setError("");
-        setMessage("");
 
         const formData = new FormData(event.currentTarget);
 
@@ -37,11 +37,13 @@ export function ProgrammingTemplateForm(props: { pools: PoolOption[] }) {
 
           const payload = (await response.json()) as { message?: string };
           if (!response.ok) {
-            setError(payload.message ?? "Could not apply program template.");
+            const nextError = payload.message ?? "Could not apply program template.";
+            setError(nextError);
+            pushToast({ title: "Program template could not be applied.", description: nextError, tone: "error" });
             return;
           }
 
-          setMessage(payload.message ?? "Template applied.");
+          pushToast({ title: payload.message ?? "Template applied.", tone: "success" });
           router.refresh();
         });
       }}
@@ -112,7 +114,6 @@ export function ProgrammingTemplateForm(props: { pools: PoolOption[] }) {
         timeline editor.
       </p>
       {error ? <p className="danger">{error}</p> : null}
-      {message ? <p className="subtle">{message}</p> : null}
       <button className="button" disabled={isPending} type="submit">
         {isPending ? "Applying..." : "Apply template"}
       </button>

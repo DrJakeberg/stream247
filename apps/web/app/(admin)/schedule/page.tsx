@@ -10,6 +10,7 @@ import { ScheduleWeekOverview } from "@/components/schedule-week-overview";
 import { ScheduleVideoTimeline } from "@/components/schedule-video-timeline";
 import { ShowProfileDeleteForm } from "@/components/show-profile-delete-form";
 import { ShowProfileForm } from "@/components/show-profile-form";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { getMaterializedProgrammingWeekPreview, getSchedulePreview, getWorkspaceTimeZone, readAppState } from "@/lib/server/state";
 
 export default async function SchedulePage() {
@@ -66,10 +67,10 @@ export default async function SchedulePage() {
               </div>
             ))}
             {shows.length === 0 ? (
-              <div className="item">
-                <strong>No show profiles yet</strong>
-                <div className="subtle">Create reusable formats like Morning Replay, Prime Time, or Weekend Archive.</div>
-              </div>
+              <EmptyState
+                description="Create reusable formats like Morning Replay, Prime Time, or Weekend Archive."
+                title="No show profiles yet"
+              />
             ) : null}
           </div>
         </Panel>
@@ -125,10 +126,10 @@ export default async function SchedulePage() {
               </div>
             ))}
             {materializedToday?.blocks.length ? null : (
-              <div className="item">
-                <strong>No materialized items today</strong>
-                <div className="subtle">Add schedule blocks or ready assets to see fill behavior for the current programming day.</div>
-              </div>
+              <EmptyState
+                description="Add schedule blocks or ready assets to see fill behavior for the current programming day."
+                title="No materialized items today"
+              />
             )}
           </div>
           <div className="list" style={{ marginTop: 14 }}>

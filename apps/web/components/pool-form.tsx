@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { useToast } from "@/components/ui/Toast";
 import type { PoolRecord, SourceRecord } from "@/lib/server/state";
 
 export function PoolForm(props: {
@@ -10,10 +11,10 @@ export function PoolForm(props: {
   pool?: PoolRecord;
 }) {
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
   const isEditing = Boolean(props.pool);
   const router = useRouter();
+  const { pushToast } = useToast();
 
   return (
     <form
@@ -21,7 +22,6 @@ export function PoolForm(props: {
       onSubmit={(event) => {
         event.preventDefault();
         setError("");
-        setMessage("");
 
         const formData = new FormData(event.currentTarget);
         const sourceIds = formData.getAll("sourceIds").map((value) => String(value));
@@ -43,11 +43,13 @@ export function PoolForm(props: {
 
           const payload = (await response.json()) as { message?: string };
           if (!response.ok) {
-            setError(payload.message ?? "Could not save pool.");
+            const nextError = payload.message ?? "Could not save pool.";
+            setError(nextError);
+            pushToast({ title: "Pool could not be saved.", description: nextError, tone: "error" });
             return;
           }
 
-          setMessage(payload.message ?? "Pool saved.");
+          pushToast({ title: payload.message ?? "Pool saved.", tone: "success" });
           router.refresh();
         });
       }}
@@ -122,7 +124,6 @@ export function PoolForm(props: {
       <p className="subtle">Pools currently use persistent round-robin playback across all ready assets from the selected sources.</p>
       <p className="subtle">Audio lanes replace the normal program audio during scheduled pool playback. Use ready local-library or direct-media assets for stable looped beds.</p>
       {error ? <p className="danger">{error}</p> : null}
-      {message ? <p className="subtle">{message}</p> : null}
       <button className="button" disabled={isPending} type="submit">
         {isPending ? "Saving..." : isEditing ? "Update pool" : "Add pool"}
       </button>

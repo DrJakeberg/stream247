@@ -2,14 +2,16 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { Textarea } from "@/components/ui/Textarea";
+import { useToast } from "@/components/ui/Toast";
 import type { ShowProfileRecord } from "@/lib/server/state";
 
 export function ShowProfileForm(props: { show?: ShowProfileRecord }) {
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
   const isEditing = Boolean(props.show);
   const router = useRouter();
+  const { pushToast } = useToast();
 
   return (
     <form
@@ -17,7 +19,6 @@ export function ShowProfileForm(props: { show?: ShowProfileRecord }) {
       onSubmit={(event) => {
         event.preventDefault();
         setError("");
-        setMessage("");
 
         const formData = new FormData(event.currentTarget);
 
@@ -37,11 +38,13 @@ export function ShowProfileForm(props: { show?: ShowProfileRecord }) {
 
           const payload = (await response.json()) as { message?: string };
           if (!response.ok) {
-            setError(payload.message ?? "Could not save show profile.");
+            const nextError = payload.message ?? "Could not save show profile.";
+            setError(nextError);
+            pushToast({ title: "Show profile could not be saved.", description: nextError, tone: "error" });
             return;
           }
 
-          setMessage(payload.message ?? "Show profile saved.");
+          pushToast({ title: payload.message ?? "Show profile saved.", tone: "success" });
           router.refresh();
         });
       }}
@@ -67,12 +70,14 @@ export function ShowProfileForm(props: { show?: ShowProfileRecord }) {
           <input defaultValue={props.show?.color ?? "#0e6d5a"} name="color" type="color" />
         </label>
       </div>
-      <label>
-        <span className="label">Description</span>
-        <input defaultValue={props.show?.description ?? ""} name="description" placeholder="Archive block with current/next overlay." />
-      </label>
+      <Textarea
+        defaultValue={props.show?.description ?? ""}
+        hint="Use this for operator-facing planning context, not viewer copy."
+        label="Description"
+        name="description"
+        placeholder="Archive block with current/next overlay."
+      />
       {error ? <p className="danger">{error}</p> : null}
-      {message ? <p className="subtle">{message}</p> : null}
       <button className="button" disabled={isPending} type="submit">
         {isPending ? "Saving..." : isEditing ? "Update show" : "Add show"}
       </button>
