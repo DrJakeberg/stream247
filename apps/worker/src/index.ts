@@ -99,8 +99,10 @@ import {
   ensureTwitchVodCache,
   getTwitchVodCacheConfig,
   isInternalMediaCachePath,
-  isTwitchVodAsset
+  isTwitchVodAsset,
+  isTwitchVodCacheCoolingDown
 } from "./twitch-vod-cache.js";
+import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 import { EngagementGameTracker } from "./engagement-game.js";
@@ -207,6 +209,9 @@ let twitchEventSubLastSyncKey = "";
 let twitchEventSubNextSyncAt = 0;
 let twitchLiveStatusLastSyncKey = "";
 let twitchLiveStatusNextSyncAt = 0;
+let twitchVodCacheRuntimeConfig:
+  | ReturnType<typeof getTwitchVodCacheConfig>
+  | null = null;
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -245,6 +250,17 @@ function getSmtpConfig(state: AppState) {
 
 function getMediaRoot(): string {
   return process.env.MEDIA_LIBRARY_ROOT || path.join(process.cwd(), "data", "media");
+}
+
+function getTwitchVodCacheRuntimeConfig() {
+  if (!twitchVodCacheRuntimeConfig) {
+    twitchVodCacheRuntimeConfig = getTwitchVodCacheConfig(process.env, getMediaRoot());
+  }
+  return twitchVodCacheRuntimeConfig;
+}
+
+function isAssetBlockedForAutomaticSelection(asset: AssetRecord): boolean {
+  return isTwitchVodCacheCoolingDown(asset, getTwitchVodCacheRuntimeConfig().failureCooldownMs);
 }
 
 function isProgramFeedMode(): boolean {
@@ -368,13 +384,14 @@ async function resolvePlayableInput(input: string): Promise<string> {
 }
 
 async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: AssetRecord; input: string }> {
-  const mediaRoot = getMediaRoot();
-  const cacheConfig = getTwitchVodCacheConfig(process.env, mediaRoot);
+  const cacheConfig = getTwitchVodCacheRuntimeConfig();
 
   if (!isTwitchVodAsset(asset)) {
+    const input = await resolvePlayableInput(asset.path);
+    await resolveIncident("playout.asset-preparation.failed", "Asset playback input resolved successfully.");
     return {
       asset,
-      input: await resolvePlayableInput(asset.path)
+      input
     };
   }
 
@@ -391,6 +408,7 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
 
   if (result.status === "ready") {
     await resolveIncident("playout.twitch-cache.failed", "Twitch VOD cache is ready.");
+    await resolveIncident("playout.asset-preparation.failed", "Asset playback input resolved successfully.");
     return {
       asset: updatedAsset,
       input: result.cachePath
@@ -398,9 +416,11 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
   }
 
   if (cacheConfig.allowRemoteFallback) {
+    const input = await resolvePlayableInput(asset.path);
+    await resolveIncident("playout.asset-preparation.failed", "Asset playback input resolved successfully.");
     return {
       asset: updatedAsset,
-      input: await resolvePlayableInput(asset.path)
+      input
     };
   }
 
@@ -1771,6 +1791,7 @@ function getPoolEligibleAssets(state: AppState, poolId: string, skippedAssetId =
         asset.status !== "ready" ||
         asset.id === skippedAssetId ||
         asset.includeInProgramming === false ||
+        isAssetBlockedForAutomaticSelection(asset) ||
         excludedAssetIds.has(asset.id)
       ) {
         return false;
@@ -2332,7 +2353,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   }
 
   const preferredAsset = currentScheduleItem?.poolId
-    ? currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId)
+      ? currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId)
     : state.assets.find((entry) => {
         if (entry.status !== "ready") {
           return false;
@@ -2341,6 +2362,9 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
           return false;
         }
         if (entry.includeInProgramming === false) {
+          return false;
+        }
+        if (isAssetBlockedForAutomaticSelection(entry)) {
           return false;
         }
         const matchingSource = state.sources.find((source) => source.id === entry.sourceId);
@@ -2360,7 +2384,13 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   }
 
   const globalFallback = [...state.assets]
-    .filter((asset) => asset.status === "ready" && asset.isGlobalFallback && asset.includeInProgramming !== false)
+    .filter(
+      (asset) =>
+        asset.status === "ready" &&
+        asset.isGlobalFallback &&
+        asset.includeInProgramming !== false &&
+        !isAssetBlockedForAutomaticSelection(asset)
+    )
     .filter((asset) => asset.id !== skippedAssetId)
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 
@@ -2375,7 +2405,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   }
 
   const anyReadyAsset = [...state.assets]
-    .filter((asset) => asset.status === "ready" && asset.includeInProgramming !== false)
+    .filter((asset) => asset.status === "ready" && asset.includeInProgramming !== false && !isAssetBlockedForAutomaticSelection(asset))
     .filter((asset) => asset.id !== skippedAssetId)
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 
@@ -3287,8 +3317,9 @@ async function runPlayoutCycle(): Promise<void> {
 
   let resolvedSelectionInput = "";
   if (selection.asset) {
+    const failedAsset = selection.asset;
     try {
-      const prepared = await resolveAssetPlaybackInput(selection.asset);
+      const prepared = await resolveAssetPlaybackInput(failedAsset);
       selection = {
         ...selection,
         asset: prepared.asset
@@ -3299,25 +3330,63 @@ async function runPlayoutCycle(): Promise<void> {
       await upsertIncident({
         scope: "playout",
         severity: "warning",
-        title: "Twitch VOD cache preparation failed",
+        title: isTwitchVodAsset(failedAsset) ? "Twitch VOD cache preparation failed" : "Asset playback preparation failed",
         message,
-        fingerprint: "playout.twitch-cache.failed"
+        fingerprint: isTwitchVodAsset(failedAsset) ? "playout.twitch-cache.failed" : "playout.asset-preparation.failed"
       });
-      await writeStandbySlate(state, "standby");
-      selection = {
-        asset: null,
-        queueKind: "standby",
-        insertTrigger: "",
-        cuepointKey: "",
-        cuepointOffsetSeconds: 0,
-        liveBridgeInputUrl: "",
-        liveBridgeInputType: "",
-        liveBridgeLabel: "",
-        reason: "Twitch VOD cache is not ready. Standby replay slate is on air.",
-        lifecycleStatus: "standby" as const,
-        reasonCode: "standby" as const,
-        fallbackTier: "standby" as const
-      };
+      const recoveryPlan = planRecoveryAfterPlaybackPreparationFailure(state.assets, failedAsset);
+      if (recoveryPlan.asset) {
+        try {
+          const recovered = await resolveAssetPlaybackInput(recoveryPlan.asset);
+          selection = {
+            asset: recovered.asset,
+            queueKind: "asset",
+            insertTrigger: "",
+            cuepointKey: "",
+            cuepointOffsetSeconds: 0,
+            liveBridgeInputUrl: "",
+            liveBridgeInputType: "",
+            liveBridgeLabel: "",
+            reason: recoveryPlan.reason,
+            lifecycleStatus: "recovering" as const,
+            reasonCode: recoveryPlan.reasonCode,
+            fallbackTier: recoveryPlan.fallbackTier
+          };
+          resolvedSelectionInput = recovered.input;
+        } catch {
+          await writeStandbySlate(state, "standby");
+          selection = {
+            asset: null,
+            queueKind: "standby",
+            insertTrigger: "",
+            cuepointKey: "",
+            cuepointOffsetSeconds: 0,
+            liveBridgeInputUrl: "",
+            liveBridgeInputType: "",
+            liveBridgeLabel: "",
+            reason: recoveryPlan.reason,
+            lifecycleStatus: "standby" as const,
+            reasonCode: "standby" as const,
+            fallbackTier: "standby" as const
+          };
+        }
+      } else {
+        await writeStandbySlate(state, "standby");
+        selection = {
+          asset: null,
+          queueKind: "standby",
+          insertTrigger: "",
+          cuepointKey: "",
+          cuepointOffsetSeconds: 0,
+          liveBridgeInputUrl: "",
+          liveBridgeInputType: "",
+          liveBridgeLabel: "",
+          reason: recoveryPlan.reason,
+          lifecycleStatus: "standby" as const,
+          reasonCode: "standby" as const,
+          fallbackTier: "standby" as const
+        };
+      }
     }
   }
 

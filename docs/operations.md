@@ -70,6 +70,13 @@
 - verify local media exists or remote sources ingest correctly
 - confirm source incidents
 - for Twitch VOD assets, inspect `playout.twitch-cache.failed` incidents and confirm `MEDIA_LIBRARY_ROOT/.stream247-cache/twitch` is writable with enough free space
+- keep at least one curated local fallback asset under `data/media` with `fallback` or `standby` in the file name so the local-library source promotes it to a global fallback automatically
+- confirm the Twitch cache guardrail env values are present in the active stack:
+  - `TWITCH_VOD_CACHE_RETENTION_HOURS`
+  - `TWITCH_VOD_CACHE_PARTIAL_MAX_AGE_HOURS`
+  - `TWITCH_VOD_CACHE_MAX_BYTES`
+  - `TWITCH_VOD_CACHE_MIN_FREE_BYTES`
+  - `TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS`
 - keep remote Twitch fallback disabled unless you intentionally accept direct remote VOD playback risk
 - confirm fallback assets exist
 

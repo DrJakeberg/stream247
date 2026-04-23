@@ -13,6 +13,11 @@ export type TwitchVodCacheConfig = {
   ytDlpBinary: string;
   ffprobeBinary: string;
   downloadTimeoutMs: number;
+  retentionMs: number;
+  partialMaxAgeMs: number;
+  maxCacheBytes: number;
+  minFreeBytes: number;
+  failureCooldownMs: number;
 };
 
 export type TwitchVodCacheResult =
@@ -31,6 +36,13 @@ export type TwitchVodCacheResult =
 
 type ExecText = typeof execFileText;
 
+const DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 2 * 60 * 60;
+const DEFAULT_RETENTION_HOURS = 72;
+const DEFAULT_PARTIAL_MAX_AGE_HOURS = 6;
+const DEFAULT_MAX_CACHE_BYTES = 20 * 1024 * 1024 * 1024;
+const DEFAULT_MIN_FREE_BYTES = 15 * 1024 * 1024 * 1024;
+const DEFAULT_FAILURE_COOLDOWN_SECONDS = 30 * 60;
+
 function readPositiveNumber(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -45,7 +57,14 @@ export function getTwitchVodCacheConfig(env: NodeJS.ProcessEnv, mediaRoot: strin
     cacheRoot,
     ytDlpBinary: env.YT_DLP_BIN || "yt-dlp",
     ffprobeBinary: env.FFPROBE_BIN || "ffprobe",
-    downloadTimeoutMs: readPositiveNumber(env.TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS, 2 * 60 * 60) * 1000
+    downloadTimeoutMs: readPositiveNumber(env.TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS, DEFAULT_DOWNLOAD_TIMEOUT_SECONDS) * 1000,
+    retentionMs: readPositiveNumber(env.TWITCH_VOD_CACHE_RETENTION_HOURS, DEFAULT_RETENTION_HOURS) * 60 * 60 * 1000,
+    partialMaxAgeMs:
+      readPositiveNumber(env.TWITCH_VOD_CACHE_PARTIAL_MAX_AGE_HOURS, DEFAULT_PARTIAL_MAX_AGE_HOURS) * 60 * 60 * 1000,
+    maxCacheBytes: readPositiveNumber(env.TWITCH_VOD_CACHE_MAX_BYTES, DEFAULT_MAX_CACHE_BYTES),
+    minFreeBytes: readPositiveNumber(env.TWITCH_VOD_CACHE_MIN_FREE_BYTES, DEFAULT_MIN_FREE_BYTES),
+    failureCooldownMs:
+      readPositiveNumber(env.TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS, DEFAULT_FAILURE_COOLDOWN_SECONDS) * 1000
   };
 }
 
@@ -65,6 +84,23 @@ export function isTwitchVodAsset(asset: Pick<AssetRecord, "path" | "externalId" 
   } catch {
     return false;
   }
+}
+
+export function isTwitchVodCacheCoolingDown(
+  asset: Pick<AssetRecord, "path" | "externalId" | "cachePath" | "cacheStatus" | "cacheUpdatedAt">,
+  cooldownMs: number,
+  nowMs = Date.now()
+): boolean {
+  if (cooldownMs <= 0 || asset.cacheStatus !== "failed" || !asset.cacheUpdatedAt || !isTwitchVodAsset(asset)) {
+    return false;
+  }
+
+  const updatedAtMs = new Date(asset.cacheUpdatedAt).getTime();
+  if (!Number.isFinite(updatedAtMs)) {
+    return false;
+  }
+
+  return nowMs - updatedAtMs < cooldownMs;
 }
 
 export function buildTwitchVodCachePath(asset: Pick<AssetRecord, "sourceId" | "externalId" | "path">, cacheRoot: string): string {
@@ -101,6 +137,16 @@ export async function ensureTwitchVodCache(
   const tmpPath = `${cachePath}.part-${String(process.pid)}-${Math.random().toString(36).slice(2)}.mp4`;
   try {
     await fs.mkdir(path.dirname(cachePath), { recursive: true });
+    const maintenance = await pruneTwitchVodCache(config, cachePath);
+    if (maintenance.freeBytes < config.minFreeBytes) {
+      return {
+        status: "failed",
+        cachePath,
+        cacheUpdatedAt: new Date().toISOString(),
+        cacheError: `Twitch VOD cache guardrail blocked download: only ${String(maintenance.freeBytes)} free bytes remain after prune, below the required ${String(config.minFreeBytes)} bytes.`
+      };
+    }
+
     await execText(
       config.ytDlpBinary,
       [
@@ -158,6 +204,112 @@ function extractTwitchVideoId(value: string): string {
   } catch {
     return "";
   }
+}
+
+type CacheFileInfo = {
+  filePath: string;
+  size: number;
+  mtimeMs: number;
+  transient: boolean;
+};
+
+async function pruneTwitchVodCache(
+  config: TwitchVodCacheConfig,
+  preservedCachePath: string
+): Promise<{ freeBytes: number; totalCacheBytes: number }> {
+  const cacheFiles = await listCacheFiles(config.cacheRoot);
+  const nowMs = Date.now();
+
+  for (const entry of cacheFiles) {
+    if (entry.transient && (entry.size === 0 || nowMs - entry.mtimeMs >= config.partialMaxAgeMs)) {
+      await fs.rm(entry.filePath, { force: true }).catch(() => undefined);
+    }
+  }
+
+  let readyFiles = (await listCacheFiles(config.cacheRoot))
+    .filter((entry) => !entry.transient && entry.filePath !== preservedCachePath)
+    .sort((left, right) => left.mtimeMs - right.mtimeMs);
+  let freeBytes = await getFilesystemFreeBytes(config.mediaRoot);
+  let totalCacheBytes = readyFiles.reduce((sum, entry) => sum + entry.size, 0);
+
+  for (const entry of [...readyFiles]) {
+    if (nowMs - entry.mtimeMs < config.retentionMs) {
+      continue;
+    }
+
+    await fs.rm(entry.filePath, { force: true }).catch(() => undefined);
+    totalCacheBytes -= entry.size;
+    freeBytes += entry.size;
+  }
+
+  readyFiles = (await listCacheFiles(config.cacheRoot))
+    .filter((entry) => !entry.transient && entry.filePath !== preservedCachePath)
+    .sort((left, right) => left.mtimeMs - right.mtimeMs);
+  totalCacheBytes = readyFiles.reduce((sum, entry) => sum + entry.size, 0);
+  freeBytes = await getFilesystemFreeBytes(config.mediaRoot);
+
+  for (const entry of readyFiles) {
+    if (totalCacheBytes <= config.maxCacheBytes && freeBytes >= config.minFreeBytes) {
+      break;
+    }
+
+    await fs.rm(entry.filePath, { force: true }).catch(() => undefined);
+    totalCacheBytes -= entry.size;
+    freeBytes += entry.size;
+  }
+
+  return {
+    freeBytes,
+    totalCacheBytes
+  };
+}
+
+async function listCacheFiles(rootPath: string): Promise<CacheFileInfo[]> {
+  const entries: CacheFileInfo[] = [];
+  await walkCacheFiles(rootPath, entries);
+  return entries;
+}
+
+async function walkCacheFiles(rootPath: string, entries: CacheFileInfo[]): Promise<void> {
+  const directoryEntries = await fs.readdir(rootPath, { withFileTypes: true }).catch(() => []);
+  for (const directoryEntry of directoryEntries) {
+    const nextPath = path.join(rootPath, directoryEntry.name);
+    if (directoryEntry.isDirectory()) {
+      await walkCacheFiles(nextPath, entries);
+      continue;
+    }
+    if (!directoryEntry.isFile()) {
+      continue;
+    }
+
+    const stat = await fs.stat(nextPath).catch(() => null);
+    if (!stat?.isFile()) {
+      continue;
+    }
+
+    entries.push({
+      filePath: nextPath,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      transient: isTransientCacheFile(nextPath)
+    });
+  }
+}
+
+function isTransientCacheFile(filePath: string): boolean {
+  const fileName = path.basename(filePath);
+  return (
+    fileName.includes(".part-") ||
+    fileName.endsWith(".part") ||
+    fileName.endsWith(".tmp") ||
+    fileName.endsWith(".ytdl") ||
+    fileName.endsWith(".temp.mp4")
+  );
+}
+
+async function getFilesystemFreeBytes(rootPath: string): Promise<number> {
+  const stats = await fs.statfs(rootPath);
+  return Number(stats.bavail) * Number(stats.bsize);
 }
 
 async function hasUsableFile(filePath: string): Promise<boolean> {

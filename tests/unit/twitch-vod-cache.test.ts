@@ -8,6 +8,7 @@ import {
   ensureTwitchVodCache,
   getTwitchVodCacheConfig,
   isInternalMediaCachePath,
+  isTwitchVodCacheCoolingDown,
   isTwitchVodAsset
 } from "../../apps/worker/src/twitch-vod-cache";
 
@@ -36,6 +37,7 @@ describe("Twitch VOD cache", () => {
     expect(config.allowRemoteFallback).toBe(false);
     expect(config.cacheRoot).toBe("/app/data/media/.stream247-cache/twitch");
     expect(config.downloadTimeoutMs).toBe(2 * 60 * 60 * 1000);
+    expect(config.failureCooldownMs).toBe(30 * 60 * 1000);
   });
 
   it("builds stable sanitized cache paths from source and Twitch id", () => {
@@ -90,6 +92,66 @@ describe("Twitch VOD cache", () => {
     expect(result.status).toBe("ready");
     await expect(fs.stat(result.cachePath)).resolves.toMatchObject({ size: "downloaded-media".length });
     await expect(fs.readdir(path.dirname(result.cachePath))).resolves.toEqual(["123456789.mp4"]);
+  });
+
+  it("treats recent failed Twitch cache assets as cooling down", () => {
+    const asset = createTwitchAsset({
+      cacheStatus: "failed",
+      cacheUpdatedAt: "2026-04-23T10:00:00.000Z"
+    });
+
+    expect(isTwitchVodCacheCoolingDown(asset, 30 * 60 * 1000, new Date("2026-04-23T10:10:00.000Z").getTime())).toBe(true);
+    expect(isTwitchVodCacheCoolingDown(asset, 30 * 60 * 1000, new Date("2026-04-23T10:40:00.000Z").getTime())).toBe(false);
+  });
+
+  it("prunes stale transient files and old cache files before a fresh download", async () => {
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "stream247-cache-"));
+    const asset = createTwitchAsset();
+    const config = getTwitchVodCacheConfig(
+      {
+        TWITCH_VOD_CACHE_MAX_BYTES: "8",
+        TWITCH_VOD_CACHE_PARTIAL_MAX_AGE_HOURS: "1"
+      },
+      tmpRoot
+    );
+    const oldDir = path.join(config.cacheRoot, "source-twitch");
+    await fs.mkdir(oldDir, { recursive: true });
+    const oldCachePath = path.join(oldDir, "old.mp4");
+    const oldPartialPath = path.join(oldDir, "old.part-deadbeef.mp4");
+    await fs.writeFile(oldCachePath, "123456789");
+    await fs.writeFile(oldPartialPath, "partial");
+    const oldTime = new Date("2026-04-22T00:00:00.000Z");
+    await fs.utimes(oldCachePath, oldTime, oldTime);
+    await fs.utimes(oldPartialPath, oldTime, oldTime);
+
+    const result = await ensureTwitchVodCache(asset, config, async (file, args) => {
+      if (file === "yt-dlp") {
+        const outputPath = args[args.indexOf("--output") + 1];
+        await fs.writeFile(outputPath!, "new-media");
+      }
+      return "1.0";
+    });
+
+    expect(result.status).toBe("ready");
+    await expect(fs.readdir(oldDir)).resolves.toEqual(["123456789.mp4"]);
+  });
+
+  it("fails fast when the cache guardrail still leaves too little free space", async () => {
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "stream247-cache-"));
+    const asset = createTwitchAsset();
+    const config = getTwitchVodCacheConfig(
+      {
+        TWITCH_VOD_CACHE_MIN_FREE_BYTES: "999999999999999"
+      },
+      tmpRoot
+    );
+
+    const result = await ensureTwitchVodCache(asset, config, async () => {
+      throw new Error("download should not start");
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.cacheError).toContain("guardrail blocked download");
   });
 
   it("reports download failures without leaving partial files", async () => {
