@@ -36,7 +36,7 @@ export type TwitchVodCacheResult =
 
 type ExecText = typeof execFileText;
 
-const DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 2 * 60 * 60;
+const DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 2 * 60;
 const DEFAULT_RETENTION_HOURS = 72;
 const DEFAULT_PARTIAL_MAX_AGE_HOURS = 6;
 const DEFAULT_MAX_CACHE_BYTES = 20 * 1024 * 1024 * 1024;
@@ -137,6 +137,7 @@ export async function ensureTwitchVodCache(
   const tmpPath = `${cachePath}.part-${String(process.pid)}-${Math.random().toString(36).slice(2)}.mp4`;
   try {
     await fs.mkdir(path.dirname(cachePath), { recursive: true });
+    await removeTargetTransientCacheFiles(cachePath);
     const maintenance = await pruneTwitchVodCache(config, cachePath);
     if (maintenance.freeBytes < config.minFreeBytes) {
       return {
@@ -226,11 +227,27 @@ async function pruneTwitchVodCache(
     }
   }
 
+  let cacheEntries = (await listCacheFiles(config.cacheRoot))
+    .filter((entry) => entry.filePath !== preservedCachePath)
+    .sort((left, right) => left.mtimeMs - right.mtimeMs);
+  let freeBytes = await getFilesystemFreeBytes(config.mediaRoot);
+  let totalCacheBytes = cacheEntries.reduce((sum, entry) => sum + entry.size, 0);
+
+  for (const entry of cacheEntries.filter((candidate) => candidate.transient)) {
+    if (totalCacheBytes <= config.maxCacheBytes && freeBytes >= config.minFreeBytes) {
+      break;
+    }
+
+    await fs.rm(entry.filePath, { force: true }).catch(() => undefined);
+    totalCacheBytes -= entry.size;
+    freeBytes += entry.size;
+  }
+
   let readyFiles = (await listCacheFiles(config.cacheRoot))
     .filter((entry) => !entry.transient && entry.filePath !== preservedCachePath)
     .sort((left, right) => left.mtimeMs - right.mtimeMs);
-  let freeBytes = await getFilesystemFreeBytes(config.mediaRoot);
-  let totalCacheBytes = readyFiles.reduce((sum, entry) => sum + entry.size, 0);
+  totalCacheBytes = readyFiles.reduce((sum, entry) => sum + entry.size, 0);
+  freeBytes = await getFilesystemFreeBytes(config.mediaRoot);
 
   for (const entry of [...readyFiles]) {
     if (nowMs - entry.mtimeMs < config.retentionMs) {
@@ -262,6 +279,28 @@ async function pruneTwitchVodCache(
     freeBytes,
     totalCacheBytes
   };
+}
+
+async function removeTargetTransientCacheFiles(cachePath: string): Promise<void> {
+  const directoryEntries = await fs.readdir(path.dirname(cachePath), { withFileTypes: true }).catch(() => []);
+  const targetName = path.basename(cachePath);
+
+  for (const directoryEntry of directoryEntries) {
+    if (!directoryEntry.isFile()) {
+      continue;
+    }
+
+    const nextPath = path.join(path.dirname(cachePath), directoryEntry.name);
+    if (!isTransientCacheFile(nextPath)) {
+      continue;
+    }
+
+    if (!directoryEntry.name.startsWith(`${targetName}.part-`) && directoryEntry.name !== `${targetName}.temp.mp4`) {
+      continue;
+    }
+
+    await fs.rm(nextPath, { force: true }).catch(() => undefined);
+  }
 }
 
 async function listCacheFiles(rootPath: string): Promise<CacheFileInfo[]> {

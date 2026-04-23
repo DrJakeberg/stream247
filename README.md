@@ -217,7 +217,7 @@ docker compose --profile proxy up -d
 - `TWITCH_RTMP_URL`: defaults to `rtmp://live.twitch.tv/app`
 - `TWITCH_VOD_CACHE_ENABLED`: cache Twitch VOD media locally before playout; defaults to `1`
 - `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK`: allow direct remote Twitch playback if cache preparation fails; defaults to `0`
-- `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`: maximum time for a Twitch VOD cache download; defaults to `7200`
+- `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`: maximum time for a Twitch VOD cache download before playout falls back locally; defaults to `120`
 - `STREAM247_RELAY_ENABLED`: split program production from external publishing; defaults to `1` in the example Compose env
 - `STREAM247_UPLINK_INPUT_MODE`: `hls` keeps the uplink on a buffered local program feed; set `rtmp` only to roll back to the older MediaMTX relay input
 - `STREAM247_PROGRAM_FEED_DIR`: local HLS program-feed directory shared by `playout` and `uplink`

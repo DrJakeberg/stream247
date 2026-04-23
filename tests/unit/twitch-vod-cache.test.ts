@@ -36,7 +36,7 @@ describe("Twitch VOD cache", () => {
     expect(config.enabled).toBe(true);
     expect(config.allowRemoteFallback).toBe(false);
     expect(config.cacheRoot).toBe("/app/data/media/.stream247-cache/twitch");
-    expect(config.downloadTimeoutMs).toBe(2 * 60 * 60 * 1000);
+    expect(config.downloadTimeoutMs).toBe(2 * 60 * 1000);
     expect(config.failureCooldownMs).toBe(30 * 60 * 1000);
   });
 
@@ -134,6 +134,31 @@ describe("Twitch VOD cache", () => {
 
     expect(result.status).toBe("ready");
     await expect(fs.readdir(oldDir)).resolves.toEqual(["123456789.mp4"]);
+  });
+
+  it("removes leftover transient files for the same Twitch VOD before retrying a download", async () => {
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "stream247-cache-"));
+    const asset = createTwitchAsset();
+    const config = getTwitchVodCacheConfig({}, tmpRoot);
+    const assetDir = path.join(config.cacheRoot, "source-twitch");
+    const stalePartial = path.join(assetDir, "123456789.mp4.part-stale.mp4");
+    const staleMarker = path.join(assetDir, "123456789.mp4.part-stale.mp4.ytdl");
+    await fs.mkdir(assetDir, { recursive: true });
+    await fs.writeFile(stalePartial, "stale-download");
+    await fs.writeFile(staleMarker, "marker");
+
+    const result = await ensureTwitchVodCache(asset, config, async (file, args) => {
+      expect(await fs.readdir(assetDir)).not.toContain("123456789.mp4.part-stale.mp4");
+      expect(await fs.readdir(assetDir)).not.toContain("123456789.mp4.part-stale.mp4.ytdl");
+      if (file === "yt-dlp") {
+        const outputPath = args[args.indexOf("--output") + 1];
+        await fs.writeFile(outputPath!, "fresh-download");
+      }
+      return "1.0";
+    });
+
+    expect(result.status).toBe("ready");
+    await expect(fs.readdir(assetDir)).resolves.toEqual(["123456789.mp4"]);
   });
 
   it("fails fast when the cache guardrail still leaves too little free space", async () => {
