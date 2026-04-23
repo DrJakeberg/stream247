@@ -31,6 +31,11 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node.js is required."
+  exit 1
+fi
+
 sanitize_url() {
   printf "%s" "$1" | sed 's#/*$##'
 }
@@ -109,6 +114,93 @@ set_image_tag STREAM247_PLAYOUT_IMAGE stream247-playout
 
 export COMPOSE_ENV_FILES="$tmp_env"
 
+has_local_media_fixture() {
+  media_root="${UPGRADE_REHEARSAL_MEDIA_ROOT:-data/media}"
+  [ -d "$media_root" ] || return 1
+  find "$media_root" -type f \( -name "*.mp4" -o -name "*.mov" -o -name "*.mkv" -o -name "*.webm" \) | head -n 1 | grep -q .
+}
+
+ensure_local_media_fixture() {
+  if [ "${UPGRADE_REHEARSAL_SEED_LOCAL_MEDIA:-1}" != "1" ] || has_local_media_fixture; then
+    return 0
+  fi
+
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "ffmpeg is required to seed an empty rehearsal media library." >&2
+    echo "Set UPGRADE_REHEARSAL_SEED_LOCAL_MEDIA=0 to disable fixture seeding when real media already exists." >&2
+    exit 1
+  fi
+
+  media_root="${UPGRADE_REHEARSAL_MEDIA_ROOT:-data/media}"
+  fixture_dir="$media_root/rehearsal"
+  fixture_path="$fixture_dir/rehearsal-program.mp4"
+  mkdir -p "$fixture_dir"
+  echo "Seeding empty rehearsal media library with ${fixture_path}..."
+  ffmpeg -hide_banner -loglevel error -y \
+    -f lavfi -i "color=c=0x0f172a:s=1280x720:r=30" \
+    -f lavfi -i "sine=frequency=440:sample_rate=44100" \
+    -t 12 \
+    -c:v libx264 -pix_fmt yuv420p \
+    -c:a aac -b:a 128k \
+    "$fixture_path"
+}
+
+read_readiness_field() {
+  endpoint="$1"
+  expression="$2"
+  response="$(curl -fsS "$endpoint" 2>/dev/null || true)"
+  if [ -z "$response" ]; then
+    return 1
+  fi
+
+  printf "%s" "$response" | node -e "
+    const fs = require('fs');
+    const data = JSON.parse(fs.readFileSync(0, 'utf8'));
+    const value = ${expression};
+    if (value === undefined || value === null) process.exit(1);
+    process.stdout.write(String(value));
+  "
+}
+
+ensure_bootstrapped_workspace() {
+  endpoint="${APP_URL}/api/system/readiness"
+  initialized="$(read_readiness_field "$endpoint" "data.initialized" || true)"
+  if [ "$initialized" = "true" ]; then
+    return 0
+  fi
+
+  owner_email="${UPGRADE_REHEARSAL_OWNER_EMAIL:-rehearsal-owner@example.com}"
+  owner_password="${UPGRADE_REHEARSAL_OWNER_PASSWORD:-stream247-rehearsal-pass}"
+  echo "Bootstrapping rehearsal workspace owner..."
+  OWNER_EMAIL="$owner_email" OWNER_PASSWORD="$owner_password" PAYLOAD_PATH="$tmp_env.bootstrap.json" node -e '
+    const fs = require("fs");
+    const payload = {
+      email: process.env.OWNER_EMAIL,
+      password: process.env.OWNER_PASSWORD
+    };
+    fs.writeFileSync(process.env.PAYLOAD_PATH, JSON.stringify(payload));
+  '
+  response_path="$tmp_env.bootstrap.response.json"
+
+  status="$(
+    curl -sS -o "$response_path" \
+      -w "%{http_code}" \
+      -H "Content-Type: application/json" \
+      -X POST \
+      --data-binary "@$tmp_env.bootstrap.json" \
+      "${APP_URL}/api/setup/bootstrap" || true
+  )"
+  rm -f "$tmp_env.bootstrap.json"
+
+  if [ "$status" != "200" ] && [ "$status" != "409" ]; then
+    echo "Workspace bootstrap failed with HTTP ${status}." >&2
+    cat "$response_path" >&2 || true
+    rm -f "$response_path"
+    return 1
+  fi
+  rm -f "$response_path"
+}
+
 echo "Running upgrade rehearsal against ${TARGET_VERSION}..."
 echo "Resolved release tag: ${TARGET_RELEASE_TAG}"
 if [ -n "${UPGRADE_REHEARSAL_IMAGE_TAG:-}" ]; then
@@ -119,6 +211,8 @@ else
   echo "Using rehearsal artifact source: pre-release main snapshot ${REHEARSAL_IMAGE_TAG}"
 fi
 echo "Using temporary image pins from ${tmp_env}"
+
+ensure_local_media_fixture
 
 echo "Pulling target images..."
 docker compose --env-file "$tmp_env" pull
@@ -178,6 +272,7 @@ wait_for_broadcast_readiness() {
 }
 
 wait_for_json_ok "${APP_URL}/api/health" "Health endpoint"
+ensure_bootstrapped_workspace
 wait_for_broadcast_readiness "${APP_URL}/api/system/readiness"
 
 echo "Capturing current readiness snapshot..."

@@ -214,6 +214,7 @@ Do not use `latest` for unattended production deployments.
    ./scripts/upgrade-rehearsal.sh v1.5.5
    ```
    Before a new release tag exists, the rehearsal automatically uses the CI-published `main-<sha>` snapshot for the current commit instead of requiring `ghcr.io/...:v1.5.5` to exist already.
+   On an empty rehearsal stack, the script bootstraps a rehearsal owner and seeds one tiny local media fixture so the current broadcast-readiness gate does not depend on stale local state. Set `UPGRADE_REHEARSAL_SEED_LOCAL_MEDIA=0` when the target media library already contains real playable media and you want to prevent fixture creation.
 7. After the release images exist, update the DT Portainer stack image refs to the target release tags and redeploy the stack from Portainer.
 8. Verify the DT stack matches the intended pinned refs:
    ```bash
@@ -269,7 +270,7 @@ If the new version is unhealthy:
   - smoke-test them before push
   - retag and publish those same tested images as the versioned GHCR artifacts
 
-`./scripts/upgrade-rehearsal.sh <target-version>` follows the same artifact model. If the requested `v*` images already exist, it rehearses against them directly. Before the version tag exists, it falls back to the CI-published `main-<sha>` snapshot for the current commit. Set `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot explicitly.
+`./scripts/upgrade-rehearsal.sh <target-version>` follows the same artifact model. If the requested `v*` images already exist, it rehearses against them directly. Before the version tag exists, it falls back to the CI-published `main-<sha>` snapshot for the current commit. Set `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot explicitly. Empty-stack rehearsals bootstrap a rehearsal owner and seed one tiny local media fixture by default; set `UPGRADE_REHEARSAL_SEED_LOCAL_MEDIA=0` to disable fixture seeding.
 
 ## Portainer Stack Check
 

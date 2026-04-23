@@ -412,6 +412,7 @@ Notes:
 - set `SESSION_COOKIE="stream247_session=..."` if you want the soak monitor to fail on open critical incidents via the authenticated incidents API
 - set `RELEASE_PREFLIGHT_ENV_FILE=/path/to/production.env` if you want to validate a staged env file without replacing the local `.env`
 - set `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force rehearsal against a specific pre-release snapshot tag instead of the script's automatic selection
+- `./scripts/upgrade-rehearsal.sh` bootstraps an empty workspace with a rehearsal owner and seeds one tiny local media fixture when `data/media` has no playable media yet; set `UPGRADE_REHEARSAL_SEED_LOCAL_MEDIA=0` to disable fixture seeding
 - `pnpm release:preflight` only passes with non-blank production values; copied `.env.example` or `.env.production.example` placeholders, quoted-empty required settings, and Traefik example defaults must be replaced first
 - `./scripts/upgrade-rehearsal.sh` now uses the published `v*` images when they already exist, and otherwise falls back to the CI-published `main-<sha>` snapshot for the current commit before the release tag is created
 - the rehearsal and soak scripts are release gates now: both expect a broadcast-ready channel, not just a merely reachable stack

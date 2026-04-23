@@ -222,6 +222,23 @@ function createCurlStub(binDir: string, tempDir: string, responses: CurlResponse
   writeFileSync(
     path.join(binDir, "curl"),
     `#!/usr/bin/env sh
+all_args="$*"
+if printf '%s\\n' "$all_args" | grep -q '/api/setup/bootstrap'; then
+  output_file=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "-o" ] && [ "$#" -ge 2 ]; then
+      output_file="$2"
+      shift 2
+      continue
+    fi
+    shift
+  done
+  if [ -n "$output_file" ]; then
+    printf '{"ok":true}\\n' > "$output_file"
+  fi
+  printf '200'
+  exit 0
+fi
 count_file="${counterFile}"
 index="$(cat "$count_file" 2>/dev/null || echo 0)"
 max_index=${responses.length - 1}
@@ -254,6 +271,7 @@ function runShellScript(
       env: {
         ...process.env,
         CHECK_BASE_URL: "http://127.0.0.1:3000",
+        UPGRADE_REHEARSAL_SEED_LOCAL_MEDIA: "0",
         ...options.env,
         PATH: `${binDir}:${process.env.PATH}`
       },
