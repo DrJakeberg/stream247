@@ -523,6 +523,23 @@ describe("release readiness scripts", () => {
     expect(result.dockerLog).toContain("up -d");
   });
 
+  it("upgrade rehearsal tolerates empty startup responses before readiness becomes valid json", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\nAPP_SECRET=test\nPOSTGRES_PASSWORD=test\nDATABASE_URL=postgresql://stream247:test@postgres:5432/stream247\n`);
+
+    const readyResponse =
+      '{"status":"ok","broadcastReady":true,"services":{"worker":"ok","playout":"ok","destination":"ok"},"playout":{"selectionReasonCode":"scheduled","fallbackTier":"none","crashLoopDetected":false}}\n';
+    const result = runShellScript(upgradeScriptPath, ["v1.0.3"], [
+      { body: "", status: 0 },
+      { body: '{"status":"ok"}\n' },
+      { body: "", status: 0 },
+      { body: readyResponse },
+      { body: readyResponse }
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Upgrade rehearsal completed for v1.0.3.");
+  });
+
   it("soak monitor fails when broadcast readiness is false or destinations are not ready", () => {
     writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
 

@@ -131,7 +131,8 @@ wait_for_json_ok() {
   label="$2"
   attempts=60
   while [ "$attempts" -gt 0 ]; do
-    if response="$(curl -fsS "$endpoint" 2>/dev/null || true)"; then
+    response="$(curl -fsS "$endpoint" 2>/dev/null || true)"
+    if [ -n "$response" ]; then
       if printf "%s" "$response" | node -e '
         const fs = require("fs");
         const raw = fs.readFileSync(0, "utf8");
@@ -154,7 +155,8 @@ wait_for_broadcast_readiness() {
   endpoint="$1"
   attempts=60
   while [ "$attempts" -gt 0 ]; do
-    if response="$(curl -fsS "$endpoint" 2>/dev/null || true)"; then
+    response="$(curl -fsS "$endpoint" 2>/dev/null || true)"
+    if [ -n "$response" ]; then
       if printf "%s" "$response" | node -e '
         const fs = require("fs");
         const raw = fs.readFileSync(0, "utf8");
