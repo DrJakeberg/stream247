@@ -140,7 +140,7 @@ Production Compose is intended to pull from:
 - `bluenviron/mediamtx:<tag>` for the local RTMP relay
 
 `.env.example` uses `latest` for evaluation.
-`.env.production.example` pins `v1.5.3` for stable deployment.
+`.env.production.example` pins `v1.5.4` for stable deployment.
 See `docs/operations.md` for the runbook and backup procedures.
 
 ## Canonical Release And Rollout Flow
@@ -191,9 +191,9 @@ Use pinned GHCR image tags in production.
 
 Example:
 
-- `ghcr.io/drjakeberg/stream247-web:v1.5.3`
-- `ghcr.io/drjakeberg/stream247-worker:v1.5.3`
-- `ghcr.io/drjakeberg/stream247-playout:v1.5.3`
+- `ghcr.io/drjakeberg/stream247-web:v1.5.4`
+- `ghcr.io/drjakeberg/stream247-worker:v1.5.4`
+- `ghcr.io/drjakeberg/stream247-playout:v1.5.4`
 - `bluenviron/mediamtx:1.15.4`
 
 Do not use `latest` for unattended production deployments.
@@ -211,9 +211,9 @@ Do not use `latest` for unattended production deployments.
    The preflight rejects blank or quoted-empty required settings plus untouched `.env.example` and `.env.production.example` placeholder values, including Traefik example defaults when proxy settings are present, so replace those first.
 6. Rehearse the target version with:
    ```bash
-   ./scripts/upgrade-rehearsal.sh v1.5.3
+   ./scripts/upgrade-rehearsal.sh v1.5.4
    ```
-   Before a new release tag exists, the rehearsal automatically uses the CI-published `main-<sha>` snapshot for the current commit instead of requiring `ghcr.io/...:v1.5.3` to exist already.
+   Before a new release tag exists, the rehearsal automatically uses the CI-published `main-<sha>` snapshot for the current commit instead of requiring `ghcr.io/...:v1.5.4` to exist already.
 7. After the release images exist, update the DT Portainer stack image refs to the target release tags and redeploy the stack from Portainer.
 8. Verify the DT stack matches the intended pinned refs:
    ```bash
