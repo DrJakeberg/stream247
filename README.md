@@ -218,7 +218,7 @@ docker compose --profile proxy up -d
 - `TWITCH_RTMP_URL`: defaults to `rtmp://live.twitch.tv/app`
 - `TWITCH_VOD_CACHE_ENABLED`: cache Twitch VOD media locally before playout; defaults to `1`
 - `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK`: allow direct remote Twitch playback if cache preparation fails; defaults to `0`
-- `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`: maximum time for a Twitch VOD cache download before playout falls back locally; defaults to `120`
+- `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`: maximum time for a Twitch VOD cache download before playout falls back locally; production pins this to `8`
 - `STREAM247_RELAY_ENABLED`: split program production from external publishing; defaults to `1` in the example Compose env
 - `STREAM247_UPLINK_INPUT_MODE`: `hls` keeps the uplink on a buffered local program feed; set `rtmp` only to roll back to the older MediaMTX relay input
 - `STREAM247_PROGRAM_FEED_DIR`: local HLS program-feed directory shared by `playout` and `uplink`
@@ -600,6 +600,7 @@ Current validation covers:
 ### Twitch VOD stays on standby
 
 - keep `TWITCH_VOD_CACHE_ENABLED=1` so Twitch archives are downloaded and verified before playout
+- keep `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS=8` in production so slow Twitch cache prep yields to local/mixed fallback before the program feed stalls
 - inspect worker/playout incidents for Twitch cache failures
 - confirm the media volume has enough free space for `data/media/.stream247-cache/twitch`
 - use `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1` only as a temporary rollback because it restores unstable remote VOD playback
