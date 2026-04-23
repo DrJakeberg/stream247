@@ -24,12 +24,13 @@ export async function getSystemReadiness() {
   try {
     const state = await readAppState();
     const persistence = await getDatabaseHealth();
-    const recentHeartbeat = state.playout.heartbeatAt ? new Date(state.playout.heartbeatAt).getTime() : 0;
+    const playoutHeartbeatAt = state.playout.heartbeatAt ? new Date(state.playout.heartbeatAt).getTime() : 0;
     const workerHeartbeat = state.auditEvents.find((event) => event.type === "worker.cycle")?.createdAt ?? "";
     const workerHeartbeatAt = workerHeartbeat ? new Date(workerHeartbeat).getTime() : 0;
     const relayEnabled = process.env.STREAM247_RELAY_ENABLED === "1";
     const hlsProgramFeedEnabled = relayEnabled && process.env.STREAM247_UPLINK_INPUT_MODE !== "rtmp";
     const uplinkHeartbeatAt = state.playout.uplinkHeartbeatAt ? new Date(state.playout.uplinkHeartbeatAt).getTime() : 0;
+    const programFeedUpdatedAt = state.playout.programFeedUpdatedAt ? new Date(state.playout.programFeedUpdatedAt).getTime() : 0;
     const now = Date.now();
     const routing = selectActiveDestinationGroup(
       state.destinations.map((destination) => ({
@@ -71,19 +72,29 @@ export async function getSystemReadiness() {
         : state.playout.programFeedStatus === "stale"
           ? "degraded"
           : "not-ready";
+    const playoutStatusUsesProgramFeedHeartbeat =
+      hlsProgramFeedEnabled &&
+      programFeedStatus === "ok" &&
+      state.playout.uplinkStatus === "running" &&
+      programFeedUpdatedAt > 0 &&
+      (state.playout.status === "running" || state.playout.status === "recovering" || state.playout.status === "switching");
+    const effectivePlayoutHeartbeat =
+      playoutStatusUsesProgramFeedHeartbeat && programFeedUpdatedAt > playoutHeartbeatAt
+        ? programFeedUpdatedAt
+        : playoutHeartbeatAt;
     const playoutTransientGraceSeconds = getPlayoutTransientGraceSeconds();
     const playoutTransientGraceMs = playoutTransientGraceSeconds * 1000;
     const playoutTransient =
       hlsProgramFeedEnabled &&
       state.playout.status === "failed" &&
-      recentHeartbeat > 0 &&
-      now - recentHeartbeat <= playoutTransientGraceMs &&
+      effectivePlayoutHeartbeat > 0 &&
+      now - effectivePlayoutHeartbeat <= playoutTransientGraceMs &&
       !state.playout.crashLoopDetected &&
       uplinkStatus === "ok" &&
       programFeedStatus === "ok" &&
       destinationStatus === "ok";
     let playoutStatus: "ok" | "degraded" | "not-ready" = "not-ready";
-    if (recentHeartbeat > 0 && now - recentHeartbeat < 60_000) {
+    if (effectivePlayoutHeartbeat > 0 && now - effectivePlayoutHeartbeat < 60_000) {
       playoutStatus =
         state.playout.status === "failed"
           ? playoutTransient
