@@ -370,7 +370,7 @@ For production pinning, use `.env.production.example` or set the image tags expl
   - `pnpm release:preflight`
   - `pnpm test:runtime-parity`
   - `pnpm test:e2e:smoke`
-  - `./scripts/upgrade-rehearsal.sh v1.5.2`
+  - `./scripts/upgrade-rehearsal.sh v1.5.3`
   - `./scripts/soak-monitor.sh --hours 24`
 
 Operational docs:
@@ -395,7 +395,7 @@ Before tagging a production release:
    ```
 3. Rehearse the target version:
    ```bash
-   ./scripts/upgrade-rehearsal.sh v1.5.2
+   ./scripts/upgrade-rehearsal.sh v1.5.3
    ```
 4. Run an extended soak:
    ```bash

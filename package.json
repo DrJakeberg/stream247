@@ -1,7 +1,7 @@
 {
   "name": "stream247",
   "private": true,
-  "version": "1.5.2",
+  "version": "1.5.3",
   "license": "SEE LICENSE IN LICENSE",
   "packageManager": "pnpm@10.6.1",
   "scripts": {

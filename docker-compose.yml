@@ -26,7 +26,7 @@ services:
       retries: 5
       start_period: 20s
   web:
-    image: ${STREAM247_WEB_IMAGE:-ghcr.io/drjakeberg/stream247-web:v1.5.2}
+    image: ${STREAM247_WEB_IMAGE:-ghcr.io/drjakeberg/stream247-web:v1.5.3}
     restart: unless-stopped
     ports:
       - "3000:3000"
@@ -59,7 +59,7 @@ services:
       redis:
         condition: service_healthy
   worker:
-    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.2}
+    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.3}
     restart: unless-stopped
     env_file:
       - .env
@@ -82,7 +82,7 @@ services:
     expose:
       - "1935"
   playout:
-    image: ${STREAM247_PLAYOUT_IMAGE:-ghcr.io/drjakeberg/stream247-playout:v1.5.2}
+    image: ${STREAM247_PLAYOUT_IMAGE:-ghcr.io/drjakeberg/stream247-playout:v1.5.3}
     restart: unless-stopped
     command: ["node", "apps/worker/dist/index.js", "playout"]
     env_file:
@@ -103,7 +103,7 @@ services:
       redis:
         condition: service_healthy
   uplink:
-    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.2}
+    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.3}
     restart: unless-stopped
     command: ["node", "apps/worker/dist/index.js", "uplink"]
     env_file:
