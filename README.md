@@ -213,6 +213,7 @@ docker compose --profile proxy up -d
 
 - `TWITCH_CLIENT_ID`: Twitch application client id
 - `TWITCH_CLIENT_SECRET`: Twitch application client secret
+- `TWITCH_SCHEDULE_SYNC_ENABLED`: set to `0` to skip Twitch schedule sync when the broadcaster account cannot create non-recurring Twitch schedule segments; defaults to `1`
 - `TWITCH_STREAM_KEY`: Twitch stream key for RTMP output
 - `TWITCH_RTMP_URL`: defaults to `rtmp://live.twitch.tv/app`
 - `TWITCH_VOD_CACHE_ENABLED`: cache Twitch VOD media locally before playout; defaults to `1`
@@ -237,6 +238,7 @@ docker compose --profile proxy up -d
 - `PLAYOUT_RECONNECT_HOURS`: interval for planned Twitch/output reconnect windows; defaults to `48`
 - `PLAYOUT_RECONNECT_SECONDS`: duration of the planned reconnect standby window; defaults to `20`
 - `SCENE_RENDER_BASE_URL`: optional internal base URL that the worker should use when capturing published Scene overlays for on-air rendering; defaults to `INTERNAL_APP_URL`, then `APP_URL`, then `http://web:3000`
+- `SCENE_RENDERER_ENABLED`: set to `0` to keep production on the text overlay path when Chromium capture is unstable
 - `SCENE_RENDER_INTERVAL_MS`: how often the worker refreshes captured on-air scene frames; defaults to `2000`
 - `SCENE_RENDER_CHROMIUM_PATH`: optional explicit Chromium binary path for the on-air scene renderer
 - `CHANNEL_TIMEZONE`: schedule timezone, for example `Europe/Berlin`

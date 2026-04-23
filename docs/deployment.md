@@ -67,7 +67,7 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
 9. Optional:
    - enter `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` during setup
    - or add them later in `/settings`
-10. Open `Live → Status` and use `Connect Twitch` if you want Twitch metadata sync, Twitch schedule sync, or team SSO.
+10. Open `Live → Status` and use `Connect Twitch` if you want Twitch metadata sync or team SSO. Only leave Twitch schedule sync enabled when the broadcaster account can create non-recurring Twitch schedule segments.
 11. Add playable media:
    - files in `data/media`
    - direct media URL sources
@@ -327,6 +327,8 @@ The Twitch cache also enforces basic retention and disk guardrails:
 - `TWITCH_VOD_CACHE_MAX_BYTES`
 - `TWITCH_VOD_CACHE_MIN_FREE_BYTES`
 - `TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS`
+- `TWITCH_SCHEDULE_SYNC_ENABLED`
+- `SCENE_RENDERER_ENABLED`
 
 The defaults prune stale partial downloads, evict older cached VOD files when the cache exceeds its byte budget, and refuse a new download when free disk falls below the configured floor.
 

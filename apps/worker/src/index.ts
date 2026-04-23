@@ -117,6 +117,7 @@ import {
 import { TwitchChatBridge } from "./twitch-engagement.js";
 import { syncTwitchEventSubSubscriptions } from "./twitch-eventsub.js";
 import { fetchTwitchLiveStatus } from "./twitch-live-status.js";
+import { isTwitchScheduleSyncEnabled } from "./twitch-sync-policy.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
@@ -4464,33 +4465,32 @@ async function reconcileTwitch(): Promise<void> {
     });
   };
 
-  try {
-    await sync(twitchAccessToken);
+  const syncScheduleIfEnabled = async (accessToken: string, syncState: AppState, successMessage: string): Promise<void> => {
+    if (!isTwitchScheduleSyncEnabled(process.env)) {
+      await resolveIncident("twitch.schedule.sync.failed", "Twitch schedule sync is disabled by configuration.");
+      return;
+    }
+
     await syncTwitchSchedule({
-      state,
-      accessToken: twitchAccessToken,
+      state: syncState,
+      accessToken,
       timeZone: process.env.CHANNEL_TIMEZONE || "UTC",
       clientId: twitchClientId,
       categoryCache
     });
+    await resolveIncident("twitch.schedule.sync.failed", successMessage);
+  };
+
+  try {
+    await sync(twitchAccessToken);
     await resolveIncident("twitch.reconcile.failed", "Twitch reconciliation succeeded.");
-    await resolveIncident("twitch.schedule.sync.failed", "Twitch schedule synchronization succeeded.");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Twitch reconciliation error.";
     if (message.includes("401")) {
       try {
         twitchAccessToken = await refreshBroadcasterAccessToken();
         await sync(twitchAccessToken);
-        await syncTwitchSchedule({
-          state: await readAppState(),
-          accessToken: twitchAccessToken,
-          timeZone: process.env.CHANNEL_TIMEZONE || "UTC",
-          clientId: twitchClientId,
-          categoryCache
-        });
         await resolveIncident("twitch.reconcile.failed", "Twitch reconciliation succeeded after token refresh.");
-        await resolveIncident("twitch.schedule.sync.failed", "Twitch schedule synchronization succeeded after token refresh.");
-        return;
       } catch (refreshError) {
         const refreshMessage = refreshError instanceof Error ? refreshError.message : "Unknown Twitch refresh failure.";
         await upsertIncident({
@@ -4500,26 +4500,72 @@ async function reconcileTwitch(): Promise<void> {
           message: refreshMessage,
           fingerprint: "twitch.refresh.failed"
         });
+        await upsertIncident({
+          scope: "twitch",
+          severity: "warning",
+          title: "Twitch reconciliation failed",
+          message: refreshMessage,
+          fingerprint: "twitch.reconcile.failed"
+        });
+        await sendAlert("Twitch reconciliation warning", refreshMessage);
+        return;
+      }
+    } else {
+      await upsertIncident({
+        scope: "twitch",
+        severity: "warning",
+        title: "Twitch reconciliation failed",
+        message,
+        fingerprint: "twitch.reconcile.failed"
+      });
+      await sendAlert("Twitch reconciliation warning", message);
+      return;
+    }
+  }
+
+  try {
+    await syncScheduleIfEnabled(twitchAccessToken, await readAppState(), "Twitch schedule synchronization succeeded.");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown Twitch schedule synchronization error.";
+    if (message.includes("401")) {
+      try {
+        twitchAccessToken = await refreshBroadcasterAccessToken();
+        await syncScheduleIfEnabled(
+          twitchAccessToken,
+          await readAppState(),
+          "Twitch schedule synchronization succeeded after token refresh."
+        );
+        return;
+      } catch (refreshError) {
+        const refreshMessage =
+          refreshError instanceof Error ? refreshError.message : "Unknown Twitch schedule refresh failure.";
+        await upsertIncident({
+          scope: "twitch",
+          severity: "critical",
+          title: "Twitch token refresh failed",
+          message: refreshMessage,
+          fingerprint: "twitch.refresh.failed"
+        });
+        await upsertIncident({
+          scope: "twitch",
+          severity: "warning",
+          title: "Twitch schedule synchronization failed",
+          message: refreshMessage,
+          fingerprint: "twitch.schedule.sync.failed"
+        });
+        await sendAlert("Twitch schedule sync warning", refreshMessage);
+        return;
       }
     }
 
     await upsertIncident({
       scope: "twitch",
       severity: "warning",
-      title: "Twitch reconciliation failed",
+      title: "Twitch schedule synchronization failed",
       message,
-      fingerprint: "twitch.reconcile.failed"
+      fingerprint: "twitch.schedule.sync.failed"
     });
-    if (message.toLowerCase().includes("schedule")) {
-      await upsertIncident({
-        scope: "twitch",
-        severity: "warning",
-        title: "Twitch schedule synchronization failed",
-        message,
-        fingerprint: "twitch.schedule.sync.failed"
-      });
-    }
-    await sendAlert("Twitch reconciliation warning", message);
+    await sendAlert("Twitch schedule sync warning", message);
   }
 }
 
