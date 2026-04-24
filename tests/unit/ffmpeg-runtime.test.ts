@@ -131,6 +131,10 @@ describe("ffmpeg runtime helpers", () => {
       "rtmp://relay:1935/live/program",
       "-c",
       "copy",
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a:0?",
       "-f",
       "tee",
       `[${teeRecoveryOptions}]rtmp://example/live/key|[${teeRecoveryOptions}:flush_packets=1]/tmp/out.flv`
@@ -197,10 +201,7 @@ describe("ffmpeg runtime helpers", () => {
     expect(
       buildUplinkFfmpegCommand(
         "/app/data/media/.stream247-program-feed/program.m3u8",
-        {
-          muxer: "flv",
-          output: "rtmp://live.twitch.tv/app/key"
-        },
+        { muxer: "tee", output: `[${teeRecoveryOptions}]rtmp://live.twitch.tv/app/key` },
         { inputMode: "hls", env: {} }
       )
     ).toEqual([
@@ -239,9 +240,13 @@ describe("ffmpeg runtime helpers", () => {
       "44100",
       "-b:a",
       "160k",
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a:0?",
       "-f",
-      "flv",
-      "rtmp://live.twitch.tv/app/key"
+      "tee",
+      `[${teeRecoveryOptions}]rtmp://live.twitch.tv/app/key`
     ]);
   });
 

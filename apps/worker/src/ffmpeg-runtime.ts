@@ -140,6 +140,10 @@ export function appendFfmpegOutputArgs(command: string[], outputTarget: FfmpegOu
   command.push(...(outputTarget.outputArgs ?? []), "-f", outputTarget.muxer, outputTarget.output);
 }
 
+function appendTeeStreamMaps(command: string[]): void {
+  command.push("-map", "0:v:0", "-map", "0:a:0?");
+}
+
 export function isNaturalPlayoutBoundary(args: {
   targetKind: "asset" | "insert" | "standby" | "reconnect" | "live" | "";
   code: number | null;
@@ -328,6 +332,9 @@ export function buildUplinkFfmpegCommand(
 
   if (inputMode === "rtmp" && !outputSettings) {
     command.push("-c", "copy");
+    if (outputTarget.muxer === "tee") {
+      appendTeeStreamMaps(command);
+    }
     appendFfmpegOutputArgs(command, outputTarget);
     return command;
   }
@@ -362,6 +369,9 @@ export function buildUplinkFfmpegCommand(
     "-b:a",
     rateControl.audioBitrate
   );
+  if (outputTarget.muxer === "tee") {
+    appendTeeStreamMaps(command);
+  }
   appendFfmpegOutputArgs(command, outputTarget);
   return command;
 }
