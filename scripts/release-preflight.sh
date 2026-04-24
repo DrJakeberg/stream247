@@ -125,8 +125,10 @@ require_production_setting() {
 validate_proxy_settings_if_configured() {
   proxy_host=""
   proxy_email=""
+  proxy_resolver=""
   proxy_host_present=0
   proxy_email_present=0
+  proxy_resolver_present=0
 
   if proxy_host_value="$(read_env_value "TRAEFIK_HOST" "$ENV_FILE" 2>/dev/null)"; then
     proxy_host_present=1
@@ -138,11 +140,16 @@ validate_proxy_settings_if_configured() {
     proxy_email="$(normalize_env_value "$proxy_email_value")"
   fi
 
-  if [ "$proxy_host_present" -eq 0 ] && [ "$proxy_email_present" -eq 0 ]; then
+  if proxy_resolver_value="$(read_env_value "TRAEFIK_CERT_RESOLVER" "$ENV_FILE" 2>/dev/null)"; then
+    proxy_resolver_present=1
+    proxy_resolver="$(normalize_env_value "$proxy_resolver_value")"
+  fi
+
+  if [ "$proxy_host_present" -eq 0 ] && [ "$proxy_email_present" -eq 0 ] && [ "$proxy_resolver_present" -eq 0 ]; then
     return
   fi
 
-  if [ -z "$proxy_host" ] && [ -z "$proxy_email" ]; then
+  if [ -z "$proxy_host" ] && [ -z "$proxy_email" ] && [ -z "$proxy_resolver" ]; then
     return
   fi
 
@@ -151,7 +158,12 @@ validate_proxy_settings_if_configured() {
     exit 1
   fi
 
-  if [ -z "$proxy_email" ]; then
+  email_required=0
+  if [ -z "$proxy_resolver" ] || [ "$proxy_resolver" = "letsencrypt" ]; then
+    email_required=1
+  fi
+
+  if [ "$email_required" -eq 1 ] && [ -z "$proxy_email" ]; then
     echo "Invalid proxy setting in $ENV_FILE: TRAEFIK_ACME_EMAIL is blank."
     exit 1
   fi
@@ -161,7 +173,7 @@ validate_proxy_settings_if_configured() {
     exit 1
   fi
 
-  if is_placeholder_value "TRAEFIK_ACME_EMAIL" "$proxy_email"; then
+  if [ -n "$proxy_email" ] && is_placeholder_value "TRAEFIK_ACME_EMAIL" "$proxy_email"; then
     echo "Invalid proxy setting in $ENV_FILE: TRAEFIK_ACME_EMAIL still uses an example or placeholder value."
     exit 1
   fi

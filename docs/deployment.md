@@ -41,7 +41,7 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
    - `APP_SECRET`
    - `POSTGRES_PASSWORD`
    - matching `DATABASE_URL`
-   - `TRAEFIK_HOST` and `TRAEFIK_ACME_EMAIL` if using the built-in Traefik profile
+   - `TRAEFIK_HOST`, plus `TRAEFIK_ACME_EMAIL` if using the built-in Traefik Let's Encrypt profile
 3. Optional but recommended:
    - `TWITCH_STREAM_KEY`
    - `CHANNEL_TIMEZONE`
@@ -83,7 +83,7 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
 - If you use the built-in Traefik profile, set:
   - `APP_URL=https://<TRAEFIK_HOST>`
   - `TRAEFIK_HOST=<same-hostname>`
-  - `TRAEFIK_ACME_EMAIL=<your-email>`
+  - `TRAEFIK_ACME_EMAIL=<your-email>` when the built-in ACME resolver is active
 - The built-in Traefik profile leaves direct port `3000` publishing enabled for easier first-time recovery and debugging. If you want a proxy-only surface, remove the `web.ports` entry locally.
 
 ## Secrets And Runtime Settings
@@ -97,7 +97,7 @@ Belongs in `.env`:
 - `APP_URL`
 - `APP_SECRET`
 - `TRAEFIK_HOST`
-- `TRAEFIK_ACME_EMAIL`
+- `TRAEFIK_ACME_EMAIL` when the built-in ACME resolver is active
 - optional fallback Twitch client credentials
 - optional fallback SMTP credentials
 - optional fallback Discord webhook URL
@@ -140,7 +140,7 @@ Production Compose is intended to pull from:
 - `bluenviron/mediamtx:<tag>` for the local RTMP relay
 
 `.env.example` uses `latest` for evaluation.
-`.env.production.example` pins `v1.5.5` for stable deployment.
+`.env.production.example` pins `v1.5.6` for stable deployment.
 See `docs/operations.md` for the runbook and backup procedures.
 
 ## Canonical Release And Rollout Flow
@@ -191,9 +191,9 @@ Use pinned GHCR image tags in production.
 
 Example:
 
-- `ghcr.io/drjakeberg/stream247-web:v1.5.5`
-- `ghcr.io/drjakeberg/stream247-worker:v1.5.5`
-- `ghcr.io/drjakeberg/stream247-playout:v1.5.5`
+- `ghcr.io/drjakeberg/stream247-web:v1.5.6`
+- `ghcr.io/drjakeberg/stream247-worker:v1.5.6`
+- `ghcr.io/drjakeberg/stream247-playout:v1.5.6`
 - `bluenviron/mediamtx:1.15.4`
 
 Do not use `latest` for unattended production deployments.
@@ -208,12 +208,12 @@ Do not use `latest` for unattended production deployments.
    ```bash
    pnpm release:preflight
    ```
-   The preflight rejects blank or quoted-empty required settings plus untouched `.env.example` and `.env.production.example` placeholder values, including Traefik example defaults when proxy settings are present, so replace those first.
+   The preflight rejects blank or quoted-empty required settings plus untouched `.env.example` and `.env.production.example` placeholder values, including Traefik host defaults whenever proxy settings are present and ACME email placeholders when the built-in Let's Encrypt resolver is configured, so replace those first.
 6. Rehearse the target version with:
    ```bash
-   ./scripts/upgrade-rehearsal.sh v1.5.5
+   ./scripts/upgrade-rehearsal.sh v1.5.6
    ```
-   Before a new release tag exists, the rehearsal automatically uses the CI-published `main-<sha>` snapshot for the current commit instead of requiring `ghcr.io/...:v1.5.5` to exist already.
+   Before a new release tag exists, the rehearsal automatically uses the CI-published `main-<sha>` snapshot for the current commit instead of requiring `ghcr.io/...:v1.5.6` to exist already.
    On an empty rehearsal stack, the script bootstraps a rehearsal owner and seeds one tiny local media fixture so the current broadcast-readiness gate does not depend on stale local state. Set `UPGRADE_REHEARSAL_SEED_LOCAL_MEDIA=0` when the target media library already contains real playable media and you want to prevent fixture creation.
 7. After the release images exist, update the DT Portainer stack image refs to the target release tags and redeploy the stack from Portainer.
 8. Verify the DT stack matches the intended pinned refs:

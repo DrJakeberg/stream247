@@ -91,6 +91,7 @@
 - inspect `program-feed.input`, `uplink.output.missing`, `uplink.process.exit`, and `uplink.ffmpeg.stderr` incidents
 - check `/api/system/readiness` for `uplink.unplannedRestartCount` and `programFeed.status`
 - if HLS warnings mention corrupt packets, discontinuities, or non-monotonic DTS but `uplink.unplannedRestartCount` stays unchanged and the feed remains fresh, investigate the local asset/input that caused the playout exit instead of reconnecting Twitch manually
+- single-output and multi-output RTMP uplinks both run through tee/fifo buffering now; a short Twitch-side write failure should recover inside the same FFmpeg process when FFmpeg can re-open the output, and a real `uplink.process.exit` still means the Twitch-facing publisher actually restarted
 - verify at least one enabled primary or backup destination has a valid RTMP URL and stream key
 - use `STREAM247_RELAY_ENABLED=0` only as a rollback because it returns external publishing to the playout process
 

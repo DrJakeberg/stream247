@@ -176,7 +176,7 @@ For pinned production deployment, start from:
 cp .env.production.example .env
 ```
 
-`pnpm release:preflight` now rejects untouched example values, quoted-empty secrets/passwords, and proxy placeholders such as `TRAEFIK_HOST=stream247.example.com` or `TRAEFIK_ACME_EMAIL=admin@example.com`, so replace the required defaults before using it as a release gate.
+`pnpm release:preflight` now rejects untouched example values, quoted-empty secrets/passwords, and proxy placeholders such as `TRAEFIK_HOST=stream247.example.com`. It also rejects `TRAEFIK_ACME_EMAIL=admin@example.com` when the built-in Let's Encrypt path is configured, so replace those defaults before using it as a release gate.
 
 In most cases you only need to set these before first start:
 
@@ -184,7 +184,7 @@ In most cases you only need to set these before first start:
 - `APP_SECRET`
 - `POSTGRES_PASSWORD`
 - `DATABASE_URL`
-- `TRAEFIK_HOST` and `TRAEFIK_ACME_EMAIL` if you use the Traefik profile
+- `TRAEFIK_HOST`, plus `TRAEFIK_ACME_EMAIL` when you use the built-in Let's Encrypt Traefik profile
 - `TWITCH_STREAM_KEY` if you want real Twitch output immediately
 
 Twitch client credentials, SMTP, and Discord can also be entered later in the setup wizard or `/settings`.
@@ -207,7 +207,7 @@ docker compose --profile proxy up -d
 ### Required Only For The Traefik Profile
 
 - `TRAEFIK_HOST`: public hostname for Traefik routing
-- `TRAEFIK_ACME_EMAIL`: email used for Let's Encrypt
+- `TRAEFIK_ACME_EMAIL`: email used for Let's Encrypt when the built-in ACME resolver is active
 
 ### Common Optional Environment Variables
 
@@ -372,7 +372,7 @@ For production pinning, use `.env.production.example` or set the image tags expl
   - `pnpm release:preflight`
   - `pnpm test:runtime-parity`
   - `pnpm test:e2e:smoke`
-  - `./scripts/upgrade-rehearsal.sh v1.5.5`
+  - `./scripts/upgrade-rehearsal.sh v1.5.6`
   - `./scripts/soak-monitor.sh --hours 24`
 
 Operational docs:
@@ -397,7 +397,7 @@ Before tagging a production release:
    ```
 3. Rehearse the target version:
    ```bash
-   ./scripts/upgrade-rehearsal.sh v1.5.5
+   ./scripts/upgrade-rehearsal.sh v1.5.6
    ```
 4. Run an extended soak:
    ```bash

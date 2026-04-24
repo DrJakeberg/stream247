@@ -119,13 +119,6 @@ export function buildFfmpegOutputTarget(targets: DestinationRuntimeTarget[]): Ff
     };
   }
 
-  if (targets.length === 1) {
-    return {
-      muxer: "flv",
-      output: targets[0]!.target
-    };
-  }
-
   return {
     muxer: "tee",
     output: targets.map((entry) => `${buildTeeOutputOptions(entry.target)}${entry.target}`).join("|")
@@ -175,7 +168,12 @@ export function groupDestinationRuntimeTargetsByOutputProfile(args: {
 }
 
 function buildTeeOutputOptions(target: string): string {
-  const options = ["onfail=ignore", "f=flv", "use_fifo=1"];
+  const options = [
+    "onfail=ignore",
+    "f=flv",
+    "use_fifo=1",
+    "fifo_options=attempt_recovery=1\\:recover_any_error=1\\:recovery_wait_time=1"
+  ];
   if (isLocalFileOutputTarget(target)) {
     options.push("flush_packets=1");
   }

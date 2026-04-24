@@ -253,6 +253,40 @@ STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
     expect(result.output).toContain("TRAEFIK_ACME_EMAIL still uses an example or placeholder value");
   });
 
+  it("rejects blank proxy email when the letsencrypt resolver is active", () => {
+    const result = runReleasePreflight(`
+APP_URL=https://stream247.mycorp.net
+APP_SECRET=super-secret-app-secret-0123456789
+POSTGRES_PASSWORD=super-secret-db-password
+DATABASE_URL=postgresql://stream247:super-secret-db-password@postgres:5432/stream247
+TRAEFIK_HOST=stream247.mycorp.net
+TRAEFIK_CERT_RESOLVER=letsencrypt
+STREAM247_WEB_IMAGE=ghcr.io/drjakeberg/stream247-web:v1.0.3
+STREAM247_WORKER_IMAGE=ghcr.io/drjakeberg/stream247-worker:v1.0.3
+STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
+`);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("TRAEFIK_ACME_EMAIL is blank");
+  });
+
+  it("accepts a non-acme resolver without a Traefik ACME email", () => {
+    const result = runReleasePreflight(`
+APP_URL=https://stream247.mycorp.net
+APP_SECRET=super-secret-app-secret-0123456789
+POSTGRES_PASSWORD=super-secret-db-password
+DATABASE_URL=postgresql://stream247:super-secret-db-password@postgres:5432/stream247
+TRAEFIK_HOST=stream247.mycorp.net
+TRAEFIK_CERT_RESOLVER=cf
+STREAM247_WEB_IMAGE=ghcr.io/drjakeberg/stream247-web:v1.0.3
+STREAM247_WORKER_IMAGE=ghcr.io/drjakeberg/stream247-worker:v1.0.3
+STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Release preflight succeeded.");
+  });
+
   it("rejects unquoted mutable latest image tags", () => {
     const result = runReleasePreflight(`
 APP_URL=https://stream247.mycorp.net
