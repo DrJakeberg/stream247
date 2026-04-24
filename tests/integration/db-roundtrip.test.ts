@@ -51,6 +51,18 @@ const persistentProgramFeedRuntimeColumns = [
   "program_feed_target_seconds",
   "program_feed_buffered_seconds"
 ].sort();
+const assetCacheMetadataMigrationId = "20260424_001_asset_cache_metadata";
+const assetCacheMetadataColumns = [
+  "cache_path",
+  "cache_status",
+  "cache_updated_at",
+  "cache_error",
+  "folder_path",
+  "tags_json",
+  "title_prefix",
+  "hashtags_json",
+  "platform_notes"
+].sort();
 const outputProfilesMigrationId = "20260420_001_output_profiles";
 const destinationOutputProfilesMigrationId = "20260421_002_destination_output_profiles";
 const engagementGameMigrationId = "20260422_001_engagement_game";
@@ -820,6 +832,58 @@ describe.sequential("database roundtrip", () => {
       height: 720,
       fps: 30,
       updatedAt: ""
+    });
+  }, 60_000);
+
+  it("upgrades existing databases with asset cache and overlay metadata columns", async () => {
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      ALTER TABLE assets
+        DROP COLUMN IF EXISTS cache_path,
+        DROP COLUMN IF EXISTS cache_status,
+        DROP COLUMN IF EXISTS cache_updated_at,
+        DROP COLUMN IF EXISTS cache_error,
+        DROP COLUMN IF EXISTS folder_path,
+        DROP COLUMN IF EXISTS tags_json,
+        DROP COLUMN IF EXISTS title_prefix,
+        DROP COLUMN IF EXISTS hashtags_json,
+        DROP COLUMN IF EXISTS platform_notes;
+      DELETE FROM schema_migrations WHERE id = '${assetCacheMetadataMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const columns = (
+      await executeSql(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'assets'
+          AND column_name IN (${assetCacheMetadataColumns.map((column) => `'${column}'`).join(", ")})
+        ORDER BY column_name;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+    const migrationApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id = '${assetCacheMetadataMigrationId}';`
+    );
+    const state = await readAppState();
+
+    expect(columns).toEqual(assetCacheMetadataColumns);
+    expect(migrationApplied).toBe("1");
+    expect(state.assets).toHaveLength(1);
+    expect(state.assets[0]).toMatchObject({
+      id: "asset_1",
+      cachePath: "",
+      cacheStatus: "",
+      cacheUpdatedAt: "",
+      cacheError: "",
+      folderPath: "",
+      tags: [],
+      titlePrefix: "",
+      hashtagsJson: "[]",
+      platformNotes: ""
     });
   }, 60_000);
 

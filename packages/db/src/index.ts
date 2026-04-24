@@ -2531,6 +2531,28 @@ if (!schemaMigrations.some((migration) => migration.id === persistentProgramFeed
   schemaMigrations.push(persistentProgramFeedRuntimeMigration);
 }
 
+const assetCacheMetadataMigration: MigrationDefinition = {
+  id: "20260424_001_asset_cache_metadata",
+  description: "Backfill asset cache and overlay metadata columns for pre-existing baseline databases.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS cache_path TEXT NOT NULL DEFAULT '';
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS cache_status TEXT NOT NULL DEFAULT '';
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS cache_updated_at TEXT NOT NULL DEFAULT '';
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS cache_error TEXT NOT NULL DEFAULT '';
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS folder_path TEXT NOT NULL DEFAULT '';
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS tags_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS title_prefix TEXT NOT NULL DEFAULT '';
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS hashtags_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS platform_notes TEXT NOT NULL DEFAULT '';
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === assetCacheMetadataMigration.id)) {
+  schemaMigrations.push(assetCacheMetadataMigration);
+}
+
 const outputProfilesMigration: MigrationDefinition = {
   id: "20260420_001_output_profiles",
   description: "Add channel-level output profile settings.",
