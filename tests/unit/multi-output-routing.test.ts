@@ -31,6 +31,9 @@ function createDestination(overrides: Partial<StreamDestinationRecord> = {}): St
 }
 
 describe("multi-output routing", () => {
+  const teeRecoveryOptions =
+    "onfail=ignore:f=flv:use_fifo=1:fifo_options=attempt_recovery=1\\\\:recover_any_error=1\\\\:recovery_wait_time=1";
+
   it("selects all healthy primary destinations before backups", () => {
     const selection = selectActiveDestinationGroup([
       {
@@ -153,12 +156,8 @@ describe("multi-output routing", () => {
     ]);
 
     expect(output.muxer).toBe("tee");
-    expect(output.output).toContain(
-      "[onfail=ignore:f=flv:use_fifo=1:fifo_options=attempt_recovery=1\\:recover_any_error=1\\:recovery_wait_time=1]rtmp://live.twitch.tv/app/env-key"
-    );
-    expect(output.output).toContain(
-      "[onfail=ignore:f=flv:use_fifo=1:fifo_options=attempt_recovery=1\\:recover_any_error=1\\:recovery_wait_time=1]rtmp://a.rtmp.youtube.com/live2/managed-key"
-    );
+    expect(output.output).toContain(`[${teeRecoveryOptions}]rtmp://live.twitch.tv/app/env-key`);
+    expect(output.output).toContain(`[${teeRecoveryOptions}]rtmp://a.rtmp.youtube.com/live2/managed-key`);
   });
 
   it("builds a recovery-enabled tee output for a single active destination", () => {
@@ -170,9 +169,7 @@ describe("multi-output routing", () => {
     ]);
 
     expect(output.muxer).toBe("tee");
-    expect(output.output).toBe(
-      "[onfail=ignore:f=flv:use_fifo=1:fifo_options=attempt_recovery=1\\:recover_any_error=1\\:recovery_wait_time=1]rtmp://live.twitch.tv/app/env-key"
-    );
+    expect(output.output).toBe(`[${teeRecoveryOptions}]rtmp://live.twitch.tv/app/env-key`);
   });
 
   it("groups active destinations by effective output profile", () => {
@@ -263,10 +260,10 @@ describe("multi-output routing", () => {
 
     expect(output.muxer).toBe("tee");
     expect(output.output).toContain(
-      "[onfail=ignore:f=flv:use_fifo=1:fifo_options=attempt_recovery=1\\:recover_any_error=1\\:recovery_wait_time=1:flush_packets=1]/tmp/stream-output/primary/primary.flv"
+      `[${teeRecoveryOptions}:flush_packets=1]/tmp/stream-output/primary/primary.flv`
     );
     expect(output.output).toContain(
-      "[onfail=ignore:f=flv:use_fifo=1:fifo_options=attempt_recovery=1\\:recover_any_error=1\\:recovery_wait_time=1:flush_packets=1]/tmp/stream-output/secondary/secondary.flv"
+      `[${teeRecoveryOptions}:flush_packets=1]/tmp/stream-output/secondary/secondary.flv`
     );
   });
 

@@ -24,6 +24,9 @@ import {
 } from "../../apps/worker/src/output-settings";
 
 describe("ffmpeg runtime helpers", () => {
+  const teeRecoveryOptions =
+    "onfail=ignore:f=flv:use_fifo=1:fifo_options=attempt_recovery=1\\\\:recover_any_error=1\\\\:recovery_wait_time=1";
+
   it("defaults scheduled reconnects to 48 hours", () => {
     expect(getPlayoutReconnectConfig({}).intervalHours).toBe(48);
     expect(getPlayoutReconnectConfig({}).intervalMs).toBe(48 * 60 * 60 * 1000);
@@ -116,8 +119,7 @@ describe("ffmpeg runtime helpers", () => {
     expect(
       buildUplinkFfmpegCommand("rtmp://relay:1935/live/program", {
         muxer: "tee",
-        output:
-          "[onfail=ignore:f=flv:use_fifo=1:fifo_options=attempt_recovery=1\\:recover_any_error=1\\:recovery_wait_time=1]rtmp://example/live/key|[onfail=ignore:f=flv:use_fifo=1:fifo_options=attempt_recovery=1\\:recover_any_error=1\\:recovery_wait_time=1:flush_packets=1]/tmp/out.flv"
+        output: `[${teeRecoveryOptions}]rtmp://example/live/key|[${teeRecoveryOptions}:flush_packets=1]/tmp/out.flv`
       })
     ).toEqual([
       "-hide_banner",
@@ -131,7 +133,7 @@ describe("ffmpeg runtime helpers", () => {
       "copy",
       "-f",
       "tee",
-      "[onfail=ignore:f=flv:use_fifo=1:fifo_options=attempt_recovery=1\\:recover_any_error=1\\:recovery_wait_time=1]rtmp://example/live/key|[onfail=ignore:f=flv:use_fifo=1:fifo_options=attempt_recovery=1\\:recover_any_error=1\\:recovery_wait_time=1:flush_packets=1]/tmp/out.flv"
+      `[${teeRecoveryOptions}]rtmp://example/live/key|[${teeRecoveryOptions}:flush_packets=1]/tmp/out.flv`
     ]);
   });
 

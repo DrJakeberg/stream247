@@ -172,7 +172,7 @@ function buildTeeOutputOptions(target: string): string {
     "onfail=ignore",
     "f=flv",
     "use_fifo=1",
-    "fifo_options=attempt_recovery=1\\:recover_any_error=1\\:recovery_wait_time=1"
+    "fifo_options=attempt_recovery=1\\\\:recover_any_error=1\\\\:recovery_wait_time=1"
   ];
   if (isLocalFileOutputTarget(target)) {
     options.push("flush_packets=1");
