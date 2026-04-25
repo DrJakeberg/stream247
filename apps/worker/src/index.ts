@@ -66,6 +66,7 @@ import { resolvePoolAudioLane, type ResolvedAudioLane } from "./audio-lanes.js";
 import { getCuepointInsertPlan } from "./cuepoints.js";
 import {
   buildFfmpegOutputTarget,
+  evaluateUplinkDestinationStall,
   groupDestinationRuntimeTargetsByOutputProfile,
   getLegacyDestinationEnvConfig,
   matchDestinationFailuresInLog,
@@ -133,6 +134,7 @@ let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
 let plannedStopReason = "";
 let uplinkProcesses: UplinkProcessRuntime[] = [];
 let uplinkReconnectUntil = "";
+const uplinkDestinationStallStartedAt: Map<string, number> = new Map();
 // Worker reconciliation can legitimately run for a little over two minutes when
 // source sync and Twitch reconciliation happen in one cycle, so keep the stale
 // window above the steady-state cadence to avoid false healthcheck failures.
@@ -177,6 +179,14 @@ const STREAM247_RELAY_DESTINATION_ID = "relay-local";
 const DESTINATION_FAILURE_COOLDOWN_SECONDS = Number(
   process.env.DESTINATION_FAILURE_COOLDOWN_SECONDS || String(DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS)
 );
+const UPLINK_DESTINATION_STALL_RESTART_SECONDS = (() => {
+  const raw = process.env.STREAM247_UPLINK_DESTINATION_STALL_RESTART_SECONDS;
+  if (raw === undefined || raw === "") {
+    return 300;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 300;
+})();
 const NEXT_ASSET_PROBE_READY_TTL_MS = 5 * 60_000;
 const NEXT_ASSET_PROBE_FAILED_TTL_MS = 60_000;
 const standbySlatePath = "/tmp/stream247-standby.txt";
@@ -3928,7 +3938,7 @@ async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> 
 
   child.on("exit", (code, signal) => {
     const stopReason = runtime.plannedStopReason;
-    const wasPlanned = stopReason !== "";
+    const wasPlanned = stopReason !== "" && stopReason !== "destination-stalled";
     const exitReason = describeFfmpegExit(code, signal ?? null);
     const lastDestinationIds = [...runtime.destinationIds];
     const lastRuntimeTargets = [...runtime.runtimeTargets];
@@ -4093,6 +4103,41 @@ async function runUplinkCycle(): Promise<void> {
 
   if (uplinkReconnectUntil !== "") {
     uplinkReconnectUntil = "";
+  }
+
+  for (const running of getRunningUplinkProcesses()) {
+    const runningDestinationStatuses = running.destinationIds
+      .map((id) => state.destinations.find((destination) => destination.id === id)?.status ?? "")
+      .filter((status) => status !== "");
+    const stallDecision = evaluateUplinkDestinationStall({
+      destinationStatuses: runningDestinationStatuses,
+      stallStartedAt: uplinkDestinationStallStartedAt.get(running.key),
+      nowMs: now,
+      thresholdSeconds: UPLINK_DESTINATION_STALL_RESTART_SECONDS
+    });
+    if (stallDecision.decision === "clear") {
+      uplinkDestinationStallStartedAt.delete(running.key);
+      continue;
+    }
+    if (stallDecision.decision === "wait") {
+      uplinkDestinationStallStartedAt.set(running.key, stallDecision.nextStallStartedAt);
+      continue;
+    }
+    uplinkDestinationStallStartedAt.delete(running.key);
+    logRuntimeEvent("uplink.destination_stall.restart", {
+      destinationIds: running.destinationIds,
+      outputProfile: running.key,
+      stallSeconds: stallDecision.stallSeconds,
+      thresholdSeconds: UPLINK_DESTINATION_STALL_RESTART_SECONDS
+    });
+    await upsertIncident({
+      scope: "playout",
+      severity: "warning",
+      title: "Uplink restarted after every destination stalled",
+      message: `All destinations for ${running.key} have been in error state for ${stallDecision.stallSeconds}s. Restarting the uplink so the fifo muxer reopens the destination connection from a clean slate.`,
+      fingerprint: `uplink.destination-stall.${running.key}`
+    });
+    await stopUplinkProcess(running, "destination-stalled");
   }
 
   for (const running of getRunningUplinkProcesses()) {

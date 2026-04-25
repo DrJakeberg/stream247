@@ -219,3 +219,28 @@ export function matchDestinationFailuresInLog(
 
   return options.allowSingleTargetFallback !== false && targets.length === 1 ? [targets[0]!.destination.id] : [];
 }
+
+export type UplinkDestinationStallDecision =
+  | { decision: "wait"; nextStallStartedAt: number }
+  | { decision: "restart"; nextStallStartedAt: undefined; stallSeconds: number }
+  | { decision: "clear"; nextStallStartedAt: undefined };
+
+export function evaluateUplinkDestinationStall(args: {
+  destinationStatuses: string[];
+  stallStartedAt: number | undefined;
+  nowMs: number;
+  thresholdSeconds: number;
+}): UplinkDestinationStallDecision {
+  const { destinationStatuses, stallStartedAt, nowMs, thresholdSeconds } = args;
+  const allInError =
+    destinationStatuses.length > 0 && destinationStatuses.every((status) => status === "error");
+  if (!allInError) {
+    return { decision: "clear", nextStallStartedAt: undefined };
+  }
+  const start = stallStartedAt ?? nowMs;
+  const elapsedMs = nowMs - start;
+  if (thresholdSeconds > 0 && elapsedMs >= thresholdSeconds * 1000) {
+    return { decision: "restart", nextStallStartedAt: undefined, stallSeconds: Math.round(elapsedMs / 1000) };
+  }
+  return { decision: "wait", nextStallStartedAt: start };
+}
