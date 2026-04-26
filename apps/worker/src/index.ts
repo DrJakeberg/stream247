@@ -72,6 +72,7 @@ import {
   matchDestinationFailuresInLog,
   resolveDestinationStreamTarget,
   selectDestinationRuntimeTargets,
+  selectUplinkStopStrategy,
   type DestinationRuntimeTarget,
   type DestinationRuntimeTargetGroup
 } from "./multi-output.js";
@@ -2490,11 +2491,13 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
 async function stopUplinkProcess(entry: UplinkProcessRuntime, reason = ""): Promise<void> {
   entry.plannedStopReason = reason;
 
-  if (!entry.process || entry.process.killed || entry.process.exitCode !== null) {
+  if (!entry.process || entry.process.exitCode !== null) {
     uplinkProcesses = uplinkProcesses.filter((candidate) => candidate !== entry);
     entry.plannedStopReason = "";
     return;
   }
+
+  const strategy = selectUplinkStopStrategy(reason);
 
   await new Promise<void>((resolve) => {
     const finalize = () => {
@@ -2503,13 +2506,23 @@ async function stopUplinkProcess(entry: UplinkProcessRuntime, reason = ""): Prom
     };
 
     entry.process.once("exit", finalize);
-    entry.process.kill("SIGTERM");
+    try {
+      entry.process.kill(strategy.initialSignal);
+    } catch {
+      // Process may have raced to exit between the exitCode check and kill.
+    }
 
-    setTimeout(() => {
-      if (entry.process.exitCode === null && !entry.process.killed) {
-        entry.process.kill("SIGKILL");
-      }
-    }, 5_000);
+    if (strategy.escalateToSigkillAfterMs > 0) {
+      setTimeout(() => {
+        if (entry.process.exitCode === null) {
+          try {
+            entry.process.kill("SIGKILL");
+          } catch {
+            // Already exited between the check and the signal.
+          }
+        }
+      }, strategy.escalateToSigkillAfterMs);
+    }
   });
 }
 

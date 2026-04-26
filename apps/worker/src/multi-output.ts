@@ -220,6 +220,18 @@ export function matchDestinationFailuresInLog(
   return options.allowSingleTargetFallback !== false && targets.length === 1 ? [targets[0]!.destination.id] : [];
 }
 
+export type UplinkStopStrategy = {
+  initialSignal: "SIGTERM" | "SIGKILL";
+  escalateToSigkillAfterMs: number;
+};
+
+export function selectUplinkStopStrategy(reason: string): UplinkStopStrategy {
+  if (reason === "destination-stalled") {
+    return { initialSignal: "SIGKILL", escalateToSigkillAfterMs: 0 };
+  }
+  return { initialSignal: "SIGTERM", escalateToSigkillAfterMs: 5_000 };
+}
+
 export type UplinkDestinationStallDecision =
   | { decision: "wait"; nextStallStartedAt: number }
   | { decision: "restart"; nextStallStartedAt: undefined; stallSeconds: number }

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { evaluateUplinkDestinationStall } from "../../apps/worker/src/multi-output";
+import {
+  evaluateUplinkDestinationStall,
+  selectUplinkStopStrategy
+} from "../../apps/worker/src/multi-output";
 
 const THRESHOLD_SECONDS = 300;
 const THRESHOLD_MS = THRESHOLD_SECONDS * 1000;
@@ -104,6 +107,20 @@ describe("evaluateUplinkDestinationStall", () => {
     });
 
     expect(decision.decision).toBe("wait");
+  });
+
+  it("returns SIGKILL with no escalation for destination-stalled stops (v1.5.8 regression)", () => {
+    const strategy = selectUplinkStopStrategy("destination-stalled");
+    expect(strategy.initialSignal).toBe("SIGKILL");
+    expect(strategy.escalateToSigkillAfterMs).toBe(0);
+  });
+
+  it("returns SIGTERM with 5s SIGKILL escalation for normal planned stops", () => {
+    for (const reason of ["destination-change", "scheduled-reconnect", "destination-missing", "relay-disabled", ""]) {
+      const strategy = selectUplinkStopStrategy(reason);
+      expect(strategy.initialSignal).toBe("SIGTERM");
+      expect(strategy.escalateToSigkillAfterMs).toBe(5000);
+    }
   });
 
   it("simulates the v1.5.7 soak failure: error continuous past threshold triggers restart", () => {
