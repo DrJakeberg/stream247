@@ -142,3 +142,39 @@ export function execFileText(file: string, args: string[], options: ExecFileText
     }
   });
 }
+
+export type StallGuardResult<T> =
+  | { status: "completed"; value: T }
+  | { status: "failed"; error: unknown }
+  | { status: "stalled" };
+
+/**
+ * Runs an async cycle but never blocks longer than `stallMs`. If the cycle
+ * neither resolves nor rejects within that window it is reported as "stalled"
+ * so the caller can recover (e.g. restart the process) instead of hanging
+ * forever on an unbounded await (such as a yt-dlp/fetch network stall).
+ */
+export async function runWithStallGuard<T>(
+  run: () => Promise<T>,
+  stallMs: number
+): Promise<StallGuardResult<T>> {
+  let timer: NodeJS.Timeout | undefined;
+  const stall = new Promise<StallGuardResult<T>>((resolve) => {
+    timer = setTimeout(() => resolve({ status: "stalled" }), stallMs);
+    timer.unref?.();
+  });
+
+  try {
+    return await Promise.race([
+      run().then(
+        (value): StallGuardResult<T> => ({ status: "completed", value }),
+        (error): StallGuardResult<T> => ({ status: "failed", error })
+      ),
+      stall
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}

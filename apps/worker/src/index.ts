@@ -96,7 +96,7 @@ import {
   shouldRequestImmediatePlayoutRetry,
   shouldSkipInitialSceneCapture
 } from "./ffmpeg-runtime.js";
-import { execFileText } from "./process-utils.js";
+import { execFileText, runWithStallGuard } from "./process-utils.js";
 import {
   ensureTwitchVodCache,
   getTwitchVodCacheConfig,
@@ -142,6 +142,30 @@ const uplinkDestinationStallStartedAt: Map<string, number> = new Map();
 const WORKER_HEARTBEAT_STALE_MS = 240_000;
 type WorkerScheduleOccurrence = ReturnType<typeof buildScheduleOccurrences>[number];
 const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
+// Hard ceiling on a single reconciliation cycle. If a cycle neither resolves
+// nor rejects within this window it is treated as a hung loop (e.g. an
+// unbounded yt-dlp/fetch network stall) and the process exits so the
+// `restart: unless-stopped` policy brings up a fresh process instead of the
+// loop hanging silently for hours while the heartbeat goes stale.
+const LOOP_STALL_TIMEOUT_MS = (() => {
+  const raw = process.env.STREAM247_LOOP_STALL_TIMEOUT_SECONDS;
+  if (raw === undefined || raw === "") {
+    return 300_000;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 60 ? parsed * 1000 : 300_000;
+})();
+// Timeout for resolving a remote playable URL via yt-dlp `--get-url`. Without
+// this, a network stall to the source leaves the playout-selection await
+// hanging forever and wedges the whole playout loop.
+const PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS = (() => {
+  const raw = process.env.STREAM247_PLAYABLE_INPUT_RESOLVE_TIMEOUT_SECONDS;
+  if (raw === undefined || raw === "") {
+    return 60_000;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed * 1000 : 60_000;
+})();
 const engagementGameTracker = new EngagementGameTracker();
 const twitchChatBridge = new TwitchChatBridge({
   async onModeratorPresenceCheckIn(window) {
@@ -378,14 +402,11 @@ async function resolvePlayableInput(input: string): Promise<string> {
   }
 
   const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
-  const resolved = await execFileText(ytDlpBinary, [
-    "--no-warnings",
-    "--no-playlist",
-    "--format",
-    "best",
-    "--get-url",
-    input
-  ]);
+  const resolved = await execFileText(
+    ytDlpBinary,
+    ["--no-warnings", "--no-playlist", "--format", "best", "--get-url", input],
+    { timeoutMs: PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS, killProcessGroup: true }
+  );
 
   const directUrl = resolved.split("\n").find(Boolean)?.trim();
   if (!directUrl) {
@@ -4880,9 +4901,32 @@ async function runLoop(mode: RuntimeMode): Promise<void> {
   const delay = mode === "worker" ? 30_000 : 15_000;
 
   for (;;) {
-    try {
-      await run();
-    } catch (error) {
+    const result = await runWithStallGuard(run, LOOP_STALL_TIMEOUT_MS);
+
+    if (result.status === "stalled") {
+      // The cycle hung past the ceiling (unbounded await). Recover by
+      // restarting the process rather than looping with a leaked hung
+      // operation while the heartbeat goes stale and the broadcast stays dark.
+      logRuntimeEvent("worker.loop.stalled", {
+        mode,
+        stallMs: LOOP_STALL_TIMEOUT_MS
+      });
+      try {
+        await upsertIncident({
+          scope: mode === "worker" ? "worker" : "playout",
+          severity: "critical",
+          title: `${mode} loop stalled`,
+          message: `${mode} cycle did not complete within ${LOOP_STALL_TIMEOUT_MS}ms; restarting the process to recover.`,
+          fingerprint: `${mode}.loop.stalled`
+        });
+      } catch {
+        // Best-effort incident; we are about to exit regardless.
+      }
+      process.exit(1);
+    }
+
+    if (result.status === "failed") {
+      const error = result.error;
       const message = error instanceof Error ? error.message : `Unknown ${mode} error.`;
       logRuntimeEvent("worker.loop.crashed", {
         mode,
