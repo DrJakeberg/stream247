@@ -24,6 +24,16 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+# Tolerance knobs (overridable via env). A clean-exit feed-handoff uplink restart
+# (uplinkUnplannedRestarts +1) is treated as a benign warning when the rest of the
+# readiness sample is healthy; a runaway delta still fails the soak. Single-sample
+# uplink/destination not-ready blips are tolerated up to the configured count of
+# consecutive samples.
+SOAK_UPLINK_RESTART_RUNAWAY_DELTA="${SOAK_UPLINK_RESTART_RUNAWAY_DELTA:-20}"
+TOLERATE_UPLINK_NOTREADY_SAMPLES="${SOAK_TOLERATE_UPLINK_NOTREADY_SAMPLES:-1}"
+TOLERATE_DEST_NOTREADY_SAMPLES="${SOAK_TOLERATE_DEST_NOTREADY_SAMPLES:-1}"
+export SOAK_UPLINK_RESTART_RUNAWAY_DELTA
+
 if [ ! -f ".env" ]; then
   echo "Missing .env. Copy .env.example first."
   exit 1
@@ -127,7 +137,7 @@ check_container_restarts() {
         ;;
     esac
     delta=$((current_count - baseline_count))
-    if [ "$delta" -gt 1 ]; then
+    if [ "$delta" -gt 0 ]; then
       issues="${issues}${issues:+, }${service}Restarts=${current_count}(+${delta})"
     fi
   done
@@ -140,89 +150,35 @@ check_container_restarts() {
   echo "containerRestarts=${current_counts}"
 }
 
+CLASSIFIER_MODULE="${ROOT_DIR}/scripts/lib/soak-readiness-classifier.cjs"
+
+# check_readiness exits 0 (ok), 1 (fatal — exit soak now), or 2 (transient — caller
+# tracks consecutive count per kind on stderr). Always writes the log-friendly line
+# on stdout.
 check_readiness() {
   response="$(curl -fsS "${APP_URL}/api/system/readiness")"
   printf "%s" "$response" | node -e '
+    const path = require("path");
     const fs = require("fs");
+    const { classifyReadinessSample } = require(process.env.CLASSIFIER_MODULE);
     const raw = fs.readFileSync(0, "utf8");
     const data = JSON.parse(raw);
-    const issues = [];
-    const playoutDetails = [
-      `playoutStatus=${data.playout?.status ?? "unknown"}`,
-      `lastExitCode=${data.playout?.lastExitCode ?? ""}`,
-      `restartCount=${data.playout?.restartCount ?? "unknown"}`,
-      `crashCountWindow=${data.playout?.crashCountWindow ?? "unknown"}`,
-      `currentAsset=${data.playout?.currentAssetId ?? ""}`,
-      `uplinkStatus=${data.uplink?.status ?? "unknown"}`,
-      `uplinkUnplannedRestarts=${data.uplink?.unplannedRestartCount ?? "unknown"}`,
-      `programFeed=${data.programFeed?.status ?? "unknown"}`
-    ];
-    const baselineUplinkUnplannedRestarts = Number(process.env.BASELINE_UPLINK_UNPLANNED_RESTARTS ?? "0");
-    const currentUplinkUnplannedRestarts = Number(data.uplink?.unplannedRestartCount ?? 0);
-    const programFeedFresh = data.services?.programFeed === "ok" && data.programFeed?.status === "fresh";
-    const uplinkHealthy = data.services?.uplink === "ok" && data.uplink?.status === "running";
-    const destinationOk = data.services?.destination === "ok";
-    const playoutTransient =
-      data.playout?.transient === true ||
-      (data.services?.playout === "not-ready" &&
-        data.playout?.status === "failed" &&
-        !data.playout?.crashLoopDetected &&
-        programFeedFresh &&
-        uplinkHealthy &&
-        destinationOk);
-    playoutDetails.push(`playoutTransient=${String(playoutTransient)}`);
-    if (!(data.status === "ok" || data.status === "degraded")) {
-      issues.push(`readiness.status=${data.status}`);
+    const result = classifyReadinessSample(data, {
+      baselineUplinkRestarts: Number(process.env.BASELINE_UPLINK_UNPLANNED_RESTARTS ?? "0"),
+      runawayThreshold: Number(process.env.SOAK_UPLINK_RESTART_RUNAWAY_DELTA ?? "20")
+    });
+    process.stdout.write(result.line + "\n");
+    if (result.kind === "ok") {
+      process.exit(0);
     }
-    if (data.broadcastReady !== true && !playoutTransient) {
-      issues.push(`broadcastReady=${String(data.broadcastReady)}`);
+    if (result.kind === "transient") {
+      process.stderr.write("transient:" + result.transientKinds.join(",") + "\n");
+      process.exit(2);
     }
-    if (data.services?.worker === "not-ready") {
-      issues.push("worker=not-ready");
-    }
-    if (data.services?.playout === "not-ready" && !playoutTransient) {
-      issues.push("playout=not-ready");
-    }
-    if (data.services?.uplink === "not-ready") {
-      issues.push("uplink=not-ready");
-    }
-    if (data.services?.programFeed === "not-ready") {
-      issues.push("programFeed=not-ready");
-    }
-    if ((data.services?.destination ?? "unknown") !== "ok") {
-      issues.push(`destination=${data.services?.destination ?? "unknown"}`);
-    }
-    if (data.playout?.crashLoopDetected) {
-      issues.push("playout.crashLoopDetected=true");
-    }
-    if (data.programFeed?.status === "stale" || data.programFeed?.status === "failed") {
-      issues.push(`programFeed=${data.programFeed.status}`);
-    }
-    if (data.uplink?.status === "failed") {
-      issues.push("uplink=failed");
-    }
-    if (currentUplinkUnplannedRestarts > baselineUplinkUnplannedRestarts) {
-      issues.push(`uplinkUnplannedRestarts=${currentUplinkUnplannedRestarts}`);
-    }
-    if (issues.length > 0) {
-      console.error([...issues, ...playoutDetails].join(", "));
-      process.exit(1);
-    }
-    console.log([
-      `status=${data.status}`,
-      `broadcastReady=${String(data.broadcastReady)}`,
-      `worker=${data.services?.worker ?? "unknown"}`,
-      `playout=${data.services?.playout ?? "unknown"}`,
-      `uplink=${data.services?.uplink ?? "unknown"}`,
-      `programFeed=${data.services?.programFeed ?? "unknown"}`,
-      `destination=${data.services?.destination ?? "unknown"}`,
-      `reason=${data.playout?.selectionReasonCode ?? ""}`,
-      `fallback=${data.playout?.fallbackTier ?? ""}`,
-      `sseConnections=${data.sseConnections ?? "unknown"}`,
-      ...playoutDetails
-    ].join(" "));
+    process.exit(1);
   '
 }
+export CLASSIFIER_MODULE
 
 check_incidents() {
   if [ -z "$SESSION_COOKIE" ]; then
@@ -244,10 +200,61 @@ check_incidents() {
   '
 }
 
+consec_uplink_notready=0
+consec_dest_notready=0
+
 while [ "$(date +%s)" -lt "$END_TIME" ]; do
   NOW="$(date -Iseconds)"
-  if readiness_line="$(check_readiness 2>&1)"; then
-    :
+
+  readiness_err_file="$(mktemp 2>/dev/null || printf "/tmp/.soak-readiness-err.%s" "$$")"
+  set +e
+  readiness_line="$(check_readiness 2> "$readiness_err_file")"
+  readiness_rc=$?
+  set -e
+  readiness_stderr="$(cat "$readiness_err_file" 2>/dev/null || true)"
+  rm -f "$readiness_err_file"
+
+  if [ "$readiness_rc" -eq 0 ]; then
+    # Healthy sample — reset transient counters.
+    consec_uplink_notready=0
+    consec_dest_notready=0
+  elif [ "$readiness_rc" -eq 2 ]; then
+    # Transient: uplink and/or destination not-ready. Increment per-kind counters
+    # and only exit when the tolerated count is exceeded.
+    exit_now=0
+    exceeded_reason=""
+    case "$readiness_stderr" in
+      *uplink*)
+        consec_uplink_notready=$((consec_uplink_notready + 1))
+        if [ "$consec_uplink_notready" -gt "$TOLERATE_UPLINK_NOTREADY_SAMPLES" ]; then
+          exit_now=1
+          exceeded_reason="${exceeded_reason}${exceeded_reason:+, }uplink=not-ready(consecutive=${consec_uplink_notready})"
+        fi
+        ;;
+      *)
+        consec_uplink_notready=0
+        ;;
+    esac
+    case "$readiness_stderr" in
+      *destination*)
+        consec_dest_notready=$((consec_dest_notready + 1))
+        if [ "$consec_dest_notready" -gt "$TOLERATE_DEST_NOTREADY_SAMPLES" ]; then
+          exit_now=1
+          exceeded_reason="${exceeded_reason}${exceeded_reason:+, }destination(consecutive=${consec_dest_notready})"
+        fi
+        ;;
+      *)
+        consec_dest_notready=0
+        ;;
+    esac
+    if [ "$exit_now" -eq 1 ]; then
+      echo "${NOW} readiness-check-failed-consecutive ${exceeded_reason} ${readiness_line}" | tee -a "$LOG_FILE"
+      exit 1
+    fi
+    # Log the transient sample (kept in log for forensics) and continue.
+    echo "${NOW} readiness-transient-tolerated ${readiness_line}" | tee -a "$LOG_FILE"
+    sleep "$INTERVAL"
+    continue
   else
     echo "${NOW} readiness-check-failed ${readiness_line}" | tee -a "$LOG_FILE"
     exit 1

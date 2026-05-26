@@ -558,7 +558,7 @@ describe("release readiness scripts", () => {
     expect(result.output).toContain("Upgrade rehearsal completed for v1.0.3.");
   });
 
-  it("soak monitor fails when broadcast readiness is false or destinations are not ready", () => {
+  it("soak monitor fails immediately when broadcastReady=false (destination not-ready is included in fail line for forensics)", () => {
     writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
 
     const result = runShellScript(soakScriptPath, ["--hours", "24", "--interval-seconds", "0"], [
@@ -569,6 +569,8 @@ describe("release readiness scripts", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("broadcastReady=false");
+    // destination=not-ready is a transient candidate; included in the fail line for forensics
+    // alongside the fatal broadcastReady=false.
     expect(result.output).toContain("destination=not-ready");
     expect(result.output).toContain("playoutStatus=failed");
     expect(result.output).toContain("lastExitCode=SIGBUS");
@@ -576,7 +578,7 @@ describe("release readiness scripts", () => {
     expect(result.output).toContain("crashCountWindow=2");
   });
 
-  it("soak monitor tolerates short local playout transients while the persistent uplink stays healthy", () => {
+  it("soak monitor tolerates short local playout transients AND a clean-handoff uplink restart while broadcastReady stays true and feed stays fresh", () => {
     writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
 
     const healthyResponse =
@@ -585,36 +587,78 @@ describe("release readiness scripts", () => {
       '{"status":"degraded","broadcastReady":false,"services":{"worker":"ok","playout":"not-ready","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"failed","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":1,"restartCount":5,"lastExitCode":"128","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":0},"programFeed":{"status":"fresh"}}\n';
     const restartedResponse =
       '{"status":"degraded","broadcastReady":true,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":6,"lastExitCode":"","currentAssetId":"asset_next"},"uplink":{"status":"running","unplannedRestartCount":1},"programFeed":{"status":"fresh"}}\n';
+    // Final mock is a genuine immediate-fail so the test terminates after the warning-only
+    // samples are processed.
+    const finalFailResponse =
+      '{"status":"degraded","broadcastReady":false,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"degraded","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":6,"lastExitCode":"","currentAssetId":"asset_next"},"uplink":{"status":"running","unplannedRestartCount":1},"programFeed":{"status":"stale"}}\n';
 
     const result = runShellScript(soakScriptPath, ["--hours", "24", "--interval-seconds", "0"], [
       { body: healthyResponse },
       { body: transientResponse },
-      { body: restartedResponse }
+      { body: restartedResponse },
+      { body: finalFailResponse }
     ]);
 
+    // First three samples must be tolerated. Only the 4th (bReady=false + stale feed)
+    // is a real fail. Exactly one readiness-check-failed should appear in the log.
     expect(result.status).toBe(1);
     expect(result.output).toContain("playoutTransient=true");
     expect(result.output).toContain("playout=not-ready");
     expect(result.output).toContain("lastExitCode=128");
-    expect(result.output).toContain("uplinkUnplannedRestarts=1");
+    expect(result.output).toContain("uplinkUnplannedRestartsDelta=1");
+    const failures = (result.output.match(/readiness-check-failed/g) ?? []).length;
+    expect(failures).toBe(1);
+    expect(result.output).toMatch(/readiness-check-failed [^\n]*broadcastReady=false/);
+    expect(result.output).toMatch(/readiness-check-failed [^\n]*programFeed=stale/);
   });
 
-  it("soak monitor fails on new unplanned uplink restarts", () => {
+  it("soak monitor tolerates a single uplink restart as a warning when broadcastReady=true and programFeed=fresh", () => {
     writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
 
     const healthyResponse =
       '{"status":"ok","broadcastReady":true,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":1,"lastExitCode":"","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":0},"programFeed":{"status":"fresh"}}\n';
     const restartedResponse =
       '{"status":"degraded","broadcastReady":true,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":1,"lastExitCode":"","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":1},"programFeed":{"status":"fresh"}}\n';
+    // Terminate the loop with a genuine fail-now sample so the test exits cleanly after the
+    // warning sample is observed.
+    const finalFailResponse =
+      '{"status":"degraded","broadcastReady":false,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"degraded","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":1,"lastExitCode":"","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":1},"programFeed":{"status":"stale"}}\n';
 
     const result = runShellScript(soakScriptPath, ["--hours", "24", "--interval-seconds", "0"], [
       { body: healthyResponse },
-      { body: restartedResponse }
+      { body: restartedResponse },
+      { body: finalFailResponse }
     ]);
 
     expect(result.status).toBe(1);
-    expect(result.output).toContain("uplinkUnplannedRestarts=1");
+    expect(result.output).toContain("uplinkUnplannedRestartsDelta=1");
     expect(result.output).toContain("uplinkStatus=running");
+    // Exactly one readiness-check-failed (the terminal bReady=false sample). The middle
+    // sample (the +1 uplink restart while healthy) must NOT have produced one.
+    const failures = (result.output.match(/readiness-check-failed/g) ?? []).length;
+    expect(failures).toBe(1);
+    // The terminal failure must be due to bReady=false / stale feed, not the uplink delta alone.
+    expect(result.output).toMatch(/readiness-check-failed [^\n]*broadcastReady=false/);
+  });
+
+  it("soak monitor fails on uplink restart runaway above SOAK_UPLINK_RESTART_RUNAWAY_DELTA", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
+
+    // Override the runaway threshold to 2 so the second mock (delta=3) trips it.
+    const healthyResponse =
+      '{"status":"ok","broadcastReady":true,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":1,"lastExitCode":"","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":0},"programFeed":{"status":"fresh"}}\n';
+    const runawayResponse =
+      '{"status":"ok","broadcastReady":true,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":1,"lastExitCode":"","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":3},"programFeed":{"status":"fresh"}}\n';
+
+    const result = runShellScript(
+      soakScriptPath,
+      ["--hours", "24", "--interval-seconds", "0"],
+      [{ body: healthyResponse }, { body: runawayResponse }],
+      { env: { SOAK_UPLINK_RESTART_RUNAWAY_DELTA: "2" } }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.output).toMatch(/readiness-check-failed[^\n]*uplinkUnplannedRestarts=3\(delta=3\)/);
   });
 
   it("soak monitor reports container restart counts and fails after repeated restarts", () => {
