@@ -661,6 +661,34 @@ describe("release readiness scripts", () => {
     expect(result.output).toMatch(/readiness-check-failed[^\n]*uplinkUnplannedRestarts=3\(delta=3\)/);
   });
 
+  it("soak monitor tolerates ONE programFeed=stale sample during active playoutTransient, fails on the SECOND consecutive", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
+
+    // Mirrors the CLEAN3 03:36 → 03:37 sequence. First sample healthy. Second sample is a
+    // playoutTransientStaleFeed (playout failed + feed stale + rest healthy) — tolerated.
+    // Third sample is another playoutTransientStaleFeed — exceeds tolerance, fails.
+    const healthyResponse =
+      '{"status":"ok","broadcastReady":true,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":5671,"lastExitCode":"","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":413},"programFeed":{"status":"fresh"}}\n';
+    const staleDuringTransient =
+      '{"status":"degraded","broadcastReady":false,"services":{"worker":"ok","playout":"not-ready","uplink":"ok","programFeed":"degraded","destination":"ok"},"playout":{"status":"failed","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":5672,"lastExitCode":"SIGBUS","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":414},"programFeed":{"status":"stale"}}\n';
+
+    const result = runShellScript(
+      soakScriptPath,
+      ["--hours", "24", "--interval-seconds", "0"],
+      [
+        { body: healthyResponse },
+        { body: staleDuringTransient },
+        { body: staleDuringTransient }
+      ]
+    );
+
+    // The first stale-during-transient sample must be tolerated (transient-tolerated line).
+    expect(result.output).toMatch(/readiness-transient-tolerated[^\n]*playoutTransientStaleFeed=true/);
+    // The second consecutive stale-during-transient sample must escalate to fatal.
+    expect(result.status).toBe(1);
+    expect(result.output).toMatch(/readiness-check-failed-consecutive[^\n]*playoutTransientStaleFeed\(consecutive=2\)/);
+  });
+
   it("soak monitor reports container restart counts and fails after repeated restarts", () => {
     writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
 

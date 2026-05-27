@@ -11,7 +11,11 @@ function isUplinkHealthyDetailed(data) {
   return data.services?.uplink === "ok" && data.uplink?.status === "running";
 }
 
-function isPlayoutTransient(data) {
+// "Candidate" pattern for a playout-supervised in-process restart: playout is failed
+// but everything around it is still nominal (uplink healthy, destination ok, no crash
+// loop). The feed may or may not still be fresh — see isPlayoutTransient (strict) vs
+// the stale-feed-during-transient grace below.
+function isPlayoutTransientCandidate(data) {
   if (data.playout?.transient === true) {
     return true;
   }
@@ -19,10 +23,15 @@ function isPlayoutTransient(data) {
     data.services?.playout === "not-ready" &&
     data.playout?.status === "failed" &&
     !data.playout?.crashLoopDetected &&
-    isProgramFeedFresh(data) &&
     isUplinkHealthyDetailed(data) &&
     data.services?.destination === "ok"
   );
+}
+
+// Strict playoutTransient: candidate AND program feed is still fresh — fully tolerated
+// with no consecutive-sample limit (the existing behavior).
+function isPlayoutTransient(data) {
+  return isPlayoutTransientCandidate(data) && isProgramFeedFresh(data);
 }
 
 function buildDetails(data, uplinkRestartDelta, playoutTransient) {
@@ -62,13 +71,24 @@ function classifyReadinessSample(data, opts = {}) {
   const services = data.services ?? {};
   const programFeedFresh = isProgramFeedFresh(data);
   const playoutTransient = isPlayoutTransient(data);
+  const playoutTransientCandidate = isPlayoutTransientCandidate(data);
+  const feedStale =
+    data.programFeed?.status === "stale" || data.programFeed?.status === "failed";
+  // "Stale feed during an active playout transient recovery" — the candidate pattern is
+  // satisfied (playout failed + uplink/destination still healthy + no crash loop) but the
+  // feed has briefly gone stale because the playout supervisor is restarting the ffmpeg
+  // child. Tolerated as a transient kind for a single consecutive sample by default; the
+  // shell loop escalates after the configured count.
+  const playoutTransientStaleFeed =
+    playoutTransientCandidate && !playoutTransient && feedStale;
+  const inAnyPlayoutTransient = playoutTransient || playoutTransientStaleFeed;
   const broadcastReady = data.broadcastReady === true;
 
   if (!(data.status === "ok" || data.status === "degraded")) {
     issuesFatal.push(`readiness.status=${data.status}`);
   }
 
-  if (data.broadcastReady !== true && !playoutTransient) {
+  if (data.broadcastReady !== true && !inAnyPlayoutTransient) {
     issuesFatal.push(`broadcastReady=${String(data.broadcastReady)}`);
   }
 
@@ -76,7 +96,7 @@ function classifyReadinessSample(data, opts = {}) {
     issuesFatal.push("worker=not-ready");
   }
 
-  if (services.playout === "not-ready" && !playoutTransient) {
+  if (services.playout === "not-ready" && !inAnyPlayoutTransient) {
     issuesFatal.push("playout=not-ready");
   }
 
@@ -84,10 +104,10 @@ function classifyReadinessSample(data, opts = {}) {
     issuesFatal.push("playout.crashLoopDetected=true");
   }
 
-  if (data.programFeed?.status === "stale" || data.programFeed?.status === "failed") {
+  if (feedStale && !playoutTransientStaleFeed) {
     issuesFatal.push(`programFeed=${data.programFeed.status}`);
   }
-  if (services.programFeed === "not-ready") {
+  if (services.programFeed === "not-ready" && !playoutTransientStaleFeed) {
     issuesFatal.push("programFeed=not-ready");
   }
 
@@ -106,11 +126,17 @@ function classifyReadinessSample(data, opts = {}) {
   if (destinationTransientCandidate) {
     transientKinds.add("destination");
   }
+  if (playoutTransientStaleFeed) {
+    transientKinds.add("playoutTransientStaleFeed");
+  }
 
-  // Uplink unplanned restart classification: warning unless user-impact or runaway.
+  // Uplink unplanned restart classification: warning unless user-impact or runaway. While
+  // a playout transient (strict or stale-feed) is active, the "user impact" condition is
+  // already attributable to the in-progress recovery and is not counted as additional fault.
   const currentUplinkRestarts = Number(data.uplink?.unplannedRestartCount ?? 0);
   const uplinkRestartDelta = currentUplinkRestarts - baselineUplinkRestarts;
-  const userImpactNow = !broadcastReady || !programFeedFresh;
+  const userImpactNow =
+    (!broadcastReady || !programFeedFresh) && !inAnyPlayoutTransient;
   if (uplinkRestartDelta > 0 && (userImpactNow || uplinkRestartDelta > runawayThreshold)) {
     issuesFatal.push(`uplinkUnplannedRestarts=${currentUplinkRestarts}(delta=${uplinkRestartDelta})`);
   }
@@ -120,6 +146,9 @@ function classifyReadinessSample(data, opts = {}) {
   const transientReasons = [];
   if (transientKinds.has("uplink")) transientReasons.push("uplink=not-ready");
   if (transientKinds.has("destination")) transientReasons.push(`destination=${destinationStatus}`);
+  if (transientKinds.has("playoutTransientStaleFeed")) {
+    transientReasons.push("playoutTransientStaleFeed=true");
+  }
 
   if (issuesFatal.length > 0) {
     // Include transient reasons in the fail line for forensics — they don't change the verdict

@@ -32,6 +32,7 @@ done
 SOAK_UPLINK_RESTART_RUNAWAY_DELTA="${SOAK_UPLINK_RESTART_RUNAWAY_DELTA:-20}"
 TOLERATE_UPLINK_NOTREADY_SAMPLES="${SOAK_TOLERATE_UPLINK_NOTREADY_SAMPLES:-1}"
 TOLERATE_DEST_NOTREADY_SAMPLES="${SOAK_TOLERATE_DEST_NOTREADY_SAMPLES:-1}"
+TOLERATE_FEED_STALE_DURING_PLAYOUT_TRANSIENT_SAMPLES="${SOAK_TOLERATE_FEED_STALE_DURING_PLAYOUT_TRANSIENT_SAMPLES:-1}"
 export SOAK_UPLINK_RESTART_RUNAWAY_DELTA
 
 if [ ! -f ".env" ]; then
@@ -202,6 +203,7 @@ check_incidents() {
 
 consec_uplink_notready=0
 consec_dest_notready=0
+consec_playout_transient_stale_feed=0
 
 while [ "$(date +%s)" -lt "$END_TIME" ]; do
   NOW="$(date -Iseconds)"
@@ -219,8 +221,9 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
     consec_uplink_notready=0
     consec_dest_notready=0
   elif [ "$readiness_rc" -eq 2 ]; then
-    # Transient: uplink and/or destination not-ready. Increment per-kind counters
-    # and only exit when the tolerated count is exceeded.
+    # Transient: uplink and/or destination not-ready, and/or programFeed stale during an
+    # active playoutTransient recovery. Increment per-kind counters and only exit when
+    # the tolerated count is exceeded.
     exit_now=0
     exceeded_reason=""
     case "$readiness_stderr" in
@@ -245,6 +248,18 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
         ;;
       *)
         consec_dest_notready=0
+        ;;
+    esac
+    case "$readiness_stderr" in
+      *playoutTransientStaleFeed*)
+        consec_playout_transient_stale_feed=$((consec_playout_transient_stale_feed + 1))
+        if [ "$consec_playout_transient_stale_feed" -gt "$TOLERATE_FEED_STALE_DURING_PLAYOUT_TRANSIENT_SAMPLES" ]; then
+          exit_now=1
+          exceeded_reason="${exceeded_reason}${exceeded_reason:+, }playoutTransientStaleFeed(consecutive=${consec_playout_transient_stale_feed})"
+        fi
+        ;;
+      *)
+        consec_playout_transient_stale_feed=0
         ;;
     esac
     if [ "$exit_now" -eq 1 ]; then
