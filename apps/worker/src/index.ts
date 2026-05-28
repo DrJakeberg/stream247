@@ -105,6 +105,7 @@ import {
   isTwitchVodCacheCoolingDown
 } from "./twitch-vod-cache.js";
 import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
+import { decideBoundaryPlaybackInput } from "./playout-boundary.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 import { EngagementGameTracker } from "./engagement-game.js";
@@ -3364,7 +3365,17 @@ async function runPlayoutCycle(): Promise<void> {
   if (selection.asset) {
     const failedAsset = selection.asset;
     try {
-      const prepared = await resolveAssetPlaybackInput(failedAsset);
+      // Reuse the input already resolved by the off-boundary queue prefetch
+      // (getPlayableQueuedAssets warms queueProbeCache during prior cycles while the
+      // current asset is still playing). Without this, a Twitch-VOD cache / yt-dlp resolve
+      // runs inline at the asset boundary and leaves playout idle with an empty currentAsset
+      // (broadcastReady=false) until it completes. On a cache miss we fall through to the
+      // same inline resolve, so this is never worse than before.
+      const boundaryDecision = decideBoundaryPlaybackInput(getFreshProbeCache(failedAsset.id));
+      const prepared =
+        boundaryDecision.source === "cache"
+          ? { asset: failedAsset, input: boundaryDecision.input }
+          : await resolveAssetPlaybackInput(failedAsset);
       selection = {
         ...selection,
         asset: prepared.asset

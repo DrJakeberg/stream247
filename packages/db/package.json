@@ -1,6 +1,6 @@
 {
   "name": "@stream247/db",
-  "version": "1.5.10",
+  "version": "1.5.11",
   "private": true,
   "license": "SEE LICENSE IN ../../LICENSE",
   "type": "module",
