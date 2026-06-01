@@ -2955,7 +2955,10 @@ export type DestinationRoutingSelection = {
   leadDestinationId: string;
 };
 
-export const DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS = 300;
+// Shorter window keeps single-destination outages bounded (the May 28 dest=error stuck shape).
+// With one Twitch destination there is no other output to "flap" to, so a longer cooldown only
+// extends the user-visible broadcastReady=false window without preventing connection thrashing.
+export const DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS = 60;
 
 export function getDestinationFailureSecondsRemaining(
   lastFailureAt: string,

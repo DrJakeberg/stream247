@@ -206,12 +206,15 @@ const DESTINATION_FAILURE_COOLDOWN_SECONDS = Number(
   process.env.DESTINATION_FAILURE_COOLDOWN_SECONDS || String(DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS)
 );
 const UPLINK_DESTINATION_STALL_RESTART_SECONDS = (() => {
+  // Default lowered from 300s to 60s alongside DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS.
+  // Together they keep the destination-recovery window ~1 min for a single-destination setup
+  // instead of ~5 min (the May 28 stuck-error shape).
   const raw = process.env.STREAM247_UPLINK_DESTINATION_STALL_RESTART_SECONDS;
   if (raw === undefined || raw === "") {
-    return 300;
+    return 60;
   }
   const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 300;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 60;
 })();
 const NEXT_ASSET_PROBE_READY_TTL_MS = 5 * 60_000;
 const NEXT_ASSET_PROBE_FAILED_TTL_MS = 60_000;
