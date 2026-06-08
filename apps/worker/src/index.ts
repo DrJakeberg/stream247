@@ -106,6 +106,7 @@ import {
 } from "./twitch-vod-cache.js";
 import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
 import { decideBoundaryPlaybackInput } from "./playout-boundary.js";
+import { planQueuePrefetch } from "./queue-prefetch.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 import { EngagementGameTracker } from "./engagement-game.js";
@@ -218,6 +219,10 @@ const UPLINK_DESTINATION_STALL_RESTART_SECONDS = (() => {
 })();
 const NEXT_ASSET_PROBE_READY_TTL_MS = 5 * 60_000;
 const NEXT_ASSET_PROBE_FAILED_TTL_MS = 60_000;
+// At most one expensive (remote: Twitch VOD cache prep / yt-dlp resolve) queue prefetch may be
+// awaited per playout cycle, so a cascade of uncached remote queue assets cannot accumulate
+// several sequential ~60-120s resolves and trip the 300s loop stall guard. See queue-prefetch.ts.
+const MAX_EXPENSIVE_QUEUE_RESOLVES_PER_CYCLE = 1;
 const standbySlatePath = "/tmp/stream247-standby.txt";
 const onAirOverlayPath = "/tmp/stream247-on-air.txt";
 
@@ -1931,6 +1936,24 @@ function getFreshProbeCache(assetId: string): QueueProbeCacheEntry | null {
   return entry;
 }
 
+// True when resolving this asset requires a remote operation that can block for its full
+// timeout: Twitch VOD cache prep (ensureTwitchVodCache), or a resolvable remote video URL
+// (yt-dlp --get-url). Mirrors the branching in resolvePlayableInput so local files and direct
+// media URLs — which resolve effectively instantly — are not treated as expensive.
+function isExpensiveQueueResolve(asset: AssetRecord): boolean {
+  if (isTwitchVodAsset(asset)) {
+    return true;
+  }
+  const path = asset.path;
+  if (!path.startsWith("http://") && !path.startsWith("https://")) {
+    return false;
+  }
+  if (isDirectMediaUrl(path)) {
+    return false;
+  }
+  return isResolvableRemoteVideoUrl(path);
+}
+
 async function getPlayableQueuedAssets(queueAssets: AssetRecord[]): Promise<{
   playableQueue: AssetRecord[];
   prefetchedAsset: AssetRecord | null;
@@ -1942,20 +1965,41 @@ async function getPlayableQueuedAssets(queueAssets: AssetRecord[]): Promise<{
   let prefetchStatus: "" | "ready" | "failed" = "";
   let prefetchError = "";
 
-  for (const asset of queueAssets) {
-    const cached = getFreshProbeCache(asset.id);
-    if (cached?.status === "ready") {
+  // Cap awaited expensive (remote) resolves to one per cycle. Cached/local/direct candidates are
+  // unaffected; surplus uncached remote candidates are deferred to a later cycle so this single
+  // stall-guarded cycle cannot accumulate multiple sequential ~60-120s resolves.
+  const cachedEntries = queueAssets.map((asset) => getFreshProbeCache(asset.id));
+  const actions = planQueuePrefetch(
+    queueAssets.map((asset, index) => ({
+      cacheStatus: cachedEntries[index]?.status ?? "none",
+      expensive: isExpensiveQueueResolve(asset)
+    })),
+    MAX_EXPENSIVE_QUEUE_RESOLVES_PER_CYCLE
+  );
+
+  for (let index = 0; index < queueAssets.length; index += 1) {
+    const asset = queueAssets[index]!;
+    const cached = cachedEntries[index];
+    const action = actions[index];
+
+    if (action === "use-cache") {
       prefetchedAsset = prefetchedAsset ?? asset;
       prefetchStatus = "ready";
       playableQueue.push(asset);
       continue;
     }
 
-    if (cached?.status === "failed") {
-      if (!prefetchError) {
+    if (action === "skip-failed") {
+      if (!prefetchError && cached) {
         prefetchStatus = "failed";
         prefetchError = cached.error;
       }
+      continue;
+    }
+
+    if (action === "defer") {
+      // Expensive remote resolve beyond this cycle's budget. Leave the cache state untouched so
+      // the asset is retried on a future cycle; do not block this cycle on it.
       continue;
     }
 
