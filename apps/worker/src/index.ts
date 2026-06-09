@@ -105,7 +105,11 @@ import {
   isTwitchVodCacheCoolingDown
 } from "./twitch-vod-cache.js";
 import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
-import { decideBoundaryPlaybackInput } from "./playout-boundary.js";
+import {
+  decideBoundaryPlaybackInput,
+  isImmediateInputOpenFailure,
+  shouldBridgeToFallbackBeforeResolve
+} from "./playout-boundary.js";
 import { planQueuePrefetch } from "./queue-prefetch.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
@@ -125,6 +129,7 @@ import { isTwitchScheduleSyncEnabled } from "./twitch-sync-policy.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
+let playoutProcessStartedAtMs = 0;
 let playoutAssetId = "";
 let playoutDestinationId = "";
 let playoutDestinationIds: string[] = [];
@@ -2805,6 +2810,7 @@ async function startOrSwitchPlayout(args: {
   });
 
   playoutProcess = child;
+  playoutProcessStartedAtMs = Date.now();
   playoutAssetId = args.asset?.id ?? "";
   playoutDestinationId = leadDestination.id;
   playoutDestinationIds = args.destinations.map((destination) => destination.id);
@@ -2970,9 +2976,11 @@ async function startOrSwitchPlayout(args: {
       });
     const nonFailureExit = wasPlanned || exitedCleanly;
     const lastLiveBridgeInputUrl = playoutLiveBridgeInputUrl;
+    const ranForMs = playoutProcessStartedAtMs > 0 ? Date.now() - playoutProcessStartedAtMs : null;
     plannedStopReason = "";
     stopSceneRendererLoop();
     playoutProcess = null;
+    playoutProcessStartedAtMs = 0;
     playoutAssetId = "";
     playoutDestinationId = "";
     playoutDestinationIds = [];
@@ -2996,6 +3004,28 @@ async function startOrSwitchPlayout(args: {
       destinationIds: lastDestinationIds,
       exitedAt
     });
+    // (A) A remote-resolved asset that fails immediately at input-open time was started with a
+    // dead/expired resolved URL (e.g. a stale googlevideo URL → exitCode=8 / "Error opening
+    // input"). Drop its probe cache so the next attempt re-resolves a fresh URL instead of
+    // reusing the dead one.
+    if (
+      !wasPlanned &&
+      lastAssetId &&
+      isImmediateInputOpenFailure({
+        exitCode: code ?? null,
+        exitSignal: signal ?? null,
+        stderrSample: lastStderrSample,
+        ranForMs
+      })
+    ) {
+      queueProbeCache.delete(lastAssetId);
+      logRuntimeEvent("playout.input.reresolve", {
+        assetId: lastAssetId,
+        exitCode: code ?? "",
+        ranForMs: ranForMs ?? -1,
+        input: lastInputSummary
+      });
+    }
     let crashLoopDetectedAfterExit = false;
     const runtimeUpdate = updatePlayoutRuntime((playout) => {
       const ranPastCrashWindow =
@@ -3419,15 +3449,60 @@ async function runPlayoutCycle(): Promise<void> {
       // (broadcastReady=false) until it completes. On a cache miss we fall through to the
       // same inline resolve, so this is never worse than before.
       const boundaryDecision = decideBoundaryPlaybackInput(getFreshProbeCache(failedAsset.id));
-      const prepared =
-        boundaryDecision.source === "cache"
-          ? { asset: failedAsset, input: boundaryDecision.input }
-          : await resolveAssetPlaybackInput(failedAsset);
-      selection = {
-        ...selection,
-        asset: prepared.asset
-      };
-      resolvedSelectionInput = prepared.input;
+      if (boundaryDecision.source === "cache") {
+        selection = { ...selection, asset: failedAsset };
+        resolvedSelectionInput = boundaryDecision.input;
+      } else {
+        // Cache miss → a cold expensive remote resolve is needed. (B) If the broadcast is dark
+        // (the previous playout failed) and a cheap local fallback exists, bridge to it now so
+        // broadcastReady recovers in seconds rather than staying dark for the ~60-120s cold
+        // resolve. The scheduled asset is re-selected on a later cycle (broadcast then covered by
+        // fallback) and playout switches to it once resolved. v1.5.13's prefetch cap is untouched.
+        const assetExpensive = isExpensiveQueueResolve(failedAsset);
+        const bridgePlan =
+          assetExpensive && state.playout.status === "failed"
+            ? planRecoveryAfterPlaybackPreparationFailure(state.assets, failedAsset)
+            : null;
+        const bridgeAsset =
+          bridgePlan && bridgePlan.asset && !isExpensiveQueueResolve(bridgePlan.asset) ? bridgePlan.asset : null;
+        if (
+          bridgeAsset &&
+          bridgePlan &&
+          shouldBridgeToFallbackBeforeResolve({
+            assetExpensive,
+            cacheWarm: false,
+            broadcastDown: state.playout.status === "failed",
+            fallbackAvailable: Boolean(bridgeAsset)
+          })
+        ) {
+          const bridged = await resolveAssetPlaybackInput(bridgeAsset);
+          logRuntimeEvent("playout.boundary.fallback_bridge", {
+            scheduledAssetId: failedAsset.id,
+            fallbackAssetId: bridged.asset.id,
+            fallbackTier: bridgePlan.fallbackTier
+          });
+          selection = {
+            asset: bridged.asset,
+            queueKind: "asset",
+            insertTrigger: "",
+            cuepointKey: "",
+            cuepointOffsetSeconds: 0,
+            liveBridgeInputUrl: "",
+            liveBridgeInputType: "",
+            liveBridgeLabel: "",
+            reason: "Bridged to local fallback while the scheduled asset re-resolves.",
+            lifecycleStatus: "recovering" as const,
+            reasonCode: bridgePlan.reasonCode,
+            fallbackTier: bridgePlan.fallbackTier
+          };
+          resolvedSelectionInput = bridged.input;
+          requestImmediatePlayoutCycle("boundary-fallback-bridge");
+        } else {
+          const prepared = await resolveAssetPlaybackInput(failedAsset);
+          selection = { ...selection, asset: prepared.asset };
+          resolvedSelectionInput = prepared.input;
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Twitch VOD cache preparation error.";
       await upsertIncident({
