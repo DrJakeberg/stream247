@@ -63,13 +63,32 @@ export function isImmediateInputOpenFailure(input: ImmediateOpenFailureInput): b
   return immediate && openError;
 }
 
+export interface BroadcastCoverageInput {
+  // A playout ffmpeg process is currently running and feeding the program feed.
+  playoutProcessRunning: boolean;
+}
+
+/**
+ * Broadcast coverage is "down" — a cold resolve would open a no-playout gap that drains the
+ * program-feed buffer — whenever no playout process is currently running. This is true for BOTH
+ * a failed exit (v1.5.14) AND a clean natural-boundary exit (the v1.5.14-soak gap: global_fallback
+ * ended cleanly, the next scheduled Twitch VOD was cold, and the ~93s inline resolve left no
+ * process running while the ~60s feed buffer drained). When a process is still running (steady
+ * state, or fallback already covering after a bridge), a cold resolve is covered by the live feed,
+ * so we keep the existing inline-resolve behavior.
+ */
+export function isBroadcastCoverageDown(input: BroadcastCoverageInput): boolean {
+  return !input.playoutProcessRunning;
+}
+
 export interface BoundaryBridgeInput {
   // The selected scheduled asset needs a slow remote resolve (Twitch cache prep / yt-dlp).
   assetExpensive: boolean;
   // The selected asset's resolved input is already warm in the probe cache.
   cacheWarm: boolean;
-  // The broadcast path is dark / going dark (previous playout failed), so a multi-minute cold
-  // resolve would leave broadcastReady=false rather than coasting on the program-feed buffer.
+  // The broadcast path has no running playout process (see isBroadcastCoverageDown) — true for a
+  // failed exit AND a clean natural-boundary exit — so a multi-minute cold resolve would leave
+  // broadcastReady=false rather than coasting on the program-feed buffer.
   broadcastDown: boolean;
   // A cheap (local) fallback asset is available to bridge with.
   fallbackAvailable: boolean;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decideBoundaryPlaybackInput,
+  isBroadcastCoverageDown,
   isImmediateInputOpenFailure,
   shouldBridgeToFallbackBeforeResolve
 } from "../../apps/worker/src/playout-boundary";
@@ -160,5 +161,54 @@ describe("boundary fallback bridge decision (B)", () => {
         fallbackAvailable: false
       })
     ).toBe(false);
+  });
+});
+
+describe("broadcast coverage detection (clean-boundary bridge)", () => {
+  // Regression for the v1.5.14-soak failure: global_fallback exited cleanly (naturalBoundary),
+  // the next scheduled Twitch VOD was cold, and the ~93s inline resolve ran with NO playout
+  // process — the ~60s feed buffer drained and programFeed went stale. Coverage must be treated
+  // as "down" on a clean boundary (no running process), not only after a failed exit.
+  it("reports coverage down when no playout process is running (clean boundary OR failure)", () => {
+    expect(isBroadcastCoverageDown({ playoutProcessRunning: false })).toBe(true);
+  });
+
+  it("reports coverage up while a playout process is running (steady state / fallback covering)", () => {
+    expect(isBroadcastCoverageDown({ playoutProcessRunning: true })).toBe(false);
+  });
+
+  it("clean boundary → cold expensive scheduled asset → bridges (the exact v1.5.14-soak shape)", () => {
+    // global_fallback just ended cleanly: no process running → coverage down.
+    const broadcastDown = isBroadcastCoverageDown({ playoutProcessRunning: false });
+    expect(broadcastDown).toBe(true);
+    expect(
+      shouldBridgeToFallbackBeforeResolve({
+        assetExpensive: true, // cold Twitch VOD
+        cacheWarm: false,
+        broadcastDown,
+        fallbackAvailable: true
+      })
+    ).toBe(true);
+  });
+
+  it("after the bridge (fallback running) → cold resolve proceeds inline, no second bridge", () => {
+    // Next cycle: fallback is now the running process → coverage up → resolve inline while the
+    // live fallback feed covers; no further bridge, no no-playout gap.
+    const broadcastDown = isBroadcastCoverageDown({ playoutProcessRunning: true });
+    expect(broadcastDown).toBe(false);
+    expect(
+      shouldBridgeToFallbackBeforeResolve({
+        assetExpensive: true,
+        cacheWarm: false,
+        broadcastDown,
+        fallbackAvailable: true
+      })
+    ).toBe(false);
+  });
+
+  it("steady-state healthy playback (process running, warm asset) → no bridge, no behavior change", () => {
+    // A long-running scheduled asset re-selected with a warm cache never reaches the bridge path;
+    // even if evaluated, a running process means coverage is up.
+    expect(isBroadcastCoverageDown({ playoutProcessRunning: true })).toBe(false);
   });
 });

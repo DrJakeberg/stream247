@@ -107,6 +107,7 @@ import {
 import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
 import {
   decideBoundaryPlaybackInput,
+  isBroadcastCoverageDown,
   isImmediateInputOpenFailure,
   shouldBridgeToFallbackBeforeResolve
 } from "./playout-boundary.js";
@@ -3453,14 +3454,18 @@ async function runPlayoutCycle(): Promise<void> {
         selection = { ...selection, asset: failedAsset };
         resolvedSelectionInput = boundaryDecision.input;
       } else {
-        // Cache miss → a cold expensive remote resolve is needed. (B) If the broadcast is dark
-        // (the previous playout failed) and a cheap local fallback exists, bridge to it now so
-        // broadcastReady recovers in seconds rather than staying dark for the ~60-120s cold
-        // resolve. The scheduled asset is re-selected on a later cycle (broadcast then covered by
-        // fallback) and playout switches to it once resolved. v1.5.13's prefetch cap is untouched.
+        // Cache miss → a cold expensive remote resolve is needed. (B) If no playout process is
+        // currently running — a failed exit OR a clean natural-boundary exit — bridge to the
+        // instant local fallback now so broadcastReady stays up (feed covered) instead of going
+        // dark for the ~60-120s cold resolve. The fallback restarts in seconds; on the next cycle
+        // the scheduled asset resolves while fallback covers the feed, then playout switches to it
+        // once ready. v1.5.13's prefetch cap and the 300s stall guard are untouched.
         const assetExpensive = isExpensiveQueueResolve(failedAsset);
+        const broadcastDown = isBroadcastCoverageDown({
+          playoutProcessRunning: playoutProcess !== null && playoutProcess.exitCode === null && !playoutProcess.killed
+        });
         const bridgePlan =
-          assetExpensive && state.playout.status === "failed"
+          assetExpensive && broadcastDown
             ? planRecoveryAfterPlaybackPreparationFailure(state.assets, failedAsset)
             : null;
         const bridgeAsset =
@@ -3471,7 +3476,7 @@ async function runPlayoutCycle(): Promise<void> {
           shouldBridgeToFallbackBeforeResolve({
             assetExpensive,
             cacheWarm: false,
-            broadcastDown: state.playout.status === "failed",
+            broadcastDown,
             fallbackAvailable: Boolean(bridgeAsset)
           })
         ) {
