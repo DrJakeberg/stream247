@@ -118,6 +118,15 @@ export function getProgramFeedConfig(
 }
 
 export function buildProgramFeedOutputTarget(config: ProgramFeedConfig, runId: string): FfmpegOutputTarget {
+  // MEDIA-SEQUENCE continuity is load-bearing for the persistent uplink: with append_list the
+  // muxer continues numbering from the existing playlist, so the uplink's HLS demuxer reads
+  // across playout asset boundaries without interruption. Setting -hls_start_number_source
+  // (e.g. epoch_us) instead restarts the sequence at each playout run, which the uplink demuxer
+  // sees as a huge forward jump ("skipping N segments ahead, expired from playlists"), hits EOF,
+  // and dies on every asset boundary (the v1.5.15 soak failure: one unplanned uplink restart per
+  // boundary until destination=degraded). Boundary timestamp resets are signaled via
+  // discont_start and absorbed by ffmpeg's input discontinuity correction (dts_delta_threshold);
+  // per-run segment uniqueness comes from the runId embedded in the segment filename.
   return {
     muxer: "hls",
     output: config.playlistPath,
@@ -126,8 +135,6 @@ export function buildProgramFeedOutputTarget(config: ProgramFeedConfig, runId: s
       String(config.targetSeconds),
       "-hls_list_size",
       String(config.listSize),
-      "-hls_start_number_source",
-      "epoch_us",
       "-hls_flags",
       "append_list+delete_segments+program_date_time+independent_segments+omit_endlist+temp_file+discont_start",
       "-hls_segment_filename",

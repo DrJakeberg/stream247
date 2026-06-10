@@ -75,13 +75,64 @@ describe("ffmpeg runtime helpers", () => {
         "2",
         "-hls_list_size",
         "30",
-        "-hls_start_number_source",
-        "epoch_us",
         "-hls_flags",
         "append_list+delete_segments+program_date_time+independent_segments+omit_endlist+temp_file+discont_start",
         "-hls_segment_filename",
         "/app/data/media/.stream247-program-feed/segment-run-1-%05d.ts"
       ]
+    });
+  });
+
+  describe("program-feed boundary continuity for the persistent uplink", () => {
+    // Regression for the v1.5.15 soak failure: -hls_start_number_source epoch_us made every new
+    // playout run restart EXT-X-MEDIA-SEQUENCE at epoch-microseconds, so each clean asset boundary
+    // jumped the sequence by ~elapsed-us. The uplink HLS demuxer logged "skipping 552960321
+    // segments ahead, expired from playlists", hit EOF, and exited (unplanned restart) at every
+    // boundary until destination=degraded.
+    it("does not override the HLS start number source — append_list must continue MEDIA-SEQUENCE across playout runs", () => {
+      const config = getProgramFeedConfig({}, "/app/data/media");
+      const args = buildProgramFeedOutputTarget(config, "run-1").outputArgs ?? [];
+
+      expect(args).not.toContain("-hls_start_number_source");
+      expect(args).not.toContain("epoch_us");
+    });
+
+    it("keeps explicit boundary signaling and append semantics (append_list + discont_start + omit_endlist)", () => {
+      const config = getProgramFeedConfig({}, "/app/data/media");
+      const args = buildProgramFeedOutputTarget(config, "run-1").outputArgs ?? [];
+      const flagsIndex = args.indexOf("-hls_flags");
+
+      expect(flagsIndex).toBeGreaterThanOrEqual(0);
+      const flags = String(args[flagsIndex + 1]);
+      expect(flags).toContain("append_list");
+      expect(flags).toContain("discont_start");
+      expect(flags).toContain("omit_endlist");
+    });
+
+    it("keeps per-run segment names unique via the runId so consecutive runs cannot collide", () => {
+      const config = getProgramFeedConfig({}, "/app/data/media");
+      const first = buildProgramFeedOutputTarget(config, "run-1").outputArgs ?? [];
+      const second = buildProgramFeedOutputTarget(config, "run-2").outputArgs ?? [];
+      const segmentOf = (args: string[]) => String(args[args.indexOf("-hls_segment_filename") + 1]);
+
+      expect(segmentOf(first)).toContain("run-1");
+      expect(segmentOf(second)).toContain("run-2");
+      expect(segmentOf(first)).not.toBe(segmentOf(second));
+    });
+
+    it("keeps the persistent uplink input tolerant of in-band boundary discontinuities", () => {
+      const command = buildUplinkFfmpegCommand(
+        "/app/data/media/.stream247-program-feed/program.m3u8",
+        { muxer: "flv", output: "rtmp://live.twitch.tv/app/key" },
+        { inputMode: "hls", env: {}, outputSettings: null }
+      );
+
+      const fflagsIndex = command.indexOf("-fflags");
+      expect(fflagsIndex).toBeGreaterThanOrEqual(0);
+      expect(String(command[fflagsIndex + 1])).toContain("+genpts");
+      expect(String(command[fflagsIndex + 1])).toContain("+discardcorrupt");
+      expect(command).toContain("-err_detect");
+      expect(command).toContain("-m3u8_hold_counters");
     });
   });
 
