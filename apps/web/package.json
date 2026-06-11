@@ -1,7 +1,7 @@
 {
   "name": "web",
   "private": true,
-  "version": "1.5.16",
+  "version": "1.5.17",
   "license": "SEE LICENSE IN ../../LICENSE",
   "scripts": {
     "dev": "next dev",

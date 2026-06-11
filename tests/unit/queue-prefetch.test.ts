@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { planQueuePrefetch, type QueuePrefetchCandidate } from "../../apps/worker/src/queue-prefetch";
+import {
+  decideQueuePrefetchBudget,
+  planQueuePrefetch,
+  raceResolveAgainstDeath,
+  type QueuePrefetchCandidate
+} from "../../apps/worker/src/queue-prefetch";
 
 const remote = (cacheStatus: QueuePrefetchCandidate["cacheStatus"]): QueuePrefetchCandidate => ({
   cacheStatus,
@@ -74,5 +79,95 @@ describe("planQueuePrefetch", () => {
 
   it("returns an empty plan for an empty queue", () => {
     expect(planQueuePrefetch([])).toEqual([]);
+  });
+});
+
+describe("coverage-gated prefetch budget (v1.5.16 soak failure: post-boundary start delay)", () => {
+  // Regression: after a clean naturalBoundary exit (scheduled_match had run for hours), no playout
+  // process was running and the cycle's awaited expensive queue resolve sat between the boundary
+  // and startOrSwitchPlayout for ~94s while the ~60s feed buffer drained. While coverage is down
+  // the budget must be 0: the already-resolved selected asset (or the bridge fallback) starts
+  // before any expensive prefetch is awaited.
+  it("returns budget 0 while broadcast coverage is down", () => {
+    expect(decideQueuePrefetchBudget({ coverageDown: true, defaultBudget: 1 })).toBe(0);
+  });
+
+  it("restores the normal v1.5.13 cap once coverage is live again", () => {
+    expect(decideQueuePrefetchBudget({ coverageDown: false, defaultBudget: 1 })).toBe(1);
+  });
+
+  it("coverage-down cycle: ready selected asset is used from cache and every cold expensive candidate defers (start before prefetch)", () => {
+    // The exact failure-shape queue: the selected next asset has a fresh probe hit; the rest of
+    // the queue contains cold expensive remote candidates that previously blocked the start.
+    const budget = decideQueuePrefetchBudget({ coverageDown: true, defaultBudget: 1 });
+    const plan = planQueuePrefetch(
+      [
+        { cacheStatus: "ready", expensive: true }, // selected next asset — probe-cache hit
+        { cacheStatus: "none", expensive: true }, // cold Twitch VOD
+        { cacheStatus: "none", expensive: true } // cold Twitch VOD
+      ],
+      budget
+    );
+
+    expect(plan).toEqual(["use-cache", "defer", "defer"]);
+  });
+
+  it("coverage-down cycle: cheap local fallback still resolves instantly (fallback start is never blocked)", () => {
+    const budget = decideQueuePrefetchBudget({ coverageDown: true, defaultBudget: 1 });
+    const plan = planQueuePrefetch(
+      [
+        { cacheStatus: "none", expensive: false }, // local fallback — instant resolve allowed
+        { cacheStatus: "none", expensive: true } // cold remote — deferred
+      ],
+      budget
+    );
+
+    expect(plan).toEqual(["resolve", "defer"]);
+  });
+});
+
+describe("raceResolveAgainstDeath (in-flight resolve unblocks on playout process death)", () => {
+  // Regression for the confirmed v1.5.16 failure mechanism: the boundary landed while an expensive
+  // prefetch resolve was already in flight (no playout.loop.wake was logged — the loop was busy),
+  // and the cycle could not start the next asset until the resolve finished ~94s later. The cycle
+  // must stop waiting the moment the covering process dies; the resolve continues in the
+  // background and writes the probe cache itself.
+  it("abandons the wait when the process dies before the resolve completes", async () => {
+    let finishResolve: (value: string) => void = () => {};
+    const resolve = new Promise<string>((res) => {
+      finishResolve = res;
+    });
+    let die: () => void = () => {};
+    const death = new Promise<void>((res) => {
+      die = res;
+    });
+
+    const outcomePromise = raceResolveAgainstDeath(resolve, death);
+    die();
+    const outcome = await outcomePromise;
+
+    expect(outcome).toEqual({ kind: "abandoned" });
+    finishResolve("late"); // background completion — must not throw or affect the outcome
+  });
+
+  it("returns the resolved value when the resolve finishes while the process is alive", async () => {
+    const death = new Promise<void>(() => {}); // never dies
+    const outcome = await raceResolveAgainstDeath(Promise.resolve("input-url"), death);
+
+    expect(outcome).toEqual({ kind: "resolved", value: "input-url" });
+  });
+
+  it("returns the failure when the resolve rejects while the process is alive", async () => {
+    const death = new Promise<void>(() => {});
+    const error = new Error("yt-dlp failed");
+    const outcome = await raceResolveAgainstDeath(Promise.reject(error), death);
+
+    expect(outcome).toEqual({ kind: "failed", error });
+  });
+
+  it("awaits normally when there is no death signal to race against", async () => {
+    const outcome = await raceResolveAgainstDeath(Promise.resolve(42), null);
+
+    expect(outcome).toEqual({ kind: "resolved", value: 42 });
   });
 });

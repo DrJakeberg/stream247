@@ -111,7 +111,7 @@ import {
   isImmediateInputOpenFailure,
   shouldBridgeToFallbackBeforeResolve
 } from "./playout-boundary.js";
-import { planQueuePrefetch } from "./queue-prefetch.js";
+import { decideQueuePrefetchBudget, planQueuePrefetch, raceResolveAgainstDeath } from "./queue-prefetch.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 import { EngagementGameTracker } from "./engagement-game.js";
@@ -1960,27 +1960,94 @@ function isExpensiveQueueResolve(asset: AssetRecord): boolean {
   return isResolvableRemoteVideoUrl(path);
 }
 
-async function getPlayableQueuedAssets(queueAssets: AssetRecord[]): Promise<{
+// Assets whose expensive prefetch resolve is still running in the background after the cycle
+// abandoned the await (covering playout process died mid-resolve). Used to avoid double-resolving
+// the same asset on the next cycle; the background completion writes the probe cache itself.
+const queueResolvesInFlight = new Set<string>();
+
+function isPlayoutProcessRunning(): boolean {
+  return playoutProcess !== null && playoutProcess.exitCode === null && !playoutProcess.killed;
+}
+
+// Resolves when the current playout process exits; null when no process is running. Disposal
+// detaches the listener so abandoned watchers do not pile up on long-lived processes.
+function watchPlayoutProcessExit(): { promise: Promise<void>; dispose: () => void } | null {
+  const child = playoutProcess;
+  if (!child || child.exitCode !== null || child.killed) {
+    return null;
+  }
+  let onExit: () => void = () => {};
+  const promise = new Promise<void>((resolve) => {
+    onExit = () => resolve();
+    child.once("exit", onExit);
+  });
+  return {
+    promise,
+    dispose: () => {
+      child.off("exit", onExit);
+    }
+  };
+}
+
+// Resolve one queue asset and write the probe cache on completion — kept as a self-contained
+// promise chain so a cycle that abandons the await (process death) still gets the cache written
+// when the resolve eventually finishes in the background.
+function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: AssetRecord; input: string }> {
+  queueResolvesInFlight.add(asset.id);
+  return resolveAssetPlaybackInput(asset)
+    .then((prepared) => {
+      queueProbeCache.set(asset.id, {
+        status: "ready",
+        checkedAt: Date.now(),
+        resolvedInput: prepared.input,
+        error: ""
+      });
+      return prepared;
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Unknown queue prefetch error.";
+      queueProbeCache.set(asset.id, {
+        status: "failed",
+        checkedAt: Date.now(),
+        resolvedInput: "",
+        error: message
+      });
+      throw error;
+    })
+    .finally(() => {
+      queueResolvesInFlight.delete(asset.id);
+    });
+}
+
+async function getPlayableQueuedAssets(
+  queueAssets: AssetRecord[],
+  options: { expensiveBudget?: number } = {}
+): Promise<{
   playableQueue: AssetRecord[];
   prefetchedAsset: AssetRecord | null;
   prefetchStatus: "" | "ready" | "failed";
   prefetchError: string;
+  deferredExpensive: boolean;
 }> {
   const playableQueue: AssetRecord[] = [];
   let prefetchedAsset: AssetRecord | null = null;
   let prefetchStatus: "" | "ready" | "failed" = "";
   let prefetchError = "";
+  let deferredExpensive = false;
 
-  // Cap awaited expensive (remote) resolves to one per cycle. Cached/local/direct candidates are
-  // unaffected; surplus uncached remote candidates are deferred to a later cycle so this single
-  // stall-guarded cycle cannot accumulate multiple sequential ~60-120s resolves.
+  // Cap awaited expensive (remote) resolves per cycle (v1.5.13), with the budget forced to 0 by
+  // the caller while broadcast coverage is down (no running playout process): an awaited ~60-120s
+  // resolve in that state sits between the boundary and startOrSwitchPlayout while the ~60s feed
+  // buffer drains — the v1.5.16 soak failure. Cached/local/direct candidates are unaffected.
+  const expensiveBudget = options.expensiveBudget ?? MAX_EXPENSIVE_QUEUE_RESOLVES_PER_CYCLE;
   const cachedEntries = queueAssets.map((asset) => getFreshProbeCache(asset.id));
+  const expensiveFlags = queueAssets.map((asset) => isExpensiveQueueResolve(asset));
   const actions = planQueuePrefetch(
     queueAssets.map((asset, index) => ({
       cacheStatus: cachedEntries[index]?.status ?? "none",
-      expensive: isExpensiveQueueResolve(asset)
+      expensive: expensiveFlags[index]!
     })),
-    MAX_EXPENSIVE_QUEUE_RESOLVES_PER_CYCLE
+    expensiveBudget
   );
 
   for (let index = 0; index < queueAssets.length; index += 1) {
@@ -2006,28 +2073,58 @@ async function getPlayableQueuedAssets(queueAssets: AssetRecord[]): Promise<{
     if (action === "defer") {
       // Expensive remote resolve beyond this cycle's budget. Leave the cache state untouched so
       // the asset is retried on a future cycle; do not block this cycle on it.
+      deferredExpensive = true;
+      continue;
+    }
+
+    if (expensiveFlags[index] && queueResolvesInFlight.has(asset.id)) {
+      // A previous cycle's abandoned resolve for this asset is still running in the background
+      // and will write the probe cache itself — do not start a duplicate.
+      deferredExpensive = true;
+      continue;
+    }
+
+    if (expensiveFlags[index] && !isPlayoutProcessRunning()) {
+      // Coverage dropped after the plan was made (the process died earlier in this cycle).
+      // Starting a new ~60-120s resolve now would block the restart path — defer instead.
+      deferredExpensive = true;
       continue;
     }
 
     try {
-      const prepared = await resolveAssetPlaybackInput(asset);
-      queueProbeCache.set(asset.id, {
-        status: "ready",
-        checkedAt: Date.now(),
-        resolvedInput: prepared.input,
-        error: ""
-      });
-      prefetchedAsset = prefetchedAsset ?? prepared.asset;
-      prefetchStatus = "ready";
-      playableQueue.push(prepared.asset);
+      if (!expensiveFlags[index]) {
+        // Cheap (local/direct) resolves return effectively instantly — await normally.
+        const prepared = await resolveQueueAssetIntoProbeCache(asset);
+        prefetchedAsset = prefetchedAsset ?? prepared.asset;
+        prefetchStatus = "ready";
+        playableQueue.push(prepared.asset);
+        continue;
+      }
+
+      // Expensive resolve: stop waiting the moment the covering playout process dies, so a
+      // boundary landing mid-resolve no longer holds the cycle (and the next start) hostage for
+      // the remainder of the resolve — the exact 94s no-playout gap of the v1.5.16 soak failure.
+      // The resolve keeps running in the background and writes the probe cache on completion.
+      const death = watchPlayoutProcessExit();
+      const outcome = await raceResolveAgainstDeath(resolveQueueAssetIntoProbeCache(asset), death?.promise ?? null);
+      death?.dispose();
+      if (outcome.kind === "abandoned") {
+        logRuntimeEvent("playout.prefetch.abandoned", {
+          assetId: asset.id,
+          reason: "playout-process-exited"
+        });
+        deferredExpensive = true;
+        break;
+      }
+      if (outcome.kind === "resolved") {
+        prefetchedAsset = prefetchedAsset ?? outcome.value.asset;
+        prefetchStatus = "ready";
+        playableQueue.push(outcome.value.asset);
+        continue;
+      }
+      throw outcome.error;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown queue prefetch error.";
-      queueProbeCache.set(asset.id, {
-        status: "failed",
-        checkedAt: Date.now(),
-        resolvedInput: "",
-        error: message
-      });
       if (!prefetchError) {
         prefetchStatus = "failed";
         prefetchError = message;
@@ -2039,7 +2136,8 @@ async function getPlayableQueuedAssets(queueAssets: AssetRecord[]): Promise<{
     playableQueue,
     prefetchedAsset,
     prefetchStatus,
-    prefetchError
+    prefetchError,
+    deferredExpensive
   };
 }
 
@@ -3671,7 +3769,16 @@ async function runPlayoutCycle(): Promise<void> {
       : [],
     manualNextQueueAsset
   );
-  const { playableQueue, prefetchedAsset, prefetchStatus, prefetchError } = await getPlayableQueuedAssets(rawQueueAssets);
+  // While broadcast coverage is down (no running playout process — clean or failed boundary),
+  // the prefetch must not await any expensive remote resolve before startOrSwitchPlayout below
+  // restores coverage; the queue warms on the immediate follow-up cycle instead (see the
+  // deferredExpensive wake at the end of this cycle).
+  const prefetchBudget = decideQueuePrefetchBudget({
+    coverageDown: !isPlayoutProcessRunning(),
+    defaultBudget: MAX_EXPENSIVE_QUEUE_RESOLVES_PER_CYCLE
+  });
+  const { playableQueue, prefetchedAsset, prefetchStatus, prefetchError, deferredExpensive } =
+    await getPlayableQueuedAssets(rawQueueAssets, { expensiveBudget: prefetchBudget });
   const queueItems = buildRuntimeQueueItems({
     state,
     selection,
@@ -4001,6 +4108,14 @@ async function runPlayoutCycle(): Promise<void> {
     await updatePoolCursor(currentScheduleItem.poolId, pool?.cursorAssetId ?? "", {
       resetItemsSinceInsert: true
     });
+  }
+
+  if (prefetchBudget === 0 && deferredExpensive && isPlayoutProcessRunning()) {
+    // Queue prefetch was skipped because coverage was down at the start of this cycle; coverage
+    // is live again (startOrSwitchPlayout above), so warm the queue immediately instead of
+    // waiting out the loop delay. Deliberately NOT requested for budget>0 deferrals (cap or
+    // in-flight dedup) — those resume on the normal cadence and must not busy-wake the loop.
+    requestImmediatePlayoutCycle("deferred-prefetch");
   }
 }
 

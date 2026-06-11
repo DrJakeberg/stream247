@@ -59,3 +59,45 @@ export function planQueuePrefetch(
     return "defer";
   });
 }
+
+/**
+ * Per-cycle expensive-resolve budget, gated on broadcast coverage.
+ *
+ * When no playout process is running (post-boundary, the v1.5.16 soak failure), an awaited
+ * ~60-120s remote resolve sits between the boundary and startOrSwitchPlayout while the ~60s
+ * program-feed buffer drains — so the budget must be 0: start the selected asset (or fallback)
+ * first, warm the queue on a later cycle once coverage is live. With a process running, the feed
+ * is covered and the normal v1.5.13 cap applies.
+ */
+export function decideQueuePrefetchBudget(input: { coverageDown: boolean; defaultBudget: number }): number {
+  return input.coverageDown ? 0 : Math.max(0, input.defaultBudget);
+}
+
+export type PrefetchResolveOutcome<T> =
+  | { kind: "resolved"; value: T }
+  | { kind: "failed"; error: unknown }
+  | { kind: "abandoned" };
+
+/**
+ * Await an expensive prefetch resolve, but stop waiting the moment the covering playout process
+ * dies. The resolve itself is not cancelled — the caller keeps its promise chain alive so a late
+ * completion still lands in the probe cache — but the cycle is unblocked immediately so it can
+ * start the next asset/fallback instead of letting the feed buffer drain behind an in-flight
+ * yt-dlp/cache resolve (the exact 94s gap of the v1.5.16 soak failure: the boundary landed while
+ * a prefetch resolve was already in flight, and the cycle could not start anything until it
+ * finished). With no death signal (coverage already down), the resolve is awaited normally —
+ * callers should not be resolving expensive candidates in that state at all (budget 0).
+ */
+export async function raceResolveAgainstDeath<T>(
+  resolve: Promise<T>,
+  death: Promise<unknown> | null
+): Promise<PrefetchResolveOutcome<T>> {
+  const tagged: Promise<PrefetchResolveOutcome<T>> = resolve.then(
+    (value) => ({ kind: "resolved" as const, value }),
+    (error) => ({ kind: "failed" as const, error })
+  );
+  if (!death) {
+    return tagged;
+  }
+  return Promise.race([tagged, death.then(() => ({ kind: "abandoned" as const }))]);
+}
