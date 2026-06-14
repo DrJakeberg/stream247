@@ -4,6 +4,26 @@
 
 - No unreleased changes currently tracked.
 
+## 1.5.17 - 2026-06-12
+
+Accepted runtime-stable production baseline. A clean 24h DUT soak completed naturally
+(1415/1415 healthy samples; 100% scheduled_match; 0 readiness failures, 0 programFeed=stale,
+0 broadcastReady=false, 0 destination=degraded, 0 uplink unplanned-restart delta) with multiple
+clean playout boundaries and no boundary-coupled uplink restarts. Scheduled-path acceptance
+granted. Caps the boundary-stability campaign whose fixes all held simultaneously in the soak.
+
+### Fixed
+
+- never block the post-boundary start path on queue prefetch: while no playout process is running, the per-cycle expensive-resolve budget is forced to 0, and an expensive resolve already in flight when the playout process exits is abandoned within milliseconds (the background resolve still populates the probe cache, with in-flight dedup) — closing a ~94s no-playout gap that drained the program-feed buffer (v1.5.17)
+- keep the program-feed HLS `EXT-X-MEDIA-SEQUENCE` continuous across playout runs by dropping the per-run `-hls_start_number_source` override, so the persistent uplink demuxer no longer sees a per-boundary sequence jump ("skipping … segments ahead, expired from playlists"), hits EOF, and restarts once per asset boundary into destination degradation (v1.5.16)
+- bridge to the local fallback immediately on a clean natural boundary (not only a failed exit) when the next scheduled asset needs a cold expensive remote resolve, so coverage is never dark during the resolve (v1.5.15)
+- bridge to local fallback on a failure-driven dark gap and invalidate the probe cache after an immediate ffmpeg input-open failure so a dead/expired resolved URL is re-resolved instead of reused (v1.5.14)
+- cap remote queue prefetch to one expensive resolve per playout cycle so a cascade of uncached remote queue assets cannot exceed the loop stall guard and force-restart the playout container (v1.5.13)
+
+### Changed
+
+- bound the single-destination recovery window by lowering the destination-failure cooldown and uplink destination-stall restart defaults to 60s (v1.5.12)
+
 ## 1.1.2 - 2026-04-19
 
 ### Added
