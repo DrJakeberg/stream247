@@ -5343,11 +5343,14 @@ async function reconcileChatInteraction(): Promise<void> {
 
   await drainChatEffects(state, config);
 
+  // Checks for an *open* session, not merely a present one: a settled poll stays in the runtime
+  // with status "closed" so its outcome can be read, and testing for presence alone would let the
+  // first poll of a process be the only one that ever opens.
   const canOpenVote =
     config.votingEnabled &&
     Boolean(currentAssetId) &&
     currentAssetId !== lastVotedAssetId &&
-    !chatControl.getSession();
+    chatControl.getSession()?.status !== "open";
 
   if (canOpenVote) {
     const candidates = state.playout.queuedAssetIds
