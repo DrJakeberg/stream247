@@ -271,10 +271,15 @@ wait_for_live_bridge_release() {
 
 require_command curl
 require_command docker
-require_command ffmpeg
+# ffmpeg is only used to synthesise fixtures. Fall back to the worker image when the host has
+# none, so CI does not depend on apt being able to install it.
+# shellcheck source=lib/ffmpeg-fallback.sh
+. "$(dirname "$0")/lib/ffmpeg-fallback.sh"
 require_command jq
 
 mkdir -p "$FIXTURE_DIR" "$MEDIA_DIR" "$POSTGRES_DIR" "$REDIS_DIR" "$PRIMARY_OUTPUT_DIR" "$SECONDARY_OUTPUT_DIR"
+
+enable_ffmpeg_fallback "$TMP_DIR"
 touch "$COOKIE_JAR"
 
 generate_video_fixture "$MEDIA_DIR/$PROGRAM_A_FILE" "0x124f7a" "330" "12"

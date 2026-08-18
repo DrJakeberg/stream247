@@ -51,23 +51,25 @@ jobs:
       - id: release-preflight-env
         run: echo "path=$(./scripts/prepare-release-preflight-env.sh)" >> "$GITHUB_OUTPUT"
       - run: RELEASE_PREFLIGHT_ENV_FILE="${{ steps.release-preflight-env.outputs.path }}" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
-      # apt on the hosted runners has hung here indefinitely more than once. Bound each attempt and
-      # retry, so a slow mirror costs minutes instead of wedging the run.
-      - name: Install ffmpeg
-        timeout-minutes: 10
+      # Host ffmpeg is an optimisation, not a requirement: the smoke scripts only use it to
+      # synthesise fixtures and fall back to the worker image built above (scripts/lib/
+      # ffmpeg-fallback.sh). apt on the hosted runners has hung indefinitely and later failed
+      # outright on this step, so it must never be able to fail the build.
+      - name: Install ffmpeg (optional, fixtures fall back to the worker image)
+        continue-on-error: true
+        timeout-minutes: 8
         run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo timeout 180 apt-get update -o Acquire::Retries=3 \
-              && sudo timeout 180 apt-get install -y --no-install-recommends ffmpeg; then
+          set -uo pipefail
+          for attempt in 1 2; do
+            if sudo timeout 120 apt-get update -o Acquire::Retries=3 \
+              && sudo timeout 120 apt-get install -y --no-install-recommends ffmpeg; then
               ffmpeg -version | head -n 1
               exit 0
             fi
-            echo "ffmpeg install attempt ${attempt} failed; retrying..."
-            sleep 10
+            echo "ffmpeg install attempt ${attempt} failed."
+            sleep 5
           done
-          echo "Could not install ffmpeg after 3 attempts." >&2
-          exit 1
+          echo "Continuing without host ffmpeg; fixtures will be generated in the worker image."
       - run: pnpm test:queue-continuity
       - run: pnpm test:runtime-parity
       - run: pnpm dlx @playwright/test@1.56.1 install --with-deps chromium

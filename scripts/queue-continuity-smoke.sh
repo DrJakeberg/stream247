@@ -151,10 +151,15 @@ dump_failure_context() {
 }
 
 require_command docker
-require_command ffmpeg
+# ffmpeg is only used to synthesise fixtures. Fall back to the worker image when the host has
+# none, so CI does not depend on apt being able to install it.
+# shellcheck source=lib/ffmpeg-fallback.sh
+. "$(dirname "$0")/lib/ffmpeg-fallback.sh"
 require_command wget
 
 mkdir -p "$TMP_DIR/media" "$TMP_DIR/postgres" "$TMP_DIR/redis" "$TMP_DIR/output"
+
+enable_ffmpeg_fallback "$TMP_DIR"
 
 generate_fixture "$TMP_DIR/media/continuity-a.mp4" "0x124f7a"
 generate_fixture "$TMP_DIR/media/continuity-b.mp4" "0x7a3d12"
