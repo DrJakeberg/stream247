@@ -2727,6 +2727,67 @@ if (!schemaMigrations.some((migration) => migration.id === twitchLiveStartedAtMi
   schemaMigrations.push(twitchLiveStartedAtMigration);
 }
 
+const chatInteractionMigration: MigrationDefinition = {
+  id: "20260818_001_chat_interaction",
+  description: "Add viewer-driven programme control: settings, the active vote, and request history.",
+  apply: async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS chat_interaction_settings (
+        singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+        enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        voting_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        requests_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        skip_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        vote_duration_seconds INTEGER NOT NULL DEFAULT 60,
+        vote_option_count INTEGER NOT NULL DEFAULT 3,
+        vote_minimum_voters INTEGER NOT NULL DEFAULT 3,
+        request_cooldown_seconds INTEGER NOT NULL DEFAULT 600,
+        request_queue_limit INTEGER NOT NULL DEFAULT 5,
+        skip_threshold_ratio DOUBLE PRECISION NOT NULL DEFAULT 0.6,
+        skip_minimum_votes INTEGER NOT NULL DEFAULT 5,
+        skip_window_seconds INTEGER NOT NULL DEFAULT 120,
+        request_command TEXT NOT NULL DEFAULT 'request',
+        skip_command TEXT NOT NULL DEFAULT 'skip',
+        updated_at TEXT NOT NULL DEFAULT ''
+      );
+
+      -- One row: the poll currently on air. The worker owns the tally and flushes it here on an
+      -- interval so the playout process can render it, rather than writing once per vote through
+      -- the global state write lock.
+      CREATE TABLE IF NOT EXISTS chat_vote_session (
+        singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+        id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'closed',
+        opened_at TEXT NOT NULL DEFAULT '',
+        closes_at TEXT NOT NULL DEFAULT '',
+        options JSONB NOT NULL DEFAULT '[]'::jsonb,
+        ballots JSONB NOT NULL DEFAULT '{}'::jsonb,
+        winner_asset_id TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT ''
+      );
+
+      CREATE TABLE IF NOT EXISTS chat_viewer_requests (
+        id TEXT PRIMARY KEY,
+        actor TEXT NOT NULL,
+        asset_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        created_at TEXT NOT NULL
+      );
+
+      -- Cooldown lookups filter by actor and order by recency; request history grows without bound
+      -- otherwise and every check would be a sequential scan.
+      CREATE INDEX IF NOT EXISTS chat_viewer_requests_actor_created_idx
+        ON chat_viewer_requests (actor, created_at DESC);
+      CREATE INDEX IF NOT EXISTS chat_viewer_requests_status_idx
+        ON chat_viewer_requests (status);
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === chatInteractionMigration.id)) {
+  schemaMigrations.push(chatInteractionMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (

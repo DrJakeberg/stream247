@@ -69,6 +69,7 @@ const engagementGameMigrationId = "20260422_001_engagement_game";
 const twitchLiveStartedAtMigrationId = "20260422_002_twitch_live_started_at";
 const outputSettingsColumns = ["singleton_id", "profile_id", "width", "height", "fps", "updated_at"].sort();
 const engagementLayerMigrationId = "20260420_002_engagement_layer";
+const chatInteractionMigrationId = "20260818_001_chat_interaction";
 const engagementAlertTypesMigrationId = "20260421_001_engagement_alert_types";
 const engagementSettingsColumns = [
   "singleton_id",
@@ -1292,5 +1293,55 @@ describe.sequential("database roundtrip", () => {
       notes: "Manual re-sync requested. The worker will refresh this source on the next cycle.",
       lastSyncedAt: "2026-04-05T10:00:00.000Z"
     });
+  }, 60_000);
+
+  it("creates the chat-interaction schema on an existing database", async () => {
+    // The tables are new in 1.5.19, so an already-migrated deployment must pick them up on upgrade
+    // rather than only appearing on a fresh install.
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      DROP TABLE IF EXISTS chat_viewer_requests;
+      DROP TABLE IF EXISTS chat_vote_session;
+      DROP TABLE IF EXISTS chat_interaction_settings;
+      DELETE FROM schema_migrations WHERE id = '${chatInteractionMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const tables = (
+      await executeSql(`
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_name IN ('chat_interaction_settings', 'chat_vote_session', 'chat_viewer_requests')
+        ORDER BY table_name;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+
+    const indexes = (
+      await executeSql(`
+        SELECT indexname
+        FROM pg_indexes
+        WHERE tablename = 'chat_viewer_requests'
+        ORDER BY indexname;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+
+    const migrationApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id = '${chatInteractionMigrationId}';`
+    );
+
+    // Sorted locally rather than trusting the database collation for the ordering.
+    expect([...tables].sort()).toEqual(
+      ["chat_interaction_settings", "chat_viewer_requests", "chat_vote_session"].sort()
+    );
+    // Cooldown checks filter by actor and order by recency; without the index every check would be
+    // a sequential scan over unbounded request history.
+    expect(indexes).toContain("chat_viewer_requests_actor_created_idx");
+    expect(migrationApplied).toBe("1");
   }, 60_000);
 });
