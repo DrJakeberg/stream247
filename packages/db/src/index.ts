@@ -5062,6 +5062,107 @@ export async function updateEngagementGameRuntimeRecord(runtime: Partial<Engagem
   });
 }
 
+export type ChatVoteOptionRecord = {
+  token: string;
+  assetId: string;
+  title: string;
+  votes: number;
+};
+
+export type ChatVoteSessionRecord = {
+  id: string;
+  status: "open" | "closed";
+  openedAt: string;
+  closesAt: string;
+  options: ChatVoteOptionRecord[];
+  ballots: Record<string, number>;
+  winnerAssetId: string;
+  updatedAt: string;
+};
+
+export function createEmptyChatVoteSessionRecord(): ChatVoteSessionRecord {
+  return {
+    id: "",
+    status: "closed",
+    openedAt: "",
+    closesAt: "",
+    options: [],
+    ballots: {},
+    winnerAssetId: "",
+    updatedAt: ""
+  };
+}
+
+/**
+ * The poll currently on air.
+ *
+ * Chat is handled in the worker container and the overlay renders in the playout container, so the
+ * tally has to cross a process boundary. The worker owns it in memory and flushes here; playout
+ * only ever reads.
+ */
+export async function readChatVoteSessionRecord(): Promise<ChatVoteSessionRecord> {
+  const result = await getPool().query<{
+    id: string;
+    status: string;
+    opened_at: string;
+    closes_at: string;
+    options: unknown;
+    ballots: unknown;
+    winner_asset_id: string;
+    updated_at: string;
+  }>("SELECT * FROM chat_vote_session WHERE singleton_id = 1");
+
+  const row = result.rows[0];
+  if (!row) {
+    return createEmptyChatVoteSessionRecord();
+  }
+
+  return {
+    id: String(row.id ?? ""),
+    status: row.status === "open" ? "open" : "closed",
+    openedAt: String(row.opened_at ?? ""),
+    closesAt: String(row.closes_at ?? ""),
+    options: Array.isArray(row.options) ? (row.options as ChatVoteOptionRecord[]) : [],
+    ballots:
+      row.ballots && typeof row.ballots === "object" && !Array.isArray(row.ballots)
+        ? (row.ballots as Record<string, number>)
+        : {},
+    winnerAssetId: String(row.winner_asset_id ?? ""),
+    updatedAt: String(row.updated_at ?? "")
+  };
+}
+
+export async function writeChatVoteSessionRecord(session: Partial<ChatVoteSessionRecord>): Promise<void> {
+  const normalized = { ...createEmptyChatVoteSessionRecord(), ...session };
+  await withSerializedStateWrite("writeChatVoteSessionRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO chat_vote_session (singleton_id, id, status, opened_at, closes_at, options, ballots, winner_asset_id, updated_at)
+        VALUES (1, $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          id = EXCLUDED.id,
+          status = EXCLUDED.status,
+          opened_at = EXCLUDED.opened_at,
+          closes_at = EXCLUDED.closes_at,
+          options = EXCLUDED.options,
+          ballots = EXCLUDED.ballots,
+          winner_asset_id = EXCLUDED.winner_asset_id,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        normalized.id,
+        normalized.status,
+        normalized.openedAt,
+        normalized.closesAt,
+        JSON.stringify(normalized.options),
+        JSON.stringify(normalized.ballots),
+        normalized.winnerAssetId,
+        normalized.updatedAt || new Date().toISOString()
+      ]
+    );
+  });
+}
+
 export async function appendEngagementEventRecord(event: Partial<EngagementEventRecord>): Promise<EngagementEventRecord> {
   return withSerializedStateWrite("appendEngagementEventRecord", async (client) => {
     const normalized = normalizeEngagementEventRecord(event);
