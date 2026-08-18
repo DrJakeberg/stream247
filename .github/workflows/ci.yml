@@ -21,6 +21,10 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    # Without this the job inherits GitHub's 6-hour default. A hung apt mirror left a run wedged
+    # for over an hour on the ffmpeg install, and because runs are serialised that blocked every
+    # later commit behind it. Fail in a useful timeframe instead.
+    timeout-minutes: 45
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
@@ -47,7 +51,23 @@ jobs:
       - id: release-preflight-env
         run: echo "path=$(./scripts/prepare-release-preflight-env.sh)" >> "$GITHUB_OUTPUT"
       - run: RELEASE_PREFLIGHT_ENV_FILE="${{ steps.release-preflight-env.outputs.path }}" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # apt on the hosted runners has hung here indefinitely more than once. Bound each attempt and
+      # retry, so a slow mirror costs minutes instead of wedging the run.
+      - name: Install ffmpeg
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo timeout 180 apt-get update -o Acquire::Retries=3 \
+              && sudo timeout 180 apt-get install -y --no-install-recommends ffmpeg; then
+              ffmpeg -version | head -n 1
+              exit 0
+            fi
+            echo "ffmpeg install attempt ${attempt} failed; retrying..."
+            sleep 10
+          done
+          echo "Could not install ffmpeg after 3 attempts." >&2
+          exit 1
       - run: pnpm test:queue-continuity
       - run: pnpm test:runtime-parity
       - run: pnpm dlx @playwright/test@1.56.1 install --with-deps chromium
