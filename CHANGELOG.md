@@ -4,7 +4,53 @@
 
 - No unreleased changes currently tracked.
 
-## 1.5.18 - 2026-08-18
+## 1.5.19 - 2026-08-18
+
+Emergency production release. Supersedes the 1.5.18 tag, whose release build failed before
+publishing any image (the Release workflow ran before CI had pushed the `main-<sha>` snapshots it
+pulls from). No 1.5.18 images exist; 1.5.19 is the artifact to deploy.
+
+Carries the 1.5.18 playout fix below plus a critical, remotely exploitable authentication flaw and
+four runtime failure modes, all found by an adversarially-verified audit pass over the product.
+
+### Security
+
+- close a full workspace takeover via the Twitch OAuth connect callback. The route had no auth
+  guard, `middleware.ts` only matches `/overlay`, and the OAuth `state` was the literal flow name
+  that no callback read back. An attacker could authorise their own Twitch account against the
+  publicly discoverable client_id, hand the code to the callback to overwrite the workspace's
+  broadcasterId and tokens, then complete SSO — which grants "owner" to whoever matches that
+  broadcasterId — and hold an owner session without ever knowing a password. State is now random,
+  single-use, flow-scoped and bound to an HttpOnly cookie, and the connect callback requires an
+  owner/admin session (v1.5.19)
+- stop falling back to the published `stream247-dev-secret` constant when `APP_SECRET` is unset in
+  production. This project is source-available, so that fallback let anyone forge a session cookie
+  for any user id. Startup now fails loudly and rejects secrets under 32 characters (v1.5.19)
+- expire session cookies. The issue timestamp was already inside the signed payload but was never
+  checked, so a leaked cookie was valid forever. Default 30 days via `SESSION_MAX_AGE_SECONDS`
+  (v1.5.19)
+
+### Fixed
+
+- escalate to SIGKILL when stopping playout. The guard also required `!currentProcess.killed`, but
+  Node sets `killed` as soon as SIGTERM is delivered, so escalation was unreachable and an ffmpeg
+  blocked on a dead input never died — turning a 5s stop into a 300s stall and a container restart.
+  A hard stop deadline now bounds the wait even for a child that survives SIGKILL (v1.5.19)
+- clear `plannedStopReason` on the early-return path of `stopPlayoutProcess`, so the next genuine
+  crash is no longer recorded as an operator-planned stop (v1.5.19)
+- handle unhandled promise rejections instead of dying. The fire-and-forget state writes in the
+  ffmpeg stderr handler could reject during a transient Postgres outage and kill the broadcast with
+  no incident, no alert and no log entry (v1.5.19)
+- attach an 'error' listener to both spawned ffmpeg processes; a spawn failure was rethrown
+  asynchronously as an uncaught exception the caller's try/catch could not see (v1.5.19)
+- return 503 from `/api/health` when persistence is unreachable. It returned 200 unconditionally
+  while the Compose healthcheck only inspects the status code, so the web container reported
+  healthy with Postgres down and every deployment gate built on it was blind (v1.5.19)
+- escape operator-configured chat commands and vote tokens before interpolating them into regular
+  expressions run against every IRC message; a command containing "(" threw inside the socket data
+  handler and took the worker down (v1.5.19)
+
+## 1.5.18 - 2026-08-18 (unreleased; no images published)
 
 Emergency production fix. DUT had been in a playout restart loop for ~38 hours: 423 restarts,
 one every ~5 minutes, with the program pinned to fallback content the whole time.

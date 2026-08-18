@@ -26,16 +26,16 @@ Stream247 uses three distinct control surfaces:
 
 Editing the local `docker-compose.yml` or `.env.production.example` does not change production by itself. Production changes happen when the DT Portainer stack is updated and redeployed with the intended image refs.
 
-## Operating Policy (since v1.5.18)
+## Operating Policy (since v1.5.19)
 
-- **v1.5.18 is the accepted production baseline.** DUT runs v1.5.18.
-- v1.5.18 was rolled to DUT directly as an emergency fix under the clause below: v1.5.17 had left
+- **v1.5.19 is the accepted production baseline.** DUT runs v1.5.19.
+- v1.5.19 was rolled to DUT directly as an emergency fix under the clause below: v1.5.17 had left
   the playout container in a restart loop (423 restarts, one every ~5 minutes) with the program
   pinned to fallback content. See the 1.5.18 entry in `CHANGELOG.md`.
 - **DUT is production/stable.** Do NOT use DUT for experiments, soak tests, release candidates, or risky/destructive validation.
 - **All future testing, release candidates, experiments, and destructive validation happen on DT only.**
 - **DUT may be touched only for** explicit production maintenance, emergency fixes, or an approved final release rollout *after* it has passed validation on DT.
-- Release surface: `v1.5.17` (previous baseline) and `v1.5.18` (current baseline), one Git tag and one GitHub Release each, with matching GHCR package versions per image (`stream247-web/worker/playout`).
+- Release surface: `v1.5.17` (previous baseline) and `v1.5.19` (current baseline; the `v1.5.18` tag exists but published no images), one Git tag and one GitHub Release each, with matching GHCR package versions per image (`stream247-web/worker/playout`).
 
 ## Deploy Steps
 
@@ -152,7 +152,7 @@ Production Compose is intended to pull from:
 - `bluenviron/mediamtx:<tag>` for the local RTMP relay
 
 `.env.example` uses `latest` for evaluation.
-`.env.production.example` pins `v1.5.7` for stable deployment.
+`.env.production.example` pins the current baseline (`v1.5.19`) for stable deployment.
 See `docs/operations.md` for the runbook and backup procedures.
 
 ## Canonical Release And Rollout Flow
@@ -203,9 +203,9 @@ Use pinned GHCR image tags in production.
 
 Example:
 
-- `ghcr.io/drjakeberg/stream247-web:v1.5.7`
-- `ghcr.io/drjakeberg/stream247-worker:v1.5.7`
-- `ghcr.io/drjakeberg/stream247-playout:v1.5.7`
+- `ghcr.io/drjakeberg/stream247-web:v1.5.19`
+- `ghcr.io/drjakeberg/stream247-worker:v1.5.19`
+- `ghcr.io/drjakeberg/stream247-playout:v1.5.19`
 - `bluenviron/mediamtx:1.15.4`
 
 Do not use `latest` for unattended production deployments.
