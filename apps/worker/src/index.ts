@@ -913,6 +913,34 @@ async function captureRenderedSceneFrame(outputSettings: WorkerStreamOutputSetti
   return renderSceneFrame(request, await getSceneRendererFonts());
 }
 
+/**
+ * Guarantees a scene payload exists before the first frame is rendered.
+ *
+ * The reconciliation cycle writes the overlay payload *after* starting playout, so on the first
+ * start of a process the cache is still empty. Because the overlay mode is baked into the ffmpeg
+ * command for the whole run, rendering nothing there would pin the overlay to text mode until the
+ * next asset boundary. The previous Chromium renderer did not have this ordering problem because
+ * it fetched state over HTTP from the web app rather than from worker-local memory.
+ */
+async function ensureScenePayload(asset: AssetRecord | null): Promise<void> {
+  if (currentScenePayload) {
+    return;
+  }
+
+  try {
+    const state = await readAppState();
+    if (!state.overlay.enabled) {
+      return;
+    }
+
+    await writeOnAirOverlay(state, asset, state.playout.queueItems[0]?.kind || (asset ? "asset" : ""));
+  } catch (error) {
+    logRuntimeEvent("scene.payload.prime_failed", {
+      error: error instanceof Error ? error.message : "Unknown scene payload priming failure."
+    });
+  }
+}
+
 async function prepareSceneRendererFrame(outputSettings: WorkerStreamOutputSettings): Promise<Buffer | null> {
   if (!shouldUseSceneRenderer()) {
     return null;
@@ -2957,6 +2985,9 @@ async function startOrSwitchPlayout(args: {
     });
   }
   const outputSettings = getWorkerStreamOutputSettings(process.env, args.outputSettings);
+  if (args.overlayEnabled && !skipInitialSceneCapture) {
+    await ensureScenePayload(args.asset ?? null);
+  }
   const initialSceneFrame = args.overlayEnabled && !skipInitialSceneCapture ? await prepareSceneRendererFrame(outputSettings) : null;
   const overlayMode: OnAirOverlayMode = !args.overlayEnabled ? "none" : initialSceneFrame ? "scene" : "text";
   let resolvedAudioLaneInput = "";
