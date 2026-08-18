@@ -8,6 +8,7 @@ import {
   DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
   addDaysToDateString,
   buildOverlayScenePayload,
+  type OverlayEngagementView,
   buildOverlayTextLinesFromScenePayload,
   formatCuepointOffsetLabel,
   buildScheduleOccurrences,
@@ -53,10 +54,7 @@ import {
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
-  buildChromiumSceneCaptureArgs,
-  getChromiumBinaryCandidates,
   getSceneRendererIntervalMs,
-  getSceneRendererOverlayUrl,
   getSceneRendererViewport,
   type OnAirOverlayMode
 } from "./on-air-scene.js";
@@ -98,6 +96,13 @@ import {
 } from "./ffmpeg-runtime.js";
 import { clampToCycleAwaitCeiling, getLoopStallTimeoutMs } from "./cycle-budget.js";
 import { VodCacheJobRunner } from "./vod-cache-jobs.js";
+import {
+  loadSceneRendererFonts,
+  renderSceneFrame,
+  sceneFrameCacheKey,
+  type SceneRenderFont,
+  type SceneRenderRequest
+} from "./scene-renderer.js";
 import { execFileText, runWithStallGuard } from "./process-utils.js";
 import {
   ensureTwitchVodCache,
@@ -232,6 +237,9 @@ const PLAYOUT_STOP_DEADLINE_MS = 20_000;
 // the overlay. The scene renderer reads it on its own cadence instead of re-reading application
 // state per frame.
 let currentScenePayload: ReturnType<typeof buildWorkerScenePayload> | null = null;
+// Live chat-driven overlay state (vote in progress, skip vote). Null when nothing is running.
+let currentSceneEngagement: OverlayEngagementView | null = null;
+let sceneRendererFonts: SceneRenderFont[] | null = null;
 const standbySlatePath = "/tmp/stream247-standby.txt";
 const onAirOverlayPath = "/tmp/stream247-on-air.txt";
 
@@ -254,9 +262,6 @@ type UplinkProcessRuntime = {
 
 const queueProbeCache = new Map<string, QueueProbeCacheEntry>();
 let sceneRendererAbortController: AbortController | null = null;
-const renderedSceneFramePath = "/tmp/stream247-scene.png";
-const SCENE_RENDER_CAPTURE_TIMEOUT_MS = 10_000;
-const SCENE_RENDER_CAPTURE_KILL_GRACE_MS = 1_000;
 const PLAYOUT_RECOVERY_SCENE_CAPTURE_SKIP_WINDOW_MS = 60_000;
 let wakePlayoutLoop: (() => void) | null = null;
 let twitchEventSubLastSyncKey = "";
@@ -868,21 +873,31 @@ function getStandbyFfmpegCommand(
   return command;
 }
 
-async function resolveChromiumBinary(): Promise<string> {
-  for (const candidate of getChromiumBinaryCandidates(process.env)) {
-    try {
-      await fs.access(candidate);
-      return candidate;
-    } catch {
-      continue;
-    }
-  }
-
-  throw new Error("No Chromium binary is available for on-air scene rendering.");
-}
-
 function shouldUseSceneRenderer(): boolean {
   return (process.env.SCENE_RENDERER_ENABLED || "1") !== "0";
+}
+
+/**
+ * Fonts are loaded once per process: they are the renderer's only external input, and re-reading
+ * them per frame would put filesystem I/O on the render path for no benefit.
+ */
+async function getSceneRendererFonts(): Promise<SceneRenderFont[]> {
+  sceneRendererFonts ??= await loadSceneRendererFonts(process.env);
+  return sceneRendererFonts;
+}
+
+function buildSceneRenderRequest(outputSettings: WorkerStreamOutputSettings): SceneRenderRequest | null {
+  if (!currentScenePayload) {
+    return null;
+  }
+
+  const viewport = getSceneRendererViewport(process.env, outputSettings);
+  return {
+    payload: currentScenePayload,
+    engagement: currentSceneEngagement,
+    width: viewport.width,
+    height: viewport.height
+  };
 }
 
 function isWritablePipe(value: unknown): value is Writable {
@@ -890,22 +905,12 @@ function isWritablePipe(value: unknown): value is Writable {
 }
 
 async function captureRenderedSceneFrame(outputSettings: WorkerStreamOutputSettings): Promise<Buffer> {
-  const chromiumBinary = await resolveChromiumBinary();
-  const viewport = getSceneRendererViewport(process.env, outputSettings);
-  await execFileText(
-    chromiumBinary,
-    buildChromiumSceneCaptureArgs({
-      url: getSceneRendererOverlayUrl(process.env),
-      outputPath: renderedSceneFramePath,
-      viewport
-    }),
-    {
-      timeoutMs: SCENE_RENDER_CAPTURE_TIMEOUT_MS,
-      killProcessGroup: true,
-      forceKillAfterMs: SCENE_RENDER_CAPTURE_KILL_GRACE_MS
-    }
-  );
-  return fs.readFile(renderedSceneFramePath);
+  const request = buildSceneRenderRequest(outputSettings);
+  if (!request) {
+    throw new Error("No overlay scene payload is available to render yet.");
+  }
+
+  return renderSceneFrame(request, await getSceneRendererFonts());
 }
 
 async function prepareSceneRendererFrame(outputSettings: WorkerStreamOutputSettings): Promise<Buffer | null> {
@@ -948,6 +953,7 @@ function startSceneRendererLoop(
 
   void (async () => {
     let currentFrame = initialFrame;
+    let currentKey = "";
 
     while (!controller.signal.aborted && !targetPipe.destroyed) {
       try {
@@ -959,10 +965,21 @@ function startSceneRendererLoop(
       }
 
       try {
-        currentFrame = await captureRenderedSceneFrame(outputSettings);
-        await resolveIncident("playout.scene-render.failed", "On-air scene renderer is healthy.");
+        const request = buildSceneRenderRequest(outputSettings);
+        if (request) {
+          // The scene only changes when its content changes. Re-pushing the cached PNG keeps the
+          // ffmpeg overlay input fed without rasterising an identical lower third for the entire
+          // length of a video.
+          const nextKey = sceneFrameCacheKey(request);
+          if (nextKey !== currentKey) {
+            currentFrame = await renderSceneFrame(request, await getSceneRendererFonts());
+            currentKey = nextKey;
+            await resolveIncident("playout.scene-render.failed", "On-air scene renderer is healthy.");
+          }
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown on-air scene renderer error.";
+        logRuntimeEvent("scene.render.update_failed", { error: message });
         await upsertIncident({
           scope: "playout",
           severity: "warning",

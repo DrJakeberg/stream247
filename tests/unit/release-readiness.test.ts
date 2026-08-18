@@ -385,8 +385,17 @@ describe("release readiness files", () => {
   it("runs worker-family containers under an init process for child reaping", () => {
     const dockerfile = readFileSync(workerDockerfilePath, "utf8");
 
-    expect(dockerfile).toContain("apk add --no-cache chromium ffmpeg yt-dlp python3 ttf-dejavu tini");
+    expect(dockerfile).toContain("apk add --no-cache ffmpeg yt-dlp python3 ttf-dejavu tini");
     expect(dockerfile).toContain('ENTRYPOINT ["/sbin/tini", "--"]');
+  });
+
+  it("ships no browser in the worker-family image", () => {
+    // The on-air overlay is rendered natively in-process. A browser in this image would only mean
+    // the per-frame screenshot path had come back, which never worked in production and cost 10s
+    // on every playout start.
+    const dockerfile = readFileSync(workerDockerfilePath, "utf8");
+
+    expect(dockerfile).not.toMatch(/\bchromium\b/);
   });
 
   it("gives worker-family healthchecks enough time under playout load", () => {
