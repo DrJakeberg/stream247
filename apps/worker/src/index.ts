@@ -224,6 +224,10 @@ const NEXT_ASSET_PROBE_FAILED_TTL_MS = 60_000;
 // awaited per playout cycle, so a cascade of uncached remote queue assets cannot accumulate
 // several sequential ~60-120s resolves and trip the 300s loop stall guard. See queue-prefetch.ts.
 const MAX_EXPENSIVE_QUEUE_RESOLVES_PER_CYCLE = 1;
+// Hard ceiling on how long stopPlayoutProcess may wait for a child to disappear. SIGTERM escalates
+// to SIGKILL after 5s; a child that survives even that (uninterruptible I/O) must not hold the
+// reconciliation cycle hostage until the stall guard restarts the container.
+const PLAYOUT_STOP_DEADLINE_MS = 20_000;
 const standbySlatePath = "/tmp/stream247-standby.txt";
 const onAirOverlayPath = "/tmp/stream247-on-air.txt";
 
@@ -2665,11 +2669,22 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
     playoutLastStderrSample = "";
     playoutLiveBridgeInputUrl = "";
     playoutLiveBridgeInputType = "";
+    // No exit handler will run for this path, so nothing would ever clear the reason we just set.
+    // Leaving it set makes the next genuine crash look like an operator-planned stop.
+    plannedStopReason = "";
     return;
   }
 
   await new Promise<void>((resolve) => {
+    let settled = false;
     const finalize = () => {
+      // Reachable from both the exit handler and the stop deadline; the second call must not
+      // clear state that a newly started process already owns.
+      if (settled) {
+        return;
+      }
+      settled = true;
+
       if (playoutProcess === currentProcess) {
         playoutProcess = null;
         playoutAssetId = "";
@@ -2686,13 +2701,40 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
     };
 
     currentProcess.once("exit", finalize);
-    currentProcess.kill("SIGTERM");
+    try {
+      currentProcess.kill("SIGTERM");
+    } catch {
+      // Process may have raced to exit between the exitCode check and the signal.
+    }
 
-    setTimeout(() => {
-      if (currentProcess.exitCode === null && !currentProcess.killed) {
-        currentProcess.kill("SIGKILL");
+    // `killed` is set the moment SIGTERM is *delivered*, not when the child actually exits, so the
+    // previous `&& !currentProcess.killed` guard made this escalation unreachable: an ffmpeg stuck
+    // in a blocking read on a dead remote input or a blocking write to a stalled RTMP socket never
+    // got SIGKILL, and the await below never resolved.
+    const escalation = setTimeout(() => {
+      if (currentProcess.exitCode === null) {
+        try {
+          currentProcess.kill("SIGKILL");
+        } catch {
+          // Already exited between the check and the signal.
+        }
       }
     }, 5_000);
+
+    // A child that ignores even SIGKILL (uninterruptible I/O) must not wedge the reconciliation
+    // cycle until the stall guard restarts the whole container.
+    const deadline = setTimeout(() => {
+      logRuntimeEvent("playout.stop.deadline_exceeded", {
+        reason,
+        pid: currentProcess.pid ?? 0
+      });
+      finalize();
+    }, PLAYOUT_STOP_DEADLINE_MS);
+
+    currentProcess.once("exit", () => {
+      clearTimeout(escalation);
+      clearTimeout(deadline);
+    });
   });
 }
 
@@ -2941,6 +2983,16 @@ async function startOrSwitchPlayout(args: {
       : getStandbyFfmpegCommand(args.outputTarget, overlayMode, outputSettings);
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe", "pipe"]
+  });
+
+  // Without an 'error' listener, EventEmitter rethrows a spawn failure (missing ffmpeg binary,
+  // EAGAIN under process pressure, EACCES) as an uncaught exception that the try/catch around the
+  // caller cannot see, because it is emitted asynchronously.
+  child.on("error", (error) => {
+    logRuntimeEvent("playout.process.spawn_failed", {
+      binary: ffmpegBinary,
+      error: error instanceof Error ? error.message : String(error)
+    });
   });
 
   playoutProcess = child;
@@ -4167,6 +4219,15 @@ async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> 
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe"]
   });
+
+  // See the playout spawn: an unlistened 'error' event is an uncaught exception.
+  child.on("error", (error) => {
+    logRuntimeEvent("uplink.process.spawn_failed", {
+      binary: ffmpegBinary,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
+
   const startedAt = new Date().toISOString();
   const runtime: UplinkProcessRuntime = {
     key: group.key,
@@ -5235,6 +5296,30 @@ async function runLoop(mode: RuntimeMode): Promise<void> {
 }
 
 const command = process.argv[2] || "worker";
+
+// The runtime is full of deliberately fire-and-forget writes from child-process event handlers
+// (`void updatePlayoutRuntime(...)` in the ffmpeg stderr handler and friends). Those go through
+// withSerializedStateWrite, which rethrows after its retries, so a transient Postgres outage during
+// a burst of ffmpeg stderr output would reject with nobody listening. Node 22 treats an unhandled
+// rejection as a fatal error, so that silently killed the broadcast: no incident, no alert, no
+// worker.loop.crashed entry -- the operator saw nothing. Degrade to a logged event instead; the
+// reconciliation loop already knows how to recover from a failed cycle.
+process.on("unhandledRejection", (reason) => {
+  logRuntimeEvent("worker.unhandled_rejection", {
+    mode: command,
+    error: reason instanceof Error ? reason.message : String(reason)
+  });
+});
+
+// An uncaught exception can leave module state inconsistent, so this only makes the failure
+// visible before handing over to the restart policy -- it does not try to continue.
+process.on("uncaughtException", (error) => {
+  logRuntimeEvent("worker.uncaught_exception", {
+    mode: command,
+    error: error instanceof Error ? error.message : String(error)
+  });
+  process.exit(1);
+});
 
 if (command === "healthcheck") {
   const healthcheckMode: RuntimeMode = process.argv[3] === "playout" ? "playout" : process.argv[3] === "uplink" ? "uplink" : "worker";

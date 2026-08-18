@@ -237,6 +237,17 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
 const invisibleUnicodePattern =
   /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00AD\u200B-\u200D\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 
+/**
+ * Escape a string for literal use inside a RegExp.
+ *
+ * Chat commands and vote tokens are operator-configured and end up interpolated into patterns that
+ * run against every incoming IRC message. An unescaped "(" or "[" throws at RegExp construction
+ * time, inside a socket data handler where nothing catches it.
+ */
+export function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function stripInvisibleCharacters(value: string): string {
   return String(value ?? "").normalize("NFC").replace(invisibleUnicodePattern, "");
 }
@@ -535,7 +546,7 @@ export function buildEngagementGameOverlayState(args: {
     ].map((option) => ({
       ...option,
       votes: recentChatEvents.reduce(
-        (count, event) => count + (new RegExp(`(^|\\s)${option.token.replace("!", "\\!")}($|\\s)`, "i").test(event.message) ? 1 : 0),
+        (count, event) => count + (new RegExp(`(^|\\s)${escapeRegExp(option.token)}($|\\s)`, "i").test(event.message) ? 1 : 0),
         0
       )
     }))
@@ -2025,7 +2036,9 @@ export function resolveModeratorCheckIn(args: {
   }
 
   const prefix = config.requirePrefix ? "!" : "";
-  const match = input.trim().match(new RegExp(`^${prefix}${config.command}(?:\\s+(\\d+))?$`, "i"));
+  // config.command is operator-supplied. Interpolated raw, a value containing "(" or "[" made
+  // `new RegExp` throw inside the IRC message handler and take the worker process down with it.
+  const match = input.trim().match(new RegExp(`^${escapeRegExp(`${prefix}${config.command}`)}(?:\\s+(\\d+))?$`, "i"));
 
   if (!match) {
     return null;
