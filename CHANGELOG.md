@@ -13,6 +13,14 @@ pulls from). No 1.5.18 images exist; 1.5.19 is the artifact to deploy.
 Carries the 1.5.18 playout fix below plus a critical, remotely exploitable authentication flaw and
 four runtime failure modes, all found by an adversarially-verified audit pass over the product.
 
+### Breaking
+
+- **`APP_SECRET` must be at least 32 characters in production and may not be the published
+  `stream247-dev-secret` constant.** A deployment that does not satisfy this now fails instead of
+  silently signing sessions with a guessable key. `pnpm release:preflight` checks it before rollout
+  and prints the remedy (`openssl rand -base64 48`). Rotating the value invalidates existing
+  sessions, so everyone signs in again once.
+
 ### Security
 
 - close a full workspace takeover via the Twitch OAuth connect callback. The route had no auth

@@ -5,6 +5,16 @@ import { buildWorkspaceHref } from "./lib/workspace-navigation";
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
+  // The workspace packages are consumed as TypeScript source and compile with NodeNext, which
+  // requires explicit ".js" specifiers in relative imports. Webpack has to be told that a ".js"
+  // specifier may resolve to the ".ts" file it was written for.
+  webpack(config) {
+    config.resolve.extensionAlias = {
+      ...config.resolve.extensionAlias,
+      ".js": [".ts", ".tsx", ".js"]
+    };
+    return config;
+  },
   async redirects() {
     return [
       {

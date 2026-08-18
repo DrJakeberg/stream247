@@ -228,6 +228,10 @@ const MAX_EXPENSIVE_QUEUE_RESOLVES_PER_CYCLE = 1;
 // to SIGKILL after 5s; a child that survives even that (uninterruptible I/O) must not hold the
 // reconciliation cycle hostage until the stall guard restarts the container.
 const PLAYOUT_STOP_DEADLINE_MS = 20_000;
+// Latest overlay scene payload, refreshed by writeOnAirOverlay on every state change that touches
+// the overlay. The scene renderer reads it on its own cadence instead of re-reading application
+// state per frame.
+let currentScenePayload: ReturnType<typeof buildWorkerScenePayload> | null = null;
 const standbySlatePath = "/tmp/stream247-standby.txt";
 const onAirOverlayPath = "/tmp/stream247-on-air.txt";
 
@@ -1102,8 +1106,7 @@ async function writeOnAirOverlay(
       })
       .filter(Boolean)
       .slice(0, state.overlay.queuePreviewCount);
-  const lines = buildOverlayTextLinesFromScenePayload(
-    buildWorkerScenePayload({
+  const payload = buildWorkerScenePayload({
       state,
       queueKind,
       currentTitle: overrides.currentTitle || buildAssetDisplayTitle(asset) || state.playout.currentTitle || currentItem?.title || "Stand by",
@@ -1116,8 +1119,14 @@ async function writeOnAirOverlay(
         currentItem?.sourceName ||
         (asset ? state.sources.find((source) => source.id === asset.sourceId)?.name : ""),
       queueTitles
-    })
-  );
+    });
+
+  // The scene renderer runs on its own cadence, decoupled from the reconciliation cycle. Caching
+  // the payload here means every state change that already refreshes the overlay text also feeds
+  // the rendered scene, without the renderer having to re-read application state per frame.
+  currentScenePayload = payload;
+
+  const lines = buildOverlayTextLinesFromScenePayload(payload);
   await fs.writeFile(onAirOverlayPath, `${lines.join("\n")}\n`, "utf8");
 }
 

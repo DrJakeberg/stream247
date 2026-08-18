@@ -30,7 +30,7 @@ cat >"$ENV_FILE" <<EOF
 NODE_ENV=production
 PORT=3000
 APP_URL=http://127.0.0.1:${PORT}
-APP_SECRET=stream247-e2e-secret
+APP_SECRET=stream247-e2e-secret-0123456789abcdef
 POSTGRES_DB=stream247
 POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247

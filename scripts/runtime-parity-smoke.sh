@@ -288,7 +288,7 @@ cat >"$ENV_FILE" <<EOF
 NODE_ENV=production
 PORT=3000
 APP_URL=${BASE_URL}
-APP_SECRET=stream247-runtime-smoke
+APP_SECRET=stream247-runtime-smoke-0123456789abcdef
 POSTGRES_DB=stream247
 POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247

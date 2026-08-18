@@ -1,3 +1,5 @@
+export * from "./overlay-layout.js";
+
 export type ModerationConfig = {
   enabled: boolean;
   command: string;
