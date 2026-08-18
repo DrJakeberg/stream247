@@ -96,10 +96,13 @@ import {
   shouldRequestImmediatePlayoutRetry,
   shouldSkipInitialSceneCapture
 } from "./ffmpeg-runtime.js";
+import { clampToCycleAwaitCeiling, getLoopStallTimeoutMs } from "./cycle-budget.js";
+import { VodCacheJobRunner } from "./vod-cache-jobs.js";
 import { execFileText, runWithStallGuard } from "./process-utils.js";
 import {
   ensureTwitchVodCache,
   getTwitchVodCacheConfig,
+  peekTwitchVodCache,
   isInternalMediaCachePath,
   isTwitchVodAsset,
   isTwitchVodCacheCoolingDown
@@ -155,24 +158,16 @@ const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
 // unbounded yt-dlp/fetch network stall) and the process exits so the
 // `restart: unless-stopped` policy brings up a fresh process instead of the
 // loop hanging silently for hours while the heartbeat goes stale.
-const LOOP_STALL_TIMEOUT_MS = (() => {
-  const raw = process.env.STREAM247_LOOP_STALL_TIMEOUT_SECONDS;
-  if (raw === undefined || raw === "") {
-    return 300_000;
-  }
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed >= 60 ? parsed * 1000 : 300_000;
-})();
+const LOOP_STALL_TIMEOUT_MS = getLoopStallTimeoutMs(process.env);
 // Timeout for resolving a remote playable URL via yt-dlp `--get-url`. Without
 // this, a network stall to the source leaves the playout-selection await
-// hanging forever and wedges the whole playout loop.
+// hanging forever and wedges the whole playout loop. Clamped to the cycle-await
+// ceiling so an operator-configured value can never outlive the stall guard.
 const PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS = (() => {
   const raw = process.env.STREAM247_PLAYABLE_INPUT_RESOLVE_TIMEOUT_SECONDS;
-  if (raw === undefined || raw === "") {
-    return 60_000;
-  }
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed * 1000 : 60_000;
+  const parsed = raw === undefined || raw === "" ? Number.NaN : Number.parseInt(raw, 10);
+  const configured = Number.isFinite(parsed) && parsed > 0 ? parsed * 1000 : 60_000;
+  return clampToCycleAwaitCeiling(configured, process.env).effectiveMs;
 })();
 const engagementGameTracker = new EngagementGameTracker();
 const twitchChatBridge = new TwitchChatBridge({
@@ -314,6 +309,37 @@ function isAssetBlockedForAutomaticSelection(asset: AssetRecord): boolean {
   return isTwitchVodCacheCoolingDown(asset, getTwitchVodCacheRuntimeConfig().failureCooldownMs);
 }
 
+// Twitch VOD downloads run here, detached from every reconciliation cycle. See vod-cache-jobs.ts.
+const vodCacheJobRunner = new VodCacheJobRunner({
+  ensureCache: (asset, config, execText, options) => ensureTwitchVodCache(asset, config, execText, options),
+  async onResult(asset, result) {
+    await updateAssetRecords([
+      {
+        ...asset,
+        cachePath: result.cachePath,
+        cacheStatus: result.status,
+        cacheUpdatedAt: result.cacheUpdatedAt,
+        cacheError: result.cacheError,
+        updatedAt: result.cacheUpdatedAt
+      }
+    ]);
+
+    if (result.status === "ready") {
+      await resolveIncident("playout.twitch-cache.failed", "Twitch VOD cache is ready.");
+      return;
+    }
+
+    await upsertIncident({
+      scope: "playout",
+      severity: "warning",
+      title: "Twitch VOD cache job failed",
+      message: result.cacheError || "The Twitch VOD cache job did not produce a usable file.",
+      fingerprint: "playout.twitch-cache.failed"
+    });
+  },
+  onEvent: (event, fields) => logRuntimeEvent(event, fields)
+});
+
 function isProgramFeedMode(): boolean {
   return STREAM247_RELAY_ENABLED && STREAM247_UPLINK_INPUT_MODE === "hls";
 }
@@ -443,7 +469,11 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
     };
   }
 
-  const result = await ensureTwitchVodCache(asset, cacheConfig);
+  // Never download here. This runs on the playout reconciliation cycle, which has a hard stall
+  // budget; a VOD download is unbounded work by nature. Look the cache up, and if it is not there
+  // yet hand the download to the detached job runner and let the caller bridge to fallback. The
+  // asset becomes playable on a later cycle once the job finishes.
+  const result = await peekTwitchVodCache(asset, cacheConfig);
   const updatedAsset: AssetRecord = {
     ...asset,
     cachePath: result.cachePath,
@@ -452,6 +482,11 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
     cacheError: result.cacheError,
     updatedAt: result.cacheUpdatedAt
   };
+
+  if (result.status !== "ready") {
+    vodCacheJobRunner.request(asset, cacheConfig);
+  }
+
   await updateAssetRecords([updatedAsset]);
 
   if (result.status === "ready") {

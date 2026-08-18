@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { AssetRecord } from "@stream247/db";
+import { clampToCycleAwaitCeiling } from "./cycle-budget.js";
+import { acquireFileLock, type FileLock } from "./file-lock.js";
 import { execFileText } from "./process-utils.js";
 
 export const INTERNAL_MEDIA_CACHE_DIRNAME = ".stream247-cache";
@@ -12,7 +14,18 @@ export type TwitchVodCacheConfig = {
   cacheRoot: string;
   ytDlpBinary: string;
   ffprobeBinary: string;
+  /**
+   * Timeout for a download awaited inside a reconciliation cycle. Clamped to the cycle-await
+   * ceiling so a long configured timeout can never outlive the loop stall guard.
+   */
   downloadTimeoutMs: number;
+  /**
+   * Timeout for a download run as a detached background job, where nothing is waiting on it.
+   * This is the operator-configured value, unclamped.
+   */
+  backgroundDownloadTimeoutMs: number;
+  /** True when the configured download timeout was unsafe for cycle use and had to be reduced. */
+  downloadTimeoutClamped: boolean;
   retentionMs: number;
   partialMaxAgeMs: number;
   maxCacheBytes: number;
@@ -50,6 +63,9 @@ function readPositiveNumber(value: string | undefined, fallback: number): number
 
 export function getTwitchVodCacheConfig(env: NodeJS.ProcessEnv, mediaRoot: string): TwitchVodCacheConfig {
   const cacheRoot = env.TWITCH_VOD_CACHE_ROOT || path.join(mediaRoot, INTERNAL_MEDIA_CACHE_DIRNAME, "twitch");
+  const configuredDownloadTimeoutMs =
+    readPositiveNumber(env.TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS, DEFAULT_DOWNLOAD_TIMEOUT_SECONDS) * 1000;
+  const awaitedDownloadTimeout = clampToCycleAwaitCeiling(configuredDownloadTimeoutMs, env);
   return {
     enabled: env.TWITCH_VOD_CACHE_ENABLED !== "0",
     allowRemoteFallback: env.TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK === "1",
@@ -57,7 +73,9 @@ export function getTwitchVodCacheConfig(env: NodeJS.ProcessEnv, mediaRoot: strin
     cacheRoot,
     ytDlpBinary: env.YT_DLP_BIN || "yt-dlp",
     ffprobeBinary: env.FFPROBE_BIN || "ffprobe",
-    downloadTimeoutMs: readPositiveNumber(env.TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS, DEFAULT_DOWNLOAD_TIMEOUT_SECONDS) * 1000,
+    downloadTimeoutMs: awaitedDownloadTimeout.effectiveMs,
+    backgroundDownloadTimeoutMs: configuredDownloadTimeoutMs,
+    downloadTimeoutClamped: awaitedDownloadTimeout.clamped,
     retentionMs: readPositiveNumber(env.TWITCH_VOD_CACHE_RETENTION_HOURS, DEFAULT_RETENTION_HOURS) * 60 * 60 * 1000,
     partialMaxAgeMs:
       readPositiveNumber(env.TWITCH_VOD_CACHE_PARTIAL_MAX_AGE_HOURS, DEFAULT_PARTIAL_MAX_AGE_HOURS) * 60 * 60 * 1000,
@@ -109,11 +127,43 @@ export function buildTwitchVodCachePath(asset: Pick<AssetRecord, "sourceId" | "e
   return path.join(cacheRoot, sourceSegment, `${idSegment}.mp4`);
 }
 
+/**
+ * Read-only cache lookup. Does no network work and starts no download, so it is always safe to
+ * await on a reconciliation cycle. Returns "ready" only when a complete, usable cache file exists.
+ */
+export async function peekTwitchVodCache(
+  asset: Pick<AssetRecord, "sourceId" | "externalId" | "path" | "cachePath">,
+  config: TwitchVodCacheConfig
+): Promise<TwitchVodCacheResult> {
+  const cachePath = asset.cachePath || buildTwitchVodCachePath(asset, config.cacheRoot);
+  const cacheUpdatedAt = new Date().toISOString();
+
+  if (await hasUsableFile(cachePath)) {
+    return { status: "ready", cachePath, cacheUpdatedAt, cacheError: "" };
+  }
+
+  return {
+    status: "missing",
+    cachePath,
+    cacheUpdatedAt,
+    cacheError: config.enabled ? "Twitch VOD is not cached yet." : "Twitch VOD cache is disabled."
+  };
+}
+
+export type TwitchVodCacheMode =
+  /** Awaited inside a reconciliation cycle: bounded by the clamped cycle-await timeout. */
+  | "cycle"
+  /** Detached background job: nothing waits on it, so the full configured timeout applies. */
+  | "background";
+
 export async function ensureTwitchVodCache(
   asset: AssetRecord,
   config: TwitchVodCacheConfig,
-  execText: ExecText = execFileText
+  execText: ExecText = execFileText,
+  options: { mode?: TwitchVodCacheMode } = {}
 ): Promise<TwitchVodCacheResult> {
+  const mode: TwitchVodCacheMode = options.mode ?? "cycle";
+  const downloadTimeoutMs = mode === "background" ? config.backgroundDownloadTimeoutMs : config.downloadTimeoutMs;
   const cachePath = asset.cachePath || buildTwitchVodCachePath(asset, config.cacheRoot);
   const existing = await hasUsableFile(cachePath);
   if (existing) {
@@ -134,10 +184,36 @@ export async function ensureTwitchVodCache(
     };
   }
 
-  const tmpPath = `${cachePath}.part-${String(process.pid)}-${Math.random().toString(36).slice(2)}.mp4`;
+  // A background job owns a stable part path so an interrupted download resumes where it stopped.
+  // A per-attempt random path (still used for the bounded cycle path, where nothing is expected to
+  // survive) meant every playout restart re-downloaded a multi-GB VOD from zero — with the process
+  // restarting every ~5 minutes, the download could never finish no matter how long it ran.
+  const tmpPath =
+    mode === "background"
+      ? `${cachePath}.part-resume.mp4`
+      : `${cachePath}.part-${String(process.pid)}-${Math.random().toString(36).slice(2)}.mp4`;
+
+  // Only one process may own the stable resume path at a time; the worker and playout containers
+  // share the media volume and can both request the same asset.
+  let lock: FileLock | null = null;
+  if (mode === "background") {
+    await fs.mkdir(path.dirname(cachePath), { recursive: true });
+    lock = await acquireFileLock(`${cachePath}.lock`);
+    if (!lock) {
+      return {
+        status: "missing",
+        cachePath,
+        cacheUpdatedAt: new Date().toISOString(),
+        cacheError: "Another Twitch VOD cache job already holds this asset."
+      };
+    }
+  }
+
   try {
     await fs.mkdir(path.dirname(cachePath), { recursive: true });
-    await removeTargetTransientCacheFiles(cachePath);
+    if (mode !== "background") {
+      await removeTargetTransientCacheFiles(cachePath);
+    }
     const maintenance = await pruneTwitchVodCache(config, cachePath);
     if (maintenance.freeBytes < config.minFreeBytes) {
       return {
@@ -153,6 +229,7 @@ export async function ensureTwitchVodCache(
       [
         "--no-playlist",
         "--no-warnings",
+        ...(mode === "background" ? ["--continue"] : ["--no-continue"]),
         "--format",
         "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format",
@@ -162,7 +239,7 @@ export async function ensureTwitchVodCache(
         asset.path
       ],
       {
-        timeoutMs: config.downloadTimeoutMs,
+        timeoutMs: downloadTimeoutMs,
         killProcessGroup: true,
         forceKillAfterMs: 5_000,
         maxBufferBytes: 1024 * 1024 * 20
@@ -177,13 +254,19 @@ export async function ensureTwitchVodCache(
       cacheError: ""
     };
   } catch (error) {
-    await fs.rm(tmpPath, { force: true }).catch(() => undefined);
+    // Keep a background job's partial download so the next attempt resumes instead of restarting
+    // from zero. Stale partials are reaped by pruneTwitchVodCache once they exceed partialMaxAgeMs.
+    if (mode !== "background") {
+      await fs.rm(tmpPath, { force: true }).catch(() => undefined);
+    }
     return {
       status: "failed",
       cachePath,
       cacheUpdatedAt: new Date().toISOString(),
       cacheError: error instanceof Error ? error.message : "Unknown Twitch VOD cache failure."
     };
+  } finally {
+    await lock?.release();
   }
 }
 
@@ -342,6 +425,7 @@ function isTransientCacheFile(filePath: string): boolean {
     fileName.endsWith(".part") ||
     fileName.endsWith(".tmp") ||
     fileName.endsWith(".ytdl") ||
+    fileName.endsWith(".lock") ||
     fileName.endsWith(".temp.mp4")
   );
 }
