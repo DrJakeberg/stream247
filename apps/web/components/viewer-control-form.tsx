@@ -106,7 +106,7 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
             influences the running order without bypassing your schedule.
           </div>
           <div className="form-grid" style={{ marginTop: 12 }}>
-            <label className="checkbox-row">
+            <label className="toggle-row">
               <input checked={enabled} onChange={(event) => setEnabled(event.target.checked)} type="checkbox" />
               <span>Enable viewer control</span>
             </label>
@@ -120,7 +120,7 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
             takes effect. A tie leaves the schedule untouched rather than picking for them.
           </div>
           <div className="form-grid" style={{ marginTop: 12 }}>
-            <label className="checkbox-row">
+            <label className="toggle-row">
               <input checked={votingEnabled} onChange={(event) => setVotingEnabled(event.target.checked)} type="checkbox" />
               <span>Enable voting</span>
             </label>
@@ -163,7 +163,7 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
             eligible.
           </div>
           <div className="form-grid" style={{ marginTop: 12 }}>
-            <label className="checkbox-row">
+            <label className="toggle-row">
               <input
                 checked={requestsEnabled}
                 onChange={(event) => setRequestsEnabled(event.target.checked)}
@@ -204,7 +204,7 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
             by a handful of people. A skipped item is held back the same way an operator skip holds it.
           </div>
           <div className="form-grid" style={{ marginTop: 12 }}>
-            <label className="checkbox-row">
+            <label className="toggle-row">
               <input checked={skipEnabled} onChange={(event) => setSkipEnabled(event.target.checked)} type="checkbox" />
               <span>Enable skip votes</span>
             </label>
@@ -245,9 +245,9 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
         </div>
       </div>
 
-      {error ? <p className="error">{error}</p> : null}
+      {error ? <p className="field-error">{error}</p> : null}
 
-      <button disabled={isPending} type="submit">
+      <button className="button" disabled={isPending} type="submit">
         {isPending ? "Saving…" : "Save viewer control"}
       </button>
     </form>
