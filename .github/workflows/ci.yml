@@ -5,6 +5,16 @@ on:
   push:
     branches: [main]
 
+# Runs on main push the same mutable GHCR tags (`latest`), so two of them in flight at once race
+# on the registry: a concurrent push was rejected with "denied: permission_denied ... 403". Only
+# the newest commit's images are wanted anyway, so supersede rather than queue.
+#
+# In-progress runs are *not* cancelled on main: the Release workflow pulls the `main-<sha>`
+# snapshots CI publishes, so a half-finished main run must still complete its push.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   validate:
     runs-on: ubuntu-latest
