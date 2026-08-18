@@ -1,10 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
+import { consumeOAuthState, describeOAuthStateFailure } from "@/lib/server/oauth-state";
 import { exchangeTwitchCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
+import { requireApiRoles } from "@/lib/server/auth";
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const error = request.nextUrl.searchParams.get("error");
+  const presentedState = request.nextUrl.searchParams.get("state");
+
+  // Connecting a broadcaster rewrites the workspace's Twitch identity, and the SSO path derives the
+  // "owner" role from it. This must never be reachable by an unauthenticated caller.
+  const denied = await requireApiRoles(["owner", "admin"]);
+  if (denied) {
+    // The state cookie is single-use; drop it so a rejected attempt cannot be replayed.
+    await consumeOAuthState("broadcaster-connect", presentedState);
+    return denied;
+  }
+
+  const stateVerdict = await consumeOAuthState("broadcaster-connect", presentedState);
+  if (!stateVerdict.ok) {
+    await recordTwitchError(describeOAuthStateFailure(stateVerdict.reason));
+    return NextResponse.redirect(getAbsoluteAppUrl(buildWorkspaceHref("live", "status")));
+  }
 
   if (error) {
     await recordTwitchError(`Twitch authorization failed: ${error}.`);

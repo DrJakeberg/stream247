@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
+import { consumeOAuthState, describeOAuthStateFailure } from "@/lib/server/oauth-state";
 import { setSessionCookie } from "@/lib/server/auth";
 import { exchangeTwitchLoginCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const error = request.nextUrl.searchParams.get("error");
+
+  // This callback mints a session cookie, so it must only honour a flow this workspace started.
+  const stateVerdict = await consumeOAuthState("team-login", request.nextUrl.searchParams.get("state"));
+  if (!stateVerdict.ok) {
+    await recordTwitchError(describeOAuthStateFailure(stateVerdict.reason));
+    return NextResponse.redirect(getAbsoluteAppUrl("/login?error=state"));
+  }
 
   if (error) {
     await recordTwitchError(`Twitch team login failed: ${error}.`);

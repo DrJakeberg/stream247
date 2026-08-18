@@ -1,3 +1,4 @@
+import { issueOAuthState } from "./oauth-state";
 import {
   appendAuditEvent,
   findTeamGrantByLogin,
@@ -43,12 +44,14 @@ export async function getTwitchAuthorizeUrl(
           "channel:read:subscriptions"
         ].join(" ");
 
+  // A random, single-use, cookie-bound state. Previously this was the literal flow name, which no
+  // callback ever verified — see lib/server/oauth-state.ts for what that allowed.
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: kind === "team-login" ? getAbsoluteAppUrl("/api/auth/twitch/callback") : getTwitchRedirectUri(),
     response_type: "code",
     scope,
-    state: kind
+    state: await issueOAuthState(kind)
   });
 
   return `https://id.twitch.tv/oauth2/authorize?${params.toString()}`;
