@@ -1117,8 +1117,21 @@ button.collection-chip {
   border-radius: 0;
 }
 
+/*
+ * The inner field drops its own outline because the wrapper below carries the focus indication —
+ * a ring around an input nested inside an already-bordered box reads as a rendering glitch. The
+ * wrapper rule is what makes that legitimate; without it the field was simply invisible to
+ * keyboard users.
+ */
 .chip-input-field:focus {
   outline: none;
+}
+
+.chip-input:focus-within {
+  border-color: var(--brand);
+  /* Derived from --brand rather than hand-mixed, so the ring follows the brand colour instead of
+     becoming the 160th independent rgba() value in this file. */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
 }
 
 .schedule-timeline {
