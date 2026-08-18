@@ -1,3 +1,4 @@
+export * from "./chat-interaction.js";
 export * from "./overlay-layout.js";
 
 export type ModerationConfig = {
