@@ -232,9 +232,20 @@ export class TwitchChatBridge {
             config: this.moderationConfig
           })
         );
-        void this.onModeratorPresenceCheckIn?.(presenceWindow);
+        void Promise.resolve(this.onModeratorPresenceCheckIn?.(presenceWindow)).catch(() => undefined);
         continue;
       }
+
+      // Command handling runs before the limiter. The limiter bounds how much chat reaches the
+      // on-air overlay and the event log; it must not decide who gets to vote. During a poll
+      // dozens of viewers answer within seconds, and rate-limiting that path would silently
+      // discard most ballots and quietly corrupt the result.
+      void Promise.resolve(
+        this.onChatMessage?.({
+          ...message,
+          createdAt: now.toISOString()
+        })
+      ).catch(() => undefined);
 
       if (!this.limiter.allow(now.getTime())) {
         continue;
@@ -248,11 +259,7 @@ export class TwitchChatBridge {
         createdAt: now.toISOString()
       };
       this.messages.push(event);
-      void this.onChatMessage?.({
-        ...message,
-        createdAt: event.createdAt
-      });
-      void appendEngagementEventRecord(event);
+      void appendEngagementEventRecord(event).catch(() => undefined);
     }
   }
 }
