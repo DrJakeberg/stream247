@@ -37,6 +37,25 @@ four runtime failure modes, all found by an adversarially-verified audit pass ov
 - expire session cookies. The issue timestamp was already inside the signed payload but was never
   checked, so a leaked cookie was valid forever. Default 30 days via `SESSION_MAX_AGE_SECONDS`
   (v1.5.19)
+- stop library uploads escaping `MEDIA_LIBRARY_ROOT`. The subfolder sanitiser kept "." in its
+  allowed character class so ordinary names survive, which also let a ".." segment through
+  untouched: "../../etc" sanitised to itself. Traversal segments are now dropped, backslashes count
+  as separators, and a containment check on the resolved destination backs it up (v1.5.19)
+- rate-limit password login and TOTP verification. Neither had a limit or lockout, so both were
+  unbounded brute-force surfaces; a six-digit TOTP with a +/-1 step window is well within reach
+  unthrottled. Login is keyed on the targeted account and the client, TOTP on the account alone,
+  and a success clears the counter (v1.5.19)
+
+### Changed
+
+- blocks that cross midnight stay on the schedule. Occurrences were built by filtering on the
+  weekday of the queried date alone, so a block scheduled Monday 23:00 for two hours vanished at
+  00:00 and the channel fell out of its programmed pool for the rest of the night. The same block
+  also claimed to be on air on its own morning, because matching compared wall-clock strings.
+  Occurrences now carry the previous day's overrun explicitly and match on minute ranges (v1.5.19)
+- viewer-driven programme control: chat voting on what plays next, `!request` from the released
+  library with per-viewer cooldowns, and threshold-based `!skip`. The domain rules, persistence and
+  worker runtime ship in this release; the playout wiring and admin UI follow (v1.5.19)
 
 ### Fixed
 
