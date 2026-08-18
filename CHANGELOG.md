@@ -53,9 +53,22 @@ four runtime failure modes, all found by an adversarially-verified audit pass ov
   00:00 and the channel fell out of its programmed pool for the rest of the night. The same block
   also claimed to be on air on its own morning, because matching compared wall-clock strings.
   Occurrences now carry the previous day's overrun explicitly and match on minute ranges (v1.5.19)
-- viewer-driven programme control: chat voting on what plays next, `!request` from the released
-  library with per-viewer cooldowns, and threshold-based `!skip`. The domain rules, persistence and
-  worker runtime ship in this release; the playout wiring and admin UI follow (v1.5.19)
+### Added
+
+- **Viewer control**: Twitch chat can steer the programme. A poll opens once per programme item and
+  closes before the boundary, so viewers see the result before it takes effect; `!request` adds a
+  released library item to the queue under a per-viewer cooldown and an outstanding-request cap; and
+  a `!skip` vote needs both a share of active chatters and an absolute floor. The live poll renders
+  in the on-air overlay. Configure it under Studio → Engagement — it ships **disabled**, because
+  enabling it hands programme decisions to anonymous chat (v1.5.19)
+
+  Three properties worth knowing before switching it on:
+  - a vote can only reorder what is already queued, so chat influences the running order without
+    bypassing the schedule
+  - a tie is reported as a tie and leaves the schedule untouched, rather than being broken by
+    candidate order that viewers cannot see
+  - re-voting moves a viewer's ballot instead of adding one, so a tally can never exceed the number
+    of distinct voters
 
 ### Fixed
 
