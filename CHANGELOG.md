@@ -51,9 +51,12 @@ four runtime failure modes, all found by an adversarially-verified audit pass ov
   no incident, no alert and no log entry (v1.5.19)
 - attach an 'error' listener to both spawned ffmpeg processes; a spawn failure was rethrown
   asynchronously as an uncaught exception the caller's try/catch could not see (v1.5.19)
-- return 503 from `/api/health` when persistence is unreachable. It returned 200 unconditionally
-  while the Compose healthcheck only inspects the status code, so the web container reported
-  healthy with Postgres down and every deployment gate built on it was blind (v1.5.19)
+- split liveness from readiness. Every check in the project used `/api/health`, which returned 200
+  unconditionally, so a rollout with Postgres unreachable passed its gates and reported healthy.
+  `/api/health` stays liveness (200 while the process serves — restarting the web container does
+  not fix a dead database and only removes the UI needed to diagnose it), and the new `/api/ready`
+  fails closed with 503 when persistence is unreachable or the workspace was never initialised.
+  `upgrade-rehearsal.sh` now gates on `/api/ready` (v1.5.19)
 - escape operator-configured chat commands and vote tokens before interpolating them into regular
   expressions run against every IRC message; a command containing "(" threw inside the socket data
   handler and took the worker down (v1.5.19)
