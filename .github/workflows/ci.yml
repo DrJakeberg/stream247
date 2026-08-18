@@ -5,15 +5,18 @@ on:
   push:
     branches: [main]
 
-# Runs on main push the same mutable GHCR tags (`latest`), so two of them in flight at once race
-# on the registry: a concurrent push was rejected with "denied: permission_denied ... 403". Only
-# the newest commit's images are wanted anyway, so supersede rather than queue.
+# Runs on main push the same mutable GHCR tags (`latest`), so two in flight at once race on the
+# registry: a concurrent push was rejected with "denied: permission_denied ... 403". Serialising
+# them fixes that.
 #
-# In-progress runs are *not* cancelled on main: the Release workflow pulls the `main-<sha>`
-# snapshots CI publishes, so a half-finished main run must still complete its push.
+# cancel-in-progress is a literal false, not an expression. An expression form here
+# (`${{ github.event_name == 'pull_request' }}`) was evaluated as truthy on push and cancelled a
+# main run before its job even started. That is worse than the race it replaced: a cancelled run
+# publishes no `main-<sha>` snapshot, and the Release workflow waits for exactly that image, so
+# tagging such a commit would block until its timeout and then fail.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   validate:
