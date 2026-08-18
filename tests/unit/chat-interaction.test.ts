@@ -6,6 +6,7 @@ import {
   createDefaultChatInteractionConfig,
   evaluateViewerRequest,
   matchRequestCandidate,
+  normalizeChatInteractionConfig,
   openVoteSession,
   parseChatCommand,
   type ChatInteractionConfig,
@@ -320,5 +321,67 @@ describe("evaluateViewerRequest", () => {
 
   it("is off when the feature is off", () => {
     expect(evaluateViewerRequest({ ...base, config: config({ requestsEnabled: false }) }).reason).toBe("disabled");
+  });
+});
+
+describe("normalizeChatInteractionConfig", () => {
+  it("returns safe defaults for empty input", () => {
+    const normalized = normalizeChatInteractionConfig(null);
+
+    expect(normalized.enabled).toBe(false);
+    expect(normalized.requestCommand).toBe("request");
+    expect(normalized.skipCommand).toBe("skip");
+  });
+
+  it("never lets one viewer skip the programme alone", () => {
+    expect(normalizeChatInteractionConfig({ skipMinimumVotes: 0 }).skipMinimumVotes).toBe(2);
+    expect(normalizeChatInteractionConfig({ skipMinimumVotes: -50 }).skipMinimumVotes).toBe(2);
+    expect(normalizeChatInteractionConfig({ skipThresholdRatio: 0 }).skipThresholdRatio).toBe(0.1);
+  });
+
+  it("never removes request throttling entirely", () => {
+    expect(normalizeChatInteractionConfig({ requestCooldownSeconds: 0 }).requestCooldownSeconds).toBe(30);
+  });
+
+  it("keeps a poll answerable and readable", () => {
+    expect(normalizeChatInteractionConfig({ voteDurationSeconds: 1 }).voteDurationSeconds).toBe(15);
+    expect(normalizeChatInteractionConfig({ voteDurationSeconds: 99_999 }).voteDurationSeconds).toBe(600);
+    expect(normalizeChatInteractionConfig({ voteOptionCount: 1 }).voteOptionCount).toBe(2);
+    expect(normalizeChatInteractionConfig({ voteOptionCount: 40 }).voteOptionCount).toBe(5);
+  });
+
+  it("strips a leading bang and anything untypable from command names", () => {
+    expect(normalizeChatInteractionConfig({ requestCommand: "!Wunsch" }).requestCommand).toBe("wunsch");
+    expect(normalizeChatInteractionConfig({ skipCommand: "sk!p me" }).skipCommand).toBe("skpme");
+  });
+
+  it("refuses a numeric command that would collide with a vote token", () => {
+    expect(normalizeChatInteractionConfig({ requestCommand: "2" }).requestCommand).toBe("request");
+  });
+
+  it("falls back rather than accepting an empty command", () => {
+    expect(normalizeChatInteractionConfig({ skipCommand: "!!!" }).skipCommand).toBe("skip");
+    expect(normalizeChatInteractionConfig({ skipCommand: "   " }).skipCommand).toBe("skip");
+  });
+
+  it("keeps a valid configuration untouched", () => {
+    const input = {
+      enabled: true,
+      votingEnabled: false,
+      requestsEnabled: true,
+      skipEnabled: true,
+      voteDurationSeconds: 90,
+      voteOptionCount: 4,
+      voteMinimumVoters: 10,
+      requestCooldownSeconds: 300,
+      requestQueueLimit: 3,
+      skipThresholdRatio: 0.75,
+      skipMinimumVotes: 8,
+      skipWindowSeconds: 180,
+      requestCommand: "wunsch",
+      skipCommand: "weiter"
+    };
+
+    expect(normalizeChatInteractionConfig(input)).toEqual(input);
   });
 });

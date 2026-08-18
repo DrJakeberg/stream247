@@ -436,3 +436,62 @@ export function evaluateViewerRequest(args: {
 
   return { accepted: true, reason: "", retryAfterSeconds: 0, assetId: match.assetId, title: match.title };
 }
+
+function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Math.round(Number(value));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function normalizeCommandName(value: unknown, fallback: string): string {
+  // Commands are typed by viewers and compared literally. Restricting them to word characters
+  // keeps them typable, keeps them from colliding with the "!<number>" vote tokens, and removes
+  // any question of what a stray character would do downstream.
+  const normalized = String(value ?? "")
+    .trim()
+    .replace(/^!+/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "");
+
+  return normalized && !/^\d+$/.test(normalized) ? normalized.slice(0, 24) : fallback;
+}
+
+/**
+ * Validates operator-supplied viewer-control settings.
+ *
+ * Every bound here is a safety property, not cosmetics: an unbounded option count would let a poll
+ * offer tokens viewers cannot type, a zero cooldown would remove request throttling entirely, and a
+ * zero skip threshold would let a single viewer skip the programme.
+ */
+export function normalizeChatInteractionConfig(
+  input: Partial<ChatInteractionConfig> | null | undefined
+): ChatInteractionConfig {
+  const defaults = createDefaultChatInteractionConfig();
+  const source = input ?? defaults;
+
+  return {
+    enabled: Boolean(source.enabled),
+    votingEnabled: source.votingEnabled === undefined ? defaults.votingEnabled : Boolean(source.votingEnabled),
+    requestsEnabled: source.requestsEnabled === undefined ? defaults.requestsEnabled : Boolean(source.requestsEnabled),
+    skipEnabled: source.skipEnabled === undefined ? defaults.skipEnabled : Boolean(source.skipEnabled),
+    // A poll shorter than 15s is not answerable; longer than 10 minutes outlives most items.
+    voteDurationSeconds: clampInt(source.voteDurationSeconds, defaults.voteDurationSeconds, 15, 600),
+    // At least a choice, at most what fits on the overlay and in a viewer's head.
+    voteOptionCount: clampInt(source.voteOptionCount, defaults.voteOptionCount, 2, 5),
+    voteMinimumVoters: clampInt(source.voteMinimumVoters, defaults.voteMinimumVoters, 1, 1000),
+    // Never 0: that would remove per-viewer request throttling altogether.
+    requestCooldownSeconds: clampInt(source.requestCooldownSeconds, defaults.requestCooldownSeconds, 30, 86_400),
+    requestQueueLimit: clampInt(source.requestQueueLimit, defaults.requestQueueLimit, 1, 50),
+    skipThresholdRatio: Math.max(
+      0.1,
+      Math.min(1, Number.isFinite(Number(source.skipThresholdRatio)) ? Number(source.skipThresholdRatio) : defaults.skipThresholdRatio)
+    ),
+    // Never below 2: one viewer must not be able to skip the programme on their own.
+    skipMinimumVotes: clampInt(source.skipMinimumVotes, defaults.skipMinimumVotes, 2, 1000),
+    skipWindowSeconds: clampInt(source.skipWindowSeconds, defaults.skipWindowSeconds, 30, 3600),
+    requestCommand: normalizeCommandName(source.requestCommand, defaults.requestCommand),
+    skipCommand: normalizeCommandName(source.skipCommand, defaults.skipCommand)
+  };
+}

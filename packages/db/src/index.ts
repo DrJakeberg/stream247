@@ -5115,6 +5115,58 @@ export async function readChatInteractionSettingsRecord(): Promise<ChatInteracti
   };
 }
 
+export async function writeChatInteractionSettingsRecord(
+  settings: ChatInteractionSettingsRecord
+): Promise<void> {
+  await withSerializedStateWrite("writeChatInteractionSettingsRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO chat_interaction_settings (
+          singleton_id, enabled, voting_enabled, requests_enabled, skip_enabled,
+          vote_duration_seconds, vote_option_count, vote_minimum_voters,
+          request_cooldown_seconds, request_queue_limit,
+          skip_threshold_ratio, skip_minimum_votes, skip_window_seconds,
+          request_command, skip_command, updated_at
+        )
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          enabled = EXCLUDED.enabled,
+          voting_enabled = EXCLUDED.voting_enabled,
+          requests_enabled = EXCLUDED.requests_enabled,
+          skip_enabled = EXCLUDED.skip_enabled,
+          vote_duration_seconds = EXCLUDED.vote_duration_seconds,
+          vote_option_count = EXCLUDED.vote_option_count,
+          vote_minimum_voters = EXCLUDED.vote_minimum_voters,
+          request_cooldown_seconds = EXCLUDED.request_cooldown_seconds,
+          request_queue_limit = EXCLUDED.request_queue_limit,
+          skip_threshold_ratio = EXCLUDED.skip_threshold_ratio,
+          skip_minimum_votes = EXCLUDED.skip_minimum_votes,
+          skip_window_seconds = EXCLUDED.skip_window_seconds,
+          request_command = EXCLUDED.request_command,
+          skip_command = EXCLUDED.skip_command,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        settings.enabled,
+        settings.votingEnabled,
+        settings.requestsEnabled,
+        settings.skipEnabled,
+        settings.voteDurationSeconds,
+        settings.voteOptionCount,
+        settings.voteMinimumVoters,
+        settings.requestCooldownSeconds,
+        settings.requestQueueLimit,
+        settings.skipThresholdRatio,
+        settings.skipMinimumVotes,
+        settings.skipWindowSeconds,
+        settings.requestCommand,
+        settings.skipCommand,
+        settings.updatedAt || new Date().toISOString()
+      ]
+    );
+  });
+}
+
 export type ChatVoteOptionRecord = {
   token: string;
   assetId: string;
