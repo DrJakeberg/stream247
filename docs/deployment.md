@@ -21,9 +21,21 @@ Stream247 uses three distinct control surfaces:
 
 - the repo is the source of truth for code, Compose files, scripts, and pinned example image refs
 - Portainer on DT is the deployment control plane that applies stack changes
-- DUT is the validation target for readiness checks, rehearsals, and long soaks
+- DT is the validation/testing environment for readiness checks, rehearsals, long soaks, release candidates, and destructive validation
+- DUT is the production/stable environment running the accepted baseline
 
 Editing the local `docker-compose.yml` or `.env.production.example` does not change production by itself. Production changes happen when the DT Portainer stack is updated and redeployed with the intended image refs.
+
+## Operating Policy (since v1.5.18)
+
+- **v1.5.18 is the accepted production baseline.** DUT runs v1.5.18.
+- v1.5.18 was rolled to DUT directly as an emergency fix under the clause below: v1.5.17 had left
+  the playout container in a restart loop (423 restarts, one every ~5 minutes) with the program
+  pinned to fallback content. See the 1.5.18 entry in `CHANGELOG.md`.
+- **DUT is production/stable.** Do NOT use DUT for experiments, soak tests, release candidates, or risky/destructive validation.
+- **All future testing, release candidates, experiments, and destructive validation happen on DT only.**
+- **DUT may be touched only for** explicit production maintenance, emergency fixes, or an approved final release rollout *after* it has passed validation on DT.
+- Release surface: `v1.5.17` (previous baseline) and `v1.5.18` (current baseline), one Git tag and one GitHub Release each, with matching GHCR package versions per image (`stream247-web/worker/playout`).
 
 ## Deploy Steps
 

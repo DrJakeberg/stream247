@@ -4,6 +4,38 @@
 
 - No unreleased changes currently tracked.
 
+## 1.5.18 - 2026-08-18
+
+Emergency production fix. DUT had been in a playout restart loop for ~38 hours: 423 restarts,
+one every ~5 minutes, with the program pinned to fallback content the whole time.
+
+The boundary-stability work in 1.5.11–1.5.17 assumed an expensive remote resolve stays within
+"~60-120s" (queue-prefetch.ts). That assumption was documented in comments but never enforced in
+code, and production ran with `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS=7200` — 24x the 300s
+loop stall guard. `raceResolveAgainstDeath` did not help, because it only unblocks when the
+covering playout process dies, and that process was healthily playing the fallback.
+
+### Fixed
+
+- take Twitch VOD downloads off the playout reconciliation cycle entirely: cycles now do a
+  read-only cache lookup (`peekTwitchVodCache`) and hand uncached assets to a detached job
+  runner, so an unbounded download can no longer consume the cycle's stall budget (v1.5.18)
+- resume interrupted VOD downloads instead of restarting them: background jobs use a stable part
+  path with `--continue`. The previous per-attempt random path meant a multi-GB VOD restarted
+  from zero on every container restart, so with a 5-minute restart cycle it could never finish
+  no matter how large the configured timeout was (v1.5.18)
+- clamp every timeout awaited on a reconciliation cycle to half the loop stall budget, so an
+  operator-configured value can no longer outlive the watchdog that is supposed to catch it
+  (v1.5.18)
+
+### Added
+
+- `cycle-budget.ts` as the single source of truth for the loop stall budget and the derived
+  ceiling for awaited cycle operations, making the previously implicit timing contract explicit
+  and testable (v1.5.18)
+- advisory file lock with heartbeat and stale-holder takeover, so the worker and playout
+  containers sharing the media volume cannot both write the same resume file (v1.5.18)
+
 ## 1.5.17 - 2026-06-12
 
 Accepted runtime-stable production baseline. A clean 24h DUT soak completed naturally
