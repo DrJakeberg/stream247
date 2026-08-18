@@ -28,7 +28,10 @@ import {
   resolveOverlayScenePresetForQueueKind,
   summarizeLiveBridgeInput,
   type LiveBridgeInputType,
-  toUtcIsoForLocalDateTime
+  toUtcIsoForLocalDateTime,
+  createDefaultChatInteractionConfig,
+  evaluateViewerRequest,
+  type ChatInteractionConfig
 } from "@stream247/core";
 import {
   appendSourceSyncRuns,
@@ -50,7 +53,9 @@ import {
   type AppState,
   type AssetRecord,
   type OutputSettingsRecord,
-  type StreamDestinationRecord
+  type StreamDestinationRecord,
+  readChatInteractionSettingsRecord,
+  writeChatVoteSessionRecord
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
@@ -96,6 +101,7 @@ import {
 } from "./ffmpeg-runtime.js";
 import { clampToCycleAwaitCeiling, getLoopStallTimeoutMs } from "./cycle-budget.js";
 import { VodCacheJobRunner } from "./vod-cache-jobs.js";
+import { ChatControlRuntime, type ChatControlEffect } from "./chat-control.js";
 import {
   loadSceneRendererFonts,
   renderSceneFrame,
@@ -175,6 +181,10 @@ const PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS = (() => {
   return clampToCycleAwaitCeiling(configured, process.env).effectiveMs;
 })();
 const engagementGameTracker = new EngagementGameTracker();
+// Owns the live vote and skip tallies. See chat-control.ts.
+const chatControl = new ChatControlRuntime({
+  onEvent: (event, fields) => logRuntimeEvent(event, fields)
+});
 const twitchChatBridge = new TwitchChatBridge({
   async onModeratorPresenceCheckIn(window) {
     await appendPresenceWindowRecord({
@@ -196,8 +206,27 @@ const twitchChatBridge = new TwitchChatBridge({
       actor: message.actor,
       createdAt: message.createdAt
     });
+
+    // Synchronous and non-throwing by contract: this runs inside the IRC socket data handler.
+    // The heavier consequences (promoting a vote winner, queueing a request, forcing a boundary)
+    // are applied by the worker cycle, which reads the runtime's state.
+    const effect = chatControl.handleMessage({
+      actor: message.actor,
+      message: message.message,
+      currentAssetId: latestPlayoutAssetId,
+      config: latestChatInteractionConfig
+    });
+
+    if (effect.kind === "skip-passed" || effect.kind === "request") {
+      pendingChatEffects.push(effect);
+    }
   }
 });
+// Latest values the IRC handler needs but cannot fetch itself, refreshed by the worker cycle.
+let latestPlayoutAssetId = "";
+let latestChatInteractionConfig = createDefaultChatInteractionConfig();
+// Effects the socket handler cannot apply itself; drained by the worker cycle.
+const pendingChatEffects: ChatControlEffect[] = [];
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
 const PLAYOUT_RECONNECT_CONFIG = getPlayoutReconnectConfig(process.env);
@@ -5194,6 +5223,159 @@ async function reconcileEngagementGame(): Promise<void> {
   await updateEngagementGameRuntimeRecord(snapshot);
 }
 
+// Tracks which asset the last vote was opened against, so a poll is opened once per programme
+// item rather than every cycle.
+let lastVotedAssetId = "";
+// How long a chat-skipped item is held out of selection, matching the operator skip default.
+const CHAT_SKIP_HOLD_MINUTES = 60;
+
+/**
+ * Drives the viewer vote from the worker cycle.
+ *
+ * The poll opens shortly after an item goes on air and settles well before the boundary, so the
+ * result is visible to viewers before it takes effect. Candidates come from the upcoming queue, so
+ * a vote can only ever reorder what was already scheduled to play -- chat steers the programme, it
+ * does not bypass it.
+ *
+ * The tally lives in the ChatControlRuntime and is flushed here only when it changed, because
+ * state writes serialise on a global lock and a busy poll would otherwise hammer it.
+ */
+/**
+ * Applies the effects the IRC handler could only record: a passed skip vote and viewer requests.
+ *
+ * Requests are resolved against assets explicitly released for viewer requests, with the requester's
+ * cooldown and the outstanding-request cap enforced. A rejection is recorded with its reason rather
+ * than dropped, so an operator can see why chat did not get what it asked for.
+ */
+async function drainChatEffects(state: AppState, config: ChatInteractionConfig): Promise<void> {
+  const effects = pendingChatEffects.splice(0, pendingChatEffects.length);
+  if (effects.length === 0) {
+    return;
+  }
+
+  for (const effect of effects) {
+    if (effect.kind === "skip-passed") {
+      const now = new Date().toISOString();
+      logRuntimeEvent("chat.skip.applied", { assetId: effect.assetId });
+      await appendAuditEvent("chat.skip", "Chat voted to skip the current item.");
+      // Exactly what the operator skip does (lib/server/broadcast.ts): hold the asset out of
+      // selection for a while and restart playout, rather than inventing a second skip path that
+      // could drift from it.
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        status: "recovering",
+        restartRequestedAt: now,
+        heartbeatAt: now,
+        skipAssetId: effect.assetId,
+        skipUntil: new Date(Date.now() + CHAT_SKIP_HOLD_MINUTES * 60_000).toISOString(),
+        message: "Skipped by chat vote."
+      }));
+      chatControl.clearSkipVote();
+      continue;
+    }
+
+    if (effect.kind !== "request") {
+      continue;
+    }
+
+    const verdict = evaluateViewerRequest({
+      actor: effect.actor,
+      query: effect.query,
+      candidates: state.assets.map((asset) => ({
+        assetId: asset.id,
+        title: buildAssetDisplayTitle(asset) || asset.id,
+        // Only assets that are ready and not blocked may be requested.
+        requestable: asset.status === "ready" && !isAssetBlockedForAutomaticSelection(asset)
+      })),
+      recentRequests: [],
+      queuedRequestCount: 0,
+      queuedAssetIds: state.playout.queuedAssetIds,
+      config,
+      now: new Date()
+    });
+
+    if (!verdict.accepted) {
+      logRuntimeEvent("chat.request.rejected", { actor: effect.actor, query: effect.query, reason: verdict.reason });
+      continue;
+    }
+
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      queuedAssetIds: [...playout.queuedAssetIds, verdict.assetId]
+    }));
+    logRuntimeEvent("chat.request.queued", { actor: effect.actor, assetId: verdict.assetId });
+    await appendAuditEvent("chat.request", `${effect.actor} requested "${verdict.title}" from chat.`);
+  }
+}
+
+async function reconcileChatInteraction(): Promise<void> {
+  const config = await readChatInteractionSettingsRecord();
+  latestChatInteractionConfig = config;
+
+  if (!config.enabled) {
+    if (chatControl.consumeDirty()) {
+      await writeChatVoteSessionRecord({ status: "closed", updatedAt: new Date().toISOString() });
+    }
+    return;
+  }
+
+  const state = await readAppState();
+
+  const outcome = chatControl.settleVoteIfDue(config);
+  if (outcome?.winnerAssetId) {
+    // Promote the winner to the front of the queue. Everything else keeps its order, so a vote
+    // reorders the queue rather than replacing it.
+    const remaining = state.playout.queuedAssetIds.filter((id) => id !== outcome.winnerAssetId);
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      queuedAssetIds: [outcome.winnerAssetId, ...remaining]
+    }));
+    await appendAuditEvent(
+      "chat.vote.decided",
+      `Chat voted for "${outcome.winnerTitle}" (${String(outcome.totalVotes)} votes from ${String(outcome.voterCount)} viewers).`
+    );
+  } else if (outcome) {
+    await appendAuditEvent("chat.vote.undecided", `Chat vote closed without a decision (${outcome.reason}).`);
+  }
+
+  const currentAssetId = state.playout.currentAssetId;
+  latestPlayoutAssetId = currentAssetId;
+
+  await drainChatEffects(state, config);
+
+  const canOpenVote =
+    config.votingEnabled &&
+    Boolean(currentAssetId) &&
+    currentAssetId !== lastVotedAssetId &&
+    !chatControl.getSession();
+
+  if (canOpenVote) {
+    const candidates = state.playout.queuedAssetIds
+      .map((id) => state.assets.find((asset) => asset.id === id))
+      .filter((asset): asset is AssetRecord => Boolean(asset))
+      .slice(0, Math.max(2, config.voteOptionCount))
+      .map((asset) => ({ assetId: asset.id, title: buildAssetDisplayTitle(asset) || asset.id }));
+
+    if (chatControl.openVote({ id: `vote-${currentAssetId}-${String(Date.now())}`, candidates, config })) {
+      lastVotedAssetId = currentAssetId;
+    }
+  }
+
+  if (chatControl.consumeDirty()) {
+    const session = chatControl.getSession();
+    await writeChatVoteSessionRecord({
+      id: session?.id ?? "",
+      status: session?.status ?? "closed",
+      openedAt: session?.openedAt ?? "",
+      closesAt: session?.closesAt ?? "",
+      options: session?.options ?? [],
+      ballots: session?.ballots ?? {},
+      winnerAssetId: chatControl.getLastOutcome()?.winnerAssetId ?? "",
+      updatedAt: new Date().toISOString()
+    });
+  }
+}
+
 async function runWorkerCycle(): Promise<void> {
   await syncDestinations();
   await syncLocalMediaLibrary();
@@ -5205,6 +5387,7 @@ async function runWorkerCycle(): Promise<void> {
   await reconcileTwitchEventSub();
   await twitchChatBridge.sync(await readAppState(), process.env);
   await reconcileEngagementGame();
+  await reconcileChatInteraction();
   await appendAuditEvent("worker.cycle", "Worker reconciliation cycle completed.");
 }
 

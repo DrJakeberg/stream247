@@ -5062,6 +5062,59 @@ export async function updateEngagementGameRuntimeRecord(runtime: Partial<Engagem
   });
 }
 
+export type ChatInteractionSettingsRecord = {
+  enabled: boolean;
+  votingEnabled: boolean;
+  requestsEnabled: boolean;
+  skipEnabled: boolean;
+  voteDurationSeconds: number;
+  voteOptionCount: number;
+  voteMinimumVoters: number;
+  requestCooldownSeconds: number;
+  requestQueueLimit: number;
+  skipThresholdRatio: number;
+  skipMinimumVotes: number;
+  skipWindowSeconds: number;
+  requestCommand: string;
+  skipCommand: string;
+  updatedAt: string;
+};
+
+/**
+ * Viewer-control settings. Defaults are deliberately off: this hands programme control to
+ * anonymous chat, so it must be switched on knowingly rather than arriving enabled after an
+ * upgrade.
+ */
+export async function readChatInteractionSettingsRecord(): Promise<ChatInteractionSettingsRecord> {
+  const result = await getPool().query<Record<string, unknown>>(
+    "SELECT * FROM chat_interaction_settings WHERE singleton_id = 1"
+  );
+  const row = result.rows[0];
+
+  const num = (value: unknown, fallback: number) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  return {
+    enabled: row ? Boolean(row.enabled) : false,
+    votingEnabled: row ? Boolean(row.voting_enabled) : true,
+    requestsEnabled: row ? Boolean(row.requests_enabled) : true,
+    skipEnabled: row ? Boolean(row.skip_enabled) : true,
+    voteDurationSeconds: num(row?.vote_duration_seconds, 60),
+    voteOptionCount: num(row?.vote_option_count, 3),
+    voteMinimumVoters: num(row?.vote_minimum_voters, 3),
+    requestCooldownSeconds: num(row?.request_cooldown_seconds, 600),
+    requestQueueLimit: num(row?.request_queue_limit, 5),
+    skipThresholdRatio: num(row?.skip_threshold_ratio, 0.6),
+    skipMinimumVotes: num(row?.skip_minimum_votes, 5),
+    skipWindowSeconds: num(row?.skip_window_seconds, 120),
+    requestCommand: String(row?.request_command ?? "request"),
+    skipCommand: String(row?.skip_command ?? "skip"),
+    updatedAt: String(row?.updated_at ?? "")
+  };
+}
+
 export type ChatVoteOptionRecord = {
   token: string;
   assetId: string;
