@@ -9,6 +9,10 @@ import {
 import type { AppState, EngagementEventRecord } from "@stream247/db";
 import { appendEngagementEventRecord } from "@stream247/db";
 
+// Twitch pings roughly every five minutes; silence past six means the connection is gone even if
+// the socket still reports itself open.
+export const CHAT_IDLE_TIMEOUT_MS = 6 * 60_000;
+
 export type TwitchChatMessage = {
   id: string;
   actor: string;
@@ -129,6 +133,8 @@ export class TwitchChatBridge {
   private readonly messages = createRingBuffer<EngagementEventRecord>(50);
   private limiter = createChatRateLimiter(30);
   private moderationConfig: AppState["moderation"] = createDefaultModerationConfig();
+  /** Last time the socket produced anything; 0 while never connected. */
+  private lastActivityAt = 0;
   private readonly onModeratorPresenceCheckIn?: TwitchChatBridgeOptions["onModeratorPresenceCheckIn"];
   private readonly onChatMessage?: TwitchChatBridgeOptions["onChatMessage"];
 
@@ -151,7 +157,7 @@ export class TwitchChatBridge {
       return;
     }
 
-    if (this.socket && this.channel === channel && !this.socket.destroyed) {
+    if (this.socket && this.channel === channel && !this.socket.destroyed && !this.isConnectionStale()) {
       return;
     }
 
@@ -167,7 +173,20 @@ export class TwitchChatBridge {
     });
 
     this.socket.setEncoding("utf8");
+    this.lastActivityAt = Date.now();
+
+    // Twitch sends a PING roughly every five minutes, so silence well past that means the
+    // connection is gone even though the socket still looks open. Without this a half-open
+    // connection -- a NAT timeout, a silent drop -- was never noticed: sync() only reconnected on
+    // a *destroyed* socket, so chat stayed dead until the process restarted.
+    this.socket.setKeepAlive(true, 30_000);
+    this.socket.setTimeout(CHAT_IDLE_TIMEOUT_MS, () => {
+      void appendChatStatus("disconnected", "idle-timeout");
+      this.socket?.destroy();
+    });
+
     this.socket.on("data", (chunk) => {
+      this.lastActivityAt = Date.now();
       this.handleChunk(String(chunk));
     });
     this.socket.on("error", () => {
@@ -176,6 +195,14 @@ export class TwitchChatBridge {
     this.socket.on("close", () => {
       void appendChatStatus("disconnected", "disconnected");
     });
+  }
+
+  /**
+   * True when the socket looks open but has produced nothing for longer than Twitch's own ping
+   * interval. The next sync() then tears it down and reconnects.
+   */
+  private isConnectionStale(nowMs = Date.now()): boolean {
+    return this.lastActivityAt > 0 && nowMs - this.lastActivityAt > CHAT_IDLE_TIMEOUT_MS;
   }
 
   async disconnect(reason: string): Promise<void> {

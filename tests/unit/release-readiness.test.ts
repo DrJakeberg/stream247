@@ -348,10 +348,12 @@ describe("release readiness files", () => {
 
   it("publishes the already-smoke-tested main snapshot images instead of rebuilding release tags", () => {
     const workflow = readFileSync(releaseWorkflowPath, "utf8");
+    // The snapshots are pulled through wait_for_image, which retries until the CI run for this
+    // commit has published them; a plain docker pull raced CI and failed the v1.5.18 release.
     const sourceSha = workflow.indexOf('SOURCE_SHA="${GITHUB_SHA::7}"');
-    const webCandidatePull = workflow.indexOf('docker pull "ghcr.io/drjakeberg/stream247-web:main-${SOURCE_SHA}"');
-    const workerCandidatePull = workflow.indexOf('docker pull "ghcr.io/drjakeberg/stream247-worker:main-${SOURCE_SHA}"');
-    const playoutCandidatePull = workflow.indexOf('docker pull "ghcr.io/drjakeberg/stream247-playout:main-${SOURCE_SHA}"');
+    const webCandidatePull = workflow.indexOf('wait_for_image "ghcr.io/drjakeberg/stream247-web:main-${SOURCE_SHA}"');
+    const workerCandidatePull = workflow.indexOf('wait_for_image "ghcr.io/drjakeberg/stream247-worker:main-${SOURCE_SHA}"');
+    const playoutCandidatePull = workflow.indexOf('wait_for_image "ghcr.io/drjakeberg/stream247-playout:main-${SOURCE_SHA}"');
     const webSmoke = workflow.indexOf("./docker/smoke-test.sh stream247-web:release-candidate");
     const composeSmoke = workflow.indexOf(
       "STREAM247_FRESH_COMPOSE_WEB_IMAGE=stream247-web:release-candidate STREAM247_FRESH_COMPOSE_WORKER_IMAGE=stream247-worker:release-candidate STREAM247_FRESH_COMPOSE_PLAYOUT_IMAGE=stream247-playout:release-candidate pnpm test:fresh-compose"
