@@ -879,9 +879,16 @@ describe("ops state helpers", () => {
       scheduleBlocks: [
         {
           id: "block-overnight",
+          // Tuesday 23:00 for two hours, i.e. it runs into Wednesday 01:00. The system time below
+          // is Wednesday 00:30, so this is the block genuinely on air.
+          //
+          // This fixture used to put the block on Wednesday itself and still expect it to be
+          // current at Wednesday 00:30 — 23 hours before it starts. That passed only because
+          // matching compared wall-clock strings, which cannot tell a wrapping block's evening
+          // from its own morning.
           title: "Overnight Replay",
           categoryName: "Archive",
-          dayOfWeek: 3,
+          dayOfWeek: 2,
           startMinuteOfDay: 23 * 60,
           durationMinutes: 120,
           showId: "show-1",

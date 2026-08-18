@@ -285,9 +285,12 @@ describe("schedule preview", () => {
       blocks: [
         {
           id: "overnight",
+          // Tuesday 23:00 for two hours, so it is genuinely on air at Wednesday 00:30 and reaches
+          // this date as a carry-over. Previously this block sat on Wednesday itself and was still
+          // expected to be current at Wednesday 00:30, 23 hours before it starts.
           title: "Overnight Replay",
           categoryName: "Archive",
-          dayOfWeek: 3,
+          dayOfWeek: 2,
           startMinuteOfDay: 23 * 60,
           durationMinutes: 120,
           poolId: "pool-overnight",
