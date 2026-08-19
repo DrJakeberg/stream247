@@ -67,7 +67,14 @@ export class VodCacheJobRunner {
    * entirely.
    */
   getPendingAssetIds(): string[] {
-    return [...new Set([...this.jobs.keys(), ...this.queue.map((asset) => asset.id)])];
+    // Filtered on state, not on presence in the map: finished jobs stay there as history, so reading
+    // the keys raw reports every asset ever downloaded. The cache eviction keeps whatever this
+    // returns, which would have pinned the entire cache forever and quietly cancelled the whole
+    // point of releasing a VOD once it has been watched.
+    const active = [...this.jobs.entries()]
+      .filter(([, job]) => job.state === "queued" || job.state === "running")
+      .map(([assetId]) => assetId);
+    return [...new Set([...active, ...this.queue.map((asset) => asset.id)])];
   }
 
   /**

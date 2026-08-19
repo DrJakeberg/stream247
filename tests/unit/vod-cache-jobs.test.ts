@@ -189,6 +189,28 @@ describe("what the runner still owes", () => {
     expect(pending).toEqual(expect.arrayContaining(["a", "b"]));
   });
 
+  it("stops reporting an asset once its download has finished", async () => {
+    // The map keeps finished jobs as history. Reading its keys raw pinned every asset ever
+    // downloaded into the eviction keep list, so nothing was ever released — the exact behaviour
+    // the cache policy exists to provide.
+    const runner = new VodCacheJobRunner({
+      ensureCache: async () => ({
+        status: "ready" as const,
+        cachePath: "/c/v1.mp4",
+        cacheUpdatedAt: "",
+        cacheError: "" as const
+      }),
+      onResult: async () => undefined
+    });
+
+    runner.request(createAsset("v1"), createConfig());
+    while (runner.isPending("v1")) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    expect(runner.getPendingAssetIds()).toEqual([]);
+  });
+
   it("reports nothing when idle", () => {
     const runner = new VodCacheJobRunner({
       ensureCache: async () => ({ status: "ready" as const, cachePath: "/c/a.mp4", cacheUpdatedAt: "", cacheError: "" as const }),
