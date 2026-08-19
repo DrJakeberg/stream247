@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { abortableDelay } from "./abortable-delay.js";
 import nodemailer from "nodemailer";
 import path from "node:path";
 import type { Writable } from "node:stream";
@@ -1053,18 +1054,7 @@ function startSceneRendererLoop(
   // declared at 1fps, and playout produced 30s of video per minute of wall clock.
   const writeIntervalMs = Math.max(100, Math.floor(ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS / 2));
 
-  const sleep = (ms: number) =>
-    new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, ms);
-      controller.signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer);
-          resolve();
-        },
-        { once: true }
-      );
-    });
+  const sleep = (ms: number) => abortableDelay(ms, controller.signal);
 
   void (async () => {
     while (!controller.signal.aborted && !targetPipe.destroyed) {
@@ -1081,6 +1071,11 @@ function startSceneRendererLoop(
         break;
       }
     }
+
+    // Stopping the writer has to stop the renderer with it. The writer also leaves this loop on a
+    // dead pipe, and the module-level handle is cleared below -- without this abort the renderer
+    // would keep rasterising frames nobody reads, unreachable by stopSceneRendererLoop().
+    controller.abort();
 
     if (!targetPipe.destroyed) {
       targetPipe.end();
