@@ -91,8 +91,28 @@ wget -qO- "http://127.0.0.1:${PORT}/api/system/readiness" >/dev/null
 
 # E2E_SPECS selects which specs run against this stack (default: the admin smoke).
 # E2E_PLAYWRIGHT_ARGS passes flags through, e.g. --update-snapshots for the design baseline.
-PLAYWRIGHT_BASE_URL="http://127.0.0.1:${PORT}" \
-E2E_OWNER_EMAIL="${E2E_OWNER_EMAIL:-owner@example.com}" \
-E2E_OWNER_PASSWORD="${E2E_OWNER_PASSWORD:-stream247-owner-pass}" \
-E2E_SECONDARY_OUTPUT_ROOT="/tmp/stream-output" \
-pnpm dlx @playwright/test@1.56.1 test ${E2E_SPECS:-tests/e2e/admin-smoke.spec.ts} --config=playwright.config.ts --reporter=line ${E2E_PLAYWRIGHT_ARGS:-}
+#
+# E2E_PLAYWRIGHT_DOCKER=1 runs the suite inside the official Playwright image. Pixel comparisons
+# only mean something when the renderer is identical, and a baseline captured on a developer
+# machine does not match a GitHub runner even at the same Chromium version, because the installed
+# fonts and fontconfig differ — 23 of 24 snapshots differed on exactly that. The container makes
+# both environments the same by construction, so snapshots become portable and can be committed.
+# The image ships the browsers but not the npm package, so the run uses the workspace install of
+# @playwright/test (a devDependency) with PLAYWRIGHT_BROWSERS_PATH pointing at the image browsers.
+export PLAYWRIGHT_BASE_URL="http://127.0.0.1:${PORT}"
+export E2E_OWNER_EMAIL="${E2E_OWNER_EMAIL:-owner@example.com}"
+export E2E_OWNER_PASSWORD="${E2E_OWNER_PASSWORD:-stream247-owner-pass}"
+export E2E_SECONDARY_OUTPUT_ROOT="/tmp/stream-output"
+
+if [ "${E2E_PLAYWRIGHT_DOCKER:-0}" = "1" ]; then
+  docker run --rm --network host \
+    -v "$WORKDIR:$WORKDIR" -w "$WORKDIR" \
+    -e PLAYWRIGHT_BASE_URL -e E2E_OWNER_EMAIL -e E2E_OWNER_PASSWORD -e E2E_SECONDARY_OUTPUT_ROOT \
+    -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    "${E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.56.1-noble}" \
+    ./node_modules/.bin/playwright test ${E2E_SPECS:-tests/e2e/admin-smoke.spec.ts} \
+      --config=playwright.config.ts --reporter=line ${E2E_PLAYWRIGHT_ARGS:-}
+else
+  pnpm dlx @playwright/test@1.56.1 test ${E2E_SPECS:-tests/e2e/admin-smoke.spec.ts} \
+    --config=playwright.config.ts --reporter=line ${E2E_PLAYWRIGHT_ARGS:-}
+fi

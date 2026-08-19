@@ -26,11 +26,11 @@
     "release:rehearse": "./scripts/upgrade-rehearsal.sh",
     "soak:monitor": "./scripts/soak-monitor.sh",
     "lint:css-tokens": "./scripts/css-token-lint.sh",
-    "test:design-baseline": "docker build -f docker/web.Dockerfile -t stream247-web:test . && docker build -f docker/worker.Dockerfile -t stream247-worker:test . && E2E_SPECS=tests/e2e/design-baseline.spec.ts bash ./scripts/e2e-smoke.sh",
-    "test:design-baseline:update": "docker build -f docker/web.Dockerfile -t stream247-web:test . && docker build -f docker/worker.Dockerfile -t stream247-worker:test . && E2E_SPECS=tests/e2e/design-baseline.spec.ts E2E_PLAYWRIGHT_ARGS=--update-snapshots bash ./scripts/e2e-smoke.sh",
-    "test:design-baseline:ci": "STREAM247_E2E_PORT=3005 E2E_SPECS=tests/e2e/design-baseline.spec.ts bash ./scripts/e2e-smoke.sh"
+    "test:design-baseline": "docker build -f docker/web.Dockerfile -t stream247-web:test . && ./scripts/design-baseline.sh",
+    "test:design-baseline:update": "docker build -f docker/web.Dockerfile -t stream247-web:test . && ./scripts/design-baseline.sh --update"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

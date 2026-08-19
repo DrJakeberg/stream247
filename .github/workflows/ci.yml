@@ -74,10 +74,11 @@ jobs:
       - run: pnpm test:runtime-parity
       - run: pnpm dlx @playwright/test@1.56.1 install --with-deps chromium
       - run: pnpm test:e2e:smoke
-      # Its own stack, deliberately. admin-smoke enables two-factor auth on the owner account, so
-      # any spec signing in after it in the same stack is met with a 2FA challenge and never
-      # reaches the workspace. Sharing one bring-up between them saved a minute and cost 23 tests.
-      - run: pnpm test:design-baseline:ci
+      # Its own stack, deliberately, for two independent reasons: admin-smoke enables two-factor
+      # auth on the owner account, so any spec signing in after it never reaches the workspace; and
+      # the visual baseline needs the runtime containers stopped so nothing rewrites readiness
+      # mid-screenshot. Sharing one bring-up saved a minute and cost 23 tests.
+      - run: ./scripts/design-baseline.sh
       - run: chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:test
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
