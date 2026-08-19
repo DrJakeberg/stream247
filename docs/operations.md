@@ -79,6 +79,8 @@
   - `TWITCH_VOD_CACHE_PARTIAL_MAX_AGE_HOURS`
   - `TWITCH_VOD_CACHE_MAX_BYTES`
   - `TWITCH_VOD_CACHE_MIN_FREE_BYTES`
+  - `TWITCH_VOD_CACHE_LIMIT_RATE` — caps download bandwidth (yt-dlp notation, e.g. `8M`). Unset means
+    unlimited, which lets a background download saturate the same line the uplink pushes through.
   - `TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS`
 - keep remote Twitch fallback disabled unless you intentionally accept direct remote VOD playback risk
 - confirm fallback assets exist

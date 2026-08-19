@@ -31,6 +31,14 @@ export type TwitchVodCacheConfig = {
   maxCacheBytes: number;
   minFreeBytes: number;
   failureCooldownMs: number;
+  /**
+   * Bandwidth ceiling handed to yt-dlp, in yt-dlp's own notation (e.g. "8M"), or "" for unlimited.
+   *
+   * A background job left unbounded takes the whole line: this cache was measured pulling
+   * 145 Mbit/s on a host whose job is to push a live stream out. Capping it keeps caching a
+   * background activity rather than something that competes with playout for the uplink.
+   */
+  limitRate: string;
 };
 
 export type TwitchVodCacheResult =
@@ -82,8 +90,22 @@ export function getTwitchVodCacheConfig(env: NodeJS.ProcessEnv, mediaRoot: strin
     maxCacheBytes: readPositiveNumber(env.TWITCH_VOD_CACHE_MAX_BYTES, DEFAULT_MAX_CACHE_BYTES),
     minFreeBytes: readPositiveNumber(env.TWITCH_VOD_CACHE_MIN_FREE_BYTES, DEFAULT_MIN_FREE_BYTES),
     failureCooldownMs:
-      readPositiveNumber(env.TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS, DEFAULT_FAILURE_COOLDOWN_SECONDS) * 1000
+      readPositiveNumber(env.TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS, DEFAULT_FAILURE_COOLDOWN_SECONDS) * 1000,
+    limitRate: normalizeLimitRate(env.TWITCH_VOD_CACHE_LIMIT_RATE)
   };
+}
+
+/**
+ * Accepts yt-dlp's rate notation (a number with an optional K/M/G suffix) and rejects anything else
+ * rather than passing it through, since a malformed value would make yt-dlp exit and turn a
+ * throttling setting into a cache that never downloads. "0" and "" both mean unlimited.
+ */
+export function normalizeLimitRate(value: string | undefined): string {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed || trimmed === "0") {
+    return "";
+  }
+  return /^\d+(\.\d+)?[KMG]?$/i.test(trimmed) ? trimmed : "";
 }
 
 export function isInternalMediaCachePath(filePath: string, mediaRoot: string): boolean {
@@ -230,6 +252,7 @@ export async function ensureTwitchVodCache(
         "--no-playlist",
         "--no-warnings",
         ...(mode === "background" ? ["--continue"] : ["--no-continue"]),
+        ...(config.limitRate ? ["--limit-rate", config.limitRate] : []),
         "--format",
         "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format",
