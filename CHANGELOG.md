@@ -4,6 +4,53 @@
 
 - No unreleased changes currently tracked.
 
+## 1.5.21 - 2026-08-19
+
+Three production failures found by watching the 1.5.20 channel, plus what an adversarial review of
+the first fix turned up.
+
+### Fixed
+
+- stop the on-air overlay throttling the encode to half real time. ffmpeg is told the scene pipe
+  delivers 1fps and the `overlay` filter cannot emit a frame until both of its inputs have one, so
+  a writer that slept the 2000ms render interval between frames paced the *entire* encode, not just
+  the overlay: playout produced 30 seconds of programme per minute of wall clock and the channel
+  fell steadily further behind. Writing and rasterising are now independent, and the writer paces
+  against the wall clock. Measured on the production channel afterwards: 90 segments in 180s, 100.0%
+  of real time (v1.5.21)
+- stop scene loop teardown from killing the worker. The fd-3 pipe had no `error` listener — the
+  drain wait supplied one by accident — and teardown aborts the loop and SIGTERMs ffmpeg in the same
+  turn, so the pipe lost its reader with nothing listening. An unhandled stream error is an uncaught
+  exception, which this process answers with `exit(1)`, at every ordinary asset boundary. Reproduced
+  against real ffmpeg: 3/3 runs died with ECONNRESET, 3/3 survive with the listener (v1.5.21)
+- keep the scene renderer alive when its own error path fails. The incident write inside the
+  handler goes through the same database whose failure would have put it there, so one Postgres blip
+  could kill the loop and freeze the lower third for the rest of the run with no incident raised
+  (v1.5.21)
+- detect an uplink that is running but no longer encoding. ffmpeg stayed alive at 0.02% CPU, emitted
+  450 timestamp discontinuities a minute and handed audio and video opposite ~117s offsets, so the
+  tracks audibly drifted apart while every destination still reported `ready` — process liveness
+  cannot tell "running" from "working". The supervisor now watches ffmpeg's own `out_time` and
+  restarts through the unplanned-stop path, so it lands in the restart tally instead of being
+  absorbed silently (v1.5.21)
+
+### Added
+
+- `TWITCH_VOD_CACHE_LIMIT_RATE` caps cache download bandwidth. The cache was measured pulling
+  145 Mbit/s on a host whose job is pushing a live stream out. Defaults to unlimited, since the right
+  number depends on the link (v1.5.21)
+- `UPLINK_STALL_TIMEOUT_MS` / `UPLINK_STALL_GRACE_MS` tune the encoder stall verdict. Watch for
+  `uplink.encoder_stall.restart` and `uplink.encoder.no_progress` (v1.5.21)
+
+### Operations
+
+- the overlay's staleness is bounded by the writer's lead, not by buffer sizes. `-thread_queue_size`
+  cannot provide that bound: frames queue in Node's stream buffer and the OS pipe long before
+  ffmpeg's own queue, and the more cheaply a transparent lower third compresses, the deeper that
+  backlog runs.
+- an uplink stall is only blamed on the uplink when the program feed is `fresh`. Otherwise a playout
+  outage would become an uplink restart loop lasting exactly as long as the outage.
+
 ## 1.5.20 - 2026-08-19
 
 Follow-up to the 1.5.19 rollout, from watching it run in production.
