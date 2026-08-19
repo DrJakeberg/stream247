@@ -1601,6 +1601,44 @@ function createInitialSeedState(): AppState {
   };
 }
 
+/**
+ * Best-effort connector kind for a source record that predates the field.
+ *
+ * Guesses from the human-readable type rather than defaulting everything to the local library,
+ * because mislabelling a Twitch or YouTube source as local would make the worker try to scan it
+ * off disk. Falls back to the same value as the column default.
+ */
+/**
+ * Fills in the source fields the database requires but older records may not carry.
+ *
+ * `connector_kind` is NOT NULL and an explicit null bypasses the column default, so a legacy record
+ * without it aborted the first state write and left persistence in "error" permanently — the
+ * workspace could not be bootstrapped at all.
+ */
+export function normalizeSourceRecords(sources: SourceRecord[]): SourceRecord[] {
+  return sources.map((source) => ({
+    ...source,
+    enabled: source.enabled ?? true,
+    connectorKind: source.connectorKind ?? inferConnectorKind(source)
+  }));
+}
+
+function inferConnectorKind(source: Partial<SourceRecord>): SourceRecord["connectorKind"] {
+  const haystack = `${source.type ?? ""} ${source.name ?? ""}`.toLowerCase();
+
+  if (haystack.includes("twitch")) {
+    return haystack.includes("channel") ? "twitch-channel" : "twitch-vod";
+  }
+  if (haystack.includes("youtube")) {
+    return haystack.includes("channel") ? "youtube-channel" : "youtube-playlist";
+  }
+  if (haystack.includes("url") || haystack.includes("direct")) {
+    return "direct-media";
+  }
+
+  return "local-library";
+}
+
 function normalizeState(state: AppState): AppState {
   const defaults = defaultState();
   const localOwnerUser = state.users.find((user) => user.role === "owner" && user.authProvider === "local");
@@ -1774,12 +1812,7 @@ function normalizeState(state: AppState): AppState {
               : (((block as ScheduleBlockRecord & { startHour?: number }).startHour ?? 0) % 24) * 60
         }))
       : [],
-    sources: Array.isArray(state.sources)
-      ? dedupeById(state.sources).map((source) => ({
-          ...source,
-          enabled: source.enabled ?? true
-        }))
-      : [],
+    sources: Array.isArray(state.sources) ? normalizeSourceRecords(dedupeById(state.sources)) : [],
     assets: normalizedAssets,
     assetCollections: normalizedAssetCollections,
     sourceSyncRuns: Array.isArray((state as AppState & { sourceSyncRuns?: SourceSyncRunRecord[] }).sourceSyncRuns)

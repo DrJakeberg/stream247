@@ -2,6 +2,13 @@
 node_modules
 .next
 coverage
-data
+# Matches at any depth. A bare "data" only excludes the context root, so a developer's
+# apps/web/data/app/state.json was copied into locally built images while CI, building from a clean
+# checkout where that gitignored directory does not exist, produced a different image. The app then
+# loads it as legacy state on first boot.
+**/data
+# Long-lived dev stack state; contains container-owned files the build context cannot read.
+.dev-stack
+test-results
 *.log
 
