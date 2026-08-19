@@ -142,6 +142,35 @@ describe("releasing cached VODs once they are no longer needed", () => {
     expect(result.freedBytes).toBe(128);
   });
 
+  it("collects a partial nothing is working on any more", async () => {
+    // The prune only runs before a download. Once every scheduled VOD is over the size limit no
+    // download ever starts, so abandoned partials were collected by nothing at all — 13.8GB of them
+    // on the production channel.
+    const config = configFor();
+    await fs.mkdir(config.cacheRoot, { recursive: true });
+    const abandoned = path.join(config.cacheRoot, "old.mp4.part-resume.mp4.part");
+    await fs.writeFile(abandoned, "abandoned bytes");
+    const longAgo = new Date(Date.now() - config.partialMaxAgeMs - 60_000);
+    await fs.utimes(abandoned, longAgo, longAgo);
+
+    const result = await evictUnusedTwitchVodCache(config, []);
+
+    expect(result.removed).toContain(abandoned);
+  });
+
+  it("leaves a recent partial alone even with no job holding it", async () => {
+    // A download that just started has not written its lock yet on every path; age alone keeps the
+    // window from turning into a race.
+    const config = configFor();
+    await fs.mkdir(config.cacheRoot, { recursive: true });
+    const fresh = path.join(config.cacheRoot, "new.mp4.part-resume.mp4.part");
+    await fs.writeFile(fresh, "just started");
+
+    const result = await evictUnusedTwitchVodCache(config, []);
+
+    expect(result.removed).not.toContain(fresh);
+  });
+
   it("never touches a download in progress", async () => {
     // Partials belong to the prune, which can tell an abandoned one from a job still writing it.
     // Deleting one here would destroy hours of accumulated transfer.
@@ -151,6 +180,10 @@ describe("releasing cached VODs once they are no longer needed", () => {
     const lock = path.join(config.cacheRoot, "a.mp4.lock");
     await fs.writeFile(partial, "downloading");
     await fs.writeFile(lock, "{}");
+    // Aged past the collection threshold on purpose: the live lock is what has to protect it here,
+    // not its timestamp.
+    const longAgo = new Date(Date.now() - config.partialMaxAgeMs - 60_000);
+    await fs.utimes(partial, longAgo, longAgo);
 
     await evictUnusedTwitchVodCache(config, []);
 

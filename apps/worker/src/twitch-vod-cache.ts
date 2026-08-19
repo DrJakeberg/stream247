@@ -507,12 +507,23 @@ export async function evictUnusedTwitchVodCache(
   const removed: string[] = [];
   let freedBytes = 0;
 
+  const nowMs = Date.now();
+
   for (const file of await listCacheFiles(config.cacheRoot)) {
-    // Anything transient is the prune's business, not this function's.
-    if (file.transient || file.filePath.endsWith(".lock")) {
+    if (file.filePath.endsWith(".lock")) {
       continue;
     }
-    if (keep.has(path.resolve(file.filePath))) {
+
+    if (file.transient) {
+      // Abandoned partials used to be left entirely to the prune, which only runs before a
+      // download. Once every scheduled VOD is over the size limit no download ever starts, so
+      // nothing collected them and tens of gigabytes stayed on disk indefinitely — measured at
+      // 13.8GB on the production channel. Age plus the absence of a live lock is the same test the
+      // prune applies; a partial a running job is still writing is never touched.
+      if (nowMs - file.mtimeMs < config.partialMaxAgeMs || (await isLockedByLiveJob(file.filePath, nowMs))) {
+        continue;
+      }
+    } else if (keep.has(path.resolve(file.filePath))) {
       continue;
     }
 
