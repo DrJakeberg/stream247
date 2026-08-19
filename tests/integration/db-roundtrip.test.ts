@@ -6,6 +6,7 @@ import {
   applyOverlayScenePresetRecordToDraft,
   createPoolRecord,
   createScheduleBlocks,
+  createScheduleBlocksChecked,
   deleteOverlayScenePresetRecord,
   ensureDatabase,
   listOverlayScenePresetRecords,
@@ -1347,6 +1348,88 @@ describe.sequential("database roundtrip", () => {
     expect(indexes).toContain("chat_viewer_requests_actor_created_idx");
     expect(migrationApplied).toBe("1");
   }, 60_000);
+
+  describe("schedule writes validated under the lock", () => {
+    // The overlap check used to run against a state read before the write, leaving a window in
+    // which another editor committed a block the check never saw: both writes succeeded and the
+    // schedule ended up overlapping anyway, which the editor then refuses to save past.
+
+    it("sees blocks already stored when it validates", async () => {
+      const existingId = `block-existing-${randomUUID()}`;
+      await createScheduleBlocks([
+        {
+          id: existingId,
+          title: "Existing",
+          categoryName: "Replay",
+          startMinuteOfDay: 10 * 60,
+          durationMinutes: 120,
+          dayOfWeek: 4,
+          poolId: "",
+          sourceName: "Pool",
+          repeatMode: "single",
+          repeatGroupId: "",
+          cuepointAssetId: "",
+          cuepointOffsetsSeconds: []
+        }
+      ]);
+
+      let seenExisting = false;
+      await createScheduleBlocksChecked(
+        [
+          {
+            id: `block-new-${randomUUID()}`,
+            title: "New",
+            categoryName: "Replay",
+            startMinuteOfDay: 20 * 60,
+            durationMinutes: 60,
+            dayOfWeek: 4,
+            poolId: "",
+            sourceName: "Pool",
+            repeatMode: "single",
+            repeatGroupId: "",
+            cuepointAssetId: "",
+            cuepointOffsetsSeconds: []
+          }
+        ],
+        (existing) => {
+          seenExisting = existing.some((block) => block.id === existingId);
+        }
+      );
+
+      expect(seenExisting).toBe(true);
+    });
+
+    it("writes nothing when the validator rejects", async () => {
+      const rejectedId = `block-rejected-${randomUUID()}`;
+
+      await expect(
+        createScheduleBlocksChecked(
+          [
+            {
+              id: rejectedId,
+              title: "Rejected",
+              categoryName: "Replay",
+              startMinuteOfDay: 60,
+              durationMinutes: 60,
+              dayOfWeek: 5,
+              poolId: "",
+              sourceName: "Pool",
+              repeatMode: "single",
+              repeatGroupId: "",
+              cuepointAssetId: "",
+              cuepointOffsetsSeconds: []
+            }
+          ],
+          () => {
+            throw new Error("overlaps");
+          }
+        )
+      ).rejects.toThrow("overlaps");
+
+      const state = await readAppState();
+      expect(state.scheduleBlocks.some((block) => block.id === rejectedId)).toBe(false);
+    });
+  });
 
   describe("moderator presence check-ins", () => {
     // expires_at used to be the primary key. It is the check-in time plus a duration picked from a

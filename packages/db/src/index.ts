@@ -5833,39 +5833,108 @@ export async function appendPresenceWindowRecord(window: ModeratorPresenceWindow
   });
 }
 
+/**
+ * Reads the blocks that currently exist, inside whatever transaction the caller holds.
+ *
+ * Exists so a validation and the write it guards can share one lock. Checking overlaps against a
+ * separately-read snapshot leaves a window in which another editor commits a block that the check
+ * never saw, and both writes then succeed — producing exactly the overlapping schedule the check
+ * was there to prevent, and an editor that refuses to save until someone deletes a block by hand.
+ */
+async function readScheduleBlockRecords(client: PoolClient): Promise<ScheduleBlockRecord[]> {
+  const result = await client.query<{
+    id: string;
+    title: string;
+    category_name: string;
+    start_hour: number;
+    start_minute_of_day: number | null;
+    duration_minutes: number;
+    day_of_week: number | null;
+    show_id: string;
+    pool_id: string;
+    source_name: string;
+    repeat_mode: ScheduleBlockRecord["repeatMode"];
+    repeat_group_id: string;
+    cuepoint_asset_id: string;
+    cuepoint_offsets_seconds: string;
+  }>("SELECT * FROM schedule_blocks ORDER BY day_of_week ASC, start_minute_of_day ASC, start_hour ASC");
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    categoryName: row.category_name,
+    startMinuteOfDay:
+      typeof row.start_minute_of_day === "number" ? row.start_minute_of_day : (row.start_hour % 24) * 60,
+    durationMinutes: row.duration_minutes,
+    dayOfWeek: row.day_of_week ?? 0,
+    showId: row.show_id || undefined,
+    poolId: row.pool_id || undefined,
+    sourceName: row.source_name,
+    repeatMode: row.repeat_mode || "single",
+    repeatGroupId: row.repeat_group_id || "",
+    cuepointAssetId: row.cuepoint_asset_id || "",
+    cuepointOffsetsSeconds: JSON.parse(row.cuepoint_offsets_seconds || "[]") as number[]
+  }));
+}
+
+/**
+ * Creates blocks only if `validate` accepts them alongside the blocks already stored.
+ *
+ * The validator runs against state read under the same lock that performs the insert, so two
+ * editors saving at once cannot both pass a check that neither of their results satisfies.
+ * Throwing from `validate` aborts the transaction and writes nothing.
+ */
+export async function createScheduleBlocksChecked(
+  blocks: ScheduleBlockRecord[],
+  validate: (existing: ScheduleBlockRecord[], incoming: ScheduleBlockRecord[]) => void
+): Promise<void> {
+  if (blocks.length === 0) {
+    return;
+  }
+
+  await withSerializedStateWrite("createScheduleBlocksChecked", async (client) => {
+    validate(await readScheduleBlockRecords(client), blocks);
+    await insertScheduleBlockRows(client, blocks);
+  });
+}
+
 export async function createScheduleBlocks(blocks: ScheduleBlockRecord[]): Promise<void> {
   if (blocks.length === 0) {
     return;
   }
 
   await withSerializedStateWrite("createScheduleBlocks", async (client) => {
-    for (const block of blocks) {
-      await client.query(
-        `
-          INSERT INTO schedule_blocks (
-            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id, cuepoint_asset_id, cuepoint_offsets_seconds
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        `,
-        [
-          block.id,
-          block.title,
-          block.categoryName,
-          Math.floor(block.startMinuteOfDay / 60),
-          block.startMinuteOfDay,
-          block.durationMinutes,
-          block.dayOfWeek,
-          block.showId ?? "",
-          block.poolId ?? "",
-          block.sourceName,
-          block.repeatMode ?? "single",
-          block.repeatGroupId ?? "",
-          block.cuepointAssetId ?? "",
-          JSON.stringify(block.cuepointOffsetsSeconds ?? [])
-        ]
-      );
-    }
+    await insertScheduleBlockRows(client, blocks);
   });
+}
+
+async function insertScheduleBlockRows(client: PoolClient, blocks: ScheduleBlockRecord[]): Promise<void> {
+  for (const block of blocks) {
+    await client.query(
+      `
+        INSERT INTO schedule_blocks (
+          id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id, cuepoint_asset_id, cuepoint_offsets_seconds
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      `,
+      [
+        block.id,
+        block.title,
+        block.categoryName,
+        Math.floor(block.startMinuteOfDay / 60),
+        block.startMinuteOfDay,
+        block.durationMinutes,
+        block.dayOfWeek,
+        block.showId ?? "",
+        block.poolId ?? "",
+        block.sourceName,
+        block.repeatMode ?? "single",
+        block.repeatGroupId ?? "",
+        block.cuepointAssetId ?? "",
+        JSON.stringify(block.cuepointOffsetsSeconds ?? [])
+      ]
+    );
+  }
 }
 
 export async function replaceAllScheduleBlocks(blocks: ScheduleBlockRecord[]): Promise<void> {
