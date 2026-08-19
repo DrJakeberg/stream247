@@ -144,3 +144,64 @@ function readPositiveMs(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
+
+/**
+ * Detection for a second way the uplink fails while looking healthy.
+ *
+ * When the playout process restarts, the program feed's timestamps restart with it. A long-lived
+ * uplink that reads across that seam keeps encoding at full CPU, but ffmpeg corrects each stream's
+ * timeline separately: audio and video were observed receiving equal and opposite offsets of about
+ * 122 seconds, which is what viewers hear as the tracks coming apart. It never recovers on its own,
+ * and out_time keeps advancing the whole time, so the stall detector cannot see it.
+ *
+ * A clean uplink reports none of these at all, and reattaching it clears them completely, so a
+ * sustained rate is both specific and actionable: restart and the seam is gone.
+ */
+export type UplinkDiscontinuityState = {
+  windowStartedAtMs: number;
+  count: number;
+};
+
+export const DEFAULT_DISCONTINUITY_WINDOW_MS = 60_000;
+/** A healthy uplink reports zero; the observed failure ran at 450-530 per minute. */
+export const DEFAULT_DISCONTINUITY_LIMIT = 120;
+
+export function createUplinkDiscontinuityState(nowMs: number): UplinkDiscontinuityState {
+  return { windowStartedAtMs: nowMs, count: 0 };
+}
+
+/** True when an ffmpeg stderr line reports the demuxer resynchronising a stream. */
+export function isTimestampDiscontinuityLine(line: string): boolean {
+  return line.includes("timestamp discontinuity");
+}
+
+export function observeDiscontinuityLine(
+  state: UplinkDiscontinuityState,
+  line: string,
+  nowMs: number,
+  windowMs: number = DEFAULT_DISCONTINUITY_WINDOW_MS
+): UplinkDiscontinuityState {
+  if (!isTimestampDiscontinuityLine(line)) {
+    return state;
+  }
+  // A fixed window rather than a rolling one: the failure is sustained for as long as it lasts, so
+  // it survives any window boundary, while a brief legitimate burst at a seam is discarded with the
+  // window it landed in.
+  if (nowMs - state.windowStartedAtMs >= windowMs) {
+    return { windowStartedAtMs: nowMs, count: 1 };
+  }
+  return { windowStartedAtMs: state.windowStartedAtMs, count: state.count + 1 };
+}
+
+export function isDiscontinuityStorm(
+  state: UplinkDiscontinuityState,
+  nowMs: number,
+  startedAtMs: number,
+  options: UplinkStallOptions,
+  limit: number = DEFAULT_DISCONTINUITY_LIMIT
+): boolean {
+  if (nowMs - startedAtMs < options.graceMs) {
+    return false;
+  }
+  return state.count >= limit;
+}

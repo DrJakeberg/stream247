@@ -4,7 +4,11 @@ import { once } from "node:events";
 import { abortableDelay } from "./abortable-delay.js";
 import {
   canBlameUplinkForStall,
+  createUplinkDiscontinuityState,
   createUplinkProgressState,
+  isDiscontinuityStorm,
+  observeDiscontinuityLine,
+  type UplinkDiscontinuityState,
   getUplinkStallOptions,
   hasNeverProgressed,
   isUplinkStalled,
@@ -304,6 +308,8 @@ type UplinkProcessRuntime = {
   plannedStopReason: string;
   /** ffmpeg's own out_time, watched to tell an uplink that is running from one that is working. */
   progress: UplinkProgressState;
+  /** Demuxer resyncs, watched to catch an uplink that encodes fine but with audio and video torn apart. */
+  discontinuity: UplinkDiscontinuityState;
 };
 
 const queueProbeCache = new Map<string, QueueProbeCacheEntry>();
@@ -4435,7 +4441,8 @@ async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> 
     outputSettings: group.settings,
     startedAt,
     plannedStopReason: "",
-    progress: createUplinkProgressState(Date.now())
+    progress: createUplinkProgressState(Date.now()),
+    discontinuity: createUplinkDiscontinuityState(Date.now())
   };
 
   // ffmpeg writes -progress here. It has to be consumed even if nothing watched it: an unread pipe
@@ -4484,6 +4491,8 @@ async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> 
     if (!line) {
       return;
     }
+
+    runtime.discontinuity = observeDiscontinuityLine(runtime.discontinuity, line, Date.now());
 
     logRuntimeEvent("uplink.ffmpeg.stderr", {
       message: line.slice(0, 400)
@@ -4720,6 +4729,23 @@ async function runUplinkCycle(): Promise<void> {
         destinationIds: running.destinationIds,
         runningSeconds: Math.round((now - startedAtMs) / 1000)
       });
+      continue;
+    }
+
+    if (isDiscontinuityStorm(running.discontinuity, now, startedAtMs, uplinkStallOptions)) {
+      logRuntimeEvent("uplink.discontinuity_storm.restart", {
+        outputProfile: running.key,
+        destinationIds: running.destinationIds,
+        eventsInWindow: running.discontinuity.count
+      });
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Uplink restarted after its input timeline came apart",
+        message: `The uplink process for ${running.key} reported ${running.discontinuity.count} timestamp discontinuities in a minute. It keeps encoding in this state but corrects audio and video onto separate timelines, which viewers hear as the tracks drifting apart. Reattaching it to the live edge clears the seam.`,
+        fingerprint: `uplink.discontinuity-storm.${running.key}`
+      });
+      await stopUplinkProcess(running, "encoder-stalled");
       continue;
     }
 

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_UPLINK_GRACE_MS,
+  DEFAULT_DISCONTINUITY_LIMIT,
   canBlameUplinkForStall,
+  createUplinkDiscontinuityState,
+  isDiscontinuityStorm,
+  isTimestampDiscontinuityLine,
+  observeDiscontinuityLine,
   DEFAULT_UPLINK_STALL_MS,
   createUplinkProgressState,
   getUplinkStallOptions,
@@ -124,5 +129,59 @@ describe("uplink stall detection", () => {
     expect(getUplinkStallOptions({ UPLINK_STALL_TIMEOUT_MS: "0" } as NodeJS.ProcessEnv).stallMs).toBe(
       DEFAULT_UPLINK_STALL_MS
     );
+  });
+
+  it("recognises the demuxer resync line ffmpeg actually prints", () => {
+    expect(
+      isTimestampDiscontinuityLine(
+        "[aist#0:1/aac @ 0x73c1ef0bad40] timestamp discontinuity (stream id=0): 10960504, new offset= -90974028060"
+      )
+    ).toBe(true);
+    expect(isTimestampDiscontinuityLine("[hls @ 0x55] skipping 1 segment ahead, expired from playlists")).toBe(false);
+    expect(isTimestampDiscontinuityLine("frame= 1234 fps=60")).toBe(false);
+  });
+
+  it("restarts an uplink whose input timeline came apart", () => {
+    // Measured in production: a healthy uplink reports none of these, the torn state ran at 450-530
+    // a minute while encoding at full CPU -- so out_time kept advancing and the stall detector was
+    // blind to it.
+    let state = createUplinkDiscontinuityState(0);
+    for (let index = 0; index < 500; index += 1) {
+      state = observeDiscontinuityLine(state, "timestamp discontinuity (stream id=0): 1", 1_000 + index * 100);
+    }
+
+    expect(state.count).toBeGreaterThanOrEqual(DEFAULT_DISCONTINUITY_LIMIT);
+    expect(isDiscontinuityStorm(state, 120_000, 0, OPTIONS)).toBe(true);
+  });
+
+  it("ignores the handful a legitimate seam produces", () => {
+    let state = createUplinkDiscontinuityState(0);
+    for (let index = 0; index < 10; index += 1) {
+      state = observeDiscontinuityLine(state, "timestamp discontinuity (stream id=0): 1", 1_000 + index * 10);
+    }
+
+    expect(isDiscontinuityStorm(state, 120_000, 0, OPTIONS)).toBe(false);
+  });
+
+  it("forgets a burst once its window has passed", () => {
+    let state = createUplinkDiscontinuityState(0);
+    for (let index = 0; index < 500; index += 1) {
+      state = observeDiscontinuityLine(state, "timestamp discontinuity", 1_000 + index * 10);
+    }
+    expect(isDiscontinuityStorm(state, 120_000, 0, OPTIONS)).toBe(true);
+
+    // A single later line opens a fresh window rather than inheriting the old count.
+    state = observeDiscontinuityLine(state, "timestamp discontinuity", 200_000);
+    expect(state.count).toBe(1);
+    expect(isDiscontinuityStorm(state, 200_000, 0, OPTIONS)).toBe(false);
+  });
+
+  it("stays silent during the grace period", () => {
+    let state = createUplinkDiscontinuityState(0);
+    for (let index = 0; index < 500; index += 1) {
+      state = observeDiscontinuityLine(state, "timestamp discontinuity", index * 10);
+    }
+
+    expect(isDiscontinuityStorm(state, OPTIONS.graceMs - 1, 0, OPTIONS)).toBe(false);
   });
 });
