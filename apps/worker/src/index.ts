@@ -71,6 +71,8 @@ import {
   ON_AIR_SCENE_PIPE_FRAMERATE,
   ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS,
   ON_AIR_SCENE_PIPE_QUEUE_FRAMES,
+  ON_AIR_SCENE_PIPE_LEAD_FRAMES,
+  framesDueByNow,
   getSceneRendererIntervalMs,
   getSceneRendererViewport,
   type OnAirOverlayMode
@@ -1062,20 +1064,31 @@ function startSceneRendererLoop(
   // frame, so a writer that pauses for the render interval throttles the whole encode down to the
   // render rate. That is what halved the programme feed: frames were pushed every 2s into a pipe
   // declared at 1fps, and playout produced 30s of video per minute of wall clock.
-  const writeIntervalMs = Math.max(100, Math.floor(ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS / 2));
+  //
+  // Pacing is against the wall clock rather than against backpressure. Writing until the pipe
+  // pushes back keeps the overlay fed, but it also keeps every buffer between here and ffmpeg
+  // permanently full, and a scene change then waits behind all of it -- tens of seconds for a
+  // cheaply compressing lower third. Staying a fixed lead ahead of real time feeds the filter just
+  // as reliably and bounds that delay to the lead itself.
+  const startedAtMs = Date.now();
+  const idleMs = Math.max(50, Math.floor(ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS / 4));
+  let framesWritten = 0;
 
   const sleep = (ms: number) => abortableDelay(ms, controller.signal);
 
   void (async () => {
     while (!controller.signal.aborted && !targetPipe.destroyed) {
       try {
+        if (framesWritten >= framesDueByNow(startedAtMs, Date.now(), ON_AIR_SCENE_PIPE_LEAD_FRAMES)) {
+          await sleep(idleMs);
+          continue;
+        }
+
+        framesWritten += 1;
         if (!targetPipe.write(currentFrame)) {
-          // Backpressure is the authoritative clock: ffmpeg accepts frames no faster than the
-          // filtergraph consumes them, so waiting on drain keeps the input fed without buffering
-          // ahead without bound.
+          // Only reached if ffmpeg has fallen behind its own declared rate; waiting for drain keeps
+          // the lead from turning into an unbounded backlog.
           await once(targetPipe, "drain", { signal: controller.signal });
-        } else {
-          await sleep(writeIntervalMs);
         }
       } catch {
         break;

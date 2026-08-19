@@ -18,12 +18,35 @@ export const ON_AIR_SCENE_PIPE_FRAMERATE = 1;
 export const ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS = 1000 / ON_AIR_SCENE_PIPE_FRAMERATE;
 
 /**
- * How many frames ffmpeg may buffer ahead on the overlay input. The writer deliberately outruns the
- * pipe so the filter never starves, which keeps this queue full — and every queued frame is one
- * more second before a scene change reaches the screen. Small enough that the lower third stays
- * responsive, large enough to absorb a slow rasterisation.
+ * Bound on ffmpeg's own input packet queue for the overlay.
+ *
+ * This does NOT bound how stale the overlay can get. Frames sit in Node's stream buffer and the OS
+ * pipe buffer before they ever reach this queue, and those hold many more frames than it does — a
+ * transparent lower third compresses small, so the cheaper the frame the deeper the backlog. Only
+ * the writer's own pacing can bound staleness; see ON_AIR_SCENE_PIPE_LEAD_FRAMES.
  */
 export const ON_AIR_SCENE_PIPE_QUEUE_FRAMES = 4;
+
+/**
+ * How many frames the writer may run ahead of real time.
+ *
+ * This is the actual staleness bound: the writer paces against the wall clock rather than writing
+ * until something pushes back, so a scene change waits at most this many frames. Large enough that
+ * the overlay input never runs dry if a rasterisation is slow — starving it throttles the entire
+ * encode, which is the failure this whole arrangement exists to prevent.
+ */
+export const ON_AIR_SCENE_PIPE_LEAD_FRAMES = 4;
+
+/**
+ * Frames that should have been handed to ffmpeg by `nowMs`, including the lead.
+ *
+ * Derived from elapsed wall-clock time rather than from a running counter, so a writer that was
+ * blocked on a full pipe catches up by itself instead of drifting permanently behind.
+ */
+export function framesDueByNow(startedAtMs: number, nowMs: number, leadFrames: number): number {
+  const elapsedMs = Math.max(0, nowMs - startedAtMs);
+  return Math.floor(elapsedMs / ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS) + leadFrames;
+}
 
 export function getSceneRendererBaseUrl(env: NodeJS.ProcessEnv): string {
   return String(env.SCENE_RENDER_BASE_URL || env.INTERNAL_APP_URL || env.APP_URL || "http://web:3000").replace(/\/+$/, "");
