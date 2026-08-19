@@ -4,6 +4,31 @@
 
 - No unreleased changes currently tracked.
 
+## 1.5.20 - 2026-08-19
+
+Follow-up to the 1.5.19 rollout, from watching it run in production.
+
+### Fixed
+
+- stop the Twitch VOD cache prune from deleting a download that is still running. It evicts
+  transient files to stay under the cache cap and protected only the target path of the download
+  that triggered it, so with several large VODs queued each new job deleted the previous job's
+  partial — 21GB of progress removed 15 minutes in, then restarted from zero. That is the same
+  "never finishes" failure the 7200s download timeout used to cause, relocated from the playout
+  cycle into the background runner: no longer fatal, but an endless loop that burns bandwidth and
+  never produces a cached file. The lock a running job maintains now exempts its partial and the
+  fragment files yt-dlp writes beside it; a stale lock still frees them (v1.5.20)
+
+### Operations
+
+- `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1` on the production channel. With it at 0 the playout
+  refuses to stream a VOD that is not fully cached and bridges to fallback content instead — which,
+  combined with VODs larger than the cache cap, meant the channel showed fallback indefinitely even
+  with playout healthy. Restart-freedom is not the same as a healthy channel; check the actual
+  ffmpeg input, not just the absence of errors.
+- `TWITCH_VOD_CACHE_MAX_BYTES` still defaults to 20GB while the scheduled VODs exceed that, so
+  nothing stays cached for long. Raise it or run the source as a direct stream deliberately.
+
 ## 1.5.19 - 2026-08-18
 
 Emergency production release. Supersedes the 1.5.18 tag, whose release build failed before
