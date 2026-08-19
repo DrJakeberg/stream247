@@ -26,8 +26,8 @@
     "release:rehearse": "./scripts/upgrade-rehearsal.sh",
     "soak:monitor": "./scripts/soak-monitor.sh",
     "lint:css-tokens": "./scripts/css-token-lint.sh",
-    "test:design-baseline": "E2E_SPECS=tests/e2e/design-baseline.spec.ts bash ./scripts/e2e-smoke.sh",
-    "test:design-baseline:update": "E2E_SPECS=tests/e2e/design-baseline.spec.ts E2E_PLAYWRIGHT_ARGS=--update-snapshots bash ./scripts/e2e-smoke.sh"
+    "test:design-baseline": "docker build -f docker/web.Dockerfile -t stream247-web:test . && docker build -f docker/worker.Dockerfile -t stream247-worker:test . && E2E_SPECS=tests/e2e/design-baseline.spec.ts bash ./scripts/e2e-smoke.sh",
+    "test:design-baseline:update": "docker build -f docker/web.Dockerfile -t stream247-web:test . && docker build -f docker/worker.Dockerfile -t stream247-worker:test . && E2E_SPECS=tests/e2e/design-baseline.spec.ts E2E_PLAYWRIGHT_ARGS=--update-snapshots bash ./scripts/e2e-smoke.sh"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

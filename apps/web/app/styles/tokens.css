@@ -1,0 +1,77 @@
+/*
+ * Design tokens.
+ *
+ * The only file allowed to contain raw colour literals; scripts/css-token-lint.sh enforces that by
+ * ratcheting on the count everywhere else.
+ *
+ * The starting problem was not the palette but its dispersion: 159 rgba() values in globals.css,
+ * almost all of them alpha variations of three base colours. The same conceptual line existed at
+ * 0.06, 0.07, 0.08 and 0.12 with no rule saying which meant what, which is how a contrast failure
+ * slips in unseen.
+ *
+ * So the base colours are declared once as channel triplets, and every translucent value is derived
+ * from them. The alpha steps below are the ones already in use — this layer is deliberately
+ * pixel-identical to what shipped, so it can be introduced without a single visual change. Reducing
+ * the number of distinct steps comes later, one considered decision at a time.
+ */
+
+:root {
+  /* ---- Base channels. Everything translucent derives from these. ---- */
+  --ink-rgb: 27 26 22; /* #1b1a16, the text colour */
+  --brand-rgb: 14 109 90; /* #0e6d5a */
+  --paper-rgb: 255 252 246; /* the warm off-white panels sit on */
+  --white-rgb: 255 255 255;
+  --shadow-rgb: 32 29 21;
+  /* The overlay preview is its own dark world and deliberately shares nothing with the admin
+     surface: it mirrors the on-air picture rather than the workspace. */
+  --overlay-ink-rgb: 8 15 13;
+
+  /* ---- Hairlines and dividers, weakest to strongest ---- */
+  --line-faint: rgb(var(--ink-rgb) / 0.06);
+  --line-soft: rgb(var(--ink-rgb) / 0.07);
+  --line-subtle: rgb(var(--ink-rgb) / 0.08);
+  --line-strong: rgb(var(--ink-rgb) / 0.12);
+
+  /* ---- Brand tints, weakest to strongest ---- */
+  --brand-tint-faint: rgb(var(--brand-rgb) / 0.12);
+  --brand-tint-soft: rgb(var(--brand-rgb) / 0.14);
+  --brand-tint: rgb(var(--brand-rgb) / 0.18);
+  --brand-tint-strong: rgb(var(--brand-rgb) / 0.2);
+  --brand-focus-ring: rgb(var(--brand-rgb) / 0.28);
+
+  /* ---- Translucent whites used to lift a surface off its background ---- */
+  --paper-veil: rgb(var(--white-rgb) / 0.14);
+  --paper-scrim: rgb(var(--white-rgb) / 0.72);
+
+  /* ---- Overlay-preview scrims ---- */
+  --overlay-scrim-strong: rgb(var(--overlay-ink-rgb) / 0.72);
+  --overlay-scrim: rgb(var(--overlay-ink-rgb) / 0.58);
+  --overlay-scrim-soft: rgb(var(--overlay-ink-rgb) / 0.56);
+  --overlay-scrim-faint: rgb(var(--overlay-ink-rgb) / 0.46);
+
+  /* ---- Spacing, on a 4px base ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  /* ---- Radii, matching the shapes already in use ---- */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-full: 999px;
+
+  /* ---- Elevation ---- */
+  --shadow-sm: 0 2px 6px rgb(var(--shadow-rgb) / 0.08);
+  --shadow-md: 0 8px 24px rgb(var(--shadow-rgb) / 0.1);
+  --shadow-lg: 0 16px 46px rgb(var(--shadow-rgb) / 0.1);
+
+  /* ---- Focus. A visible focus state is a functional requirement, not decoration: the workspace
+     is operated fastest exactly when something is broken. ---- */
+  --focus-ring-width: 3px;
+  --focus-ring: 0 0 0 var(--focus-ring-width) var(--brand-focus-ring);
+}

@@ -2,6 +2,12 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 // Visual baseline for the CSS consolidation.
 //
+// These run against the stream247-web:test image, which scripts/e2e-smoke.sh does NOT build — it
+// uses whatever image already exists. A baseline captured from a stale image silently stops
+// describing the source, and the next unrelated change shows up as a diff. Use the
+// `test:design-baseline` npm scripts, which build first; CI builds the images before calling the
+// smoke script.
+//
 // The e2e stack is deterministic in its *data*: scripts/e2e-smoke.sh tears the volumes down and
 // uses a fresh temp directory per run, so Postgres starts empty and nothing is seeded. What is not
 // deterministic is *time* and *runtime state* — heartbeats, readiness, and anything derived from
