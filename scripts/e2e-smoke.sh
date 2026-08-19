@@ -50,7 +50,10 @@ EOF
 cat >"$OVERRIDE_FILE" <<EOF
 services:
   web:
-    ports:
+    # !override replaces the base compose port list instead of appending to it. Without it the
+    # stack also tries to publish the base file's "3000:3000", so every smoke run fails with
+    # "port is already allocated" whenever anything else holds host port 3000.
+    ports: !override
       - "127.0.0.1:${PORT}:3000"
     volumes:
       - ${TMP_DIR}/media:/app/data/media
@@ -86,8 +89,10 @@ done
 
 wget -qO- "http://127.0.0.1:${PORT}/api/system/readiness" >/dev/null
 
+# E2E_SPECS selects which specs run against this stack (default: the admin smoke).
+# E2E_PLAYWRIGHT_ARGS passes flags through, e.g. --update-snapshots for the design baseline.
 PLAYWRIGHT_BASE_URL="http://127.0.0.1:${PORT}" \
 E2E_OWNER_EMAIL="${E2E_OWNER_EMAIL:-owner@example.com}" \
 E2E_OWNER_PASSWORD="${E2E_OWNER_PASSWORD:-stream247-owner-pass}" \
 E2E_SECONDARY_OUTPUT_ROOT="/tmp/stream-output" \
-pnpm dlx @playwright/test@1.56.1 test tests/e2e/admin-smoke.spec.ts --config=playwright.config.ts --reporter=line
+pnpm dlx @playwright/test@1.56.1 test ${E2E_SPECS:-tests/e2e/admin-smoke.spec.ts} --config=playwright.config.ts --reporter=line ${E2E_PLAYWRIGHT_ARGS:-}
