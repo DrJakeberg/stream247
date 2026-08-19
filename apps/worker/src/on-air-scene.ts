@@ -7,6 +7,16 @@ export type OnAirOverlayMode = "none" | "text" | "scene";
 
 export const ON_AIR_SCENE_PIPE_FD = 3;
 
+/**
+ * Frame rate ffmpeg is told the overlay pipe delivers. `overlay` cannot emit a frame until both of
+ * its inputs have one, so the writer must keep at least this many frames per second available: an
+ * overlay input starved below this rate throttles the entire encode, not just the overlay.
+ */
+export const ON_AIR_SCENE_PIPE_FRAMERATE = 1;
+
+/** Budget for a single written frame before the overlay input runs dry. */
+export const ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS = 1000 / ON_AIR_SCENE_PIPE_FRAMERATE;
+
 export function getSceneRendererBaseUrl(env: NodeJS.ProcessEnv): string {
   return String(env.SCENE_RENDER_BASE_URL || env.INTERNAL_APP_URL || env.APP_URL || "http://web:3000").replace(/\/+$/, "");
 }

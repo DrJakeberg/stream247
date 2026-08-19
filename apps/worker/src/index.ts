@@ -59,6 +59,8 @@ import {
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
+  ON_AIR_SCENE_PIPE_FRAMERATE,
+  ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS,
   getSceneRendererIntervalMs,
   getSceneRendererViewport,
   type OnAirOverlayMode
@@ -723,7 +725,16 @@ function getFfmpegCommand(
 
   if (overlayMode === "scene") {
     const sceneInputIndex = audioLane ? 2 : 1;
-    command.push("-f", "image2pipe", "-framerate", "1", "-vcodec", "png", "-i", `pipe:${ON_AIR_SCENE_PIPE_FD}`);
+    command.push(
+      "-f",
+      "image2pipe",
+      "-framerate",
+      String(ON_AIR_SCENE_PIPE_FRAMERATE),
+      "-vcodec",
+      "png",
+      "-i",
+      `pipe:${ON_AIR_SCENE_PIPE_FD}`
+    );
     command.push(
       "-filter_complex",
       outputVideoFilter
@@ -786,7 +797,16 @@ function getLiveBridgeFfmpegCommand(
   const outputVideoFilter = isStreamScaleEnabled(process.env) ? getOutputVideoFilter(output) : "";
 
   if (overlayMode === "scene") {
-    command.push("-f", "image2pipe", "-framerate", "1", "-vcodec", "png", "-i", `pipe:${ON_AIR_SCENE_PIPE_FD}`);
+    command.push(
+      "-f",
+      "image2pipe",
+      "-framerate",
+      String(ON_AIR_SCENE_PIPE_FRAMERATE),
+      "-vcodec",
+      "png",
+      "-i",
+      `pipe:${ON_AIR_SCENE_PIPE_FD}`
+    );
     command.push(
       "-filter_complex",
       outputVideoFilter
@@ -859,7 +879,16 @@ function getStandbyFfmpegCommand(
   ];
 
   if (overlayMode === "scene") {
-    command.push("-f", "image2pipe", "-framerate", "1", "-vcodec", "png", "-i", `pipe:${ON_AIR_SCENE_PIPE_FD}`);
+    command.push(
+      "-f",
+      "image2pipe",
+      "-framerate",
+      String(ON_AIR_SCENE_PIPE_FRAMERATE),
+      "-vcodec",
+      "png",
+      "-i",
+      `pipe:${ON_AIR_SCENE_PIPE_FD}`
+    );
     command.push("-filter_complex", "[0:v][2:v]overlay=0:0:format=auto[vout]", "-map", "[vout]", "-map", "1:a");
   } else {
     command.push(
@@ -1008,19 +1037,57 @@ function startSceneRendererLoop(
   const intervalMs = getSceneRendererIntervalMs(process.env);
   sceneRendererAbortController = controller;
 
-  void (async () => {
-    let currentFrame = initialFrame;
-    let currentKey = "";
+  let currentFrame = initialFrame;
 
+  // Feeding the pipe and rasterising the scene run independently on purpose. ffmpeg pulls this
+  // input at ON_AIR_SCENE_PIPE_FRAMERATE and `overlay` blocks until both of its inputs have a
+  // frame, so a writer that pauses for the render interval throttles the whole encode down to the
+  // render rate. That is what halved the programme feed: frames were pushed every 2s into a pipe
+  // declared at 1fps, and playout produced 30s of video per minute of wall clock.
+  const writeIntervalMs = Math.max(100, Math.floor(ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS / 2));
+
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      controller.signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true }
+      );
+    });
+
+  void (async () => {
     while (!controller.signal.aborted && !targetPipe.destroyed) {
       try {
         if (!targetPipe.write(currentFrame)) {
-          await once(targetPipe, "drain");
+          // Backpressure is the authoritative clock: ffmpeg accepts frames no faster than the
+          // filtergraph consumes them, so waiting on drain keeps the input fed without buffering
+          // ahead without bound.
+          await once(targetPipe, "drain", { signal: controller.signal });
+        } else {
+          await sleep(writeIntervalMs);
         }
       } catch {
         break;
       }
+    }
 
+    if (!targetPipe.destroyed) {
+      targetPipe.end();
+    }
+
+    if (sceneRendererAbortController === controller) {
+      sceneRendererAbortController = null;
+    }
+  })();
+
+  void (async () => {
+    let currentKey = "";
+
+    while (!controller.signal.aborted && !targetPipe.destroyed) {
       try {
         const request = buildSceneRenderRequest(outputSettings);
         if (request) {
@@ -1046,15 +1113,7 @@ function startSceneRendererLoop(
         });
       }
 
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    }
-
-    if (!targetPipe.destroyed) {
-      targetPipe.end();
-    }
-
-    if (sceneRendererAbortController === controller) {
-      sceneRendererAbortController = null;
+      await sleep(intervalMs);
     }
   })();
 }
