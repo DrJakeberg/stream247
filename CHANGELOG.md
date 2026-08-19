@@ -27,8 +27,8 @@ the first fix turned up.
   handler goes through the same database whose failure would have put it there, so one Postgres blip
   could kill the loop and freeze the lower third for the rest of the run with no incident raised
   (v1.5.21)
-- detect an uplink that is running but no longer encoding. ffmpeg stayed alive at 0.02% CPU, emitted
-  450 timestamp discontinuities a minute and handed audio and video opposite ~117s offsets, so the
+- detect an uplink that is running but no longer producing. ffmpeg stayed alive while emitting 450
+  timestamp discontinuities a minute and handing audio and video opposite ~117s offsets, so the
   tracks audibly drifted apart while every destination still reported `ready` — process liveness
   cannot tell "running" from "working". The supervisor now watches ffmpeg's own `out_time` and
   restarts through the unplanned-stop path, so it lands in the restart tally instead of being
@@ -44,6 +44,10 @@ the first fix turned up.
 
 ### Operations
 
+- `docker stats --no-stream` is not usable for judging whether the uplink is encoding. Consecutive
+  samples on the same healthy process read 0.05% and 17.43% while its 30-second cgroup average was
+  99%. Measure `cpu.stat` usage over a window, or the interface counters, before concluding anything
+  from CPU. This is the reason the stall detector watches `out_time` rather than CPU.
 - the overlay's staleness is bounded by the writer's lead, not by buffer sizes. `-thread_queue_size`
   cannot provide that bound: frames queue in Node's stream buffer and the OS pipe long before
   ffmpeg's own queue, and the more cheaply a transparent lower third compresses, the deeper that

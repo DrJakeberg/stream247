@@ -2,14 +2,16 @@
  * Stall detection for the uplink encoder.
  *
  * The uplink was supervised purely by process liveness: a running ffmpeg counted as a healthy
- * channel. In production it entered a state where it consumed 0.02% CPU, emitted 450 timestamp
- * discontinuities a minute and encoded nothing, having lost its place in the sliding HLS window.
- * Viewers saw audio and video drift apart while every health surface reported "ok", and it never
- * recovered on its own.
+ * channel. In production it entered a state where it emitted 450 timestamp discontinuities a minute
+ * and pushed well under its target bitrate, having lost its place in the sliding HLS window. Viewers
+ * heard audio and video drift apart while every health surface reported "ok", and it never recovered
+ * on its own.
  *
  * ffmpeg's own -progress output is the signal that separates "alive" from "working": out_time
- * advances only when frames are actually muxed. This module turns that stream into a stall verdict
- * and deliberately keeps no I/O, so the thresholds can be tested without spawning anything.
+ * advances only when frames are actually muxed. CPU is not a usable substitute -- consecutive
+ * `docker stats` samples of a healthy uplink read 0.05% and 17.43% against a 30-second cgroup
+ * average of 99%. This module turns the progress stream into a stall verdict and deliberately keeps
+ * no I/O, so the thresholds can be tested without spawning anything.
  */
 
 export type UplinkProgressState = {
@@ -149,7 +151,7 @@ function readPositiveMs(raw: string | undefined, fallback: number): number {
  * Detection for a second way the uplink fails while looking healthy.
  *
  * When the playout process restarts, the program feed's timestamps restart with it. A long-lived
- * uplink that reads across that seam keeps encoding at full CPU, but ffmpeg corrects each stream's
+ * uplink that reads across that seam keeps encoding, but ffmpeg corrects each stream's
  * timeline separately: audio and video were observed receiving equal and opposite offsets of about
  * 122 seconds, which is what viewers hear as the tracks coming apart. It never recovers on its own,
  * and out_time keeps advancing the whole time, so the stall detector cannot see it.
