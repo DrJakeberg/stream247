@@ -2881,6 +2881,24 @@ function toScheduleOccurrence(args: {
  * from the schedule at 00:00 and the channel fell out of its programmed pool for the rest of the
  * night with nothing marked as current.
  */
+/**
+ * The next date on or after `date` that falls on `dayOfWeek` (0 = Sunday).
+ *
+ * Forward rather than nearest, so a preview always describes programming still ahead: opening
+ * Monday on a Wednesday shows next Monday, not the one that already aired. Needed because a
+ * schedule preview is built for a date, not for a weekday — resolving a pool into the individual
+ * videos that would play requires knowing which day it is.
+ */
+export function shiftDateToDayOfWeek(date: string, dayOfWeek: number): string {
+  const base = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(base.getTime())) {
+    return date;
+  }
+  const target = ((Math.trunc(dayOfWeek) % 7) + 7) % 7;
+  base.setUTCDate(base.getUTCDate() + ((target - base.getUTCDay() + 7) % 7));
+  return base.toISOString().slice(0, 10);
+}
+
 export function buildScheduleOccurrences(args: {
   date: string;
   blocks: ScheduleBlock[];
