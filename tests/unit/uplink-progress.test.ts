@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_UPLINK_GRACE_MS,
+  canBlameUplinkForStall,
   DEFAULT_UPLINK_STALL_MS,
   createUplinkProgressState,
   getUplinkStallOptions,
@@ -97,6 +98,19 @@ describe("uplink stall detection", () => {
 
     expect(state.lastValue).toBe(5_000_000);
     expect(state.lastAdvanceAtMs).toBe(advancedAt);
+  });
+
+  it("does not blame the uplink for a feed that has stopped producing", () => {
+    // Otherwise a playout outage becomes an uplink restart loop that lasts exactly as long as the
+    // outage, and never fixes anything on the way.
+    expect(canBlameUplinkForStall("hls", "fresh")).toBe(true);
+    for (const status of ["", "bootstrapping", "stale", "failed"]) {
+      expect(canBlameUplinkForStall("hls", status)).toBe(false);
+    }
+    // A relay input does not depend on the program feed at all.
+    for (const status of ["", "stale", "failed"]) {
+      expect(canBlameUplinkForStall("rtmp", status)).toBe(true);
+    }
   });
 
   it("reads thresholds from the environment with usable defaults", () => {

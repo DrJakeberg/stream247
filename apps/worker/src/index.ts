@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { abortableDelay } from "./abortable-delay.js";
 import {
+  canBlameUplinkForStall,
   createUplinkProgressState,
   getUplinkStallOptions,
   hasNeverProgressed,
@@ -4699,7 +4700,14 @@ async function runUplinkCycle(): Promise<void> {
   // channel lost audio/video sync while every destination still reported "ready". out_time is the
   // one signal that separates the two.
   const uplinkStallOptions = getUplinkStallOptions(process.env);
-  for (const running of getRunningUplinkProcesses()) {
+  // When the uplink reads the program feed, a feed that is not fresh is reason enough for out_time
+  // to stand still: ffmpeg has nothing to encode. Restarting on that would produce a restart loop
+  // for the whole duration of a playout outage, and would not fix anything even once.
+  const feedCanSupplyUplink = canBlameUplinkForStall(
+    STREAM247_UPLINK_INPUT_MODE,
+    state.playout.programFeedStatus
+  );
+  for (const running of feedCanSupplyUplink ? getRunningUplinkProcesses() : []) {
     const startedAtMs = new Date(running.startedAt).getTime();
     if (!Number.isFinite(startedAtMs)) {
       continue;

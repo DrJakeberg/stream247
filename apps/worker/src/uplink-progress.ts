@@ -129,6 +129,17 @@ export function hasNeverProgressed(
   return !state.seenProgress && nowMs - startedAtMs >= options.graceMs;
 }
 
+/**
+ * Whether a stalled out_time can be blamed on the uplink at all.
+ *
+ * An uplink reading the program feed legitimately stops advancing when that feed does, and no
+ * number of restarts fixes a playout that is not producing. Acting on it anyway would turn a
+ * playout outage into an uplink restart loop lasting exactly as long as the outage.
+ */
+export function canBlameUplinkForStall(inputMode: string, programFeedStatus: string): boolean {
+  return inputMode !== "hls" || programFeedStatus === "fresh";
+}
+
 function readPositiveMs(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
