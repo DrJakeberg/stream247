@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  canReleaseVodCache,
   evictUnusedTwitchVodCache,
   getTwitchVodCacheConfig,
   parseVodSizeBytes
@@ -89,6 +90,22 @@ describe("per-asset size limit", () => {
   it("falls back to the default for a nonsense value rather than caching nothing", () => {
     expect(configFor({ TWITCH_VOD_CACHE_MAX_ASSET_BYTES: "0" }).maxAssetBytes).toBe(20 * 1024 * 1024 * 1024);
     expect(configFor({ TWITCH_VOD_CACHE_MAX_ASSET_BYTES: "lots" }).maxAssetBytes).toBe(20 * 1024 * 1024 * 1024);
+  });
+});
+
+describe("when releasing is safe at all", () => {
+  // An empty keep list must never be read as "nothing is in use". The playout reports no current
+  // asset while reconnecting, in standby, and on a freshly restarted process whose probe cache is
+  // still cold — every one of those is a moment when it is about to need the very files it would
+  // otherwise be told to delete. Evicting there turns a routine restart into a full re-download of
+  // every scheduled VOD.
+
+  it("refuses while the playout has nothing selected", () => {
+    expect(canReleaseVodCache("")).toBe(false);
+  });
+
+  it("allows it once something is on air", () => {
+    expect(canReleaseVodCache("asset-1")).toBe(true);
   });
 });
 

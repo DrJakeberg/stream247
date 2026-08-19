@@ -488,6 +488,19 @@ async function isLockedByLiveJob(filePath: string, nowMs: number): Promise<boole
  * Never touches partial downloads: those belong to the prune, which knows how to tell an abandoned
  * one from a job still writing it.
  */
+/**
+ * Whether the playout knows enough about what it is doing for an eviction to be safe.
+ *
+ * An empty keep list must never be read as "nothing is in use". The playout deliberately reports no
+ * current asset while reconnecting, while in standby, and on a freshly restarted process whose
+ * probe cache is still cold — all states in which it is about to need exactly the files it would
+ * otherwise be told to delete. Wiping the cache there converts a routine restart into a full
+ * re-download of every scheduled VOD.
+ */
+export function canReleaseVodCache(currentAssetId: string): boolean {
+  return Boolean(currentAssetId);
+}
+
 export async function evictUnusedTwitchVodCache(
   config: TwitchVodCacheConfig,
   keepPaths: readonly string[]

@@ -132,6 +132,7 @@ import { execFileText, runWithStallGuard } from "./process-utils.js";
 import {
   ensureTwitchVodCache,
   buildTwitchVodCachePath,
+  canReleaseVodCache,
   evictUnusedTwitchVodCache,
   getTwitchVodCacheConfig,
   peekTwitchVodCache,
@@ -426,10 +427,14 @@ const vodCacheJobRunner = new VodCacheJobRunner({
  * is never a reason to interrupt the channel. The size cap still bounds the cache if this does
  * nothing at all.
  */
-async function releaseUnusedVodCache(keepAssetIds: readonly string[], state: AppState): Promise<void> {
+async function releaseUnusedVodCache(
+  currentAssetId: string,
+  keepAssetIds: readonly string[],
+  state: AppState
+): Promise<void> {
   try {
     const config = getTwitchVodCacheConfig(process.env, getMediaRoot());
-    if (!config.enabled) {
+    if (!config.enabled || !canReleaseVodCache(currentAssetId)) {
       return;
     }
 
@@ -4440,6 +4445,7 @@ async function runPlayoutCycle(): Promise<void> {
   // playback-ended event, so a skip, a crash or a boundary frees the disk just as an ordinary
   // finish does.
   await releaseUnusedVodCache(
+    selection.asset?.id ?? "",
     [
       selection.asset?.id ?? "",
       // Everything still ahead in the queue, not just the next item. The download runner works
