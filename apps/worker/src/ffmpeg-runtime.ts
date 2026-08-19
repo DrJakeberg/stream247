@@ -327,6 +327,12 @@ export function buildUplinkFfmpegCommand(
     "-hide_banner",
     "-loglevel",
     "warning",
+    // Machine-readable progress on the otherwise unused stdout. This is the only signal that
+    // distinguishes an uplink that is running from one that is working: the supervisor watches
+    // out_time here, because a stalled ffmpeg stays alive and looks healthy from the outside.
+    "-progress",
+    "pipe:1",
+    "-nostats",
     "-fflags",
     inputMode === "hls" ? "+genpts+discardcorrupt" : "+genpts"
   ];

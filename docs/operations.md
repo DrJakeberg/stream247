@@ -79,6 +79,10 @@
   - `TWITCH_VOD_CACHE_PARTIAL_MAX_AGE_HOURS`
   - `TWITCH_VOD_CACHE_MAX_BYTES`
   - `TWITCH_VOD_CACHE_MIN_FREE_BYTES`
+  - `UPLINK_STALL_TIMEOUT_MS` / `UPLINK_STALL_GRACE_MS` — how long the uplink may run without
+    advancing `out_time` before it is restarted, and the quiet period after start. A stalled ffmpeg
+    stays alive and keeps its destinations in `ready`, so process liveness alone does not catch it;
+    watch for the `uplink.encoder_stall.restart` and `uplink.encoder.no_progress` events.
   - `TWITCH_VOD_CACHE_LIMIT_RATE` — caps download bandwidth (yt-dlp notation, e.g. `8M`). Unset means
     unlimited, which lets a background download saturate the same line the uplink pushes through.
   - `TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS`

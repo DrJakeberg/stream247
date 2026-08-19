@@ -2,6 +2,14 @@ import { promises as fs } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { abortableDelay } from "./abortable-delay.js";
+import {
+  createUplinkProgressState,
+  getUplinkStallOptions,
+  hasNeverProgressed,
+  isUplinkStalled,
+  observeUplinkProgress,
+  type UplinkProgressState
+} from "./uplink-progress.js";
 import nodemailer from "nodemailer";
 import path from "node:path";
 import type { Writable } from "node:stream";
@@ -291,6 +299,8 @@ type UplinkProcessRuntime = {
   outputSettings: WorkerStreamOutputSettings;
   startedAt: string;
   plannedStopReason: string;
+  /** ffmpeg's own out_time, watched to tell an uplink that is running from one that is working. */
+  progress: UplinkProgressState;
 };
 
 const queueProbeCache = new Map<string, QueueProbeCacheEntry>();
@@ -4383,8 +4393,15 @@ async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> 
     runtimeTargets: group.targets,
     outputSettings: group.settings,
     startedAt,
-    plannedStopReason: ""
+    plannedStopReason: "",
+    progress: createUplinkProgressState(Date.now())
   };
+
+  // ffmpeg writes -progress here. It has to be consumed even if nothing watched it: an unread pipe
+  // fills and blocks the process, which would manufacture the very stall this is meant to catch.
+  child.stdout?.on("data", (chunk: Buffer) => {
+    runtime.progress = observeUplinkProgress(runtime.progress, chunk.toString(), Date.now());
+  });
 
   uplinkProcesses = [...uplinkProcesses.filter((entry) => entry.key !== group.key), runtime];
   const runningDestinationIds = getRunningUplinkDestinationIds();
@@ -4468,7 +4485,9 @@ async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> 
 
   child.on("exit", (code, signal) => {
     const stopReason = runtime.plannedStopReason;
-    const wasPlanned = stopReason !== "" && stopReason !== "destination-stalled";
+    // A stall we stopped ourselves is still a failure of the channel: counting it as planned would
+    // hide it from the unplanned-restart tally that operators watch, and skip the restart.
+    const wasPlanned = stopReason !== "" && stopReason !== "destination-stalled" && stopReason !== "encoder-stalled";
     const exitReason = describeFfmpegExit(code, signal ?? null);
     const lastDestinationIds = [...runtime.destinationIds];
     const lastRuntimeTargets = [...runtime.runtimeTargets];
@@ -4633,6 +4652,48 @@ async function runUplinkCycle(): Promise<void> {
 
   if (uplinkReconnectUntil !== "") {
     uplinkReconnectUntil = "";
+  }
+
+  // The destination-stall check below asks whether the *targets* are healthy. It cannot see an
+  // ffmpeg that is alive, holds its connections open and encodes nothing -- which is how this
+  // channel lost audio/video sync while every destination still reported "ready". out_time is the
+  // one signal that separates the two.
+  const uplinkStallOptions = getUplinkStallOptions(process.env);
+  for (const running of getRunningUplinkProcesses()) {
+    const startedAtMs = new Date(running.startedAt).getTime();
+    if (!Number.isFinite(startedAtMs)) {
+      continue;
+    }
+
+    if (hasNeverProgressed(running.progress, now, startedAtMs, uplinkStallOptions)) {
+      // Reported only: indistinguishable from a slow connect, and killing on it risks a loop.
+      logRuntimeEvent("uplink.encoder.no_progress", {
+        outputProfile: running.key,
+        destinationIds: running.destinationIds,
+        runningSeconds: Math.round((now - startedAtMs) / 1000)
+      });
+      continue;
+    }
+
+    if (!isUplinkStalled(running.progress, now, startedAtMs, uplinkStallOptions)) {
+      continue;
+    }
+
+    const stalledSeconds = Math.round((now - running.progress.lastAdvanceAtMs) / 1000);
+    logRuntimeEvent("uplink.encoder_stall.restart", {
+      outputProfile: running.key,
+      destinationIds: running.destinationIds,
+      stalledSeconds,
+      thresholdSeconds: Math.round(uplinkStallOptions.stallMs / 1000)
+    });
+    await upsertIncident({
+      scope: "playout",
+      severity: "warning",
+      title: "Uplink restarted after it stopped encoding",
+      message: `The uplink process for ${running.key} is still running but has not advanced its output timestamp for ${stalledSeconds}s. Restarting it so the channel does not keep an open but silent connection.`,
+      fingerprint: `uplink.encoder-stall.${running.key}`
+    });
+    await stopUplinkProcess(running, "encoder-stalled");
   }
 
   for (const running of getRunningUplinkProcesses()) {
