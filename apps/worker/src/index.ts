@@ -5134,17 +5134,22 @@ async function reconcileTwitch(): Promise<void> {
     return;
   }
 
-  const currentScheduleItem = getCurrentScheduleItem(state);
-  const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
-  if (!currentScheduleItem && !currentAsset) {
-    return;
-  }
-
+  // Refreshed before the early return below, not after it. The stored token is what the chat bridge
+  // authenticates with on every sync, and that sync runs whether or not anything is scheduled. With
+  // the refresh sitting behind "is something playing", a channel with an empty programme let its
+  // token expire and then could not reconnect to chat — the one part of the product that is
+  // supposed to keep working while nothing is on air.
   const expiresAt = state.twitch.tokenExpiresAt ? new Date(state.twitch.tokenExpiresAt).getTime() : 0;
   let twitchAccessToken = state.twitch.accessToken;
   const twitchClientId = getTwitchClientId(state);
   if (expiresAt > 0 && expiresAt - Date.now() < 5 * 60_000) {
     twitchAccessToken = await refreshBroadcasterAccessToken();
+  }
+
+  const currentScheduleItem = getCurrentScheduleItem(state);
+  const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
+  if (!currentScheduleItem && !currentAsset) {
+    return;
   }
 
   const desiredTitle = currentAsset
