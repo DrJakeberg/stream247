@@ -60,6 +60,17 @@ export class VodCacheJobRunner {
   }
 
   /**
+   * Assets this runner is currently working on or still has queued.
+   *
+   * The cache eviction needs it: a download that completes for an asset the playout has already
+   * moved past would otherwise be deleted the moment it lands, and the bandwidth spent on it wasted
+   * entirely.
+   */
+  getPendingAssetIds(): string[] {
+    return [...new Set([...this.jobs.keys(), ...this.queue.map((asset) => asset.id)])];
+  }
+
+  /**
    * Ask for an asset to be cached. Returns true when a new job was accepted, false when the asset
    * is already queued/running or still inside its failure cooldown. Never throws, never blocks.
    */

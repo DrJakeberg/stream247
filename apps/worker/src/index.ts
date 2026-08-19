@@ -426,20 +426,16 @@ const vodCacheJobRunner = new VodCacheJobRunner({
  * is never a reason to interrupt the channel. The size cap still bounds the cache if this does
  * nothing at all.
  */
-async function releaseUnusedVodCache(
-  currentAsset: AssetRecord | null | undefined,
-  nextAssetId: string,
-  state: AppState
-): Promise<void> {
+async function releaseUnusedVodCache(keepAssetIds: readonly string[], state: AppState): Promise<void> {
   try {
     const config = getTwitchVodCacheConfig(process.env, getMediaRoot());
     if (!config.enabled) {
       return;
     }
 
-    const nextAsset = nextAssetId ? state.assets.find((entry) => entry.id === nextAssetId) : undefined;
-    const keepPaths = [currentAsset, nextAsset]
-      .filter((asset): asset is AssetRecord => Boolean(asset) && isTwitchVodAsset(asset as AssetRecord))
+    const wanted = new Set(keepAssetIds.filter((id) => id));
+    const keepPaths = state.assets
+      .filter((asset) => wanted.has(asset.id) && isTwitchVodAsset(asset))
       .map((asset) => asset.cachePath || buildTwitchVodCachePath(asset, config.cacheRoot));
 
     const released = await evictUnusedTwitchVodCache(config, keepPaths);
@@ -4443,7 +4439,21 @@ async function runPlayoutCycle(): Promise<void> {
   // Free cached VODs the moment they stop being needed. Keyed on what is in use rather than on a
   // playback-ended event, so a skip, a crash or a boundary frees the disk just as an ordinary
   // finish does.
-  await releaseUnusedVodCache(selection.asset, nextQueueItem?.assetId ?? prefetchedAsset?.id ?? "", state);
+  await releaseUnusedVodCache(
+    [
+      selection.asset?.id ?? "",
+      // Everything still ahead in the queue, not just the next item. The download runner works
+      // several assets ahead, and keeping only the next one would delete a VOD moments after its
+      // download finished — then request it again, which is the loop this cache already escaped
+      // once.
+      ...queueItems.map((item) => item.assetId),
+      prefetchedAsset?.id ?? "",
+      // A download that lands for an asset the playout has already passed would otherwise be
+      // deleted on arrival, throwing away the bandwidth that produced it.
+      ...vodCacheJobRunner.getPendingAssetIds()
+    ],
+    state
+  );
 
   if (
     currentScheduleItem?.poolId &&

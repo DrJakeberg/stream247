@@ -168,3 +168,33 @@ describe("VodCacheJobRunner", () => {
     expect(ensureCache).not.toHaveBeenCalled();
   });
 });
+
+describe("what the runner still owes", () => {
+  // The cache eviction keeps whatever this reports. A download that lands for an asset the playout
+  // has already moved past would otherwise be deleted the moment it appears, wasting every byte
+  // spent on it and leaving the asset to be requested again later.
+  it("reports queued and running assets, without duplicates", () => {
+    const runner = new VodCacheJobRunner({
+      ensureCache: () => new Promise(() => undefined),
+      onResult: async () => undefined
+    });
+    const config = createConfig();
+
+    runner.request(createAsset("a"), config);
+    runner.request(createAsset("b"), config);
+    runner.request(createAsset("a"), config);
+
+    const pending = runner.getPendingAssetIds();
+    expect(pending).toHaveLength(new Set(pending).size);
+    expect(pending).toEqual(expect.arrayContaining(["a", "b"]));
+  });
+
+  it("reports nothing when idle", () => {
+    const runner = new VodCacheJobRunner({
+      ensureCache: async () => ({ status: "ready" as const, cachePath: "/c/a.mp4", cacheUpdatedAt: "", cacheError: "" as const }),
+      onResult: async () => undefined
+    });
+
+    expect(runner.getPendingAssetIds()).toEqual([]);
+  });
+});
