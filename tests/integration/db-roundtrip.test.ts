@@ -10,6 +10,7 @@ import {
   ensureDatabase,
   listOverlayScenePresetRecords,
   publishOverlayDraftRecord,
+  appendPresenceWindowRecord,
   readAppState,
   updateAppState,
   updatePlayoutRuntime,
@@ -1346,6 +1347,62 @@ describe.sequential("database roundtrip", () => {
     expect(indexes).toContain("chat_viewer_requests_actor_created_idx");
     expect(migrationApplied).toBe("1");
   }, 60_000);
+
+  describe("moderator presence check-ins", () => {
+    // expires_at used to be the primary key. It is the check-in time plus a duration picked from a
+    // short list, so two moderators checking in during the same second for the same length produced
+    // the identical value — and the insert runs inside the Twitch chat callback, where the unique
+    // violation surfaced as a check-in that simply did not happen.
+
+    it("accepts two check-ins that expire at the same instant", async () => {
+      const expiresAt = "2026-08-19T21:00:00.000Z";
+      const createdAt = "2026-08-19T20:30:00.000Z";
+
+      await appendPresenceWindowRecord({
+        actor: "first_moderator",
+        minutes: 30,
+        requestedMinutes: 30,
+        appliedMinutes: 30,
+        clampReason: "",
+        createdAt,
+        expiresAt
+      });
+
+      await expect(
+        appendPresenceWindowRecord({
+          actor: "second_moderator",
+          minutes: 30,
+          requestedMinutes: 30,
+          appliedMinutes: 30,
+          clampReason: "",
+          createdAt,
+          expiresAt
+        })
+      ).resolves.toBeUndefined();
+
+      const state = await readAppState();
+      const both = state.presenceWindows.filter((window) => window.expiresAt === expiresAt);
+      expect(both.map((window) => window.actor).sort()).toEqual(["first_moderator", "second_moderator"]);
+    });
+
+    it("keeps the same actor's repeated check-in rather than replacing it", async () => {
+      const expiresAt = "2026-08-19T22:00:00.000Z";
+      for (let index = 0; index < 3; index += 1) {
+        await appendPresenceWindowRecord({
+          actor: "same_moderator",
+          minutes: 30,
+          requestedMinutes: 30,
+          appliedMinutes: 30,
+          clampReason: "",
+          createdAt: "2026-08-19T21:30:00.000Z",
+          expiresAt
+        });
+      }
+
+      const state = await readAppState();
+      expect(state.presenceWindows.filter((window) => window.expiresAt === expiresAt)).toHaveLength(3);
+    });
+  });
 
   describe("state writes and the live playout runtime", () => {
     // Why the blueprint import uses updateAppState instead of readAppState + writeAppState.
