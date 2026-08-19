@@ -49,6 +49,25 @@
   --overlay-scrim-soft: rgb(var(--overlay-ink-rgb) / 0.56);
   --overlay-scrim-faint: rgb(var(--overlay-ink-rgb) / 0.46);
 
+  /* ---- State channels. Same treatment as the bases above: declared once, tinted by alpha. ---- */
+  --danger-rgb: 158 36 48; /* #9e2430 */
+  --warning-rgb: 160 74 22; /* #a04a16 */
+
+  --danger-tint-faint: rgb(var(--danger-rgb) / 0.12);
+  --danger-tint-soft: rgb(var(--danger-rgb) / 0.14);
+  --danger-tint: rgb(var(--danger-rgb) / 0.18);
+  --danger-tint-strong: rgb(var(--danger-rgb) / 0.2);
+  --danger-border: rgb(var(--danger-rgb) / 0.3);
+  --danger-border-strong: rgb(var(--danger-rgb) / 0.34);
+
+  --warning-tint-faint: rgb(var(--warning-rgb) / 0.12);
+  --warning-tint: rgb(var(--warning-rgb) / 0.14);
+
+  /* The overlay keeps its own danger red: it is mixed into dark scrims for on-air legibility,
+     where the admin value would sit too light. Declared here so it is a decision, not a stray
+     literal. */
+  --overlay-danger: #8b1e2d;
+
   /* ---- Spacing, on a 4px base ---- */
   --space-1: 4px;
   --space-2: 8px;
