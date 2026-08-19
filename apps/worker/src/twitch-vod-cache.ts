@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { AssetRecord } from "@stream247/db";
 import { clampToCycleAwaitCeiling } from "./cycle-budget.js";
-import { acquireFileLock, type FileLock } from "./file-lock.js";
+import { DEFAULT_LOCK_STALE_MS, acquireFileLock, type FileLock } from "./file-lock.js";
 import { execFileText } from "./process-utils.js";
 
 export const INTERNAL_MEDIA_CACHE_DIRNAME = ".stream247-cache";
@@ -297,6 +297,35 @@ type CacheFileInfo = {
   transient: boolean;
 };
 
+/**
+ * True when a live download job holds the lock for the cache entry this file belongs to.
+ *
+ * Partial downloads used to be disposable: each attempt wrote a uniquely named part file and the
+ * next attempt started over. Since background jobs resume into a stable part path, a partial is
+ * accumulated work — often tens of gigabytes — and evicting one mid-flight means it can never
+ * finish. With several large VODs queued that is an endless loop: every new job destroys the
+ * previous job's progress, which is the same "never completes" failure the download timeout used
+ * to cause, only moved into the background.
+ *
+ * The lock file the running job maintains (with a heartbeat) is the signal for "someone is working
+ * on this right now"; a stale lock means the holder died and the partial is fair game again.
+ */
+async function isLockedByLiveJob(filePath: string, nowMs: number): Promise<boolean> {
+  // ".../<id>.mp4.part-resume.mp4" and its fragment siblings all belong to ".../<id>.mp4".
+  const marker = filePath.indexOf(".part-resume");
+  if (marker === -1) {
+    return false;
+  }
+
+  const lockPath = `${filePath.slice(0, marker)}.lock`;
+  const stat = await fs.stat(lockPath).catch(() => null);
+  if (!stat?.isFile()) {
+    return false;
+  }
+
+  return nowMs - stat.mtimeMs < DEFAULT_LOCK_STALE_MS;
+}
+
 async function pruneTwitchVodCache(
   config: TwitchVodCacheConfig,
   preservedCachePath: string
@@ -306,6 +335,9 @@ async function pruneTwitchVodCache(
 
   for (const entry of cacheFiles) {
     if (entry.transient && (entry.size === 0 || nowMs - entry.mtimeMs >= config.partialMaxAgeMs)) {
+      if (await isLockedByLiveJob(entry.filePath, nowMs)) {
+        continue;
+      }
       await fs.rm(entry.filePath, { force: true }).catch(() => undefined);
     }
   }
@@ -319,6 +351,10 @@ async function pruneTwitchVodCache(
   for (const entry of cacheEntries.filter((candidate) => candidate.transient)) {
     if (totalCacheBytes <= config.maxCacheBytes && freeBytes >= config.minFreeBytes) {
       break;
+    }
+
+    if (await isLockedByLiveJob(entry.filePath, nowMs)) {
+      continue;
     }
 
     await fs.rm(entry.filePath, { force: true }).catch(() => undefined);
