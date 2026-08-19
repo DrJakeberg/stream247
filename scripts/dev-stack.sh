@@ -146,14 +146,7 @@ cmd_up() {
   rm -f "$COOKIE_JAR"
   seed_dev_fixture "$BASE_URL" "$COOKIE_JAR"
 
-  # With the runtime containers stopped, nothing owns the playout runtime and every live surface
-  # renders "nothing on air" — the one state no screenshot needs. Seed the state a running channel
-  # would have, so the dashboard, the program page and the channel page are testable too. With the
-  # containers running the worker owns it and this would just be overwritten.
-  if [ "$with_runtime" -eq 0 ]; then
-    DATABASE_URL="postgresql://stream247:stream247@127.0.0.1:${DB_PORT}/stream247" \
-      node "$ROOT_DIR/scripts/seed-playout-runtime.mjs" || echo "Runtime seed failed; live surfaces will render idle."
-  fi
+  [ "$with_runtime" -eq 0 ] && seed_runtime
 
   echo ""
   echo "Dev stack is up at ${BASE_URL}"
@@ -164,7 +157,19 @@ cmd_up() {
   fi
 }
 
-cmd_seed() { wait_for_web && rm -f "$COOKIE_JAR" && seed_dev_fixture "$BASE_URL" "$COOKIE_JAR"; }
+# With the runtime containers stopped nothing owns the playout runtime, so every live surface
+# renders "nothing on air" — the one state no screenshot needs. This seeds the state a running
+# channel would have. With the containers running the worker owns it and this would be overwritten
+# within seconds, so callers only invoke it in the deterministic configuration.
+seed_runtime() {
+  DATABASE_URL="postgresql://stream247:stream247@127.0.0.1:${DB_PORT}/stream247" \
+    node "$ROOT_DIR/scripts/seed-playout-runtime.mjs" ||
+    echo "Runtime seed failed; live surfaces will render idle."
+}
+
+cmd_seed() {
+  wait_for_web && rm -f "$COOKIE_JAR" && seed_dev_fixture "$BASE_URL" "$COOKIE_JAR" && seed_runtime
+}
 cmd_status() {
   echo "URL: ${BASE_URL}"
   curl -fsS "${BASE_URL}/api/ready" >/dev/null 2>&1 && echo "Readiness: ok" || echo "Readiness: not ready"

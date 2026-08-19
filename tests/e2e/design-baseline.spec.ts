@@ -72,13 +72,18 @@ type Surface = {
 const SURFACES: Surface[] = [
   { name: "login", path: "/login", authenticated: false },
   { name: "channel", path: "/channel", authenticated: false },
-  // /live?tab=status and ?tab=control are deliberately absent. They are driven by a live SSE feed
-  // and exist to display constantly-changing runtime state, so pixel snapshots of them are flaky:
-  // an early run passed 28/28 and a later, otherwise identical one failed on live-status-mobile
-  // with scattered text differences. Field-level masks lost that race, and a net that goes red at
-  // random gets ignored, which is worse than not having one. Covering them properly needs a
-  // deterministic runtime fixture (pinned heartbeats and readiness), which is its own piece of
-  // work and not a prerequisite for the CSS consolidation.
+  // /live?tab=status and ?tab=control were excluded for a long time: driven by a live SSE feed and
+  // built to display constantly-changing runtime state, their snapshots were flaky — an early run
+  // passed 28/28 and a later, otherwise identical one failed on live-status-mobile with scattered
+  // text differences. Field-level masks lost that race, and a net that goes red at random gets
+  // ignored, which is worse than not having one.
+  //
+  // They are covered now because the runtime is pinned rather than masked: dev-stack.sh seeds a
+  // fixed playout runtime with fixed instants, and the worker that would rewrite it is stopped, so
+  // the SSE feed has nothing to push. These are the pages an operator opens when something is
+  // wrong, which makes them the last ones that should have gone unwatched.
+  { name: "live-status", path: "/live?tab=status", authenticated: true },
+  { name: "live-control", path: "/live?tab=control", authenticated: true },
   { name: "live-moderation", path: "/live?tab=moderation", authenticated: true },
   { name: "program-schedule", path: "/program?tab=schedule", authenticated: true },
   { name: "program-pools", path: "/program?tab=pools", authenticated: true },
