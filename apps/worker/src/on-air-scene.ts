@@ -17,6 +17,14 @@ export const ON_AIR_SCENE_PIPE_FRAMERATE = 1;
 /** Budget for a single written frame before the overlay input runs dry. */
 export const ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS = 1000 / ON_AIR_SCENE_PIPE_FRAMERATE;
 
+/**
+ * How many frames ffmpeg may buffer ahead on the overlay input. The writer deliberately outruns the
+ * pipe so the filter never starves, which keeps this queue full — and every queued frame is one
+ * more second before a scene change reaches the screen. Small enough that the lower third stays
+ * responsive, large enough to absorb a slow rasterisation.
+ */
+export const ON_AIR_SCENE_PIPE_QUEUE_FRAMES = 4;
+
 export function getSceneRendererBaseUrl(env: NodeJS.ProcessEnv): string {
   return String(env.SCENE_RENDER_BASE_URL || env.INTERNAL_APP_URL || env.APP_URL || "http://web:3000").replace(/\/+$/, "");
 }
