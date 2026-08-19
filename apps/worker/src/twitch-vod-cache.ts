@@ -300,6 +300,9 @@ export async function ensureTwitchVodCache(
     // be can never end up as a local file: it would saturate the line for as long as it ran and
     // then be evicted, so the next attempt would start from zero again. Streaming it from Twitch is
     // the correct outcome, not a fallback.
+    // The estimate is the only enforcement there is. --max-filesize was tried and removed: yt-dlp
+    // consults it only for progressive HTTP downloads with a known Content-Length, never for the
+    // fragmented HLS every Twitch VOD arrives as -- measured downloading 95MB against a 1MiB cap.
     const probedSizeBytes = await probeTwitchVodSizeBytes(asset.path, config, execText);
     if (probedSizeBytes > config.maxAssetBytes) {
       return {
@@ -328,11 +331,6 @@ export async function ensureTwitchVodCache(
         "--no-warnings",
         ...(mode === "background" ? ["--continue"] : ["--no-continue"]),
         ...(config.limitRate ? ["--limit-rate", config.limitRate] : []),
-        // Only bites when yt-dlp itself knows a size, which for Twitch it does not — the estimate
-        // above is what actually enforces the limit. Kept for other sources and for the case where
-        // Twitch starts reporting one.
-        "--max-filesize",
-        String(config.maxAssetBytes),
         "--format",
         "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format",
