@@ -26,6 +26,7 @@ cd "$ROOT_DIR"
 
 PROJECT_NAME="${DEV_STACK_PROJECT:-stream247-dev}"
 PORT="${DEV_STACK_PORT:-3020}"
+DB_PORT="${DEV_STACK_DB_PORT:-55432}"
 STATE_DIR="${DEV_STACK_STATE_DIR:-$ROOT_DIR/.dev-stack}"
 ENV_FILE="$STATE_DIR/.env"
 OVERRIDE_FILE="$STATE_DIR/docker-compose.override.yml"
@@ -97,6 +98,10 @@ services:
     env_file: !override
       - ${ENV_FILE}
   postgres:
+    # Published so the runtime seed can reach the database from the host. Bound to loopback: a
+    # throwaway dev database still is not something to leave listening on every interface.
+    ports: !override
+      - "127.0.0.1:${DB_PORT}:5432"
     env_file: !override
       - ${ENV_FILE}
     volumes:
@@ -140,6 +145,15 @@ cmd_up() {
 
   rm -f "$COOKIE_JAR"
   seed_dev_fixture "$BASE_URL" "$COOKIE_JAR"
+
+  # With the runtime containers stopped, nothing owns the playout runtime and every live surface
+  # renders "nothing on air" — the one state no screenshot needs. Seed the state a running channel
+  # would have, so the dashboard, the program page and the channel page are testable too. With the
+  # containers running the worker owns it and this would just be overwritten.
+  if [ "$with_runtime" -eq 0 ]; then
+    DATABASE_URL="postgresql://stream247:stream247@127.0.0.1:${DB_PORT}/stream247" \
+      node "$ROOT_DIR/scripts/seed-playout-runtime.mjs" || echo "Runtime seed failed; live surfaces will render idle."
+  fi
 
   echo ""
   echo "Dev stack is up at ${BASE_URL}"
