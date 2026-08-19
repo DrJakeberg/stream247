@@ -4,6 +4,47 @@
 
 - No unreleased changes currently tracked.
 
+## 1.5.23 - 2026-08-20
+
+Design consolidation, and the two gaps the 1.5.22 rollout exposed in production.
+
+### Fixed
+
+- collect abandoned partial downloads. They were left entirely to the prune, which only runs
+  immediately before a download starts — and the new size policy makes that a dead end: once every
+  scheduled VOD is over the limit no download ever starts, nothing prunes, and the partials stay
+  forever. Measured at 13.8GB on the production channel, invisible to a release that skipped every
+  transient file. The release now applies the prune's own test: old enough, and no live job holding
+  the lock (v1.5.23)
+
+### Changed
+
+- one definition for the five state tones. `status-chip-*`, `badge-*`, `programming-status-*`,
+  `schedule-block-*`, `toast-*`, `.warning`/`.danger` and `.field-error` said the same five things in
+  their own colours — agreeing on meaning, disagreeing on value, which is how one drifts out of
+  contrast while the rest stay fine. They now map onto
+  `--tone-{positive,caution,critical,neutral,info}-{fg,bg,border}`; class names are unchanged, so no
+  markup moved. Info became a real channel instead of three literals inside one pill. Colour
+  literals: 100 → 93 (v1.5.23)
+- removed `Card`, `PageHeader` and `Button` from the design-system primitives. Card and PageHeader
+  duplicated Panel and AdminPageHeader, which carry 17 and 11 usages against zero for the newer
+  pair; Button was never used either. Consolidating onto the incumbents keeps the visual result
+  identical (v1.5.23)
+
+### Added
+
+- a fixed playout runtime for the dev stack. It leaves worker/playout/uplink stopped so the UI is
+  reproducible, which also left every live surface reporting "nothing on air" — so the pages that
+  report on a running channel were outside the visual suite by construction. The runtime the stopped
+  worker would own is now seeded through the same `updatePlayoutRuntime` production uses, with fixed
+  ids and fixed instants (v1.5.23)
+- `/live?tab=status` and `?tab=control` in the visual baseline. They were excluded for flakiness;
+  with the runtime pinned rather than masked, two consecutive verification runs pass 28/28. These
+  are the pages an operator opens when something is wrong (v1.5.23)
+- `tests/unit/design-tones.test.ts`, which resolves the channel syntax
+  (`rgb(var(--brand-rgb) / 0.12)`) the existing contrast test cannot read. The token layer is
+  finally covered by the standard it was written to serve (v1.5.23)
+
 ## 1.5.22 - 2026-08-19
 
 The VOD cache does what it was always meant to, plus the audit findings that were still open.
