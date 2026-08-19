@@ -30,26 +30,50 @@ function configFor(env: Record<string, string> = {}) {
 }
 
 describe("VOD size probe", () => {
-  it("adds the sizes of the formats yt-dlp would merge", () => {
-    // A video+audio selection prints one line per format.
-    expect(parseVodSizeBytes("1000\n234\n")).toBe(1234);
+  // Twitch reports no size at all: both filesize and filesize_approx come back "NA" for its HLS
+  // VODs, on every yt-dlp version tried. The first version of this policy read only those fields,
+  // so the size check was unreachable and the whole 20GB rule did nothing. Bitrate and duration are
+  // available, and pin the size closely enough for the decision being made.
+
+  it("derives the size from bitrate and duration when no size is reported", () => {
+    // A real Twitch VOD: 6499.143 kbit/s over 48064 seconds is roughly 36GB.
+    const bytes = parseVodSizeBytes("NA|6499.143|48064");
+
+    expect(bytes / 1024 ** 3).toBeGreaterThan(35);
+    expect(bytes / 1024 ** 3).toBeLessThan(38);
   });
 
-  it("reads a single reported size", () => {
-    expect(parseVodSizeBytes("21474836480")).toBe(21474836480);
+  it("puts a real Twitch VOD on the correct side of a 20GB limit", () => {
+    const twentyGb = 20 * 1024 * 1024 * 1024;
+
+    expect(parseVodSizeBytes("NA|6499.143|48064")).toBeGreaterThan(twentyGb);
+    // A two-hour stream at the same bitrate fits comfortably.
+    expect(parseVodSizeBytes("NA|6499.143|7200")).toBeLessThan(twentyGb);
   });
 
-  it("reports an unavailable size as zero rather than guessing", () => {
-    // Twitch does not always expose one, and 0 must mean "no answer" to the caller — treating it as
-    // a real size would refuse to cache everything.
-    expect(parseVodSizeBytes("NA")).toBe(0);
+  it("prefers a reported size over the estimate", () => {
+    expect(parseVodSizeBytes("1000000000|6499.143|48064")).toBe(1000000000);
+  });
+
+  it("adds the formats yt-dlp would merge", () => {
+    // One line per selected format; a video+audio selection yields two.
+    expect(parseVodSizeBytes("1000|NA|NA\n234|NA|NA")).toBe(1234);
+    expect(parseVodSizeBytes("NA|8|100\nNA|2|100")).toBe(125_000);
+  });
+
+  it("reports an unanswerable line as zero rather than guessing", () => {
+    // 0 must mean "no answer" to the caller — reading it as a real size would refuse to cache
+    // everything.
+    expect(parseVodSizeBytes("NA|NA|NA")).toBe(0);
     expect(parseVodSizeBytes("")).toBe(0);
-    expect(parseVodSizeBytes("NA\nNA\n")).toBe(0);
+    expect(parseVodSizeBytes("NA")).toBe(0);
   });
 
-  it("ignores noise around the numbers", () => {
-    expect(parseVodSizeBytes("  4096  \nNA\n2048\n")).toBe(6144);
-    expect(parseVodSizeBytes("-5\n0\n100")).toBe(100);
+  it("ignores partial and nonsensical values", () => {
+    // A bitrate without a duration cannot produce an estimate.
+    expect(parseVodSizeBytes("NA|6499|NA")).toBe(0);
+    expect(parseVodSizeBytes("NA|NA|48064")).toBe(0);
+    expect(parseVodSizeBytes("-5|-1|-1")).toBe(0);
   });
 });
 

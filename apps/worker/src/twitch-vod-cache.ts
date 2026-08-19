@@ -134,21 +134,37 @@ export function normalizeLimitRate(value: string | undefined): string {
 }
 
 /**
- * Reads a byte count out of yt-dlp's `--print` output.
+ * Reads a download size out of yt-dlp's `--print` output.
  *
- * yt-dlp prints one line per selected format, so a merged video+audio selection yields two numbers
- * that have to be added, and it prints "NA" whenever a size is unknown. Unknown is reported as 0,
- * which callers must treat as "no answer" rather than "empty file": Twitch does not always expose a
- * size, and refusing to cache on a missing answer would disable caching entirely.
+ * Twitch never reports one directly: both `filesize` and `filesize_approx` come back as "NA" for
+ * its HLS VODs, on every yt-dlp version tried. What is available is the bitrate and the duration,
+ * which pin the size closely enough for a 20GB decision — a 48000-second VOD at 6499kbit/s is
+ * unambiguously above the limit however the estimate rounds.
+ *
+ * Each selected format prints one line, so a merged video+audio selection yields two that add up.
+ * Returns 0 when a line offers neither a size nor both of its parts, which callers must read as "no
+ * answer" rather than "empty": refusing to cache on a missing answer would disable caching outright.
  */
 export function parseVodSizeBytes(output: string): number {
   let total = 0;
+
   for (const line of String(output ?? "").split("\n")) {
-    const value = Number(line.trim());
-    if (Number.isFinite(value) && value > 0) {
-      total += value;
+    const [rawSize, rawBitrateKbps, rawDurationSeconds] = line.trim().split("|");
+
+    const size = Number(rawSize);
+    if (Number.isFinite(size) && size > 0) {
+      total += size;
+      continue;
+    }
+
+    // tbr is kilobits per second; 1000/8 converts to bytes per second.
+    const bitrateKbps = Number(rawBitrateKbps);
+    const durationSeconds = Number(rawDurationSeconds);
+    if (Number.isFinite(bitrateKbps) && bitrateKbps > 0 && Number.isFinite(durationSeconds) && durationSeconds > 0) {
+      total += Math.round(bitrateKbps * 125 * durationSeconds);
     }
   }
+
   return total;
 }
 
@@ -312,8 +328,9 @@ export async function ensureTwitchVodCache(
         "--no-warnings",
         ...(mode === "background" ? ["--continue"] : ["--no-continue"]),
         ...(config.limitRate ? ["--limit-rate", config.limitRate] : []),
-        // Backstop for the probe returning nothing: yt-dlp aborts by itself rather than filling the
-        // disk with something that would only be evicted.
+        // Only bites when yt-dlp itself knows a size, which for Twitch it does not — the estimate
+        // above is what actually enforces the limit. Kept for other sources and for the case where
+        // Twitch starts reporting one.
         "--max-filesize",
         String(config.maxAssetBytes),
         "--format",
@@ -383,7 +400,7 @@ async function probeTwitchVodSizeBytes(
         "--format",
         "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--print",
-        "%(filesize,filesize_approx)s",
+        "%(filesize,filesize_approx)s|%(tbr)s|%(duration)s",
         url
       ],
       {
