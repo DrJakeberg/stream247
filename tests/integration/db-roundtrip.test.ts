@@ -11,6 +11,8 @@ import {
   listOverlayScenePresetRecords,
   publishOverlayDraftRecord,
   readAppState,
+  updateAppState,
+  updatePlayoutRuntime,
   readManagedDestinationStreamKeys,
   readOverlayStudioState,
   resetDatabaseConnectionsForTests,
@@ -1344,4 +1346,47 @@ describe.sequential("database roundtrip", () => {
     expect(indexes).toContain("chat_viewer_requests_actor_created_idx");
     expect(migrationApplied).toBe("1");
   }, 60_000);
+
+  describe("state writes and the live playout runtime", () => {
+    // Why the blueprint import uses updateAppState instead of readAppState + writeAppState.
+    //
+    // The whole AppState is written as one row set, playout runtime included. A caller that reads the
+    // state, spends time building a new one and then writes it back carries a snapshot of `playout`
+    // from before the write -- so importing a blueprint while the channel was on air rewound the
+    // worker's heartbeats, restart counters and uplink status to whatever they were when the request
+    // began. updateAppState reads inside the same locked transaction it writes in, which is what
+    // makes that impossible rather than merely unlikely.
+
+    it("hands the updater state that already includes writes made after an earlier read", async () => {
+      const staleSnapshot = await readAppState();
+
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        restartCount: playout.restartCount + 7,
+        uplinkStatus: "running"
+      }));
+
+      let observedRestartCount = -1;
+      await updateAppState((current) => {
+        observedRestartCount = current.playout.restartCount;
+        return current;
+      });
+
+      expect(observedRestartCount).toBe(staleSnapshot.playout.restartCount + 7);
+      // The read-then-write pattern would have written the left-hand value back over the right-hand
+      // one, which is exactly the runtime loss this guards against.
+      expect(staleSnapshot.playout.restartCount).not.toBe(observedRestartCount);
+    });
+
+    it("preserves a concurrent runtime advance across an unrelated state edit", async () => {
+      const before = await readAppState();
+
+      await updatePlayoutRuntime((playout) => ({ ...playout, restartCount: playout.restartCount + 3 }));
+
+      await updateAppState((current) => ({ ...current, moderation: { ...current.moderation } }));
+
+      const after = await readAppState();
+      expect(after.playout.restartCount).toBe(before.playout.restartCount + 3);
+    });
+  });
 });
