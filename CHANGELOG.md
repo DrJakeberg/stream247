@@ -4,6 +4,55 @@
 
 - No unreleased changes currently tracked.
 
+## 1.5.22 - 2026-08-19
+
+The VOD cache does what it was always meant to, plus the audit findings that were still open.
+
+### Added
+
+- cache a Twitch VOD when it fits, stream it live when it does not. `TWITCH_VOD_CACHE_MAX_ASSET_BYTES`
+  (default 20GB) is checked before any bandwidth is spent, and an oversized VOD is marked
+  `too-large` and played straight from Twitch — a settled state, so it raises no incident and is
+  never retried. Below the limit the VOD is cached and released as soon as it is neither on air nor
+  still ahead in the queue. Keyed on what is in use rather than on a playback-ended event, because
+  playback ends in more ways than it begins: a skip, a crash, a boundary, an operator override
+  (v1.5.22)
+- `TWITCH_VOD_CACHE_LIMIT_RATE` caps download bandwidth so caching cannot take the line from the
+  live stream (v1.5.22)
+
+### Fixed
+
+- size the VOD from its bitrate and duration. Twitch reports neither `filesize` nor
+  `filesize_approx` for its HLS VODs — verified against live VODs on two yt-dlp versions — so the
+  first version of the size check was unreachable and the limit did nothing at all. `--max-filesize`
+  could not cover for it either: yt-dlp consults it only for progressive HTTP downloads, never for
+  fragmented HLS, measured at 95MB downloaded against a 1MiB cap (v1.5.22)
+- never read an empty playout selection as "no cached file is needed". The playout reports no
+  current asset while reconnecting, in standby, and on a freshly restarted process — in each of
+  those the release would have deleted the entire cache, turning a routine restart into a full
+  re-download of every scheduled VOD (v1.5.22)
+- stop the blueprint import overwriting the live playout runtime. It read the whole app state, spent
+  the request building a new one and wrote it back, so importing a blueprint while the channel was
+  on air rewound the worker's heartbeats, restart counters and uplink status — without holding the
+  state write lock (v1.5.22)
+- stop EventSub reporting dead subscriptions as configured. Twitch keeps a subscription listed after
+  it stops delivering; matching on type and condition alone counted `authorization_revoked` and
+  `notification_failures_exceeded` as present, so the channel silently received nothing. Revocations
+  were also processed as notifications, turning "this subscription is dead" into a cheer alert on
+  the overlay attributed to "Viewer" (v1.5.22)
+- let two moderators check in during the same second. `presence_windows` used `expires_at` as its
+  primary key, and that value is the check-in time plus a duration from a short list (v1.5.22)
+- refresh the broadcaster token with nothing on air. The refresh sat behind an early return taken
+  when no asset and no schedule block were active, but the chat bridge authenticates with the stored
+  token on every cycle — so an empty programme expired the token and took chat down with it
+  (v1.5.22)
+- stop template application locking the schedule editor. It skipped the overlap check every other
+  way of creating a block performs, and the editor refuses to save while conflicts exist (v1.5.22)
+- fill the schedule video timeline on every day. A preview is built for a date; the page built one
+  for today and filtered it by the selected weekday, leaving six days out of seven empty (v1.5.22)
+- validate schedule overlaps under the lock that writes them. Two editors saving at once each
+  validated against a snapshot without the other's block, and both writes succeeded (v1.5.22)
+
 ## 1.5.21 - 2026-08-19
 
 Three production failures found by watching the 1.5.20 channel, plus what an adversarial review of
