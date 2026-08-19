@@ -131,6 +131,8 @@ import {
 import { execFileText, runWithStallGuard } from "./process-utils.js";
 import {
   ensureTwitchVodCache,
+  buildTwitchVodCachePath,
+  evictUnusedTwitchVodCache,
   getTwitchVodCacheConfig,
   peekTwitchVodCache,
   isInternalMediaCachePath,
@@ -394,6 +396,18 @@ const vodCacheJobRunner = new VodCacheJobRunner({
       return;
     }
 
+    if (result.status === "too-large") {
+      // Not a failure: the VOD is simply played from Twitch. Raising an incident here would leave a
+      // permanent warning on a channel that is working exactly as configured.
+      logRuntimeEvent("vod.cache.too_large", {
+        assetId: asset.id,
+        sizeBytes: result.sizeBytes,
+        limitBytes: getTwitchVodCacheConfig(process.env, getMediaRoot()).maxAssetBytes
+      });
+      await resolveIncident("playout.twitch-cache.failed", "Twitch VOD is streamed directly.");
+      return;
+    }
+
     await upsertIncident({
       scope: "playout",
       severity: "warning",
@@ -404,6 +418,43 @@ const vodCacheJobRunner = new VodCacheJobRunner({
   },
   onEvent: (event, fields) => logRuntimeEvent(event, fields)
 });
+
+/**
+ * Deletes cached VODs other than the one on air and the one queued next.
+ *
+ * Errors are swallowed: this runs inside the playout reconciliation cycle, and failing to free disk
+ * is never a reason to interrupt the channel. The size cap still bounds the cache if this does
+ * nothing at all.
+ */
+async function releaseUnusedVodCache(
+  currentAsset: AssetRecord | null | undefined,
+  nextAssetId: string,
+  state: AppState
+): Promise<void> {
+  try {
+    const config = getTwitchVodCacheConfig(process.env, getMediaRoot());
+    if (!config.enabled) {
+      return;
+    }
+
+    const nextAsset = nextAssetId ? state.assets.find((entry) => entry.id === nextAssetId) : undefined;
+    const keepPaths = [currentAsset, nextAsset]
+      .filter((asset): asset is AssetRecord => Boolean(asset) && isTwitchVodAsset(asset as AssetRecord))
+      .map((asset) => asset.cachePath || buildTwitchVodCachePath(asset, config.cacheRoot));
+
+    const released = await evictUnusedTwitchVodCache(config, keepPaths);
+    if (released.removed.length > 0) {
+      logRuntimeEvent("vod.cache.released", {
+        files: released.removed.length,
+        freedBytes: released.freedBytes
+      });
+    }
+  } catch (error) {
+    logRuntimeEvent("vod.cache.release_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
 
 function isProgramFeedMode(): boolean {
   return STREAM247_RELAY_ENABLED && STREAM247_UPLINK_INPUT_MODE === "hls";
@@ -548,7 +599,15 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
     updatedAt: result.cacheUpdatedAt
   };
 
-  if (result.status !== "ready") {
+  // A VOD already known to exceed the cache limit is a settled decision, not a pending download.
+  // peekTwitchVodCache only looks for a local file, so it reports "missing" every cycle; without
+  // this the job runner would be handed the same oversized download again for as long as the asset
+  // stays scheduled.
+  const settledTooLarge = asset.cacheStatus === "too-large";
+  if (settledTooLarge) {
+    updatedAsset.cacheStatus = "too-large";
+    updatedAsset.cacheError = asset.cacheError;
+  } else if (result.status !== "ready") {
     vodCacheJobRunner.request(asset, cacheConfig);
   }
 
@@ -563,7 +622,10 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
     };
   }
 
-  if (cacheConfig.allowRemoteFallback) {
+  // Streaming from Twitch is the configured outcome for an oversized VOD, so it does not depend on
+  // the remote-fallback switch: that switch governs what happens while a cacheable VOD is still
+  // downloading, which is a different question.
+  if (settledTooLarge || cacheConfig.allowRemoteFallback) {
     const input = await resolvePlayableInput(asset.path);
     await resolveIncident("playout.asset-preparation.failed", "Asset playback input resolved successfully.");
     return {
@@ -4377,6 +4439,11 @@ async function runPlayoutCycle(): Promise<void> {
       selection.asset && playout.manualNextAssetId === selection.asset.id ? "" : playout.manualNextRequestedAt,
     message: activeQueueItem?.subtitle || selection.reason
   }));
+
+  // Free cached VODs the moment they stop being needed. Keyed on what is in use rather than on a
+  // playback-ended event, so a skip, a crash or a boundary frees the disk just as an ordinary
+  // finish does.
+  await releaseUnusedVodCache(selection.asset, nextQueueItem?.assetId ?? prefetchedAsset?.id ?? "", state);
 
   if (
     currentScheduleItem?.poolId &&

@@ -77,6 +77,10 @@
   - `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`
   - `TWITCH_VOD_CACHE_RETENTION_HOURS`
   - `TWITCH_VOD_CACHE_PARTIAL_MAX_AGE_HOURS`
+  - `TWITCH_VOD_CACHE_MAX_ASSET_BYTES` — per-VOD ceiling. A VOD above it is never downloaded and is
+    played straight from Twitch (`cacheStatus: "too-large"`, event `vod.cache.too_large`); this is a
+    settled decision, not a failure, so nothing retries it. Keep `TWITCH_VOD_CACHE_MAX_BYTES` above
+    it, or the prune evicts the very file being downloaded.
   - `TWITCH_VOD_CACHE_MAX_BYTES`
   - `TWITCH_VOD_CACHE_MIN_FREE_BYTES`
   - `UPLINK_STALL_TIMEOUT_MS` / `UPLINK_STALL_GRACE_MS` — how long the uplink may run without

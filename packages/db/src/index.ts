@@ -138,7 +138,11 @@ export type AssetRecord = {
   title: string;
   path: string;
   cachePath?: string;
-  cacheStatus?: "" | "missing" | "ready" | "failed";
+  /**
+   * "too-large" means the VOD exceeds the per-asset cache limit and is played straight from Twitch.
+   * It is a settled decision rather than a failure, so nothing retries it.
+   */
+  cacheStatus?: "" | "missing" | "ready" | "failed" | "too-large";
   cacheUpdatedAt?: string;
   cacheError?: string;
   folderPath?: string;

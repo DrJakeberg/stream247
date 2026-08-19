@@ -32,6 +32,14 @@ export type TwitchVodCacheConfig = {
   minFreeBytes: number;
   failureCooldownMs: number;
   /**
+   * Size above which a VOD is not cached at all.
+   *
+   * Downloading something larger than the cache can hold is pure waste: it saturates the line for
+   * as long as it runs and is then evicted, so it never becomes a local file and the next attempt
+   * starts over. Past this size the channel plays the VOD from Twitch directly.
+   */
+  maxAssetBytes: number;
+  /**
    * Bandwidth ceiling handed to yt-dlp, in yt-dlp's own notation (e.g. "8M"), or "" for unlimited.
    *
    * A background job left unbounded takes the whole line: this cache was measured pulling
@@ -53,6 +61,18 @@ export type TwitchVodCacheResult =
       cachePath: string;
       cacheUpdatedAt: string;
       cacheError: string;
+    }
+  | {
+      /**
+       * The VOD is bigger than a single cache entry may be, so it is played straight from Twitch
+       * instead. Distinct from "failed" on purpose: nothing went wrong and retrying cannot help, so
+       * the caller must not put the asset into a failure cooldown and try again later.
+       */
+      status: "too-large";
+      cachePath: string;
+      cacheUpdatedAt: string;
+      cacheError: string;
+      sizeBytes: number;
     };
 
 type ExecText = typeof execFileText;
@@ -61,8 +81,12 @@ const DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 2 * 60;
 const DEFAULT_RETENTION_HOURS = 72;
 const DEFAULT_PARTIAL_MAX_AGE_HOURS = 6;
 const DEFAULT_MAX_CACHE_BYTES = 20 * 1024 * 1024 * 1024;
+/** Largest single VOD worth caching; anything above this is streamed from Twitch instead. */
+const DEFAULT_MAX_ASSET_BYTES = 20 * 1024 * 1024 * 1024;
 const DEFAULT_MIN_FREE_BYTES = 15 * 1024 * 1024 * 1024;
 const DEFAULT_FAILURE_COOLDOWN_SECONDS = 30 * 60;
+/** The probe only reads a manifest; anything slower than this is a hung network call. */
+const PROBE_TIMEOUT_MS = 30_000;
 
 function readPositiveNumber(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -91,6 +115,7 @@ export function getTwitchVodCacheConfig(env: NodeJS.ProcessEnv, mediaRoot: strin
     minFreeBytes: readPositiveNumber(env.TWITCH_VOD_CACHE_MIN_FREE_BYTES, DEFAULT_MIN_FREE_BYTES),
     failureCooldownMs:
       readPositiveNumber(env.TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS, DEFAULT_FAILURE_COOLDOWN_SECONDS) * 1000,
+    maxAssetBytes: readPositiveNumber(env.TWITCH_VOD_CACHE_MAX_ASSET_BYTES, DEFAULT_MAX_ASSET_BYTES),
     limitRate: normalizeLimitRate(env.TWITCH_VOD_CACHE_LIMIT_RATE)
   };
 }
@@ -106,6 +131,25 @@ export function normalizeLimitRate(value: string | undefined): string {
     return "";
   }
   return /^\d+(\.\d+)?[KMG]?$/i.test(trimmed) ? trimmed : "";
+}
+
+/**
+ * Reads a byte count out of yt-dlp's `--print` output.
+ *
+ * yt-dlp prints one line per selected format, so a merged video+audio selection yields two numbers
+ * that have to be added, and it prints "NA" whenever a size is unknown. Unknown is reported as 0,
+ * which callers must treat as "no answer" rather than "empty file": Twitch does not always expose a
+ * size, and refusing to cache on a missing answer would disable caching entirely.
+ */
+export function parseVodSizeBytes(output: string): number {
+  let total = 0;
+  for (const line of String(output ?? "").split("\n")) {
+    const value = Number(line.trim());
+    if (Number.isFinite(value) && value > 0) {
+      total += value;
+    }
+  }
+  return total;
 }
 
 export function isInternalMediaCachePath(filePath: string, mediaRoot: string): boolean {
@@ -236,6 +280,21 @@ export async function ensureTwitchVodCache(
     if (mode !== "background") {
       await removeTargetTransientCacheFiles(cachePath);
     }
+    // Ask how big it is before spending any bandwidth on it. A VOD larger than one cache entry may
+    // be can never end up as a local file: it would saturate the line for as long as it ran and
+    // then be evicted, so the next attempt would start from zero again. Streaming it from Twitch is
+    // the correct outcome, not a fallback.
+    const probedSizeBytes = await probeTwitchVodSizeBytes(asset.path, config, execText);
+    if (probedSizeBytes > config.maxAssetBytes) {
+      return {
+        status: "too-large",
+        cachePath,
+        cacheUpdatedAt: new Date().toISOString(),
+        cacheError: `Twitch VOD is ${formatGigabytes(probedSizeBytes)}, above the ${formatGigabytes(config.maxAssetBytes)} cache limit; streaming it directly instead.`,
+        sizeBytes: probedSizeBytes
+      };
+    }
+
     const maintenance = await pruneTwitchVodCache(config, cachePath);
     if (maintenance.freeBytes < config.minFreeBytes) {
       return {
@@ -253,6 +312,10 @@ export async function ensureTwitchVodCache(
         "--no-warnings",
         ...(mode === "background" ? ["--continue"] : ["--no-continue"]),
         ...(config.limitRate ? ["--limit-rate", config.limitRate] : []),
+        // Backstop for the probe returning nothing: yt-dlp aborts by itself rather than filling the
+        // disk with something that would only be evicted.
+        "--max-filesize",
+        String(config.maxAssetBytes),
         "--format",
         "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format",
@@ -290,6 +353,49 @@ export async function ensureTwitchVodCache(
     };
   } finally {
     await lock?.release();
+  }
+}
+
+/** Renders a byte count the way the operator-facing messages talk about VOD sizes. */
+export function formatGigabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+}
+
+/**
+ * Asks yt-dlp for the download size without fetching anything.
+ *
+ * Returns 0 when the answer is unavailable, and deliberately swallows probe failures: a broken
+ * probe must not stop a download that would otherwise have succeeded, since --max-filesize still
+ * enforces the same limit during the transfer.
+ */
+async function probeTwitchVodSizeBytes(
+  url: string,
+  config: TwitchVodCacheConfig,
+  execText: ExecText
+): Promise<number> {
+  try {
+    const output = await execText(
+      config.ytDlpBinary,
+      [
+        "--no-playlist",
+        "--no-warnings",
+        "--simulate",
+        "--format",
+        "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "--print",
+        "%(filesize,filesize_approx)s",
+        url
+      ],
+      {
+        timeoutMs: PROBE_TIMEOUT_MS,
+        killProcessGroup: true,
+        forceKillAfterMs: 5_000,
+        maxBufferBytes: 1024 * 64
+      }
+    );
+    return parseVodSizeBytes(output);
+  } catch {
+    return 0;
   }
 }
 
@@ -347,6 +453,52 @@ async function isLockedByLiveJob(filePath: string, nowMs: number): Promise<boole
   }
 
   return nowMs - stat.mtimeMs < DEFAULT_LOCK_STALE_MS;
+}
+
+/**
+ * Deletes cached VODs that are neither playing now nor queued next.
+ *
+ * The retention window and the size cap only free space lazily -- once the cache is already full,
+ * or once a file is old enough. Neither matches how this channel uses the cache: a VOD is watched
+ * once and then has no further purpose, so holding it costs disk for nothing and makes the next
+ * download prune something it should not have to.
+ *
+ * Expressed as "keep what is in use" rather than "delete what just played" on purpose. Playback
+ * ends in more ways than it begins -- a skip, a crash, a boundary, an operator override -- and a
+ * rule driven by the current selection covers all of them, while an end-of-playback hook covers
+ * only the paths someone remembered to wire it into.
+ *
+ * Never touches partial downloads: those belong to the prune, which knows how to tell an abandoned
+ * one from a job still writing it.
+ */
+export async function evictUnusedTwitchVodCache(
+  config: TwitchVodCacheConfig,
+  keepPaths: readonly string[]
+): Promise<{ removed: string[]; freedBytes: number }> {
+  const keep = new Set(keepPaths.filter((entry) => entry).map((entry) => path.resolve(entry)));
+  const removed: string[] = [];
+  let freedBytes = 0;
+
+  for (const file of await listCacheFiles(config.cacheRoot)) {
+    // Anything transient is the prune's business, not this function's.
+    if (file.transient || file.filePath.endsWith(".lock")) {
+      continue;
+    }
+    if (keep.has(path.resolve(file.filePath))) {
+      continue;
+    }
+
+    const deleted = await fs.rm(file.filePath, { force: true }).then(
+      () => true,
+      () => false
+    );
+    if (deleted) {
+      removed.push(file.filePath);
+      freedBytes += file.size;
+    }
+  }
+
+  return { removed, freedBytes };
 }
 
 async function pruneTwitchVodCache(
