@@ -63,6 +63,40 @@
   --warning-tint-faint: rgb(var(--warning-rgb) / 0.12);
   --warning-tint: rgb(var(--warning-rgb) / 0.14);
 
+  /* Info is the fifth state channel. It existed only as three literals inside one status pill
+     (rgba(52, 92, 166, ...) and #284f94); declared here it becomes a state like the others. */
+  --info-rgb: 40 79 148; /* #284f94 */
+  --info-tint-faint: rgb(var(--info-rgb) / 0.12);
+  --info-tint: rgb(var(--info-rgb) / 0.14);
+  --info-border: rgb(var(--info-rgb) / 0.22);
+
+  /* ---- Tones ----
+     One vocabulary for "this thing is fine / needs attention / is broken / is idle / is notable".
+     Seven class families expressed the same five states in their own colours: status-chip-*,
+     badge-*, programming-status-*, schedule-block-*, toast-*, .warning/.danger and .field-error.
+     They agreed on meaning and disagreed on value, which is how one of them drifts out of contrast
+     without anyone noticing. Each family now maps its own names onto these. Every pairing below is
+     asserted in tests/unit/design-contrast.test.ts. */
+  --tone-positive-fg: var(--brand-strong);
+  --tone-positive-bg: var(--brand-tint-faint);
+  --tone-positive-border: var(--brand-tint-strong);
+
+  --tone-caution-fg: var(--warning);
+  --tone-caution-bg: var(--warning-tint);
+  --tone-caution-border: rgb(var(--warning-rgb) / 0.22);
+
+  --tone-critical-fg: var(--danger);
+  --tone-critical-bg: var(--danger-tint-faint);
+  --tone-critical-border: var(--danger-tint);
+
+  --tone-neutral-fg: var(--muted);
+  --tone-neutral-bg: var(--line-subtle);
+  --tone-neutral-border: var(--line-strong);
+
+  --tone-info-fg: rgb(var(--info-rgb));
+  --tone-info-bg: var(--info-tint);
+  --tone-info-border: var(--info-border);
+
   /* The overlay keeps its own danger red: it is mixed into dark scrims for on-air legibility,
      where the admin value would sit too light. Declared here so it is a decision, not a stray
      literal. */

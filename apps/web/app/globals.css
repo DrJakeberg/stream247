@@ -361,18 +361,18 @@ main {
 }
 
 .badge-ready {
-  background: var(--brand-tint-faint);
-  color: var(--brand-strong);
+  background: var(--tone-positive-bg);
+  color: var(--tone-positive-fg);
 }
 
 .badge-action {
-  background: var(--warning-tint);
-  color: var(--warning);
+  background: var(--tone-caution-bg);
+  color: var(--tone-caution-fg);
 }
 
 .badge-optional {
-  background: var(--line-subtle);
-  color: var(--muted);
+  background: var(--tone-neutral-bg);
+  color: var(--tone-neutral-fg);
 }
 
 .warning {
@@ -698,8 +698,9 @@ textarea {
   pointer-events: auto;
 }
 
+/* Toasts carry the same states as the chips, expressed as a border rather than a fill. */
 .toast-success {
-  border-color: var(--brand-tint-strong);
+  border-color: var(--tone-positive-border);
 }
 
 .toast-error {
@@ -799,20 +800,20 @@ textarea {
 
 .status-chip-ok,
 .status-chip-live {
-  color: var(--brand-strong);
-  background: var(--brand-tint-faint);
+  color: var(--tone-positive-fg);
+  background: var(--tone-positive-bg);
 }
 
 .status-chip-degraded,
 .status-chip-not-ready {
-  color: var(--warning);
-  background: var(--warning-tint);
+  color: var(--tone-caution-fg);
+  background: var(--tone-caution-bg);
 }
 
 .status-chip-offline,
 .status-chip-unknown {
-  color: var(--muted);
-  background: var(--line-subtle);
+  color: var(--tone-neutral-fg);
+  background: var(--tone-neutral-bg);
 }
 
 @keyframes button-spin {
@@ -954,30 +955,27 @@ button.collection-chip {
 }
 
 .programming-status-balanced {
-  border-color: var(--brand-tint-strong);
-  background: var(--brand-tint-faint);
-  color: #0b5f4f;
+  border-color: var(--tone-positive-border);
+  background: var(--tone-positive-bg);
+  color: var(--tone-positive-fg);
 }
 
 .programming-status-underfilled {
-  border-color: rgba(176, 118, 29, 0.22);
-  background: rgba(176, 118, 29, 0.14);
-  color: #7e5516;
+  border-color: var(--tone-caution-border);
+  background: var(--tone-caution-bg);
+  color: var(--tone-caution-fg);
 }
 
 .programming-status-overflow {
-  border-color: rgba(52, 92, 166, 0.22);
-  background: rgba(52, 92, 166, 0.14);
-  color: #284f94;
+  border-color: var(--tone-info-border);
+  background: var(--tone-info-bg);
+  color: var(--tone-info-fg);
 }
 
 .programming-status-empty {
-  border-color: var(--danger-tint);
-  background: var(--danger-tint-faint);
-  /* Was #8b1e2d, a second danger red that existed only here. Both clear the readability
-     threshold on this tint by a wide margin (5.97:1 for --danger against 7.07:1), so the darker
-     value bought nothing and cost a colour. */
-  color: var(--danger);
+  border-color: var(--tone-critical-border);
+  background: var(--tone-critical-bg);
+  color: var(--tone-critical-fg);
 }
 
 .programming-workspace-grid {
@@ -1211,12 +1209,14 @@ button.collection-chip {
   background: var(--brand-tint);
 }
 
+/* The same five states as the status pills, one step stronger because these are filled areas
+   rather than text on a tint — read from the same channels so the two cannot disagree. */
 .schedule-block-underfilled {
-  background: rgba(176, 118, 29, 0.16);
+  background: rgb(var(--warning-rgb) / 0.16);
 }
 
 .schedule-block-overflow {
-  background: rgba(52, 92, 166, 0.16);
+  background: rgb(var(--info-rgb) / 0.16);
 }
 
 .schedule-block-empty {
