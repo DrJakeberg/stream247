@@ -1059,6 +1059,18 @@ function startSceneRendererLoop(
 
   let currentFrame = initialFrame;
 
+  // A pipe whose reader goes away emits 'error', and a stream error with no listener is an uncaught
+  // exception -- which this process answers with exit(1). Nothing here used to register one: the
+  // drain wait happened to serve as the stream's only error listener, and passing it the abort
+  // signal removed it at exactly the wrong moment, since teardown aborts and then SIGTERMs ffmpeg in
+  // the same turn. Every ordinary asset boundary took that path, so this is registered up front and
+  // for the whole lifetime of the pipe.
+  targetPipe.on("error", (error: unknown) => {
+    logRuntimeEvent("scene.pipe.error", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
+
   // Feeding the pipe and rasterising the scene run independently on purpose. ffmpeg pulls this
   // input at ON_AIR_SCENE_PIPE_FRAMERATE and `overlay` blocks until both of its inputs have a
   // frame, so a writer that pauses for the render interval throttles the whole encode down to the
@@ -1107,7 +1119,13 @@ function startSceneRendererLoop(
     if (sceneRendererAbortController === controller) {
       sceneRendererAbortController = null;
     }
-  })();
+  })().catch((error: unknown) => {
+    // An un-awaited async IIFE that rejects is an unhandled rejection, which this process only
+    // logs -- leaving a dead loop behind and no indication of why.
+    logRuntimeEvent("scene.pipe.writer_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
 
   void (async () => {
     let currentKey = "";
@@ -1129,18 +1147,27 @@ function startSceneRendererLoop(
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown on-air scene renderer error.";
         logRuntimeEvent("scene.render.update_failed", { error: message });
+        // Recording the incident goes through the same database the render may have just failed on,
+        // so it gets its own guard. Losing the incident is survivable; losing this loop is not.
         await upsertIncident({
           scope: "playout",
           severity: "warning",
           title: "On-air scene renderer update failed",
           message,
           fingerprint: "playout.scene-render.failed"
-        });
+        }).catch(() => undefined);
       }
 
       await sleep(intervalMs);
     }
-  })();
+  })().catch((error: unknown) => {
+    // Deliberately does not abort the controller. A dead renderer leaves the writer pushing the
+    // last good frame, so the overlay freezes; aborting would starve the overlay input instead and
+    // throttle the entire encode. A stale lower third beats a stalled channel.
+    logRuntimeEvent("scene.render.loop_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
 }
 
 function buildWorkerScenePayload(args: {
