@@ -113,6 +113,9 @@ if [ "${E2E_PLAYWRIGHT_DOCKER:-0}" = "1" ]; then
     ./node_modules/.bin/playwright test ${E2E_SPECS:-tests/e2e/admin-smoke.spec.ts} \
       --config=playwright.config.ts --reporter=line ${E2E_PLAYWRIGHT_ARGS:-}
 else
-  pnpm dlx @playwright/test@1.56.1 test ${E2E_SPECS:-tests/e2e/admin-smoke.spec.ts} \
+  # The workspace install, not `pnpm dlx`. Since @playwright/test became a devDependency, dlx would
+  # fetch a second copy: the runner from one instance and the spec's import from the other, which
+  # surfaces as "test.describe.configure() ... No tests found".
+  ./node_modules/.bin/playwright test ${E2E_SPECS:-tests/e2e/admin-smoke.spec.ts} \
     --config=playwright.config.ts --reporter=line ${E2E_PLAYWRIGHT_ARGS:-}
 fi

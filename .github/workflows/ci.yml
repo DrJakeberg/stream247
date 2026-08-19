@@ -72,7 +72,8 @@ jobs:
           echo "Continuing without host ffmpeg; fixtures will be generated in the worker image."
       - run: pnpm test:queue-continuity
       - run: pnpm test:runtime-parity
-      - run: pnpm dlx @playwright/test@1.56.1 install --with-deps chromium
+      # Installs browsers for the workspace copy of @playwright/test; dlx would fetch a second one.
+      - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e:smoke
       # Its own stack, deliberately, for two independent reasons: admin-smoke enables two-factor
       # auth on the owner account, so any spec signing in after it never reaches the workspace; and
