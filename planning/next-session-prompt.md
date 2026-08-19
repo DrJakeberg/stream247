@@ -10,121 +10,112 @@ Entscheidung wirklich irreversibel ist oder eine Frage die Richtung grundlegend 
 
 ## Ausgangslage
 
-Produktion läuft auf **v1.5.19** (DUT, `ssh dut`, Stack `stream247`). Der Kanal lief zuvor 38
-Stunden in einer Playout-Restart-Schleife (674 Restarts) und ist seit dem Deploy stabil:
-`restarts=0`, keine `worker.loop.stalled`, keine `scene.render.fallback`.
+Produktion läuft auf **v1.5.22** (DUT, `ssh dut`, Stack `stream247`). Zuletzt gemessen: Programm-Feed
+100 % Echtzeit, A/V-Versatz 0,18 ms, 0 Neustarts, 0 Diskontinuitäten.
 
-Behoben in v1.5.19: ein aus dem Internet ausnutzbarer Workspace-Takeover über den ungeschützten
-Twitch-OAuth-Callback, die Restart-Schleife (VOD-Download lief inline im Playout-Cycle), der
-`APP_SECRET`-Fallback auf eine veröffentlichte Konstante, Path-Traversal beim Upload, fehlendes
-Rate-Limit auf Login/TOTP, vier Worker-Ausfallpfade, eine blinde Health-Route, Blöcke über
-Mitternacht, IRC-Half-Open. Neu: nativer Overlay-Renderer (satori/resvg statt Chromium-Screenshot)
-und Chat-Steuerung (Voting, `!request`, `!skip`) — letztere ist standardmäßig **aus**.
+Drei Produktionsfehler wurden am 19.08. gefunden und behoben:
 
-## Offene Entscheidung: Twitch-VOD-Cache
+1. **Halbe Echtzeit.** Die Overlay-Pipe ist als 1 fps deklariert, bekam aber nur alle 2000 ms einen
+   Frame. Da `overlay` erst ausgibt, wenn *beide* Eingänge einen Frame haben, drosselte das den
+   gesamten Encode auf 50 %. Writer und Renderer laufen jetzt getrennt, der Writer taktet nach
+   Wanduhr mit festem Vorlauf.
+2. **Uplink lief, produzierte aber nicht.** Nach einem Playout-Neustart beginnen die Zeitstempel des
+   Feeds von vorn; der langlebige Uplink liest über die Naht und korrigiert Audio und Video auf
+   *getrennte* Zeitachsen (~117 s auseinander). Er erholt sich nie von selbst. Zwei Wächter fangen
+   das jetzt ab: `out_time`-Stillstand und ein Diskontinuitätssturm (>120/min). Beide haben in
+   Produktion bereits ausgelöst und repariert.
+3. **Teardown tötete den Worker.** Die fd-3-Pipe hatte keinen `error`-Listener; beim Herunterfahren
+   verlor sie ihren Leser und die unbehandelte Ausnahme beendete den Prozess — bei *jedem*
+   Asset-Wechsel. Mit echtem ffmpeg reproduziert: 3/3 Absturz ohne, 3/3 überlebt mit Fix.
 
-Der Kanal spielt seit dem 19.08. sein Programm **direkt von Twitch**
-(`TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1`), weil die VODs grösser sind als das Cache-Limit und
-deshalb nie fertig heruntergeladen wurden. Vorher lief er dauerhaft auf Fallback-Inhalten.
+**VOD-Cache-Richtlinie** (v1.5.22, vom Nutzer so festgelegt): unter 20 GB cachen und nach der
+Wiedergabe freigeben, darüber direkt von Twitch streamen. Auf DUT verifiziert — zwei VODs mit 23,2
+und 23,1 GB wurden korrekt als `too-large` eingestuft und nicht geladen.
 
-`TWITCH_VOD_CACHE_MAX_BYTES` steht auf dem Standard von 20 GB, die VODs liegen bei 20+ GB, die
-Platte hat 101 GB frei. Selbst mit dem Prune-Fix passt kaum ein VOD hinein und der naechste
-verdraengt ihn. Zu klaeren: Limit deutlich anheben, oder diese Quelle bewusst als Direkt-Stream
-fuehren und gar nicht cachen. Direktes Streamen haengt an signierten URLs, die waehrend der
-Wiedergabe ablaufen koennen — v1.5.14 verwirft dafuer den Probe-Cache und loest neu auf.
+Wichtig dabei: **Twitch meldet keine Dateigröße** (`filesize` und `filesize_approx` sind immer `NA`).
+Die Größe wird aus `tbr × duration` geschätzt. `--max-filesize` wurde entfernt, weil yt-dlp es für
+fragmentiertes HLS gar nicht auswertet (gemessen: 95 MB gegen ein 1-MiB-Limit).
 
 ## Was zuerst prüfen
 
-Overlay-Renderer und Chat-Verdrahtung sind **erstmals unter Last**. Beide sind durch Unit-Tests und
-visuelle Prüfung abgedeckt, aber in Produktion unerprobt. Verifiziere zuerst:
-
 ```bash
 ssh dut 'docker inspect -f "restarts={{.RestartCount}}" stream247-playout-1'
-ssh dut 'docker logs --since 30m stream247-playout-1 2>&1 | grep -o "\"event\":\"[^\"]*\"" | sort | uniq -c | sort -rn'
+ssh dut 'docker logs --since 5m stream247-uplink-1 2>&1 | grep -ci discontinuity'
 ```
 
-`playout.boundary.fallback_bridge` heisst: der Kanal spielt Fallback statt seines Programms —
-Restart-Freiheit allein ist noch kein gesunder Kanal. Pruefe im Zweifel den echten ffmpeg-Input:
-`ssh dut 'docker exec stream247-playout-1 sh -lc "ps -o args | grep ^ffmpeg"'`.
+Eine anhaltende Diskontinuitätsrate über ~100/min bedeutet auseinanderlaufenden Ton. Der Wächter
+sollte das binnen einer Minute selbst beheben (`uplink.discontinuity_storm.restart`); tut er es
+nicht, ist die Schwelle falsch kalibriert.
 
-`scene.render.fallback` darf nicht auftauchen — das hieße, das Overlay ist stumm im Textmodus.
-Notausgang ohne Stream-Unterbrechung: `SCENE_RENDERER_ENABLED=0` in der Stack-Env.
+**`docker stats --no-stream` ist unbrauchbar**, um zu beurteilen, ob der Uplink encodiert. Zwei
+Stichproben desselben gesunden Prozesses lasen 0,05 % und 17,43 %, der 30-Sekunden-Mittelwert lag bei
+99 %. Miss `cpu.stat` über ein Fenster oder die Interface-Zähler.
 
-## Aufgaben, in dieser Reihenfolge
+## Offene Aufgaben
 
-1. **Stabilität überwachen und Regressionen beheben.** `./scripts/soak-monitor.sh` existiert.
-   Besonderes Augenmerk auf Overlay-Renderer und den Twitch-VOD-Hintergrundjob (`vod.cache.job.*`).
-2. **Restliche Audit-Befunde** (~20 bestätigte, mittlere Schwere): Blueprint-Import macht
-   Read-Modify-Write auf den ganzen AppState ohne Sperre und überschreibt die Live-Playout-Runtime;
-   `presence_windows` nutzt `expires_at` als Primärschlüssel, kollidierende Check-ins werfen 23505
-   und töten den Chat-Callback; EventSub behandelt Revocations als echte Notifications; EventSub-Sync
-   ignoriert `subscription.status`; Broadcaster-Token wird nur bei aktivem Playout refresht;
-   Schedule-Vorschau weicht von der tatsächlichen Playout-Auswahl ab.
-3. **Design-Konsolidierung fortsetzen.** Farbliterale stehen bei 100 (von ursprünglich 185). Nächste
-   Schritte: die sieben parallelen Zustandsvokabulare (`status-chip-*`, `badge-*`,
-   `programming-status-*`, `schedule-block-*`, `toast-*`, `.warning`/`.danger`, `.field-error`) auf
-   eines zusammenführen; `Card`/`Panel` und `PageHeader`/`AdminPageHeader` entdoppeln.
-4. **Planungsfeature.** Template-Anwendung umgeht die Kollisionsprüfung und sperrt den Editor
-   dauerhaft; TOCTOU bei gleichzeitigen Edits; Video-Timeline im Day-Lens an 6 von 7 Tagen leer.
+1. **Visuelle Gestaltung.** Das Einzige aus dem ursprünglichen Auftrag, das offen ist. Der Nutzer
+   hatte „konsolidieren statt neu erfinden" gewählt, und die Konsolidierung ist durch: Farbliterale
+   von 185 auf 93, sieben Zustandsvokabulare auf fünf Töne (`--tone-*`), drei nie eingeführte
+   Design-System-Primitive entfernt. Ein echter gestalterischer Neuentwurf von Admin, Overlay und
+   Kanalseite braucht die Richtung des Nutzers — frag danach, statt zu raten.
+2. **Kontrast vor Farbe.** Es gibt `tests/unit/design-contrast.test.ts` (liest `globals.css`, kennt
+   nur hex/rgba) und `tests/unit/design-tones.test.ts` (löst die Kanal-Syntax
+   `rgb(var(--x-rgb) / 0.12)` auf). Miss jede neue Paarung, bevor du sie festlegst — das Projekt
+   hält Statustext auf 4,5:1.
+3. **Teildownloads auf DUT.** 13,8 GB verwaiste Partials von einem abgebrochenen Download liegen im
+   Cache. v1.5.23 sammelt sie ein; nach dem Deploy prüfen, ob sie verschwinden.
 
 ## Umgebung
 
 ```bash
-scripts/dev-stack.sh up                 # langlebiger Stack + festes Fixture, Port 3020
-scripts/dev-stack.sh up --with-runtime  # zusätzlich worker/playout/uplink
-scripts/design-baseline.sh              # visuelle Prüfung (24 Snapshots)
+scripts/dev-stack.sh up                 # langlebiger Stack, Port 3020, mit gepinnter Playout-Runtime
+scripts/design-baseline.sh              # visuelle Prüfung (28 Snapshots)
 scripts/design-baseline.sh --update     # Baseline neu erzeugen
-pnpm validate                           # lint, css-token-lint, typecheck, 562 Tests, build
+pnpm validate                           # lint, css-token-lint, typecheck, Tests, build
 ```
 
-Der Dev-Stack lässt worker/playout/uplink **absichtlich** aus: Sie schreiben laufend Heartbeats und
-Readiness um, wodurch die UI nicht deterministisch wäre. Ohne sie sind drei Readiness-Abrufe
-bytegleich.
+Der Dev-Stack lässt worker/playout/uplink **absichtlich** aus und sät stattdessen eine feste
+Playout-Runtime (`scripts/seed-playout-runtime.mjs`), damit die Live-Seiten einen laufenden Kanal
+zeigen statt „nichts on air". Deshalb sind `/live?tab=status` und `?tab=control` seit v1.5.23 in der
+visuellen Suite; sie waren vorher wegen Flakiness ausgeschlossen.
 
 ## Deploy
 
-Portainer ist die einzige Kontrollebene für Produktion. Die API ist **nicht** über
-`https://po.h.3jc.de` erreichbar (OAuth2-Proxy liefert 404 auf `/api/`), und das Zertifikat dort ist
-seit 18.08.2026 abgelaufen. Funktionierender Weg — über die Netzwerk-Namespace des Containers:
+Portainer ist die einzige Kontrollebene. Die API ist **nicht** über `https://po.h.3jc.de` erreichbar;
+der Weg führt über die Netzwerk-Namespace des Containers auf `dt`:
 
 ```bash
-ssh dt 'KEY=$(cat ~/.pt-key); docker run --rm -e KEY="$KEY" --entrypoint sh \
+ssh dt 'KEY=$(cat /root/.pt-key); docker run --rm -e KEY="$KEY" --entrypoint sh \
   --network container:portainer2-portainer-1 curlimages/curl:latest \
   -c "curl -s -H \"X-API-Key: \$KEY\" http://127.0.0.1:9000/api/stacks/148"'
 ```
 
-Stack-Id 148, EndpointId 3. Update per `PUT /api/stacks/148?endpointId=3` mit
-`{env, stackFileContent, prune:false, pullImage:true}`; die Nutzlast über **stdin** (`--data-binary @-`)
-reichen, denn Volume-Mounts aus dem Home-Verzeichnis funktionieren auf `dt` nicht.
+Stack 148, Endpoint 3. Update per `PUT /api/stacks/148?endpointId=3` mit
+`{env, stackFileContent, prune:false, pullImage:true}`, Nutzlast über **stdin** (`--data-binary @-`).
+Die laufende Version steuern die Env-Variablen `STREAM247_{WEB,WORKER,PLAYOUT}_IMAGE`, nicht die
+Defaults in der Compose-Datei.
 
-Der API-Key liegt auf `dt` unter `~/.pt-key` (Modus 600). **Er stand im Klartext in einem
-Chatverlauf — kläre mit dem Nutzer, ob er rotiert werden soll.**
+**Der API-Key stand im Klartext in einem Chatverlauf — kläre mit dem Nutzer, ob er rotiert wird.**
 
-Vor jedem Deploy prüfen: `APP_SECRET` muss ≥32 Zeichen haben, sonst startet die Web-App nicht
-(bewusst, der alte Fallback war eine veröffentlichte Konstante). Rollback: dieselben drei Image-Tags
-zurücksetzen — Migrationen legen nur neue Tabellen an, ältere Versionen laufen mit dem migrierten
-Schema weiter.
+## Fallen, die Zeit gekostet haben
 
-## Fallen, die in der Vorsession Zeit gekostet haben
-
-- **Snapshots sind nicht portabel.** Playwright nennt sie `chromium-linux`, aber Desktop und
-  GitHub-Runner rendern unterschiedlich. Deshalb läuft die visuelle Suite im offiziellen
-  Playwright-Image. Baseline immer über `scripts/design-baseline.sh` erzeugen *und* prüfen — dasselbe
-  Skript besitzt beide Seiten, damit sie nicht auseinanderlaufen.
-- **`e2e-smoke.sh` baut keine Images.** Es nutzt das vorhandene `stream247-web:test`. Eine Baseline
-  gegen ein veraltetes Image beschreibt den Code nicht mehr.
-- **`admin-smoke.spec.ts` schaltet 2FA für den Owner ein.** Jede Spec, die danach im selben Stack
-  eine Anmeldung versucht, scheitert. Deshalb laufen beide in getrennten Stacks.
-- **Compose führt Listen zusammen, statt sie zu ersetzen.** `ports`, `env_file` und `volumes` brauchen
-  `!override`, sonst erbt der Test-Stack die Werte der Basisdatei.
-- **Docker ist lokal rootless, auf den Servern rootful.** `--user` bildet in entgegengesetzte
-  Richtungen ab; Container-Aufrufe ohne `--user` funktionieren in beiden Modi.
+- **Das SSH-Zertifikat hält ~8 Stunden.** `Permission denied (publickey)` auf dut/dt heißt meistens
+  nur, dass es abgelaufen ist: `ssh-keygen -L -f ~/.ssh/id_ed25519_homelab-cert.pub | grep -i valid`.
+  Erneuern kann nur der Nutzer (Vault-OIDC).
+- **CI serialisiert über `concurrency: ci-${{ github.ref }}`.** Ein neuer Push stellt sich hinter den
+  laufenden Lauf. Stehen veraltete Läufe vorne, brich sie ab (`gh run cancel`), sonst wartest du
+  zwanzig Minuten auf nichts.
+- **Snapshots sind nicht portabel.** Die visuelle Suite läuft im offiziellen Playwright-Image;
+  Baseline immer über `scripts/design-baseline.sh` erzeugen *und* prüfen.
+- **Compose führt Listen zusammen.** `ports`, `env_file` und `volumes` brauchen `!override`.
 
 ## Arbeitsweise
 
 Nach jeder abgeschlossenen Aufgabe committen und pushen, dann `gh run watch --exit-status`
-blockierend abwarten statt den Ausgang zu raten. Bei Fehlschlag Logs holen, Ursache finden, beheben.
+blockierend abwarten statt den Ausgang zu raten.
 
-Wenn ein bestehender Test dem Code widerspricht: **prüfe, welcher von beiden recht hat.** In der
-Vorsession kodierten zwei Schedule-Tests nachweislich falsches Verhalten (ein Block Mittwoch
-23:00–01:00 sollte bereits Mittwoch 00:30 laufen, 23 Stunden zu früh).
+Wenn ein bestehender Test dem Code widerspricht: **prüfe, welcher von beiden recht hat.**
+
+Und miss, bevor du schließt. In dieser Session wurden mehrere Fehler nur deshalb gefunden, weil eine
+gegnerische Prüfung sie gegen echte Systeme reproduziert hat statt sie zu erschließen — zwei davon
+hätten die Cache-Richtlinie still wirkungslos gemacht.
