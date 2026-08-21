@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_UPLINK_GRACE_MS,
+  DEFAULT_UPLINK_NO_PROGRESS_RESTART_MS,
   DEFAULT_DISCONTINUITY_LIMIT,
   canBlameUplinkForStall,
   createUplinkDiscontinuityState,
@@ -12,6 +13,7 @@ import {
   getUplinkStallOptions,
   hasNeverProgressed,
   isUplinkStalled,
+  shouldRestartForNoProgress,
   observeUplinkProgress
 } from "../../apps/worker/src/uplink-progress.js";
 
@@ -19,7 +21,7 @@ import {
 // pulled audio and video apart while every health surface reported "ok". Process liveness could not
 // tell "running" from "working"; out_time can.
 
-const OPTIONS = { stallMs: 45_000, graceMs: 60_000 };
+const OPTIONS = { stallMs: 45_000, graceMs: 60_000, noProgressRestartMs: 300_000 };
 
 /** A real -progress block, as ffmpeg writes it. */
 function progressBlock(outTimeUs: number): string {
@@ -72,13 +74,33 @@ describe("uplink stall detection", () => {
     expect(isUplinkStalled(state, OPTIONS.graceMs - 1, 0, OPTIONS)).toBe(false);
   });
 
-  it("never kills a process that has not reported progress yet", () => {
-    // A slow RTMP connect is indistinguishable from a stall here, and a false positive on a live
-    // uplink means a restart loop on air.
+  it("does not treat a process that has not reported progress yet as stalled", () => {
+    // The stall verdict measures a timestamp that stopped advancing; there is nothing to measure
+    // until the first frame. That case belongs to the no-progress path below.
     const state = createUplinkProgressState(0);
 
     expect(isUplinkStalled(state, 10 * 60_000, 0, OPTIONS)).toBe(false);
     expect(hasNeverProgressed(state, 10 * 60_000, 0, OPTIONS)).toBe(true);
+  });
+
+  it("restarts an uplink that has never encoded a frame, once no benign reason is left", () => {
+    // Observed in production: 65 minutes running, not one frame, no RTMP connection, this state
+    // logged every 15 seconds while the channel was off the air. It used to be reported only.
+    const state = createUplinkProgressState(0);
+
+    // A slow connect resolves far inside the threshold, so nothing happens there.
+    expect(shouldRestartForNoProgress(state, 90_000, 0, OPTIONS)).toBe(false);
+    expect(shouldRestartForNoProgress(state, OPTIONS.noProgressRestartMs - 1, 0, OPTIONS)).toBe(false);
+
+    expect(shouldRestartForNoProgress(state, OPTIONS.noProgressRestartMs, 0, OPTIONS)).toBe(true);
+    expect(shouldRestartForNoProgress(state, 65 * 60_000, 0, OPTIONS)).toBe(true);
+  });
+
+  it("leaves a working uplink alone however long it runs", () => {
+    let state = createUplinkProgressState(0);
+    state = observeUplinkProgress(state, progressBlock(2_000_000), 1_000);
+
+    expect(shouldRestartForNoProgress(state, 65 * 60_000, 0, OPTIONS)).toBe(false);
   });
 
   it("reassembles progress lines split across chunk boundaries", () => {
@@ -121,11 +143,12 @@ describe("uplink stall detection", () => {
   it("reads thresholds from the environment with usable defaults", () => {
     expect(getUplinkStallOptions({} as NodeJS.ProcessEnv)).toEqual({
       stallMs: DEFAULT_UPLINK_STALL_MS,
-      graceMs: DEFAULT_UPLINK_GRACE_MS
+      graceMs: DEFAULT_UPLINK_GRACE_MS,
+      noProgressRestartMs: DEFAULT_UPLINK_NO_PROGRESS_RESTART_MS
     });
     expect(
       getUplinkStallOptions({ UPLINK_STALL_TIMEOUT_MS: "20000", UPLINK_STALL_GRACE_MS: "5000" } as NodeJS.ProcessEnv)
-    ).toEqual({ stallMs: 20_000, graceMs: 5_000 });
+    ).toEqual({ stallMs: 20_000, graceMs: 5_000, noProgressRestartMs: DEFAULT_UPLINK_NO_PROGRESS_RESTART_MS });
     expect(getUplinkStallOptions({ UPLINK_STALL_TIMEOUT_MS: "0" } as NodeJS.ProcessEnv).stallMs).toBe(
       DEFAULT_UPLINK_STALL_MS
     );

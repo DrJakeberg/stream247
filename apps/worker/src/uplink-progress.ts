@@ -30,15 +30,23 @@ export type UplinkStallOptions = {
   stallMs: number;
   /** Quiet period after start during which no verdict is given, for probing and connecting. */
   graceMs: number;
+  /** How long an uplink may run without ever encoding a frame before it is restarted. */
+  noProgressRestartMs: number;
 };
 
 export const DEFAULT_UPLINK_STALL_MS = 45_000;
 export const DEFAULT_UPLINK_GRACE_MS = 60_000;
+/** Long enough that a slow connect, a DNS retry and a reconnecting destination all resolve first. */
+export const DEFAULT_UPLINK_NO_PROGRESS_RESTART_MS = 300_000;
 
 export function getUplinkStallOptions(env: NodeJS.ProcessEnv): UplinkStallOptions {
   return {
     stallMs: readPositiveMs(env.UPLINK_STALL_TIMEOUT_MS, DEFAULT_UPLINK_STALL_MS),
-    graceMs: readPositiveMs(env.UPLINK_STALL_GRACE_MS, DEFAULT_UPLINK_GRACE_MS)
+    graceMs: readPositiveMs(env.UPLINK_STALL_GRACE_MS, DEFAULT_UPLINK_GRACE_MS),
+    noProgressRestartMs: readPositiveMs(
+      env.UPLINK_NO_PROGRESS_RESTART_MS,
+      DEFAULT_UPLINK_NO_PROGRESS_RESTART_MS
+    )
   };
 }
 
@@ -94,12 +102,9 @@ export function observeUplinkProgress(
 /**
  * True when ffmpeg is alive but has stopped producing output.
  *
- * Deliberately silent until ffmpeg has reported progress at least once, which leaves one case
- * uncovered: a process that never encodes a single frame. That gap is chosen. This verdict kills a
- * live uplink, so a false positive costs a restart loop on air, while a false negative costs only
- * what the old behaviour already cost. "Was producing output, then stopped" is unambiguous;
- * "has not produced output yet" is indistinguishable from a slow RTMP connect. Use
- * hasNeverProgressed for that case — it is meant for logging, not for killing.
+ * Silent until ffmpeg has reported progress at least once. "Never produced output" is handled
+ * separately by hasNeverProgressed, on a much longer clock: within the first minute it is
+ * indistinguishable from a slow RTMP connect, but an hour of it is not.
  */
 export function isUplinkStalled(
   state: UplinkProgressState,
@@ -119,8 +124,7 @@ export function isUplinkStalled(
 /**
  * True when ffmpeg has been running past its grace period without ever reporting progress.
  *
- * Reported, not acted on: it is the one uplink state that is genuinely ambiguous, and surfacing it
- * is what turns "the channel is silently dead" into something an operator can see.
+ * Worth reporting well before it is worth acting on, so this stays cheap to call every cycle.
  */
 export function hasNeverProgressed(
   state: UplinkProgressState,
@@ -129,6 +133,27 @@ export function hasNeverProgressed(
   options: UplinkStallOptions
 ): boolean {
   return !state.seenProgress && nowMs - startedAtMs >= options.graceMs;
+}
+
+/**
+ * True when an uplink has never encoded a frame for so long that no benign explanation remains.
+ *
+ * This case was originally reported and never acted on, reasoning that a false positive costs a
+ * restart loop while a false negative costs no more than the previous behaviour. That was wrong.
+ * Observed in production: the uplink ran 65 minutes without a single frame and never opened an RTMP
+ * connection, logging this state every 15 seconds while the channel was simply off the air. A
+ * restart loop is noisy and visible in the restart tally; a silent dead uplink is neither.
+ *
+ * The threshold is minutes rather than seconds because a slow connect, a DNS retry and a
+ * reconnecting destination all resolve far inside it.
+ */
+export function shouldRestartForNoProgress(
+  state: UplinkProgressState,
+  nowMs: number,
+  startedAtMs: number,
+  options: UplinkStallOptions
+): boolean {
+  return !state.seenProgress && nowMs - startedAtMs >= options.noProgressRestartMs;
 }
 
 /**

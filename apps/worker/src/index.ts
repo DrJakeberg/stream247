@@ -12,6 +12,7 @@ import {
   getUplinkStallOptions,
   hasNeverProgressed,
   isUplinkStalled,
+  shouldRestartForNoProgress,
   observeUplinkProgress,
   type UplinkProgressState
 } from "./uplink-progress.js";
@@ -4798,12 +4799,34 @@ async function runUplinkCycle(): Promise<void> {
     }
 
     if (hasNeverProgressed(running.progress, now, startedAtMs, uplinkStallOptions)) {
-      // Reported only: indistinguishable from a slow connect, and killing on it risks a loop.
+      const runningSeconds = Math.round((now - startedAtMs) / 1000);
       logRuntimeEvent("uplink.encoder.no_progress", {
         outputProfile: running.key,
         destinationIds: running.destinationIds,
-        runningSeconds: Math.round((now - startedAtMs) / 1000)
+        runningSeconds
       });
+
+      // Past the restart threshold no benign explanation is left. This used to be reported and
+      // never acted on: the uplink was observed running 65 minutes without encoding a frame, never
+      // opening an RTMP connection, logging this line every 15 seconds while the channel was off
+      // the air. A restart that does not help is at least visible in the restart tally.
+      if (!shouldRestartForNoProgress(running.progress, now, startedAtMs, uplinkStallOptions)) {
+        continue;
+      }
+
+      logRuntimeEvent("uplink.encoder.no_progress.restart", {
+        outputProfile: running.key,
+        destinationIds: running.destinationIds,
+        runningSeconds
+      });
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Uplink restarted after never encoding a frame",
+        message: `The uplink process for ${running.key} has been running for ${runningSeconds}s without encoding anything, so nothing has reached the destination in that time. Restarting it; if this repeats, the program feed itself is likely unreadable rather than the uplink being at fault.`,
+        fingerprint: `uplink.no-progress.${running.key}`
+      });
+      await stopUplinkProcess(running, "encoder-stalled");
       continue;
     }
 
