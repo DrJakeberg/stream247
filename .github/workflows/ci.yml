@@ -5,9 +5,26 @@ on:
   push:
     branches: [main]
 
+# Runs on main push the same mutable GHCR tags (`latest`), so two in flight at once race on the
+# registry: a concurrent push was rejected with "denied: permission_denied ... 403". Serialising
+# them fixes that.
+#
+# cancel-in-progress is a literal false, not an expression. An expression form here
+# (`${{ github.event_name == 'pull_request' }}`) was evaluated as truthy on push and cancelled a
+# main run before its job even started. That is worse than the race it replaced: a cancelled run
+# publishes no `main-<sha>` snapshot, and the Release workflow waits for exactly that image, so
+# tagging such a commit would block until its timeout and then fail.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    # Without this the job inherits GitHub's 6-hour default. A hung apt mirror left a run wedged
+    # for over an hour on the ffmpeg install, and because runs are serialised that blocked every
+    # later commit behind it. Fail in a useful timeframe instead.
+    timeout-minutes: 45
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
@@ -34,11 +51,35 @@ jobs:
       - id: release-preflight-env
         run: echo "path=$(./scripts/prepare-release-preflight-env.sh)" >> "$GITHUB_OUTPUT"
       - run: RELEASE_PREFLIGHT_ENV_FILE="${{ steps.release-preflight-env.outputs.path }}" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # Host ffmpeg is an optimisation, not a requirement: the smoke scripts only use it to
+      # synthesise fixtures and fall back to the worker image built above (scripts/lib/
+      # ffmpeg-fallback.sh). apt on the hosted runners has hung indefinitely and later failed
+      # outright on this step, so it must never be able to fail the build.
+      - name: Install ffmpeg (optional, fixtures fall back to the worker image)
+        continue-on-error: true
+        timeout-minutes: 8
+        run: |
+          set -uo pipefail
+          for attempt in 1 2; do
+            if sudo timeout 120 apt-get update -o Acquire::Retries=3 \
+              && sudo timeout 120 apt-get install -y --no-install-recommends ffmpeg; then
+              ffmpeg -version | head -n 1
+              exit 0
+            fi
+            echo "ffmpeg install attempt ${attempt} failed."
+            sleep 5
+          done
+          echo "Continuing without host ffmpeg; fixtures will be generated in the worker image."
       - run: pnpm test:queue-continuity
       - run: pnpm test:runtime-parity
-      - run: pnpm dlx @playwright/test@1.56.1 install --with-deps chromium
+      # Installs browsers for the workspace copy of @playwright/test; dlx would fetch a second one.
+      - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e:smoke
+      # Its own stack, deliberately, for two independent reasons: admin-smoke enables two-factor
+      # auth on the owner account, so any spec signing in after it never reaches the workspace; and
+      # the visual baseline needs the runtime containers stopped so nothing rewrites readiness
+      # mid-screenshot. Sharing one bring-up saved a minute and cost 23 tests.
+      - run: ./scripts/design-baseline.sh
       - run: chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:test
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3

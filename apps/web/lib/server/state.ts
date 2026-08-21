@@ -8,6 +8,7 @@ import {
   getCuepointProgress,
   buildScheduleOccurrences,
   buildSchedulePreview,
+  shiftDateToDayOfWeek,
   describePresenceStatus,
   findCurrentScheduleOccurrence,
   findNextScheduleOccurrence,
@@ -43,6 +44,7 @@ import {
   applyOverlayScenePresetRecordToDraft,
   createPoolRecord,
   createScheduleBlocks,
+  createScheduleBlocksChecked,
   createShowProfileRecord,
   deleteAssetCollectionRecord,
   deleteDestinationRecord,
@@ -181,6 +183,7 @@ export {
   applyOverlayScenePresetRecordToDraft,
   createPoolRecord,
   createScheduleBlocks,
+  createScheduleBlocksChecked,
   createShowProfileRecord,
   deleteAssetCollectionRecord,
   deleteDestinationRecord,
@@ -238,19 +241,29 @@ export function getWorkspaceTimeZone(): string {
   return process.env.CHANNEL_TIMEZONE || "UTC";
 }
 
-export function getSchedulePreview(state: AppState) {
+/**
+ * Preview for one day of the week.
+ *
+ * `dayOfWeek` matters because a preview is built for a *date*, not for a weekday: it resolves each
+ * block's pool into the individual videos that would play. Without it the caller received today's
+ * preview and then filtered it by whichever day the user had open, which left the video timeline
+ * empty on six days out of seven — the schedule page's own day selector could not reach the data it
+ * was selecting.
+ */
+export function getSchedulePreview(state: AppState, dayOfWeek?: number) {
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
     timeZone: getWorkspaceTimeZone()
   });
 
   return buildSchedulePreview({
-    date: scheduleMoment.date,
+    date: dayOfWeek === undefined ? scheduleMoment.date : shiftDateToDayOfWeek(scheduleMoment.date, dayOfWeek),
     blocks: state.scheduleBlocks,
     pools: state.pools,
     assets: state.assets
   });
 }
+
 
 export function getMaterializedProgrammingWeekPreview(state: AppState) {
   const scheduleMoment = getCurrentScheduleMoment({

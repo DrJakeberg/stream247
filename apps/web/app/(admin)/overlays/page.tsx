@@ -8,12 +8,18 @@ import {
 } from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
 import { EngagementSettingsForm } from "@/components/engagement-settings-form";
+import { ViewerControlForm } from "@/components/viewer-control-form";
 import { Panel } from "@/components/panel";
+import { readChatInteractionSettingsRecord, readChatVoteSessionRecord } from "@stream247/db";
 import { getBroadcastSnapshot, readAppState } from "@/lib/server/state";
 
 export default async function OverlaysPage() {
   const state = await readAppState();
   const engagement = getBroadcastSnapshot(state).engagement;
+  const [viewerControl, activeVote] = await Promise.all([
+    readChatInteractionSettingsRecord(),
+    readChatVoteSessionRecord()
+  ]);
   const chatRuntimeEnabled = isEngagementChatRuntimeEnabled(state.engagement, process.env);
   const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(state.engagement, process.env);
   const donationsRuntimeEnabled = isEngagementDonationAlertsRuntimeEnabled(state.engagement, process.env);
@@ -90,6 +96,17 @@ export default async function OverlaysPage() {
           </div>
         </Panel>
       </div>
+
+      <Panel title="Viewer control" eyebrow="Chat steers the programme">
+        <div className="subtle" style={{ marginBottom: 12 }}>
+          {viewerControl.enabled
+            ? activeVote.status === "open"
+              ? `A poll is live with ${String(activeVote.options.reduce((sum, option) => sum + option.votes, 0))} votes from ${String(Object.keys(activeVote.ballots).length)} viewers.`
+              : "Enabled. A poll opens once per programme item."
+            : "Disabled. Chat cannot influence the running order."}
+        </div>
+        <ViewerControlForm settings={viewerControl} />
+      </Panel>
     </div>
   );
 }

@@ -19,7 +19,7 @@ import {
   readOverlayStudioState,
   replaceOverlayScenePresetRecords,
   saveOverlayDraftRecord,
-  writeAppState,
+  updateAppState,
   type AppState,
   type OverlayScenePresetRecord,
   type OverlaySettingsRecord,
@@ -891,29 +891,37 @@ export async function exportChannelBlueprint(): Promise<ChannelBlueprintDocument
 }
 
 export async function importChannelBlueprint(input: unknown, options?: BlueprintImportOptions): Promise<NormalizedBlueprint> {
-  const [currentState, studio] = await Promise.all([readAppState(), readOverlayStudioState()]);
-  const normalized = normalizeChannelBlueprintDocument({
-    input,
-    currentState,
-    studio,
-    options
-  });
-  const importedSourceIds = new Set(normalized.importedSources.map((source) => source.id));
-  const importedAssets = normalized.sections.library
-    ? currentState.assets.filter((asset) => importedSourceIds.has(asset.sourceId))
-    : currentState.assets;
+  const studio = await readOverlayStudioState();
+  let normalized!: NormalizedBlueprint;
 
-  await writeAppState({
-    ...currentState,
-    moderation: normalized.importedModeration,
-    sources: normalized.importedSources,
-    assets: importedAssets,
-    assetCollections: normalized.importedAssetCollections,
-    overlay: normalized.importedLiveOverlay,
-    pools: normalized.importedPools,
-    showProfiles: normalized.importedShowProfiles,
-    scheduleBlocks: normalized.importedScheduleBlocks,
-    destinations: normalized.importedDestinations
+  // Read and write inside one locked transaction. Reading the state separately and spreading it
+  // back meant the import carried a snapshot of `playout` taken before the write, so importing a
+  // blueprint while the channel was on air rewound the worker's live runtime -- heartbeats, restart
+  // counters, uplink status, the current asset -- to whatever it had been when the request started.
+  await updateAppState((currentState) => {
+    normalized = normalizeChannelBlueprintDocument({
+      input,
+      currentState,
+      studio,
+      options
+    });
+    const importedSourceIds = new Set(normalized.importedSources.map((source) => source.id));
+    const importedAssets = normalized.sections.library
+      ? currentState.assets.filter((asset) => importedSourceIds.has(asset.sourceId))
+      : currentState.assets;
+
+    return {
+      ...currentState,
+      moderation: normalized.importedModeration,
+      sources: normalized.importedSources,
+      assets: importedAssets,
+      assetCollections: normalized.importedAssetCollections,
+      overlay: normalized.importedLiveOverlay,
+      pools: normalized.importedPools,
+      showProfiles: normalized.importedShowProfiles,
+      scheduleBlocks: normalized.importedScheduleBlocks,
+      destinations: normalized.importedDestinations
+    };
   });
   if (normalized.sections.sceneStudio) {
     await saveOverlayDraftRecord(normalized.importedDraftOverlay, normalized.importedLiveOverlay.updatedAt);

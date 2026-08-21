@@ -115,6 +115,17 @@ export async function POST(request: Request) {
     return new Response(payload.challenge, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
   }
 
+  // Only notifications describe something that happened. A revocation carries the same subscription
+  // type but no event body, so falling through here turned "this subscription is dead" into a cheer
+  // or follow alert on the overlay, attributed to "Viewer". Twitch also reserves the right to add
+  // message types, so this accepts a known one rather than excluding the ones known today.
+  if (messageType !== "notification") {
+    return NextResponse.json(
+      { ok: true, ignored: true, reason: messageType === "revocation" ? "subscription-revoked" : "unsupported-message-type" },
+      { status: 202 }
+    );
+  }
+
   const state = await readAppState();
   if (!isEngagementAlertsRuntimeEnabled(state.engagement, process.env)) {
     return NextResponse.json({ ok: true, ignored: true, reason: "alerts-disabled" }, { status: 202 });

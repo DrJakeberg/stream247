@@ -1,6 +1,21 @@
 import { promises as fs } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { abortableDelay } from "./abortable-delay.js";
+import {
+  canBlameUplinkForStall,
+  createUplinkDiscontinuityState,
+  createUplinkProgressState,
+  isDiscontinuityStorm,
+  observeDiscontinuityLine,
+  type UplinkDiscontinuityState,
+  getUplinkStallOptions,
+  hasNeverProgressed,
+  isUplinkStalled,
+  shouldRestartForNoProgress,
+  observeUplinkProgress,
+  type UplinkProgressState
+} from "./uplink-progress.js";
 import nodemailer from "nodemailer";
 import path from "node:path";
 import type { Writable } from "node:stream";
@@ -8,6 +23,7 @@ import {
   DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
   addDaysToDateString,
   buildOverlayScenePayload,
+  type OverlayEngagementView,
   buildOverlayTextLinesFromScenePayload,
   formatCuepointOffsetLabel,
   buildScheduleOccurrences,
@@ -27,7 +43,10 @@ import {
   resolveOverlayScenePresetForQueueKind,
   summarizeLiveBridgeInput,
   type LiveBridgeInputType,
-  toUtcIsoForLocalDateTime
+  toUtcIsoForLocalDateTime,
+  createDefaultChatInteractionConfig,
+  evaluateViewerRequest,
+  type ChatInteractionConfig
 } from "@stream247/core";
 import {
   appendSourceSyncRuns,
@@ -49,14 +68,18 @@ import {
   type AppState,
   type AssetRecord,
   type OutputSettingsRecord,
-  type StreamDestinationRecord
+  type StreamDestinationRecord,
+  readChatInteractionSettingsRecord,
+  writeChatVoteSessionRecord
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
-  buildChromiumSceneCaptureArgs,
-  getChromiumBinaryCandidates,
+  ON_AIR_SCENE_PIPE_FRAMERATE,
+  ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS,
+  ON_AIR_SCENE_PIPE_QUEUE_FRAMES,
+  ON_AIR_SCENE_PIPE_LEAD_FRAMES,
+  framesDueByNow,
   getSceneRendererIntervalMs,
-  getSceneRendererOverlayUrl,
   getSceneRendererViewport,
   type OnAirOverlayMode
 } from "./on-air-scene.js";
@@ -96,10 +119,24 @@ import {
   shouldRequestImmediatePlayoutRetry,
   shouldSkipInitialSceneCapture
 } from "./ffmpeg-runtime.js";
+import { clampToCycleAwaitCeiling, getLoopStallTimeoutMs } from "./cycle-budget.js";
+import { VodCacheJobRunner } from "./vod-cache-jobs.js";
+import { ChatControlRuntime, type ChatControlEffect } from "./chat-control.js";
+import {
+  loadSceneRendererFonts,
+  renderSceneFrame,
+  sceneFrameCacheKey,
+  type SceneRenderFont,
+  type SceneRenderRequest
+} from "./scene-renderer.js";
 import { execFileText, runWithStallGuard } from "./process-utils.js";
 import {
   ensureTwitchVodCache,
+  buildTwitchVodCachePath,
+  canReleaseVodCache,
+  evictUnusedTwitchVodCache,
   getTwitchVodCacheConfig,
+  peekTwitchVodCache,
   isInternalMediaCachePath,
   isTwitchVodAsset,
   isTwitchVodCacheCoolingDown
@@ -155,26 +192,22 @@ const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
 // unbounded yt-dlp/fetch network stall) and the process exits so the
 // `restart: unless-stopped` policy brings up a fresh process instead of the
 // loop hanging silently for hours while the heartbeat goes stale.
-const LOOP_STALL_TIMEOUT_MS = (() => {
-  const raw = process.env.STREAM247_LOOP_STALL_TIMEOUT_SECONDS;
-  if (raw === undefined || raw === "") {
-    return 300_000;
-  }
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed >= 60 ? parsed * 1000 : 300_000;
-})();
+const LOOP_STALL_TIMEOUT_MS = getLoopStallTimeoutMs(process.env);
 // Timeout for resolving a remote playable URL via yt-dlp `--get-url`. Without
 // this, a network stall to the source leaves the playout-selection await
-// hanging forever and wedges the whole playout loop.
+// hanging forever and wedges the whole playout loop. Clamped to the cycle-await
+// ceiling so an operator-configured value can never outlive the stall guard.
 const PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS = (() => {
   const raw = process.env.STREAM247_PLAYABLE_INPUT_RESOLVE_TIMEOUT_SECONDS;
-  if (raw === undefined || raw === "") {
-    return 60_000;
-  }
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed * 1000 : 60_000;
+  const parsed = raw === undefined || raw === "" ? Number.NaN : Number.parseInt(raw, 10);
+  const configured = Number.isFinite(parsed) && parsed > 0 ? parsed * 1000 : 60_000;
+  return clampToCycleAwaitCeiling(configured, process.env).effectiveMs;
 })();
 const engagementGameTracker = new EngagementGameTracker();
+// Owns the live vote and skip tallies. See chat-control.ts.
+const chatControl = new ChatControlRuntime({
+  onEvent: (event, fields) => logRuntimeEvent(event, fields)
+});
 const twitchChatBridge = new TwitchChatBridge({
   async onModeratorPresenceCheckIn(window) {
     await appendPresenceWindowRecord({
@@ -196,8 +229,27 @@ const twitchChatBridge = new TwitchChatBridge({
       actor: message.actor,
       createdAt: message.createdAt
     });
+
+    // Synchronous and non-throwing by contract: this runs inside the IRC socket data handler.
+    // The heavier consequences (promoting a vote winner, queueing a request, forcing a boundary)
+    // are applied by the worker cycle, which reads the runtime's state.
+    const effect = chatControl.handleMessage({
+      actor: message.actor,
+      message: message.message,
+      currentAssetId: latestPlayoutAssetId,
+      config: latestChatInteractionConfig
+    });
+
+    if (effect.kind === "skip-passed" || effect.kind === "request") {
+      pendingChatEffects.push(effect);
+    }
   }
 });
+// Latest values the IRC handler needs but cannot fetch itself, refreshed by the worker cycle.
+let latestPlayoutAssetId = "";
+let latestChatInteractionConfig = createDefaultChatInteractionConfig();
+// Effects the socket handler cannot apply itself; drained by the worker cycle.
+const pendingChatEffects: ChatControlEffect[] = [];
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
 const PLAYOUT_RECONNECT_CONFIG = getPlayoutReconnectConfig(process.env);
@@ -229,6 +281,17 @@ const NEXT_ASSET_PROBE_FAILED_TTL_MS = 60_000;
 // awaited per playout cycle, so a cascade of uncached remote queue assets cannot accumulate
 // several sequential ~60-120s resolves and trip the 300s loop stall guard. See queue-prefetch.ts.
 const MAX_EXPENSIVE_QUEUE_RESOLVES_PER_CYCLE = 1;
+// Hard ceiling on how long stopPlayoutProcess may wait for a child to disappear. SIGTERM escalates
+// to SIGKILL after 5s; a child that survives even that (uninterruptible I/O) must not hold the
+// reconciliation cycle hostage until the stall guard restarts the container.
+const PLAYOUT_STOP_DEADLINE_MS = 20_000;
+// Latest overlay scene payload, refreshed by writeOnAirOverlay on every state change that touches
+// the overlay. The scene renderer reads it on its own cadence instead of re-reading application
+// state per frame.
+let currentScenePayload: ReturnType<typeof buildWorkerScenePayload> | null = null;
+// Live chat-driven overlay state (vote in progress, skip vote). Null when nothing is running.
+let currentSceneEngagement: OverlayEngagementView | null = null;
+let sceneRendererFonts: SceneRenderFont[] | null = null;
 const standbySlatePath = "/tmp/stream247-standby.txt";
 const onAirOverlayPath = "/tmp/stream247-on-air.txt";
 
@@ -247,13 +310,14 @@ type UplinkProcessRuntime = {
   outputSettings: WorkerStreamOutputSettings;
   startedAt: string;
   plannedStopReason: string;
+  /** ffmpeg's own out_time, watched to tell an uplink that is running from one that is working. */
+  progress: UplinkProgressState;
+  /** Demuxer resyncs, watched to catch an uplink that encodes fine but with audio and video torn apart. */
+  discontinuity: UplinkDiscontinuityState;
 };
 
 const queueProbeCache = new Map<string, QueueProbeCacheEntry>();
 let sceneRendererAbortController: AbortController | null = null;
-const renderedSceneFramePath = "/tmp/stream247-scene.png";
-const SCENE_RENDER_CAPTURE_TIMEOUT_MS = 10_000;
-const SCENE_RENDER_CAPTURE_KILL_GRACE_MS = 1_000;
 const PLAYOUT_RECOVERY_SCENE_CAPTURE_SKIP_WINDOW_MS = 60_000;
 let wakePlayoutLoop: (() => void) | null = null;
 let twitchEventSubLastSyncKey = "";
@@ -312,6 +376,85 @@ function getTwitchVodCacheRuntimeConfig() {
 
 function isAssetBlockedForAutomaticSelection(asset: AssetRecord): boolean {
   return isTwitchVodCacheCoolingDown(asset, getTwitchVodCacheRuntimeConfig().failureCooldownMs);
+}
+
+// Twitch VOD downloads run here, detached from every reconciliation cycle. See vod-cache-jobs.ts.
+const vodCacheJobRunner = new VodCacheJobRunner({
+  ensureCache: (asset, config, execText, options) => ensureTwitchVodCache(asset, config, execText, options),
+  async onResult(asset, result) {
+    await updateAssetRecords([
+      {
+        ...asset,
+        cachePath: result.cachePath,
+        cacheStatus: result.status,
+        cacheUpdatedAt: result.cacheUpdatedAt,
+        cacheError: result.cacheError,
+        updatedAt: result.cacheUpdatedAt
+      }
+    ]);
+
+    if (result.status === "ready") {
+      await resolveIncident("playout.twitch-cache.failed", "Twitch VOD cache is ready.");
+      return;
+    }
+
+    if (result.status === "too-large") {
+      // Not a failure: the VOD is simply played from Twitch. Raising an incident here would leave a
+      // permanent warning on a channel that is working exactly as configured.
+      logRuntimeEvent("vod.cache.too_large", {
+        assetId: asset.id,
+        sizeBytes: result.sizeBytes,
+        limitBytes: getTwitchVodCacheConfig(process.env, getMediaRoot()).maxAssetBytes
+      });
+      await resolveIncident("playout.twitch-cache.failed", "Twitch VOD is streamed directly.");
+      return;
+    }
+
+    await upsertIncident({
+      scope: "playout",
+      severity: "warning",
+      title: "Twitch VOD cache job failed",
+      message: result.cacheError || "The Twitch VOD cache job did not produce a usable file.",
+      fingerprint: "playout.twitch-cache.failed"
+    });
+  },
+  onEvent: (event, fields) => logRuntimeEvent(event, fields)
+});
+
+/**
+ * Deletes the cached VOD that just finished playing, and collects abandoned partials.
+ *
+ * Errors are swallowed: this runs inside the playout reconciliation cycle, and failing to free disk
+ * is never a reason to interrupt the channel. The size cap still bounds the cache if this does
+ * nothing at all.
+ */
+async function releaseWatchedVodCache(
+  currentAssetId: string,
+  finishedAssetId: string,
+  state: AppState
+): Promise<void> {
+  try {
+    const config = getTwitchVodCacheConfig(process.env, getMediaRoot());
+    if (!config.enabled || !canReleaseVodCache(currentAssetId)) {
+      return;
+    }
+
+    const watchedPaths = state.assets
+      .filter((asset) => asset.id === finishedAssetId && isTwitchVodAsset(asset))
+      .map((asset) => asset.cachePath || buildTwitchVodCachePath(asset, config.cacheRoot));
+
+    const released = await evictUnusedTwitchVodCache(config, watchedPaths);
+    if (released.removed.length > 0) {
+      logRuntimeEvent("vod.cache.released", {
+        files: released.removed.length,
+        freedBytes: released.freedBytes
+      });
+    }
+  } catch (error) {
+    logRuntimeEvent("vod.cache.release_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
 
 function isProgramFeedMode(): boolean {
@@ -443,7 +586,11 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
     };
   }
 
-  const result = await ensureTwitchVodCache(asset, cacheConfig);
+  // Never download here. This runs on the playout reconciliation cycle, which has a hard stall
+  // budget; a VOD download is unbounded work by nature. Look the cache up, and if it is not there
+  // yet hand the download to the detached job runner and let the caller bridge to fallback. The
+  // asset becomes playable on a later cycle once the job finishes.
+  const result = await peekTwitchVodCache(asset, cacheConfig);
   const updatedAsset: AssetRecord = {
     ...asset,
     cachePath: result.cachePath,
@@ -452,6 +599,19 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
     cacheError: result.cacheError,
     updatedAt: result.cacheUpdatedAt
   };
+
+  // A VOD already known to exceed the cache limit is a settled decision, not a pending download.
+  // peekTwitchVodCache only looks for a local file, so it reports "missing" every cycle; without
+  // this the job runner would be handed the same oversized download again for as long as the asset
+  // stays scheduled.
+  const settledTooLarge = asset.cacheStatus === "too-large";
+  if (settledTooLarge) {
+    updatedAsset.cacheStatus = "too-large";
+    updatedAsset.cacheError = asset.cacheError;
+  } else if (result.status !== "ready") {
+    vodCacheJobRunner.request(asset, cacheConfig);
+  }
+
   await updateAssetRecords([updatedAsset]);
 
   if (result.status === "ready") {
@@ -463,7 +623,10 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
     };
   }
 
-  if (cacheConfig.allowRemoteFallback) {
+  // Streaming from Twitch is the configured outcome for an oversized VOD, so it does not depend on
+  // the remote-fallback switch: that switch governs what happens while a cacheable VOD is still
+  // downloading, which is a different question.
+  if (settledTooLarge || cacheConfig.allowRemoteFallback) {
     const input = await resolvePlayableInput(asset.path);
     await resolveIncident("playout.asset-preparation.failed", "Asset playback input resolved successfully.");
     return {
@@ -646,7 +809,18 @@ function getFfmpegCommand(
 
   if (overlayMode === "scene") {
     const sceneInputIndex = audioLane ? 2 : 1;
-    command.push("-f", "image2pipe", "-framerate", "1", "-vcodec", "png", "-i", `pipe:${ON_AIR_SCENE_PIPE_FD}`);
+    command.push(
+      "-f",
+      "image2pipe",
+      "-framerate",
+      String(ON_AIR_SCENE_PIPE_FRAMERATE),
+      "-thread_queue_size",
+      String(ON_AIR_SCENE_PIPE_QUEUE_FRAMES),
+      "-vcodec",
+      "png",
+      "-i",
+      `pipe:${ON_AIR_SCENE_PIPE_FD}`
+    );
     command.push(
       "-filter_complex",
       outputVideoFilter
@@ -709,7 +883,18 @@ function getLiveBridgeFfmpegCommand(
   const outputVideoFilter = isStreamScaleEnabled(process.env) ? getOutputVideoFilter(output) : "";
 
   if (overlayMode === "scene") {
-    command.push("-f", "image2pipe", "-framerate", "1", "-vcodec", "png", "-i", `pipe:${ON_AIR_SCENE_PIPE_FD}`);
+    command.push(
+      "-f",
+      "image2pipe",
+      "-framerate",
+      String(ON_AIR_SCENE_PIPE_FRAMERATE),
+      "-thread_queue_size",
+      String(ON_AIR_SCENE_PIPE_QUEUE_FRAMES),
+      "-vcodec",
+      "png",
+      "-i",
+      `pipe:${ON_AIR_SCENE_PIPE_FD}`
+    );
     command.push(
       "-filter_complex",
       outputVideoFilter
@@ -782,7 +967,18 @@ function getStandbyFfmpegCommand(
   ];
 
   if (overlayMode === "scene") {
-    command.push("-f", "image2pipe", "-framerate", "1", "-vcodec", "png", "-i", `pipe:${ON_AIR_SCENE_PIPE_FD}`);
+    command.push(
+      "-f",
+      "image2pipe",
+      "-framerate",
+      String(ON_AIR_SCENE_PIPE_FRAMERATE),
+      "-thread_queue_size",
+      String(ON_AIR_SCENE_PIPE_QUEUE_FRAMES),
+      "-vcodec",
+      "png",
+      "-i",
+      `pipe:${ON_AIR_SCENE_PIPE_FD}`
+    );
     command.push("-filter_complex", "[0:v][2:v]overlay=0:0:format=auto[vout]", "-map", "[vout]", "-map", "1:a");
   } else {
     command.push(
@@ -825,21 +1021,31 @@ function getStandbyFfmpegCommand(
   return command;
 }
 
-async function resolveChromiumBinary(): Promise<string> {
-  for (const candidate of getChromiumBinaryCandidates(process.env)) {
-    try {
-      await fs.access(candidate);
-      return candidate;
-    } catch {
-      continue;
-    }
-  }
-
-  throw new Error("No Chromium binary is available for on-air scene rendering.");
-}
-
 function shouldUseSceneRenderer(): boolean {
   return (process.env.SCENE_RENDERER_ENABLED || "1") !== "0";
+}
+
+/**
+ * Fonts are loaded once per process: they are the renderer's only external input, and re-reading
+ * them per frame would put filesystem I/O on the render path for no benefit.
+ */
+async function getSceneRendererFonts(): Promise<SceneRenderFont[]> {
+  sceneRendererFonts ??= await loadSceneRendererFonts(process.env);
+  return sceneRendererFonts;
+}
+
+function buildSceneRenderRequest(outputSettings: WorkerStreamOutputSettings): SceneRenderRequest | null {
+  if (!currentScenePayload) {
+    return null;
+  }
+
+  const viewport = getSceneRendererViewport(process.env, outputSettings);
+  return {
+    payload: currentScenePayload,
+    engagement: currentSceneEngagement,
+    width: viewport.width,
+    height: viewport.height
+  };
 }
 
 function isWritablePipe(value: unknown): value is Writable {
@@ -847,22 +1053,40 @@ function isWritablePipe(value: unknown): value is Writable {
 }
 
 async function captureRenderedSceneFrame(outputSettings: WorkerStreamOutputSettings): Promise<Buffer> {
-  const chromiumBinary = await resolveChromiumBinary();
-  const viewport = getSceneRendererViewport(process.env, outputSettings);
-  await execFileText(
-    chromiumBinary,
-    buildChromiumSceneCaptureArgs({
-      url: getSceneRendererOverlayUrl(process.env),
-      outputPath: renderedSceneFramePath,
-      viewport
-    }),
-    {
-      timeoutMs: SCENE_RENDER_CAPTURE_TIMEOUT_MS,
-      killProcessGroup: true,
-      forceKillAfterMs: SCENE_RENDER_CAPTURE_KILL_GRACE_MS
+  const request = buildSceneRenderRequest(outputSettings);
+  if (!request) {
+    throw new Error("No overlay scene payload is available to render yet.");
+  }
+
+  return renderSceneFrame(request, await getSceneRendererFonts());
+}
+
+/**
+ * Guarantees a scene payload exists before the first frame is rendered.
+ *
+ * The reconciliation cycle writes the overlay payload *after* starting playout, so on the first
+ * start of a process the cache is still empty. Because the overlay mode is baked into the ffmpeg
+ * command for the whole run, rendering nothing there would pin the overlay to text mode until the
+ * next asset boundary. The previous Chromium renderer did not have this ordering problem because
+ * it fetched state over HTTP from the web app rather than from worker-local memory.
+ */
+async function ensureScenePayload(asset: AssetRecord | null): Promise<void> {
+  if (currentScenePayload) {
+    return;
+  }
+
+  try {
+    const state = await readAppState();
+    if (!state.overlay.enabled) {
+      return;
     }
-  );
-  return fs.readFile(renderedSceneFramePath);
+
+    await writeOnAirOverlay(state, asset, state.playout.queueItems[0]?.kind || (asset ? "asset" : ""));
+  } catch (error) {
+    logRuntimeEvent("scene.payload.prime_failed", {
+      error: error instanceof Error ? error.message : "Unknown scene payload priming failure."
+    });
+  }
 }
 
 async function prepareSceneRendererFrame(outputSettings: WorkerStreamOutputSettings): Promise<Buffer | null> {
@@ -903,34 +1127,60 @@ function startSceneRendererLoop(
   const intervalMs = getSceneRendererIntervalMs(process.env);
   sceneRendererAbortController = controller;
 
-  void (async () => {
-    let currentFrame = initialFrame;
+  let currentFrame = initialFrame;
 
+  // A pipe whose reader goes away emits 'error', and a stream error with no listener is an uncaught
+  // exception -- which this process answers with exit(1). Nothing here used to register one: the
+  // drain wait happened to serve as the stream's only error listener, and passing it the abort
+  // signal removed it at exactly the wrong moment, since teardown aborts and then SIGTERMs ffmpeg in
+  // the same turn. Every ordinary asset boundary took that path, so this is registered up front and
+  // for the whole lifetime of the pipe.
+  targetPipe.on("error", (error: unknown) => {
+    logRuntimeEvent("scene.pipe.error", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
+
+  // Feeding the pipe and rasterising the scene run independently on purpose. ffmpeg pulls this
+  // input at ON_AIR_SCENE_PIPE_FRAMERATE and `overlay` blocks until both of its inputs have a
+  // frame, so a writer that pauses for the render interval throttles the whole encode down to the
+  // render rate. That is what halved the programme feed: frames were pushed every 2s into a pipe
+  // declared at 1fps, and playout produced 30s of video per minute of wall clock.
+  //
+  // Pacing is against the wall clock rather than against backpressure. Writing until the pipe
+  // pushes back keeps the overlay fed, but it also keeps every buffer between here and ffmpeg
+  // permanently full, and a scene change then waits behind all of it -- tens of seconds for a
+  // cheaply compressing lower third. Staying a fixed lead ahead of real time feeds the filter just
+  // as reliably and bounds that delay to the lead itself.
+  const startedAtMs = Date.now();
+  const idleMs = Math.max(50, Math.floor(ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS / 4));
+  let framesWritten = 0;
+
+  const sleep = (ms: number) => abortableDelay(ms, controller.signal);
+
+  void (async () => {
     while (!controller.signal.aborted && !targetPipe.destroyed) {
       try {
+        if (framesWritten >= framesDueByNow(startedAtMs, Date.now(), ON_AIR_SCENE_PIPE_LEAD_FRAMES)) {
+          await sleep(idleMs);
+          continue;
+        }
+
+        framesWritten += 1;
         if (!targetPipe.write(currentFrame)) {
-          await once(targetPipe, "drain");
+          // Only reached if ffmpeg has fallen behind its own declared rate; waiting for drain keeps
+          // the lead from turning into an unbounded backlog.
+          await once(targetPipe, "drain", { signal: controller.signal });
         }
       } catch {
         break;
       }
-
-      try {
-        currentFrame = await captureRenderedSceneFrame(outputSettings);
-        await resolveIncident("playout.scene-render.failed", "On-air scene renderer is healthy.");
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown on-air scene renderer error.";
-        await upsertIncident({
-          scope: "playout",
-          severity: "warning",
-          title: "On-air scene renderer update failed",
-          message,
-          fingerprint: "playout.scene-render.failed"
-        });
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
+
+    // Stopping the writer has to stop the renderer with it. The writer also leaves this loop on a
+    // dead pipe, and the module-level handle is cleared below -- without this abort the renderer
+    // would keep rasterising frames nobody reads, unreachable by stopSceneRendererLoop().
+    controller.abort();
 
     if (!targetPipe.destroyed) {
       targetPipe.end();
@@ -939,7 +1189,55 @@ function startSceneRendererLoop(
     if (sceneRendererAbortController === controller) {
       sceneRendererAbortController = null;
     }
-  })();
+  })().catch((error: unknown) => {
+    // An un-awaited async IIFE that rejects is an unhandled rejection, which this process only
+    // logs -- leaving a dead loop behind and no indication of why.
+    logRuntimeEvent("scene.pipe.writer_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
+
+  void (async () => {
+    let currentKey = "";
+
+    while (!controller.signal.aborted && !targetPipe.destroyed) {
+      try {
+        const request = buildSceneRenderRequest(outputSettings);
+        if (request) {
+          // The scene only changes when its content changes. Re-pushing the cached PNG keeps the
+          // ffmpeg overlay input fed without rasterising an identical lower third for the entire
+          // length of a video.
+          const nextKey = sceneFrameCacheKey(request);
+          if (nextKey !== currentKey) {
+            currentFrame = await renderSceneFrame(request, await getSceneRendererFonts());
+            currentKey = nextKey;
+            await resolveIncident("playout.scene-render.failed", "On-air scene renderer is healthy.");
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown on-air scene renderer error.";
+        logRuntimeEvent("scene.render.update_failed", { error: message });
+        // Recording the incident goes through the same database the render may have just failed on,
+        // so it gets its own guard. Losing the incident is survivable; losing this loop is not.
+        await upsertIncident({
+          scope: "playout",
+          severity: "warning",
+          title: "On-air scene renderer update failed",
+          message,
+          fingerprint: "playout.scene-render.failed"
+        }).catch(() => undefined);
+      }
+
+      await sleep(intervalMs);
+    }
+  })().catch((error: unknown) => {
+    // Deliberately does not abort the controller. A dead renderer leaves the writer pushing the
+    // last good frame, so the overlay freezes; aborting would starve the overlay input instead and
+    // throttle the entire encode. A stale lower third beats a stalled channel.
+    logRuntimeEvent("scene.render.loop_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
 }
 
 function buildWorkerScenePayload(args: {
@@ -1063,8 +1361,7 @@ async function writeOnAirOverlay(
       })
       .filter(Boolean)
       .slice(0, state.overlay.queuePreviewCount);
-  const lines = buildOverlayTextLinesFromScenePayload(
-    buildWorkerScenePayload({
+  const payload = buildWorkerScenePayload({
       state,
       queueKind,
       currentTitle: overrides.currentTitle || buildAssetDisplayTitle(asset) || state.playout.currentTitle || currentItem?.title || "Stand by",
@@ -1077,8 +1374,14 @@ async function writeOnAirOverlay(
         currentItem?.sourceName ||
         (asset ? state.sources.find((source) => source.id === asset.sourceId)?.name : ""),
       queueTitles
-    })
-  );
+    });
+
+  // The scene renderer runs on its own cadence, decoupled from the reconciliation cycle. Caching
+  // the payload here means every state change that already refreshes the overlay text also feeds
+  // the rendered scene, without the renderer having to re-read application state per frame.
+  currentScenePayload = payload;
+
+  const lines = buildOverlayTextLinesFromScenePayload(payload);
   await fs.writeFile(onAirOverlayPath, `${lines.join("\n")}\n`, "utf8");
 }
 
@@ -2630,11 +2933,22 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
     playoutLastStderrSample = "";
     playoutLiveBridgeInputUrl = "";
     playoutLiveBridgeInputType = "";
+    // No exit handler will run for this path, so nothing would ever clear the reason we just set.
+    // Leaving it set makes the next genuine crash look like an operator-planned stop.
+    plannedStopReason = "";
     return;
   }
 
   await new Promise<void>((resolve) => {
+    let settled = false;
     const finalize = () => {
+      // Reachable from both the exit handler and the stop deadline; the second call must not
+      // clear state that a newly started process already owns.
+      if (settled) {
+        return;
+      }
+      settled = true;
+
       if (playoutProcess === currentProcess) {
         playoutProcess = null;
         playoutAssetId = "";
@@ -2651,13 +2965,40 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
     };
 
     currentProcess.once("exit", finalize);
-    currentProcess.kill("SIGTERM");
+    try {
+      currentProcess.kill("SIGTERM");
+    } catch {
+      // Process may have raced to exit between the exitCode check and the signal.
+    }
 
-    setTimeout(() => {
-      if (currentProcess.exitCode === null && !currentProcess.killed) {
-        currentProcess.kill("SIGKILL");
+    // `killed` is set the moment SIGTERM is *delivered*, not when the child actually exits, so the
+    // previous `&& !currentProcess.killed` guard made this escalation unreachable: an ffmpeg stuck
+    // in a blocking read on a dead remote input or a blocking write to a stalled RTMP socket never
+    // got SIGKILL, and the await below never resolved.
+    const escalation = setTimeout(() => {
+      if (currentProcess.exitCode === null) {
+        try {
+          currentProcess.kill("SIGKILL");
+        } catch {
+          // Already exited between the check and the signal.
+        }
       }
     }, 5_000);
+
+    // A child that ignores even SIGKILL (uninterruptible I/O) must not wedge the reconciliation
+    // cycle until the stall guard restarts the whole container.
+    const deadline = setTimeout(() => {
+      logRuntimeEvent("playout.stop.deadline_exceeded", {
+        reason,
+        pid: currentProcess.pid ?? 0
+      });
+      finalize();
+    }, PLAYOUT_STOP_DEADLINE_MS);
+
+    currentProcess.once("exit", () => {
+      clearTimeout(escalation);
+      clearTimeout(deadline);
+    });
   });
 }
 
@@ -2854,6 +3195,9 @@ async function startOrSwitchPlayout(args: {
     });
   }
   const outputSettings = getWorkerStreamOutputSettings(process.env, args.outputSettings);
+  if (args.overlayEnabled && !skipInitialSceneCapture) {
+    await ensureScenePayload(args.asset ?? null);
+  }
   const initialSceneFrame = args.overlayEnabled && !skipInitialSceneCapture ? await prepareSceneRendererFrame(outputSettings) : null;
   const overlayMode: OnAirOverlayMode = !args.overlayEnabled ? "none" : initialSceneFrame ? "scene" : "text";
   let resolvedAudioLaneInput = "";
@@ -2906,6 +3250,16 @@ async function startOrSwitchPlayout(args: {
       : getStandbyFfmpegCommand(args.outputTarget, overlayMode, outputSettings);
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe", "pipe"]
+  });
+
+  // Without an 'error' listener, EventEmitter rethrows a spawn failure (missing ffmpeg binary,
+  // EAGAIN under process pressure, EACCES) as an uncaught exception that the try/catch around the
+  // caller cannot see, because it is emitted asynchronously.
+  child.on("error", (error) => {
+    logRuntimeEvent("playout.process.spawn_failed", {
+      binary: ffmpegBinary,
+      error: error instanceof Error ? error.message : String(error)
+    });
   });
 
   playoutProcess = child;
@@ -4087,6 +4441,19 @@ async function runPlayoutCycle(): Promise<void> {
     message: activeQueueItem?.subtitle || selection.reason
   }));
 
+  // Free cached VODs the moment they stop being needed. Keyed on what is in use rather than on a
+  // playback-ended event, so a skip, a crash or a boundary frees the disk just as an ordinary
+  // finish does.
+  // Exactly one asset stops playing per transition, and that is the only thing worth deleting.
+  // Deriving the delete set by elimination — everything not currently in use — removed VODs that had
+  // been fetched ahead of their slot and never played, including a 19.1GB download seconds after
+  // the 52 minutes it took to fetch.
+  const finishedAssetId =
+    selection.asset && state.playout.currentAssetId && state.playout.currentAssetId !== selection.asset.id
+      ? state.playout.currentAssetId
+      : "";
+  await releaseWatchedVodCache(selection.asset?.id ?? "", finishedAssetId, state);
+
   if (
     currentScheduleItem?.poolId &&
     selection.reasonCode === "scheduled_match" &&
@@ -4132,6 +4499,15 @@ async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> 
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe"]
   });
+
+  // See the playout spawn: an unlistened 'error' event is an uncaught exception.
+  child.on("error", (error) => {
+    logRuntimeEvent("uplink.process.spawn_failed", {
+      binary: ffmpegBinary,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
+
   const startedAt = new Date().toISOString();
   const runtime: UplinkProcessRuntime = {
     key: group.key,
@@ -4140,8 +4516,16 @@ async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> 
     runtimeTargets: group.targets,
     outputSettings: group.settings,
     startedAt,
-    plannedStopReason: ""
+    plannedStopReason: "",
+    progress: createUplinkProgressState(Date.now()),
+    discontinuity: createUplinkDiscontinuityState(Date.now())
   };
+
+  // ffmpeg writes -progress here. It has to be consumed even if nothing watched it: an unread pipe
+  // fills and blocks the process, which would manufacture the very stall this is meant to catch.
+  child.stdout?.on("data", (chunk: Buffer) => {
+    runtime.progress = observeUplinkProgress(runtime.progress, chunk.toString(), Date.now());
+  });
 
   uplinkProcesses = [...uplinkProcesses.filter((entry) => entry.key !== group.key), runtime];
   const runningDestinationIds = getRunningUplinkDestinationIds();
@@ -4184,6 +4568,8 @@ async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> 
       return;
     }
 
+    runtime.discontinuity = observeDiscontinuityLine(runtime.discontinuity, line, Date.now());
+
     logRuntimeEvent("uplink.ffmpeg.stderr", {
       message: line.slice(0, 400)
     });
@@ -4225,7 +4611,9 @@ async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> 
 
   child.on("exit", (code, signal) => {
     const stopReason = runtime.plannedStopReason;
-    const wasPlanned = stopReason !== "" && stopReason !== "destination-stalled";
+    // A stall we stopped ourselves is still a failure of the channel: counting it as planned would
+    // hide it from the unplanned-restart tally that operators watch, and skip the restart.
+    const wasPlanned = stopReason !== "" && stopReason !== "destination-stalled" && stopReason !== "encoder-stalled";
     const exitReason = describeFfmpegExit(code, signal ?? null);
     const lastDestinationIds = [...runtime.destinationIds];
     const lastRuntimeTargets = [...runtime.runtimeTargets];
@@ -4390,6 +4778,94 @@ async function runUplinkCycle(): Promise<void> {
 
   if (uplinkReconnectUntil !== "") {
     uplinkReconnectUntil = "";
+  }
+
+  // The destination-stall check below asks whether the *targets* are healthy. It cannot see an
+  // ffmpeg that is alive, holds its connections open and encodes nothing -- which is how this
+  // channel lost audio/video sync while every destination still reported "ready". out_time is the
+  // one signal that separates the two.
+  const uplinkStallOptions = getUplinkStallOptions(process.env);
+  // When the uplink reads the program feed, a feed that is not fresh is reason enough for out_time
+  // to stand still: ffmpeg has nothing to encode. Restarting on that would produce a restart loop
+  // for the whole duration of a playout outage, and would not fix anything even once.
+  const feedCanSupplyUplink = canBlameUplinkForStall(
+    STREAM247_UPLINK_INPUT_MODE,
+    state.playout.programFeedStatus
+  );
+  for (const running of feedCanSupplyUplink ? getRunningUplinkProcesses() : []) {
+    const startedAtMs = new Date(running.startedAt).getTime();
+    if (!Number.isFinite(startedAtMs)) {
+      continue;
+    }
+
+    if (hasNeverProgressed(running.progress, now, startedAtMs, uplinkStallOptions)) {
+      const runningSeconds = Math.round((now - startedAtMs) / 1000);
+      logRuntimeEvent("uplink.encoder.no_progress", {
+        outputProfile: running.key,
+        destinationIds: running.destinationIds,
+        runningSeconds
+      });
+
+      // Past the restart threshold no benign explanation is left. This used to be reported and
+      // never acted on: the uplink was observed running 65 minutes without encoding a frame, never
+      // opening an RTMP connection, logging this line every 15 seconds while the channel was off
+      // the air. A restart that does not help is at least visible in the restart tally.
+      if (!shouldRestartForNoProgress(running.progress, now, startedAtMs, uplinkStallOptions)) {
+        continue;
+      }
+
+      logRuntimeEvent("uplink.encoder.no_progress.restart", {
+        outputProfile: running.key,
+        destinationIds: running.destinationIds,
+        runningSeconds
+      });
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Uplink restarted after never encoding a frame",
+        message: `The uplink process for ${running.key} has been running for ${runningSeconds}s without encoding anything, so nothing has reached the destination in that time. Restarting it; if this repeats, the program feed itself is likely unreadable rather than the uplink being at fault.`,
+        fingerprint: `uplink.no-progress.${running.key}`
+      });
+      await stopUplinkProcess(running, "encoder-stalled");
+      continue;
+    }
+
+    if (isDiscontinuityStorm(running.discontinuity, now, startedAtMs, uplinkStallOptions)) {
+      logRuntimeEvent("uplink.discontinuity_storm.restart", {
+        outputProfile: running.key,
+        destinationIds: running.destinationIds,
+        eventsInWindow: running.discontinuity.count
+      });
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Uplink restarted after its input timeline came apart",
+        message: `The uplink process for ${running.key} reported ${running.discontinuity.count} timestamp discontinuities in a minute. It keeps encoding in this state but corrects audio and video onto separate timelines, which viewers hear as the tracks drifting apart. Reattaching it to the live edge clears the seam.`,
+        fingerprint: `uplink.discontinuity-storm.${running.key}`
+      });
+      await stopUplinkProcess(running, "encoder-stalled");
+      continue;
+    }
+
+    if (!isUplinkStalled(running.progress, now, startedAtMs, uplinkStallOptions)) {
+      continue;
+    }
+
+    const stalledSeconds = Math.round((now - running.progress.lastAdvanceAtMs) / 1000);
+    logRuntimeEvent("uplink.encoder_stall.restart", {
+      outputProfile: running.key,
+      destinationIds: running.destinationIds,
+      stalledSeconds,
+      thresholdSeconds: Math.round(uplinkStallOptions.stallMs / 1000)
+    });
+    await upsertIncident({
+      scope: "playout",
+      severity: "warning",
+      title: "Uplink restarted after it stopped encoding",
+      message: `The uplink process for ${running.key} is still running but has not advanced its output timestamp for ${stalledSeconds}s. Restarting it so the channel does not keep an open but silent connection.`,
+      fingerprint: `uplink.encoder-stall.${running.key}`
+    });
+    await stopUplinkProcess(running, "encoder-stalled");
   }
 
   for (const running of getRunningUplinkProcesses()) {
@@ -4679,17 +5155,22 @@ async function reconcileTwitch(): Promise<void> {
     return;
   }
 
-  const currentScheduleItem = getCurrentScheduleItem(state);
-  const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
-  if (!currentScheduleItem && !currentAsset) {
-    return;
-  }
-
+  // Refreshed before the early return below, not after it. The stored token is what the chat bridge
+  // authenticates with on every sync, and that sync runs whether or not anything is scheduled. With
+  // the refresh sitting behind "is something playing", a channel with an empty programme let its
+  // token expire and then could not reconnect to chat — the one part of the product that is
+  // supposed to keep working while nothing is on air.
   const expiresAt = state.twitch.tokenExpiresAt ? new Date(state.twitch.tokenExpiresAt).getTime() : 0;
   let twitchAccessToken = state.twitch.accessToken;
   const twitchClientId = getTwitchClientId(state);
   if (expiresAt > 0 && expiresAt - Date.now() < 5 * 60_000) {
     twitchAccessToken = await refreshBroadcasterAccessToken();
+  }
+
+  const currentScheduleItem = getCurrentScheduleItem(state);
+  const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
+  if (!currentScheduleItem && !currentAsset) {
+    return;
   }
 
   const desiredTitle = currentAsset
@@ -5041,6 +5522,162 @@ async function reconcileEngagementGame(): Promise<void> {
   await updateEngagementGameRuntimeRecord(snapshot);
 }
 
+// Tracks which asset the last vote was opened against, so a poll is opened once per programme
+// item rather than every cycle.
+let lastVotedAssetId = "";
+// How long a chat-skipped item is held out of selection, matching the operator skip default.
+const CHAT_SKIP_HOLD_MINUTES = 60;
+
+/**
+ * Drives the viewer vote from the worker cycle.
+ *
+ * The poll opens shortly after an item goes on air and settles well before the boundary, so the
+ * result is visible to viewers before it takes effect. Candidates come from the upcoming queue, so
+ * a vote can only ever reorder what was already scheduled to play -- chat steers the programme, it
+ * does not bypass it.
+ *
+ * The tally lives in the ChatControlRuntime and is flushed here only when it changed, because
+ * state writes serialise on a global lock and a busy poll would otherwise hammer it.
+ */
+/**
+ * Applies the effects the IRC handler could only record: a passed skip vote and viewer requests.
+ *
+ * Requests are resolved against assets explicitly released for viewer requests, with the requester's
+ * cooldown and the outstanding-request cap enforced. A rejection is recorded with its reason rather
+ * than dropped, so an operator can see why chat did not get what it asked for.
+ */
+async function drainChatEffects(state: AppState, config: ChatInteractionConfig): Promise<void> {
+  const effects = pendingChatEffects.splice(0, pendingChatEffects.length);
+  if (effects.length === 0) {
+    return;
+  }
+
+  for (const effect of effects) {
+    if (effect.kind === "skip-passed") {
+      const now = new Date().toISOString();
+      logRuntimeEvent("chat.skip.applied", { assetId: effect.assetId });
+      await appendAuditEvent("chat.skip", "Chat voted to skip the current item.");
+      // Exactly what the operator skip does (lib/server/broadcast.ts): hold the asset out of
+      // selection for a while and restart playout, rather than inventing a second skip path that
+      // could drift from it.
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        status: "recovering",
+        restartRequestedAt: now,
+        heartbeatAt: now,
+        skipAssetId: effect.assetId,
+        skipUntil: new Date(Date.now() + CHAT_SKIP_HOLD_MINUTES * 60_000).toISOString(),
+        message: "Skipped by chat vote."
+      }));
+      chatControl.clearSkipVote();
+      continue;
+    }
+
+    if (effect.kind !== "request") {
+      continue;
+    }
+
+    const verdict = evaluateViewerRequest({
+      actor: effect.actor,
+      query: effect.query,
+      candidates: state.assets.map((asset) => ({
+        assetId: asset.id,
+        title: buildAssetDisplayTitle(asset) || asset.id,
+        // Only assets that are ready and not blocked may be requested.
+        requestable: asset.status === "ready" && !isAssetBlockedForAutomaticSelection(asset)
+      })),
+      recentRequests: [],
+      queuedRequestCount: 0,
+      queuedAssetIds: state.playout.queuedAssetIds,
+      config,
+      now: new Date()
+    });
+
+    if (!verdict.accepted) {
+      logRuntimeEvent("chat.request.rejected", { actor: effect.actor, query: effect.query, reason: verdict.reason });
+      continue;
+    }
+
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      queuedAssetIds: [...playout.queuedAssetIds, verdict.assetId]
+    }));
+    logRuntimeEvent("chat.request.queued", { actor: effect.actor, assetId: verdict.assetId });
+    await appendAuditEvent("chat.request", `${effect.actor} requested "${verdict.title}" from chat.`);
+  }
+}
+
+async function reconcileChatInteraction(): Promise<void> {
+  const config = await readChatInteractionSettingsRecord();
+  latestChatInteractionConfig = config;
+
+  if (!config.enabled) {
+    if (chatControl.consumeDirty()) {
+      await writeChatVoteSessionRecord({ status: "closed", updatedAt: new Date().toISOString() });
+    }
+    return;
+  }
+
+  const state = await readAppState();
+
+  const outcome = chatControl.settleVoteIfDue(config);
+  if (outcome?.winnerAssetId) {
+    // Promote the winner to the front of the queue. Everything else keeps its order, so a vote
+    // reorders the queue rather than replacing it.
+    const remaining = state.playout.queuedAssetIds.filter((id) => id !== outcome.winnerAssetId);
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      queuedAssetIds: [outcome.winnerAssetId, ...remaining]
+    }));
+    await appendAuditEvent(
+      "chat.vote.decided",
+      `Chat voted for "${outcome.winnerTitle}" (${String(outcome.totalVotes)} votes from ${String(outcome.voterCount)} viewers).`
+    );
+  } else if (outcome) {
+    await appendAuditEvent("chat.vote.undecided", `Chat vote closed without a decision (${outcome.reason}).`);
+  }
+
+  const currentAssetId = state.playout.currentAssetId;
+  latestPlayoutAssetId = currentAssetId;
+
+  await drainChatEffects(state, config);
+
+  // Checks for an *open* session, not merely a present one: a settled poll stays in the runtime
+  // with status "closed" so its outcome can be read, and testing for presence alone would let the
+  // first poll of a process be the only one that ever opens.
+  const canOpenVote =
+    config.votingEnabled &&
+    Boolean(currentAssetId) &&
+    currentAssetId !== lastVotedAssetId &&
+    chatControl.getSession()?.status !== "open";
+
+  if (canOpenVote) {
+    const candidates = state.playout.queuedAssetIds
+      .map((id) => state.assets.find((asset) => asset.id === id))
+      .filter((asset): asset is AssetRecord => Boolean(asset))
+      .slice(0, Math.max(2, config.voteOptionCount))
+      .map((asset) => ({ assetId: asset.id, title: buildAssetDisplayTitle(asset) || asset.id }));
+
+    if (chatControl.openVote({ id: `vote-${currentAssetId}-${String(Date.now())}`, candidates, config })) {
+      lastVotedAssetId = currentAssetId;
+    }
+  }
+
+  if (chatControl.consumeDirty()) {
+    const session = chatControl.getSession();
+    await writeChatVoteSessionRecord({
+      id: session?.id ?? "",
+      status: session?.status ?? "closed",
+      openedAt: session?.openedAt ?? "",
+      closesAt: session?.closesAt ?? "",
+      options: session?.options ?? [],
+      ballots: session?.ballots ?? {},
+      winnerAssetId: chatControl.getLastOutcome()?.winnerAssetId ?? "",
+      updatedAt: new Date().toISOString()
+    });
+  }
+}
+
 async function runWorkerCycle(): Promise<void> {
   await syncDestinations();
   await syncLocalMediaLibrary();
@@ -5052,6 +5689,7 @@ async function runWorkerCycle(): Promise<void> {
   await reconcileTwitchEventSub();
   await twitchChatBridge.sync(await readAppState(), process.env);
   await reconcileEngagementGame();
+  await reconcileChatInteraction();
   await appendAuditEvent("worker.cycle", "Worker reconciliation cycle completed.");
 }
 
@@ -5200,6 +5838,30 @@ async function runLoop(mode: RuntimeMode): Promise<void> {
 }
 
 const command = process.argv[2] || "worker";
+
+// The runtime is full of deliberately fire-and-forget writes from child-process event handlers
+// (`void updatePlayoutRuntime(...)` in the ffmpeg stderr handler and friends). Those go through
+// withSerializedStateWrite, which rethrows after its retries, so a transient Postgres outage during
+// a burst of ffmpeg stderr output would reject with nobody listening. Node 22 treats an unhandled
+// rejection as a fatal error, so that silently killed the broadcast: no incident, no alert, no
+// worker.loop.crashed entry -- the operator saw nothing. Degrade to a logged event instead; the
+// reconciliation loop already knows how to recover from a failed cycle.
+process.on("unhandledRejection", (reason) => {
+  logRuntimeEvent("worker.unhandled_rejection", {
+    mode: command,
+    error: reason instanceof Error ? reason.message : String(reason)
+  });
+});
+
+// An uncaught exception can leave module state inconsistent, so this only makes the failure
+// visible before handing over to the restart policy -- it does not try to continue.
+process.on("uncaughtException", (error) => {
+  logRuntimeEvent("worker.uncaught_exception", {
+    mode: command,
+    error: error instanceof Error ? error.message : String(error)
+  });
+  process.exit(1);
+});
 
 if (command === "healthcheck") {
   const healthcheckMode: RuntimeMode = process.argv[3] === "playout" ? "playout" : process.argv[3] === "uplink" ? "uplink" : "worker";

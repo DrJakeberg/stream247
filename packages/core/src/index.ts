@@ -1,3 +1,6 @@
+export * from "./chat-interaction.js";
+export * from "./overlay-layout.js";
+
 export type ModerationConfig = {
   enabled: boolean;
   command: string;
@@ -236,6 +239,17 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
 
 const invisibleUnicodePattern =
   /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00AD\u200B-\u200D\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+
+/**
+ * Escape a string for literal use inside a RegExp.
+ *
+ * Chat commands and vote tokens are operator-configured and end up interpolated into patterns that
+ * run against every incoming IRC message. An unescaped "(" or "[" throws at RegExp construction
+ * time, inside a socket data handler where nothing catches it.
+ */
+export function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 export function stripInvisibleCharacters(value: string): string {
   return String(value ?? "").normalize("NFC").replace(invisibleUnicodePattern, "");
@@ -535,7 +549,7 @@ export function buildEngagementGameOverlayState(args: {
     ].map((option) => ({
       ...option,
       votes: recentChatEvents.reduce(
-        (count, event) => count + (new RegExp(`(^|\\s)${option.token.replace("!", "\\!")}($|\\s)`, "i").test(event.message) ? 1 : 0),
+        (count, event) => count + (new RegExp(`(^|\\s)${escapeRegExp(option.token)}($|\\s)`, "i").test(event.message) ? 1 : 0),
         0
       )
     }))
@@ -785,6 +799,18 @@ export type ScheduleOccurrence = {
   endTime: string;
   startMinuteOfDay: number;
   durationMinutes: number;
+  /**
+   * True when this occurrence started on the previous day and runs past midnight into `date`.
+   * A block scheduled Monday 23:00 for two hours produces a Monday occurrence and a Tuesday
+   * carry-over; without the latter the channel fell out of its programmed pool at 00:00.
+   */
+  carriesOverFromPreviousDay?: boolean;
+  /**
+   * Start expressed relative to `date`, so a carry-over is negative (Monday 23:00 seen from
+   * Tuesday is -60). Ordering and "is it on now" comparisons use this rather than wall-clock
+   * strings, which cannot tell a wrapping block's evening from its own morning.
+   */
+  effectiveStartMinuteOfDay: number;
   repeatMode?: ScheduleRepeatMode;
   repeatGroupId?: string;
   cuepointAssetId?: string;
@@ -2025,7 +2051,9 @@ export function resolveModeratorCheckIn(args: {
   }
 
   const prefix = config.requirePrefix ? "!" : "";
-  const match = input.trim().match(new RegExp(`^${prefix}${config.command}(?:\\s+(\\d+))?$`, "i"));
+  // config.command is operator-supplied. Interpolated raw, a value containing "(" or "[" made
+  // `new RegExp` throw inside the IRC message handler and take the worker process down with it.
+  const match = input.trim().match(new RegExp(`^${escapeRegExp(`${prefix}${config.command}`)}(?:\\s+(\\d+))?$`, "i"));
 
   if (!match) {
     return null;
@@ -2807,38 +2835,103 @@ function getDayOfWeekForDate(value: string): number {
   return new Date(`${value}T00:00:00.000Z`).getUTCDay();
 }
 
+const MINUTES_PER_DAY = 24 * 60;
+
+function toScheduleOccurrence(args: {
+  block: ScheduleBlock;
+  date: string;
+  carriesOverFromPreviousDay: boolean;
+}): ScheduleOccurrence {
+  const startMinutes = args.block.startMinuteOfDay;
+  const endMinutes = (startMinutes + args.block.durationMinutes) % MINUTES_PER_DAY;
+
+  return {
+    // The carry-over flag is part of the key: the same block legitimately appears on two dates,
+    // and callers de-duplicate occurrences by key.
+    key: `${args.date}:${args.block.id}:${startMinutes}:${args.block.durationMinutes}${args.carriesOverFromPreviousDay ? ":carry" : ""}`,
+    blockId: args.block.id,
+    title: args.block.title,
+    categoryName: args.block.categoryName,
+    dayOfWeek: args.block.dayOfWeek,
+    showId: args.block.showId,
+    poolId: args.block.poolId,
+    sourceName: args.block.sourceName,
+    date: args.date,
+    startTime: formatMinuteOfDay(startMinutes),
+    endTime: formatMinuteOfDay(endMinutes),
+    startMinuteOfDay: startMinutes,
+    durationMinutes: args.block.durationMinutes,
+    carriesOverFromPreviousDay: args.carriesOverFromPreviousDay,
+    effectiveStartMinuteOfDay: args.carriesOverFromPreviousDay ? startMinutes - MINUTES_PER_DAY : startMinutes,
+    repeatMode: normalizeScheduleRepeatMode(args.block.repeatMode ?? "single"),
+    repeatGroupId: args.block.repeatGroupId ?? "",
+    cuepointAssetId: args.block.cuepointAssetId ?? "",
+    cuepointOffsetsSeconds: normalizeCuepointOffsetsSeconds(
+      args.block.cuepointOffsetsSeconds ?? [],
+      args.block.durationMinutes
+    )
+  };
+}
+
+/**
+ * Every occurrence covering any part of `date`.
+ *
+ * This includes blocks that started the previous day and run past midnight. Filtering purely on
+ * the weekday of `date` dropped them, so a block scheduled Monday 23:00 for two hours vanished
+ * from the schedule at 00:00 and the channel fell out of its programmed pool for the rest of the
+ * night with nothing marked as current.
+ */
+/**
+ * The next date on or after `date` that falls on `dayOfWeek` (0 = Sunday).
+ *
+ * Forward rather than nearest, so a preview always describes programming still ahead: opening
+ * Monday on a Wednesday shows next Monday, not the one that already aired. Needed because a
+ * schedule preview is built for a date, not for a weekday — resolving a pool into the individual
+ * videos that would play requires knowing which day it is.
+ */
+export function shiftDateToDayOfWeek(date: string, dayOfWeek: number): string {
+  const base = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(base.getTime())) {
+    return date;
+  }
+  const target = ((Math.trunc(dayOfWeek) % 7) + 7) % 7;
+  base.setUTCDate(base.getUTCDate() + ((target - base.getUTCDay() + 7) % 7));
+  return base.toISOString().slice(0, 10);
+}
+
 export function buildScheduleOccurrences(args: {
   date: string;
   blocks: ScheduleBlock[];
 }): ScheduleOccurrence[] {
   const dayOfWeek = getDayOfWeekForDate(args.date);
-  return [...args.blocks]
-    .filter((block) => block.dayOfWeek === dayOfWeek)
-    .sort((a, b) => a.startMinuteOfDay - b.startMinuteOfDay)
-    .map((block) => {
-      const startMinutes = block.startMinuteOfDay;
-      const endMinutes = (startMinutes + block.durationMinutes) % (24 * 60);
+  const previousDayOfWeek = (dayOfWeek + 6) % 7;
 
-      return {
-        key: `${args.date}:${block.id}:${startMinutes}:${block.durationMinutes}`,
-        blockId: block.id,
-        title: block.title,
-        categoryName: block.categoryName,
-        dayOfWeek: block.dayOfWeek,
-        showId: block.showId,
-        poolId: block.poolId,
-        sourceName: block.sourceName,
-        date: args.date,
-        startTime: formatMinuteOfDay(startMinutes),
-        endTime: formatMinuteOfDay(endMinutes),
-        startMinuteOfDay: startMinutes,
-        durationMinutes: block.durationMinutes,
-        repeatMode: normalizeScheduleRepeatMode(block.repeatMode ?? "single"),
-        repeatGroupId: block.repeatGroupId ?? "",
-        cuepointAssetId: block.cuepointAssetId ?? "",
-        cuepointOffsetsSeconds: normalizeCuepointOffsetsSeconds(block.cuepointOffsetsSeconds ?? [], block.durationMinutes)
-      };
-    });
+  const sameDay = args.blocks
+    .filter((block) => block.dayOfWeek === dayOfWeek)
+    .map((block) => toScheduleOccurrence({ block, date: args.date, carriesOverFromPreviousDay: false }));
+
+  const carriedOver = args.blocks
+    .filter(
+      (block) =>
+        block.dayOfWeek === previousDayOfWeek && block.startMinuteOfDay + block.durationMinutes > MINUTES_PER_DAY
+    )
+    .map((block) => toScheduleOccurrence({ block, date: args.date, carriesOverFromPreviousDay: true }));
+
+  return [...carriedOver, ...sameDay].sort((a, b) => a.effectiveStartMinuteOfDay - b.effectiveStartMinuteOfDay);
+}
+
+/**
+ * Minute range an occurrence covers, relative to its `date`. The end may exceed 1440 for a block
+ * that runs into the following day, and the start may be negative for a carry-over.
+ */
+export function getScheduleOccurrenceMinuteRange(occurrence: ScheduleOccurrence): { start: number; end: number } {
+  const start = occurrence.effectiveStartMinuteOfDay;
+  return { start, end: start + occurrence.durationMinutes };
+}
+
+export function isScheduleOccurrenceOnAir(occurrence: ScheduleOccurrence, minuteOfDay: number): boolean {
+  const { start, end } = getScheduleOccurrenceMinuteRange(occurrence);
+  return minuteOfDay >= start && minuteOfDay < end;
 }
 
 function parseScheduleTimeToMinuteOfDay(value: string): number {
@@ -2846,18 +2939,30 @@ function parseScheduleTimeToMinuteOfDay(value: string): number {
   return Math.max(0, Math.min(24 * 60 - 1, hours * 60 + minutes));
 }
 
+/**
+ * The occurrence on air at `currentTime`.
+ *
+ * Matching is done on minute ranges rather than wall-clock strings. A string comparison cannot
+ * distinguish a wrapping block's evening from its own morning: a Monday 23:00-01:00 block compared
+ * as "current >= 23:00 || current < 01:00" also claimed Monday 00:30, which belongs to the block
+ * that started the *previous* night.
+ *
+ * When several occurrences overlap, the one that started most recently wins, so a later block
+ * takes over from an overrunning earlier one instead of the array order deciding.
+ */
 export function findCurrentScheduleOccurrence(args: {
   occurrences: ScheduleOccurrence[];
   currentTime: string;
 }): ScheduleOccurrence | null {
-  return (
-    args.occurrences.find((item) =>
-      isCurrentScheduleTime({
-        startTime: item.startTime,
-        endTime: item.endTime,
-        currentTime: args.currentTime
-      })
-    ) ?? null
+  const currentMinuteOfDay = parseScheduleTimeToMinuteOfDay(args.currentTime);
+  const active = args.occurrences.filter((item) => isScheduleOccurrenceOnAir(item, currentMinuteOfDay));
+
+  if (active.length === 0) {
+    return null;
+  }
+
+  return active.reduce((latest, item) =>
+    item.effectiveStartMinuteOfDay > latest.effectiveStartMinuteOfDay ? item : latest
   );
 }
 
@@ -2880,8 +2985,9 @@ export function listUpcomingScheduleOccurrences(args: {
 
   const currentMinuteOfDay = parseScheduleTimeToMinuteOfDay(args.currentTime);
   const currentOccurrence = args.currentOccurrence ?? findCurrentScheduleOccurrence(args);
+  // effectiveStartMinuteOfDay, so a carry-over from last night is never offered as "upcoming".
   return args.occurrences.filter(
-    (item) => item.startMinuteOfDay > currentMinuteOfDay && item.key !== currentOccurrence?.key
+    (item) => item.effectiveStartMinuteOfDay > currentMinuteOfDay && item.key !== currentOccurrence?.key
   );
 }
 

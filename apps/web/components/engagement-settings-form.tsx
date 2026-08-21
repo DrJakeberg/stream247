@@ -87,7 +87,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
           <span className="label">Chat overlay</span>
           <div className="subtle">Configure the on-stream Twitch chat rail that renders inside the captured overlay.</div>
           <div className="form-grid" style={{ marginTop: 12 }}>
-            <label className="checkbox-row">
+            <label className="toggle-row">
               <input checked={chatEnabled} onChange={(event) => setChatEnabled(event.target.checked)} type="checkbox" />
               <span>Enable chat overlay</span>
             </label>
@@ -142,15 +142,15 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
           <span className="label">Alert types</span>
           <div className="subtle">Follow, subscription, cheer, and channel-point alerts all render through the same internal overlay path.</div>
           <div className="form-grid" style={{ marginTop: 12 }}>
-            <label className="checkbox-row">
+            <label className="toggle-row">
               <input checked={alertsEnabled} onChange={(event) => setAlertsEnabled(event.target.checked)} type="checkbox" />
               <span>Enable follow and subscription alerts</span>
             </label>
-            <label className="checkbox-row">
+            <label className="toggle-row">
               <input checked={donationsEnabled} onChange={(event) => setDonationsEnabled(event.target.checked)} type="checkbox" />
               <span>Enable bits / cheer alerts</span>
             </label>
-            <label className="checkbox-row">
+            <label className="toggle-row">
               <input
                 checked={channelPointsEnabled}
                 onChange={(event) => setChannelPointsEnabled(event.target.checked)}
@@ -184,7 +184,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
             The game shares the Twitch IRC runtime with the chat rail. Keep `STREAM_CHAT_OVERLAY_ENABLED=1` and chat enabled when you want the mode selector to stay live.
           </div>
           <div className="form-grid" style={{ marginTop: 12 }}>
-            <label className="checkbox-row">
+            <label className="toggle-row">
               <input checked={gameEnabled} onChange={(event) => setGameEnabled(event.target.checked)} type="checkbox" />
               <span>Enable chatter-participation game</span>
             </label>
@@ -198,11 +198,11 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
                 value={gameWindowMinutes}
               />
             </label>
-            <label className="checkbox-row">
+            <label className="toggle-row">
               <input checked={soloModeEnabled} onChange={(event) => setSoloModeEnabled(event.target.checked)} type="checkbox" />
               <span>Solo mode</span>
             </label>
-            <label className="checkbox-row">
+            <label className="toggle-row">
               <input
                 checked={smallGroupModeEnabled}
                 onChange={(event) => setSmallGroupModeEnabled(event.target.checked)}
@@ -210,7 +210,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
               />
               <span>Small-group mode</span>
             </label>
-            <label className="checkbox-row">
+            <label className="toggle-row">
               <input checked={crowdModeEnabled} onChange={(event) => setCrowdModeEnabled(event.target.checked)} type="checkbox" />
               <span>Crowd mode</span>
             </label>

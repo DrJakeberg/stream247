@@ -7,6 +7,7 @@ import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, readAppState, updateSourceFieldRecords } from "@/lib/server/state";
+import { isInsideMediaRoot, sanitizeSubfolder } from "@/lib/server/media-paths";
 
 const allowedExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm", ".avi", ".mp3", ".aac", ".flac", ".wav"]);
 const maxUploadCollisionRetries = 16;
@@ -25,20 +26,6 @@ function sanitizeFileName(fileName: string): string {
     .replace(/^-|-$/g, "")
     .slice(0, 120);
   return `${safeBaseName || "upload"}${extension}`;
-}
-
-function sanitizeSubfolder(value: string): string {
-  return value
-    .split("/")
-    .map((segment) =>
-      segment
-        .trim()
-        .replace(/[^\w.-]+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-|-$/g, "")
-    )
-    .filter(Boolean)
-    .join("/");
 }
 
 async function markLocalLibraryForRescan() {
@@ -134,6 +121,11 @@ export async function POST(request: Request) {
   const mediaRoot = getMediaRoot();
   const subfolder = sanitizeSubfolder(rawSubfolder);
   const targetRoot = path.join(mediaRoot, subfolder || "uploads");
+
+  if (!isInsideMediaRoot(targetRoot, mediaRoot)) {
+    return NextResponse.json({ message: "Upload folder must stay inside the media library." }, { status: 400 });
+  }
+
   await fs.mkdir(targetRoot, { recursive: true });
 
   const storedPaths: string[] = [];

@@ -1,3 +1,5 @@
+@import "./styles/tokens.css";
+
 :root {
   --bg: #f2eee5;
   --bg-accent: #e6dcc8;
@@ -10,7 +12,7 @@
   --line: rgba(27, 26, 22, 0.1);
   --brand: #0e6d5a;
   --brand-strong: #0c5546;
-  --focus: rgba(14, 109, 90, 0.28);
+  --focus: var(--brand-focus-ring);
   --shadow-card: 0 16px 46px rgba(32, 29, 21, 0.1);
   --warning: #a04a16;
   --danger: #9e2430;
@@ -43,8 +45,8 @@ body {
   margin: 0;
   padding: 0;
   background:
-    radial-gradient(circle at top left, rgba(14, 109, 90, 0.14), transparent 28%),
-    radial-gradient(circle at 80% 8%, rgba(160, 74, 22, 0.12), transparent 30%),
+    radial-gradient(circle at top left, var(--brand-tint-soft), transparent 28%),
+    radial-gradient(circle at 80% 8%, var(--warning-tint-faint), transparent 30%),
     linear-gradient(180deg, #fbf5e9 0%, #efe2cf 100%);
   color: var(--text);
   font-family:
@@ -84,7 +86,7 @@ main {
   border-right: 1px solid var(--line);
   background:
     linear-gradient(180deg, rgba(255, 249, 239, 0.92), rgba(242, 232, 215, 0.78)),
-    radial-gradient(circle at top, rgba(14, 109, 90, 0.12), transparent 46%);
+    radial-gradient(circle at top, var(--brand-tint-faint), transparent 46%);
   backdrop-filter: blur(18px);
   position: sticky;
   top: 0;
@@ -122,7 +124,7 @@ main {
 
 .tabs-link,
 .workspace-tab-link {
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   border-radius: 999px;
   color: inherit;
   font-size: 0.95rem;
@@ -140,7 +142,7 @@ main {
 .tabs-link:focus-visible,
 .workspace-tab-link:focus-visible {
   background: var(--surface);
-  border-color: rgba(14, 109, 90, 0.14);
+  border-color: var(--brand-tint-soft);
   transform: translateY(-1px);
   outline: none;
 }
@@ -186,13 +188,13 @@ main {
 
 .nav-link:hover {
   background: var(--surface);
-  border-color: rgba(14, 109, 90, 0.14);
+  border-color: var(--brand-tint-soft);
   transform: translateX(2px);
 }
 
 .nav-link-active {
-  background: rgba(14, 109, 90, 0.12);
-  border-color: rgba(14, 109, 90, 0.2);
+  background: var(--brand-tint-faint);
+  border-color: var(--brand-tint-strong);
   color: var(--brand-strong);
   box-shadow: inset 3px 0 0 var(--brand);
 }
@@ -225,7 +227,7 @@ main {
   flex: 0 0 auto;
   border-radius: 999px;
   background: var(--brand);
-  box-shadow: 0 0 0 4px rgba(14, 109, 90, 0.12);
+  box-shadow: 0 0 0 4px var(--brand-tint-faint);
 }
 
 .sidebar-card {
@@ -234,7 +236,7 @@ main {
   min-width: 0;
   padding: 16px;
   border-radius: 20px;
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   background: rgba(255, 252, 246, 0.84);
 }
 
@@ -346,7 +348,7 @@ main {
   padding: 14px;
   border-radius: 16px;
   background: var(--surface-strong);
-  border: 1px solid rgba(27, 26, 22, 0.07);
+  border: 1px solid var(--line-soft);
 }
 
 .badge {
@@ -354,23 +356,23 @@ main {
   padding: 6px 10px;
   border-radius: 999px;
   font-size: 0.75rem;
-  background: rgba(14, 109, 90, 0.12);
+  background: var(--brand-tint-faint);
   color: var(--brand-strong);
 }
 
 .badge-ready {
-  background: rgba(14, 109, 90, 0.12);
-  color: var(--brand-strong);
+  background: var(--tone-positive-bg);
+  color: var(--tone-positive-fg);
 }
 
 .badge-action {
-  background: rgba(160, 74, 22, 0.14);
-  color: var(--warning);
+  background: var(--tone-caution-bg);
+  color: var(--tone-caution-fg);
 }
 
 .badge-optional {
-  background: rgba(27, 26, 22, 0.08);
-  color: var(--muted);
+  background: var(--tone-neutral-bg);
+  color: var(--tone-neutral-fg);
 }
 
 .warning {
@@ -426,7 +428,7 @@ code {
     Consolas,
     "Liberation Mono",
     monospace;
-  background: rgba(27, 26, 22, 0.06);
+  background: var(--line-faint);
   padding: 2px 6px;
   border-radius: 6px;
 }
@@ -444,7 +446,7 @@ textarea,
 .select {
   width: 100%;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--paper-scrim);
   padding: 12px 14px;
   border-radius: 14px;
   color: var(--text);
@@ -503,7 +505,7 @@ textarea {
 
 .button.secondary,
 .button-secondary {
-  background: rgba(27, 26, 22, 0.08);
+  background: var(--line-subtle);
   color: var(--text);
 }
 
@@ -524,7 +526,7 @@ textarea {
 .schedule-video-slot {
   min-width: 0;
   overflow: hidden;
-  border-right: 1px solid rgba(14, 109, 90, 0.18);
+  border-right: 1px solid var(--brand-tint);
   padding: 10px 12px;
   color: var(--brand-strong);
   font-size: 0.84rem;
@@ -590,7 +592,7 @@ textarea {
 
 .chip-toggle-active {
   border-color: rgba(14, 109, 90, 0.4);
-  background: rgba(14, 109, 90, 0.12);
+  background: var(--brand-tint-faint);
 }
 
 .panel-compact {
@@ -690,18 +692,19 @@ textarea {
   gap: 12px;
   padding: 14px 16px;
   border-radius: 18px;
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   background: rgba(255, 249, 239, 0.96);
   box-shadow: var(--shadow-card);
   pointer-events: auto;
 }
 
+/* Toasts carry the same states as the chips, expressed as a border rather than a fill. */
 .toast-success {
-  border-color: rgba(14, 109, 90, 0.2);
+  border-color: var(--tone-positive-border);
 }
 
 .toast-error {
-  border-color: rgba(158, 36, 48, 0.2);
+  border-color: var(--danger-tint-strong);
 }
 
 .toast-copy {
@@ -783,7 +786,7 @@ textarea {
   padding: 8px 12px;
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--paper-scrim);
   color: var(--text);
   font-size: 0.9rem;
 }
@@ -797,20 +800,20 @@ textarea {
 
 .status-chip-ok,
 .status-chip-live {
-  color: var(--brand-strong);
-  background: rgba(14, 109, 90, 0.12);
+  color: var(--tone-positive-fg);
+  background: var(--tone-positive-bg);
 }
 
 .status-chip-degraded,
 .status-chip-not-ready {
-  color: var(--warning);
-  background: rgba(160, 74, 22, 0.14);
+  color: var(--tone-caution-fg);
+  background: var(--tone-caution-bg);
 }
 
 .status-chip-offline,
 .status-chip-unknown {
-  color: var(--muted);
-  background: rgba(27, 26, 22, 0.08);
+  color: var(--tone-neutral-fg);
+  background: var(--tone-neutral-bg);
 }
 
 @keyframes button-spin {
@@ -830,7 +833,7 @@ textarea {
   gap: 8px;
   max-width: 100%;
   padding: 9px 12px;
-  border: 1px solid color-mix(in srgb, var(--collection-color) 32%, rgba(27, 26, 22, 0.12));
+  border: 1px solid color-mix(in srgb, var(--collection-color) 32%, var(--line-strong));
   border-radius: 999px;
   background: color-mix(in srgb, var(--collection-color) 14%, rgba(255, 255, 255, 0.88));
   color: color-mix(in srgb, var(--collection-color) 72%, #1b1a16);
@@ -843,7 +846,7 @@ button.collection-chip {
 }
 
 .collection-chip-active {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--collection-color) 36%, rgba(27, 26, 22, 0.12));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--collection-color) 36%, var(--line-strong));
 }
 
 .collection-chip-static {
@@ -860,7 +863,7 @@ button.collection-chip {
   gap: 14px;
   padding: 16px;
   border-radius: 22px;
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   background: rgba(255, 249, 239, 0.76);
   min-width: 0;
 }
@@ -884,7 +887,7 @@ button.collection-chip {
   gap: 14px;
   padding: 14px;
   border-radius: 20px;
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   background: rgba(255, 252, 246, 0.88);
   min-width: 0;
 }
@@ -893,7 +896,7 @@ button.collection-chip {
   position: relative;
   overflow: hidden;
   border-radius: 18px;
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   background:
     radial-gradient(circle at top right, rgba(14, 109, 90, 0.16), transparent 36%),
     linear-gradient(180deg, rgba(255, 249, 239, 0.88), rgba(230, 220, 200, 0.78));
@@ -927,7 +930,7 @@ button.collection-chip {
 .week-day-card {
   padding: 14px;
   border-radius: 18px;
-  border: 1px solid rgba(27, 26, 22, 0.07);
+  border: 1px solid var(--line-soft);
   background: var(--surface-strong);
   display: grid;
   gap: 6px;
@@ -947,32 +950,32 @@ button.collection-chip {
   border-radius: 999px;
   font-size: 0.76rem;
   letter-spacing: 0.04em;
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   background: rgba(255, 255, 255, 0.65);
 }
 
 .programming-status-balanced {
-  border-color: rgba(14, 109, 90, 0.2);
-  background: rgba(14, 109, 90, 0.12);
-  color: #0b5f4f;
+  border-color: var(--tone-positive-border);
+  background: var(--tone-positive-bg);
+  color: var(--tone-positive-fg);
 }
 
 .programming-status-underfilled {
-  border-color: rgba(176, 118, 29, 0.22);
-  background: rgba(176, 118, 29, 0.14);
-  color: #7e5516;
+  border-color: var(--tone-caution-border);
+  background: var(--tone-caution-bg);
+  color: var(--tone-caution-fg);
 }
 
 .programming-status-overflow {
-  border-color: rgba(52, 92, 166, 0.22);
-  background: rgba(52, 92, 166, 0.14);
-  color: #284f94;
+  border-color: var(--tone-info-border);
+  background: var(--tone-info-bg);
+  color: var(--tone-info-fg);
 }
 
 .programming-status-empty {
-  border-color: rgba(158, 36, 48, 0.18);
-  background: rgba(158, 36, 48, 0.12);
-  color: #8b1e2d;
+  border-color: var(--tone-critical-border);
+  background: var(--tone-critical-bg);
+  color: var(--tone-critical-fg);
 }
 
 .programming-workspace-grid {
@@ -986,7 +989,7 @@ button.collection-chip {
   gap: 8px;
   padding: 14px;
   border-radius: 18px;
-  border: 1px solid rgba(27, 26, 22, 0.07);
+  border: 1px solid var(--line-soft);
   background: rgba(255, 249, 239, 0.76);
 }
 
@@ -1022,12 +1025,12 @@ button.collection-chip {
   min-width: 0;
   padding: 16px;
   border-radius: 18px;
-  border: 1px solid rgba(27, 26, 22, 0.07);
+  border: 1px solid var(--line-soft);
   background: rgba(255, 249, 239, 0.8);
 }
 
 .program-week-block {
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.68);
   overflow: hidden;
@@ -1060,7 +1063,7 @@ button.collection-chip {
   min-width: 0;
   padding: 12px 14px;
   border-radius: 16px;
-  border: 1px solid rgba(27, 26, 22, 0.07);
+  border: 1px solid var(--line-soft);
   background: rgba(255, 255, 255, 0.62);
   transition:
     border-color 160ms ease,
@@ -1070,7 +1073,7 @@ button.collection-chip {
 
 .program-sequence-item:hover,
 .program-sequence-item:focus-visible {
-  border-color: rgba(14, 109, 90, 0.2);
+  border-color: var(--brand-tint-strong);
   background: rgba(255, 255, 255, 0.82);
   transform: translateY(-1px);
   outline: none;
@@ -1080,12 +1083,12 @@ button.collection-chip {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--paper-scrim);
   padding: 10px 12px;
 }
 
 .chip-input-error {
-  border-color: rgba(158, 36, 48, 0.3);
+  border-color: var(--danger-border);
 }
 
 .chip-input-list {
@@ -1103,7 +1106,7 @@ button.collection-chip {
   border: 0;
   border-radius: 999px;
   padding: 8px 10px;
-  background: rgba(14, 109, 90, 0.12);
+  background: var(--brand-tint-faint);
   color: var(--brand-strong);
   cursor: pointer;
 }
@@ -1117,8 +1120,21 @@ button.collection-chip {
   border-radius: 0;
 }
 
+/*
+ * The inner field drops its own outline because the wrapper below carries the focus indication —
+ * a ring around an input nested inside an already-bordered box reads as a rendering glitch. The
+ * wrapper rule is what makes that legitimate; without it the field was simply invisible to
+ * keyboard users.
+ */
 .chip-input-field:focus {
   outline: none;
+}
+
+.chip-input:focus-within {
+  border-color: var(--brand);
+  /* Derived from --brand rather than hand-mixed, so the ring follows the brand colour instead of
+     becoming the 160th independent rgba() value in this file. */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
 }
 
 .schedule-timeline {
@@ -1137,7 +1153,7 @@ button.collection-chip {
 .schedule-slot {
   position: relative;
   height: 28px;
-  border-bottom: 1px solid rgba(27, 26, 22, 0.06);
+  border-bottom: 1px solid var(--line-faint);
   padding-left: 84px;
 }
 
@@ -1175,7 +1191,7 @@ button.collection-chip {
   border: 0;
   border-left: 4px solid var(--brand);
   border-radius: 16px;
-  background: rgba(14, 109, 90, 0.18);
+  background: var(--brand-tint);
   color: var(--text);
   text-align: left;
   box-shadow: 0 10px 24px rgba(32, 29, 21, 0.08);
@@ -1190,19 +1206,21 @@ button.collection-chip {
 }
 
 .schedule-block-balanced {
-  background: rgba(14, 109, 90, 0.18);
+  background: var(--brand-tint);
 }
 
+/* The same five states as the status pills, one step stronger because these are filled areas
+   rather than text on a tint — read from the same channels so the two cannot disagree. */
 .schedule-block-underfilled {
-  background: rgba(176, 118, 29, 0.16);
+  background: rgb(var(--warning-rgb) / 0.16);
 }
 
 .schedule-block-overflow {
-  background: rgba(52, 92, 166, 0.16);
+  background: rgb(var(--info-rgb) / 0.16);
 }
 
 .schedule-block-empty {
-  background: rgba(158, 36, 48, 0.14);
+  background: var(--danger-tint-soft);
 }
 
 .truncate-title {
@@ -1285,7 +1303,7 @@ button.collection-chip {
 
 .admin-status-chip {
   padding: 14px 16px;
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   border-radius: 18px;
   background: rgba(255, 249, 239, 0.78);
   backdrop-filter: blur(12px);
@@ -1308,7 +1326,7 @@ button.collection-chip {
 
 .status-rail > div {
   padding: 14px 16px;
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   border-radius: 18px;
   background: rgba(255, 249, 239, 0.78);
 }
@@ -1348,13 +1366,13 @@ button.collection-chip {
   cursor: pointer;
   padding: 14px;
   border-radius: 18px;
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   background: rgba(255, 249, 239, 0.72);
 }
 
 .preset-card-active {
   border-color: rgba(14, 109, 90, 0.34);
-  box-shadow: inset 0 0 0 1px rgba(14, 109, 90, 0.2);
+  box-shadow: inset 0 0 0 1px var(--brand-tint-strong);
 }
 
 .scene-designer-grid {
@@ -1377,14 +1395,14 @@ button.collection-chip {
   align-items: flex-start;
   padding: 18px 20px;
   border-radius: 20px;
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   background: rgba(255, 249, 239, 0.72);
 }
 
 .scene-workspace-toolbar-alert,
 .scene-header-alert {
-  border-color: rgba(158, 36, 48, 0.34);
-  box-shadow: inset 0 0 0 1px rgba(158, 36, 48, 0.18);
+  border-color: var(--danger-border-strong);
+  box-shadow: inset 0 0 0 1px var(--danger-tint);
 }
 
 .scene-status-grid {
@@ -1417,7 +1435,7 @@ button.collection-chip {
   inset: 5%;
   border: 1px dashed rgba(255, 249, 239, 0.45);
   border-radius: 20px;
-  box-shadow: inset 0 0 0 1px rgba(14, 109, 90, 0.14);
+  box-shadow: inset 0 0 0 1px var(--brand-tint-soft);
   pointer-events: none;
   z-index: 1;
 }
@@ -1444,7 +1462,7 @@ button.collection-chip {
   padding: 24px;
   overflow: auto;
   border-radius: 24px;
-  border: 1px solid rgba(27, 26, 22, 0.08);
+  border: 1px solid var(--line-subtle);
   background: rgba(255, 249, 239, 0.98);
   color: var(--text);
   box-shadow: 0 24px 48px rgba(7, 16, 14, 0.22);
@@ -1475,7 +1493,7 @@ button.collection-chip {
   width: 14px;
   height: 14px;
   border-radius: 999px;
-  border: 1px solid rgba(27, 26, 22, 0.12);
+  border: 1px solid var(--line-strong);
   flex: 0 0 auto;
 }
 
@@ -1491,7 +1509,7 @@ button.collection-chip {
 
 .schedule-block-conflict {
   border-left-color: var(--danger);
-  background: rgba(158, 36, 48, 0.14);
+  background: var(--danger-tint-soft);
 }
 
 .overlay-page {
@@ -1610,7 +1628,7 @@ button.collection-chip {
 .engagement-chat-message,
 .engagement-alert,
 .engagement-game {
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--paper-veil);
   border-radius: 18px;
   background: rgba(8, 15, 13, 0.62);
   box-shadow: 0 20px 70px rgba(0, 0, 0, 0.32);
@@ -1770,15 +1788,15 @@ button.collection-chip {
 
 .overlay-frame-bumper .overlay-card-large {
   background:
-    linear-gradient(145deg, color-mix(in srgb, var(--overlay-accent) 26%, rgba(8, 15, 13, 0.82)), rgba(8, 15, 13, 0.56)),
-    rgba(8, 15, 13, 0.56);
+    linear-gradient(145deg, color-mix(in srgb, var(--overlay-accent) 26%, rgba(8, 15, 13, 0.82)), var(--overlay-scrim-soft)),
+    var(--overlay-scrim-soft);
   box-shadow: 0 26px 80px rgba(0, 0, 0, 0.26);
 }
 
 .overlay-frame-reconnect .overlay-card-large {
   background:
     linear-gradient(145deg, rgba(176, 118, 29, 0.34), rgba(8, 15, 13, 0.64)),
-    rgba(8, 15, 13, 0.56);
+    var(--overlay-scrim-soft);
 }
 
 .overlay-card,
@@ -1788,7 +1806,7 @@ button.collection-chip {
 .overlay-ticker {
   border-radius: 22px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(8, 15, 13, 0.58);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(16px);
 }
 
@@ -1878,7 +1896,7 @@ button.collection-chip {
 }
 
 .overlay-chip {
-  background: color-mix(in srgb, var(--overlay-accent) 22%, rgba(8, 15, 13, 0.58));
+  background: color-mix(in srgb, var(--overlay-accent) 22%, var(--overlay-scrim));
 }
 
 .overlay-surface-solid .overlay-card,
@@ -1895,7 +1913,7 @@ button.collection-chip {
 .overlay-surface-signal .overlay-ticker {
   background:
     linear-gradient(145deg, color-mix(in srgb, var(--overlay-accent) 34%, rgba(8, 15, 13, 0.92)), rgba(8, 15, 13, 0.74)),
-    rgba(8, 15, 13, 0.72);
+    var(--overlay-scrim-strong);
 }
 
 .overlay-clock {
@@ -1906,7 +1924,7 @@ button.collection-chip {
   grid-column: 1 / -1;
   padding: var(--overlay-banner-padding-y) var(--overlay-banner-padding-x);
   font-weight: 600;
-  background: color-mix(in srgb, #8b1e2d 72%, rgba(8, 15, 13, 0.58));
+  background: color-mix(in srgb, var(--overlay-danger) 72%, var(--overlay-scrim));
 }
 
 .overlay-ticker {
@@ -1933,7 +1951,7 @@ button.collection-chip {
 
 .overlay-custom-layer-text {
   padding: var(--overlay-custom-text-padding-y) var(--overlay-custom-text-padding-x);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--paper-veil);
   background: rgba(8, 15, 13, 0.52);
   backdrop-filter: blur(14px);
   display: grid;
@@ -1984,16 +2002,16 @@ button.collection-chip {
 
 .overlay-custom-layer-media,
 .overlay-custom-layer-embed {
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--paper-veil);
   background: rgba(8, 15, 13, 0.42);
   backdrop-filter: blur(12px);
 }
 
 .overlay-custom-layer-widget-data {
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--paper-veil);
   background:
-    linear-gradient(180deg, rgba(8, 15, 13, 0.72), rgba(8, 15, 13, 0.46)),
-    color-mix(in srgb, var(--overlay-accent) 18%, rgba(8, 15, 13, 0.46));
+    linear-gradient(180deg, var(--overlay-scrim-strong), var(--overlay-scrim-faint)),
+    color-mix(in srgb, var(--overlay-accent) 18%, var(--overlay-scrim-faint));
   backdrop-filter: blur(12px);
   display: grid;
   align-content: center;
@@ -2023,7 +2041,7 @@ button.collection-chip {
 .overlay-custom-layer-iframe {
   border: 0;
   pointer-events: none;
-  background: rgba(8, 15, 13, 0.72);
+  background: var(--overlay-scrim-strong);
 }
 
 .overlay-custom-layer-placeholder {
@@ -2050,7 +2068,7 @@ button.collection-chip {
   z-index: 1;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(8, 15, 13, 0.72);
+  background: var(--overlay-scrim-strong);
   font-size: max(12px, calc(12px * var(--overlay-scale)));
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -2066,22 +2084,22 @@ button.collection-chip {
   font-size: max(12px, calc(12px * var(--overlay-scale)));
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  background: rgba(8, 15, 13, 0.72);
+  background: var(--overlay-scrim-strong);
 }
 
 .overlay-custom-layer-support-supported {
   color: #dff7ee;
-  background: color-mix(in srgb, #1d7a58 68%, rgba(8, 15, 13, 0.72));
+  background: color-mix(in srgb, #1d7a58 68%, var(--overlay-scrim-strong));
 }
 
 .overlay-custom-layer-support-limited {
   color: #f7f1e6;
-  background: color-mix(in srgb, #7d5b1b 58%, rgba(8, 15, 13, 0.72));
+  background: color-mix(in srgb, #7d5b1b 58%, var(--overlay-scrim-strong));
 }
 
 .overlay-custom-layer-support-unsupported {
   color: #fbe4e7;
-  background: color-mix(in srgb, #8b1e2d 68%, rgba(8, 15, 13, 0.72));
+  background: color-mix(in srgb, var(--overlay-danger) 68%, var(--overlay-scrim-strong));
 }
 
 .overlay-custom-layer-widget-label {

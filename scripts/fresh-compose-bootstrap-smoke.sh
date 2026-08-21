@@ -32,7 +32,7 @@ cat >"$ENV_FILE" <<EOF
 NODE_ENV=production
 PORT=3000
 APP_URL=http://127.0.0.1:${PORT}
-APP_SECRET=stream247-compose-smoke
+APP_SECRET=stream247-compose-smoke-0123456789abcdef
 POSTGRES_DB=stream247
 POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247
@@ -53,7 +53,10 @@ EOF
 cat >"$OVERRIDE_FILE" <<EOF
 services:
   web:
-    ports:
+    # !override replaces the base compose port list instead of appending to it. Without it the
+    # stack also tries to publish the base file's "3000:3000", so every smoke run fails with
+    # "port is already allocated" whenever anything else holds host port 3000.
+    ports: !override
       - "127.0.0.1:${PORT}:3000"
     volumes:
       - ${TMP_DIR}/media:/app/data/media

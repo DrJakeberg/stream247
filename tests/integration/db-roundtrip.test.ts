@@ -6,11 +6,15 @@ import {
   applyOverlayScenePresetRecordToDraft,
   createPoolRecord,
   createScheduleBlocks,
+  createScheduleBlocksChecked,
   deleteOverlayScenePresetRecord,
   ensureDatabase,
   listOverlayScenePresetRecords,
   publishOverlayDraftRecord,
+  appendPresenceWindowRecord,
   readAppState,
+  updateAppState,
+  updatePlayoutRuntime,
   readManagedDestinationStreamKeys,
   readOverlayStudioState,
   resetDatabaseConnectionsForTests,
@@ -69,6 +73,7 @@ const engagementGameMigrationId = "20260422_001_engagement_game";
 const twitchLiveStartedAtMigrationId = "20260422_002_twitch_live_started_at";
 const outputSettingsColumns = ["singleton_id", "profile_id", "width", "height", "fps", "updated_at"].sort();
 const engagementLayerMigrationId = "20260420_002_engagement_layer";
+const chatInteractionMigrationId = "20260818_001_chat_interaction";
 const engagementAlertTypesMigrationId = "20260421_001_engagement_alert_types";
 const engagementSettingsColumns = [
   "singleton_id",
@@ -1293,4 +1298,235 @@ describe.sequential("database roundtrip", () => {
       lastSyncedAt: "2026-04-05T10:00:00.000Z"
     });
   }, 60_000);
+
+  it("creates the chat-interaction schema on an existing database", async () => {
+    // The tables are new in 1.5.19, so an already-migrated deployment must pick them up on upgrade
+    // rather than only appearing on a fresh install.
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      DROP TABLE IF EXISTS chat_viewer_requests;
+      DROP TABLE IF EXISTS chat_vote_session;
+      DROP TABLE IF EXISTS chat_interaction_settings;
+      DELETE FROM schema_migrations WHERE id = '${chatInteractionMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const tables = (
+      await executeSql(`
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_name IN ('chat_interaction_settings', 'chat_vote_session', 'chat_viewer_requests')
+        ORDER BY table_name;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+
+    const indexes = (
+      await executeSql(`
+        SELECT indexname
+        FROM pg_indexes
+        WHERE tablename = 'chat_viewer_requests'
+        ORDER BY indexname;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+
+    const migrationApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id = '${chatInteractionMigrationId}';`
+    );
+
+    // Sorted locally rather than trusting the database collation for the ordering.
+    expect([...tables].sort()).toEqual(
+      ["chat_interaction_settings", "chat_viewer_requests", "chat_vote_session"].sort()
+    );
+    // Cooldown checks filter by actor and order by recency; without the index every check would be
+    // a sequential scan over unbounded request history.
+    expect(indexes).toContain("chat_viewer_requests_actor_created_idx");
+    expect(migrationApplied).toBe("1");
+  }, 60_000);
+
+  describe("schedule writes validated under the lock", () => {
+    // The overlap check used to run against a state read before the write, leaving a window in
+    // which another editor committed a block the check never saw: both writes succeeded and the
+    // schedule ended up overlapping anyway, which the editor then refuses to save past.
+
+    it("sees blocks already stored when it validates", async () => {
+      const existingId = `block-existing-${randomUUID()}`;
+      await createScheduleBlocks([
+        {
+          id: existingId,
+          title: "Existing",
+          categoryName: "Replay",
+          startMinuteOfDay: 10 * 60,
+          durationMinutes: 120,
+          dayOfWeek: 4,
+          poolId: "",
+          sourceName: "Pool",
+          repeatMode: "single",
+          repeatGroupId: "",
+          cuepointAssetId: "",
+          cuepointOffsetsSeconds: []
+        }
+      ]);
+
+      let seenExisting = false;
+      await createScheduleBlocksChecked(
+        [
+          {
+            id: `block-new-${randomUUID()}`,
+            title: "New",
+            categoryName: "Replay",
+            startMinuteOfDay: 20 * 60,
+            durationMinutes: 60,
+            dayOfWeek: 4,
+            poolId: "",
+            sourceName: "Pool",
+            repeatMode: "single",
+            repeatGroupId: "",
+            cuepointAssetId: "",
+            cuepointOffsetsSeconds: []
+          }
+        ],
+        (existing) => {
+          seenExisting = existing.some((block) => block.id === existingId);
+        }
+      );
+
+      expect(seenExisting).toBe(true);
+    });
+
+    it("writes nothing when the validator rejects", async () => {
+      const rejectedId = `block-rejected-${randomUUID()}`;
+
+      await expect(
+        createScheduleBlocksChecked(
+          [
+            {
+              id: rejectedId,
+              title: "Rejected",
+              categoryName: "Replay",
+              startMinuteOfDay: 60,
+              durationMinutes: 60,
+              dayOfWeek: 5,
+              poolId: "",
+              sourceName: "Pool",
+              repeatMode: "single",
+              repeatGroupId: "",
+              cuepointAssetId: "",
+              cuepointOffsetsSeconds: []
+            }
+          ],
+          () => {
+            throw new Error("overlaps");
+          }
+        )
+      ).rejects.toThrow("overlaps");
+
+      const state = await readAppState();
+      expect(state.scheduleBlocks.some((block) => block.id === rejectedId)).toBe(false);
+    });
+  });
+
+  describe("moderator presence check-ins", () => {
+    // expires_at used to be the primary key. It is the check-in time plus a duration picked from a
+    // short list, so two moderators checking in during the same second for the same length produced
+    // the identical value — and the insert runs inside the Twitch chat callback, where the unique
+    // violation surfaced as a check-in that simply did not happen.
+
+    it("accepts two check-ins that expire at the same instant", async () => {
+      const expiresAt = "2026-08-19T21:00:00.000Z";
+      const createdAt = "2026-08-19T20:30:00.000Z";
+
+      await appendPresenceWindowRecord({
+        actor: "first_moderator",
+        minutes: 30,
+        requestedMinutes: 30,
+        appliedMinutes: 30,
+        clampReason: "",
+        createdAt,
+        expiresAt
+      });
+
+      await expect(
+        appendPresenceWindowRecord({
+          actor: "second_moderator",
+          minutes: 30,
+          requestedMinutes: 30,
+          appliedMinutes: 30,
+          clampReason: "",
+          createdAt,
+          expiresAt
+        })
+      ).resolves.toBeUndefined();
+
+      const state = await readAppState();
+      const both = state.presenceWindows.filter((window) => window.expiresAt === expiresAt);
+      expect(both.map((window) => window.actor).sort()).toEqual(["first_moderator", "second_moderator"]);
+    });
+
+    it("keeps the same actor's repeated check-in rather than replacing it", async () => {
+      const expiresAt = "2026-08-19T22:00:00.000Z";
+      for (let index = 0; index < 3; index += 1) {
+        await appendPresenceWindowRecord({
+          actor: "same_moderator",
+          minutes: 30,
+          requestedMinutes: 30,
+          appliedMinutes: 30,
+          clampReason: "",
+          createdAt: "2026-08-19T21:30:00.000Z",
+          expiresAt
+        });
+      }
+
+      const state = await readAppState();
+      expect(state.presenceWindows.filter((window) => window.expiresAt === expiresAt)).toHaveLength(3);
+    });
+  });
+
+  describe("state writes and the live playout runtime", () => {
+    // Why the blueprint import uses updateAppState instead of readAppState + writeAppState.
+    //
+    // The whole AppState is written as one row set, playout runtime included. A caller that reads the
+    // state, spends time building a new one and then writes it back carries a snapshot of `playout`
+    // from before the write -- so importing a blueprint while the channel was on air rewound the
+    // worker's heartbeats, restart counters and uplink status to whatever they were when the request
+    // began. updateAppState reads inside the same locked transaction it writes in, which is what
+    // makes that impossible rather than merely unlikely.
+
+    it("hands the updater state that already includes writes made after an earlier read", async () => {
+      const staleSnapshot = await readAppState();
+
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        restartCount: playout.restartCount + 7,
+        uplinkStatus: "running"
+      }));
+
+      let observedRestartCount = -1;
+      await updateAppState((current) => {
+        observedRestartCount = current.playout.restartCount;
+        return current;
+      });
+
+      expect(observedRestartCount).toBe(staleSnapshot.playout.restartCount + 7);
+      // The read-then-write pattern would have written the left-hand value back over the right-hand
+      // one, which is exactly the runtime loss this guards against.
+      expect(staleSnapshot.playout.restartCount).not.toBe(observedRestartCount);
+    });
+
+    it("preserves a concurrent runtime advance across an unrelated state edit", async () => {
+      const before = await readAppState();
+
+      await updatePlayoutRuntime((playout) => ({ ...playout, restartCount: playout.restartCount + 3 }));
+
+      await updateAppState((current) => ({ ...current, moderation: { ...current.moderation } }));
+
+      const after = await readAppState();
+      expect(after.playout.restartCount).toBe(before.playout.restartCount + 3);
+    });
+  });
 });

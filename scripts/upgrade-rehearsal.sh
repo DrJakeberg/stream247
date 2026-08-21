@@ -271,7 +271,9 @@ wait_for_broadcast_readiness() {
   return 1
 }
 
-wait_for_json_ok "${APP_URL}/api/health" "Health endpoint"
+# /api/ready, not /api/health: health is liveness and answers 200 while the process serves, even
+# with Postgres unreachable. A rehearsal gate has to fail closed.
+wait_for_json_ok "${APP_URL}/api/ready" "Readiness endpoint"
 ensure_bootstrapped_workspace
 wait_for_broadcast_readiness "${APP_URL}/api/system/readiness"
 

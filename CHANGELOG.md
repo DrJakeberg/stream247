@@ -4,6 +4,320 @@
 
 - No unreleased changes currently tracked.
 
+## 1.5.24 - 2026-08-21
+
+### Fixed
+
+- `/login` returned 500 on every workspace with Twitch configured. The page built the authorize URL
+  while rendering, which mints a single-use OAuth state and writes it to a cookie — something
+  Next.js only permits in a Route Handler or Server Action. `/setup` and the dashboard took the same
+  path. Introduced with the OAuth state fix in 1.5.19 and invisible until now, because the visual
+  suite runs against a stack with no Twitch credentials, where the function returns early and never
+  reaches the cookie write: the one environment that could not reproduce it. Pages now check whether
+  sign-in is configured and link to a route that mints the URL on click, so the state is also fresh
+  when it is used rather than dating from the page render (v1.5.24)
+- stop deleting VODs fetched ahead of their slot. The delete set was derived by elimination —
+  everything not on air, in the runtime queue, or still downloading — and a completed download fails
+  all three the moment it lands. Measured on the production channel: 19.1GB removed seconds after
+  the 52 minutes it took to fetch, then fetched again. Exactly one asset stops playing per
+  transition, and that one is now named rather than inferred (v1.5.24)
+- restart an uplink that has never encoded anything. This state was reported and deliberately never
+  acted on, reasoning that a false positive costs a restart loop while a false negative costs no
+  more than the previous behaviour. It cost the channel: the uplink ran 65 minutes without a single
+  frame, never opened an RTMP connection, and logged the condition every 15 seconds while nothing
+  reached Twitch. `UPLINK_NO_PROGRESS_RESTART_MS` (5 minutes) now bounds it (v1.5.24)
+- pin the two visual snapshots that depended on the server's clock. `page.clock` freezes the browser
+  only, so the schedule page rendered a different week each morning and the scene preview raced its
+  own clock between server paint and hydration — both passed when their baseline was taken and
+  failed two days later with no code change (v1.5.24)
+
+## 1.5.23 - 2026-08-20
+
+Design consolidation, and the two gaps the 1.5.22 rollout exposed in production.
+
+### Fixed
+
+- collect abandoned partial downloads. They were left entirely to the prune, which only runs
+  immediately before a download starts — and the new size policy makes that a dead end: once every
+  scheduled VOD is over the limit no download ever starts, nothing prunes, and the partials stay
+  forever. Measured at 13.8GB on the production channel, invisible to a release that skipped every
+  transient file. The release now applies the prune's own test: old enough, and no live job holding
+  the lock (v1.5.23)
+
+### Changed
+
+- one definition for the five state tones. `status-chip-*`, `badge-*`, `programming-status-*`,
+  `schedule-block-*`, `toast-*`, `.warning`/`.danger` and `.field-error` said the same five things in
+  their own colours — agreeing on meaning, disagreeing on value, which is how one drifts out of
+  contrast while the rest stay fine. They now map onto
+  `--tone-{positive,caution,critical,neutral,info}-{fg,bg,border}`; class names are unchanged, so no
+  markup moved. Info became a real channel instead of three literals inside one pill. Colour
+  literals: 100 → 93 (v1.5.23)
+- removed `Card`, `PageHeader` and `Button` from the design-system primitives. Card and PageHeader
+  duplicated Panel and AdminPageHeader, which carry 17 and 11 usages against zero for the newer
+  pair; Button was never used either. Consolidating onto the incumbents keeps the visual result
+  identical (v1.5.23)
+
+### Added
+
+- a fixed playout runtime for the dev stack. It leaves worker/playout/uplink stopped so the UI is
+  reproducible, which also left every live surface reporting "nothing on air" — so the pages that
+  report on a running channel were outside the visual suite by construction. The runtime the stopped
+  worker would own is now seeded through the same `updatePlayoutRuntime` production uses, with fixed
+  ids and fixed instants (v1.5.23)
+- `/live?tab=status` and `?tab=control` in the visual baseline. They were excluded for flakiness;
+  with the runtime pinned rather than masked, two consecutive verification runs pass 28/28. These
+  are the pages an operator opens when something is wrong (v1.5.23)
+- `tests/unit/design-tones.test.ts`, which resolves the channel syntax
+  (`rgb(var(--brand-rgb) / 0.12)`) the existing contrast test cannot read. The token layer is
+  finally covered by the standard it was written to serve (v1.5.23)
+
+## 1.5.22 - 2026-08-19
+
+The VOD cache does what it was always meant to, plus the audit findings that were still open.
+
+### Added
+
+- cache a Twitch VOD when it fits, stream it live when it does not. `TWITCH_VOD_CACHE_MAX_ASSET_BYTES`
+  (default 20GB) is checked before any bandwidth is spent, and an oversized VOD is marked
+  `too-large` and played straight from Twitch — a settled state, so it raises no incident and is
+  never retried. Below the limit the VOD is cached and released as soon as it is neither on air nor
+  still ahead in the queue. Keyed on what is in use rather than on a playback-ended event, because
+  playback ends in more ways than it begins: a skip, a crash, a boundary, an operator override
+  (v1.5.22)
+- `TWITCH_VOD_CACHE_LIMIT_RATE` caps download bandwidth so caching cannot take the line from the
+  live stream (v1.5.22)
+
+### Fixed
+
+- size the VOD from its bitrate and duration. Twitch reports neither `filesize` nor
+  `filesize_approx` for its HLS VODs — verified against live VODs on two yt-dlp versions — so the
+  first version of the size check was unreachable and the limit did nothing at all. `--max-filesize`
+  could not cover for it either: yt-dlp consults it only for progressive HTTP downloads, never for
+  fragmented HLS, measured at 95MB downloaded against a 1MiB cap (v1.5.22)
+- never read an empty playout selection as "no cached file is needed". The playout reports no
+  current asset while reconnecting, in standby, and on a freshly restarted process — in each of
+  those the release would have deleted the entire cache, turning a routine restart into a full
+  re-download of every scheduled VOD (v1.5.22)
+- stop the blueprint import overwriting the live playout runtime. It read the whole app state, spent
+  the request building a new one and wrote it back, so importing a blueprint while the channel was
+  on air rewound the worker's heartbeats, restart counters and uplink status — without holding the
+  state write lock (v1.5.22)
+- stop EventSub reporting dead subscriptions as configured. Twitch keeps a subscription listed after
+  it stops delivering; matching on type and condition alone counted `authorization_revoked` and
+  `notification_failures_exceeded` as present, so the channel silently received nothing. Revocations
+  were also processed as notifications, turning "this subscription is dead" into a cheer alert on
+  the overlay attributed to "Viewer" (v1.5.22)
+- let two moderators check in during the same second. `presence_windows` used `expires_at` as its
+  primary key, and that value is the check-in time plus a duration from a short list (v1.5.22)
+- refresh the broadcaster token with nothing on air. The refresh sat behind an early return taken
+  when no asset and no schedule block were active, but the chat bridge authenticates with the stored
+  token on every cycle — so an empty programme expired the token and took chat down with it
+  (v1.5.22)
+- stop template application locking the schedule editor. It skipped the overlap check every other
+  way of creating a block performs, and the editor refuses to save while conflicts exist (v1.5.22)
+- fill the schedule video timeline on every day. A preview is built for a date; the page built one
+  for today and filtered it by the selected weekday, leaving six days out of seven empty (v1.5.22)
+- validate schedule overlaps under the lock that writes them. Two editors saving at once each
+  validated against a snapshot without the other's block, and both writes succeeded (v1.5.22)
+
+## 1.5.21 - 2026-08-19
+
+Three production failures found by watching the 1.5.20 channel, plus what an adversarial review of
+the first fix turned up.
+
+### Fixed
+
+- stop the on-air overlay throttling the encode to half real time. ffmpeg is told the scene pipe
+  delivers 1fps and the `overlay` filter cannot emit a frame until both of its inputs have one, so
+  a writer that slept the 2000ms render interval between frames paced the *entire* encode, not just
+  the overlay: playout produced 30 seconds of programme per minute of wall clock and the channel
+  fell steadily further behind. Writing and rasterising are now independent, and the writer paces
+  against the wall clock. Measured on the production channel afterwards: 90 segments in 180s, 100.0%
+  of real time (v1.5.21)
+- stop scene loop teardown from killing the worker. The fd-3 pipe had no `error` listener — the
+  drain wait supplied one by accident — and teardown aborts the loop and SIGTERMs ffmpeg in the same
+  turn, so the pipe lost its reader with nothing listening. An unhandled stream error is an uncaught
+  exception, which this process answers with `exit(1)`, at every ordinary asset boundary. Reproduced
+  against real ffmpeg: 3/3 runs died with ECONNRESET, 3/3 survive with the listener (v1.5.21)
+- keep the scene renderer alive when its own error path fails. The incident write inside the
+  handler goes through the same database whose failure would have put it there, so one Postgres blip
+  could kill the loop and freeze the lower third for the rest of the run with no incident raised
+  (v1.5.21)
+- detect an uplink that is running but no longer producing. ffmpeg stayed alive while emitting 450
+  timestamp discontinuities a minute and handing audio and video opposite ~117s offsets, so the
+  tracks audibly drifted apart while every destination still reported `ready` — process liveness
+  cannot tell "running" from "working". The supervisor now watches ffmpeg's own `out_time` and
+  restarts through the unplanned-stop path, so it lands in the restart tally instead of being
+  absorbed silently (v1.5.21)
+
+### Added
+
+- `TWITCH_VOD_CACHE_LIMIT_RATE` caps cache download bandwidth. The cache was measured pulling
+  145 Mbit/s on a host whose job is pushing a live stream out. Defaults to unlimited, since the right
+  number depends on the link (v1.5.21)
+- `UPLINK_STALL_TIMEOUT_MS` / `UPLINK_STALL_GRACE_MS` tune the encoder stall verdict. Watch for
+  `uplink.encoder_stall.restart` and `uplink.encoder.no_progress` (v1.5.21)
+
+### Operations
+
+- `docker stats --no-stream` is not usable for judging whether the uplink is encoding. Consecutive
+  samples on the same healthy process read 0.05% and 17.43% while its 30-second cgroup average was
+  99%. Measure `cpu.stat` usage over a window, or the interface counters, before concluding anything
+  from CPU. This is the reason the stall detector watches `out_time` rather than CPU.
+- the overlay's staleness is bounded by the writer's lead, not by buffer sizes. `-thread_queue_size`
+  cannot provide that bound: frames queue in Node's stream buffer and the OS pipe long before
+  ffmpeg's own queue, and the more cheaply a transparent lower third compresses, the deeper that
+  backlog runs.
+- an uplink stall is only blamed on the uplink when the program feed is `fresh`. Otherwise a playout
+  outage would become an uplink restart loop lasting exactly as long as the outage.
+
+## 1.5.20 - 2026-08-19
+
+Follow-up to the 1.5.19 rollout, from watching it run in production.
+
+### Fixed
+
+- stop the Twitch VOD cache prune from deleting a download that is still running. It evicts
+  transient files to stay under the cache cap and protected only the target path of the download
+  that triggered it, so with several large VODs queued each new job deleted the previous job's
+  partial — 21GB of progress removed 15 minutes in, then restarted from zero. That is the same
+  "never finishes" failure the 7200s download timeout used to cause, relocated from the playout
+  cycle into the background runner: no longer fatal, but an endless loop that burns bandwidth and
+  never produces a cached file. The lock a running job maintains now exempts its partial and the
+  fragment files yt-dlp writes beside it; a stale lock still frees them (v1.5.20)
+
+### Operations
+
+- `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1` on the production channel. With it at 0 the playout
+  refuses to stream a VOD that is not fully cached and bridges to fallback content instead — which,
+  combined with VODs larger than the cache cap, meant the channel showed fallback indefinitely even
+  with playout healthy. Restart-freedom is not the same as a healthy channel; check the actual
+  ffmpeg input, not just the absence of errors.
+- `TWITCH_VOD_CACHE_MAX_BYTES` still defaults to 20GB while the scheduled VODs exceed that, so
+  nothing stays cached for long. Raise it or run the source as a direct stream deliberately.
+
+## 1.5.19 - 2026-08-18
+
+Emergency production release. Supersedes the 1.5.18 tag, whose release build failed before
+publishing any image (the Release workflow ran before CI had pushed the `main-<sha>` snapshots it
+pulls from). No 1.5.18 images exist; 1.5.19 is the artifact to deploy.
+
+Carries the 1.5.18 playout fix below plus a critical, remotely exploitable authentication flaw and
+four runtime failure modes, all found by an adversarially-verified audit pass over the product.
+
+### Breaking
+
+- **`APP_SECRET` must be at least 32 characters in production and may not be the published
+  `stream247-dev-secret` constant.** A deployment that does not satisfy this now fails instead of
+  silently signing sessions with a guessable key. `pnpm release:preflight` checks it before rollout
+  and prints the remedy (`openssl rand -base64 48`). Rotating the value invalidates existing
+  sessions, so everyone signs in again once.
+
+### Security
+
+- close a full workspace takeover via the Twitch OAuth connect callback. The route had no auth
+  guard, `middleware.ts` only matches `/overlay`, and the OAuth `state` was the literal flow name
+  that no callback read back. An attacker could authorise their own Twitch account against the
+  publicly discoverable client_id, hand the code to the callback to overwrite the workspace's
+  broadcasterId and tokens, then complete SSO — which grants "owner" to whoever matches that
+  broadcasterId — and hold an owner session without ever knowing a password. State is now random,
+  single-use, flow-scoped and bound to an HttpOnly cookie, and the connect callback requires an
+  owner/admin session (v1.5.19)
+- stop falling back to the published `stream247-dev-secret` constant when `APP_SECRET` is unset in
+  production. This project is source-available, so that fallback let anyone forge a session cookie
+  for any user id. Startup now fails loudly and rejects secrets under 32 characters (v1.5.19)
+- expire session cookies. The issue timestamp was already inside the signed payload but was never
+  checked, so a leaked cookie was valid forever. Default 30 days via `SESSION_MAX_AGE_SECONDS`
+  (v1.5.19)
+- stop library uploads escaping `MEDIA_LIBRARY_ROOT`. The subfolder sanitiser kept "." in its
+  allowed character class so ordinary names survive, which also let a ".." segment through
+  untouched: "../../etc" sanitised to itself. Traversal segments are now dropped, backslashes count
+  as separators, and a containment check on the resolved destination backs it up (v1.5.19)
+- rate-limit password login and TOTP verification. Neither had a limit or lockout, so both were
+  unbounded brute-force surfaces; a six-digit TOTP with a +/-1 step window is well within reach
+  unthrottled. Login is keyed on the targeted account and the client, TOTP on the account alone,
+  and a success clears the counter (v1.5.19)
+
+### Changed
+
+- blocks that cross midnight stay on the schedule. Occurrences were built by filtering on the
+  weekday of the queried date alone, so a block scheduled Monday 23:00 for two hours vanished at
+  00:00 and the channel fell out of its programmed pool for the rest of the night. The same block
+  also claimed to be on air on its own morning, because matching compared wall-clock strings.
+  Occurrences now carry the previous day's overrun explicitly and match on minute ranges (v1.5.19)
+### Added
+
+- **Viewer control**: Twitch chat can steer the programme. A poll opens once per programme item and
+  closes before the boundary, so viewers see the result before it takes effect; `!request` adds a
+  released library item to the queue under a per-viewer cooldown and an outstanding-request cap; and
+  a `!skip` vote needs both a share of active chatters and an absolute floor. The live poll renders
+  in the on-air overlay. Configure it under Studio → Engagement — it ships **disabled**, because
+  enabling it hands programme decisions to anonymous chat (v1.5.19)
+
+  Three properties worth knowing before switching it on:
+  - a vote can only reorder what is already queued, so chat influences the running order without
+    bypassing the schedule
+  - a tie is reported as a tie and leaves the schedule untouched, rather than being broken by
+    candidate order that viewers cannot see
+  - re-voting moves a viewer's ballot instead of adding one, so a tally can never exceed the number
+    of distinct voters
+
+### Fixed
+
+- escalate to SIGKILL when stopping playout. The guard also required `!currentProcess.killed`, but
+  Node sets `killed` as soon as SIGTERM is delivered, so escalation was unreachable and an ffmpeg
+  blocked on a dead input never died — turning a 5s stop into a 300s stall and a container restart.
+  A hard stop deadline now bounds the wait even for a child that survives SIGKILL (v1.5.19)
+- clear `plannedStopReason` on the early-return path of `stopPlayoutProcess`, so the next genuine
+  crash is no longer recorded as an operator-planned stop (v1.5.19)
+- handle unhandled promise rejections instead of dying. The fire-and-forget state writes in the
+  ffmpeg stderr handler could reject during a transient Postgres outage and kill the broadcast with
+  no incident, no alert and no log entry (v1.5.19)
+- attach an 'error' listener to both spawned ffmpeg processes; a spawn failure was rethrown
+  asynchronously as an uncaught exception the caller's try/catch could not see (v1.5.19)
+- split liveness from readiness. Every check in the project used `/api/health`, which returned 200
+  unconditionally, so a rollout with Postgres unreachable passed its gates and reported healthy.
+  `/api/health` stays liveness (200 while the process serves — restarting the web container does
+  not fix a dead database and only removes the UI needed to diagnose it), and the new `/api/ready`
+  fails closed with 503 when persistence is unreachable or the workspace was never initialised.
+  `upgrade-rehearsal.sh` now gates on `/api/ready` (v1.5.19)
+- escape operator-configured chat commands and vote tokens before interpolating them into regular
+  expressions run against every IRC message; a command containing "(" threw inside the socket data
+  handler and took the worker down (v1.5.19)
+
+## 1.5.18 - 2026-08-18 (unreleased; no images published)
+
+Emergency production fix. DUT had been in a playout restart loop for ~38 hours: 423 restarts,
+one every ~5 minutes, with the program pinned to fallback content the whole time.
+
+The boundary-stability work in 1.5.11–1.5.17 assumed an expensive remote resolve stays within
+"~60-120s" (queue-prefetch.ts). That assumption was documented in comments but never enforced in
+code, and production ran with `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS=7200` — 24x the 300s
+loop stall guard. `raceResolveAgainstDeath` did not help, because it only unblocks when the
+covering playout process dies, and that process was healthily playing the fallback.
+
+### Fixed
+
+- take Twitch VOD downloads off the playout reconciliation cycle entirely: cycles now do a
+  read-only cache lookup (`peekTwitchVodCache`) and hand uncached assets to a detached job
+  runner, so an unbounded download can no longer consume the cycle's stall budget (v1.5.18)
+- resume interrupted VOD downloads instead of restarting them: background jobs use a stable part
+  path with `--continue`. The previous per-attempt random path meant a multi-GB VOD restarted
+  from zero on every container restart, so with a 5-minute restart cycle it could never finish
+  no matter how large the configured timeout was (v1.5.18)
+- clamp every timeout awaited on a reconciliation cycle to half the loop stall budget, so an
+  operator-configured value can no longer outlive the watchdog that is supposed to catch it
+  (v1.5.18)
+
+### Added
+
+- `cycle-budget.ts` as the single source of truth for the loop stall budget and the derived
+  ceiling for awaited cycle operations, making the previously implicit timing contract explicit
+  and testable (v1.5.18)
+- advisory file lock with heartbeat and stale-holder takeover, so the worker and playout
+  containers sharing the media volume cannot both write the same resume file (v1.5.18)
+
 ## 1.5.17 - 2026-06-12
 
 Accepted runtime-stable production baseline. A clean 24h DUT soak completed naturally

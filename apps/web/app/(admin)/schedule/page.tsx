@@ -58,7 +58,6 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
   const searchParams = props.searchParams ? await props.searchParams : {};
   const state = await readAppState();
   const broadcastSnapshot = getBroadcastSnapshot(state);
-  const schedulePreview = getSchedulePreview(state);
   const materializedWeek = getMaterializedProgrammingWeekPreview(state);
   const timeZone = getWorkspaceTimeZone();
   const conflicts = new Set(findScheduleConflicts(state.scheduleBlocks));
@@ -74,6 +73,9 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
   const categoryOptions = getShowProfileCategoryOptions(shows);
   const defaultDay = materializedWeek[0]?.dayOfWeek ?? 1;
   const activeDay = resolveDayOfWeek(searchParams.day, defaultDay);
+  // Built for the day being viewed. A preview is per-date, so building it for today and filtering by
+  // the selected day left the video timeline empty on every day but one.
+  const schedulePreview = getSchedulePreview(state, activeDay);
   const materializedActiveDay = materializedWeek.find((day) => day.dayOfWeek === activeDay) ?? null;
   const liveQueue = state.playout.queueItems.slice(0, 5);
   const lens = resolveScheduleLens(searchParams.lens);

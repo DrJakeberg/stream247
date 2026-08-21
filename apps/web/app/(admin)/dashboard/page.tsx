@@ -18,11 +18,11 @@ import {
   getSchedulePreview,
   readAppState
 } from "@/lib/server/state";
-import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
+import { isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
 
 export default async function DashboardPage() {
   const state = await readAppState();
-  const twitchAuthorizeUrl = await getTwitchAuthorizeUrl("broadcaster-connect");
+  const twitchAuthorizeUrl = (await isTwitchAuthorizeConfigured()) ? "/api/integrations/twitch/connect" : null;
   const checklist = getGoLiveChecklist(state);
   const schedulePreview = getSchedulePreview(state);
   const presenceStatus = getPresenceStatus(state);

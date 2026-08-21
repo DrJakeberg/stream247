@@ -8,8 +8,34 @@ import { findUserById, readAppState, type UserRecord, type UserRole } from "./st
 const sessionCookieName = "stream247_session";
 const twoFactorChallengeMaxAgeSeconds = 60 * 5;
 
+// Sessions are stateless HMACs, so an unbounded lifetime means a leaked cookie is valid forever.
+const sessionMaxAgeSeconds = (() => {
+  const parsed = Number.parseInt(process.env.SESSION_MAX_AGE_SECONDS ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30 * 24 * 60 * 60;
+})();
+
+const DEV_AUTH_SECRET = "stream247-dev-secret";
+const MIN_AUTH_SECRET_LENGTH = 32;
+
 function getAuthSecret(): string {
-  return process.env.APP_SECRET || "stream247-dev-secret";
+  const configured = process.env.APP_SECRET || "";
+
+  // This project is source-available: the development fallback is a publicly known constant, so
+  // silently using it in production lets anyone forge a session cookie for any user id. Fail loudly
+  // instead of degrading to a value that only looks like a secret.
+  if (process.env.NODE_ENV === "production") {
+    if (!configured) {
+      throw new Error("APP_SECRET must be set in production; refusing to sign sessions with the development fallback.");
+    }
+
+    if (configured === DEV_AUTH_SECRET || configured.length < MIN_AUTH_SECRET_LENGTH) {
+      throw new Error(
+        `APP_SECRET must be a unique value of at least ${MIN_AUTH_SECRET_LENGTH} characters in production.`
+      );
+    }
+  }
+
+  return configured || DEV_AUTH_SECRET;
 }
 
 export function hashPassword(password: string): string {
@@ -58,6 +84,13 @@ export function parseSessionValue(value: string | undefined): string | null {
   const payload = parts.join(":");
 
   if (!signature || signValue(payload) !== signature) {
+    return null;
+  }
+
+  // The issue timestamp was always part of the signed payload but was never checked, so a session
+  // cookie stayed valid indefinitely and could not be aged out.
+  const issuedAt = Number(parts[parts.length - 1]);
+  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > sessionMaxAgeSeconds * 1000) {
     return null;
   }
 

@@ -37,7 +37,7 @@ docker run -d \
   -p "${PORT}:3000" \
   -e NODE_ENV=production \
   -e APP_URL="http://127.0.0.1:${PORT}" \
-  -e APP_SECRET="stream247-fresh-db-smoke" \
+  -e APP_SECRET="stream247-fresh-db-smoke-0123456789abcdef" \
   -e DATABASE_URL="postgresql://stream247:stream247@${POSTGRES_CONTAINER}:5432/stream247" \
   stream247-web:test >/dev/null
 
