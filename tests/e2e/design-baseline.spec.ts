@@ -28,7 +28,12 @@ const RUNTIME_STATE_SELECTORS = [
   "[data-runtime-timestamp]",
   ".status-chip",
   ".readiness-timestamps",
-  ".incident-list"
+  ".incident-list",
+  // The scene preview renders a wall clock. The server paints the real time, hydration replaces it
+  // with the frozen one, and the screenshot lands on whichever came first — which is why this
+  // surface failed on one viewport and passed on the other in the same run. page.clock cannot reach
+  // the server, so the region is masked instead.
+  ".overlay-clock"
 ];
 
 async function freezeClock(page: Page) {
@@ -85,11 +90,14 @@ const SURFACES: Surface[] = [
   { name: "live-status", path: "/live?tab=status", authenticated: true },
   { name: "live-control", path: "/live?tab=control", authenticated: true },
   { name: "live-moderation", path: "/live?tab=moderation", authenticated: true },
-  { name: "program-schedule", path: "/program?tab=schedule", authenticated: true },
+  // The day is pinned. Its default derives from the server's today, and page.clock only freezes the
+  // browser — so an unpinned schedule renders a different week every day and the snapshot rots
+  // overnight rather than on a real change.
+  { name: "program-schedule", path: "/program?tab=schedule&day=1", authenticated: true },
   { name: "program-pools", path: "/program?tab=pools", authenticated: true },
   { name: "program-library", path: "/program?tab=library", authenticated: true },
   { name: "program-sources", path: "/program?tab=sources", authenticated: true },
-  { name: "studio-scene", path: "/studio?tab=scene", authenticated: true },
+  { name: "studio-scene", path: "/studio?tab=scene", authenticated: true, masked: true },
   { name: "studio-engagement", path: "/studio?tab=engagement", authenticated: true },
   { name: "studio-output", path: "/studio?tab=output", authenticated: true },
   { name: "admin-settings", path: "/admin?tab=settings", authenticated: true },
