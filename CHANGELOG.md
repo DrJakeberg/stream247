@@ -4,6 +4,33 @@
 
 - No unreleased changes currently tracked.
 
+## 1.5.24 - 2026-08-21
+
+### Fixed
+
+- `/login` returned 500 on every workspace with Twitch configured. The page built the authorize URL
+  while rendering, which mints a single-use OAuth state and writes it to a cookie — something
+  Next.js only permits in a Route Handler or Server Action. `/setup` and the dashboard took the same
+  path. Introduced with the OAuth state fix in 1.5.19 and invisible until now, because the visual
+  suite runs against a stack with no Twitch credentials, where the function returns early and never
+  reaches the cookie write: the one environment that could not reproduce it. Pages now check whether
+  sign-in is configured and link to a route that mints the URL on click, so the state is also fresh
+  when it is used rather than dating from the page render (v1.5.24)
+- stop deleting VODs fetched ahead of their slot. The delete set was derived by elimination —
+  everything not on air, in the runtime queue, or still downloading — and a completed download fails
+  all three the moment it lands. Measured on the production channel: 19.1GB removed seconds after
+  the 52 minutes it took to fetch, then fetched again. Exactly one asset stops playing per
+  transition, and that one is now named rather than inferred (v1.5.24)
+- restart an uplink that has never encoded anything. This state was reported and deliberately never
+  acted on, reasoning that a false positive costs a restart loop while a false negative costs no
+  more than the previous behaviour. It cost the channel: the uplink ran 65 minutes without a single
+  frame, never opened an RTMP connection, and logged the condition every 15 seconds while nothing
+  reached Twitch. `UPLINK_NO_PROGRESS_RESTART_MS` (5 minutes) now bounds it (v1.5.24)
+- pin the two visual snapshots that depended on the server's clock. `page.clock` freezes the browser
+  only, so the schedule page rendered a different week each morning and the scene preview raced its
+  own clock between server paint and hydration — both passed when their baseline was taken and
+  failed two days later with no code change (v1.5.24)
+
 ## 1.5.23 - 2026-08-20
 
 Design consolidation, and the two gaps the 1.5.22 rollout exposed in production.
