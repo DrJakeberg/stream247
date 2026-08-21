@@ -22,6 +22,27 @@ export function getAbsoluteAppUrl(pathname: string): string {
   return `${getAppBaseUrl()}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
 }
 
+/**
+ * Whether a Twitch sign-in link is worth showing at all.
+ *
+ * Separate from getTwitchAuthorizeUrl because building that URL mints a single-use state and writes
+ * it to a cookie, and Next.js forbids setting cookies while rendering a page. A Server Component
+ * that merely wants to decide whether to show the button must not take that path — it returned a
+ * 500 on /login for every workspace that had Twitch configured, while every workspace without it
+ * (including the test stack) returned early and looked fine.
+ */
+export async function isTwitchAuthorizeConfigured(): Promise<boolean> {
+  const state = await readAppState();
+  return Boolean(getManagedTwitchConfig(state).clientId);
+}
+
+/**
+ * Builds the authorize URL and issues the state cookie that binds it.
+ *
+ * Callable only from Route Handlers and Server Actions: it writes a cookie. Pages link to a route
+ * that calls this, which also means the state is minted when the user clicks rather than when the
+ * page was rendered.
+ */
 export async function getTwitchAuthorizeUrl(
   kind: "broadcaster-connect" | "team-login" = "broadcaster-connect"
 ): Promise<string | null> {

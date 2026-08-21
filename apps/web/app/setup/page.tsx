@@ -9,12 +9,12 @@ import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { getGoLiveChecklist } from "@/lib/server/onboarding";
 import { readAppState } from "@/lib/server/state";
 import { getAuthenticatedUser } from "@/lib/server/auth";
-import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
+import { isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
 
 export default async function SetupPage() {
   const state = await readAppState();
   const user = await getAuthenticatedUser();
-  const twitchAuthorizeUrl = await getTwitchAuthorizeUrl("broadcaster-connect");
+  const twitchAuthorizeUrl = (await isTwitchAuthorizeConfigured()) ? "/api/integrations/twitch/connect" : null;
   const checklist = getGoLiveChecklist(state);
 
   if (state.initialized) {
