@@ -478,13 +478,13 @@ async function isLockedByLiveJob(filePath: string, nowMs: number): Promise<boole
  * once and then has no further purpose, so holding it costs disk for nothing and makes the next
  * download prune something it should not have to.
  *
- * Expressed as "keep what is in use" rather than "delete what just played" on purpose. Playback
- * ends in more ways than it begins -- a skip, a crash, a boundary, an operator override -- and a
- * rule driven by the current selection covers all of them, while an end-of-playback hook covers
- * only the paths someone remembered to wire it into.
+ * `keepPaths` must name everything that has not been watched yet, not merely what is on air. The
+ * first version passed only the current asset, the runtime queue and the jobs still downloading —
+ * so a VOD fetched ahead of its slot was deleted the instant its download finished, because by then
+ * the playout had moved on and the job was no longer pending. Measured on the production channel:
+ * a 19.1GB download that ran for 52 minutes, removed seconds after it completed.
  *
- * Never touches partial downloads: those belong to the prune, which knows how to tell an abandoned
- * one from a job still writing it.
+ * Partial downloads are collected separately, by age and by the absence of a live lock.
  */
 /**
  * Whether the playout knows enough about what it is doing for an eviction to be safe.
@@ -501,12 +501,11 @@ export function canReleaseVodCache(currentAssetId: string): boolean {
 
 export async function evictUnusedTwitchVodCache(
   config: TwitchVodCacheConfig,
-  keepPaths: readonly string[]
+  watchedPaths: readonly string[]
 ): Promise<{ removed: string[]; freedBytes: number }> {
-  const keep = new Set(keepPaths.filter((entry) => entry).map((entry) => path.resolve(entry)));
+  const watched = new Set(watchedPaths.filter((entry) => entry).map((entry) => path.resolve(entry)));
   const removed: string[] = [];
   let freedBytes = 0;
-
   const nowMs = Date.now();
 
   for (const file of await listCacheFiles(config.cacheRoot)) {
@@ -515,15 +514,17 @@ export async function evictUnusedTwitchVodCache(
     }
 
     if (file.transient) {
-      // Abandoned partials used to be left entirely to the prune, which only runs before a
-      // download. Once every scheduled VOD is over the size limit no download ever starts, so
-      // nothing collected them and tens of gigabytes stayed on disk indefinitely — measured at
-      // 13.8GB on the production channel. Age plus the absence of a live lock is the same test the
-      // prune applies; a partial a running job is still writing is never touched.
+      // Abandoned partials are collected by age and by the absence of a live lock -- the same test
+      // the prune applies. The prune only runs immediately before a download, and once every
+      // scheduled VOD is over the size limit no download ever starts, so nothing else would ever
+      // collect them: 13.8GB measured on the production channel.
       if (nowMs - file.mtimeMs < config.partialMaxAgeMs || (await isLockedByLiveJob(file.filePath, nowMs))) {
         continue;
       }
-    } else if (keep.has(path.resolve(file.filePath))) {
+    } else if (!watched.has(path.resolve(file.filePath))) {
+      // Named, not inferred. Deleting whatever was not currently in use removed VODs that had been
+      // fetched ahead of their slot and never played -- a 19.1GB download, gone seconds after the
+      // 52 minutes it took to fetch. Only a file whose asset has actually finished playing goes.
       continue;
     }
 

@@ -122,21 +122,33 @@ describe("releasing cached VODs once they are no longer needed", () => {
     return paths;
   }
 
-  it("keeps what is on air and what is queued next, drops the rest", async () => {
-    const [onAir, next, watched] = await seedCache(["a.mp4", "b.mp4", "c.mp4"]);
+  it("deletes the file it is told has been watched, and only that one", async () => {
+    const [onAir, ahead, watched] = await seedCache(["a.mp4", "b.mp4", "c.mp4"]);
 
-    const result = await evictUnusedTwitchVodCache(configFor(), [onAir, next]);
+    const result = await evictUnusedTwitchVodCache(configFor(), [watched]);
 
     expect(result.removed).toEqual([watched]);
     await expect(fs.stat(onAir)).resolves.toBeTruthy();
-    await expect(fs.stat(next)).resolves.toBeTruthy();
+    await expect(fs.stat(ahead)).resolves.toBeTruthy();
     await expect(fs.stat(watched)).rejects.toThrow();
   });
 
-  it("reports how much it freed", async () => {
-    await seedCache(["a.mp4", "b.mp4"]);
+  it("keeps a VOD fetched ahead of its slot", async () => {
+    // The failure this replaces: the delete set was derived by elimination — everything not
+    // currently in use — so a download that completed while the playout had moved on was removed
+    // seconds after finishing. Measured in production at 19.1GB, after 52 minutes of transfer.
+    const [prefetched] = await seedCache(["future.mp4"]);
 
     const result = await evictUnusedTwitchVodCache(configFor(), []);
+
+    expect(result.removed).toEqual([]);
+    await expect(fs.stat(prefetched)).resolves.toBeTruthy();
+  });
+
+  it("reports how much it freed", async () => {
+    const paths = await seedCache(["a.mp4", "b.mp4"]);
+
+    const result = await evictUnusedTwitchVodCache(configFor(), paths);
 
     expect(result.removed).toHaveLength(2);
     expect(result.freedBytes).toBe(128);
@@ -198,11 +210,11 @@ describe("releasing cached VODs once they are no longer needed", () => {
     expect(result.freedBytes).toBe(0);
   });
 
-  it("ignores blank entries in the keep list", async () => {
-    const [onAir] = await seedCache(["a.mp4"]);
+  it("ignores a blank entry rather than treating it as a path", async () => {
+    await seedCache(["a.mp4"]);
 
-    // A missing next asset yields "" — it must not be read as "keep nothing".
-    const result = await evictUnusedTwitchVodCache(configFor(), [onAir, ""]);
+    // No asset finished this cycle, which yields "" — it must delete nothing.
+    const result = await evictUnusedTwitchVodCache(configFor(), [""]);
 
     expect(result.removed).toEqual([]);
   });

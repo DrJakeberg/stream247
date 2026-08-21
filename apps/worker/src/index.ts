@@ -421,15 +421,15 @@ const vodCacheJobRunner = new VodCacheJobRunner({
 });
 
 /**
- * Deletes cached VODs other than the one on air and the one queued next.
+ * Deletes the cached VOD that just finished playing, and collects abandoned partials.
  *
  * Errors are swallowed: this runs inside the playout reconciliation cycle, and failing to free disk
  * is never a reason to interrupt the channel. The size cap still bounds the cache if this does
  * nothing at all.
  */
-async function releaseUnusedVodCache(
+async function releaseWatchedVodCache(
   currentAssetId: string,
-  keepAssetIds: readonly string[],
+  finishedAssetId: string,
   state: AppState
 ): Promise<void> {
   try {
@@ -438,12 +438,11 @@ async function releaseUnusedVodCache(
       return;
     }
 
-    const wanted = new Set(keepAssetIds.filter((id) => id));
-    const keepPaths = state.assets
-      .filter((asset) => wanted.has(asset.id) && isTwitchVodAsset(asset))
+    const watchedPaths = state.assets
+      .filter((asset) => asset.id === finishedAssetId && isTwitchVodAsset(asset))
       .map((asset) => asset.cachePath || buildTwitchVodCachePath(asset, config.cacheRoot));
 
-    const released = await evictUnusedTwitchVodCache(config, keepPaths);
+    const released = await evictUnusedTwitchVodCache(config, watchedPaths);
     if (released.removed.length > 0) {
       logRuntimeEvent("vod.cache.released", {
         files: released.removed.length,
@@ -4444,22 +4443,15 @@ async function runPlayoutCycle(): Promise<void> {
   // Free cached VODs the moment they stop being needed. Keyed on what is in use rather than on a
   // playback-ended event, so a skip, a crash or a boundary frees the disk just as an ordinary
   // finish does.
-  await releaseUnusedVodCache(
-    selection.asset?.id ?? "",
-    [
-      selection.asset?.id ?? "",
-      // Everything still ahead in the queue, not just the next item. The download runner works
-      // several assets ahead, and keeping only the next one would delete a VOD moments after its
-      // download finished — then request it again, which is the loop this cache already escaped
-      // once.
-      ...queueItems.map((item) => item.assetId),
-      prefetchedAsset?.id ?? "",
-      // A download that lands for an asset the playout has already passed would otherwise be
-      // deleted on arrival, throwing away the bandwidth that produced it.
-      ...vodCacheJobRunner.getPendingAssetIds()
-    ],
-    state
-  );
+  // Exactly one asset stops playing per transition, and that is the only thing worth deleting.
+  // Deriving the delete set by elimination — everything not currently in use — removed VODs that had
+  // been fetched ahead of their slot and never played, including a 19.1GB download seconds after
+  // the 52 minutes it took to fetch.
+  const finishedAssetId =
+    selection.asset && state.playout.currentAssetId && state.playout.currentAssetId !== selection.asset.id
+      ? state.playout.currentAssetId
+      : "";
+  await releaseWatchedVodCache(selection.asset?.id ?? "", finishedAssetId, state);
 
   if (
     currentScheduleItem?.poolId &&
