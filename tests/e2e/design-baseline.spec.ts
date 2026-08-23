@@ -87,13 +87,15 @@ const SURFACES: Surface[] = [
   // fixed playout runtime with fixed instants, and the worker that would rewrite it is stopped, so
   // the SSE feed has nothing to push. These are the pages an operator opens when something is
   // wrong, which makes them the last ones that should have gone unwatched.
-  { name: "live-status", path: "/live?tab=status", authenticated: true },
+  { name: "live-status", path: "/live?tab=status", authenticated: true, masked: true },
   { name: "live-control", path: "/live?tab=control", authenticated: true },
   { name: "live-moderation", path: "/live?tab=moderation", authenticated: true },
-  // The day is pinned. Its default derives from the server's today, and page.clock only freezes the
-  // browser — so an unpinned schedule renders a different week every day and the snapshot rots
-  // overnight rather than on a real change.
-  { name: "program-schedule", path: "/program?tab=schedule&day=1", authenticated: true },
+  // Pinning the day was not enough, and neither was masking the clock: both of these rotted again
+  // two days after their baseline was taken, with no code change in between. What varies is server
+  // state and server time, and page.clock reaches neither — so the volatile regions are masked and
+  // the snapshot covers layout rather than content. A net that goes red on a calendar rather than
+  // on a regression is one people learn to ignore.
+  { name: "program-schedule", path: "/program?tab=schedule&day=1", authenticated: true, masked: true },
   { name: "program-pools", path: "/program?tab=pools", authenticated: true },
   { name: "program-library", path: "/program?tab=library", authenticated: true },
   { name: "program-sources", path: "/program?tab=sources", authenticated: true },
