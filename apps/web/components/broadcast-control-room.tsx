@@ -170,7 +170,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
 
         <article className="panel">
           <span className="label">Cuepoints</span>
-          <h3>Timed insert state</h3>
+          <h3>Timed insert</h3>
           <div className="list">
             <div className="item">
               <strong>{snapshot.cuepoints.assetTitle || "No cuepoint insert asset"}</strong>
@@ -218,7 +218,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
 
         <article className="panel">
           <span className="label">Destination</span>
-          <h3>Output health</h3>
+          <h3>Sending to Twitch</h3>
           <div className="list">
             <div className="item">
               <strong>{snapshot.destination?.name || "No destination configured"}</strong>
@@ -266,7 +266,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
 
         <article className="panel">
           <span className="label">Scenes</span>
-          <h3>Current overlay payload</h3>
+          <h3>What the overlay shows</h3>
           <div className="list">
             <div className="item">
               <strong>{snapshot.overlay.replayLabel} · {snapshot.overlay.channelName}</strong>
@@ -339,7 +339,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
 
         <article className="panel">
           <span className="label">Worker</span>
-          <h3>Background health</h3>
+          <h3>Behind the scenes</h3>
           <div className="list">
             <div className="item">
               <strong>{snapshot.workerHealth.status}</strong>
