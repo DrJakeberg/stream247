@@ -4,6 +4,29 @@
 
 - No unreleased changes currently tracked.
 
+## 1.5.25 - 2026-08-23
+
+### Fixed
+
+- restart the playout when its source has run dry. A VOD finished and ffmpeg did not exit: the
+  `fps=60` filter kept manufacturing frames by duplicating the last one — over ten million of them
+  across two and a half days — so video packets kept flowing and every liveness check stayed green.
+  The channel was off the air that entire time, because audio cannot be duplicated: the program feed
+  carried a silent audio stream, the uplink could not determine its parameters and reported
+  "Nothing was written into output file, because at least one of its streams received no packets",
+  and nothing ever reached Twitch. Audio is now the signal — a feed carrying video without audio
+  past `PLAYOUT_FEED_SILENCE_MS` is treated as an exhausted source. A feed that never carried audio
+  is never judged, so a silent clip does not restart forever, and a feed with no video either is
+  left to the existing process supervision (v1.5.25)
+
+### Changed
+
+- three visual snapshots now mask their runtime regions rather than asserting content. Pinning the
+  schedule day and masking the scene clock both looked right and both failed again two days later
+  with no code change: what varies is server state and server time, which `page.clock` cannot
+  reach. Narrowing what they assert is the trade — a net that goes red on a calendar rather than on
+  a regression is one people stop reading (v1.5.25)
+
 ## 1.5.24 - 2026-08-21
 
 ### Fixed
