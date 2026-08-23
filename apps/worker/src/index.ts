@@ -131,6 +131,12 @@ import {
 } from "./scene-renderer.js";
 import { execFileText, runWithStallGuard } from "./process-utils.js";
 import {
+  createFeedAudioState,
+  getFeedAudioOptions,
+  isFeedAudioStalled,
+  observeFeedAudio
+} from "./feed-audio-health.js";
+import {
   ensureTwitchVodCache,
   buildTwitchVodCachePath,
   canReleaseVodCache,
@@ -474,6 +480,48 @@ async function ensureProgramFeedDirectory(): Promise<void> {
   await fs.mkdir(config.directory, { recursive: true });
 }
 
+/**
+ * Counts audio and video packets in the newest program-feed segment.
+ *
+ * Video alone proves nothing: when a source runs out, the fps filter keeps manufacturing frames by
+ * duplicating the last one, so packets keep flowing while nothing real is being played. Audio
+ * cannot be duplicated, which makes it the honest signal for "is there still a source behind this".
+ *
+ * Returns null when the feed cannot be read at all, so an unreadable directory reads as "no
+ * opinion" rather than as a stall.
+ */
+async function probeProgramFeedPackets(
+  playlistPath: string
+): Promise<{ audioPackets: number; videoPackets: number } | null> {
+  try {
+    const directory = path.dirname(playlistPath);
+    const playlist = await fs.readFile(playlistPath, "utf8");
+    const segments = playlist.split("\n").filter((line) => line.trim().endsWith(".ts"));
+    const newest = segments[segments.length - 1];
+    if (!newest) {
+      return null;
+    }
+
+    const segmentPath = path.join(directory, newest.trim());
+    const [audio, video] = await Promise.all([
+      countPackets(segmentPath, "a"),
+      countPackets(segmentPath, "v")
+    ]);
+    return { audioPackets: audio, videoPackets: video };
+  } catch {
+    return null;
+  }
+}
+
+async function countPackets(segmentPath: string, stream: "a" | "v"): Promise<number> {
+  const output = await execFileText(
+    process.env.FFPROBE_BIN || "ffprobe",
+    ["-v", "error", "-select_streams", stream, "-show_entries", "packet=size", "-of", "csv=p=0", segmentPath],
+    { timeoutMs: 15_000, killProcessGroup: true, maxBufferBytes: 1024 * 1024 }
+  );
+  return output.split("\n").filter((line) => line.trim()).length;
+}
+
 async function readProgramFeedRuntimeStatus(): Promise<{
   status: AppState["playout"]["programFeedStatus"];
   updatedAt: string;
@@ -507,6 +555,58 @@ async function readProgramFeedRuntimeStatus(): Promise<{
   }
 }
 
+let feedAudioState = createFeedAudioState(Date.now());
+
+/**
+ * Restarts the playout when its feed has carried video without audio for too long.
+ *
+ * A source that runs out does not stop the process: ffmpeg stays alive and the fps filter keeps
+ * manufacturing frames from the last one. In production that ran for two and a half days and ten
+ * million duplicated frames, with every liveness check green — while the uplink, unable to
+ * determine the parameters of an audio stream that never received a packet, wrote nothing at all
+ * and the channel was off the air the entire time.
+ */
+async function enforceProgramFeedAudio(playlistPath: string): Promise<void> {
+  try {
+    if (!playoutProcess || !playlistPath) {
+      return;
+    }
+
+    const sample = await probeProgramFeedPackets(playlistPath);
+    if (!sample) {
+      return;
+    }
+
+    const options = getFeedAudioOptions(process.env);
+    const observed = { ...sample, atMs: Date.now() };
+    feedAudioState = observeFeedAudio(feedAudioState, observed);
+
+    if (!isFeedAudioStalled(feedAudioState, observed, playoutProcessStartedAtMs, options)) {
+      return;
+    }
+
+    const silentSeconds = Math.round((observed.atMs - feedAudioState.lastAudioAtMs) / 1000);
+    logRuntimeEvent("playout.feed_audio.restart", {
+      silentSeconds,
+      videoPackets: observed.videoPackets
+    });
+    await upsertIncident({
+      scope: "playout",
+      severity: "warning",
+      title: "Playout restarted after its source ran dry",
+      message: `The program feed has carried video without any audio for ${silentSeconds}s. Video alone does not prove a source is still playing — the fps filter duplicates the last frame indefinitely — so this is treated as an exhausted or stalled source and the playout is restarted.`,
+      fingerprint: "playout.feed-audio"
+    });
+
+    feedAudioState = createFeedAudioState(Date.now());
+    await stopPlayoutProcess("feed-audio-stalled");
+  } catch (error) {
+    logRuntimeEvent("playout.feed_audio.check_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
 async function updateProgramFeedRuntimeStatus(): Promise<Awaited<ReturnType<typeof readProgramFeedRuntimeStatus>>> {
   const feed = await readProgramFeedRuntimeStatus();
   await updatePlayoutRuntime((playout) => ({
@@ -517,6 +617,7 @@ async function updateProgramFeedRuntimeStatus(): Promise<Awaited<ReturnType<type
     programFeedTargetSeconds: feed.targetSeconds,
     programFeedBufferedSeconds: feed.bufferedSeconds
   }));
+  await enforceProgramFeedAudio(feed.playlistPath);
   return feed;
 }
 
