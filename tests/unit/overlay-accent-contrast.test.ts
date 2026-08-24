@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accentInkColor } from "@stream247/core";
+import { accentInkColor, accentTextColor } from "@stream247/core";
 
 /**
  * The chip an operator can make unreadable.
@@ -63,5 +63,27 @@ describe("the on-air label chip stays readable", () => {
   it("handles the short hex form the picker also accepts", () => {
     expect(accentInkColor("#000")).toBe("#ffffff");
     expect(accentInkColor("#fff")).toBe("#05070c");
+  });
+});
+
+describe("headings lettered in the accent stay readable on the panel", () => {
+  // The panel fill as if opaque: it is 72-94% over moving video, so this is the darkest it gets,
+  // which is where a dark accent fails hardest.
+  const PANEL = "#080a0f";
+
+  it.each(ACCENTS)("%s is either used or replaced, never left illegible", (accent) => {
+    expect(contrastRatio(accentTextColor(accent), PANEL)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("keeps the channel's colour whenever it can be read", () => {
+    // Branding is not something to take away for safety when the choice was fine.
+    expect(accentTextColor("#6ee7ff")).toBe("#6ee7ff");
+    expect(accentTextColor("#facc15")).toBe("#facc15");
+  });
+
+  it("replaces it only when it cannot", () => {
+    expect(accentTextColor("#0e6d5a")).toBe("#ffffff");
+    expect(accentTextColor("#1f2937")).toBe("#ffffff");
+    expect(accentTextColor("#000000")).toBe("#ffffff");
   });
 });

@@ -175,6 +175,64 @@ function sanitizeAccent(value: string): string {
  * where the two contrast ratios cross, so the choice is always the more legible of the two rather
  * than a taste call.
  */
+/** The panel fill, treated as opaque. See accentTextColor. */
+const OVERLAY_PANEL_FILL = "#080a0f";
+
+function relativeLuminance(hex: string): number | null {
+  const raw = hex.trim().replace("#", "");
+  const full =
+    raw.length === 3 || raw.length === 4
+      ? raw
+          .slice(0, 3)
+          .split("")
+          .map((char) => char + char)
+          .join("")
+      : raw.slice(0, 6);
+
+  if (!/^[0-9a-f]{6}$/i.test(full)) {
+    return null;
+  }
+
+  const channel = (start: number) => {
+    const value = parseInt(full.slice(start, start + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+
+  return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+}
+
+function contrastAgainstPanel(hex: string): number | null {
+  const colour = relativeLuminance(hex);
+  const panel = relativeLuminance(OVERLAY_PANEL_FILL) ?? 0;
+  if (colour === null) {
+    return null;
+  }
+  return (Math.max(colour, panel) + 0.05) / (Math.min(colour, panel) + 0.05);
+}
+
+/**
+ * The accent, when it can be read as text on the panel; white when it cannot.
+ *
+ * Two headings are lettered in the operator's accent colour directly on the dark panel. A dark
+ * accent puts dark text on a dark surface — the same mistake as the label chip, mirrored, and just
+ * as invisible from inside the product.
+ *
+ * Keeping the accent whenever it works matters: it is the channel's colour, and overriding it for
+ * safety would take branding away from people whose choice was fine. So it is measured, and only
+ * replaced when it falls below 4.5:1.
+ *
+ * The panel is 72–94% opaque over moving video, so the true backdrop is not knowable here. This
+ * measures against the fill as if it were opaque, which is the darkest it gets and therefore the
+ * case where a dark accent fails hardest.
+ */
+export function accentTextColor(accent: string): string {
+  const ratio = contrastAgainstPanel(accent);
+  if (ratio === null) {
+    return "#ffffff";
+  }
+  return ratio >= 4.5 ? accent : "#ffffff";
+}
+
 export function accentInkColor(accent: string): "#05070c" | "#ffffff" {
   const hex = accent.trim().replace("#", "");
   const full =
@@ -290,7 +348,7 @@ function buildVotePanel(
 
   const header = row({ alignItems: "center", justifyContent: "space-between", marginBottom: px(14) }, [
     label(clampOverlayText(engagement.headline, 40).toUpperCase(), {
-      color: accent,
+      color: accentTextColor(accent),
       fontSize: px(20),
       fontWeight: 700,
       letterSpacing: px(2)
@@ -406,7 +464,7 @@ function buildNextCard(
       },
       children: [
         label(heading.toUpperCase(), {
-          color: accent,
+          color: accentTextColor(accent),
           fontSize: px(16),
           fontWeight: 700,
           letterSpacing: px(2),
