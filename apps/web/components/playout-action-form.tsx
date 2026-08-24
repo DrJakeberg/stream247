@@ -178,6 +178,15 @@ export function PlayoutActionForm(props: {
         </label>
       </div>
 
+      {/*
+        Bringing an outside feed on air is a distinct job from steering the schedule, and a rare one
+        on a channel that runs itself. Its three fields and its two buttons were spread across the
+        page — the inputs in one block, "Take live" and "Release live" among the asset actions. They
+        are one thing now, and closed until someone wants it.
+      */}
+      <details className="disclosure">
+        <summary>Bring in an outside feed</summary>
+        <div style={{ marginTop: 12 }}>
       <div className="form-grid">
         <label>
           <span className="label">Live Bridge input</span>
@@ -205,6 +214,33 @@ export function PlayoutActionForm(props: {
           value={liveBridgeUrl}
         />
       </label>
+        <button
+          className="button button-secondary"
+          disabled={isPending || !liveBridgeUrl.trim()}
+          onClick={() =>
+            startTransition(() =>
+              void runAction({
+                type: "bridge_start",
+                inputType: liveBridgeInputType,
+                inputUrl: liveBridgeUrl,
+                label: liveBridgeLabel
+              })
+            )
+          }
+          type="button"
+        >
+          Take live
+        </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending || !props.liveBridgeStatus || props.liveBridgeStatus === "idle"}
+          onClick={() => startTransition(() => void runAction({ type: "bridge_release" }))}
+          type="button"
+        >
+          Release live
+        </button>
+        </div>
+      </details>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button
@@ -267,31 +303,6 @@ export function PlayoutActionForm(props: {
           type="button"
         >
           Play insert
-        </button>
-        <button
-          className="button button-secondary"
-          disabled={isPending || !liveBridgeUrl.trim()}
-          onClick={() =>
-            startTransition(() =>
-              void runAction({
-                type: "bridge_start",
-                inputType: liveBridgeInputType,
-                inputUrl: liveBridgeUrl,
-                label: liveBridgeLabel
-              })
-            )
-          }
-          type="button"
-        >
-          Take live
-        </button>
-        <button
-          className="button button-secondary"
-          disabled={isPending || !props.liveBridgeStatus || props.liveBridgeStatus === "idle"}
-          onClick={() => startTransition(() => void runAction({ type: "bridge_release" }))}
-          type="button"
-        >
-          Release live
         </button>
         <button
           className="button button-secondary"

@@ -39,7 +39,9 @@ const SURFACES: Surface[] = [
   { name: "channel", path: "/channel", maxControls: 1, primaryActions: 1, authenticated: false },
   // The page an operator opens when something is wrong. It showed 33 at once, six of them repair
   // actions of equal weight, with the order to try them explained in a paragraph above the form.
-  { name: "live-control", path: "/live?tab=control", maxControls: 27, primaryActions: 1 },
+  // Now 22: the repairs fold away, and so does bringing in an outside feed — a separate job whose
+  // three fields and two buttons had been scattered across the page rather than kept together.
+  { name: "live-control", path: "/live?tab=control", maxControls: 22, primaryActions: 1 },
   // Was 62, because the full editor stood open under every destination and the count therefore grew
   // with the number of outputs configured. Folding those away leaves what the page is for.
   // 25, down from 28: three of those were "Open setup" links on go-live steps whose remedy is a

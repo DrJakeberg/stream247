@@ -78,17 +78,11 @@ PIN ASSET
 Abendprogramm — Folge 13
 Abendprogramm — Folge 12
 OVERRIDE MINUTES
-LIVE BRIDGE INPUT
-RTMP / RTMPS
-HLS
-LIVE BRIDGE LABEL
-LIVE BRIDGE URL
+Bring in an outside feed
 Pin on air
 Play now
 Move next
 Play insert
-Take live
-Release live
 Remove next
 Replay previous
 Next queued asset: Abendprogramm — Folge 13
