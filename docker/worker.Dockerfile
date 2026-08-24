@@ -10,7 +10,14 @@ RUN pnpm install --frozen-lockfile=false
 FROM public.ecr.aws/docker/library/node:22-alpine AS builder
 WORKDIR /app
 RUN corepack enable
-COPY --from=deps /app/node_modules ./node_modules
+# The whole installed tree, for the same reason as the web image: pnpm puts a node_modules in every
+# workspace package, filled with symlinks into the store, and taking only the root one leaves the
+# build resolving pg and @stream247/core through whatever the context happened to carry in.
+#
+# This was load-bearing and unnoticed. Excluding **/node_modules from the build context fixed the
+# web image and broke this one in the same commit, which nothing caught: local builds still had the
+# packages lying around, and the change never reached CI.
+COPY --from=deps /app ./
 COPY . .
 RUN pnpm --filter core build && pnpm --filter db build && pnpm --filter worker build
 
