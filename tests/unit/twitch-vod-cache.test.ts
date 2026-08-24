@@ -83,8 +83,15 @@ describe("Twitch VOD cache", () => {
 
     const result = await ensureTwitchVodCache(asset, config, async (file, args) => {
       if (file === "yt-dlp") {
-        const outputPath = args[args.indexOf("--output") + 1];
-        await fs.writeFile(outputPath!, "downloaded-media");
+        const outputIndex = args.indexOf("--output");
+        // Guarded: yt-dlp is also called to probe the size, and that call has no --output at all.
+        // Unguarded, indexOf returns -1 and this writes to args[0] — which is "--no-playlist", so
+        // every run left a file by that name in the repository root. It looked like the product
+        // building a broken command line; it was this.
+        const outputPath = outputIndex === -1 ? "" : args[outputIndex + 1];
+        if (outputPath) {
+          await fs.writeFile(outputPath, "downloaded-media");
+        }
       }
       return "1.0";
     });
@@ -126,8 +133,15 @@ describe("Twitch VOD cache", () => {
 
     const result = await ensureTwitchVodCache(asset, config, async (file, args) => {
       if (file === "yt-dlp") {
-        const outputPath = args[args.indexOf("--output") + 1];
-        await fs.writeFile(outputPath!, "new-media");
+        const outputIndex = args.indexOf("--output");
+        // Guarded: yt-dlp is also called to probe the size, and that call has no --output at all.
+        // Unguarded, indexOf returns -1 and this writes to args[0] — which is "--no-playlist", so
+        // every run left a file by that name in the repository root. It looked like the product
+        // building a broken command line; it was this.
+        const outputPath = outputIndex === -1 ? "" : args[outputIndex + 1];
+        if (outputPath) {
+          await fs.writeFile(outputPath, "new-media");
+        }
       }
       return "1.0";
     });
@@ -151,8 +165,15 @@ describe("Twitch VOD cache", () => {
       expect(await fs.readdir(assetDir)).not.toContain("123456789.mp4.part-stale.mp4");
       expect(await fs.readdir(assetDir)).not.toContain("123456789.mp4.part-stale.mp4.ytdl");
       if (file === "yt-dlp") {
-        const outputPath = args[args.indexOf("--output") + 1];
-        await fs.writeFile(outputPath!, "fresh-download");
+        const outputIndex = args.indexOf("--output");
+        // Guarded: yt-dlp is also called to probe the size, and that call has no --output at all.
+        // Unguarded, indexOf returns -1 and this writes to args[0] — which is "--no-playlist", so
+        // every run left a file by that name in the repository root. It looked like the product
+        // building a broken command line; it was this.
+        const outputPath = outputIndex === -1 ? "" : args[outputIndex + 1];
+        if (outputPath) {
+          await fs.writeFile(outputPath, "fresh-download");
+        }
       }
       return "1.0";
     });
