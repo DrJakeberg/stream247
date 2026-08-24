@@ -1254,6 +1254,14 @@ function startSceneRendererLoop(
   // cheaply compressing lower third. Staying a fixed lead ahead of real time feeds the filter just
   // as reliably and bounds that delay to the lead itself.
   const startedAtMs = Date.now();
+
+  // The renderer's normal life is logged, not only its failures.
+  //
+  // Its sole observable used to be scene.pipe.error. When a fallback video exited 255 forty-three
+  // seconds into playback and took the uplink's encoder down with it, the logs could not say
+  // whether the overlay had been feeding that process at all — and a starved overlay pipe is the
+  // documented way to stall this encode. Two plausible causes, no way to separate them.
+  logRuntimeEvent("scene.pipe.open", {});
   const idleMs = Math.max(50, Math.floor(ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS / 4));
   let framesWritten = 0;
 
@@ -1277,6 +1285,14 @@ function startSceneRendererLoop(
         break;
       }
     }
+
+    // How many frames actually reached ffmpeg, and for how long. A transition where the overlay
+    // never fed the new process looks like a handful of frames and a lifetime of seconds; one that
+    // fed it properly looks like roughly one frame per second of playback.
+    logRuntimeEvent("scene.pipe.closed", {
+      framesWritten,
+      livedForMs: Date.now() - startedAtMs
+    });
 
     // Stopping the writer has to stop the renderer with it. The writer also leaves this loop on a
     // dead pipe, and the module-level handle is cleared below -- without this abort the renderer
