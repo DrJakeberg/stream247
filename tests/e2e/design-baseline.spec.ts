@@ -33,7 +33,11 @@ const RUNTIME_STATE_SELECTORS = [
   // with the frozen one, and the screenshot lands on whichever came first — which is why this
   // surface failed on one viewport and passed on the other in the same run. page.clock cannot reach
   // the server, so the region is masked instead.
-  ".overlay-clock"
+  ".overlay-clock",
+  // Build identity — app version and image tags. They differ between a developer machine, CI and
+  // production by construction, and the version moves on every release, so a snapshot asserting
+  // them goes red on release bumps rather than on design changes.
+  "[data-build-info]"
 ];
 
 async function freezeClock(page: Page) {
@@ -102,7 +106,7 @@ const SURFACES: Surface[] = [
   { name: "studio-scene", path: "/studio?tab=scene", authenticated: true, masked: true },
   { name: "studio-engagement", path: "/studio?tab=engagement", authenticated: true },
   { name: "studio-output", path: "/studio?tab=output", authenticated: true },
-  { name: "admin-settings", path: "/admin?tab=settings", authenticated: true },
+  { name: "admin-settings", path: "/admin?tab=settings", authenticated: true, masked: true },
   { name: "admin-team", path: "/admin?tab=team", authenticated: true }
 ];
 

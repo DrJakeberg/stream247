@@ -33,14 +33,18 @@ export default async function SettingsPage() {
             scripts before changing a live system.
           </p>
           <div className="list">
-            <div className="item">
+            {/* Build identity, not design: the version comes from package.json and the image tags
+                from the environment, so both differ between a developer's machine, CI and
+                production, and the version moves on every release. Marked so the visual baseline
+                can exclude it — otherwise this snapshot rots on every version bump. */}
+            <div className="item" data-build-info>
               <strong>Release channel</strong>
               <div className="subtle">
                 App {updateCenter.appVersion} · channel {updateCenter.channel} · images{" "}
                 {updateCenter.alignedImages ? "aligned" : "not aligned"}
               </div>
             </div>
-            <div className="item">
+            <div className="item" data-build-info>
               <strong>Image tags</strong>
               <div className="subtle">web: {updateCenter.imageTags.web || "unset"}</div>
               <div className="subtle">worker: {updateCenter.imageTags.worker || "unset"}</div>
