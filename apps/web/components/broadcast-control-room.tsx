@@ -9,7 +9,12 @@ import { PlayoutActionForm } from "@/components/playout-action-form";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
 import { getChannelStatusLabel } from "@/lib/channel-status";
-import { DESTINATION_ROLE_LABELS, DESTINATION_STATUS_LABELS } from "@/lib/destination-wording";
+import {
+  DESTINATION_RECOVERY_LABELS,
+  DESTINATION_ROLE_LABELS,
+  DESTINATION_STATUS_LABELS,
+  describeStreamKey
+} from "@/lib/destination-wording";
 import { describePlayoutReason } from "@/lib/playout-reason";
 
 type AssetOption = {
@@ -249,12 +254,12 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                   {destination.active ? " · in use" : ""}
                 </div>
                 <div className="subtle">
-                  {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"} · key source{" "}
-                  {destination.streamKeySource}
+                  {destination.rtmpUrl || "No RTMP URL configured"} ·{" "}
+                  {describeStreamKey(destination.streamKeyPresent, destination.streamKeySource)}
                 </div>
                 <div className="subtle">{destination.notes}</div>
                 <div className="subtle">
-                  Recovery {destination.recoveryState}
+                  Recovery: {DESTINATION_RECOVERY_LABELS[destination.recoveryState]}
                   {destination.failureHoldSecondsRemaining > 0 ? ` · retry in ${destination.failureHoldSecondsRemaining}s` : ""}
                 </div>
                 <div className="subtle">{destination.recoverySummary}</div>

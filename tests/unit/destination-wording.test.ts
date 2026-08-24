@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DESTINATION_RECOVERY_LABELS,
   DESTINATION_ROLE_LABELS,
   DESTINATION_STATUS_LABELS,
   STREAM_KEY_SOURCE_LABELS,
@@ -23,7 +24,8 @@ describe("wording for destinations", () => {
     const labels = [
       ...Object.values(DESTINATION_ROLE_LABELS),
       ...Object.values(DESTINATION_STATUS_LABELS),
-      ...Object.values(STREAM_KEY_SOURCE_LABELS)
+      ...Object.values(STREAM_KEY_SOURCE_LABELS),
+      ...Object.values(DESTINATION_RECOVERY_LABELS)
     ];
 
     for (const label of labels) {
@@ -37,5 +39,16 @@ describe("wording for destinations", () => {
     expect(describeStreamKey(true, "env")).toBe("Stream key set in the server configuration");
     expect(describeStreamKey(true, "managed")).toBe("Stream key stored here");
     expect(describeStreamKey(true, undefined)).toBe("Stream key not set");
+  });
+
+  it("covers every recovery state, including the one that is not a fault", () => {
+    const states = ["active", "staged", "cooldown", "ready", "missing-config"] as const;
+
+    for (const state of states) {
+      expect(DESTINATION_RECOVERY_LABELS[state]).toBeTruthy();
+    }
+    expect(Object.keys(DESTINATION_RECOVERY_LABELS).sort()).toEqual([...states].sort());
+    // The one that mattered: an unconfigured destination is an empty form, not a broken one.
+    expect(DESTINATION_RECOVERY_LABELS["missing-config"]).toBe("Not set up yet");
   });
 });

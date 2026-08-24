@@ -36,3 +36,21 @@ export function describeStreamKey(present: boolean, source: "env" | "managed" | 
   }
   return `Stream key ${STREAM_KEY_SOURCE_LABELS[source ?? "missing"]}`;
 }
+
+/**
+ * What a destination is doing about coming back, when it has been failing.
+ *
+ * The control room printed this as stored — "Recovery missing-config" — on the page an operator
+ * opens when something is wrong, where "missing-config" reads like a fault and is not one: nobody
+ * has filled the destination in yet.
+ *
+ * "Staged" and "cooldown" say what state the thing is in; what an operator wants to know is what
+ * happens next, so these say that instead.
+ */
+export const DESTINATION_RECOVERY_LABELS = {
+  active: "In use",
+  staged: "Waiting for the next transition",
+  cooldown: "Cooling down before retrying",
+  ready: "Ready",
+  "missing-config": "Not set up yet"
+} as const satisfies Record<"active" | "staged" | "cooldown" | "ready" | "missing-config", string>;

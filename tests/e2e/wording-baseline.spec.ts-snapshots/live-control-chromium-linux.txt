@@ -112,20 +112,20 @@ Last transition <timestamp>
 The encoder has not reported any errors.
 Lokales Relay
 Primary · priority 0 · Not set up yet
-No RTMP URL configured · stream key present · key source managed
-Recovery missing-config
+No RTMP URL configured · Stream key stored here
+Recovery: Not set up yet
 Configure a valid RTMP URL and stream key before this output can join the live destination group.
 Primary Twitch Output
 Primary · priority 0 · Ready · in use
-/tmp/stream-output · stream key present · key source env
+/tmp/stream-output · Stream key set in the server configuration
 Primary RTMP destination for the broadcast runtime.
-Recovery active
+Recovery: In use
 Output is currently carrying the live broadcast.
 Backup RTMP Output
 Backup · priority 10 · Not set up yet
-No RTMP URL configured · stream key missing · key source missing
+No RTMP URL configured · Stream key missing
 Backup RTMP destination used when the primary output is unavailable or disabled.
-Recovery missing-config
+Recovery: Not set up yet
 Configure a valid RTMP URL and stream key before this output can join the live destination group.
 SCENES
 What the overlay shows
