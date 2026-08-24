@@ -217,7 +217,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
             </label>
             <label>
               <span className="label">Mode automation</span>
-              <div className="subtle">Solo handles one chatter, Small-group handles 2-9, Crowd takes over at 10+, with worker-side hysteresis to prevent flapping.</div>
+              <div className="subtle">Solo handles one chatter, Small-group handles 2-9, Crowd takes over at 10+. Switching lags slightly behind the numbers on purpose, so a mode does not flicker while people join and leave.</div>
             </label>
           </div>
           <div className="subtle">Disable any mode you do not want auto-selected. If chat goes quiet or every mode is disabled, the game widget stays off-air.</div>

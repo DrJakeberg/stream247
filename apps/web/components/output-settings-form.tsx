@@ -120,9 +120,9 @@ export function OutputSettingsForm({ output }: { output: OutputSettingsRecord })
       </div>
 
       <p className="subtle">
-        Saved output profiles are applied by the playout worker when it starts the next FFmpeg process. Environment
-        variables named `STREAM_OUTPUT_WIDTH`, `STREAM_OUTPUT_HEIGHT`, and `STREAM_OUTPUT_FPS` still override this UI
-        setting for deployment-level control.
+        A saved profile takes effect the next time playout restarts its encoder, not on the current item. If
+        STREAM_OUTPUT_WIDTH, STREAM_OUTPUT_HEIGHT or STREAM_OUTPUT_FPS are set on the server, those win over what is
+        chosen here.
       </p>
       {error ? <p className="danger">{error}</p> : null}
       <button className="button" disabled={isPending} title="Save the current stream output profile." type="submit">

@@ -73,7 +73,7 @@ Solo mode
 Small-group mode
 Crowd mode
 MODE AUTOMATION
-Solo handles one chatter, Small-group handles 2-9, Crowd takes over at 10+, with worker-side hysteresis to prevent flapping.
+Solo handles one chatter, Small-group handles 2-9, Crowd takes over at 10+. Switching lags slightly behind the numbers on purpose, so a mode does not flicker while people join and leave.
 Disable any mode you do not want auto-selected. If chat goes quiet or every mode is disabled, the game widget stays off-air.
 Save engagement settings
 LIVE STATUS

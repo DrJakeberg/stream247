@@ -56,7 +56,7 @@ export function LibraryUploadForm() {
         />
       </label>
       <p className="subtle">
-        Uploaded files land in the shared local media library and become available to the local-library source on the next worker cycle.
+        Uploaded files land in the shared local media library and become playable within a few minutes.
       </p>
       {error ? <p className="danger">{error}</p> : null}
       <button className="button" disabled={isPending} type="submit">

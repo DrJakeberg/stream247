@@ -40,7 +40,7 @@ Upload local media
 Upload new files into the shared local media library. The Local media library source picks them up within a few minutes.
 MEDIA FILES
 OPTIONAL SUBFOLDER
-Uploaded files land in the shared local media library and become available to the local-library source on the next worker cycle.
+Uploaded files land in the shared local media library and become playable within a few minutes.
 Upload into local library
 CATALOG
 Asset library
