@@ -3,6 +3,7 @@
 import type { BroadcastSnapshot } from "@/lib/live-broadcast";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
 import { getChannelStatusLabel } from "@/lib/channel-status";
+import { describePlayoutReason } from "@/lib/playout-reason";
 
 export function AdminStatusRail(props: { initialSnapshot: BroadcastSnapshot }) {
   const { snapshot, connected } = useLiveSnapshot({
@@ -23,7 +24,7 @@ export function AdminStatusRail(props: { initialSnapshot: BroadcastSnapshot }) {
       <div className="admin-status-chip">
         <span className="label">Current</span>
         <strong>{currentQueueItem?.title || snapshot.currentAsset?.title || snapshot.playout.currentTitle || "Standby"}</strong>
-        <span className="subtle">{snapshot.currentScheduleItem?.title || snapshot.playout.selectionReasonCode || "No active schedule window"}</span>
+        <span className="subtle">{snapshot.currentScheduleItem?.title || describePlayoutReason(snapshot.playout.selectionReasonCode) || "No active schedule window"}</span>
       </div>
       <div className="admin-status-chip">
         <span className="label">Next</span>

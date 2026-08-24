@@ -13,6 +13,8 @@ import {
   parseAssetHashtagsJson
 } from "@/lib/asset-metadata";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
+import { describePlayoutReason } from "@/lib/playout-reason";
+import { getChannelStatusLabel } from "@/lib/channel-status";
 import {
   getAssetPlaybackDiagnostics,
   getCurrentScheduleItem,
@@ -256,7 +258,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
             <div className="item">
               <strong>Playout status</strong>
               <div className="subtle">
-                {state.playout.status} · {state.playout.selectionReasonCode || "no selection reason"}
+                {getChannelStatusLabel(state.playout.status)} · {describePlayoutReason(state.playout.selectionReasonCode) || "no selection reason"}
               </div>
             </div>
             <div className="item">

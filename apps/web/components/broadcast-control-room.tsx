@@ -10,6 +10,7 @@ import { StatusChip } from "@/components/ui/StatusChip";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
 import { getChannelStatusLabel } from "@/lib/channel-status";
 import { DESTINATION_ROLE_LABELS, DESTINATION_STATUS_LABELS } from "@/lib/destination-wording";
+import { describePlayoutReason } from "@/lib/playout-reason";
 
 type AssetOption = {
   id: string;
@@ -96,7 +97,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                   : currentQueueItem?.subtitle || snapshot.playout.message}
               </div>
               <div className="subtle">
-                Transition {snapshot.playout.transitionState} · queue reason {snapshot.playout.selectionReasonCode || "none"} · version{" "}
+                Transition {snapshot.playout.transitionState} · queue reason {describePlayoutReason(snapshot.playout.selectionReasonCode) || "none"} · version{" "}
                 {snapshot.playout.queueVersion}
               </div>
             </div>

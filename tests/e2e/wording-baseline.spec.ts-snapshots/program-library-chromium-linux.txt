@@ -15,7 +15,7 @@ On air
 idle
 CURRENT
 Abendprogramm — Folge 12
-scheduled_match
+Matched the schedule
 NEXT
 Abendprogramm
 Queue will resolve on next cycle

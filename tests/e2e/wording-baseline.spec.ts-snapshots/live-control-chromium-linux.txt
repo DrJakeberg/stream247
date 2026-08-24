@@ -15,7 +15,7 @@ On air
 idle
 CURRENT
 Abendprogramm — Folge 12
-scheduled_match
+Matched the schedule
 NEXT
 Abendprogramm
 Queue will resolve on next cycle
@@ -62,7 +62,7 @@ ON AIR
 Current and next
 Abendprogramm — Folge 12
 Scheduled block is on air.
-Transition idle · queue reason scheduled_match · version 0
+Transition idle · queue reason Matched the schedule · version 0
 Abendprogramm
 Prefetch idle · last probe never
 Transition target none · ready not ready
