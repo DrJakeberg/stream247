@@ -104,7 +104,8 @@ export function SourceActionsForm(props: { source: SourceRecord }) {
       </label>
       <div className="subtle">{connector.notes}</div>
       <div className="toggle-row">
-        <button className="button" disabled={isPending} type="submit">
+        {/* One of these per source, so it cannot be the page's main action. Adding a source is. */}
+        <button className="button button-secondary" disabled={isPending} type="submit">
           {isPending ? "Saving..." : "Save"}
         </button>
         <button

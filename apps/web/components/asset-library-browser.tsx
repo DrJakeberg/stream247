@@ -456,7 +456,7 @@ export function AssetLibraryBrowser(props: {
           </label>
           <div className="toggle-row">
             <button
-              className="button"
+              className="button button-secondary"
               disabled={isPending || !collectionNameDraft.trim()}
               onClick={() => {
                 setError("");
@@ -533,7 +533,7 @@ export function AssetLibraryBrowser(props: {
 
       <div className="toggle-row">
         <button
-          className="button"
+          className="button button-secondary"
           disabled={isPending || selectedIds.length === 0}
           onClick={() => {
             setError("");

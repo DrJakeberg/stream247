@@ -21,30 +21,42 @@ type Surface = {
   /** Ceiling for visible controls, taken from the page as it stands today. */
   maxControls: number;
   /**
-   * Whether this page is expected to offer a primary action.
+   * How many primary actions this page is expected to carry.
    *
-   * False for surfaces that only show you something. Inventing a primary button for a page that
-   * has nothing to be primary about would make the rule true and the page worse.
+   * One almost everywhere. Zero for surfaces that only show you something — inventing a primary
+   * button for a page with nothing to be primary about would satisfy the rule and make the page
+   * worse. More than one only where a page holds genuinely separate panels, each owning its own
+   * save; that is two tasks, not two competing answers to one. Every value above one needs the
+   * reason written next to it.
    */
-  hasPrimary: boolean;
+  primaryActions: number;
   /** Public surfaces are measured without signing in, because that is how they are seen. */
   authenticated?: boolean;
 };
 
 const SURFACES: Surface[] = [
   // The page the audience actually lands on, and the only one here that is not an operator tool.
-  { name: "channel", path: "/channel", maxControls: 1, hasPrimary: true, authenticated: false },
+  { name: "channel", path: "/channel", maxControls: 1, primaryActions: 1, authenticated: false },
   // The page an operator opens when something is wrong. It showed 33 at once, six of them repair
   // actions of equal weight, with the order to try them explained in a paragraph above the form.
-  { name: "live-control", path: "/live?tab=control", maxControls: 27, hasPrimary: true },
+  { name: "live-control", path: "/live?tab=control", maxControls: 27, primaryActions: 1 },
   // Was 62, because the full editor stood open under every destination and the count therefore grew
   // with the number of outputs configured. Folding those away leaves what the page is for.
-  { name: "live-status", path: "/live?tab=status", maxControls: 28, hasPrimary: true },
-  { name: "program-schedule", path: "/program?tab=schedule&day=1", maxControls: 14, hasPrimary: false },
+  { name: "live-status", path: "/live?tab=status", maxControls: 28, primaryActions: 1 },
+  { name: "program-schedule", path: "/program?tab=schedule&day=1", maxControls: 14, primaryActions: 0 },
   // The overlay editor, where editing is the point — so this one is folded rather than trimmed. Was
   // 79; twenty-four of those were three buttons on each of eight layers, held open permanently.
-  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 55, hasPrimary: true },
-  { name: "admin-settings", path: "/admin?tab=settings", maxControls: 29, hasPrimary: true }
+  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 55, primaryActions: 1 },
+  { name: "admin-settings", path: "/admin?tab=settings", maxControls: 29, primaryActions: 1 },
+  { name: "login", path: "/login", maxControls: 3, primaryActions: 1, authenticated: false },
+  { name: "live-moderation", path: "/live?tab=moderation", maxControls: 20, primaryActions: 1 },
+  { name: "program-pools", path: "/program?tab=pools", maxControls: 41, primaryActions: 1 },
+  { name: "program-library", path: "/program?tab=library", maxControls: 40, primaryActions: 1 },
+  { name: "program-sources", path: "/program?tab=sources", maxControls: 48, primaryActions: 1 },
+  // Two panels that save separately: chat and alerts, and what chat is allowed to steer.
+  { name: "studio-engagement", path: "/studio?tab=engagement", maxControls: 40, primaryActions: 2 },
+  { name: "studio-output", path: "/studio?tab=output", maxControls: 20, primaryActions: 1 },
+  { name: "admin-team", path: "/admin?tab=team", maxControls: 11, primaryActions: 1 }
 ];
 
 async function signIn(page: Page) {
@@ -97,10 +109,10 @@ test.describe("control density", () => {
 
       expect(measured.total).toBeLessThanOrEqual(surface.maxControls);
 
-      // Never more than one. Two primary buttons is not twice as clear — the settings page carried
-      // "Save encrypted settings" and "Export channel blueprint" side by side, and neither led.
-      expect(measured.primaries.length).toBeLessThanOrEqual(1);
-      expect(measured.primaries.length === 1).toBe(surface.hasPrimary);
+      // Two primary buttons is not twice as clear. The settings page carried "Save encrypted
+      // settings" and "Export channel blueprint" side by side and neither led; the pools page had
+      // one "Update pool" per pool, so the count grew with the content.
+      expect(measured.primaries).toHaveLength(surface.primaryActions);
     });
   }
 });

@@ -124,7 +124,13 @@ export function PoolForm(props: {
       <p className="subtle">Pools currently use persistent round-robin playback across all ready assets from the selected sources.</p>
       <p className="subtle">Audio lanes replace the normal program audio during scheduled pool playback. Use ready local-library or direct-media assets for stable looped beds.</p>
       {error ? <p className="danger">{error}</p> : null}
-      <button className="button" disabled={isPending} type="submit">
+      {/*
+        Primary when this form creates a pool, secondary when it edits one that exists.
+        The same component renders both, and the page shows one editor per pool — so styling it
+        primary in either case gave the pools page four equally loud main actions, one of which was
+        the real one.
+      */}
+      <button className={isEditing ? "button button-secondary" : "button"} disabled={isPending} type="submit">
         {isPending ? "Saving..." : isEditing ? "Update pool" : "Add pool"}
       </button>
     </form>
