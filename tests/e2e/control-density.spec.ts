@@ -51,7 +51,11 @@ const SURFACES: Surface[] = [
   { name: "login", path: "/login", maxControls: 3, primaryActions: 1, authenticated: false },
   { name: "live-moderation", path: "/live?tab=moderation", maxControls: 20, primaryActions: 1 },
   { name: "program-pools", path: "/program?tab=pools", maxControls: 17, primaryActions: 1 },
-  { name: "program-library", path: "/program?tab=library", maxControls: 31, primaryActions: 1 },
+  // 35, not 31. The earlier number was recorded when the fixture seeded no assets at all, so the
+  // library page was counted with nothing in it. Two assets bring two controls each. Of the fourteen
+  // surfaces this is the only one whose count depended on that, which is why it is the only budget
+  // that moved — but the number it replaces described an empty page, not a simpler one.
+  { name: "program-library", path: "/program?tab=library", maxControls: 35, primaryActions: 1 },
   { name: "program-sources", path: "/program?tab=sources", maxControls: 30, primaryActions: 1 },
   // Two panels that save separately: chat and alerts, and what chat is allowed to steer.
   { name: "studio-engagement", path: "/studio?tab=engagement", maxControls: 40, primaryActions: 2 },
