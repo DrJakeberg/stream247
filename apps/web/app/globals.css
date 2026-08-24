@@ -2181,3 +2181,37 @@ button.collection-chip {
     min-height: 84px;
   }
 }
+
+/*
+ * A group of actions that are stronger, rarer, or only relevant when something is wrong.
+ *
+ * Deliberately built from existing tokens and no new colour values: the point is to change what is
+ * in front of the operator, not what anything looks like, and a new colour would need its contrast
+ * argued before it earns a place here.
+ */
+.disclosure {
+  border: 1px solid var(--line-subtle);
+  border-radius: 16px;
+  padding: 12px 14px;
+}
+
+.disclosure > summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure > summary::before {
+  content: "›";
+  display: inline-block;
+  width: 1em;
+  transition: transform 120ms ease;
+}
+
+.disclosure[open] > summary::before {
+  transform: rotate(90deg);
+}

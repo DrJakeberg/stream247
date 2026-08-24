@@ -52,23 +52,23 @@ export function PlayoutActionForm(props: {
 
   return (
     <div className="stack-form" style={{ marginTop: 8 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button
-          className="button button-secondary"
-          disabled={isPending}
-          onClick={() => startTransition(() => void runAction({ type: "restart" }))}
-          type="button"
-        >
-          Soft restart
-        </button>
-        <button
-          className="button button-secondary"
-          disabled={isPending}
-          onClick={() => startTransition(() => void runAction({ type: "hard_reload" }))}
-          type="button"
-        >
-          Hard reload
-        </button>
+      {/*
+        The repair actions used to sit here as six buttons of equal weight, in front of everything
+        else, on the page an operator opens when something is wrong. Measured, this surface showed 33
+        controls at once and no visible hierarchy among them — while a paragraph above the form
+        explained, in prose, which ones to reach for first.
+
+        That ordering is now the layout rather than a sentence: the two the guidance calls the normal
+        path stay in front, the rest are one click away, and the group is closed by default so the
+        everyday controls are what you see. Nothing was removed.
+      */}
+      <details className="disclosure">
+        <summary>If something is stuck</summary>
+        <p className="subtle" style={{ marginTop: 8 }}>
+          Refreshing the scenes or rebuilding the queue fixes most of it, and neither interrupts what is on
+          air. The rest are stronger and worth trying in the order they appear.
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
         <button
           className="button button-secondary"
           disabled={isPending}
@@ -84,6 +84,14 @@ export function PlayoutActionForm(props: {
           type="button"
         >
           Rebuild queue
+        </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending}
+          onClick={() => startTransition(() => void runAction({ type: "restart" }))}
+          type="button"
+        >
+          Soft restart
         </button>
         <button
           className="button button-secondary"
@@ -108,6 +116,18 @@ export function PlayoutActionForm(props: {
         >
           Recover outputs now
         </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending}
+          onClick={() => startTransition(() => void runAction({ type: "hard_reload" }))}
+          type="button"
+        >
+          Hard reload
+        </button>
+        </div>
+      </details>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button
           className="button button-secondary"
           disabled={isPending}

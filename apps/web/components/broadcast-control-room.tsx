@@ -129,10 +129,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
         <article className="panel">
           <span className="label">Actions</span>
           <h3>Operator controls</h3>
-          <p className="subtle">
-            Use soft actions first. Hard reload is still available, but queue rebuild and scene refresh should be the
-            normal recovery path.
-          </p>
+          {/* The recovery guidance that used to live here is now the order of the buttons themselves. */}
           <PlayoutActionForm
             assets={props.assets}
             currentAssetId={snapshot.currentAsset?.id}
