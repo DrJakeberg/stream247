@@ -2,6 +2,7 @@
 
 import type { BroadcastSnapshot } from "@/lib/live-broadcast";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
+import { getChannelStatusLabel } from "@/lib/channel-status";
 
 export function AdminStatusRail(props: { initialSnapshot: BroadcastSnapshot }) {
   const { snapshot, connected } = useLiveSnapshot({
@@ -16,7 +17,7 @@ export function AdminStatusRail(props: { initialSnapshot: BroadcastSnapshot }) {
     <section className="admin-status-rail">
       <div className="admin-status-chip">
         <span className="label">Feed</span>
-        <strong>{snapshot.playout.status}</strong>
+        <strong>{getChannelStatusLabel(snapshot.playout.status)}</strong>
         <span className="subtle">{snapshot.playout.transitionState || "idle"}</span>
       </div>
       <div className="admin-status-chip">

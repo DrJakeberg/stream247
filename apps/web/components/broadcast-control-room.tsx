@@ -8,6 +8,8 @@ import type { BroadcastSnapshot } from "@/lib/live-broadcast";
 import { PlayoutActionForm } from "@/components/playout-action-form";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
+import { getChannelStatusLabel } from "@/lib/channel-status";
+import { DESTINATION_ROLE_LABELS, DESTINATION_STATUS_LABELS } from "@/lib/destination-wording";
 
 type AssetOption = {
   id: string;
@@ -53,7 +55,8 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
         <div className="status-rail">
           <div>
             <span className="label">Feed</span>
-            <strong>{snapshot.playout.status}</strong>
+            {/* The same words the public page uses, rather than the value the runtime stores. */}
+            <strong>{getChannelStatusLabel(snapshot.playout.status)}</strong>
           </div>
           <div>
             <span className="label">Current</span>
@@ -67,8 +70,10 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
             <span className="label">Destination</span>
             <strong>
               {activeDestinationCount > 0
-                ? `${activeDestinationCount} active`
-                : snapshot.destination?.status || "missing"}
+                ? `${activeDestinationCount} in use`
+                : snapshot.destination
+                  ? DESTINATION_STATUS_LABELS[snapshot.destination.status]
+                  : "None set up"}
             </strong>
           </div>
           <div>
@@ -238,8 +243,9 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               <div className="item" key={destination.id}>
                 <strong>{destination.name}</strong>
                 <div className="subtle">
-                  {destination.role} · priority {destination.priority} · {destination.status}
-                  {destination.active ? " · active" : ""}
+                  {DESTINATION_ROLE_LABELS[destination.role]} · priority {destination.priority} ·{" "}
+                  {DESTINATION_STATUS_LABELS[destination.status]}
+                  {destination.active ? " · in use" : ""}
                 </div>
                 <div className="subtle">
                   {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"} · key source{" "}

@@ -3,6 +3,7 @@
 import type { UserRole } from "@/lib/server/state";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { humanizeOptionValue } from "@/lib/option-labels";
 
 const roles: UserRole[] = ["admin", "operator", "moderator", "viewer"];
 
@@ -51,7 +52,7 @@ export function TeamAccessForm() {
         <select className="select" defaultValue="moderator" name="role">
           {roles.map((role) => (
             <option key={role} value={role}>
-              {role}
+              {humanizeOptionValue(role)}
             </option>
           ))}
         </select>
