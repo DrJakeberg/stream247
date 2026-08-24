@@ -27,9 +27,13 @@ type Surface = {
    * has nothing to be primary about would make the rule true and the page worse.
    */
   hasPrimary: boolean;
+  /** Public surfaces are measured without signing in, because that is how they are seen. */
+  authenticated?: boolean;
 };
 
 const SURFACES: Surface[] = [
+  // The page the audience actually lands on, and the only one here that is not an operator tool.
+  { name: "channel", path: "/channel", maxControls: 1, hasPrimary: true, authenticated: false },
   // The page an operator opens when something is wrong. It showed 33 at once, six of them repair
   // actions of equal weight, with the order to try them explained in a paragraph above the form.
   { name: "live-control", path: "/live?tab=control", maxControls: 27, hasPrimary: true },
@@ -56,7 +60,9 @@ test.describe("control density", () => {
     test(`${surface.name} keeps its controls countable`, async ({ page }) => {
       test.setTimeout(60_000);
       await page.setViewportSize({ width: 1440, height: 1600 });
-      await signIn(page);
+      if (surface.authenticated !== false) {
+        await signIn(page);
+      }
       await page.goto(surface.path);
 
       const shell = page.locator("main, .content-stack").first();

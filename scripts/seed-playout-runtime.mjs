@@ -16,7 +16,12 @@
 // Imported by path rather than by package name: pnpm links workspace packages only into the
 // workspaces that depend on them, and the repo root is not one, so "@stream247/db" does not resolve
 // from here. Requires `pnpm build` to have run, which `dev-stack.sh up` already depends on.
-import { readAppState, updateAssetRecords, updatePlayoutRuntime } from "../packages/db/dist/index.js";
+import {
+  readAppState,
+  updateAssetRecords,
+  updatePlayoutRuntime,
+  updateTwitchConnectionRecord
+} from "../packages/db/dist/index.js";
 
 // Fixed instants, not offsets from now: the point is that two runs produce identical bytes.
 const STARTED_AT = "2026-03-14T20:00:00.000Z";
@@ -103,6 +108,32 @@ async function main() {
     programFeedTargetSeconds: 2,
     programFeedBufferedSeconds: 60
   }));
+
+  // A broadcaster login, so the public channel page can render the one thing it is for.
+  //
+  // Without it watchUrl resolves to empty and the watch link is correctly absent — which left the
+  // audience-facing primary action outside every screenshot. The token fields stay empty: nothing
+  // here talks to Twitch, and a fixture that carries credential-shaped strings invites someone to
+  // treat them as real.
+  await updateTwitchConnectionRecord({
+    status: "connected",
+    broadcasterId: "dev-broadcaster",
+    broadcasterLogin: "stream247dev",
+    accessToken: "",
+    refreshToken: "",
+    connectedAt: STARTED_AT,
+    tokenExpiresAt: "",
+    lastRefreshAt: "",
+    lastMetadataSyncAt: HEARTBEAT_AT,
+    lastSyncedTitle: "",
+    lastSyncedCategoryName: "",
+    lastSyncedCategoryId: "",
+    lastScheduleSyncAt: "",
+    liveStatus: "live",
+    viewerCount: 128,
+    startedAt: STARTED_AT,
+    error: ""
+  });
 
   console.log(`Seeded a running playout runtime on "${asset.title}".`);
 }

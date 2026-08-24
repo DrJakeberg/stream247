@@ -126,6 +126,7 @@ import {
   type OutputSettingsRecord,
   type ManagedConfigRecord
 } from "@stream247/db";
+import { buildTwitchWatchUrl } from "@/lib/watch-url";
 import type {
   BroadcastSnapshot,
   LiveAssetSummary,
@@ -1283,6 +1284,7 @@ export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot
   return {
     generatedAt: snapshot.generatedAt,
     timeZone: snapshot.timeZone,
+    watchUrl: buildTwitchWatchUrl(snapshot.twitch.broadcasterLogin),
     overlay: snapshot.overlay,
     engagement: snapshot.engagement,
     activeScene: snapshot.activeScene,

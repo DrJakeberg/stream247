@@ -360,6 +360,8 @@ export type BroadcastSnapshot = {
 export type PublicChannelSnapshot = {
   generatedAt: string;
   timeZone: string;
+  /** Where viewers watch, or empty when no usable broadcaster login is configured. */
+  watchUrl: string;
   overlay: LiveOverlaySummary;
   engagement: LiveEngagementSummary;
   activeScene: LiveSceneSummary;

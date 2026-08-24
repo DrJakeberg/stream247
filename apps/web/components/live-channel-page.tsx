@@ -20,6 +20,17 @@ export function LiveChannelPage(props: { initialSnapshot: PublicChannelSnapshot 
         ) : null}
         <span className="subtle">{snapshot.timeZone}</span>
       </div>
+      {/*
+        The one thing this page is for. It listed what was on air and what came next and offered no
+        way to reach any of it — measured, zero links and zero buttons on the only surface the
+        audience sees. Absent when no usable broadcaster login is configured, because a watch link
+        that goes nowhere is worse than none.
+      */}
+      {snapshot.watchUrl ? (
+        <a className="button" href={snapshot.watchUrl} rel="noreferrer" target="_blank">
+          Watch the stream
+        </a>
+      ) : null}
       <div className="list">
         <div className="item">
           <strong>On air now</strong>
