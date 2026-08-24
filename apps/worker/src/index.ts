@@ -3486,6 +3486,17 @@ async function startOrSwitchPlayout(args: {
     }
 
     playoutLastStderrSample = line.slice(0, 400);
+
+    // Also to the container log, the way the uplink already does.
+    //
+    // The runtime field alone is not a record: it is cleared when the next process starts, so a
+    // failure that is followed by a restart leaves an exit code with nothing beside it. That is
+    // exactly what happened when the fallback video exited 255 and took the uplink's encoder down
+    // with it — lastExitCode said 255, lastStderrSample was empty, and the reason was gone.
+    logRuntimeEvent("playout.ffmpeg.stderr", {
+      message: playoutLastStderrSample
+    });
+
     void updatePlayoutRuntime((playout) => ({
       ...playout,
       lastStderrSample: playoutLastStderrSample,
