@@ -1436,26 +1436,26 @@ export function buildOverlaySceneMetadataWidgetContent(args: {
   if (args.widgetDataKey === "next") {
     return {
       label: labelOverride || args.payload.nextLabel || "Next",
-      title: args.payload.nextTitle || "No next block configured",
-      body: args.payload.nextTimeLabel || "Schedule timing not available",
+      title: args.payload.nextTitle || "Nothing scheduled next",
+      body: args.payload.nextTimeLabel || "Times to follow",
       secondary: args.payload.scheduleAux || ""
     };
   }
 
   if (args.widgetDataKey === "queue") {
-    const queueTitle = args.payload.queueTitles[0] || args.payload.queueTitleLine || "Queue preview pending";
+    const queueTitle = args.payload.queueTitles[0] || args.payload.queueTitleLine || "Coming up shortly";
     return {
       label: labelOverride || "Later",
       title: queueTitle,
-      body: args.payload.queueTitles.slice(1).join(" · ") || args.payload.scheduleAux || "Playout will add queue detail once it is confirmed.",
+      body: args.payload.queueTitles.slice(1).join(" · ") || args.payload.scheduleAux || "More to follow",
       secondary: args.payload.queueTitleLine || ""
     };
   }
 
   return {
     label: labelOverride || args.payload.heroLabel || "Now Playing",
-    title: args.payload.heroTitle || "Current block unavailable",
-    body: args.payload.metaLine || args.payload.heroBody || "Current scene metadata will appear here.",
+    title: args.payload.heroTitle || "On air",
+    body: args.payload.metaLine || args.payload.heroBody || "Details to follow",
     secondary: args.payload.heroBody && args.payload.heroBody !== args.payload.metaLine ? args.payload.heroBody : ""
   };
 }
@@ -1723,7 +1723,7 @@ export function buildOverlayScenePayload(args: {
     metaLine,
     nextLabel,
     nextTitle: nextTitle || "Schedule not available",
-    nextTimeLabel: normalizeOverlayVisibleText(args.nextTimeLabel) || "No next block configured",
+    nextTimeLabel: normalizeOverlayVisibleText(args.nextTimeLabel) || "Nothing scheduled next",
     queueTitleLine: queueTitles.join(" · "),
     queueTitles,
     scheduleLabel: "Scene",
