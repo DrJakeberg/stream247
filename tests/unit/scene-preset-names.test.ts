@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { OVERLAY_SCENE_PRESETS } from "@stream247/core";
-import { describeScenePreset } from "@/lib/scene-preset-names";
+import { OVERLAY_SCENE_PRESETS, OVERLAY_TYPOGRAPHY_PRESETS } from "@stream247/core";
+import { describeScenePreset, describeTypographyPreset } from "@/lib/scene-preset-names";
 
 describe("naming a scene preset", () => {
   it("uses the name the picker already shows", () => {
@@ -21,5 +21,21 @@ describe("naming a scene preset", () => {
     expect(describeScenePreset("gone-from-the-table")).toBe("gone-from-the-table");
     expect(describeScenePreset("")).toBe("");
     expect(describeScenePreset(undefined)).toBe("");
+  });
+});
+
+describe("naming a typography preset", () => {
+  it("has a name for every preset the picker offers", () => {
+    for (const preset of OVERLAY_TYPOGRAPHY_PRESETS) {
+      const label = describeTypographyPreset(preset.id);
+      expect(label).toBe(preset.label);
+      expect(label).not.toContain("-");
+    }
+  });
+
+  it("falls back to the id and says nothing for nothing", () => {
+    expect(describeTypographyPreset("gone-from-the-table")).toBe("gone-from-the-table");
+    expect(describeTypographyPreset("")).toBe("");
+    expect(describeTypographyPreset(undefined)).toBe("");
   });
 });

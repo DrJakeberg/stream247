@@ -161,13 +161,13 @@ QUEUE PREVIEW COUNT
 LIVE SCENE
 Replay Lower Third
 Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
-Typography studio-sans · 0 positioned layers
+Typography Studio Sans · 0 positioned layers
 Asset Replay Lower Third · Insert Bumper Board · Standby Standby Board · Reconnect Reconnect Board
 Published never
 DRAFT SCENE
 Replay Lower Third
 Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
-Typography studio-sans · 0 positioned layers
+Typography Studio Sans · 0 positioned layers
 Asset Replay Lower Third · Insert Bumper Board · Standby Standby Board · Reconnect Reconnect Board
 Draft saved not yet saved
 PUBLISH STATUS
@@ -176,7 +176,7 @@ Draft is based on live scene updated at unknown.
 VIEWER SCENE
 Published scene state
 Live scene preset
-replay-lower-third · glass surface · bottom anchor · balanced title scale
+Replay Lower Third · glass surface · bottom anchor · balanced title scale
 Typography studio-sans · 0 positioned layers
 Current category shown · source label shown
 Queue preview hidden
@@ -185,7 +185,7 @@ Draft status
 Draft matches the live scene.
 Draft saved not yet saved
 Based on live scene unknown
-Draft preset replay-lower-third · glass surface · bottom anchor
+Draft preset Replay Lower Third · glass surface · bottom anchor
 Typography studio-sans · 0 positioned layers
 0 saved scene presets in the library.
 Current block

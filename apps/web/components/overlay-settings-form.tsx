@@ -29,7 +29,7 @@ import { useToast } from "@/components/ui/Toast";
 import { buildOverlayPublishReviewSections, type OverlayPublishReviewSection } from "@/lib/overlay-publish-review";
 import { createDefaultCustomLayer } from "@/lib/overlay-studio-defaults";
 import type { OverlayScenePresetRecord, OverlaySettingsRecord } from "@/lib/server/state";
-import { describeScenePreset } from "@/lib/scene-preset-names";
+import { describeScenePreset, describeTypographyPreset } from "@/lib/scene-preset-names";
 
 type OverlayPreviewSeed = {
   timeZone: string;
@@ -1221,7 +1221,7 @@ export function OverlaySettingsForm(props: {
                         {describeScenePreset(preset.overlay.reconnectScenePreset)}
                       </div>
                       <div className="subtle">
-                        Typography {preset.overlay.typographyPreset} · {preset.overlay.customLayers.length} positioned layer
+                        Typography {describeTypographyPreset(preset.overlay.typographyPreset)} · {preset.overlay.customLayers.length} positioned layer
                         {preset.overlay.customLayers.length === 1 ? "" : "s"}
                       </div>
                       <div className="subtle">Updated {preset.updatedAt || "unknown"}</div>
@@ -1307,7 +1307,7 @@ export function OverlaySettingsForm(props: {
             Reconnect {props.liveOverlay.reconnectHeadline}
           </div>
           <div className="subtle">
-            Typography {props.liveOverlay.typographyPreset} · {props.liveOverlay.customLayers.length} positioned layer
+            Typography {describeTypographyPreset(props.liveOverlay.typographyPreset)} · {props.liveOverlay.customLayers.length} positioned layer
             {props.liveOverlay.customLayers.length === 1 ? "" : "s"}
           </div>
           <div className="subtle">
@@ -1323,7 +1323,7 @@ export function OverlaySettingsForm(props: {
             Asset headline {draft.headline} · Insert {draft.insertHeadline} · Standby {draft.standbyHeadline} · Reconnect {draft.reconnectHeadline}
           </div>
           <div className="subtle">
-            Typography {draft.typographyPreset} · {draft.customLayers.length} positioned layer{draft.customLayers.length === 1 ? "" : "s"}
+            Typography {describeTypographyPreset(draft.typographyPreset)} · {draft.customLayers.length} positioned layer{draft.customLayers.length === 1 ? "" : "s"}
           </div>
           <div className="subtle">
             Asset {describeScenePreset(draft.scenePreset)} · Insert {describeScenePreset(draft.insertScenePreset)} · Standby {describeScenePreset(draft.standbyScenePreset)} · Reconnect {describeScenePreset(draft.reconnectScenePreset)}

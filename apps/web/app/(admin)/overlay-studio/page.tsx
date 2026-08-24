@@ -5,6 +5,7 @@ import Link from "next/link";
 import { OverlaySettingsForm } from "@/components/overlay-settings-form";
 import { Panel } from "@/components/panel";
 import { getCurrentScheduleItem, getNextScheduleItem, listOverlayScenePresetRecords, readAppState, readOverlayStudioState } from "@/lib/server/state";
+import { describeScenePreset } from "@/lib/scene-preset-names";
 
 export default async function OverlayStudioPage() {
   const state = await readAppState();
@@ -62,7 +63,7 @@ export default async function OverlayStudioPage() {
             <div className="item">
               <strong>Live scene preset</strong>
               <div className="subtle">
-                {studioState.liveOverlay.scenePreset} · {studioState.liveOverlay.surfaceStyle} surface · {studioState.liveOverlay.panelAnchor} anchor · {studioState.liveOverlay.titleScale} title scale
+                {describeScenePreset(studioState.liveOverlay.scenePreset)} · {studioState.liveOverlay.surfaceStyle} surface · {studioState.liveOverlay.panelAnchor} anchor · {studioState.liveOverlay.titleScale} title scale
               </div>
               <div className="subtle">
                 Typography {studioState.liveOverlay.typographyPreset} · {studioState.liveOverlay.customLayers.length} positioned layer
@@ -85,7 +86,7 @@ export default async function OverlayStudioPage() {
               <div className="subtle">Draft saved {studioState.draftOverlay.updatedAt || "not yet saved"}</div>
               <div className="subtle">Based on live scene {studioState.basedOnUpdatedAt || "unknown"}</div>
               <div className="subtle">
-                Draft preset {studioState.draftOverlay.scenePreset} · {studioState.draftOverlay.surfaceStyle} surface ·{" "}
+                Draft preset {describeScenePreset(studioState.draftOverlay.scenePreset)} · {studioState.draftOverlay.surfaceStyle} surface ·{" "}
                 {studioState.draftOverlay.panelAnchor} anchor
               </div>
               <div className="subtle">
