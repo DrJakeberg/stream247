@@ -80,15 +80,12 @@ This checklist is the fastest way to understand whether the channel is configure
 Owner account
 Ready
 Owner owner@example.com is configured.
-Open setup
 Public app URL
 Ready
 APP_URL is set to http://<version>.1:3020.
-Open setup
 App secret and persistence
 Ready
 APP_SECRET and DATABASE_URL are configured.
-Open setup
 Twitch app credentials
 Needs action
 Save Twitch client credentials in setup or settings to enable broadcaster connect and team SSO.

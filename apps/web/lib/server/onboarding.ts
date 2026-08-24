@@ -8,7 +8,14 @@ export type GoLiveChecklistItem = {
   title: string;
   detail: string;
   status: "ready" | "action" | "optional";
-  href: string;
+  /**
+   * Where to go to fix it, when that is a page in this product.
+   *
+   * Absent for the steps whose remedy is a server environment variable: there is no screen for
+   * APP_URL or APP_SECRET, and /setup redirects to the login page once a workspace is initialised,
+   * so the link was a dead end offering itself as an answer.
+   */
+  href?: string;
 };
 
 export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
@@ -48,14 +55,14 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
       title: "Owner account",
       detail: state.owner ? `Owner ${state.owner.email} is configured.` : "Create the owner account to initialize the workspace.",
       status: state.owner ? "ready" : "action",
-      href: "/setup"
+      // Only before there is one: afterwards /setup redirects away and the step is done anyway.
+      href: state.owner ? undefined : "/setup"
     },
     {
       id: "base-url",
       title: "Public app URL",
       detail: hasAppUrl ? `APP_URL is set to ${process.env.APP_URL}.` : "Set APP_URL so OAuth callbacks and overlay links use the public hostname.",
-      status: hasAppUrl ? "ready" : "action",
-      href: "/setup"
+      status: hasAppUrl ? "ready" : "action"
     },
     {
       id: "app-secret",
@@ -64,8 +71,7 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
         hasAppSecret && hasDatabaseUrl
           ? "APP_SECRET and DATABASE_URL are configured."
           : "Set APP_SECRET and DATABASE_URL before treating the install as production-ready.",
-      status: hasAppSecret && hasDatabaseUrl ? "ready" : "action",
-      href: "/setup"
+      status: hasAppSecret && hasDatabaseUrl ? "ready" : "action"
     },
     {
       id: "twitch-credentials",

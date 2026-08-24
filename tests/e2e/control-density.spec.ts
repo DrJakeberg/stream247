@@ -42,7 +42,10 @@ const SURFACES: Surface[] = [
   { name: "live-control", path: "/live?tab=control", maxControls: 27, primaryActions: 1 },
   // Was 62, because the full editor stood open under every destination and the count therefore grew
   // with the number of outputs configured. Folding those away leaves what the page is for.
-  { name: "live-status", path: "/live?tab=status", maxControls: 28, primaryActions: 1 },
+  // 25, down from 28: three of those were "Open setup" links on go-live steps whose remedy is a
+  // server environment variable. They pointed at a page that redirects to login once a workspace
+  // exists.
+  { name: "live-status", path: "/live?tab=status", maxControls: 25, primaryActions: 1 },
   { name: "program-schedule", path: "/program?tab=schedule&day=1", maxControls: 14, primaryActions: 0 },
   // The overlay editor, where editing is the point — so this one is folded rather than trimmed. Was
   // 79; twenty-four of those were three buttons on each of eight layers, held open permanently.

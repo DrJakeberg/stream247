@@ -25,9 +25,11 @@ export function GoLiveChecklist(props: { items: GoLiveChecklistItem[] }) {
               <span className={`badge badge-${item.status}`}>{STATUS_LABELS[item.status]}</span>
             </div>
             <div className="subtle">{item.detail}</div>
-            <div className="subtle" style={{ marginTop: 8 }}>
-              <Link href={item.href}>Open {describeWorkspaceHref(item.href)}</Link>
-            </div>
+            {item.href ? (
+              <div className="subtle" style={{ marginTop: 8 }}>
+                <Link href={item.href}>Open {describeWorkspaceHref(item.href)}</Link>
+              </div>
+            ) : null}
           </div>
         ))}
       </div>
