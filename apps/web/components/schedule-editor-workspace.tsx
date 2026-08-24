@@ -302,7 +302,7 @@ export function ScheduleEditorWorkspace({
                           {block.poolId ? "Open pools" : "Open library"}
                         </Link>
                       }
-                      description="This block has no playable asset slots yet. Check the linked pool cursor or the ready library inventory."
+                      description="Nothing in this block can play yet. Check that its pool has assets marked ready in the library."
                       title="No playable video slots"
                     />
                   )}

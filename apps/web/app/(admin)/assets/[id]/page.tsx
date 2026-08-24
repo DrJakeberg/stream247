@@ -203,7 +203,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
                 <strong>{pool.name}</strong>
                 <div className="subtle">
                   {pool.playbackMode} ·{" "}
-                  {pool.cursorAssetId === asset.id ? "Current pool cursor asset" : "Available in pool rotation"}
+                  {pool.cursorAssetId === asset.id ? "This pool's rotation currently stands here" : "In this pool's rotation"}
                 </div>
               </div>
             ))}

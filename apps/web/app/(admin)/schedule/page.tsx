@@ -127,8 +127,8 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
             <>
               <Panel title="Week lens" eyebrow="Program">
                 <p className="subtle">
-                  The week view resolves the first playable video for every block from the current pool cursor, then
-                  lets you expand into the predicted sequence before anything goes on air.
+                  Shows the first video each block would play, continuing from wherever its pool&apos;s rotation
+                  currently stands, and lets you open a block to see what follows before any of it goes on air.
                 </p>
                 <ProgramWeekLens assets={state.assets} days={materializedWeek} pools={state.pools} />
               </Panel>
