@@ -10,9 +10,12 @@ stack.env
 *.log
 playwright-report
 test-results
-data/postgres
-data/redis
-data/app
+# Everything the stack writes at runtime, not three of the four directories it writes to.
+#
+# data/media was missing: the program feed, thumbnails and rehearsal media accumulate there and sat
+# in git status as twenty megabytes of untracked noise, one "git add ." away from being committed.
+# It is the same content .dockerignore keeps out of images for the same reason.
+data/
 apps/web/data
 *.tsbuildinfo
 .dev-stack/
