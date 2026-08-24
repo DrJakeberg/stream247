@@ -531,6 +531,15 @@ export function AssetLibraryBrowser(props: {
         </label>
       </div>
 
+      {/*
+        Nine actions that need a selection to mean anything, previously shown greyed out whether or
+        not anything was selected. That is fourteen of this page's forty controls describing work
+        that cannot be done yet. They appear once there is something to apply them to, and the line
+        that replaces them says so rather than leaving the possibility undiscoverable.
+      */}
+      {selectedIds.length === 0 ? (
+        <p className="subtle">Select assets to see what you can do with them.</p>
+      ) : (
       <div className="toggle-row">
         <button
           className="button button-secondary"
@@ -641,6 +650,7 @@ export function AssetLibraryBrowser(props: {
           Clear tags
         </button>
       </div>
+      )}
 
       <div className="library-group-stack">
         {assetGroups.map((group) => (
