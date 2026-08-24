@@ -63,7 +63,7 @@ Current and next
 Abendprogramm — Folge 12
 <time> to <time> · Musik
 Transition idle · queue reason Matched the schedule · version 0
-No next item yet
+Abendprogramm — Folge 13
 Prefetch idle · last probe never
 Transition target none · ready not ready
 Queue preview
@@ -75,6 +75,8 @@ Temporary fallback
 Skip current
 Resume schedule
 PIN ASSET
+Abendprogramm — Folge 13
+Abendprogramm — Folge 12
 OVERRIDE MINUTES
 LIVE BRIDGE INPUT
 RTMP / RTMPS
@@ -89,6 +91,7 @@ Take live
 Release live
 Remove next
 Replay previous
+Next queued asset: Abendprogramm — Folge 13
 AUDIO LANE
 Secondary audio
 Program audio

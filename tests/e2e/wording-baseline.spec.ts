@@ -32,6 +32,9 @@ const SURFACES: Surface[] = [
   { name: "live-control", path: "/live?tab=control" },
   { name: "live-status", path: "/live?tab=status" },
   { name: "live-moderation", path: "/live?tab=moderation" },
+  // Pinned to a weekday so the grid is the same every run. It was missing from this list until the
+  // fixture week became gapless — the page most affected by that change was the one not covered.
+  { name: "program-schedule", path: "/program?tab=schedule&day=1" },
   { name: "program-pools", path: "/program?tab=pools" },
   { name: "program-library", path: "/program?tab=library" },
   { name: "program-sources", path: "/program?tab=sources" },

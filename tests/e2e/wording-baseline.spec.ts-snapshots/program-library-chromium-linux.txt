@@ -72,7 +72,7 @@ Folder
 Tag
 Curated set
 Status
-Showing 0 of 0 assets across 0 library views.
+Showing 2 of 2 assets across 1 library view.
 No assets selected yet.
 Curated sets
 Curated sets let operators pin reusable groups of assets without rewriting folders or tags. New sets can start with the currently selected assets.
@@ -88,5 +88,23 @@ New set draft
 BULK FOLDER PATH
 BULK TAGS
 Select assets to see what you can do with them.
-No assets match the current filters
-Try a different source, curated set, folder, or search query.
+dev-source
+2 asset(s)
+Select asset
+Abendprogramm — Folge 13
+dev-source · ready · 45m
+Replay
+Folder: root · Tags: none
+Included in programming · No global fallback flag
+No curated set
+/app/data/media/dev/abendprogramm-13.mp4
+Open asset detail
+Select asset
+Abendprogramm — Folge 12
+dev-source · ready · 60m
+Replay
+Folder: root · Tags: none
+Included in programming · No global fallback flag
+No curated set
+/app/data/media/dev/abendprogramm-12.mp4
+Open asset detail

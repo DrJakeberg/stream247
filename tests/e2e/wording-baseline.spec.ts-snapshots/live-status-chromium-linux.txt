@@ -65,7 +65,7 @@ DESTINATION
 1 active
 Primary Twitch Output lead · primary · stream key present
 ASSETS
-0
+2
 Local ingestion and future connectors feed the asset catalog.
 INCIDENTS
 0
@@ -76,7 +76,7 @@ TEAM ACCESS
 LAUNCH
 Readiness
 This checklist is the fastest way to understand whether the channel is configured well enough for reliable 24/7 operation.
-8 of 11 readiness steps are ready.
+9 of 11 readiness steps are ready.
 Owner account
 Ready
 Owner owner@example.com is configured.
@@ -106,8 +106,8 @@ Ready
 3 source(s) configured.
 Open Program · Sources
 Playable assets
-Needs action
-Wait for ingestion or add local media until at least one asset is ready.
+Ready
+2 ready asset(s) are available.
 Open Program · Library
 Program pools
 Ready
@@ -169,7 +169,7 @@ PID 4242 · restart count 0 · asset Abendprogramm — Folge 12
 Transition idle · next probe idle · next Abendprogramm — Folge 13
 Last stderr: No FFmpeg stderr captured yet.
 Current schedule: Abendprogramm · Next: none
-Queue: no queued assets
+Queue: Abendprogramm — Folge 12 → Abendprogramm — Folge 13
 Use Live control for skip, fallback, restart, override, replay, and Live Bridge actions. This status view stays read-only.
 System readiness
 Database persistence, background worker reconciliation, and playout heartbeat are now active.

@@ -1,0 +1,150 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+<runtime>
+<runtime>
+CURRENT
+<runtime>
+<runtime>
+NEXT
+<runtime>
+<runtime>
+DESTINATION
+<runtime>
+<runtime>
+INCIDENTS
+<runtime>
+<runtime>
+UPDATES
+<runtime>
+<runtime>
+Schedule
+Pools
+Library
+Sources
+Week
+Day
+Now + Next
+PROGRAM
+Week lens
+The week view resolves the first playable video for every block from the current pool cursor, then lets you expand into the predicted sequence before anything goes on air.
+MON
+3 blocks
+1440m scheduled
+<time> TO <time>
+No playable video resolved
+Nachtschleife · Abendprogramm · Monday
+No playable material
+<time> TO <time>
+No playable video resolved
+Tagesprogramm · Abendprogramm · Monday
+No playable material
+<time> TO <time>
+No playable video resolved
+Abendprogramm · Abendprogramm · Monday
+No playable material
+TUE
+3 blocks
+1440m scheduled
+<time> TO <time>
+No playable video resolved
+Nachtschleife · Abendprogramm · Tuesday
+No playable material
+<time> TO <time>
+No playable video resolved
+Tagesprogramm · Abendprogramm · Tuesday
+No playable material
+<time> TO <time>
+No playable video resolved
+Abendprogramm · Abendprogramm · Tuesday
+No playable material
+WED
+3 blocks
+1440m scheduled
+<time> TO <time>
+No playable video resolved
+Nachtschleife · Abendprogramm · Wednesday
+No playable material
+<time> TO <time>
+No playable video resolved
+Tagesprogramm · Abendprogramm · Wednesday
+No playable material
+<time> TO <time>
+No playable video resolved
+Abendprogramm · Abendprogramm · Wednesday
+No playable material
+THU
+3 blocks
+1440m scheduled
+<time> TO <time>
+No playable video resolved
+Nachtschleife · Abendprogramm · Thursday
+No playable material
+<time> TO <time>
+No playable video resolved
+Tagesprogramm · Abendprogramm · Thursday
+No playable material
+<time> TO <time>
+No playable video resolved
+Abendprogramm · Abendprogramm · Thursday
+No playable material
+FRI
+3 blocks
+1440m scheduled
+<time> TO <time>
+No playable video resolved
+Nachtschleife · Abendprogramm · Friday
+No playable material
+<time> TO <time>
+No playable video resolved
+Tagesprogramm · Abendprogramm · Friday
+No playable material
+<time> TO <time>
+No playable video resolved
+Abendprogramm · Abendprogramm · Friday
+No playable material
+SAT
+3 blocks
+1500m scheduled
+<time> TO <time>
+No playable video resolved
+Nachtschleife · Abendprogramm · Saturday
+No playable material
+<time> TO <time>
+No playable video resolved
+Tagesprogramm · Abendprogramm · Saturday
+No playable material
+<time> TO <time>
+No playable video resolved
+Nachtschleife · Abendprogramm · Saturday
+No playable material
+SUN
+3 blocks
+1500m scheduled
+<time> TO <time>
+No playable video resolved
+Nachtschleife · Abendprogramm · Saturday
+No playable material
+<time> TO <time>
+No playable video resolved
+Tagesprogramm · Abendprogramm · Sunday
+No playable material
+<time> TO <time>
+No playable video resolved
+Abendprogramm · Abendprogramm · Sunday
+No playable material
+PROGRAM
+Needs attention
+Some week blocks still resolve to no playable video
+Unresolved blocks: Mon <time> Nachtschleife · Mon <time> Tagesprogramm · Mon <time> Abendprogramm
+Open pools

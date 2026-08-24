@@ -19,7 +19,7 @@
 import {
   readAppState,
   replaceAllScheduleBlocks,
-  updateAssetRecords,
+  replaceAssetsForSourceIds,
   updatePlayoutRuntime,
   updateTwitchConnectionRecord
 } from "../packages/db/dist/index.js";
@@ -68,9 +68,15 @@ const ASSETS = [
 
 async function main() {
   const state = await readAppState();
-  if (!state.assets.some((entry) => entry.id === ASSETS[0].id)) {
-    await updateAssetRecords(ASSETS);
-  }
+
+  // replaceAssetsForSourceIds, not updateAssetRecords.
+  //
+  // The comment above these assets says the workspace renders empty without them — and it has been,
+  // silently, because updateAssetRecords is an UPDATE. On an empty table it matches no rows and
+  // succeeds, so the seed reported success while writing nothing. Every surface that resolves
+  // playable material has been recording its empty state into the baselines as though that were the
+  // seeded content: "No playable video resolved", on every block of every day.
+  await replaceAssetsForSourceIds([...new Set(ASSETS.map((asset) => asset.sourceId))], ASSETS);
 
   const asset = ASSETS[0];
   const nextAsset = ASSETS[1];

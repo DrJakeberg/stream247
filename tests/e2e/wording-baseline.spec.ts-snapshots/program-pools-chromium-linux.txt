@@ -45,9 +45,13 @@ Twitch Archive
 YouTube Playlist
 AUTOMATIC INSERT ASSET
 No automatic insert
+Abendprogramm — Folge 13
+Abendprogramm — Folge 12
 INSERT EVERY N SCHEDULED ITEMS
 AUDIO LANE ASSET
 Use program audio
+Abendprogramm — Folge 13
+Abendprogramm — Folge 12
 AUDIO LANE LEVEL (%)
 Pools currently use persistent round-robin playback across all ready assets from the selected sources.
 Audio lanes replace the normal program audio during scheduled pool playback. Assets from Local media library or Direct media URL sources loop most reliably.
