@@ -2,6 +2,7 @@
 
 import type { PublicChannelSnapshot } from "@/lib/live-broadcast";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
+import { getChannelStatusLabel, getChannelUpdateNotice } from "@/lib/channel-status";
 
 export function LiveChannelPage(props: { initialSnapshot: PublicChannelSnapshot }) {
   const { snapshot, connected } = useLiveSnapshot({
@@ -13,8 +14,10 @@ export function LiveChannelPage(props: { initialSnapshot: PublicChannelSnapshot 
   return (
     <div className="stack-form">
       <div className="stats-row">
-        <span className="badge">{snapshot.playout.status}</span>
-        <span className="subtle">{connected ? "Live updates connected" : "Polling fallback active"}</span>
+        <span className="badge">{getChannelStatusLabel(snapshot.playout.status)}</span>
+        {getChannelUpdateNotice(connected) ? (
+          <span className="subtle">{getChannelUpdateNotice(connected)}</span>
+        ) : null}
         <span className="subtle">{snapshot.timeZone}</span>
       </div>
       <div className="list">
