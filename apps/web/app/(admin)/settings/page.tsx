@@ -49,7 +49,7 @@ export default async function SettingsPage() {
             <div className="item">
               <strong>Production checklist</strong>
               <div className="subtle">{updateCenter.pinnedImages ? "Images are pinned away from latest." : "Production should not run on latest image tags."}</div>
-              <div className="subtle">{readiness.broadcastReady ? "Readiness is currently green." : "Readiness is currently degraded."}</div>
+              <div className="subtle">{readiness.broadcastReady ? "Everything needed to go on air is ready." : "Something needed to go on air is missing."}</div>
               <div className="subtle">Run `pnpm release:preflight` before upgrades and `pnpm release:rehearse vX.Y.Z` before major changes.</div>
             </div>
             <div className="item">

@@ -235,7 +235,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 {snapshot.playout.crashLoopDetected ? "detected" : "clear"}
               </div>
               <div className="subtle">Last transition {snapshot.playout.lastTransitionAt || "not recorded yet"}</div>
-              <div className="subtle">{snapshot.playout.lastStderrSample || "No recent FFmpeg stderr sample."}</div>
+              <div className="subtle">{snapshot.playout.lastStderrSample || "The encoder has not reported any errors."}</div>
             </div>
             {snapshot.destinations.map((destination) => (
               <div className="item" key={destination.id}>
