@@ -4,6 +4,7 @@ import { DESTINATION_OUTPUT_PROFILES, type DestinationOutputProfileId } from "@s
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { StreamDestinationRecord } from "@/lib/server/state";
+import { DESTINATION_ROLE_LABELS, describeStreamKey } from "@/lib/destination-wording";
 
 function isProtectedDestination(destinationId: string): boolean {
   return destinationId === "destination-primary" || destinationId === "destination-backup";
@@ -79,11 +80,10 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
       }}
     >
       <div className="stats-row">
-        <span className="badge">{destination.role}</span>
+        <span className="badge">{DESTINATION_ROLE_LABELS[destination.role]}</span>
         <span className="subtle">Priority {destination.priority}</span>
-        <span className="subtle">profile {destination.outputProfileId ?? "inherit"}</span>
-        <span className="subtle">{destination.streamKeyPresent ? "stream key present" : "stream key missing"}</span>
-        <span className="subtle">key source {destination.streamKeySource || "missing"}</span>
+        <span className="subtle">Quality {destination.outputProfileId ?? "same as the channel"}</span>
+        <span className="subtle">{describeStreamKey(destination.streamKeyPresent, destination.streamKeySource)}</span>
       </div>
       {destination.lastFailureAt ? (
         <p className="danger">

@@ -9,6 +9,7 @@ import { IncidentActionForm } from "@/components/incident-action-form";
 import { Panel } from "@/components/panel";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
 import { getGoLiveChecklist } from "@/lib/server/onboarding";
+import { DESTINATION_ROLE_LABELS, DESTINATION_STATUS_LABELS, describeStreamKey } from "@/lib/destination-wording";
 import {
   getActivePresenceWindows,
   getCurrentScheduleItem,
@@ -164,12 +165,13 @@ export default async function DashboardPage() {
               <div className="item" key={destination.id}>
                 <strong>{destination.name}</strong>
                 <div className="subtle">
-                  {destination.role} · priority {destination.priority} · {destination.status}
-                  {activeDestinationIds.has(destination.id) ? " · active" : ""}
+                  {DESTINATION_ROLE_LABELS[destination.role]} · priority {destination.priority} ·{" "}
+                  {DESTINATION_STATUS_LABELS[destination.status]}
+                  {activeDestinationIds.has(destination.id) ? " · in use" : ""}
                 </div>
                 <div className="subtle">
-                  {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"} · key source{" "}
-                  {destination.streamKeySource || "missing"}
+                  {destination.rtmpUrl || "No RTMP URL configured"} ·{" "}
+                  {describeStreamKey(destination.streamKeyPresent, destination.streamKeySource)}
                 </div>
                 {destination.lastFailureAt ? (
                   <div className="subtle">
