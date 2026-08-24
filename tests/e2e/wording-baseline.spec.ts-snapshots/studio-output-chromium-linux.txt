@@ -1,0 +1,103 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+On air
+idle
+CURRENT
+Abendprogramm — Folge 12
+scheduled_match
+NEXT
+Abendprogramm
+Queue will resolve on next cycle
+DESTINATION
+Primary Twitch Output
+ready
+INCIDENTS
+0
+No unresolved incidents
+UPDATES
+Polling
+No worker heartbeat yet
+Scene
+Engagement
+Output
+Output
+Set the stream output profile and destination overrides.
+Control the stream output profile, per-destination overrides, and the destination health states that feed the live delivery path.
+STREAM SETTINGS
+Output profile
+OUTPUT PROFILE
+720p30
+1080p30
+480p30
+360p30
+Custom
+WIDTH
+HEIGHT
+FPS
+Saved output profiles are applied by the playout worker when it starts the next FFmpeg process. Environment variables named `STREAM_OUTPUT_WIDTH`, `STREAM_OUTPUT_HEIGHT`, and `STREAM_OUTPUT_FPS` still override this UI setting for deployment-level control.
+Save output settings
+RUNTIME
+Effective runtime output
+1280x720@30
+The saved output profile is the effective runtime output.
+Overlay capture
+Scene rendering follows the output dimensions unless `SCENE_RENDER_WIDTH` or `SCENE_RENDER_HEIGHT` are explicitly set.
+Scaling rollback
+Set `STREAM_SCALE_ENABLED=0` only as a temporary rollback if output normalization causes unexpected encoder load.
+Parallel renditions
+Destinations can inherit the stream profile or pin a lower fixed profile. Rendering above the stream profile upscales the shared program feed and increases CPU cost.
+DELIVERY
+Per-destination renditions
+Lokales Relay
+primary · priority 0 · No RTMP URL configured
+Assigned profile inherit · effective 1280x720@30
+primary
+enabled
+Missing config
+DESTINATION PROFILE
+Use stream profile
+720p30
+1080p30
+480p30
+360p30
+Effective rendition 1280x720@30. Inherit follows the stream profile (1280x720@30).
+Save profile
+Primary Twitch Output
+primary · priority 0 · /tmp/stream-output
+Assigned profile inherit · effective 1280x720@30
+primary
+enabled
+Ready
+DESTINATION PROFILE
+Use stream profile
+720p30
+1080p30
+480p30
+360p30
+Effective rendition 1280x720@30. Inherit follows the stream profile (1280x720@30).
+Save profile
+Backup RTMP Output
+backup · priority 10 · No RTMP URL configured
+Assigned profile inherit · effective 1280x720@30
+backup
+disabled
+Disabled
+DESTINATION PROFILE
+Use stream profile
+720p30
+1080p30
+480p30
+360p30
+Effective rendition 1280x720@30. Inherit follows the stream profile (1280x720@30).
+Save profile

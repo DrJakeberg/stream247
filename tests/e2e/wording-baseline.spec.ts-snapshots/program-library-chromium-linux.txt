@@ -1,0 +1,92 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+On air
+idle
+CURRENT
+Abendprogramm — Folge 12
+scheduled_match
+NEXT
+Abendprogramm
+Queue will resolve on next cycle
+DESTINATION
+Primary Twitch Output
+ready
+INCIDENTS
+0
+No unresolved incidents
+UPDATES
+Polling
+No worker heartbeat yet
+Schedule
+Pools
+Library
+Sources
+Library
+Browse the playable catalog and upload local media.
+Library is the programming-facing catalog of playable files. Use Sources for ingest configuration and Pools for schedule group logic.
+LIBRARY
+Upload local media
+Upload new files into the shared local media library. The local-library source will ingest them on the next worker cycle.
+MEDIA FILES
+OPTIONAL SUBFOLDER
+Uploaded files land in the shared local media library and become available to the local-library source on the next worker cycle.
+Upload into local library
+CATALOG
+Asset library
+Search the playable catalog by title, source, folder, tag, or curated set. This is the programming-facing library, separate from source ingest configuration and pool rules.
+SEARCH ASSETS
+SOURCE
+All sources
+Local Media Library
+Twitch Archive
+YouTube Playlist
+ASSET STATUS
+All statuses
+Ready
+Pending
+Error
+PROGRAM
+All assets
+Included in programming
+Excluded from programming
+Global fallback only
+FOLDER
+TAG
+CURATED SET
+All curated sets
+GROUP BY
+No grouping
+Source
+Folder
+Tag
+Curated set
+Status
+Showing 0 of 0 assets across 0 library views.
+No assets selected yet.
+Curated sets
+Curated sets let operators pin reusable groups of assets without rewriting folders or tags. New sets can start with the currently selected assets.
+No curated sets yet.
+SET NAME
+ACCENT COLOR
+DESCRIPTION
+Create curated set
+Add selected to set
+Remove selected from set
+Delete curated set
+New set draft
+BULK FOLDER PATH
+BULK TAGS
+Select assets to see what you can do with them.
+No assets match the current filters
+Try a different source, curated set, folder, or search query.

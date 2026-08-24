@@ -1,0 +1,68 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+On air
+idle
+CURRENT
+Abendprogramm — Folge 12
+scheduled_match
+NEXT
+Abendprogramm
+Queue will resolve on next cycle
+DESTINATION
+Primary Twitch Output
+ready
+INCIDENTS
+0
+No unresolved incidents
+UPDATES
+Polling
+No worker heartbeat yet
+Live
+Keep channel and playout state visible across the whole Live workspace.
+Twitch channel state, viewer count, uptime, and playout health stay visible while you move between Live control, status, and moderation.
+Live · 128
+Feed running
+TWITCH UPTIME
+162d 19h
+VIEWERS
+128
+CHANNEL
+stream247dev
+UPDATES
+Polling
+Control
+Status
+Moderation
+MODERATION
+Moderation presence policy
+This policy allows a moderator to check in with a command such as here 30 to keep chat out of emote-only mode for a limited window.
+Feature state
+Enabled
+Current chat mode
+emote-only
+No moderator presence window is active. Emote-only fallback should be enabled.
+Latest check-in
+No active moderation presence
+Actor Requested Applied Clamp reason Expires
+No moderation presence entries have been recorded yet.
+Create moderation presence
+Enable moderation presence policy
+COMMAND KEYWORD
+Require command prefix
+DEFAULT MINUTES
+MINIMUM MINUTES
+MAXIMUM MINUTES
+Omitted durations use the default. Requests below the minimum clamp up, and requests above the maximum clamp down.
+Fallback to emote-only when no moderation presence is active
+Save moderation policy

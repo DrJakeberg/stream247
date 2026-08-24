@@ -1,0 +1,48 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+On air
+idle
+CURRENT
+Abendprogramm — Folge 12
+scheduled_match
+NEXT
+Abendprogramm
+Queue will resolve on next cycle
+DESTINATION
+Primary Twitch Output
+ready
+INCIDENTS
+0
+No unresolved incidents
+UPDATES
+Polling
+No worker heartbeat yet
+Settings
+Team
+IDENTITY
+Twitch team access
+Grant access by Twitch login. Team members authenticate with Twitch SSO and inherit the configured tool role.
+TWITCH LOGIN
+ROLE
+Admin
+Operator
+Moderator
+Viewer
+Grant Twitch access
+ACCESS LIST
+Current grants
+No Twitch team access grants yet
+Add moderators or operators by Twitch login to enable Twitch SSO access.
+Active users
+1 user account(s) currently known to the workspace.

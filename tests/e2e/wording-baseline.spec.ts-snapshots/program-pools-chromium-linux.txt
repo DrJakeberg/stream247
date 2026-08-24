@@ -1,0 +1,74 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+On air
+idle
+CURRENT
+Abendprogramm — Folge 12
+scheduled_match
+NEXT
+Abendprogramm
+Queue will resolve on next cycle
+DESTINATION
+Primary Twitch Output
+ready
+INCIDENTS
+0
+No unresolved incidents
+UPDATES
+Polling
+No worker heartbeat yet
+Schedule
+Pools
+Library
+Sources
+Pools
+Manage programming pools.
+Pools define which ready assets rotate together during scheduled playback. Use them as the bridge between ingest and the weekly schedule.
+PROGRAM
+Create pool
+Pools are the scheduler's programming units. Group ready assets from one or more sources and apply insert or audio-lane behavior here.
+POOL NAME
+INCLUDED SOURCES
+Local Media Library
+Twitch Archive
+YouTube Playlist
+AUTOMATIC INSERT ASSET
+No automatic insert
+INSERT EVERY N SCHEDULED ITEMS
+AUDIO LANE ASSET
+Use program audio
+AUDIO LANE LEVEL (%)
+Pools currently use persistent round-robin playback across all ready assets from the selected sources.
+Audio lanes replace the normal program audio during scheduled pool playback. Use ready local-library or direct-media assets for stable looped beds.
+Add pool
+PROGRAM
+Pools
+Abendprogramm
+1 source(s) · round-robin
+No automatic inserts configured
+Local Media Library
+0 total assets · 0 ready
+Change this pool
+Archive Pool
+2 source(s) · round-robin
+No automatic inserts configured
+Twitch Archive, YouTube Playlist
+0 total assets · 0 ready
+Change this pool
+Nachtschleife
+2 source(s) · round-robin
+No automatic inserts configured
+Local Media Library, YouTube Playlist
+0 total assets · 0 ready
+Change this pool

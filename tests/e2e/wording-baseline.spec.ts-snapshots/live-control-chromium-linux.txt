@@ -1,0 +1,151 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+On air
+idle
+CURRENT
+Abendprogramm — Folge 12
+scheduled_match
+NEXT
+Abendprogramm
+Queue will resolve on next cycle
+DESTINATION
+Primary Twitch Output
+ready
+INCIDENTS
+0
+No unresolved incidents
+UPDATES
+Polling
+No worker heartbeat yet
+Live
+Keep channel and playout state visible across the whole Live workspace.
+Twitch channel state, viewer count, uptime, and playout health stay visible while you move between Live control, status, and moderation.
+Live · 128
+Feed running
+TWITCH UPTIME
+162d 19h
+VIEWERS
+128
+CHANNEL
+stream247dev
+UPDATES
+Polling
+Control
+Status
+Moderation
+Live
+Operate the live 24/7 output from one workspace.
+Use Live control for on-air actions. Current item, next queue, destination health, and scene state update continuously without reloading the page.
+Live · 128
+FEED
+On air
+CURRENT
+Abendprogramm — Folge 12
+NEXT
+Abendprogramm
+DESTINATION
+1 in use
+UPDATES
+Polling
+ON AIR
+Current and next
+Abendprogramm — Folge 12
+Scheduled block is on air.
+Transition idle · queue reason scheduled_match · version 0
+Abendprogramm
+Prefetch idle · last probe never
+Transition target none · ready not ready
+Queue preview
+No queue preview is currently available.
+ACTIONS
+Operator controls
+If something is stuck
+Temporary fallback
+Skip current
+Resume schedule
+PIN ASSET
+OVERRIDE MINUTES
+LIVE BRIDGE INPUT
+RTMP / RTMPS
+HLS
+LIVE BRIDGE LABEL
+LIVE BRIDGE URL
+Pin on air
+Play now
+Move next
+Play insert
+Take live
+Release live
+Remove next
+Replay previous
+AUDIO LANE
+Secondary audio
+Program audio
+No audio lane is configured for the active pool.
+CUEPOINTS
+Timed insert
+No cuepoint insert asset
+No cuepoints are configured for the current schedule block.
+LIVE BRIDGE
+Live takeover
+Live Bridge
+Status idle · no input type
+No live input configured.
+DESTINATION
+Sending to Twitch
+Primary Twitch Output
+primary lead · ready · /tmp/stream-output
+1 active · 0 staged · 0 cooling down
+PID 4242 · restarts 0 · crash loop clear
+Last transition <timestamp>
+The encoder has not reported any errors.
+Lokales Relay
+Primary · priority 0 · Not set up yet
+No RTMP URL configured · stream key present · key source managed
+Recovery missing-config
+Configure a valid RTMP URL and stream key before this output can join the live destination group.
+Primary Twitch Output
+Primary · priority 0 · Ready · in use
+/tmp/stream-output · stream key present · key source env
+Primary RTMP destination for the broadcast runtime.
+Recovery active
+Output is currently carrying the live broadcast.
+Backup RTMP Output
+Backup · priority 10 · Not set up yet
+No RTMP URL configured · stream key missing · key source missing
+Backup RTMP destination used when the primary output is unavailable or disabled.
+Recovery missing-config
+Configure a valid RTMP URL and stream key before this output can join the live destination group.
+SCENES
+What the overlay shows
+Replay stream · Stream247
+Always on air
+Preset replay-lower-third · glass surface · bottom anchor · balanced scale
+Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
+Asset replay-lower-third · Insert bumper-board · Standby standby-board · Reconnect reconnect-board
+Accent #0e6d5a · Brand badge none · Next visible yes · Clock yes
+Queue preview no · Current category yes · Source label yes
+Active scene replay-lower-third · layers Brand Chip → Hero Card → Next Card → Schedule Teaser → Clock
+Hidden layers none
+Open overlay studio
+Open public overlay
+INCIDENTS
+Open problems
+No open incidents
+The live system currently reports no unresolved incidents.
+WORKER
+Behind the scenes
+missing
+No worker heartbeat has been recorded yet.
+Last run: never

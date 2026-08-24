@@ -1,0 +1,120 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+On air
+idle
+CURRENT
+Abendprogramm — Folge 12
+scheduled_match
+NEXT
+Abendprogramm
+Queue will resolve on next cycle
+DESTINATION
+Primary Twitch Output
+ready
+INCIDENTS
+0
+No unresolved incidents
+UPDATES
+Polling
+No worker heartbeat yet
+Scene
+Engagement
+Output
+Engagement
+Manage in-stream engagement from one tab.
+Control the live chat rail, Twitch alert types, and the chatter-participation game that all render through the same captured overlay.
+CHAT AND ALERTS
+Engagement controls
+CHAT OVERLAY
+Configure the on-stream Twitch chat rail that renders inside the captured overlay.
+Enable chat overlay
+CHAT MODE
+Quiet
+Active
+Flood
+CHAT POSITION
+Bottom left
+Bottom right
+Top left
+Top right
+STYLE
+Compact
+Card
+MAX CHAT MESSAGES
+RATE LIMIT PER MINUTE
+ALERT TYPES
+Follow, subscription, cheer, and channel-point alerts all render through the same internal overlay path.
+Enable follow and subscription alerts
+Enable bits / cheer alerts
+Enable channel point redemption alerts
+ALERT POSITION
+Bottom left
+Bottom right
+Top left
+Top right
+These switches are still gated by deployment flags. Set `STREAM_CHAT_OVERLAY_ENABLED=1` and `STREAM_ALERTS_ENABLED=1` before enabling them on a live channel.
+Bits and channel point alerts also require one Twitch reconnect after M32 so the broadcaster token includes the new scopes.
+CHATTER-PARTICIPATION GAME
+The game shares the Twitch IRC runtime with the chat rail. Keep `STREAM_CHAT_OVERLAY_ENABLED=1` and chat enabled when you want the mode selector to stay live.
+Enable chatter-participation game
+ACTIVE CHATTER WINDOW (MINUTES)
+Solo mode
+Small-group mode
+Crowd mode
+MODE AUTOMATION
+Solo handles one chatter, Small-group handles 2-9, Crowd takes over at 10+, with worker-side hysteresis to prevent flapping.
+Disable any mode you do not want auto-selected. If chat goes quiet or every mode is disabled, the game widget stays off-air.
+Save engagement settings
+LIVE STATUS
+Runtime state
+Chat overlay
+Disabled by settings or STREAM_CHAT_OVERLAY_ENABLED.
+Follow/sub alerts
+Disabled by settings or STREAM_ALERTS_ENABLED.
+Bits / cheer alerts
+Disabled by settings, STREAM_ALERTS_ENABLED, or missing the post-M32 Twitch reconnect.
+Channel point alerts
+Disabled by settings, STREAM_ALERTS_ENABLED, or missing the post-M32 Twitch reconnect.
+Recent engagement events
+No recent chat or alert events.
+Game mode
+Disabled by settings, disabled chat runtime, or no active chatters in the current window.
+Twitch reconnect note
+Broadcasters connected before M32 must reconnect Twitch once so bits and channel point alert scopes are granted.
+CHAT STEERS THE PROGRAMME
+Viewer control
+Disabled. Chat cannot influence the running order.
+VIEWER CONTROL
+Lets Twitch chat steer the programme. A vote can only reorder what is already queued, so chat influences the running order without bypassing your schedule.
+Enable viewer control
+VOTE ON WHAT PLAYS NEXT
+A poll opens once per item and closes before the boundary, so viewers see the result before it takes effect. A tie leaves the schedule untouched rather than picking for them.
+Enable voting
+POLL DURATION (SECONDS)
+CANDIDATES
+MINIMUM VOTERS TO HONOUR A RESULT
+REQUESTS
+Viewers add a ready library item to the end of the queue. Only items the library has released are eligible.
+Enable requests
+COMMAND
+COOLDOWN PER VIEWER (SECONDS)
+MAXIMUM VIEWER REQUESTS IN THE QUEUE
+SKIP VOTE
+Needs both a share of active chatters and an absolute floor, so a quiet channel cannot be skipped by a handful of people. A skipped item is held back the same way an operator skip holds it.
+Enable skip votes
+COMMAND
+SHARE OF ACTIVE CHATTERS (%)
+MINIMUM VOTES
+COLLECTION WINDOW (SECONDS)
+Save viewer control

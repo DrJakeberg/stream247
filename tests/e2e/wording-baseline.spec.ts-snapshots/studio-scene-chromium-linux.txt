@@ -1,0 +1,198 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+On air
+idle
+CURRENT
+Abendprogramm — Folge 12
+scheduled_match
+NEXT
+Abendprogramm
+Queue will resolve on next cycle
+DESTINATION
+Primary Twitch Output
+ready
+INCIDENTS
+0
+No unresolved incidents
+UPDATES
+Polling
+No worker heartbeat yet
+Scene
+Engagement
+Output
+Scene
+Publish the viewer-facing scene without leaving the control room.
+Scene controls the published viewer-facing scene. Draft changes stay isolated until you review and publish them to Stream247's internal overlay output and the on-air renderer.
+SCENE
+Scene controls
+Stream247 captures http://<version>.1:3020/overlay as its internal overlay output. Draft changes stay inside the studio until you publish them, and the same live scene settings also drive the on-air replay text overlay inside the FFmpeg playout path. Metadata widgets stay inside that canonical scene payload, custom font stacks resolve only against fonts already installed on the browser host or worker image, and positioned embeds remain conservative: remote CSP and iframe policies still decide whether a website or widget can actually render.
+SCENE DRAFT
+Live and draft match
+Draft is based on live scene updated at unknown.
+Activate emergency banner
+Save draft
+Review changes
+Reset to live
+SCENE PREVIEW
+Regular asset
+Insert / bumper
+Standby
+Reconnect
+REPLAY STREAM · STREAM247 · NOW PLAYING
+NOW PLAYING
+Abendprogramm — Folge 12
+Always on air
+Always on air · Archive Pool
+NEXT
+Abendprogramm
+<time> to <time>
+SCENE
+Abendprogramm — Folge 12
+Always on air
+Archive Pool
+<time> EUROPE/BERLIN
+Enable overlay output
+CHANNEL NAME
+HEADLINE
+INSERT HEADLINE
+STANDBY HEADLINE
+RECONNECT HEADLINE
+REPLAY LABEL
+BRAND BADGE
+ACCENT COLOR
+TICKER TEXT
+ACTIVE SCENE PRESET
+Replay Lower Third
+Split Now / Next
+Standby Board
+Minimal Chip
+Bumper Board
+Reconnect Board
+Replay Lower Third
+Wide now-playing panel with a compact next item card for a broadcast lower-third feel.
+Split Now / Next
+Balanced dual-card layout that keeps current and next programming equally visible.
+Standby Board
+Full-frame replay board for standby, reconnects, or channels that always want a strong branded slate.
+Minimal Chip
+Compact replay badge with current metadata for channels that want very light on-air graphics.
+Bumper Board
+Bold insert scene for channel IDs, bumpers, and manual inserts between regular programming.
+Reconnect Board
+Centered reconnect scene for controlled output resets without losing channel branding.
+INSERT SCENE PRESET
+Replay Lower Third
+Split Now / Next
+Standby Board
+Minimal Chip
+Bumper Board
+Reconnect Board
+Used for manual and automatic inserts between regular programming.
+STANDBY SCENE PRESET
+Replay Lower Third
+Split Now / Next
+Standby Board
+Minimal Chip
+Bumper Board
+Reconnect Board
+Used while the stream is on air but waiting for the next playable item.
+RECONNECT SCENE PRESET
+Replay Lower Third
+Split Now / Next
+Standby Board
+Minimal Chip
+Bumper Board
+Reconnect Board
+Used during controlled reconnect windows and output resets.
+SURFACE STYLE
+Glass
+Solid
+Signal
+Soft translucent panels with the most broadcast-style depth.
+PANEL ANCHOR
+Bottom Dock
+Center Stage
+Classic lower-third placement anchored near the bottom edge.
+TITLE SCALE
+Compact
+Balanced
+Cinematic
+Default heading scale for most replay channels.
+TYPOGRAPHY PRESET
+Studio Sans
+Editorial Serif
+Signal Mono
+Neutral broadcast sans stack for everyday replay channels.
+Scene layer order
+Asset, insert, standby, and reconnect modes can now each resolve to different scene presets without changing the main live scene.
+POSITIONED LAYERS
+Add custom text, logo, image, website, or widget layers on top of the preset layout. Text layers can switch to safe local font stacks, metadata widgets can read from the canonical scene payload, and browser frames remain limited by each provider's iframe and CSP rules.
+Add Text Layer
+Add Logo Layer
+Add Image Layer
+Add Website Embed
+Add Widget Embed
+No positioned layers yet. Add one when you need custom text, logos, stills, or embed-safe widgets.
+SCENE PRESET LIBRARY
+Save the current draft as a reusable scene preset, then re-apply it later without rebuilding every control by hand.
+PRESET NAME
+DESCRIPTION
+Save draft as preset
+No saved scene presets yet.
+EMERGENCY BANNER
+Show clock
+Show next item
+Show schedule teaser
+Show current category
+Show source label
+Show queue preview
+QUEUE PREVIEW COUNT
+LIVE SCENE
+replay-lower-third
+Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
+Typography studio-sans · 0 positioned layers
+Asset replay-lower-third · Insert bumper-board · Standby standby-board · Reconnect reconnect-board
+Published never
+DRAFT SCENE
+replay-lower-third
+Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
+Typography studio-sans · 0 positioned layers
+Asset replay-lower-third · Insert bumper-board · Standby standby-board · Reconnect reconnect-board
+Draft saved not yet saved
+PUBLISH STATUS
+Live and draft match
+Draft is based on live scene updated at unknown.
+VIEWER SCENE
+Published scene state
+Live scene preset
+replay-lower-third · glass surface · bottom anchor · balanced title scale
+Typography studio-sans · 0 positioned layers
+Current category shown · source label shown
+Queue preview hidden
+Published never
+Draft status
+Draft matches the live scene.
+Draft saved not yet saved
+Based on live scene unknown
+Draft preset replay-lower-third · glass surface · bottom anchor
+Typography studio-sans · 0 positioned layers
+0 saved scene presets in the library.
+Current block
+No active block
+Next block
+Abendprogramm · <time> to <time>
+Internal overlay output
+Open overlay page
+Emergency banner
+No emergency banner is active.
