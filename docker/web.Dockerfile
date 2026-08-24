@@ -12,7 +12,10 @@ RUN pnpm install --frozen-lockfile=false
 FROM public.ecr.aws/docker/library/node:22-alpine AS builder
 WORKDIR /app
 RUN corepack enable
-COPY --from=deps /app/node_modules ./node_modules
+# The whole installed tree, not just the root node_modules. pnpm puts a node_modules in every
+# workspace package, filled with symlinks into the store, and taking only the root one left the
+# build resolving next through whatever the context happened to carry in.
+COPY --from=deps /app ./
 COPY . .
 RUN pnpm build
 

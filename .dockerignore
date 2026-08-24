@@ -1,5 +1,10 @@
 .git
-node_modules
+# Same trap as the data entry below: a bare "node_modules" only matches the context root, so every
+# workspace package's node_modules was copied in from the developer's machine. pnpm fills those with
+# symlinks into a store the image does not have, and the build died on "Cannot find module
+# next/dist/bin/next" — after five days in which every local image build failed and the stack kept
+# quietly serving the last one that worked.
+**/node_modules
 .next
 coverage
 # Matches at any depth. A bare "data" only excludes the context root, so a developer's
