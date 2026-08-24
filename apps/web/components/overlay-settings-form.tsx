@@ -727,10 +727,18 @@ export function OverlaySettingsForm(props: {
             </label>
           </div>
 
+          {/*
+            Eight layers, three buttons each: twenty-four of this page's seventy-nine controls were
+            here, permanently open, for a task done rarely and never in a hurry. Each layer already
+            states its position and whether it is visible, so folding the group away costs the
+            reordering buttons and no information.
+          */}
           <div className="list">
-            <div className="item">
-              <span className="label">Scene layer order</span>
-              <div className="subtle">Top to bottom render order inside the current scene preset.</div>
+            <details className="disclosure item">
+              <summary>Scene layer order</summary>
+              <div className="subtle" style={{ marginTop: 8 }}>
+                Top to bottom render order inside the current scene preset.
+              </div>
               <div className="list" style={{ marginTop: 12 }}>
                 {draft.layerOrder.map((layerKind, index) => {
                   const layer = OVERLAY_SCENE_LAYERS.find((entry) => entry.id === layerKind);
@@ -755,7 +763,7 @@ export function OverlaySettingsForm(props: {
                   );
                 })}
               </div>
-            </div>
+            </details>
           </div>
 
           <p className="subtle">

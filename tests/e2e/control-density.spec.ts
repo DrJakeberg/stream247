@@ -30,7 +30,9 @@ const SURFACES: Surface[] = [
   // with the number of outputs configured. Folding those away leaves what the page is for.
   { name: "live-status", path: "/live?tab=status", maxControls: 28 },
   { name: "program-schedule", path: "/program?tab=schedule&day=1", maxControls: 14 },
-  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 79 },
+  // The overlay editor, where editing is the point — so this one is folded rather than trimmed. Was
+  // 79; twenty-four of those were three buttons on each of eight layers, held open permanently.
+  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 55 },
   { name: "admin-settings", path: "/admin?tab=settings", maxControls: 29 }
 ];
 
