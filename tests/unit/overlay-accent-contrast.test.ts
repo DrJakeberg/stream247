@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { accentInkColor, accentTextColor } from "@stream247/core";
 
 /**
@@ -85,5 +87,29 @@ describe("headings lettered in the accent stay readable on the panel", () => {
     expect(accentTextColor("#0e6d5a")).toBe("#ffffff");
     expect(accentTextColor("#1f2937")).toBe("#ffffff");
     expect(accentTextColor("#000000")).toBe("#ffffff");
+  });
+});
+
+describe("the overlay's own text stays above the threshold", () => {
+  // Read out of the renderer rather than listed here. A list would let someone soften a value in
+  // the source while this file kept agreeing with the old one — the way an allowlist quietly
+  // becomes the blind spot it was written to remove.
+  const source = readFileSync(path.join(process.cwd(), "packages/core/src/overlay-layout.ts"), "utf8");
+  const alphas = [...source.matchAll(/color: "rgba\(255,255,255,([\d.]+)\)"/g)].map((match) => Number(match[1]));
+
+  it("finds the colours it is supposed to be checking", () => {
+    // Without this, a rename of the colour syntax turns this whole block into a silent pass.
+    expect(alphas.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it.each([...new Set(alphas)])("white at %s reads on the panel", (alpha) => {
+    // The panel fill, composited as if opaque — the darkest backdrop these ever sit on.
+    const panel = [8, 10, 15];
+    const composited = panel
+      .map((channel) => Math.round(alpha * 255 + (1 - alpha) * channel))
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
+
+    expect(contrastRatio(`#${composited}`, "#080a0f")).toBeGreaterThanOrEqual(4.5);
   });
 });
