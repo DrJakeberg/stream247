@@ -87,8 +87,8 @@ Local Media Library
 Filesystem scan
 Pending scan
 Enabled
-0 assets
-0 ready
+2 assets
+2 ready
 Not synced yet
 No sync run recorded yet.
 2 pool refs

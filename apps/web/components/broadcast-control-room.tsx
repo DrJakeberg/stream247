@@ -302,7 +302,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 {snapshot.overlay.showCurrentCategory ? "yes" : "no"} · Source label {snapshot.overlay.showSourceLabel ? "yes" : "no"}
               </div>
               <div className="subtle">
-                Active scene {snapshot.activeScene.resolvedPresetId} · layers{" "}
+                Active scene {describeScenePreset(snapshot.activeScene.resolvedPresetId)} · layers{" "}
                 {snapshot.activeScene.layers.filter((layer) => layer.enabled).map((layer) => layer.label).join(" → ")}
               </div>
               <div className="subtle">

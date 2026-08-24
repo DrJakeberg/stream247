@@ -88,11 +88,11 @@ New set draft
 BULK FOLDER PATH
 BULK TAGS
 Select assets to see what you can do with them.
-dev-source
+Local Media Library
 2 asset(s)
 Select asset
 Abendprogramm — Folge 13
-dev-source · ready · 45m
+Local Media Library · ready · 45m
 Replay
 Folder: root · Tags: none
 Included in programming · No global fallback flag
@@ -101,7 +101,7 @@ No curated set
 Open asset detail
 Select asset
 Abendprogramm — Folge 12
-dev-source · ready · 60m
+Local Media Library · ready · 60m
 Replay
 Folder: root · Tags: none
 Included in programming · No global fallback flag

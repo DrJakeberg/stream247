@@ -140,7 +140,7 @@ Asset headline Always on air · Insert Insert on air · Standby Please wait, res
 Asset Replay Lower Third · Insert Bumper Board · Standby Standby Board · Reconnect Reconnect Board
 Accent #0e6d5a · Brand badge none · Next visible yes · Clock yes
 Queue preview no · Current category yes · Source label yes
-Active scene replay-lower-third · layers Brand Chip → Hero Card → Next Card → Schedule Teaser → Clock
+Active scene Replay Lower Third · layers Brand Chip → Hero Card → Next Card → Schedule Teaser → Clock
 Hidden layers none
 Open overlay studio
 Open public overlay

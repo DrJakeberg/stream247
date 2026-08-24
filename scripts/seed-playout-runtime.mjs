@@ -29,7 +29,11 @@ const STARTED_AT = "2026-03-14T20:00:00.000Z";
 const HEARTBEAT_AT = "2026-03-14T20:42:00.000Z";
 
 /**
- * Two assets, fixed in every field.
+ * Two assets, fixed in every field, belonging to the source the seeded pool actually draws from.
+ *
+ * They used to sit on "dev-source", which no source record has ever had. The library page showed
+ * that id where a source name belongs, and no pool could reach them: the pool draws from
+ * source-local-library, so its blocks resolved to nothing even once the assets existed.
  *
  * The API fixture cannot create these: registering media goes through an upload, and a dev stack
  * has no media to upload. Without them the workspace has pools and schedule blocks pointing at
@@ -38,7 +42,7 @@ const HEARTBEAT_AT = "2026-03-14T20:42:00.000Z";
 const ASSETS = [
   {
     id: "dev-asset-on-air",
-    sourceId: "dev-source",
+    sourceId: "source-local-library",
     title: "Abendprogramm — Folge 12",
     path: "/app/data/media/dev/abendprogramm-12.mp4",
     status: "ready",
@@ -52,7 +56,7 @@ const ASSETS = [
   },
   {
     id: "dev-asset-next",
-    sourceId: "dev-source",
+    sourceId: "source-local-library",
     title: "Abendprogramm — Folge 13",
     path: "/app/data/media/dev/abendprogramm-13.mp4",
     status: "ready",
@@ -76,7 +80,10 @@ async function main() {
   // succeeds, so the seed reported success while writing nothing. Every surface that resolves
   // playable material has been recording its empty state into the baselines as though that were the
   // seeded content: "No playable video resolved", on every block of every day.
-  await replaceAssetsForSourceIds([...new Set(ASSETS.map((asset) => asset.sourceId))], ASSETS);
+  // "dev-source" is swept up as well: the fixture used to file these two assets under that id, and
+  // the replace is by source rather than by asset id — so without it the old rows survive and the
+  // insert collides on the primary key. Any dev database seeded before this still carries them.
+  await replaceAssetsForSourceIds([...new Set([...ASSETS.map((asset) => asset.sourceId), "dev-source"])], ASSETS);
 
   const asset = ASSETS[0];
   const nextAsset = ASSETS[1];

@@ -62,7 +62,7 @@ Abendprogramm
 1 source(s) · round-robin
 No automatic inserts configured
 Local Media Library
-0 total assets · 0 ready
+2 total assets · 2 ready
 Change this pool
 Archive Pool
 2 source(s) · round-robin
@@ -74,5 +74,5 @@ Nachtschleife
 2 source(s) · round-robin
 No automatic inserts configured
 Local Media Library, YouTube Playlist
-0 total assets · 0 ready
+2 total assets · 2 ready
 Change this pool

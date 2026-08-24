@@ -42,109 +42,104 @@ MON
 3 blocks
 1440m scheduled
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Nachtschleife · Abendprogramm · Monday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Tagesprogramm · Abendprogramm · Monday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Abendprogramm · Abendprogramm · Monday
-No playable material
+Repeats inside block
 TUE
 3 blocks
 1440m scheduled
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Nachtschleife · Abendprogramm · Tuesday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Tagesprogramm · Abendprogramm · Tuesday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Abendprogramm · Abendprogramm · Tuesday
-No playable material
+Repeats inside block
 WED
 3 blocks
 1440m scheduled
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Nachtschleife · Abendprogramm · Wednesday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Tagesprogramm · Abendprogramm · Wednesday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Abendprogramm · Abendprogramm · Wednesday
-No playable material
+Repeats inside block
 THU
 3 blocks
 1440m scheduled
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Nachtschleife · Abendprogramm · Thursday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Tagesprogramm · Abendprogramm · Thursday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Abendprogramm · Abendprogramm · Thursday
-No playable material
+Repeats inside block
 FRI
 3 blocks
 1440m scheduled
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Nachtschleife · Abendprogramm · Friday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Tagesprogramm · Abendprogramm · Friday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Abendprogramm · Abendprogramm · Friday
-No playable material
+Repeats inside block
 SAT
 3 blocks
 1500m scheduled
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Nachtschleife · Abendprogramm · Saturday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Tagesprogramm · Abendprogramm · Saturday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Nachtschleife · Abendprogramm · Saturday
-No playable material
+Repeats inside block
 SUN
 3 blocks
 1500m scheduled
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Nachtschleife · Abendprogramm · Saturday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Tagesprogramm · Abendprogramm · Sunday
-No playable material
+Repeats inside block
 <time> TO <time>
-No playable video resolved
+Abendprogramm — Folge 12
 Abendprogramm · Abendprogramm · Sunday
-No playable material
-PROGRAM
-Needs attention
-Some week blocks still resolve to no playable video
-Unresolved blocks: Mon <time> Nachtschleife · Mon <time> Tagesprogramm · Mon <time> Abendprogramm
-Open pools
+Repeats inside block

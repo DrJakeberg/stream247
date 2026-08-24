@@ -5,7 +5,7 @@ import Link from "next/link";
 import { OverlaySettingsForm } from "@/components/overlay-settings-form";
 import { Panel } from "@/components/panel";
 import { getCurrentScheduleItem, getNextScheduleItem, listOverlayScenePresetRecords, readAppState, readOverlayStudioState } from "@/lib/server/state";
-import { describeScenePreset } from "@/lib/scene-preset-names";
+import { describeScenePreset, describeTypographyPreset } from "@/lib/scene-preset-names";
 
 export default async function OverlayStudioPage() {
   const state = await readAppState();
@@ -66,7 +66,7 @@ export default async function OverlayStudioPage() {
                 {describeScenePreset(studioState.liveOverlay.scenePreset)} · {studioState.liveOverlay.surfaceStyle} surface · {studioState.liveOverlay.panelAnchor} anchor · {studioState.liveOverlay.titleScale} title scale
               </div>
               <div className="subtle">
-                Typography {studioState.liveOverlay.typographyPreset} · {studioState.liveOverlay.customLayers.length} positioned layer
+                Typography {describeTypographyPreset(studioState.liveOverlay.typographyPreset)} · {studioState.liveOverlay.customLayers.length} positioned layer
                 {studioState.liveOverlay.customLayers.length === 1 ? "" : "s"}
               </div>
               <div className="subtle">
@@ -90,7 +90,7 @@ export default async function OverlayStudioPage() {
                 {studioState.draftOverlay.panelAnchor} anchor
               </div>
               <div className="subtle">
-                Typography {studioState.draftOverlay.typographyPreset} · {studioState.draftOverlay.customLayers.length} positioned layer
+                Typography {describeTypographyPreset(studioState.draftOverlay.typographyPreset)} · {studioState.draftOverlay.customLayers.length} positioned layer
                 {studioState.draftOverlay.customLayers.length === 1 ? "" : "s"}
               </div>
               <div className="subtle">
