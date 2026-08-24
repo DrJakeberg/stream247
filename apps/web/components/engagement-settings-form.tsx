@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { useToast } from "@/components/ui/Toast";
 import type { EngagementSettingsRecord } from "@/lib/server/state";
+import { humanizeOptionValue } from "@/lib/option-labels";
 
 const chatModes: EngagementChatDisplayMode[] = ["quiet", "active", "flood"];
 const positions: EngagementOverlayPosition[] = ["bottom-left", "bottom-right", "top-left", "top-right"];
@@ -96,7 +97,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
               <select onChange={(event) => setChatMode(event.target.value as EngagementChatDisplayMode)} value={chatMode}>
                 {chatModes.map((mode) => (
                   <option key={mode} value={mode}>
-                    {mode}
+                    {humanizeOptionValue(mode)}
                   </option>
                 ))}
               </select>
@@ -106,7 +107,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
               <select onChange={(event) => setChatPosition(event.target.value as EngagementOverlayPosition)} value={chatPosition}>
                 {positions.map((position) => (
                   <option key={position} value={position}>
-                    {position}
+                    {humanizeOptionValue(position)}
                   </option>
                 ))}
               </select>
@@ -116,7 +117,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
               <select onChange={(event) => setStyle(event.target.value as EngagementOverlayStyle)} value={style}>
                 {styles.map((nextStyle) => (
                   <option key={nextStyle} value={nextStyle}>
-                    {nextStyle}
+                    {humanizeOptionValue(nextStyle)}
                   </option>
                 ))}
               </select>
@@ -163,7 +164,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
               <select onChange={(event) => setAlertPosition(event.target.value as EngagementOverlayPosition)} value={alertPosition}>
                 {positions.map((position) => (
                   <option key={position} value={position}>
-                    {position}
+                    {humanizeOptionValue(position)}
                   </option>
                 ))}
               </select>
