@@ -86,15 +86,15 @@ Play insert
 Remove next
 Replay previous
 Next queued asset: Abendprogramm — Folge 13
-AUDIO LANE
+REPLACEMENT AUDIO
 Secondary audio
 Program audio
 No audio lane is configured for the active pool.
 Pool Abendprogramm
-CUEPOINTS
+TIMED INSERTS
 Timed insert
 No cuepoint insert asset
-No cuepoints are configured for the current schedule block.
+Nothing is set to play at a fixed time in this block.
 LIVE BRIDGE
 Live takeover
 Live Bridge

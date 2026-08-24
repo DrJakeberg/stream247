@@ -277,9 +277,9 @@ export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
       </label>
       <div className="form-grid">
         <label>
-          <span className="label">Cuepoint insert asset</span>
+          <span className="label">Timed insert</span>
           <select defaultValue={block?.cuepointAssetId ?? ""} name="cuepointAssetId">
-            <option value="">Use pool automatic insert asset</option>
+            <option value="">Use whatever the pool inserts</option>
             {assets
               .filter((asset) => asset.status === "ready")
               .map((asset) => (
@@ -290,7 +290,7 @@ export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
           </select>
         </label>
         <label>
-          <span className="label">Cuepoints (seconds from block start)</span>
+          <span className="label">Play it at (seconds into the block)</span>
           <input
             name="cuepointOffsetsText"
             onChange={(event) => setCuepointOffsetsText(event.target.value)}

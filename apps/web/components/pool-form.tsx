@@ -97,7 +97,7 @@ export function PoolForm(props: {
       </div>
       <div className="form-grid">
         <label>
-          <span className="label">Audio lane asset</span>
+          <span className="label">Replacement audio</span>
           <select defaultValue={props.pool?.audioLaneAssetId ?? ""} name="audioLaneAssetId">
             <option value="">Use program audio</option>
             {props.assets
@@ -110,7 +110,7 @@ export function PoolForm(props: {
           </select>
         </label>
         <label>
-          <span className="label">Audio lane level (%)</span>
+          <span className="label">Replacement audio level (%)</span>
           <input
             defaultValue={props.pool?.audioLaneVolumePercent ?? 100}
             min="0"
@@ -123,8 +123,8 @@ export function PoolForm(props: {
       </div>
       <p className="subtle">Pools currently use persistent round-robin playback across all ready assets from the selected sources.</p>
       <p className="subtle">
-        Audio lanes replace the normal program audio during scheduled pool playback. Assets from Local media library or
-        Direct media URL sources loop most reliably.
+        Replacement audio plays instead of the programme sound whenever this pool is on air. Assets from Local media
+        library or Direct media URL sources loop most reliably.
       </p>
       {error ? <p className="danger">{error}</p> : null}
       {/*

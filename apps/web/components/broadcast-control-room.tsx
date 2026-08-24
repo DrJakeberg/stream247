@@ -161,7 +161,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
         </article>
 
         <article className="panel">
-          <span className="label">Audio lane</span>
+          <span className="label">Replacement audio</span>
           <h3>Secondary audio</h3>
           <div className="list">
             <div className="item">
@@ -178,7 +178,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
         </article>
 
         <article className="panel">
-          <span className="label">Cuepoints</span>
+          <span className="label">Timed inserts</span>
           <h3>Timed insert</h3>
           <div className="list">
             <div className="item">
@@ -186,16 +186,16 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               <div className="subtle">
                 {snapshot.cuepoints.configured
                   ? `Safe-boundary mode · ${snapshot.cuepoints.firedCount}/${snapshot.cuepoints.totalCount} fired`
-                  : "No cuepoints are configured for the current schedule block."}
+                  : "Nothing is set to play at a fixed time in this block."}
               </div>
               {snapshot.cuepoints.offsetsSeconds.length > 0 ? (
                 <div className="subtle">Offsets {snapshot.cuepoints.offsetsSeconds.map((offset) => `${offset}s`).join(" · ")}</div>
               ) : null}
               {snapshot.cuepoints.nextOffsetSeconds !== null ? (
-                <div className="subtle">Next cuepoint at {snapshot.cuepoints.nextOffsetSeconds}s from block start</div>
+                <div className="subtle">Next one {snapshot.cuepoints.nextOffsetSeconds}s into the block</div>
               ) : null}
               {snapshot.cuepoints.dueOffsetSeconds !== null ? (
-                <div className="subtle">A cuepoint at {snapshot.cuepoints.dueOffsetSeconds}s is armed for the next safe insert boundary.</div>
+                <div className="subtle">The insert due at {snapshot.cuepoints.dueOffsetSeconds}s is waiting for a safe point to start.</div>
               ) : null}
               {snapshot.cuepoints.lastTriggeredAt ? (
                 <div className="subtle">

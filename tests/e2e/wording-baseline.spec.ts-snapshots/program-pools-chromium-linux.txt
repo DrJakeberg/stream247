@@ -48,13 +48,13 @@ No automatic insert
 Abendprogramm — Folge 13
 Abendprogramm — Folge 12
 INSERT EVERY N SCHEDULED ITEMS
-AUDIO LANE ASSET
+REPLACEMENT AUDIO
 Use program audio
 Abendprogramm — Folge 13
 Abendprogramm — Folge 12
-AUDIO LANE LEVEL (%)
+REPLACEMENT AUDIO LEVEL (%)
 Pools currently use persistent round-robin playback across all ready assets from the selected sources.
-Audio lanes replace the normal program audio during scheduled pool playback. Assets from Local media library or Direct media URL sources loop most reliably.
+Replacement audio plays instead of the programme sound whenever this pool is on air. Assets from Local media library or Direct media URL sources loop most reliably.
 Add pool
 PROGRAM
 Pools
