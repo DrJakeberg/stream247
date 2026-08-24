@@ -11,23 +11,23 @@ Admin
 Open public page
 Sign out
 FEED
-On air
-idle
+<runtime>
+<runtime>
 CURRENT
-Abendprogramm — Folge 12
-Matched the schedule
+<runtime>
+<runtime>
 NEXT
-Abendprogramm
-Queue will resolve on next cycle
+<runtime>
+<runtime>
 DESTINATION
-Primary Twitch Output
-ready
+<runtime>
+<runtime>
 INCIDENTS
-0
-No unresolved incidents
+<runtime>
+<runtime>
 UPDATES
-Polling
-No worker heartbeat yet
+<runtime>
+<runtime>
 Scene
 Engagement
 Output
@@ -51,16 +51,16 @@ Standby
 Reconnect
 REPLAY STREAM · STREAM247 · NOW PLAYING
 NOW PLAYING
-Abendprogramm — Folge 12
-Always on air
-Always on air · Archive Pool
-NEXT
 Abendprogramm
-<time> to <time>
-SCENE
-Abendprogramm — Folge 12
 Always on air
-Archive Pool
+Musik · Abendprogramm
+NEXT
+Abendprogramm — Folge 13
+No next block configured
+SCENE
+Abendprogramm
+Musik
+Abendprogramm
 <time> EUROPE/BERLIN
 Enable overlay output
 CHANNEL NAME
@@ -189,9 +189,9 @@ Draft preset Replay Lower Third · glass surface · bottom anchor
 Typography studio-sans · 0 positioned layers
 0 saved scene presets in the library.
 Current block
-No active block
-Next block
 Abendprogramm · <time> to <time>
+Next block
+No next block
 Internal overlay output
 Open overlay page
 Emergency banner

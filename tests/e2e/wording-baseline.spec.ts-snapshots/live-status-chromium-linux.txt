@@ -11,36 +11,36 @@ Admin
 Open public page
 Sign out
 FEED
-On air
-idle
+<runtime>
+<runtime>
 CURRENT
-Abendprogramm — Folge 12
-Matched the schedule
+<runtime>
+<runtime>
 NEXT
-Abendprogramm
-Queue will resolve on next cycle
+<runtime>
+<runtime>
 DESTINATION
-Primary Twitch Output
-ready
+<runtime>
+<runtime>
 INCIDENTS
-0
-No unresolved incidents
+<runtime>
+<runtime>
 UPDATES
-Polling
-No worker heartbeat yet
+<runtime>
+<runtime>
 Live
 Keep channel and playout state visible across the whole Live workspace.
 Twitch channel state, viewer count, uptime, and playout health stay visible while you move between Live control, status, and moderation.
 Live · 128
 Feed running
 TWITCH UPTIME
-<age>
+<runtime>
 VIEWERS
-128
+<runtime>
 CHANNEL
-stream247dev
+<runtime>
 UPDATES
-Polling
+<runtime>
 Control
 Status
 Moderation
@@ -165,7 +165,7 @@ Primary Twitch Output · /tmp/stream-output
 PID 4242 · restart count 0 · asset Abendprogramm — Folge 12
 Transition idle · next probe idle · next Abendprogramm — Folge 13
 Last stderr: No FFmpeg stderr captured yet.
-Current schedule: none · Next: Abendprogramm
+Current schedule: Abendprogramm · Next: none
 Queue: no queued assets
 Use Live control for skip, fallback, restart, override, replay, and Live Bridge actions. This status view stays read-only.
 System readiness

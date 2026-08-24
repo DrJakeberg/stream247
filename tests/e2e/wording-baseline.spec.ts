@@ -96,7 +96,21 @@ test.describe("wording baseline", () => {
 
       // Collapsed groups are part of what a page says, so their summaries are included and their
       // contents are not — the same thing a reader sees.
-      const text = await shell.innerText();
+      //
+      // The status rail's values are dropped, its labels kept. What is on air right now is decided
+      // by the wall clock against the seeded schedule, and this baseline went red on fourteen
+      // surfaces at once when the day crossed a schedule boundary — one shared region, every
+      // authenticated page. Those values are data, not wording; the labels above them are wording,
+      // and stay covered.
+      // Rewritten in the live document rather than in a clone: innerText needs layout, and a
+      // detached node has none, so a clone collapses the whole page onto one line. The readable
+      // diff is the point of this baseline. The page is discarded after the test either way.
+      const text = await shell.evaluate((root) => {
+        for (const value of root.querySelectorAll(".admin-status-rail strong, .admin-status-rail .subtle, .status-rail strong")) {
+          value.textContent = "<runtime>";
+        }
+        return (root as HTMLElement).innerText;
+      });
 
       expect(normalize(text)).toMatchSnapshot(`${surface.name}.txt`);
     });

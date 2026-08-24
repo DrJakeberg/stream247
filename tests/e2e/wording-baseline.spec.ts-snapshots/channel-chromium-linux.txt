@@ -8,10 +8,10 @@ Updating every few seconds
 Europe/Berlin
 Watch the stream
 On air now
-Abendprogramm — Folge 12
-Scheduled block is on air.
-Up next
 Abendprogramm
 <time> to <time> · Musik
+Up next
+No next item published yet
+The next queue item will appear here as soon as the runtime confirms it.
 After that
 Nothing further is scheduled yet.

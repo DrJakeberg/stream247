@@ -40,7 +40,16 @@ const RUNTIME_STATE_SELECTORS = [
   // This is not why CI and a developer machine disagreed, though it was blamed for it at the time:
   // local image builds had been silently broken for five days, so the harness kept comparing
   // against a five-day-old UI while CI built the real one. That is fixed in the build, not here.
-  "[data-build-info]"
+  "[data-build-info]",
+  // The shared status rail's values: what is on air, what is next, how the outputs are doing. Every
+  // authenticated page carries it, and it is decided by the wall clock against the seeded schedule
+  // — so it changes on its own when the day crosses a schedule boundary. It took out the live
+  // control snapshots that way; the others survived only because a few changed words stay under the
+  // pixel tolerance on a tall page, which is luck rather than a net. The labels above the values
+  // are static and stay visible.
+  ".admin-status-rail strong",
+  ".admin-status-rail .subtle",
+  ".status-rail strong"
 ];
 
 /**
@@ -131,22 +140,22 @@ const SURFACES: Surface[] = [
   // the SSE feed has nothing to push. These are the pages an operator opens when something is
   // wrong, which makes them the last ones that should have gone unwatched.
   { name: "live-status", path: "/live?tab=status", authenticated: true, masked: true },
-  { name: "live-control", path: "/live?tab=control", authenticated: true },
-  { name: "live-moderation", path: "/live?tab=moderation", authenticated: true },
+  { name: "live-control", path: "/live?tab=control", authenticated: true, masked: true },
+  { name: "live-moderation", path: "/live?tab=moderation", authenticated: true, masked: true },
   // Pinning the day was not enough, and neither was masking the clock: both of these rotted again
   // two days after their baseline was taken, with no code change in between. What varies is server
   // state and server time, and page.clock reaches neither — so the volatile regions are masked and
   // the snapshot covers layout rather than content. A net that goes red on a calendar rather than
   // on a regression is one people learn to ignore.
   { name: "program-schedule", path: "/program?tab=schedule&day=1", authenticated: true, masked: true },
-  { name: "program-pools", path: "/program?tab=pools", authenticated: true },
-  { name: "program-library", path: "/program?tab=library", authenticated: true },
-  { name: "program-sources", path: "/program?tab=sources", authenticated: true },
+  { name: "program-pools", path: "/program?tab=pools", authenticated: true, masked: true },
+  { name: "program-library", path: "/program?tab=library", authenticated: true, masked: true },
+  { name: "program-sources", path: "/program?tab=sources", authenticated: true, masked: true },
   { name: "studio-scene", path: "/studio?tab=scene", authenticated: true, masked: true },
-  { name: "studio-engagement", path: "/studio?tab=engagement", authenticated: true },
-  { name: "studio-output", path: "/studio?tab=output", authenticated: true },
+  { name: "studio-engagement", path: "/studio?tab=engagement", authenticated: true, masked: true },
+  { name: "studio-output", path: "/studio?tab=output", authenticated: true, masked: true },
   { name: "admin-settings", path: "/admin?tab=settings", authenticated: true, masked: true },
-  { name: "admin-team", path: "/admin?tab=team", authenticated: true }
+  { name: "admin-team", path: "/admin?tab=team", authenticated: true, masked: true }
 ];
 
 const VIEWPORTS = [
