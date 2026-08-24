@@ -81,8 +81,14 @@ export function ChannelBlueprintForm() {
         memberships only remap when matching media is already present locally in the target workspace.
       </div>
       <div className="toggle-row">
+        {/*
+          Secondary, not primary. The settings page carried two primary buttons — saving the
+          settings and exporting a blueprint — and two of them means neither leads. Saving is what
+          the page is for; exporting is a thing you do occasionally, on purpose, having come here to
+          do it.
+        */}
         <button
-          className="button"
+          className="button button-secondary"
           disabled={isPending}
           onClick={() => {
             setError("");

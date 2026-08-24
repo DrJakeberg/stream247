@@ -20,20 +20,27 @@ type Surface = {
   path: string;
   /** Ceiling for visible controls, taken from the page as it stands today. */
   maxControls: number;
+  /**
+   * Whether this page is expected to offer a primary action.
+   *
+   * False for surfaces that only show you something. Inventing a primary button for a page that
+   * has nothing to be primary about would make the rule true and the page worse.
+   */
+  hasPrimary: boolean;
 };
 
 const SURFACES: Surface[] = [
   // The page an operator opens when something is wrong. It showed 33 at once, six of them repair
   // actions of equal weight, with the order to try them explained in a paragraph above the form.
-  { name: "live-control", path: "/live?tab=control", maxControls: 27 },
+  { name: "live-control", path: "/live?tab=control", maxControls: 27, hasPrimary: true },
   // Was 62, because the full editor stood open under every destination and the count therefore grew
   // with the number of outputs configured. Folding those away leaves what the page is for.
-  { name: "live-status", path: "/live?tab=status", maxControls: 28 },
-  { name: "program-schedule", path: "/program?tab=schedule&day=1", maxControls: 14 },
+  { name: "live-status", path: "/live?tab=status", maxControls: 28, hasPrimary: true },
+  { name: "program-schedule", path: "/program?tab=schedule&day=1", maxControls: 14, hasPrimary: false },
   // The overlay editor, where editing is the point — so this one is folded rather than trimmed. Was
   // 79; twenty-four of those were three buttons on each of eight layers, held open permanently.
-  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 55 },
-  { name: "admin-settings", path: "/admin?tab=settings", maxControls: 29 }
+  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 55, hasPrimary: true },
+  { name: "admin-settings", path: "/admin?tab=settings", maxControls: 29, hasPrimary: true }
 ];
 
 async function signIn(page: Page) {
@@ -65,17 +72,29 @@ test.describe("control density", () => {
           element.checkVisibility({ checkVisibilityCSS: true, contentVisibilityAuto: true, opacityProperty: true })
         );
 
+        // The primary style is the plain .button class; everything else carries a modifier. If a
+        // page has none, nothing tells you where to start; if it has several, none of them lead.
+        const primaries = visible.filter(
+          (element) => element.classList.contains("button") && element.className.trim() === "button"
+        );
+
         return {
           total: visible.length,
+          primaries: primaries.map((element) => (element.textContent || "").trim()),
           labels: visible.map((element) => (element.textContent || element.getAttribute("aria-label") || "").trim())
         };
       });
 
       // Reported on every run: the number is the point, and a silently passing budget teaches nothing.
-      console.log(`${surface.name}: ${measured.total} controls`);
+      console.log(`${surface.name}: ${measured.total} controls, primary: [${measured.primaries.join(", ")}]`);
       console.log(`  ${measured.labels.filter(Boolean).join(" | ")}`);
 
       expect(measured.total).toBeLessThanOrEqual(surface.maxControls);
+
+      // Never more than one. Two primary buttons is not twice as clear — the settings page carried
+      // "Save encrypted settings" and "Export channel blueprint" side by side, and neither led.
+      expect(measured.primaries.length).toBeLessThanOrEqual(1);
+      expect(measured.primaries.length === 1).toBe(surface.hasPrimary);
     });
   }
 });
