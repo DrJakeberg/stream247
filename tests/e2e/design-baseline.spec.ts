@@ -34,11 +34,50 @@ const RUNTIME_STATE_SELECTORS = [
   // surface failed on one viewport and passed on the other in the same run. page.clock cannot reach
   // the server, so the region is masked instead.
   ".overlay-clock",
-  // Build identity — app version and image tags. They differ between a developer machine, CI and
-  // production by construction, and the version moves on every release, so a snapshot asserting
-  // them goes red on release bumps rather than on design changes.
+  // Build identity — app version and image tags. The version moves on every release, so a snapshot
+  // asserting it would go red on release bumps rather than on design changes.
+  //
+  // This is not why CI and a developer machine disagreed, though it was blamed for it at the time:
+  // local image builds had been silently broken for five days, so the harness kept comparing
+  // against a five-day-old UI while CI built the real one. That is fixed in the build, not here.
   "[data-build-info]"
 ];
+
+/**
+ * Waits until the shell stops changing height.
+ *
+ * CI failed these with mismatched image *heights*, and the reported height alternated between
+ * attempts of a single run — 3636px, 3672px, 3636px. That is Playwright's stability loop, which
+ * keeps screenshotting until two consecutive frames agree: the page was still moving while it was
+ * being photographed. It reproduced only on CI because a developer machine reuses a stack that has
+ * been idle for hours, while CI starts one seconds earlier and is still settling.
+ *
+ * Masking cannot fix this. A mask paints over pixels; it does not put reflowed content back where
+ * it was, so a page that grows by one line still fails on everything below that line.
+ */
+async function waitForStableHeight(target: Locator) {
+  const settleSamples = 3;
+  const sampleIntervalMs = 250;
+  const deadline = Date.now() + 15_000;
+
+  let lastHeight = -1;
+  let stableSamples = 0;
+
+  while (Date.now() < deadline) {
+    const box = await target.boundingBox();
+    const height = box ? Math.round(box.height) : -1;
+
+    stableSamples = height === lastHeight ? stableSamples + 1 : 0;
+    lastHeight = height;
+
+    if (stableSamples >= settleSamples) return;
+    await target.page().waitForTimeout(sampleIntervalMs);
+  }
+
+  // Not fatal: the screenshot comparison below is the real assertion, and failing here would only
+  // replace a precise diff with a vaguer timeout.
+  console.warn(`Layout still moving after 15s; screenshotting anyway (last height ${lastHeight}px).`);
+}
 
 async function freezeClock(page: Page) {
   // Covers client-rendered clocks (the overlay preview ticks every second) and anything computed
@@ -134,6 +173,7 @@ test.describe("design baseline", () => {
 
         // Web fonts settle after first paint; without this the first run and the rest disagree.
         await page.evaluate(() => document.fonts.ready);
+        await waitForStableHeight(target);
 
         await expect(target).toHaveScreenshot(`${surface.name}-${viewport.label}.png`, {
           animations: "disabled",

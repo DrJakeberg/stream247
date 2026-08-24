@@ -27,7 +27,11 @@ cd "$ROOT_DIR"
 PORT="${DEV_STACK_PORT:-3020}"
 BASE_URL="http://127.0.0.1:${PORT}"
 IMAGE="${E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.56.1-noble}"
-SPEC="${DESIGN_BASELINE_SPEC:-tests/e2e/design-baseline.spec.ts}"
+# layout-stability runs alongside the snapshots on purpose. When a page changes height between two
+# loads, the snapshot fails with "140336 pixels are different" and a size mismatch, which says
+# nothing about the cause; the stability test fails with the text that changed. Same stack, same
+# container, so it costs one spec file rather than another run.
+SPEC="${DESIGN_BASELINE_SPEC:-tests/e2e/design-baseline.spec.ts tests/e2e/layout-stability.spec.ts}"
 
 EXTRA_ARGS=""
 [ "${1:-}" = "--update" ] && EXTRA_ARGS="--update-snapshots"
@@ -51,5 +55,5 @@ docker run --rm --network host \
   -e E2E_OWNER_EMAIL="${DEV_OWNER_EMAIL:-owner@example.com}" \
   -e E2E_OWNER_PASSWORD="${DEV_OWNER_PASSWORD:-stream247-owner-pass}" \
   "$IMAGE" \
-  ./node_modules/.bin/playwright test "$SPEC" \
+  ./node_modules/.bin/playwright test $SPEC \
     --config=playwright.config.ts --reporter=line $EXTRA_ARGS
