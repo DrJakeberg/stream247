@@ -97,7 +97,7 @@ export function SourcesWorkspacePanels({ state }: { state: AppState }) {
           })}
           {state.sources.length === 0 ? (
             <EmptyState
-              description="Add a YouTube, Twitch, direct-media, or local-library source to start ingestion."
+              description="Add a YouTube, Twitch, direct media, or local library source to start ingestion."
               title="No sources configured yet"
             />
           ) : null}
@@ -112,8 +112,8 @@ export function PoolsWorkspacePanels({ state }: { state: AppState }) {
     <>
       <Panel title="Create pool" eyebrow="Program">
         <p className="subtle">
-          Pools are the scheduler&apos;s programming units. Group ready assets from one or more sources and apply insert
-          or audio-lane behavior here.
+          Pools are the scheduler&apos;s programming units. Group ready assets from one or more sources, and set up
+          automatic inserts or a replacement audio bed here.
         </p>
         <PoolForm assets={state.assets} sources={state.sources} />
       </Panel>
@@ -169,8 +169,8 @@ export function LibraryWorkspacePanels({ state }: { state: AppState }) {
     <>
       <Panel title="Upload local media" eyebrow="Library">
         <p className="subtle">
-          Upload new files into the shared local media library. The local-library source will ingest them on the next
-          worker cycle.
+          Upload new files into the shared local media library. The Local media library source picks them up
+          within a few minutes.
         </p>
         <LibraryUploadForm />
       </Panel>

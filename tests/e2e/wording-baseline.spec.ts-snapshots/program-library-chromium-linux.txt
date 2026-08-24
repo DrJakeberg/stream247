@@ -37,7 +37,7 @@ Browse the playable catalog and upload local media.
 Library is the programming-facing catalog of playable files. Use Sources for ingest configuration and Pools for schedule group logic.
 LIBRARY
 Upload local media
-Upload new files into the shared local media library. The local-library source will ingest them on the next worker cycle.
+Upload new files into the shared local media library. The Local media library source picks them up within a few minutes.
 MEDIA FILES
 OPTIONAL SUBFOLDER
 Uploaded files land in the shared local media library and become available to the local-library source on the next worker cycle.

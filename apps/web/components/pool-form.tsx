@@ -122,7 +122,10 @@ export function PoolForm(props: {
         </label>
       </div>
       <p className="subtle">Pools currently use persistent round-robin playback across all ready assets from the selected sources.</p>
-      <p className="subtle">Audio lanes replace the normal program audio during scheduled pool playback. Use ready local-library or direct-media assets for stable looped beds.</p>
+      <p className="subtle">
+        Audio lanes replace the normal program audio during scheduled pool playback. Assets from Local media library or
+        Direct media URL sources loop most reliably.
+      </p>
       {error ? <p className="danger">{error}</p> : null}
       {/*
         Primary when this form creates a pool, secondary when it edits one that exists.

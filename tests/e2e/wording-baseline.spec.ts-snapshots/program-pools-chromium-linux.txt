@@ -37,7 +37,7 @@ Manage programming pools.
 Pools define which ready assets rotate together during scheduled playback. Use them as the bridge between ingest and the weekly schedule.
 PROGRAM
 Create pool
-Pools are the scheduler's programming units. Group ready assets from one or more sources and apply insert or audio-lane behavior here.
+Pools are the scheduler's programming units. Group ready assets from one or more sources, and set up automatic inserts or a replacement audio bed here.
 POOL NAME
 INCLUDED SOURCES
 Local Media Library
@@ -50,7 +50,7 @@ AUDIO LANE ASSET
 Use program audio
 AUDIO LANE LEVEL (%)
 Pools currently use persistent round-robin playback across all ready assets from the selected sources.
-Audio lanes replace the normal program audio during scheduled pool playback. Use ready local-library or direct-media assets for stable looped beds.
+Audio lanes replace the normal program audio during scheduled pool playback. Assets from Local media library or Direct media URL sources loop most reliably.
 Add pool
 PROGRAM
 Pools
