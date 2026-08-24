@@ -8,10 +8,10 @@ Updating every few seconds
 Europe/Berlin
 Watch the stream
 On air now
-Abendprogramm
-<time> to <time> · Musik
+<block>
+<time> to <time> · <category>
 Up next
-Abendprogramm — Folge 13
-The next queue item will appear here as soon as the runtime confirms it.
+<block>
+<time> to <time> · <category>
 After that
 Nothing further is scheduled yet.

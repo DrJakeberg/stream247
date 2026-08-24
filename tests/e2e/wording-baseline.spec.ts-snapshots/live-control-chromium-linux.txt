@@ -60,10 +60,10 @@ UPDATES
 <runtime>
 ON AIR
 Current and next
-Abendprogramm — Folge 12
-<time> to <time> · Musik
+<asset>
+<time> to <time> · <category>
 Transition idle · queue reason Matched the schedule · version 0
-Abendprogramm — Folge 13
+<asset>
 Prefetch idle · last probe never
 Transition target none · ready not ready
 Queue preview
@@ -75,8 +75,8 @@ Temporary fallback
 Skip current
 Resume schedule
 PIN ASSET
-Abendprogramm — Folge 13
-Abendprogramm — Folge 12
+<asset>
+<asset>
 OVERRIDE MINUTES
 Bring in an outside feed
 Pin on air
@@ -85,12 +85,12 @@ Move next
 Play insert
 Remove next
 Replay previous
-Next queued asset: Abendprogramm — Folge 13
+Next queued asset: <asset>
 REPLACEMENT AUDIO
 Secondary audio
 Program audio
 No audio lane is configured for the active pool.
-Pool Abendprogramm
+Pool <block>
 TIMED INSERTS
 Timed insert
 No cuepoint insert asset

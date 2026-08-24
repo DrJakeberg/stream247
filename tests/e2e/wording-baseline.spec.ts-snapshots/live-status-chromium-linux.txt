@@ -120,15 +120,15 @@ Optional, but recommended: enable the overlay so viewers can see current/next re
 Open Studio · Scene
 SCHEDULE
 Upcoming schedule
-Nachtschleife
-<time> to <time> · Archiv
-Selected from Lokale Bibliothek for 360 minutes · Monday.
-Tagesprogramm
-<time> to <time> · Talk
-Selected from Lokale Bibliothek for 840 minutes · Monday.
-Abendprogramm
-<time> to <time> · Musik
-Selected from Lokale Bibliothek for 240 minutes · Monday.
+<block>
+<time> to <time> · <category>
+Selected from Lokale Bibliothek for 360 minutes · <day>.
+<block>
+<time> to <time> · <category>
+Selected from Lokale Bibliothek for 840 minutes · <day>.
+<block>
+<time> to <time> · <category>
+Selected from Lokale Bibliothek for 240 minutes · <day>.
 DELIVERY
 Output destinations
 Stream247 can now fan one channel out to multiple active outputs. Healthy primary outputs are preferred together; backup outputs take over only when no primary output group is available.
@@ -162,11 +162,11 @@ RUNTIME
 Alerts and drift
 Encoder runtime
 Primary Twitch Output · /tmp/stream-output
-PID 4242 · restart count 0 · asset Abendprogramm — Folge 12
-Transition idle · next probe idle · next Abendprogramm — Folge 13
+PID 4242 · restart count 0 · asset <asset>
+Transition idle · next probe idle · next <asset>
 Last stderr: No FFmpeg stderr captured yet.
-Current schedule: Abendprogramm · Next: none
-Queue: Abendprogramm — Folge 12 → Abendprogramm — Folge 13
+Current schedule: <block> · Next: <block>
+Queue: <asset> → <asset>
 Use Live control for skip, fallback, restart, override, replay, and Live Bridge actions. This status view stays read-only.
 System readiness
 Database persistence, background worker reconciliation, and playout heartbeat are now active.

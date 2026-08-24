@@ -51,15 +51,15 @@ Standby
 Reconnect
 REPLAY STREAM · STREAM247 · NOW PLAYING
 NOW PLAYING
-Abendprogramm
+<block>
 Always on air
-Musik · Lokale Bibliothek
+<category> · Lokale Bibliothek
 NEXT
-Abendprogramm — Folge 13
-No next block configured
+<block>
+<time> to <time>
 SCENE
-Abendprogramm
-Musik
+<block>
+<category>
 Lokale Bibliothek
 <time> EUROPE/BERLIN
 Enable overlay output
@@ -182,9 +182,9 @@ Draft preset Replay Lower Third · glass surface · bottom anchor
 Typography Studio Sans · 0 positioned layers
 0 saved scene presets in the library.
 Current block
-Abendprogramm · <time> to <time>
+<block> · <time> to <time>
 Next block
-No next block
+<block> · <time> to <time>
 Internal overlay output
 Open overlay page
 Emergency banner

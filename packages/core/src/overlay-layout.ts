@@ -164,6 +164,41 @@ function sanitizeAccent(value: string): string {
   return /^#[0-9a-f]{3,8}$/i.test(value.trim()) ? value.trim() : "#6ee7ff";
 }
 
+/**
+ * Ink for a chip filled with the operator's accent colour.
+ *
+ * The label chip used to be painted "#05070c" whatever the accent was. That reads well on the
+ * default cyan and disappears on anything dark — and this is the one surface where nobody in the
+ * product sees the mistake, because it is only visible to whoever is watching the stream.
+ *
+ * Relative luminance per WCAG, then black or white, whichever is further away. The threshold sits
+ * where the two contrast ratios cross, so the choice is always the more legible of the two rather
+ * than a taste call.
+ */
+export function accentInkColor(accent: string): "#05070c" | "#ffffff" {
+  const hex = accent.trim().replace("#", "");
+  const full =
+    hex.length === 3 || hex.length === 4
+      ? hex
+          .slice(0, 3)
+          .split("")
+          .map((char) => char + char)
+          .join("")
+      : hex.slice(0, 6);
+
+  if (!/^[0-9a-f]{6}$/i.test(full)) {
+    return "#05070c";
+  }
+
+  const channel = (start: number) => {
+    const value = parseInt(full.slice(start, start + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+
+  return luminance > 0.179 ? "#05070c" : "#ffffff";
+}
+
 function buildLowerThird(
   payload: OverlayScenePayloadView,
   accent: string,
@@ -186,7 +221,7 @@ function buildLowerThird(
         ...(heroLabel
           ? [
               label(heroLabel.toUpperCase(), {
-                color: "#05070c",
+                color: accentInkColor(accent),
                 backgroundColor: accent,
                 fontSize: px(18),
                 fontWeight: 700,
@@ -261,7 +296,7 @@ function buildVotePanel(
       letterSpacing: px(2)
     }),
     label(`${countdown}s`, {
-      color: "#05070c",
+      color: accentInkColor(accent),
       backgroundColor: accent,
       fontSize: px(20),
       fontWeight: 700,

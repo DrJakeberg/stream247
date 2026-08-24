@@ -59,7 +59,22 @@ const VOLATILE: Array<[RegExp, string]> = [
   // worth seeing.
   [/\b\d+d \d+h\b/g, "<age>"],
   [/\b\d+h \d+m\b/g, "<age>"],
-  [/\b\d+m \d+s\b/g, "<age>"]
+  [/\b\d+m \d+s\b/g, "<age>"],
+  // What is on air, and on which day.
+  //
+  // Two separate clocks reach these pages. Making the seeded week gapless fixed the first — there is
+  // always something scheduled — but the blocks differ by hour, and the day still turns: Monday
+  // became Tuesday overnight and five surfaces changed at once, naming a different block, a
+  // different category, a different weekday, and rotating the week grid to start elsewhere.
+  //
+  // Which programme is playing is fixture data. The labels and sentences around it are the product,
+  // and those are what this baseline is for. The names below are the fixture's own, listed here so
+  // it is visible that they are being substituted rather than checked.
+  [/Abendprogramm — Folge \d+/g, "<asset>"],
+  [/\b(?:Nachtschleife|Tagesprogramm|Abendprogramm)\b/g, "<block>"],
+  [/\b(?:Archiv|Talk|Musik)\b/g, "<category>"],
+  [/\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/g, "<day>"],
+  [/\b(?:MON|TUE|WED|THU|FRI|SAT|SUN)\b/g, "<DAY>"]
 ];
 
 async function signIn(page: Page) {

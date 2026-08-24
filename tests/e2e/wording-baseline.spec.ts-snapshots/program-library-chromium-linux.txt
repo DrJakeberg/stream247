@@ -91,7 +91,7 @@ Select assets to see what you can do with them.
 Local Media Library
 2 asset(s)
 Select asset
-Abendprogramm — Folge 13
+<asset>
 Local Media Library · ready · 45m
 Replay
 Folder: root · Tags: none
@@ -100,7 +100,7 @@ No curated set
 /app/data/media/dev/abendprogramm-13.mp4
 Open asset detail
 Select asset
-Abendprogramm — Folge 12
+<asset>
 Local Media Library · ready · 60m
 Replay
 Folder: root · Tags: none

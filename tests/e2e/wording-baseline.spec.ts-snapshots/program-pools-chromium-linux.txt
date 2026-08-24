@@ -45,20 +45,20 @@ Twitch Archive
 YouTube Playlist
 AUTOMATIC INSERT ASSET
 No automatic insert
-Abendprogramm — Folge 13
-Abendprogramm — Folge 12
+<asset>
+<asset>
 INSERT EVERY N SCHEDULED ITEMS
 REPLACEMENT AUDIO
 Use program audio
-Abendprogramm — Folge 13
-Abendprogramm — Folge 12
+<asset>
+<asset>
 REPLACEMENT AUDIO LEVEL (%)
 Pools currently use persistent round-robin playback across all ready assets from the selected sources.
 Replacement audio plays instead of the programme sound whenever this pool is on air. Assets from Local media library or Direct media URL sources loop most reliably.
 Add pool
 PROGRAM
 Pools
-Abendprogramm
+<block>
 1 source(s) · round-robin
 No automatic inserts configured
 Local Media Library
@@ -70,7 +70,7 @@ No automatic inserts configured
 Twitch Archive, YouTube Playlist
 0 total assets · 0 ready
 Change this pool
-Nachtschleife
+<block>
 2 source(s) · round-robin
 No automatic inserts configured
 Local Media Library, YouTube Playlist

@@ -38,108 +38,108 @@ Now + Next
 PROGRAM
 Week lens
 Shows the first video each block would play, continuing from wherever its pool's rotation currently stands, and lets you open a block to see what follows before any of it goes on air.
-MON
+<DAY>
 3 blocks
 1440m scheduled
 <time> TO <time>
-Abendprogramm — Folge 12
-Nachtschleife · Abendprogramm · Monday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
 <time> TO <time>
-Abendprogramm — Folge 12
-Tagesprogramm · Abendprogramm · Monday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
 <time> TO <time>
-Abendprogramm — Folge 12
-Abendprogramm · Abendprogramm · Monday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
-TUE
+<DAY>
 3 blocks
 1440m scheduled
 <time> TO <time>
-Abendprogramm — Folge 12
-Nachtschleife · Abendprogramm · Tuesday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
 <time> TO <time>
-Abendprogramm — Folge 12
-Tagesprogramm · Abendprogramm · Tuesday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
 <time> TO <time>
-Abendprogramm — Folge 12
-Abendprogramm · Abendprogramm · Tuesday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
-WED
+<DAY>
 3 blocks
 1440m scheduled
 <time> TO <time>
-Abendprogramm — Folge 12
-Nachtschleife · Abendprogramm · Wednesday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
 <time> TO <time>
-Abendprogramm — Folge 12
-Tagesprogramm · Abendprogramm · Wednesday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
 <time> TO <time>
-Abendprogramm — Folge 12
-Abendprogramm · Abendprogramm · Wednesday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
-THU
+<DAY>
 3 blocks
 1440m scheduled
 <time> TO <time>
-Abendprogramm — Folge 12
-Nachtschleife · Abendprogramm · Thursday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
 <time> TO <time>
-Abendprogramm — Folge 12
-Tagesprogramm · Abendprogramm · Thursday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
 <time> TO <time>
-Abendprogramm — Folge 12
-Abendprogramm · Abendprogramm · Thursday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
-FRI
-3 blocks
-1440m scheduled
-<time> TO <time>
-Abendprogramm — Folge 12
-Nachtschleife · Abendprogramm · Friday
-Repeats inside block
-<time> TO <time>
-Abendprogramm — Folge 12
-Tagesprogramm · Abendprogramm · Friday
-Repeats inside block
-<time> TO <time>
-Abendprogramm — Folge 12
-Abendprogramm · Abendprogramm · Friday
-Repeats inside block
-SAT
+<DAY>
 3 blocks
 1500m scheduled
 <time> TO <time>
-Abendprogramm — Folge 12
-Nachtschleife · Abendprogramm · Saturday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
 <time> TO <time>
-Abendprogramm — Folge 12
-Tagesprogramm · Abendprogramm · Saturday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
 <time> TO <time>
-Abendprogramm — Folge 12
-Nachtschleife · Abendprogramm · Saturday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
-SUN
+<DAY>
 3 blocks
 1500m scheduled
 <time> TO <time>
-Abendprogramm — Folge 12
-Nachtschleife · Abendprogramm · Saturday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
 <time> TO <time>
-Abendprogramm — Folge 12
-Tagesprogramm · Abendprogramm · Sunday
+<asset>
+<block> · <block> · <day>
 Repeats inside block
 <time> TO <time>
-Abendprogramm — Folge 12
-Abendprogramm · Abendprogramm · Sunday
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<DAY>
+3 blocks
+1440m scheduled
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
 Repeats inside block
