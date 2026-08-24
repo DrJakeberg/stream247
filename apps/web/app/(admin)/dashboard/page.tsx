@@ -176,9 +176,19 @@ export default async function DashboardPage() {
                     Last failure {destination.lastFailureAt} · count {destination.failureCount} · {destination.lastError || "No error sample captured."}
                   </div>
                 ) : null}
-                <div style={{ marginTop: 12 }}>
-                  <DestinationSettingsForm destination={destination} />
-                </div>
+                {/*
+                  The editor used to stand open under every destination, so a page with three
+                  outputs presented three full forms at once — 62 controls on a page whose job is to
+                  tell you whether you are on air. What each destination is and how it is doing is
+                  already summarised above; the form is only needed when someone intends to change
+                  it.
+                */}
+                <details className="disclosure" style={{ marginTop: 12 }}>
+                  <summary>Change this destination</summary>
+                  <div style={{ marginTop: 12 }}>
+                    <DestinationSettingsForm destination={destination} />
+                  </div>
+                </details>
               </div>
             ))}
           </div>

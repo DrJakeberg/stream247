@@ -26,9 +26,9 @@ const SURFACES: Surface[] = [
   // The page an operator opens when something is wrong. It showed 33 at once, six of them repair
   // actions of equal weight, with the order to try them explained in a paragraph above the form.
   { name: "live-control", path: "/live?tab=control", maxControls: 27 },
-  // Highest of the admin surfaces, and not yet looked at: most of it is one destination editor
-  // repeated per destination, so the count grows with the number of outputs configured.
-  { name: "live-status", path: "/live?tab=status", maxControls: 62 },
+  // Was 62, because the full editor stood open under every destination and the count therefore grew
+  // with the number of outputs configured. Folding those away leaves what the page is for.
+  { name: "live-status", path: "/live?tab=status", maxControls: 28 },
   { name: "program-schedule", path: "/program?tab=schedule&day=1", maxControls: 14 },
   { name: "studio-scene", path: "/studio?tab=scene", maxControls: 79 },
   { name: "admin-settings", path: "/admin?tab=settings", maxControls: 29 }
