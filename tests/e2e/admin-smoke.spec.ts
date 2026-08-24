@@ -164,6 +164,12 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await expect(page).toHaveURL(/\/live(?:\?tab=control)?$/);
   await expect(page.getByRole("heading", { name: /Operate the live 24\/7 output from one workspace/i })).toBeVisible();
 
+  // The repair actions moved behind a disclosure: they are for when something is wrong, and having
+  // six of them open in front of the everyday controls was the reason the live page showed
+  // thirty-three at once. The cost is this extra click, which an operator pays too — so the smoke
+  // test pays it as well rather than reaching past the interface.
+  await page.getByText("If something is stuck").click();
+
   const refreshResponse = page.waitForResponse(
     (response) => response.url().includes("/api/broadcast/actions") && response.request().method() === "POST"
   );
