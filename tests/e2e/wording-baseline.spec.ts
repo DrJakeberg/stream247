@@ -48,7 +48,15 @@ const VOLATILE: Array<[RegExp, string]> = [
   [/\b\d{1,2}:\d{2}(:\d{2})?\b/g, "<time>"],
   [/\bv?\d+\.\d+\.\d+\b/g, "<version>"],
   [/\bsha256:[0-9a-f]+/g, "<digest>"],
-  [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<id>"]
+  [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<id>"],
+  // Ages, not configured durations: "162d 20h" is how long ago something happened and grows while
+  // nobody is looking. It went into the first recording as a literal and would have turned this
+  // baseline red an hour later — the exact failure mode it exists to avoid. Configured values like
+  // "180 minutes" are deliberately not covered: those are settings, and a change to one is a change
+  // worth seeing.
+  [/\b\d+d \d+h\b/g, "<age>"],
+  [/\b\d+h \d+m\b/g, "<age>"],
+  [/\b\d+m \d+s\b/g, "<age>"]
 ];
 
 async function signIn(page: Page) {

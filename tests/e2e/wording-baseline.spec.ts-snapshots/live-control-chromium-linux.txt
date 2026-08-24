@@ -34,7 +34,7 @@ Twitch channel state, viewer count, uptime, and playout health stay visible whil
 Live · 128
 Feed running
 TWITCH UPTIME
-162d 19h
+<age>
 VIEWERS
 128
 CHANNEL
@@ -131,9 +131,9 @@ SCENES
 What the overlay shows
 Replay stream · Stream247
 Always on air
-Preset replay-lower-third · glass surface · bottom anchor · balanced scale
+Preset Replay Lower Third · glass surface · bottom anchor · balanced scale
 Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
-Asset replay-lower-third · Insert bumper-board · Standby standby-board · Reconnect reconnect-board
+Asset Replay Lower Third · Insert Bumper Board · Standby Standby Board · Reconnect Reconnect Board
 Accent #0e6d5a · Brand badge none · Next visible yes · Clock yes
 Queue preview no · Current category yes · Source label yes
 Active scene replay-lower-third · layers Brand Chip → Hero Card → Next Card → Schedule Teaser → Clock

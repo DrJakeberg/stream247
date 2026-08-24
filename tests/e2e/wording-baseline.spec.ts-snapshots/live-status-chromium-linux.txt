@@ -34,7 +34,7 @@ Twitch channel state, viewer count, uptime, and playout health stay visible whil
 Live · 128
 Feed running
 TWITCH UPTIME
-162d 19h
+<age>
 VIEWERS
 128
 CHANNEL

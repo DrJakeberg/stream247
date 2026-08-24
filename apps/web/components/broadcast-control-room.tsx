@@ -16,6 +16,7 @@ import {
   describeStreamKey
 } from "@/lib/destination-wording";
 import { describePlayoutReason } from "@/lib/playout-reason";
+import { describeScenePreset } from "@/lib/scene-preset-names";
 
 type AssetOption = {
   id: string;
@@ -281,7 +282,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               <strong>{snapshot.overlay.replayLabel} · {snapshot.overlay.channelName}</strong>
               <div className="subtle">{snapshot.overlay.headline}</div>
               <div className="subtle">
-                Preset {snapshot.overlay.scenePreset} · {snapshot.overlay.surfaceStyle} surface · {snapshot.overlay.panelAnchor} anchor ·{" "}
+                Preset {describeScenePreset(snapshot.overlay.scenePreset)} · {snapshot.overlay.surfaceStyle} surface · {snapshot.overlay.panelAnchor} anchor ·{" "}
                 {snapshot.overlay.titleScale} scale
               </div>
               <div className="subtle">
@@ -289,8 +290,8 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 Reconnect {snapshot.overlay.reconnectHeadline}
               </div>
               <div className="subtle">
-                Asset {snapshot.overlay.scenePreset} · Insert {snapshot.overlay.insertScenePreset} · Standby {snapshot.overlay.standbyScenePreset} ·
-                Reconnect {snapshot.overlay.reconnectScenePreset}
+                Asset {describeScenePreset(snapshot.overlay.scenePreset)} · Insert {describeScenePreset(snapshot.overlay.insertScenePreset)} · Standby {describeScenePreset(snapshot.overlay.standbyScenePreset)} ·
+                Reconnect {describeScenePreset(snapshot.overlay.reconnectScenePreset)}
               </div>
               <div className="subtle">
                 Accent {snapshot.overlay.accentColor} · Brand badge {snapshot.overlay.brandBadge || "none"} · Next visible{" "}

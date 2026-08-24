@@ -29,6 +29,7 @@ import { useToast } from "@/components/ui/Toast";
 import { buildOverlayPublishReviewSections, type OverlayPublishReviewSection } from "@/lib/overlay-publish-review";
 import { createDefaultCustomLayer } from "@/lib/overlay-studio-defaults";
 import type { OverlayScenePresetRecord, OverlaySettingsRecord } from "@/lib/server/state";
+import { describeScenePreset } from "@/lib/scene-preset-names";
 
 type OverlayPreviewSeed = {
   timeZone: string;
@@ -1216,8 +1217,8 @@ export function OverlaySettingsForm(props: {
                       <strong>{preset.name}</strong>
                       <div className="subtle">{preset.description || "No description provided."}</div>
                       <div className="subtle">
-                        Asset {preset.overlay.scenePreset} · Insert {preset.overlay.insertScenePreset} · Standby {preset.overlay.standbyScenePreset} · Reconnect{" "}
-                        {preset.overlay.reconnectScenePreset}
+                        Asset {describeScenePreset(preset.overlay.scenePreset)} · Insert {describeScenePreset(preset.overlay.insertScenePreset)} · Standby {describeScenePreset(preset.overlay.standbyScenePreset)} · Reconnect{" "}
+                        {describeScenePreset(preset.overlay.reconnectScenePreset)}
                       </div>
                       <div className="subtle">
                         Typography {preset.overlay.typographyPreset} · {preset.overlay.customLayers.length} positioned layer
@@ -1300,7 +1301,7 @@ export function OverlaySettingsForm(props: {
       <div className="scene-status-grid">
         <div className="item">
           <span className="label">Live scene</span>
-          <strong>{props.liveOverlay.scenePreset}</strong>
+          <strong>{describeScenePreset(props.liveOverlay.scenePreset)}</strong>
           <div className="subtle">
             Asset headline {props.liveOverlay.headline} · Insert {props.liveOverlay.insertHeadline} · Standby {props.liveOverlay.standbyHeadline} ·
             Reconnect {props.liveOverlay.reconnectHeadline}
@@ -1310,14 +1311,14 @@ export function OverlaySettingsForm(props: {
             {props.liveOverlay.customLayers.length === 1 ? "" : "s"}
           </div>
           <div className="subtle">
-            Asset {props.liveOverlay.scenePreset} · Insert {props.liveOverlay.insertScenePreset} · Standby {props.liveOverlay.standbyScenePreset} · Reconnect{" "}
-            {props.liveOverlay.reconnectScenePreset}
+            Asset {describeScenePreset(props.liveOverlay.scenePreset)} · Insert {describeScenePreset(props.liveOverlay.insertScenePreset)} · Standby {describeScenePreset(props.liveOverlay.standbyScenePreset)} · Reconnect{" "}
+            {describeScenePreset(props.liveOverlay.reconnectScenePreset)}
           </div>
           <div className="subtle">Published {props.liveOverlay.updatedAt || "never"}</div>
         </div>
         <div className="item">
           <span className="label">Draft scene</span>
-          <strong>{draft.scenePreset}</strong>
+          <strong>{describeScenePreset(draft.scenePreset)}</strong>
           <div className="subtle">
             Asset headline {draft.headline} · Insert {draft.insertHeadline} · Standby {draft.standbyHeadline} · Reconnect {draft.reconnectHeadline}
           </div>
@@ -1325,7 +1326,7 @@ export function OverlaySettingsForm(props: {
             Typography {draft.typographyPreset} · {draft.customLayers.length} positioned layer{draft.customLayers.length === 1 ? "" : "s"}
           </div>
           <div className="subtle">
-            Asset {draft.scenePreset} · Insert {draft.insertScenePreset} · Standby {draft.standbyScenePreset} · Reconnect {draft.reconnectScenePreset}
+            Asset {describeScenePreset(draft.scenePreset)} · Insert {describeScenePreset(draft.insertScenePreset)} · Standby {describeScenePreset(draft.standbyScenePreset)} · Reconnect {describeScenePreset(draft.reconnectScenePreset)}
           </div>
           <div className="subtle">Draft saved {props.draftOverlay.updatedAt || "not yet saved"}</div>
         </div>

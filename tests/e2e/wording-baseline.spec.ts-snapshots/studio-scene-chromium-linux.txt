@@ -159,16 +159,16 @@ Show source label
 Show queue preview
 QUEUE PREVIEW COUNT
 LIVE SCENE
-replay-lower-third
+Replay Lower Third
 Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
 Typography studio-sans · 0 positioned layers
-Asset replay-lower-third · Insert bumper-board · Standby standby-board · Reconnect reconnect-board
+Asset Replay Lower Third · Insert Bumper Board · Standby Standby Board · Reconnect Reconnect Board
 Published never
 DRAFT SCENE
-replay-lower-third
+Replay Lower Third
 Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
 Typography studio-sans · 0 positioned layers
-Asset replay-lower-third · Insert bumper-board · Standby standby-board · Reconnect reconnect-board
+Asset Replay Lower Third · Insert Bumper Board · Standby Standby Board · Reconnect Reconnect Board
 Draft saved not yet saved
 PUBLISH STATUS
 Live and draft match
