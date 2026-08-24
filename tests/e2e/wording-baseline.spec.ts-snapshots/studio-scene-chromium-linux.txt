@@ -53,14 +53,14 @@ REPLAY STREAM · STREAM247 · NOW PLAYING
 NOW PLAYING
 Abendprogramm
 Always on air
-Musik · Abendprogramm
+Musik · Lokale Bibliothek
 NEXT
 Abendprogramm — Folge 13
 No next block configured
 SCENE
 Abendprogramm
 Musik
-Abendprogramm
+Lokale Bibliothek
 <time> EUROPE/BERLIN
 Enable overlay output
 CHANNEL NAME

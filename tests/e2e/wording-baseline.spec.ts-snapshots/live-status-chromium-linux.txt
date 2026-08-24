@@ -115,7 +115,7 @@ Ready
 Open Program · Pools
 Weekly schedule
 Ready
-7 schedule block(s) are configured.
+20 schedule block(s) are configured.
 Open Program · Schedule
 Replay overlay branding
 Optional
@@ -123,12 +123,15 @@ Optional, but recommended: enable the overlay so viewers can see current/next re
 Open Studio · Scene
 SCHEDULE
 Upcoming schedule
-Morning Twitch VOD Rotation
-<time> to <time> · Just Chatting
-Selected from Twitch Archive for 240 minutes · Monday.
+Nachtschleife
+<time> to <time> · Archiv
+Selected from Lokale Bibliothek for 360 minutes · Monday.
+Tagesprogramm
+<time> to <time> · Talk
+Selected from Lokale Bibliothek for 840 minutes · Monday.
 Abendprogramm
 <time> to <time> · Musik
-Selected from Abendprogramm for 180 minutes · Monday.
+Selected from Lokale Bibliothek for 240 minutes · Monday.
 DELIVERY
 Output destinations
 Stream247 can now fan one channel out to multiple active outputs. Healthy primary outputs are preferred together; backup outputs take over only when no primary output group is available.

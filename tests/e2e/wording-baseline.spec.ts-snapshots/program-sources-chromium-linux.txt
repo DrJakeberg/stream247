@@ -92,7 +92,7 @@ Enabled
 Not synced yet
 No sync run recorded yet.
 2 pool refs
-5 schedule refs
+20 schedule refs
 0 open incident(s)
 Open detail
 Change this source
@@ -105,7 +105,7 @@ Enabled
 Not synced yet
 No sync run recorded yet.
 1 pool refs
-2 schedule refs
+0 schedule refs
 0 open incident(s)
 Open detail
 Change this source
@@ -118,7 +118,7 @@ Enabled
 Not synced yet
 No sync run recorded yet.
 2 pool refs
-2 schedule refs
+0 schedule refs
 0 open incident(s)
 Open detail
 Change this source

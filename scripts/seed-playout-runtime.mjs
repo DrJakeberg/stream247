@@ -18,6 +18,7 @@
 // from here. Requires `pnpm build` to have run, which `dev-stack.sh up` already depends on.
 import {
   readAppState,
+  replaceAllScheduleBlocks,
   updateAssetRecords,
   updatePlayoutRuntime,
   updateTwitchConnectionRecord
@@ -108,6 +109,48 @@ async function main() {
     programFeedTargetSeconds: 2,
     programFeedBufferedSeconds: 60
   }));
+
+  // A week with no gaps in it.
+  //
+  // The fixture used to seed a handful of blocks at fixed hours — 20:00 on weekdays, and so on —
+  // which left most of the day unprogrammed. Whether anything was on air then depended on what time
+  // the suite happened to run, and four surfaces render exactly that: the live pages, the public
+  // channel page and the scene preview. They went red on their own when the clock crossed a
+  // boundary, with no change to any code.
+  //
+  // Every hour of every day belongs to a block now, and the times are fixed rather than relative to
+  // now, so the same block is on air at 03:00 as at 15:00. Saturday still runs into Sunday, because
+  // the carry-over path is worth having in the fixture and not only in unit tests.
+  const pool = state.pools[0]?.id ?? "";
+  const week = [];
+  for (let day = 0; day <= 6; day += 1) {
+    const dayStart = day === 0 ? 60 : 0;
+    if (day !== 0) {
+      week.push({ day, title: "Nachtschleife", categoryName: "Archiv", start: dayStart, minutes: 360 - dayStart });
+    }
+    const morning = day === 0 ? 60 : 360;
+    const eveningStart = day === 6 ? 1380 : 1200;
+    week.push({ day, title: "Tagesprogramm", categoryName: "Talk", start: morning, minutes: eveningStart - morning });
+    if (day !== 6) {
+      week.push({ day, title: "Abendprogramm", categoryName: "Musik", start: 1200, minutes: 240 });
+    }
+  }
+  // Saturday 23:00 for two hours, running into Sunday: the one deliberate carry-over.
+  week.push({ day: 6, title: "Nachtschleife", categoryName: "Archiv", start: 1380, minutes: 120 });
+
+  await replaceAllScheduleBlocks(
+    week.map((block) => ({
+      id: `fixture-${block.day}-${block.start}`,
+      title: block.title,
+      categoryName: block.categoryName,
+      dayOfWeek: block.day,
+      startMinuteOfDay: block.start,
+      durationMinutes: block.minutes,
+      poolId: pool,
+      sourceName: "Lokale Bibliothek",
+      repeatMode: "single"
+    }))
+  );
 
   // A broadcaster login, so the public channel page can render the one thing it is for.
   //
