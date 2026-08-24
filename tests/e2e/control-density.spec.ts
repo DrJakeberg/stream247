@@ -50,9 +50,9 @@ const SURFACES: Surface[] = [
   { name: "admin-settings", path: "/admin?tab=settings", maxControls: 29, primaryActions: 1 },
   { name: "login", path: "/login", maxControls: 3, primaryActions: 1, authenticated: false },
   { name: "live-moderation", path: "/live?tab=moderation", maxControls: 20, primaryActions: 1 },
-  { name: "program-pools", path: "/program?tab=pools", maxControls: 41, primaryActions: 1 },
+  { name: "program-pools", path: "/program?tab=pools", maxControls: 17, primaryActions: 1 },
   { name: "program-library", path: "/program?tab=library", maxControls: 40, primaryActions: 1 },
-  { name: "program-sources", path: "/program?tab=sources", maxControls: 48, primaryActions: 1 },
+  { name: "program-sources", path: "/program?tab=sources", maxControls: 30, primaryActions: 1 },
   // Two panels that save separately: chat and alerts, and what chat is allowed to steer.
   { name: "studio-engagement", path: "/studio?tab=engagement", maxControls: 40, primaryActions: 2 },
   { name: "studio-output", path: "/studio?tab=output", maxControls: 20, primaryActions: 1 },

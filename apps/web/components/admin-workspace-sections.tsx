@@ -80,7 +80,17 @@ export function SourcesWorkspacePanels({ state }: { state: AppState }) {
                       Open detail
                     </Link>
                   </div>
-                  <SourceActionsForm source={source} />
+                  {/*
+                    Folded for the same reason as the destination editors: this list is read far
+                    more often than it is edited, and an open form under every source made the page
+                    grow with the number of sources rather than with what it has to say.
+                  */}
+                  <details className="disclosure" style={{ marginTop: 12 }}>
+                    <summary>Change this source</summary>
+                    <div style={{ marginTop: 12 }}>
+                      <SourceActionsForm source={source} />
+                    </div>
+                  </details>
                 </div>
               </div>
             );
@@ -130,12 +140,16 @@ export function PoolsWorkspacePanels({ state }: { state: AppState }) {
                 {state.assets.filter((asset) => pool.sourceIds.includes(asset.sourceId)).length} total assets ·{" "}
                 {state.assets.filter((asset) => pool.sourceIds.includes(asset.sourceId) && asset.status === "ready").length} ready
               </div>
-              <div style={{ marginTop: 12 }}>
-                <PoolForm assets={state.assets} pool={pool} sources={state.sources} />
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <PoolDeleteForm id={pool.id} name={pool.name} />
-              </div>
+              {/* Same fold as sources and destinations: the list is read far more often than edited. */}
+              <details className="disclosure" style={{ marginTop: 12 }}>
+                <summary>Change this pool</summary>
+                <div style={{ marginTop: 12 }}>
+                  <PoolForm assets={state.assets} pool={pool} sources={state.sources} />
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <PoolDeleteForm id={pool.id} name={pool.name} />
+                </div>
+              </details>
             </div>
           ))}
           {state.pools.length === 0 ? (
