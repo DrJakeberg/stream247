@@ -609,16 +609,11 @@ export function OverlaySettingsForm(props: {
             </label>
           </div>
 
-          <label>
-            <span className="label">Active scene preset</span>
-            <select onChange={(event) => setDraftField("scenePreset", event.target.value as OverlaySettingsRecord["scenePreset"])} value={draft.scenePreset}>
-              {OVERLAY_SCENE_PRESETS.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {/*
+            The cards below are the only way to choose this now. A select offering the same six
+            presets sat directly above them — one choice, two controls, and the select could only
+            list the names while the cards say what each one does.
+          */}
           <div className="preset-grid">
             {OVERLAY_SCENE_PRESETS.map((preset) => (
               <button

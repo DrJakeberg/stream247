@@ -72,13 +72,6 @@ REPLAY LABEL
 BRAND BADGE
 ACCENT COLOR
 TICKER TEXT
-ACTIVE SCENE PRESET
-Replay Lower Third
-Split Now / Next
-Standby Board
-Minimal Chip
-Bumper Board
-Reconnect Board
 Replay Lower Third
 Wide now-playing panel with a compact next item card for a broadcast lower-third feel.
 Split Now / Next

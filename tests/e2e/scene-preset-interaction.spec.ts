@@ -19,8 +19,7 @@ const ownerEmail = process.env.E2E_OWNER_EMAIL || "owner@example.com";
 const ownerPassword = process.env.E2E_OWNER_PASSWORD || "stream247-owner-pass";
 
 const SCENE_PATH = "/studio?tab=scene";
-const PRESET_LABEL = "Active scene preset";
-const OTHER_PRESET = "split-now-next";
+const OTHER_PRESET = "Split Now / Next";
 
 async function signIn(page: Page) {
   await page.goto("/login");
@@ -30,8 +29,13 @@ async function signIn(page: Page) {
   await expect(page).toHaveURL(/\/live(?:\?tab=control)?$/);
 }
 
-function presetSelect(page: Page) {
-  return page.getByLabel(PRESET_LABEL);
+/** The chosen preset is the card carrying the active class; there is no select any more. */
+function activePresetName(page: Page) {
+  return page.locator(".preset-card-active strong").first();
+}
+
+function presetCard(page: Page, label: string) {
+  return page.locator(".preset-card", { hasText: label }).first();
 }
 
 async function saveDraft(page: Page) {
@@ -47,8 +51,8 @@ async function saveDraft(page: Page) {
   expect(response.ok(), `saving the draft returned ${response.status()}`).toBe(true);
 }
 
-async function setPreset(page: Page, value: string) {
-  await presetSelect(page).selectOption(value);
+async function setPreset(page: Page, label: string) {
+  await presetCard(page, label).click();
   await saveDraft(page);
 }
 
@@ -59,25 +63,20 @@ test.describe("choosing a scene preset", () => {
     await signIn(page);
     await page.goto(SCENE_PATH);
 
-    const select = presetSelect(page);
-    await expect(select).toBeVisible();
-    const original = await select.inputValue();
+    await expect(activePresetName(page)).toBeVisible();
+    const original = (await activePresetName(page).textContent())?.trim() ?? "";
     expect(original, "the fixture should start on a known preset").toBeTruthy();
     expect(OTHER_PRESET).not.toBe(original);
 
     try {
-      // The value the form submits has to be the stored id, not the label shown in the option.
-      const optionValues = await select.locator("option").evaluateAll((options) =>
-        options.map((option) => (option as HTMLOptionElement).value)
-      );
-      expect(optionValues).toContain(OTHER_PRESET);
-      for (const value of optionValues) {
-        expect(value, "option values are ids, not display labels").toMatch(/^[a-z0-9-]+$/);
-      }
+      // The value-binding check that used to live here went with the select. A card passes the
+      // stored id straight to the handler, so there is no place for a label to be submitted in its
+      // stead — which was the bug this test was written for.
+      await expect(presetCard(page, OTHER_PRESET)).toBeVisible();
 
       await setPreset(page, OTHER_PRESET);
       await page.reload();
-      await expect(presetSelect(page)).toHaveValue(OTHER_PRESET);
+      await expect(activePresetName(page)).toHaveText(OTHER_PRESET);
     } finally {
       // Discard the draft rather than saving the old value back.
       //
@@ -98,7 +97,7 @@ test.describe("choosing a scene preset", () => {
     }
 
     await page.reload();
-    await expect(presetSelect(page)).toHaveValue(original);
+    await expect(activePresetName(page)).toHaveText(original);
     await expect(page.getByText("Live and draft match").first()).toBeVisible();
   });
 });
