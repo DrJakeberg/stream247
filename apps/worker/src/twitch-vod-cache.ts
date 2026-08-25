@@ -499,6 +499,30 @@ export function canReleaseVodCache(currentAssetId: string): boolean {
   return Boolean(currentAssetId);
 }
 
+/**
+ * Names every completed cache file that disk pressure may take: everything on disk except the
+ * entries in `protectedPaths` — the cache paths of assets the schedule or queue still references.
+ *
+ * This inverts the keep-list for the disk watermark monitor. The boundary release names the one
+ * file that just finished playing; under disk pressure the question is the opposite — "what may
+ * go?" — and the answer has to come from a directory walk, because a cache file whose asset record
+ * has been deleted (a removed source, a re-synced library) is referenced by nothing and would
+ * otherwise be invisible to any asset-driven enumeration. Transient files are left out: the
+ * eviction pass collects those by its own age-and-lock rules, and naming them here would bypass
+ * the live-download protection.
+ */
+export async function collectReleasableVodCachePaths(
+  config: TwitchVodCacheConfig,
+  protectedPaths: readonly string[]
+): Promise<string[]> {
+  const protectedResolved = new Set(protectedPaths.filter((entry) => entry).map((entry) => path.resolve(entry)));
+
+  return (await listCacheFiles(config.cacheRoot))
+    .filter((file) => !file.transient)
+    .map((file) => file.filePath)
+    .filter((filePath) => !protectedResolved.has(path.resolve(filePath)));
+}
+
 export async function evictUnusedTwitchVodCache(
   config: TwitchVodCacheConfig,
   watchedPaths: readonly string[]

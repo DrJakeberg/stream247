@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   canReleaseVodCache,
+  collectReleasableVodCachePaths,
   evictUnusedTwitchVodCache,
   getTwitchVodCacheConfig,
   parseVodSizeBytes
@@ -217,5 +218,54 @@ describe("releasing cached VODs once they are no longer needed", () => {
     const result = await evictUnusedTwitchVodCache(configFor(), [""]);
 
     expect(result.removed).toEqual([]);
+  });
+});
+
+describe("naming what disk pressure may take", () => {
+  // The disk watermark monitor asks the opposite question from the boundary release: not "which
+  // file finished playing" but "which files does nothing reference any more". The answer comes
+  // from a directory walk so a cache entry whose asset record was deleted is still found.
+
+  async function seedFiles(names: string[]): Promise<string[]> {
+    const config = configFor();
+    await fs.mkdir(config.cacheRoot, { recursive: true });
+    const paths: string[] = [];
+    for (const name of names) {
+      const filePath = path.join(config.cacheRoot, name);
+      await fs.writeFile(filePath, "x".repeat(16));
+      paths.push(filePath);
+    }
+    return paths;
+  }
+
+  it("offers every completed file except the protected ones", async () => {
+    const [scheduled, orphaned] = await seedFiles(["scheduled.mp4", "orphaned.mp4"]);
+
+    const releasable = await collectReleasableVodCachePaths(configFor(), [scheduled]);
+
+    expect(releasable).toEqual([orphaned]);
+  });
+
+  it("finds a cache entry whose asset record no longer exists", async () => {
+    // A removed source or a re-synced library leaves files no asset points at. An asset-driven
+    // enumeration can never name them, which is exactly why the walk exists.
+    const [ghost] = await seedFiles(["deleted-asset.mp4"]);
+
+    expect(await collectReleasableVodCachePaths(configFor(), [])).toEqual([ghost]);
+  });
+
+  it("leaves partials to the eviction pass and its live-download protection", async () => {
+    // Naming a partial here would hand it to the eviction as a plain deletable file and bypass the
+    // age-and-lock rules that keep a resumable download's accumulated gigabytes alive.
+    await seedFiles(["big.mp4.part-resume.mp4"]);
+    const [complete] = await seedFiles(["done.mp4"]);
+
+    expect(await collectReleasableVodCachePaths(configFor(), [])).toEqual([complete]);
+  });
+
+  it("ignores blank protected entries rather than resolving them to a directory", async () => {
+    const [only] = await seedFiles(["only.mp4"]);
+
+    expect(await collectReleasableVodCachePaths(configFor(), [""])).toEqual([only]);
   });
 });
