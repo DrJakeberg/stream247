@@ -59,7 +59,7 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
   const state = await readAppState();
   const broadcastSnapshot = getBroadcastSnapshot(state);
   const materializedWeek = getMaterializedProgrammingWeekPreview(state);
-  const timeZone = getWorkspaceTimeZone();
+  const timeZone = getWorkspaceTimeZone(state);
   const conflicts = new Set(findScheduleConflicts(state.scheduleBlocks));
   const poolOptions = state.pools
     .map((pool) => ({ id: pool.id, name: pool.name }))

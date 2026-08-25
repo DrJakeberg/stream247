@@ -6,7 +6,7 @@ import { getPublicChannelSnapshot, getWorkspaceTimeZone, readAppState } from "@/
 
 export default async function ChannelPage() {
   const state = await readAppState();
-  const timeZone = getWorkspaceTimeZone();
+  const timeZone = getWorkspaceTimeZone(state);
 
   return (
     <main className="standalone">

@@ -49,6 +49,11 @@ export function framesDueByNow(startedAtMs: number, nowMs: number, leadFrames: n
 }
 
 export function getSceneRendererBaseUrl(env: NodeJS.ProcessEnv): string {
+  // Deliberately env-only, unlike the resolvers in @stream247/db: this is the *internal* address
+  // the renderer fetches frames from inside the compose network, and the wizard-managed app URL
+  // names the *public* entry point. Routing frame capture through the public proxy because someone
+  // set their public URL in the wizard would be a regression, so a wizard-only install correctly
+  // falls through to http://web:3000 here.
   return String(env.SCENE_RENDER_BASE_URL || env.INTERNAL_APP_URL || env.APP_URL || "http://web:3000").replace(/\/+$/, "");
 }
 

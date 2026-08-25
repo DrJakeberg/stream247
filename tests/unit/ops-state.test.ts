@@ -77,6 +77,8 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       updatedAt: ""
     },
     managedConfig: {
+      appUrl: "",
+      channelTimezone: "",
       twitchClientId: "",
       twitchClientSecret: "",
       twitchDefaultCategoryId: "",

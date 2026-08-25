@@ -10,6 +10,7 @@ export {
   getAppSecretFilePath,
   resolveAppSecret
 } from "./app-secret.js";
+export { isUsableTimeZone, resolveAppBaseUrl, resolveChannelTimeZone } from "./instance-config.js";
 import {
   createDefaultModerationConfig,
   normalizeAudioLaneVolumePercent,
@@ -380,6 +381,10 @@ export type OverlayScenePresetRecord = {
 };
 
 export type ManagedConfigRecord = {
+  // Instance basics, written by the setup wizard. Env variables override these two — see
+  // instance-config.ts for the precedence rationale.
+  appUrl: string;
+  channelTimezone: string;
   twitchClientId: string;
   twitchClientSecret: string;
   twitchDefaultCategoryId: string;
@@ -1340,6 +1345,8 @@ function defaultState(): AppState {
       updatedAt: ""
     },
     managedConfig: {
+      appUrl: "",
+      channelTimezone: "",
       twitchClientId: "",
       twitchClientSecret: "",
       twitchDefaultCategoryId: "",

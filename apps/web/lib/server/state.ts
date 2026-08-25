@@ -75,6 +75,7 @@ import {
   readAppState,
   replaceAllScheduleBlocks,
   replaceTwitchScheduleSegments,
+  resolveChannelTimeZone,
   resolveIncident,
   replaceAssetsForSourceIds,
   updateAssetCurationRecords,
@@ -238,8 +239,9 @@ export {
   writeAppState
 };
 
-export function getWorkspaceTimeZone(): string {
-  return process.env.CHANNEL_TIMEZONE || "UTC";
+export function getWorkspaceTimeZone(state: Pick<AppState, "managedConfig">): string {
+  // Env first, then the wizard-written managed value, then UTC — the resolver owns the order.
+  return resolveChannelTimeZone(state.managedConfig);
 }
 
 /**
@@ -254,7 +256,7 @@ export function getWorkspaceTimeZone(): string {
 export function getSchedulePreview(state: AppState, dayOfWeek?: number) {
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
-    timeZone: getWorkspaceTimeZone()
+    timeZone: getWorkspaceTimeZone(state)
   });
 
   return buildSchedulePreview({
@@ -269,7 +271,7 @@ export function getSchedulePreview(state: AppState, dayOfWeek?: number) {
 export function getMaterializedProgrammingWeekPreview(state: AppState) {
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
-    timeZone: getWorkspaceTimeZone()
+    timeZone: getWorkspaceTimeZone(state)
   });
 
   return buildMaterializedProgrammingWeek({
@@ -305,7 +307,7 @@ export function getRecentPresenceWindows(state: AppState, limit = 10): Moderator
 }
 
 export function getManagedConfigValue<K extends keyof ManagedConfigRecord>(
-  state: AppState,
+  state: Pick<AppState, "managedConfig">,
   key: K,
   envFallback = ""
 ): ManagedConfigRecord[K] {
@@ -313,7 +315,7 @@ export function getManagedConfigValue<K extends keyof ManagedConfigRecord>(
   return ((typeof value === "string" && value !== "" ? value : envFallback) as ManagedConfigRecord[K]);
 }
 
-export function getManagedTwitchConfig(state: AppState) {
+export function getManagedTwitchConfig(state: Pick<AppState, "managedConfig">) {
   return {
     clientId: getManagedConfigValue(state, "twitchClientId", process.env.TWITCH_CLIENT_ID || ""),
     clientSecret: getManagedConfigValue(state, "twitchClientSecret", process.env.TWITCH_CLIENT_SECRET || ""),
@@ -340,7 +342,7 @@ export function getManagedAlertConfig(state: AppState) {
 export function getCurrentScheduleItem(state: AppState) {
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
-    timeZone: getWorkspaceTimeZone()
+    timeZone: getWorkspaceTimeZone(state)
   });
   const occurrences = buildScheduleOccurrences({
     date: scheduleMoment.date,
@@ -355,7 +357,7 @@ export function getCurrentScheduleItem(state: AppState) {
 export function getNextScheduleItem(state: AppState) {
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
-    timeZone: getWorkspaceTimeZone()
+    timeZone: getWorkspaceTimeZone(state)
   });
   const occurrences = buildScheduleOccurrences({
     date: scheduleMoment.date,
@@ -1052,7 +1054,7 @@ export function buildActiveScenePayload(
     nextTitle: nextAssetTitle || nextScheduleLookaheadTitle || state.playout.nextTitle || nextScheduleItem?.title || "Schedule not available",
     nextTimeLabel: nextScheduleItem ? `${nextScheduleItem.startTime} to ${nextScheduleItem.endTime}` : "No next block configured",
     queueTitles,
-    timeZone: getWorkspaceTimeZone()
+    timeZone: getWorkspaceTimeZone(state)
   });
 }
 
@@ -1170,7 +1172,7 @@ function summarizeCuepoints(
   const cuepointAsset = cuepointAssetId ? state.assets.find((entry) => entry.id === cuepointAssetId) ?? null : null;
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
-    timeZone: getWorkspaceTimeZone()
+    timeZone: getWorkspaceTimeZone(state)
   });
   const active =
     Boolean(currentScheduleItem) &&
@@ -1251,7 +1253,7 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
 
   return {
     generatedAt: new Date().toISOString(),
-    timeZone: getWorkspaceTimeZone(),
+    timeZone: getWorkspaceTimeZone(state),
     workerHealth: getWorkerHealth(state),
     twitch: summarizeTwitchLiveStatus(state),
     playout: summarizePlayout(state.playout),
