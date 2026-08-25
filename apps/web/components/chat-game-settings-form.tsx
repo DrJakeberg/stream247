@@ -23,9 +23,12 @@ export function ChatGameSettingsForm({ chatGame }: { chatGame: ChatGameSettingsR
   const router = useRouter();
   const { pushToast } = useToast();
 
+  const activeGame = CHAT_GAMES.find((game) => game.id === gameId) ?? CHAT_GAMES[0]!;
+
   // Validated as the operator types, so a duplicate or empty emote is visible before saving —
-  // the server rejects the same problems, this just says so earlier.
-  const emoteIssues = listChatGameEmoteMapIssues(emoteMap);
+  // the server rejects the same problems, this just says so earlier. A game steered by
+  // coordinates never blocks on the emote map it does not use.
+  const emoteIssues = activeGame.input === "emotes" ? listChatGameEmoteMapIssues(emoteMap) : [];
 
   async function save() {
     const response = await fetch("/api/chat-game/settings", {
@@ -75,38 +78,46 @@ export function ChatGameSettingsForm({ chatGame }: { chatGame: ChatGameSettingsR
                   </option>
                 ))}
               </select>
-              <span className="subtle">{CHAT_GAMES.find((game) => game.id === gameId)?.description}</span>
+              <span className="subtle">{activeGame.description}</span>
             </label>
-            <label>
-              <span className="label">Grid width (cells)</span>
-              <input max={32} min={8} onChange={(event) => setGridWidth(event.target.value)} type="number" value={gridWidth} />
-            </label>
-            <label>
-              <span className="label">Grid height (cells)</span>
-              <input max={18} min={6} onChange={(event) => setGridHeight(event.target.value)} type="number" value={gridHeight} />
-            </label>
+            {/* A game with a fixed board would silently ignore these, so they fold away instead. */}
+            {activeGame.usesGrid ? (
+              <label>
+                <span className="label">Grid width (cells)</span>
+                <input max={32} min={8} onChange={(event) => setGridWidth(event.target.value)} type="number" value={gridWidth} />
+              </label>
+            ) : null}
+            {activeGame.usesGrid ? (
+              <label>
+                <span className="label">Grid height (cells)</span>
+                <input max={18} min={6} onChange={(event) => setGridHeight(event.target.value)} type="number" value={gridHeight} />
+              </label>
+            ) : null}
           </div>
         </div>
 
-        <div className="item">
-          <span className="label">Emote controls</span>
-          <div className="subtle">
-            One emote per direction, exactly as chat would type it. Four distinct values are required; changing
-            them mid-round starts a fresh round under the new controls.
+        {/* Shown only for games chat steers by emotes; a coordinate game has no use for the map. */}
+        {activeGame.input === "emotes" ? (
+          <div className="item">
+            <span className="label">Emote controls</span>
+            <div className="subtle">
+              One emote per direction, exactly as chat would type it. Four distinct values are required; changing
+              them mid-round starts a fresh round under the new controls.
+            </div>
+            <div className="form-grid" style={{ marginTop: 12 }}>
+              {(Object.keys(DIRECTION_LABELS) as ChatGameDirection[]).map((direction) => (
+                <label key={direction}>
+                  <span className="label">{DIRECTION_LABELS[direction]}</span>
+                  <input
+                    onChange={(event) => setEmoteMap((current) => ({ ...current, [direction]: event.target.value }))}
+                    value={emoteMap[direction]}
+                  />
+                </label>
+              ))}
+            </div>
+            {emoteIssues.length > 0 ? <p className="danger">{emoteIssues.join(" ")}</p> : null}
           </div>
-          <div className="form-grid" style={{ marginTop: 12 }}>
-            {(Object.keys(DIRECTION_LABELS) as ChatGameDirection[]).map((direction) => (
-              <label key={direction}>
-                <span className="label">{DIRECTION_LABELS[direction]}</span>
-                <input
-                  onChange={(event) => setEmoteMap((current) => ({ ...current, [direction]: event.target.value }))}
-                  value={emoteMap[direction]}
-                />
-              </label>
-            ))}
-          </div>
-          {emoteIssues.length > 0 ? <p className="danger">{emoteIssues.join(" ")}</p> : null}
-        </div>
+        ) : null}
       </div>
 
       {error ? <p className="danger">{error}</p> : null}

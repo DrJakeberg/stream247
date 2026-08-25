@@ -38,6 +38,8 @@ export type ChatGameOptionDefinition = {
   description: string;
   /** Which chat vocabulary the game listens to: the emote map, or grid coordinates like "b3". */
   input: "emotes" | "cells";
+  /** Whether the operator's grid settings shape this game's board, or the game fixes its own. */
+  usesGrid: boolean;
 };
 
 export const CHAT_GAMES: ChatGameOptionDefinition[] = [
@@ -45,21 +47,24 @@ export const CHAT_GAMES: ChatGameOptionDefinition[] = [
     id: "snake",
     label: "Snake",
     description: "Chat steers a snake across a grid, one cell per emote. Food grows it, walls and its own body end the round.",
-    input: "emotes"
+    input: "emotes",
+    usesGrid: true
   },
   {
     id: "minesweeper",
     label: "Minesweeper",
     description:
       "Chat digs cells by typing coordinates like b3. Numbers count the mines around a cell; clear every safe cell to win the round.",
-    input: "cells"
+    input: "cells",
+    usesGrid: true
   },
   {
     id: "2048",
     label: "2048",
     description:
       "Chat slides numbered tiles with the four direction emotes on its own four by four board. Equal tiles merge; the round ends when no move is left.",
-    input: "emotes"
+    input: "emotes",
+    usesGrid: false
   }
 ];
 
