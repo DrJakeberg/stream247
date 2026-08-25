@@ -23,9 +23,11 @@ import {
   DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
   addDaysToDateString,
   buildOverlayScenePayload,
+  type OverlayChatView,
   type OverlayEngagementView,
   type OverlayGameView,
   buildOverlayTextLinesFromScenePayload,
+  isEngagementChatRuntimeEnabled,
   formatCuepointOffsetLabel,
   buildScheduleOccurrences,
   describePresenceStatus,
@@ -84,10 +86,13 @@ import {
   type OutputSettingsRecord,
   type StreamDestinationRecord,
   readChatInteractionSettingsRecord,
+  readChatOverlayMessagesRecord,
   readChatSkipVoteRecord,
   readChatVoteSessionRecord,
+  writeChatOverlayMessagesRecord,
   writeChatSkipVoteRecord,
   writeChatVoteSessionRecord,
+  type ChatOverlayMessagesRecord,
   type ChatSkipVoteRecord,
   type ChatVoteSessionRecord,
   clearChatGameRuntimeRecord,
@@ -164,6 +169,7 @@ import {
   chooseEngagementOverlayView,
   type ChatControlEffect
 } from "./chat-control.js";
+import { buildChatOverlayViewFromMessages } from "./chat-overlay.js";
 import {
   loadSceneRendererFonts,
   renderSceneFrame,
@@ -331,11 +337,21 @@ const twitchChatBridge = new TwitchChatBridge({
     if (chatGameRuntime.handleChatMessage(message.message)) {
       scheduleChatGameFlush();
     }
+  },
+  // Any change to the overlay-facing buffer — a message that passed the display limiter, a
+  // moderation removal, a disconnect clearing everything — reaches the persisted row within the
+  // flush window. Moderation is why this cannot wait for the worker cycle: a deleted message
+  // must leave the broadcast in about a second, not in up to thirty.
+  onOverlayMessagesChanged() {
+    scheduleChatOverlayFlush();
   }
 });
 // Latest values the IRC handler needs but cannot fetch itself, refreshed by the worker cycle.
 let latestPlayoutAssetId = "";
 let latestChatInteractionConfig = createDefaultChatInteractionConfig();
+// Latest engagement settings, cached by the worker cycle for the chat-overlay flush. Null until
+// the first cycle: flushing before settings are known could only write a wrong gate.
+let latestEngagementSettings: AppState["engagement"] | null = null;
 // Effects the socket handler cannot apply itself; drained by the worker cycle.
 const pendingChatEffects: ChatControlEffect[] = [];
 
@@ -409,6 +425,65 @@ async function flushChatSkipVote(): Promise<void> {
   const record = chatControl.getSkipVoteRecord(latestChatInteractionConfig);
   await writeChatSkipVoteRecord({ ...(record ?? {}), updatedAt: new Date().toISOString() });
 }
+
+// Chat-overlay writes share the skip vote's throttle shape: at most one write per window however
+// fast the room talks, because every state write crosses the global serialisation lock.
+const CHAT_OVERLAY_FLUSH_DELAY_MS = 1_000;
+let chatOverlayFlushTimer: NodeJS.Timeout | null = null;
+// What was last written, so a cycle that changed nothing writes nothing.
+let lastChatOverlayFlushKey = "";
+
+function scheduleChatOverlayFlush(): void {
+  if (chatOverlayFlushTimer) {
+    return;
+  }
+
+  chatOverlayFlushTimer = setTimeout(() => {
+    chatOverlayFlushTimer = null;
+    void flushChatOverlayMessages().catch((error: unknown) => {
+      // A failed flush costs at most a second of chat freshness; the next buffer change
+      // reschedules, and the worker cycle flushes again regardless.
+      logRuntimeEvent("chat.overlay.flush_failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }, CHAT_OVERLAY_FLUSH_DELAY_MS);
+}
+
+/**
+ * Writes the bridge's current buffer as the on-air chat row: display name, text, timestamp —
+ * the login the bridge keeps for moderation matching stays in the worker, and user ids never
+ * existed on this path at all. With the runtime gate off the row is written empty, which is what
+ * takes the panel off air when an operator disables chat between two messages.
+ */
+async function flushChatOverlayMessages(): Promise<void> {
+  const settings = latestEngagementSettings;
+  if (!settings) {
+    return;
+  }
+
+  const enabled = isEngagementChatRuntimeEnabled(settings, process.env);
+  const record = {
+    enabled,
+    position: settings.chatPosition,
+    maxMessages: settings.maxMessages,
+    messages: enabled
+      ? twitchChatBridge.getRecentMessages().map((event) => ({
+          name: event.actor,
+          text: event.message,
+          at: event.createdAt
+        }))
+      : []
+  };
+
+  const key = JSON.stringify(record);
+  if (key === lastChatOverlayFlushKey) {
+    return;
+  }
+
+  await writeChatOverlayMessagesRecord({ ...record, updatedAt: new Date().toISOString() });
+  lastChatOverlayFlushKey = key;
+}
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
 const PLAYOUT_RECONNECT_CONFIG = getPlayoutReconnectConfig(process.env);
@@ -460,6 +535,12 @@ let lastSkipVoteRecord: ChatSkipVoteRecord | null = null;
 // The chat game as last read from the runtime record, refreshed by the scene renderer loop.
 // Null when no game is running or no scene carries a game layer.
 let currentSceneGame: OverlayGameView | null = null;
+// Live chat as the overlay draws it, projected from the persisted chat_overlay_messages row by
+// the scene renderer loop. Null when chat is disabled or the row holds nothing fresh.
+let currentSceneChat: OverlayChatView | null = null;
+// The last chat row, kept for the same reason as the poll and skip rows: a database blip must
+// not blank the panel, and the projection's own per-message TTL ages a genuinely stale row off.
+let lastChatOverlayRecord: ChatOverlayMessagesRecord | null = null;
 let sceneRendererFonts: SceneRenderFont[] | null = null;
 const standbySlatePath = "/tmp/stream247-standby.txt";
 const onAirOverlayPath = "/tmp/stream247-on-air.txt";
@@ -1670,6 +1751,7 @@ function buildSceneRenderRequest(outputSettings: WorkerStreamOutputSettings): Sc
     payload: currentScenePayload,
     engagement: currentSceneEngagement,
     game: currentSceneGame,
+    chat: currentSceneChat,
     width: viewport.width,
     height: viewport.height
   };
@@ -1736,6 +1818,35 @@ async function refreshSceneEngagementView(): Promise<void> {
     lastVoteSessionRecord ? buildEngagementOverlayViewFromVoteSession(lastVoteSessionRecord, now) : null,
     lastSkipVoteRecord ? buildEngagementOverlayViewFromSkipVote(lastSkipVoteRecord, now) : null
   );
+}
+
+/**
+ * Refreshes the on-air chat view from the persisted row.
+ *
+ * Chat arrives in the worker container and the overlay renders here, so the messages cross
+ * through Postgres like the poll, the skip campaign, and the game. Re-projected per interval
+ * rather than per read for the same reason the engagement view is: the per-message TTL has to
+ * age messages off air between the worker's change-driven flushes, including when a failed read
+ * keeps the last row around. A failed read keeps the last view rather than blanking a lively
+ * panel over a database blip.
+ */
+async function refreshSceneChatView(): Promise<void> {
+  if (!currentScenePayload) {
+    currentSceneChat = null;
+    return;
+  }
+
+  try {
+    lastChatOverlayRecord = await readChatOverlayMessagesRecord();
+  } catch (error) {
+    logRuntimeEvent("scene.chat.read_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  currentSceneChat = lastChatOverlayRecord
+    ? buildChatOverlayViewFromMessages(lastChatOverlayRecord, new Date())
+    : null;
 }
 
 function isWritablePipe(value: unknown): value is Writable {
@@ -1910,6 +2021,7 @@ function startSceneRendererLoop(
       try {
         await refreshSceneGameView();
         await refreshSceneEngagementView();
+        await refreshSceneChatView();
         const request = buildSceneRenderRequest(outputSettings);
         if (request) {
           // The scene only changes when its content changes. Re-pushing the cached PNG keeps the
@@ -6756,7 +6868,16 @@ async function runWorkerCycle(): Promise<void> {
   await reconcileTwitch();
   await reconcileTwitchLiveStatus();
   await reconcileTwitchEventSub();
-  await twitchChatBridge.sync(await readAppState(), process.env);
+  const chatCycleState = await readAppState();
+  latestEngagementSettings = chatCycleState.engagement;
+  await twitchChatBridge.sync(chatCycleState, process.env);
+  // The cycle flush is what carries settings changes (position, count, the enable gate) to the
+  // row when no chat is arriving to trigger the throttled one; identical content writes nothing.
+  await flushChatOverlayMessages().catch((error: unknown) => {
+    logRuntimeEvent("chat.overlay.flush_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
   await reconcileEngagementGame();
   await reconcileChatInteraction();
   await reconcileChatGame();

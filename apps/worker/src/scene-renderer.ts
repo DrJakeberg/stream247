@@ -13,6 +13,7 @@ import { Resvg } from "@resvg/resvg-js";
 import satori from "satori";
 import {
   buildOverlaySceneLayout,
+  type OverlayChatView,
   type OverlayEngagementView,
   type OverlayGameView,
   type OverlayScenePayloadView
@@ -79,6 +80,7 @@ export type SceneRenderRequest = {
   payload: OverlayScenePayloadView;
   engagement?: OverlayEngagementView | null;
   game?: OverlayGameView | null;
+  chat?: OverlayChatView | null;
   width: number;
   height: number;
 };
@@ -89,7 +91,12 @@ export type SceneRenderRequest = {
 export async function renderSceneFrame(request: SceneRenderRequest, fonts: SceneRenderFont[]): Promise<Buffer> {
   const svg = await satori(
     buildOverlaySceneLayout(
-      { payload: request.payload, engagement: request.engagement ?? null, game: request.game ?? null },
+      {
+        payload: request.payload,
+        engagement: request.engagement ?? null,
+        game: request.game ?? null,
+        chat: request.chat ?? null
+      },
       { width: request.width, height: request.height }
     ) as Parameters<typeof satori>[0],
     {
@@ -124,6 +131,8 @@ export function sceneFrameCacheKey(request: SceneRenderRequest): string {
     request.payload,
     request.engagement ?? null,
     // Included so a game input re-rasterises the frame, and an idle game does not.
-    request.game ?? null
+    request.game ?? null,
+    // Included so a new chat message re-rasterises the frame, and a quiet room does not.
+    request.chat ?? null
   ]);
 }

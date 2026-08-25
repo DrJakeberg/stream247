@@ -178,6 +178,7 @@ describe("engagement layer helpers", () => {
     expect(message).toEqual({
       id: "chat-1",
       actor: "Test Viewer",
+      login: "testviewer",
       message: "Hello chat",
       isModerator: false
     });
@@ -188,6 +189,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-1",
         actor: "Moderator",
+        login: "moderator",
         message: "!here 45",
         isModerator: true
       },
@@ -210,6 +212,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-2",
         actor: "Moderator",
+        login: "moderator",
         message: "!checkin 45",
         isModerator: true
       },
@@ -228,6 +231,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-3",
         actor: "Moderator",
+        login: "moderator",
         message: "here 30",
         isModerator: true
       },
@@ -246,6 +250,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-4",
         actor: "Moderator",
+        login: "moderator",
         message: "here",
         isModerator: true
       },
@@ -292,6 +297,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-6",
         actor: "Moderator",
+        login: "moderator",
         message: "!here 9999",
         isModerator: true
       },
