@@ -83,7 +83,9 @@ import {
   type OutputSettingsRecord,
   type StreamDestinationRecord,
   readChatInteractionSettingsRecord,
+  readChatVoteSessionRecord,
   writeChatVoteSessionRecord,
+  type ChatVoteSessionRecord,
   clearChatGameRuntimeRecord,
   readChatGameRuntimeRecord,
   readChatGameSettingsRecord,
@@ -151,7 +153,7 @@ import {
 } from "./ffmpeg-runtime.js";
 import { clampToCycleAwaitCeiling, getLoopStallTimeoutMs } from "./cycle-budget.js";
 import { VodCacheJobRunner } from "./vod-cache-jobs.js";
-import { ChatControlRuntime, type ChatControlEffect } from "./chat-control.js";
+import { ChatControlRuntime, buildEngagementOverlayViewFromVoteSession, type ChatControlEffect } from "./chat-control.js";
 import {
   loadSceneRendererFonts,
   renderSceneFrame,
@@ -393,8 +395,13 @@ const PLAYOUT_STOP_DEADLINE_MS = 20_000;
 // the overlay. The scene renderer reads it on its own cadence instead of re-reading application
 // state per frame.
 let currentScenePayload: ReturnType<typeof buildWorkerScenePayload> | null = null;
-// Live chat-driven overlay state (vote in progress, skip vote). Null when nothing is running.
+// Live chat-driven overlay state, projected from the persisted poll by the scene renderer loop.
+// Null when no poll is open. (Skip votes are tallied worker-side but never persisted, so the
+// playout container cannot draw them yet.)
 let currentSceneEngagement: OverlayEngagementView | null = null;
+// The last poll row read from Postgres, kept so the countdown ticks between reads and a failed
+// read cannot blank a running poll.
+let lastVoteSessionRecord: ChatVoteSessionRecord | null = null;
 // The chat game as last read from the runtime record, refreshed by the scene renderer loop.
 // Null when no game is running or no scene carries a game layer.
 let currentSceneGame: OverlayGameView | null = null;
@@ -1642,6 +1649,35 @@ async function refreshSceneGameView(): Promise<void> {
   }
 }
 
+/**
+ * Refreshes the on-air vote view from the persisted poll.
+ *
+ * The poll is tallied in the worker container and drawn in the playout container, so the state
+ * crosses through Postgres exactly like the chat game's does. Unlike the game there is no scene
+ * layer to gate on — the vote panel rides the right rail of every scene — so the gate is the
+ * payload itself plus what the row says. The view is re-derived per interval rather than only per
+ * read, because the countdown has to tick between the worker's change-driven flushes; that same
+ * re-derivation takes an expired poll off air even when a failed read keeps the last row around.
+ */
+async function refreshSceneEngagementView(): Promise<void> {
+  if (!currentScenePayload) {
+    currentSceneEngagement = null;
+    return;
+  }
+
+  try {
+    lastVoteSessionRecord = await readChatVoteSessionRecord();
+  } catch (error) {
+    logRuntimeEvent("scene.engagement.read_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  currentSceneEngagement = lastVoteSessionRecord
+    ? buildEngagementOverlayViewFromVoteSession(lastVoteSessionRecord, new Date())
+    : null;
+}
+
 function isWritablePipe(value: unknown): value is Writable {
   return Boolean(value) && typeof (value as Writable).write === "function";
 }
@@ -1813,6 +1849,7 @@ function startSceneRendererLoop(
     while (!controller.signal.aborted && !targetPipe.destroyed) {
       try {
         await refreshSceneGameView();
+        await refreshSceneEngagementView();
         const request = buildSceneRenderRequest(outputSettings);
         if (request) {
           // The scene only changes when its content changes. Re-pushing the cached PNG keeps the

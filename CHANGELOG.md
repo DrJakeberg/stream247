@@ -26,6 +26,17 @@
   Assets with an unknown duration behave exactly as before, with the feed-audio watchdog as the
   net; live-bridge input is never cut
 
+- the chat poll now renders on air. Voting always worked — ballots counted, the tally flushed to
+  Postgres, the winner promoted to the front of the queue — but the playout container never read
+  any of it back: the vote panel predates the native scene renderer, and when the overlay moved
+  in-process from the Chromium screenshot nothing was wired to feed the engagement view, so
+  viewers voted in a poll they could not see. The playout render loop now projects the persisted
+  poll row into the vote panel on every render interval, sharing the projection with the
+  worker-side tally so the two sides of the process boundary cannot drift; the countdown ticks
+  between the worker's change-driven flushes and the deadline inside the row takes an orphaned
+  poll off air. Skip-vote progress still cannot be drawn on air — its tally is never persisted —
+  and remains a follow-up
+
 ## 1.5.26 - 2026-08-25
 
 ### Fixed
