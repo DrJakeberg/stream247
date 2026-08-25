@@ -74,6 +74,7 @@ import {
   resolveIncident,
   updateDestinationRecord,
   updateEngagementGameRuntimeRecord,
+  updateAssetChapterProbeRecords,
   updateAssetRecords,
   updatePlayoutRuntime,
   updatePoolCursor,
@@ -112,6 +113,7 @@ import {
   type OnAirOverlayMode
 } from "./on-air-scene.js";
 import { incrementQueueVersion, prioritizeManualNextAsset } from "./broadcast-queue.js";
+import { getChapterBackfillConfig, probeAssetChapters, selectChapterBackfillCandidates } from "./chapter-backfill.js";
 import { buildLocalLibraryAssetId, buildLocalLibraryFolderPath } from "./local-library.js";
 import { resolvePoolAudioLane, type ResolvedAudioLane } from "./audio-lanes.js";
 import { getCuepointInsertPlan } from "./cuepoints.js";
@@ -3009,6 +3011,53 @@ async function syncTwitchVodSources(): Promise<void> {
     twitchAssets
   );
   await appendSourceSyncRuns(syncRuns);
+}
+
+/**
+ * Fetch chapters for assets whose ingest could not deliver them.
+ *
+ * Collection connectors list their items with --flat-playlist, which never carries chapters, so
+ * YouTube items, Twitch archive VODs and direct media arrive chapterless. This step spends a small
+ * per-cycle probe budget on those assets (one metadata-only call each, no download) and stores the
+ * result through the same only-fill-empty rule re-ingest uses — operator edits always win, and a
+ * settled probe (chapters or a final "there are none") is never paid for again. Failures go into a
+ * cooldown instead of an incident: a missing chapter list degrades nothing on air, so the log
+ * entry is enough. The written chaptersJson feeds the existing boundary emission and Helix sync
+ * untouched.
+ */
+async function backfillAssetChapters(): Promise<void> {
+  const config = getChapterBackfillConfig(process.env);
+  if (config.perCycleBudget <= 0) {
+    return;
+  }
+
+  const state = await readAppState();
+  const candidates = selectChapterBackfillCandidates({
+    assets: state.assets,
+    sources: state.sources,
+    budget: config.perCycleBudget,
+    failureCooldownMs: config.failureCooldownMs,
+    nowMs: Date.now()
+  });
+
+  for (const candidate of candidates) {
+    const result = await probeAssetChapters(candidate, config);
+    const probedAt = new Date().toISOString();
+
+    if (result.status === "ok") {
+      await updateAssetChapterProbeRecords([
+        { id: candidate.assetId, chaptersProbeStatus: "ok", chaptersProbedAt: probedAt, chaptersJson: result.chaptersJson }
+      ]);
+      continue;
+    }
+
+    await updateAssetChapterProbeRecords([{ id: candidate.assetId, chaptersProbeStatus: "failed", chaptersProbedAt: probedAt }]);
+    logRuntimeEvent("asset.chapters.probe_failed", {
+      assetId: candidate.assetId,
+      probe: candidate.probe,
+      error: result.error
+    });
+  }
 }
 
 function getCurrentScheduleItem(state: AppState): ReturnType<typeof buildScheduleOccurrences>[number] | null {
@@ -6865,6 +6914,8 @@ async function runWorkerCycle(): Promise<void> {
   await syncDirectMediaSources();
   await syncYoutubePlaylistSources();
   await syncTwitchVodSources();
+  // After the syncs, so assets discovered this cycle can already receive their chapters.
+  await backfillAssetChapters();
   await reconcileTwitch();
   await reconcileTwitchLiveStatus();
   await reconcileTwitchEventSub();
