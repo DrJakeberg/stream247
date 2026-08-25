@@ -14,6 +14,7 @@ import satori from "satori";
 import {
   buildOverlaySceneLayout,
   type OverlayEngagementView,
+  type OverlayGameView,
   type OverlayScenePayloadView
 } from "@stream247/core";
 
@@ -77,6 +78,7 @@ export async function loadSceneRendererFonts(env: NodeJS.ProcessEnv): Promise<Sc
 export type SceneRenderRequest = {
   payload: OverlayScenePayloadView;
   engagement?: OverlayEngagementView | null;
+  game?: OverlayGameView | null;
   width: number;
   height: number;
 };
@@ -87,7 +89,7 @@ export type SceneRenderRequest = {
 export async function renderSceneFrame(request: SceneRenderRequest, fonts: SceneRenderFont[]): Promise<Buffer> {
   const svg = await satori(
     buildOverlaySceneLayout(
-      { payload: request.payload, engagement: request.engagement ?? null },
+      { payload: request.payload, engagement: request.engagement ?? null, game: request.game ?? null },
       { width: request.width, height: request.height }
     ) as Parameters<typeof satori>[0],
     {
@@ -120,6 +122,8 @@ export function sceneFrameCacheKey(request: SceneRenderRequest): string {
     request.width,
     request.height,
     request.payload,
-    request.engagement ?? null
+    request.engagement ?? null,
+    // Included so a game input re-rasterises the frame, and an idle game does not.
+    request.game ?? null
   ]);
 }

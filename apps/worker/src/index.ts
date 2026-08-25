@@ -24,6 +24,7 @@ import {
   addDaysToDateString,
   buildOverlayScenePayload,
   type OverlayEngagementView,
+  type OverlayGameView,
   buildOverlayTextLinesFromScenePayload,
   formatCuepointOffsetLabel,
   buildScheduleOccurrences,
@@ -74,7 +75,11 @@ import {
   type OutputSettingsRecord,
   type StreamDestinationRecord,
   readChatInteractionSettingsRecord,
-  writeChatVoteSessionRecord
+  writeChatVoteSessionRecord,
+  clearChatGameRuntimeRecord,
+  readChatGameRuntimeRecord,
+  readChatGameSettingsRecord,
+  writeChatGameRuntimeRecord
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
@@ -183,6 +188,7 @@ import { decideQueuePrefetchBudget, planQueuePrefetch, raceResolveAgainstDeath }
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 import { EngagementGameTracker } from "./engagement-game.js";
+import { ChatGameRuntime, buildChatGameOverlayViewFromRuntimeRecord } from "./chat-game.js";
 import {
   getOutputGopSize,
   getOutputScaleFactor,
@@ -240,6 +246,10 @@ const engagementGameTracker = new EngagementGameTracker();
 const chatControl = new ChatControlRuntime({
   onEvent: (event, fields) => logRuntimeEvent(event, fields)
 });
+// Owns the running chat game (snake). See chat-game.ts.
+const chatGameRuntime = new ChatGameRuntime({
+  onEvent: (event, fields) => logRuntimeEvent(event, fields)
+});
 const twitchChatBridge = new TwitchChatBridge({
   async onModeratorPresenceCheckIn(window) {
     await appendPresenceWindowRecord({
@@ -275,6 +285,14 @@ const twitchChatBridge = new TwitchChatBridge({
     if (effect.kind === "skip-passed" || effect.kind === "request") {
       pendingChatEffects.push(effect);
     }
+
+    // The game shares the same intake as votes: every message, before the display rate limiter,
+    // so emote-only rooms still steer it. Inputs apply synchronously in arrival order — several
+    // emotes between two rendered frames move the snake several cells, which is the intended
+    // behaviour of a game that moves only on input.
+    if (chatGameRuntime.handleChatMessage(message.message)) {
+      scheduleChatGameFlush();
+    }
   }
 });
 // Latest values the IRC handler needs but cannot fetch itself, refreshed by the worker cycle.
@@ -282,6 +300,41 @@ let latestPlayoutAssetId = "";
 let latestChatInteractionConfig = createDefaultChatInteractionConfig();
 // Effects the socket handler cannot apply itself; drained by the worker cycle.
 const pendingChatEffects: ChatControlEffect[] = [];
+
+// Game-state writes are throttled to one per this window. State writes go through the global
+// serialisation lock, and a room hammering four emotes must not turn into a write per message —
+// while the 30s worker cycle alone would leave the on-air snake half a minute behind the chat
+// that steers it. One flush a second keeps both sides honest; playout reads on its own cadence.
+const CHAT_GAME_FLUSH_DELAY_MS = 1_000;
+let chatGameFlushTimer: NodeJS.Timeout | null = null;
+
+function scheduleChatGameFlush(): void {
+  if (chatGameFlushTimer) {
+    return;
+  }
+
+  chatGameFlushTimer = setTimeout(() => {
+    chatGameFlushTimer = null;
+    void flushChatGameRuntime().catch((error: unknown) => {
+      // A failed flush loses at most one second of moves, and the next input reschedules; the
+      // round itself lives in memory and the worker cycle flushes again anyway.
+      logRuntimeEvent("chat.game.flush_failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }, CHAT_GAME_FLUSH_DELAY_MS);
+}
+
+async function flushChatGameRuntime(): Promise<void> {
+  if (!chatGameRuntime.consumeDirty()) {
+    return;
+  }
+
+  const record = chatGameRuntime.getRuntimeRecord();
+  if (record) {
+    await writeChatGameRuntimeRecord(record);
+  }
+}
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
 const PLAYOUT_RECONNECT_CONFIG = getPlayoutReconnectConfig(process.env);
@@ -323,6 +376,9 @@ const PLAYOUT_STOP_DEADLINE_MS = 20_000;
 let currentScenePayload: ReturnType<typeof buildWorkerScenePayload> | null = null;
 // Live chat-driven overlay state (vote in progress, skip vote). Null when nothing is running.
 let currentSceneEngagement: OverlayEngagementView | null = null;
+// The chat game as last read from the runtime record, refreshed by the scene renderer loop.
+// Null when no game is running or no scene carries a game layer.
+let currentSceneGame: OverlayGameView | null = null;
 let sceneRendererFonts: SceneRenderFont[] | null = null;
 const standbySlatePath = "/tmp/stream247-standby.txt";
 const onAirOverlayPath = "/tmp/stream247-on-air.txt";
@@ -1482,9 +1538,39 @@ function buildSceneRenderRequest(outputSettings: WorkerStreamOutputSettings): Sc
   return {
     payload: currentScenePayload,
     engagement: currentSceneEngagement,
+    game: currentSceneGame,
     width: viewport.width,
     height: viewport.height
   };
+}
+
+/** True when the current scene carries an enabled game layer, so the game path can run at all. */
+function scenePayloadHasGameLayer(): boolean {
+  return Boolean(currentScenePayload?.scene.customLayers.some((layer) => layer.kind === "game" && layer.enabled));
+}
+
+/**
+ * Refreshes the on-air game view from the runtime record.
+ *
+ * The game is steered in the worker container and drawn in the playout container, so the state
+ * crosses through Postgres like the vote tally does. Gated on the scene actually carrying a game
+ * layer — with game layers off there is no read, no view, and no game code in the render path.
+ * A failed read keeps the last view: a database blip must not blank a running game, and a frozen
+ * board beats a flickering one.
+ */
+async function refreshSceneGameView(): Promise<void> {
+  if (!scenePayloadHasGameLayer()) {
+    currentSceneGame = null;
+    return;
+  }
+
+  try {
+    currentSceneGame = buildChatGameOverlayViewFromRuntimeRecord(await readChatGameRuntimeRecord());
+  } catch (error) {
+    logRuntimeEvent("scene.game.read_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
 
 function isWritablePipe(value: unknown): value is Writable {
@@ -1657,6 +1743,7 @@ function startSceneRendererLoop(
 
     while (!controller.signal.aborted && !targetPipe.destroyed) {
       try {
+        await refreshSceneGameView();
         const request = buildSceneRenderRequest(outputSettings);
         if (request) {
           // The scene only changes when its content changes. Re-pushing the cached PNG keeps the
@@ -6227,6 +6314,34 @@ async function reconcileChatInteraction(): Promise<void> {
   }
 }
 
+/**
+ * Reconciles the chat game against its settings and the live scene.
+ *
+ * Active means: the published overlay is on and some scene layer of kind "game" is enabled. The
+ * intake follows the layer, not just the settings, so switching the layer off stops the game from
+ * consuming chat at all and clears its persisted state — layers off must mean no game anywhere,
+ * which is also the rollback story for the whole feature.
+ */
+async function reconcileChatGame(): Promise<void> {
+  const settings = await readChatGameSettingsRecord();
+  const state = await readAppState();
+  const active =
+    state.overlay.enabled && state.overlay.customLayers.some((layer) => layer.kind === "game" && layer.enabled);
+
+  // The persisted round is only fetched when the runtime might adopt it: on activation, or after
+  // a restart when memory is empty. A running round never re-reads its own writes.
+  const restore = active && !chatGameRuntime.isActive() ? await readChatGameRuntimeRecord() : null;
+  const result = chatGameRuntime.sync({ active, settings, restore });
+
+  if (result.becameInactive) {
+    await clearChatGameRuntimeRecord();
+    await appendAuditEvent("chat.game.cleared", "Chat game layer was disabled; game state was removed.");
+    return;
+  }
+
+  await flushChatGameRuntime();
+}
+
 async function runWorkerCycle(): Promise<void> {
   // Disk self-protection runs before the syncs so a failing external integration — Twitch down, a
   // source erroring — can never stand between a filling disk and the one mechanism that frees it.
@@ -6242,6 +6357,7 @@ async function runWorkerCycle(): Promise<void> {
   await twitchChatBridge.sync(await readAppState(), process.env);
   await reconcileEngagementGame();
   await reconcileChatInteraction();
+  await reconcileChatGame();
   await appendAuditEvent("worker.cycle", "Worker reconciliation cycle completed.");
 }
 
