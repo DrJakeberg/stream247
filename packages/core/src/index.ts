@@ -1,4 +1,5 @@
 export * from "./broadcast-channel.js";
+export * from "./chat-game.js";
 export * from "./chat-interaction.js";
 export * from "./overlay-layout.js";
 
