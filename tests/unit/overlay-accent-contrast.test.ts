@@ -94,12 +94,27 @@ describe("the overlay's own text stays above the threshold", () => {
   // Read out of the renderer rather than listed here. A list would let someone soften a value in
   // the source while this file kept agreeing with the old one — the way an allowlist quietly
   // becomes the blind spot it was written to remove.
+  //
+  // The renderer's white inks were consolidated into the named INK_* scale, so the pattern matches
+  // translucent white wherever it is used as text: the scale's declarations, and any inline
+  // `color:` literal someone adds past it. Translucent-white *fills* (the vote bar track, empty
+  // game cells) are excluded on purpose — they carry no text of their own.
   const source = readFileSync(path.join(process.cwd(), "packages/core/src/overlay-layout.ts"), "utf8");
-  const alphas = [...source.matchAll(/color: "rgba\(255,255,255,([\d.]+)\)"/g)].map((match) => Number(match[1]));
+  const alphas = [...source.matchAll(/(?:color: |INK_[A-Z]+ = )"rgba\(255,255,255,([\d.]+)\)"/g)].map((match) =>
+    Number(match[1])
+  );
 
   it("finds the colours it is supposed to be checking", () => {
-    // Without this, a rename of the colour syntax turns this whole block into a silent pass.
-    expect(alphas.length).toBeGreaterThanOrEqual(4);
+    // Without this, a rename of the colour syntax turns this whole block into a silent pass. Two
+    // is the size of the consolidated scale below full white (secondary and tertiary).
+    expect(alphas.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps the ink scale at three steps", () => {
+    // Five loudnesses collapsed into primary/secondary/tertiary. A fourth alpha reappearing means
+    // someone bypassed the scale, which is how the vote hint became the faintest line on air.
+    expect(new Set(alphas).size).toBeLessThanOrEqual(2);
+    expect(source.match(/INK_[A-Z]+ =/g)?.length).toBe(3);
   });
 
   it.each([...new Set(alphas)])("white at %s reads on the panel", (alpha) => {
