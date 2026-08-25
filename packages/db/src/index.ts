@@ -2650,7 +2650,9 @@ if (!schemaMigrations.some((migration) => migration.id === persistentProgramFeed
 }
 
 const assetChaptersMigration: MigrationDefinition = {
-  id: "20260825_001_asset_chapters",
+  // 20260825_001 is the broadcaster-connection migration added while integrating M51 upstream;
+  // chapters sequence after it so both apply in a deterministic order on existing databases.
+  id: "20260825_002_asset_chapters",
   description: "Add per-asset chapter lists so category and stream title can change inside one video.",
   apply: async (client) => {
     await client.query(`
