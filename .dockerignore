@@ -14,6 +14,9 @@ coverage
 **/data
 # Long-lived dev stack state; contains container-owned files the build context cannot read.
 .dev-stack
+# Agent worktrees carry their own .dev-stack copies (root-owned Postgres data the context walk
+# cannot even open), and nothing under .claude belongs in an image.
+.claude
 test-results
 *.log
 

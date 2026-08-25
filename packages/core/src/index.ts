@@ -2998,6 +2998,39 @@ export function findNextScheduleOccurrence(args: {
   return listUpcomingScheduleOccurrences(args)[0] ?? null;
 }
 
+/**
+ * "What comes next" for a channel that never signs off. The single-day search answers "later
+ * today"; after the last block of the evening it answered nothing, and the viewer page told a
+ * 24/7 audience that nothing further was scheduled while tomorrow's programme sat in the grid.
+ * Later days skip carry-overs: an occurrence spilling past midnight was already offered on the
+ * day it starts.
+ */
+export function findNextScheduleOccurrenceAcrossDays(args: {
+  blocks: ScheduleBlock[];
+  date: string;
+  currentTime: string;
+  lookaheadDays?: number;
+}): ScheduleOccurrence | null {
+  const today = buildScheduleOccurrences({ date: args.date, blocks: args.blocks });
+  const next = findNextScheduleOccurrence({ occurrences: today, currentTime: args.currentTime });
+  if (next) {
+    return next;
+  }
+
+  const lookaheadDays = args.lookaheadDays ?? 7;
+  for (let offset = 1; offset <= lookaheadDays; offset += 1) {
+    const date = addDaysToDateString(args.date, offset);
+    const candidate = buildScheduleOccurrences({ date, blocks: args.blocks }).find(
+      (occurrence) => !occurrence.carriesOverFromPreviousDay
+    );
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 export function listUpcomingScheduleOccurrences(args: {
   occurrences: ScheduleOccurrence[];
   currentTime: string;

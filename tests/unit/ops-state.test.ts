@@ -836,7 +836,7 @@ describe("ops state helpers", () => {
     expect(snapshot.nextScheduleItem?.title).toBe("Noon Show");
   });
 
-  it("returns no current or next block after the final scheduled block has ended", () => {
+  it("wraps to the weekly grid's next occurrence after the final block of the day", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-07T14:30:00.000Z"));
     const state = createState({
@@ -867,11 +867,16 @@ describe("ops state helpers", () => {
     });
 
     expect(getCurrentScheduleItem(state)).toBeNull();
-    expect(getNextScheduleItem(state)).toBeNull();
+    // This used to expect null, which pinned the bug the wording baselines tripped over every
+    // evening: a 24/7 channel reported "nothing further scheduled" while next week's grid was
+    // fully populated. The next occurrence of a weekly block is a real answer.
+    const next = getNextScheduleItem(state);
+    expect(next?.title).toBe("Morning Show");
+    expect(next?.date).toBe("2026-04-14");
 
     const snapshot = getBroadcastSnapshot(state);
     expect(snapshot.currentScheduleItem).toBeNull();
-    expect(snapshot.nextScheduleItem).toBeNull();
+    expect(snapshot.nextScheduleItem?.title).toBe("Morning Show");
   });
 
   it("keeps the first later daytime block as next when the current block crosses midnight", () => {

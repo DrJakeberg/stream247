@@ -3,6 +3,7 @@ import {
   buildScheduleOccurrences,
   findCurrentScheduleOccurrence,
   findNextScheduleOccurrence,
+  findNextScheduleOccurrenceAcrossDays,
   getScheduleOccurrenceMinuteRange,
   isScheduleOccurrenceOnAir,
   listUpcomingScheduleOccurrences,
@@ -197,5 +198,67 @@ describe("listUpcomingScheduleOccurrences", () => {
     const occurrences = buildScheduleOccurrences({ date: TUESDAY, blocks });
 
     expect(listUpcomingScheduleOccurrences({ occurrences, currentTime: "23:59" })).toEqual([]);
+  });
+});
+
+describe("findNextScheduleOccurrenceAcrossDays", () => {
+  // The CI failure that motivated this: the fixture's weekday block runs 20:00-23:00, the
+  // wording baselines were recorded during the day, and every evening run found "next: none"
+  // because the search stopped at midnight. A 24/7 channel always has a next block as long as
+  // anything is scheduled this week.
+  const eveningBlocks = [
+    block({ id: "abend-mo", dayOfWeek: 1, startMinuteOfDay: 20 * 60, durationMinutes: 180 }),
+    block({ id: "abend-di", dayOfWeek: 2, startMinuteOfDay: 20 * 60, durationMinutes: 180 })
+  ];
+
+  it("falls through midnight to the next day's block once today is exhausted", () => {
+    const next = findNextScheduleOccurrenceAcrossDays({
+      blocks: eveningBlocks,
+      date: MONDAY,
+      currentTime: "21:00"
+    });
+
+    expect(next?.blockId).toBe("abend-di");
+    expect(next?.date).toBe(TUESDAY);
+  });
+
+  it("keeps today's answer when today still has one", () => {
+    const next = findNextScheduleOccurrenceAcrossDays({
+      blocks: eveningBlocks,
+      date: MONDAY,
+      currentTime: "12:00"
+    });
+
+    expect(next?.blockId).toBe("abend-mo");
+    expect(next?.date).toBe(MONDAY);
+  });
+
+  it("scans the whole week for a sparse schedule", () => {
+    const next = findNextScheduleOccurrenceAcrossDays({
+      blocks: [block({ id: "samstag", dayOfWeek: 6, startMinuteOfDay: 23 * 60, durationMinutes: 120 })],
+      date: MONDAY,
+      currentTime: "12:00"
+    });
+
+    expect(next?.blockId).toBe("samstag");
+    expect(next?.date).toBe("2026-04-11");
+  });
+
+  it("returns null only when nothing is scheduled at all", () => {
+    expect(
+      findNextScheduleOccurrenceAcrossDays({ blocks: [], date: MONDAY, currentTime: "12:00" })
+    ).toBeNull();
+  });
+
+  it("never offers a later day's carry-over, whose true start already had its turn", () => {
+    const next = findNextScheduleOccurrenceAcrossDays({
+      blocks: [block({ id: "nacht", dayOfWeek: 1, startMinuteOfDay: 23 * 60, durationMinutes: 120 })],
+      date: TUESDAY,
+      currentTime: "12:00"
+    });
+
+    expect(next?.blockId).toBe("nacht");
+    expect(next?.date).toBe("2026-04-13");
+    expect(next?.carriesOverFromPreviousDay).not.toBe(true);
   });
 });

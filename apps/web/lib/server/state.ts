@@ -11,7 +11,7 @@ import {
   shiftDateToDayOfWeek,
   describePresenceStatus,
   findCurrentScheduleOccurrence,
-  findNextScheduleOccurrence,
+  findNextScheduleOccurrenceAcrossDays,
   getDestinationFailureSecondsRemaining as getDestinationFailureHoldSecondsRemaining,
   getScheduleElapsedSeconds,
   getCurrentScheduleMoment,
@@ -369,18 +369,12 @@ export function getNextScheduleItem(state: AppState) {
     now: new Date(),
     timeZone: getWorkspaceTimeZone(state)
   });
-  const occurrences = buildScheduleOccurrences({
+  // Across days, not just today's grid: after the evening's last block the channel is still on
+  // air, and "up next" is tomorrow's programme rather than nothing.
+  return findNextScheduleOccurrenceAcrossDays({
+    blocks: state.scheduleBlocks,
     date: scheduleMoment.date,
-    blocks: state.scheduleBlocks
-  });
-  const current = findCurrentScheduleOccurrence({
-    occurrences,
     currentTime: scheduleMoment.time
-  });
-  return findNextScheduleOccurrence({
-    occurrences,
-    currentTime: scheduleMoment.time,
-    currentOccurrence: current
   });
 }
 
