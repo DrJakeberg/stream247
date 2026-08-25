@@ -129,6 +129,32 @@ describe("chat game lifecycle", () => {
   });
 });
 
+describe("chat intake for the other games", () => {
+  it("digs minesweeper cells on coordinates and lets emotes pass by untouched", () => {
+    const runtime = new ChatGameRuntime({ seed: () => 11 });
+    runtime.sync({ active: true, settings: { ...SETTINGS, gameId: "minesweeper" } });
+
+    expect(runtime.handleChatMessage("⬆")).toBe(false);
+    expect(runtime.handleChatMessage("hello chat")).toBe(false);
+    expect(runtime.handleChatMessage("b3")).toBe(true);
+    // The same cell again moves nothing, so nothing is persisted for it.
+    runtime.consumeDirty();
+    expect(runtime.handleChatMessage("b3")).toBe(false);
+    expect(runtime.consumeDirty()).toBe(false);
+  });
+
+  it("slides 2048 tiles on the very emote map that steers the snake", () => {
+    const runtime = new ChatGameRuntime({ seed: () => 11 });
+    runtime.sync({ active: true, settings: { ...SETTINGS, gameId: "2048" } });
+
+    expect(runtime.handleChatMessage("b3")).toBe(false);
+    const moved = ["⬆", "⬇", "⬅", "➡"].map((emote) => runtime.handleChatMessage(emote));
+    // A fresh board cannot refuse all four directions; which ones move depends on the seed.
+    expect(moved).toContain(true);
+    expect(runtime.getRuntimeRecord()!.gameId).toBe("2048");
+  });
+});
+
 describe("the playout-side view of a persisted round", () => {
   it("derives the same render model the worker would draw", () => {
     const runtime = activeRuntime();
