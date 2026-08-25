@@ -179,6 +179,21 @@ const TITLE_SIZES: Record<string, number> = {
   cinematic: 66
 };
 
+// The overlay's text hierarchy, as white alphas on the panel fill. There used to be five
+// (0.5, 0.52, 0.62, 0.66, 0.78) — five loudnesses for three roles, and the two quietest sat on
+// the lines a viewer most needs to act on: the vote hint and the programme metadata. Three steps,
+// one per role.
+//
+// Measured at both ends of what the panel can be. On the opaque fill (#080a0f, the darkest
+// backdrop): SECONDARY 11.97:1, TERTIARY 8.69:1. On the worst case — the signal surface's 72%
+// scrim composited over pure white video, the lightest backdrop an ink can meet: SECONDARY
+// 5.80:1, TERTIARY 4.68:1. Tertiary sits at 0.66 rather than 0.64 because 0.64 cleared that
+// worst case by only 0.008. Both ends are re-derived from this source by
+// overlay-accent-contrast.test.ts, so a softened step has to face the numbers.
+const INK_PRIMARY = "#ffffff";
+const INK_SECONDARY = "rgba(255,255,255,0.78)";
+const INK_TERTIARY = "rgba(255,255,255,0.66)";
+
 function resolveSurface(style: string, accent: string): OverlayLayoutStyle {
   if (style === "solid") {
     return { backgroundColor: "rgba(8,10,15,0.94)", border: `2px solid ${accent}` };
@@ -325,7 +340,7 @@ function buildLowerThird(
             ]
           : []),
         ...(chip
-          ? [label(chip, { color: "rgba(255,255,255,0.66)", fontSize: px(20), letterSpacing: px(1) })]
+          ? [label(chip, { color: INK_TERTIARY, fontSize: px(20), letterSpacing: px(1) })]
           : [])
       ])
     );
@@ -333,19 +348,23 @@ function buildLowerThird(
 
   if (heroTitle) {
     children.push(
-      label(heroTitle, { color: "#ffffff", fontSize: titleSize, fontWeight: 700, lineHeight: 1.1 })
+      label(heroTitle, { color: INK_PRIMARY, fontSize: titleSize, fontWeight: 700, lineHeight: 1.1 })
     );
   }
 
   if (heroBody) {
     children.push(
-      label(heroBody, { color: "rgba(255,255,255,0.78)", fontSize: px(24), marginTop: px(8) })
+      label(heroBody, { color: INK_SECONDARY, fontSize: px(24), marginTop: px(8) })
     );
   }
 
   if (metaLine) {
+    // Tertiary, not a fourth quieter step: 0.52 was the faintest line on air, and it carries the
+    // category and schedule facts, not decoration. Colour only — tracking would change where the
+    // clamped 110-character line breaks, and px() would apply it at some output sizes and round
+    // it away at others.
     children.push(
-      label(metaLine, { color: "rgba(255,255,255,0.52)", fontSize: px(19), marginTop: px(10) })
+      label(metaLine, { color: INK_TERTIARY, fontSize: px(19), marginTop: px(10) })
     );
   }
 
@@ -413,11 +432,11 @@ function buildVotePanel(
                 fontSize: px(17),
                 fontWeight: 700,
                 padding: `${px(2)}px ${px(9)}px`,
-                borderRadius: px(5)
+                borderRadius: px(6)
               }),
-              label(clampOverlayText(option.title, 38), { color: "#ffffff", fontSize: px(21) })
+              label(clampOverlayText(option.title, 38), { color: INK_PRIMARY, fontSize: px(21) })
             ]),
-            label(`${String(option.votes)}`, { color: "rgba(255,255,255,0.62)", fontSize: px(19) })
+            label(`${String(option.votes)}`, { color: INK_TERTIARY, fontSize: px(19) })
           ]),
           // Track and fill are separate nodes because satori has no ::before/::after.
           {
@@ -466,7 +485,9 @@ function buildVotePanel(
         fontFamily,
         ...resolveSurface(surfaceStyle, accent)
       },
-      children: [header, ...options, ...(hint ? [label(hint, { color: "rgba(255,255,255,0.5)", fontSize: px(17), marginTop: px(4) })] : [])]
+      // The hint is the line that turns a watcher into a voter ("type !1 in chat"); it was the
+      // faintest text on the frame, which had the priority exactly backwards.
+      children: [header, ...options, ...(hint ? [label(hint, { color: INK_TERTIARY, fontSize: px(17), marginTop: px(4) })] : [])]
     }
   };
 }
@@ -493,7 +514,9 @@ function buildNextCard(
         flexDirection: "column",
         maxWidth: px(520),
         padding: `${px(16)}px ${px(20)}px`,
-        borderRadius: px(14),
+        // 16 like the game panel: the right rail's small cards share one radius, and only the two
+        // full panels (lower third, vote) carry the larger 18.
+        borderRadius: px(16),
         fontFamily,
         ...resolveSurface(payload.scene.surfaceStyle, accent)
       },
@@ -505,7 +528,7 @@ function buildNextCard(
           letterSpacing: px(2),
           marginBottom: px(6)
         }),
-        label(nextTitle, { color: "#ffffff", fontSize: px(24) })
+        label(nextTitle, { color: INK_PRIMARY, fontSize: px(24) })
       ]
     }
   };
@@ -641,9 +664,9 @@ function buildGamePanel(
         ...(hint
           ? [
               label(clampOverlayText(hint, 70), {
-                // Solid enough to clear 4.5:1 on the panel fill; the hint is the only line that
-                // tells a new viewer the game is theirs to play.
-                color: "rgba(255,255,255,0.78)",
+                // Secondary, not tertiary: the hint is the only line that tells a new viewer the
+                // game is theirs to play.
+                color: INK_SECONDARY,
                 fontSize: px(16),
                 marginTop: px(10)
               })
@@ -664,9 +687,11 @@ function buildBanner(message: string, scale: number, fontFamily: string): Overla
         width: "100%",
         justifyContent: "center",
         padding: `${px(12)}px ${px(24)}px`,
-        borderRadius: px(10),
+        // 12 keeps the banner within the panel radius family (12/16/18) instead of being the one
+        // shape with its own corner.
+        borderRadius: px(12),
         backgroundColor: "rgba(190,32,48,0.94)",
-        color: "#ffffff",
+        color: INK_PRIMARY,
         fontFamily,
         fontSize: px(24),
         fontWeight: 700,
@@ -709,7 +734,7 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
 
   const clock = formatOverlayClock(options.now ?? new Date(), payload.timeZone);
   const clockChip = label(clock, {
-    color: "#ffffff",
+    color: INK_PRIMARY,
     fontSize: px(26),
     fontWeight: 700,
     letterSpacing: px(1),

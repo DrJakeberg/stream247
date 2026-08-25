@@ -137,6 +137,17 @@ describe("declared colour pairs", () => {
     expect(contrastRatio({ r: 255, g: 255, b: 255 }, readToken("brand"))).toBeGreaterThanOrEqual(4.5);
   });
 
+  it("the channel page's programme cards keep their text and their accent readable", () => {
+    // The public channel page sets programme titles in --text and times in --muted on
+    // --surface-strong items, and marks the on-air card with a --brand border. The pairs predate
+    // the visual pass; they are asserted now because the page's hierarchy leans on them.
+    const strong = readToken("surface-strong");
+    expect(contrastRatio(readToken("text"), strong)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(readToken("muted"), strong)).toBeGreaterThanOrEqual(4.5);
+    // The border is a boundary, not text: 3:1.
+    expect(contrastRatio(readToken("brand"), strong)).toBeGreaterThanOrEqual(3);
+  });
+
   it("state colours are readable on the surfaces they appear on", () => {
     for (const token of ["danger", "warning"]) {
       expect(contrastRatio(readToken(token), surface), `--${token} on --surface`).toBeGreaterThanOrEqual(4.5);

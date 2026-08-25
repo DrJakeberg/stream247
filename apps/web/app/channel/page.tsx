@@ -8,8 +8,9 @@ export default async function ChannelPage() {
   const state = await readAppState();
   const timeZone = getWorkspaceTimeZone(state);
 
+  // channel-public restyles the shared primitives for the audience; see globals.css.
   return (
-    <main className="standalone">
+    <main className="standalone channel-public">
       <section className="hero">
         <span className="badge">Schedule</span>
         <h2>What is live now, and what comes next.</h2>
