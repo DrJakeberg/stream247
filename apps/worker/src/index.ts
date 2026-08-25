@@ -83,8 +83,11 @@ import {
   type OutputSettingsRecord,
   type StreamDestinationRecord,
   readChatInteractionSettingsRecord,
+  readChatSkipVoteRecord,
   readChatVoteSessionRecord,
+  writeChatSkipVoteRecord,
   writeChatVoteSessionRecord,
+  type ChatSkipVoteRecord,
   type ChatVoteSessionRecord,
   clearChatGameRuntimeRecord,
   readChatGameRuntimeRecord,
@@ -153,7 +156,13 @@ import {
 } from "./ffmpeg-runtime.js";
 import { clampToCycleAwaitCeiling, getLoopStallTimeoutMs } from "./cycle-budget.js";
 import { VodCacheJobRunner } from "./vod-cache-jobs.js";
-import { ChatControlRuntime, buildEngagementOverlayViewFromVoteSession, type ChatControlEffect } from "./chat-control.js";
+import {
+  ChatControlRuntime,
+  buildEngagementOverlayViewFromSkipVote,
+  buildEngagementOverlayViewFromVoteSession,
+  chooseEngagementOverlayView,
+  type ChatControlEffect
+} from "./chat-control.js";
 import {
   loadSceneRendererFonts,
   renderSceneFrame,
@@ -307,6 +316,13 @@ const twitchChatBridge = new TwitchChatBridge({
       pendingChatEffects.push(effect);
     }
 
+    // Every accepted skip vote goes on air within a second (see CHAT_SKIP_FLUSH_DELAY_MS). The
+    // passed campaign flushes too: its full bar stays honest on screen until the worker cycle
+    // applies the skip and clears the row.
+    if (effect.kind === "skip-recorded" || effect.kind === "skip-passed") {
+      scheduleChatSkipFlush();
+    }
+
     // The game shares the same intake as votes: every message, before the display rate limiter,
     // so emote-only rooms still steer it. Inputs apply synchronously in arrival order — several
     // emotes between two rendered frames move the snake several cells, which is the intended
@@ -356,6 +372,42 @@ async function flushChatGameRuntime(): Promise<void> {
     await writeChatGameRuntimeRecord(record);
   }
 }
+
+// Skip progress reaches the screen on the game's cadence, not the worker cycle's. The 30s cycle
+// is fine for the poll — it runs a minute and its ballots trickle — but a skip campaign is a
+// rally: someone typed !skip and needs the count on air while others can still join a 120s
+// window. Write volume stays bounded without consulting the dirty flag, because only an accepted
+// vote schedules a flush and each viewer is accepted at most once per campaign.
+const CHAT_SKIP_FLUSH_DELAY_MS = 1_000;
+let chatSkipFlushTimer: NodeJS.Timeout | null = null;
+
+function scheduleChatSkipFlush(): void {
+  if (chatSkipFlushTimer) {
+    return;
+  }
+
+  chatSkipFlushTimer = setTimeout(() => {
+    chatSkipFlushTimer = null;
+    void flushChatSkipVote().catch((error: unknown) => {
+      // A failed flush costs at most a second of on-air progress; the next accepted vote
+      // reschedules, and the worker cycle flushes again regardless.
+      logRuntimeEvent("chat.skip.flush_failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }, CHAT_SKIP_FLUSH_DELAY_MS);
+}
+
+/**
+ * Writes the campaign snapshot, or the empty record when none is collecting — clearing must reach
+ * the row too, or the overlay would replay a finished campaign until its window lapsed. Does not
+ * consume the runtime's dirty flag: that belongs to the cycle flush, and stealing it here would
+ * suppress the poll write that shares it.
+ */
+async function flushChatSkipVote(): Promise<void> {
+  const record = chatControl.getSkipVoteRecord(latestChatInteractionConfig);
+  await writeChatSkipVoteRecord({ ...(record ?? {}), updatedAt: new Date().toISOString() });
+}
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
 const PLAYOUT_RECONNECT_CONFIG = getPlayoutReconnectConfig(process.env);
@@ -395,13 +447,15 @@ const PLAYOUT_STOP_DEADLINE_MS = 20_000;
 // the overlay. The scene renderer reads it on its own cadence instead of re-reading application
 // state per frame.
 let currentScenePayload: ReturnType<typeof buildWorkerScenePayload> | null = null;
-// Live chat-driven overlay state, projected from the persisted poll by the scene renderer loop.
-// Null when no poll is open. (Skip votes are tallied worker-side but never persisted, so the
-// playout container cannot draw them yet.)
+// Live chat-driven overlay state, projected from the persisted poll and skip rows by the scene
+// renderer loop. Null when neither is running.
 let currentSceneEngagement: OverlayEngagementView | null = null;
 // The last poll row read from Postgres, kept so the countdown ticks between reads and a failed
 // read cannot blank a running poll.
 let lastVoteSessionRecord: ChatVoteSessionRecord | null = null;
+// The last skip-campaign row, kept for the same reason: a database blip must not blank a running
+// campaign, and the projection's own deadline check takes a genuinely stale row off air.
+let lastSkipVoteRecord: ChatSkipVoteRecord | null = null;
 // The chat game as last read from the runtime record, refreshed by the scene renderer loop.
 // Null when no game is running or no scene carries a game layer.
 let currentSceneGame: OverlayGameView | null = null;
@@ -1650,14 +1704,16 @@ async function refreshSceneGameView(): Promise<void> {
 }
 
 /**
- * Refreshes the on-air vote view from the persisted poll.
+ * Refreshes the on-air engagement view — the poll or the skip campaign — from the persisted rows.
  *
- * The poll is tallied in the worker container and drawn in the playout container, so the state
+ * Both are tallied in the worker container and drawn in the playout container, so the state
  * crosses through Postgres exactly like the chat game's does. Unlike the game there is no scene
- * layer to gate on — the vote panel rides the right rail of every scene — so the gate is the
- * payload itself plus what the row says. The view is re-derived per interval rather than only per
- * read, because the countdown has to tick between the worker's change-driven flushes; that same
- * re-derivation takes an expired poll off air even when a failed read keeps the last row around.
+ * layer to gate on — the engagement panel rides the right rail of every scene — so the gate is the
+ * payload itself plus what the rows say. The views are re-derived per interval rather than only
+ * per read, because the countdowns have to tick between the worker's change-driven flushes; that
+ * same re-derivation takes an expired poll or a lapsed campaign off air even when a failed read
+ * keeps the last rows around. When both rows project to something, chooseEngagementOverlayView
+ * settles the one panel slot the same way the worker-side view does.
  */
 async function refreshSceneEngagementView(): Promise<void> {
   if (!currentScenePayload) {
@@ -1667,15 +1723,18 @@ async function refreshSceneEngagementView(): Promise<void> {
 
   try {
     lastVoteSessionRecord = await readChatVoteSessionRecord();
+    lastSkipVoteRecord = await readChatSkipVoteRecord();
   } catch (error) {
     logRuntimeEvent("scene.engagement.read_failed", {
       error: error instanceof Error ? error.message : String(error)
     });
   }
 
-  currentSceneEngagement = lastVoteSessionRecord
-    ? buildEngagementOverlayViewFromVoteSession(lastVoteSessionRecord, new Date())
-    : null;
+  const now = new Date();
+  currentSceneEngagement = chooseEngagementOverlayView(
+    lastVoteSessionRecord ? buildEngagementOverlayViewFromVoteSession(lastVoteSessionRecord, now) : null,
+    lastSkipVoteRecord ? buildEngagementOverlayViewFromSkipVote(lastSkipVoteRecord, now) : null
+  );
 }
 
 function isWritablePipe(value: unknown): value is Writable {
@@ -6486,8 +6545,12 @@ async function reconcileChatInteraction(): Promise<void> {
   latestChatInteractionConfig = config;
 
   if (!config.enabled) {
+    // Disabling viewer control ends the campaign in memory too, not just its row: otherwise a
+    // re-enable within the window would resurrect a tally collected under the old rules.
+    chatControl.clearSkipVote();
     if (chatControl.consumeDirty()) {
       await writeChatVoteSessionRecord({ status: "closed", updatedAt: new Date().toISOString() });
+      await flushChatSkipVote();
     }
     return;
   }
@@ -6513,6 +6576,14 @@ async function reconcileChatInteraction(): Promise<void> {
 
   const currentAssetId = state.playout.currentAssetId;
   latestPlayoutAssetId = currentAssetId;
+
+  // A campaign belongs to one item — applySkipVote restarts the tally when the programme moves
+  // on, but only when the next vote arrives. Without this clear, a boundary with no further
+  // !skip would leave the previous item's progress on air for up to a full window.
+  const skipSnapshot = chatControl.getSkipVoteRecord(config);
+  if (skipSnapshot && currentAssetId && skipSnapshot.assetId !== currentAssetId) {
+    chatControl.clearSkipVote();
+  }
 
   await drainChatEffects(state, config);
 
@@ -6549,6 +6620,9 @@ async function reconcileChatInteraction(): Promise<void> {
       winnerAssetId: chatControl.getLastOutcome()?.winnerAssetId ?? "",
       updatedAt: new Date().toISOString()
     });
+    // The dirty flag covers both tallies, so a skip change flushes here too — this is also the
+    // write that clears the row after clearSkipVote, which the throttled flush never sees.
+    await flushChatSkipVote();
   }
 }
 
