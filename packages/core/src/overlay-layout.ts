@@ -108,14 +108,49 @@ export type OverlayEngagementView = {
   hint: string;
 };
 
+/**
+ * The chat game as the overlay draws it — a structural mirror of ChatGameRenderModel, declared
+ * here so this file stays dependency-free like the rest of the layout types.
+ */
+export type OverlayGameView = {
+  gridWidth: number;
+  gridHeight: number;
+  cells: { x: number; y: number; kind: string }[];
+  headline: string;
+  statusLine: string;
+  hintLine: string;
+  phase: string;
+};
+
+/** The slice of a custom layer the native renderer needs to place the game panel. */
+export type OverlayGameLayerPlacement = {
+  kind: string;
+  enabled: boolean;
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
+  opacityPercent: number;
+  allowOutsideSafeArea: boolean;
+};
+
 export type OverlayLayoutInput = {
   payload: OverlayScenePayloadView;
   engagement?: OverlayEngagementView | null;
+  game?: OverlayGameView | null;
 };
 
 /** The subset of OverlayScenePayload the layout consumes. */
 export type OverlayScenePayloadView = {
-  scene: { surfaceStyle: string; panelAnchor: string; titleScale: string; typographyPreset: string; resolvedPresetId: string };
+  scene: {
+    surfaceStyle: string;
+    panelAnchor: string;
+    titleScale: string;
+    typographyPreset: string;
+    resolvedPresetId: string;
+    /** Optional because older cached payloads predate custom-layer-aware native rendering. */
+    customLayers?: OverlayGameLayerPlacement[];
+  };
   channelName: string;
   accentColor: string;
   brandLine: string;
@@ -476,6 +511,149 @@ function buildNextCard(
   };
 }
 
+/** Clamps a custom-layer percent box the same way the studio preview does. */
+function clampPlacementPercent(value: number, min: number, max: number): number {
+  return Math.min(Math.max(Number.isFinite(value) ? value : 0, min), max);
+}
+
+/**
+ * The chat-game panel: heading, score, the cell grid, and the how-to-play hint.
+ *
+ * Rendered natively because this is the surface the audience actually plays on — the game is
+ * pointless if it only exists in the studio preview. The grid is plain flex rows of fixed-size
+ * squares: at one frame per second there is nothing to animate, so legibility comes entirely from
+ * cell size and contrast. Cells scale to fit the operator's placement box and never overflow it.
+ */
+function buildGamePanel(
+  game: OverlayGameView,
+  placement: OverlayGameLayerPlacement,
+  accent: string,
+  scale: number,
+  fontFamily: string,
+  surfaceStyle: string,
+  frame: { width: number; height: number }
+): OverlayLayoutNode {
+  const px = (value: number) => Math.round(value * scale);
+
+  // The same safe margins the root layout keeps for its own panels. A layer that has not opted
+  // out of the safe area positions inside them, so the panel can never sit in an overscan edge.
+  const safeX = placement.allowOutsideSafeArea ? 0 : px(72);
+  const safeY = placement.allowOutsideSafeArea ? 0 : px(56);
+  const safeWidth = frame.width - safeX * 2;
+  const safeHeight = frame.height - safeY * 2;
+
+  const xPercent = clampPlacementPercent(placement.xPercent, 0, 100);
+  const yPercent = clampPlacementPercent(placement.yPercent, 0, 100);
+  const widthPercent = clampPlacementPercent(placement.widthPercent, 10, 100 - xPercent);
+  const heightPercent = clampPlacementPercent(placement.heightPercent, 8, 100 - yPercent);
+
+  const boxLeft = Math.round(safeX + (safeWidth * xPercent) / 100);
+  const boxTop = Math.round(safeY + (safeHeight * yPercent) / 100);
+  const boxWidth = Math.round((safeWidth * widthPercent) / 100);
+  const boxHeight = Math.round((safeHeight * heightPercent) / 100);
+
+  const gridWidth = Math.max(1, Math.round(game.gridWidth));
+  const gridHeight = Math.max(1, Math.round(game.gridHeight));
+
+  // Text rows above and below the grid share the box with it; whatever is left decides the cell
+  // size. The floor keeps cells visible even when an operator draws a tiny box.
+  const framePadding = px(18);
+  const textAllowance = px(84);
+  const gap = Math.max(1, px(2));
+  const innerWidth = boxWidth - framePadding * 2;
+  const innerHeight = boxHeight - framePadding * 2 - textAllowance;
+  const cellSize = Math.max(
+    px(8),
+    Math.floor(
+      Math.min((innerWidth - gap * (gridWidth - 1)) / gridWidth, (innerHeight - gap * (gridHeight - 1)) / gridHeight)
+    )
+  );
+
+  const cellKinds = new Map<string, string>();
+  for (const cell of game.cells) {
+    cellKinds.set(`${String(cell.x)},${String(cell.y)}`, cell.kind);
+  }
+
+  const gridRows: OverlayLayoutNode[] = [];
+  for (let y = 0; y < gridHeight; y += 1) {
+    const rowCells: OverlayLayoutNode[] = [];
+    for (let x = 0; x < gridWidth; x += 1) {
+      const kind = cellKinds.get(`${String(x)},${String(y)}`) ?? "";
+      const cellStyle: OverlayLayoutStyle = {
+        display: "flex",
+        width: cellSize,
+        height: cellSize,
+        borderRadius: Math.max(1, px(3)),
+        backgroundColor: "rgba(255,255,255,0.10)"
+      };
+      if (kind === "snake-head") {
+        // The head is the cell every viewer tracks, so it gets the strongest mark on the panel.
+        cellStyle.backgroundColor = "#ffffff";
+      } else if (kind === "snake-body") {
+        cellStyle.backgroundColor = accent;
+      } else if (kind === "food") {
+        cellStyle.backgroundColor = "#ffffff";
+        cellStyle.borderRadius = 999;
+      }
+      rowCells.push({ type: "div", props: { style: cellStyle } });
+    }
+    gridRows.push(row({ gap }, rowCells));
+  }
+
+  const header = row({ alignItems: "center", justifyContent: "space-between", marginBottom: px(10), gap: px(12) }, [
+    label(clampOverlayText(game.headline, 32).toUpperCase(), {
+      color: accentTextColor(accent),
+      fontSize: px(18),
+      fontWeight: 700,
+      letterSpacing: px(2)
+    }),
+    label(clampOverlayText(game.statusLine, 30), {
+      color: accentInkColor(accent),
+      backgroundColor: accent,
+      fontSize: px(17),
+      fontWeight: 700,
+      padding: `${px(3)}px ${px(10)}px`,
+      borderRadius: px(999)
+    })
+  ]);
+
+  const hint = text(game.hintLine);
+
+  return {
+    type: "div",
+    props: {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        position: "absolute",
+        left: boxLeft,
+        top: boxTop,
+        width: boxWidth,
+        padding: `${framePadding}px`,
+        borderRadius: px(16),
+        opacity: clampPlacementPercent(placement.opacityPercent, 5, 100) / 100,
+        fontFamily,
+        ...resolveSurface(surfaceStyle, accent)
+      },
+      children: [
+        header,
+        { type: "div", props: { style: { display: "flex", flexDirection: "column", gap }, children: gridRows } },
+        ...(hint
+          ? [
+              label(clampOverlayText(hint, 70), {
+                // Solid enough to clear 4.5:1 on the panel fill; the hint is the only line that
+                // tells a new viewer the game is theirs to play.
+                color: "rgba(255,255,255,0.78)",
+                fontSize: px(16),
+                marginTop: px(10)
+              })
+            ]
+          : [])
+      ]
+    }
+  };
+}
+
 function buildBanner(message: string, scale: number, fontFamily: string): OverlayLayoutNode {
   const px = (value: number) => Math.round(value * scale);
   return {
@@ -516,6 +694,18 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
   const banner = text(payload.emergencyBanner);
   const votePanel = input.engagement ? buildVotePanel(input.engagement, accent, scale, fontFamily, payload.scene.surfaceStyle) : null;
   const nextCard = buildNextCard(payload, accent, scale, fontFamily);
+
+  // The game renders only when this scene carries an enabled game layer AND a game is actually
+  // running. Either alone is not enough: a scene without the layer stays game-free however lively
+  // chat is, and an enabled layer with no running game draws nothing rather than an empty board.
+  const gamePlacement = (payload.scene.customLayers ?? []).find((layer) => layer.kind === "game" && layer.enabled) ?? null;
+  const gamePanel =
+    gamePlacement && input.game
+      ? buildGamePanel(input.game, gamePlacement, accent, scale, fontFamily, payload.scene.surfaceStyle, {
+          width: options.width,
+          height: options.height
+        })
+      : null;
 
   const clock = formatOverlayClock(options.now ?? new Date(), payload.timeZone);
   const clockChip = label(clock, {
@@ -563,9 +753,12 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
         justifyContent: anchorTop ? "center" : "space-between",
         padding: `${px(56)}px ${px(72)}px`,
         // Transparent: ffmpeg composites this over the programme frame.
-        backgroundColor: "rgba(0,0,0,0)"
+        backgroundColor: "rgba(0,0,0,0)",
+        // The game panel positions absolutely against this root, so the root must be its
+        // containing block rather than the browser default of the nearest positioned ancestor.
+        position: "relative"
       },
-      children: [...topBar, bottom]
+      children: [...topBar, bottom, ...(gamePanel ? [gamePanel] : [])]
     }
   };
 }

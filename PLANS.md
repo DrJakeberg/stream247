@@ -1315,8 +1315,8 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | M51 | Architecture fix | Now | In progress | Separate the broadcast channel from the connected identity; chat and moderation work via the mod account now, metadata via a broadcaster connection later |
 | M52 | UX | Now | Complete | First-run wizard covering everything that lives in `.env` today |
 | M52 | UX | Now | Planned | First-run wizard covering everything that lives in `.env` today |
-| M53 | Feature | Next | Done | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
-| M54 | Feature | Next | Planned | Chat game framework with Snake as the first game (emote-per-direction, moves only on input) |
+| M53 | Feature | Next | Planned | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
+| M54 | Feature | Next | Done | Chat game framework with Snake as the first game (emote-per-direction, moves only on input) |
 | M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
 
 ## M51 Broadcast Channel Split
@@ -1464,6 +1464,31 @@ incident naming what was freed and why. Never touches media the schedule still r
 - Validation completed: `pnpm validate` passed; the normalisation sort, the retention rule, the
   route's duration bound and the write throttle were each counter-verified by mutating the
   implementation and watching the matching test fail.
+
+### 2026-08-25 — M54 Chat Game Framework And Snake
+
+- Added the pure chat-game framework in `packages/core/src/chat-game.ts`: a game is settings plus
+  `createInitialState` / `applyInput` / `renderModel` / `parseState`, with deliberately no tick —
+  the contract has no way to advance a game by time, and tests pin that a round is byte-identical
+  after hours without input.
+- Snake is the first game: a configurable emote→direction map (four distinct single-token emotes,
+  validated in the studio form and rejected with reasons at the API), a configurable grid
+  (default 16x9), exactly one cell of movement per accepted chat message applied in arrival
+  order, food/growth, and wall/self collision into a "Game over · Score N" card that the next
+  input restarts.
+- The worker consumes broadcast-channel chat before the display rate limiter (emote-only rooms
+  steer fine), persists the round with its settings in the new `chat_game_runtime` table —
+  created in both the base schema and the idempotent `20260825_003_chat_game` migration — and a
+  restarted worker adopts the persisted round instead of wiping it. Flushes are throttled to one
+  per second; the playout container re-derives the render model from one read per render
+  interval, gated on the scene actually carrying a game layer.
+- A new "game" custom layer kind places the panel per scene; the native renderer draws the cell
+  grid within the safe-area and clamping rules, with the accent-or-white heading rule and
+  measured chip ink, and no operator vocabulary in on-air text. Disabling the layer stops the
+  intake and clears all game state.
+- Validation completed: `pnpm validate` passed; counter-verified the one-cell rule (a two-cell
+  mutation fails five snake tests) and the heading contrast rule (raw accent instead of
+  `accentTextColor` fails the dark-accent cases).
 
 ### 2026-08-25 — M55 Global Disk Self-Protection
 

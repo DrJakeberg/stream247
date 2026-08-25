@@ -72,6 +72,23 @@ export function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): Ove
     };
   }
 
+  if (kind === "game") {
+    // A wide box on the right: the default 16x9 snake grid wants roughly the frame's own aspect
+    // ratio, and the right rail is where the layout already parks secondary panels.
+    return {
+      id,
+      kind,
+      name: "Chat Game",
+      enabled: true,
+      xPercent: 60,
+      yPercent: 10,
+      widthPercent: 30,
+      heightPercent: 44,
+      opacityPercent: 100,
+      allowOutsideSafeArea: false
+    };
+  }
+
   if (kind === "widget") {
     return {
       id,
