@@ -44,16 +44,16 @@ const SURFACES: Surface[] = [
   { name: "live-control", path: "/live?tab=control", maxControls: 22, primaryActions: 1 },
   // Was 62, because the full editor stood open under every destination and the count therefore grew
   // with the number of outputs configured. Folding those away leaves what the page is for.
-  // 25, down from 28: three of those were "Open setup" links on go-live steps whose remedy is a
-  // server environment variable. They pointed at a page that redirects to login once a workspace
-  // exists.
-  { name: "live-status", path: "/live?tab=status", maxControls: 25, primaryActions: 1 },
+  // 27: two of the three "Open setup" links removed as dead ends came back with real targets — the
+  // M52 wizard gave APP_URL and the app secret actual steps to open. A link that goes somewhere is
+  // not clutter, so the budget moves with it.
+  { name: "live-status", path: "/live?tab=status", maxControls: 27, primaryActions: 1 },
   { name: "program-schedule", path: "/program?tab=schedule&day=1", maxControls: 14, primaryActions: 0 },
   // The overlay editor, where editing is the point — so this one is folded rather than trimmed. Was
   // 79; twenty-four of those were three buttons on each of eight layers, held open permanently, and
   // one more was a select offering the same six presets as the cards beside it.
   { name: "studio-scene", path: "/studio?tab=scene", maxControls: 54, primaryActions: 1 },
-  { name: "admin-settings", path: "/admin?tab=settings", maxControls: 29, primaryActions: 1 },
+  { name: "admin-settings", path: "/admin?tab=settings", maxControls: 30, primaryActions: 1 },
   { name: "login", path: "/login", maxControls: 3, primaryActions: 1, authenticated: false },
   { name: "live-moderation", path: "/live?tab=moderation", maxControls: 20, primaryActions: 1 },
   { name: "program-pools", path: "/program?tab=pools", maxControls: 17, primaryActions: 1 },
