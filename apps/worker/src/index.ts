@@ -61,8 +61,10 @@ import {
   parseAssetChaptersJson,
   serializeAssetChapters,
   resolveAlertsRuntimeEnabled,
+  resolveAssetRetentionConfig,
   resolveDiskWatermarkConfig,
   resolveEncoderQualitySettings,
+  resolveSystemVolumeWatermarkConfig,
   resolveTwitchEventSubSecret,
   resolveTwitchScheduleSyncEnabled,
   type ResolvedEncoderQualitySettings
@@ -105,6 +107,8 @@ import {
   clearChatGameRuntimeRecord,
   readChatGameRuntimeRecord,
   readChatGameSettingsRecord,
+  readDatabaseSizeBytes,
+  runAssetRetentionSweep,
   writeChatGameRuntimeRecord
 } from "@stream247/db";
 import {
@@ -149,6 +153,7 @@ import {
   type DiskWatermarkStage,
   type DiskWatermarkStageResult
 } from "./disk-watermark.js";
+import { decideSystemVolumeObservation } from "./system-volume.js";
 import {
   appendFfmpegOutputArgs,
   buildProgramFeedOutputTarget,
@@ -988,6 +993,113 @@ async function enforceDiskWatermark(): Promise<void> {
     }
   } catch (error) {
     logRuntimeEvent("disk.watermark.check_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+// The second watermark: observation only, for the volumes eviction cannot help (M57). The pure
+// decision and the honest description of what the measurement covers live in system-volume.ts;
+// this is the I/O around it. The flag carries "the incident is already open" between cycles so
+// the alert fires once per breach, not once per 30-second measurement — after a worker restart
+// it resets, and the raise then re-runs into the same fingerprint, which upsertIncident absorbs.
+let systemVolumeIncidentOpen = false;
+
+async function observeSystemVolume(): Promise<void> {
+  try {
+    // Same tolerant managed-config read as the eviction watermark: with the database unreachable
+    // the thresholds degrade to env-only resolution instead of dying.
+    const managedConfig = await readAppState()
+      .then((state) => state.managedConfig)
+      .catch(() => null);
+    const config = resolveSystemVolumeWatermarkConfig(managedConfig, process.env);
+
+    // "/" is the worker container's root filesystem — the closest observable stand-in for the OS
+    // volume (see system-volume.ts for exactly how far that approximation carries).
+    const volume = await fs.statfs("/");
+    const freeBytes = Number(volume.bavail) * Number(volume.bsize);
+    const totalBytes = Number(volume.blocks) * Number(volume.bsize);
+    const decision = decideSystemVolumeObservation({
+      freeBytes,
+      totalBytes,
+      config,
+      incidentOpen: systemVolumeIncidentOpen
+    });
+
+    if (decision === "raise") {
+      systemVolumeIncidentOpen = true;
+      // Reported for context, not thresholded: the database's logical size tells the operator
+      // whether the database is what is eating the volume. -1 means it could not be read; the
+      // incident still fires, because the free-space measurement is the one that matters.
+      const databaseSizeBytes = await readDatabaseSizeBytes().catch(() => -1);
+      const databaseDetail =
+        databaseSizeBytes >= 0
+          ? `the application database currently holds ${formatGigabytes(databaseSizeBytes)}`
+          : "the application database size could not be read";
+      const message = `Free space on the system volume is down to ${formatFreePercent(freeBytes, totalBytes)} (${formatGigabytes(freeBytes)} of ${formatGigabytes(totalBytes)}), measured at the worker's root filesystem as the closest observable stand-in for the OS and database volumes; ${databaseDetail}. Nothing here can be freed automatically — media eviction only relieves the media volume — so an operator has to free space before the database or the host stops accepting writes.`;
+      logRuntimeEvent("system.volume.low", { freeBytes, totalBytes, databaseSizeBytes });
+      await upsertIncident({
+        scope: "system",
+        severity: "critical",
+        title: "System volume is running out of space",
+        message,
+        fingerprint: "system.volume.low"
+      });
+      await sendAlert("System volume warning", message);
+      return;
+    }
+
+    if (decision === "resolve") {
+      systemVolumeIncidentOpen = false;
+      logRuntimeEvent("system.volume.recovered", { freeBytes, totalBytes });
+      await resolveIncident("system.volume.low", "Free space on the system volume is back above the recovery mark.");
+    }
+  } catch (error) {
+    logRuntimeEvent("system.volume.check_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+// The asset-retention sweep (M57): at most once per hour, because it hydrates the full state
+// under the write lock and the growth it addresses builds over weeks, not cycles. The decision
+// logic and the reference-path inventory live in @stream247/db (asset-retention.ts); this wiring
+// resolves the managed switch and reports. The counters are logged on EVERY sweep — with the
+// switch off, the sweep classifies and logs what it WOULD delete and why the rest stays, so an
+// operator watches first and enables second.
+const ASSET_RETENTION_SWEEP_INTERVAL_MS = 60 * 60_000;
+let assetRetentionLastSweepMs = 0;
+
+async function sweepAssetRetention(): Promise<void> {
+  const nowMs = Date.now();
+  if (nowMs - assetRetentionLastSweepMs < ASSET_RETENTION_SWEEP_INTERVAL_MS) {
+    return;
+  }
+  assetRetentionLastSweepMs = nowMs;
+
+  try {
+    const managedConfig = await readAppState()
+      .then((state) => state.managedConfig)
+      .catch(() => null);
+    const config = resolveAssetRetentionConfig(managedConfig, process.env);
+    const result = await runAssetRetentionSweep({
+      protectionDays: config.protectionDays,
+      deleteEnabled: config.enabled
+    });
+    logRuntimeEvent("assets.retention.sweep", {
+      enabled: config.enabled,
+      protectionDays: config.protectionDays,
+      ...result.counters,
+      deletedAssets: result.deletedAssets,
+      deletedCollectionItems: result.deletedCollectionItems,
+      danglingCollectionItems: result.danglingCollectionItems,
+      newlyMarkedOrphans: result.newlyMarkedOrphans,
+      clearedOrphanMarks: result.clearedOrphanMarks
+    });
+  } catch (error) {
+    // Failing to sweep is never a reason to fail the cycle; the next attempt comes an hour
+    // later, which matches how slowly this problem grows.
+    logRuntimeEvent("assets.retention.sweep_failed", {
       error: error instanceof Error ? error.message : String(error)
     });
   }
@@ -6935,6 +7047,10 @@ async function runWorkerCycle(): Promise<void> {
   // Disk self-protection runs before the syncs so a failing external integration — Twitch down, a
   // source erroring — can never stand between a filling disk and the one mechanism that frees it.
   await enforceDiskWatermark();
+  // The observation-only sibling: OS/database volume pressure cannot be evicted away, only
+  // reported, and the report must not wait behind a wedged sync either.
+  await observeSystemVolume();
+  await sweepAssetRetention();
   await syncDestinations();
   await syncLocalMediaLibrary();
   await syncDirectMediaSources();
