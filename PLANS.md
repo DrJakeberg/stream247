@@ -8,7 +8,7 @@ This plan closes those gaps while preserving Stream247's existing self-hosted ar
 
 ## Current State
 
-- Monorepo with `apps/web`, `apps/worker`, `packages/core`, `packages/db`, and `packages/config`
+- Monorepo with `apps/web`, `apps/worker`, `packages/core`, and `packages/db`
 - Delivery is Docker / Docker Compose / GHCR with CI, release, upgrade rehearsal, soak monitor, and smoke scripts
 - Runtime already supports:
   - local/direct/YouTube/Twitch sources

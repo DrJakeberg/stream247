@@ -11,7 +11,6 @@
     "typecheck": "tsc -p tsconfig.typecheck.json --noEmit"
   },
   "dependencies": {
-    "@stream247/config": "workspace:*",
     "@stream247/core": "workspace:*",
     "@stream247/db": "workspace:*",
     "next": "^15.2.4",

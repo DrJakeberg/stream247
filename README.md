@@ -623,7 +623,6 @@ Current validation covers:
 - `apps/web`: Next.js admin UI, public pages, and API routes
 - `apps/worker`: background ingestion, reconciliation, and playout logic
 - `packages/core`: scheduling and moderation domain logic
-- `packages/config`: runtime config helpers
 - `packages/db`: PostgreSQL-backed application state layer
 - `docs`: architecture, deployment, and Twitch setup docs
 - `.github`: CI, release, issues, and PR templates

@@ -12,9 +12,6 @@
       ],
       "@stream247/db": [
         "../../packages/db/src/index.ts"
-      ],
-      "@stream247/config": [
-        "../../packages/config/src/index.ts"
       ]
     },
     "plugins": [
