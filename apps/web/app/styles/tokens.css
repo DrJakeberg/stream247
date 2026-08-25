@@ -39,9 +39,31 @@
   --brand-tint-strong: rgb(var(--brand-rgb) / 0.2);
   --brand-focus-ring: rgb(var(--brand-rgb) / 0.28);
 
+  /* ---- Brand emphasis steps the visual pass consolidated ----
+     Selected controls had hand-mixed their own greens: borders at 0.34 (preset cards) and 0.4
+     (chip toggles), washes at 0.06 (active schedule slot) and 0.08 (video timeline). Same meaning,
+     four values. One border step and one wash step replace them; the glow is the decorative
+     radial behind the scene preview, declared so it is a decision rather than a stray literal.
+     --brand-strong text on --brand-wash over a panel measures 7.64:1 (asserted in
+     tests/unit/design-tones.test.ts); the border and glow are boundaries and backdrops for
+     nothing, so they carry no text requirement. */
+  --brand-border-active: rgb(var(--brand-rgb) / 0.36);
+  --brand-wash: rgb(var(--brand-rgb) / 0.07);
+  --brand-glow: rgb(var(--brand-rgb) / 0.24);
+
   /* ---- Translucent whites used to lift a surface off its background ---- */
   --paper-veil: rgb(var(--white-rgb) / 0.14);
   --paper-scrim: rgb(var(--white-rgb) / 0.72);
+
+  /* ---- The secondary card surface ----
+     #fff9ef is the fill of --surface-strong; declared as channels so the card veil derives from
+     it. Eight card families (library groups, program day cards, preset cards, the scene toolbar,
+     the admin status rail, ...) each mixed their own alpha of this paper, scattered across
+     0.72-0.8 — the same surface at five strengths for no reason a viewer could see. One step at
+     the cluster's centre replaces them. Body text on it measures 16.2:1 over the app background,
+     muted text 5.92:1 (asserted in tests/unit/design-tones.test.ts). */
+  --paper-strong-rgb: 255 249 239;
+  --surface-card: rgb(var(--paper-strong-rgb) / 0.76);
 
   /* ---- Overlay-preview scrims ---- */
   --overlay-scrim-strong: rgb(var(--overlay-ink-rgb) / 0.72);

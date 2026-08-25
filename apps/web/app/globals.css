@@ -147,10 +147,12 @@ main {
   outline: none;
 }
 
+/* The same treatment as .nav-link-active: the sidebar and the workspace tabs are both "you are
+   here", and they used to say it in two slightly different greens. */
 .tabs-link-active,
 .workspace-tab-link-active {
-  background: rgba(14, 109, 90, 0.1);
-  border-color: rgba(14, 109, 90, 0.22);
+  background: var(--brand-tint-faint);
+  border-color: var(--brand-tint-strong);
   color: var(--brand-strong);
 }
 
@@ -520,7 +522,7 @@ textarea {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: rgba(14, 109, 90, 0.08);
+  background: var(--brand-wash);
 }
 
 .schedule-video-slot {
@@ -591,7 +593,7 @@ textarea {
 }
 
 .chip-toggle-active {
-  border-color: rgba(14, 109, 90, 0.4);
+  border-color: var(--brand-border-active);
   background: var(--brand-tint-faint);
 }
 
@@ -864,7 +866,7 @@ button.collection-chip {
   padding: 16px;
   border-radius: 22px;
   border: 1px solid var(--line-subtle);
-  background: rgba(255, 249, 239, 0.76);
+  background: var(--surface-card);
   min-width: 0;
 }
 
@@ -898,7 +900,7 @@ button.collection-chip {
   border-radius: 18px;
   border: 1px solid var(--line-subtle);
   background:
-    radial-gradient(circle at top right, rgba(14, 109, 90, 0.16), transparent 36%),
+    radial-gradient(circle at top right, var(--brand-tint-soft), transparent 36%),
     linear-gradient(180deg, rgba(255, 249, 239, 0.88), rgba(230, 220, 200, 0.78));
   aspect-ratio: 16 / 9;
 }
@@ -990,7 +992,7 @@ button.collection-chip {
   padding: 14px;
   border-radius: 18px;
   border: 1px solid var(--line-soft);
-  background: rgba(255, 249, 239, 0.76);
+  background: var(--surface-card);
 }
 
 .program-lens-layout {
@@ -1026,7 +1028,7 @@ button.collection-chip {
   padding: 16px;
   border-radius: 18px;
   border: 1px solid var(--line-soft);
-  background: rgba(255, 249, 239, 0.8);
+  background: var(--surface-card);
 }
 
 .program-week-block {
@@ -1162,7 +1164,7 @@ button.collection-chip {
 }
 
 .schedule-slot-active {
-  background: rgba(14, 109, 90, 0.06);
+  background: var(--brand-wash);
 }
 
 .schedule-slot-label {
@@ -1305,7 +1307,7 @@ button.collection-chip {
   padding: 14px 16px;
   border: 1px solid var(--line-subtle);
   border-radius: 18px;
-  background: rgba(255, 249, 239, 0.78);
+  background: var(--surface-card);
   backdrop-filter: blur(12px);
   box-shadow: 0 12px 40px rgba(32, 29, 21, 0.06);
   min-width: 0;
@@ -1328,7 +1330,7 @@ button.collection-chip {
   padding: 14px 16px;
   border: 1px solid var(--line-subtle);
   border-radius: 18px;
-  background: rgba(255, 249, 239, 0.78);
+  background: var(--surface-card);
 }
 
 .status-rail strong {
@@ -1367,11 +1369,11 @@ button.collection-chip {
   padding: 14px;
   border-radius: 18px;
   border: 1px solid var(--line-subtle);
-  background: rgba(255, 249, 239, 0.72);
+  background: var(--surface-card);
 }
 
 .preset-card-active {
-  border-color: rgba(14, 109, 90, 0.34);
+  border-color: var(--brand-border-active);
   box-shadow: inset 0 0 0 1px var(--brand-tint-strong);
 }
 
@@ -1396,7 +1398,7 @@ button.collection-chip {
   padding: 18px 20px;
   border-radius: 20px;
   border: 1px solid var(--line-subtle);
-  background: rgba(255, 249, 239, 0.72);
+  background: var(--surface-card);
 }
 
 .scene-workspace-toolbar-alert,
@@ -1425,7 +1427,7 @@ button.collection-chip {
   padding: 22px;
   border-radius: 26px;
   background:
-    radial-gradient(circle at top right, rgba(14, 109, 90, 0.24), transparent 28%),
+    radial-gradient(circle at top right, var(--brand-glow), transparent 28%),
     linear-gradient(160deg, rgba(7, 16, 14, 0.82), rgba(7, 16, 14, 0.2));
   overflow: hidden;
 }

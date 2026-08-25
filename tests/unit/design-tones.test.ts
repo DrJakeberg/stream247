@@ -146,6 +146,34 @@ describe("state tones", () => {
     }
   });
 
+  it("keeps text readable on the consolidated card surface", () => {
+    // --surface-card replaced eight hand-mixed paper alphas (0.72-0.8) with one step. Cards carry
+    // full content — titles, muted metadata — so both text colours are held to body-text AA on the
+    // two backdrops a card actually sits on: the app background and a panel.
+    for (const backdrop of [appBackground, panel]) {
+      const card = resolve("surface-card", backdrop);
+      expect(contrastRatio(resolve("text", card), card)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(resolve("muted", card), card)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("keeps the schedule labels readable on the brand wash", () => {
+    // --brand-wash is the weakest brand fill (active schedule rows, the video timeline), and
+    // .schedule-video-slot letters it in --brand-strong. Measured at 7.64:1 when the 0.06/0.08
+    // washes were unified; the floor below is AA so a later darkening of the wash cannot pass
+    // unremarked.
+    const wash = resolve("brand-wash", panel);
+    expect(contrastRatio(resolve("brand-strong", wash), wash)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("keeps the selected-navigation pair readable", () => {
+    // .nav-link-active and the workspace tabs both set --brand-strong on --brand-tint-faint. The
+    // pair predates this suite; it is asserted now because the tabs joined it during the visual
+    // pass. 7.10:1 as consolidated.
+    const tint = resolve("brand-tint-faint", panel);
+    expect(contrastRatio(resolve("brand-strong", tint), tint)).toBeGreaterThanOrEqual(4.5);
+  });
+
   it("did not lose contrast when the local greens and blues were folded in", () => {
     // The values these replaced, measured before the change: 6.17 for the balanced pill's own
     // green, 5.43 for the underfilled amber, 6.29 for the overflow blue. The consolidated pairs
