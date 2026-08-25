@@ -1314,8 +1314,6 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | --- | --- | --- | --- | --- |
 | M51 | Architecture fix | Now | In progress | Separate the broadcast channel from the connected identity; chat and moderation work via the mod account now, metadata via a broadcaster connection later |
 | M52 | UX | Now | Complete | First-run wizard covering everything that lives in `.env` today |
-| M53 | Feature | Next | Planned | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
-
 | M52 | UX | Now | Planned | First-run wizard covering everything that lives in `.env` today |
 | M53 | Feature | Next | Done | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
 | M54 | Feature | Next | Planned | Chat game framework with Snake as the first game (emote-per-direction, moves only on input) |
