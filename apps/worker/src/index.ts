@@ -100,7 +100,20 @@ import {
   type DestinationRuntimeTargetGroup
 } from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
-import { ensureLocalAssetThumbnail } from "./asset-thumbnails.js";
+import {
+  ensureLocalAssetThumbnail,
+  getAssetThumbnailPath,
+  getThumbnailDirectory,
+  selectEvictableThumbnails,
+  type ThumbnailFileInfo
+} from "./asset-thumbnails.js";
+import {
+  collectDiskProtectedAssetIds,
+  decideDiskWatermarkAction,
+  getDiskWatermarkConfig,
+  type DiskWatermarkStage,
+  type DiskWatermarkStageResult
+} from "./disk-watermark.js";
 import {
   appendFfmpegOutputArgs,
   buildProgramFeedOutputTarget,
@@ -140,7 +153,9 @@ import {
   ensureTwitchVodCache,
   buildTwitchVodCachePath,
   canReleaseVodCache,
+  collectReleasableVodCachePaths,
   evictUnusedTwitchVodCache,
+  formatGigabytes,
   getTwitchVodCacheConfig,
   peekTwitchVodCache,
   isInternalMediaCachePath,
@@ -486,11 +501,12 @@ function getProgramFeedRuntimeConfig() {
  * segments, the oldest from 125 days earlier.
  *
  * Runs on the boundary rather than on a timer, next to the VOD cache release, because that is when
- * a run has just ended and left its tail behind.
+ * a run has just ended and left its tail behind. The disk watermark monitor reuses it as its
+ * feed-segments stage, which is why it reports what it freed instead of only that it ran.
  */
-async function sweepProgramFeedSegments(): Promise<void> {
+async function sweepProgramFeedSegments(): Promise<{ files: number; freedBytes: number }> {
   if (!isProgramFeedMode()) {
-    return;
+    return { files: 0, freedBytes: 0 };
   }
 
   try {
@@ -511,7 +527,7 @@ async function sweepProgramFeedSegments(): Promise<void> {
 
     const stale = selectStaleProgramFeedSegments({ segments, playlist, nowMs: Date.now() });
     if (stale.length === 0) {
-      return;
+      return { files: 0, freedBytes: 0 };
     }
 
     const freedBytes = sumSegmentBytes(segments, stale);
@@ -527,8 +543,204 @@ async function sweepProgramFeedSegments(): Promise<void> {
       // looking like the same sweep running over and over without effect.
       capped: stale.length >= PROGRAM_FEED_SWEEP_LIMIT
     });
+    return { files: stale.length, freedBytes };
   } catch (error) {
     logRuntimeEvent("program-feed.sweep_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return { files: 0, freedBytes: 0 };
+  }
+}
+
+// Global disk self-protection (M55). The staging decision is pure and lives in disk-watermark.ts;
+// everything here is the I/O around it: measuring the volume, running the chosen stage, and
+// telling the operator what happened.
+
+/** Stages already run in the current eviction episode. Empty whenever free space is healthy. */
+let diskWatermarkEpisode: DiskWatermarkStageResult[] = [];
+/** True while a watermark incident is open, so resolution runs once instead of on every idle cycle. */
+let diskWatermarkIncidentRaised = false;
+
+/** How each stage's haul is named in incidents, so the operator reads what was freed, not a key. */
+const DISK_WATERMARK_STAGE_DETAIL: Record<DiskWatermarkStage, string> = {
+  "vod-cache": "unused Twitch VOD cache entries",
+  "feed-segments": "orphaned program-feed segments",
+  thumbnails: "old asset thumbnails"
+};
+
+function formatFreePercent(freeBytes: number, totalBytes: number): string {
+  return `${((freeBytes / totalBytes) * 100).toFixed(1)}%`;
+}
+
+/**
+ * Runs one eviction stage and reports what it freed. Every stage composes an existing, already
+ * safety-reasoned mechanism rather than deleting on its own: the VOD cache eviction with its
+ * partial/lock rules, the capped feed sweep with its playlist-and-age rules, and the capped
+ * thumbnail selection. Protection always comes from collectDiskProtectedAssetIds — media the
+ * schedule or queue still references is never offered to any of them.
+ */
+async function runDiskWatermarkStage(
+  stage: DiskWatermarkStage,
+  state: AppState
+): Promise<{ freedBytes: number; removedFiles: number }> {
+  if (stage === "vod-cache") {
+    const config = getTwitchVodCacheConfig(process.env, getMediaRoot());
+
+    // The same gate the boundary release uses: a playout that cannot say what it is playing is
+    // reconnecting, in standby, or freshly restarted — exactly the moments its runtime keep-list
+    // is incomplete. Skipping costs one cycle and advances the ladder to stages whose protection
+    // does not depend on the playout knowing its own state.
+    if (!canReleaseVodCache(state.playout.currentAssetId)) {
+      return { freedBytes: 0, removedFiles: 0 };
+    }
+
+    const protectedIds = collectDiskProtectedAssetIds(state);
+    const protectedPaths = state.assets
+      .filter((asset) => protectedIds.has(asset.id) && isTwitchVodAsset(asset))
+      .map((asset) => asset.cachePath || buildTwitchVodCachePath(asset, config.cacheRoot));
+    const releasable = await collectReleasableVodCachePaths(config, protectedPaths);
+    const result = await evictUnusedTwitchVodCache(config, releasable);
+    return { freedBytes: result.freedBytes, removedFiles: result.removed.length };
+  }
+
+  if (stage === "feed-segments") {
+    // In relay mode this is the same capped, playlist-respecting sweep the boundary runs; outside
+    // relay mode there is no program feed and the stage frees nothing, which simply advances the
+    // ladder.
+    const result = await sweepProgramFeedSegments();
+    return { freedBytes: result.freedBytes, removedFiles: result.files };
+  }
+
+  // Thumbnails have no reference index of their own (no playlist, no watched paths), so protection
+  // is by asset id: every asset the schedule blocks, pools and broadcast queue reference maps
+  // through getAssetThumbnailPath, and only files outside that set are offered for eviction.
+  const mediaRoot = getMediaRoot();
+  const protectedPaths = [...collectDiskProtectedAssetIds(state)].map((assetId) =>
+    getAssetThumbnailPath(assetId, mediaRoot)
+  );
+  const directory = getThumbnailDirectory(mediaRoot);
+  const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
+  const files: ThumbnailFileInfo[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".jpg")) {
+      continue;
+    }
+    const filePath = path.join(directory, entry.name);
+    const stats = await fs.stat(filePath).catch(() => null);
+    if (stats) {
+      files.push({ filePath, modifiedAtMs: stats.mtimeMs, bytes: stats.size });
+    }
+  }
+
+  let freedBytes = 0;
+  let removedFiles = 0;
+  for (const file of selectEvictableThumbnails({ files, protectedPaths })) {
+    const deleted = await fs.rm(file.filePath, { force: true }).then(
+      () => true,
+      () => false
+    );
+    if (deleted) {
+      freedBytes += file.bytes;
+      removedFiles += 1;
+    }
+  }
+  return { freedBytes, removedFiles };
+}
+
+/**
+ * The disk watermark monitor: one measurement and at most one eviction stage per worker cycle.
+ *
+ * Bounded on purpose, for the same reason the feed sweep is capped: a disk that filled over weeks
+ * does not need to be emptied inside one cycle, and a cycle that suddenly deletes tens of
+ * gigabytes is itself a reliability event. One stage per 30-second cycle drains pressure fast
+ * enough while keeping each cycle's cost roughly constant.
+ *
+ * Errors are swallowed into a runtime event: failing to free disk is never a reason to fail the
+ * worker cycle, and the per-cache guardrails still hold if this does nothing at all.
+ */
+async function enforceDiskWatermark(): Promise<void> {
+  try {
+    const config = getDiskWatermarkConfig(process.env);
+    if (!config.enabled) {
+      return;
+    }
+
+    const mediaRoot = getMediaRoot();
+    const volume = await fs.statfs(mediaRoot);
+    const freeBytes = Number(volume.bavail) * Number(volume.bsize);
+    const totalBytes = Number(volume.blocks) * Number(volume.bsize);
+    const decision = decideDiskWatermarkAction({
+      freeBytes,
+      totalBytes,
+      config,
+      completedStages: diskWatermarkEpisode
+    });
+
+    if (decision.kind === "idle") {
+      if (diskWatermarkIncidentRaised) {
+        diskWatermarkIncidentRaised = false;
+        const message = "Free space on the media volume is back above the watermark.";
+        await resolveIncident("disk.watermark.evicted", message);
+        await resolveIncident("disk.watermark.exhausted", message);
+      }
+      return;
+    }
+
+    if (decision.kind === "recovered") {
+      logRuntimeEvent("disk.watermark.recovered", { freedBytes: decision.freedBytes, freeBytes, totalBytes });
+      diskWatermarkEpisode = [];
+      if (diskWatermarkIncidentRaised) {
+        diskWatermarkIncidentRaised = false;
+        const message = `Eviction freed ${formatGigabytes(decision.freedBytes)}; free space on the media volume is back above the recovery watermark.`;
+        await resolveIncident("disk.watermark.evicted", message);
+        await resolveIncident("disk.watermark.exhausted", message);
+      }
+      return;
+    }
+
+    if (decision.kind === "exhausted") {
+      logRuntimeEvent("disk.watermark.exhausted", { freedBytes: decision.freedBytes, freeBytes, totalBytes });
+      // The episode ends but the ladder may retry on later cycles, because evictable media does
+      // appear on its own — a VOD finishes playing, a playout run leaves its segment tail behind.
+      // The critical incident is what tells the operator that retrying alone will not fix this.
+      diskWatermarkEpisode = [];
+      diskWatermarkIncidentRaised = true;
+      await upsertIncident({
+        scope: "system",
+        severity: "critical",
+        title: "Media disk is almost full and eviction cannot free it",
+        message: `Free space on the media volume is down to ${formatFreePercent(freeBytes, totalBytes)} (${formatGigabytes(freeBytes)} of ${formatGigabytes(totalBytes)}) and every eviction stage — unused VOD cache, orphaned feed segments, old thumbnails — has run without reaching the ${String(Math.round(config.recoverFreeRatio * 100))}% recovery watermark; only ${formatGigabytes(decision.freedBytes)} could be reclaimed. Media the schedule still references is never evicted, so an operator has to free space before playout, feed segments or downloads start failing writes.`,
+        fingerprint: "disk.watermark.exhausted"
+      });
+      return;
+    }
+
+    const state = await readAppState();
+    const result = await runDiskWatermarkStage(decision.stage, state);
+    diskWatermarkEpisode = [...diskWatermarkEpisode, { stage: decision.stage, freedBytes: result.freedBytes }];
+    logRuntimeEvent("disk.watermark.stage", {
+      stage: decision.stage,
+      freedBytes: result.freedBytes,
+      files: result.removedFiles,
+      freeBytes,
+      totalBytes
+    });
+
+    // The incident names what was freed and why, so the operator can read what happened without
+    // the runtime log. Stages that freed nothing only log — on a genuinely full disk the incident
+    // that matters is the critical one, and it must not be buried under empty-handed sweeps.
+    if (result.freedBytes > 0) {
+      diskWatermarkIncidentRaised = true;
+      await upsertIncident({
+        scope: "system",
+        severity: "warning",
+        title: "Low disk space triggered media eviction",
+        message: `Free space on the media volume fell to ${formatFreePercent(freeBytes, totalBytes)} (${formatGigabytes(freeBytes)} of ${formatGigabytes(totalBytes)}), below the ${String(Math.round(config.triggerFreeRatio * 100))}% watermark; removed ${String(result.removedFiles)} ${DISK_WATERMARK_STAGE_DETAIL[decision.stage]} (${formatGigabytes(result.freedBytes)}) to climb back above ${String(Math.round(config.recoverFreeRatio * 100))}%. Media the schedule still references is never touched.`,
+        fingerprint: "disk.watermark.evicted"
+      });
+    }
+  } catch (error) {
+    logRuntimeEvent("disk.watermark.check_failed", {
       error: error instanceof Error ? error.message : String(error)
     });
   }
@@ -5923,6 +6135,9 @@ async function reconcileChatInteraction(): Promise<void> {
 }
 
 async function runWorkerCycle(): Promise<void> {
+  // Disk self-protection runs before the syncs so a failing external integration — Twitch down, a
+  // source erroring — can never stand between a filling disk and the one mechanism that frees it.
+  await enforceDiskWatermark();
   await syncDestinations();
   await syncLocalMediaLibrary();
   await syncDirectMediaSources();

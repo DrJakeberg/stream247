@@ -10,8 +10,52 @@ function sanitizeAssetId(assetId: string): string {
   return assetId.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+export function getThumbnailDirectory(mediaRoot: string): string {
+  return path.join(mediaRoot, THUMBNAIL_DIRECTORY);
+}
+
 export function getAssetThumbnailPath(assetId: string, mediaRoot: string): string {
-  return path.join(mediaRoot, THUMBNAIL_DIRECTORY, `${sanitizeAssetId(assetId)}.jpg`);
+  return path.join(getThumbnailDirectory(mediaRoot), `${sanitizeAssetId(assetId)}.jpg`);
+}
+
+/**
+ * How many thumbnails one disk-watermark sweep may remove. Thumbnails are small, so the cap is
+ * about bounding the number of filesystem operations a single worker cycle performs — the same
+ * reasoning as the program feed sweep cap — not about limiting how much space comes back.
+ */
+export const THUMBNAIL_SWEEP_LIMIT = 500;
+
+export type ThumbnailFileInfo = {
+  filePath: string;
+  modifiedAtMs: number;
+  bytes: number;
+};
+
+/**
+ * Picks the thumbnails a disk-pressure sweep may delete: oldest first, capped, and never one that
+ * belongs to a protected asset.
+ *
+ * Thumbnails have no reference index of their own the way the VOD cache has watched paths and the
+ * program feed has its playlist, so protection is by asset id: the caller passes the thumbnail
+ * paths of every asset the schedule blocks, pools and broadcast queue currently reference (see
+ * collectDiskProtectedAssetIds), built with getAssetThumbnailPath so the id-to-filename mapping
+ * cannot drift from the one the writer uses. Losing an unprotected thumbnail is cosmetic — it is
+ * regenerated from the media file on the next library sync — which is why this is the last
+ * eviction stage rather than the first.
+ */
+export function selectEvictableThumbnails(args: {
+  files: ThumbnailFileInfo[];
+  protectedPaths: readonly string[];
+  limit?: number;
+}): ThumbnailFileInfo[] {
+  const protectedResolved = new Set(args.protectedPaths.filter((entry) => entry).map((entry) => path.resolve(entry)));
+
+  return args.files
+    .filter((file) => !protectedResolved.has(path.resolve(file.filePath)))
+    // Oldest first, so a capped sweep drains from the far end — the thumbnails least likely to
+    // belong to anything still active — instead of whatever order the directory listing returned.
+    .sort((left, right) => left.modifiedAtMs - right.modifiedAtMs)
+    .slice(0, args.limit ?? THUMBNAIL_SWEEP_LIMIT);
 }
 
 export async function ensureLocalAssetThumbnail(args: {

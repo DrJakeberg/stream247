@@ -93,6 +93,26 @@
 - keep remote Twitch fallback disabled unless you intentionally accept direct remote VOD playback risk
 - confirm fallback assets exist
 
+### Media disk filling up
+
+The worker watches free space on the media volume as a whole, above the per-cache guardrails.
+Below the trigger watermark it evicts in stages, at most one stage per worker cycle: unused
+Twitch VOD cache entries first, then orphaned program-feed segments, then the oldest thumbnails.
+Eviction stops as soon as free space is back above the recovery watermark, and media the schedule,
+queue or fallback tier still references is never touched.
+
+- a `disk.watermark.evicted` warning incident names what was freed and why; no action is needed —
+  the system is protecting itself
+- a `disk.watermark.exhausted` critical incident means every stage ran and free space is still
+  below the recovery watermark: nothing evictable is left, so free space manually (grow the
+  volume, remove local media, or shrink the schedule's VOD footprint) before playout, feed
+  segments or downloads start failing writes
+- runtime events: `disk.watermark.stage`, `disk.watermark.recovered`, `disk.watermark.exhausted`,
+  and `disk.watermark.check_failed` when the volume could not be measured
+- tuning: `STREAM247_DISK_WATERMARK_TRIGGER_PERCENT` (default 10, percent free that starts an
+  episode), `STREAM247_DISK_WATERMARK_RECOVER_PERCENT` (default 15, where it stops; must be above
+  the trigger or both fall back to defaults), `STREAM247_DISK_WATERMARK_ENABLED=0` to disable
+
 ### Uplink is not publishing
 
 - confirm `STREAM247_RELAY_ENABLED=1` and the `relay`, `playout`, and `uplink` containers are running
