@@ -1315,7 +1315,7 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | M51 | Architecture fix | Now | Done | Separate the broadcast channel from the connected identity; chat and moderation work via the mod account now, metadata via a broadcaster connection later. Verified live 2026-08-25: chat bridge rejoined #jimpanse247 within one cycle of the setting change |
 | M52 | UX | Now | Done | First-run wizard covering everything that lives in `.env` today |
 | M53 | Feature | Next | Done | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
-| M54 | Feature | Next | Done | Chat game framework with Snake as the first game (emote-per-direction, moves only on input) |
+| M54 | Feature | Next | Done | Chat game framework with Snake as the first game (emote-per-direction, moves only on input); Minesweeper (chat digs by coordinates like "b3") and 2048 (snake's emote map on a fixed 4x4 board) follow on the same framework |
 | M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
 
 ## M51 Broadcast Channel Split
@@ -1495,6 +1495,24 @@ incident naming what was freed and why. Never touches media the schedule still r
 - Validation completed: `pnpm validate` passed; counter-verified the one-cell rule (a two-cell
   mutation fails five snake tests) and the heading contrast rule (raw accent instead of
   `accentTextColor` fails the dark-accent cases).
+
+### 2026-08-25 — M54 More Games: Minesweeper And 2048
+
+- Two more games on the unchanged four-function contract, chosen to differ from Snake in both
+  input and feel: Minesweeper (chat types coordinates like "b3"; the seeded board commits on the
+  first dig and never under it, digs flood-reveal to the numbered frontier, a mine ends the
+  round, clearing every safe cell wins) and 2048 (the snake's emote→direction map unchanged on a
+  fixed four-by-four board; slide-and-merge with one merge per tile per move, seeded spawns,
+  round over when no move remains). Tic-tac-toe was passed over because a correct minimax engine
+  never loses — chat could at best draw, forever; hangman fits the cell-grid panel worst and
+  needs a curated embedded word list.
+- One resolver dispatches chat per game vocabulary, so a coordinate can never move the snake and
+  an emote never digs; determinism tests pin same-seed-same-inputs-same-board for both games. The
+  panel gained in-cell labels and a coordinate gutter (letters/numbers) that only coordinate
+  games request, rasterised through the same satori smoke as Snake. No schema change: the
+  settings row already stored `game_id` with snake as its default, and unknown ids normalise back
+  to snake on old rows. The studio picker offers all three games within the existing select and
+  folds away fields the selected game ignores, so the engagement control budget is untouched.
 
 ### 2026-08-25 — M55 Global Disk Self-Protection
 
