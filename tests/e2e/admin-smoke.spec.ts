@@ -22,7 +22,11 @@ async function ensureSignedIn(page: Page) {
     await page.getByLabel("Owner email").fill(ownerEmail);
     await page.getByLabel("Password").fill(ownerPassword);
     await setupButton.click();
-    await expect(page).toHaveURL(/\/live(?:\?tab=status)?$/);
+    // Since M52 the wizard continues on /setup instead of dropping into the workspace; the next
+    // open step is derived server-side, and for this stack (APP_URL in env) that is the Twitch
+    // credentials step. The test only needs the session, so it moves on from here.
+    await expect(page.getByText("Setup steps", { exact: true })).toBeVisible();
+    await expect(page.getByText("2. Instance basics")).toBeVisible();
     return;
   }
 

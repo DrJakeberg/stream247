@@ -11,7 +11,8 @@ async function ensureSignedInForProgram(page: Page) {
     await page.getByLabel("Owner email").fill(ownerEmail);
     await page.getByLabel("Password").fill(ownerPassword);
     await setupButton.click();
-    await expect(page).toHaveURL(/\/live(?:\?tab=status)?$/);
+    // Since M52 the wizard continues on /setup rather than dropping into the workspace.
+    await expect(page.getByText("Setup steps", { exact: true })).toBeVisible();
     return;
   }
 

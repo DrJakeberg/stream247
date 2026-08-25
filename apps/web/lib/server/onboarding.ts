@@ -1,4 +1,5 @@
 import { selectActiveDestinationGroup } from "@stream247/core";
+import { DEV_FALLBACK_APP_SECRET, resolveAppBaseUrl, resolveAppSecret } from "@stream247/db";
 import { buildWorkspaceHref } from "../workspace-navigation";
 import type { AppState } from "./state";
 import { getManagedTwitchConfig } from "./state";
@@ -11,17 +12,29 @@ export type GoLiveChecklistItem = {
   /**
    * Where to go to fix it, when that is a page in this product.
    *
-   * Absent for the steps whose remedy is a server environment variable: there is no screen for
-   * APP_URL or APP_SECRET, and /setup redirects to the login page once a workspace is initialised,
-   * so the link was a dead end offering itself as an answer.
+   * Since M52 that includes APP_URL and APP_SECRET: the setup wizard is their screen, and /setup
+   * stays reachable for a signed-in operator after the workspace is initialised. Before that they
+   * were env-only and the links here were dead ends offering themselves as answers.
    */
   href?: string;
 };
 
 export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
   const twitchConfig = getManagedTwitchConfig(state);
-  const hasAppUrl = Boolean((process.env.APP_URL || "").trim());
-  const hasAppSecret = Boolean((process.env.APP_SECRET || "").trim());
+  const appBaseUrl = resolveAppBaseUrl(state.managedConfig);
+  const hasAppUrl = appBaseUrl !== "";
+  const hasEnvAppUrl = Boolean((process.env.APP_URL || "").trim());
+  const hasEnvAppSecret = Boolean((process.env.APP_SECRET || "").trim());
+  // A real secret is either the env value or the one generated and persisted on first boot; only
+  // the development fallback (or production refusing to resolve at all) leaves this step open.
+  let hasAppSecret = hasEnvAppSecret;
+  if (!hasAppSecret) {
+    try {
+      hasAppSecret = resolveAppSecret() !== DEV_FALLBACK_APP_SECRET;
+    } catch {
+      hasAppSecret = false;
+    }
+  }
   const hasDatabaseUrl = Boolean((process.env.DATABASE_URL || "").trim());
   const hasTwitchCredentials = Boolean(twitchConfig.clientId && twitchConfig.clientSecret);
   const readyAssets = state.assets.filter((asset) => asset.status === "ready").length;
@@ -61,17 +74,27 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
     {
       id: "base-url",
       title: "Public app URL",
-      detail: hasAppUrl ? `APP_URL is set to ${process.env.APP_URL}.` : "Set APP_URL so OAuth callbacks and overlay links use the public hostname.",
-      status: hasAppUrl ? "ready" : "action"
+      detail: hasEnvAppUrl
+        ? `APP_URL is set to ${appBaseUrl}.`
+        : hasAppUrl
+          ? `The public URL is set to ${appBaseUrl} in the setup wizard.`
+          : "Set the public URL in the setup wizard so OAuth callbacks and overlay links use the public hostname.",
+      status: hasAppUrl ? "ready" : "action",
+      href: "/setup?step=instance"
     },
     {
       id: "app-secret",
       title: "App secret and persistence",
+      // DATABASE_URL stopped gating this step with M52: the compose-internal default points at the
+      // bundled Postgres, and if that database were unreachable this checklist could not render.
       detail:
-        hasAppSecret && hasDatabaseUrl
+        hasEnvAppSecret && hasDatabaseUrl
           ? "APP_SECRET and DATABASE_URL are configured."
-          : "Set APP_SECRET and DATABASE_URL before treating the install as production-ready.",
-      status: hasAppSecret && hasDatabaseUrl ? "ready" : "action"
+          : hasAppSecret
+            ? "The app secret was generated on first boot and persists on the data volume; the bundled Postgres needs no configuration."
+            : "Running on the development fallback secret — fine locally, refused in production.",
+      status: hasAppSecret ? "ready" : "action",
+      href: "/setup?step=done"
     },
     {
       id: "twitch-credentials",
@@ -80,7 +103,7 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
         ? "Twitch client id and client secret are available for OAuth and sync."
         : "Save Twitch client credentials in setup or settings to enable broadcaster connect and team SSO.",
       status: hasTwitchCredentials ? "ready" : "action",
-      href: state.initialized ? buildWorkspaceHref("admin", "settings") : "/setup"
+      href: state.initialized ? buildWorkspaceHref("admin", "settings") : "/setup?step=twitch-app"
     },
     {
       id: "twitch-connect",
