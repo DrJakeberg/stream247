@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+- operational decisions moved from `.env` into the GUI (M56, part 1), on the managed-config
+  pattern the Twitch credentials established: a value saved in settings wins, the env variable
+  stays as fallback, and web and worker share one resolver per family in `packages/core` so the
+  two sides cannot drift. Concretely: encoder quality (speed preset, video bitrate ceiling,
+  buffer size, audio bitrate) as a folded group on the studio output tab; the disk watermark
+  (on/off, trigger and recovery percent — the pair is validated before saving and rejected whole,
+  exactly like the worker treats it) and the chat, alerts and Twitch schedule sync feature
+  switches as folded groups in the admin settings; the EventSub webhook secret in the managed
+  credentials form, with the same keep-on-empty semantics as every other stored secret. An empty
+  managed value changes nothing: existing env-driven installs behave bit for bit as before,
+  including the runtime gates' historical only-"1"-enables semantics
+
+### Removed
+
+- the dead `packages/config` package. Its `getConfig` (REDIS_URL, MOD_PRESENCE_ENABLED,
+  MOD_PRESENCE_COMMAND) was imported by nothing; the workspace dependency, path mappings, build
+  steps and Dockerfile copy went with it
+
 ## 1.5.28 - 2026-08-25
 
 ### Fixed

@@ -1317,6 +1317,7 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | M53 | Feature | Next | Done | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
 | M54 | Feature | Next | Done | Chat game framework with Snake as the first game (emote-per-direction, moves only on input); Minesweeper (chat digs by coordinates like "b3") and 2048 (snake's emote map on a fixed 4x4 board) follow on the same framework |
 | M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
+| M56 | UX | Now | In progress | Every operational decision configurable in the GUI, `.env` demoted to fallback. Part 1 done: encoder quality, disk watermark, engagement/schedule-sync feature switches, EventSub secret — all as managed config with env fallback through shared core resolvers; dead `packages/config` removed. Open: VOD-cache family, watchdog thresholds, relay topology, alerting/SMTP polish |
 
 ## M51 Broadcast Channel Split
 
@@ -1422,6 +1423,29 @@ disk watermark monitor. When free space crosses a threshold: staged eviction —
 first, then orphaned feed segments beyond the live window, then oldest thumbnails — with an
 incident naming what was freed and why. Never touches media the schedule still references.
 
+## M56 Operational Settings In The GUI
+
+Product vision: a GUI in which everything is configurable, `.env` unimportant. Every family moves
+on the managed-config pattern the Twitch credentials established: an encrypted managed value that
+wins when set, the env variable as fallback, one shared resolver in `packages/core` so web and
+worker can never drift. An empty managed value must never change what an existing env-driven
+install does — including the historical `=== "1"` semantics of the engagement runtime gates.
+
+Part 1 (done): encoder quality (speed preset, video bitrate ceiling, buffer size, audio bitrate)
+folded into the studio output tab; disk watermark (enabled, trigger, recover — pair validated
+before saving, rejected whole like the worker does) and the chat/alerts/schedule-sync feature
+switches folded into admin settings; the EventSub webhook secret in the managed credentials form
+with keep-on-empty secret semantics. The dead `packages/config` (`getConfig`: REDIS_URL,
+MOD_PRESENCE_*) is deleted.
+
+Still open for later parts: the VOD cache family, watchdog/stall thresholds, relay/uplink
+topology, ffmpeg reconnect tuning, alert delivery polish, and the redis service that compose
+still provisions although no code reads it.
+
+- Acceptance: an operator changes the encoder preset in the studio, the next encoder start uses
+  it; clearing the field returns the install to its env-driven behaviour bit for bit
+- Rollback: clear the managed fields (empty = follow env) — no schema migration was involved
+
 ## Rollback Notes
 
 - Docs-only milestones roll back by reverting the doc commit.
@@ -1443,6 +1467,24 @@ incident naming what was freed and why. Never touches media the schedule still r
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-08-25 — M56 Part 1: Operational Settings Into The GUI
+
+- New `packages/core/src/managed-runtime.ts`: one resolver per family (encoder quality, disk
+  watermark, feature switches, EventSub secret), all managed-first with env fallback, plus the
+  validation helpers the settings forms and routes share. Tests pin that an empty managed value
+  reproduces the pre-M56 env behaviour exactly, `=== "1"` quirks included.
+- Eleven new keys on the encrypted `ManagedConfigRecord` — no migration, the payload is JSON and
+  the defaults merge in on read.
+- Worker: playout/live-bridge/standby/uplink ffmpeg commands, the disk watermark monitor, the
+  chat/alerts/schedule-sync gates and the EventSub subscription sync all resolve through the
+  shared resolvers; `getDiskWatermarkConfig` and `isTwitchScheduleSyncEnabled` folded into core.
+- Web: encoder quality as a folded group on the studio output tab; disk watermark and feature
+  switches as folded groups in admin settings (partial-update route so the two forms cannot blank
+  each other); EventSub secret in the managed credentials form with keep-on-empty semantics.
+- Deleted `packages/config` whole — `getConfig` had no importers.
+- Deliberately left for later M56 parts: VOD cache family, watchdog thresholds, relay topology,
+  reconnect tuning, and the unused redis service in compose.
 
 ### 2026-08-25 — M53 Chapters Per Video
 
