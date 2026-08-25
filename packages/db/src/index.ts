@@ -452,7 +452,25 @@ export type ManagedConfigRecord = {
   streamChatOverlayEnabled: string;
   streamAlertsEnabled: string;
   twitchScheduleSyncEnabled: string;
+  // M57: the video-source layer gate and its sampling cadence, resolved through the same
+  // managed-first family in packages/core managed-runtime.ts.
+  sourceLayerEnabled: string;
+  sourceSnapshotIntervalSeconds: string;
   twitchEventsubSecret: string;
+  updatedAt: string;
+};
+
+/**
+ * A stored external video source (M57): what the studio and the worker may know about it.
+ * The feed URL itself is deliberately absent — it is written through
+ * upsertOverlayVideoSourceRecord, kept encrypted at rest, and read back only by the playout
+ * sampler via readOverlayVideoSourceUrls. Every listing surface sees presence, never the value,
+ * because feed URLs routinely embed credentials.
+ */
+export type OverlayVideoSourceRecord = {
+  id: string;
+  name: string;
+  urlPresent: boolean;
   updatedAt: string;
 };
 
@@ -1452,6 +1470,8 @@ function defaultState(): AppState {
       streamChatOverlayEnabled: "",
       streamAlertsEnabled: "",
       twitchScheduleSyncEnabled: "",
+      sourceLayerEnabled: "",
+      sourceSnapshotIntervalSeconds: "",
       twitchEventsubSecret: "",
       updatedAt: ""
     },
@@ -2394,6 +2414,14 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       last_error TEXT NOT NULL DEFAULT ''
     );
 
+    CREATE TABLE IF NOT EXISTS overlay_video_sources (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      url_present BOOLEAN NOT NULL DEFAULT FALSE,
+      encrypted_url TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
     CREATE TABLE IF NOT EXISTS incidents (
       id TEXT PRIMARY KEY,
       scope TEXT NOT NULL,
@@ -3233,6 +3261,33 @@ const assetChapterProbeMigration: MigrationDefinition = {
 
 if (!schemaMigrations.some((migration) => migration.id === assetChapterProbeMigration.id)) {
   schemaMigrations.push(assetChapterProbeMigration);
+}
+
+// Numbered under the next day rather than 20260825_006: that slot was left reserved for M56 work
+// landing in parallel (see the note above assetChapterProbeMigration), and racing a reserved
+// number for the sake of a gapless sequence is exactly the collision the reservation avoids.
+const overlayVideoSourcesMigration: MigrationDefinition = {
+  id: "20260826_001_overlay_video_sources",
+  description: "Store external video sources for the scene's source layer, feed URL encrypted at rest.",
+  apply: async (client) => {
+    await client.query(`
+      -- External video sources the scene's source layer can show (M57). One row per stored
+      -- camera/feed. The URL is encrypted with the same app-secret-derived key as managed
+      -- destination stream keys, and url_present exists so listing surfaces can show that a
+      -- feed is configured without ever selecting the encrypted value.
+      CREATE TABLE IF NOT EXISTS overlay_video_sources (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        url_present BOOLEAN NOT NULL DEFAULT FALSE,
+        encrypted_url TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT ''
+      );
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === overlayVideoSourcesMigration.id)) {
+  schemaMigrations.push(overlayVideoSourcesMigration);
 }
 
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
@@ -6452,6 +6507,105 @@ export async function readManagedDestinationStreamKeys(destinationIds?: string[]
     return Object.fromEntries(
       result.rows
         .map((row) => [row.id, decryptSecretString(row.encrypted_stream_key || "")] as const)
+        .filter((entry): entry is [string, string] => Boolean(entry[1]))
+    );
+  } finally {
+    client.release();
+  }
+}
+
+// --- Overlay video sources (M57) -------------------------------------------------------------
+//
+// The same custody rules as managed destination stream keys: the URL enters through one writer,
+// is encrypted with the app-secret-derived key, and leaves the database in exactly one place —
+// the playout sampler's read below. Listings only ever see url_present.
+
+export async function listOverlayVideoSourceRecords(): Promise<OverlayVideoSourceRecord[]> {
+  await ensureDatabase();
+  const client = await getPool().connect();
+  try {
+    const result = await client.query<{ id: string; name: string; url_present: boolean; updated_at: string }>(
+      "SELECT id, name, url_present, updated_at FROM overlay_video_sources ORDER BY name, id"
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      urlPresent: row.url_present,
+      updatedAt: row.updated_at
+    }));
+  } finally {
+    client.release();
+  }
+}
+
+export async function upsertOverlayVideoSourceRecord(
+  source: { id: string; name: string },
+  options?: {
+    /** New feed URL to store (encrypted). Omit to keep whatever is stored. */
+    managedUrl?: string;
+    /** Explicitly forget the stored URL. */
+    clearManagedUrl?: boolean;
+  }
+): Promise<void> {
+  await withSerializedStateWrite("upsertOverlayVideoSourceRecord", async (client) => {
+    const existingResult = await client.query<{ encrypted_url: string }>(
+      "SELECT encrypted_url FROM overlay_video_sources WHERE id = $1 LIMIT 1",
+      [source.id]
+    );
+    const existingEncryptedUrl = existingResult.rows[0]?.encrypted_url || "";
+    // Keep-on-empty, like every other stored secret: only an explicit new value or an explicit
+    // clear touches the stored URL, so renaming a source can never silently drop its feed.
+    const nextUrl =
+      typeof options?.managedUrl === "string"
+        ? options.managedUrl.trim()
+        : options?.clearManagedUrl
+          ? ""
+          : null;
+    const encryptedUrl = nextUrl === null ? existingEncryptedUrl : nextUrl ? encryptSecretString(nextUrl) : "";
+
+    await client.query(
+      `
+        INSERT INTO overlay_video_sources (id, name, url_present, encrypted_url, updated_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (id) DO UPDATE
+        SET name = EXCLUDED.name,
+            url_present = EXCLUDED.url_present,
+            encrypted_url = EXCLUDED.encrypted_url,
+            updated_at = EXCLUDED.updated_at
+      `,
+      [source.id, source.name, Boolean(encryptedUrl), encryptedUrl, new Date().toISOString()]
+    );
+  });
+}
+
+export async function deleteOverlayVideoSourceRecord(sourceId: string): Promise<void> {
+  await withSerializedStateWrite("deleteOverlayVideoSourceRecord", async (client) => {
+    await client.query("DELETE FROM overlay_video_sources WHERE id = $1", [sourceId]);
+  });
+}
+
+/**
+ * Decrypted feed URLs for the playout sampler — the one read that sees the value. Callers must
+ * treat the result as a credential: never log it whole (summarise to origin+path like playback
+ * inputs) and never place it in any record that leaves the process.
+ */
+export async function readOverlayVideoSourceUrls(sourceIds?: string[]): Promise<Record<string, string>> {
+  await ensureDatabase();
+  const client = await getPool().connect();
+  try {
+    const result =
+      sourceIds && sourceIds.length > 0
+        ? await client.query<{ id: string; encrypted_url: string }>(
+            "SELECT id, encrypted_url FROM overlay_video_sources WHERE id = ANY($1::text[])",
+            [sourceIds]
+          )
+        : await client.query<{ id: string; encrypted_url: string }>(
+            "SELECT id, encrypted_url FROM overlay_video_sources WHERE encrypted_url <> ''"
+          );
+
+    return Object.fromEntries(
+      result.rows
+        .map((row) => [row.id, decryptSecretString(row.encrypted_url || "")] as const)
         .filter((entry): entry is [string, string] => Boolean(entry[1]))
     );
   } finally {

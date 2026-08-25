@@ -12,7 +12,8 @@ const FLAG_KEYS = [
   "diskWatermarkEnabled",
   "streamChatOverlayEnabled",
   "streamAlertsEnabled",
-  "twitchScheduleSyncEnabled"
+  "twitchScheduleSyncEnabled",
+  "sourceLayerEnabled"
 ] as const;
 
 const PERCENT_KEYS = ["diskWatermarkTriggerPercent", "diskWatermarkRecoverPercent"] as const;

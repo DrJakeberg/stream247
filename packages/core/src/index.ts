@@ -63,7 +63,7 @@ export type OverlayPanelAnchor = "bottom" | "center";
 export type OverlayTitleScale = "compact" | "balanced" | "cinematic";
 export type OverlayTypographyPreset = "studio-sans" | "editorial-serif" | "signal-mono";
 export type OverlaySceneLayerKind = "chip" | "hero" | "next" | "queue" | "schedule" | "clock" | "banner" | "ticker";
-export type OverlaySceneCustomLayerKind = "text" | "logo" | "image" | "embed" | "widget" | "game";
+export type OverlaySceneCustomLayerKind = "text" | "logo" | "image" | "embed" | "widget" | "game" | "source";
 export type OverlaySceneCustomTextTone = "headline" | "body" | "caption";
 export type OverlaySceneCustomTextAlign = "left" | "center" | "right";
 export type OverlaySceneCustomMediaFit = "contain" | "cover";
@@ -642,12 +642,25 @@ export type OverlaySceneCustomGameLayer = OverlaySceneCustomLayerBase & {
   kind: "game";
 };
 
+/**
+ * Placement slot for a sampled external video source (a camera or feed). The layer carries only
+ * where the picture sits and which stored source it shows: the source's URL frequently embeds
+ * credentials, so it lives encrypted in its own store and is referenced by id — it must never
+ * travel through the scene payload, which is cached, diffed and logged in the clear.
+ */
+export type OverlaySceneCustomSourceLayer = OverlaySceneCustomLayerBase & {
+  kind: "source";
+  /** Id of the stored video source; empty until the operator links one. */
+  sourceId: string;
+};
+
 export type OverlaySceneCustomLayer =
   | OverlaySceneCustomTextLayer
   | OverlaySceneCustomMediaLayer
   | OverlaySceneCustomEmbedLayer
   | OverlaySceneCustomWidgetLayer
-  | OverlaySceneCustomGameLayer;
+  | OverlaySceneCustomGameLayer
+  | OverlaySceneCustomSourceLayer;
 
 export type OverlayScenePresetDefinition = {
   id: OverlayScenePreset;
@@ -1117,6 +1130,11 @@ export const OVERLAY_SCENE_CUSTOM_LAYER_KINDS: OverlayOptionDefinition<OverlaySc
     id: "game",
     label: "Chat Game",
     description: "On-air panel for the chat-driven game. Which game runs and how chat steers it is configured in the game settings."
+  },
+  {
+    id: "source",
+    label: "Video Source",
+    description: "Slow-refresh picture from a stored camera or feed. The layer only places the picture; the feed itself is stored separately."
   }
 ];
 
@@ -1313,6 +1331,19 @@ function sanitizeOverlaySceneCustomLayerId(value: unknown, index: number): strin
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
   return cleaned || `layer-${index + 1}`;
+}
+
+/**
+ * The stored-video-source reference on a source layer. Same shape rule as layer ids, but empty
+ * stays empty: an unlinked layer is a valid draft state, not something to invent an id for.
+ */
+function sanitizeOverlayVideoSourceId(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
 }
 
 function isOverlaySceneCustomLayerKind(value: unknown): value is OverlaySceneCustomLayerKind {
@@ -1570,6 +1601,15 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
       normalized.push({
         ...base,
         kind: "game"
+      });
+    } else if (raw.kind === "source") {
+      // Placement plus a reference into the encrypted video-source store. Deliberately no URL
+      // field: whatever a caller sends beyond the id is dropped here, so a feed address (which
+      // may embed credentials) can never ride into the scene payload.
+      normalized.push({
+        ...base,
+        kind: "source",
+        sourceId: sanitizeOverlayVideoSourceId((raw as { sourceId?: unknown }).sourceId)
       });
     } else {
       normalized.push({

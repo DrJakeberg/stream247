@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
-type SwitchKey = "streamChatOverlayEnabled" | "streamAlertsEnabled" | "twitchScheduleSyncEnabled";
+type SwitchKey = "streamChatOverlayEnabled" | "streamAlertsEnabled" | "twitchScheduleSyncEnabled" | "sourceLayerEnabled";
 
 const SWITCHES: Array<{ key: SwitchKey; label: string; hint: string }> = [
   {
@@ -20,6 +20,11 @@ const SWITCHES: Array<{ key: SwitchKey; label: string; hint: string }> = [
     key: "twitchScheduleSyncEnabled",
     label: "Twitch schedule sync",
     hint: "Mirrors the weekly programme into the channel's Twitch schedule."
+  },
+  {
+    key: "sourceLayerEnabled",
+    label: "Video sources on the stream",
+    hint: "Samples stored cameras or feeds and draws the picture into positioned scene layers."
   }
 ];
 

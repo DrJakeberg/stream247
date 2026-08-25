@@ -139,6 +139,8 @@ export function OverlaySettingsForm(props: {
   hasUnpublishedChanges: boolean;
   basedOnUpdatedAt: string;
   preview: OverlayPreviewSeed;
+  /** Stored external video sources a source layer can link to. Name and presence only. */
+  videoSources?: Array<{ id: string; name: string; urlPresent: boolean }>;
 }) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -1178,6 +1180,34 @@ export function OverlaySettingsForm(props: {
                           This layer places the chat game panel in the scene. Which game runs, its grid, and the
                           emote controls are configured under Overlays → Chat game, because the same round continues
                           across scene changes.
+                        </div>
+                      ) : null}
+                      {layer.kind === "source" ? (
+                        <div className="form-grid" style={{ marginTop: 12 }}>
+                          <label>
+                            <span className="label">Stored video source</span>
+                            <select
+                              onChange={(event) =>
+                                updateCustomLayer(layer.id, (current) =>
+                                  current.kind === "source" ? { ...current, sourceId: event.target.value } : current
+                                )
+                              }
+                              value={layer.sourceId}
+                            >
+                              <option value="">Not linked yet</option>
+                              {(props.videoSources ?? []).map((source) => (
+                                <option key={source.id} value={source.id}>
+                                  {source.name}
+                                  {source.urlPresent ? "" : " — no feed stored yet"}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="subtle" style={{ gridColumn: "1 / -1" }}>
+                            The layer only places the picture. Feeds live in the video source list below the scene
+                            controls, their addresses stay stored encrypted, and on air the layer disappears while
+                            its feed is unreachable instead of freezing on a stale picture.
+                          </div>
                         </div>
                       ) : null}
                     </div>

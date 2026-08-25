@@ -2,8 +2,10 @@ export const dynamic = "force-dynamic";
 
 import { AdminPageHeader } from "@/components/admin-page-header";
 import Link from "next/link";
+import { listOverlayVideoSourceRecords } from "@stream247/db";
 import { OverlaySettingsForm } from "@/components/overlay-settings-form";
 import { Panel } from "@/components/panel";
+import { VideoSourceSettingsForm } from "@/components/video-source-settings-form";
 import { getCurrentScheduleItem, getNextScheduleItem, getWorkspaceTimeZone, listOverlayScenePresetRecords, readAppState, readOverlayStudioState } from "@/lib/server/state";
 import { getAbsoluteAppUrl } from "@/lib/server/twitch";
 import { describeScenePreset, describeTypographyPreset } from "@/lib/scene-preset-names";
@@ -12,6 +14,7 @@ export default async function OverlayStudioPage() {
   const state = await readAppState();
   const studioState = await readOverlayStudioState();
   const scenePresets = await listOverlayScenePresetRecords();
+  const videoSources = await listOverlayVideoSourceRecords();
   const currentItem = getCurrentScheduleItem(state);
   const nextItem = getNextScheduleItem(state);
   const previewQueueTitles = state.playout.queueItems.slice(1, 5).map((item) => item.title).filter(Boolean);
@@ -44,6 +47,7 @@ export default async function OverlayStudioPage() {
             hasUnpublishedChanges={studioState.hasUnpublishedChanges}
             liveOverlay={studioState.liveOverlay}
             scenePresets={scenePresets}
+            videoSources={videoSources}
             preview={{
               timeZone: getWorkspaceTimeZone(state),
               currentTitle: currentItem?.title || state.playout.currentTitle || "Morning Replay",
@@ -57,6 +61,7 @@ export default async function OverlayStudioPage() {
                   : [nextItem?.title || "Next replay block", "Prime time replay", "Late night standby"].filter(Boolean)
             }}
           />
+          <VideoSourceSettingsForm videoSources={videoSources} />
         </Panel>
 
         <Panel title="Published scene state" eyebrow="Viewer scene">

@@ -179,6 +179,7 @@ export type ManagedRuntimeToggleInput =
       streamChatOverlayEnabled: string;
       streamAlertsEnabled: string;
       twitchScheduleSyncEnabled: string;
+      sourceLayerEnabled: string;
     }>
   | null
   | undefined;
@@ -196,6 +197,15 @@ export function resolveAlertsRuntimeEnabled(managed: ManagedRuntimeToggleInput, 
 /** Twitch schedule sync defaults ON; historically only the literal "0" turned it off. */
 export function resolveTwitchScheduleSyncEnabled(managed: ManagedRuntimeToggleInput, env: EnvLike): boolean {
   return readManagedFlag(managed?.twitchScheduleSyncEnabled) ?? (env.TWITCH_SCHEDULE_SYNC_ENABLED || "1") !== "0";
+}
+
+/**
+ * Video-source layer runtime gate (M57). Defaults OFF: the sampler spawns short-lived capture
+ * processes inside the playout container, and that must be an explicit operator decision. Same
+ * only-"1"-enables env semantics as the chat overlay and alerts gates.
+ */
+export function resolveSourceLayerRuntimeEnabled(managed: ManagedRuntimeToggleInput, env: EnvLike): boolean {
+  return readManagedFlag(managed?.sourceLayerEnabled) ?? env.STREAM247_SOURCE_LAYER_ENABLED === "1";
 }
 
 // ---------------------------------------------------------------------------
