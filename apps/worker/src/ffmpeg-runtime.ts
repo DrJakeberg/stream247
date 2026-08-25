@@ -1,5 +1,9 @@
 import path from "node:path";
-import type { StreamOutputSettings } from "@stream247/core";
+import {
+  resolveEncoderQualitySettings,
+  type ManagedEncoderQualityInput,
+  type StreamOutputSettings
+} from "@stream247/core";
 import { getOutputGopSize, getOutputVideoFilter, isStreamScaleEnabled } from "./output-settings.js";
 
 const OUTPUT_FAILURE_NEEDLES = [
@@ -263,16 +267,24 @@ export function describeFfmpegExit(code: number | null, signal: NodeJS.Signals |
   return "exited unexpectedly";
 }
 
-function getOutputRateControlSettings(output: StreamOutputSettings | null, env: NodeJS.ProcessEnv): {
+function getOutputRateControlSettings(
+  output: StreamOutputSettings | null,
+  env: NodeJS.ProcessEnv,
+  managedConfig: ManagedEncoderQualityInput
+): {
   maxrate: string;
   bufsize: string;
   audioBitrate: string;
 } {
-  if (env.FFMPEG_MAXRATE || env.FFMPEG_BUFSIZE || env.FFMPEG_AUDIO_BITRATE) {
+  // An explicitly configured rate trio — managed config or env, resolved by the shared core
+  // resolver — beats the resolution ladder below, exactly like the old "any FFMPEG_* rate env
+  // set" check did.
+  const encoder = resolveEncoderQualitySettings(managedConfig, env);
+  if (encoder.rateControlConfigured) {
     return {
-      maxrate: env.FFMPEG_MAXRATE || "4500k",
-      bufsize: env.FFMPEG_BUFSIZE || "9000k",
-      audioBitrate: env.FFMPEG_AUDIO_BITRATE || "160k"
+      maxrate: encoder.maxrate,
+      bufsize: encoder.bufsize,
+      audioBitrate: encoder.audioBitrate
     };
   }
 
@@ -318,11 +330,17 @@ function getOutputRateControlSettings(output: StreamOutputSettings | null, env: 
 export function buildUplinkFfmpegCommand(
   input: string,
   outputTarget: FfmpegOutputTarget,
-  options: { inputMode?: UplinkInputMode; env?: NodeJS.ProcessEnv; outputSettings?: StreamOutputSettings | null } = {}
+  options: {
+    inputMode?: UplinkInputMode;
+    env?: NodeJS.ProcessEnv;
+    outputSettings?: StreamOutputSettings | null;
+    managedConfig?: ManagedEncoderQualityInput;
+  } = {}
 ): string[] {
   const inputMode = options.inputMode ?? "rtmp";
   const env = options.env ?? process.env;
   const outputSettings = options.outputSettings ?? null;
+  const managedConfig = options.managedConfig ?? null;
   const command = [
     "-hide_banner",
     "-loglevel",
@@ -356,13 +374,13 @@ export function buildUplinkFfmpegCommand(
   if (outputVideoFilter) {
     command.push("-vf", outputVideoFilter);
   }
-  const rateControl = getOutputRateControlSettings(outputSettings, env);
+  const rateControl = getOutputRateControlSettings(outputSettings, env, managedConfig);
 
   command.push(
     "-c:v",
     "libx264",
     "-preset",
-    env.FFMPEG_PRESET || "veryfast",
+    resolveEncoderQualitySettings(managedConfig, env).preset,
     "-maxrate",
     rateControl.maxrate,
     "-bufsize",

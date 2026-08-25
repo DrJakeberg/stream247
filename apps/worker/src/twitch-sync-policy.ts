@@ -1,6 +1,6 @@
-export function isTwitchScheduleSyncEnabled(env: NodeJS.ProcessEnv): boolean {
-  return (env.TWITCH_SCHEDULE_SYNC_ENABLED || "1") !== "0";
-}
+// The schedule sync on/off gate lives in packages/core (resolveTwitchScheduleSyncEnabled)
+// since M56: it now reads managed config first with TWITCH_SCHEDULE_SYNC_ENABLED as fallback,
+// and web and worker must share that resolution.
 
 // One helix/channels PATCH per half minute at most. Chapter boundaries made metadata changes far
 // more frequent than the old one-title-per-asset world — a replayed VOD can cross a boundary,

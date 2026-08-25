@@ -228,7 +228,7 @@ export class TwitchChatBridge {
   }
 
   async sync(state: AppState, env: NodeJS.ProcessEnv): Promise<void> {
-    const enabled = isEngagementChatRuntimeEnabled(state.engagement, env);
+    const enabled = isEngagementChatRuntimeEnabled(state.engagement, env, state.managedConfig);
     const { nick, channel } = resolveChatConnectionTarget({
       identityLogin: state.twitch.broadcasterLogin,
       configuredBroadcastLogin: state.managedConfig.twitchBroadcastChannelLogin || env.TWITCH_BROADCAST_CHANNEL_LOGIN || ""

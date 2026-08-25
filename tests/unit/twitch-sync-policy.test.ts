@@ -1,19 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   decideTwitchChannelMetadataWrite,
-  isTwitchScheduleSyncEnabled,
   TWITCH_CHANNEL_METADATA_WRITE_MIN_INTERVAL_MS
 } from "../../apps/worker/src/twitch-sync-policy";
 
-describe("twitch sync policy", () => {
-  it("enables Twitch schedule sync by default", () => {
-    expect(isTwitchScheduleSyncEnabled({})).toBe(true);
-  });
-
-  it("disables Twitch schedule sync when configured off", () => {
-    expect(isTwitchScheduleSyncEnabled({ TWITCH_SCHEDULE_SYNC_ENABLED: "0" })).toBe(false);
-  });
-});
+// The schedule sync on/off gate moved to packages/core in M56 (resolveTwitchScheduleSyncEnabled,
+// covered in managed-runtime.test.ts) so web and worker share one resolution.
 
 describe("the channel metadata write decision", () => {
   const changedMetadata = {

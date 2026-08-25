@@ -254,6 +254,26 @@ describe("ffmpeg runtime helpers", () => {
     ]);
   });
 
+  it("prefers managed encoder settings over env and the rate ladder (M56)", () => {
+    const command = buildUplinkFfmpegCommand(
+      "rtmp://relay:1935/live/program",
+      { muxer: "flv", output: "rtmp://live.example.com/app/key" },
+      {
+        outputSettings: { profileId: "360p30", width: 640, height: 360, fps: 30 },
+        env: { FFMPEG_PRESET: "ultrafast" } as NodeJS.ProcessEnv,
+        managedConfig: { ffmpegPreset: "medium", ffmpegMaxrate: "3000k" }
+      }
+    );
+
+    // The managed preset beats the env preset, and one managed rate value is enough to switch
+    // from the 360p ladder step (1200k/2400k) to the explicitly configured trio with defaults.
+    expect(command).toContain("medium");
+    expect(command).not.toContain("ultrafast");
+    expect(command).toContain("3000k");
+    expect(command).toContain("9000k");
+    expect(command).not.toContain("1200k");
+  });
+
   it("builds a transcoding uplink command for the local HLS program feed", () => {
     expect(
       buildUplinkFfmpegCommand(

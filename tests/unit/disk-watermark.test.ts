@@ -3,10 +3,10 @@ import {
   DISK_WATERMARK_STAGE_ORDER,
   collectDiskProtectedAssetIds,
   decideDiskWatermarkAction,
-  getDiskWatermarkConfig,
   type DiskProtectionState,
   type DiskWatermarkStageResult
 } from "../../apps/worker/src/disk-watermark";
+import { resolveDiskWatermarkConfig } from "../../packages/core/src/index.js";
 
 // The global disk watermark: one monitor for the whole media volume, above the per-cache
 // guardrails. Everything here is a pure decision — the wiring in the worker measures the volume
@@ -16,8 +16,12 @@ import {
 const GB = 1024 ** 3;
 const TOTAL_BYTES = 100 * GB;
 
+// Config resolution moved to packages/core in M56 (managed value first, env fallback — see
+// managed-runtime.test.ts for the precedence contract). These tests keep exercising the env
+// side through the shared resolver, because this file documents the watermark's behaviour as
+// an operator experiences it.
 function configFor(env: Record<string, string> = {}) {
-  return getDiskWatermarkConfig(env as NodeJS.ProcessEnv);
+  return resolveDiskWatermarkConfig(null, env);
 }
 
 function decideAt(freeGb: number, completedStages: DiskWatermarkStageResult[] = [], config = configFor()) {
