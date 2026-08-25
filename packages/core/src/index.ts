@@ -53,7 +53,7 @@ export type OverlayPanelAnchor = "bottom" | "center";
 export type OverlayTitleScale = "compact" | "balanced" | "cinematic";
 export type OverlayTypographyPreset = "studio-sans" | "editorial-serif" | "signal-mono";
 export type OverlaySceneLayerKind = "chip" | "hero" | "next" | "queue" | "schedule" | "clock" | "banner" | "ticker";
-export type OverlaySceneCustomLayerKind = "text" | "logo" | "image" | "embed" | "widget";
+export type OverlaySceneCustomLayerKind = "text" | "logo" | "image" | "embed" | "widget" | "game";
 export type OverlaySceneCustomTextTone = "headline" | "body" | "caption";
 export type OverlaySceneCustomTextAlign = "left" | "center" | "right";
 export type OverlaySceneCustomMediaFit = "contain" | "cover";
@@ -611,11 +611,21 @@ export type OverlaySceneCustomWidgetLayer = OverlaySceneCustomLayerBase & {
   widgetDataKey: OverlaySceneCustomWidgetDataKey;
 };
 
+/**
+ * Placement slot for the chat game. The layer only says where the game panel sits in this scene;
+ * which game runs, its grid, and its emote mapping live in the chat-game settings, because the
+ * same game continues across scene changes and must not fork per scene.
+ */
+export type OverlaySceneCustomGameLayer = OverlaySceneCustomLayerBase & {
+  kind: "game";
+};
+
 export type OverlaySceneCustomLayer =
   | OverlaySceneCustomTextLayer
   | OverlaySceneCustomMediaLayer
   | OverlaySceneCustomEmbedLayer
-  | OverlaySceneCustomWidgetLayer;
+  | OverlaySceneCustomWidgetLayer
+  | OverlaySceneCustomGameLayer;
 
 export type OverlayScenePresetDefinition = {
   id: OverlayScenePreset;
@@ -1080,6 +1090,11 @@ export const OVERLAY_SCENE_CUSTOM_LAYER_KINDS: OverlayOptionDefinition<OverlaySc
     id: "widget",
     label: "Widget Embed",
     description: "Sandboxed iframe slot for third-party widgets that support embeds."
+  },
+  {
+    id: "game",
+    label: "Chat Game",
+    description: "On-air panel for the chat-driven game. Which game runs and how chat steers it is configured in the game settings."
   }
 ];
 
@@ -1527,6 +1542,12 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
         title: sanitizeTextValue(raw.title, 80),
         widgetMode: normalizeOverlaySceneCustomWidgetMode(raw.widgetMode),
         widgetDataKey: normalizeOverlaySceneCustomWidgetDataKey(raw.widgetDataKey)
+      });
+    } else if (raw.kind === "game") {
+      // Placement only: everything about the game itself lives in the chat-game settings.
+      normalized.push({
+        ...base,
+        kind: "game"
       });
     } else {
       normalized.push({
