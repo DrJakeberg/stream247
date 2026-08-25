@@ -148,6 +148,7 @@ import {
   isTwitchVodCacheCoolingDown
 } from "./twitch-vod-cache.js";
 import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
+import { selectStaleProgramFeedSegments, sumSegmentBytes } from "./program-feed-maintenance.js";
 import {
   decideBoundaryPlaybackInput,
   isBroadcastCoverageDown,
@@ -469,6 +470,60 @@ function isProgramFeedMode(): boolean {
 
 function getProgramFeedRuntimeConfig() {
   return getProgramFeedConfig(process.env, getMediaRoot());
+}
+
+/**
+ * Deletes segments from playout runs that have ended.
+ *
+ * The muxer's delete_segments only reaches what the current process knows about, and with
+ * append_list every restart abandons whatever was still inside the window. Measured on the test
+ * channel before this existed: 8878 files and 3.7 GB in a directory whose live window is six
+ * segments, the oldest from 125 days earlier.
+ *
+ * Runs on the boundary rather than on a timer, next to the VOD cache release, because that is when
+ * a run has just ended and left its tail behind.
+ */
+async function sweepProgramFeedSegments(): Promise<void> {
+  if (!isProgramFeedMode()) {
+    return;
+  }
+
+  try {
+    const config = getProgramFeedRuntimeConfig();
+    const playlist = await fs.readFile(config.playlistPath, "utf8").catch(() => "");
+    const entries = await fs.readdir(config.directory, { withFileTypes: true });
+    const segments: Array<{ name: string; modifiedAtMs: number; bytes: number }> = [];
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".ts")) {
+        continue;
+      }
+      const stats = await fs.stat(path.join(config.directory, entry.name)).catch(() => null);
+      if (stats) {
+        segments.push({ name: entry.name, modifiedAtMs: stats.mtimeMs, bytes: stats.size });
+      }
+    }
+
+    const stale = selectStaleProgramFeedSegments({ segments, playlist, nowMs: Date.now() });
+    if (stale.length === 0) {
+      return;
+    }
+
+    const freedBytes = sumSegmentBytes(segments, stale);
+    for (const name of stale) {
+      await fs.rm(path.join(config.directory, name), { force: true });
+    }
+
+    logRuntimeEvent("program-feed.segments.swept", {
+      files: stale.length,
+      freedBytes,
+      remaining: segments.length - stale.length
+    });
+  } catch (error) {
+    logRuntimeEvent("program-feed.sweep_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
 
 function createProgramFeedRunId(): string {
@@ -4581,6 +4636,7 @@ async function runPlayoutCycle(): Promise<void> {
       ? state.playout.currentAssetId
       : "";
   await releaseWatchedVodCache(selection.asset?.id ?? "", finishedAssetId, state);
+  await sweepProgramFeedSegments();
 
   if (
     currentScheduleItem?.poolId &&
