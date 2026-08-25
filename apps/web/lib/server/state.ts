@@ -33,6 +33,7 @@ import {
   isEngagementDonationAlertsRuntimeEnabled,
   isEngagementGameRuntimeEnabled,
   normalizeEngagementSettings,
+  resolveBroadcastChannelLogin,
   stripInvisibleCharacters,
   summarizeLiveBridgeInput,
   type OverlaySceneRenderTarget
@@ -321,6 +322,11 @@ export function getManagedTwitchConfig(state: AppState) {
       state,
       "twitchDefaultCategoryId",
       process.env.TWITCH_DEFAULT_CATEGORY_ID || ""
+    ),
+    broadcastChannelLogin: getManagedConfigValue(
+      state,
+      "twitchBroadcastChannelLogin",
+      process.env.TWITCH_BROADCAST_CHANNEL_LOGIN || ""
     )
   };
 }
@@ -1215,11 +1221,16 @@ function summarizeCuepoints(
   };
 }
 
-function summarizeTwitchLiveStatus(state: AppState): LiveTwitchStatusSummary {
+export function summarizeTwitchLiveStatus(state: AppState): LiveTwitchStatusSummary {
   return {
     status: state.twitch.status === "connected" ? state.twitch.liveStatus : "unknown",
     viewerCount: state.twitch.status === "connected" ? state.twitch.viewerCount : 0,
-    broadcasterLogin: state.twitch.broadcasterLogin,
+    // The broadcast channel, not the connected account: this login becomes the public watch link
+    // and the live widget's label, both of which must point where the video actually goes.
+    broadcasterLogin: resolveBroadcastChannelLogin({
+      configuredLogin: getManagedTwitchConfig(state).broadcastChannelLogin,
+      identityLogin: state.twitch.broadcasterLogin
+    }),
     startedAt: state.twitch.status === "connected" ? state.twitch.startedAt || "" : ""
   };
 }

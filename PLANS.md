@@ -1312,7 +1312,7 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 
 | Milestone | Type | Priority | Status | Goal |
 | --- | --- | --- | --- | --- |
-| M51 | Architecture fix | Now | Planned | Separate the broadcast channel from the connected identity; chat and moderation work via the mod account now, metadata via a broadcaster connection later |
+| M51 | Architecture fix | Now | In progress | Separate the broadcast channel from the connected identity; chat and moderation work via the mod account now, metadata via a broadcaster connection later |
 | M52 | UX | Now | Planned | First-run wizard covering everything that lives in `.env` today |
 | M53 | Feature | Next | Planned | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
 | M54 | Feature | Next | Planned | Chat game framework with Snake as the first game (emote-per-direction, moves only on input) |
@@ -1340,6 +1340,24 @@ visibly wait instead of silently patching the identity's channel.
   no Helix write ever targets 3jakec's channel; connecting jimpanse247 later flips metadata sync on
   without a restart
 - Rollback: broadcast-channel setting empty restores the previous single-account behaviour
+
+**Progress Notes**
+
+- 2026-08-25: The split is in place. `twitchBroadcastChannelLogin` lives in the managed config
+  (validated as a Twitch login, empty = identity = rollback), the chat bridge joins the broadcast
+  channel while authenticating as the identity, emote-only goes through Helix chat-settings with
+  `broadcaster_id=<channel>&moderator_id=<identity>` (channel id resolved by login, cached), and
+  live status, viewer count and the watch link follow the broadcast channel via login-based
+  streams lookup. Title/category/schedule writes are gated: with a split and no matching
+  broadcaster connection they skip every Helix write and report "waiting for broadcast channel
+  connection" as an info incident, on the dashboard, and in the connection panel. The second OAuth
+  slot exists as `twitch_broadcaster_connection` (additive table) plus a dashboard entry naming
+  the required account and scopes; once a matching connection exists the sync writes with its
+  token, so connecting later flips metadata on without a restart.
+- Still open: the browser OAuth flow for the broadcaster slot (callback routing plus token refresh
+  for the second connection) — deliberately unbuilt while the broadcaster account is inaccessible,
+  because the existing callback would store the result into the identity slot and the flow could
+  not be exercised end to end.
 
 ## M52 Setup Wizard
 

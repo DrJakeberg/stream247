@@ -7,6 +7,7 @@ export function SecretSettingsForm(props: {
   initialValues: {
     twitchClientId: string;
     twitchDefaultCategoryId: string;
+    twitchBroadcastChannelLogin: string;
     smtpHost: string;
     smtpPort: string;
     smtpUser: string;
@@ -41,6 +42,7 @@ export function SecretSettingsForm(props: {
               twitchClientId: String(formData.get("twitchClientId") || ""),
               twitchClientSecret: String(formData.get("twitchClientSecret") || ""),
               twitchDefaultCategoryId: String(formData.get("twitchDefaultCategoryId") || ""),
+              twitchBroadcastChannelLogin: String(formData.get("twitchBroadcastChannelLogin") || ""),
               discordWebhookUrl: String(formData.get("discordWebhookUrl") || ""),
               smtpHost: String(formData.get("smtpHost") || ""),
               smtpPort: String(formData.get("smtpPort") || ""),
@@ -80,6 +82,14 @@ export function SecretSettingsForm(props: {
         <label>
           <span className="label">Default Twitch category id</span>
           <input defaultValue={props.initialValues.twitchDefaultCategoryId} name="twitchDefaultCategoryId" />
+        </label>
+        <label>
+          <span className="label">Broadcast channel login</span>
+          <input
+            defaultValue={props.initialValues.twitchBroadcastChannelLogin}
+            name="twitchBroadcastChannelLogin"
+            placeholder="Empty: same channel as the connected account"
+          />
         </label>
         <label>
           <span className="label">Discord webhook url</span>

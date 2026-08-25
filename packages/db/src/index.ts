@@ -88,6 +88,22 @@ export type TwitchConnection = {
   error: string;
 };
 
+// The second OAuth slot of the broadcast-channel split: the broadcaster account itself, connected
+// only for channel metadata (title, category, schedule). It stays "not-connected" for setups
+// where the identity connection already owns the broadcast channel. Deliberately minimal — no
+// sync bookkeeping fields, those stay on the identity connection which drives the sync loop.
+export type TwitchBroadcasterConnection = {
+  status: "not-connected" | "connected" | "error";
+  broadcasterId: string;
+  broadcasterLogin: string;
+  accessToken: string;
+  refreshToken: string;
+  connectedAt: string;
+  tokenExpiresAt: string;
+  lastRefreshAt: string;
+  error: string;
+};
+
 export type TwitchScheduleSegmentRecord = {
   key: string;
   segmentId: string;
@@ -375,6 +391,9 @@ export type ManagedConfigRecord = {
   twitchClientId: string;
   twitchClientSecret: string;
   twitchDefaultCategoryId: string;
+  // The channel the stream key actually sends video to. Empty means "same as the connected
+  // identity", which is the pre-split behaviour and the rollback path.
+  twitchBroadcastChannelLogin: string;
   discordWebhookUrl: string;
   smtpHost: string;
   smtpPort: string;
@@ -543,6 +562,7 @@ export type AppState = {
   engagementGame: EngagementGameRuntimeRecord;
   engagementEvents: EngagementEventRecord[];
   twitch: TwitchConnection;
+  twitchBroadcaster: TwitchBroadcasterConnection;
   twitchScheduleSegments: TwitchScheduleSegmentRecord[];
   pools: PoolRecord[];
   showProfiles: ShowProfileRecord[];
@@ -1331,6 +1351,7 @@ function defaultState(): AppState {
       twitchClientId: "",
       twitchClientSecret: "",
       twitchDefaultCategoryId: "",
+      twitchBroadcastChannelLogin: "",
       discordWebhookUrl: "",
       smtpHost: "",
       smtpPort: "",
@@ -1389,6 +1410,17 @@ function defaultState(): AppState {
       liveStatus: "unknown",
       viewerCount: 0,
       startedAt: "",
+      error: ""
+    },
+    twitchBroadcaster: {
+      status: "not-connected",
+      broadcasterId: "",
+      broadcasterLogin: "",
+      accessToken: "",
+      refreshToken: "",
+      connectedAt: "",
+      tokenExpiresAt: "",
+      lastRefreshAt: "",
       error: ""
     },
     twitchScheduleSegments: [],
@@ -1746,6 +1778,10 @@ function normalizeState(state: AppState): AppState {
       viewerCount: Math.max(0, Number(state.twitch?.viewerCount ?? defaults.twitch.viewerCount) || defaults.twitch.viewerCount),
       startedAt: String(state.twitch?.startedAt ?? defaults.twitch.startedAt ?? "")
     },
+    twitchBroadcaster: {
+      ...defaults.twitchBroadcaster,
+      ...(state.twitchBroadcaster ?? {})
+    },
     twitchScheduleSegments: Array.isArray(state.twitchScheduleSegments) ? state.twitchScheduleSegments : [],
     users: Array.isArray(state.users) ? dedupeById(state.users) : [],
     teamAccessGrants: Array.isArray(state.teamAccessGrants) ? dedupeById(state.teamAccessGrants) : [],
@@ -2071,6 +2107,19 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       live_status TEXT NOT NULL DEFAULT 'unknown',
       viewer_count INTEGER NOT NULL DEFAULT 0,
       started_at TEXT NOT NULL DEFAULT '',
+      error TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS twitch_broadcaster_connection (
+      singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'not-connected',
+      broadcaster_id TEXT NOT NULL DEFAULT '',
+      broadcaster_login TEXT NOT NULL DEFAULT '',
+      access_token TEXT NOT NULL DEFAULT '',
+      refresh_token TEXT NOT NULL DEFAULT '',
+      connected_at TEXT NOT NULL DEFAULT '',
+      token_expires_at TEXT NOT NULL DEFAULT '',
+      last_refresh_at TEXT NOT NULL DEFAULT '',
       error TEXT NOT NULL DEFAULT ''
     );
 
@@ -3243,6 +3292,37 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     ]
   );
 
+  await client.query(
+    `
+      INSERT INTO twitch_broadcaster_connection (
+        singleton_id, status, broadcaster_id, broadcaster_login, access_token, refresh_token, connected_at,
+        token_expires_at, last_refresh_at, error
+      )
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ON CONFLICT (singleton_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        broadcaster_id = EXCLUDED.broadcaster_id,
+        broadcaster_login = EXCLUDED.broadcaster_login,
+        access_token = EXCLUDED.access_token,
+        refresh_token = EXCLUDED.refresh_token,
+        connected_at = EXCLUDED.connected_at,
+        token_expires_at = EXCLUDED.token_expires_at,
+        last_refresh_at = EXCLUDED.last_refresh_at,
+        error = EXCLUDED.error
+    `,
+    [
+      next.twitchBroadcaster.status,
+      next.twitchBroadcaster.broadcasterId,
+      next.twitchBroadcaster.broadcasterLogin,
+      next.twitchBroadcaster.accessToken,
+      next.twitchBroadcaster.refreshToken,
+      next.twitchBroadcaster.connectedAt,
+      next.twitchBroadcaster.tokenExpiresAt,
+      next.twitchBroadcaster.lastRefreshAt,
+      next.twitchBroadcaster.error
+    ]
+  );
+
   await client.query("DELETE FROM twitch_schedule_segments");
   for (const segment of next.twitchScheduleSegments) {
     await client.query(
@@ -3819,6 +3899,17 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     started_at: string;
     error: string;
   }>("SELECT * FROM twitch_connection WHERE singleton_id = 1");
+  const twitchBroadcasterResult = await client.query<{
+    status: TwitchBroadcasterConnection["status"];
+    broadcaster_id: string;
+    broadcaster_login: string;
+    access_token: string;
+    refresh_token: string;
+    connected_at: string;
+    token_expires_at: string;
+    last_refresh_at: string;
+    error: string;
+  }>("SELECT * FROM twitch_broadcaster_connection WHERE singleton_id = 1");
   const twitchScheduleSegmentsResult = await client.query<{
     key: string;
     segment_id: string;
@@ -4050,6 +4141,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   const engagementRow = engagementResult.rows[0];
   const engagementGameRow = engagementGameResult.rows[0];
   const twitchRow = twitchResult.rows[0];
+  const twitchBroadcasterRow = twitchBroadcasterResult.rows[0];
   const playoutRow = playoutResult.rows[0];
   const decryptedManagedConfig = managedConfigRow ? decryptManagedConfig(managedConfigRow.encrypted_payload) : null;
 
@@ -4140,6 +4232,19 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           error: twitchRow.error
         }
       : defaults.twitch,
+    twitchBroadcaster: twitchBroadcasterRow
+      ? {
+          status: twitchBroadcasterRow.status,
+          broadcasterId: twitchBroadcasterRow.broadcaster_id,
+          broadcasterLogin: twitchBroadcasterRow.broadcaster_login,
+          accessToken: twitchBroadcasterRow.access_token,
+          refreshToken: twitchBroadcasterRow.refresh_token,
+          connectedAt: twitchBroadcasterRow.connected_at,
+          tokenExpiresAt: twitchBroadcasterRow.token_expires_at,
+          lastRefreshAt: twitchBroadcasterRow.last_refresh_at,
+          error: twitchBroadcasterRow.error
+        }
+      : defaults.twitchBroadcaster,
     twitchScheduleSegments: twitchScheduleSegmentsResult.rows.map((row) => ({
       key: row.key,
       segmentId: row.segment_id,
@@ -5672,6 +5777,41 @@ export async function updateTwitchConnectionRecord(twitch: TwitchConnection): Pr
         twitch.viewerCount,
         twitch.startedAt || "",
         twitch.error
+      ]
+    );
+  });
+}
+
+export async function updateTwitchBroadcasterConnectionRecord(broadcaster: TwitchBroadcasterConnection): Promise<void> {
+  await withSerializedStateWrite("updateTwitchBroadcasterConnectionRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO twitch_broadcaster_connection (
+          singleton_id, status, broadcaster_id, broadcaster_login, access_token, refresh_token, connected_at,
+          token_expires_at, last_refresh_at, error
+        )
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          status = EXCLUDED.status,
+          broadcaster_id = EXCLUDED.broadcaster_id,
+          broadcaster_login = EXCLUDED.broadcaster_login,
+          access_token = EXCLUDED.access_token,
+          refresh_token = EXCLUDED.refresh_token,
+          connected_at = EXCLUDED.connected_at,
+          token_expires_at = EXCLUDED.token_expires_at,
+          last_refresh_at = EXCLUDED.last_refresh_at,
+          error = EXCLUDED.error
+      `,
+      [
+        broadcaster.status,
+        broadcaster.broadcasterId,
+        broadcaster.broadcasterLogin,
+        broadcaster.accessToken,
+        broadcaster.refreshToken,
+        broadcaster.connectedAt,
+        broadcaster.tokenExpiresAt,
+        broadcaster.lastRefreshAt,
+        broadcaster.error
       ]
     );
   });

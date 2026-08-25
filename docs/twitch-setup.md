@@ -53,6 +53,27 @@ Current behavior:
 - blank secret fields keep the stored value instead of wiping it
 - `.env` values are used only when no managed value exists
 
+## Broadcast Channel
+
+The channel the stream key sends video to does not have to be the connected account's own channel —
+a common arrangement is a moderator account connected while the video goes to the broadcaster's
+channel. The broadcast channel login lives in `Settings → Managed credentials` (or
+`TWITCH_BROADCAST_CHANNEL_LOGIN` as env fallback). Empty means "same as the connected account",
+which is the previous behaviour and the rollback path.
+
+With a broadcast channel configured:
+
+- chat joins the broadcast channel, authenticated as the connected account
+- emote-only automation targets the broadcast channel as a moderator action
+- live status, viewer count and the public watch link follow the broadcast channel
+- title, category and schedule sync **wait** — they need the broadcaster account's own connection
+  (scopes `channel:manage:broadcast` and `channel:manage:schedule`) and report
+  "waiting for broadcast channel connection" as an info incident and on the dashboard until then;
+  no metadata write ever targets the connected account's channel while waiting
+
+The broadcaster connection slot exists in the data model and the dashboard explains it, but the
+browser flow to connect the second account is not wired up yet.
+
 ## Broadcaster Connect
 
 The broadcaster connection is used for:
