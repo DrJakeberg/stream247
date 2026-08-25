@@ -38,6 +38,13 @@ const ENGLISH_COMPOUNDS = new Set([
   "broadcast-style",
   "browser-based",
   "channel-point",
+  // From the M54 game surfaces. "chat-game layers" is a compound adjective, "on-screen" and
+  // "mid-round" are ordinary spoken English — none of them is a stored id. Added after this test
+  // correctly went red in CI while my local validate lied: the pipeline read the exit code of
+  // `tail`, not of validate.
+  "chat-game",
+  "mid-round",
+  "on-screen",
   "chatter-participation",
   "check-in",
   "curated-set",
