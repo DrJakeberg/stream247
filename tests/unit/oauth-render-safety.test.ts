@@ -31,7 +31,8 @@ const RENDERED_FILES = [
 /** Route handlers, where writing a cookie is legal. */
 const ROUTE_FILES = [
   "app/api/auth/twitch/start/route.ts",
-  "app/api/integrations/twitch/connect/route.ts"
+  "app/api/integrations/twitch/connect/route.ts",
+  "app/api/integrations/twitch/connect-broadcaster/route.ts"
 ];
 
 function read(relativePath: string): string {
