@@ -125,6 +125,13 @@ export default async function OverlaysPage() {
               : "The Chat Game layer is enabled; the worker starts a round on its next cycle."
             : "No scene has an enabled Chat Game layer. Add one in Scene Studio to put the game on air."}
         </div>
+        {!chatRuntimeEnabled ? (
+          <div className="subtle" style={{ marginBottom: 12 }}>
+            The game reads its emotes through the same Twitch IRC runtime as the chat rail, which is currently
+            disabled. Enable chat in the engagement controls (and `STREAM_CHAT_OVERLAY_ENABLED=1` in the
+            deployment) so inputs can arrive; the on-screen chat rail itself can stay hidden.
+          </div>
+        ) : null}
         <ChatGameSettingsForm chatGame={chatGame} />
       </Panel>
     </div>

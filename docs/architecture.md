@@ -186,6 +186,16 @@ Current Twitch domains:
 
 When Twitch reconciliation fails, Stream247 raises incidents instead of failing silently.
 
+## Chat Games
+
+Chat-driven games render into the on-air overlay through an extensible framework:
+
+- a game is a pure state machine in `packages/core/chat-game.ts`: settings, `applyInput`, and `renderModel` — deliberately no tick, so a game only ever advances on accepted chat input
+- Snake is the first game: every emote maps to one direction (configurable, four distinct emotes), and the snake moves exactly one cell per accepted message
+- the worker consumes broadcast-channel chat, applies inputs in arrival order, and persists the round in `chat_game_runtime`, so a worker restart resumes the round
+- the playout container re-derives the render model from that record and draws it wherever a scene has an enabled `Chat Game` layer; disabling the layer stops the intake and clears the round
+- game rules (game choice, grid, emote mapping) are configured once under `Engagement`, because the same round continues across scene changes
+
 ## Operator Controls
 
 Current operator controls include:
