@@ -130,12 +130,13 @@ Neutral broadcast sans stack for everyday replay channels.
 Scene layer order
 Asset, insert, standby, and reconnect modes can now each resolve to different scene presets without changing the main live scene.
 POSITIONED LAYERS
-Add custom text, logo, image, website, or widget layers on top of the preset layout. Text layers can switch to safe local font stacks, metadata widgets can read from the canonical scene payload, and browser frames remain limited by each provider's iframe and CSP rules.
+Add custom text, logo, image, website, widget, or chat-game layers on top of the preset layout. Text layers can switch to safe local font stacks, metadata widgets can read from the canonical scene payload, and browser frames remain limited by each provider's iframe and CSP rules.
 Add Text Layer
 Add Logo Layer
 Add Image Layer
 Add Website Embed
 Add Widget Embed
+Add Chat Game
 No positioned layers yet. Add one when you need custom text, logos, stills, or embed-safe widgets.
 SCENE PRESET LIBRARY
 Save the current draft as a reusable scene preset, then re-apply it later without rebuilding every control by hand.

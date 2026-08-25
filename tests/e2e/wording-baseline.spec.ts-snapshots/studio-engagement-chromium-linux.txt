@@ -118,3 +118,21 @@ SHARE OF ACTIVE CHATTERS (%)
 MINIMUM VOTES
 COLLECTION WINDOW (SECONDS)
 Save viewer control
+CHAT PLAYS ON AIR
+Chat game
+No scene has an enabled Chat Game layer. Add one in Scene Studio to put the game on air.
+The game reads its emotes through the same Twitch IRC runtime as the chat rail, which is currently disabled. Enable chat in the engagement controls (and `STREAM_CHAT_OVERLAY_ENABLED=1` in the deployment) so inputs can arrive; the on-screen chat rail itself can stay hidden.
+CHAT GAME
+The game moves only when chat sends the mapped emotes — one accepted message, one move. It appears on air wherever a scene has an enabled Chat Game layer in Scene Studio.
+GAME
+Snake
+Chat steers a snake across a grid, one cell per emote. Food grows it, walls and its own body end the round.
+GRID WIDTH (CELLS)
+GRID HEIGHT (CELLS)
+EMOTE CONTROLS
+One emote per direction, exactly as chat would type it. Four distinct values are required; changing them mid-round starts a fresh round under the new controls.
+UP EMOTE
+DOWN EMOTE
+LEFT EMOTE
+RIGHT EMOTE
+Save chat game settings

@@ -52,7 +52,7 @@ const SURFACES: Surface[] = [
   // The overlay editor, where editing is the point — so this one is folded rather than trimmed. Was
   // 79; twenty-four of those were three buttons on each of eight layers, held open permanently, and
   // one more was a select offering the same six presets as the cards beside it.
-  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 54, primaryActions: 1 },
+  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 55, primaryActions: 1 },
   { name: "admin-settings", path: "/admin?tab=settings", maxControls: 30, primaryActions: 1 },
   { name: "login", path: "/login", maxControls: 3, primaryActions: 1, authenticated: false },
   { name: "live-moderation", path: "/live?tab=moderation", maxControls: 20, primaryActions: 1 },
@@ -63,8 +63,10 @@ const SURFACES: Surface[] = [
   // that moved — but the number it replaces described an empty page, not a simpler one.
   { name: "program-library", path: "/program?tab=library", maxControls: 35, primaryActions: 1 },
   { name: "program-sources", path: "/program?tab=sources", maxControls: 30, primaryActions: 1 },
-  // Two panels that save separately: chat and alerts, and what chat is allowed to steer.
-  { name: "studio-engagement", path: "/studio?tab=engagement", maxControls: 40, primaryActions: 2 },
+  // Three panels that save separately: chat and alerts, what chat is allowed to steer, and the
+  // chat game. Each is its own task with its own save, which is the documented exception to the
+  // one-primary rule — a shared save across unrelated panels would be the worse design.
+  { name: "studio-engagement", path: "/studio?tab=engagement", maxControls: 48, primaryActions: 3 },
   { name: "studio-output", path: "/studio?tab=output", maxControls: 20, primaryActions: 1 },
   { name: "admin-team", path: "/admin?tab=team", maxControls: 11, primaryActions: 1 }
 ];
