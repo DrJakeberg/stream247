@@ -5712,7 +5712,19 @@ async function reconcileTwitchLiveStatus(): Promise<void> {
   const clientId = getTwitchClientId(state);
   const clientSecret = getTwitchClientSecret(state);
   const broadcasterId = state.twitch.broadcasterId.trim();
-  const syncKey = [state.twitch.status, broadcasterId, clientId, clientSecret].join("|");
+  // The poll asks about the broadcast channel, not the connected account: those differ when the
+  // stream key sends video to a channel the identity merely moderates, and the widget would
+  // otherwise report the moderator's own (empty) channel as the live status. Part of the sync key
+  // so a settings change re-polls immediately instead of serving the old channel for a minute.
+  const broadcastChannelLogin = resolveBroadcastChannelLogin({
+    configuredLogin: getTwitchBroadcastChannelLogin(state),
+    identityLogin: state.twitch.broadcasterLogin
+  });
+  const usesBroadcastChannelLogin = isBroadcastChannelSplit({
+    configuredLogin: getTwitchBroadcastChannelLogin(state),
+    identityLogin: state.twitch.broadcasterLogin
+  });
+  const syncKey = [state.twitch.status, broadcasterId, broadcastChannelLogin, clientId, clientSecret].join("|");
   const now = Date.now();
 
   if (syncKey === twitchLiveStatusLastSyncKey && now < twitchLiveStatusNextSyncAt) {
@@ -5735,11 +5747,11 @@ async function reconcileTwitchLiveStatus(): Promise<void> {
   }
 
   try {
-    const snapshot = await fetchTwitchLiveStatus({
-      broadcasterId,
-      clientId,
-      clientSecret
-    });
+    const snapshot = await fetchTwitchLiveStatus(
+      usesBroadcastChannelLogin
+        ? { broadcasterLogin: broadcastChannelLogin, clientId, clientSecret }
+        : { broadcasterId, clientId, clientSecret }
+    );
 
     if (
       state.twitch.liveStatus === snapshot.liveStatus &&

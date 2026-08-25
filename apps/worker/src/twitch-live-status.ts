@@ -67,11 +67,22 @@ export function parseTwitchLiveStatusPayload(payload: {
 }
 
 export async function fetchTwitchLiveStatus(args: {
-  broadcasterId: string;
+  broadcasterId?: string;
+  // Preferred over the id when given. With a broadcast-channel split the only identifier the
+  // workspace holds for the watched channel is its login — the stored broadcaster id belongs to
+  // the connected moderator account, whose stream status is not the one anybody asked about. The
+  // public streams endpoint answers by login with a plain app token either way.
+  broadcasterLogin?: string;
   clientId: string;
   clientSecret: string;
   fetchImpl?: FetchLike;
 }): Promise<TwitchLiveStatusSnapshot> {
+  const login = (args.broadcasterLogin || "").trim();
+  const broadcasterId = (args.broadcasterId || "").trim();
+  if (!login && !broadcasterId) {
+    throw new Error("Twitch live-status lookup needs a broadcaster login or id.");
+  }
+
   const fetchImpl = args.fetchImpl ?? fetch;
   const accessToken = await createAppAccessToken({
     clientId: args.clientId,
@@ -79,7 +90,9 @@ export async function fetchTwitchLiveStatus(args: {
     fetchImpl
   });
   const response = await fetchImpl(
-    `https://api.twitch.tv/helix/streams?user_id=${encodeURIComponent(args.broadcasterId)}`,
+    login
+      ? `https://api.twitch.tv/helix/streams?user_login=${encodeURIComponent(login)}`
+      : `https://api.twitch.tv/helix/streams?user_id=${encodeURIComponent(broadcasterId)}`,
     {
       headers: {
         Authorization: `Bearer ${accessToken}`,
