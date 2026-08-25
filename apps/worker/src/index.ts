@@ -181,6 +181,7 @@ import {
 } from "./twitch-vod-cache.js";
 import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
 import { getPlayoutFeedHealthOptions, shouldRestartStalledPlayout } from "./playout-feed-health.js";
+import { getDurationBoundOptions, shouldEndAssetAtDurationBound } from "./duration-bound.js";
 import {
   PROGRAM_FEED_SWEEP_LIMIT,
   selectStaleProgramFeedSegments,
@@ -1016,6 +1017,56 @@ async function enforceProgramFeedProgress(feed: { updatedAt: string }): Promise<
       error: error instanceof Error ? error.message : String(error)
     });
   }
+}
+
+/**
+ * Ends the current asset deliberately once elapsed playback passes its known duration plus a
+ * margin.
+ *
+ * This is the planned answer to the fault the two watchdogs above only rescue: a remotely
+ * streamed VOD reaches its end without ffmpeg receiving EOF, the fps filter manufactures video
+ * from the last frame, and the uplink encoder watchdog (at ~45s) and the feed-audio watchdog (at
+ * 91s) fight over a feed that stopped carrying content at the moment the asset ended. When the
+ * duration is known we do not wait for any of that: the stop below takes the same planned-stop
+ * path every deliberate transition takes, the exit handler records a planned transition rather
+ * than a failure, and the remainder of the same playout cycle starts the next queue item. No
+ * incident is raised because nothing failed — this is scheduling, not rescue.
+ *
+ * The elapsed clock is the same playoutProcessStartedAtMs the feed watchdogs use; every asset
+ * starts from position zero, so wall time since process start can only run ahead of the playback
+ * position (brief rebuffering), never behind — the margin absorbs that. Cuepoints are keyed on
+ * schedule wall-clock time, not on this process clock, so a cuepoint due during the asset has
+ * fired (or will fire on the following cycle) exactly as it does after a natural EOF. Assets with
+ * an unknown duration never reach the stop; for those the feed-audio watchdog remains the net,
+ * which is why neither watchdog is removed.
+ */
+async function enforceAssetDurationBound(assets: AssetRecord[]): Promise<void> {
+  if (!playoutProcess || playoutProcess.killed) {
+    return;
+  }
+
+  const asset = playoutAssetId ? assets.find((entry) => entry.id === playoutAssetId) ?? null : null;
+  const durationSeconds = asset?.durationSeconds ?? 0;
+  const options = getDurationBoundOptions(process.env);
+  const nowMs = Date.now();
+  if (
+    !shouldEndAssetAtDurationBound({
+      targetKind: playoutTargetKind,
+      durationSeconds,
+      processStartedAtMs: playoutProcessStartedAtMs,
+      nowMs,
+      marginSeconds: options.marginSeconds
+    })
+  ) {
+    return;
+  }
+
+  logRuntimeEvent("playout.duration_bound.end", {
+    assetId: playoutAssetId,
+    durationSeconds,
+    elapsedSeconds: Math.round((nowMs - playoutProcessStartedAtMs) / 1000)
+  });
+  await stopPlayoutProcess("duration-bound");
 }
 
 async function updateProgramFeedRuntimeStatus(): Promise<Awaited<ReturnType<typeof readProgramFeedRuntimeStatus>>> {
@@ -4337,6 +4388,12 @@ async function runPlayoutCycle(): Promise<void> {
     }));
     state = await readAppState();
   }
+
+  // Before anything looks at the running process: an asset that has played past its known
+  // duration plus margin is over, whatever ffmpeg thinks. Stopping here, ahead of the selection
+  // logic, makes the rest of this cycle indistinguishable from one that began just after a
+  // natural EOF exit — the selection sees no running process and starts the next queue item.
+  await enforceAssetDurationBound(state.assets);
 
   const previewSelection = choosePlaybackCandidate(state);
   if (playoutProcess && !playoutProcess.killed && !isMatchingRunningSelection(previewSelection)) {
