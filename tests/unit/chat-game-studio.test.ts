@@ -55,4 +55,14 @@ describe("the chat game settings form", () => {
       expect(chatGameSettingsFormSource).toContain(direction);
     }
   });
+
+  it("folds the emote controls away for games chat steers by coordinates", () => {
+    // Minesweeper never reads the map, so showing it would be an instruction the game ignores —
+    // and an invalid map must not block saving a game that does not use it.
+    expect(chatGameSettingsFormSource).toContain('activeGame.input === "emotes"');
+  });
+
+  it("folds the grid fields away for games with a fixed board", () => {
+    expect(chatGameSettingsFormSource).toContain("activeGame.usesGrid");
+  });
 });

@@ -11,6 +11,19 @@
 
 ### Added
 
+- two more chat games on the M54 framework: Minesweeper and 2048. Minesweeper is steered by
+  coordinates typed in chat ("b3", case-insensitive, spreadsheet-style columns): the seeded board
+  commits on the first dig and never under it, a dig flood-reveals to the numbered frontier, a
+  mine ends the round, clearing every safe cell wins it. 2048 reuses the snake's emote→direction
+  map unchanged on its own four-by-four board: classic slide-and-merge with each tile merging at
+  most once per move, spawns drawn from the state's own seed cursor, round over when no move is
+  left. Both keep the framework's promises — no clock, no `Math.random`, same seed plus same
+  inputs equals the same board — persist through the same runtime row, and render through the
+  same panel, which now draws numbers inside cells and, for coordinate-driven games, column
+  letters and row numbers around the grid. The studio picker offers all three games and folds
+  away the fields the selected game ignores (the emote map for Minesweeper, the grid for 2048);
+  no schema change was needed, because the settings row already stored the game id with snake as
+  its default
 - skip-vote progress now renders on air, closing the follow-up left by the 1.5.27 poll fix. The
   `!skip` tally lived only in worker memory, so viewers voting to skip rallied nobody: nothing was
   persisted and the playout container had nothing to draw. The worker now flushes the campaign's

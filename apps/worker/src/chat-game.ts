@@ -14,10 +14,10 @@ import {
   chatGameSettingsKey,
   getChatGameDefinition,
   normalizeChatGameSettings,
-  resolveChatGameDirection,
+  resolveChatGameInput,
   type ChatGameSettings,
-  type OverlayGameView,
-  type SnakeGameState
+  type ChatGameState,
+  type OverlayGameView
 } from "@stream247/core";
 import type { ChatGameRuntimeRecord } from "@stream247/db";
 
@@ -42,7 +42,7 @@ export class ChatGameRuntime {
   private readonly options: ChatGameRuntimeOptions;
   private settings: ChatGameSettings | null = null;
   private settingsKey = "";
-  private state: SnakeGameState | null = null;
+  private state: ChatGameState | null = null;
   private dirty = false;
 
   constructor(options: ChatGameRuntimeOptions = {}) {
@@ -104,10 +104,11 @@ export class ChatGameRuntime {
   /**
    * Handles one chat message and reports whether it changed the round.
    *
-   * Synchronous and never throws: this runs inside the IRC socket data handler. Only the
-   * configured emotes act; everything else is not an input at all. An accepted emote that steers
-   * nowhere (a reversal into the snake's neck) leaves the state identical and reports false, so
-   * callers only schedule persistence when something actually moved.
+   * Synchronous and never throws: this runs inside the IRC socket data handler. Only the active
+   * game's vocabulary acts — the configured emotes for direction-driven games, coordinates like
+   * "b3" for cell-driven ones; everything else is not an input at all. An accepted input that
+   * moves nothing (a reversal into the snake's neck, a dig on an open cell) leaves the state
+   * identical and reports false, so callers only schedule persistence when something changed.
    */
   handleChatMessage(message: string): boolean {
     try {
@@ -115,12 +116,12 @@ export class ChatGameRuntime {
         return false;
       }
 
-      const direction = resolveChatGameDirection(message, this.settings.emoteMap);
-      if (!direction) {
+      const input = resolveChatGameInput(message, this.settings);
+      if (!input) {
         return false;
       }
 
-      const next = getChatGameDefinition(this.settings.gameId).applyInput(this.state, { direction }, this.settings);
+      const next = getChatGameDefinition(this.settings.gameId).applyInput(this.state, input, this.settings);
       if (next === this.state) {
         return false;
       }

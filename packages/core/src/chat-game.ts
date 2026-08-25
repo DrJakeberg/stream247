@@ -11,7 +11,14 @@
 // container re-derives the render model from that state. Both sides share only what is in this
 // file, so everything in it must stay pure and JSON-serialisable.
 
-export type ChatGameId = "snake";
+// Game modules import types and the seed helper from this file; this file imports their
+// definitions for the registry. The cycle is safe: the game modules finish evaluating before this
+// module's body runs, and the only value they take from here is a hoisted function they call at
+// play time, never during evaluation.
+import { GAME_2048_DEFINITION, type Game2048State } from "./chat-game-2048.js";
+import { MINESWEEPER_GAME_DEFINITION, type MinesweeperGameState } from "./chat-game-minesweeper.js";
+
+export type ChatGameId = "snake" | "minesweeper" | "2048";
 
 export type ChatGameDirection = "up" | "down" | "left" | "right";
 
@@ -29,13 +36,35 @@ export type ChatGameOptionDefinition = {
   id: ChatGameId;
   label: string;
   description: string;
+  /** Which chat vocabulary the game listens to: the emote map, or grid coordinates like "b3". */
+  input: "emotes" | "cells";
+  /** Whether the operator's grid settings shape this game's board, or the game fixes its own. */
+  usesGrid: boolean;
 };
 
 export const CHAT_GAMES: ChatGameOptionDefinition[] = [
   {
     id: "snake",
     label: "Snake",
-    description: "Chat steers a snake across a grid, one cell per emote. Food grows it, walls and its own body end the round."
+    description: "Chat steers a snake across a grid, one cell per emote. Food grows it, walls and its own body end the round.",
+    input: "emotes",
+    usesGrid: true
+  },
+  {
+    id: "minesweeper",
+    label: "Minesweeper",
+    description:
+      "Chat digs cells by typing coordinates like b3. Numbers count the mines around a cell; clear every safe cell to win the round.",
+    input: "cells",
+    usesGrid: true
+  },
+  {
+    id: "2048",
+    label: "2048",
+    description:
+      "Chat slides numbered tiles with the four direction emotes on its own four by four board. Equal tiles merge; the round ends when no move is left.",
+    input: "emotes",
+    usesGrid: false
   }
 ];
 
@@ -121,8 +150,9 @@ export function normalizeChatGameSettings(value: Partial<ChatGameSettings> | nul
     right: String(rawMap?.right ?? "").trim()
   };
 
+  const requestedGameId = value?.gameId;
   return {
-    gameId: value?.gameId === "snake" ? value.gameId : defaults.gameId,
+    gameId: requestedGameId && CHAT_GAMES.some((game) => game.id === requestedGameId) ? requestedGameId : defaults.gameId,
     gridWidth: clampGridDimension(value?.gridWidth, MIN_GRID_WIDTH, MAX_GRID_WIDTH, defaults.gridWidth),
     gridHeight: clampGridDimension(value?.gridHeight, MIN_GRID_HEIGHT, MAX_GRID_HEIGHT, defaults.gridHeight),
     emoteMap: isChatGameEmoteMapValid(trimmedMap) ? trimmedMap : defaults.emoteMap
@@ -168,16 +198,94 @@ export function resolveChatGameDirection(message: string, map: ChatGameEmoteMap)
   return null;
 }
 
-export type ChatGameInput = {
-  direction: ChatGameDirection;
-};
+/**
+ * The label of a grid column, for coordinate-driven games: 0 → "a", 25 → "z", 26 → "aa". The grid
+ * allows up to 32 columns, so the label can grow past a single letter, exactly like it does in a
+ * spreadsheet — which is the mental model chat already has for "b3".
+ */
+export function chatGameColumnLabel(index: number): string {
+  let value = index + 1;
+  let out = "";
+  while (value > 0) {
+    out = String.fromCharCode(97 + ((value - 1) % 26)) + out;
+    value = Math.floor((value - 1) / 26);
+  }
+  return out;
+}
 
-export type ChatGameCellKind = "snake-head" | "snake-body" | "food";
+function parseChatGameColumnLetters(letters: string): number {
+  let value = 0;
+  for (const letter of letters) {
+    value = value * 26 + (letter.charCodeAt(0) - 96);
+  }
+  return value - 1;
+}
+
+/**
+ * Resolves one chat message to at most one grid cell.
+ *
+ * A coordinate is a column label and a 1-based row, "b3", matched per whitespace token and
+ * case-insensitively — unlike emote codes, coordinates are not chat vocabulary with meaning of
+ * their own, so "B3" refusing to dig would read as the game being broken. A message with several
+ * coordinates counts once, for its first one that is on the grid: one message, one dig.
+ */
+export function resolveChatGameCell(message: string, settings: ChatGameSettings): ChatGameCell | null {
+  for (const token of message.split(/\s+/)) {
+    const match = /^([a-z]{1,2})([1-9][0-9]?)$/.exec(token.toLowerCase());
+    if (!match) {
+      continue;
+    }
+    const x = parseChatGameColumnLetters(match[1]!);
+    const y = Number(match[2]) - 1;
+    if (x < settings.gridWidth && y < settings.gridHeight) {
+      return { x, y };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolves one chat message into the active game's input, or null when the message is not an
+ * input at all. This is the single dispatch point between chat vocabularies: emote-driven games
+ * share the configured map, coordinate-driven games read grid cells — and no game ever sees the
+ * other vocabulary, so a coordinate can never move the snake.
+ */
+export function resolveChatGameInput(message: string, settings: ChatGameSettings): ChatGameInput | null {
+  const inputKind = CHAT_GAMES.find((game) => game.id === settings.gameId)?.input ?? "emotes";
+  if (inputKind === "cells") {
+    const cell = resolveChatGameCell(message, settings);
+    return cell ? { cell } : null;
+  }
+
+  const direction = resolveChatGameDirection(message, settings.emoteMap);
+  return direction ? { direction } : null;
+}
+
+/**
+ * One accepted chat message, resolved into a move. Emote-driven games receive a direction,
+ * coordinate-driven games receive a cell; a game handed the other variant treats it as no move
+ * at all and returns its state unchanged.
+ */
+export type ChatGameInput = { direction: ChatGameDirection } | { cell: ChatGameCell };
+
+export type ChatGameCellKind =
+  | "snake-head"
+  | "snake-body"
+  | "food"
+  // Minesweeper: a dug cell, and a mine shown once the round is decided.
+  | "revealed"
+  | "mine"
+  // 2048: a numbered tile; the strong variant marks the tiles the round is building towards.
+  | "tile"
+  | "tile-strong";
 
 export type ChatGameRenderCell = {
   x: number;
   y: number;
   kind: ChatGameCellKind;
+  /** Text drawn inside the cell — a mine count, a tile value. Omitted for purely graphic cells. */
+  label?: string;
 };
 
 /**
@@ -195,6 +303,8 @@ export type ChatGameRenderModel = {
   statusLine: string;
   /** How to play, built from the configured emotes so it is always literally true. */
   hintLine: string;
+  /** Asks the panel to draw column letters and row numbers, for games steered by coordinates. */
+  showCoordinates?: boolean;
   phase: "playing" | "over";
 };
 
@@ -226,11 +336,14 @@ export type SnakeGameState = {
   seed: number;
 };
 
-// Plain 31-bit linear congruential generator. Food placement needs to be deterministic from the
-// state — both containers and every test must agree on where food is without sharing a Math.random.
-function nextSeed(seed: number): number {
+// Plain 31-bit linear congruential generator. Every random-looking decision in a game — food
+// placement, mine layout, tile spawns — needs to be deterministic from the state, because both
+// containers and every test must agree on the board without sharing a Math.random.
+export function nextChatGameSeed(seed: number): number {
   return (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
 }
+
+const nextSeed = nextChatGameSeed;
 
 const DIRECTION_DELTAS: Record<ChatGameDirection, ChatGameCell> = {
   up: { x: 0, y: -1 },
@@ -299,6 +412,12 @@ function applySnakeInput(state: SnakeGameState, input: ChatGameInput, settings: 
   // card stays up exactly until the room plays again.
   if (state.phase === "over") {
     return createInitialSnakeState(settings, nextSeed(state.seed));
+  }
+
+  // A cell input is not a snake move; in production the resolver never produces one while the
+  // snake is active, so this is pure defence for direct callers.
+  if (!("direction" in input)) {
+    return state;
   }
 
   // Reversing into the neck would be an instant self-collision every time, so the classic rule
@@ -452,12 +571,23 @@ export const SNAKE_GAME_DEFINITION: ChatGameDefinition<SnakeGameState> = {
   parseState: parseSnakeState
 };
 
+/** Any game's state, for the callers that thread state through a definition without opening it. */
+export type ChatGameState = SnakeGameState | MinesweeperGameState | Game2048State;
+
 // The one place that maps a game id to its definition. A future game adds its id to ChatGameId,
 // registers here, and inherits the whole intake, persistence, and rendering path unchanged.
-const CHAT_GAME_DEFINITIONS: { [K in ChatGameId]: ChatGameDefinition<SnakeGameState> } = {
-  snake: SNAKE_GAME_DEFINITION
+//
+// The casts erase each definition's own state type. That is sound in practice because a
+// definition only ever receives states it created or parsed itself — parseState rejects foreign
+// shapes, and the worker keys every call on the same settings.gameId that selected the
+// definition. TypeScript cannot see that pairing, so it is asserted here, in the one place the
+// pairing is made.
+const CHAT_GAME_DEFINITIONS: { [K in ChatGameId]: ChatGameDefinition<ChatGameState> } = {
+  snake: SNAKE_GAME_DEFINITION as ChatGameDefinition<ChatGameState>,
+  minesweeper: MINESWEEPER_GAME_DEFINITION as ChatGameDefinition<ChatGameState>,
+  "2048": GAME_2048_DEFINITION as ChatGameDefinition<ChatGameState>
 };
 
-export function getChatGameDefinition(gameId: ChatGameId): ChatGameDefinition<SnakeGameState> {
+export function getChatGameDefinition(gameId: ChatGameId): ChatGameDefinition<ChatGameState> {
   return CHAT_GAME_DEFINITIONS[gameId];
 }

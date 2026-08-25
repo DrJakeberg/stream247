@@ -115,10 +115,12 @@ export type OverlayEngagementView = {
 export type OverlayGameView = {
   gridWidth: number;
   gridHeight: number;
-  cells: { x: number; y: number; kind: string }[];
+  cells: { x: number; y: number; kind: string; label?: string }[];
   headline: string;
   statusLine: string;
   hintLine: string;
+  /** Coordinate-driven games ask for column letters and row numbers around the grid. */
+  showCoordinates?: boolean;
   phase: string;
 };
 
@@ -579,29 +581,69 @@ function buildGamePanel(
   const gridHeight = Math.max(1, Math.round(game.gridHeight));
 
   // Text rows above and below the grid share the box with it; whatever is left decides the cell
-  // size. The floor keeps cells visible even when an operator draws a tiny box.
+  // size. The floor keeps cells visible even when an operator draws a tiny box. A coordinate
+  // gutter, when the game asks for one, costs exactly one extra cell in each direction.
   const framePadding = px(18);
   const textAllowance = px(84);
   const gap = Math.max(1, px(2));
+  const axis = game.showCoordinates ? 1 : 0;
   const innerWidth = boxWidth - framePadding * 2;
   const innerHeight = boxHeight - framePadding * 2 - textAllowance;
   const cellSize = Math.max(
     px(8),
     Math.floor(
-      Math.min((innerWidth - gap * (gridWidth - 1)) / gridWidth, (innerHeight - gap * (gridHeight - 1)) / gridHeight)
+      Math.min(
+        (innerWidth - gap * (gridWidth + axis - 1)) / (gridWidth + axis),
+        (innerHeight - gap * (gridHeight + axis - 1)) / (gridHeight + axis)
+      )
     )
   );
 
-  const cellKinds = new Map<string, string>();
+  const cellContents = new Map<string, { kind: string; label?: string }>();
   for (const cell of game.cells) {
-    cellKinds.set(`${String(cell.x)},${String(cell.y)}`, cell.kind);
+    cellContents.set(`${String(cell.x)},${String(cell.y)}`, { kind: cell.kind, label: cell.label });
   }
 
+  // Mirrors chatGameColumnLabel in the game framework — declared locally because this file stays
+  // dependency-free and the rule (spreadsheet letters: 0 → "a", 26 → "aa") is fixed by the games'
+  // own chat vocabulary, which viewers type back at the board.
+  const columnLabel = (index: number): string => {
+    let value = index + 1;
+    let out = "";
+    while (value > 0) {
+      out = String.fromCharCode(97 + ((value - 1) % 26)) + out;
+      value = Math.floor((value - 1) / 26);
+    }
+    return out;
+  };
+
+  const axisLabel = (value: string): OverlayLayoutNode =>
+    label(value, {
+      width: cellSize,
+      height: cellSize,
+      alignItems: "center",
+      justifyContent: "center",
+      color: INK_TERTIARY,
+      fontSize: Math.max(px(9), Math.floor(cellSize * 0.44)),
+      fontWeight: 700
+    });
+
   const gridRows: OverlayLayoutNode[] = [];
+  if (axis === 1) {
+    // Column letters across the top, above an empty corner. Without these the coordinates the
+    // game asks chat to type would be unguessable on air.
+    gridRows.push(
+      row({ gap }, [axisLabel(""), ...Array.from({ length: gridWidth }, (_, x) => axisLabel(columnLabel(x)))])
+    );
+  }
   for (let y = 0; y < gridHeight; y += 1) {
     const rowCells: OverlayLayoutNode[] = [];
+    if (axis === 1) {
+      rowCells.push(axisLabel(String(y + 1)));
+    }
     for (let x = 0; x < gridWidth; x += 1) {
-      const kind = cellKinds.get(`${String(x)},${String(y)}`) ?? "";
+      const content = cellContents.get(`${String(x)},${String(y)}`);
+      const kind = content?.kind ?? "";
       const cellStyle: OverlayLayoutStyle = {
         display: "flex",
         width: cellSize,
@@ -609,6 +651,7 @@ function buildGamePanel(
         borderRadius: Math.max(1, px(3)),
         backgroundColor: "rgba(255,255,255,0.10)"
       };
+      let labelColor = INK_PRIMARY;
       if (kind === "snake-head") {
         // The head is the cell every viewer tracks, so it gets the strongest mark on the panel.
         cellStyle.backgroundColor = "#ffffff";
@@ -617,8 +660,32 @@ function buildGamePanel(
       } else if (kind === "food") {
         cellStyle.backgroundColor = "#ffffff";
         cellStyle.borderRadius = 999;
+      } else if (kind === "revealed") {
+        // A dug minesweeper cell: brighter than untouched ground, numbered at the frontier.
+        cellStyle.backgroundColor = "rgba(255,255,255,0.22)";
+      } else if (kind === "mine") {
+        cellStyle.backgroundColor = "#ffffff";
+        cellStyle.borderRadius = 999;
+      } else if (kind === "tile") {
+        cellStyle.backgroundColor = accent;
+        labelColor = accentInkColor(accent);
+      } else if (kind === "tile-strong") {
+        // The white tile marks the values the round is building towards; dark ink keeps the
+        // number readable on it under every accent.
+        cellStyle.backgroundColor = "#ffffff";
+        labelColor = "#05070c";
       }
-      rowCells.push({ type: "div", props: { style: cellStyle } });
+      if (content?.label) {
+        // Longer labels (a "2048" tile) trade size for fit; the weight keeps them legible.
+        cellStyle.alignItems = "center";
+        cellStyle.justifyContent = "center";
+        cellStyle.color = labelColor;
+        cellStyle.fontWeight = 700;
+        cellStyle.fontSize = Math.max(px(9), Math.floor(cellSize * (content.label.length > 2 ? 0.3 : 0.46)));
+        rowCells.push({ type: "div", props: { style: cellStyle, children: content.label } });
+      } else {
+        rowCells.push({ type: "div", props: { style: cellStyle } });
+      }
     }
     gridRows.push(row({ gap }, rowCells));
   }
