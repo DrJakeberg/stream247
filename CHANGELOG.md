@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- chapter auto-detection now reaches every remote source, not just single Twitch VODs. Collection
+  connectors list their items with `--flat-playlist`, which never carries chapters, so YouTube
+  playlist/channel items, Twitch channel archives and direct media always arrived chapterless. A
+  budgeted backfill now spends `CHAPTER_BACKFILL_PER_CYCLE` (default 3) metadata-only probes per
+  worker cycle on such assets — yt-dlp for YouTube/Twitch, ffprobe for embedded MP4/MKV chapters —
+  and stores the result through the same only-fill-empty rule as re-ingest, so operator-edited
+  chapter lists always win. A completed probe is final even when it finds no chapters; a failed
+  one waits out `CHAPTER_BACKFILL_FAILURE_COOLDOWN_SECONDS` (default 1800). The discovered
+  chapters run through the existing boundary emission and Helix sync unchanged
+
 ## 1.5.28 - 2026-08-25
 
 ### Fixed
