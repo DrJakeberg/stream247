@@ -201,7 +201,7 @@ import { createTwitchUserIdResolver } from "./twitch-broadcast-channel.js";
 import { TwitchChatBridge } from "./twitch-engagement.js";
 import { syncTwitchEventSubSubscriptions } from "./twitch-eventsub.js";
 import { fetchTwitchLiveStatus } from "./twitch-live-status.js";
-import { isTwitchScheduleSyncEnabled } from "./twitch-sync-policy.js";
+import { decideTwitchChannelMetadataWrite, isTwitchScheduleSyncEnabled } from "./twitch-sync-policy.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
@@ -221,6 +221,10 @@ let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
 // re-fire, which an empty set after restart does automatically.
 let chapterBoundaryWindowKey = "";
 let chapterBoundaryFiredKeys: string[] = [];
+// When the worker process last PATCHed helix/channels. Worker-process state (reconcileTwitch runs
+// only there); losing it on restart merely allows one immediate write, which is the safe side of
+// a throttle.
+let lastChannelMetadataWriteAtMs = 0;
 let plannedStopReason = "";
 let uplinkProcesses: UplinkProcessRuntime[] = [];
 let uplinkReconnectUntil = "";
@@ -5746,11 +5750,28 @@ async function reconcileTwitch(): Promise<void> {
     return;
   }
 
-  const desiredTitle = currentAsset
-    ? buildTwitchMetadataTitle(currentAsset, currentScheduleItem?.title || state.playout.currentTitle)
+  // The chapter on air right now, derived from elapsed playback rather than from boundary
+  // events. That makes the sync level-based: every cycle asks "what should the channel say at
+  // this second", which applies a crossed boundary within one cycle and also lets a broadcaster
+  // account connected mid-video catch up on the next cycle without any replayed events.
+  const currentChapter =
+    currentAsset && state.playout.currentAssetId === currentAsset.id && state.playout.processStartedAt !== ""
+      ? getAssetChapterAt(
+          parseAssetChaptersJson(currentAsset.chaptersJson),
+          Math.max(0, Math.floor((Date.now() - new Date(state.playout.processStartedAt).getTime()) / 1000))
+        )
+      : null;
+  // The chapter title replaces the asset title inside the usual composition, so the replay
+  // prefix and hashtags still apply; an empty chapter title falls back to the asset title.
+  const metadataAsset =
+    currentAsset && currentChapter?.title ? { ...currentAsset, title: currentChapter.title } : currentAsset;
+  const desiredTitle = metadataAsset
+    ? buildTwitchMetadataTitle(metadataAsset, currentScheduleItem?.title || state.playout.currentTitle)
     : currentScheduleItem?.title || state.playout.currentTitle;
   let desiredCategoryId = getTwitchDefaultCategoryId(state);
-  let desiredCategoryName = currentAsset?.categoryName || currentScheduleItem?.categoryName || "";
+  const desiredCategoryCandidate =
+    currentChapter?.categoryName || currentAsset?.categoryName || currentScheduleItem?.categoryName || "";
+  let desiredCategoryName = desiredCategoryCandidate;
   const categoryCache = new Map<string, { id: string; name: string } | null>();
   const presenceStatus = describePresenceStatus({
     activeWindows: state.presenceWindows.map((window) => ({
@@ -5769,6 +5790,8 @@ async function reconcileTwitch(): Promise<void> {
   });
 
   const sync = async (accessToken: string) => {
+    let channelWriteThrottled = false;
+
     if (metadataSyncGate.mode === "waiting-for-broadcaster") {
       // The identity token could write title and category — but only to the identity's own
       // channel, which is the wrong-channel failure this gate exists to end. Until the broadcaster
@@ -5798,7 +5821,7 @@ async function reconcileTwitch(): Promise<void> {
 
       const resolvedCategory = await resolveTwitchCategory({
         accessToken,
-        categoryName: currentAsset?.categoryName || currentScheduleItem?.categoryName || "",
+        categoryName: desiredCategoryCandidate,
         clientId: twitchClientId
       });
 
@@ -5814,7 +5837,7 @@ async function reconcileTwitch(): Promise<void> {
           scope: "twitch",
           severity: "warning",
           title: "Twitch category lookup failed",
-          message: `Could not resolve a Twitch category id for "${currentAsset?.categoryName || currentScheduleItem?.categoryName || "unknown"}". Title sync still continues.`,
+          message: `Could not resolve a Twitch category id for "${desiredCategoryCandidate || "unknown"}". Title sync still continues.`,
           fingerprint: "twitch.category.lookup.failed"
         });
       } else {
@@ -5824,10 +5847,20 @@ async function reconcileTwitch(): Promise<void> {
         );
       }
 
-      const shouldSyncChannelMetadata =
-        state.twitch.lastSyncedTitle !== desiredTitle || state.twitch.lastSyncedCategoryId !== desiredCategoryId;
+      // One decision point in front of the channel PATCH: gate, skip-if-unchanged, and the
+      // 30-second write throttle that chapter boundaries made necessary. See twitch-sync-policy.
+      const writeDecision = decideTwitchChannelMetadataWrite({
+        gateMode: metadataSyncGate.mode,
+        desiredTitle,
+        desiredCategoryId,
+        lastSyncedTitle: state.twitch.lastSyncedTitle,
+        lastSyncedCategoryId: state.twitch.lastSyncedCategoryId,
+        lastWriteAtMs: lastChannelMetadataWriteAtMs,
+        nowMs: Date.now()
+      });
+      channelWriteThrottled = !writeDecision.write && writeDecision.reason === "throttled";
 
-      if (shouldSyncChannelMetadata) {
+      if (writeDecision.write) {
         const channelBody: Record<string, string> = { title: desiredTitle };
         if (desiredCategoryId) {
           channelBody.game_id = desiredCategoryId;
@@ -5849,6 +5882,8 @@ async function reconcileTwitch(): Promise<void> {
         if (!channelResponse.ok) {
           throw new Error(`Channel metadata sync failed with status ${channelResponse.status}.`);
         }
+
+        lastChannelMetadataWriteAtMs = Date.now();
       }
     }
 
@@ -5894,15 +5929,17 @@ async function reconcileTwitch(): Promise<void> {
     }
 
     // Recorded only when metadata actually synced. Booking a "last synced" title while waiting
-    // would make the dashboard claim a sync that never reached any channel.
+    // would make the dashboard claim a sync that never reached any channel. A throttled write is
+    // the same lie one step smaller, so its last-synced values stay untouched too — that is also
+    // what makes the next cycle still see the difference and retry after the interval.
     if (metadataSyncGate.mode !== "waiting-for-broadcaster") {
       await updateTwitchConnectionRecord({
         ...state.twitch,
         status: "connected",
         lastMetadataSyncAt: new Date().toISOString(),
-        lastSyncedTitle: desiredTitle,
-        lastSyncedCategoryName: desiredCategoryName,
-        lastSyncedCategoryId: desiredCategoryId,
+        lastSyncedTitle: channelWriteThrottled ? state.twitch.lastSyncedTitle : desiredTitle,
+        lastSyncedCategoryName: channelWriteThrottled ? state.twitch.lastSyncedCategoryName : desiredCategoryName,
+        lastSyncedCategoryId: channelWriteThrottled ? state.twitch.lastSyncedCategoryId : desiredCategoryId,
         error: ""
       });
     }
