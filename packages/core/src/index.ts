@@ -2074,10 +2074,13 @@ export function resolveModeratorCheckIn(args: {
     return null;
   }
 
-  const prefix = config.requirePrefix ? "!" : "";
+  // requirePrefix false means the "!" is optional, not forbidden: the spec and the check-in form
+  // both say "!here 5", and a default install that silently ignored exactly that command looked
+  // like the feature not existing.
+  const prefix = config.requirePrefix ? "!" : "!?";
   // config.command is operator-supplied. Interpolated raw, a value containing "(" or "[" made
   // `new RegExp` throw inside the IRC message handler and take the worker process down with it.
-  const match = input.trim().match(new RegExp(`^${escapeRegExp(`${prefix}${config.command}`)}(?:\\s+(\\d+))?$`, "i"));
+  const match = input.trim().match(new RegExp(`^${prefix}${escapeRegExp(config.command)}(?:\\s+(\\d+))?$`, "i"));
 
   if (!match) {
     return null;
