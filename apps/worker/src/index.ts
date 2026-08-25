@@ -50,7 +50,13 @@ import {
   TWITCH_METADATA_WAITING_MESSAGE,
   isBroadcastChannelSplit,
   resolveBroadcastChannelLogin,
-  resolveTwitchMetadataSyncGate
+  resolveTwitchMetadataSyncGate,
+  buildAssetChaptersFromSourceMetadata,
+  buildAssetChapterWindowKey,
+  getAssetChapterAt,
+  getDueAssetChapterBoundaries,
+  parseAssetChaptersJson,
+  serializeAssetChapters
 } from "@stream247/core";
 import {
   appendSourceSyncRuns,
@@ -197,7 +203,7 @@ import { createTwitchUserIdResolver } from "./twitch-broadcast-channel.js";
 import { TwitchChatBridge } from "./twitch-engagement.js";
 import { syncTwitchEventSubSubscriptions } from "./twitch-eventsub.js";
 import { fetchTwitchLiveStatus } from "./twitch-live-status.js";
-import { isTwitchScheduleSyncEnabled } from "./twitch-sync-policy.js";
+import { decideTwitchChannelMetadataWrite, isTwitchScheduleSyncEnabled } from "./twitch-sync-policy.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
@@ -211,6 +217,16 @@ let playoutResolvedInput = "";
 let playoutLastStderrSample = "";
 let playoutLiveBridgeInputUrl = "";
 let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
+// Chapter boundaries already announced for the current playback window. In-memory on purpose:
+// the window key is (asset id, process start), and both this fired set and the ffmpeg process
+// die together — a worker restart replays the asset from second zero, so the boundaries must
+// re-fire, which an empty set after restart does automatically.
+let chapterBoundaryWindowKey = "";
+let chapterBoundaryFiredKeys: string[] = [];
+// When the worker process last PATCHed helix/channels. Worker-process state (reconcileTwitch runs
+// only there); losing it on restart merely allows one immediate write, which is the safe side of
+// a throttle.
+let lastChannelMetadataWriteAtMs = 0;
 let plannedStopReason = "";
 let uplinkProcesses: UplinkProcessRuntime[] = [];
 let uplinkReconnectUntil = "";
@@ -1794,6 +1810,35 @@ async function writeStandbySlate(
   await fs.writeFile(standbySlatePath, `${lines.join("\n")}\n`, "utf8");
 }
 
+/**
+ * The chapter-aware display title for the asset that is on air right now.
+ *
+ * Derived from elapsed playback rather than from the boundary fired set, so every overlay
+ * rewrite — the 15s cycle, an operator refresh, a scene re-render — shows the chapter that is
+ * actually playing instead of the one that was current at the last boundary event. Empty when
+ * the asset is not the one on air, has no chapters, or the active chapter carries no title;
+ * callers then fall back to the asset title exactly as before chapters existed.
+ */
+function resolveOnAirChapterTitle(state: AppState, asset: AssetRecord | null): string {
+  if (!asset || state.playout.currentAssetId !== asset.id || state.playout.processStartedAt === "") {
+    return "";
+  }
+
+  const chapters = parseAssetChaptersJson(asset.chaptersJson);
+  if (chapters.length === 0) {
+    return "";
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(state.playout.processStartedAt).getTime()) / 1000));
+  const chapter = getAssetChapterAt(chapters, elapsedSeconds);
+  if (!chapter || chapter.title === "") {
+    return "";
+  }
+
+  // The replay prefix stays: a chapter changes what plays, not the fact that it is a replay.
+  return buildAssetDisplayTitle({ title: chapter.title, titlePrefix: asset.titlePrefix });
+}
+
 async function writeOnAirOverlay(
   state: AppState,
   asset: AssetRecord | null,
@@ -1821,7 +1866,13 @@ async function writeOnAirOverlay(
   const payload = buildWorkerScenePayload({
       state,
       queueKind,
-      currentTitle: overrides.currentTitle || buildAssetDisplayTitle(asset) || state.playout.currentTitle || currentItem?.title || "Stand by",
+      currentTitle:
+        overrides.currentTitle ||
+        resolveOnAirChapterTitle(state, asset) ||
+        buildAssetDisplayTitle(asset) ||
+        state.playout.currentTitle ||
+        currentItem?.title ||
+        "Stand by",
       nextTitle: overrides.nextTitle || nextItem?.title || "Coming up next",
       nextScheduleItem: nextItem,
       nextTimeLabel: overrides.nextTimeLabel || (nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured"),
@@ -2154,6 +2205,7 @@ type YtDlpVideoResponse = {
   categories?: string[];
   webpage_url?: string;
   original_url?: string;
+  chapters?: Array<{ start_time?: number; end_time?: number; title?: string }>;
 };
 
 function buildRemoteAsset(args: {
@@ -2164,6 +2216,7 @@ function buildRemoteAsset(args: {
   folderPath?: string;
   externalId?: string;
   categoryName?: string;
+  chaptersJson?: string;
   durationSeconds?: number;
   publishedAt?: string;
   now: string;
@@ -2179,6 +2232,7 @@ function buildRemoteAsset(args: {
     includeInProgramming: true,
     externalId: args.externalId,
     categoryName: args.categoryName,
+    chaptersJson: args.chaptersJson,
     durationSeconds: args.durationSeconds,
     publishedAt: args.publishedAt,
     fallbackPriority: 100,
@@ -2438,6 +2492,12 @@ async function syncTwitchVodSources(): Promise<void> {
             folderPath: buildSourceFolderPath(source.connectorKind, source.name),
             externalId: payload.id,
             categoryName: payload.category || payload.categories?.[0] || "",
+            // Twitch VOD chapters are named after the game on air at that point, so the chapter
+            // title is also the category candidate. The db layer only stores this when the asset
+            // has no chapters yet — operator edits survive every re-sync.
+            chaptersJson: serializeAssetChapters(
+              buildAssetChaptersFromSourceMetadata(payload.chapters, { chapterTitleNamesCategory: true })
+            ),
             durationSeconds: payload.duration,
             publishedAt: fromUnixTimestamp(payload.timestamp),
             now
@@ -4130,6 +4190,50 @@ async function syncDestinations(): Promise<void> {
   }
 }
 
+/**
+ * Announce every chapter offset the current playback has crossed since the last cycle.
+ *
+ * This is the cuepoint pattern one level down: elapsed time within the asset instead of within
+ * the schedule block, measured against the playout process's own start clock because that is the
+ * moment the asset began at second zero. The event always fires and is always recorded — even
+ * while the Twitch metadata sync is gated waiting for the broadcaster connection — so the log
+ * shows which chapters passed, and the sync (which reads elapsed time, not these events) starts
+ * applying chapters the moment the broadcaster connects, without a restart.
+ */
+function emitDueAssetChapterBoundaries(asset: AssetRecord | null): void {
+  if (!asset || !isPlayoutProcessRunning() || playoutAssetId !== asset.id || playoutProcessStartedAtMs <= 0) {
+    return;
+  }
+
+  const chapters = parseAssetChaptersJson(asset.chaptersJson);
+  if (chapters.length === 0) {
+    return;
+  }
+
+  const windowKey = buildAssetChapterWindowKey(asset.id, new Date(playoutProcessStartedAtMs).toISOString());
+  if (chapterBoundaryWindowKey !== windowKey) {
+    chapterBoundaryWindowKey = windowKey;
+    chapterBoundaryFiredKeys = [];
+  }
+
+  const progress = getDueAssetChapterBoundaries({
+    windowKey,
+    chapters,
+    firedChapterKeys: chapterBoundaryFiredKeys,
+    elapsedSeconds: Math.max(0, Math.floor((Date.now() - playoutProcessStartedAtMs) / 1000))
+  });
+  chapterBoundaryFiredKeys = progress.firedChapterKeys;
+
+  for (const chapter of progress.dueChapters) {
+    logRuntimeEvent("playout.chapter.boundary", {
+      assetId: asset.id,
+      offsetSeconds: chapter.offsetSeconds,
+      categoryName: chapter.categoryName,
+      title: chapter.title
+    });
+  }
+}
+
 async function runPlayoutCycle(): Promise<void> {
   let state = await readAppState();
   if (
@@ -4923,6 +5027,8 @@ async function runPlayoutCycle(): Promise<void> {
   await releaseWatchedVodCache(selection.asset?.id ?? "", finishedAssetId, state);
   await sweepProgramFeedSegments();
 
+  emitDueAssetChapterBoundaries(selection.asset);
+
   if (
     currentScheduleItem?.poolId &&
     selection.reasonCode === "scheduled_match" &&
@@ -5646,11 +5752,28 @@ async function reconcileTwitch(): Promise<void> {
     return;
   }
 
-  const desiredTitle = currentAsset
-    ? buildTwitchMetadataTitle(currentAsset, currentScheduleItem?.title || state.playout.currentTitle)
+  // The chapter on air right now, derived from elapsed playback rather than from boundary
+  // events. That makes the sync level-based: every cycle asks "what should the channel say at
+  // this second", which applies a crossed boundary within one cycle and also lets a broadcaster
+  // account connected mid-video catch up on the next cycle without any replayed events.
+  const currentChapter =
+    currentAsset && state.playout.currentAssetId === currentAsset.id && state.playout.processStartedAt !== ""
+      ? getAssetChapterAt(
+          parseAssetChaptersJson(currentAsset.chaptersJson),
+          Math.max(0, Math.floor((Date.now() - new Date(state.playout.processStartedAt).getTime()) / 1000))
+        )
+      : null;
+  // The chapter title replaces the asset title inside the usual composition, so the replay
+  // prefix and hashtags still apply; an empty chapter title falls back to the asset title.
+  const metadataAsset =
+    currentAsset && currentChapter?.title ? { ...currentAsset, title: currentChapter.title } : currentAsset;
+  const desiredTitle = metadataAsset
+    ? buildTwitchMetadataTitle(metadataAsset, currentScheduleItem?.title || state.playout.currentTitle)
     : currentScheduleItem?.title || state.playout.currentTitle;
   let desiredCategoryId = getTwitchDefaultCategoryId(state);
-  let desiredCategoryName = currentAsset?.categoryName || currentScheduleItem?.categoryName || "";
+  const desiredCategoryCandidate =
+    currentChapter?.categoryName || currentAsset?.categoryName || currentScheduleItem?.categoryName || "";
+  let desiredCategoryName = desiredCategoryCandidate;
   const categoryCache = new Map<string, { id: string; name: string } | null>();
   const presenceStatus = describePresenceStatus({
     activeWindows: state.presenceWindows.map((window) => ({
@@ -5669,6 +5792,8 @@ async function reconcileTwitch(): Promise<void> {
   });
 
   const sync = async (accessToken: string) => {
+    let channelWriteThrottled = false;
+
     if (metadataSyncGate.mode === "waiting-for-broadcaster") {
       // The identity token could write title and category — but only to the identity's own
       // channel, which is the wrong-channel failure this gate exists to end. Until the broadcaster
@@ -5698,7 +5823,7 @@ async function reconcileTwitch(): Promise<void> {
 
       const resolvedCategory = await resolveTwitchCategory({
         accessToken,
-        categoryName: currentAsset?.categoryName || currentScheduleItem?.categoryName || "",
+        categoryName: desiredCategoryCandidate,
         clientId: twitchClientId
       });
 
@@ -5714,7 +5839,7 @@ async function reconcileTwitch(): Promise<void> {
           scope: "twitch",
           severity: "warning",
           title: "Twitch category lookup failed",
-          message: `Could not resolve a Twitch category id for "${currentAsset?.categoryName || currentScheduleItem?.categoryName || "unknown"}". Title sync still continues.`,
+          message: `Could not resolve a Twitch category id for "${desiredCategoryCandidate || "unknown"}". Title sync still continues.`,
           fingerprint: "twitch.category.lookup.failed"
         });
       } else {
@@ -5724,10 +5849,20 @@ async function reconcileTwitch(): Promise<void> {
         );
       }
 
-      const shouldSyncChannelMetadata =
-        state.twitch.lastSyncedTitle !== desiredTitle || state.twitch.lastSyncedCategoryId !== desiredCategoryId;
+      // One decision point in front of the channel PATCH: gate, skip-if-unchanged, and the
+      // 30-second write throttle that chapter boundaries made necessary. See twitch-sync-policy.
+      const writeDecision = decideTwitchChannelMetadataWrite({
+        gateMode: metadataSyncGate.mode,
+        desiredTitle,
+        desiredCategoryId,
+        lastSyncedTitle: state.twitch.lastSyncedTitle,
+        lastSyncedCategoryId: state.twitch.lastSyncedCategoryId,
+        lastWriteAtMs: lastChannelMetadataWriteAtMs,
+        nowMs: Date.now()
+      });
+      channelWriteThrottled = !writeDecision.write && writeDecision.reason === "throttled";
 
-      if (shouldSyncChannelMetadata) {
+      if (writeDecision.write) {
         const channelBody: Record<string, string> = { title: desiredTitle };
         if (desiredCategoryId) {
           channelBody.game_id = desiredCategoryId;
@@ -5749,6 +5884,8 @@ async function reconcileTwitch(): Promise<void> {
         if (!channelResponse.ok) {
           throw new Error(`Channel metadata sync failed with status ${channelResponse.status}.`);
         }
+
+        lastChannelMetadataWriteAtMs = Date.now();
       }
     }
 
@@ -5794,15 +5931,17 @@ async function reconcileTwitch(): Promise<void> {
     }
 
     // Recorded only when metadata actually synced. Booking a "last synced" title while waiting
-    // would make the dashboard claim a sync that never reached any channel.
+    // would make the dashboard claim a sync that never reached any channel. A throttled write is
+    // the same lie one step smaller, so its last-synced values stay untouched too — that is also
+    // what makes the next cycle still see the difference and retry after the interval.
     if (metadataSyncGate.mode !== "waiting-for-broadcaster") {
       await updateTwitchConnectionRecord({
         ...state.twitch,
         status: "connected",
         lastMetadataSyncAt: new Date().toISOString(),
-        lastSyncedTitle: desiredTitle,
-        lastSyncedCategoryName: desiredCategoryName,
-        lastSyncedCategoryId: desiredCategoryId,
+        lastSyncedTitle: channelWriteThrottled ? state.twitch.lastSyncedTitle : desiredTitle,
+        lastSyncedCategoryName: channelWriteThrottled ? state.twitch.lastSyncedCategoryName : desiredCategoryName,
+        lastSyncedCategoryId: channelWriteThrottled ? state.twitch.lastSyncedCategoryId : desiredCategoryId,
         error: ""
       });
     }

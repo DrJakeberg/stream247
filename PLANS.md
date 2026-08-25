@@ -1315,6 +1315,9 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | M51 | Architecture fix | Now | In progress | Separate the broadcast channel from the connected identity; chat and moderation work via the mod account now, metadata via a broadcaster connection later |
 | M52 | UX | Now | Complete | First-run wizard covering everything that lives in `.env` today |
 | M53 | Feature | Next | Planned | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
+
+| M52 | UX | Now | Planned | First-run wizard covering everything that lives in `.env` today |
+| M53 | Feature | Next | Done | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
 | M54 | Feature | Next | Planned | Chat game framework with Snake as the first game (emote-per-direction, moves only on input) |
 | M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
 
@@ -1436,6 +1439,33 @@ incident naming what was freed and why. Never touches media the schedule still r
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-08-25 — M53 Chapters Per Video
+
+- Added the pure `packages/core/src/asset-chapters.ts` model: normalisation (sort, drop
+  negatives/duplicates/empty rows, cap), chapter-at-elapsed lookup, and boundary detection over
+  (elapsed seconds, chapter list, fired set) — the cuepoint pattern one level down, offsets within
+  the asset. An empty list is exactly the pre-chapter behaviour and stays the rollback path.
+- Schema stayed additive: `assets.chapters_json` (default `'[]'`) exists in the base schema and in
+  migration `20260825_002_asset_chapters` for existing databases. Re-ingest fills chapters only
+  while the stored list is empty (`chooseStoredAssetChaptersJson`), so operator edits survive
+  every sync; Twitch VOD ingest maps yt-dlp chapters with the chapter title doubling as the
+  category candidate, because Twitch names chapters after the game on air.
+- The playout cycle emits `playout.chapter.boundary` once per crossed offset, keyed on
+  (asset, process start) so restarts re-fire from second zero; the event fires and is recorded
+  even while the M51 metadata gate waits for the broadcaster. The overlay hero title and the
+  Twitch sync both derive the active chapter from elapsed playback (level-based), so a
+  broadcaster connected mid-video catches up on the next cycle without a restart.
+- `decideTwitchChannelMetadataWrite` is the single decision point in front of the helix/channels
+  PATCH: waiting mode never writes, unchanged state skips, and a due write within 30 seconds of
+  the previous one is deferred with the last-synced fields left untouched so the next cycle
+  retries.
+- Library UI: a chapter editor on the asset detail page (offset as seconds/mm:ss/hh:mm:ss, title,
+  category per row; add/remove/edit) through the existing PATCH `/api/assets/[id]` route, which
+  rejects offsets at or beyond a known duration.
+- Validation completed: `pnpm validate` passed; the normalisation sort, the retention rule, the
+  route's duration bound and the write throttle were each counter-verified by mutating the
+  implementation and watching the matching test fail.
 
 ### 2026-08-25 — M55 Global Disk Self-Protection
 

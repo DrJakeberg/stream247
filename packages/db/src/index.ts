@@ -14,6 +14,7 @@ export { isUsableTimeZone, resolveAppBaseUrl, resolveChannelTimeZone } from "./i
 import {
   createDefaultModerationConfig,
   normalizeAudioLaneVolumePercent,
+  parseAssetChaptersJson,
   normalizeCuepointOffsetsSeconds,
   normalizeEngagementEvent,
   normalizeEngagementGameMode,
@@ -175,6 +176,11 @@ export type AssetRecord = {
   titlePrefix?: string;
   hashtagsJson?: string;
   platformNotes?: string;
+  /**
+   * JSON list of AssetChapter entries ({offsetSeconds, categoryName, title}). "[]" means the
+   * asset has no chapters and behaves exactly as it did before chapters existed.
+   */
+  chaptersJson?: string;
   status: "ready" | "pending" | "error";
   includeInProgramming: boolean;
   externalId?: string;
@@ -215,6 +221,7 @@ export type AssetMetadataUpdateRecord = {
   categoryName?: string;
   hashtagsJson?: string;
   platformNotes?: string;
+  chaptersJson?: string;
   updatedAt?: string;
 };
 
@@ -1201,6 +1208,27 @@ function normalizeAssetHashtagsJson(value: unknown): string {
   }
 }
 
+function normalizeAssetChaptersJson(value: unknown): string {
+  return typeof value === "string" ? JSON.stringify(parseAssetChaptersJson(value)) : "[]";
+}
+
+/**
+ * Decide which chapter list survives a re-ingest.
+ *
+ * Chapters are curation the moment an operator touches them, so a stored non-empty list always
+ * wins over whatever ingest discovered — the same retention rule tags and the title prefix follow
+ * in replaceAssetsForSourceIds. Only an empty stored list gets filled, which also means deleting
+ * every chapter hands the asset back to auto-fill on the next sync; that is the documented
+ * rollback shape, not data loss.
+ */
+export function chooseStoredAssetChaptersJson(
+  existingChaptersJson: string | undefined,
+  incomingChaptersJson: string | undefined
+): string {
+  const existing = normalizeAssetChaptersJson(existingChaptersJson ?? "[]");
+  return existing !== "[]" ? existing : normalizeAssetChaptersJson(incomingChaptersJson ?? "[]");
+}
+
 function normalizeAssetCollectionColor(value: unknown): string {
   const candidate = String(value ?? "")
     .trim()
@@ -1728,6 +1756,7 @@ function normalizeState(state: AppState): AppState {
         titlePrefix: normalizeAssetTitlePrefix(asset.titlePrefix ?? ""),
         hashtagsJson: normalizeAssetHashtagsJson(asset.hashtagsJson ?? "[]"),
         platformNotes: normalizeAssetPlatformNotes(asset.platformNotes ?? ""),
+        chaptersJson: normalizeAssetChaptersJson(asset.chaptersJson ?? "[]"),
         includeInProgramming: asset.includeInProgramming ?? true,
         cachePath: asset.cachePath ?? "",
         cacheStatus: asset.cacheStatus ?? "",
@@ -2218,6 +2247,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       title_prefix TEXT NOT NULL DEFAULT '',
       hashtags_json TEXT NOT NULL DEFAULT '[]',
       platform_notes TEXT NOT NULL DEFAULT '',
+      chapters_json TEXT NOT NULL DEFAULT '[]',
       status TEXT NOT NULL,
       include_in_programming BOOLEAN NOT NULL DEFAULT TRUE,
       external_id TEXT NOT NULL DEFAULT '',
@@ -2485,6 +2515,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS title_prefix TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS hashtags_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS platform_notes TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_state TEXT NOT NULL DEFAULT 'idle';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS queue_version INTEGER NOT NULL DEFAULT 0;
@@ -2665,6 +2696,22 @@ const persistentProgramFeedRuntimeMigration: MigrationDefinition = {
 
 if (!schemaMigrations.some((migration) => migration.id === persistentProgramFeedRuntimeMigration.id)) {
   schemaMigrations.push(persistentProgramFeedRuntimeMigration);
+}
+
+const assetChaptersMigration: MigrationDefinition = {
+  // 20260825_001 is the broadcaster-connection migration added while integrating M51 upstream;
+  // chapters sequence after it so both apply in a deterministic order on existing databases.
+  id: "20260825_002_asset_chapters",
+  description: "Add per-asset chapter lists so category and stream title can change inside one video.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_json TEXT NOT NULL DEFAULT '[]';
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === assetChaptersMigration.id)) {
+  schemaMigrations.push(assetChaptersMigration);
 }
 
 const assetCacheMetadataMigration: MigrationDefinition = {
@@ -3534,10 +3581,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       `
         INSERT INTO assets (
           id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
-          title_prefix, hashtags_json, platform_notes, include_in_programming, external_id, category_name, duration_seconds, published_at,
+          title_prefix, hashtags_json, platform_notes, chapters_json, include_in_programming, external_id, category_name, duration_seconds, published_at,
           fallback_priority, is_global_fallback, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
       `,
       [
         asset.id,
@@ -3554,6 +3601,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         asset.titlePrefix ?? "",
         asset.hashtagsJson ?? "[]",
         asset.platformNotes ?? "",
+        normalizeAssetChaptersJson(asset.chaptersJson ?? "[]"),
         asset.includeInProgramming,
         asset.externalId ?? "",
         asset.categoryName ?? "",
@@ -4030,6 +4078,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     title_prefix: string;
     hashtags_json: string;
     platform_notes: string;
+    chapters_json: string;
     status: AssetRecord["status"];
     include_in_programming: boolean;
     external_id: string;
@@ -4365,6 +4414,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       titlePrefix: row.title_prefix || "",
       hashtagsJson: row.hashtags_json || "[]",
       platformNotes: row.platform_notes || "",
+      chaptersJson: row.chapters_json || "[]",
       status: row.status,
       includeInProgramming: row.include_in_programming,
       externalId: row.external_id || undefined,
@@ -4775,11 +4825,12 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
       title_prefix: string;
       hashtags_json: string;
       platform_notes: string;
+      chapters_json: string;
       include_in_programming: boolean;
       fallback_priority: number;
       is_global_fallback: boolean;
     }>(
-      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, include_in_programming, fallback_priority, is_global_fallback FROM assets WHERE source_id = ANY($1::text[])",
+      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, chapters_json, include_in_programming, fallback_priority, is_global_fallback FROM assets WHERE source_id = ANY($1::text[])",
       [sourceIds]
     );
 
@@ -4801,10 +4852,10 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
         `
           INSERT INTO assets (
             id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
-            title_prefix, hashtags_json, platform_notes, include_in_programming, external_id, category_name, duration_seconds, published_at,
+            title_prefix, hashtags_json, platform_notes, chapters_json, include_in_programming, external_id, category_name, duration_seconds, published_at,
             fallback_priority, is_global_fallback, created_at, updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
         `,
         [
           asset.id,
@@ -4821,6 +4872,9 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
           normalizeAssetTitlePrefix(existing?.title_prefix ?? asset.titlePrefix ?? ""),
           normalizeAssetHashtagsJson(existing?.hashtags_json ?? asset.hashtagsJson ?? "[]"),
           normalizeAssetPlatformNotes(existing?.platform_notes ?? asset.platformNotes ?? ""),
+          // Unlike the fields above, an existing-but-empty chapter list does not win: empty means
+          // "never curated", so a re-ingest may fill it — but only then.
+          chooseStoredAssetChaptersJson(existing?.chapters_json, asset.chaptersJson),
           existing?.include_in_programming ?? asset.includeInProgramming,
           asset.externalId ?? "",
           normalizeAssetCategoryName(asset.categoryName ?? ""),
@@ -4859,15 +4913,16 @@ export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
             title_prefix = $11,
             hashtags_json = $12,
             platform_notes = $13,
-            include_in_programming = $14,
-            external_id = $15,
-            category_name = $16,
-            duration_seconds = $17,
-            published_at = $18,
-            fallback_priority = $19,
-            is_global_fallback = $20,
-            created_at = $21,
-            updated_at = $22
+            chapters_json = $14,
+            include_in_programming = $15,
+            external_id = $16,
+            category_name = $17,
+            duration_seconds = $18,
+            published_at = $19,
+            fallback_priority = $20,
+            is_global_fallback = $21,
+            created_at = $22,
+            updated_at = $23
           WHERE id = $1
         `,
         [
@@ -4884,6 +4939,7 @@ export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
           normalizeAssetTitlePrefix(asset.titlePrefix ?? ""),
           normalizeAssetHashtagsJson(asset.hashtagsJson ?? "[]"),
           normalizeAssetPlatformNotes(asset.platformNotes ?? ""),
+          normalizeAssetChaptersJson(asset.chaptersJson ?? "[]"),
           asset.includeInProgramming,
           asset.externalId ?? "",
           normalizeAssetCategoryName(asset.categoryName ?? ""),
@@ -4997,6 +5053,11 @@ export async function updateAssetMetadataRecords(updates: AssetMetadataUpdateRec
       if (update.platformNotes !== undefined) {
         setClauses.push(`platform_notes = $${values.length + 1}`);
         values.push(normalizeAssetPlatformNotes(update.platformNotes));
+      }
+
+      if (update.chaptersJson !== undefined) {
+        setClauses.push(`chapters_json = $${values.length + 1}`);
+        values.push(normalizeAssetChaptersJson(update.chaptersJson));
       }
 
       if (setClauses.length === 0) {
