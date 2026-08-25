@@ -179,8 +179,10 @@ Current Twitch domains:
 
 - broadcaster OAuth connection
 - team SSO login
-- title sync from active schedule block
-- category lookup and sync from active schedule block
+- title sync from the active schedule block, the current video, or the video's current chapter
+- category lookup and sync from the same three levels — per-video chapters (auto-filled from VOD
+  metadata, editable in the library) switch category and title at offsets inside one video,
+  gated behind the broadcaster connection and throttled to one channel write per 30 seconds
 - Twitch schedule segment sync for upcoming blocks
 - moderation-related chat mode updates
 

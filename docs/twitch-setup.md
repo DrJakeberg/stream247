@@ -6,8 +6,10 @@ Stream247 currently uses Twitch for:
 
 - broadcaster OAuth connection
 - team SSO sign-in
-- title sync from the active schedule block
-- category sync from the active schedule block
+- title sync from the active schedule block, the current video, or the video's current chapter
+- category sync from the active schedule block, the current video, or the video's current chapter
+  (chapters switch category and title at offsets inside one video, throttled to one channel write
+  per 30 seconds)
 - upcoming Twitch schedule segment sync
 - moderation automation such as emote-only fallback windows
 - RTMP output when streaming to Twitch

@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-- No unreleased changes currently tracked.
+### Added
+
+- chapters per video (M53): each asset can carry a chapter list — offset, Twitch category, stream
+  title — auto-filled from VOD metadata at ingest (Twitch VOD chapters name the game on air, so
+  the chapter title doubles as the category candidate) and editable per video in the library.
+  During playback the worker emits `playout.chapter.boundary` events as offsets are crossed; the
+  on-air hero title and the Twitch metadata sync follow the chapter that is actually playing,
+  through the M51 broadcaster gate and throttled to one channel write per 30 seconds. Operator
+  edits survive re-ingest; an empty chapter list behaves exactly as before the feature existed
 
 ## 1.5.26 - 2026-08-25
 
