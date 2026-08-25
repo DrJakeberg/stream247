@@ -2,7 +2,19 @@
 
 ## Unreleased
 
-- No unreleased changes currently tracked.
+### Added
+
+- skip-vote progress now renders on air, closing the follow-up left by the 1.5.27 poll fix. The
+  `!skip` tally lived only in worker memory, so viewers voting to skip rallied nobody: nothing was
+  persisted and the playout container had nothing to draw. The worker now flushes the campaign's
+  numbers — votes, threshold, window end, never voter identities — to a `chat_skip_vote` singleton
+  row within a second of an accepted vote, and the playout render loop projects the row into the
+  engagement panel with the same shared-projection pattern as the poll. A row older than its own
+  window renders nothing, so a worker restart cannot fabricate progress from a dead campaign; an
+  asset boundary or disabling viewer control clears the row instead of letting it linger. When the
+  poll and a campaign are live at once, the one panel slot goes to whichever runs out of time
+  first (ties to the skip campaign, whose failure mode is silent) — with default settings the poll
+  still shows first, then the campaign inherits the slot
 
 ## 1.5.27 - 2026-08-25
 
