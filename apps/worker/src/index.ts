@@ -215,6 +215,12 @@ let playoutResolvedInput = "";
 let playoutLastStderrSample = "";
 let playoutLiveBridgeInputUrl = "";
 let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
+// Chapter boundaries already announced for the current playback window. In-memory on purpose:
+// the window key is (asset id, process start), and both this fired set and the ffmpeg process
+// die together — a worker restart replays the asset from second zero, so the boundaries must
+// re-fire, which an empty set after restart does automatically.
+let chapterBoundaryWindowKey = "";
+let chapterBoundaryFiredKeys: string[] = [];
 let plannedStopReason = "";
 let uplinkProcesses: UplinkProcessRuntime[] = [];
 let uplinkReconnectUntil = "";
@@ -1798,6 +1804,35 @@ async function writeStandbySlate(
   await fs.writeFile(standbySlatePath, `${lines.join("\n")}\n`, "utf8");
 }
 
+/**
+ * The chapter-aware display title for the asset that is on air right now.
+ *
+ * Derived from elapsed playback rather than from the boundary fired set, so every overlay
+ * rewrite — the 15s cycle, an operator refresh, a scene re-render — shows the chapter that is
+ * actually playing instead of the one that was current at the last boundary event. Empty when
+ * the asset is not the one on air, has no chapters, or the active chapter carries no title;
+ * callers then fall back to the asset title exactly as before chapters existed.
+ */
+function resolveOnAirChapterTitle(state: AppState, asset: AssetRecord | null): string {
+  if (!asset || state.playout.currentAssetId !== asset.id || state.playout.processStartedAt === "") {
+    return "";
+  }
+
+  const chapters = parseAssetChaptersJson(asset.chaptersJson);
+  if (chapters.length === 0) {
+    return "";
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(state.playout.processStartedAt).getTime()) / 1000));
+  const chapter = getAssetChapterAt(chapters, elapsedSeconds);
+  if (!chapter || chapter.title === "") {
+    return "";
+  }
+
+  // The replay prefix stays: a chapter changes what plays, not the fact that it is a replay.
+  return buildAssetDisplayTitle({ title: chapter.title, titlePrefix: asset.titlePrefix });
+}
+
 async function writeOnAirOverlay(
   state: AppState,
   asset: AssetRecord | null,
@@ -1825,7 +1860,13 @@ async function writeOnAirOverlay(
   const payload = buildWorkerScenePayload({
       state,
       queueKind,
-      currentTitle: overrides.currentTitle || buildAssetDisplayTitle(asset) || state.playout.currentTitle || currentItem?.title || "Stand by",
+      currentTitle:
+        overrides.currentTitle ||
+        resolveOnAirChapterTitle(state, asset) ||
+        buildAssetDisplayTitle(asset) ||
+        state.playout.currentTitle ||
+        currentItem?.title ||
+        "Stand by",
       nextTitle: overrides.nextTitle || nextItem?.title || "Coming up next",
       nextScheduleItem: nextItem,
       nextTimeLabel: overrides.nextTimeLabel || (nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured"),
@@ -4143,6 +4184,50 @@ async function syncDestinations(): Promise<void> {
   }
 }
 
+/**
+ * Announce every chapter offset the current playback has crossed since the last cycle.
+ *
+ * This is the cuepoint pattern one level down: elapsed time within the asset instead of within
+ * the schedule block, measured against the playout process's own start clock because that is the
+ * moment the asset began at second zero. The event always fires and is always recorded — even
+ * while the Twitch metadata sync is gated waiting for the broadcaster connection — so the log
+ * shows which chapters passed, and the sync (which reads elapsed time, not these events) starts
+ * applying chapters the moment the broadcaster connects, without a restart.
+ */
+function emitDueAssetChapterBoundaries(asset: AssetRecord | null): void {
+  if (!asset || !isPlayoutProcessRunning() || playoutAssetId !== asset.id || playoutProcessStartedAtMs <= 0) {
+    return;
+  }
+
+  const chapters = parseAssetChaptersJson(asset.chaptersJson);
+  if (chapters.length === 0) {
+    return;
+  }
+
+  const windowKey = buildAssetChapterWindowKey(asset.id, new Date(playoutProcessStartedAtMs).toISOString());
+  if (chapterBoundaryWindowKey !== windowKey) {
+    chapterBoundaryWindowKey = windowKey;
+    chapterBoundaryFiredKeys = [];
+  }
+
+  const progress = getDueAssetChapterBoundaries({
+    windowKey,
+    chapters,
+    firedChapterKeys: chapterBoundaryFiredKeys,
+    elapsedSeconds: Math.max(0, Math.floor((Date.now() - playoutProcessStartedAtMs) / 1000))
+  });
+  chapterBoundaryFiredKeys = progress.firedChapterKeys;
+
+  for (const chapter of progress.dueChapters) {
+    logRuntimeEvent("playout.chapter.boundary", {
+      assetId: asset.id,
+      offsetSeconds: chapter.offsetSeconds,
+      categoryName: chapter.categoryName,
+      title: chapter.title
+    });
+  }
+}
+
 async function runPlayoutCycle(): Promise<void> {
   let state = await readAppState();
   if (
@@ -4935,6 +5020,8 @@ async function runPlayoutCycle(): Promise<void> {
       : "";
   await releaseWatchedVodCache(selection.asset?.id ?? "", finishedAssetId, state);
   await sweepProgramFeedSegments();
+
+  emitDueAssetChapterBoundaries(selection.asset);
 
   if (
     currentScheduleItem?.poolId &&
