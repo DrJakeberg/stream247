@@ -2,12 +2,20 @@
 
 ## Unreleased
 
+## 1.5.28 - 2026-08-25
+
 ### Fixed
 
 - the channel page's "Up next" now looks past midnight: after the last block of the evening it
   shows the next occurrence in the weekly grid instead of claiming nothing further is scheduled —
   on a 24/7 channel that answer was wrong whenever any block existed later in the week. This is
   also what made CI's wording baselines fail on every evening run
+- "!here 5" works with the default moderation policy. requirePrefix: false treated the bang as
+  forbidden rather than optional, so the exact command the spec and the check-in form both show
+  was silently ignored on a default install; strict configs still require the prefix
+- every compose service now caps its container logs (json-file, 20m × 5). The OS disk is the one
+  partition the media-root watermark does not watch, and unbounded ffmpeg stderr was the likeliest
+  way to fill it
 
 ### Added
 
