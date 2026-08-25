@@ -5605,6 +5605,30 @@ export async function updateManagedConfigRecord(config: ManagedConfigRecord): Pr
   });
 }
 
+/**
+ * The managed config alone, without dragging the full application state along. Exists for hot
+ * paths that poll a switch or a cadence — the playout sampler asks every few seconds, and
+ * readAppState reads dozens of tables it has no use for. Defaults are merged the same way the
+ * full state read does, so a missing or undecryptable row degrades to "nothing managed".
+ */
+export async function readManagedConfigRecord(): Promise<ManagedConfigRecord> {
+  await ensureDatabase();
+  const client = await getPool().connect();
+  try {
+    const result = await client.query<{ encrypted_payload: string; updated_at: string }>(
+      "SELECT encrypted_payload, updated_at FROM managed_config WHERE singleton_id = 1 LIMIT 1"
+    );
+    const row = result.rows[0];
+    const decrypted = row ? decryptManagedConfig(row.encrypted_payload) : null;
+    const defaults = defaultState().managedConfig;
+    return decrypted
+      ? { ...defaults, ...decrypted, updatedAt: row?.updated_at || decrypted.updatedAt }
+      : defaults;
+  } finally {
+    client.release();
+  }
+}
+
 export async function updateOutputSettingsRecord(output: OutputSettingsRecord): Promise<void> {
   await withSerializedStateWrite("updateOutputSettingsRecord", async (client) => {
     const normalized = normalizeOutputSettingsRecord(output);

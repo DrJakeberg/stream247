@@ -92,11 +92,12 @@ describe("when eviction starts", () => {
     expect(decideAt(5)).toEqual({ kind: "run-stage", stage: DISK_WATERMARK_STAGE_ORDER[0] });
   });
 
-  it("evicts the cheapest loss first: VOD cache before feed segments before thumbnails", () => {
-    // The order is part of the contract. A cached VOD re-downloads itself, an orphaned segment is
-    // garbage by definition, a thumbnail regenerates on the next library sync — so the ladder
-    // climbs from "free" to "cosmetic" and never needs to touch anything the schedule references.
-    expect(DISK_WATERMARK_STAGE_ORDER).toEqual(["vod-cache", "feed-segments", "thumbnails"]);
+  it("evicts the cheapest loss first: source frames, then VOD cache, feed segments, thumbnails", () => {
+    // The order is part of the contract. A sampled source frame regenerates within one capture
+    // interval, a cached VOD re-downloads itself, an orphaned segment is garbage by definition,
+    // a thumbnail regenerates on the next library sync — so the ladder climbs from "free" to
+    // "cosmetic" and never needs to touch anything the schedule references.
+    expect(DISK_WATERMARK_STAGE_ORDER).toEqual(["source-frames", "vod-cache", "feed-segments", "thumbnails"]);
   });
 
   it("does nothing when disabled, however full the disk is", () => {
@@ -122,12 +123,13 @@ describe("when eviction starts", () => {
 
 describe("how an episode proceeds and ends", () => {
   it("advances one stage per decision, in order", () => {
-    expect(decideAt(5, [{ stage: "vod-cache", freedBytes: 2 * GB }])).toEqual({
+    expect(decideAt(5, [{ stage: "source-frames", freedBytes: 2 * GB }])).toEqual({
       kind: "run-stage",
-      stage: "feed-segments"
+      stage: "vod-cache"
     });
     expect(
       decideAt(5, [
+        { stage: "source-frames", freedBytes: 0 },
         { stage: "vod-cache", freedBytes: 2 * GB },
         { stage: "feed-segments", freedBytes: GB }
       ])
@@ -135,9 +137,9 @@ describe("how an episode proceeds and ends", () => {
   });
 
   it("advances past a stage that freed nothing", () => {
-    expect(decideAt(5, [{ stage: "vod-cache", freedBytes: 0 }])).toEqual({
+    expect(decideAt(5, [{ stage: "source-frames", freedBytes: 0 }])).toEqual({
       kind: "run-stage",
-      stage: "feed-segments"
+      stage: "vod-cache"
     });
   });
 
@@ -155,9 +157,9 @@ describe("how an episode proceeds and ends", () => {
     // episode already underway pushes on to the recovery watermark so free space does not hover at
     // the edge and re-trigger a few cycles later.
     expect(decideAt(12)).toEqual({ kind: "idle" });
-    expect(decideAt(12, [{ stage: "vod-cache", freedBytes: 2 * GB }])).toEqual({
+    expect(decideAt(12, [{ stage: "source-frames", freedBytes: 2 * GB }])).toEqual({
       kind: "run-stage",
-      stage: "feed-segments"
+      stage: "vod-cache"
     });
   });
 
@@ -165,6 +167,7 @@ describe("how an episode proceeds and ends", () => {
     // This is the "disk genuinely full" case: nothing evictable is left and only an operator can
     // free space. The wiring turns it into a critical incident.
     const decision = decideAt(3, [
+      { stage: "source-frames", freedBytes: 0 },
       { stage: "vod-cache", freedBytes: GB },
       { stage: "feed-segments", freedBytes: 0 },
       { stage: "thumbnails", freedBytes: 512 }

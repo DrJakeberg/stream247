@@ -209,6 +209,43 @@ export function resolveSourceLayerRuntimeEnabled(managed: ManagedRuntimeToggleIn
 }
 
 // ---------------------------------------------------------------------------
+// Source snapshot cadence
+// ---------------------------------------------------------------------------
+
+export type ManagedSourceSnapshotInput = Partial<{ sourceSnapshotIntervalSeconds: string }> | null | undefined;
+
+export const DEFAULT_SOURCE_SNAPSHOT_INTERVAL_SECONDS = 5;
+const MIN_SOURCE_SNAPSHOT_INTERVAL_SECONDS = 2;
+const MAX_SOURCE_SNAPSHOT_INTERVAL_SECONDS = 300;
+
+/**
+ * How often the playout sampler captures a frame from the scene's video source. Managed value
+ * first, env fallback, five-second default. Values are clamped rather than rejected: the overlay
+ * pipe runs at one frame per second, so sub-two-second sampling only multiplies short-lived
+ * capture processes without the picture updating any faster, and a beyond-minutes value is
+ * almost certainly a typo that would read as "the feature is broken".
+ */
+export function resolveSourceSnapshotIntervalSeconds(managed: ManagedSourceSnapshotInput, env: EnvLike): number {
+  const clamp = (value: number) =>
+    Math.min(MAX_SOURCE_SNAPSHOT_INTERVAL_SECONDS, Math.max(MIN_SOURCE_SNAPSHOT_INTERVAL_SECONDS, Math.round(value)));
+
+  const managedText = text(managed?.sourceSnapshotIntervalSeconds);
+  if (managedText !== "") {
+    const managedValue = Number(managedText);
+    if (Number.isFinite(managedValue) && managedValue > 0) {
+      return clamp(managedValue);
+    }
+  }
+
+  const envValue = Number(text(env.STREAM247_SOURCE_SNAPSHOT_INTERVAL_SECONDS));
+  if (Number.isFinite(envValue) && envValue > 0) {
+    return clamp(envValue);
+  }
+
+  return DEFAULT_SOURCE_SNAPSHOT_INTERVAL_SECONDS;
+}
+
+// ---------------------------------------------------------------------------
 // EventSub webhook secret
 // ---------------------------------------------------------------------------
 
