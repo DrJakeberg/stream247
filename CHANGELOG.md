@@ -4,6 +4,26 @@
 
 ### Added
 
+- the self-monitoring now covers the volumes eviction cannot help. A second, observation-only
+  watermark watches free space on the worker's root filesystem — the closest measurable stand-in
+  for the OS and database volumes, since the database's own volume cannot be statfs'd from the
+  worker — and reports `pg_database_size` for context. Crossing below the warning mark raises one
+  critical incident plus one alert per breach (fingerprint-deduped), resolved only above the
+  higher all-clear mark; nothing is ever evicted there. Thresholds are managed config with env
+  fallback (`STREAM247_SYSTEM_VOLUME_TRIGGER_PERCENT` / `STREAM247_SYSTEM_VOLUME_RECOVER_PERCENT`,
+  defaults 10/15), editable inside the folded disk group of the admin settings
+- a conservative asset-retention sweep against unbounded library growth. Hourly, the worker
+  classifies every asset row: kept while its source exists, kept while anything references it
+  (pools — cursor, insert, audio lane, or the pool still listing the vanished source; schedule
+  cuepoints; curated sets; the entire playout runtime including the queue; chat votes, viewer
+  requests and skip campaigns; global fallbacks), and kept until it has been *observed* orphaned
+  for the whole protection window (`STREAM247_ASSET_RETENTION_PROTECT_DAYS`, default 7 — the
+  clock is the sweep's own first-seen mark in the new `asset_retention_marks` table, migration
+  `20260825_006`, so losing a source never makes old assets deletable the same day). Deletion is
+  gated behind a managed switch that ships OFF (`STREAM247_ASSET_RETENTION_ENABLED`, only "1"
+  enables); the candidate and kept-because counters are logged on every sweep either way, so an
+  operator watches first and enables second
+
 - chapter auto-detection now reaches every remote source, not just single Twitch VODs. Collection
   connectors list their items with `--flat-playlist`, which never carries chapters, so YouTube
   playlist/channel items, Twitch channel archives and direct media always arrived chapterless. A
