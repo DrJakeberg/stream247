@@ -1134,7 +1134,7 @@ export const OVERLAY_SCENE_CUSTOM_LAYER_KINDS: OverlayOptionDefinition<OverlaySc
   {
     id: "source",
     label: "Video Source",
-    description: "Slow-refresh picture from a stored camera or feed. The layer only places the picture; the feed itself is stored separately."
+    description: "Slowly refreshing picture from a stored camera or feed. The layer only places the picture; the feed itself is stored separately."
   }
 ];
 

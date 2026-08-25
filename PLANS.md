@@ -1318,6 +1318,7 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | M54 | Feature | Next | Done | Chat game framework with Snake as the first game (emote-per-direction, moves only on input); Minesweeper (chat digs by coordinates like "b3") and 2048 (snake's emote map on a fixed 4x4 board) follow on the same framework |
 | M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
 | M56 | UX | Now | In progress | Every operational decision configurable in the GUI, `.env` demoted to fallback. Part 1 done: encoder quality, disk watermark, engagement/schedule-sync feature switches, EventSub secret — all as managed config with env fallback through shared core resolvers; dead `packages/config` removed. Open: VOD-cache family, watchdog thresholds, relay topology, alerting/SMTP polish |
+| M57 | Feature | Now | In progress | Embedded video sources as scene layers. Stage 1 done: source layer kind (placement + reference), encrypted feed store, snapshot sampler at managed cadence rendering through the native overlay — plus logo/image/text layers on air. Stage 2 open: multiple simultaneous source frames, per-layer cadence, and any move beyond snapshot cadence |
 
 ## M51 Broadcast Channel Split
 
@@ -1446,6 +1447,26 @@ still provisions although no code reads it.
   it; clearing the field returns the install to its env-driven behaviour bit for bit
 - Rollback: clear the managed fields (empty = follow env) — no schema migration was involved
 
+## M57 Embedded Video Sources As Scene Layers
+
+Architecture decision (stage 1, settled): the playout ffmpeg keeps exactly two video inputs —
+programme feed and the overlay PNG pipe. An embedded camera/feed reaches the frame as an overlay
+panel at snapshot cadence: a short-lived capture process grabs one frame per interval, the native
+renderer inlines it as an image, and the encode can never stall on a third live input. No relay
+change, no additional ffmpeg input in stage 1.
+
+- The `source` custom layer carries placement plus a reference into `overlay_video_sources`; the
+  feed URL is encrypted at rest (app-secret key, destination stream-key custody: one writer, one
+  reader — the playout sampler), and only presence is ever listed
+- Away-behaviour (owner default): the layer is hidden on air, no frozen last picture; the studio
+  shows the outage as status. The visibility decision is one predicate in the layout so a later
+  "last picture + offline mark" stays a local change
+- Runtime gate `sourceLayerEnabled` defaults off; capture cadence is managed with env fallback
+  (default 5s); the sampler runs on the renderer loop, detached, timeout pinned under the cycle
+  stall budget; its directory is the cheapest disk-watermark stage
+- Stage 2 (open): several simultaneous source frames per scene, per-layer cadence, and — if the
+  cadence ceiling ever matters — revisiting the two-input decision with the relay in the loop
+
 ## Rollback Notes
 
 - Docs-only milestones roll back by reverting the doc commit.
@@ -1467,6 +1488,31 @@ still provisions although no code reads it.
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-08-26 — M57 Stage 1: Embedded Video Sources As Overlay Panels
+
+- Stage 1a: `source` layer kind in core (placement + sanitised source reference, any URL a caller
+  smuggles into the layer is dropped in the normaliser), `overlay_video_sources` table (base
+  schema + migration `20260826_001_overlay_video_sources` — 006 of 2026-08-25 stayed reserved for
+  parallel M56 work, so the next day's sequence was used), destination-style encrypted upsert with
+  keep-on-empty, admin-gated write-only API route, studio placeholder tile and source manager,
+  managed switch `sourceLayerEnabled` (default off). Proof test pins that stage 1a changed nothing
+  on air.
+- Stage 1b: `buildSourcePanel` renders the capture as a data-URI image inside the game panel's
+  placement/clamping rules (extracted into one shared helper); the frame cache key carries capture
+  status and timestamp, never image bytes. Side gain: logo, image and text layers render on air
+  with the existing ink/surface vocabulary — no new colour literals; embeds stay browser-only and
+  the studio says so. Measured through the real satori/resvg path: ~76ms for a 1280x720 frame with
+  a 640x360 capture, warm (budget: well under the 1s frame interval).
+- Stage 1c: `apps/worker/src/source-snapshot.ts` — I/O-free policy (cadence resolver clamped
+  2..300s, capture timeout under the cycle stall budget, three-interval staleness grace, failure
+  threshold 3) plus a temp+rename spawner; wired into the renderer refresh loop behind an
+  in-flight guard, never the reconciliation path. Incident `playout.source-snapshot.failed` raises
+  after repeated failures and auto-resolves on the next good frame. Snapshot directory is the new
+  first (cheapest) disk-watermark stage.
+- Affected design/wording surfaces: the overlay studio page gained the video source manager and
+  new layer-editor copy — studio-scene screenshot baselines will move; on-air baselines only move
+  for scenes that already carry text/logo/image layers.
 
 ### 2026-08-25 — M56 Part 1: Operational Settings Into The GUI
 

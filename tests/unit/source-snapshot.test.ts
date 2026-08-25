@@ -1,8 +1,12 @@
+import { mkdtempSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveSourceSnapshotIntervalSeconds } from "@stream247/core";
 import {
   SOURCE_SNAPSHOT_FAILURE_INCIDENT_THRESHOLD,
   buildSourceSnapshotArgs,
+  captureSourceSnapshot,
   deriveSourceFrameStatus,
   getSourceSnapshotDirectory,
   getSourceSnapshotPath,
@@ -121,5 +125,26 @@ describe("feed summaries", () => {
     expect(summary).not.toContain("secret");
     expect(summary).not.toContain("user");
     expect(summary).not.toContain("token");
+  });
+
+  it("scrubs the feed address out of failed-capture errors and leaves no temp file behind", async () => {
+    // /bin/false exits non-zero, and execFile quotes the entire command line — feed URL with
+    // embedded credentials included — in its error message. That message feeds logs and
+    // incidents, so the address must come out before the result leaves the module.
+    const mediaRoot = mkdtempSync(path.join(tmpdir(), "stream247-source-snapshot-"));
+    const result = await captureSourceSnapshot({
+      url: "rtsp://user:secret@cam.local/stream",
+      sourceId: "cam",
+      mediaRoot,
+      timeoutMs: 5000,
+      ffmpegBinary: "/bin/false"
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).not.toContain("secret");
+      expect(result.error).not.toContain("user:");
+    }
+    expect(readdirSync(getSourceSnapshotDirectory(mediaRoot))).toEqual([]);
   });
 });

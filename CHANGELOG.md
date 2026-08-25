@@ -4,6 +4,22 @@
 
 ### Added
 
+- embedded video sources on air (M57, stage 1): a new positioned scene layer shows a slow-refresh
+  picture from a stored camera or feed. The playout encode keeps its two video inputs — a
+  short-lived capture grabs one frame every few seconds (managed cadence, default 5s, env
+  fallback) and the native renderer draws it as an overlay panel, so a dying feed can never stall
+  the encode. Feed addresses are stored encrypted in their own table (app-secret key, the managed
+  destination stream-key pattern), never appear in the scene payload, any listing, log or
+  incident, and the layer itself carries only placement plus a source reference. A feed that goes
+  away hides the layer on air instead of freezing; the studio shows the outage as status. The
+  whole path sits behind a managed feature switch that defaults off. Repeated capture failures
+  raise a warning incident that auto-resolves on the next good frame, and the snapshot directory
+  joined the disk-watermark eviction ladder as its cheapest stage
+- logo, image and text layers now render on the on-air picture through the same native renderer
+  (previously browser overlay only), with the panels' existing ink and surface vocabulary and the
+  same safe-area clamping as the game panel. Website/widget embeds stay browser-overlay-only —
+  the rasteriser cannot run an iframe — and the studio now says so where those layers are edited
+
 - chapter auto-detection now reaches every remote source, not just single Twitch VODs. Collection
   connectors list their items with `--flat-playlist`, which never carries chapters, so YouTube
   playlist/channel items, Twitch channel archives and direct media always arrived chapterless. A

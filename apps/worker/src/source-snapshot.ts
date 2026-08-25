@@ -194,6 +194,9 @@ export async function captureSourceSnapshot(args: {
     return { ok: true };
   } catch (error) {
     await fs.unlink(tempPath).catch(() => {});
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    // execFile failures quote the whole command line — feed URL, embedded credentials and all —
+    // so the address is scrubbed to its summary before the message can reach a log or incident.
+    const raw = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: raw.split(args.url).join(summarizeSourceFeed(args.url)).slice(0, 300) };
   }
 }

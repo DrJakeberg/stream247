@@ -50,7 +50,7 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
   return (
     <div className="stack-form">
       <p className="subtle">
-        Cameras and feeds a scene's video source layer can show. The feed address is stored encrypted and never
+        Cameras and feeds the scene layers can show. The feed address is stored encrypted and never
         shown again — this list only says whether one is stored. Saving with an empty address keeps the stored one.
       </p>
       <div className="form-grid">
