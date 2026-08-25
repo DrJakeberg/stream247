@@ -50,7 +50,13 @@ import {
   TWITCH_METADATA_WAITING_MESSAGE,
   isBroadcastChannelSplit,
   resolveBroadcastChannelLogin,
-  resolveTwitchMetadataSyncGate
+  resolveTwitchMetadataSyncGate,
+  buildAssetChaptersFromSourceMetadata,
+  buildAssetChapterWindowKey,
+  getAssetChapterAt,
+  getDueAssetChapterBoundaries,
+  parseAssetChaptersJson,
+  serializeAssetChapters
 } from "@stream247/core";
 import {
   appendSourceSyncRuns,
@@ -2152,6 +2158,7 @@ type YtDlpVideoResponse = {
   categories?: string[];
   webpage_url?: string;
   original_url?: string;
+  chapters?: Array<{ start_time?: number; end_time?: number; title?: string }>;
 };
 
 function buildRemoteAsset(args: {
@@ -2162,6 +2169,7 @@ function buildRemoteAsset(args: {
   folderPath?: string;
   externalId?: string;
   categoryName?: string;
+  chaptersJson?: string;
   durationSeconds?: number;
   publishedAt?: string;
   now: string;
@@ -2177,6 +2185,7 @@ function buildRemoteAsset(args: {
     includeInProgramming: true,
     externalId: args.externalId,
     categoryName: args.categoryName,
+    chaptersJson: args.chaptersJson,
     durationSeconds: args.durationSeconds,
     publishedAt: args.publishedAt,
     fallbackPriority: 100,
@@ -2436,6 +2445,12 @@ async function syncTwitchVodSources(): Promise<void> {
             folderPath: buildSourceFolderPath(source.connectorKind, source.name),
             externalId: payload.id,
             categoryName: payload.category || payload.categories?.[0] || "",
+            // Twitch VOD chapters are named after the game on air at that point, so the chapter
+            // title is also the category candidate. The db layer only stores this when the asset
+            // has no chapters yet — operator edits survive every re-sync.
+            chaptersJson: serializeAssetChapters(
+              buildAssetChaptersFromSourceMetadata(payload.chapters, { chapterTitleNamesCategory: true })
+            ),
             durationSeconds: payload.duration,
             publishedAt: fromUnixTimestamp(payload.timestamp),
             now
