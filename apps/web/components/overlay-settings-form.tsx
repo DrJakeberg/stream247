@@ -1169,7 +1169,9 @@ export function OverlaySettingsForm(props: {
                             />
                           </label>
                           <div className="subtle" style={{ gridColumn: "1 / -1" }}>
-                            {describeOverlaySceneFrameSupport(layer.url).guidance}
+                            {describeOverlaySceneFrameSupport(layer.url).guidance} Embedded frames render in the
+                            browser overlay page only — the on-air picture cannot draw third-party sites, so treat
+                            this layer as preview and browser-overlay content.
                           </div>
                             </>
                           ) : null}

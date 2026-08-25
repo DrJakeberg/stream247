@@ -16,7 +16,8 @@ import {
   type OverlayChatView,
   type OverlayEngagementView,
   type OverlayGameView,
-  type OverlayScenePayloadView
+  type OverlayScenePayloadView,
+  type OverlaySourceFrameView
 } from "@stream247/core";
 
 export type SceneRenderFont = {
@@ -81,6 +82,7 @@ export type SceneRenderRequest = {
   engagement?: OverlayEngagementView | null;
   game?: OverlayGameView | null;
   chat?: OverlayChatView | null;
+  sourceFrame?: OverlaySourceFrameView | null;
   width: number;
   height: number;
 };
@@ -95,7 +97,8 @@ export async function renderSceneFrame(request: SceneRenderRequest, fonts: Scene
         payload: request.payload,
         engagement: request.engagement ?? null,
         game: request.game ?? null,
-        chat: request.chat ?? null
+        chat: request.chat ?? null,
+        sourceFrame: request.sourceFrame ?? null
       },
       { width: request.width, height: request.height }
     ) as Parameters<typeof satori>[0],
@@ -133,6 +136,11 @@ export function sceneFrameCacheKey(request: SceneRenderRequest): string {
     // Included so a game input re-rasterises the frame, and an idle game does not.
     request.game ?? null,
     // Included so a new chat message re-rasterises the frame, and a quiet room does not.
-    request.chat ?? null
+    request.chat ?? null,
+    // Capture identity only, NEVER the data URI: keys are compared every render tick and held in
+    // memory, and a few hundred kilobytes of base64 in every key would make both of those costs
+    // scale with image size for zero extra information — capturedAt already changes exactly when
+    // the picture does.
+    request.sourceFrame ? [request.sourceFrame.status, request.sourceFrame.capturedAt] : null
   ]);
 }
