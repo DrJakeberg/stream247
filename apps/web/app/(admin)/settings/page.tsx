@@ -72,6 +72,7 @@ export default async function SettingsPage() {
             initialValues={{
               twitchClientId: twitchConfig.clientId,
               twitchDefaultCategoryId: twitchConfig.defaultCategoryId,
+              twitchBroadcastChannelLogin: twitchConfig.broadcastChannelLogin,
               smtpHost: alertConfig.smtpHost,
               smtpPort: alertConfig.smtpPort,
               smtpUser: alertConfig.smtpUser,

@@ -321,6 +321,11 @@ export function getManagedTwitchConfig(state: AppState) {
       state,
       "twitchDefaultCategoryId",
       process.env.TWITCH_DEFAULT_CATEGORY_ID || ""
+    ),
+    broadcastChannelLogin: getManagedConfigValue(
+      state,
+      "twitchBroadcastChannelLogin",
+      process.env.TWITCH_BROADCAST_CHANNEL_LOGIN || ""
     )
   };
 }
