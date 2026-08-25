@@ -148,7 +148,11 @@ import {
   isTwitchVodCacheCoolingDown
 } from "./twitch-vod-cache.js";
 import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
-import { selectStaleProgramFeedSegments, sumSegmentBytes } from "./program-feed-maintenance.js";
+import {
+  PROGRAM_FEED_SWEEP_LIMIT,
+  selectStaleProgramFeedSegments,
+  sumSegmentBytes
+} from "./program-feed-maintenance.js";
 import {
   decideBoundaryPlaybackInput,
   isBroadcastCoverageDown,
@@ -517,7 +521,10 @@ async function sweepProgramFeedSegments(): Promise<void> {
     logRuntimeEvent("program-feed.segments.swept", {
       files: stale.length,
       freedBytes,
-      remaining: segments.length - stale.length
+      remaining: segments.length - stale.length,
+      // Named so a backlog draining over several boundaries is visible as progress rather than
+      // looking like the same sweep running over and over without effect.
+      capped: stale.length >= PROGRAM_FEED_SWEEP_LIMIT
     });
   } catch (error) {
     logRuntimeEvent("program-feed.sweep_failed", {

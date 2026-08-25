@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PROGRAM_FEED_SEGMENT_MIN_AGE_MS,
+  PROGRAM_FEED_SWEEP_LIMIT,
   selectStaleProgramFeedSegments,
   sumSegmentBytes
 } from "../../apps/worker/src/program-feed-maintenance";
@@ -36,7 +37,9 @@ describe("sweeping the program feed", () => {
       nowMs: NOW
     });
 
-    expect(stale).toEqual(["segment-old-run-1.ts", "segment-old-run-2.ts"]);
+    // Oldest first: the order is part of the contract now that a sweep is capped, so a backlog
+    // drains from its far end instead of from wherever the directory listing began.
+    expect(stale).toEqual(["segment-old-run-2.ts", "segment-old-run-1.ts"]);
   });
 
   it("leaves a segment alone until it is older than the margin, referenced or not", () => {
@@ -88,5 +91,28 @@ describe("sweeping the program feed", () => {
     );
 
     expect(bytes).toBe(860_000);
+  });
+});
+
+describe("bounding the work a single sweep does", () => {
+  it("removes the oldest first, so a capped sweep drains the far end", () => {
+    const stale = selectStaleProgramFeedSegments({
+      segments: [segment("segment-newer.ts", 2 * HOUR), segment("segment-oldest.ts", 90 * 24 * HOUR)],
+      playlist: PLAYLIST,
+      nowMs: NOW,
+      limit: 1
+    });
+
+    expect(stale).toEqual(["segment-oldest.ts"]);
+  });
+
+  it("caps a backlog rather than emptying it in one transition", () => {
+    // The measured backlog was 8847 files. Deleting them during a boundary — already the moment the
+    // encoder stalls for about a minute — would put that cost exactly where it hurts most.
+    const backlog = Array.from({ length: 5000 }, (_, index) => segment(`segment-backlog-${index}.ts`, 5 * HOUR));
+
+    expect(selectStaleProgramFeedSegments({ segments: backlog, playlist: PLAYLIST, nowMs: NOW })).toHaveLength(
+      PROGRAM_FEED_SWEEP_LIMIT
+    );
   });
 });

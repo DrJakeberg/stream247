@@ -22,11 +22,23 @@ export type ProgramFeedSegment = {
 
 export const PROGRAM_FEED_SEGMENT_MIN_AGE_MS = 10 * 60 * 1000;
 
+/**
+ * How many segments one sweep may remove.
+ *
+ * The sweep runs on the transition, which is already the most timing-sensitive moment this system
+ * has: on the test channel every boundary stalls the uplink's encoder for around a minute. A first
+ * run against the backlog measured there would have deleted 8847 files in that window. Capped, the
+ * cost of a boundary stays roughly constant and the backlog drains over successive transitions
+ * instead of landing on one of them.
+ */
+export const PROGRAM_FEED_SWEEP_LIMIT = 400;
+
 export function selectStaleProgramFeedSegments(args: {
   segments: ProgramFeedSegment[];
   playlist: string;
   nowMs: number;
   minAgeMs?: number;
+  limit?: number;
 }): string[] {
   const minAgeMs = args.minAgeMs ?? PROGRAM_FEED_SEGMENT_MIN_AGE_MS;
 
@@ -44,6 +56,10 @@ export function selectStaleProgramFeedSegments(args: {
   return args.segments
     .filter((segment) => !referenced(segment.name))
     .filter((segment) => args.nowMs - segment.modifiedAtMs >= minAgeMs)
+    // Oldest first, so a capped sweep drains the backlog from its far end rather than nibbling at
+    // whatever the directory listing happened to return first.
+    .sort((left, right) => left.modifiedAtMs - right.modifiedAtMs)
+    .slice(0, args.limit ?? PROGRAM_FEED_SWEEP_LIMIT)
     .map((segment) => segment.name);
 }
 
