@@ -1,7 +1,8 @@
 import {
   isEngagementAlertsRuntimeEnabled,
   isEngagementChannelPointsRuntimeEnabled,
-  isEngagementDonationAlertsRuntimeEnabled
+  isEngagementDonationAlertsRuntimeEnabled,
+  resolveTwitchEventSubSecret
 } from "@stream247/core";
 import { resolveAppBaseUrl, type AppState, type ManagedConfigRecord } from "@stream247/db";
 
@@ -76,16 +77,16 @@ function resolveDesiredEventSubSubscriptions(args: {
   state: AppState;
   env: Record<string, string | undefined>;
 }): EventSubSubscriptionDefinition[] {
-  if (!isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env)) {
+  if (!isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env, args.state.managedConfig)) {
     return [];
   }
 
   return REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS.filter((definition) => {
     if (definition.type === "channel.cheer") {
-      return isEngagementDonationAlertsRuntimeEnabled(args.state.engagement, args.env);
+      return isEngagementDonationAlertsRuntimeEnabled(args.state.engagement, args.env, args.state.managedConfig);
     }
     if (definition.type === "channel.channel_points_custom_reward_redemption.add") {
-      return isEngagementChannelPointsRuntimeEnabled(args.state.engagement, args.env);
+      return isEngagementChannelPointsRuntimeEnabled(args.state.engagement, args.env, args.state.managedConfig);
     }
     return true;
   });
@@ -313,10 +314,10 @@ export async function syncTwitchEventSubSubscriptions(args: {
   fetchImpl?: FetchLike;
 }): Promise<TwitchEventSubSyncResult> {
   const fetchImpl = args.fetchImpl ?? fetch;
-  const enabled = isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env);
+  const enabled = isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env, args.state.managedConfig);
   const broadcasterId = args.state.twitch.broadcasterId.trim();
   const callbackUrl = resolveTwitchEventSubCallbackUrl(args.state.managedConfig, args.env);
-  const secret = (args.env.TWITCH_EVENTSUB_SECRET || "").trim();
+  const secret = resolveTwitchEventSubSecret(args.state.managedConfig, args.env);
   const desiredSubscriptions = resolveDesiredEventSubSubscriptions(args);
 
   if (args.state.twitch.status !== "connected" || !broadcasterId) {

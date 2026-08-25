@@ -1,8 +1,16 @@
 export const dynamic = "force-dynamic";
 
+import {
+  resolveAlertsRuntimeEnabled,
+  resolveChatOverlayRuntimeEnabled,
+  resolveDiskWatermarkConfig,
+  resolveTwitchScheduleSyncEnabled
+} from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
 import { Panel } from "@/components/panel";
 import { ChannelBlueprintForm } from "@/components/channel-blueprint-form";
+import { DiskWatermarkForm } from "@/components/disk-watermark-form";
+import { FeatureSwitchesForm } from "@/components/feature-switches-form";
 import { SecretSettingsForm } from "@/components/secret-settings-form";
 import { TwoFactorSettingsForm } from "@/components/two-factor-settings-form";
 import { getAuthenticatedUser } from "@/lib/server/auth";
@@ -17,6 +25,8 @@ export default async function SettingsPage() {
   const alertConfig = getManagedAlertConfig(state);
   const readiness = await getSystemReadiness();
   const updateCenter = await getUpdateCenterState();
+  // Env-only resolutions: what "follow the server" means for each folded operations group.
+  const diskFallback = resolveDiskWatermarkConfig(null, process.env);
 
   return (
     <div className="stack-form">
@@ -81,8 +91,40 @@ export default async function SettingsPage() {
             }}
             status={{
               hasTwitchClientSecret: Boolean(state.managedConfig.twitchClientSecret || process.env.TWITCH_CLIENT_SECRET),
+              hasTwitchEventsubSecret: Boolean(state.managedConfig.twitchEventsubSecret || process.env.TWITCH_EVENTSUB_SECRET),
               hasDiscordWebhookUrl: Boolean(state.managedConfig.discordWebhookUrl || process.env.DISCORD_WEBHOOK_URL),
               hasSmtpPassword: Boolean(state.managedConfig.smtpPassword || process.env.SMTP_PASSWORD)
+            }}
+          />
+        </Panel>
+
+        <Panel title="Operations" eyebrow="Runtime">
+          <p className="subtle">
+            Operational decisions that used to live only in the server environment. Both groups fold away
+            because they are set once and then left alone; a value saved here wins over the environment.
+          </p>
+          <DiskWatermarkForm
+            initialValues={{
+              diskWatermarkEnabled: state.managedConfig.diskWatermarkEnabled,
+              diskWatermarkTriggerPercent: state.managedConfig.diskWatermarkTriggerPercent,
+              diskWatermarkRecoverPercent: state.managedConfig.diskWatermarkRecoverPercent
+            }}
+            fallback={{
+              enabled: diskFallback.enabled,
+              triggerPercent: Math.round(diskFallback.triggerFreeRatio * 100),
+              recoverPercent: Math.round(diskFallback.recoverFreeRatio * 100)
+            }}
+          />
+          <FeatureSwitchesForm
+            initialValues={{
+              streamChatOverlayEnabled: state.managedConfig.streamChatOverlayEnabled,
+              streamAlertsEnabled: state.managedConfig.streamAlertsEnabled,
+              twitchScheduleSyncEnabled: state.managedConfig.twitchScheduleSyncEnabled
+            }}
+            fallback={{
+              streamChatOverlayEnabled: resolveChatOverlayRuntimeEnabled(null, process.env),
+              streamAlertsEnabled: resolveAlertsRuntimeEnabled(null, process.env),
+              twitchScheduleSyncEnabled: resolveTwitchScheduleSyncEnabled(null, process.env)
             }}
           />
         </Panel>

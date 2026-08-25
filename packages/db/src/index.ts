@@ -440,6 +440,19 @@ export type ManagedConfigRecord = {
   smtpPassword: string;
   smtpFrom: string;
   alertEmailTo: string;
+  // M56: operational decisions, resolved through packages/core managed-runtime.ts (managed value
+  // wins, env is the fallback). All stored as strings; "" always means "not managed — follow env".
+  ffmpegPreset: string;
+  ffmpegMaxrate: string;
+  ffmpegBufsize: string;
+  ffmpegAudioBitrate: string;
+  diskWatermarkEnabled: string;
+  diskWatermarkTriggerPercent: string;
+  diskWatermarkRecoverPercent: string;
+  streamChatOverlayEnabled: string;
+  streamAlertsEnabled: string;
+  twitchScheduleSyncEnabled: string;
+  twitchEventsubSecret: string;
   updatedAt: string;
 };
 
@@ -1429,6 +1442,17 @@ function defaultState(): AppState {
       smtpPassword: "",
       smtpFrom: "",
       alertEmailTo: "",
+      ffmpegPreset: "",
+      ffmpegMaxrate: "",
+      ffmpegBufsize: "",
+      ffmpegAudioBitrate: "",
+      diskWatermarkEnabled: "",
+      diskWatermarkTriggerPercent: "",
+      diskWatermarkRecoverPercent: "",
+      streamChatOverlayEnabled: "",
+      streamAlertsEnabled: "",
+      twitchScheduleSyncEnabled: "",
+      twitchEventsubSecret: "",
       updatedAt: ""
     },
     output: {

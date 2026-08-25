@@ -15,42 +15,17 @@
  * stage implementations receive an explicit protection set built by collectDiskProtectedAssetIds.
  */
 
+import type { ResolvedDiskWatermarkConfig } from "@stream247/core";
+
 export const DISK_WATERMARK_STAGE_ORDER = ["vod-cache", "feed-segments", "thumbnails"] as const;
 
 export type DiskWatermarkStage = (typeof DISK_WATERMARK_STAGE_ORDER)[number];
 
-export type DiskWatermarkConfig = {
-  enabled: boolean;
-  /** Fraction of the volume that must stay free; below this an eviction episode starts. */
-  triggerFreeRatio: number;
-  /** Fraction of the volume at which an episode stops evicting. Above the trigger on purpose. */
-  recoverFreeRatio: number;
-};
-
-const DEFAULT_TRIGGER_FREE_PERCENT = 10;
-const DEFAULT_RECOVER_FREE_PERCENT = 15;
-
-function readPercent(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 && parsed < 100 ? parsed : fallback;
-}
-
-export function getDiskWatermarkConfig(env: NodeJS.ProcessEnv): DiskWatermarkConfig {
-  const triggerPercent = readPercent(env.STREAM247_DISK_WATERMARK_TRIGGER_PERCENT, DEFAULT_TRIGGER_FREE_PERCENT);
-  const recoverPercent = readPercent(env.STREAM247_DISK_WATERMARK_RECOVER_PERCENT, DEFAULT_RECOVER_FREE_PERCENT);
-
-  // The recovery watermark only means something above the trigger: with the pair equal or
-  // inverted, every episode would end the moment it started and the monitor would do nothing
-  // while looking configured. A misordered override is ignored whole rather than half-applied,
-  // because "my numbers are in effect but swapped" is far harder to diagnose than "my numbers
-  // were rejected".
-  const ordered = recoverPercent > triggerPercent;
-  return {
-    enabled: env.STREAM247_DISK_WATERMARK_ENABLED !== "0",
-    triggerFreeRatio: (ordered ? triggerPercent : DEFAULT_TRIGGER_FREE_PERCENT) / 100,
-    recoverFreeRatio: (ordered ? recoverPercent : DEFAULT_RECOVER_FREE_PERCENT) / 100
-  };
-}
+// Since M56 the watermark configuration resolves through the shared managed-config resolver in
+// packages/core (resolveDiskWatermarkConfig): the settings page value wins, the
+// STREAM247_DISK_WATERMARK_* env variables are the fallback, and a misordered pair is still
+// rejected whole. This module only decides; the wiring in the worker resolves and measures.
+export type DiskWatermarkConfig = ResolvedDiskWatermarkConfig;
 
 export type DiskWatermarkStageResult = {
   stage: DiskWatermarkStage;

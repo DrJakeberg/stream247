@@ -811,13 +811,35 @@ describe("engagement EventSub and SSE routes", () => {
   });
 
   it("returns the EventSub challenge after signature verification", async () => {
+    // Since M56 the challenge path DOES read state before verifying: the shared secret may live
+    // only in managed config, so verification cannot answer from env alone any more.
     const body = JSON.stringify({ challenge: "challenge-token" });
 
     const response = await POST(signedEventSubRequest(body, "eventsub-secret", { "twitch-eventsub-message-type": "webhook_callback_verification" }));
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("challenge-token");
-    expect(mockReadAppState).not.toHaveBeenCalled();
+  });
+
+  it("verifies signatures against the managed EventSub secret when env has none (M56)", async () => {
+    delete process.env.TWITCH_EVENTSUB_SECRET;
+    mockReadAppState.mockResolvedValue({
+      engagement: baseEngagement({ alertsEnabled: true }),
+      engagementEvents: [],
+      managedConfig: { twitchEventsubSecret: "managed-eventsub-secret" }
+    });
+    const body = JSON.stringify({ challenge: "challenge-token" });
+
+    const wrongSecret = await POST(
+      signedEventSubRequest(body, "eventsub-secret", { "twitch-eventsub-message-type": "webhook_callback_verification" })
+    );
+    expect(wrongSecret.status).toBe(403);
+
+    const managedSecret = await POST(
+      signedEventSubRequest(body, "managed-eventsub-secret", { "twitch-eventsub-message-type": "webhook_callback_verification" })
+    );
+    expect(managedSecret.status).toBe(200);
+    expect(await managedSecret.text()).toBe("challenge-token");
   });
 
   it("rejects invalid EventSub signatures in production", async () => {

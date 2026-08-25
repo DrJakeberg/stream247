@@ -59,7 +59,13 @@ import {
   getAssetChapterAt,
   getDueAssetChapterBoundaries,
   parseAssetChaptersJson,
-  serializeAssetChapters
+  serializeAssetChapters,
+  resolveAlertsRuntimeEnabled,
+  resolveDiskWatermarkConfig,
+  resolveEncoderQualitySettings,
+  resolveTwitchEventSubSecret,
+  resolveTwitchScheduleSyncEnabled,
+  type ResolvedEncoderQualitySettings
 } from "@stream247/core";
 import {
   appendSourceSyncRuns,
@@ -140,7 +146,6 @@ import {
 import {
   collectDiskProtectedAssetIds,
   decideDiskWatermarkAction,
-  getDiskWatermarkConfig,
   type DiskWatermarkStage,
   type DiskWatermarkStageResult
 } from "./disk-watermark.js";
@@ -230,7 +235,7 @@ import { createTwitchUserIdResolver } from "./twitch-broadcast-channel.js";
 import { TwitchChatBridge } from "./twitch-engagement.js";
 import { syncTwitchEventSubSubscriptions } from "./twitch-eventsub.js";
 import { fetchTwitchLiveStatus } from "./twitch-live-status.js";
-import { decideTwitchChannelMetadataWrite, isTwitchScheduleSyncEnabled } from "./twitch-sync-policy.js";
+import { decideTwitchChannelMetadataWrite } from "./twitch-sync-policy.js";
 
 const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
 let playoutProcess: ChildProcess | null = null;
@@ -354,6 +359,10 @@ let latestChatInteractionConfig = createDefaultChatInteractionConfig();
 // Latest engagement settings, cached by the worker cycle for the chat-overlay flush. Null until
 // the first cycle: flushing before settings are known could only write a wrong gate.
 let latestEngagementSettings: AppState["engagement"] | null = null;
+// Managed config from the same cycle read, for the runtime gates that fire between cycles
+// (the throttled chat flush). Null only before the first cycle, which resolves as env-only —
+// exactly the pre-M56 behaviour.
+let latestManagedConfig: AppState["managedConfig"] | null = null;
 // Effects the socket handler cannot apply itself; drained by the worker cycle.
 const pendingChatEffects: ChatControlEffect[] = [];
 
@@ -464,7 +473,7 @@ async function flushChatOverlayMessages(): Promise<void> {
     return;
   }
 
-  const enabled = isEngagementChatRuntimeEnabled(settings, process.env);
+  const enabled = isEngagementChatRuntimeEnabled(settings, process.env, latestManagedConfig);
   const record = {
     enabled,
     position: settings.chatPosition,
@@ -891,7 +900,14 @@ async function runDiskWatermarkStage(
  */
 async function enforceDiskWatermark(): Promise<void> {
   try {
-    const config = getDiskWatermarkConfig(process.env);
+    // Managed config wins, env is the fallback. The read is tolerant on purpose: with the
+    // database unreachable the watermark degrades to env-only resolution instead of dying —
+    // the same posture it had before the settings moved into managed config. (Actually running
+    // an eviction stage has always needed application state for the protection set.)
+    const managedConfig = await readAppState()
+      .then((state) => state.managedConfig)
+      .catch(() => null);
+    const config = resolveDiskWatermarkConfig(managedConfig, process.env);
     if (!config.enabled) {
       return;
     }
@@ -1507,7 +1523,8 @@ function getFfmpegCommand(
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
   overlayMode: OnAirOverlayMode,
   audioLane: AudioLaneCommandConfig | null,
-  output: WorkerStreamOutputSettings
+  output: WorkerStreamOutputSettings,
+  encoder: ResolvedEncoderQualitySettings
 ): string[] {
   const command = ["-hide_banner", "-loglevel", "warning", "-y", ...buildFfmpegInputArgs({ input, realtime: true })];
   const outputVideoFilter = isStreamScaleEnabled(process.env) ? getOutputVideoFilter(output) : "";
@@ -1557,11 +1574,11 @@ function getFfmpegCommand(
     "-c:v",
     "libx264",
     "-preset",
-    process.env.FFMPEG_PRESET || "veryfast",
+    encoder.preset,
     "-maxrate",
-    process.env.FFMPEG_MAXRATE || "4500k",
+    encoder.maxrate,
     "-bufsize",
-    process.env.FFMPEG_BUFSIZE || "9000k",
+    encoder.bufsize,
     "-pix_fmt",
     "yuv420p",
     "-g",
@@ -1575,7 +1592,7 @@ function getFfmpegCommand(
     "-ar",
     "44100",
     "-b:a",
-    process.env.FFMPEG_AUDIO_BITRATE || "160k"
+    encoder.audioBitrate
   );
   appendFfmpegOutputArgs(command, outputTarget);
 
@@ -1586,7 +1603,8 @@ function getLiveBridgeFfmpegCommand(
   input: string,
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
   overlayMode: OnAirOverlayMode,
-  output: WorkerStreamOutputSettings
+  output: WorkerStreamOutputSettings,
+  encoder: ResolvedEncoderQualitySettings
 ): string[] {
   const command = ["-hide_banner", "-loglevel", "warning", "-y", ...buildFfmpegInputArgs({ input })];
   const outputVideoFilter = isStreamScaleEnabled(process.env) ? getOutputVideoFilter(output) : "";
@@ -1628,11 +1646,11 @@ function getLiveBridgeFfmpegCommand(
     "-c:v",
     "libx264",
     "-preset",
-    process.env.FFMPEG_PRESET || "veryfast",
+    encoder.preset,
     "-maxrate",
-    process.env.FFMPEG_MAXRATE || "4500k",
+    encoder.maxrate,
     "-bufsize",
-    process.env.FFMPEG_BUFSIZE || "9000k",
+    encoder.bufsize,
     "-pix_fmt",
     "yuv420p",
     "-g",
@@ -1646,7 +1664,7 @@ function getLiveBridgeFfmpegCommand(
     "-ar",
     "44100",
     "-b:a",
-    process.env.FFMPEG_AUDIO_BITRATE || "160k"
+    encoder.audioBitrate
   );
   appendFfmpegOutputArgs(command, outputTarget);
 
@@ -1656,7 +1674,8 @@ function getLiveBridgeFfmpegCommand(
 function getStandbyFfmpegCommand(
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
   overlayMode: OnAirOverlayMode,
-  output: WorkerStreamOutputSettings
+  output: WorkerStreamOutputSettings,
+  encoder: ResolvedEncoderQualitySettings
 ): string[] {
   const scale = getOutputScaleFactor(output);
   const command = [
@@ -1704,11 +1723,11 @@ function getStandbyFfmpegCommand(
     "-c:v",
     "libx264",
     "-preset",
-    process.env.FFMPEG_PRESET || "veryfast",
+    encoder.preset,
     "-maxrate",
-    process.env.FFMPEG_MAXRATE || "4500k",
+    encoder.maxrate,
     "-bufsize",
-    process.env.FFMPEG_BUFSIZE || "9000k",
+    encoder.bufsize,
     "-pix_fmt",
     "yuv420p",
     "-g",
@@ -1722,7 +1741,7 @@ function getStandbyFfmpegCommand(
     "-ar",
     "44100",
     "-b:a",
-    process.env.FFMPEG_AUDIO_BITRATE || "160k",
+    encoder.audioBitrate,
     "-shortest"
   );
   appendFfmpegOutputArgs(command, outputTarget);
@@ -4138,6 +4157,8 @@ async function startOrSwitchPlayout(args: {
   fallbackTier: AppState["playout"]["fallbackTier"];
   overlayEnabled: boolean;
   outputSettings: OutputSettingsRecord;
+  /** Managed config from the caller's state read; the encoder settings resolve through it. */
+  managedConfig: AppState["managedConfig"] | null;
   runtimeTargets: DestinationRuntimeTarget[];
   runtimeStatus: AppState["playout"]["status"];
   runtimeHeartbeatAt: string;
@@ -4208,8 +4229,9 @@ async function startOrSwitchPlayout(args: {
     : args.asset
       ? args.resolvedAssetInput || cachedResolvedInput || (await resolveAssetPlaybackInput(args.asset)).input
       : "";
+  const encoder = resolveEncoderQualitySettings(args.managedConfig, process.env);
   const command = args.liveBridge
-    ? getLiveBridgeFfmpegCommand(args.liveBridge.inputUrl, args.outputTarget, overlayMode, outputSettings)
+    ? getLiveBridgeFfmpegCommand(args.liveBridge.inputUrl, args.outputTarget, overlayMode, outputSettings, encoder)
     : args.asset
       ? getFfmpegCommand(
           resolvedProgramInput,
@@ -4221,9 +4243,10 @@ async function startOrSwitchPlayout(args: {
                 volumePercent: args.audioLane.volumePercent
               }
             : null,
-          outputSettings
+          outputSettings,
+          encoder
         )
-      : getStandbyFfmpegCommand(args.outputTarget, overlayMode, outputSettings);
+      : getStandbyFfmpegCommand(args.outputTarget, overlayMode, outputSettings, encoder);
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe", "pipe"]
   });
@@ -5234,6 +5257,7 @@ async function runPlayoutCycle(): Promise<void> {
         fallbackTier: selection.fallbackTier,
         overlayEnabled: state.overlay.enabled,
         outputSettings: state.output,
+        managedConfig: state.managedConfig,
         runtimeTargets: playoutTargets,
         runtimeStatus: state.playout.status,
         runtimeHeartbeatAt: state.playout.heartbeatAt,
@@ -5301,6 +5325,7 @@ async function runPlayoutCycle(): Promise<void> {
         fallbackTier: selection.fallbackTier,
         overlayEnabled: state.overlay.enabled,
         outputSettings: state.output,
+        managedConfig: state.managedConfig,
         runtimeTargets: playoutTargets,
         runtimeStatus: state.playout.status,
         runtimeHeartbeatAt: state.playout.heartbeatAt,
@@ -5526,7 +5551,7 @@ async function runPlayoutCycle(): Promise<void> {
   }
 }
 
-async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> {
+async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: AppState["managedConfig"] | null): Promise<void> {
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
   const inputMode = STREAM247_UPLINK_INPUT_MODE;
   const inputUrl = inputMode === "hls" ? getProgramFeedRuntimeConfig().playlistPath : getRelayInputUrl(process.env);
@@ -5534,7 +5559,8 @@ async function startUplink(group: DestinationRuntimeTargetGroup): Promise<void> 
   const command = buildUplinkFfmpegCommand(inputUrl, outputTarget, {
     inputMode,
     env: process.env,
-    outputSettings: group.settings
+    outputSettings: group.settings,
+    managedConfig
   });
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe"]
@@ -5956,7 +5982,7 @@ async function runUplinkCycle(): Promise<void> {
     }
 
     if (!isMatchingRunningUplinkGroup(group)) {
-      await startUplink(group);
+      await startUplink(group, state.managedConfig);
     }
   }
 
@@ -6427,7 +6453,7 @@ async function reconcileTwitch(): Promise<void> {
   };
 
   const syncScheduleIfEnabled = async (accessToken: string, syncState: AppState, successMessage: string): Promise<void> => {
-    if (!isTwitchScheduleSyncEnabled(process.env)) {
+    if (!resolveTwitchScheduleSyncEnabled(syncState.managedConfig, process.env)) {
       await resolveIncident("twitch.schedule.sync.failed", "Twitch schedule sync is disabled by configuration.");
       return;
     }
@@ -6636,12 +6662,12 @@ async function reconcileTwitchEventSub(): Promise<void> {
   const clientSecret = getTwitchClientSecret(state);
   const syncKey = [
     state.engagement.alertsEnabled ? "alerts-on" : "alerts-off",
-    process.env.STREAM_ALERTS_ENABLED === "1" ? "runtime-on" : "runtime-off",
+    resolveAlertsRuntimeEnabled(state.managedConfig, process.env) ? "runtime-on" : "runtime-off",
     state.twitch.status,
     state.twitch.broadcasterId,
     clientId,
     resolveAppBaseUrl(state.managedConfig),
-    process.env.TWITCH_EVENTSUB_SECRET ? "secret-set" : "secret-missing"
+    resolveTwitchEventSubSecret(state.managedConfig, process.env) ? "secret-set" : "secret-missing"
   ].join("|");
   const now = Date.now();
   if (syncKey === twitchEventSubLastSyncKey && now < twitchEventSubNextSyncAt) {
@@ -6921,6 +6947,7 @@ async function runWorkerCycle(): Promise<void> {
   await reconcileTwitchEventSub();
   const chatCycleState = await readAppState();
   latestEngagementSettings = chatCycleState.engagement;
+  latestManagedConfig = chatCycleState.managedConfig;
   await twitchChatBridge.sync(chatCycleState, process.env);
   // The cycle flush is what carries settings changes (position, count, the enable gate) to the
   // row when no chat is arriving to trigger the throttled one; identical content writes nothing.
