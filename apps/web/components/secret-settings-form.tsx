@@ -16,6 +16,7 @@ export function SecretSettingsForm(props: {
   };
   status: {
     hasTwitchClientSecret: boolean;
+    hasTwitchEventsubSecret: boolean;
     hasDiscordWebhookUrl: boolean;
     hasSmtpPassword: boolean;
   };
@@ -43,6 +44,7 @@ export function SecretSettingsForm(props: {
               twitchClientSecret: String(formData.get("twitchClientSecret") || ""),
               twitchDefaultCategoryId: String(formData.get("twitchDefaultCategoryId") || ""),
               twitchBroadcastChannelLogin: String(formData.get("twitchBroadcastChannelLogin") || ""),
+              twitchEventsubSecret: String(formData.get("twitchEventsubSecret") || ""),
               discordWebhookUrl: String(formData.get("discordWebhookUrl") || ""),
               smtpHost: String(formData.get("smtpHost") || ""),
               smtpPort: String(formData.get("smtpPort") || ""),
@@ -89,6 +91,14 @@ export function SecretSettingsForm(props: {
             defaultValue={props.initialValues.twitchBroadcastChannelLogin}
             name="twitchBroadcastChannelLogin"
             placeholder="Empty: same channel as the connected account"
+          />
+        </label>
+        <label>
+          <span className="label">EventSub webhook secret</span>
+          <input
+            name="twitchEventsubSecret"
+            placeholder={props.status.hasTwitchEventsubSecret ? "Stored. Leave blank to keep it." : "Needed for viewer alerts"}
+            type="password"
           />
         </label>
         <label>
