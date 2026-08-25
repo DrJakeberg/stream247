@@ -171,6 +171,120 @@ export function resolveDiskWatermarkConfig(managed: ManagedDiskWatermarkInput, e
 }
 
 // ---------------------------------------------------------------------------
+// System volume observation watermark
+// ---------------------------------------------------------------------------
+
+// A second, observation-only watermark next to the eviction one. The eviction watermark measures
+// the media volume, where the worker can act; this pair measures the worker container's root
+// filesystem ("/") as the nearest observable proxy for the OS volume the worker cannot statfs
+// directly. Crossing it raises a critical incident and an alert — never an eviction, because
+// nothing the worker could delete lives there.
+
+export type ManagedSystemVolumeInput =
+  | Partial<{
+      systemVolumeTriggerPercent: string;
+      systemVolumeRecoverPercent: string;
+    }>
+  | null
+  | undefined;
+
+export type ResolvedSystemVolumeWatermark = {
+  /** Fraction of the root volume that must stay free; below this the incident opens. */
+  triggerFreeRatio: number;
+  /** Fraction at which the incident resolves. Above the trigger on purpose, for hysteresis. */
+  recoverFreeRatio: number;
+};
+
+const DEFAULT_SYSTEM_TRIGGER_FREE_PERCENT = 10;
+const DEFAULT_SYSTEM_RECOVER_FREE_PERCENT = 15;
+
+export function resolveSystemVolumeTriggerPercent(managed: ManagedSystemVolumeInput, env: EnvLike): number {
+  return readPercent(
+    managed?.systemVolumeTriggerPercent,
+    env.STREAM247_SYSTEM_VOLUME_TRIGGER_PERCENT,
+    DEFAULT_SYSTEM_TRIGGER_FREE_PERCENT
+  );
+}
+
+export function resolveSystemVolumeRecoverPercent(managed: ManagedSystemVolumeInput, env: EnvLike): number {
+  return readPercent(
+    managed?.systemVolumeRecoverPercent,
+    env.STREAM247_SYSTEM_VOLUME_RECOVER_PERCENT,
+    DEFAULT_SYSTEM_RECOVER_FREE_PERCENT
+  );
+}
+
+export function resolveSystemVolumeWatermarkConfig(
+  managed: ManagedSystemVolumeInput,
+  env: EnvLike
+): ResolvedSystemVolumeWatermark {
+  const triggerPercent = resolveSystemVolumeTriggerPercent(managed, env);
+  const recoverPercent = resolveSystemVolumeRecoverPercent(managed, env);
+
+  // Same whole-pair rule as the eviction watermark: recovery at or below the trigger would open
+  // and resolve the incident on alternating cycles. A misordered override is rejected whole.
+  const ordered = recoverPercent > triggerPercent;
+  return {
+    triggerFreeRatio: (ordered ? triggerPercent : DEFAULT_SYSTEM_TRIGGER_FREE_PERCENT) / 100,
+    recoverFreeRatio: (ordered ? recoverPercent : DEFAULT_SYSTEM_RECOVER_FREE_PERCENT) / 100
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Asset retention sweep
+// ---------------------------------------------------------------------------
+
+export type ManagedAssetRetentionInput =
+  | Partial<{
+      assetRetentionEnabled: string;
+      assetRetentionProtectionDays: string;
+    }>
+  | null
+  | undefined;
+
+export type ResolvedAssetRetentionConfig = {
+  /** Whether the sweep may delete. Candidates are counted and logged either way. */
+  enabled: boolean;
+  /** Days an asset must have been observed orphaned before it may be removed. */
+  protectionDays: number;
+};
+
+const DEFAULT_ASSET_RETENTION_PROTECT_DAYS = 7;
+
+/** Whole days, at least one, at most a year — a window beyond that is a "never" in disguise. */
+export function isValidAssetRetentionDays(value: number): boolean {
+  return Number.isInteger(value) && value >= 1 && value <= 365;
+}
+
+export function resolveAssetRetentionProtectionDays(managed: ManagedAssetRetentionInput, env: EnvLike): number {
+  const managedText = text(managed?.assetRetentionProtectionDays);
+  if (managedText !== "") {
+    const managedDays = Number(managedText);
+    if (isValidAssetRetentionDays(managedDays)) {
+      return managedDays;
+    }
+  }
+
+  const envDays = Number(env.STREAM247_ASSET_RETENTION_PROTECT_DAYS);
+  return isValidAssetRetentionDays(envDays) ? envDays : DEFAULT_ASSET_RETENTION_PROTECT_DAYS;
+}
+
+/**
+ * Default OFF, and from env only the literal "1" enables it — deleting library rows must never be
+ * something an install starts doing because it upgraded. The managed switch wins once set, in both
+ * directions, so the GUI is the observe-first-then-enable path.
+ */
+export function resolveAssetRetentionConfig(
+  managed: ManagedAssetRetentionInput,
+  env: EnvLike
+): ResolvedAssetRetentionConfig {
+  return {
+    enabled: readManagedFlag(managed?.assetRetentionEnabled) ?? env.STREAM247_ASSET_RETENTION_ENABLED === "1",
+    protectionDays: resolveAssetRetentionProtectionDays(managed, env)
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Runtime feature switches
 // ---------------------------------------------------------------------------
 

@@ -1,15 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
+  isValidAssetRetentionDays,
   isValidDiskWatermarkPercent,
   isValidEncoderBitrate,
   isValidEncoderSpeedPreset,
   isValidManagedFlagText,
   resolveAlertsRuntimeEnabled,
+  resolveAssetRetentionConfig,
+  resolveAssetRetentionProtectionDays,
   resolveChatOverlayRuntimeEnabled,
   resolveDiskWatermarkConfig,
   resolveDiskWatermarkRecoverPercent,
   resolveDiskWatermarkTriggerPercent,
   resolveEncoderQualitySettings,
+  resolveSystemVolumeRecoverPercent,
+  resolveSystemVolumeTriggerPercent,
+  resolveSystemVolumeWatermarkConfig,
   resolveTwitchEventSubSecret,
   resolveTwitchScheduleSyncEnabled
 } from "../../packages/core/src/index.js";
@@ -156,5 +162,98 @@ describe("EventSub secret resolution", () => {
     expect(resolveTwitchEventSubSecret({ twitchEventsubSecret: " managed " }, { TWITCH_EVENTSUB_SECRET: "env" })).toBe("managed");
     expect(resolveTwitchEventSubSecret({ twitchEventsubSecret: "" }, { TWITCH_EVENTSUB_SECRET: " env " })).toBe("env");
     expect(resolveTwitchEventSubSecret(null, {})).toBe("");
+  });
+});
+
+// The system-volume observation watermark (worker-root free space as the OS-volume proxy) follows
+// the exact resolution shape of the eviction watermark: managed wins, env falls back, and a pair
+// whose recovery does not sit above its trigger is rejected whole rather than half-applied.
+describe("system volume watermark resolution", () => {
+  it("uses the built-in defaults when neither managed config nor env is set", () => {
+    const resolved = resolveSystemVolumeWatermarkConfig(null, {});
+
+    expect(resolved.triggerFreeRatio).toBeCloseTo(0.1);
+    expect(resolved.recoverFreeRatio).toBeCloseTo(0.15);
+  });
+
+  it("follows the env variables when the managed values are empty", () => {
+    expect(
+      resolveSystemVolumeTriggerPercent({ systemVolumeTriggerPercent: "" }, { STREAM247_SYSTEM_VOLUME_TRIGGER_PERCENT: "5" })
+    ).toBe(5);
+    expect(
+      resolveSystemVolumeRecoverPercent({ systemVolumeRecoverPercent: "" }, { STREAM247_SYSTEM_VOLUME_RECOVER_PERCENT: "8" })
+    ).toBe(8);
+  });
+
+  it("lets a managed value win over the env variable", () => {
+    const resolved = resolveSystemVolumeWatermarkConfig(
+      { systemVolumeTriggerPercent: "20", systemVolumeRecoverPercent: "30" },
+      { STREAM247_SYSTEM_VOLUME_TRIGGER_PERCENT: "5", STREAM247_SYSTEM_VOLUME_RECOVER_PERCENT: "8" }
+    );
+
+    expect(resolved.triggerFreeRatio).toBeCloseTo(0.2);
+    expect(resolved.recoverFreeRatio).toBeCloseTo(0.3);
+  });
+
+  it("rejects a misordered pair whole and falls back to the defaults", () => {
+    const resolved = resolveSystemVolumeWatermarkConfig(
+      { systemVolumeTriggerPercent: "30", systemVolumeRecoverPercent: "20" },
+      {}
+    );
+
+    expect(resolved.triggerFreeRatio).toBeCloseTo(0.1);
+    expect(resolved.recoverFreeRatio).toBeCloseTo(0.15);
+  });
+});
+
+// The asset-retention sweep ships default OFF: an untouched install must never start deleting
+// library rows because it upgraded. Only the literal "1" enables it from env — the same
+// deliberately narrow semantics the engagement runtime gates use — and the managed switch wins
+// over env in both directions once it is set.
+describe("asset retention resolution", () => {
+  it("is disabled by default with a 7-day protection window", () => {
+    const resolved = resolveAssetRetentionConfig(null, {});
+
+    expect(resolved.enabled).toBe(false);
+    expect(resolved.protectionDays).toBe(7);
+  });
+
+  it("only the literal env value 1 enables the sweep", () => {
+    expect(resolveAssetRetentionConfig(null, { STREAM247_ASSET_RETENTION_ENABLED: "1" }).enabled).toBe(true);
+    expect(resolveAssetRetentionConfig(null, { STREAM247_ASSET_RETENTION_ENABLED: "true" }).enabled).toBe(false);
+    expect(resolveAssetRetentionConfig(null, { STREAM247_ASSET_RETENTION_ENABLED: "0" }).enabled).toBe(false);
+  });
+
+  it("lets the managed switch win over env in both directions", () => {
+    expect(
+      resolveAssetRetentionConfig({ assetRetentionEnabled: "0" }, { STREAM247_ASSET_RETENTION_ENABLED: "1" }).enabled
+    ).toBe(false);
+    expect(resolveAssetRetentionConfig({ assetRetentionEnabled: "1" }, {}).enabled).toBe(true);
+    // A corrupted managed value degrades to the env behaviour instead of silently toggling.
+    expect(
+      resolveAssetRetentionConfig({ assetRetentionEnabled: "yes" }, { STREAM247_ASSET_RETENTION_ENABLED: "1" }).enabled
+    ).toBe(true);
+  });
+
+  it("resolves the protection window managed-first with env fallback", () => {
+    expect(
+      resolveAssetRetentionProtectionDays({ assetRetentionProtectionDays: "14" }, { STREAM247_ASSET_RETENTION_PROTECT_DAYS: "3" })
+    ).toBe(14);
+    expect(
+      resolveAssetRetentionProtectionDays({ assetRetentionProtectionDays: "" }, { STREAM247_ASSET_RETENTION_PROTECT_DAYS: "3" })
+    ).toBe(3);
+    // Invalid values never shorten the window: they fall through to the next layer.
+    expect(
+      resolveAssetRetentionProtectionDays({ assetRetentionProtectionDays: "0" }, { STREAM247_ASSET_RETENTION_PROTECT_DAYS: "junk" })
+    ).toBe(7);
+  });
+
+  it("validates the day window as a whole number of days with a sane ceiling", () => {
+    expect(isValidAssetRetentionDays(1)).toBe(true);
+    expect(isValidAssetRetentionDays(365)).toBe(true);
+    expect(isValidAssetRetentionDays(0)).toBe(false);
+    expect(isValidAssetRetentionDays(2.5)).toBe(false);
+    expect(isValidAssetRetentionDays(366)).toBe(false);
+    expect(isValidAssetRetentionDays(Number.NaN)).toBe(false);
   });
 });
