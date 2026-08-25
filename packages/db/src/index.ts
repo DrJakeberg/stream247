@@ -2,6 +2,14 @@ import { promises as fs } from "node:fs";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import path from "node:path";
 import { Pool, type PoolClient } from "pg";
+import { resolveAppSecret } from "./app-secret.js";
+
+export {
+  DEV_FALLBACK_APP_SECRET,
+  MIN_APP_SECRET_LENGTH,
+  getAppSecretFilePath,
+  resolveAppSecret
+} from "./app-secret.js";
 import {
   createDefaultModerationConfig,
   normalizeAudioLaneVolumePercent,
@@ -1214,7 +1222,11 @@ function getPool(): Pool {
 }
 
 function getEncryptionKey(): Buffer {
-  return scryptSync(process.env.APP_SECRET || "stream247-dev-secret", "stream247-managed-config", 32);
+  // Before M52 this silently fell back to the published development constant even in production,
+  // which made the managed-config encryption decorative for any install that forgot APP_SECRET.
+  // resolveAppSecret generates and persists a real secret instead, and only production with a
+  // broken data volume still refuses to proceed.
+  return scryptSync(resolveAppSecret(), "stream247-managed-config", 32);
 }
 
 function encryptManagedConfig(value: ManagedConfigRecord): string {
