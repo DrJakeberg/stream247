@@ -14,13 +14,24 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 
-export type OAuthFlowKind = "broadcaster-connect" | "team-login";
+// "broadcaster-connect" is the identity connection (the name predates the M51 split);
+// "broadcast-channel-connect" is the second slot, the broadcast channel's own account. They must
+// stay separate kinds: a shared state cookie would let a completed identity flow satisfy the
+// broadcaster callback, which is exactly the identity-into-the-broadcaster-slot mixup the
+// separate flow exists to prevent.
+export type OAuthFlowKind = "broadcaster-connect" | "team-login" | "broadcast-channel-connect";
 
 const COOKIE_PREFIX = "s247_oauth_state_";
 const STATE_TTL_SECONDS = 10 * 60;
 
+const COOKIE_SUFFIX: Record<OAuthFlowKind, string> = {
+  "broadcaster-connect": "connect",
+  "team-login": "login",
+  "broadcast-channel-connect": "broadcast_channel"
+};
+
 function cookieNameFor(kind: OAuthFlowKind): string {
-  return `${COOKIE_PREFIX}${kind === "team-login" ? "login" : "connect"}`;
+  return `${COOKIE_PREFIX}${COOKIE_SUFFIX[kind]}`;
 }
 
 export function createOAuthStateToken(): string {

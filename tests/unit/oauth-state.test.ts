@@ -5,7 +5,8 @@ import {
   describeOAuthStateFailure,
   issueOAuthStateIn,
   matchesOAuthState,
-  type OAuthCookieStore
+  type OAuthCookieStore,
+  type OAuthFlowKind
 } from "../../apps/web/lib/server/oauth-state.js";
 
 // Stand-in for the Next.js cookie store: the state machine is exercised directly, without a
@@ -30,8 +31,8 @@ beforeEach(() => {
   store = createCookieStore();
 });
 
-const issueOAuthState = async (kind: "broadcaster-connect" | "team-login") => issueOAuthStateIn(store, kind);
-const consumeOAuthState = async (kind: "broadcaster-connect" | "team-login", presented: string | null) =>
+const issueOAuthState = async (kind: OAuthFlowKind) => issueOAuthStateIn(store, kind);
+const consumeOAuthState = async (kind: OAuthFlowKind, presented: string | null) =>
   consumeOAuthStateIn(store, kind, presented);
 
 describe("createOAuthStateToken", () => {
@@ -130,6 +131,23 @@ describe("issueOAuthState / consumeOAuthState", () => {
 
     await expect(consumeOAuthState("team-login", loginToken)).resolves.toEqual({ ok: true });
     await expect(consumeOAuthState("broadcaster-connect", connectToken)).resolves.toEqual({ ok: true });
+  });
+
+  it("scopes the broadcaster-slot flow apart from the identity flow", async () => {
+    // The mixup the split guards against, in state-cookie form: a completed identity connect must
+    // not be able to satisfy the broadcaster-slot callback, and vice versa.
+    const identityToken = await issueOAuthState("broadcaster-connect");
+
+    await expect(consumeOAuthState("broadcast-channel-connect", identityToken)).resolves.toEqual({
+      ok: false,
+      reason: "missing-cookie"
+    });
+
+    const slotToken = await issueOAuthState("broadcast-channel-connect");
+    const secondIdentityToken = await issueOAuthState("broadcaster-connect");
+
+    await expect(consumeOAuthState("broadcast-channel-connect", slotToken)).resolves.toEqual({ ok: true });
+    await expect(consumeOAuthState("broadcaster-connect", secondIdentityToken)).resolves.toEqual({ ok: true });
   });
 });
 
