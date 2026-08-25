@@ -1299,6 +1299,104 @@ pnpm validate
 
 ---
 
+## Phase 5 — Broadcast-Kanal, Wizard, Kapitel, Chat-Spiele, Selbstschutz
+
+Phase 5 captures the product vision confirmed on 2026-08-25. Ordering follows dependency: the
+broadcast-channel split first, because chat, metadata, chapters and games all land on the wrong
+channel until it exists.
+
+Context that motivates M51: the stream key sends video to **jimpanse247**, but the connected OAuth
+account is **3jakec** (a moderator there). Verified in code: the chat bridge joins the connected
+account's own channel, metadata sync PATCHes the connected account's channel, and the public watch
+link points at it. Everything Twitch-facing therefore talks to the wrong room today.
+
+| Milestone | Type | Priority | Status | Goal |
+| --- | --- | --- | --- | --- |
+| M51 | Architecture fix | Now | Planned | Separate the broadcast channel from the connected identity; chat and moderation work via the mod account now, metadata via a broadcaster connection later |
+| M52 | UX | Now | Planned | First-run wizard covering everything that lives in `.env` today |
+| M53 | Feature | Next | Planned | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
+| M54 | Feature | Next | Planned | Chat game framework with Snake as the first game (emote-per-direction, moves only on input) |
+| M55 | Ops | Later | Planned | Global disk watermark self-protection with staged cache eviction |
+
+## M51 Broadcast Channel Split
+
+Introduce a broadcast-channel concept (`jimpanse247`) distinct from the connected identity
+(`3jakec`). Decision 2026-08-25: both connections must be possible — the identity connection for
+chat and moderation, an optional broadcaster connection for channel metadata. The broadcaster
+account is not accessible today but will be again; until it is connected, metadata sync must
+visibly wait instead of silently patching the identity's channel.
+
+- Add a broadcast-channel setting (login), editable in the workspace; default empty means "same as
+  connected identity" for setups without the split
+- Chat bridge joins the broadcast channel with the identity token; emote-only and chat settings go
+  through Helix with `broadcaster_id=<channel>&moderator_id=<identity>`, which a moderator token is
+  allowed to do
+- Title/category/schedule sync runs only through a broadcaster-scoped connection (second OAuth slot,
+  minimal scopes `channel:manage:broadcast` + schedule); absent that connection the sync reports
+  "waiting for broadcast channel connection" as a visible state, not an error
+- Live status, viewer counts and every public link (watch link, overlay hints) use the broadcast
+  channel
+- Acceptance: with only 3jakec connected, chat interaction and `!here` work in `#jimpanse247`, and
+  no Helix write ever targets 3jakec's channel; connecting jimpanse247 later flips metadata sync on
+  without a restart
+- Rollback: broadcast-channel setting empty restores the previous single-account behaviour
+
+## M52 Setup Wizard
+
+A guided first-run that replaces manual `.env` editing for everything except what Compose itself
+provides. Decision 2026-08-25: all of it — the theoretical target is a stack that starts with no
+hand-written env file; source/schedule/destination remain ordinary workspace tasks after setup.
+
+- `APP_SECRET` is generated on first boot and persisted (data volume / managed config), never typed
+- `DATABASE_URL` stays an internal Compose default pointing at the bundled Postgres
+- Wizard steps: instance basics (`APP_URL`, timezone) → Twitch app credentials (already encrypted
+  managed config) → identity connection → optional broadcaster connection (M51) → done; each step
+  skippable and resumable, with the go-live checklist reflecting wizard completion
+- Acceptance: a fresh `docker compose up` with no `.env` beyond compose defaults reaches a working,
+  connected workspace entirely through the browser
+- Rollback: env variables keep overriding wizard-written values, so existing installs are untouched
+
+## M53 Chapters Per Video
+
+Per-asset chapters, each carrying its own category and stream title. Decision 2026-08-25: multiple
+categories per source with chapter switches inside a VOD, and both category and title settable per
+chapter.
+
+- Schema: chapter list per asset `[{offsetSeconds, categoryName, title}]`, additive column
+- Ingest fills chapters from VOD metadata where the source provides it (yt-dlp chapter data for
+  Twitch/YouTube); single-chapter fallback is today's per-video category
+- Library UI: chapter editor per video (add/remove/edit offset, category, title)
+- Playout emits chapter-boundary events; the Twitch metadata sync (via M51 broadcaster connection)
+  applies category and title at each boundary, throttled to Twitch's tolerance
+- Acceptance: a VOD with three chapters changes category and title on the broadcast channel at the
+  right offsets; a video without chapter data behaves exactly as today
+- Rollback: empty chapter lists disable the whole path
+
+## M54 Chat Game Framework And Snake
+
+An extensible framework for chat-driven games rendered into the on-air overlay, with Snake first.
+Decision 2026-08-25: every emote maps to a direction (configurable mapping, one emote = one
+direction), and the snake does not move on its own — it moves only when chat inputs arrive. More
+games follow on the same framework.
+
+- Framework: a game is an engagement module with chat-input intake, a tick/state model, an overlay
+  layer for rendering (native renderer runs at one frame per second, which suits input-driven
+  games), and per-game settings in the studio
+- Snake: configurable emote→direction map, grid size, and reset behaviour; moves exactly one cell
+  per accepted chat input; scoreboard line optional
+- Games are enabled per scene like other layers, and the moderation presence model applies (games
+  can run in emote-only, since emotes are the input)
+- Acceptance: an operator enables Snake, maps four emotes, and chat in the broadcast channel steers
+  it on air; disabling the layer removes all game state cleanly
+- Rollback: game layers off = no game code in the render path
+
+## M55 Global Disk Self-Protection
+
+Extend the existing per-cache guardrails (VOD cache min-free-bytes, feed segment sweep) into one
+disk watermark monitor. When free space crosses a threshold: staged eviction — unused VOD cache
+first, then orphaned feed segments beyond the live window, then oldest thumbnails — with an
+incident naming what was freed and why. Never touches media the schedule still references.
+
 ## Rollback Notes
 
 - Docs-only milestones roll back by reverting the doc commit.
@@ -1320,6 +1418,19 @@ pnpm validate
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-04-22 — M50 Portainer/DT Rollout Flow And Stack Check
+
+- Rewrote `docs/deployment.md` so the repo → GHCR → Portainer on DT → DUT validation sequence is now the canonical deployment flow instead of an implicit assumption.
+- Added the read-only `scripts/portainer-stack-check.sh` helper to resolve the pinned image digests from `.env.production.example` and compare them to the running Portainer-managed stack through the Portainer API and Docker-proxy endpoints.
+- Validation completed: `./scripts/portainer-stack-check.sh --dry-run` and `pnpm validate` passed.
+
+### 2026-04-22 — M49 Docs Finalization
+
+- Collapsed the tracked product docs to the final six-file set: `architecture.md`, `deployment.md`, `moderation-policies.md`, `operations.md`, `twitch-setup.md`, and `ui.md`.
+- Merged the durable reset content into the permanent docs, removed the tracked reset and Phase 4 archive docs from `docs/`, and updated `README.md` to point only at the permanent doc set.
+- Moved the three user-owned local planning files out of `docs/` and into `planning/archive/` unchanged so the six-doc collapse could complete without deleting local work.
+- Validation completed: `test "$(ls docs/*.md | wc -l)" = "6"` and `pnpm validate` passed.
 
 ### 2026-04-21 — M29 React Component Primitives And Chat Command Dispatch
 
@@ -1613,3 +1724,923 @@ pnpm validate
 - Classified clean asset/insert FFmpeg exits as natural playout boundaries instead of incidents, while keeping non-clean exits such as code `128` or `8` as structured per-asset failures with last stderr and sanitized input context.
 - Updated readiness and the soak monitor so short local playout failures are tolerated only when the persistent uplink is running, the program feed is fresh, the destination is ready, and crash-loop protection is not active.
 - Validation completed: `pnpm exec vitest run tests/unit/ffmpeg-runtime.test.ts tests/unit/release-readiness.test.ts`, `pnpm --filter worker build`, `pnpm --filter web typecheck`, and `pnpm validate` passed.
+
+---
+
+## Phase 5 — Product Reset & Redesign
+
+Phase 5 executes the full product reset. It has two sub-phases: Phase 5A (M36–M42) corrects surface drift and hardens the text pipeline so the redesign has a clean foundation; Phase 5B (M43–M50) ships the redesign — new information architecture, planning UX, online-studio UX, design system, engagement model, live-status visibility, and final documentation.
+
+Reference documents:
+- `docs/product-reset-audit.md` — executive verdict, requirement-by-requirement audit, square-box pipeline map, deployment reality
+- `docs/product-reset-target-state.md` — future product shape, four-workspace model, non-goals
+- `docs/product-reset-kill-list.md` — remove/keep/replace verdicts, terminology migration table
+- `docs/product-reset-ui-spec.md` — React-first design contract, canonical primitives, consistency rules
+- `docs/product-reset-docs-plan.md` — final six-doc set, merge/delete sequence
+
+**Operating rules for every Phase 5 milestone:**
+
+- The repo holds source of code. Portainer on DT is the deployment control plane. DUT is the runtime validation target. Editing the local `docker-compose.yml` alone does not change production.
+- Every milestone that changes a shipped image specifies (1) the new tag to pin in `.env.production.example`, (2) the Portainer stack update step on DT, (3) the DUT validation command(s), and (4) the rollback path.
+- Every milestone states its non-goals. If a milestone is silent on something, that thing is out of scope.
+- Route path strings are not committed ahead of M43. Milestones before M43 refer to workspaces (Live / Program / Studio / Admin), not URL paths.
+
+| Milestone | Phase | Type | Status | Goal |
+| --- | --- | --- | --- | --- |
+| M36 | 5A | Feature fix | Complete | Text-pipeline hardening — strip invisible Unicode at write, read, and render |
+| M37 | 5A | Feature fix | Complete | Navigation regression + orphaned Moderation surface |
+| M38 | 5A | Feature | Complete | Moderation presence — full chatter + operator workflow with clamp feedback |
+| M39 | 5A | Cleanup | Complete | Remove external-overlay legacy from copy + `noindex` the overlay route |
+| M40 | 5A | Cleanup | Complete | Apply terminology migration table to all surface labels |
+| M41 | 5A | UX | Complete | Consolidate playout actions on the Live surface; Dashboard becomes read-only |
+| M42 | 5A | Docs | Complete | Quarantine Phase-4 planning artifacts out of `docs/` |
+| M43 | 5B | UX | Complete | IA reset — four-workspace model in code, final route strings chosen |
+| M44 | 5B | UX | Complete | Design-system rollout — `Tabs`, `EmptyState`, `Toast`, `Textarea` primitives |
+| M45 | 5B | UX | Complete | Planning UX V2 — Program workspace with Week/Day/Now+Next lenses |
+| M46 | 5B | UX | Complete | Online Studio UX V2 — Scene/Engagement/Output tabs, publish with diff |
+| M47 | 5B | Feature | Complete | Engagement V2 — chatter-participation game with adaptive modes |
+| M48 | 5B | UX | Complete | Live-status visibility upgrade — chip in sidebar + Live header |
+| M49 | 5B | Docs | Complete | Docs finalization — collapse to the six-doc set |
+| M50 | 5B | Ops | Complete | Portainer/DT rollout flow baked into `deployment.md` + stack-check script |
+
+---
+
+## M36 Text-Pipeline Hardening (Square-Box Fix)
+
+**Goal**
+
+Eliminate the square-box tofu glyphs in overlay text, chat output, and broadcast titles by sanitizing text at every pipeline layer — form input, DB write, DB read, API response, render — not just trimming whitespace.
+
+**Scope**
+
+- Add `stripInvisibleCharacters(value: string): string` to `packages/core/src/index.ts`. Strips zero-width characters (U+200B–U+200D), BOM (U+FEFF), C0/C1 control chars (U+0000–U+001F except `\n\t`; U+007F–U+009F), bidi overrides (U+202A–U+202E, U+2066–U+2069), soft hyphen (U+00AD). Applies NFC normalization. Preserves printable non-ASCII (emoji, CJK, accents).
+- Replace `normalizeText` at `apps/web/app/api/assets/[id]/route.ts:19` (currently `.trim().slice()`) with a wrapper around `stripInvisibleCharacters` + length clamp.
+- Apply the same sanitizer at the normalize-body helpers in the shows, pools, overlay, and sources API routes.
+- Replace `visibleOverlayText` at `apps/web/components/overlay-scene-canvas.tsx:20` (currently `.trim()`) with `stripInvisibleCharacters`.
+- Wrap `buildTwitchMetadataTitle` at `apps/worker/src/twitch-metadata.ts:21` with the sanitizer on every concatenated segment (prefix, title, category token, hashtags).
+- Add regression coverage in `tests/unit/strip-invisible-characters.test.ts` covering U+200B/C/D, U+FEFF, U+0000–1F, U+007F–9F, U+202A–E, U+00AD, combining marks, emoji preservation, CJK preservation.
+- Add focused route regressions plus a fresh-DB roundtrip proving polluted text is cleaned before persistence, title generation, and overlay rendering.
+
+**Touched files**
+
+- `packages/core/src/index.ts`
+- `apps/web/app/api/assets/[id]/route.ts`
+- `apps/web/app/api/shows/route.ts`
+- `apps/web/app/api/pools/route.ts`
+- `apps/web/app/api/overlay/route.ts`
+- `apps/web/app/api/sources/route.ts`
+- `apps/web/components/overlay-scene-canvas.tsx`
+- `apps/worker/src/twitch-metadata.ts`
+- `tests/unit/strip-invisible-characters.test.ts` (new)
+
+**Acceptance**
+
+- `stripInvisibleCharacters` exists in `packages/core` and is exported.
+- All five API routes route text through it at write time.
+- Overlay render sanitizes at display time.
+- `buildTwitchMetadataTitle` produces strings with no invisible characters even when DB source contains them (legacy data safety).
+- Unit tests cover every invisible category and assert normalized NFC output.
+- Focused route regressions plus the fresh-DB roundtrip prove the full pipeline is clean end-to-end.
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/strip-invisible-characters.test.ts
+pnpm exec vitest run tests/integration/
+pnpm validate
+```
+
+**DUT validation**
+
+- Push seed asset titles containing every control-char category to DUT via `/api/assets`.
+- Capture overlay frames via existing Chromium capture path.
+- Assert no tofu glyphs in captured frames; assert title in Twitch API reflects the sanitized string.
+
+**Portainer/DT rollout**
+
+- Build web + worker images, push to `ghcr.io/drjakeberg/stream247-{web,worker}:v1.6.0-M36`.
+- Pin tag in `.env.production.example`.
+- Redeploy Portainer-managed stack on DT.
+- Run seed-title DUT validation before promoting to production.
+
+**Rollback**
+
+- Revert tag in `.env.production.example` to previous release; redeploy previous stack in Portainer.
+
+**Non-goals**
+
+- No font swap to address glyph-set gaps.
+- No on-air banner changes.
+- No historical-data backfill sweep; the render-layer sanitizer handles legacy rows on display.
+
+**Progress notes**
+
+- Completed with centralized invisible-character stripping in core, route-level write sanitization on assets/shows/pools/overlay/sources, DB normalization for overlay preset and asset metadata writes, render-time overlay cleanup, and Twitch/overlay title-path sanitization.
+- Validation completed: `pnpm exec vitest run tests/unit/strip-invisible-characters.test.ts tests/unit/twitch-metadata.test.ts tests/unit/assets-api-safety.test.ts tests/unit/sources-api-safety.test.ts tests/unit/overlay-scenes.test.ts`, `pnpm exec vitest run tests/integration/`, and `pnpm validate` passed.
+
+---
+
+## M37 Navigation Regression And Orphaned Moderation Surface
+
+**Goal**
+
+Fix the three concrete nav defects: `<a href>` in `admin-navigation.tsx:20` (drops SSE on every click), the dead `/ops` redirect, and the Moderation surface not being reachable from the sidebar.
+
+**Scope**
+
+- Convert every internal link in `apps/web/components/admin-navigation.tsx` from `<a href>` to `next/link` `<Link>`.
+- Delete `apps/web/app/(admin)/ops/page.tsx` and remove any nav entry still pointing at `/ops`.
+- Surface the Moderation page in the sidebar (temporary placement; final placement under the Live workspace happens in M43).
+- Update the nav-link CSS block in `apps/web/app/globals.css` so long labels wrap (`word-break: break-word`, two-line clamp) instead of truncating with `text-overflow: ellipsis`.
+
+**Touched files**
+
+- `apps/web/components/admin-navigation.tsx`
+- `apps/web/lib/admin-navigation.ts`
+- `apps/web/app/(admin)/ops/page.tsx` (delete)
+- `apps/web/app/globals.css`
+
+**Acceptance**
+
+- No `<a href="/…">` for internal routes anywhere in `apps/web/components/admin-navigation.tsx`.
+- `/ops` route no longer exists; any lingering link targeting it is removed.
+- Sidebar contains a visible Moderation entry.
+- Long label "Moderation Presence Window" wraps to two lines in the sidebar at default width; no ellipsis.
+- SSE event counter on `/api/broadcast/stream` does not reset when clicking between nav items.
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm --filter web build
+```
+
+**DUT validation**
+
+- Open the admin app on DUT.
+- Subscribe to `/api/broadcast/stream` in a side tab; click every sidebar entry; confirm event counter is continuous.
+- Confirm Moderation is reachable from the sidebar.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M37`; pin in `.env.production.example`; redeploy Portainer stack; smoke-check SSE persistence after deploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack.
+
+**Non-goals**
+
+- No IA rename. Workspace consolidation is M43.
+- No redesign of individual pages. This milestone is a regression fix.
+
+---
+
+## M38 Moderation Presence — Full Operator + Chatter Flow
+
+**Goal**
+
+Close the feedback gap on `!here`. The parser at `apps/worker/src/twitch-engagement.ts:70` and `parseModeratorCheckIn` at `packages/core/src/index.ts:1782` already clamp requested values to the configured `min`/`max`/`default`. Today the clamp is silent — operators and chatters never know why `!here 5` produced a 10-minute window. This milestone makes the clamp visible across chat, the Live workspace, the Moderation page, and the settings form.
+
+**Scope — chatter flow**
+
+- When a moderator runs `!here` or `!here N`, the IRC bridge sends a chat reply confirming the resulting window. If the requested value was clamped, the reply explains the clamp explicitly: `"received !here 5, minimum is 10 — window set to 10 min"`. If the value was accepted as-is: `"presence window set to 30 min"`.
+- Reply text is generated by a pure helper in `packages/core` (new `formatPresenceClampReply`) so it is unit-testable without the IRC bridge.
+
+**Scope — operator UI**
+
+- Live workspace header shows a presence chip (`StatusChip`) while a window is active. Chip shows remaining minutes; clicking it opens the Moderation detail page.
+- Moderation page shows active + recent windows with three columns: *requested value*, *applied value*, *clamp reason*.
+- Moderation settings form exposes `min`, `max`, `default` with inline helper text describing the clamp rule.
+- Sidebar badge shows a dot when a window is active.
+
+**Scope — docs**
+
+- `docs/moderation-policies.md` gets a subsection stating: the exact clamp rule, the IRC reply format, the min/max/default semantics, how to change them.
+
+**Touched files**
+
+- `apps/worker/src/twitch-engagement.ts` (call new reply helper + send IRC message)
+- `packages/core/src/index.ts` (add `formatPresenceClampReply`; keep `parseModeratorCheckIn` unchanged)
+- `apps/web/components/moderation-settings-form.tsx`
+- `apps/web/app/(admin)/moderation/page.tsx`
+- `apps/web/components/admin-navigation.tsx` (sidebar dot)
+- `apps/web/app/(admin)/broadcast/page.tsx` (or wherever the Live header renders — presence chip)
+- `tests/unit/engagement.test.ts` (extend)
+- `tests/unit/format-presence-clamp-reply.test.ts` (new)
+- `docs/moderation-policies.md`
+
+**Acceptance**
+
+- `!here 5` with min=10 produces chat reply mentioning the clamp; DB window is 10 minutes.
+- `!here 30` with min=10/max=60 produces chat reply confirming 30 minutes; no clamp language.
+- `!here 9999` with max=60 produces chat reply mentioning the max-clamp; DB window is 60 minutes.
+- Moderation page shows requested vs applied values for each of the above.
+- Sidebar dot and Live header chip reflect the active window in real time.
+- Settings form explains the clamp rule inline.
+- `docs/moderation-policies.md` describes the clamp rule and the reply format.
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/engagement.test.ts tests/unit/format-presence-clamp-reply.test.ts
+pnpm validate
+```
+
+**DUT validation**
+
+- IRC test harness sends `!here`, `!here 1`, `!here 9999`, `!here 10` against the DUT bot; assert chat reply strings and DB window values.
+- Operator walkthrough on DUT: confirm chip + Moderation page + sidebar dot reflect each window.
+
+**Portainer/DT rollout**
+
+- Build web + worker; tag `v1.6.0-M38`; pin in `.env.production.example`; redeploy Portainer stack; soak `!here` harness on DUT before production promote.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack. Chat replies stop; clamp behavior reverts to silent but functionally unchanged.
+
+**Non-goals**
+
+- No new chat commands beyond `!here`.
+- No automation changes triggered by presence state.
+- No Twitch API calls to auto-set chat mode during presence (separate future milestone if pursued).
+
+---
+
+## M39 External-Overlay Legacy Removal
+
+**Goal**
+
+Remove every trace of the "external overlay / browser source / third-party stream embed" framing from copy and search indexing. Align the overlay's product-surface language with the target-state statement: *the overlay is internal output for Stream247's own 24/7 broadcast*.
+
+**Scope**
+
+- Strip "external", "browser source", "third-party", and "OBS source" phrasing from admin copy, Studio descriptions, and onboarding text.
+- Update `docs/legacy-removal-list.md` — the explicit "external stream overlay" language at `docs/legacy-removal-list.md:111` is rewritten or the file is merged and deleted per M42.
+- Add `noindex` meta to the `/overlay` route's layout and set the HTTP response header `X-Robots-Tag: noindex` on `/overlay` and `/overlay?chromeless=1`.
+- Add the explicit internal-overlay statement to `README.md` product description.
+
+**Touched files**
+
+- `apps/web/app/overlay/layout.tsx` (or equivalent)
+- `apps/web/app/overlay/page.tsx`
+- `apps/web/middleware.ts` (or response-header wiring) for `X-Robots-Tag`
+- `docs/legacy-removal-list.md` (updated or deleted)
+- `README.md`
+- Various UI copy files touched by grep for the old phrasing
+
+**Acceptance**
+
+- `curl -I http://<dut>/overlay` returns `X-Robots-Tag: noindex` in the response.
+- `curl http://<dut>/overlay` HTML contains `<meta name="robots" content="noindex">`.
+- `grep -ri "external overlay\|browser source\|third-party" apps/web docs` returns zero hits (or only the product-reset docs where the migration is explained).
+- Chromium capture still renders `/overlay?chromeless=1` correctly.
+- `README.md` contains the one-sentence internal-overlay statement.
+
+**Validation**
+
+```bash
+pnpm --filter web build
+pnpm validate
+```
+
+**DUT validation**
+
+- `curl -I` the overlay URL on DUT; assert header.
+- View-source on `/overlay`; assert meta.
+- Restart Chromium capture; confirm overlay still renders and frame pipeline is unaffected.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M39`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack. Headers revert.
+
+**Non-goals**
+
+- No URL change for `/overlay`.
+- No capture flow change.
+
+---
+
+## M40 Surface-Language Terminology Cleanup
+
+**Goal**
+
+Apply the terminology migration table from `docs/product-reset-kill-list.md` to every surface label, section header, `PageHeader` title, form label, button label, and doc copy string. Route paths do not move in this milestone — that's M43.
+
+**Scope — replace, in UI copy only**
+
+- "Broadcast" / "Dashboard" (nav labels) → "Live" — applied to sidebar labels, page titles, and copy referring to the live surface collectively.
+- "Overlays" (nav label for chat/alerts) → "Engagement" — in the sidebar and any internal references.
+- "Scene Studio" / "Overlay Studio" labels → "Scene" — as a tab name once tabs land in M44; as a label prior.
+- "Stream Studio" (section header) → "Studio".
+- "Workspace" (section header) → "Admin".
+- "Programming" (section header) → "Program".
+- "in-stream overlay" / "browser source" (already covered partially by M39) → "overlay".
+- "pool block" → "schedule block" (where the reference is to a block on the schedule).
+- "Go Live Checklist" vs "readiness" — unify on "Readiness".
+- "presence window" / "mod presence" / "!here window" — unify on "Moderation presence".
+
+**Touched files**
+
+- `apps/web/lib/admin-navigation.ts` (section labels; routes unchanged)
+- `apps/web/components/admin-navigation.tsx` (rendered labels)
+- Every `PageHeader` usage in `apps/web/app/(admin)/**/page.tsx`
+- Form label strings across the admin app
+- `docs/architecture.md`, `docs/deployment.md`, `docs/operations.md`, `docs/moderation-policies.md`, `docs/twitch-setup.md`
+
+**Acceptance**
+
+- `grep -ri "Stream Studio\|Workspace (section)\|Programming (section)" apps/web` returns zero hits.
+- Sidebar reads `Live`, `Program`, `Studio`, `Admin` as top-level labels (grouping remains; workspace consolidation is M43).
+- Docs use the new terms consistently.
+
+**Validation**
+
+```bash
+pnpm --filter web build
+pnpm validate
+```
+
+**DUT validation**
+
+- Visual walkthrough of every admin page on DUT.
+- Screenshot compare vs pre-M40 baseline; only label strings should differ.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M40`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack.
+
+**Non-goals**
+
+- No route rename. Routes move in M43.
+- No IA consolidation. Workspaces consolidate in M43.
+- No layout or content changes. Copy only.
+
+---
+
+## M41 Broadcast/Dashboard Control Consolidation
+
+**Goal**
+
+Remove the duplicate playout action forms from `/dashboard` so `/broadcast` is the single surface with live actions. `/dashboard` becomes read-only status. No route rename in this milestone — that's M43's job.
+
+**Scope**
+
+- Remove skip/override/restart/fallback/insert form components from `/dashboard`; replace with status-only rendering.
+- Keep all incident and drift content on `/dashboard` (the Operations consolidation from M34 stands).
+- Ensure `/broadcast` is the only surface with action buttons that mutate playout state.
+
+**Touched files**
+
+- `apps/web/app/(admin)/dashboard/page.tsx`
+- Any control-form component imports that become unused (delete cleanly; no re-export stubs)
+
+**Acceptance**
+
+- `/dashboard` renders no `<form>` or action button that calls a playout-mutation endpoint.
+- `/broadcast` retains all five action categories.
+- No operator workflow requires visiting `/dashboard` to act on the stream.
+
+**Validation**
+
+```bash
+pnpm --filter web build
+pnpm validate
+```
+
+**DUT validation**
+
+- Operator performs one go-live and one pause on DUT via `/broadcast`; confirm `/dashboard` shows the new state as status only.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M41`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack.
+
+**Non-goals**
+
+- No redesign of either page layout. Layout redesign lives in M43/M44.
+- No IA change.
+
+---
+
+## M42 Quarantine Phase-4 Planning Artifacts
+
+**Goal**
+
+Move the five Phase-4 planning artifacts out of `docs/` so the product doc set is not mixed with superseded plans. Files go to `docs/archive/` until M49 deletes them outright.
+
+**Scope**
+
+- Move `docs/full-product-reset-audit.md`, `docs/full-product-reset-plan.md`, `docs/legacy-removal-list.md`, `docs/docs-reset-plan.md`, `docs/ui-redesign-spec.md` to `docs/archive/`.
+- Update `README.md` doc list to reflect the new structure.
+- Update any cross-links that reference the moved files.
+
+**Touched files**
+
+- `docs/archive/` (new directory)
+- `docs/full-product-reset-audit.md` → `docs/archive/full-product-reset-audit.md`
+- `docs/full-product-reset-plan.md` → `docs/archive/full-product-reset-plan.md`
+- `docs/legacy-removal-list.md` → `docs/archive/legacy-removal-list.md`
+- `docs/docs-reset-plan.md` → `docs/archive/docs-reset-plan.md`
+- `docs/ui-redesign-spec.md` → `docs/archive/ui-redesign-spec.md`
+- `README.md`
+
+**Acceptance**
+
+- Top level of `docs/` contains only current product docs + the five product-reset files (which themselves are scheduled for M49 absorption).
+- `docs/archive/` contains the five moved files.
+- No dead cross-links.
+
+**Validation**
+
+```bash
+pnpm validate
+```
+
+**DUT validation**
+
+- None (docs-only).
+
+**Portainer/DT rollout**
+
+- None (docs-only).
+
+**Non-goals**
+
+- No content rewrite. This is a move, not an edit.
+- No new docs.
+
+---
+
+## M43 IA Reset — Workspace Model In Code
+
+**Goal**
+
+Commit the four-workspace information architecture from `docs/product-reset-target-state.md` to code. This is where final route path strings are chosen and recorded.
+
+**Scope**
+
+- Rewrite `apps/web/lib/admin-navigation.ts` as four workspace entries: Live, Program, Studio, Admin.
+- Create the workspace route shells. Final path strings (for example `/live` vs `/broadcast`, `/program` vs `/schedule`, `/studio` vs `/overlay-studio`, `/admin` vs `/settings`) are chosen during implementation and recorded in an addendum at the end of `docs/product-reset-target-state.md`.
+- Set up redirects from every old route to the new workspace + internal tab.
+- Keep old routes aliased for one soak cycle before deletion (cleanup milestone after M50, or folded into M49).
+- Apply the `Tabs` primitive from M44 as it lands — M43 can ship the shell even with interim tab styling if M44 is not yet complete.
+
+**Touched files**
+
+- `apps/web/lib/admin-navigation.ts`
+- `apps/web/app/(admin)/layout.tsx`
+- New workspace page files (paths decided at implementation)
+- Route redirects via `next.config.js` or route-level `redirect()`
+- `docs/product-reset-target-state.md` (addendum recording final paths)
+
+**Acceptance**
+
+- Four workspace entries in the sidebar; no other top-level entries.
+- Every old admin URL redirects to its new workspace + tab.
+- SSE subscription survives workspace switches.
+- Final path strings recorded in target-state addendum.
+
+**Validation**
+
+```bash
+pnpm --filter web build
+pnpm validate
+```
+
+**DUT validation**
+
+- Operator walkthrough on DUT: visit every old URL; confirm redirect to new workspace; confirm tab selection is correct.
+- SSE event counter on `/api/broadcast/stream` stays continuous through workspace switches.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M43`; pin; redeploy; soak for at least 24h with redirects live before deleting aliases.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack. Old routes still serve pre-M43 surfaces.
+
+**Non-goals**
+
+- No internal layout redesign. Layouts inside workspaces can remain pre-reset shapes until M44–M46 land.
+- No primitive changes. Primitives roll out in M44.
+- No data-model changes.
+
+---
+
+## M44 Design-System Rollout
+
+**Goal**
+
+Add the four new primitives (`Tabs`, `EmptyState`, `Toast`, `Textarea`) specified in `docs/product-reset-ui-spec.md`, then apply them incrementally starting with the Program workspace.
+
+**Scope**
+
+- Create `apps/web/components/ui/Tabs.tsx` — keyboard-accessible, URL-synced, visually distinct from sidebar.
+- Create `apps/web/components/ui/EmptyState.tsx` — title + body + optional primary action slot.
+- Create `apps/web/components/ui/Toast.tsx` — stacked top-right, auto-dismiss, accessible live region.
+- Create `apps/web/components/ui/Textarea.tsx` — same label/helper/error shape as `Input`.
+- Document each in `docs/product-reset-ui-spec.md`.
+- Apply to the Program workspace first as the reference adoption.
+- Set up Playwright screenshot baselines for the Program workspace after the design-system pass.
+
+**Touched files**
+
+- `apps/web/components/ui/Tabs.tsx` (new)
+- `apps/web/components/ui/EmptyState.tsx` (new)
+- `apps/web/components/ui/Toast.tsx` (new)
+- `apps/web/components/ui/Textarea.tsx` (new)
+- `apps/web/app/(admin)/program/**` (primitive adoption)
+- `docs/product-reset-ui-spec.md`
+- `tests/e2e/program-screenshot.spec.ts` (new)
+
+**Acceptance**
+
+- Four new primitives exist and are documented.
+- Program workspace uses all four where applicable.
+- Screenshot baseline captures the Program workspace's clean state.
+
+**Validation**
+
+```bash
+pnpm --filter web build
+pnpm exec playwright test tests/e2e/program-screenshot.spec.ts
+pnpm validate
+```
+
+**DUT validation**
+
+- Playwright screenshot compare against DUT-rendered Program workspace.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M44`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack.
+
+**Non-goals**
+
+- No wholesale rewrite of every form. Adoption is incremental across M44–M46.
+- No new primitives beyond the four listed.
+
+---
+
+## M45 Planning UX V2
+
+**Goal**
+
+Ship the Program workspace per `docs/product-reset-target-state.md` and `docs/product-reset-ui-spec.md`. Three lenses (Week, Day, Now+Next). Video-level default. Structured Replay toggle, hashtag chip input, category `Select`.
+
+**Scope**
+
+- Program workspace with three internal tabs (Week / Day / Now+Next), all using the `Tabs` primitive.
+- Week lens: seven-day grid; each block shows its first resolved video via `lookaheadVideoTitleFromPool` at `packages/core/src/index.ts:1943`; expandable to reveal the full video sequence.
+- Day lens: vertical timeline; every asset slot shown with runtime, category, Replay flag.
+- Now+Next lens: currently playing + next two + fallback chain; matches Live header chip.
+- Inline per-video metadata drawer: Replay boolean toggle, hashtag chip input (no JSON), category `Select` bound to show profile, notes `Textarea`.
+- Worker composes broadcast title from the Replay flag via `buildTwitchMetadataTitle` at `apps/worker/src/twitch-metadata.ts:21` — UI never handles the `"Replay: "` prefix literally.
+- Next-item resolution is real; nil resolutions render `EmptyState` with a fix link.
+
+**Touched files**
+
+- `apps/web/app/(admin)/program/week/page.tsx` (or equivalent)
+- `apps/web/app/(admin)/program/day/page.tsx`
+- `apps/web/app/(admin)/program/now-next/page.tsx`
+- `apps/web/components/schedule-block-editor.tsx`
+- `apps/web/components/asset-metadata-drawer.tsx` (new or consolidated)
+- `apps/web/components/hashtag-chip-input.tsx` (new)
+- `apps/worker/src/twitch-metadata.ts` (verify Replay composition)
+- `packages/core/src/index.ts` (verify `lookaheadVideoTitleFromPool` wiring)
+
+**Acceptance**
+
+- All three lenses exist, reachable via tabs.
+- Video-level granularity is the default view in every lens.
+- Hashtag input is chip-based; no raw JSON.
+- Replay is a toggle; broadcast title composition happens in the worker.
+- Category is a `Select` bound to the show profile.
+- "Next" resolution shows a real title end-to-end (overlay + chat + Twitch title).
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/
+pnpm --filter web build
+pnpm --filter worker build
+pnpm validate
+```
+
+**DUT validation**
+
+- Seed a schedule on DUT with multiple pools, a Replay asset, and hashtags.
+- Confirm Week lens shows correct first-resolved title per block.
+- Confirm broadcast title has `Replay: <title>` prefix and no invisible characters (validates M36 + M45 together).
+- Confirm hashtags reach Twitch title and chat without becoming JSON noise.
+
+**Portainer/DT rollout**
+
+- Build web + worker; tag `v1.6.0-M45`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack. Program workspace reverts to M44 shell.
+
+**Non-goals**
+
+- No change to pool rotation algorithm.
+- No calendar export.
+- No multi-week template features beyond what exists.
+
+---
+
+## M46 Online Studio UX V2
+
+**Goal**
+
+Ship the Studio workspace per `docs/product-reset-target-state.md` and `docs/product-reset-ui-spec.md`. Three tabs (Scene / Engagement / Output). One publish action with diff preview. Emergency banner prominent on Scene.
+
+**Scope**
+
+- Studio workspace with three tabs via `Tabs` primitive.
+- Scene tab: layer-based overlay editor; safe-area boundaries visible at 5% inset; per-layer "allow outside safe area" toggle.
+- Publish flow: "Review changes" → diff modal (added/removed/changed layers, text, positions) → confirm publishes.
+- Emergency banner toggle is top-right on the Scene tab; active state = red border on workspace header.
+- Engagement tab: chat overlay settings, follow/sub/cheer/channel-points alert settings, chatter-participation game settings (UI scaffolding only; behavior in M47).
+- Output tab: output profile `Select`, destination list, per-destination output profile override, `StatusChip` for destination health.
+- Collapse the duplicate engagement-settings surface that currently exists across `/overlays` and the chat-settings form.
+
+**Touched files**
+
+- `apps/web/app/(admin)/studio/scene/page.tsx`
+- `apps/web/app/(admin)/studio/engagement/page.tsx`
+- `apps/web/app/(admin)/studio/output/page.tsx`
+- `apps/web/components/scene-publish-dialog.tsx` (new)
+- `apps/web/components/emergency-banner-toggle.tsx`
+- `apps/web/components/engagement-settings-form.tsx`
+- `apps/web/components/destination-output-profile-form.tsx` (already exists; integrate)
+
+**Acceptance**
+
+- Studio has exactly three tabs.
+- Publish always shows a diff; no one-click publish without review.
+- Emergency banner toggle reaches the overlay in under 5s.
+- Engagement settings live in one place only.
+- Output tab shows per-destination health chips.
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/
+pnpm --filter web build
+pnpm validate
+```
+
+**DUT validation**
+
+- Publish a draft scene on DUT; confirm Chromium capture picks up the change.
+- Toggle emergency banner; measure time-to-overlay; assert under 5s.
+- Edit engagement settings; confirm overlay reflects changes.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M46`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack.
+
+**Non-goals**
+
+- No new scene primitives (text/image/logo/embed set is unchanged).
+- No new output profiles.
+- No new destination types.
+
+---
+
+## M47 Engagement + Interaction Model V2
+
+**Goal**
+
+Ship the chatter-participation game per `docs/product-reset-target-state.md`. Three adaptive modes driven by active-chatter count: solo, small-group, crowd. Single configuration surface in Studio → Engagement. Overlay rendering alongside chat and alerts.
+
+**Scope**
+
+- Add active-chatter rolling-window tracker in `apps/worker/src/twitch-engagement.ts`. Window length configurable; default 10 minutes.
+- Mode selector: ≈1 chatter → solo; 2–10 → small-group; 10+ → crowd. Hysteresis to prevent flapping.
+- Solo mode: call-and-response prompts, reactive emote challenges.
+- Small-group mode: emoji-vote prompts, lightweight prediction rounds.
+- Crowd mode: voting / prediction / trivia with on-overlay aggregation.
+- Engagement overlay renders game state alongside chat and alerts.
+- Settings UI in Studio → Engagement: enable/disable, per-mode toggles, window length.
+
+**Touched files**
+
+- `apps/worker/src/twitch-engagement.ts`
+- `apps/worker/src/engagement-game.ts` (new)
+- `apps/web/components/engagement-overlay.tsx`
+- `apps/web/components/engagement-settings-form.tsx`
+- `packages/core/src/index.ts` (active-chatter window logic, pure helpers)
+- `tests/unit/engagement-game.test.ts` (new)
+
+**Acceptance**
+
+- Mode switches correctly at boundaries with hysteresis.
+- Overlay renders each mode's widget inside safe area.
+- Settings form controls all three modes independently.
+- Game does not interfere with existing chat overlay or alerts.
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/engagement-game.test.ts
+pnpm --filter web build
+pnpm --filter worker build
+pnpm validate
+```
+
+**DUT validation**
+
+- IRC harness on DUT simulates 1, 5, 15, 30 chatters over a 30-minute window.
+- Confirm mode switches occur at documented thresholds.
+- Capture overlay frames; confirm game widget renders correctly in each mode.
+
+**Portainer/DT rollout**
+
+- Build web + worker; tag `v1.6.0-M47`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack. Engagement overlay reverts to pre-M47 behavior (chat + alerts only).
+
+**Non-goals**
+
+- No custom per-stream game scripting.
+- No external game platform integration.
+- No changes to existing follow/sub/cheer/channel-points alerts.
+
+---
+
+## M48 Live-Status Visibility Upgrade
+
+**Goal**
+
+Make Twitch channel live state visible in every operator surface. Sidebar chip + Live workspace header chip. Video preview is explicitly deferred.
+
+**Scope**
+
+- Sidebar shows `StatusChip` for Twitch live status (live / offline / unknown).
+- Live workspace header shows live + uptime + viewer count.
+- Playout live status remains a separate chip (is the worker playing content right now?).
+- State flows from existing polling at `apps/worker/src/twitch-live-status.ts` through the existing SSE feed.
+- Deferred-decision rationale captured in a subsection of `docs/product-reset-target-state.md`: an embedded Twitch player is bandwidth-heavy, it flashes the operator's own viewership, and an overlay snapshot is not a substitute. Revisit only against measured operator need.
+
+**Touched files**
+
+- `apps/web/components/admin-navigation.tsx` (sidebar chip)
+- `apps/web/app/(admin)/live/page.tsx` (or whichever route lands as Live after M43)
+- `apps/worker/src/twitch-live-status.ts` (verify emit shape)
+- `docs/product-reset-target-state.md` (deferred-decision rationale)
+
+**Acceptance**
+
+- Sidebar chip updates within 30s of a Twitch live state change.
+- Live header shows live/offline + uptime + viewer count.
+- Polling source is unchanged.
+
+**Validation**
+
+```bash
+pnpm --filter web build
+pnpm validate
+```
+
+**DUT validation**
+
+- Go live on the DUT-connected Twitch channel; confirm sidebar chip flips within 30s.
+- End the stream; confirm chip flips back.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M48`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack.
+
+**Non-goals**
+
+- No small video preview. Explicitly deferred.
+- No viewer analytics dashboard.
+
+---
+
+## M49 Docs Finalization
+
+**Goal**
+
+Collapse Phase-4 and Phase-5 documentation artifacts into the final six-doc set defined in `docs/product-reset-docs-plan.md`. Delete the artifacts.
+
+**Scope**
+
+- Merge the permanent parts of `docs/product-reset-target-state.md` (overlay-is-internal statement, non-goals list, four-workspace model) into `architecture.md` and `README.md`.
+- Merge the terminology migration table from `docs/product-reset-kill-list.md` into `ui.md` as a "canonical terms" section.
+- Rename `docs/product-reset-ui-spec.md` → `docs/ui.md`. Delete the old `docs/ui-redesign-spec.md` when `ui.md` lands.
+- Delete `docs/product-reset-audit.md`, `docs/product-reset-target-state.md`, `docs/product-reset-kill-list.md`, `docs/product-reset-docs-plan.md`, and everything in `docs/archive/` (the five Phase-4 artifacts moved in M42).
+- Final `docs/` listing: `architecture.md`, `deployment.md`, `moderation-policies.md`, `operations.md`, `twitch-setup.md`, `ui.md`.
+- Verification step: `ls docs/*.md` returns exactly those six files.
+
+**Touched files**
+
+- `docs/architecture.md` (content additions)
+- `docs/ui.md` (renamed from `docs/product-reset-ui-spec.md`; content additions)
+- `README.md` (final product description)
+- Deletions: `docs/product-reset-audit.md`, `docs/product-reset-target-state.md`, `docs/product-reset-kill-list.md`, `docs/product-reset-docs-plan.md`, `docs/ui-redesign-spec.md`, `docs/archive/*`
+
+**Acceptance**
+
+- `docs/` contains exactly six `.md` files, all named per the plan.
+- No load-bearing content was lost; each deleted file's content either lives in a permanent doc or was ephemeral planning.
+- `README.md` contains the internal-overlay statement.
+- No dead cross-links in the repo.
+
+**Validation**
+
+```bash
+test "$(ls docs/*.md | wc -l)" = "6"
+pnpm validate
+```
+
+**DUT validation**
+
+- None (docs-only).
+
+**Portainer/DT rollout**
+
+- None (docs-only).
+
+**Non-goals**
+
+- No new doc topics.
+- No content rewrites beyond the specific merges listed.
+
+---
+
+## M50 Portainer/DT Rollout Flow + Stack-Check Script
+
+**Goal**
+
+Bake the "repo → GHCR → Portainer on DT → DUT soak → production promote" flow into `deployment.md` as the canonical deployment rhythm. Add a script that verifies the running Portainer stack's image digests match `.env.production.example`.
+
+**Scope**
+
+- Write the full deployment flow in `deployment.md` as a step-by-step procedure operators follow for every release. Includes: build via CI on `v*` tag push, image digests in GHCR, Portainer stack update on DT, `.env.production.example` pin, DUT validation commands, production promote, rollback steps.
+- Add `scripts/portainer-stack-check.sh` that reads the running Portainer stack's image digests (via Portainer API with read-only credentials) and asserts they match the pinned tags in `.env.production.example`. Reports a pass/fail summary.
+- Script is read-only. It does not call any deploy-changing endpoint.
+
+**Touched files**
+
+- `docs/deployment.md`
+- `scripts/portainer-stack-check.sh` (new)
+
+**Acceptance**
+
+- `docs/deployment.md` contains the canonical flow with every step labeled.
+- `scripts/portainer-stack-check.sh` exists, is executable, and runs against a configured DT Portainer endpoint.
+- Script reports expected digests when the stack matches the env file; reports mismatch otherwise.
+
+**Validation**
+
+```bash
+./scripts/portainer-stack-check.sh --dry-run
+pnpm validate
+```
+
+**DUT validation**
+
+- Run `scripts/portainer-stack-check.sh` on DUT against the DUT Portainer instance; confirm it reports the expected digests.
+
+**Portainer/DT rollout**
+
+- Script is read-only; no deploy change.
+
+**Non-goals**
+
+- No Portainer API automation for deployment itself.
+- No changes to the CI pipeline.
+- No auto-promote from DUT to production.
