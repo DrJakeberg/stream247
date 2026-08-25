@@ -175,12 +175,64 @@ describe("ChatControlRuntime overlay view", () => {
     expect(after?.options[0]?.votes).toBe(1);
   });
 
-  it("prefers the poll over skip progress when both are live", () => {
+  it("takes a lapsed skip campaign off the view rather than freezing it at 0s", () => {
+    const { runtime, advance } = createRuntime();
+    const cfg = config({ skipMinimumVotes: 4, skipWindowSeconds: 120 });
+    runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "asset-1", config: cfg });
+    advance(600);
+
+    // The same rule the playout-side projection applies to a stale persisted row: a campaign
+    // whose window has lapsed collected nothing and must leave the screen, not sit at 0s.
+    expect(runtime.getOverlayView(cfg)).toBeNull();
+  });
+
+  it("shows the poll when it closes sooner than the skip window", () => {
+    // Both panels share one slot; the one that runs out of time first wins it (defaults: the
+    // 60s poll beats the 120s skip window).
     const { runtime } = createRuntime();
     runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "asset-1", config: config() });
     runtime.openVote({ id: "vote-1", candidates, config: config() });
 
     expect(runtime.getOverlayView(config())?.kind).toBe("vote-next");
+  });
+
+  it("shows skip progress when its window closes sooner than the poll", () => {
+    const { runtime } = createRuntime();
+    const cfg = config({ voteDurationSeconds: 300, skipWindowSeconds: 60 });
+    runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "asset-1", config: cfg });
+    runtime.openVote({ id: "vote-1", candidates, config: cfg });
+
+    expect(runtime.getOverlayView(cfg)?.kind).toBe("skip-vote");
+  });
+});
+
+describe("ChatControlRuntime skip snapshot", () => {
+  it("reports nothing while no campaign is collecting", () => {
+    const { runtime } = createRuntime();
+
+    expect(runtime.getSkipVoteRecord(config())).toBeNull();
+  });
+
+  it("bakes the threshold and the window end into the snapshot", () => {
+    const { runtime } = createRuntime();
+    const cfg = config({ skipMinimumVotes: 4, skipWindowSeconds: 120 });
+    runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "asset-1", config: cfg });
+    runtime.handleMessage({ actor: "b", message: "!skip", currentAssetId: "asset-1", config: cfg });
+
+    const record = runtime.getSkipVoteRecord(cfg);
+
+    expect(record).toMatchObject({ assetId: "asset-1", skipCommand: "skip", votes: 2, votesNeeded: 4 });
+    // The window end is derived from the campaign start, not from "now": the snapshot must not
+    // slide the deadline forward every time it is taken.
+    expect(record?.expiresAt).toBe(new Date(Date.parse(record?.startedAt ?? "") + 120_000).toISOString());
+  });
+
+  it("clears the snapshot with the campaign", () => {
+    const { runtime } = createRuntime();
+    runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "asset-1", config: config() });
+    runtime.clearSkipVote();
+
+    expect(runtime.getSkipVoteRecord(config())).toBeNull();
   });
 });
 
