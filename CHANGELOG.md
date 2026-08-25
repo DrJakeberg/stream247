@@ -4,6 +4,61 @@
 
 - No unreleased changes currently tracked.
 
+## 1.5.26 - 2026-08-25
+
+### Fixed
+
+- live streams no longer outlive the clients that opened them. A run of the visual suite left the
+  web process holding 22 SSE connections with zero established sockets on its port; each kept
+  polling, Postgres committed 115 transactions a second with nobody connected, and the process took
+  16 seconds to answer its own health check at 0% CPU. The disconnect listener now registers before
+  the first await, and the stream additionally closes itself when nothing is reading what it
+  enqueues. Measured after: 0 connections, 2 transactions a second (v1.5.26)
+- local image builds had been failing for five days without anyone noticing, because the dev stack
+  kept serving the last image that worked. `.dockerignore` listed `node_modules`, which Docker
+  matches only at the context root, so every workspace package's node_modules was copied in from
+  the developer's machine — pnpm symlinks into a store the image does not have. The pattern matches
+  at any depth now and both builder stages take the whole installed tree from deps. The same change
+  broke the worker image, caught by scripts/clean-checkout-build.sh, which now rebuilds every image
+  from a pristine clone the way CI does (v1.5.26)
+- playout restarts when its process is alive but the feed has stopped advancing. Caught live:
+  ffmpeg blocked 3h43m at 0% CPU on a remote source that stopped delivering, reconnect flags set
+  and never firing, the uplink exiting "end of input" once a minute, the channel dark for four
+  minutes. Same idea as the uplink's encoder-stall watchdog, one stage earlier; a 90-second grace
+  period keeps ordinary boundaries out of reach (v1.5.26)
+- the on-air label chip picks black or white ink by the accent's luminance instead of always dark —
+  a dark accent used to letter it invisibly, on the one surface nobody inside the product looks at.
+  Accent-coloured headings on the panel are kept when they clear 4.5:1 and replaced with white when
+  they cannot, so safety does not take the channel's colour away from choices that were fine
+  (v1.5.26)
+- playout logs its ffmpeg stderr to the container log and the overlay pipe reports its open and
+  close with frames written, so a failed transition leaves a reason behind instead of an exit code
+  beside an empty field. The first incident after deployment was answerable within minutes — and
+  the answer corrected the original report: exit 255 with planned:true is the worker's own asset
+  switch, not a crash (v1.5.26)
+
+### Changed
+
+- the program feed directory is swept at each boundary: segments no playlist references and older
+  than ten minutes are removed, capped at 400 per sweep so the cost of a transition stays constant.
+  Measured before: 8878 files, 3.7 GB, the oldest 125 days old, in a directory whose live window is
+  six segments — the record of eight thousand playout restarts (v1.5.26)
+- the operator surfaces were simplified against measured control counts, each page holding its
+  budget as a test: live control 33 to 22, live status 62 to 25, sources 48 to 30, pools 41 to 17,
+  scene editor 79 to 54. One primary action per page, held by the same test; repair actions,
+  destination/source/pool editors and the live bridge fold away; dead links on the go-live
+  checklist are gone. The public channel page gained the one control it lacked: a watch link
+  (v1.5.26)
+- stored identifiers no longer reach text people read: scheduled_match and its fifteen siblings,
+  missing-config, preset and source ids, "pool cursor", "worker-side hysteresis". Cuepoints are
+  "Timed inserts" and audio lanes are "Replacement audio", both named from behaviour in core rather
+  than guessed. A wording baseline records every surface as reviewable text, and an identifier scan
+  with a visible, self-pruning exception list holds the state (v1.5.26)
+- the dev fixture seeds a gapless week at fixed times, actually writes its two assets (the previous
+  call was an UPDATE that matched nothing and reported success), and files them under a source that
+  exists — so the baselines photograph a workspace with content instead of recording empty states
+  as truth (v1.5.26)
+
 ## 1.5.25 - 2026-08-23
 
 ### Fixed
