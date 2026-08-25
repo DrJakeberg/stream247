@@ -184,6 +184,14 @@ export type AssetRecord = {
    * asset has no chapters and behaves exactly as it did before chapters existed.
    */
   chaptersJson?: string;
+  /**
+   * Outcome of the last chapter metadata probe (the budgeted backfill for sources whose listing
+   * ingest cannot deliver chapters). "" means never probed, "ok" means the probe completed — even
+   * when the source simply has no chapters, so the budget is never spent on it again — and
+   * "failed" puts the asset into the failure cooldown before the next attempt.
+   */
+  chaptersProbeStatus?: "" | "ok" | "failed";
+  chaptersProbedAt?: string;
   status: "ready" | "pending" | "error";
   includeInProgramming: boolean;
   externalId?: string;
@@ -226,6 +234,14 @@ export type AssetMetadataUpdateRecord = {
   platformNotes?: string;
   chaptersJson?: string;
   updatedAt?: string;
+};
+
+export type AssetChapterProbeUpdateRecord = {
+  id: string;
+  chaptersProbeStatus: "ok" | "failed";
+  chaptersProbedAt: string;
+  /** Chapters the probe discovered; applied only while the stored list is still empty. */
+  chaptersJson?: string;
 };
 
 export type AssetCollectionMembershipUpdateRecord = {
@@ -1215,6 +1231,10 @@ function normalizeAssetChaptersJson(value: unknown): string {
   return typeof value === "string" ? JSON.stringify(parseAssetChaptersJson(value)) : "[]";
 }
 
+function normalizeAssetChapterProbeStatus(value: unknown): "" | "ok" | "failed" {
+  return value === "ok" || value === "failed" ? value : "";
+}
+
 /**
  * Decide which chapter list survives a re-ingest.
  *
@@ -1760,6 +1780,8 @@ function normalizeState(state: AppState): AppState {
         hashtagsJson: normalizeAssetHashtagsJson(asset.hashtagsJson ?? "[]"),
         platformNotes: normalizeAssetPlatformNotes(asset.platformNotes ?? ""),
         chaptersJson: normalizeAssetChaptersJson(asset.chaptersJson ?? "[]"),
+        chaptersProbeStatus: normalizeAssetChapterProbeStatus(asset.chaptersProbeStatus),
+        chaptersProbedAt: asset.chaptersProbedAt ?? "",
         includeInProgramming: asset.includeInProgramming ?? true,
         cachePath: asset.cachePath ?? "",
         cacheStatus: asset.cacheStatus ?? "",
@@ -2303,6 +2325,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       hashtags_json TEXT NOT NULL DEFAULT '[]',
       platform_notes TEXT NOT NULL DEFAULT '',
       chapters_json TEXT NOT NULL DEFAULT '[]',
+      chapters_probe_status TEXT NOT NULL DEFAULT '',
+      chapters_probed_at TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL,
       include_in_programming BOOLEAN NOT NULL DEFAULT TRUE,
       external_id TEXT NOT NULL DEFAULT '',
@@ -2571,6 +2595,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS hashtags_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS platform_notes TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probe_status TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probed_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_state TEXT NOT NULL DEFAULT 'idle';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS queue_version INTEGER NOT NULL DEFAULT 0;
@@ -3162,6 +3188,29 @@ if (!schemaMigrations.some((migration) => migration.id === chatOverlayMessagesMi
   schemaMigrations.push(chatOverlayMessagesMigration);
 }
 
+// 007 even though 006 is unused here: 001-005 of this date are taken above and 006 is reserved
+// for the M56 work landing in parallel, so this branch skips it rather than racing for the same
+// number. Declared in the base-schema block as well; this migration carries the columns to every
+// existing install.
+const assetChapterProbeMigration: MigrationDefinition = {
+  id: "20260825_007_asset_chapter_probe",
+  description: "Track per-asset chapter probe outcomes so the budgeted backfill never re-fetches or retries hot.",
+  apply: async (client) => {
+    await client.query(`
+      -- Bookkeeping for the chapter backfill (YouTube items, Twitch archive VODs, direct media):
+      -- '' = never probed, 'ok' = probe completed (possibly finding no chapters — that answer is
+      -- final, the budget is not spent on it again), 'failed' = wait out the cooldown measured
+      -- from chapters_probed_at before the next attempt.
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probe_status TEXT NOT NULL DEFAULT '';
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probed_at TEXT NOT NULL DEFAULT '';
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === assetChapterProbeMigration.id)) {
+  schemaMigrations.push(assetChapterProbeMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -3741,10 +3790,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       `
         INSERT INTO assets (
           id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
-          title_prefix, hashtags_json, platform_notes, chapters_json, include_in_programming, external_id, category_name, duration_seconds, published_at,
+          title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, external_id, category_name, duration_seconds, published_at,
           fallback_priority, is_global_fallback, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
       `,
       [
         asset.id,
@@ -3762,6 +3811,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         asset.hashtagsJson ?? "[]",
         asset.platformNotes ?? "",
         normalizeAssetChaptersJson(asset.chaptersJson ?? "[]"),
+        normalizeAssetChapterProbeStatus(asset.chaptersProbeStatus),
+        asset.chaptersProbedAt ?? "",
         asset.includeInProgramming,
         asset.externalId ?? "",
         asset.categoryName ?? "",
@@ -4239,6 +4290,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     hashtags_json: string;
     platform_notes: string;
     chapters_json: string;
+    chapters_probe_status: string;
+    chapters_probed_at: string;
     status: AssetRecord["status"];
     include_in_programming: boolean;
     external_id: string;
@@ -4575,6 +4628,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       hashtagsJson: row.hashtags_json || "[]",
       platformNotes: row.platform_notes || "",
       chaptersJson: row.chapters_json || "[]",
+      chaptersProbeStatus: normalizeAssetChapterProbeStatus(row.chapters_probe_status),
+      chaptersProbedAt: row.chapters_probed_at || "",
       status: row.status,
       includeInProgramming: row.include_in_programming,
       externalId: row.external_id || undefined,
@@ -4986,11 +5041,13 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
       hashtags_json: string;
       platform_notes: string;
       chapters_json: string;
+      chapters_probe_status: string;
+      chapters_probed_at: string;
       include_in_programming: boolean;
       fallback_priority: number;
       is_global_fallback: boolean;
     }>(
-      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, chapters_json, include_in_programming, fallback_priority, is_global_fallback FROM assets WHERE source_id = ANY($1::text[])",
+      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, fallback_priority, is_global_fallback FROM assets WHERE source_id = ANY($1::text[])",
       [sourceIds]
     );
 
@@ -5012,10 +5069,10 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
         `
           INSERT INTO assets (
             id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
-            title_prefix, hashtags_json, platform_notes, chapters_json, include_in_programming, external_id, category_name, duration_seconds, published_at,
+            title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, external_id, category_name, duration_seconds, published_at,
             fallback_priority, is_global_fallback, created_at, updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
         `,
         [
           asset.id,
@@ -5035,6 +5092,10 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
           // Unlike the fields above, an existing-but-empty chapter list does not win: empty means
           // "never curated", so a re-ingest may fill it — but only then.
           chooseStoredAssetChaptersJson(existing?.chapters_json, asset.chaptersJson),
+          // Probe bookkeeping survives the delete-and-reinsert the same way the cache fields do;
+          // syncs never set these, so the stored outcome carries forward.
+          asset.chaptersProbeStatus ?? normalizeAssetChapterProbeStatus(existing?.chapters_probe_status),
+          asset.chaptersProbedAt ?? existing?.chapters_probed_at ?? "",
           existing?.include_in_programming ?? asset.includeInProgramming,
           asset.externalId ?? "",
           normalizeAssetCategoryName(asset.categoryName ?? ""),
@@ -5074,15 +5135,17 @@ export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
             hashtags_json = $12,
             platform_notes = $13,
             chapters_json = $14,
-            include_in_programming = $15,
-            external_id = $16,
-            category_name = $17,
-            duration_seconds = $18,
-            published_at = $19,
-            fallback_priority = $20,
-            is_global_fallback = $21,
-            created_at = $22,
-            updated_at = $23
+            chapters_probe_status = $15,
+            chapters_probed_at = $16,
+            include_in_programming = $17,
+            external_id = $18,
+            category_name = $19,
+            duration_seconds = $20,
+            published_at = $21,
+            fallback_priority = $22,
+            is_global_fallback = $23,
+            created_at = $24,
+            updated_at = $25
           WHERE id = $1
         `,
         [
@@ -5100,6 +5163,8 @@ export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
           normalizeAssetHashtagsJson(asset.hashtagsJson ?? "[]"),
           normalizeAssetPlatformNotes(asset.platformNotes ?? ""),
           normalizeAssetChaptersJson(asset.chaptersJson ?? "[]"),
+          normalizeAssetChapterProbeStatus(asset.chaptersProbeStatus),
+          asset.chaptersProbedAt ?? "",
           asset.includeInProgramming,
           asset.externalId ?? "",
           normalizeAssetCategoryName(asset.categoryName ?? ""),
@@ -5218,6 +5283,10 @@ export async function updateAssetMetadataRecords(updates: AssetMetadataUpdateRec
       if (update.chaptersJson !== undefined) {
         setClauses.push(`chapters_json = $${values.length + 1}`);
         values.push(normalizeAssetChaptersJson(update.chaptersJson));
+        // An operator touching the chapter list resets the probe bookkeeping: deleting every
+        // chapter is the documented way back to auto-fill, and for probed sources that means the
+        // backfill must be allowed to fetch again instead of sitting on a stale "ok".
+        setClauses.push(`chapters_probe_status = ''`, `chapters_probed_at = ''`);
       }
 
       if (setClauses.length === 0) {
@@ -5231,6 +5300,43 @@ export async function updateAssetMetadataRecords(updates: AssetMetadataUpdateRec
       if (result.rowCount === 0) {
         throw new Error(`Asset not found: ${update.id}`);
       }
+    }
+  });
+}
+
+/**
+ * Record the outcome of a chapter metadata probe.
+ *
+ * Discovered chapters go through chooseStoredAssetChaptersJson against the row as it is *now*, so
+ * an operator edit that landed between the probe and this write wins exactly like it does on
+ * re-ingest. A vanished asset is skipped rather than raised: the probe is bookkeeping about a row
+ * that no longer exists, and failing the worker cycle over it would hurt the broadcast, not help.
+ */
+export async function updateAssetChapterProbeRecords(updates: AssetChapterProbeUpdateRecord[]): Promise<void> {
+  if (updates.length === 0) {
+    return;
+  }
+
+  await withSerializedStateWrite("updateAssetChapterProbeRecords", async (client) => {
+    for (const update of updates) {
+      const existing = await client.query<{ chapters_json: string }>("SELECT chapters_json FROM assets WHERE id = $1", [
+        update.id
+      ]);
+      const row = existing.rows[0];
+      if (!row) {
+        continue;
+      }
+
+      await client.query(
+        "UPDATE assets SET chapters_probe_status = $2, chapters_probed_at = $3, chapters_json = $4, updated_at = $5 WHERE id = $1",
+        [
+          update.id,
+          normalizeAssetChapterProbeStatus(update.chaptersProbeStatus),
+          update.chaptersProbedAt,
+          chooseStoredAssetChaptersJson(row.chapters_json, update.chaptersJson),
+          new Date().toISOString()
+        ]
+      );
     }
   });
 }
