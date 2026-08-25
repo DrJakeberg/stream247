@@ -11,6 +11,21 @@
 
 ### Added
 
+- the chat window now renders in the broadcast frame, not only in the browser preview. Chat
+  messages previously existed solely in the web overlay page, which stopped feeding the encode
+  when the native satori renderer replaced the Chromium screenshot path — so "chat on stream" was
+  silently preview-only. The worker's chat bridge now flushes its ring buffer (display name,
+  text, timestamp; never user ids or logins) to a `chat_overlay_messages` singleton row within a
+  second of a change, and the playout render loop projects the row into a chat panel that joins
+  the overlay's flex flow at the corner `chatPosition` names — displacing the lower third, the
+  vote panel, and the next card instead of ever overlapping them. The panel shows at most eight
+  one-line messages (each hard-clamped, control characters and bidi overrides stripped; Twitch
+  emote codes stay visible as words since the renderer draws text, not emote images) and a
+  message ages off air after five minutes, the same window that defines an active chatter — which
+  is also what takes a dead worker's last flush off the broadcast. Moderation reaches the frame
+  too: the bridge mirrors CLEARMSG and CLEARCHAT into its buffer, so a deleted or banned
+  message leaves the stream on the next flush instead of replaying on the one surface no
+  moderator can refresh. Empty or disabled chat renders nothing — no empty panel frame
 - skip-vote progress now renders on air, closing the follow-up left by the 1.5.27 poll fix. The
   `!skip` tally lived only in worker memory, so viewers voting to skip rallied nobody: nothing was
   persisted and the playout container had nothing to draw. The worker now flushes the campaign's
