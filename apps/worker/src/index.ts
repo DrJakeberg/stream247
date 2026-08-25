@@ -46,7 +46,11 @@ import {
   toUtcIsoForLocalDateTime,
   createDefaultChatInteractionConfig,
   evaluateViewerRequest,
-  type ChatInteractionConfig
+  type ChatInteractionConfig,
+  TWITCH_METADATA_WAITING_MESSAGE,
+  isBroadcastChannelSplit,
+  resolveBroadcastChannelLogin,
+  resolveTwitchMetadataSyncGate
 } from "@stream247/core";
 import {
   appendSourceSyncRuns,
@@ -172,6 +176,7 @@ import {
   isStreamScaleEnabled,
   type WorkerStreamOutputSettings
 } from "./output-settings.js";
+import { createTwitchUserIdResolver } from "./twitch-broadcast-channel.js";
 import { TwitchChatBridge } from "./twitch-engagement.js";
 import { syncTwitchEventSubSubscriptions } from "./twitch-eventsub.js";
 import { fetchTwitchLiveStatus } from "./twitch-live-status.js";
@@ -336,6 +341,8 @@ let twitchEventSubLastSyncKey = "";
 let twitchEventSubNextSyncAt = 0;
 let twitchLiveStatusLastSyncKey = "";
 let twitchLiveStatusNextSyncAt = 0;
+// Process-lifetime cache for the broadcast channel's user id; see twitch-broadcast-channel.ts.
+const twitchUserIdResolver = createTwitchUserIdResolver();
 let twitchVodCacheRuntimeConfig:
   | ReturnType<typeof getTwitchVodCacheConfig>
   | null = null;
@@ -358,6 +365,10 @@ function getTwitchClientSecret(state: AppState): string {
 
 function getTwitchDefaultCategoryId(state: AppState): string {
   return getManagedString(state, "twitchDefaultCategoryId", process.env.TWITCH_DEFAULT_CATEGORY_ID || "");
+}
+
+function getTwitchBroadcastChannelLogin(state: AppState): string {
+  return getManagedString(state, "twitchBroadcastChannelLogin", process.env.TWITCH_BROADCAST_CHANNEL_LOGIN || "");
 }
 
 function getDiscordWebhookUrl(state: AppState): string {
@@ -5490,9 +5501,29 @@ async function reconcileTwitch(): Promise<void> {
       }
     }
 
+    // Emote-only is a moderator action, not a broadcaster one: Helix chat-settings accepts
+    // broadcaster_id=<channel> with moderator_id=<caller> for any caller who moderates there. So
+    // unlike title and category this write does not have to wait for a broadcaster connection —
+    // it targets the broadcast channel directly, whose id is looked up by login and cached for
+    // the process lifetime. Without a split both ids collapse to the identity, as before.
+    const broadcastChannelLogin = resolveBroadcastChannelLogin({
+      configuredLogin: getTwitchBroadcastChannelLogin(state),
+      identityLogin: state.twitch.broadcasterLogin
+    });
+    const chatSettingsBroadcasterId = isBroadcastChannelSplit({
+      configuredLogin: getTwitchBroadcastChannelLogin(state),
+      identityLogin: state.twitch.broadcasterLogin
+    })
+      ? await twitchUserIdResolver.resolve({
+          login: broadcastChannelLogin,
+          accessToken,
+          clientId: twitchClientId
+        })
+      : state.twitch.broadcasterId;
+
     const chatResponse = await fetch(
       `https://api.twitch.tv/helix/chat/settings?broadcaster_id=${encodeURIComponent(
-        state.twitch.broadcasterId
+        chatSettingsBroadcasterId
       )}&moderator_id=${encodeURIComponent(state.twitch.broadcasterId)}`,
       {
         method: "PATCH",
