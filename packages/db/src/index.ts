@@ -5,6 +5,8 @@ import { Pool, type PoolClient } from "pg";
 import {
   createDefaultModerationConfig,
   normalizeAudioLaneVolumePercent,
+  normalizeChatGameSettings,
+  type ChatGameSettings,
   normalizeCuepointOffsetsSeconds,
   normalizeEngagementEvent,
   normalizeEngagementGameMode,
@@ -2906,6 +2908,46 @@ if (!schemaMigrations.some((migration) => migration.id === presenceWindowKeyMigr
   schemaMigrations.push(presenceWindowKeyMigration);
 }
 
+const chatGameMigration: MigrationDefinition = {
+  id: "20260825_001_chat_game",
+  description: "Add the chat-game framework: game settings and the running round's state.",
+  apply: async (client) => {
+    await client.query(`
+      -- Which game runs and how chat steers it. One row: the game continues across scene changes,
+      -- so its rules cannot fork per scene; scenes only decide where (and whether) it renders.
+      CREATE TABLE IF NOT EXISTS chat_game_settings (
+        singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+        game_id TEXT NOT NULL DEFAULT 'snake',
+        grid_width INTEGER NOT NULL DEFAULT 16,
+        grid_height INTEGER NOT NULL DEFAULT 9,
+        emote_up TEXT NOT NULL DEFAULT '⬆',
+        emote_down TEXT NOT NULL DEFAULT '⬇',
+        emote_left TEXT NOT NULL DEFAULT '⬅',
+        emote_right TEXT NOT NULL DEFAULT '➡',
+        updated_at TEXT NOT NULL DEFAULT ''
+      );
+
+      -- The running round. Inputs arrive in the worker container and the overlay renders in the
+      -- playout container, so the state has to cross a process boundary — and persisting it here
+      -- also means a worker restart resumes the round instead of wiping it mid-game. The settings
+      -- the round was started under travel with the state, so playout renders from one read and a
+      -- settings edit mid-round is detected as a different settings_key.
+      CREATE TABLE IF NOT EXISTS chat_game_runtime (
+        singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+        game_id TEXT NOT NULL DEFAULT '',
+        settings_key TEXT NOT NULL DEFAULT '',
+        settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+        state JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_at TEXT NOT NULL DEFAULT ''
+      );
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === chatGameMigration.id)) {
+  schemaMigrations.push(chatGameMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -5439,6 +5481,139 @@ export async function writeChatVoteSessionRecord(session: Partial<ChatVoteSessio
         normalized.updatedAt || new Date().toISOString()
       ]
     );
+  });
+}
+
+export type ChatGameSettingsRecord = ChatGameSettings & {
+  updatedAt: string;
+};
+
+/**
+ * The chat game's rules: which game, its grid, and the emote→direction mapping. Normalisation is
+ * applied on the way out as well as in, so an old or hand-edited row can never hand the worker an
+ * unplayable configuration.
+ */
+export async function readChatGameSettingsRecord(): Promise<ChatGameSettingsRecord> {
+  const result = await getPool().query<Record<string, unknown>>(
+    "SELECT * FROM chat_game_settings WHERE singleton_id = 1"
+  );
+  const row = result.rows[0];
+
+  const settings = normalizeChatGameSettings({
+    gameId: row?.game_id as ChatGameSettings["gameId"],
+    gridWidth: Number(row?.grid_width),
+    gridHeight: Number(row?.grid_height),
+    emoteMap: row
+      ? {
+          up: String(row.emote_up ?? ""),
+          down: String(row.emote_down ?? ""),
+          left: String(row.emote_left ?? ""),
+          right: String(row.emote_right ?? "")
+        }
+      : undefined
+  });
+
+  return { ...settings, updatedAt: String(row?.updated_at ?? "") };
+}
+
+export async function writeChatGameSettingsRecord(record: ChatGameSettingsRecord): Promise<void> {
+  const settings = normalizeChatGameSettings(record);
+  await withSerializedStateWrite("writeChatGameSettingsRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO chat_game_settings (
+          singleton_id, game_id, grid_width, grid_height,
+          emote_up, emote_down, emote_left, emote_right, updated_at
+        )
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          game_id = EXCLUDED.game_id,
+          grid_width = EXCLUDED.grid_width,
+          grid_height = EXCLUDED.grid_height,
+          emote_up = EXCLUDED.emote_up,
+          emote_down = EXCLUDED.emote_down,
+          emote_left = EXCLUDED.emote_left,
+          emote_right = EXCLUDED.emote_right,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        settings.gameId,
+        settings.gridWidth,
+        settings.gridHeight,
+        settings.emoteMap.up,
+        settings.emoteMap.down,
+        settings.emoteMap.left,
+        settings.emoteMap.right,
+        record.updatedAt || new Date().toISOString()
+      ]
+    );
+  });
+}
+
+export type ChatGameRuntimeRecord = {
+  gameId: string;
+  settingsKey: string;
+  /** The settings the round was started under, so playout renders from a single read. */
+  settings: unknown;
+  state: unknown;
+  updatedAt: string;
+};
+
+export function createEmptyChatGameRuntimeRecord(): ChatGameRuntimeRecord {
+  return { gameId: "", settingsKey: "", settings: {}, state: {}, updatedAt: "" };
+}
+
+/**
+ * The running round. The worker owns it in memory and flushes here; playout only ever reads, and
+ * a restarted worker adopts it instead of wiping the round the room is playing.
+ */
+export async function readChatGameRuntimeRecord(): Promise<ChatGameRuntimeRecord> {
+  const result = await getPool().query<Record<string, unknown>>(
+    "SELECT * FROM chat_game_runtime WHERE singleton_id = 1"
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return createEmptyChatGameRuntimeRecord();
+  }
+
+  return {
+    gameId: String(row.game_id ?? ""),
+    settingsKey: String(row.settings_key ?? ""),
+    settings: row.settings ?? {},
+    state: row.state ?? {},
+    updatedAt: String(row.updated_at ?? "")
+  };
+}
+
+export async function writeChatGameRuntimeRecord(record: Partial<ChatGameRuntimeRecord>): Promise<void> {
+  const normalized = { ...createEmptyChatGameRuntimeRecord(), ...record };
+  await withSerializedStateWrite("writeChatGameRuntimeRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO chat_game_runtime (singleton_id, game_id, settings_key, settings, state, updated_at)
+        VALUES (1, $1, $2, $3::jsonb, $4::jsonb, $5)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          game_id = EXCLUDED.game_id,
+          settings_key = EXCLUDED.settings_key,
+          settings = EXCLUDED.settings,
+          state = EXCLUDED.state,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        normalized.gameId,
+        normalized.settingsKey,
+        JSON.stringify(normalized.settings ?? {}),
+        JSON.stringify(normalized.state ?? {}),
+        normalized.updatedAt || new Date().toISOString()
+      ]
+    );
+  });
+}
+
+/** Disabling the game layer must remove all game state cleanly; this is that removal. */
+export async function clearChatGameRuntimeRecord(): Promise<void> {
+  await withSerializedStateWrite("clearChatGameRuntimeRecord", async (client) => {
+    await client.query("DELETE FROM chat_game_runtime WHERE singleton_id = 1");
   });
 }
 
