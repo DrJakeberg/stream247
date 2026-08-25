@@ -2091,6 +2091,27 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS chat_game_settings (
+      singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+      game_id TEXT NOT NULL DEFAULT 'snake',
+      grid_width INTEGER NOT NULL DEFAULT 16,
+      grid_height INTEGER NOT NULL DEFAULT 9,
+      emote_up TEXT NOT NULL DEFAULT '⬆',
+      emote_down TEXT NOT NULL DEFAULT '⬇',
+      emote_left TEXT NOT NULL DEFAULT '⬅',
+      emote_right TEXT NOT NULL DEFAULT '➡',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_game_runtime (
+      singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+      game_id TEXT NOT NULL DEFAULT '',
+      settings_key TEXT NOT NULL DEFAULT '',
+      settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+      state JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
     CREATE TABLE IF NOT EXISTS twitch_connection (
       singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'not-connected',
@@ -2908,8 +2929,11 @@ if (!schemaMigrations.some((migration) => migration.id === presenceWindowKeyMigr
   schemaMigrations.push(presenceWindowKeyMigration);
 }
 
+// The base-schema block above only ever runs for databases created from nothing: its baseline
+// migration id is already recorded on every existing install. New tables therefore live in BOTH
+// places — the base block for fresh installs and this idempotent migration for everyone else.
 const chatGameMigration: MigrationDefinition = {
-  id: "20260825_001_chat_game",
+  id: "20260825_003_chat_game",
   description: "Add the chat-game framework: game settings and the running round's state.",
   apply: async (client) => {
     await client.query(`
