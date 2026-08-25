@@ -2,7 +2,19 @@
 
 ## Unreleased
 
-- No unreleased changes currently tracked.
+### Fixed
+
+- assets with a known duration end on time instead of being rescued by watchdogs. Remotely
+  streamed VODs (CloudFront-backed Twitch assets too large to cache) reach their end without
+  ffmpeg receiving EOF: the fps=60 filter manufactured video from the last frame ("More than 1000
+  frames dup"), audio went silent, the uplink encoder stalled and its watchdog restarted it after
+  ~45s — one viewer-visible discontinuity per asset end — and only at 91s of silence did the
+  feed-audio watchdog rotate the asset. The playout now ends the asset deliberately once elapsed
+  playback passes its known duration plus a margin (PLAYOUT_DURATION_BOUND_MARGIN_SECONDS, default
+  15s), through the same planned-transition path a natural boundary takes: no incident, a
+  playout.duration_bound.end runtime event, and the next queue item starting in the same cycle.
+  Assets with an unknown duration behave exactly as before, with the feed-audio watchdog as the
+  net; live-bridge input is never cut
 
 ## 1.5.26 - 2026-08-25
 

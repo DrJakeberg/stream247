@@ -48,6 +48,21 @@
 - if the playout container accumulates zombie Chromium or crashpad processes, recreate it after deploying an image that runs Node under the configured init process
 - if the soak monitor reports `container-restart-check-failed`, inspect `docker compose ps`, `docker inspect --format '{{.RestartCount}}'`, and recent logs for `web`, `worker`, and `playout` before restarting the soak
 
+### Remote VOD reaches its end without EOF
+
+- remotely streamed VODs (CloudFront-backed Twitch assets too large to cache) can reach their end
+  without ffmpeg receiving EOF; when the asset's duration is known, the playout ends it
+  deliberately once elapsed playback passes duration plus a margin, on the same planned-transition
+  path a natural boundary takes
+- a `playout.duration_bound.end` runtime event at an asset end is that planned transition, not a
+  fault; no incident accompanies it
+- `uplink.encoder_stall.restart` or `playout.feed_audio.restart` firing at almost every asset end
+  means the bound is not firing for those assets — check that their `durationSeconds` metadata is
+  present; assets with an unknown duration fall back to the watchdogs by design
+- tuning: `PLAYOUT_DURATION_BOUND_MARGIN_SECONDS` (default 15) — seconds past the known duration
+  before the deliberate end; keep it generous, because cutting duplicated last-frame is invisible
+  while cutting real content is not
+
 ### Crash-loop protection active
 
 - inspect the latest playout incidents
