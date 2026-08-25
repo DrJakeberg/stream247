@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- the channel page's "Up next" now looks past midnight: after the last block of the evening it
+  shows the next occurrence in the weekly grid instead of claiming nothing further is scheduled —
+  on a 24/7 channel that answer was wrong whenever any block existed later in the week. This is
+  also what made CI's wording baselines fail on every evening run
+
 ### Added
 
 - skip-vote progress now renders on air, closing the follow-up left by the 1.5.27 poll fix. The
