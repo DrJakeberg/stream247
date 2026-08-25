@@ -1312,10 +1312,9 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 
 | Milestone | Type | Priority | Status | Goal |
 | --- | --- | --- | --- | --- |
-| M51 | Architecture fix | Now | In progress | Separate the broadcast channel from the connected identity; chat and moderation work via the mod account now, metadata via a broadcaster connection later |
-| M52 | UX | Now | Complete | First-run wizard covering everything that lives in `.env` today |
-| M52 | UX | Now | Planned | First-run wizard covering everything that lives in `.env` today |
-| M53 | Feature | Next | Planned | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
+| M51 | Architecture fix | Now | Done | Separate the broadcast channel from the connected identity; chat and moderation work via the mod account now, metadata via a broadcaster connection later. Verified live 2026-08-25: chat bridge rejoined #jimpanse247 within one cycle of the setting change |
+| M52 | UX | Now | Done | First-run wizard covering everything that lives in `.env` today |
+| M53 | Feature | Next | Done | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
 | M54 | Feature | Next | Done | Chat game framework with Snake as the first game (emote-per-direction, moves only on input) |
 | M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
 
