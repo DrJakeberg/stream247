@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- No unreleased changes currently tracked.
+
+## 1.5.27 - 2026-08-25
+
 ### Added
 
 - chapters per video (M53): each asset can carry a chapter list — offset, Twitch category, stream
