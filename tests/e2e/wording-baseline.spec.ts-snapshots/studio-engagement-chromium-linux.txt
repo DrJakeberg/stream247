@@ -126,6 +126,8 @@ CHAT GAME
 The game moves only when chat sends the mapped emotes — one accepted message, one move. It appears on air wherever a scene has an enabled Chat Game layer in Scene Studio.
 GAME
 Snake
+Minesweeper
+2048
 Chat steers a snake across a grid, one cell per emote. Food grows it, walls and its own body end the round.
 GRID WIDTH (CELLS)
 GRID HEIGHT (CELLS)
