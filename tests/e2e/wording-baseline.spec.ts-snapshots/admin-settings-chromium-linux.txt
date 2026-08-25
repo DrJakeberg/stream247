@@ -55,6 +55,7 @@ TWITCH CLIENT ID
 TWITCH CLIENT SECRET
 DEFAULT TWITCH CATEGORY ID
 BROADCAST CHANNEL LOGIN
+EVENTSUB WEBHOOK SECRET
 DISCORD WEBHOOK URL
 SMTP HOST
 SMTP PORT
@@ -63,6 +64,11 @@ SMTP PASSWORD
 SMTP FROM
 ALERT EMAIL TO
 Save encrypted settings
+RUNTIME
+Operations
+Operational decisions that used to live only in the server environment. Both groups fold away because they are set once and then left alone; a value saved here wins over the environment.
+Disk watermark
+Feature switches
 SECURITY
 Local account security
 Optional two-factor authentication is available for local accounts. Team members signing in through Twitch SSO are not affected by this setting.

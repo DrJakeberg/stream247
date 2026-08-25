@@ -63,10 +63,10 @@ Bottom left
 Bottom right
 Top left
 Top right
-These switches are still gated by deployment flags. Set `STREAM_CHAT_OVERLAY_ENABLED=1` and `STREAM_ALERTS_ENABLED=1` before enabling them on a live channel.
+These switches are still gated by the chat and alert feature switches in the admin settings, which fall back to the deployment environment when left on their default.
 Bits and channel point alerts also require one Twitch reconnect after M32 so the broadcaster token includes the new scopes.
 CHATTER-PARTICIPATION GAME
-The game shares the Twitch IRC runtime with the chat rail. Keep `STREAM_CHAT_OVERLAY_ENABLED=1` and chat enabled when you want the mode selector to stay live.
+The game shares the Twitch IRC runtime with the chat rail. Keep the chat feature switch on and chat enabled when you want the mode selector to stay live.
 Enable chatter-participation game
 ACTIVE CHATTER WINDOW (MINUTES)
 Solo mode
@@ -79,13 +79,13 @@ Save engagement settings
 LIVE STATUS
 Runtime state
 Chat overlay
-Disabled by settings or STREAM_CHAT_OVERLAY_ENABLED.
+Disabled by settings or by the chat feature switch in the admin settings.
 Follow/sub alerts
-Disabled by settings or STREAM_ALERTS_ENABLED.
+Disabled by settings or by the alerts feature switch in the admin settings.
 Bits / cheer alerts
-Disabled by settings, STREAM_ALERTS_ENABLED, or missing the post-M32 Twitch reconnect.
+Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect.
 Channel point alerts
-Disabled by settings, STREAM_ALERTS_ENABLED, or missing the post-M32 Twitch reconnect.
+Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect.
 Recent engagement events
 No recent chat or alert events.
 Game mode
@@ -121,7 +121,7 @@ Save viewer control
 CHAT PLAYS ON AIR
 Chat game
 No scene has an enabled Chat Game layer. Add one in Scene Studio to put the game on air.
-The game reads its emotes through the same Twitch IRC runtime as the chat rail, which is currently disabled. Enable chat in the engagement controls (and `STREAM_CHAT_OVERLAY_ENABLED=1` in the deployment) so inputs can arrive; the on-screen chat rail itself can stay hidden.
+The game reads its emotes through the same Twitch IRC runtime as the chat rail, which is currently disabled. Enable chat in the engagement controls and turn on the chat feature switch in the admin settings so inputs can arrive; the on-screen chat rail itself can stay hidden.
 CHAT GAME
 The game moves only when chat sends the mapped emotes — one accepted message, one move. It appears on air wherever a scene has an enabled Chat Game layer in Scene Studio.
 GAME

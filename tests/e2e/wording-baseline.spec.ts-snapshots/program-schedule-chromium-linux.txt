@@ -40,7 +40,7 @@ Week lens
 Shows the first video each block would play, continuing from wherever its pool's rotation currently stands, and lets you open a block to see what follows before any of it goes on air.
 <DAY>
 3 blocks
-1440m scheduled
+<minutes> scheduled
 <time> TO <time>
 <asset>
 <block> · <block> · <day>
@@ -55,7 +55,7 @@ Repeats inside block
 Repeats inside block
 <DAY>
 3 blocks
-1440m scheduled
+<minutes> scheduled
 <time> TO <time>
 <asset>
 <block> · <block> · <day>
@@ -70,7 +70,7 @@ Repeats inside block
 Repeats inside block
 <DAY>
 3 blocks
-1440m scheduled
+<minutes> scheduled
 <time> TO <time>
 <asset>
 <block> · <block> · <day>
@@ -85,7 +85,7 @@ Repeats inside block
 Repeats inside block
 <DAY>
 3 blocks
-1440m scheduled
+<minutes> scheduled
 <time> TO <time>
 <asset>
 <block> · <block> · <day>
@@ -100,7 +100,7 @@ Repeats inside block
 Repeats inside block
 <DAY>
 3 blocks
-1500m scheduled
+<minutes> scheduled
 <time> TO <time>
 <asset>
 <block> · <block> · <day>
@@ -115,7 +115,7 @@ Repeats inside block
 Repeats inside block
 <DAY>
 3 blocks
-1500m scheduled
+<minutes> scheduled
 <time> TO <time>
 <asset>
 <block> · <block> · <day>
@@ -130,7 +130,7 @@ Repeats inside block
 Repeats inside block
 <DAY>
 3 blocks
-1440m scheduled
+<minutes> scheduled
 <time> TO <time>
 <asset>
 <block> · <block> · <day>

@@ -47,6 +47,7 @@ HEIGHT
 FPS
 A saved profile takes effect the next time playout restarts its encoder, not on the current item. If STREAM_OUTPUT_WIDTH, STREAM_OUTPUT_HEIGHT or STREAM_OUTPUT_FPS are set on the server, those win over what is chosen here.
 Save output settings
+Encoder quality
 RUNTIME
 Effective runtime output
 1280x720@30

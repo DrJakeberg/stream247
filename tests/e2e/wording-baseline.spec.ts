@@ -74,7 +74,13 @@ const VOLATILE: Array<[RegExp, string]> = [
   [/\b(?:Nachtschleife|Tagesprogramm|Abendprogramm)\b/g, "<block>"],
   [/\b(?:Archiv|Talk|Musik)\b/g, "<category>"],
   [/\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/g, "<day>"],
-  [/\b(?:MON|TUE|WED|THU|FRI|SAT|SUN)\b/g, "<DAY>"]
+  [/\b(?:MON|TUE|WED|THU|FRI|SAT|SUN)\b/g, "<DAY>"],
+  // The week lens starts at today, so each day card's scheduled/projected total changes rows at
+  // midnight — the first midnight run after the day-name fix above swapped "1440m scheduled" with
+  // "1500m scheduled" and nothing else. These are aggregates whose *position* follows the clock,
+  // unlike a configured "180 minutes", which stays deliberately uncovered.
+  [/\b\d+m (scheduled|projected)\b/g, "<minutes> $1"],
+  [/\b\d+h scheduled\b/g, "<hours> scheduled"]
 ];
 
 async function signIn(page: Page) {
