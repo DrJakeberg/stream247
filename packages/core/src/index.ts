@@ -4,7 +4,14 @@ export * from "./chat-game.js";
 export * from "./chat-game-2048.js";
 export * from "./chat-game-minesweeper.js";
 export * from "./chat-interaction.js";
+export * from "./managed-runtime.js";
 export * from "./overlay-layout.js";
+
+import {
+  resolveAlertsRuntimeEnabled,
+  resolveChatOverlayRuntimeEnabled,
+  type ManagedRuntimeToggleInput
+} from "./managed-runtime.js";
 
 export type ModerationConfig = {
   enabled: boolean;
@@ -396,34 +403,41 @@ export function normalizeEngagementEvent(value: EngagementEventInput): Engagemen
   };
 }
 
+// The runtime gates now resolve through managed config first (M56) and keep the env variable
+// as fallback. Callers that have application state pass state.managedConfig; omitting it keeps
+// the historical env-only behaviour, which is also what every pre-M56 call site did.
 export function isEngagementChatRuntimeEnabled(
   settings: EngagementSettingsInput | null | undefined,
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  managedConfig?: ManagedRuntimeToggleInput
 ): boolean {
-  return normalizeEngagementSettings(settings).chatEnabled && env.STREAM_CHAT_OVERLAY_ENABLED === "1";
+  return normalizeEngagementSettings(settings).chatEnabled && resolveChatOverlayRuntimeEnabled(managedConfig, env);
 }
 
 export function isEngagementAlertsRuntimeEnabled(
   settings: EngagementSettingsInput | null | undefined,
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  managedConfig?: ManagedRuntimeToggleInput
 ): boolean {
-  return normalizeEngagementSettings(settings).alertsEnabled && env.STREAM_ALERTS_ENABLED === "1";
+  return normalizeEngagementSettings(settings).alertsEnabled && resolveAlertsRuntimeEnabled(managedConfig, env);
 }
 
 export function isEngagementDonationAlertsRuntimeEnabled(
   settings: EngagementSettingsInput | null | undefined,
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  managedConfig?: ManagedRuntimeToggleInput
 ): boolean {
   const normalized = normalizeEngagementSettings(settings);
-  return normalized.donationsEnabled && isEngagementAlertsRuntimeEnabled(normalized, env);
+  return normalized.donationsEnabled && isEngagementAlertsRuntimeEnabled(normalized, env, managedConfig);
 }
 
 export function isEngagementChannelPointsRuntimeEnabled(
   settings: EngagementSettingsInput | null | undefined,
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  managedConfig?: ManagedRuntimeToggleInput
 ): boolean {
   const normalized = normalizeEngagementSettings(settings);
-  return normalized.channelPointsEnabled && isEngagementAlertsRuntimeEnabled(normalized, env);
+  return normalized.channelPointsEnabled && isEngagementAlertsRuntimeEnabled(normalized, env, managedConfig);
 }
 
 export function hasEnabledEngagementGameModes(settings: EngagementSettingsInput | null | undefined): boolean {
@@ -433,10 +447,15 @@ export function hasEnabledEngagementGameModes(settings: EngagementSettingsInput 
 
 export function isEngagementGameRuntimeEnabled(
   settings: EngagementSettingsInput | null | undefined,
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  managedConfig?: ManagedRuntimeToggleInput
 ): boolean {
   const normalized = normalizeEngagementSettings(settings);
-  return normalized.gameEnabled && hasEnabledEngagementGameModes(normalized) && isEngagementChatRuntimeEnabled(normalized, env);
+  return (
+    normalized.gameEnabled &&
+    hasEnabledEngagementGameModes(normalized) &&
+    isEngagementChatRuntimeEnabled(normalized, env, managedConfig)
+  );
 }
 
 export function getEngagementGameWindowMs(settings: EngagementSettingsInput | null | undefined): number {
