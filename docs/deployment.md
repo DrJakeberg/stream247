@@ -39,7 +39,11 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
 
 ## Deploy Steps
 
-1. Choose your base env file:
+1. Optionally choose a base env file. Since M52 the stack also starts with no `.env` at all: the
+   app secret is generated on first boot and persisted on the data volume, the bundled Postgres
+   uses its compose-internal defaults, and the `/setup` wizard covers the public URL, timezone,
+   and Twitch credentials. An env file remains the way to pin any of these — env values always
+   override wizard-written ones.
    - evaluation:
      ```bash
      cp .env.example .env
@@ -48,15 +52,14 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
      ```bash
      cp .env.production.example .env
      ```
-2. Set:
-   - `APP_URL`
-   - `APP_SECRET`
-   - `POSTGRES_PASSWORD`
-   - matching `DATABASE_URL`
+2. If you use an env file, set what you want pinned:
+   - `APP_URL` (otherwise the wizard manages it)
+   - `APP_SECRET` (otherwise generated and persisted on first boot)
+   - `POSTGRES_PASSWORD` and a matching `DATABASE_URL` (otherwise the bundled defaults apply)
    - `TRAEFIK_HOST`, plus `TRAEFIK_ACME_EMAIL` if using the built-in Traefik Let's Encrypt profile
 3. Optional but recommended:
    - `TWITCH_STREAM_KEY`
-   - `CHANNEL_TIMEZONE`
+   - `CHANNEL_TIMEZONE` (otherwise the wizard manages it)
    - Discord / SMTP alert settings
    - Twitch client credentials if you do not want to enter them later in setup or `/settings`
 4. Optionally pin:
@@ -73,19 +76,19 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
    ```bash
    docker compose --profile proxy up -d
    ```
-6. Open `/setup`.
-7. Create the owner account.
-8. Sign in to the admin UI.
-9. Optional:
-   - enter `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` during setup
-   - or add them later in `/settings`
-10. Open `Live → Status` and use `Connect Twitch` if you want Twitch metadata sync or team SSO. Only leave Twitch schedule sync enabled when the broadcaster account can create non-recurring Twitch schedule segments.
-11. Add playable media:
+6. Open `/setup` and follow the wizard: owner account → instance basics (public URL, timezone) →
+   Twitch app credentials → Twitch connection → review. Every step after the owner account is
+   skippable and the wizard resumes at the first unfinished step, because completion is derived
+   from what is actually configured rather than from a stored counter.
+7. Any skipped value can be finished later: reopen `/setup` while signed in, or use `/settings`
+   for the Twitch credentials.
+8. Open `Live → Status` and use `Connect Twitch` if you want Twitch metadata sync or team SSO. Only leave Twitch schedule sync enabled when the broadcaster account can create non-recurring Twitch schedule segments.
+9. Add playable media:
    - files in `data/media`
    - direct media URL sources
    - YouTube playlist sources
    - Twitch VOD sources
-12. Build schedule blocks and let the worker ingest and reconcile.
+10. Build schedule blocks and let the worker ingest and reconcile.
 
 ## Reverse Proxy And URL Notes
 
@@ -100,7 +103,9 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
 
 ## Secrets And Runtime Settings
 
-Belongs in `.env`:
+Belongs in `.env` (since M52 as pins, not requirements: `APP_URL` and `CHANNEL_TIMEZONE` are
+wizard-managed and `APP_SECRET` is generated and persisted on the data volume when unset —
+`data/media/.stream247-app-secret`, mode 600, shared by all service containers):
 
 - `POSTGRES_PASSWORD`
 - `TWITCH_STREAM_KEY`

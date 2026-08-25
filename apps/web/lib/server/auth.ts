@@ -1,4 +1,5 @@
 import { scryptSync, timingSafeEqual, randomBytes, createHmac } from "node:crypto";
+import { resolveAppSecret } from "@stream247/db";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
@@ -14,28 +15,13 @@ const sessionMaxAgeSeconds = (() => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 30 * 24 * 60 * 60;
 })();
 
-const DEV_AUTH_SECRET = "stream247-dev-secret";
-const MIN_AUTH_SECRET_LENGTH = 32;
-
 function getAuthSecret(): string {
-  const configured = process.env.APP_SECRET || "";
-
-  // This project is source-available: the development fallback is a publicly known constant, so
-  // silently using it in production lets anyone forge a session cookie for any user id. Fail loudly
-  // instead of degrading to a value that only looks like a secret.
-  if (process.env.NODE_ENV === "production") {
-    if (!configured) {
-      throw new Error("APP_SECRET must be set in production; refusing to sign sessions with the development fallback.");
-    }
-
-    if (configured === DEV_AUTH_SECRET || configured.length < MIN_AUTH_SECRET_LENGTH) {
-      throw new Error(
-        `APP_SECRET must be a unique value of at least ${MIN_AUTH_SECRET_LENGTH} characters in production.`
-      );
-    }
-  }
-
-  return configured || DEV_AUTH_SECRET;
+  // Resolution lives in @stream247/db so sessions here and the managed-config encryption there
+  // sign and encrypt with the same secret. The guarantees are unchanged in shape: production
+  // refuses the publicly known development fallback and any weak env value. What changed with M52
+  // is that an absent env value no longer refuses to start — a strong secret is generated on first
+  // boot and persisted on the data volume, and env keeps priority as the rollback path.
+  return resolveAppSecret();
 }
 
 export function hashPassword(password: string): string {

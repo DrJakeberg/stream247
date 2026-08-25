@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 
 export function SetupForm() {
   const [error, setError] = useState("");
@@ -19,14 +18,12 @@ export function SetupForm() {
         const formData = new FormData(event.currentTarget);
         const email = String(formData.get("email") || "");
         const password = String(formData.get("password") || "");
-        const twitchClientId = String(formData.get("twitchClientId") || "");
-        const twitchClientSecret = String(formData.get("twitchClientSecret") || "");
 
         startTransition(async () => {
           const response = await fetch("/api/setup/bootstrap", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email, password, twitchClientId, twitchClientSecret })
+            body: JSON.stringify({ email, password })
           });
 
           if (!response.ok) {
@@ -35,7 +32,10 @@ export function SetupForm() {
             return;
           }
 
-          router.replace(buildWorkspaceHref("live", "status"));
+          // Stay in the wizard: the next step is derived server-side from what is configured, so a
+          // plain revisit of /setup continues exactly where this bootstrap left off.
+          router.replace("/setup");
+          router.refresh();
         });
       }}
     >
@@ -48,19 +48,10 @@ export function SetupForm() {
         <input name="password" type="password" minLength={10} required placeholder="At least 10 characters" />
       </label>
       <p className="subtle">
-        After bootstrap you will land in the status view, where the remaining readiness steps explain what is still
-        missing for a fully broadcast-ready channel.
+        This account owns the workspace and signs in with email and password. Everything else — the public URL, Twitch
+        credentials, the Twitch connection — has its own later step, and each one can be done now or skipped and picked
+        up again.
       </p>
-      <div className="form-grid">
-        <label>
-          <span className="label">Optional Twitch client id</span>
-          <input name="twitchClientId" placeholder="Optional during bootstrap" />
-        </label>
-        <label>
-          <span className="label">Optional Twitch client secret</span>
-          <input name="twitchClientSecret" type="password" placeholder="Optional during bootstrap" />
-        </label>
-      </div>
       {error ? <p className="danger">{error}</p> : null}
       <button className="button" disabled={isPending} type="submit">
         {isPending ? "Creating workspace..." : "Create owner account"}

@@ -1,3 +1,4 @@
+import { resolveAppBaseUrl } from "@stream247/db";
 import { issueOAuthState } from "./oauth-state";
 import {
   appendAuditEvent,
@@ -6,20 +7,25 @@ import {
   readAppState,
   updateTwitchConnectionRecord,
   upsertUserRecord,
+  type AppState,
   type UserRecord,
   type UserRole
 } from "./state";
 
-export function getTwitchRedirectUri(): string {
-  return getAbsoluteAppUrl("/api/integrations/twitch/callback");
+type StateWithManagedConfig = Pick<AppState, "managedConfig">;
+
+export function getTwitchRedirectUri(state: StateWithManagedConfig): string {
+  return getAbsoluteAppUrl(state, "/api/integrations/twitch/callback");
 }
 
-export function getAppBaseUrl(): string {
-  return (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
+export function getAppBaseUrl(state: StateWithManagedConfig): string {
+  // The localhost default keeps unconfigured local installs working; the resolver decides between
+  // env and the wizard-written managed value, in that order.
+  return resolveAppBaseUrl(state.managedConfig) || "http://localhost:3000";
 }
 
-export function getAbsoluteAppUrl(pathname: string): string {
-  return `${getAppBaseUrl()}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
+export function getAbsoluteAppUrl(state: StateWithManagedConfig, pathname: string): string {
+  return `${getAppBaseUrl(state)}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
 }
 
 /**
@@ -69,7 +75,7 @@ export async function getTwitchAuthorizeUrl(
   // callback ever verified — see lib/server/oauth-state.ts for what that allowed.
   const params = new URLSearchParams({
     client_id: clientId,
-    redirect_uri: kind === "team-login" ? getAbsoluteAppUrl("/api/auth/twitch/callback") : getTwitchRedirectUri(),
+    redirect_uri: kind === "team-login" ? getAbsoluteAppUrl(state, "/api/auth/twitch/callback") : getTwitchRedirectUri(state),
     response_type: "code",
     scope,
     state: await issueOAuthState(kind)
@@ -91,7 +97,7 @@ export async function exchangeTwitchCode(code: string) {
     client_secret: clientSecret,
     code,
     grant_type: "authorization_code",
-    redirect_uri: getTwitchRedirectUri()
+    redirect_uri: getTwitchRedirectUri(state)
   });
 
   const tokenResponse = await fetch("https://id.twitch.tv/oauth2/token", {
@@ -173,7 +179,7 @@ export async function exchangeTwitchLoginCode(code: string): Promise<UserRecord>
     throw new Error("Missing TWITCH_CLIENT_ID or TWITCH_CLIENT_SECRET.");
   }
 
-  const redirectUri = getAbsoluteAppUrl("/api/auth/twitch/callback");
+  const redirectUri = getAbsoluteAppUrl(state, "/api/auth/twitch/callback");
   const tokenParams = new URLSearchParams({
     client_id: clientId,
     client_secret: clientSecret,

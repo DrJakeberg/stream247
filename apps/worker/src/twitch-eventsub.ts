@@ -3,7 +3,7 @@ import {
   isEngagementChannelPointsRuntimeEnabled,
   isEngagementDonationAlertsRuntimeEnabled
 } from "@stream247/core";
-import type { AppState } from "@stream247/db";
+import { resolveAppBaseUrl, type AppState, type ManagedConfigRecord } from "@stream247/db";
 
 type FetchLike = typeof fetch;
 
@@ -102,8 +102,13 @@ function emptyResult(enabled: boolean, reason: string): TwitchEventSubSyncResult
   };
 }
 
-export function resolveTwitchEventSubCallbackUrl(env: Record<string, string | undefined>): string {
-  const appUrl = (env.APP_URL || "").trim().replace(/\/$/, "");
+export function resolveTwitchEventSubCallbackUrl(
+  managedConfig: Partial<Pick<ManagedConfigRecord, "appUrl">> | undefined,
+  env: Record<string, string | undefined>
+): string {
+  // Twitch will only deliver webhooks to a public https URL, so the wizard-managed app URL is as
+  // valid a source as the env variable — env first, per the instance-config precedence.
+  const appUrl = resolveAppBaseUrl(managedConfig, env);
   if (!appUrl || !appUrl.startsWith("https://")) {
     return "";
   }
@@ -310,7 +315,7 @@ export async function syncTwitchEventSubSubscriptions(args: {
   const fetchImpl = args.fetchImpl ?? fetch;
   const enabled = isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env);
   const broadcasterId = args.state.twitch.broadcasterId.trim();
-  const callbackUrl = resolveTwitchEventSubCallbackUrl(args.env);
+  const callbackUrl = resolveTwitchEventSubCallbackUrl(args.state.managedConfig, args.env);
   const secret = (args.env.TWITCH_EVENTSUB_SECRET || "").trim();
   const desiredSubscriptions = resolveDesiredEventSubSubscriptions(args);
 

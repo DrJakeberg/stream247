@@ -35,6 +35,11 @@ The app has four top-level workspaces and uses tabs inside each workspace.
 
 Legacy admin routes may continue to redirect, but the workspace URLs above are the canonical entry points.
 
+Outside the workspaces, `/setup` is the first-run wizard (owner account → instance basics → Twitch
+app credentials → Twitch connection → review). It stays reachable for signed-in operators after
+bootstrap; each step's completion is derived from what is actually configured, so it is resumable
+and every post-owner step is skippable.
+
 ## Navigation Rules
 
 - All internal navigation uses Next.js `Link`, never raw `<a href>` for in-app routes.

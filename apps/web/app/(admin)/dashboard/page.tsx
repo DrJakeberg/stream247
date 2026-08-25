@@ -20,7 +20,7 @@ import {
   getSchedulePreview,
   readAppState
 } from "@/lib/server/state";
-import { isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
+import { getAbsoluteAppUrl, isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
 
 export default async function DashboardPage() {
   const state = await readAppState();
@@ -314,7 +314,7 @@ export default async function DashboardPage() {
                   : "Overlay is currently disabled."}
               </div>
               <div className="subtle">
-                Stream247 captures <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> as the
+                Stream247 captures <code>{getAbsoluteAppUrl(state, "/overlay")}</code> as the
                 internal overlay output.
               </div>
             </div>

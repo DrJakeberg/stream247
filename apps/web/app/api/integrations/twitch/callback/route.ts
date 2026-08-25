@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { consumeOAuthState, describeOAuthStateFailure } from "@/lib/server/oauth-state";
+import { readAppState } from "@/lib/server/state";
 import { exchangeTwitchCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
 import { requireApiRoles } from "@/lib/server/auth";
 
@@ -8,6 +9,10 @@ export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const error = request.nextUrl.searchParams.get("error");
   const presentedState = request.nextUrl.searchParams.get("state");
+
+  // Read once for URL building; the exchange below rewrites the Twitch connection but not the
+  // app base URL the redirects are built from.
+  const appState = await readAppState();
 
   // Connecting a broadcaster rewrites the workspace's Twitch identity, and the SSO path derives the
   // "owner" role from it. This must never be reachable by an unauthenticated caller.
@@ -21,17 +26,17 @@ export async function GET(request: NextRequest) {
   const stateVerdict = await consumeOAuthState("broadcaster-connect", presentedState);
   if (!stateVerdict.ok) {
     await recordTwitchError(describeOAuthStateFailure(stateVerdict.reason));
-    return NextResponse.redirect(getAbsoluteAppUrl(buildWorkspaceHref("live", "status")));
+    return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));
   }
 
   if (error) {
     await recordTwitchError(`Twitch authorization failed: ${error}.`);
-    return NextResponse.redirect(getAbsoluteAppUrl(buildWorkspaceHref("live", "status")));
+    return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));
   }
 
   if (!code) {
     await recordTwitchError("Twitch callback did not include an authorization code.");
-    return NextResponse.redirect(getAbsoluteAppUrl(buildWorkspaceHref("live", "status")));
+    return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));
   }
 
   try {
@@ -41,5 +46,5 @@ export async function GET(request: NextRequest) {
     await recordTwitchError(message);
   }
 
-  return NextResponse.redirect(getAbsoluteAppUrl(buildWorkspaceHref("live", "status")));
+  return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));
 }

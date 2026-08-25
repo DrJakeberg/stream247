@@ -60,6 +60,8 @@ import {
   replaceAssetsForSourceIds,
   readAppState,
   replaceTwitchScheduleSegments,
+  resolveAppBaseUrl,
+  resolveChannelTimeZone,
   resolveIncident,
   updateDestinationRecord,
   updateEngagementGameRuntimeRecord,
@@ -1751,7 +1753,7 @@ function buildWorkerScenePayload(args: {
     nextTitle: resolvedNextTitle,
     nextTimeLabel: args.nextTimeLabel,
     queueTitles: args.queueTitles,
-    timeZone: process.env.CHANNEL_TIMEZONE || "UTC"
+    timeZone: resolveChannelTimeZone(args.state.managedConfig)
   });
 }
 
@@ -1761,7 +1763,7 @@ async function writeStandbySlate(
 ): Promise<void> {
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
-    timeZone: process.env.CHANNEL_TIMEZONE || "UTC"
+    timeZone: resolveChannelTimeZone(state.managedConfig)
   });
   const occurrences = buildScheduleOccurrences({
     date: scheduleMoment.date,
@@ -2540,7 +2542,7 @@ async function syncTwitchVodSources(): Promise<void> {
 }
 
 function getCurrentScheduleItem(state: AppState): ReturnType<typeof buildScheduleOccurrences>[number] | null {
-  const timeZone = process.env.CHANNEL_TIMEZONE || "UTC";
+  const timeZone = resolveChannelTimeZone(state.managedConfig);
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
     timeZone
@@ -2557,7 +2559,7 @@ function getCurrentScheduleItem(state: AppState): ReturnType<typeof buildSchedul
 }
 
 function getNextScheduleItem(state: AppState): ReturnType<typeof buildScheduleOccurrences>[number] | null {
-  const timeZone = process.env.CHANNEL_TIMEZONE || "UTC";
+  const timeZone = resolveChannelTimeZone(state.managedConfig);
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
     timeZone
@@ -5821,10 +5823,13 @@ async function reconcileTwitch(): Promise<void> {
 
     await syncTwitchSchedule({
       state: syncState,
+      // Both sides of the M51/M52 merge belong here: the token and broadcaster id follow the
+      // metadata gate (identity vs. broadcaster connection), and the timezone follows managed
+      // config rather than the env.
       accessToken: metadataSyncGate.mode === "broadcaster" ? syncState.twitchBroadcaster.accessToken : accessToken,
       broadcasterId:
         metadataSyncGate.mode === "broadcaster" ? syncState.twitchBroadcaster.broadcasterId : syncState.twitch.broadcasterId,
-      timeZone: process.env.CHANNEL_TIMEZONE || "UTC",
+      timeZone: resolveChannelTimeZone(syncState.managedConfig),
       clientId: twitchClientId,
       categoryCache
     });
@@ -6005,7 +6010,7 @@ async function reconcileTwitchEventSub(): Promise<void> {
     state.twitch.status,
     state.twitch.broadcasterId,
     clientId,
-    process.env.APP_URL || "",
+    resolveAppBaseUrl(state.managedConfig),
     process.env.TWITCH_EVENTSUB_SECRET ? "secret-set" : "secret-missing"
   ].join("|");
   const now = Date.now();

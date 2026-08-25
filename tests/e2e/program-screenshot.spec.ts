@@ -11,7 +11,10 @@ async function ensureSignedInForProgram(page: Page) {
     await page.getByLabel("Owner email").fill(ownerEmail);
     await page.getByLabel("Password").fill(ownerPassword);
     await setupButton.click();
-    await expect(page).toHaveURL(/\/live(?:\?tab=status)?$/);
+    // Since M52 the wizard continues on /setup rather than dropping into the workspace. Waiting on
+    // the owner summary matters: it only renders after bootstrap completed, unlike the step rail,
+    // which is already visible before submitting.
+    await expect(page.getByText(`Owner ${ownerEmail} exists.`)).toBeVisible();
     return;
   }
 

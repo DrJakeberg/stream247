@@ -4,7 +4,8 @@ import { AdminPageHeader } from "@/components/admin-page-header";
 import Link from "next/link";
 import { OverlaySettingsForm } from "@/components/overlay-settings-form";
 import { Panel } from "@/components/panel";
-import { getCurrentScheduleItem, getNextScheduleItem, listOverlayScenePresetRecords, readAppState, readOverlayStudioState } from "@/lib/server/state";
+import { getCurrentScheduleItem, getNextScheduleItem, getWorkspaceTimeZone, listOverlayScenePresetRecords, readAppState, readOverlayStudioState } from "@/lib/server/state";
+import { getAbsoluteAppUrl } from "@/lib/server/twitch";
 import { describeScenePreset, describeTypographyPreset } from "@/lib/scene-preset-names";
 
 export default async function OverlayStudioPage() {
@@ -30,7 +31,7 @@ export default async function OverlayStudioPage() {
       <div className="grid two">
         <Panel title="Scene controls" eyebrow="Scene">
           <p className="subtle">
-            Stream247 captures <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> as its
+            Stream247 captures <code>{getAbsoluteAppUrl(state, "/overlay")}</code> as its
             internal overlay output. Draft changes stay inside the studio until you publish them, and the same live
             scene settings also drive the on-air replay text overlay inside the FFmpeg playout path. Metadata widgets
             stay inside that canonical scene payload, custom font stacks resolve only against fonts already installed
@@ -44,7 +45,7 @@ export default async function OverlayStudioPage() {
             liveOverlay={studioState.liveOverlay}
             scenePresets={scenePresets}
             preview={{
-              timeZone: process.env.CHANNEL_TIMEZONE || "UTC",
+              timeZone: getWorkspaceTimeZone(state),
               currentTitle: currentItem?.title || state.playout.currentTitle || "Morning Replay",
               currentCategory: currentItem?.categoryName || "Always on air",
               currentSourceName: currentItem?.sourceName || "Archive Pool",
