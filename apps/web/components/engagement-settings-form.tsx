@@ -171,8 +171,8 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
             </label>
           </div>
           <p className="subtle">
-            These switches are still gated by deployment flags. Set `STREAM_CHAT_OVERLAY_ENABLED=1` and
-            `STREAM_ALERTS_ENABLED=1` before enabling them on a live channel.
+            These switches are still gated by the chat and alert feature switches in the admin settings, which
+            fall back to the deployment environment when left on their default.
           </p>
           <p className="subtle">
             Bits and channel point alerts also require one Twitch reconnect after M32 so the broadcaster token includes the new scopes.
@@ -182,7 +182,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
         <div className="item">
           <span className="label">Chatter-participation game</span>
           <div className="subtle">
-            The game shares the Twitch IRC runtime with the chat rail. Keep `STREAM_CHAT_OVERLAY_ENABLED=1` and chat enabled when you want the mode selector to stay live.
+            The game shares the Twitch IRC runtime with the chat rail. Keep the chat feature switch on and chat enabled when you want the mode selector to stay live.
           </div>
           <div className="form-grid" style={{ marginTop: 12 }}>
             <label className="toggle-row">

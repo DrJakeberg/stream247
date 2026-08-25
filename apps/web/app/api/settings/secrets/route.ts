@@ -14,6 +14,7 @@ export async function PUT(request: NextRequest) {
     twitchClientSecret: string;
     twitchDefaultCategoryId: string;
     twitchBroadcastChannelLogin: string;
+    twitchEventsubSecret: string;
     discordWebhookUrl: string;
     smtpHost: string;
     smtpPort: string;
@@ -46,6 +47,10 @@ export async function PUT(request: NextRequest) {
     twitchClientSecret: trim(body.twitchClientSecret) || state.managedConfig.twitchClientSecret,
     twitchDefaultCategoryId: trim(body.twitchDefaultCategoryId),
     twitchBroadcastChannelLogin: broadcastChannelLogin,
+    // A secret like the client secret and the SMTP password: an empty field keeps the stored
+    // value. The webhook signature check and the worker's subscription sync both resolve it
+    // managed-first with TWITCH_EVENTSUB_SECRET as fallback.
+    twitchEventsubSecret: trim(body.twitchEventsubSecret) || state.managedConfig.twitchEventsubSecret,
     discordWebhookUrl: trim(body.discordWebhookUrl) || state.managedConfig.discordWebhookUrl,
     smtpHost: trim(body.smtpHost),
     smtpPort: trim(body.smtpPort),

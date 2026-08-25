@@ -912,11 +912,12 @@ function summarizeEngagement(state: AppState): LiveEngagementSummary {
   const engagementEvents = Array.isArray((state as Partial<AppState>).engagementEvents)
     ? ((state as Partial<AppState>).engagementEvents as EngagementEventRecord[])
     : [];
-  const chatRuntimeEnabled = isEngagementChatRuntimeEnabled(engagement, process.env);
-  const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(engagement, process.env);
-  const donationsRuntimeEnabled = isEngagementDonationAlertsRuntimeEnabled(engagement, process.env);
-  const channelPointsRuntimeEnabled = isEngagementChannelPointsRuntimeEnabled(engagement, process.env);
-  const gameRuntimeEnabled = isEngagementGameRuntimeEnabled(engagement, process.env);
+  const managedConfig = (state as Partial<AppState>).managedConfig ?? null;
+  const chatRuntimeEnabled = isEngagementChatRuntimeEnabled(engagement, process.env, managedConfig);
+  const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(engagement, process.env, managedConfig);
+  const donationsRuntimeEnabled = isEngagementDonationAlertsRuntimeEnabled(engagement, process.env, managedConfig);
+  const channelPointsRuntimeEnabled = isEngagementChannelPointsRuntimeEnabled(engagement, process.env, managedConfig);
+  const gameRuntimeEnabled = isEngagementGameRuntimeEnabled(engagement, process.env, managedConfig);
   const latestStatus = engagementEvents.find((event) => event.kind === "status" && event.actor === "chat") ?? null;
   const chatStatus = !chatRuntimeEnabled
     ? "disabled"

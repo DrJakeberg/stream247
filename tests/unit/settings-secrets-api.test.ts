@@ -54,6 +54,7 @@ describe("managed settings API", () => {
         twitchClientSecret: "stored-secret",
         twitchDefaultCategoryId: "",
         twitchBroadcastChannelLogin: "",
+        twitchEventsubSecret: "stored-eventsub-secret",
         discordWebhookUrl: "",
         smtpHost: "",
         smtpPort: "",
@@ -81,6 +82,24 @@ describe("managed settings API", () => {
     expect(response.status).toBe(200);
     expect(mockUpdateManagedConfigRecord).toHaveBeenCalledWith(
       expect.objectContaining({ twitchBroadcastChannelLogin: "" })
+    );
+  });
+
+  it("keeps the stored EventSub secret when the field comes back empty — it is a secret", async () => {
+    const response = await PUT(putRequest({ twitchEventsubSecret: "" }));
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateManagedConfigRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ twitchEventsubSecret: "stored-eventsub-secret" })
+    );
+  });
+
+  it("replaces the EventSub secret when a new value is submitted, trimmed", async () => {
+    const response = await PUT(putRequest({ twitchEventsubSecret: "  next-eventsub-secret  " }));
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateManagedConfigRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ twitchEventsubSecret: "next-eventsub-secret" })
     );
   });
 

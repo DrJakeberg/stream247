@@ -29,10 +29,10 @@ export default async function OverlaysPage() {
     readChatGameRuntimeRecord()
   ]);
   const gameLayerEnabled = state.overlay.customLayers.some((layer) => layer.kind === "game" && layer.enabled);
-  const chatRuntimeEnabled = isEngagementChatRuntimeEnabled(state.engagement, process.env);
-  const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(state.engagement, process.env);
-  const donationsRuntimeEnabled = isEngagementDonationAlertsRuntimeEnabled(state.engagement, process.env);
-  const channelPointsRuntimeEnabled = isEngagementChannelPointsRuntimeEnabled(state.engagement, process.env);
+  const chatRuntimeEnabled = isEngagementChatRuntimeEnabled(state.engagement, process.env, state.managedConfig);
+  const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(state.engagement, process.env, state.managedConfig);
+  const donationsRuntimeEnabled = isEngagementDonationAlertsRuntimeEnabled(state.engagement, process.env, state.managedConfig);
+  const channelPointsRuntimeEnabled = isEngagementChannelPointsRuntimeEnabled(state.engagement, process.env, state.managedConfig);
 
   return (
     <div className="stack-form">
@@ -52,13 +52,13 @@ export default async function OverlaysPage() {
             <div className="item">
               <strong>Chat overlay</strong>
               <div className="subtle">
-                {chatRuntimeEnabled ? `Runtime enabled, IRC ${engagement.chatStatus}.` : "Disabled by settings or STREAM_CHAT_OVERLAY_ENABLED."}
+                {chatRuntimeEnabled ? `Runtime enabled, IRC ${engagement.chatStatus}.` : "Disabled by settings or by the chat feature switch in the admin settings."}
               </div>
             </div>
             <div className="item">
               <strong>Follow/sub alerts</strong>
               <div className="subtle">
-                {alertsRuntimeEnabled ? "Runtime enabled. EventSub notifications will render as timed alerts." : "Disabled by settings or STREAM_ALERTS_ENABLED."}
+                {alertsRuntimeEnabled ? "Runtime enabled. EventSub notifications will render as timed alerts." : "Disabled by settings or by the alerts feature switch in the admin settings."}
               </div>
             </div>
             <div className="item">
@@ -66,7 +66,7 @@ export default async function OverlaysPage() {
               <div className="subtle">
                 {donationsRuntimeEnabled
                   ? "Runtime enabled. Cheer EventSub notifications will render as timed alerts."
-                  : "Disabled by settings, STREAM_ALERTS_ENABLED, or missing the post-M32 Twitch reconnect."}
+                  : "Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect."}
               </div>
             </div>
             <div className="item">
@@ -74,7 +74,7 @@ export default async function OverlaysPage() {
               <div className="subtle">
                 {channelPointsRuntimeEnabled
                   ? "Runtime enabled. Redemption EventSub notifications will render as timed alerts when a custom reward exists."
-                  : "Disabled by settings, STREAM_ALERTS_ENABLED, or missing the post-M32 Twitch reconnect."}
+                  : "Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect."}
               </div>
             </div>
             <div className="item">
@@ -128,8 +128,8 @@ export default async function OverlaysPage() {
         {!chatRuntimeEnabled ? (
           <div className="subtle" style={{ marginBottom: 12 }}>
             The game reads its emotes through the same Twitch IRC runtime as the chat rail, which is currently
-            disabled. Enable chat in the engagement controls (and `STREAM_CHAT_OVERLAY_ENABLED=1` in the
-            deployment) so inputs can arrive; the on-screen chat rail itself can stay hidden.
+            disabled. Enable chat in the engagement controls and turn on the chat feature switch in the admin
+            settings so inputs can arrive; the on-screen chat rail itself can stay hidden.
           </div>
         ) : null}
         <ChatGameSettingsForm chatGame={chatGame} />

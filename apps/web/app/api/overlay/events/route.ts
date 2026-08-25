@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 import {
   isEngagementAlertsRuntimeEnabled,
   isEngagementChannelPointsRuntimeEnabled,
-  isEngagementDonationAlertsRuntimeEnabled
+  isEngagementDonationAlertsRuntimeEnabled,
+  resolveTwitchEventSubSecret,
+  type ManagedEventSubSecretInput
 } from "@stream247/core";
 import { appendEngagementEventRecord, getBroadcastSnapshot, readAppState } from "@/lib/server/state";
 import { createSseResponse } from "@/lib/server/sse";
@@ -32,8 +34,8 @@ type EventSubPayload = {
   };
 };
 
-function verifyEventSubSignature(request: Request, rawBody: string): boolean {
-  const secret = process.env.TWITCH_EVENTSUB_SECRET || "";
+function verifyEventSubSignature(request: Request, rawBody: string, managedConfig: ManagedEventSubSecretInput): boolean {
+  const secret = resolveTwitchEventSubSecret(managedConfig, process.env);
   if (!secret) {
     return process.env.NODE_ENV !== "production";
   }
@@ -100,7 +102,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const rawBody = await request.text();
-  if (!verifyEventSubSignature(request, rawBody)) {
+  // State is read before signature verification since M56: the shared secret itself may live in
+  // managed config, with the env variable as fallback.
+  const state = await readAppState();
+  if (!verifyEventSubSignature(request, rawBody, state.managedConfig)) {
     return NextResponse.json({ message: "Invalid EventSub signature." }, { status: 403 });
   }
 
@@ -126,8 +131,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const state = await readAppState();
-  if (!isEngagementAlertsRuntimeEnabled(state.engagement, process.env)) {
+  if (!isEngagementAlertsRuntimeEnabled(state.engagement, process.env, state.managedConfig)) {
     return NextResponse.json({ ok: true, ignored: true, reason: "alerts-disabled" }, { status: 202 });
   }
 
@@ -135,10 +139,10 @@ export async function POST(request: Request) {
   if (!kind) {
     return NextResponse.json({ ok: true, ignored: true, reason: "unsupported-event" }, { status: 202 });
   }
-  if (kind === "cheer" && !isEngagementDonationAlertsRuntimeEnabled(state.engagement, process.env)) {
+  if (kind === "cheer" && !isEngagementDonationAlertsRuntimeEnabled(state.engagement, process.env, state.managedConfig)) {
     return NextResponse.json({ ok: true, ignored: true, reason: "donations-disabled" }, { status: 202 });
   }
-  if (kind === "channel-point" && !isEngagementChannelPointsRuntimeEnabled(state.engagement, process.env)) {
+  if (kind === "channel-point" && !isEngagementChannelPointsRuntimeEnabled(state.engagement, process.env, state.managedConfig)) {
     return NextResponse.json({ ok: true, ignored: true, reason: "channel-points-disabled" }, { status: 202 });
   }
 
