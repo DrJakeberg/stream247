@@ -75,6 +75,7 @@ import {
   updateAssetRecords,
   updatePlayoutRuntime,
   updatePoolCursor,
+  updateTwitchBroadcasterConnectionRecord,
   updateTwitchConnectionRecord,
   upsertSources,
   upsertIncident,
@@ -2127,20 +2128,23 @@ async function writeOnAirOverlay(
   await fs.writeFile(onAirOverlayPath, `${lines.join("\n")}\n`, "utf8");
 }
 
-async function refreshBroadcasterAccessToken(): Promise<string> {
-  const state = await readAppState();
-  const clientId = getTwitchClientId(state);
-  const clientSecret = getTwitchClientSecret(state);
-
-  if (!clientId || !clientSecret || !state.twitch.refreshToken) {
-    throw new Error("Missing Twitch client credentials or refresh token.");
-  }
-
+/**
+ * The refresh-grant HTTP exchange, shared by the identity and the broadcaster-slot refresh. What
+ * differs between the two — which record holds the refresh token and where the result is stored —
+ * stays in the callers; copying the exchange instead would let the two flows drift apart on
+ * exactly the error handling that 401 recovery depends on.
+ */
+async function requestTwitchTokenRefresh(args: {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  errorLabel: string;
+}): Promise<{ access_token: string; refresh_token?: string; expires_in?: number }> {
   const body = new URLSearchParams({
     grant_type: "refresh_token",
-    refresh_token: state.twitch.refreshToken,
-    client_id: clientId,
-    client_secret: clientSecret
+    refresh_token: args.refreshToken,
+    client_id: args.clientId,
+    client_secret: args.clientSecret
   });
 
   const response = await fetch("https://id.twitch.tv/oauth2/token", {
@@ -2149,10 +2153,30 @@ async function refreshBroadcasterAccessToken(): Promise<string> {
   });
 
   if (!response.ok) {
-    throw new Error(`Twitch token refresh failed with status ${response.status}.`);
+    throw new Error(`${args.errorLabel} failed with status ${response.status}.`);
   }
 
-  const payload = (await response.json()) as { access_token: string; refresh_token?: string; expires_in?: number };
+  return (await response.json()) as { access_token: string; refresh_token?: string; expires_in?: number };
+}
+
+// Renamed from refreshBroadcasterAccessToken: it always refreshed the *identity* connection
+// (state.twitch), and since M51 "broadcaster" means the second slot — the old name pointed at
+// the wrong one of the two.
+async function refreshIdentityAccessToken(): Promise<string> {
+  const state = await readAppState();
+  const clientId = getTwitchClientId(state);
+  const clientSecret = getTwitchClientSecret(state);
+
+  if (!clientId || !clientSecret || !state.twitch.refreshToken) {
+    throw new Error("Missing Twitch client credentials or refresh token.");
+  }
+
+  const payload = await requestTwitchTokenRefresh({
+    clientId,
+    clientSecret,
+    refreshToken: state.twitch.refreshToken,
+    errorLabel: "Twitch token refresh"
+  });
   const refreshedAt = new Date().toISOString();
   const tokenExpiresAt = payload.expires_in
     ? new Date(Date.now() + payload.expires_in * 1000).toISOString()
@@ -2169,6 +2193,46 @@ async function refreshBroadcasterAccessToken(): Promise<string> {
   });
 
   await resolveIncident("twitch.refresh.failed", "Twitch token refresh succeeded.");
+  return payload.access_token;
+}
+
+/**
+ * Mirror of refreshIdentityAccessToken for the broadcaster slot. Deliberately does not touch the
+ * slot's status on failure: an error status would flip the metadata gate to waiting, and since
+ * the gate is what decides whether this refresh runs at all, a transient failure would lock the
+ * slot out of ever refreshing again. The stale token stays, the next cycle retries, and the
+ * caller's incident names the failure.
+ */
+async function refreshBroadcasterSlotAccessToken(): Promise<string> {
+  const state = await readAppState();
+  const clientId = getTwitchClientId(state);
+  const clientSecret = getTwitchClientSecret(state);
+
+  if (!clientId || !clientSecret || !state.twitchBroadcaster.refreshToken) {
+    throw new Error("Missing Twitch client credentials or broadcaster refresh token.");
+  }
+
+  const payload = await requestTwitchTokenRefresh({
+    clientId,
+    clientSecret,
+    refreshToken: state.twitchBroadcaster.refreshToken,
+    errorLabel: "Twitch broadcaster token refresh"
+  });
+  const refreshedAt = new Date().toISOString();
+
+  await updateTwitchBroadcasterConnectionRecord({
+    ...state.twitchBroadcaster,
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token ?? state.twitchBroadcaster.refreshToken,
+    status: "connected",
+    tokenExpiresAt: payload.expires_in
+      ? new Date(Date.now() + payload.expires_in * 1000).toISOString()
+      : state.twitchBroadcaster.tokenExpiresAt,
+    lastRefreshAt: refreshedAt,
+    error: ""
+  });
+
+  await resolveIncident("twitch.refresh.failed", "Twitch broadcaster token refresh succeeded.");
   return payload.access_token;
 }
 
@@ -5983,7 +6047,7 @@ async function reconcileTwitch(): Promise<void> {
   let twitchAccessToken = state.twitch.accessToken;
   const twitchClientId = getTwitchClientId(state);
   if (expiresAt > 0 && expiresAt - Date.now() < 5 * 60_000) {
-    twitchAccessToken = await refreshBroadcasterAccessToken();
+    twitchAccessToken = await refreshIdentityAccessToken();
   }
 
   const currentScheduleItem = getCurrentScheduleItem(state);
@@ -6031,6 +6095,20 @@ async function reconcileTwitch(): Promise<void> {
     broadcasterConnection: state.twitchBroadcaster
   });
 
+  // The broadcaster slot's token ages exactly like the identity's, so it gets the same
+  // treatment: refreshed ahead of expiry rather than only after a 401, and rebindable by the
+  // 401 retry below. Only relevant in broadcaster mode — while waiting there is no token, and
+  // without a split the identity token carries the writes.
+  let broadcasterSlotAccessToken = state.twitchBroadcaster.accessToken;
+  if (metadataSyncGate.mode === "broadcaster") {
+    const slotExpiresAt = state.twitchBroadcaster.tokenExpiresAt
+      ? new Date(state.twitchBroadcaster.tokenExpiresAt).getTime()
+      : 0;
+    if (slotExpiresAt > 0 && slotExpiresAt - Date.now() < 5 * 60_000) {
+      broadcasterSlotAccessToken = await refreshBroadcasterSlotAccessToken();
+    }
+  }
+
   const sync = async (accessToken: string) => {
     let channelWriteThrottled = false;
 
@@ -6059,7 +6137,7 @@ async function reconcileTwitch(): Promise<void> {
       const metadataBroadcasterId =
         metadataSyncGate.mode === "broadcaster" ? state.twitchBroadcaster.broadcasterId : state.twitch.broadcasterId;
       const metadataAccessToken =
-        metadataSyncGate.mode === "broadcaster" ? state.twitchBroadcaster.accessToken : accessToken;
+        metadataSyncGate.mode === "broadcaster" ? broadcasterSlotAccessToken : accessToken;
 
       const resolvedCategory = await resolveTwitchCategory({
         accessToken,
@@ -6222,7 +6300,14 @@ async function reconcileTwitch(): Promise<void> {
     const message = error instanceof Error ? error.message : "Unknown Twitch reconciliation error.";
     if (message.includes("401")) {
       try {
-        twitchAccessToken = await refreshBroadcasterAccessToken();
+        // The message does not say which token 401'd, and in broadcaster mode a sync uses both:
+        // the identity's for the category lookup and chat settings, the slot's for the channel
+        // PATCH. Refreshing both before the single retry keeps the recovery one round instead of
+        // burning the retry on the token that was still fine.
+        twitchAccessToken = await refreshIdentityAccessToken();
+        if (metadataSyncGate.mode === "broadcaster") {
+          broadcasterSlotAccessToken = await refreshBroadcasterSlotAccessToken();
+        }
         await sync(twitchAccessToken);
         await resolveIncident("twitch.reconcile.failed", "Twitch reconciliation succeeded after token refresh.");
       } catch (refreshError) {
@@ -6263,7 +6348,12 @@ async function reconcileTwitch(): Promise<void> {
     const message = error instanceof Error ? error.message : "Unknown Twitch schedule synchronization error.";
     if (message.includes("401")) {
       try {
-        twitchAccessToken = await refreshBroadcasterAccessToken();
+        // Same both-tokens rule as the metadata retry above. The schedule sync re-reads state,
+        // so the slot refresh only has to persist the new token for the retry to pick it up.
+        twitchAccessToken = await refreshIdentityAccessToken();
+        if (metadataSyncGate.mode === "broadcaster") {
+          await refreshBroadcasterSlotAccessToken();
+        }
         await syncScheduleIfEnabled(
           twitchAccessToken,
           await readAppState(),

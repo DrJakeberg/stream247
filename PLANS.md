@@ -1355,10 +1355,17 @@ visibly wait instead of silently patching the identity's channel.
   slot exists as `twitch_broadcaster_connection` (additive table) plus a dashboard entry naming
   the required account and scopes; once a matching connection exists the sync writes with its
   token, so connecting later flips metadata on without a restart.
-- Still open: the browser OAuth flow for the broadcaster slot (callback routing plus token refresh
-  for the second connection) — deliberately unbuilt while the broadcaster account is inaccessible,
-  because the existing callback would store the result into the identity slot and the flow could
-  not be exercised end to end.
+- 2026-08-25 (later): the broadcaster-slot OAuth flow is built, separate from the identity flow
+  end to end so the existing callback can never store into the wrong slot: its own start route
+  (`/api/integrations/twitch/connect-broadcaster`, only the two metadata scopes), its own
+  namespaced single-use state cookie, and its own callback that — before storing anything —
+  verifies the authorised Twitch login matches the configured broadcast channel
+  (case-insensitive) and rejects mismatches (most likely the identity signing in again) with a
+  message naming both accounts. The waiting entry in the connection panel is now the actual
+  connect link, a connected slot gets a disconnect button, and the worker refreshes the slot
+  token ahead of expiry and on 401 exactly like the identity's. Exercised through unit tests
+  with mocked Twitch endpoints (the wrong-account guard is mutation-tested); a live end-to-end
+  run still waits on the broadcaster account becoming accessible again.
 
 ## M52 Setup Wizard
 

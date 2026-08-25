@@ -1,5 +1,7 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
 import { TWITCH_METADATA_WAITING_MESSAGE } from "@stream247/core";
 
 export type BroadcastChannelConnectionSummary = {
@@ -12,9 +14,9 @@ export type BroadcastChannelConnectionSummary = {
  *
  * Null without a split: the connected account already owns the broadcast channel, and an entry
  * about a second connection would only raise the question of why it is missing. In the waiting
- * state the text has to carry the whole story, because the connect flow itself cannot run until
- * the broadcaster account is accessible again — the entry is the explanation of what is waiting,
- * on which account, and with which scopes, not a working button.
+ * state the text still carries the whole story — which account must do the connecting and with
+ * which scopes — because the connect button below it only helps someone who is signed in to
+ * Twitch as that account; everyone else needs to know why their click will be rejected.
  */
 export function getBroadcastChannelConnectionNotice(
   summary: BroadcastChannelConnectionSummary
@@ -80,8 +82,55 @@ export function TwitchConnectPanel({
         <div className="item">
           <strong>{broadcastNotice.title}</strong>
           <div className="subtle">{broadcastNotice.detail}</div>
+          {broadcastChannel?.mode === "waiting-for-broadcaster" ? (
+            // A plain link, mirroring the identity connect above: the route mints the state
+            // cookie on click. The link exists only in the waiting state, which is exactly "a
+            // broadcast channel is configured and differs from the identity".
+            <a className="button" href="/api/integrations/twitch/connect-broadcaster">
+              Connect broadcast channel
+            </a>
+          ) : null}
+          {broadcastChannel?.mode === "broadcaster" ? <BroadcasterDisconnectButton /> : null}
         </div>
       ) : null}
     </>
+  );
+}
+
+/**
+ * Clears the broadcaster slot. Small and local to the panel: disconnecting flips metadata sync
+ * back to its visible waiting state, so the refreshed panel immediately shows the connect button
+ * again instead of leaving a stale "connected" entry.
+ */
+function BroadcasterDisconnectButton() {
+  const [error, setError] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        className="button button-secondary"
+        disabled={isPending}
+        onClick={() => {
+          setError("");
+          startTransition(async () => {
+            const response = await fetch("/api/integrations/twitch/disconnect-broadcaster", { method: "POST" });
+
+            if (!response.ok) {
+              const payload = (await response.json().catch(() => ({}))) as { message?: string };
+              setError(payload.message ?? "Could not disconnect the broadcast channel.");
+              return;
+            }
+
+            router.refresh();
+          });
+        }}
+        type="button"
+      >
+        Disconnect broadcast channel
+      </button>
+      {error ? <p className="danger">{error}</p> : null}
+    </div>
   );
 }

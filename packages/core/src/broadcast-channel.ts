@@ -46,6 +46,11 @@ export function isBroadcastChannelSplit(args: { configuredLogin: string; identit
 
 export const TWITCH_METADATA_WAITING_MESSAGE = "Waiting for broadcast channel connection.";
 
+// Exactly the writes the broadcaster slot exists for — title/category and schedule. Asking for
+// more would turn a narrowly scoped metadata connection into a second fully privileged account
+// for no benefit; the identity connection keeps every other scope.
+export const TWITCH_BROADCASTER_SLOT_SCOPES = ["channel:manage:broadcast", "channel:manage:schedule"];
+
 export type TwitchMetadataSyncGate =
   | { mode: "identity" }
   | { mode: "waiting-for-broadcaster"; broadcastChannelLogin: string }
@@ -81,4 +86,48 @@ export function resolveTwitchMetadataSyncGate(args: {
   return connectionMatchesChannel
     ? { mode: "broadcaster", broadcastChannelLogin }
     : { mode: "waiting-for-broadcaster", broadcastChannelLogin };
+}
+
+export type BroadcasterConnectVerdict =
+  | { ok: true; broadcastChannelLogin: string }
+  | { ok: false; reason: "no-split" | "wrong-account"; message: string };
+
+/**
+ * Whether a completed broadcaster-slot OAuth may be stored.
+ *
+ * The dangerous outcome is a token for the wrong channel sitting in the broadcaster slot: the
+ * sync gate would either flip on and patch a channel nobody broadcasts to, or keep waiting while
+ * the dashboard claims a connection exists. The likeliest wrong account is the identity itself —
+ * the operator is usually signed in to Twitch as the moderator, and Twitch happily authorises
+ * whoever holds the session. So the decision runs before anything is persisted, compares logins
+ * case-insensitively (Twitch logins are), and rejects with a message that names both accounts,
+ * because "connect failed" without the names would send the operator straight back into the same
+ * mistake.
+ */
+export function evaluateBroadcasterConnectLogin(args: {
+  configuredLogin: string;
+  identityLogin: string;
+  authenticatedLogin: string;
+}): BroadcasterConnectVerdict {
+  if (!isBroadcastChannelSplit(args)) {
+    return {
+      ok: false,
+      reason: "no-split",
+      message:
+        "No broadcast channel split is configured, so there is no broadcaster slot to fill — the identity connection already covers metadata sync."
+    };
+  }
+
+  const broadcastChannelLogin = resolveBroadcastChannelLogin(args);
+  const authenticated = args.authenticatedLogin.trim();
+
+  if (authenticated.toLowerCase() !== broadcastChannelLogin.toLowerCase()) {
+    return {
+      ok: false,
+      reason: "wrong-account",
+      message: `Twitch authorised ${authenticated || "an unknown account"}, but the broadcast channel is ${broadcastChannelLogin}. Nothing was stored — sign in to Twitch as ${broadcastChannelLogin} and connect again.`
+    };
+  }
+
+  return { ok: true, broadcastChannelLogin };
 }
