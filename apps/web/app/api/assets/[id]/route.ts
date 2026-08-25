@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { stripInvisibleCharacters } from "@stream247/core";
+import { formatCuepointOffsetLabel, normalizeAssetChapters, stripInvisibleCharacters } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
 import {
   appendAuditEvent,
@@ -15,6 +15,7 @@ type AssetMetadataRequest = {
   hashtags?: unknown;
   hashtagsJson?: unknown;
   platformNotes?: unknown;
+  chapters?: unknown;
 };
 
 function normalizeText(value: unknown, maxLength: number): string {
@@ -110,12 +111,31 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     update.platformNotes = normalizeText(body.platformNotes, 1000);
   }
 
+  if (body.chapters !== undefined) {
+    const chapters = normalizeAssetChapters(body.chapters);
+    // Duration is only known for some connectors, so the bound is enforced when it exists and
+    // waived when it does not — rejecting edits on a duration the system never learned would
+    // make chapters uneditable for exactly the assets that need manual curation most.
+    const durationSeconds = asset.durationSeconds ?? 0;
+    const beyondEnd = durationSeconds > 0 ? chapters.find((chapter) => chapter.offsetSeconds >= durationSeconds) : undefined;
+    if (beyondEnd) {
+      return NextResponse.json(
+        {
+          message: `Chapter offset ${formatCuepointOffsetLabel(beyondEnd.offsetSeconds)} lies beyond the video's duration.`
+        },
+        { status: 400 }
+      );
+    }
+    update.chaptersJson = JSON.stringify(chapters);
+  }
+
   if (
     update.title === undefined &&
     update.titlePrefix === undefined &&
     update.categoryName === undefined &&
     update.hashtagsJson === undefined &&
-    update.platformNotes === undefined
+    update.platformNotes === undefined &&
+    update.chaptersJson === undefined
   ) {
     return NextResponse.json({ message: "No metadata changes were provided." }, { status: 400 });
   }

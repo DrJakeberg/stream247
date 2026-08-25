@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { AssetChapterEditor } from "@/components/asset-chapter-editor";
 import { AssetCurationForm } from "@/components/asset-curation-form";
 import { AssetMetadataForm } from "@/components/asset-metadata-form";
 import { Panel } from "@/components/panel";
@@ -187,6 +188,14 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
             rewriting ingestion-owned source metadata.
           </div>
           <AssetMetadataForm asset={asset} categoryOptions={categoryOptions} />
+        </Panel>
+
+        <Panel title="Chapters" eyebrow="Publishing">
+          <div className="subtle" style={{ marginBottom: 12 }}>
+            Chapters switch the Twitch category and stream title at offsets inside this video, following the original
+            stream. Ingest fills them from VOD metadata once; edits here are never overwritten by a re-sync.
+          </div>
+          <AssetChapterEditor asset={asset} categoryOptions={categoryOptions} />
         </Panel>
 
         <Panel title="Asset curation" eyebrow="Program">
