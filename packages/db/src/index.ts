@@ -2608,6 +2608,36 @@ if (!schemaMigrations.some((migration) => migration.id === libraryBlueprintsV2Mi
   schemaMigrations.push(libraryBlueprintsV2Migration);
 }
 
+const twitchBroadcasterConnectionMigration: MigrationDefinition = {
+  id: "20260825_001_twitch_broadcaster_connection",
+  description: "Add the broadcaster connection slot for the broadcast-channel split (M51).",
+  apply: async (client) => {
+    // Identical to the base-schema definition on purpose. The base block only runs for databases
+    // created from nothing, so a table that exists only there reaches fresh installs and never an
+    // existing one — the dev stack failed with "relation does not exist" on exactly this table
+    // while every fresh-db and fresh-compose check stayed green. New tables need both: the base
+    // schema for new databases, and a migration for every database that already exists.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS twitch_broadcaster_connection (
+        singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'not-connected',
+        broadcaster_id TEXT NOT NULL DEFAULT '',
+        broadcaster_login TEXT NOT NULL DEFAULT '',
+        access_token TEXT NOT NULL DEFAULT '',
+        refresh_token TEXT NOT NULL DEFAULT '',
+        connected_at TEXT NOT NULL DEFAULT '',
+        token_expires_at TEXT NOT NULL DEFAULT '',
+        last_refresh_at TEXT NOT NULL DEFAULT '',
+        error TEXT NOT NULL DEFAULT ''
+      );
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === twitchBroadcasterConnectionMigration.id)) {
+  schemaMigrations.push(twitchBroadcasterConnectionMigration);
+}
+
 const persistentProgramFeedRuntimeMigration: MigrationDefinition = {
   id: "20260419_001_persistent_program_feed_runtime",
   description: "Add persistent uplink and program feed runtime columns.",
