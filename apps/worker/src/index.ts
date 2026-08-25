@@ -5247,6 +5247,10 @@ async function sendAlert(subject: string, message: string): Promise<void> {
 async function syncTwitchSchedule(args: {
   state: AppState;
   accessToken: string;
+  // Passed explicitly rather than read from the connection state: with a broadcast-channel split
+  // the schedule belongs to the broadcaster connection's channel, not the identity's, and the
+  // token must match the channel the segments are written to.
+  broadcasterId: string;
   timeZone: string;
   clientId: string;
   categoryCache: Map<string, { id: string; name: string } | null>;
@@ -5323,9 +5327,9 @@ async function syncTwitchSchedule(args: {
 
     const endpoint = existingSegment
       ? `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
-          args.state.twitch.broadcasterId
+          args.broadcasterId
         )}&id=${encodeURIComponent(existingSegment.segmentId)}`
-      : `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(args.state.twitch.broadcasterId)}`;
+      : `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(args.broadcasterId)}`;
 
     const response = await fetch(endpoint, {
       method: existingSegment ? "PATCH" : "POST",
@@ -5372,7 +5376,7 @@ async function syncTwitchSchedule(args: {
 
     await fetch(
       `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
-        args.state.twitch.broadcasterId
+        args.broadcasterId
       )}&id=${encodeURIComponent(staleSegment.segmentId)}`,
       {
         method: "DELETE",
@@ -5444,60 +5448,93 @@ async function reconcileTwitch(): Promise<void> {
     now: new Date(),
     fallbackEmoteOnly: state.moderation.fallbackEmoteOnly
   });
+  const metadataSyncGate = resolveTwitchMetadataSyncGate({
+    configuredLogin: getTwitchBroadcastChannelLogin(state),
+    identityLogin: state.twitch.broadcasterLogin,
+    broadcasterConnection: state.twitchBroadcaster
+  });
 
   const sync = async (accessToken: string) => {
-    const resolvedCategory = await resolveTwitchCategory({
-      accessToken,
-      categoryName: currentAsset?.categoryName || currentScheduleItem?.categoryName || "",
-      clientId: twitchClientId
-    });
-
-    if (resolvedCategory) {
-      desiredCategoryId = resolvedCategory.id;
-      desiredCategoryName = resolvedCategory.name;
-      await resolveIncident(
-        "twitch.category.lookup.failed",
-        `Resolved Twitch category ${resolvedCategory.name} for the current playout item ${desiredTitle}.`
-      );
-    } else if (!desiredCategoryId) {
+    if (metadataSyncGate.mode === "waiting-for-broadcaster") {
+      // The identity token could write title and category — but only to the identity's own
+      // channel, which is the wrong-channel failure this gate exists to end. Until the broadcaster
+      // account is connected the sync waits visibly instead of writing somewhere wrong. The wait
+      // sits before the category lookup on purpose: resolving categories for a write that cannot
+      // happen would spend rate limit on nothing. Emote-only below is unaffected — it is a
+      // moderator action and needs no broadcaster token.
       await upsertIncident({
         scope: "twitch",
-        severity: "warning",
-        title: "Twitch category lookup failed",
-        message: `Could not resolve a Twitch category id for "${currentAsset?.categoryName || currentScheduleItem?.categoryName || "unknown"}". Title sync still continues.`,
-        fingerprint: "twitch.category.lookup.failed"
+        severity: "info",
+        title: "Twitch metadata sync is waiting for the broadcast channel connection",
+        message: `${TWITCH_METADATA_WAITING_MESSAGE} Title and category for ${metadataSyncGate.broadcastChannelLogin} stay untouched until the broadcaster account is connected.`,
+        fingerprint: "twitch.metadata.waiting-for-broadcaster"
       });
     } else {
       await resolveIncident(
-        "twitch.category.lookup.failed",
-        `Using default Twitch category for the current playout item ${desiredTitle}.`
+        "twitch.metadata.waiting-for-broadcaster",
+        "Twitch metadata sync has a channel it may write to."
       );
-    }
 
-    const shouldSyncChannelMetadata =
-      state.twitch.lastSyncedTitle !== desiredTitle || state.twitch.lastSyncedCategoryId !== desiredCategoryId;
+      // With a broadcaster connection the writes carry its token and target its channel; without
+      // a split they carry the identity's, which is the pre-split behaviour unchanged.
+      const metadataBroadcasterId =
+        metadataSyncGate.mode === "broadcaster" ? state.twitchBroadcaster.broadcasterId : state.twitch.broadcasterId;
+      const metadataAccessToken =
+        metadataSyncGate.mode === "broadcaster" ? state.twitchBroadcaster.accessToken : accessToken;
 
-    if (shouldSyncChannelMetadata) {
-      const channelBody: Record<string, string> = { title: desiredTitle };
-      if (desiredCategoryId) {
-        channelBody.game_id = desiredCategoryId;
+      const resolvedCategory = await resolveTwitchCategory({
+        accessToken,
+        categoryName: currentAsset?.categoryName || currentScheduleItem?.categoryName || "",
+        clientId: twitchClientId
+      });
+
+      if (resolvedCategory) {
+        desiredCategoryId = resolvedCategory.id;
+        desiredCategoryName = resolvedCategory.name;
+        await resolveIncident(
+          "twitch.category.lookup.failed",
+          `Resolved Twitch category ${resolvedCategory.name} for the current playout item ${desiredTitle}.`
+        );
+      } else if (!desiredCategoryId) {
+        await upsertIncident({
+          scope: "twitch",
+          severity: "warning",
+          title: "Twitch category lookup failed",
+          message: `Could not resolve a Twitch category id for "${currentAsset?.categoryName || currentScheduleItem?.categoryName || "unknown"}". Title sync still continues.`,
+          fingerprint: "twitch.category.lookup.failed"
+        });
+      } else {
+        await resolveIncident(
+          "twitch.category.lookup.failed",
+          `Using default Twitch category for the current playout item ${desiredTitle}.`
+        );
       }
 
-      const channelResponse = await fetch(
-        `https://api.twitch.tv/helix/channels?broadcaster_id=${encodeURIComponent(state.twitch.broadcasterId)}`,
-        {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Client-Id": twitchClientId,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(channelBody)
-        }
-      );
+      const shouldSyncChannelMetadata =
+        state.twitch.lastSyncedTitle !== desiredTitle || state.twitch.lastSyncedCategoryId !== desiredCategoryId;
 
-      if (!channelResponse.ok) {
-        throw new Error(`Channel metadata sync failed with status ${channelResponse.status}.`);
+      if (shouldSyncChannelMetadata) {
+        const channelBody: Record<string, string> = { title: desiredTitle };
+        if (desiredCategoryId) {
+          channelBody.game_id = desiredCategoryId;
+        }
+
+        const channelResponse = await fetch(
+          `https://api.twitch.tv/helix/channels?broadcaster_id=${encodeURIComponent(metadataBroadcasterId)}`,
+          {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${metadataAccessToken}`,
+              "Client-Id": twitchClientId,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(channelBody)
+          }
+        );
+
+        if (!channelResponse.ok) {
+          throw new Error(`Channel metadata sync failed with status ${channelResponse.status}.`);
+        }
       }
     }
 
@@ -5542,15 +5579,19 @@ async function reconcileTwitch(): Promise<void> {
       throw new Error(`Chat settings sync failed with status ${chatResponse.status}.`);
     }
 
-    await updateTwitchConnectionRecord({
-      ...state.twitch,
-      status: "connected",
-      lastMetadataSyncAt: new Date().toISOString(),
-      lastSyncedTitle: desiredTitle,
-      lastSyncedCategoryName: desiredCategoryName,
-      lastSyncedCategoryId: desiredCategoryId,
-      error: ""
-    });
+    // Recorded only when metadata actually synced. Booking a "last synced" title while waiting
+    // would make the dashboard claim a sync that never reached any channel.
+    if (metadataSyncGate.mode !== "waiting-for-broadcaster") {
+      await updateTwitchConnectionRecord({
+        ...state.twitch,
+        status: "connected",
+        lastMetadataSyncAt: new Date().toISOString(),
+        lastSyncedTitle: desiredTitle,
+        lastSyncedCategoryName: desiredCategoryName,
+        lastSyncedCategoryId: desiredCategoryId,
+        error: ""
+      });
+    }
   };
 
   const syncScheduleIfEnabled = async (accessToken: string, syncState: AppState, successMessage: string): Promise<void> => {
@@ -5559,9 +5600,18 @@ async function reconcileTwitch(): Promise<void> {
       return;
     }
 
+    // Same gate as title and category: schedule segments are broadcaster-owned writes, and the
+    // waiting incident from sync() already names the state, so this only has to not write.
+    if (metadataSyncGate.mode === "waiting-for-broadcaster") {
+      await resolveIncident("twitch.schedule.sync.failed", TWITCH_METADATA_WAITING_MESSAGE);
+      return;
+    }
+
     await syncTwitchSchedule({
       state: syncState,
-      accessToken,
+      accessToken: metadataSyncGate.mode === "broadcaster" ? syncState.twitchBroadcaster.accessToken : accessToken,
+      broadcasterId:
+        metadataSyncGate.mode === "broadcaster" ? syncState.twitchBroadcaster.broadcasterId : syncState.twitch.broadcasterId,
       timeZone: process.env.CHANNEL_TIMEZONE || "UTC",
       clientId: twitchClientId,
       categoryCache
