@@ -76,8 +76,14 @@ With a broadcast channel configured:
   "waiting for broadcast channel connection" as an info incident and on the dashboard until then;
   no metadata write ever targets the connected account's channel while waiting
 
-The broadcaster connection slot exists in the data model and the dashboard explains it, but the
-browser flow to connect the second account is not wired up yet.
+The dashboard's waiting entry doubles as the connect affordance: `Connect broadcast channel`
+starts a dedicated OAuth flow (`/api/integrations/twitch/connect-broadcaster`) that requests only
+`channel:manage:broadcast` and `channel:manage:schedule`. The click must happen while signed in
+to Twitch as the broadcast channel's own account — the callback verifies the authorised login
+against the configured broadcast channel (case-insensitive) and rejects anything else, most
+importantly the identity account, without storing a token. On success metadata sync flips on
+within the next worker cycle, no restart needed; `Disconnect broadcast channel` clears the slot
+and returns the sync to its visible waiting state.
 
 ## Broadcaster Connect
 

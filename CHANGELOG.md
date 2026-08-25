@@ -2,7 +2,17 @@
 
 ## Unreleased
 
-- No unreleased changes currently tracked.
+### Added
+
+- broadcaster-slot OAuth connect (M51 completion): the broadcast channel's own account can now be
+  connected from the browser through a flow kept fully separate from the identity connection —
+  own start route with only the `channel:manage:broadcast` and `channel:manage:schedule` scopes,
+  own namespaced single-use state cookie, and a callback that verifies the authorised Twitch
+  login matches the configured broadcast channel before storing anything; connecting the wrong
+  account (typically the identity) is rejected with a message naming both accounts and stores no
+  token. The dashboard's waiting entry became the actual connect link, a connected slot can be
+  disconnected, and the worker refreshes the slot token ahead of expiry and on 401 like the
+  identity token, so metadata sync flips on — and stays on — without a restart
 
 ## 1.5.27 - 2026-08-25
 
