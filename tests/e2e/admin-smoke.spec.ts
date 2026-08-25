@@ -22,11 +22,11 @@ async function ensureSignedIn(page: Page) {
     await page.getByLabel("Owner email").fill(ownerEmail);
     await page.getByLabel("Password").fill(ownerPassword);
     await setupButton.click();
-    // Since M52 the wizard continues on /setup instead of dropping into the workspace; the next
-    // open step is derived server-side, and for this stack (APP_URL in env) that is the Twitch
-    // credentials step. The test only needs the session, so it moves on from here.
-    await expect(page.getByText("Setup steps", { exact: true })).toBeVisible();
-    await expect(page.getByText("2. Instance basics")).toBeVisible();
+    // Since M52 the wizard continues on /setup instead of dropping into the workspace. The wait
+    // target must be something that only renders after bootstrap actually completed — the step
+    // rail is visible before submitting too, and returning on it races the session cookie: the
+    // next navigation then bounces through /login and lands on bare /live without its tab.
+    await expect(page.getByText(`Owner ${ownerEmail} exists.`)).toBeVisible();
     return;
   }
 

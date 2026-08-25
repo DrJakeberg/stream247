@@ -1313,7 +1313,7 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | Milestone | Type | Priority | Status | Goal |
 | --- | --- | --- | --- | --- |
 | M51 | Architecture fix | Now | Planned | Separate the broadcast channel from the connected identity; chat and moderation work via the mod account now, metadata via a broadcaster connection later |
-| M52 | UX | Now | Planned | First-run wizard covering everything that lives in `.env` today |
+| M52 | UX | Now | Complete | First-run wizard covering everything that lives in `.env` today |
 | M53 | Feature | Next | Planned | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
 | M54 | Feature | Next | Planned | Chat game framework with Snake as the first game (emote-per-direction, moves only on input) |
 | M55 | Ops | Later | Planned | Global disk watermark self-protection with staged cache eviction |
@@ -1418,6 +1418,14 @@ incident naming what was freed and why. Never touches media the schedule still r
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-08-25 — M52 Setup Wizard
+
+- `APP_SECRET` is now resolved in `@stream247/db` for web sessions and managed-config encryption alike: generated on first boot (64 chars, exclusive create so racing containers agree) and persisted mode-600 at `data/media/.stream247-app-secret`; env overrides everything, production still refuses the published dev constant and weak values, and the old silent dev-constant fallback inside `getEncryptionKey` is gone.
+- `APP_URL` and `CHANNEL_TIMEZONE` moved into managed config with env-first resolvers (`resolveAppBaseUrl`, `resolveChannelTimeZone`); every reader in web and worker goes through them, with the scene renderer base URL as the one documented env-only exception (internal address, not the public one).
+- `/setup` is a resumable wizard — owner → instance basics → Twitch app credentials → Twitch connect → review — with completion derived from actual configuration instead of a stored step counter; the go-live checklist links `APP_URL`/`APP_SECRET` to their wizard steps, and `DATABASE_URL` stopped gating the secret step because the compose-internal default points at the bundled Postgres.
+- Compose marks `.env` as optional for web/worker/playout/uplink, so a fresh `docker compose up` with no env file reaches `/setup`; env examples and docs describe env values as pins/rollback rather than requirements.
+- Validation completed: `pnpm validate` (lint, css tokens, typecheck, 778 unit + 33 integration tests, build) and the containerised e2e admin smoke via `scripts/e2e-smoke.sh` after rebuilding the test images. The first smoke run caught a real race in the updated spec — the post-bootstrap wait targeted the step rail, which renders before the session cookie lands — fixed by waiting on the owner summary that only exists after bootstrap; second run green.
 
 ### 2026-04-22 — M50 Portainer/DT Rollout Flow And Stack Check
 
