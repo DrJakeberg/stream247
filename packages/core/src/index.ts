@@ -1,3 +1,4 @@
+export * from "./asset-chapters.js";
 export * from "./broadcast-channel.js";
 export * from "./chat-interaction.js";
 export * from "./overlay-layout.js";
