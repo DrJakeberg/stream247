@@ -148,6 +148,7 @@ import {
   isTwitchVodCacheCoolingDown
 } from "./twitch-vod-cache.js";
 import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
+import { getPlayoutFeedHealthOptions, shouldRestartStalledPlayout } from "./playout-feed-health.js";
 import {
   PROGRAM_FEED_SWEEP_LIMIT,
   selectStaleProgramFeedSegments,
@@ -669,6 +670,57 @@ async function enforceProgramFeedAudio(playlistPath: string): Promise<void> {
   }
 }
 
+/**
+ * Restarts the playout when its process is alive but the feed has stopped advancing.
+ *
+ * Caught live: ffmpeg blocked for 3h43m at 0% CPU on a remote source that stopped delivering, its
+ * -reconnect flags set and never firing. The feed stood still, the uplink exited "end of input"
+ * once a minute, and the channel was dark for four minutes. The uplink has a watchdog for "running
+ * is not working"; this is the same idea one stage earlier.
+ *
+ * Complementary to enforceProgramFeedAudio, not overlapping: that one catches a feed that still
+ * advances but carries no audio; this one catches a feed that does not advance at all.
+ */
+async function enforceProgramFeedProgress(feed: { updatedAt: string }): Promise<void> {
+  try {
+    const options = getPlayoutFeedHealthOptions(process.env);
+    const parsedUpdatedAt = feed.updatedAt ? new Date(feed.updatedAt).getTime() : 0;
+    const feedUpdatedAtMs = Number.isFinite(parsedUpdatedAt) ? parsedUpdatedAt : 0;
+    const nowMs = Date.now();
+
+    if (
+      !shouldRestartStalledPlayout({
+        playoutRunning: isPlayoutProcessRunning(),
+        processStartedAtMs: playoutProcessStartedAtMs,
+        feedUpdatedAtMs,
+        nowMs,
+        options
+      })
+    ) {
+      return;
+    }
+
+    const staleSeconds = Math.round((nowMs - feedUpdatedAtMs) / 1000);
+    logRuntimeEvent("playout.feed_stall.restart", {
+      staleSeconds,
+      thresholdSeconds: Math.round(options.staleMs / 1000)
+    });
+    await upsertIncident({
+      scope: "playout",
+      severity: "warning",
+      title: "Playout restarted after its feed stopped advancing",
+      message: `The playout process is still running but the program feed has not advanced for ${staleSeconds}s. This is the shape of an input that hangs without erroring; restarting is the only way forward.`,
+      fingerprint: "playout.feed-stall"
+    });
+
+    await stopPlayoutProcess("feed-stalled");
+  } catch (error) {
+    logRuntimeEvent("playout.feed_stall.check_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
 async function updateProgramFeedRuntimeStatus(): Promise<Awaited<ReturnType<typeof readProgramFeedRuntimeStatus>>> {
   const feed = await readProgramFeedRuntimeStatus();
   await updatePlayoutRuntime((playout) => ({
@@ -680,6 +732,7 @@ async function updateProgramFeedRuntimeStatus(): Promise<Awaited<ReturnType<type
     programFeedBufferedSeconds: feed.bufferedSeconds
   }));
   await enforceProgramFeedAudio(feed.playlistPath);
+  await enforceProgramFeedProgress(feed);
   return feed;
 }
 
