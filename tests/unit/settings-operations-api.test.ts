@@ -125,6 +125,55 @@ describe("managed operations API", () => {
       expect.objectContaining({ diskWatermarkTriggerPercent: "", diskWatermarkRecoverPercent: "" })
     );
   });
+
+  // M57: the observation-only system-volume pair and the retention sweep save through the same
+  // partial route, with the same whole-pair rule for the new percent pair and day validation
+  // for the protection window.
+  it("stores the system-volume pair and the retention settings", async () => {
+    const response = await putOperations(
+      request({
+        systemVolumeTriggerPercent: "20",
+        systemVolumeRecoverPercent: "30",
+        assetRetentionEnabled: "1",
+        assetRetentionProtectionDays: "14"
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateManagedConfigRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemVolumeTriggerPercent: "20",
+        systemVolumeRecoverPercent: "30",
+        assetRetentionEnabled: "1",
+        assetRetentionProtectionDays: "14",
+        twitchClientId: "keep-me"
+      })
+    );
+  });
+
+  it("rejects a misordered system-volume pair whole, like the worker would", async () => {
+    const response = await putOperations(
+      request({ systemVolumeTriggerPercent: "30", systemVolumeRecoverPercent: "20" })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockUpdateManagedConfigRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects a protection window that is not a whole number of days in range", async () => {
+    for (const value of ["0", "2.5", "400", "junk"]) {
+      const response = await putOperations(request({ assetRetentionProtectionDays: value }));
+      expect(response.status).toBe(400);
+    }
+    expect(mockUpdateManagedConfigRecord).not.toHaveBeenCalled();
+  });
+
+  it("validates the retention switch like every other managed flag", async () => {
+    const response = await putOperations(request({ assetRetentionEnabled: "yes" }));
+
+    expect(response.status).toBe(400);
+    expect(mockUpdateManagedConfigRecord).not.toHaveBeenCalled();
+  });
 });
 
 describe("managed encoder API", () => {

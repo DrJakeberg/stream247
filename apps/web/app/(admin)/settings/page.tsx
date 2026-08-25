@@ -2,8 +2,10 @@ export const dynamic = "force-dynamic";
 
 import {
   resolveAlertsRuntimeEnabled,
+  resolveAssetRetentionConfig,
   resolveChatOverlayRuntimeEnabled,
   resolveDiskWatermarkConfig,
+  resolveSystemVolumeWatermarkConfig,
   resolveTwitchScheduleSyncEnabled
 } from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
@@ -27,6 +29,8 @@ export default async function SettingsPage() {
   const updateCenter = await getUpdateCenterState();
   // Env-only resolutions: what "follow the server" means for each folded operations group.
   const diskFallback = resolveDiskWatermarkConfig(null, process.env);
+  const systemVolumeFallback = resolveSystemVolumeWatermarkConfig(null, process.env);
+  const retentionFallback = resolveAssetRetentionConfig(null, process.env);
 
   return (
     <div className="stack-form">
@@ -107,12 +111,20 @@ export default async function SettingsPage() {
             initialValues={{
               diskWatermarkEnabled: state.managedConfig.diskWatermarkEnabled,
               diskWatermarkTriggerPercent: state.managedConfig.diskWatermarkTriggerPercent,
-              diskWatermarkRecoverPercent: state.managedConfig.diskWatermarkRecoverPercent
+              diskWatermarkRecoverPercent: state.managedConfig.diskWatermarkRecoverPercent,
+              systemVolumeTriggerPercent: state.managedConfig.systemVolumeTriggerPercent,
+              systemVolumeRecoverPercent: state.managedConfig.systemVolumeRecoverPercent,
+              assetRetentionEnabled: state.managedConfig.assetRetentionEnabled,
+              assetRetentionProtectionDays: state.managedConfig.assetRetentionProtectionDays
             }}
             fallback={{
               enabled: diskFallback.enabled,
               triggerPercent: Math.round(diskFallback.triggerFreeRatio * 100),
-              recoverPercent: Math.round(diskFallback.recoverFreeRatio * 100)
+              recoverPercent: Math.round(diskFallback.recoverFreeRatio * 100),
+              systemTriggerPercent: Math.round(systemVolumeFallback.triggerFreeRatio * 100),
+              systemRecoverPercent: Math.round(systemVolumeFallback.recoverFreeRatio * 100),
+              retentionEnabled: retentionFallback.enabled,
+              retentionDays: retentionFallback.protectionDays
             }}
           />
           <FeatureSwitchesForm
