@@ -20,6 +20,7 @@ import {
   normalizeCuepointOffsetsSeconds,
   normalizeEngagementEvent,
   normalizeEngagementGameMode,
+  normalizeEngagementOverlayPosition,
   normalizeEngagementGameRuntime,
   normalizeEngagementSettings,
   normalizeOverlayPanelAnchor,
@@ -2176,6 +2177,21 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       updated_at TEXT NOT NULL DEFAULT ''
     );
 
+    -- One row: the chat messages the on-air overlay may draw. The worker's chat bridge keeps the
+    -- live ring buffer in memory and flushes a display projection here so the playout container
+    -- can render it — the same boundary chat_vote_session and chat_skip_vote cross. Only what the
+    -- frame shows is stored: display name, text, timestamp. No user ids, no logins, no message
+    -- ids — moderation removals happen in the worker's buffer and reach this row as the next
+    -- flush of its contents.
+    CREATE TABLE IF NOT EXISTS chat_overlay_messages (
+      singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      position TEXT NOT NULL DEFAULT 'bottom-left',
+      max_messages INTEGER NOT NULL DEFAULT 5,
+      messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
     CREATE TABLE IF NOT EXISTS twitch_connection (
       singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'not-connected',
@@ -3113,6 +3129,37 @@ const chatSkipVoteMigration: MigrationDefinition = {
 
 if (!schemaMigrations.some((migration) => migration.id === chatSkipVoteMigration.id)) {
   schemaMigrations.push(chatSkipVoteMigration);
+}
+
+// 005 because 001-004 of this date are taken above (broadcaster connection, asset chapters, chat
+// game, skip vote); checked against main at the time of writing. Like the skip-vote table this is
+// declared in the base-schema block as well, which only ever runs for databases created from
+// nothing — this migration is what carries the table to every existing install.
+const chatOverlayMessagesMigration: MigrationDefinition = {
+  id: "20260825_005_chat_overlay_messages",
+  description: "Persist recent chat messages so the playout container can draw them on air.",
+  apply: async (client) => {
+    await client.query(`
+      -- One row: the chat messages the on-air overlay may draw. The worker's chat bridge keeps
+      -- the live ring buffer in memory and flushes a display projection here so the playout
+      -- container can render it — the same boundary chat_vote_session and chat_skip_vote cross.
+      -- Only what the frame shows is stored: display name, text, timestamp. No user ids, no
+      -- logins, no message ids — moderation removals happen in the worker's buffer and reach
+      -- this row as the next flush of its contents.
+      CREATE TABLE IF NOT EXISTS chat_overlay_messages (
+        singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+        enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        position TEXT NOT NULL DEFAULT 'bottom-left',
+        max_messages INTEGER NOT NULL DEFAULT 5,
+        messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+        updated_at TEXT NOT NULL DEFAULT ''
+      );
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === chatOverlayMessagesMigration.id)) {
+  schemaMigrations.push(chatOverlayMessagesMigration);
 }
 
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
@@ -5746,6 +5793,115 @@ export async function writeChatSkipVoteRecord(record: Partial<ChatSkipVoteRecord
         normalized.votesNeeded,
         normalized.startedAt,
         normalized.expiresAt,
+        normalized.updatedAt || new Date().toISOString()
+      ]
+    );
+  });
+}
+
+export type ChatOverlayMessageRecord = {
+  /** Display name as chat shows it — the only identity the overlay ever needs. */
+  name: string;
+  text: string;
+  /** ISO timestamp of arrival; the projection uses it to age messages off air. */
+  at: string;
+};
+
+export type ChatOverlayMessagesRecord = {
+  /** Snapshot of the runtime gate at flush time, so playout renders from this one read. */
+  enabled: boolean;
+  position: string;
+  maxMessages: number;
+  /** Oldest first. */
+  messages: ChatOverlayMessageRecord[];
+  updatedAt: string;
+};
+
+/** More rows than any panel can show, fewer than the worker's 50-message ring. */
+const CHAT_OVERLAY_MESSAGES_STORED_MAX = 12;
+
+/**
+ * Normalised on the way out as well as in, like the game settings: whatever ends up in the row —
+ * an old shape, a hand edit — comes back as bounded plain strings. Zero-width and control
+ * characters are stripped here because this text's only consumer is a broadcast frame.
+ */
+function normalizeChatOverlayMessages(value: unknown): ChatOverlayMessageRecord[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      const record = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+      return {
+        name: stripInvisibleCharacters(String(record.name ?? "")).trim().slice(0, 80),
+        text: stripInvisibleCharacters(String(record.text ?? "")).trim().slice(0, 200),
+        at: stripInvisibleCharacters(String(record.at ?? "")).trim().slice(0, 40)
+      };
+    })
+    .filter((entry) => entry.name && entry.text && entry.at)
+    .slice(-CHAT_OVERLAY_MESSAGES_STORED_MAX);
+}
+
+export function createEmptyChatOverlayMessagesRecord(): ChatOverlayMessagesRecord {
+  return {
+    enabled: false,
+    position: "bottom-left",
+    maxMessages: 5,
+    messages: [],
+    updatedAt: ""
+  };
+}
+
+/**
+ * The chat the on-air overlay may draw, mirrored for the process boundary the same way the poll
+ * and the skip campaign are: the worker's bridge owns the ring buffer in memory and flushes this
+ * display projection, playout only ever reads. Moderation hygiene rides the same flush — a
+ * deleted or banned message disappears from the worker's buffer and the next flush overwrites
+ * the row without it.
+ */
+export async function readChatOverlayMessagesRecord(): Promise<ChatOverlayMessagesRecord> {
+  const result = await getPool().query<{
+    enabled: boolean;
+    position: string;
+    max_messages: number;
+    messages: unknown;
+    updated_at: string;
+  }>("SELECT * FROM chat_overlay_messages WHERE singleton_id = 1");
+
+  const row = result.rows[0];
+  if (!row) {
+    return createEmptyChatOverlayMessagesRecord();
+  }
+
+  return {
+    enabled: Boolean(row.enabled),
+    position: normalizeEngagementOverlayPosition(row.position),
+    maxMessages: Math.min(12, Math.max(1, Math.round(Number(row.max_messages)) || 5)),
+    messages: normalizeChatOverlayMessages(row.messages),
+    updatedAt: String(row.updated_at ?? "")
+  };
+}
+
+export async function writeChatOverlayMessagesRecord(record: Partial<ChatOverlayMessagesRecord>): Promise<void> {
+  const normalized = { ...createEmptyChatOverlayMessagesRecord(), ...record };
+  await withSerializedStateWrite("writeChatOverlayMessagesRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO chat_overlay_messages (singleton_id, enabled, position, max_messages, messages, updated_at)
+        VALUES (1, $1, $2, $3, $4::jsonb, $5)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          enabled = EXCLUDED.enabled,
+          position = EXCLUDED.position,
+          max_messages = EXCLUDED.max_messages,
+          messages = EXCLUDED.messages,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        normalized.enabled,
+        normalizeEngagementOverlayPosition(normalized.position),
+        Math.min(12, Math.max(1, Math.round(Number(normalized.maxMessages)) || 5)),
+        JSON.stringify(normalizeChatOverlayMessages(normalized.messages)),
         normalized.updatedAt || new Date().toISOString()
       ]
     );

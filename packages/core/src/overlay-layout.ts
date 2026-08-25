@@ -108,6 +108,25 @@ export type OverlayEngagementView = {
   hint: string;
 };
 
+export type OverlayChatMessageView = {
+  name: string;
+  text: string;
+};
+
+/**
+ * Live chat as the overlay draws it: display name and text only. Identities beyond the display
+ * name never reach this type — the projection that feeds it already dropped them, and the layout
+ * has no use for them.
+ */
+export type OverlayChatView = {
+  /** One of the four corners; anything else falls back to bottom-left. */
+  position: string;
+  /** Operator's message count; the panel additionally caps at OVERLAY_CHAT_PANEL_MAX_MESSAGES. */
+  maxMessages: number;
+  /** Oldest first; the panel keeps the newest tail. */
+  messages: OverlayChatMessageView[];
+};
+
 /**
  * The chat game as the overlay draws it — a structural mirror of ChatGameRenderModel, declared
  * here so this file stays dependency-free like the rest of the layout types.
@@ -140,6 +159,7 @@ export type OverlayLayoutInput = {
   payload: OverlayScenePayloadView;
   engagement?: OverlayEngagementView | null;
   game?: OverlayGameView | null;
+  chat?: OverlayChatView | null;
 };
 
 /** The subset of OverlayScenePayload the layout consumes. */
@@ -536,6 +556,107 @@ function buildNextCard(
   };
 }
 
+// The panel's own message cap, independent of the operator's maxMessages (which reaches 12).
+//
+// The claim behind the number: the chat panel is the only overlay content other people write, so
+// its worst case has to fit under the worst case of everything it can stack with. One message is
+// one 19px row (~23px drawn) plus an 8px gap, so eight messages plus padding are ~280 design-px.
+// The tallest neighbour is the five-option vote panel at ~425, the top cluster is ~110, and the
+// frame keeps 56px vertical padding — stacked worst case ~947 of the 1080 grid, leaving real
+// slack for a wrapped banner. At twelve messages that slack is gone.
+export const OVERLAY_CHAT_PANEL_MAX_MESSAGES = 8;
+
+// Character budgets for one message row inside the 680px panel (inner 640): a bold 14-character
+// name (~170px) plus a 40-character text (~440px) fit a single 19px line in the loaded faces.
+// lineClamp backstops glyphs wider than the estimate (CJK, fullwidth), so a row can never wrap
+// into a second line and eat the height claim above.
+const CHAT_NAME_MAX_CHARS = 14;
+const CHAT_TEXT_MAX_CHARS = 40;
+
+/**
+ * Chat text arrives from strangers. Control characters can break satori's text shaping, bidi
+ * overrides can reverse what the frame appears to say, and zero-width characters smuggle both —
+ * all of it is stripped, and runs of whitespace (including newlines) collapse to single spaces so
+ * a message is one line of plain text before any clamping happens. Twitch emote codes are not
+ * special-cased: satori draws text, not emote images, so a code like "Kappa" stays visible as its
+ * word.
+ */
+function sanitizeChatLine(value: unknown): string {
+  return (
+    String(value ?? "")
+      // Whitespace first: newlines and tabs become spaces before the control-range strip would
+      // swallow them, so a line break keeps its word boundary.
+      .replace(/\s+/g, " ")
+      .replace(/[\u0000-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "")
+      .replace(/ {2,}/g, " ")
+      .trim()
+  );
+}
+
+/**
+ * The live-chat panel: the newest handful of messages, name and text, nothing else.
+ *
+ * No heading and no hint — chat explains itself, and every extra line would come out of the
+ * height budget documented at OVERLAY_CHAT_PANEL_MAX_MESSAGES. Returns null when nothing
+ * survives sanitisation: an empty chat renders no frame at all rather than an empty panel.
+ */
+function buildChatPanel(
+  chat: OverlayChatView,
+  accent: string,
+  scale: number,
+  fontFamily: string,
+  surfaceStyle: string
+): OverlayLayoutNode | null {
+  const px = (value: number) => Math.round(value * scale);
+  const operatorLimit = Number.isFinite(chat.maxMessages) ? Math.round(chat.maxMessages) : 1;
+  const limit = Math.min(Math.max(1, operatorLimit), OVERLAY_CHAT_PANEL_MAX_MESSAGES);
+
+  const messages = chat.messages
+    .map((message) => ({
+      name: clampOverlayText(sanitizeChatLine(message.name), CHAT_NAME_MAX_CHARS),
+      text: clampOverlayText(sanitizeChatLine(message.text), CHAT_TEXT_MAX_CHARS)
+    }))
+    .filter((message) => message.name && message.text)
+    .slice(-limit);
+
+  if (messages.length === 0) {
+    return null;
+  }
+
+  const rows = messages.map((message, index) =>
+    row({ alignItems: "flex-start", gap: px(10), ...(index > 0 ? { marginTop: px(8) } : {}) }, [
+      label(message.name, {
+        color: accentTextColor(accent),
+        fontSize: px(19),
+        fontWeight: 700
+      }),
+      label(message.text, {
+        color: INK_PRIMARY,
+        fontSize: px(19),
+        // One drawn line per message, whatever the glyph widths — the height claim depends on it.
+        lineClamp: 1
+      })
+    ])
+  );
+
+  return {
+    type: "div",
+    props: {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        width: px(680),
+        padding: `${px(16)}px ${px(20)}px`,
+        // 16 like the other small rail cards; only the two full panels carry 18.
+        borderRadius: px(16),
+        fontFamily,
+        ...resolveSurface(surfaceStyle, accent)
+      },
+      children: rows
+    }
+  };
+}
+
 /** Clamps a custom-layer percent box the same way the studio preview does. */
 function clampPlacementPercent(value: number, min: number, max: number): number {
   return Math.min(Math.max(Number.isFinite(value) ? value : 0, min), max);
@@ -799,6 +920,12 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
         })
       : null;
 
+  // Chat is gated upstream (enabled setting, freshness) by the projection that builds the view;
+  // here the only gate left is content. An empty or fully-sanitised-away chat builds no panel,
+  // and with no panel every placement below collapses back to exactly the chatless tree.
+  const chatPanel = input.chat ? buildChatPanel(input.chat, accent, scale, fontFamily, payload.scene.surfaceStyle) : null;
+  const chatPosition = chatPanel ? String(input.chat?.position ?? "") : "";
+
   const clock = formatOverlayClock(options.now ?? new Date(), payload.timeZone);
   const clockChip = label(clock, {
     color: INK_PRIMARY,
@@ -820,17 +947,53 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
     ])
   ];
 
+  // The chat panel joins the flex flow of whichever corner the operator chose, never absolute
+  // positioning: a top position hangs it in its own full-width row under the banner/clock, a
+  // bottom position stacks it into the column of the panel that anchors that corner. Flex flow is
+  // the overlap guarantee — the panel displaces its neighbours instead of covering them, which is
+  // what lets the height claim at OVERLAY_CHAT_PANEL_MAX_MESSAGES stay a budget rather than a
+  // collision rule. This also holds for the centre anchor, where absolute maths would collide
+  // with the vertically-centred lower third.
+  if (chatPanel && (chatPosition === "top-left" || chatPosition === "top-right")) {
+    topBar.push(
+      row(
+        {
+          width: "100%",
+          justifyContent: chatPosition === "top-left" ? "flex-start" : "flex-end",
+          marginTop: px(16)
+        },
+        [chatPanel]
+      )
+    );
+  }
+
   // Right rail carries whatever is secondary: the vote panel takes priority over "up next",
   // because it is the thing viewers are being asked to act on.
   const rail: OverlayLayoutNode[] = [];
+  if (chatPanel && chatPosition === "bottom-right") {
+    // Above the vote panel / next card, so those keep their exact anchor at the frame's edge.
+    rail.push(chatPanel);
+  }
   if (votePanel) {
     rail.push(votePanel);
   } else if (nextCard) {
     rail.push(nextCard);
   }
 
+  const lowerThird = buildLowerThird(payload, accent, scale, fontFamily);
+  const chatAtBottomLeft = chatPanel && !(chatPosition === "bottom-right" || chatPosition === "top-left" || chatPosition === "top-right");
+  const leftCell: OverlayLayoutNode = chatAtBottomLeft
+    ? {
+        type: "div",
+        props: {
+          style: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: px(14) },
+          children: [chatPanel, lowerThird]
+        }
+      }
+    : lowerThird;
+
   const bottom = row({ alignItems: "flex-end", justifyContent: "space-between", width: "100%", gap: px(28) }, [
-    buildLowerThird(payload, accent, scale, fontFamily),
+    leftCell,
     ...(rail.length ? [{ type: "div", props: { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: px(14) }, children: rail } }] : [])
   ]);
 

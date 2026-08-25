@@ -15,6 +15,7 @@ import {
   readAppState,
   updateAppState,
   updatePlayoutRuntime,
+  readChatOverlayMessagesRecord,
   readChatSkipVoteRecord,
   readManagedDestinationStreamKeys,
   readOverlayStudioState,
@@ -28,6 +29,7 @@ import {
   updateOutputSettingsRecord,
   updateSourceFieldRecords,
   writeAppState,
+  writeChatOverlayMessagesRecord,
   writeChatSkipVoteRecord
 } from "@stream247/db";
 
@@ -77,6 +79,7 @@ const outputSettingsColumns = ["singleton_id", "profile_id", "width", "height", 
 const engagementLayerMigrationId = "20260420_002_engagement_layer";
 const chatInteractionMigrationId = "20260818_001_chat_interaction";
 const chatSkipVoteMigrationId = "20260825_004_chat_skip_vote";
+const chatOverlayMessagesMigrationId = "20260825_005_chat_overlay_messages";
 const engagementAlertTypesMigrationId = "20260421_001_engagement_alert_types";
 const engagementSettingsColumns = [
   "singleton_id",
@@ -1388,6 +1391,55 @@ describe.sequential("database roundtrip", () => {
     const cleared = await readChatSkipVoteRecord();
     expect(cleared.votes).toBe(0);
     expect(cleared.assetId).toBe("");
+  }, 60_000);
+
+  it("creates the chat-overlay-messages schema on an existing database and roundtrips the row", async () => {
+    // Same upgrade story as the skip vote: the base-schema block only ever runs for databases
+    // created from nothing, so an already-migrated deployment gets the table from the migration.
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      DROP TABLE IF EXISTS chat_overlay_messages;
+      DELETE FROM schema_migrations WHERE id = '${chatOverlayMessagesMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const migrationApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id = '${chatOverlayMessagesMigrationId}';`
+    );
+    expect(migrationApplied).toBe("1");
+
+    // Exercised against the real table: singleton upsert, jsonb column mapping, and the
+    // sanitising normalisation a mocked pool would wave through.
+    await writeChatOverlayMessagesRecord({
+      enabled: true,
+      position: "top-right",
+      maxMessages: 6,
+      messages: [
+        { name: "viewer_one", text: "hello​ stream", at: "2026-08-25T20:00:00.000Z" },
+        { name: "", text: "no name, never stored", at: "2026-08-25T20:00:01.000Z" },
+        { name: "viewer_two", text: "second", at: "2026-08-25T20:00:02.000Z" }
+      ],
+      updatedAt: "2026-08-25T20:00:03.000Z"
+    });
+
+    const reread = await readChatOverlayMessagesRecord();
+    expect(reread.enabled).toBe(true);
+    expect(reread.position).toBe("top-right");
+    expect(reread.maxMessages).toBe(6);
+    expect(reread.updatedAt).toBe("2026-08-25T20:00:03.000Z");
+    expect(reread.messages).toEqual([
+      { name: "viewer_one", text: "hello stream", at: "2026-08-25T20:00:00.000Z" },
+      { name: "viewer_two", text: "second", at: "2026-08-25T20:00:02.000Z" }
+    ]);
+
+    // Clearing writes the empty record over the same row rather than deleting it — the shape a
+    // disabled chat overlay leaves behind.
+    await writeChatOverlayMessagesRecord({ updatedAt: "2026-08-25T20:05:00.000Z" });
+    const cleared = await readChatOverlayMessagesRecord();
+    expect(cleared.enabled).toBe(false);
+    expect(cleared.messages).toEqual([]);
   }, 60_000);
 
   describe("schedule writes validated under the lock", () => {

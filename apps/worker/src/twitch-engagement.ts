@@ -17,15 +17,54 @@ export const CHAT_IDLE_TIMEOUT_MS = 6 * 60_000;
 export type TwitchChatMessage = {
   id: string;
   actor: string;
+  /** The account's lowercase login, from the IRC source prefix. Display names can be localised
+   * strings unrelated to the login, and moderation lines (CLEARCHAT) name the login — so removal
+   * has to match on this, never on the display name. */
+  login: string;
   message: string;
   isModerator: boolean;
 };
+
+/**
+ * A moderation line the bridge must mirror into its own buffer. Twitch sends CLEARMSG when one
+ * message is deleted and CLEARCHAT when a user is banned or timed out (or, with no target, when
+ * the whole room is cleared). A message a moderator removed from chat must not keep playing on
+ * the broadcast, which is the one surface the moderator cannot refresh.
+ */
+export type TwitchChatModerationAction =
+  | { kind: "clear-message"; targetMessageId: string }
+  | { kind: "clear-user"; login: string }
+  | { kind: "clear-all" };
+
+export function parseTwitchChatModerationLine(line: string): TwitchChatModerationAction | null {
+  const clearMsg = line.match(/^@(?<tags>[^ ]+) :[^ ]+ CLEARMSG #[^ ]+ :.*$/);
+  if (clearMsg?.groups) {
+    const targetMessageId =
+      clearMsg.groups.tags
+        .split(";")
+        .map((entry) => entry.split("="))
+        .find(([key]) => key === "target-msg-id")?.[1] ?? "";
+    return targetMessageId ? { kind: "clear-message", targetMessageId } : null;
+  }
+
+  const clearChat = line.match(/^(?:@[^ ]+ )?:[^ ]+ CLEARCHAT #[^ ]+(?: :(?<login>.+))?$/);
+  if (clearChat) {
+    const login = (clearChat.groups?.login ?? "").trim().toLowerCase();
+    return login ? { kind: "clear-user", login } : { kind: "clear-all" };
+  }
+
+  return null;
+}
 
 type ModeratorPresenceWindow = NonNullable<ReturnType<typeof resolveModeratorCheckIn>>;
 
 type TwitchChatBridgeOptions = {
   onModeratorPresenceCheckIn?: (window: ModeratorPresenceWindow) => Promise<void> | void;
   onChatMessage?: (message: TwitchChatMessage & { createdAt: string }) => Promise<void> | void;
+  /** Fired whenever the overlay-facing message buffer changes: a display-worthy message arrived,
+   * a moderation line removed something, or a disconnect cleared the buffer. The worker throttles
+   * the resulting flush, so firing per change is cheap. */
+  onOverlayMessagesChanged?: () => void;
 };
 
 /**
@@ -66,6 +105,17 @@ export function createRingBuffer<T>(capacity: number) {
     },
     clear() {
       entries.splice(0, entries.length);
+    },
+    /** Removes every matching entry and reports how many went — the moderation path. */
+    remove(predicate: (entry: T) => boolean): number {
+      let removed = 0;
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        if (predicate(entries[index]!)) {
+          entries.splice(index, 1);
+          removed += 1;
+        }
+      }
+      return removed;
     }
   };
 }
@@ -82,7 +132,8 @@ export function parseTwitchIrcMessage(line: string): TwitchChatMessage | null {
       return [key, value.join("=")];
     })
   );
-  const actor = (tags["display-name"] || "").replace(/\\s/g, " ").trim() || match.groups.source.split("!")[0] || "Viewer";
+  const login = (match.groups.source.split("!")[0] || "").toLowerCase();
+  const actor = (tags["display-name"] || "").replace(/\\s/g, " ").trim() || login || "Viewer";
   const message = match.groups.message.trim();
   const badges = String(tags.badges || "");
   const isModerator =
@@ -95,6 +146,7 @@ export function parseTwitchIrcMessage(line: string): TwitchChatMessage | null {
   return {
     id: tags.id || `chat-${randomUUID()}`,
     actor,
+    login,
     message,
     isModerator
   };
@@ -153,21 +205,26 @@ export class TwitchChatBridge {
   private socket: tls.TLSSocket | null = null;
   private channel = "";
   private buffer = "";
-  private readonly messages = createRingBuffer<EngagementEventRecord>(50);
+  // Entries carry the login alongside the display event: CLEARCHAT names the login, and a
+  // localised display name may share no characters with it. The login never leaves this buffer —
+  // getRecentMessages and everything downstream see only the display record.
+  private readonly messages = createRingBuffer<EngagementEventRecord & { login: string }>(50);
   private limiter = createChatRateLimiter(30);
   private moderationConfig: AppState["moderation"] = createDefaultModerationConfig();
   /** Last time the socket produced anything; 0 while never connected. */
   private lastActivityAt = 0;
   private readonly onModeratorPresenceCheckIn?: TwitchChatBridgeOptions["onModeratorPresenceCheckIn"];
   private readonly onChatMessage?: TwitchChatBridgeOptions["onChatMessage"];
+  private readonly onOverlayMessagesChanged?: TwitchChatBridgeOptions["onOverlayMessagesChanged"];
 
   constructor(options: TwitchChatBridgeOptions = {}) {
     this.onModeratorPresenceCheckIn = options.onModeratorPresenceCheckIn;
     this.onChatMessage = options.onChatMessage;
+    this.onOverlayMessagesChanged = options.onOverlayMessagesChanged;
   }
 
   getRecentMessages(): EngagementEventRecord[] {
-    return this.messages.values();
+    return this.messages.values().map(({ login: _login, ...event }) => event);
   }
 
   async sync(state: AppState, env: NodeJS.ProcessEnv): Promise<void> {
@@ -242,6 +299,10 @@ export class TwitchChatBridge {
     this.channel = "";
     this.buffer = "";
     this.messages.clear();
+    // The cleared buffer must reach the on-air row too: while disconnected the bridge cannot see
+    // moderation lines, so stale messages must not keep playing on the broadcast. The panel goes
+    // blank on a reconnect and refills as the room talks.
+    this.onOverlayMessagesChanged?.();
     if (reason === "disabled") {
       await appendChatStatus("disconnected", "disabled");
     }
@@ -263,6 +324,23 @@ export class TwitchChatBridge {
     for (const line of lines) {
       if (line.startsWith("PING ")) {
         this.socket?.write(line.replace("PING", "PONG") + "\r\n");
+        continue;
+      }
+
+      const moderation = parseTwitchChatModerationLine(line);
+      if (moderation) {
+        const removed = this.messages.remove((entry) => {
+          if (moderation.kind === "clear-message") {
+            return entry.id === moderation.targetMessageId;
+          }
+          if (moderation.kind === "clear-user") {
+            return entry.login === moderation.login;
+          }
+          return true;
+        });
+        if (removed > 0) {
+          this.onOverlayMessagesChanged?.();
+        }
         continue;
       }
 
@@ -313,7 +391,8 @@ export class TwitchChatBridge {
         message: message.message,
         createdAt: now.toISOString()
       };
-      this.messages.push(event);
+      this.messages.push({ ...event, login: message.login });
+      this.onOverlayMessagesChanged?.();
       void appendEngagementEventRecord(event).catch(() => undefined);
     }
   }
