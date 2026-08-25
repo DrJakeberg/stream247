@@ -2160,6 +2160,22 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       updated_at TEXT NOT NULL DEFAULT ''
     );
 
+    -- One row: the running skip campaign. The worker tallies !skip in memory and flushes only the
+    -- numbers here so the playout container can draw progress; who voted stays in the worker, both
+    -- because the overlay never needs identities and because this table should not become a second
+    -- place viewer handles are stored. votes_needed is written rather than derived: it depends on
+    -- the active-chatter count only the worker knows.
+    CREATE TABLE IF NOT EXISTS chat_skip_vote (
+      singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+      asset_id TEXT NOT NULL DEFAULT '',
+      skip_command TEXT NOT NULL DEFAULT 'skip',
+      votes INTEGER NOT NULL DEFAULT 0,
+      votes_needed INTEGER NOT NULL DEFAULT 0,
+      started_at TEXT NOT NULL DEFAULT '',
+      expires_at TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
     CREATE TABLE IF NOT EXISTS twitch_connection (
       singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'not-connected',
@@ -3066,6 +3082,37 @@ const chatGameMigration: MigrationDefinition = {
 
 if (!schemaMigrations.some((migration) => migration.id === chatGameMigration.id)) {
   schemaMigrations.push(chatGameMigration);
+}
+
+// Declared in the base-schema block as well: that block only ever runs for databases created from
+// nothing, because its baseline migration id is already recorded on every existing install. This
+// migration is what carries the table to everyone else.
+const chatSkipVoteMigration: MigrationDefinition = {
+  id: "20260825_004_chat_skip_vote",
+  description: "Persist skip-vote progress so the playout container can draw it on air.",
+  apply: async (client) => {
+    await client.query(`
+      -- One row: the running skip campaign. The worker tallies !skip in memory and flushes only
+      -- the numbers here so the playout container can draw progress; who voted stays in the
+      -- worker, both because the overlay never needs identities and because this table should not
+      -- become a second place viewer handles are stored. votes_needed is written rather than
+      -- derived: it depends on the active-chatter count only the worker knows.
+      CREATE TABLE IF NOT EXISTS chat_skip_vote (
+        singleton_id SMALLINT PRIMARY KEY DEFAULT 1,
+        asset_id TEXT NOT NULL DEFAULT '',
+        skip_command TEXT NOT NULL DEFAULT 'skip',
+        votes INTEGER NOT NULL DEFAULT 0,
+        votes_needed INTEGER NOT NULL DEFAULT 0,
+        started_at TEXT NOT NULL DEFAULT '',
+        expires_at TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT ''
+      );
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === chatSkipVoteMigration.id)) {
+  schemaMigrations.push(chatSkipVoteMigration);
 }
 
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
@@ -5612,6 +5659,93 @@ export async function writeChatVoteSessionRecord(session: Partial<ChatVoteSessio
         JSON.stringify(normalized.options),
         JSON.stringify(normalized.ballots),
         normalized.winnerAssetId,
+        normalized.updatedAt || new Date().toISOString()
+      ]
+    );
+  });
+}
+
+export type ChatSkipVoteRecord = {
+  /** Asset the campaign wants skipped; a boundary invalidates it. */
+  assetId: string;
+  /** The operator-configured command, persisted so the overlay can tell viewers what to type. */
+  skipCommand: string;
+  votes: number;
+  votesNeeded: number;
+  startedAt: string;
+  /** End of the collection window. The projection refuses rows past this, so a stale row — a
+   * worker that died mid-campaign — can never fabricate progress on air. */
+  expiresAt: string;
+  updatedAt: string;
+};
+
+export function createEmptyChatSkipVoteRecord(): ChatSkipVoteRecord {
+  return {
+    assetId: "",
+    skipCommand: "",
+    votes: 0,
+    votesNeeded: 0,
+    startedAt: "",
+    expiresAt: "",
+    updatedAt: ""
+  };
+}
+
+/**
+ * The running skip campaign, mirrored for the process boundary the same way the poll is: the
+ * worker owns the tally in memory and flushes the numbers here, playout only ever reads. Only the
+ * numbers cross — voter identities stay in the worker (see the table comment).
+ */
+export async function readChatSkipVoteRecord(): Promise<ChatSkipVoteRecord> {
+  const result = await getPool().query<{
+    asset_id: string;
+    skip_command: string;
+    votes: number;
+    votes_needed: number;
+    started_at: string;
+    expires_at: string;
+    updated_at: string;
+  }>("SELECT * FROM chat_skip_vote WHERE singleton_id = 1");
+
+  const row = result.rows[0];
+  if (!row) {
+    return createEmptyChatSkipVoteRecord();
+  }
+
+  return {
+    assetId: String(row.asset_id ?? ""),
+    skipCommand: String(row.skip_command ?? ""),
+    votes: Number(row.votes ?? 0),
+    votesNeeded: Number(row.votes_needed ?? 0),
+    startedAt: String(row.started_at ?? ""),
+    expiresAt: String(row.expires_at ?? ""),
+    updatedAt: String(row.updated_at ?? "")
+  };
+}
+
+export async function writeChatSkipVoteRecord(record: Partial<ChatSkipVoteRecord>): Promise<void> {
+  const normalized = { ...createEmptyChatSkipVoteRecord(), ...record };
+  await withSerializedStateWrite("writeChatSkipVoteRecord", async (client) => {
+    await client.query(
+      `
+        INSERT INTO chat_skip_vote (singleton_id, asset_id, skip_command, votes, votes_needed, started_at, expires_at, updated_at)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          asset_id = EXCLUDED.asset_id,
+          skip_command = EXCLUDED.skip_command,
+          votes = EXCLUDED.votes,
+          votes_needed = EXCLUDED.votes_needed,
+          started_at = EXCLUDED.started_at,
+          expires_at = EXCLUDED.expires_at,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        normalized.assetId,
+        normalized.skipCommand,
+        normalized.votes,
+        normalized.votesNeeded,
+        normalized.startedAt,
+        normalized.expiresAt,
         normalized.updatedAt || new Date().toISOString()
       ]
     );

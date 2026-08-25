@@ -15,6 +15,7 @@ import {
   readAppState,
   updateAppState,
   updatePlayoutRuntime,
+  readChatSkipVoteRecord,
   readManagedDestinationStreamKeys,
   readOverlayStudioState,
   resetDatabaseConnectionsForTests,
@@ -26,7 +27,8 @@ import {
   updateEngagementSettingsRecord,
   updateOutputSettingsRecord,
   updateSourceFieldRecords,
-  writeAppState
+  writeAppState,
+  writeChatSkipVoteRecord
 } from "@stream247/db";
 
 const execFileAsync = promisify(execFile);
@@ -74,6 +76,7 @@ const twitchLiveStartedAtMigrationId = "20260422_002_twitch_live_started_at";
 const outputSettingsColumns = ["singleton_id", "profile_id", "width", "height", "fps", "updated_at"].sort();
 const engagementLayerMigrationId = "20260420_002_engagement_layer";
 const chatInteractionMigrationId = "20260818_001_chat_interaction";
+const chatSkipVoteMigrationId = "20260825_004_chat_skip_vote";
 const engagementAlertTypesMigrationId = "20260421_001_engagement_alert_types";
 const engagementSettingsColumns = [
   "singleton_id",
@@ -1347,6 +1350,44 @@ describe.sequential("database roundtrip", () => {
     // a sequential scan over unbounded request history.
     expect(indexes).toContain("chat_viewer_requests_actor_created_idx");
     expect(migrationApplied).toBe("1");
+  }, 60_000);
+
+  it("creates the chat-skip-vote schema on an existing database and roundtrips a campaign", async () => {
+    // The table is new, so an already-migrated deployment must pick it up on upgrade rather than
+    // only appearing on a fresh install — the base-schema block alone never reaches them.
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      DROP TABLE IF EXISTS chat_skip_vote;
+      DELETE FROM schema_migrations WHERE id = '${chatSkipVoteMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const migrationApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id = '${chatSkipVoteMigrationId}';`
+    );
+    expect(migrationApplied).toBe("1");
+
+    // The helpers are exercised against the real table: the singleton upsert and the column
+    // mapping are exactly the parts a unit test with a mocked pool would wave through.
+    const campaign = {
+      assetId: "asset-skip-1",
+      skipCommand: "skip",
+      votes: 3,
+      votesNeeded: 5,
+      startedAt: "2026-08-25T20:00:00.000Z",
+      expiresAt: "2026-08-25T20:02:00.000Z",
+      updatedAt: "2026-08-25T20:00:30.000Z"
+    };
+    await writeChatSkipVoteRecord(campaign);
+    expect(await readChatSkipVoteRecord()).toEqual(campaign);
+
+    // Clearing writes the empty record over the same row rather than deleting it.
+    await writeChatSkipVoteRecord({ updatedAt: "2026-08-25T20:03:00.000Z" });
+    const cleared = await readChatSkipVoteRecord();
+    expect(cleared.votes).toBe(0);
+    expect(cleared.assetId).toBe("");
   }, 60_000);
 
   describe("schedule writes validated under the lock", () => {

@@ -210,44 +210,53 @@ export class ChatControlRuntime {
   }
 
   /**
+   * The persistable snapshot of the running skip campaign, or null while none is collecting.
+   *
+   * This is what the worker flushes to chat_skip_vote for the playout container. The threshold is
+   * baked in at snapshot time because it derives from the active-chatter count, which only this
+   * process knows; the window end is derived from the campaign's own start so taking a snapshot
+   * never slides the deadline. The same Math.max(10, ...) clamp as applySkipVote, so the persisted
+   * deadline agrees with the rule that actually lapses the tally.
+   */
+  getSkipVoteRecord(config: ChatInteractionConfig): SkipVoteOverlaySource & { startedAt: string } | null {
+    if (!this.skipState || this.skipState.voters.length === 0) {
+      return null;
+    }
+
+    const votesNeeded = applySkipVote({
+      state: this.skipState,
+      // Probe with an actor already counted, so this reports the threshold without casting a vote.
+      actor: this.skipState.voters[0] ?? "",
+      assetId: this.skipState.assetId,
+      activeChatterCount: this.getActiveChatterCount(),
+      config,
+      now: this.now()
+    }).votesNeeded;
+
+    return {
+      assetId: this.skipState.assetId,
+      skipCommand: config.skipCommand,
+      votes: this.skipState.voters.length,
+      votesNeeded,
+      startedAt: this.skipState.startedAt,
+      expiresAt: new Date(
+        Date.parse(this.skipState.startedAt) + Math.max(10, config.skipWindowSeconds) * 1000
+      ).toISOString()
+    };
+  }
+
+  /**
    * What the overlay should draw right now, or null when nothing is running.
+   *
+   * Built from the same projections and the same chooser the playout container uses on the
+   * persisted rows, so what the worker would draw and what actually goes on air cannot drift.
    */
   getOverlayView(config: ChatInteractionConfig): OverlayEngagementView | null {
     const now = this.now();
-
-    if (this.session) {
-      const view = buildEngagementOverlayViewFromVoteSession(this.session, now);
-      if (view) {
-        return view;
-      }
-    }
-
-    if (this.skipState && this.skipState.voters.length > 0) {
-      const votesNeeded = applySkipVote({
-        state: this.skipState,
-        // Probe with an actor already counted, so this reports the threshold without casting a vote.
-        actor: this.skipState.voters[0] ?? "",
-        assetId: this.skipState.assetId,
-        activeChatterCount: this.getActiveChatterCount(),
-        config,
-        now
-      }).votesNeeded;
-
-      return {
-        kind: "skip-vote",
-        headline: "Überspringen?",
-        options: [{ token: `!${config.skipCommand}`, title: "Weiter zum nächsten Video", votes: this.skipState.voters.length }],
-        totalVotes: votesNeeded,
-        secondsRemaining: Math.max(
-          0,
-          Math.round((Date.parse(this.skipState.startedAt) + config.skipWindowSeconds * 1000 - now.getTime()) / 1000)
-        ),
-        threshold: votesNeeded,
-        hint: `${String(this.skipState.voters.length)} von ${String(votesNeeded)} Stimmen`
-      };
-    }
-
-    return null;
+    const voteView = this.session ? buildEngagementOverlayViewFromVoteSession(this.session, now) : null;
+    const skipRecord = this.getSkipVoteRecord(config);
+    const skipView = skipRecord ? buildEngagementOverlayViewFromSkipVote(skipRecord, now) : null;
+    return chooseEngagementOverlayView(voteView, skipView);
   }
 }
 
@@ -296,4 +305,72 @@ export function buildEngagementOverlayViewFromVoteSession(
     threshold: 0,
     hint: `Schreib ${session.options.map((option) => option.token).join(", ")} in den Chat`
   };
+}
+
+/**
+ * The slice of a skip campaign the overlay projection needs. Both the worker's snapshot and the
+ * persisted chat_skip_vote row satisfy it, for the same reason as VoteSessionOverlaySource: one
+ * projection on both sides of the process boundary, so the wording cannot drift apart.
+ */
+export type SkipVoteOverlaySource = {
+  assetId: string;
+  skipCommand: string;
+  votes: number;
+  votesNeeded: number;
+  expiresAt: string;
+};
+
+/**
+ * Projects a skip campaign into what the overlay draws. Returns null — no panel — for an empty or
+ * cleared row, and for a row whose window has lapsed. The lapse check is the worker-restart guard:
+ * the tally itself lives in worker memory, so after a restart the persisted numbers are the only
+ * trace of a campaign that no longer exists, and rendering them would fabricate progress viewers
+ * can no longer join. A row older than its own window says nothing, on either side.
+ */
+export function buildEngagementOverlayViewFromSkipVote(
+  record: SkipVoteOverlaySource,
+  now: Date
+): OverlayEngagementView | null {
+  if (record.votes <= 0 || record.votesNeeded <= 0) {
+    return null;
+  }
+
+  const expiresAtMs = Date.parse(record.expiresAt);
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now.getTime()) {
+    return null;
+  }
+
+  const command = record.skipCommand.trim() || "skip";
+  return {
+    kind: "skip-vote",
+    headline: "Überspringen?",
+    options: [{ token: `!${command}`, title: "Weiter zum nächsten Video", votes: record.votes }],
+    // The layout draws each option's share of totalVotes as its bar, so handing it the threshold
+    // makes the single bar read as progress toward passing.
+    totalVotes: record.votesNeeded,
+    secondsRemaining: Math.max(0, Math.round((expiresAtMs - now.getTime()) / 1000)),
+    threshold: record.votesNeeded,
+    hint: `${String(record.votes)} von ${String(record.votesNeeded)} Stimmen`
+  };
+}
+
+/**
+ * Decides which engagement view gets the panel when both a poll and a skip campaign are live.
+ *
+ * There is one panel slot on the rail, and splitting it would leave both halves unreadable at
+ * broadcast size. The one with less time left wins: its chance of being seen is the scarce
+ * resource, and the other still has runway once the first resolves. With the default settings the
+ * 60s poll therefore shows over the 120s skip window, then the skip campaign inherits the slot for
+ * its remaining minute. Ties go to the skip campaign because its failure mode is silent — a lapsed
+ * campaign just disappears — while an unseen poll still closes visibly and the schedule carries on.
+ */
+export function chooseEngagementOverlayView(
+  voteView: OverlayEngagementView | null,
+  skipView: OverlayEngagementView | null
+): OverlayEngagementView | null {
+  if (!voteView || !skipView) {
+    return voteView ?? skipView;
+  }
+
+  return skipView.secondsRemaining <= voteView.secondsRemaining ? skipView : voteView;
 }
