@@ -4,6 +4,7 @@ import {
   createDefaultModerationConfig,
   formatPresenceClampReply,
   isEngagementChatRuntimeEnabled,
+  resolveBroadcastChannelLogin,
   resolveModeratorCheckIn
 } from "@stream247/core";
 import type { AppState, EngagementEventRecord } from "@stream247/db";
@@ -26,6 +27,28 @@ type TwitchChatBridgeOptions = {
   onModeratorPresenceCheckIn?: (window: ModeratorPresenceWindow) => Promise<void> | void;
   onChatMessage?: (message: TwitchChatMessage & { createdAt: string }) => Promise<void> | void;
 };
+
+/**
+ * Which IRC room to join, and as whom.
+ *
+ * The two were the same value until the broadcast-channel split: the bridge joined the connected
+ * account's own room, which is empty when the stream key sends video to a different channel. The
+ * nick must stay the identity's login — Twitch rejects a connection whose NICK does not match the
+ * token — while the JOIN targets the broadcast channel, which any account may enter and a
+ * moderator may speak in. IRC channel names are lowercase, so both come back lowercased.
+ */
+export function resolveChatConnectionTarget(args: {
+  identityLogin: string;
+  configuredBroadcastLogin: string;
+}): { nick: string; channel: string } {
+  const nick = args.identityLogin.trim().toLowerCase();
+  const channel = resolveBroadcastChannelLogin({
+    configuredLogin: args.configuredBroadcastLogin,
+    identityLogin: args.identityLogin
+  }).toLowerCase();
+
+  return { nick, channel };
+}
 
 export function createRingBuffer<T>(capacity: number) {
   const max = Math.max(1, Math.round(capacity));
@@ -149,10 +172,13 @@ export class TwitchChatBridge {
 
   async sync(state: AppState, env: NodeJS.ProcessEnv): Promise<void> {
     const enabled = isEngagementChatRuntimeEnabled(state.engagement, env);
-    const channel = state.twitch.broadcasterLogin.toLowerCase();
+    const { nick, channel } = resolveChatConnectionTarget({
+      identityLogin: state.twitch.broadcasterLogin,
+      configuredBroadcastLogin: state.managedConfig.twitchBroadcastChannelLogin || env.TWITCH_BROADCAST_CHANNEL_LOGIN || ""
+    });
     const accessToken = state.twitch.accessToken;
     this.moderationConfig = state.moderation;
-    if (!enabled || !channel || !accessToken) {
+    if (!enabled || !nick || !channel || !accessToken) {
       await this.disconnect("disabled");
       return;
     }
@@ -167,7 +193,9 @@ export class TwitchChatBridge {
     this.socket = tls.connect({ host: "irc.chat.twitch.tv", port: 6697, servername: "irc.chat.twitch.tv" }, () => {
       this.socket?.write("CAP REQ :twitch.tv/tags twitch.tv/commands\r\n");
       this.socket?.write(`PASS oauth:${accessToken.replace(/^oauth:/, "")}\r\n`);
-      this.socket?.write(`NICK ${channel}\r\n`);
+      // The nick authenticates, the channel is joined: with a broadcast channel configured these
+      // differ, and sending the channel as NICK would fail the login outright.
+      this.socket?.write(`NICK ${nick}\r\n`);
       this.socket?.write(`JOIN #${channel}\r\n`);
       void appendChatStatus("connected", "connected");
     });
