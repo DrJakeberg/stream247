@@ -2185,6 +2185,97 @@ button.collection-chip {
 }
 
 /*
+ * ---- The public channel page ----
+ *
+ * The one surface a viewer meets in a browser, restyled to read as a broadcast schedule rather
+ * than an operator console. Same markup, same primitives — this block only changes proportion:
+ * a reading-width column, a larger title, the watch action shaped as the page's single button,
+ * and the programme titles promoted above the labels that file them.
+ *
+ * Every colour is an existing token. The pairs the hierarchy leans on (text and muted on
+ * --surface-strong, the --brand accent border) are asserted in tests/unit/design-contrast.test.ts.
+ */
+.channel-public {
+  /* 1120px is an operator workspace width. Three stacked programme entries read best at text
+     width, and the page has nothing to put in the spare columns. */
+  max-width: 880px;
+}
+
+.channel-public .hero {
+  padding: 36px 32px;
+}
+
+.channel-public .hero h2 {
+  /* Between 2.15rem at 390px and 2.6rem on a desktop: the page title is the product's face and
+     the only headline in sight, so it takes the scale the workspace headers deliberately avoid. */
+  font-size: clamp(2.15rem, 1.8rem + 1.2vw, 2.6rem);
+  line-height: 1.06;
+}
+
+.channel-public .panel {
+  padding: 28px;
+}
+
+.channel-public .panel h3 {
+  font-size: 1.3rem;
+}
+
+/* The page's one action. Inside the stacked form grid the anchor would stretch to the full column
+   width and read as a toolbar; pill-shaped and content-sized it reads as the button it is. */
+.channel-public .button {
+  justify-self: start;
+  padding: 14px 28px;
+  border-radius: var(--radius-full);
+  font-weight: 600;
+}
+
+.channel-public .item {
+  display: grid;
+  gap: 6px;
+  padding: 18px 20px;
+}
+
+/* The labels ("On air now", "Up next") become eyebrows and the programme titles become the
+   content: before this, the filing system was set louder than the programme.
+   Capitals come from font-variant-caps rather than text-transform: the transform rewrites
+   innerText and would show up in the wording baseline as a copy change, which this is not. */
+.channel-public .item > strong {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  font-variant-caps: all-small-caps;
+  color: var(--muted);
+}
+
+.channel-public .item > div:first-of-type {
+  color: var(--text);
+  font-size: 1.2rem;
+  line-height: 1.3;
+}
+
+/* What is on air is the reason a viewer is here, so its card carries the brand edge and the
+   largest title on the page. */
+.channel-public .item:first-child {
+  border-left: 4px solid var(--brand);
+}
+
+.channel-public .item:first-child > div:first-of-type {
+  font-size: 1.45rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+@media (max-width: 640px) {
+  .channel-public .hero {
+    padding: 24px 20px;
+  }
+
+  .channel-public .panel {
+    padding: 20px;
+  }
+}
+
+/*
  * A group of actions that are stronger, rarer, or only relevant when something is wrong.
  *
  * Deliberately built from existing tokens and no new colour values: the point is to change what is
