@@ -215,21 +215,11 @@ export class ChatControlRuntime {
   getOverlayView(config: ChatInteractionConfig): OverlayEngagementView | null {
     const now = this.now();
 
-    if (this.session?.status === "open") {
-      const closesAtMs = Date.parse(this.session.closesAt);
-      return {
-        kind: "vote-next",
-        headline: "Was läuft als Nächstes?",
-        options: this.session.options.map((option) => ({
-          token: option.token,
-          title: option.title,
-          votes: option.votes
-        })),
-        totalVotes: this.session.options.reduce((sum, option) => sum + option.votes, 0),
-        secondsRemaining: Math.max(0, Math.round((closesAtMs - now.getTime()) / 1000)),
-        threshold: 0,
-        hint: `Schreib ${this.session.options.map((option) => option.token).join(", ")} in den Chat`
-      };
+    if (this.session) {
+      const view = buildEngagementOverlayViewFromVoteSession(this.session, now);
+      if (view) {
+        return view;
+      }
     }
 
     if (this.skipState && this.skipState.voters.length > 0) {
@@ -259,4 +249,51 @@ export class ChatControlRuntime {
 
     return null;
   }
+}
+
+/**
+ * The slice of a poll the overlay projection needs. Both the live VoteSession in the worker and
+ * the persisted chat_vote_session row satisfy it, so the same projection serves both sides of the
+ * process boundary and their wording cannot drift apart.
+ */
+export type VoteSessionOverlaySource = {
+  status: "open" | "closed";
+  closesAt: string;
+  options: { token: string; title: string; votes: number }[];
+};
+
+/**
+ * Projects a poll into what the overlay draws. Used by the playout container, which only ever
+ * reads: the render model is re-derived from the row on every render interval, never stored, so
+ * the countdown ticks between the worker's change-driven flushes. Returns null — no panel — when
+ * no poll is open, when it has nothing to choose from, or when its deadline has passed: a worker
+ * that dies mid-poll leaves the row open forever, and the deadline inside the row is the only
+ * signal playout has to take the panel off air.
+ */
+export function buildEngagementOverlayViewFromVoteSession(
+  session: VoteSessionOverlaySource,
+  now: Date
+): OverlayEngagementView | null {
+  if (session.status !== "open" || session.options.length === 0) {
+    return null;
+  }
+
+  const closesAtMs = Date.parse(session.closesAt);
+  if (!Number.isFinite(closesAtMs) || closesAtMs <= now.getTime()) {
+    return null;
+  }
+
+  return {
+    kind: "vote-next",
+    headline: "Was läuft als Nächstes?",
+    options: session.options.map((option) => ({
+      token: option.token,
+      title: option.title,
+      votes: option.votes
+    })),
+    totalVotes: session.options.reduce((sum, option) => sum + option.votes, 0),
+    secondsRemaining: Math.max(0, Math.round((closesAtMs - now.getTime()) / 1000)),
+    threshold: 0,
+    hint: `Schreib ${session.options.map((option) => option.token).join(", ")} in den Chat`
+  };
 }
