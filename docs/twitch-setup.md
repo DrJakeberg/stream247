@@ -19,7 +19,10 @@ Both redirect URLs must be registered on the same Twitch application:
 - `<APP_URL>/api/integrations/twitch/callback`
 - `<APP_URL>/api/auth/twitch/callback`
 
-`APP_URL` must exactly match the externally reachable base URL of your Stream247 deployment.
+`<APP_URL>` here means the public base URL of your deployment — either the `APP_URL` env variable
+or, since M52, the public URL saved in the `/setup` wizard (env wins when both are set). It must
+exactly match the externally reachable base URL; the wizard's Twitch-credentials step displays the
+two exact URLs to register.
 
 ## How To Get Client ID And Secret
 

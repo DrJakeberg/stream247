@@ -32,8 +32,12 @@ services:
       - "3000:3000"
     expose:
       - "3000"
+    # Optional since M52: a fresh install can start with no hand-written env file at all — the app
+    # secret generates itself onto the data volume, the bundled Postgres matches the code defaults,
+    # and the /setup wizard covers the rest. A present .env still overrides everything.
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./data/media:/app/data/media
     labels:
@@ -62,7 +66,8 @@ services:
     image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.20}
     restart: unless-stopped
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./data/media:/app/data/media
     healthcheck:
@@ -86,7 +91,8 @@ services:
     restart: unless-stopped
     command: ["node", "apps/worker/dist/index.js", "playout"]
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./data/media:/app/data/media
     healthcheck:
@@ -107,7 +113,8 @@ services:
     restart: unless-stopped
     command: ["node", "apps/worker/dist/index.js", "uplink"]
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./data/media:/app/data/media
     healthcheck:
