@@ -1316,7 +1316,7 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | M52 | UX | Now | Planned | First-run wizard covering everything that lives in `.env` today |
 | M53 | Feature | Next | Planned | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
 | M54 | Feature | Next | Planned | Chat game framework with Snake as the first game (emote-per-direction, moves only on input) |
-| M55 | Ops | Later | Planned | Global disk watermark self-protection with staged cache eviction |
+| M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
 
 ## M51 Broadcast Channel Split
 
@@ -1418,6 +1418,22 @@ incident naming what was freed and why. Never touches media the schedule still r
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-08-25 — M55 Global Disk Self-Protection
+
+- Added the pure `apps/worker/src/disk-watermark.ts` ladder: below 10% free the worker starts an
+  eviction episode, runs one stage per cycle (unused VOD cache, then orphaned feed segments, then
+  oldest thumbnails), and stops at 15% free rather than emptying everything; a misordered
+  watermark override falls back to the defaults whole.
+- Every stage composes an existing safety mechanism — the VOD cache eviction behind its
+  `canReleaseVodCache` gate and partial/lock rules, the capped boundary feed sweep, and a new
+  capped oldest-first thumbnail selection — and receives an explicit protection set covering every
+  asset the schedule blocks, pools, broadcast queue and global fallback tier reference.
+- Eviction that freed space raises a `disk.watermark.evicted` warning incident naming what went
+  and why; a full ladder still below the recovery watermark raises the critical
+  `disk.watermark.exhausted` incident that demands operator action.
+- Validation completed: `pnpm validate` passed; the recovery-watermark hysteresis test was
+  counter-verified by mutating the mid-episode comparison to the trigger and watching it fail.
 
 ### 2026-04-22 — M50 Portainer/DT Rollout Flow And Stack Check
 
