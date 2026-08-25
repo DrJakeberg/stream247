@@ -770,9 +770,9 @@ export function OverlaySettingsForm(props: {
             <div className="item">
               <span className="label">Positioned layers</span>
               <div className="subtle">
-                Add custom text, logo, image, website, or widget layers on top of the preset layout. Text layers can switch to safe local font
-                stacks, metadata widgets can read from the canonical scene payload, and browser frames remain limited by each provider&apos;s iframe
-                and CSP rules.
+                Add custom text, logo, image, website, widget, or chat-game layers on top of the preset layout. Text layers can switch to safe
+                local font stacks, metadata widgets can read from the canonical scene payload, and browser frames remain limited by each
+                provider&apos;s iframe and CSP rules.
               </div>
               <div className="inline-form" style={{ marginTop: 12 }}>
                 {OVERLAY_SCENE_CUSTOM_LAYER_KINDS.map((layerKind) => (
@@ -1171,6 +1171,13 @@ export function OverlaySettingsForm(props: {
                           </div>
                             </>
                           ) : null}
+                        </div>
+                      ) : null}
+                      {layer.kind === "game" ? (
+                        <div className="subtle" style={{ marginTop: 12 }}>
+                          This layer places the chat game panel in the scene. Which game runs, its grid, and the
+                          emote controls are configured under Overlays → Chat game, because the same round continues
+                          across scene changes.
                         </div>
                       ) : null}
                     </div>

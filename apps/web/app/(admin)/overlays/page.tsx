@@ -7,19 +7,28 @@ import {
   isEngagementDonationAlertsRuntimeEnabled
 } from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
+import { ChatGameSettingsForm } from "@/components/chat-game-settings-form";
 import { EngagementSettingsForm } from "@/components/engagement-settings-form";
 import { ViewerControlForm } from "@/components/viewer-control-form";
 import { Panel } from "@/components/panel";
-import { readChatInteractionSettingsRecord, readChatVoteSessionRecord } from "@stream247/db";
+import {
+  readChatGameRuntimeRecord,
+  readChatGameSettingsRecord,
+  readChatInteractionSettingsRecord,
+  readChatVoteSessionRecord
+} from "@stream247/db";
 import { getBroadcastSnapshot, readAppState } from "@/lib/server/state";
 
 export default async function OverlaysPage() {
   const state = await readAppState();
   const engagement = getBroadcastSnapshot(state).engagement;
-  const [viewerControl, activeVote] = await Promise.all([
+  const [viewerControl, activeVote, chatGame, chatGameRuntime] = await Promise.all([
     readChatInteractionSettingsRecord(),
-    readChatVoteSessionRecord()
+    readChatVoteSessionRecord(),
+    readChatGameSettingsRecord(),
+    readChatGameRuntimeRecord()
   ]);
+  const gameLayerEnabled = state.overlay.customLayers.some((layer) => layer.kind === "game" && layer.enabled);
   const chatRuntimeEnabled = isEngagementChatRuntimeEnabled(state.engagement, process.env);
   const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(state.engagement, process.env);
   const donationsRuntimeEnabled = isEngagementDonationAlertsRuntimeEnabled(state.engagement, process.env);
@@ -106,6 +115,17 @@ export default async function OverlaysPage() {
             : "Disabled. Chat cannot influence the running order."}
         </div>
         <ViewerControlForm settings={viewerControl} />
+      </Panel>
+
+      <Panel title="Chat game" eyebrow="Chat plays on air">
+        <div className="subtle" style={{ marginBottom: 12 }}>
+          {gameLayerEnabled
+            ? chatGameRuntime.gameId
+              ? "A round is running. The board renders in every scene whose Chat Game layer is enabled."
+              : "The Chat Game layer is enabled; the worker starts a round on its next cycle."
+            : "No scene has an enabled Chat Game layer. Add one in Scene Studio to put the game on air."}
+        </div>
+        <ChatGameSettingsForm chatGame={chatGame} />
       </Panel>
     </div>
   );

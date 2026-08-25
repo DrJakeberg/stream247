@@ -210,6 +210,20 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
       );
     }
 
+    if (layer.kind === "game") {
+      // The preview cannot know the live round — that state belongs to the worker — so it shows
+      // the placement box and names what will appear there once chat is playing.
+      return (
+        <div className="overlay-custom-layer overlay-custom-layer-widget-data" key={layer.id} style={style}>
+          <Badge className="overlay-custom-layer-embed-badge">Chat Game</Badge>
+          <div className="overlay-custom-layer-widget-label">{layer.name || "Chat Game"}</div>
+          <div className="overlay-custom-layer-widget-body">
+            The running chat game renders here on air. Configure the game and its emote controls under Overlays → Chat game.
+          </div>
+        </div>
+      );
+    }
+
     if (layer.kind === "widget" && layer.widgetMode === "metadata") {
       const widget = buildOverlaySceneMetadataWidgetContent({
         payload: props.payload,
