@@ -127,4 +127,17 @@ describe("the overlay's own text stays above the threshold", () => {
 
     expect(contrastRatio(`#${composited}`, "#080a0f")).toBeGreaterThanOrEqual(4.5);
   });
+
+  it.each([...new Set(alphas), 1])("white at %s reads on the lightest surface over white video", (alpha) => {
+    // The opposite extreme of the opaque check above. The signal surface is the most translucent
+    // panel (rgba(8,10,15,0.72), resolveSurface), and over pure white video it is the lightest
+    // backdrop an ink can meet — the case a dark-panel-only measurement never sees. Tertiary at
+    // 0.64 cleared this by 0.008; it was raised to 0.66 (4.68:1) so the margin is real.
+    const toHex = (channels: number[]) =>
+      `#${channels.map((value) => Math.round(value).toString(16).padStart(2, "0")).join("")}`;
+    const backdrop = [8, 10, 15].map((channel) => 0.72 * channel + 0.28 * 255);
+    const ink = backdrop.map((channel) => alpha * 255 + (1 - alpha) * channel);
+
+    expect(contrastRatio(toHex(ink), toHex(backdrop))).toBeGreaterThanOrEqual(4.5);
+  });
 });

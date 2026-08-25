@@ -159,19 +159,25 @@ describe("state tones", () => {
 
   it("keeps the schedule labels readable on the brand wash", () => {
     // --brand-wash is the weakest brand fill (active schedule rows, the video timeline), and
-    // .schedule-video-slot letters it in --brand-strong. Measured at 7.64:1 when the 0.06/0.08
-    // washes were unified; the floor below is AA so a later darkening of the wash cannot pass
-    // unremarked.
-    const wash = resolve("brand-wash", panel);
-    expect(contrastRatio(resolve("brand-strong", wash), wash)).toBeGreaterThanOrEqual(4.5);
+    // .schedule-video-slot letters it in --brand-strong. The wash sits over a panel in the
+    // schedule surfaces and closer to the bare app background elsewhere, so both backdrops are
+    // measured: 7.64:1 over a panel, 6.85:1 over --bg when the 0.06/0.08 washes were unified.
+    // The floor below is AA so a later darkening of the wash cannot pass unremarked.
+    for (const backdrop of [panel, appBackground]) {
+      const wash = resolve("brand-wash", backdrop);
+      expect(contrastRatio(resolve("brand-strong", wash), wash)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it("keeps the selected-navigation pair readable", () => {
     // .nav-link-active and the workspace tabs both set --brand-strong on --brand-tint-faint. The
     // pair predates this suite; it is asserted now because the tabs joined it during the visual
-    // pass. 7.10:1 as consolidated.
-    const tint = resolve("brand-tint-faint", panel);
-    expect(contrastRatio(resolve("brand-strong", tint), tint)).toBeGreaterThanOrEqual(4.5);
+    // pass. Tabs render near the bare background, the sidebar links over its gradient, so both
+    // backdrops are measured: 7.10:1 over a panel, 6.38:1 over --bg as consolidated.
+    for (const backdrop of [panel, appBackground]) {
+      const tint = resolve("brand-tint-faint", backdrop);
+      expect(contrastRatio(resolve("brand-strong", tint), tint)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it("did not lose contrast when the local greens and blues were folded in", () => {

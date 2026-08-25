@@ -44,8 +44,10 @@
      (chip toggles), washes at 0.06 (active schedule slot) and 0.08 (video timeline). Same meaning,
      four values. One border step and one wash step replace them; the glow is the decorative
      radial behind the scene preview, declared so it is a decision rather than a stray literal.
-     --brand-strong text on --brand-wash over a panel measures 7.64:1 (asserted in
-     tests/unit/design-tones.test.ts); the border and glow are boundaries and backdrops for
+     --brand-strong text on --brand-wash measures 7.64:1 composited over a panel and 6.85:1
+     composited directly over --bg — both backdrops occur (.schedule-slot-active sits inside a
+     panel, .tabs-link-active closer to the page background) and both are asserted in
+     tests/unit/design-tones.test.ts. The border and glow are boundaries and backdrops for
      nothing, so they carry no text requirement. */
   --brand-border-active: rgb(var(--brand-rgb) / 0.36);
   --brand-wash: rgb(var(--brand-rgb) / 0.07);

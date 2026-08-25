@@ -182,12 +182,17 @@ const TITLE_SIZES: Record<string, number> = {
 // The overlay's text hierarchy, as white alphas on the panel fill. There used to be five
 // (0.5, 0.52, 0.62, 0.66, 0.78) — five loudnesses for three roles, and the two quietest sat on
 // the lines a viewer most needs to act on: the vote hint and the programme metadata. Three steps,
-// one per role. Measured on the panel fill as if opaque (its darkest state): SECONDARY 11.97:1,
-// TERTIARY 8.21:1 — both re-derived from this source by overlay-accent-contrast.test.ts, so a
-// softened step has to face the numbers.
+// one per role.
+//
+// Measured at both ends of what the panel can be. On the opaque fill (#080a0f, the darkest
+// backdrop): SECONDARY 11.97:1, TERTIARY 8.69:1. On the worst case — the signal surface's 72%
+// scrim composited over pure white video, the lightest backdrop an ink can meet: SECONDARY
+// 5.80:1, TERTIARY 4.68:1. Tertiary sits at 0.66 rather than 0.64 because 0.64 cleared that
+// worst case by only 0.008. Both ends are re-derived from this source by
+// overlay-accent-contrast.test.ts, so a softened step has to face the numbers.
 const INK_PRIMARY = "#ffffff";
 const INK_SECONDARY = "rgba(255,255,255,0.78)";
-const INK_TERTIARY = "rgba(255,255,255,0.64)";
+const INK_TERTIARY = "rgba(255,255,255,0.66)";
 
 function resolveSurface(style: string, accent: string): OverlayLayoutStyle {
   if (style === "solid") {
@@ -355,9 +360,11 @@ function buildLowerThird(
 
   if (metaLine) {
     // Tertiary, not a fourth quieter step: 0.52 was the faintest line on air, and it carries the
-    // category and schedule facts, not decoration.
+    // category and schedule facts, not decoration. Colour only — tracking would change where the
+    // clamped 110-character line breaks, and px() would apply it at some output sizes and round
+    // it away at others.
     children.push(
-      label(metaLine, { color: INK_TERTIARY, fontSize: px(19), marginTop: px(10), letterSpacing: px(0.5) })
+      label(metaLine, { color: INK_TERTIARY, fontSize: px(19), marginTop: px(10) })
     );
   }
 
