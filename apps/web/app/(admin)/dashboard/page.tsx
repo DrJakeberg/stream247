@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 
-import { selectActiveDestinationGroup } from "@stream247/core";
+import { TWITCH_METADATA_WAITING_MESSAGE, resolveTwitchMetadataSyncGate, selectActiveDestinationGroup } from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
 import { DestinationCreateForm } from "@/components/destination-create-form";
@@ -13,6 +13,7 @@ import { DESTINATION_ROLE_LABELS, DESTINATION_STATUS_LABELS, describeStreamKey }
 import {
   getActivePresenceWindows,
   getCurrentScheduleItem,
+  getManagedTwitchConfig,
   getNextScheduleItem,
   getPlayoutQueueAssets,
   getPresenceStatus,
@@ -24,6 +25,11 @@ import { isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
 export default async function DashboardPage() {
   const state = await readAppState();
   const twitchAuthorizeUrl = (await isTwitchAuthorizeConfigured()) ? "/api/integrations/twitch/connect" : null;
+  const metadataSyncGate = resolveTwitchMetadataSyncGate({
+    configuredLogin: getManagedTwitchConfig(state).broadcastChannelLogin,
+    identityLogin: state.twitch.broadcasterLogin,
+    broadcasterConnection: state.twitchBroadcaster
+  });
   const checklist = getGoLiveChecklist(state);
   const schedulePreview = getSchedulePreview(state);
   const presenceStatus = getPresenceStatus(state);
@@ -270,6 +276,12 @@ export default async function DashboardPage() {
             </div>
             <div className="item">
               <strong>Twitch metadata sync</strong>
+              {metadataSyncGate.mode === "waiting-for-broadcaster" ? (
+                <div className="subtle">
+                  {TWITCH_METADATA_WAITING_MESSAGE} Title and category for {metadataSyncGate.broadcastChannelLogin} sync
+                  once the broadcaster account is connected.
+                </div>
+              ) : null}
               <div className="subtle">
                 {state.twitch.lastMetadataSyncAt
                   ? `${state.twitch.lastSyncedTitle || "no title"} · ${state.twitch.lastSyncedCategoryName || "no category"}`
@@ -306,7 +318,14 @@ export default async function DashboardPage() {
                 internal overlay output.
               </div>
             </div>
-            <TwitchConnectPanel authorizeUrl={twitchAuthorizeUrl} />
+            <TwitchConnectPanel
+              authorizeUrl={twitchAuthorizeUrl}
+              broadcastChannel={
+                metadataSyncGate.mode === "identity"
+                  ? { mode: "identity", broadcastChannelLogin: "" }
+                  : { mode: metadataSyncGate.mode, broadcastChannelLogin: metadataSyncGate.broadcastChannelLogin }
+              }
+            />
           </div>
         </Panel>
       </section>
