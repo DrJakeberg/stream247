@@ -662,6 +662,106 @@ export function resolveDurationBoundMarginSeconds(managed: ManagedWatchdogInput,
 }
 
 // ---------------------------------------------------------------------------
+// Feed tuning: planned reconnect cadence and program-feed geometry
+// ---------------------------------------------------------------------------
+
+// M56 part 2. The relay topology (STREAM247_RELAY_ENABLED, the relay input/output URLs,
+// STREAM247_UPLINK_INPUT_MODE) is deliberately NOT managed: those describe how the containers are
+// wired at deploy time, and a GUI value that contradicts the running compose file would be a lie
+// with a save button. What IS runtime operation is the cadence of the planned encoder reconnect
+// and the geometry of the program feed, so those move here.
+
+export type ManagedFeedTuningInput =
+  | Partial<{
+      playoutReconnectHours: string;
+      playoutReconnectWindowSeconds: string;
+      programFeedTargetSeconds: string;
+      programFeedListSize: string;
+      programFeedFailoverSeconds: string;
+    }>
+  | null
+  | undefined;
+
+/**
+ * Bounds and defaults, shared by resolver, form and API route.
+ * - reconnect hours 1..720: sub-hourly planned reconnects are viewer-visible interruptions on a
+ *   timer; past 30 days the cadence is "never" in disguise.
+ * - reconnect window 5..300 s: the window must outlast a process restart, and past five minutes
+ *   it is an outage, not a window.
+ * - segment target 1..10 s: the historical floor is 1; the ceiling of 10 keeps every segment
+ *   safely below the feed watchdogs' 15 s lower bound (pinned by a test), so a healthy feed that
+ *   advances once per segment can never be read as stalled.
+ * - list size 3..120: the muxer needs at least a 3-segment sliding window to hand the uplink a
+ *   readable playlist; 120 ten-second segments already buffer 20 minutes of disk.
+ * - failover 1..60 s: how far past the buffered window the playlist may age before the feed
+ *   counts as stale; beyond a minute the uplink would sit on a dead feed without failing over.
+ */
+export const FEED_TUNING_LIMITS = {
+  playoutReconnectHours: { min: 1, max: 720, default: 48 },
+  playoutReconnectWindowSeconds: { min: 5, max: 300, default: 20 },
+  programFeedTargetSeconds: { min: 1, max: 10, default: 2 },
+  programFeedListSize: { min: 3, max: 120, default: 30 },
+  programFeedFailoverSeconds: { min: 1, max: 60, default: 10 }
+} as const;
+
+type FeedTuningLimitKey = keyof typeof FEED_TUNING_LIMITS;
+
+export function isWithinFeedTuningLimits(key: FeedTuningLimitKey, value: number): boolean {
+  const bounds = FEED_TUNING_LIMITS[key];
+  return Number.isFinite(value) && value >= bounds.min && value <= bounds.max;
+}
+
+/** Managed wins (rounded and clamped); env keeps its historical positive-number reading. */
+function readFeedTuningNumber(
+  managedValue: string | undefined,
+  key: FeedTuningLimitKey,
+  envFallback: () => number
+): number {
+  const bounds = FEED_TUNING_LIMITS[key];
+  const managedText = text(managedValue);
+  if (managedText !== "") {
+    const parsed = Number(managedText);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.min(bounds.max, Math.max(bounds.min, Math.round(parsed)));
+    }
+  }
+  return envFallback();
+}
+
+export function resolvePlayoutReconnectTuning(
+  managed: ManagedFeedTuningInput,
+  env: EnvLike
+): { intervalHours: number; windowSeconds: number } {
+  return {
+    intervalHours: readFeedTuningNumber(managed?.playoutReconnectHours, "playoutReconnectHours", () =>
+      readPositiveEnvNumber(env.PLAYOUT_RECONNECT_HOURS, FEED_TUNING_LIMITS.playoutReconnectHours.default)
+    ),
+    windowSeconds: readFeedTuningNumber(managed?.playoutReconnectWindowSeconds, "playoutReconnectWindowSeconds", () =>
+      readPositiveEnvNumber(env.PLAYOUT_RECONNECT_SECONDS, FEED_TUNING_LIMITS.playoutReconnectWindowSeconds.default)
+    )
+  };
+}
+
+export function resolveProgramFeedTuning(
+  managed: ManagedFeedTuningInput,
+  env: EnvLike
+): { targetSeconds: number; listSize: number; failoverSeconds: number } {
+  // The env path reproduces ffmpeg-runtime's historical floors bit for bit: floor to an integer,
+  // then raise below-minimum values to the floor the muxer needs.
+  return {
+    targetSeconds: readFeedTuningNumber(managed?.programFeedTargetSeconds, "programFeedTargetSeconds", () =>
+      Math.max(1, Math.floor(readPositiveEnvNumber(env.STREAM247_PROGRAM_FEED_TARGET_SECONDS, 2)))
+    ),
+    listSize: readFeedTuningNumber(managed?.programFeedListSize, "programFeedListSize", () =>
+      Math.max(3, Math.floor(readPositiveEnvNumber(env.STREAM247_PROGRAM_FEED_LIST_SIZE, 30)))
+    ),
+    failoverSeconds: readFeedTuningNumber(managed?.programFeedFailoverSeconds, "programFeedFailoverSeconds", () =>
+      Math.max(1, Math.floor(readPositiveEnvNumber(env.STREAM247_PROGRAM_FEED_FAILOVER_SECONDS, 10)))
+    )
+  };
+}
+
+// ---------------------------------------------------------------------------
 // EventSub webhook secret
 // ---------------------------------------------------------------------------
 

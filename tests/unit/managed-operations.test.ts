@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   isValidVodCacheGb,
   isValidVodCacheLimitRate,
+  FEED_TUNING_LIMITS,
   resolveDurationBoundMarginSeconds,
   resolveFeedAudioWatchdogMs,
   resolvePlayoutFeedWatchdogMs,
+  resolvePlayoutReconnectTuning,
+  resolveProgramFeedTuning,
   resolveUplinkWatchdogMs,
   resolveVodCacheTuning,
   VOD_CACHE_LIMITS,
@@ -272,5 +275,76 @@ describe("watchdog threshold resolution", () => {
     expect(WATCHDOG_LIMITS.feedStallGraceSeconds.min).toBeGreaterThanOrEqual(30);
     expect(resolveFeedAudioWatchdogMs({ feedAudioGraceSeconds: "0" }, {}).graceMs).toBe(0);
     expect(resolveUplinkWatchdogMs({ uplinkStallGraceSeconds: "0" }, {}).graceMs).toBe(0);
+  });
+});
+
+// Feed tuning: the planned encoder reconnect cadence and the program feed's segment geometry.
+// The relay topology itself (STREAM247_RELAY_ENABLED, relay URLs, the uplink input mode) is
+// deliberately NOT managed — it describes how the containers are wired at deploy time, and a GUI
+// field for it could describe a topology the running compose file does not have.
+
+describe("feed tuning resolution", () => {
+  it("resolves the built-in defaults when nothing is set anywhere", () => {
+    expect(resolvePlayoutReconnectTuning(null, {})).toEqual({ intervalHours: 48, windowSeconds: 20 });
+    expect(resolveProgramFeedTuning(null, {})).toEqual({ targetSeconds: 2, listSize: 30, failoverSeconds: 10 });
+  });
+
+  it("keeps the env fallback exactly as before when managed values are empty", () => {
+    expect(
+      resolvePlayoutReconnectTuning({ playoutReconnectHours: "" }, { PLAYOUT_RECONNECT_HOURS: "12", PLAYOUT_RECONNECT_SECONDS: "45" })
+    ).toEqual({ intervalHours: 12, windowSeconds: 45 });
+    expect(
+      resolveProgramFeedTuning(null, {
+        STREAM247_PROGRAM_FEED_TARGET_SECONDS: "4",
+        STREAM247_PROGRAM_FEED_LIST_SIZE: "60",
+        STREAM247_PROGRAM_FEED_FAILOVER_SECONDS: "20"
+      })
+    ).toEqual({ targetSeconds: 4, listSize: 60, failoverSeconds: 20 });
+    // The historical env floors survive: fractional values floor, sub-minimum values are raised.
+    expect(resolveProgramFeedTuning(null, { STREAM247_PROGRAM_FEED_LIST_SIZE: "2" }).listSize).toBe(3);
+    expect(resolveProgramFeedTuning(null, { STREAM247_PROGRAM_FEED_TARGET_SECONDS: "2.9" }).targetSeconds).toBe(2);
+  });
+
+  it("lets managed values win and clamps them into their bounds", () => {
+    expect(
+      resolvePlayoutReconnectTuning(
+        { playoutReconnectHours: "24", playoutReconnectWindowSeconds: "30" },
+        { PLAYOUT_RECONNECT_HOURS: "12" }
+      )
+    ).toEqual({ intervalHours: 24, windowSeconds: 30 });
+    expect(
+      resolveProgramFeedTuning(
+        { programFeedTargetSeconds: "4", programFeedListSize: "15", programFeedFailoverSeconds: "5" },
+        { STREAM247_PROGRAM_FEED_TARGET_SECONDS: "2" }
+      )
+    ).toEqual({ targetSeconds: 4, listSize: 15, failoverSeconds: 5 });
+
+    // Sub-hourly planned reconnects are viewer-visible interruptions on a timer.
+    expect(resolvePlayoutReconnectTuning({ playoutReconnectHours: "0.1" }, {}).intervalHours).toBe(
+      FEED_TUNING_LIMITS.playoutReconnectHours.min
+    );
+    // Segments above ten seconds would collide with the feed-stall watchdog's lower bound.
+    expect(resolveProgramFeedTuning({ programFeedTargetSeconds: "60" }, {}).targetSeconds).toBe(
+      FEED_TUNING_LIMITS.programFeedTargetSeconds.max
+    );
+    // The muxer needs a minimum sliding window to hand the uplink a readable playlist.
+    expect(resolveProgramFeedTuning({ programFeedListSize: "1" }, {}).listSize).toBe(
+      FEED_TUNING_LIMITS.programFeedListSize.min
+    );
+  });
+
+  it("guarantees the feed-stall watchdog can never sit below the longest segment", () => {
+    // The invariant that ties the two families together: even with both knobs at their worst
+    // managed extremes, a healthy feed that advances once per segment cannot be read as stalled.
+    expect(WATCHDOG_LIMITS.feedStallTimeoutSeconds.min).toBeGreaterThan(
+      FEED_TUNING_LIMITS.programFeedTargetSeconds.max
+    );
+    expect(WATCHDOG_LIMITS.feedAudioSilenceSeconds.min).toBeGreaterThan(
+      FEED_TUNING_LIMITS.programFeedTargetSeconds.max
+    );
+
+    const worstFeed = resolveProgramFeedTuning({ programFeedTargetSeconds: "999" }, {});
+    const worstWatchdog = resolvePlayoutFeedWatchdogMs({ feedStallTimeoutSeconds: "1" }, {});
+    expect(worstWatchdog.staleMs).toBeGreaterThan(worstFeed.targetSeconds * 1000);
   });
 });
