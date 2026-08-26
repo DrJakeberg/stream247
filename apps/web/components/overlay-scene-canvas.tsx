@@ -224,6 +224,22 @@ export function OverlaySceneCanvas(props: OverlaySceneCanvasProps) {
       );
     }
 
+    if (layer.kind === "source") {
+      // The preview cannot show the live picture — sampling happens in the playout container —
+      // so it shows the placement box and says what will appear there once a feed is linked.
+      return (
+        <div className="overlay-custom-layer overlay-custom-layer-widget-data" key={layer.id} style={style}>
+          <Badge className="overlay-custom-layer-embed-badge">Video Source</Badge>
+          <div className="overlay-custom-layer-widget-label">{layer.name || "Video Source"}</div>
+          <div className="overlay-custom-layer-widget-body">
+            {layer.sourceId
+              ? "The sampled picture from the linked video source renders here on air while the feed is reachable."
+              : "Link a stored video source to this layer so its sampled picture can render here on air."}
+          </div>
+        </div>
+      );
+    }
+
     if (layer.kind === "widget" && layer.widgetMode === "metadata") {
       const widget = buildOverlaySceneMetadataWidgetContent({
         payload: props.payload,

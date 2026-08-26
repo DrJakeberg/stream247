@@ -16,7 +16,8 @@ const FLAG_KEYS = [
   "assetRetentionEnabled",
   "streamChatOverlayEnabled",
   "streamAlertsEnabled",
-  "twitchScheduleSyncEnabled"
+  "twitchScheduleSyncEnabled",
+  "sourceLayerEnabled"
 ] as const;
 
 // Two independent percent pairs, each validated whole: the media-volume eviction watermark and

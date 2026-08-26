@@ -65,8 +65,11 @@ import {
   resolveDiskWatermarkConfig,
   resolveEncoderQualitySettings,
   resolveSystemVolumeWatermarkConfig,
+  resolveSourceLayerRuntimeEnabled,
+  resolveSourceSnapshotIntervalSeconds,
   resolveTwitchEventSubSecret,
   resolveTwitchScheduleSyncEnabled,
+  type OverlaySourceFrameView,
   type ResolvedEncoderQualitySettings
 } from "@stream247/core";
 import {
@@ -109,7 +112,9 @@ import {
   readChatGameSettingsRecord,
   readDatabaseSizeBytes,
   runAssetRetentionSweep,
-  writeChatGameRuntimeRecord
+  writeChatGameRuntimeRecord,
+  readManagedConfigRecord,
+  readOverlayVideoSourceUrls
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
@@ -154,6 +159,18 @@ import {
   type DiskWatermarkStageResult
 } from "./disk-watermark.js";
 import { decideSystemVolumeObservation } from "./system-volume.js";
+import {
+  captureSourceSnapshot,
+  deriveSourceFrameStatus,
+  getSourceSnapshotDirectory,
+  getSourceSnapshotPath,
+  resolveSourceSnapshotTimeoutMs,
+  selectEvictableSourceFrames,
+  shouldRaiseSourceSnapshotIncident,
+  shouldStartSourceCapture,
+  summarizeSourceFeed,
+  type SourceFrameFileInfo
+} from "./source-snapshot.js";
 import {
   appendFfmpegOutputArgs,
   buildProgramFeedOutputTarget,
@@ -557,6 +574,29 @@ let currentSceneChat: OverlayChatView | null = null;
 // The last chat row, kept for the same reason as the poll and skip rows: a database blip must
 // not blank the panel, and the projection's own per-message TTL ages a genuinely stale row off.
 let lastChatOverlayRecord: ChatOverlayMessagesRecord | null = null;
+// The sampled video-source frame the renderer draws (M57). Null hides the layer — including
+// while the feed is away, which is the owner-default behaviour. Filled by the detached sampler
+// below; the renderer loop only ever reads it.
+let currentSceneSourceFrame: OverlaySourceFrameView | null = null;
+// Sampler bookkeeping. All plain module state like the scene views above: single renderer loop,
+// single sampler, no concurrent writers beyond the one in-flight capture guarded here.
+let sourceSnapshotInFlight = false;
+let sourceSnapshotLastStartedAtMs = 0;
+let sourceSnapshotLastSuccessAtMs = 0;
+let sourceSnapshotDataUri = "";
+let sourceSnapshotCapturedAt = "";
+let sourceSnapshotSourceId = "";
+let sourceSnapshotFailures = 0;
+// Managed switch, cadence and decrypted feed URL, re-read on a slow TTL so a settings change
+// lands within seconds without putting a config read on every renderer tick.
+let sourceSnapshotPolicy: {
+  checkedAtMs: number;
+  sourceId: string;
+  enabled: boolean;
+  intervalMs: number;
+  url: string;
+} | null = null;
+const SOURCE_SNAPSHOT_POLICY_TTL_MS = 10_000;
 let sceneRendererFonts: SceneRenderFont[] | null = null;
 const standbySlatePath = "/tmp/stream247-standby.txt";
 const onAirOverlayPath = "/tmp/stream247-on-air.txt";
@@ -808,6 +848,7 @@ let diskWatermarkIncidentRaised = false;
 
 /** How each stage's haul is named in incidents, so the operator reads what was freed, not a key. */
 const DISK_WATERMARK_STAGE_DETAIL: Record<DiskWatermarkStage, string> = {
+  "source-frames": "sampled video-source frames",
   "vod-cache": "unused Twitch VOD cache entries",
   "feed-segments": "orphaned program-feed segments",
   thumbnails: "old asset thumbnails"
@@ -828,6 +869,39 @@ async function runDiskWatermarkStage(
   stage: DiskWatermarkStage,
   state: AppState
 ): Promise<{ freedBytes: number; removedFiles: number }> {
+  if (stage === "source-frames") {
+    // Sampled source frames are the cheapest loss on the ladder: a live one regenerates within
+    // one capture interval, an old one belongs to a sampler that stopped. No protection set —
+    // nothing here is ever the only copy of anything.
+    const directory = getSourceSnapshotDirectory(getMediaRoot());
+    const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
+    const files: SourceFrameFileInfo[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) {
+        continue;
+      }
+      const filePath = path.join(directory, entry.name);
+      const stats = await fs.stat(filePath).catch(() => null);
+      if (stats) {
+        files.push({ filePath, modifiedAtMs: stats.mtimeMs, bytes: stats.size });
+      }
+    }
+
+    let freedBytes = 0;
+    let removedFiles = 0;
+    for (const file of selectEvictableSourceFrames({ files, nowMs: Date.now() })) {
+      const deleted = await fs.rm(file.filePath, { force: true }).then(
+        () => true,
+        () => false
+      );
+      if (deleted) {
+        freedBytes += file.bytes;
+        removedFiles += 1;
+      }
+    }
+    return { freedBytes, removedFiles };
+  }
+
   if (stage === "vod-cache") {
     const config = getTwitchVodCacheConfig(process.env, getMediaRoot());
 
@@ -961,7 +1035,7 @@ async function enforceDiskWatermark(): Promise<void> {
         scope: "system",
         severity: "critical",
         title: "Media disk is almost full and eviction cannot free it",
-        message: `Free space on the media volume is down to ${formatFreePercent(freeBytes, totalBytes)} (${formatGigabytes(freeBytes)} of ${formatGigabytes(totalBytes)}) and every eviction stage — unused VOD cache, orphaned feed segments, old thumbnails — has run without reaching the ${String(Math.round(config.recoverFreeRatio * 100))}% recovery watermark; only ${formatGigabytes(decision.freedBytes)} could be reclaimed. Media the schedule still references is never evicted, so an operator has to free space before playout, feed segments or downloads start failing writes.`,
+        message: `Free space on the media volume is down to ${formatFreePercent(freeBytes, totalBytes)} (${formatGigabytes(freeBytes)} of ${formatGigabytes(totalBytes)}) and every eviction stage — sampled video frames, unused VOD cache, orphaned feed segments, old thumbnails — has run without reaching the ${String(Math.round(config.recoverFreeRatio * 100))}% recovery watermark; only ${formatGigabytes(decision.freedBytes)} could be reclaimed. Media the schedule still references is never evicted, so an operator has to free space before playout, feed segments or downloads start failing writes.`,
         fingerprint: "disk.watermark.exhausted"
       });
       return;
@@ -1885,6 +1959,7 @@ function buildSceneRenderRequest(outputSettings: WorkerStreamOutputSettings): Sc
     engagement: currentSceneEngagement,
     game: currentSceneGame,
     chat: currentSceneChat,
+    sourceFrame: currentSceneSourceFrame,
     width: viewport.width,
     height: viewport.height
   };
@@ -1980,6 +2055,145 @@ async function refreshSceneChatView(): Promise<void> {
   currentSceneChat = lastChatOverlayRecord
     ? buildChatOverlayViewFromMessages(lastChatOverlayRecord, new Date())
     : null;
+}
+
+/** The first enabled source layer with a linked source; one frame input, one drawn layer. */
+function scenePayloadSourceLayerId(): string {
+  for (const entry of currentScenePayload?.scene.customLayers ?? []) {
+    if (entry.kind === "source" && entry.enabled && entry.sourceId) {
+      return entry.sourceId;
+    }
+  }
+  return "";
+}
+
+/**
+ * Refreshes the sampled video-source frame for the renderer (M57).
+ *
+ * Runs on the renderer loop's cadence, never on the reconciliation path, and never blocks on a
+ * capture: the actual ffmpeg grab is detached behind an in-flight guard, and this function only
+ * decides whether one is due and projects the last capture into a view. The gate order means
+ * "switch off" needs no restart — within the policy TTL the sampler stops starting captures and
+ * the frame goes null, so the next rasterisation simply has no panel.
+ */
+async function refreshSceneSourceFrame(): Promise<void> {
+  const sourceId = scenePayloadSourceLayerId();
+  if (!sourceId) {
+    currentSceneSourceFrame = null;
+    return;
+  }
+
+  const nowMs = Date.now();
+  if (
+    !sourceSnapshotPolicy ||
+    sourceSnapshotPolicy.sourceId !== sourceId ||
+    nowMs - sourceSnapshotPolicy.checkedAtMs > SOURCE_SNAPSHOT_POLICY_TTL_MS
+  ) {
+    try {
+      const managed = await readManagedConfigRecord();
+      const enabled = resolveSourceLayerRuntimeEnabled(managed, process.env);
+      const intervalMs = resolveSourceSnapshotIntervalSeconds(managed, process.env) * 1000;
+      const url = enabled ? ((await readOverlayVideoSourceUrls([sourceId]))[sourceId] ?? "") : "";
+      if (sourceSnapshotPolicy && sourceSnapshotPolicy.sourceId !== sourceId) {
+        // The scene now points at a different source: forget the old cadence so the new feed is
+        // sampled immediately instead of waiting out the previous source's interval.
+        sourceSnapshotLastStartedAtMs = 0;
+        sourceSnapshotLastSuccessAtMs = 0;
+        sourceSnapshotFailures = 0;
+      }
+      sourceSnapshotPolicy = { checkedAtMs: nowMs, sourceId, enabled, intervalMs, url };
+    } catch (error) {
+      // A failed read keeps the last policy: a database blip must not stop a healthy sampler,
+      // and with no policy at all the layer simply stays hidden until the next tick.
+      logRuntimeEvent("scene.source.policy_read_failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  const policy = sourceSnapshotPolicy;
+  if (!policy || policy.sourceId !== sourceId || !policy.enabled || !policy.url) {
+    currentSceneSourceFrame = null;
+    return;
+  }
+
+  if (
+    shouldStartSourceCapture({
+      nowMs,
+      lastStartedAtMs: sourceSnapshotLastStartedAtMs,
+      intervalMs: policy.intervalMs,
+      inFlight: sourceSnapshotInFlight
+    })
+  ) {
+    startSourceSnapshotCapture(policy.url, sourceId);
+  }
+
+  currentSceneSourceFrame =
+    sourceSnapshotDataUri && sourceSnapshotSourceId === sourceId
+      ? {
+          dataUri: sourceSnapshotDataUri,
+          status: deriveSourceFrameStatus({
+            nowMs,
+            lastSuccessAtMs: sourceSnapshotLastSuccessAtMs,
+            intervalMs: policy.intervalMs
+          }),
+          capturedAt: sourceSnapshotCapturedAt
+        }
+      : null;
+}
+
+/** One detached capture at a time; the guard in shouldStartSourceCapture is the backpressure. */
+function startSourceSnapshotCapture(url: string, sourceId: string): void {
+  sourceSnapshotInFlight = true;
+  sourceSnapshotLastStartedAtMs = Date.now();
+
+  void (async () => {
+    const result = await captureSourceSnapshot({
+      url,
+      sourceId,
+      mediaRoot: getMediaRoot(),
+      timeoutMs: resolveSourceSnapshotTimeoutMs(process.env)
+    });
+
+    if (result.ok) {
+      const png = await fs.readFile(getSourceSnapshotPath(sourceId, getMediaRoot()));
+      sourceSnapshotDataUri = `data:image/png;base64,${png.toString("base64")}`;
+      sourceSnapshotCapturedAt = new Date().toISOString();
+      sourceSnapshotLastSuccessAtMs = Date.now();
+      sourceSnapshotSourceId = sourceId;
+      if (sourceSnapshotFailures > 0) {
+        await resolveIncident("playout.source-snapshot.failed", "The scene's video source is delivering frames again.");
+      }
+      sourceSnapshotFailures = 0;
+      return;
+    }
+
+    sourceSnapshotFailures += 1;
+    // The feed address never reaches a log or an incident whole — same custody rule as playback
+    // inputs, because feed URLs routinely embed credentials.
+    logRuntimeEvent("scene.source.capture_failed", {
+      feed: summarizeSourceFeed(url),
+      failures: sourceSnapshotFailures,
+      error: result.error
+    });
+    if (shouldRaiseSourceSnapshotIncident(sourceSnapshotFailures)) {
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "The scene's video source is not delivering frames",
+        message: `Sampling ${summarizeSourceFeed(url)} has failed ${String(sourceSnapshotFailures)} times in a row. The video source layer is hidden on air until a capture succeeds again; playout itself is unaffected.`,
+        fingerprint: "playout.source-snapshot.failed"
+      });
+    }
+  })()
+    .catch((error: unknown) => {
+      logRuntimeEvent("scene.source.capture_crashed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    })
+    .finally(() => {
+      sourceSnapshotInFlight = false;
+    });
 }
 
 function isWritablePipe(value: unknown): value is Writable {
@@ -2155,6 +2369,7 @@ function startSceneRendererLoop(
         await refreshSceneGameView();
         await refreshSceneEngagementView();
         await refreshSceneChatView();
+        await refreshSceneSourceFrame();
         const request = buildSceneRenderRequest(outputSettings);
         if (request) {
           // The scene only changes when its content changes. Re-pushing the cached PNG keeps the

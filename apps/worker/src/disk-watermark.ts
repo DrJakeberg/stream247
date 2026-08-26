@@ -8,16 +8,17 @@
  * writes and downloads at once, so this module decides — from measurements only, with no I/O of
  * its own — when the worker should start evicting and which stage runs next.
  *
- * The stages are ordered by how cheap the loss is: an unused VOD cache entry re-downloads itself,
- * an orphaned feed segment is garbage by definition, and a thumbnail regenerates on the next
- * library sync. One stage runs per worker cycle so the work a cycle does stays bounded, for the
- * same reason the feed sweep is capped. Nothing here ever names schedule-referenced media; the
- * stage implementations receive an explicit protection set built by collectDiskProtectedAssetIds.
+ * The stages are ordered by how cheap the loss is: a sampled source frame regenerates within one
+ * capture interval, an unused VOD cache entry re-downloads itself, an orphaned feed segment is
+ * garbage by definition, and a thumbnail regenerates on the next library sync. One stage runs per
+ * worker cycle so the work a cycle does stays bounded, for the same reason the feed sweep is
+ * capped. Nothing here ever names schedule-referenced media; the stage implementations receive an
+ * explicit protection set built by collectDiskProtectedAssetIds.
  */
 
 import type { ResolvedDiskWatermarkConfig } from "@stream247/core";
 
-export const DISK_WATERMARK_STAGE_ORDER = ["vod-cache", "feed-segments", "thumbnails"] as const;
+export const DISK_WATERMARK_STAGE_ORDER = ["source-frames", "vod-cache", "feed-segments", "thumbnails"] as const;
 
 export type DiskWatermarkStage = (typeof DISK_WATERMARK_STAGE_ORDER)[number];
 

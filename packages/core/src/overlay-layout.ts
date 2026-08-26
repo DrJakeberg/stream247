@@ -21,6 +21,12 @@ export type OverlayLayoutNode = {
   props: {
     style?: OverlayLayoutStyle;
     children?: OverlayLayoutNode | OverlayLayoutNode[] | string;
+    /**
+     * Image nodes only. The renderer hands satori data URIs wherever it can (sampled source
+     * frames always are), keeping rasterisation free of network fetches; an absolute http(s)
+     * URL is fetched by satori itself and only re-fetched when the frame's cache key changes.
+     */
+    src?: string;
   };
 };
 
@@ -143,8 +149,13 @@ export type OverlayGameView = {
   phase: string;
 };
 
-/** The slice of a custom layer the native renderer needs to place the game panel. */
-export type OverlayGameLayerPlacement = {
+/**
+ * The slice of a custom layer the native renderer reads. Placement is common to every kind; the
+ * content fields are optional because each kind only carries its own and older cached payloads
+ * predate them entirely. embed and widget layers stay browser-overlay-only — satori cannot run
+ * an iframe — so no field of theirs appears here.
+ */
+export type OverlayCustomLayerView = {
   kind: string;
   enabled: boolean;
   xPercent: number;
@@ -153,6 +164,33 @@ export type OverlayGameLayerPlacement = {
   heightPercent: number;
   opacityPercent: number;
   allowOutsideSafeArea: boolean;
+  /** source layers: reference into the stored video sources. Never a URL. */
+  sourceId?: string;
+  /** logo/image layers: the picture, plus how it fills the box. */
+  url?: string;
+  fit?: string;
+  /** text layers. */
+  text?: string;
+  secondaryText?: string;
+  textTone?: string;
+  textAlign?: string;
+  useAccent?: boolean;
+  fontMode?: string;
+};
+
+/** Historical name from the game-only era; the game panel still reads exactly this shape. */
+export type OverlayGameLayerPlacement = OverlayCustomLayerView;
+
+/**
+ * One sampled picture from the scene's video source, as the layout draws it. The data URI is the
+ * capture itself; capturedAt is its identity for caching, so the frame cache key can react to a
+ * new capture without hashing image bytes.
+ */
+export type OverlaySourceFrameView = {
+  dataUri: string;
+  /** "live" draws; anything else hides the layer. See sourceFrameVisible for the policy. */
+  status: string;
+  capturedAt: string;
 };
 
 export type OverlayLayoutInput = {
@@ -160,6 +198,7 @@ export type OverlayLayoutInput = {
   engagement?: OverlayEngagementView | null;
   game?: OverlayGameView | null;
   chat?: OverlayChatView | null;
+  sourceFrame?: OverlaySourceFrameView | null;
 };
 
 /** The subset of OverlayScenePayload the layout consumes. */
@@ -171,7 +210,7 @@ export type OverlayScenePayloadView = {
     typographyPreset: string;
     resolvedPresetId: string;
     /** Optional because older cached payloads predate custom-layer-aware native rendering. */
-    customLayers?: OverlayGameLayerPlacement[];
+    customLayers?: OverlayCustomLayerView[];
   };
   channelName: string;
   accentColor: string;
@@ -663,6 +702,37 @@ function clampPlacementPercent(value: number, min: number, max: number): number 
 }
 
 /**
+ * Resolves a custom layer's percent box into frame pixels — the game panel's placement rules,
+ * extracted verbatim so every positioned panel clamps identically: a layer that has not opted out
+ * of the safe area positions inside the same margins the root layout keeps for its own panels,
+ * and width/height are clamped against the remaining room so no box can leave the frame.
+ */
+function resolvePlacementBox(
+  placement: OverlayCustomLayerView,
+  scale: number,
+  frame: { width: number; height: number }
+): { left: number; top: number; width: number; height: number } {
+  const px = (value: number) => Math.round(value * scale);
+
+  const safeX = placement.allowOutsideSafeArea ? 0 : px(72);
+  const safeY = placement.allowOutsideSafeArea ? 0 : px(56);
+  const safeWidth = frame.width - safeX * 2;
+  const safeHeight = frame.height - safeY * 2;
+
+  const xPercent = clampPlacementPercent(placement.xPercent, 0, 100);
+  const yPercent = clampPlacementPercent(placement.yPercent, 0, 100);
+  const widthPercent = clampPlacementPercent(placement.widthPercent, 10, 100 - xPercent);
+  const heightPercent = clampPlacementPercent(placement.heightPercent, 8, 100 - yPercent);
+
+  return {
+    left: Math.round(safeX + (safeWidth * xPercent) / 100),
+    top: Math.round(safeY + (safeHeight * yPercent) / 100),
+    width: Math.round((safeWidth * widthPercent) / 100),
+    height: Math.round((safeHeight * heightPercent) / 100)
+  };
+}
+
+/**
  * The chat-game panel: heading, score, the cell grid, and the how-to-play hint.
  *
  * Rendered natively because this is the surface the audience actually plays on — the game is
@@ -681,22 +751,11 @@ function buildGamePanel(
 ): OverlayLayoutNode {
   const px = (value: number) => Math.round(value * scale);
 
-  // The same safe margins the root layout keeps for its own panels. A layer that has not opted
-  // out of the safe area positions inside them, so the panel can never sit in an overscan edge.
-  const safeX = placement.allowOutsideSafeArea ? 0 : px(72);
-  const safeY = placement.allowOutsideSafeArea ? 0 : px(56);
-  const safeWidth = frame.width - safeX * 2;
-  const safeHeight = frame.height - safeY * 2;
-
-  const xPercent = clampPlacementPercent(placement.xPercent, 0, 100);
-  const yPercent = clampPlacementPercent(placement.yPercent, 0, 100);
-  const widthPercent = clampPlacementPercent(placement.widthPercent, 10, 100 - xPercent);
-  const heightPercent = clampPlacementPercent(placement.heightPercent, 8, 100 - yPercent);
-
-  const boxLeft = Math.round(safeX + (safeWidth * xPercent) / 100);
-  const boxTop = Math.round(safeY + (safeHeight * yPercent) / 100);
-  const boxWidth = Math.round((safeWidth * widthPercent) / 100);
-  const boxHeight = Math.round((safeHeight * heightPercent) / 100);
+  const box = resolvePlacementBox(placement, scale, frame);
+  const boxLeft = box.left;
+  const boxTop = box.top;
+  const boxWidth = box.width;
+  const boxHeight = box.height;
 
   const gridWidth = Math.max(1, Math.round(game.gridWidth));
   const gridHeight = Math.max(1, Math.round(game.gridHeight));
@@ -865,6 +924,194 @@ function buildGamePanel(
   };
 }
 
+/**
+ * The one place that decides whether a sampled source frame may be drawn.
+ *
+ * Owner default: a source whose feed went away is HIDDEN on air — no frozen last picture, because
+ * a viewer cannot tell a frozen camera from a live one, and the studio shows the outage as a
+ * status instead. If that decision ever changes to "last picture plus an offline mark", this
+ * predicate (and buildSourcePanel, which would gain the mark) is the whole change.
+ */
+export function sourceFrameVisible(frame: OverlaySourceFrameView | null | undefined): frame is OverlaySourceFrameView {
+  return Boolean(frame && frame.status === "live" && frame.dataUri.startsWith("data:image/"));
+}
+
+/**
+ * The sampled-source panel: the newest capture, filling the operator's placement box.
+ *
+ * Deliberately chromeless beyond the shared surface: a camera picture explains itself, and every
+ * heading would cost picture height. The image is always a data URI (the sampler reads the
+ * capture file and inlines it), so drawing this panel never puts network I/O on the render path.
+ */
+function buildSourcePanel(
+  sourceFrame: OverlaySourceFrameView,
+  placement: OverlayCustomLayerView,
+  accent: string,
+  scale: number,
+  surfaceStyle: string,
+  frame: { width: number; height: number }
+): OverlayLayoutNode {
+  const px = (value: number) => Math.round(value * scale);
+  const box = resolvePlacementBox(placement, scale, frame);
+  const framePadding = Math.max(2, px(6));
+
+  return {
+    type: "div",
+    props: {
+      style: {
+        display: "flex",
+        position: "absolute",
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
+        padding: `${framePadding}px`,
+        borderRadius: px(16),
+        opacity: clampPlacementPercent(placement.opacityPercent, 5, 100) / 100,
+        ...resolveSurface(surfaceStyle, accent)
+      },
+      children: [
+        {
+          type: "img",
+          props: {
+            src: sourceFrame.dataUri,
+            style: {
+              width: box.width - framePadding * 2,
+              height: box.height - framePadding * 2,
+              objectFit: "cover",
+              borderRadius: px(12)
+            }
+          }
+        }
+      ]
+    }
+  };
+}
+
+/**
+ * A logo or image layer on air: the same placement rules as every positioned panel, no surface
+ * chrome. Chromeless on purpose — logos ship with transparency, and putting the panel scrim
+ * behind them would draw a dark plate the studio preview does not show.
+ *
+ * Only URLs the rasteriser can actually resolve are drawn: data URIs (free) and absolute http(s)
+ * URLs (satori fetches them when the frame's cache key changes). A relative library path renders
+ * in the browser overlay but has no base URL here, so it is skipped rather than failing the
+ * whole frame.
+ */
+function buildMediaPanel(
+  placement: OverlayCustomLayerView,
+  scale: number,
+  frame: { width: number; height: number }
+): OverlayLayoutNode | null {
+  const url = String(placement.url ?? "");
+  if (!/^(data:image\/|https?:\/\/)/.test(url)) {
+    return null;
+  }
+
+  const px = (value: number) => Math.round(value * scale);
+  const box = resolvePlacementBox(placement, scale, frame);
+
+  return {
+    type: "div",
+    props: {
+      style: {
+        display: "flex",
+        position: "absolute",
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
+        borderRadius: px(16),
+        overflow: "hidden",
+        opacity: clampPlacementPercent(placement.opacityPercent, 5, 100) / 100
+      },
+      children: [
+        {
+          type: "img",
+          props: {
+            src: url,
+            style: {
+              width: box.width,
+              height: box.height,
+              objectFit: placement.fit === "cover" ? "cover" : "contain"
+            }
+          }
+        }
+      ]
+    }
+  };
+}
+
+/**
+ * A text layer on air, built from the panel's existing ink and surface vocabulary — no colours of
+ * its own. Tones map onto the studio's three text sizes; with only regular and bold faces loaded,
+ * the headline is bold and body/caption stay regular. Custom local font families cannot reach the
+ * rasteriser (it loads exactly three families), so they fall back to the scene's preset stack.
+ */
+function buildTextPanel(
+  placement: OverlayCustomLayerView,
+  accent: string,
+  scale: number,
+  fontFamily: string,
+  surfaceStyle: string,
+  frame: { width: number; height: number }
+): OverlayLayoutNode | null {
+  const primary = clampOverlayText(String(placement.text ?? ""), 180);
+  const secondary = clampOverlayText(String(placement.secondaryText ?? ""), 220);
+  if (!primary && !secondary) {
+    return null;
+  }
+
+  const px = (value: number) => Math.round(value * scale);
+  const box = resolvePlacementBox(placement, scale, frame);
+  const tone = String(placement.textTone ?? "headline");
+  const align = String(placement.textAlign ?? "left");
+  const alignItems = align === "center" ? "center" : align === "right" ? "flex-end" : "flex-start";
+
+  const stacks: Record<string, string> = {
+    "safe-sans": FONT_STACKS["studio-sans"]!,
+    "safe-serif": FONT_STACKS["editorial-serif"]!,
+    "safe-mono": FONT_STACKS["signal-mono"]!
+  };
+  const resolvedFamily = stacks[String(placement.fontMode ?? "")] ?? fontFamily;
+
+  const primaryStyle: OverlayLayoutStyle =
+    tone === "caption"
+      ? { fontSize: px(13), letterSpacing: px(1), textTransform: "uppercase" }
+      : tone === "body"
+        ? { fontSize: px(16), lineHeight: 1.2 }
+        : { fontSize: px(30), fontWeight: 700, lineHeight: 1.05 };
+
+  return {
+    type: "div",
+    props: {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems,
+        position: "absolute",
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
+        padding: `${px(14)}px ${px(18)}px`,
+        borderRadius: px(16),
+        opacity: clampPlacementPercent(placement.opacityPercent, 5, 100) / 100,
+        fontFamily: resolvedFamily,
+        textAlign: align,
+        ...resolveSurface(surfaceStyle, accent)
+      },
+      children: [
+        ...(primary
+          ? [label(primary, { color: placement.useAccent === true ? accentTextColor(accent) : INK_PRIMARY, ...primaryStyle })]
+          : []),
+        ...(secondary ? [label(secondary, { color: INK_SECONDARY, fontSize: px(13), marginTop: px(6) })] : [])
+      ]
+    }
+  };
+}
+
 function buildBanner(message: string, scale: number, fontFamily: string): OverlayLayoutNode {
   const px = (value: number) => Math.round(value * scale);
   return {
@@ -919,6 +1166,35 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
           height: options.height
         })
       : null;
+
+  // The other positioned layers, in the operator's layer order. The source panel follows the
+  // game panel's double gate: an enabled source layer AND a drawable frame (see
+  // sourceFrameVisible — a stale feed hides the layer rather than freezing it). One frame input
+  // means one drawn source layer per scene; the first enabled one wins, like the game panel.
+  // embed and widget layers never appear here — satori cannot run an iframe, so they stay
+  // browser-overlay-only and the studio says so.
+  const frameSize = { width: options.width, height: options.height };
+  const customPanels: OverlayLayoutNode[] = [];
+  let sourceDrawn = false;
+  for (const layer of payload.scene.customLayers ?? []) {
+    if (!layer.enabled) {
+      continue;
+    }
+    if (layer.kind === "source" && !sourceDrawn && sourceFrameVisible(input.sourceFrame)) {
+      customPanels.push(buildSourcePanel(input.sourceFrame, layer, accent, scale, payload.scene.surfaceStyle, frameSize));
+      sourceDrawn = true;
+    } else if (layer.kind === "logo" || layer.kind === "image") {
+      const mediaPanel = buildMediaPanel(layer, scale, frameSize);
+      if (mediaPanel) {
+        customPanels.push(mediaPanel);
+      }
+    } else if (layer.kind === "text") {
+      const textPanel = buildTextPanel(layer, accent, scale, fontFamily, payload.scene.surfaceStyle, frameSize);
+      if (textPanel) {
+        customPanels.push(textPanel);
+      }
+    }
+  }
 
   // Chat is gated upstream (enabled setting, freshness) by the projection that builds the view;
   // here the only gate left is content. An empty or fully-sanitised-away chat builds no panel,
@@ -1013,7 +1289,7 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
         // containing block rather than the browser default of the nearest positioned ancestor.
         position: "relative"
       },
-      children: [...topBar, bottom, ...(gamePanel ? [gamePanel] : [])]
+      children: [...topBar, bottom, ...(gamePanel ? [gamePanel] : []), ...customPanels]
     }
   };
 }

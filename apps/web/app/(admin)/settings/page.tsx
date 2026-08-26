@@ -6,6 +6,7 @@ import {
   resolveChatOverlayRuntimeEnabled,
   resolveDiskWatermarkConfig,
   resolveSystemVolumeWatermarkConfig,
+  resolveSourceLayerRuntimeEnabled,
   resolveTwitchScheduleSyncEnabled
 } from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
@@ -131,12 +132,14 @@ export default async function SettingsPage() {
             initialValues={{
               streamChatOverlayEnabled: state.managedConfig.streamChatOverlayEnabled,
               streamAlertsEnabled: state.managedConfig.streamAlertsEnabled,
-              twitchScheduleSyncEnabled: state.managedConfig.twitchScheduleSyncEnabled
+              twitchScheduleSyncEnabled: state.managedConfig.twitchScheduleSyncEnabled,
+              sourceLayerEnabled: state.managedConfig.sourceLayerEnabled
             }}
             fallback={{
               streamChatOverlayEnabled: resolveChatOverlayRuntimeEnabled(null, process.env),
               streamAlertsEnabled: resolveAlertsRuntimeEnabled(null, process.env),
-              twitchScheduleSyncEnabled: resolveTwitchScheduleSyncEnabled(null, process.env)
+              twitchScheduleSyncEnabled: resolveTwitchScheduleSyncEnabled(null, process.env),
+              sourceLayerEnabled: resolveSourceLayerRuntimeEnabled(null, process.env)
             }}
           />
         </Panel>
