@@ -360,6 +360,164 @@ export function resolveSourceSnapshotIntervalSeconds(managed: ManagedSourceSnaps
 }
 
 // ---------------------------------------------------------------------------
+// Replay (Twitch VOD) cache tuning
+// ---------------------------------------------------------------------------
+
+// M56 part 2. The cache path (TWITCH_VOD_CACHE_ROOT) stays env-only on purpose: where a volume is
+// mounted is infrastructure, decided at deploy time, and a GUI field for it could point the worker
+// at a directory that does not exist on the next host. Everything else about the cache is an
+// operating decision and lives here. Byte sizes are managed in whole-or-fractional GB (GiB,
+// 1024^3) because nobody reasons about a replay cache in bytes; the resolver converts.
+
+export type ManagedVodCacheInput =
+  | Partial<{
+      vodCacheEnabled: string;
+      vodCacheAllowRemoteFallback: string;
+      vodCacheMaxGb: string;
+      vodCacheMinFreeGb: string;
+      vodCacheMaxAssetGb: string;
+      vodCacheRetentionHours: string;
+      vodCachePartialMaxAgeHours: string;
+      vodCacheDownloadTimeoutSeconds: string;
+      vodCacheFailureCooldownSeconds: string;
+      vodCacheLimitRate: string;
+    }>
+  | null
+  | undefined;
+
+/**
+ * Bounds for the managed values, shared by the settings form, the API route and the resolver.
+ * Derivations: a cache below 1 GB cannot hold a single VOD and above 4 TB the setting stops being
+ * a cache; retention beyond a year and a partial older than a week are "never" in disguise; a
+ * download timeout under 30 s cannot fetch anything real (the awaited path is additionally clamped
+ * to the cycle stall budget by the worker — see cycle-budget.ts); a failure cooldown under a
+ * minute turns a broken VOD into a hammering retry loop.
+ */
+export const VOD_CACHE_LIMITS = {
+  gb: { min: 1, max: 4096 },
+  retentionHours: { min: 1, max: 8760 },
+  partialMaxAgeHours: { min: 1, max: 168 },
+  downloadTimeoutSeconds: { min: 30, max: 14_400 },
+  failureCooldownSeconds: { min: 60, max: 86_400 }
+} as const;
+
+export type ResolvedVodCacheTuning = {
+  enabled: boolean;
+  /** Whether an uncached VOD may be played straight from Twitch instead of waiting for the cache. */
+  allowRemoteFallback: boolean;
+  maxCacheBytes: number;
+  minFreeBytes: number;
+  maxAssetBytes: number;
+  retentionHours: number;
+  partialMaxAgeHours: number;
+  downloadTimeoutSeconds: number;
+  failureCooldownSeconds: number;
+  /** yt-dlp rate notation ("8M"), or "" for unlimited. */
+  limitRate: string;
+};
+
+const GIB = 1024 * 1024 * 1024;
+
+export function isValidVodCacheGb(value: number): boolean {
+  return Number.isFinite(value) && value >= VOD_CACHE_LIMITS.gb.min && value <= VOD_CACHE_LIMITS.gb.max;
+}
+
+/** The shapes yt-dlp accepts, plus "" and "0" for unlimited — same rule the worker normaliser uses. */
+export function isValidVodCacheLimitRate(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === "" || trimmed === "0" || /^\d+(\.\d+)?[KMG]?$/i.test(trimmed);
+}
+
+type Bounds = { min: number; max: number };
+
+/**
+ * A managed number wins when parseable, clamped into its bounds — the API refuses to persist an
+ * out-of-range value, so the clamp only ever corrects a corrupted store, never surprises an
+ * operator. Unparseable managed text reads as "not set". The env path keeps its historical
+ * semantics untouched (any positive number, however extreme): an untouched managed value must
+ * leave an env-driven install byte-for-byte where it was.
+ */
+function readManagedBoundedNumber(
+  managedValue: string | undefined,
+  bounds: Bounds,
+  envFallback: () => number
+): number {
+  const managedText = text(managedValue);
+  if (managedText !== "") {
+    const parsed = Number(managedText);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.min(bounds.max, Math.max(bounds.min, parsed));
+    }
+  }
+  return envFallback();
+}
+
+function readPositiveEnvNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function resolveVodCacheTuning(managed: ManagedVodCacheInput, env: EnvLike): ResolvedVodCacheTuning {
+  const managedLimitRate = text(managed?.vodCacheLimitRate);
+  const gbToBytes = (gb: number) => Math.round(gb * GIB);
+
+  return {
+    enabled: readManagedFlag(managed?.vodCacheEnabled) ?? env.TWITCH_VOD_CACHE_ENABLED !== "0",
+    allowRemoteFallback:
+      readManagedFlag(managed?.vodCacheAllowRemoteFallback) ?? env.TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK === "1",
+    maxCacheBytes: gbToBytes(
+      readManagedBoundedNumber(managed?.vodCacheMaxGb, VOD_CACHE_LIMITS.gb, () =>
+        readPositiveEnvNumber(env.TWITCH_VOD_CACHE_MAX_BYTES, 20 * GIB) / GIB
+      )
+    ),
+    minFreeBytes: gbToBytes(
+      readManagedBoundedNumber(managed?.vodCacheMinFreeGb, VOD_CACHE_LIMITS.gb, () =>
+        readPositiveEnvNumber(env.TWITCH_VOD_CACHE_MIN_FREE_BYTES, 15 * GIB) / GIB
+      )
+    ),
+    maxAssetBytes: gbToBytes(
+      readManagedBoundedNumber(managed?.vodCacheMaxAssetGb, VOD_CACHE_LIMITS.gb, () =>
+        readPositiveEnvNumber(env.TWITCH_VOD_CACHE_MAX_ASSET_BYTES, 20 * GIB) / GIB
+      )
+    ),
+    retentionHours: readManagedBoundedNumber(managed?.vodCacheRetentionHours, VOD_CACHE_LIMITS.retentionHours, () =>
+      readPositiveEnvNumber(env.TWITCH_VOD_CACHE_RETENTION_HOURS, 72)
+    ),
+    partialMaxAgeHours: readManagedBoundedNumber(
+      managed?.vodCachePartialMaxAgeHours,
+      VOD_CACHE_LIMITS.partialMaxAgeHours,
+      () => readPositiveEnvNumber(env.TWITCH_VOD_CACHE_PARTIAL_MAX_AGE_HOURS, 6)
+    ),
+    downloadTimeoutSeconds: readManagedBoundedNumber(
+      managed?.vodCacheDownloadTimeoutSeconds,
+      VOD_CACHE_LIMITS.downloadTimeoutSeconds,
+      () => readPositiveEnvNumber(env.TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS, 120)
+    ),
+    failureCooldownSeconds: readManagedBoundedNumber(
+      managed?.vodCacheFailureCooldownSeconds,
+      VOD_CACHE_LIMITS.failureCooldownSeconds,
+      () => readPositiveEnvNumber(env.TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS, 30 * 60)
+    ),
+    // A managed "0" is an explicit "unlimited", overriding an env cap; malformed notation reads
+    // as "not set" so a corrupted value can never make the downloader exit on its arguments. The
+    // env fallback goes through the same normalisation the worker has always applied.
+    limitRate:
+      managedLimitRate !== "" && isValidVodCacheLimitRate(managedLimitRate)
+        ? normalizeVodCacheLimitRate(managedLimitRate)
+        : normalizeVodCacheLimitRate(env.TWITCH_VOD_CACHE_LIMIT_RATE)
+  };
+}
+
+/** "" and "0" both mean unlimited; anything not in yt-dlp's notation is dropped, not passed on. */
+export function normalizeVodCacheLimitRate(value: string | undefined): string {
+  const trimmed = text(value);
+  if (!trimmed || trimmed === "0" || !isValidVodCacheLimitRate(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
+
+// ---------------------------------------------------------------------------
 // EventSub webhook secret
 // ---------------------------------------------------------------------------
 
