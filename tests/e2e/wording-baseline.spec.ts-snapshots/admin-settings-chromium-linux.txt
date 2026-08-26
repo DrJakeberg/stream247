@@ -66,9 +66,12 @@ ALERT EMAIL TO
 Save encrypted settings
 RUNTIME
 Operations
-Operational decisions that used to live only in the server environment. Both groups fold away because they are set once and then left alone; a value saved here wins over the environment.
+Operational decisions that used to live only in the server environment. Every group folds away because it is set once and then left alone; a value saved here wins over the environment.
 Disk watermark
 Feature switches
+Replay cache
+Watchdog thresholds
+Feed tuning
 SECURITY
 Local account security
 Optional two-factor authentication is available for local accounts. Team members signing in through Twitch SSO are not affected by this setting.
