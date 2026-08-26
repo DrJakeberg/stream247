@@ -1,7 +1,10 @@
 import path from "node:path";
 import {
   resolveEncoderQualitySettings,
+  resolvePlayoutReconnectTuning,
+  resolveProgramFeedTuning,
   type ManagedEncoderQualityInput,
+  type ManagedFeedTuningInput,
   type StreamOutputSettings
 } from "@stream247/core";
 import { getOutputGopSize, getOutputVideoFilter, isStreamScaleEnabled } from "./output-settings.js";
@@ -45,11 +48,6 @@ function isRemoteHttpInput(input: string): boolean {
   }
 }
 
-function readPositiveNumber(value: string | undefined, fallback: number): number {
-  const parsed = Number(value ?? "");
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
 export type FfmpegOutputTarget = {
   muxer: "flv" | "tee" | "hls";
   output: string;
@@ -68,20 +66,23 @@ export type ProgramFeedConfig = {
   failoverSeconds: number;
 };
 
-export function getPlayoutReconnectConfig(env: NodeJS.ProcessEnv = process.env): {
+/** M56 part 2: managed cadence first (clamped in core), env second, 48h/20s default last. */
+export function getPlayoutReconnectConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  managed?: ManagedFeedTuningInput
+): {
   intervalHours: number;
   intervalMs: number;
   windowSeconds: number;
   windowMs: number;
 } {
-  const intervalHours = readPositiveNumber(env.PLAYOUT_RECONNECT_HOURS, 48);
-  const windowSeconds = readPositiveNumber(env.PLAYOUT_RECONNECT_SECONDS, 20);
+  const tuning = resolvePlayoutReconnectTuning(managed ?? null, env);
 
   return {
-    intervalHours,
-    intervalMs: intervalHours * 60 * 60 * 1000,
-    windowSeconds,
-    windowMs: windowSeconds * 1000
+    intervalHours: tuning.intervalHours,
+    intervalMs: tuning.intervalHours * 60 * 60 * 1000,
+    windowSeconds: tuning.windowSeconds,
+    windowMs: tuning.windowSeconds * 1000
   };
 }
 
@@ -101,23 +102,27 @@ export function getRelayInputUrl(env: NodeJS.ProcessEnv = process.env): string {
   return env.STREAM247_RELAY_INPUT_URL || getRelayPublishUrl(env);
 }
 
+/**
+ * M56 part 2: the feed geometry (segment length, window size, failover margin) resolves managed
+ * first through the shared core clamps. The directory stays env-only — where the feed lives on
+ * disk is infrastructure, decided by the mount layout, not an operating decision.
+ */
 export function getProgramFeedConfig(
   env: NodeJS.ProcessEnv = process.env,
-  mediaRoot = "/app/data/media"
+  mediaRoot = "/app/data/media",
+  managed?: ManagedFeedTuningInput
 ): ProgramFeedConfig {
   const directory = env.STREAM247_PROGRAM_FEED_DIR || path.join(mediaRoot, ".stream247-program-feed");
-  const targetSeconds = Math.max(1, Math.floor(readPositiveNumber(env.STREAM247_PROGRAM_FEED_TARGET_SECONDS, 2)));
-  const listSize = Math.max(3, Math.floor(readPositiveNumber(env.STREAM247_PROGRAM_FEED_LIST_SIZE, 30)));
-  const failoverSeconds = Math.max(1, Math.floor(readPositiveNumber(env.STREAM247_PROGRAM_FEED_FAILOVER_SECONDS, 10)));
+  const tuning = resolveProgramFeedTuning(managed ?? null, env);
 
   return {
     directory,
     playlistPath: path.join(directory, "program.m3u8"),
     segmentPattern: path.join(directory, "segment-%s-%05d.ts"),
-    targetSeconds,
-    listSize,
-    bufferedSeconds: targetSeconds * listSize,
-    failoverSeconds
+    targetSeconds: tuning.targetSeconds,
+    listSize: tuning.listSize,
+    bufferedSeconds: tuning.targetSeconds * tuning.listSize,
+    failoverSeconds: tuning.failoverSeconds
   };
 }
 

@@ -520,10 +520,11 @@ async function flushChatOverlayMessages(): Promise<void> {
 }
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
-const PLAYOUT_RECONNECT_CONFIG = getPlayoutReconnectConfig(process.env);
-const PLAYOUT_RECONNECT_INTERVAL_MS = PLAYOUT_RECONNECT_CONFIG.intervalMs;
-const PLAYOUT_RECONNECT_INTERVAL_HOURS = PLAYOUT_RECONNECT_CONFIG.intervalHours;
-const PLAYOUT_RECONNECT_WINDOW_MS = PLAYOUT_RECONNECT_CONFIG.windowMs;
+// A function rather than module-level constants since M56 part 2: the cadence is managed config
+// first, and a value saved in the GUI must reach the next cycle without a process restart.
+function getPlayoutReconnectRuntimeConfig() {
+  return getPlayoutReconnectConfig(process.env, latestManagedConfig);
+}
 const TWITCH_EVENTSUB_SYNC_INTERVAL_MS = 10 * 60_000;
 const TWITCH_LIVE_STATUS_SYNC_INTERVAL_MS = 60_000;
 const STREAM247_RELAY_ENABLED = isRelayModeEnabled(process.env);
@@ -771,7 +772,7 @@ function isProgramFeedMode(): boolean {
 }
 
 function getProgramFeedRuntimeConfig() {
-  return getProgramFeedConfig(process.env, getMediaRoot());
+  return getProgramFeedConfig(process.env, getMediaRoot(), latestManagedConfig);
 }
 
 /**
@@ -5216,24 +5217,25 @@ async function runPlayoutCycle(): Promise<void> {
   const liveBridgeActive =
     state.playout.liveBridgeInputUrl !== "" &&
     (state.playout.liveBridgeStatus === "pending" || state.playout.liveBridgeStatus === "active");
+  const playoutReconnect = getPlayoutReconnectRuntimeConfig();
   const reconnectActive =
     !STREAM247_RELAY_ENABLED &&
     !liveBridgeActive &&
     state.playout.restartRequestedAt !== "" &&
-    Date.now() - new Date(state.playout.restartRequestedAt).getTime() < PLAYOUT_RECONNECT_WINDOW_MS;
+    Date.now() - new Date(state.playout.restartRequestedAt).getTime() < playoutReconnect.windowMs;
   const reconnectDue =
     !STREAM247_RELAY_ENABLED &&
     !liveBridgeActive &&
     !reconnectActive &&
     state.playout.processStartedAt !== "" &&
-    Date.now() - new Date(state.playout.processStartedAt).getTime() >= PLAYOUT_RECONNECT_INTERVAL_MS;
+    Date.now() - new Date(state.playout.processStartedAt).getTime() >= playoutReconnect.intervalMs;
 
   if (reconnectDue) {
     await stopPlayoutProcess("scheduled-reconnect");
     await updatePlayoutRuntime((playout) => ({
       ...playout,
       restartRequestedAt: new Date().toISOString(),
-      message: `Scheduled ${PLAYOUT_RECONNECT_INTERVAL_HOURS}h reconnect is starting.`
+      message: `Scheduled ${playoutReconnect.intervalHours}h reconnect is starting.`
     }));
     state = await readAppState();
   }
@@ -6146,16 +6148,17 @@ async function runUplinkCycle(): Promise<void> {
     await resolveIncident("program-feed.input", "Program feed is fresh.");
   }
 
+  const uplinkReconnect = getPlayoutReconnectRuntimeConfig();
   const reconnectActive = uplinkReconnectUntil !== "" && now < new Date(uplinkReconnectUntil).getTime();
   const reconnectDue =
     !reconnectActive &&
     getRunningUplinkStartedAt() !== "" &&
-    now - new Date(getRunningUplinkStartedAt()).getTime() >= PLAYOUT_RECONNECT_INTERVAL_MS;
+    now - new Date(getRunningUplinkStartedAt()).getTime() >= uplinkReconnect.intervalMs;
 
   if (reconnectDue) {
-    uplinkReconnectUntil = new Date(now + PLAYOUT_RECONNECT_WINDOW_MS).toISOString();
+    uplinkReconnectUntil = new Date(now + uplinkReconnect.windowMs).toISOString();
     await stopAllUplinkProcesses("scheduled-reconnect");
-    await appendAuditEvent("uplink.cycle", `Scheduled ${PLAYOUT_RECONNECT_INTERVAL_HOURS}h uplink reconnect started.`);
+    await appendAuditEvent("uplink.cycle", `Scheduled ${uplinkReconnect.intervalHours}h uplink reconnect started.`);
     return;
   }
 
@@ -6169,7 +6172,7 @@ async function runUplinkCycle(): Promise<void> {
       uplinkDestinationIds: destinationIds,
       uplinkReconnectUntil
     }));
-    await appendAuditEvent("uplink.cycle", `Scheduled ${PLAYOUT_RECONNECT_INTERVAL_HOURS}h uplink reconnect window is active.`);
+    await appendAuditEvent("uplink.cycle", `Scheduled ${uplinkReconnect.intervalHours}h uplink reconnect window is active.`);
     return;
   }
 
