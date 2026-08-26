@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   isValidVodCacheGb,
   isValidVodCacheLimitRate,
+  resolveDurationBoundMarginSeconds,
+  resolveFeedAudioWatchdogMs,
+  resolvePlayoutFeedWatchdogMs,
+  resolveUplinkWatchdogMs,
   resolveVodCacheTuning,
-  VOD_CACHE_LIMITS
+  VOD_CACHE_LIMITS,
+  WATCHDOG_LIMITS
 } from "../../packages/core/src/index.js";
 
 // M56 part 2: the remaining operational families move from .env into managed config, on the same
@@ -150,5 +155,122 @@ describe("replay cache tuning resolution", () => {
     expect(isValidVodCacheLimitRate("500K")).toBe(true);
     expect(isValidVodCacheLimitRate("8 Mbit")).toBe(false);
     expect(isValidVodCacheLimitRate("-1M")).toBe(false);
+  });
+});
+
+// The watchdog thresholds decide when a live channel restarts its own processes. The clamps are
+// not taste: each lower bound is the smallest value that cannot mistake healthy cadence for a
+// fault, each upper bound is the point past which the watchdog is "off in disguise". GUI fields
+// are seconds; the modules keep operating in milliseconds.
+
+describe("watchdog threshold resolution", () => {
+  it("resolves the built-in defaults when nothing is set anywhere", () => {
+    expect(resolveFeedAudioWatchdogMs(null, {})).toEqual({ silenceMs: 90_000, graceMs: 60_000 });
+    expect(resolvePlayoutFeedWatchdogMs(null, {})).toEqual({ staleMs: 45_000, graceMs: 90_000 });
+    expect(resolveUplinkWatchdogMs(null, {})).toEqual({
+      stallMs: 45_000,
+      graceMs: 60_000,
+      noProgressRestartMs: 300_000
+    });
+    expect(resolveDurationBoundMarginSeconds(null, {})).toBe(15);
+  });
+
+  it("keeps the historical env-ms semantics untouched when managed values are empty", () => {
+    expect(
+      resolveFeedAudioWatchdogMs(
+        { feedAudioSilenceSeconds: "" },
+        { PLAYOUT_FEED_SILENCE_MS: "120000", PLAYOUT_FEED_GRACE_MS: "30000" }
+      )
+    ).toEqual({ silenceMs: 120_000, graceMs: 30_000 });
+    expect(
+      resolvePlayoutFeedWatchdogMs(null, {
+        PLAYOUT_FEED_STALE_TIMEOUT_MS: "60000",
+        PLAYOUT_FEED_STALE_GRACE_MS: "120000"
+      })
+    ).toEqual({ staleMs: 60_000, graceMs: 120_000 });
+    expect(
+      resolveUplinkWatchdogMs(null, {
+        UPLINK_STALL_TIMEOUT_MS: "30000",
+        UPLINK_STALL_GRACE_MS: "90000",
+        UPLINK_NO_PROGRESS_RESTART_MS: "600000"
+      })
+    ).toEqual({ stallMs: 30_000, graceMs: 90_000, noProgressRestartMs: 600_000 });
+    expect(
+      resolveDurationBoundMarginSeconds(null, { PLAYOUT_DURATION_BOUND_MARGIN_SECONDS: "30" })
+    ).toBe(30);
+    // Env keeps its old "positive or default" rule, including values the managed path would clamp.
+    expect(resolveFeedAudioWatchdogMs(null, { PLAYOUT_FEED_SILENCE_MS: "0" }).silenceMs).toBe(90_000);
+    expect(resolveFeedAudioWatchdogMs(null, { PLAYOUT_FEED_SILENCE_MS: "1000" }).silenceMs).toBe(1_000);
+  });
+
+  it("lets managed seconds win over env milliseconds", () => {
+    expect(
+      resolveFeedAudioWatchdogMs(
+        { feedAudioSilenceSeconds: "120", feedAudioGraceSeconds: "0" },
+        { PLAYOUT_FEED_SILENCE_MS: "30000", PLAYOUT_FEED_GRACE_MS: "30000" }
+      )
+    ).toEqual({ silenceMs: 120_000, graceMs: 0 });
+    expect(
+      resolvePlayoutFeedWatchdogMs(
+        { feedStallTimeoutSeconds: "60", feedStallGraceSeconds: "45" },
+        { PLAYOUT_FEED_STALE_TIMEOUT_MS: "30000" }
+      )
+    ).toEqual({ staleMs: 60_000, graceMs: 45_000 });
+    expect(
+      resolveUplinkWatchdogMs(
+        {
+          uplinkStallTimeoutSeconds: "90",
+          uplinkStallGraceSeconds: "30",
+          uplinkNoProgressRestartSeconds: "120"
+        },
+        {}
+      )
+    ).toEqual({ stallMs: 90_000, graceMs: 30_000, noProgressRestartMs: 120_000 });
+    expect(resolveDurationBoundMarginSeconds({ durationBoundMarginSeconds: "45" }, {})).toBe(45);
+  });
+
+  it("clamps every managed threshold into its documented bounds", () => {
+    // A stall/silence timeout below the longest feed segment reads ordinary cadence as a fault
+    // and restarts a healthy channel forever — the lower clamps make that unconfigurable.
+    expect(resolveFeedAudioWatchdogMs({ feedAudioSilenceSeconds: "1" }, {}).silenceMs).toBe(
+      WATCHDOG_LIMITS.feedAudioSilenceSeconds.min * 1000
+    );
+    expect(resolvePlayoutFeedWatchdogMs({ feedStallTimeoutSeconds: "1" }, {}).staleMs).toBe(
+      WATCHDOG_LIMITS.feedStallTimeoutSeconds.min * 1000
+    );
+    // A fresh playout needs startup plus its first segment before the old playlist timestamp can
+    // be held against it; grace below that restarts a healthy fresh process in a loop.
+    expect(resolvePlayoutFeedWatchdogMs({ feedStallGraceSeconds: "1" }, {}).graceMs).toBe(
+      WATCHDOG_LIMITS.feedStallGraceSeconds.min * 1000
+    );
+    expect(resolveUplinkWatchdogMs({ uplinkStallTimeoutSeconds: "1" }, {}).stallMs).toBe(
+      WATCHDOG_LIMITS.uplinkStallTimeoutSeconds.min * 1000
+    );
+    // Below a minute "never encoded a frame" is indistinguishable from a slow RTMP connect.
+    expect(resolveUplinkWatchdogMs({ uplinkNoProgressRestartSeconds: "5" }, {}).noProgressRestartMs).toBe(
+      WATCHDOG_LIMITS.uplinkNoProgressRestartSeconds.min * 1000
+    );
+    // Margin 5..120: below risks cutting real content on rebuffer skew, above it the watchdog
+    // cascade fires first and the deliberate stop never happens.
+    expect(resolveDurationBoundMarginSeconds({ durationBoundMarginSeconds: "1" }, {})).toBe(5);
+    expect(resolveDurationBoundMarginSeconds({ durationBoundMarginSeconds: "999" }, {})).toBe(120);
+    // Upper bounds: an hour-plus threshold is the watchdog switched off while looking configured.
+    expect(resolveFeedAudioWatchdogMs({ feedAudioSilenceSeconds: "99999" }, {}).silenceMs).toBe(
+      WATCHDOG_LIMITS.feedAudioSilenceSeconds.max * 1000
+    );
+    expect(resolveUplinkWatchdogMs({ uplinkNoProgressRestartSeconds: "99999" }, {}).noProgressRestartMs).toBe(
+      WATCHDOG_LIMITS.uplinkNoProgressRestartSeconds.max * 1000
+    );
+  });
+
+  it("allows zero grace only where a first-observation gate already protects startup", () => {
+    // Feed-audio and uplink stall verdicts require having seen audio/progress once, so zero grace
+    // cannot restart a fresh process; the playout feed-stall check has no such gate and keeps a
+    // hard lower bound instead.
+    expect(WATCHDOG_LIMITS.feedAudioGraceSeconds.min).toBe(0);
+    expect(WATCHDOG_LIMITS.uplinkStallGraceSeconds.min).toBe(0);
+    expect(WATCHDOG_LIMITS.feedStallGraceSeconds.min).toBeGreaterThanOrEqual(30);
+    expect(resolveFeedAudioWatchdogMs({ feedAudioGraceSeconds: "0" }, {}).graceMs).toBe(0);
+    expect(resolveUplinkWatchdogMs({ uplinkStallGraceSeconds: "0" }, {}).graceMs).toBe(0);
   });
 });

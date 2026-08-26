@@ -518,6 +518,150 @@ export function normalizeVodCacheLimitRate(value: string | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
+// Watchdog thresholds
+// ---------------------------------------------------------------------------
+
+// M56 part 2. These numbers decide when a live channel restarts its own processes, so a wrong
+// value does not merely misconfigure a feature — it can destabilise the channel (a stall timeout
+// below the segment length restarts a healthy playout forever). Managed values are therefore
+// clamped into the bounds each module's own invariants dictate; the settings API refuses to
+// persist anything outside them, so the clamp is a corruption net, not a silent correction of
+// operator input. The env path keeps its historical any-positive-ms semantics untouched.
+//
+// STREAM247_LOOP_STALL_TIMEOUT_SECONDS is deliberately NOT part of this family: it is the
+// process's own self-protection (cycle-budget.ts), and a GUI that can lower the guard that
+// catches a wedged worker would let one bad click take down the mechanism that reports bad
+// clicks. It stays env-only.
+
+export type ManagedWatchdogInput =
+  | Partial<{
+      feedAudioSilenceSeconds: string;
+      feedAudioGraceSeconds: string;
+      feedStallTimeoutSeconds: string;
+      feedStallGraceSeconds: string;
+      uplinkStallTimeoutSeconds: string;
+      uplinkStallGraceSeconds: string;
+      uplinkNoProgressRestartSeconds: string;
+      durationBoundMarginSeconds: string;
+    }>
+  | null
+  | undefined;
+
+/**
+ * Bounds and defaults, shared by the resolver, the settings form and the API route. Seconds
+ * everywhere here; the modules run on milliseconds and the resolvers convert.
+ *
+ * Lower-bound derivations, one per guard:
+ * - silence/stale/stall 15 s: the program feed advances once per segment and segments are capped
+ *   at 10 s (FEED_TUNING_LIMITS), so 15 s is the smallest threshold that cannot read ordinary
+ *   segment cadence as a fault. That relationship is pinned by a test.
+ * - feed-stall grace 30 s: after a restart the playlist timestamp still belongs to the previous
+ *   run, and a fresh ffmpeg needs startup plus its first segment (observed 10–20 s on remote
+ *   sources) before that timestamp says anything about it.
+ * - audio/uplink grace 0: both verdicts require having observed audio/progress at least once, so
+ *   even zero grace cannot restart a process that never got started properly.
+ * - no-progress restart 60 s: below a minute, "never encoded a frame" is indistinguishable from a
+ *   slow RTMP connect, a DNS retry, or a reconnecting destination (uplink-progress.ts).
+ * - duration margin 5–120 s: metadata durations are second-accurate; under 5 s a rebuffer skew
+ *   could cut real content, and past ~120 s the watchdog cascade fires first anyway.
+ * Upper bounds are uniformly "past this the watchdog is off while looking configured".
+ */
+export const WATCHDOG_LIMITS = {
+  feedAudioSilenceSeconds: { min: 15, max: 3600, default: 90 },
+  feedAudioGraceSeconds: { min: 0, max: 3600, default: 60 },
+  feedStallTimeoutSeconds: { min: 15, max: 3600, default: 45 },
+  feedStallGraceSeconds: { min: 30, max: 3600, default: 90 },
+  uplinkStallTimeoutSeconds: { min: 15, max: 3600, default: 45 },
+  uplinkStallGraceSeconds: { min: 0, max: 3600, default: 60 },
+  uplinkNoProgressRestartSeconds: { min: 60, max: 7200, default: 300 },
+  durationBoundMarginSeconds: { min: 5, max: 120, default: 15 }
+} as const;
+
+type WatchdogLimitKey = keyof typeof WATCHDOG_LIMITS;
+
+export function isWithinWatchdogLimits(key: WatchdogLimitKey, value: number): boolean {
+  const bounds = WATCHDOG_LIMITS[key];
+  return Number.isFinite(value) && value >= bounds.min && value <= bounds.max;
+}
+
+/**
+ * Managed seconds win (clamped); otherwise the env millisecond value with its historical
+ * "any positive number" rule; otherwise the default. Zero is a valid managed value wherever the
+ * lower bound is zero, which is why the managed branch tests parseability, not positivity.
+ */
+function readWatchdogSeconds(managedValue: string | undefined, key: WatchdogLimitKey, envMsValue: string | undefined): number {
+  const bounds = WATCHDOG_LIMITS[key];
+  const managedText = text(managedValue);
+  if (managedText !== "") {
+    const parsed = Number(managedText);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.min(bounds.max, Math.max(bounds.min, Math.round(parsed)));
+    }
+  }
+
+  const envMs = Number(envMsValue);
+  if (Number.isFinite(envMs) && envMs > 0) {
+    return envMs / 1000;
+  }
+  return bounds.default;
+}
+
+export function resolveFeedAudioWatchdogMs(
+  managed: ManagedWatchdogInput,
+  env: EnvLike
+): { silenceMs: number; graceMs: number } {
+  return {
+    silenceMs: readWatchdogSeconds(managed?.feedAudioSilenceSeconds, "feedAudioSilenceSeconds", env.PLAYOUT_FEED_SILENCE_MS) * 1000,
+    graceMs: readWatchdogSeconds(managed?.feedAudioGraceSeconds, "feedAudioGraceSeconds", env.PLAYOUT_FEED_GRACE_MS) * 1000
+  };
+}
+
+export function resolvePlayoutFeedWatchdogMs(
+  managed: ManagedWatchdogInput,
+  env: EnvLike
+): { staleMs: number; graceMs: number } {
+  return {
+    staleMs:
+      readWatchdogSeconds(managed?.feedStallTimeoutSeconds, "feedStallTimeoutSeconds", env.PLAYOUT_FEED_STALE_TIMEOUT_MS) * 1000,
+    graceMs:
+      readWatchdogSeconds(managed?.feedStallGraceSeconds, "feedStallGraceSeconds", env.PLAYOUT_FEED_STALE_GRACE_MS) * 1000
+  };
+}
+
+export function resolveUplinkWatchdogMs(
+  managed: ManagedWatchdogInput,
+  env: EnvLike
+): { stallMs: number; graceMs: number; noProgressRestartMs: number } {
+  return {
+    stallMs:
+      readWatchdogSeconds(managed?.uplinkStallTimeoutSeconds, "uplinkStallTimeoutSeconds", env.UPLINK_STALL_TIMEOUT_MS) * 1000,
+    graceMs:
+      readWatchdogSeconds(managed?.uplinkStallGraceSeconds, "uplinkStallGraceSeconds", env.UPLINK_STALL_GRACE_MS) * 1000,
+    noProgressRestartMs:
+      readWatchdogSeconds(
+        managed?.uplinkNoProgressRestartSeconds,
+        "uplinkNoProgressRestartSeconds",
+        env.UPLINK_NO_PROGRESS_RESTART_MS
+      ) * 1000
+  };
+}
+
+/** The duration-bound margin was seconds in env already; only the clamp is new on the managed path. */
+export function resolveDurationBoundMarginSeconds(managed: ManagedWatchdogInput, env: EnvLike): number {
+  const bounds = WATCHDOG_LIMITS.durationBoundMarginSeconds;
+  const managedText = text(managed?.durationBoundMarginSeconds);
+  if (managedText !== "") {
+    const parsed = Number(managedText);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.min(bounds.max, Math.max(bounds.min, Math.round(parsed)));
+    }
+  }
+
+  const envSeconds = Number(env.PLAYOUT_DURATION_BOUND_MARGIN_SECONDS);
+  return Number.isFinite(envSeconds) && envSeconds > 0 ? envSeconds : bounds.default;
+}
+
+// ---------------------------------------------------------------------------
 // EventSub webhook secret
 // ---------------------------------------------------------------------------
 
