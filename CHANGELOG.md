@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.29 - 2026-08-26
+
 ### Added
 
 - the self-monitoring now covers the volumes eviction cannot help. A second, observation-only
