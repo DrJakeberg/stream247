@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { normalizeVodCacheLimitRate, resolveVodCacheTuning, type ManagedVodCacheInput } from "@stream247/core";
 import type { AssetRecord } from "@stream247/db";
 import { clampToCycleAwaitCeiling } from "./cycle-budget.js";
 import { DEFAULT_LOCK_STALE_MS, acquireFileLock, type FileLock } from "./file-lock.js";
@@ -77,30 +78,30 @@ export type TwitchVodCacheResult =
 
 type ExecText = typeof execFileText;
 
-const DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 2 * 60;
-const DEFAULT_RETENTION_HOURS = 72;
-const DEFAULT_PARTIAL_MAX_AGE_HOURS = 6;
-const DEFAULT_MAX_CACHE_BYTES = 20 * 1024 * 1024 * 1024;
-/** Largest single VOD worth caching; anything above this is streamed from Twitch instead. */
-const DEFAULT_MAX_ASSET_BYTES = 20 * 1024 * 1024 * 1024;
-const DEFAULT_MIN_FREE_BYTES = 15 * 1024 * 1024 * 1024;
-const DEFAULT_FAILURE_COOLDOWN_SECONDS = 30 * 60;
 /** The probe only reads a manifest; anything slower than this is a hung network call. */
 const PROBE_TIMEOUT_MS = 30_000;
 
-function readPositiveNumber(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-export function getTwitchVodCacheConfig(env: NodeJS.ProcessEnv, mediaRoot: string): TwitchVodCacheConfig {
+/**
+ * M56 part 2: the tuning numbers resolve through the shared core resolver — managed value first,
+ * env second, built-in default last — so the settings page and this worker can never disagree
+ * about what is in effect. Only the pieces that are genuinely infrastructure stay env-only here:
+ * the cache root (a mount point) and the tool binaries.
+ */
+export function getTwitchVodCacheConfig(
+  env: NodeJS.ProcessEnv,
+  mediaRoot: string,
+  managed?: ManagedVodCacheInput
+): TwitchVodCacheConfig {
+  const tuning = resolveVodCacheTuning(managed ?? null, env);
   const cacheRoot = env.TWITCH_VOD_CACHE_ROOT || path.join(mediaRoot, INTERNAL_MEDIA_CACHE_DIRNAME, "twitch");
-  const configuredDownloadTimeoutMs =
-    readPositiveNumber(env.TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS, DEFAULT_DOWNLOAD_TIMEOUT_SECONDS) * 1000;
+  const configuredDownloadTimeoutMs = tuning.downloadTimeoutSeconds * 1000;
+  // The cycle-budget invariant is applied AFTER managed resolution on purpose: however the
+  // timeout was configured — env or GUI — an awaited download must never outlive the loop stall
+  // guard. Only the detached background job honours the configured value in full.
   const awaitedDownloadTimeout = clampToCycleAwaitCeiling(configuredDownloadTimeoutMs, env);
   return {
-    enabled: env.TWITCH_VOD_CACHE_ENABLED !== "0",
-    allowRemoteFallback: env.TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK === "1",
+    enabled: tuning.enabled,
+    allowRemoteFallback: tuning.allowRemoteFallback,
     mediaRoot,
     cacheRoot,
     ytDlpBinary: env.YT_DLP_BIN || "yt-dlp",
@@ -108,15 +109,13 @@ export function getTwitchVodCacheConfig(env: NodeJS.ProcessEnv, mediaRoot: strin
     downloadTimeoutMs: awaitedDownloadTimeout.effectiveMs,
     backgroundDownloadTimeoutMs: configuredDownloadTimeoutMs,
     downloadTimeoutClamped: awaitedDownloadTimeout.clamped,
-    retentionMs: readPositiveNumber(env.TWITCH_VOD_CACHE_RETENTION_HOURS, DEFAULT_RETENTION_HOURS) * 60 * 60 * 1000,
-    partialMaxAgeMs:
-      readPositiveNumber(env.TWITCH_VOD_CACHE_PARTIAL_MAX_AGE_HOURS, DEFAULT_PARTIAL_MAX_AGE_HOURS) * 60 * 60 * 1000,
-    maxCacheBytes: readPositiveNumber(env.TWITCH_VOD_CACHE_MAX_BYTES, DEFAULT_MAX_CACHE_BYTES),
-    minFreeBytes: readPositiveNumber(env.TWITCH_VOD_CACHE_MIN_FREE_BYTES, DEFAULT_MIN_FREE_BYTES),
-    failureCooldownMs:
-      readPositiveNumber(env.TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS, DEFAULT_FAILURE_COOLDOWN_SECONDS) * 1000,
-    maxAssetBytes: readPositiveNumber(env.TWITCH_VOD_CACHE_MAX_ASSET_BYTES, DEFAULT_MAX_ASSET_BYTES),
-    limitRate: normalizeLimitRate(env.TWITCH_VOD_CACHE_LIMIT_RATE)
+    retentionMs: tuning.retentionHours * 60 * 60 * 1000,
+    partialMaxAgeMs: tuning.partialMaxAgeHours * 60 * 60 * 1000,
+    maxCacheBytes: tuning.maxCacheBytes,
+    minFreeBytes: tuning.minFreeBytes,
+    failureCooldownMs: tuning.failureCooldownSeconds * 1000,
+    maxAssetBytes: tuning.maxAssetBytes,
+    limitRate: tuning.limitRate
   };
 }
 
@@ -124,13 +123,10 @@ export function getTwitchVodCacheConfig(env: NodeJS.ProcessEnv, mediaRoot: strin
  * Accepts yt-dlp's rate notation (a number with an optional K/M/G suffix) and rejects anything else
  * rather than passing it through, since a malformed value would make yt-dlp exit and turn a
  * throttling setting into a cache that never downloads. "0" and "" both mean unlimited.
+ * Delegates to the shared core rule so the settings form validates exactly what runs.
  */
 export function normalizeLimitRate(value: string | undefined): string {
-  const trimmed = String(value ?? "").trim();
-  if (!trimmed || trimmed === "0") {
-    return "";
-  }
-  return /^\d+(\.\d+)?[KMG]?$/i.test(trimmed) ? trimmed : "";
+  return normalizeVodCacheLimitRate(value);
 }
 
 /**

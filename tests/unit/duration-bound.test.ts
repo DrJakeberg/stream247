@@ -87,4 +87,15 @@ describe("asset duration bound", () => {
       DEFAULT_DURATION_BOUND_MARGIN_SECONDS
     );
   });
+
+  it("resolves a managed margin first, clamped into 5..120 (M56 part 2)", () => {
+    expect(
+      getDurationBoundOptions({ PLAYOUT_DURATION_BOUND_MARGIN_SECONDS: "30" } as NodeJS.ProcessEnv, {
+        durationBoundMarginSeconds: "45"
+      }).marginSeconds
+    ).toBe(45);
+    expect(
+      getDurationBoundOptions({} as NodeJS.ProcessEnv, { durationBoundMarginSeconds: "1" }).marginSeconds
+    ).toBe(5);
+  });
 });

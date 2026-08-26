@@ -59,6 +59,24 @@
   credentials form, with the same keep-on-empty semantics as every other stored secret. An empty
   managed value changes nothing: existing env-driven installs behave bit for bit as before,
   including the runtime gates' historical only-"1"-enables semantics
+- the remaining operational env families followed (M56, part 2), as three more folded groups in
+  the admin settings operations panel, each saving through its own partial route so no form can
+  blank a sibling's values. "Replay cache": the Twitch VOD cache switch, remote-fallback switch,
+  size ceilings in GB (whole cache, minimum free, largest single replay — a per-replay ceiling
+  above the cache is rejected whole), retention and partial-download ages, download timeout,
+  failure cooldown and the download speed ceiling; the cache root path stays env-only, a mount
+  point is infrastructure. "Watchdog thresholds": the feed-silence, frozen-feed and encoder-stall
+  watchdogs, the never-started encoder restart and the planned end-of-video margin, all as
+  seconds with a spoken description of what each guard does. "Feed tuning": planned reconnect
+  cadence and window, program-feed segment length, window size and failover margin; the relay
+  topology stays env-only, deploy wiring is not a runtime decision. Because these values steer
+  restarts, every managed number is validated against bounds derived from each module's own
+  invariants (form and API refuse, the shared resolver additionally clamps a corrupted store),
+  the feed-stall floor is pinned above the longest configurable segment, and a managed download
+  timeout still passes the cycle-budget clamp, so no GUI value can outlive the loop stall guard.
+  The worker's playout and uplink modes now refresh managed config at each cycle start, so a
+  saved value reaches a running channel without a restart. The loop stall guard itself stays
+  env-only on purpose: the GUI must not be able to lower the process's own self-protection
 
 ### Removed
 

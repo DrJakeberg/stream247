@@ -464,6 +464,34 @@ export type ManagedConfigRecord = {
   // managed-first family in packages/core managed-runtime.ts.
   sourceLayerEnabled: string;
   sourceSnapshotIntervalSeconds: string;
+  // M56 part 2: the replay (Twitch VOD) cache family. Sizes are GB here because that is what the
+  // form asks for; the resolver converts. The cache root path stays env-only (infrastructure).
+  vodCacheEnabled: string;
+  vodCacheAllowRemoteFallback: string;
+  vodCacheMaxGb: string;
+  vodCacheMinFreeGb: string;
+  vodCacheMaxAssetGb: string;
+  vodCacheRetentionHours: string;
+  vodCachePartialMaxAgeHours: string;
+  vodCacheDownloadTimeoutSeconds: string;
+  vodCacheFailureCooldownSeconds: string;
+  vodCacheLimitRate: string;
+  // M56 part 2: watchdog thresholds, seconds in the GUI, resolved (and clamped) in core. The
+  // loop stall guard is deliberately absent — the process's self-protection stays env-only.
+  feedAudioSilenceSeconds: string;
+  feedAudioGraceSeconds: string;
+  feedStallTimeoutSeconds: string;
+  feedStallGraceSeconds: string;
+  uplinkStallTimeoutSeconds: string;
+  uplinkStallGraceSeconds: string;
+  uplinkNoProgressRestartSeconds: string;
+  durationBoundMarginSeconds: string;
+  // M56 part 2: planned reconnect cadence and program-feed geometry. Relay topology stays env.
+  playoutReconnectHours: string;
+  playoutReconnectWindowSeconds: string;
+  programFeedTargetSeconds: string;
+  programFeedListSize: string;
+  programFeedFailoverSeconds: string;
   twitchEventsubSecret: string;
   updatedAt: string;
 };
@@ -1484,6 +1512,29 @@ function defaultState(): AppState {
       twitchScheduleSyncEnabled: "",
       sourceLayerEnabled: "",
       sourceSnapshotIntervalSeconds: "",
+      vodCacheEnabled: "",
+      vodCacheAllowRemoteFallback: "",
+      vodCacheMaxGb: "",
+      vodCacheMinFreeGb: "",
+      vodCacheMaxAssetGb: "",
+      vodCacheRetentionHours: "",
+      vodCachePartialMaxAgeHours: "",
+      vodCacheDownloadTimeoutSeconds: "",
+      vodCacheFailureCooldownSeconds: "",
+      vodCacheLimitRate: "",
+      feedAudioSilenceSeconds: "",
+      feedAudioGraceSeconds: "",
+      feedStallTimeoutSeconds: "",
+      feedStallGraceSeconds: "",
+      uplinkStallTimeoutSeconds: "",
+      uplinkStallGraceSeconds: "",
+      uplinkNoProgressRestartSeconds: "",
+      durationBoundMarginSeconds: "",
+      playoutReconnectHours: "",
+      playoutReconnectWindowSeconds: "",
+      programFeedTargetSeconds: "",
+      programFeedListSize: "",
+      programFeedFailoverSeconds: "",
       twitchEventsubSecret: "",
       updatedAt: ""
     },

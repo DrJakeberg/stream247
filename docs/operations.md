@@ -61,7 +61,9 @@
   present; assets with an unknown duration fall back to the watchdogs by design
 - tuning: `PLAYOUT_DURATION_BOUND_MARGIN_SECONDS` (default 15) — seconds past the known duration
   before the deliberate end; keep it generous, because cutting duplicated last-frame is invisible
-  while cutting real content is not
+  while cutting real content is not. Since M56 part 2 this margin — like every watchdog threshold —
+  is also settable in Admin → Settings → Operations ("Watchdog thresholds"); a value saved there
+  wins over the env variable, and the GUI enforces the safe range (5–120 s here)
 
 ### Crash-loop protection active
 
@@ -88,7 +90,10 @@
 - for Twitch VOD assets, inspect `playout.twitch-cache.failed` incidents and confirm `MEDIA_LIBRARY_ROOT/.stream247-cache/twitch` is writable with enough free space
 - if playout stays on the reconnect slate while a Twitch VOD is still downloading, inspect the playout container for active `yt-dlp` work and prune leftover `.part-*` files for the same VOD; the production timeout should stay low enough that playout falls through to local fallback instead of waiting for a multi-minute cache prep
 - keep at least one curated local fallback asset under `data/media` with `fallback` or `standby` in the file name so the local-library source promotes it to a global fallback automatically
-- confirm the Twitch cache guardrail env values are present in the active stack:
+- confirm the Twitch cache guardrails are set — since M56 part 2 the whole family (and the uplink
+  watchdog pair below) is managed-first: Admin → Settings → Operations ("Replay cache" and
+  "Watchdog thresholds") wins over these env values, which remain the fallback for an untouched
+  install. Only `TWITCH_VOD_CACHE_ROOT` stays env-only, because a mount point is infrastructure:
   - `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`
   - `TWITCH_VOD_CACHE_RETENTION_HOURS`
   - `TWITCH_VOD_CACHE_PARTIAL_MAX_AGE_HOURS`

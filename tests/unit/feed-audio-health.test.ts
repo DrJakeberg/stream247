@@ -90,4 +90,14 @@ describe("program feed audio health", () => {
       DEFAULT_FEED_SILENCE_MS
     );
   });
+
+  it("resolves managed thresholds first, seconds in the GUI, milliseconds here (M56 part 2)", () => {
+    const options = getFeedAudioOptions({ PLAYOUT_FEED_SILENCE_MS: "30000" } as NodeJS.ProcessEnv, {
+      feedAudioSilenceSeconds: "120",
+      feedAudioGraceSeconds: "30"
+    });
+
+    expect(options.silenceMs).toBe(120_000);
+    expect(options.graceMs).toBe(30_000);
+  });
 });

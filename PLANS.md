@@ -1317,7 +1317,7 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | M53 | Feature | Next | Done | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
 | M54 | Feature | Next | Done | Chat game framework with Snake as the first game (emote-per-direction, moves only on input); Minesweeper (chat digs by coordinates like "b3") and 2048 (snake's emote map on a fixed 4x4 board) follow on the same framework |
 | M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
-| M56 | UX | Now | In progress | Every operational decision configurable in the GUI, `.env` demoted to fallback. Part 1 done: encoder quality, disk watermark, engagement/schedule-sync feature switches, EventSub secret — all as managed config with env fallback through shared core resolvers; dead `packages/config` removed. Open: VOD-cache family, watchdog thresholds, relay topology, alerting/SMTP polish |
+| M56 | UX | Now | In progress | Every operational decision configurable in the GUI, `.env` demoted to fallback. Part 1 done: encoder quality, disk watermark, engagement/schedule-sync feature switches, EventSub secret. Part 2 done: replay (VOD) cache family, watchdog/stall thresholds, reconnect + program-feed tuning — clamped resolvers in core, three folded admin groups with partial routes; SMTP/alert family confirmed already GUI-complete. Deliberately env-only: cache root, relay topology, loop stall guard. Open: the unused redis service in compose |
 | M57 | Feature | Now | In progress | Embedded video sources as scene layers. Stage 1 done: source layer kind (placement + reference), encrypted feed store, snapshot sampler at managed cadence rendering through the native overlay — plus logo/image/text layers on air. Stage 2 open: multiple simultaneous source frames, per-layer cadence, and any move beyond snapshot cadence |
 
 ## M51 Broadcast Channel Split
@@ -1439,12 +1439,29 @@ switches folded into admin settings; the EventSub webhook secret in the managed 
 with keep-on-empty secret semantics. The dead `packages/config` (`getConfig`: REDIS_URL,
 MOD_PRESENCE_*) is deleted.
 
-Still open for later parts: the VOD cache family, watchdog/stall thresholds, relay/uplink
-topology, ffmpeg reconnect tuning, alert delivery polish, and the redis service that compose
-still provisions although no code reads it.
+Part 2 (done): the replay (Twitch VOD) cache family, the watchdog/stall thresholds and the
+reconnect/program-feed tuning, as three folded groups in the admin settings operations panel,
+each with its own partial update route. These families configure guards, so every managed number
+is bounded: the API refuses out-of-range values with the reason, the shared resolver clamps a
+corrupted store, the feed-stall floor is pinned above the longest configurable segment, and a
+managed download timeout still passes the cycle-budget clamp. The SMTP/alert family was checked
+and is already fully GUI-capable (managed credentials form + `getManagedAlertConfig` /
+`getSmtpConfig`, both managed-first) — nothing was duplicated.
+
+Deliberately env-only, documented as such: `TWITCH_VOD_CACHE_ROOT` and
+`STREAM247_PROGRAM_FEED_DIR` (mount points are infrastructure), the relay topology
+(`STREAM247_RELAY_ENABLED`, relay URLs, `STREAM247_UPLINK_INPUT_MODE` — deploy wiring, and a GUI
+value contradicting the running compose file would be a lie with a save button), and
+`STREAM247_LOOP_STALL_TIMEOUT_SECONDS` (the process's own self-protection; the GUI must not be
+able to lower the guard that catches a wedged worker).
+
+Still open for later parts: the redis service that compose still provisions although no code
+reads it.
 
 - Acceptance: an operator changes the encoder preset in the studio, the next encoder start uses
   it; clearing the field returns the install to its env-driven behaviour bit for bit
+- Acceptance (part 2): a watchdog threshold saved in the GUI is in effect on the next cycle
+  without a container restart; a value outside the safe bounds never persists
 - Rollback: clear the managed fields (empty = follow env) — no schema migration was involved
 
 ## M57 Embedded Video Sources As Scene Layers
@@ -1488,6 +1505,37 @@ change, no additional ffmpeg input in stage 1.
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-08-26 — M56 Part 2: Replay Cache, Watchdogs And Feed Tuning Into The GUI
+
+- Three new resolver families in `packages/core/src/managed-runtime.ts` (replay cache, watchdog
+  thresholds, feed tuning), each with exported bounds (`VOD_CACHE_LIMITS`, `WATCHDOG_LIMITS`,
+  `FEED_TUNING_LIMITS`) shared by resolver, API route and form. Managed numbers clamp; the env
+  path keeps its historical semantics bit for bit. Clamp derivations live next to the bounds and
+  are pinned as tests, including the cross-family invariant that the feed-stall floor (15 s)
+  stays above the longest configurable segment (10 s).
+- Twenty-three new keys on the encrypted `ManagedConfigRecord` — no migration, JSON payload with
+  read-time defaults. Byte sizes are stored as GB because that is what the form asks for.
+- Worker: `getTwitchVodCacheConfig`, the four watchdog option readers,
+  `getPlayoutReconnectConfig` and `getProgramFeedConfig` all take managed input and delegate to
+  the core resolvers; the playout and uplink modes refresh `latestManagedConfig` at each cycle
+  start (each mode is its own process). The reconnect cadence became a per-cycle read instead of
+  module-level constants. The cycle-budget clamp is applied after managed resolution, so a
+  managed 7200 s download timeout can never outlive the loop stall guard — pinned by a test.
+- Web: three folded groups in the operations panel ("Replay cache", "Watchdog thresholds",
+  "Feed tuning"), each saving through its own partial route (`/api/settings/replay-cache`,
+  `/watchdogs`, `/feed-tuning`). Admin-settings control budget stays 31/1: all twenty-six new
+  controls sit behind summaries. The per-replay-ceiling-inside-cache pair rule is validated whole
+  against resolved values, form and API alike.
+- SMTP/alert family audited: already fully GUI-capable since the managed-credentials work
+  (`getManagedAlertConfig` web-side, `getSmtpConfig` worker-side, both managed-first with env
+  fallback; all fields present in the credentials form). Nothing duplicated.
+- Deliberate omissions, with reasons in code and PLANS: cache root and feed directory (mount
+  points), relay topology (deploy wiring), `STREAM247_LOOP_STALL_TIMEOUT_SECONDS` (the GUI must
+  not be able to lower the process's own self-protection).
+- Affected baselines (not re-recorded here): admin-settings wording baseline gains the three new
+  fold summaries and the reworded operations intro; the admin-settings design screenshot moves
+  with the added summaries. No other surface changes.
 
 ### 2026-08-26 — M57 Stage 1: Embedded Video Sources As Overlay Panels
 

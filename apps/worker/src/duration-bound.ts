@@ -18,6 +18,8 @@
  * raised, and the feed-audio watchdog stays in place as the net for the unknown-duration case.
  */
 
+import { resolveDurationBoundMarginSeconds, WATCHDOG_LIMITS, type ManagedWatchdogInput } from "@stream247/core";
+
 // Mirrors the playoutTargetKind union in index.ts: what kind of input the running process serves.
 export type DurationBoundTargetKind = "asset" | "insert" | "standby" | "reconnect" | "live" | "";
 
@@ -31,11 +33,12 @@ export type DurationBoundOptions = {
 // seconds of duplicated last-frame is invisible, while cutting real content is not. The margin
 // also absorbs the wall-clock skew from brief remote rebuffering, where elapsed real time runs
 // slightly ahead of the playback position.
-export const DEFAULT_DURATION_BOUND_MARGIN_SECONDS = 15;
+export const DEFAULT_DURATION_BOUND_MARGIN_SECONDS = WATCHDOG_LIMITS.durationBoundMarginSeconds.default;
 
-export function getDurationBoundOptions(env: NodeJS.ProcessEnv): DurationBoundOptions {
+/** M56 part 2: managed config first (clamped 5..120 in core), env seconds second. */
+export function getDurationBoundOptions(env: NodeJS.ProcessEnv, managed?: ManagedWatchdogInput): DurationBoundOptions {
   return {
-    marginSeconds: readPositiveSeconds(env.PLAYOUT_DURATION_BOUND_MARGIN_SECONDS, DEFAULT_DURATION_BOUND_MARGIN_SECONDS)
+    marginSeconds: resolveDurationBoundMarginSeconds(managed ?? null, env)
   };
 }
 
@@ -77,9 +80,4 @@ export function shouldEndAssetAtDurationBound(input: DurationBoundInput): boolea
     return false;
   }
   return input.nowMs - input.processStartedAtMs >= (input.durationSeconds + input.marginSeconds) * 1000;
-}
-
-function readPositiveSeconds(raw: string | undefined, fallback: number): number {
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }

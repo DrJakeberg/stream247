@@ -360,6 +360,408 @@ export function resolveSourceSnapshotIntervalSeconds(managed: ManagedSourceSnaps
 }
 
 // ---------------------------------------------------------------------------
+// Replay (Twitch VOD) cache tuning
+// ---------------------------------------------------------------------------
+
+// M56 part 2. The cache path (TWITCH_VOD_CACHE_ROOT) stays env-only on purpose: where a volume is
+// mounted is infrastructure, decided at deploy time, and a GUI field for it could point the worker
+// at a directory that does not exist on the next host. Everything else about the cache is an
+// operating decision and lives here. Byte sizes are managed in whole-or-fractional GB (GiB,
+// 1024^3) because nobody reasons about a replay cache in bytes; the resolver converts.
+
+export type ManagedVodCacheInput =
+  | Partial<{
+      vodCacheEnabled: string;
+      vodCacheAllowRemoteFallback: string;
+      vodCacheMaxGb: string;
+      vodCacheMinFreeGb: string;
+      vodCacheMaxAssetGb: string;
+      vodCacheRetentionHours: string;
+      vodCachePartialMaxAgeHours: string;
+      vodCacheDownloadTimeoutSeconds: string;
+      vodCacheFailureCooldownSeconds: string;
+      vodCacheLimitRate: string;
+    }>
+  | null
+  | undefined;
+
+/**
+ * Bounds for the managed values, shared by the settings form, the API route and the resolver.
+ * Derivations: a cache below 1 GB cannot hold a single VOD and above 4 TB the setting stops being
+ * a cache; retention beyond a year and a partial older than a week are "never" in disguise; a
+ * download timeout under 30 s cannot fetch anything real (the awaited path is additionally clamped
+ * to the cycle stall budget by the worker — see cycle-budget.ts); a failure cooldown under a
+ * minute turns a broken VOD into a hammering retry loop.
+ */
+export const VOD_CACHE_LIMITS = {
+  gb: { min: 1, max: 4096 },
+  retentionHours: { min: 1, max: 8760 },
+  partialMaxAgeHours: { min: 1, max: 168 },
+  downloadTimeoutSeconds: { min: 30, max: 14_400 },
+  failureCooldownSeconds: { min: 60, max: 86_400 }
+} as const;
+
+export type ResolvedVodCacheTuning = {
+  enabled: boolean;
+  /** Whether an uncached VOD may be played straight from Twitch instead of waiting for the cache. */
+  allowRemoteFallback: boolean;
+  maxCacheBytes: number;
+  minFreeBytes: number;
+  maxAssetBytes: number;
+  retentionHours: number;
+  partialMaxAgeHours: number;
+  downloadTimeoutSeconds: number;
+  failureCooldownSeconds: number;
+  /** yt-dlp rate notation ("8M"), or "" for unlimited. */
+  limitRate: string;
+};
+
+const GIB = 1024 * 1024 * 1024;
+
+export function isValidVodCacheGb(value: number): boolean {
+  return Number.isFinite(value) && value >= VOD_CACHE_LIMITS.gb.min && value <= VOD_CACHE_LIMITS.gb.max;
+}
+
+/** The shapes yt-dlp accepts, plus "" and "0" for unlimited — same rule the worker normaliser uses. */
+export function isValidVodCacheLimitRate(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === "" || trimmed === "0" || /^\d+(\.\d+)?[KMG]?$/i.test(trimmed);
+}
+
+type Bounds = { min: number; max: number };
+
+/**
+ * A managed number wins when parseable, clamped into its bounds — the API refuses to persist an
+ * out-of-range value, so the clamp only ever corrects a corrupted store, never surprises an
+ * operator. Unparseable managed text reads as "not set". The env path keeps its historical
+ * semantics untouched (any positive number, however extreme): an untouched managed value must
+ * leave an env-driven install byte-for-byte where it was.
+ */
+function readManagedBoundedNumber(
+  managedValue: string | undefined,
+  bounds: Bounds,
+  envFallback: () => number
+): number {
+  const managedText = text(managedValue);
+  if (managedText !== "") {
+    const parsed = Number(managedText);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.min(bounds.max, Math.max(bounds.min, parsed));
+    }
+  }
+  return envFallback();
+}
+
+function readPositiveEnvNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function resolveVodCacheTuning(managed: ManagedVodCacheInput, env: EnvLike): ResolvedVodCacheTuning {
+  const managedLimitRate = text(managed?.vodCacheLimitRate);
+  const gbToBytes = (gb: number) => Math.round(gb * GIB);
+
+  return {
+    enabled: readManagedFlag(managed?.vodCacheEnabled) ?? env.TWITCH_VOD_CACHE_ENABLED !== "0",
+    allowRemoteFallback:
+      readManagedFlag(managed?.vodCacheAllowRemoteFallback) ?? env.TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK === "1",
+    maxCacheBytes: gbToBytes(
+      readManagedBoundedNumber(managed?.vodCacheMaxGb, VOD_CACHE_LIMITS.gb, () =>
+        readPositiveEnvNumber(env.TWITCH_VOD_CACHE_MAX_BYTES, 20 * GIB) / GIB
+      )
+    ),
+    minFreeBytes: gbToBytes(
+      readManagedBoundedNumber(managed?.vodCacheMinFreeGb, VOD_CACHE_LIMITS.gb, () =>
+        readPositiveEnvNumber(env.TWITCH_VOD_CACHE_MIN_FREE_BYTES, 15 * GIB) / GIB
+      )
+    ),
+    maxAssetBytes: gbToBytes(
+      readManagedBoundedNumber(managed?.vodCacheMaxAssetGb, VOD_CACHE_LIMITS.gb, () =>
+        readPositiveEnvNumber(env.TWITCH_VOD_CACHE_MAX_ASSET_BYTES, 20 * GIB) / GIB
+      )
+    ),
+    retentionHours: readManagedBoundedNumber(managed?.vodCacheRetentionHours, VOD_CACHE_LIMITS.retentionHours, () =>
+      readPositiveEnvNumber(env.TWITCH_VOD_CACHE_RETENTION_HOURS, 72)
+    ),
+    partialMaxAgeHours: readManagedBoundedNumber(
+      managed?.vodCachePartialMaxAgeHours,
+      VOD_CACHE_LIMITS.partialMaxAgeHours,
+      () => readPositiveEnvNumber(env.TWITCH_VOD_CACHE_PARTIAL_MAX_AGE_HOURS, 6)
+    ),
+    downloadTimeoutSeconds: readManagedBoundedNumber(
+      managed?.vodCacheDownloadTimeoutSeconds,
+      VOD_CACHE_LIMITS.downloadTimeoutSeconds,
+      () => readPositiveEnvNumber(env.TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS, 120)
+    ),
+    failureCooldownSeconds: readManagedBoundedNumber(
+      managed?.vodCacheFailureCooldownSeconds,
+      VOD_CACHE_LIMITS.failureCooldownSeconds,
+      () => readPositiveEnvNumber(env.TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS, 30 * 60)
+    ),
+    // A managed "0" is an explicit "unlimited", overriding an env cap; malformed notation reads
+    // as "not set" so a corrupted value can never make the downloader exit on its arguments. The
+    // env fallback goes through the same normalisation the worker has always applied.
+    limitRate:
+      managedLimitRate !== "" && isValidVodCacheLimitRate(managedLimitRate)
+        ? normalizeVodCacheLimitRate(managedLimitRate)
+        : normalizeVodCacheLimitRate(env.TWITCH_VOD_CACHE_LIMIT_RATE)
+  };
+}
+
+/** "" and "0" both mean unlimited; anything not in yt-dlp's notation is dropped, not passed on. */
+export function normalizeVodCacheLimitRate(value: string | undefined): string {
+  const trimmed = text(value);
+  if (!trimmed || trimmed === "0" || !isValidVodCacheLimitRate(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
+
+// ---------------------------------------------------------------------------
+// Watchdog thresholds
+// ---------------------------------------------------------------------------
+
+// M56 part 2. These numbers decide when a live channel restarts its own processes, so a wrong
+// value does not merely misconfigure a feature — it can destabilise the channel (a stall timeout
+// below the segment length restarts a healthy playout forever). Managed values are therefore
+// clamped into the bounds each module's own invariants dictate; the settings API refuses to
+// persist anything outside them, so the clamp is a corruption net, not a silent correction of
+// operator input. The env path keeps its historical any-positive-ms semantics untouched.
+//
+// STREAM247_LOOP_STALL_TIMEOUT_SECONDS is deliberately NOT part of this family: it is the
+// process's own self-protection (cycle-budget.ts), and a GUI that can lower the guard that
+// catches a wedged worker would let one bad click take down the mechanism that reports bad
+// clicks. It stays env-only.
+
+export type ManagedWatchdogInput =
+  | Partial<{
+      feedAudioSilenceSeconds: string;
+      feedAudioGraceSeconds: string;
+      feedStallTimeoutSeconds: string;
+      feedStallGraceSeconds: string;
+      uplinkStallTimeoutSeconds: string;
+      uplinkStallGraceSeconds: string;
+      uplinkNoProgressRestartSeconds: string;
+      durationBoundMarginSeconds: string;
+    }>
+  | null
+  | undefined;
+
+/**
+ * Bounds and defaults, shared by the resolver, the settings form and the API route. Seconds
+ * everywhere here; the modules run on milliseconds and the resolvers convert.
+ *
+ * Lower-bound derivations, one per guard:
+ * - silence/stale/stall 15 s: the program feed advances once per segment and segments are capped
+ *   at 10 s (FEED_TUNING_LIMITS), so 15 s is the smallest threshold that cannot read ordinary
+ *   segment cadence as a fault. That relationship is pinned by a test.
+ * - feed-stall grace 30 s: after a restart the playlist timestamp still belongs to the previous
+ *   run, and a fresh ffmpeg needs startup plus its first segment (observed 10–20 s on remote
+ *   sources) before that timestamp says anything about it.
+ * - audio/uplink grace 0: both verdicts require having observed audio/progress at least once, so
+ *   even zero grace cannot restart a process that never got started properly.
+ * - no-progress restart 60 s: below a minute, "never encoded a frame" is indistinguishable from a
+ *   slow RTMP connect, a DNS retry, or a reconnecting destination (uplink-progress.ts).
+ * - duration margin 5–120 s: metadata durations are second-accurate; under 5 s a rebuffer skew
+ *   could cut real content, and past ~120 s the watchdog cascade fires first anyway.
+ * Upper bounds are uniformly "past this the watchdog is off while looking configured".
+ */
+export const WATCHDOG_LIMITS = {
+  feedAudioSilenceSeconds: { min: 15, max: 3600, default: 90 },
+  feedAudioGraceSeconds: { min: 0, max: 3600, default: 60 },
+  feedStallTimeoutSeconds: { min: 15, max: 3600, default: 45 },
+  feedStallGraceSeconds: { min: 30, max: 3600, default: 90 },
+  uplinkStallTimeoutSeconds: { min: 15, max: 3600, default: 45 },
+  uplinkStallGraceSeconds: { min: 0, max: 3600, default: 60 },
+  uplinkNoProgressRestartSeconds: { min: 60, max: 7200, default: 300 },
+  durationBoundMarginSeconds: { min: 5, max: 120, default: 15 }
+} as const;
+
+type WatchdogLimitKey = keyof typeof WATCHDOG_LIMITS;
+
+export function isWithinWatchdogLimits(key: WatchdogLimitKey, value: number): boolean {
+  const bounds = WATCHDOG_LIMITS[key];
+  return Number.isFinite(value) && value >= bounds.min && value <= bounds.max;
+}
+
+/**
+ * Managed seconds win (clamped); otherwise the env millisecond value with its historical
+ * "any positive number" rule; otherwise the default. Zero is a valid managed value wherever the
+ * lower bound is zero, which is why the managed branch tests parseability, not positivity.
+ */
+function readWatchdogSeconds(managedValue: string | undefined, key: WatchdogLimitKey, envMsValue: string | undefined): number {
+  const bounds = WATCHDOG_LIMITS[key];
+  const managedText = text(managedValue);
+  if (managedText !== "") {
+    const parsed = Number(managedText);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.min(bounds.max, Math.max(bounds.min, Math.round(parsed)));
+    }
+  }
+
+  const envMs = Number(envMsValue);
+  if (Number.isFinite(envMs) && envMs > 0) {
+    return envMs / 1000;
+  }
+  return bounds.default;
+}
+
+export function resolveFeedAudioWatchdogMs(
+  managed: ManagedWatchdogInput,
+  env: EnvLike
+): { silenceMs: number; graceMs: number } {
+  return {
+    silenceMs: readWatchdogSeconds(managed?.feedAudioSilenceSeconds, "feedAudioSilenceSeconds", env.PLAYOUT_FEED_SILENCE_MS) * 1000,
+    graceMs: readWatchdogSeconds(managed?.feedAudioGraceSeconds, "feedAudioGraceSeconds", env.PLAYOUT_FEED_GRACE_MS) * 1000
+  };
+}
+
+export function resolvePlayoutFeedWatchdogMs(
+  managed: ManagedWatchdogInput,
+  env: EnvLike
+): { staleMs: number; graceMs: number } {
+  return {
+    staleMs:
+      readWatchdogSeconds(managed?.feedStallTimeoutSeconds, "feedStallTimeoutSeconds", env.PLAYOUT_FEED_STALE_TIMEOUT_MS) * 1000,
+    graceMs:
+      readWatchdogSeconds(managed?.feedStallGraceSeconds, "feedStallGraceSeconds", env.PLAYOUT_FEED_STALE_GRACE_MS) * 1000
+  };
+}
+
+export function resolveUplinkWatchdogMs(
+  managed: ManagedWatchdogInput,
+  env: EnvLike
+): { stallMs: number; graceMs: number; noProgressRestartMs: number } {
+  return {
+    stallMs:
+      readWatchdogSeconds(managed?.uplinkStallTimeoutSeconds, "uplinkStallTimeoutSeconds", env.UPLINK_STALL_TIMEOUT_MS) * 1000,
+    graceMs:
+      readWatchdogSeconds(managed?.uplinkStallGraceSeconds, "uplinkStallGraceSeconds", env.UPLINK_STALL_GRACE_MS) * 1000,
+    noProgressRestartMs:
+      readWatchdogSeconds(
+        managed?.uplinkNoProgressRestartSeconds,
+        "uplinkNoProgressRestartSeconds",
+        env.UPLINK_NO_PROGRESS_RESTART_MS
+      ) * 1000
+  };
+}
+
+/** The duration-bound margin was seconds in env already; only the clamp is new on the managed path. */
+export function resolveDurationBoundMarginSeconds(managed: ManagedWatchdogInput, env: EnvLike): number {
+  const bounds = WATCHDOG_LIMITS.durationBoundMarginSeconds;
+  const managedText = text(managed?.durationBoundMarginSeconds);
+  if (managedText !== "") {
+    const parsed = Number(managedText);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.min(bounds.max, Math.max(bounds.min, Math.round(parsed)));
+    }
+  }
+
+  const envSeconds = Number(env.PLAYOUT_DURATION_BOUND_MARGIN_SECONDS);
+  return Number.isFinite(envSeconds) && envSeconds > 0 ? envSeconds : bounds.default;
+}
+
+// ---------------------------------------------------------------------------
+// Feed tuning: planned reconnect cadence and program-feed geometry
+// ---------------------------------------------------------------------------
+
+// M56 part 2. The relay topology (STREAM247_RELAY_ENABLED, the relay input/output URLs,
+// STREAM247_UPLINK_INPUT_MODE) is deliberately NOT managed: those describe how the containers are
+// wired at deploy time, and a GUI value that contradicts the running compose file would be a lie
+// with a save button. What IS runtime operation is the cadence of the planned encoder reconnect
+// and the geometry of the program feed, so those move here.
+
+export type ManagedFeedTuningInput =
+  | Partial<{
+      playoutReconnectHours: string;
+      playoutReconnectWindowSeconds: string;
+      programFeedTargetSeconds: string;
+      programFeedListSize: string;
+      programFeedFailoverSeconds: string;
+    }>
+  | null
+  | undefined;
+
+/**
+ * Bounds and defaults, shared by resolver, form and API route.
+ * - reconnect hours 1..720: sub-hourly planned reconnects are viewer-visible interruptions on a
+ *   timer; past 30 days the cadence is "never" in disguise.
+ * - reconnect window 5..300 s: the window must outlast a process restart, and past five minutes
+ *   it is an outage, not a window.
+ * - segment target 1..10 s: the historical floor is 1; the ceiling of 10 keeps every segment
+ *   safely below the feed watchdogs' 15 s lower bound (pinned by a test), so a healthy feed that
+ *   advances once per segment can never be read as stalled.
+ * - list size 3..120: the muxer needs at least a 3-segment sliding window to hand the uplink a
+ *   readable playlist; 120 ten-second segments already buffer 20 minutes of disk.
+ * - failover 1..60 s: how far past the buffered window the playlist may age before the feed
+ *   counts as stale; beyond a minute the uplink would sit on a dead feed without failing over.
+ */
+export const FEED_TUNING_LIMITS = {
+  playoutReconnectHours: { min: 1, max: 720, default: 48 },
+  playoutReconnectWindowSeconds: { min: 5, max: 300, default: 20 },
+  programFeedTargetSeconds: { min: 1, max: 10, default: 2 },
+  programFeedListSize: { min: 3, max: 120, default: 30 },
+  programFeedFailoverSeconds: { min: 1, max: 60, default: 10 }
+} as const;
+
+type FeedTuningLimitKey = keyof typeof FEED_TUNING_LIMITS;
+
+export function isWithinFeedTuningLimits(key: FeedTuningLimitKey, value: number): boolean {
+  const bounds = FEED_TUNING_LIMITS[key];
+  return Number.isFinite(value) && value >= bounds.min && value <= bounds.max;
+}
+
+/** Managed wins (rounded and clamped); env keeps its historical positive-number reading. */
+function readFeedTuningNumber(
+  managedValue: string | undefined,
+  key: FeedTuningLimitKey,
+  envFallback: () => number
+): number {
+  const bounds = FEED_TUNING_LIMITS[key];
+  const managedText = text(managedValue);
+  if (managedText !== "") {
+    const parsed = Number(managedText);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.min(bounds.max, Math.max(bounds.min, Math.round(parsed)));
+    }
+  }
+  return envFallback();
+}
+
+export function resolvePlayoutReconnectTuning(
+  managed: ManagedFeedTuningInput,
+  env: EnvLike
+): { intervalHours: number; windowSeconds: number } {
+  return {
+    intervalHours: readFeedTuningNumber(managed?.playoutReconnectHours, "playoutReconnectHours", () =>
+      readPositiveEnvNumber(env.PLAYOUT_RECONNECT_HOURS, FEED_TUNING_LIMITS.playoutReconnectHours.default)
+    ),
+    windowSeconds: readFeedTuningNumber(managed?.playoutReconnectWindowSeconds, "playoutReconnectWindowSeconds", () =>
+      readPositiveEnvNumber(env.PLAYOUT_RECONNECT_SECONDS, FEED_TUNING_LIMITS.playoutReconnectWindowSeconds.default)
+    )
+  };
+}
+
+export function resolveProgramFeedTuning(
+  managed: ManagedFeedTuningInput,
+  env: EnvLike
+): { targetSeconds: number; listSize: number; failoverSeconds: number } {
+  // The env path reproduces ffmpeg-runtime's historical floors bit for bit: floor to an integer,
+  // then raise below-minimum values to the floor the muxer needs.
+  return {
+    targetSeconds: readFeedTuningNumber(managed?.programFeedTargetSeconds, "programFeedTargetSeconds", () =>
+      Math.max(1, Math.floor(readPositiveEnvNumber(env.STREAM247_PROGRAM_FEED_TARGET_SECONDS, 2)))
+    ),
+    listSize: readFeedTuningNumber(managed?.programFeedListSize, "programFeedListSize", () =>
+      Math.max(3, Math.floor(readPositiveEnvNumber(env.STREAM247_PROGRAM_FEED_LIST_SIZE, 30)))
+    ),
+    failoverSeconds: readFeedTuningNumber(managed?.programFeedFailoverSeconds, "programFeedFailoverSeconds", () =>
+      Math.max(1, Math.floor(readPositiveEnvNumber(env.STREAM247_PROGRAM_FEED_FAILOVER_SECONDS, 10)))
+    )
+  };
+}
+
+// ---------------------------------------------------------------------------
 // EventSub webhook secret
 // ---------------------------------------------------------------------------
 

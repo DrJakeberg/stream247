@@ -46,6 +46,34 @@ describe("ffmpeg runtime helpers", () => {
     });
   });
 
+  it("resolves managed reconnect cadence first (M56 part 2)", () => {
+    expect(
+      getPlayoutReconnectConfig({ PLAYOUT_RECONNECT_HOURS: "12" }, { playoutReconnectHours: "24", playoutReconnectWindowSeconds: "30" })
+    ).toMatchObject({
+      intervalHours: 24,
+      intervalMs: 24 * 60 * 60 * 1000,
+      windowSeconds: 30,
+      windowMs: 30 * 1000
+    });
+  });
+
+  it("resolves managed program-feed geometry first, derived fields included (M56 part 2)", () => {
+    const config = getProgramFeedConfig({ STREAM247_PROGRAM_FEED_TARGET_SECONDS: "2" }, "/app/data/media", {
+      programFeedTargetSeconds: "4",
+      programFeedListSize: "15",
+      programFeedFailoverSeconds: "5"
+    });
+
+    expect(config).toMatchObject({
+      targetSeconds: 4,
+      listSize: 15,
+      bufferedSeconds: 60,
+      failoverSeconds: 5
+    });
+    // The directory stays infrastructure: env decides where the feed lives, never the GUI.
+    expect(config.directory).toBe("/app/data/media/.stream247-program-feed");
+  });
+
   it("resolves relay mode and relay endpoints from env", () => {
     expect(isRelayModeEnabled({})).toBe(false);
     expect(isRelayModeEnabled({ STREAM247_RELAY_ENABLED: "1" })).toBe(true);

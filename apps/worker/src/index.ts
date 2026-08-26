@@ -381,9 +381,10 @@ let latestChatInteractionConfig = createDefaultChatInteractionConfig();
 // Latest engagement settings, cached by the worker cycle for the chat-overlay flush. Null until
 // the first cycle: flushing before settings are known could only write a wrong gate.
 let latestEngagementSettings: AppState["engagement"] | null = null;
-// Managed config from the same cycle read, for the runtime gates that fire between cycles
-// (the throttled chat flush). Null only before the first cycle, which resolves as env-only —
-// exactly the pre-M56 behaviour.
+// Managed config from the most recent cycle read of whichever mode this process runs (worker,
+// playout and uplink each refresh it), for the readers that fire between or inside cycles: the
+// throttled chat flush, the watchdog thresholds, the feed geometry and the VOD cache tuning.
+// Null only before the first cycle, which resolves as env-only — exactly the pre-M56 behaviour.
 let latestManagedConfig: AppState["managedConfig"] | null = null;
 // Effects the socket handler cannot apply itself; drained by the worker cycle.
 const pendingChatEffects: ChatControlEffect[] = [];
@@ -519,10 +520,11 @@ async function flushChatOverlayMessages(): Promise<void> {
 }
 const PLAYOUT_CRASH_LOOP_THRESHOLD = 3;
 const PLAYOUT_CRASH_LOOP_WINDOW_MS = 10 * 60_000;
-const PLAYOUT_RECONNECT_CONFIG = getPlayoutReconnectConfig(process.env);
-const PLAYOUT_RECONNECT_INTERVAL_MS = PLAYOUT_RECONNECT_CONFIG.intervalMs;
-const PLAYOUT_RECONNECT_INTERVAL_HOURS = PLAYOUT_RECONNECT_CONFIG.intervalHours;
-const PLAYOUT_RECONNECT_WINDOW_MS = PLAYOUT_RECONNECT_CONFIG.windowMs;
+// A function rather than module-level constants since M56 part 2: the cadence is managed config
+// first, and a value saved in the GUI must reach the next cycle without a process restart.
+function getPlayoutReconnectRuntimeConfig() {
+  return getPlayoutReconnectConfig(process.env, latestManagedConfig);
+}
 const TWITCH_EVENTSUB_SYNC_INTERVAL_MS = 10 * 60_000;
 const TWITCH_LIVE_STATUS_SYNC_INTERVAL_MS = 60_000;
 const STREAM247_RELAY_ENABLED = isRelayModeEnabled(process.env);
@@ -632,9 +634,6 @@ let twitchLiveStatusLastSyncKey = "";
 let twitchLiveStatusNextSyncAt = 0;
 // Process-lifetime cache for the broadcast channel's user id; see twitch-broadcast-channel.ts.
 const twitchUserIdResolver = createTwitchUserIdResolver();
-let twitchVodCacheRuntimeConfig:
-  | ReturnType<typeof getTwitchVodCacheConfig>
-  | null = null;
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -679,11 +678,10 @@ function getMediaRoot(): string {
   return process.env.MEDIA_LIBRARY_ROOT || path.join(process.cwd(), "data", "media");
 }
 
+// Re-resolved on every call rather than memoised: since M56 part 2 the tuning is managed config
+// first, and a value saved in the GUI must take effect on the next cycle, not the next deploy.
 function getTwitchVodCacheRuntimeConfig() {
-  if (!twitchVodCacheRuntimeConfig) {
-    twitchVodCacheRuntimeConfig = getTwitchVodCacheConfig(process.env, getMediaRoot());
-  }
-  return twitchVodCacheRuntimeConfig;
+  return getTwitchVodCacheConfig(process.env, getMediaRoot(), latestManagedConfig);
 }
 
 function isAssetBlockedForAutomaticSelection(asset: AssetRecord): boolean {
@@ -716,7 +714,7 @@ const vodCacheJobRunner = new VodCacheJobRunner({
       logRuntimeEvent("vod.cache.too_large", {
         assetId: asset.id,
         sizeBytes: result.sizeBytes,
-        limitBytes: getTwitchVodCacheConfig(process.env, getMediaRoot()).maxAssetBytes
+        limitBytes: getTwitchVodCacheRuntimeConfig().maxAssetBytes
       });
       await resolveIncident("playout.twitch-cache.failed", "Twitch VOD is streamed directly.");
       return;
@@ -746,7 +744,7 @@ async function releaseWatchedVodCache(
   state: AppState
 ): Promise<void> {
   try {
-    const config = getTwitchVodCacheConfig(process.env, getMediaRoot());
+    const config = getTwitchVodCacheRuntimeConfig();
     if (!config.enabled || !canReleaseVodCache(currentAssetId)) {
       return;
     }
@@ -774,7 +772,7 @@ function isProgramFeedMode(): boolean {
 }
 
 function getProgramFeedRuntimeConfig() {
-  return getProgramFeedConfig(process.env, getMediaRoot());
+  return getProgramFeedConfig(process.env, getMediaRoot(), latestManagedConfig);
 }
 
 /**
@@ -903,7 +901,7 @@ async function runDiskWatermarkStage(
   }
 
   if (stage === "vod-cache") {
-    const config = getTwitchVodCacheConfig(process.env, getMediaRoot());
+    const config = getTwitchVodCacheRuntimeConfig();
 
     // The same gate the boundary release uses: a playout that cannot say what it is playing is
     // reconnecting, in standby, or freshly restarted — exactly the moments its runtime keep-list
@@ -1285,7 +1283,7 @@ async function enforceProgramFeedAudio(playlistPath: string): Promise<void> {
       return;
     }
 
-    const options = getFeedAudioOptions(process.env);
+    const options = getFeedAudioOptions(process.env, latestManagedConfig);
     const observed = { ...sample, atMs: Date.now() };
     feedAudioState = observeFeedAudio(feedAudioState, observed);
 
@@ -1328,7 +1326,7 @@ async function enforceProgramFeedAudio(playlistPath: string): Promise<void> {
  */
 async function enforceProgramFeedProgress(feed: { updatedAt: string }): Promise<void> {
   try {
-    const options = getPlayoutFeedHealthOptions(process.env);
+    const options = getPlayoutFeedHealthOptions(process.env, latestManagedConfig);
     const parsedUpdatedAt = feed.updatedAt ? new Date(feed.updatedAt).getTime() : 0;
     const feedUpdatedAtMs = Number.isFinite(parsedUpdatedAt) ? parsedUpdatedAt : 0;
     const nowMs = Date.now();
@@ -1394,7 +1392,7 @@ async function enforceAssetDurationBound(assets: AssetRecord[]): Promise<void> {
 
   const asset = playoutAssetId ? assets.find((entry) => entry.id === playoutAssetId) ?? null : null;
   const durationSeconds = asset?.durationSeconds ?? 0;
-  const options = getDurationBoundOptions(process.env);
+  const options = getDurationBoundOptions(process.env, latestManagedConfig);
   const nowMs = Date.now();
   if (
     !shouldEndAssetAtDurationBound({
@@ -5045,6 +5043,10 @@ function emitDueAssetChapterBoundaries(asset: AssetRecord | null): void {
 
 async function runPlayoutCycle(): Promise<void> {
   let state = await readAppState();
+  // The playout and uplink modes run as their own processes, so each cycle refreshes the managed
+  // config it hands to the between-cycle readers (watchdog options, feed geometry, VOD cache
+  // tuning). Before the first cycle those resolve env-only — exactly the pre-M56 behaviour.
+  latestManagedConfig = state.managedConfig;
   if (
     (state.playout.overrideUntil !== "" && !isTimestampActive(state.playout.overrideUntil)) ||
     (state.playout.skipUntil !== "" && !isTimestampActive(state.playout.skipUntil))
@@ -5215,24 +5217,25 @@ async function runPlayoutCycle(): Promise<void> {
   const liveBridgeActive =
     state.playout.liveBridgeInputUrl !== "" &&
     (state.playout.liveBridgeStatus === "pending" || state.playout.liveBridgeStatus === "active");
+  const playoutReconnect = getPlayoutReconnectRuntimeConfig();
   const reconnectActive =
     !STREAM247_RELAY_ENABLED &&
     !liveBridgeActive &&
     state.playout.restartRequestedAt !== "" &&
-    Date.now() - new Date(state.playout.restartRequestedAt).getTime() < PLAYOUT_RECONNECT_WINDOW_MS;
+    Date.now() - new Date(state.playout.restartRequestedAt).getTime() < playoutReconnect.windowMs;
   const reconnectDue =
     !STREAM247_RELAY_ENABLED &&
     !liveBridgeActive &&
     !reconnectActive &&
     state.playout.processStartedAt !== "" &&
-    Date.now() - new Date(state.playout.processStartedAt).getTime() >= PLAYOUT_RECONNECT_INTERVAL_MS;
+    Date.now() - new Date(state.playout.processStartedAt).getTime() >= playoutReconnect.intervalMs;
 
   if (reconnectDue) {
     await stopPlayoutProcess("scheduled-reconnect");
     await updatePlayoutRuntime((playout) => ({
       ...playout,
       restartRequestedAt: new Date().toISOString(),
-      message: `Scheduled ${PLAYOUT_RECONNECT_INTERVAL_HOURS}h reconnect is starting.`
+      message: `Scheduled ${playoutReconnect.intervalHours}h reconnect is starting.`
     }));
     state = await readAppState();
   }
@@ -6088,6 +6091,9 @@ async function runUplinkCycle(): Promise<void> {
   }
 
   const state = await readAppState();
+  // Same refresh as the playout cycle: this mode is its own process and must not depend on the
+  // worker cycle having run to see a managed value.
+  latestManagedConfig = state.managedConfig;
   const managedDestinationKeys = await readManagedDestinationStreamKeys(state.destinations.map((entry) => entry.id));
   const activeDestinationGroup = selectDestinationRuntimeTargets({
     destinations: state.destinations,
@@ -6142,16 +6148,17 @@ async function runUplinkCycle(): Promise<void> {
     await resolveIncident("program-feed.input", "Program feed is fresh.");
   }
 
+  const uplinkReconnect = getPlayoutReconnectRuntimeConfig();
   const reconnectActive = uplinkReconnectUntil !== "" && now < new Date(uplinkReconnectUntil).getTime();
   const reconnectDue =
     !reconnectActive &&
     getRunningUplinkStartedAt() !== "" &&
-    now - new Date(getRunningUplinkStartedAt()).getTime() >= PLAYOUT_RECONNECT_INTERVAL_MS;
+    now - new Date(getRunningUplinkStartedAt()).getTime() >= uplinkReconnect.intervalMs;
 
   if (reconnectDue) {
-    uplinkReconnectUntil = new Date(now + PLAYOUT_RECONNECT_WINDOW_MS).toISOString();
+    uplinkReconnectUntil = new Date(now + uplinkReconnect.windowMs).toISOString();
     await stopAllUplinkProcesses("scheduled-reconnect");
-    await appendAuditEvent("uplink.cycle", `Scheduled ${PLAYOUT_RECONNECT_INTERVAL_HOURS}h uplink reconnect started.`);
+    await appendAuditEvent("uplink.cycle", `Scheduled ${uplinkReconnect.intervalHours}h uplink reconnect started.`);
     return;
   }
 
@@ -6165,7 +6172,7 @@ async function runUplinkCycle(): Promise<void> {
       uplinkDestinationIds: destinationIds,
       uplinkReconnectUntil
     }));
-    await appendAuditEvent("uplink.cycle", `Scheduled ${PLAYOUT_RECONNECT_INTERVAL_HOURS}h uplink reconnect window is active.`);
+    await appendAuditEvent("uplink.cycle", `Scheduled ${uplinkReconnect.intervalHours}h uplink reconnect window is active.`);
     return;
   }
 
@@ -6177,7 +6184,7 @@ async function runUplinkCycle(): Promise<void> {
   // ffmpeg that is alive, holds its connections open and encodes nothing -- which is how this
   // channel lost audio/video sync while every destination still reported "ready". out_time is the
   // one signal that separates the two.
-  const uplinkStallOptions = getUplinkStallOptions(process.env);
+  const uplinkStallOptions = getUplinkStallOptions(process.env, state.managedConfig);
   // When the uplink reads the program feed, a feed that is not fresh is reason enough for out_time
   // to stand still: ffmpeg has nothing to encode. Restarting on that would produce a restart loop
   // for the whole duration of a playout outage, and would not fix anything even once.

@@ -14,6 +14,8 @@
  * no I/O, so the thresholds can be tested without spawning anything.
  */
 
+import { resolveUplinkWatchdogMs, WATCHDOG_LIMITS, type ManagedWatchdogInput } from "@stream247/core";
+
 export type UplinkProgressState = {
   /** Highest out_time seen so far, in ffmpeg's own units. Only its monotonic growth matters. */
   lastValue: number;
@@ -34,20 +36,14 @@ export type UplinkStallOptions = {
   noProgressRestartMs: number;
 };
 
-export const DEFAULT_UPLINK_STALL_MS = 45_000;
-export const DEFAULT_UPLINK_GRACE_MS = 60_000;
+export const DEFAULT_UPLINK_STALL_MS = WATCHDOG_LIMITS.uplinkStallTimeoutSeconds.default * 1000;
+export const DEFAULT_UPLINK_GRACE_MS = WATCHDOG_LIMITS.uplinkStallGraceSeconds.default * 1000;
 /** Long enough that a slow connect, a DNS retry and a reconnecting destination all resolve first. */
-export const DEFAULT_UPLINK_NO_PROGRESS_RESTART_MS = 300_000;
+export const DEFAULT_UPLINK_NO_PROGRESS_RESTART_MS = WATCHDOG_LIMITS.uplinkNoProgressRestartSeconds.default * 1000;
 
-export function getUplinkStallOptions(env: NodeJS.ProcessEnv): UplinkStallOptions {
-  return {
-    stallMs: readPositiveMs(env.UPLINK_STALL_TIMEOUT_MS, DEFAULT_UPLINK_STALL_MS),
-    graceMs: readPositiveMs(env.UPLINK_STALL_GRACE_MS, DEFAULT_UPLINK_GRACE_MS),
-    noProgressRestartMs: readPositiveMs(
-      env.UPLINK_NO_PROGRESS_RESTART_MS,
-      DEFAULT_UPLINK_NO_PROGRESS_RESTART_MS
-    )
-  };
+/** M56 part 2: managed config first (seconds, clamped in core), env milliseconds second. */
+export function getUplinkStallOptions(env: NodeJS.ProcessEnv, managed?: ManagedWatchdogInput): UplinkStallOptions {
+  return resolveUplinkWatchdogMs(managed ?? null, env);
 }
 
 export function createUplinkProgressState(nowMs: number): UplinkProgressState {
@@ -165,11 +161,6 @@ export function shouldRestartForNoProgress(
  */
 export function canBlameUplinkForStall(inputMode: string, programFeedStatus: string): boolean {
   return inputMode !== "hls" || programFeedStatus === "fresh";
-}
-
-function readPositiveMs(raw: string | undefined, fallback: number): number {
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 /**

@@ -5,17 +5,27 @@ import {
   resolveAssetRetentionConfig,
   resolveChatOverlayRuntimeEnabled,
   resolveDiskWatermarkConfig,
+  resolveDurationBoundMarginSeconds,
+  resolveFeedAudioWatchdogMs,
+  resolvePlayoutFeedWatchdogMs,
+  resolvePlayoutReconnectTuning,
+  resolveProgramFeedTuning,
   resolveSystemVolumeWatermarkConfig,
   resolveSourceLayerRuntimeEnabled,
-  resolveTwitchScheduleSyncEnabled
+  resolveTwitchScheduleSyncEnabled,
+  resolveUplinkWatchdogMs,
+  resolveVodCacheTuning
 } from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
 import { Panel } from "@/components/panel";
 import { ChannelBlueprintForm } from "@/components/channel-blueprint-form";
 import { DiskWatermarkForm } from "@/components/disk-watermark-form";
 import { FeatureSwitchesForm } from "@/components/feature-switches-form";
+import { FeedTuningForm } from "@/components/feed-tuning-form";
+import { ReplayCacheForm } from "@/components/replay-cache-form";
 import { SecretSettingsForm } from "@/components/secret-settings-form";
 import { TwoFactorSettingsForm } from "@/components/two-factor-settings-form";
+import { WatchdogThresholdsForm } from "@/components/watchdog-thresholds-form";
 import { getAuthenticatedUser } from "@/lib/server/auth";
 import { getSystemReadiness } from "@/lib/server/readiness";
 import { getManagedAlertConfig, getManagedTwitchConfig, readAppState } from "@/lib/server/state";
@@ -32,6 +42,13 @@ export default async function SettingsPage() {
   const diskFallback = resolveDiskWatermarkConfig(null, process.env);
   const systemVolumeFallback = resolveSystemVolumeWatermarkConfig(null, process.env);
   const retentionFallback = resolveAssetRetentionConfig(null, process.env);
+  const vodCacheFallback = resolveVodCacheTuning(null, process.env);
+  const feedAudioFallback = resolveFeedAudioWatchdogMs(null, process.env);
+  const feedStallFallback = resolvePlayoutFeedWatchdogMs(null, process.env);
+  const uplinkFallback = resolveUplinkWatchdogMs(null, process.env);
+  const reconnectFallback = resolvePlayoutReconnectTuning(null, process.env);
+  const programFeedFallback = resolveProgramFeedTuning(null, process.env);
+  const toGb = (bytes: number) => Math.round((bytes / (1024 * 1024 * 1024)) * 10) / 10;
 
   return (
     <div className="stack-form">
@@ -105,8 +122,8 @@ export default async function SettingsPage() {
 
         <Panel title="Operations" eyebrow="Runtime">
           <p className="subtle">
-            Operational decisions that used to live only in the server environment. Both groups fold away
-            because they are set once and then left alone; a value saved here wins over the environment.
+            Operational decisions that used to live only in the server environment. Every group folds away
+            because it is set once and then left alone; a value saved here wins over the environment.
           </p>
           <DiskWatermarkForm
             initialValues={{
@@ -140,6 +157,70 @@ export default async function SettingsPage() {
               streamAlertsEnabled: resolveAlertsRuntimeEnabled(null, process.env),
               twitchScheduleSyncEnabled: resolveTwitchScheduleSyncEnabled(null, process.env),
               sourceLayerEnabled: resolveSourceLayerRuntimeEnabled(null, process.env)
+            }}
+          />
+          <ReplayCacheForm
+            initialValues={{
+              vodCacheEnabled: state.managedConfig.vodCacheEnabled,
+              vodCacheAllowRemoteFallback: state.managedConfig.vodCacheAllowRemoteFallback,
+              vodCacheMaxGb: state.managedConfig.vodCacheMaxGb,
+              vodCacheMinFreeGb: state.managedConfig.vodCacheMinFreeGb,
+              vodCacheMaxAssetGb: state.managedConfig.vodCacheMaxAssetGb,
+              vodCacheRetentionHours: state.managedConfig.vodCacheRetentionHours,
+              vodCachePartialMaxAgeHours: state.managedConfig.vodCachePartialMaxAgeHours,
+              vodCacheDownloadTimeoutSeconds: state.managedConfig.vodCacheDownloadTimeoutSeconds,
+              vodCacheFailureCooldownSeconds: state.managedConfig.vodCacheFailureCooldownSeconds,
+              vodCacheLimitRate: state.managedConfig.vodCacheLimitRate
+            }}
+            fallback={{
+              enabled: vodCacheFallback.enabled,
+              allowRemoteFallback: vodCacheFallback.allowRemoteFallback,
+              maxGb: toGb(vodCacheFallback.maxCacheBytes),
+              minFreeGb: toGb(vodCacheFallback.minFreeBytes),
+              maxAssetGb: toGb(vodCacheFallback.maxAssetBytes),
+              retentionHours: vodCacheFallback.retentionHours,
+              partialMaxAgeHours: vodCacheFallback.partialMaxAgeHours,
+              downloadTimeoutSeconds: vodCacheFallback.downloadTimeoutSeconds,
+              failureCooldownSeconds: vodCacheFallback.failureCooldownSeconds,
+              limitRate: vodCacheFallback.limitRate
+            }}
+          />
+          <WatchdogThresholdsForm
+            initialValues={{
+              feedAudioSilenceSeconds: state.managedConfig.feedAudioSilenceSeconds,
+              feedAudioGraceSeconds: state.managedConfig.feedAudioGraceSeconds,
+              feedStallTimeoutSeconds: state.managedConfig.feedStallTimeoutSeconds,
+              feedStallGraceSeconds: state.managedConfig.feedStallGraceSeconds,
+              uplinkStallTimeoutSeconds: state.managedConfig.uplinkStallTimeoutSeconds,
+              uplinkStallGraceSeconds: state.managedConfig.uplinkStallGraceSeconds,
+              uplinkNoProgressRestartSeconds: state.managedConfig.uplinkNoProgressRestartSeconds,
+              durationBoundMarginSeconds: state.managedConfig.durationBoundMarginSeconds
+            }}
+            fallback={{
+              feedAudioSilenceSeconds: Math.round(feedAudioFallback.silenceMs / 1000),
+              feedAudioGraceSeconds: Math.round(feedAudioFallback.graceMs / 1000),
+              feedStallTimeoutSeconds: Math.round(feedStallFallback.staleMs / 1000),
+              feedStallGraceSeconds: Math.round(feedStallFallback.graceMs / 1000),
+              uplinkStallTimeoutSeconds: Math.round(uplinkFallback.stallMs / 1000),
+              uplinkStallGraceSeconds: Math.round(uplinkFallback.graceMs / 1000),
+              uplinkNoProgressRestartSeconds: Math.round(uplinkFallback.noProgressRestartMs / 1000),
+              durationBoundMarginSeconds: resolveDurationBoundMarginSeconds(null, process.env)
+            }}
+          />
+          <FeedTuningForm
+            initialValues={{
+              playoutReconnectHours: state.managedConfig.playoutReconnectHours,
+              playoutReconnectWindowSeconds: state.managedConfig.playoutReconnectWindowSeconds,
+              programFeedTargetSeconds: state.managedConfig.programFeedTargetSeconds,
+              programFeedListSize: state.managedConfig.programFeedListSize,
+              programFeedFailoverSeconds: state.managedConfig.programFeedFailoverSeconds
+            }}
+            fallback={{
+              playoutReconnectHours: reconnectFallback.intervalHours,
+              playoutReconnectWindowSeconds: reconnectFallback.windowSeconds,
+              programFeedTargetSeconds: programFeedFallback.targetSeconds,
+              programFeedListSize: programFeedFallback.listSize,
+              programFeedFailoverSeconds: programFeedFallback.failoverSeconds
             }}
           />
         </Panel>
