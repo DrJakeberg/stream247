@@ -16,6 +16,8 @@
  * its grace period has simply not started yet.
  */
 
+import { resolvePlayoutFeedWatchdogMs, WATCHDOG_LIMITS, type ManagedWatchdogInput } from "@stream247/core";
+
 export type PlayoutFeedHealthOptions = {
   /** How long the feed may stand still before the running process is held responsible. */
   staleMs: number;
@@ -23,14 +25,15 @@ export type PlayoutFeedHealthOptions = {
   graceMs: number;
 };
 
-export const DEFAULT_PLAYOUT_FEED_STALE_MS = 45_000;
-export const DEFAULT_PLAYOUT_FEED_GRACE_MS = 90_000;
+export const DEFAULT_PLAYOUT_FEED_STALE_MS = WATCHDOG_LIMITS.feedStallTimeoutSeconds.default * 1000;
+export const DEFAULT_PLAYOUT_FEED_GRACE_MS = WATCHDOG_LIMITS.feedStallGraceSeconds.default * 1000;
 
-export function getPlayoutFeedHealthOptions(env: NodeJS.ProcessEnv): PlayoutFeedHealthOptions {
-  return {
-    staleMs: readPositiveMs(env.PLAYOUT_FEED_STALE_TIMEOUT_MS, DEFAULT_PLAYOUT_FEED_STALE_MS),
-    graceMs: readPositiveMs(env.PLAYOUT_FEED_STALE_GRACE_MS, DEFAULT_PLAYOUT_FEED_GRACE_MS)
-  };
+/** M56 part 2: managed config first (seconds, clamped in core), env milliseconds second. */
+export function getPlayoutFeedHealthOptions(
+  env: NodeJS.ProcessEnv,
+  managed?: ManagedWatchdogInput
+): PlayoutFeedHealthOptions {
+  return resolvePlayoutFeedWatchdogMs(managed ?? null, env);
 }
 
 export function shouldRestartStalledPlayout(args: {
@@ -55,9 +58,4 @@ export function shouldRestartStalledPlayout(args: {
   }
 
   return args.nowMs - args.feedUpdatedAtMs >= args.options.staleMs;
-}
-
-function readPositiveMs(value: string | undefined, fallback: number): number {
-  const parsed = Number(value ?? "");
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }

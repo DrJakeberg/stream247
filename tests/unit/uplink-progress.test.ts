@@ -208,3 +208,16 @@ describe("uplink stall detection", () => {
     expect(isDiscontinuityStorm(state, OPTIONS.graceMs - 1, 0, OPTIONS)).toBe(false);
   });
 });
+
+describe("managed uplink thresholds (M56 part 2)", () => {
+  it("resolves managed values first, seconds in the GUI, milliseconds here", () => {
+    const options = getUplinkStallOptions({ UPLINK_STALL_TIMEOUT_MS: "30000" } as NodeJS.ProcessEnv, {
+      uplinkStallTimeoutSeconds: "90",
+      uplinkNoProgressRestartSeconds: "120"
+    });
+
+    expect(options.stallMs).toBe(90_000);
+    expect(options.graceMs).toBe(60_000);
+    expect(options.noProgressRestartMs).toBe(120_000);
+  });
+});

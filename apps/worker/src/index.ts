@@ -1282,7 +1282,7 @@ async function enforceProgramFeedAudio(playlistPath: string): Promise<void> {
       return;
     }
 
-    const options = getFeedAudioOptions(process.env);
+    const options = getFeedAudioOptions(process.env, latestManagedConfig);
     const observed = { ...sample, atMs: Date.now() };
     feedAudioState = observeFeedAudio(feedAudioState, observed);
 
@@ -1325,7 +1325,7 @@ async function enforceProgramFeedAudio(playlistPath: string): Promise<void> {
  */
 async function enforceProgramFeedProgress(feed: { updatedAt: string }): Promise<void> {
   try {
-    const options = getPlayoutFeedHealthOptions(process.env);
+    const options = getPlayoutFeedHealthOptions(process.env, latestManagedConfig);
     const parsedUpdatedAt = feed.updatedAt ? new Date(feed.updatedAt).getTime() : 0;
     const feedUpdatedAtMs = Number.isFinite(parsedUpdatedAt) ? parsedUpdatedAt : 0;
     const nowMs = Date.now();
@@ -1391,7 +1391,7 @@ async function enforceAssetDurationBound(assets: AssetRecord[]): Promise<void> {
 
   const asset = playoutAssetId ? assets.find((entry) => entry.id === playoutAssetId) ?? null : null;
   const durationSeconds = asset?.durationSeconds ?? 0;
-  const options = getDurationBoundOptions(process.env);
+  const options = getDurationBoundOptions(process.env, latestManagedConfig);
   const nowMs = Date.now();
   if (
     !shouldEndAssetAtDurationBound({
@@ -6181,7 +6181,7 @@ async function runUplinkCycle(): Promise<void> {
   // ffmpeg that is alive, holds its connections open and encodes nothing -- which is how this
   // channel lost audio/video sync while every destination still reported "ready". out_time is the
   // one signal that separates the two.
-  const uplinkStallOptions = getUplinkStallOptions(process.env);
+  const uplinkStallOptions = getUplinkStallOptions(process.env, state.managedConfig);
   // When the uplink reads the program feed, a feed that is not fresh is reason enough for out_time
   // to stand still: ffmpeg has nothing to encode. Restarting on that would produce a restart loop
   // for the whole duration of a playout outage, and would not fix anything even once.

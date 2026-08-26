@@ -12,6 +12,8 @@
  * exhausted one produces none, however much video the filter graph invents on top of it.
  */
 
+import { resolveFeedAudioWatchdogMs, WATCHDOG_LIMITS, type ManagedWatchdogInput } from "@stream247/core";
+
 export type FeedAudioSample = {
   /** Audio packets counted in the segment that was probed. */
   audioPackets: number;
@@ -34,14 +36,15 @@ export type FeedAudioOptions = {
   graceMs: number;
 };
 
-export const DEFAULT_FEED_SILENCE_MS = 90_000;
-export const DEFAULT_FEED_GRACE_MS = 60_000;
+export const DEFAULT_FEED_SILENCE_MS = WATCHDOG_LIMITS.feedAudioSilenceSeconds.default * 1000;
+export const DEFAULT_FEED_GRACE_MS = WATCHDOG_LIMITS.feedAudioGraceSeconds.default * 1000;
 
-export function getFeedAudioOptions(env: NodeJS.ProcessEnv): FeedAudioOptions {
-  return {
-    silenceMs: readPositiveMs(env.PLAYOUT_FEED_SILENCE_MS, DEFAULT_FEED_SILENCE_MS),
-    graceMs: readPositiveMs(env.PLAYOUT_FEED_GRACE_MS, DEFAULT_FEED_GRACE_MS)
-  };
+/**
+ * M56 part 2: managed config first (seconds, clamped in core), env milliseconds second, default
+ * last — the shared resolver keeps this watchdog and the settings page telling the same story.
+ */
+export function getFeedAudioOptions(env: NodeJS.ProcessEnv, managed?: ManagedWatchdogInput): FeedAudioOptions {
+  return resolveFeedAudioWatchdogMs(managed ?? null, env);
 }
 
 export function createFeedAudioState(nowMs: number): FeedAudioState {
@@ -77,9 +80,4 @@ export function isFeedAudioStalled(
     return false;
   }
   return sample.atMs - state.lastAudioAtMs >= options.silenceMs;
-}
-
-function readPositiveMs(raw: string | undefined, fallback: number): number {
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }

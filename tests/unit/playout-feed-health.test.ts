@@ -67,4 +67,14 @@ describe("a playout process that is alive and producing nothing", () => {
     // which would be worse than the fault it is meant to catch.
     expect(DEFAULT_PLAYOUT_FEED_STALE_MS).toBeGreaterThanOrEqual(30_000);
   });
+
+  it("resolves managed thresholds first, seconds in the GUI, milliseconds here (M56 part 2)", () => {
+    const options = getPlayoutFeedHealthOptions({ PLAYOUT_FEED_STALE_TIMEOUT_MS: "20000" }, {
+      feedStallTimeoutSeconds: "60",
+      feedStallGraceSeconds: "45"
+    });
+
+    expect(options.staleMs).toBe(60_000);
+    expect(options.graceMs).toBe(45_000);
+  });
 });
