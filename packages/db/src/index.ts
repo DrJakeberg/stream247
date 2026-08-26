@@ -11,6 +11,8 @@ export {
   resolveAppSecret
 } from "./app-secret.js";
 export { isUsableTimeZone, resolveAppBaseUrl, resolveChannelTimeZone } from "./instance-config.js";
+export * from "./asset-retention.js";
+import { classifyAssetRetention, selectAssetRetentionDeletions, type AssetRetentionCounters } from "./asset-retention.js";
 import {
   createDefaultModerationConfig,
   normalizeAudioLaneVolumePercent,
@@ -449,6 +451,12 @@ export type ManagedConfigRecord = {
   diskWatermarkEnabled: string;
   diskWatermarkTriggerPercent: string;
   diskWatermarkRecoverPercent: string;
+  // M57: the observation-only watermark on the worker-root/system volume, and the asset
+  // retention sweep. Same string convention as every managed value above.
+  systemVolumeTriggerPercent: string;
+  systemVolumeRecoverPercent: string;
+  assetRetentionEnabled: string;
+  assetRetentionProtectionDays: string;
   streamChatOverlayEnabled: string;
   streamAlertsEnabled: string;
   twitchScheduleSyncEnabled: string;
@@ -1449,6 +1457,10 @@ function defaultState(): AppState {
       diskWatermarkEnabled: "",
       diskWatermarkTriggerPercent: "",
       diskWatermarkRecoverPercent: "",
+      systemVolumeTriggerPercent: "",
+      systemVolumeRecoverPercent: "",
+      assetRetentionEnabled: "",
+      assetRetentionProtectionDays: "",
       streamChatOverlayEnabled: "",
       streamAlertsEnabled: "",
       twitchScheduleSyncEnabled: "",
@@ -2363,6 +2375,15 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       updated_at TEXT NOT NULL
     );
 
+    -- Bookkeeping for the asset-retention sweep: when each orphaned asset row was FIRST seen
+    -- without its source. The protection window counts from this observation, so losing a source
+    -- never makes weeks-old assets deletable the same day. Deliberately not a column on assets:
+    -- full-state writes and source syncs rewrite that table wholesale and would reset it.
+    CREATE TABLE IF NOT EXISTS asset_retention_marks (
+      asset_id TEXT PRIMARY KEY,
+      orphan_first_seen_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS source_sync_runs (
       id TEXT PRIMARY KEY,
       source_id TEXT NOT NULL,
@@ -3233,6 +3254,31 @@ const assetChapterProbeMigration: MigrationDefinition = {
 
 if (!schemaMigrations.some((migration) => migration.id === assetChapterProbeMigration.id)) {
   schemaMigrations.push(assetChapterProbeMigration);
+}
+
+// 006, claimed late: the number was reserved for M56 while that work was in flight (see the 007
+// comment above), but M56 landed touching only managed_config through the base-block ALTERs and
+// never registered a migration — verified against the full migration list, where this date runs
+// 001–005 and then 007. The gap is real, so this migration closes it. Ordering is safe either
+// way: migrations apply in registration order and the ids are opaque names, so installs that
+// already recorded 007 simply record 006 afterwards.
+const assetRetentionMarksMigration: MigrationDefinition = {
+  id: "20260825_006_asset_retention_marks",
+  description: "Track when each orphaned asset was first observed, so the retention sweep's protection window is honest.",
+  apply: async (client) => {
+    await client.query(`
+      -- Same table and rationale as the base-schema block: the sweep's orphan-first-seen clock,
+      -- kept out of the assets table because full-state writes rewrite assets wholesale.
+      CREATE TABLE IF NOT EXISTS asset_retention_marks (
+        asset_id TEXT PRIMARY KEY,
+        orphan_first_seen_at TEXT NOT NULL
+      );
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === assetRetentionMarksMigration.id)) {
+  schemaMigrations.push(assetRetentionMarksMigration);
 }
 
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
@@ -4910,6 +4956,18 @@ export async function resetDatabaseConnectionsForTests(): Promise<void> {
   globalThis.__stream247DbReady = undefined;
 }
 
+/**
+ * The logical size of this database, over SQL — the one measurement of the database volume the
+ * worker can take from inside its own container (the volume itself is not statfs-able from
+ * there). Honest limits: this excludes WAL, other databases on the same cluster and filesystem
+ * overhead, and says nothing about how much room the volume underneath has left. See
+ * apps/worker/src/system-volume.ts for how the worker reports it.
+ */
+export async function readDatabaseSizeBytes(): Promise<number> {
+  const result = await getPool().query<{ bytes: string }>("SELECT pg_database_size(current_database()) AS bytes");
+  return Number(result.rows[0]?.bytes ?? 0);
+}
+
 export async function writeAppState(state: AppState): Promise<void> {
   await withSerializedStateWrite("writeAppState", async (client) => {
     await persistState(client, normalizeState(state));
@@ -5532,6 +5590,129 @@ export async function deleteSourceRecordAndAssets(sourceId: string): Promise<voi
   await withSerializedStateWrite("deleteSourceRecordAndAssets", async (client) => {
     await client.query("DELETE FROM assets WHERE source_id = $1", [sourceId]);
     await client.query("DELETE FROM sources WHERE id = $1", [sourceId]);
+  });
+}
+
+export type AssetRetentionSweepResult = {
+  counters: AssetRetentionCounters;
+  deletedAssets: number;
+  deletedCollectionItems: number;
+  danglingCollectionItems: number;
+  newlyMarkedOrphans: number;
+  clearedOrphanMarks: number;
+};
+
+/**
+ * One retention sweep (M57). Classification is the pure function in asset-retention.ts; this
+ * executor hydrates the snapshot, keeps the orphan-first-seen marks, and — only when enabled —
+ * deletes. The whole sweep runs inside one serialized state write, so no source sync, no
+ * full-state write and no queue mutation can interleave between the reference scan and the
+ * delete: what was classified is what is acted on.
+ */
+export async function runAssetRetentionSweep(args: {
+  protectionDays: number;
+  deleteEnabled: boolean;
+  now?: Date;
+}): Promise<AssetRetentionSweepResult> {
+  return withSerializedStateWrite("runAssetRetentionSweep", async (client) => {
+    const state = await hydrateState(client);
+
+    // The chat reference paths live outside AppState: the poll (options and winner), the viewer
+    // request history, and the running skip campaign each carry asset ids of their own.
+    const voteResult = await client.query<{ options: unknown; winner_asset_id: string }>(
+      "SELECT options, winner_asset_id FROM chat_vote_session WHERE singleton_id = 1"
+    );
+    const voteRow = voteResult.rows[0];
+    const voteOptionAssetIds = Array.isArray(voteRow?.options)
+      ? (voteRow?.options as Array<{ assetId?: unknown }>).map((option) => String(option?.assetId ?? "")).filter(Boolean)
+      : [];
+    const requestsResult = await client.query<{ asset_id: string }>("SELECT asset_id FROM chat_viewer_requests");
+    const skipResult = await client.query<{ asset_id: string }>(
+      "SELECT asset_id FROM chat_skip_vote WHERE singleton_id = 1"
+    );
+    const marksResult = await client.query<{ asset_id: string; orphan_first_seen_at: string }>(
+      "SELECT asset_id, orphan_first_seen_at FROM asset_retention_marks"
+    );
+    const orphanFirstSeenAt: Record<string, string> = {};
+    for (const row of marksResult.rows) {
+      orphanFirstSeenAt[row.asset_id] = row.orphan_first_seen_at;
+    }
+
+    const now = args.now ?? new Date();
+    const classification = classifyAssetRetention(
+      {
+        sources: state.sources,
+        assets: state.assets,
+        pools: state.pools,
+        scheduleBlocks: state.scheduleBlocks,
+        assetCollections: state.assetCollections,
+        playout: state.playout,
+        chat: {
+          voteWinnerAssetId: String(voteRow?.winner_asset_id ?? ""),
+          voteOptionAssetIds,
+          viewerRequestAssetIds: requestsResult.rows.map((row) => row.asset_id),
+          skipVoteAssetId: String(skipResult.rows[0]?.asset_id ?? "")
+        },
+        orphanFirstSeenAt
+      },
+      { nowMs: now.getTime(), protectionDays: args.protectionDays }
+    );
+
+    // Mark bookkeeping runs even with deletion off — observing is the disabled mode's whole
+    // point, and the protection clock must already be running by the time the operator enables.
+    const orphanedSet = new Set(classification.orphanedAssetIds);
+    const newMarks = classification.orphanedAssetIds.filter((assetId) => !(assetId in orphanFirstSeenAt));
+    for (const assetId of newMarks) {
+      await client.query(
+        "INSERT INTO asset_retention_marks (asset_id, orphan_first_seen_at) VALUES ($1, $2) ON CONFLICT (asset_id) DO NOTHING",
+        [assetId, now.toISOString()]
+      );
+    }
+    // A mark whose asset regained its source (or is gone entirely) is cleared: the observation
+    // no longer applies, and if the asset orphans again the window starts over from zero.
+    const staleMarks = marksResult.rows.map((row) => row.asset_id).filter((assetId) => !orphanedSet.has(assetId));
+    if (staleMarks.length > 0) {
+      await client.query("DELETE FROM asset_retention_marks WHERE asset_id = ANY($1::text[])", [staleMarks]);
+    }
+
+    // Dangling curated-set items (asset row already gone) reference nothing by definition.
+    // Counted always; removed only when enabled. normalizeState drops them from any full-state
+    // write anyway — deleting here just makes the cleanup deterministic instead of
+    // write-dependent.
+    const danglingResult = await client.query<{ count: string }>(
+      "SELECT COUNT(*) AS count FROM asset_collection_items items WHERE NOT EXISTS (SELECT 1 FROM assets WHERE assets.id = items.asset_id)"
+    );
+    const danglingCollectionItems = Number(danglingResult.rows[0]?.count ?? 0);
+
+    const deletions = selectAssetRetentionDeletions(classification, args.deleteEnabled);
+    let deletedAssets = 0;
+    let deletedCollectionItems = 0;
+    if (deletions.length > 0) {
+      // Orphanhood is re-asserted in SQL at the moment of deletion. Nothing can have changed
+      // underneath inside this serialized write; the guard is belt-and-braces against the
+      // classifier and the hydrate ever drifting apart.
+      const deletedResult = await client.query(
+        "DELETE FROM assets WHERE id = ANY($1::text[]) AND source_id NOT IN (SELECT id FROM sources)",
+        [deletions]
+      );
+      deletedAssets = deletedResult.rowCount ?? 0;
+      await client.query("DELETE FROM asset_retention_marks WHERE asset_id = ANY($1::text[])", [deletions]);
+    }
+    if (args.deleteEnabled && danglingCollectionItems > 0) {
+      const removedItems = await client.query(
+        "DELETE FROM asset_collection_items WHERE NOT EXISTS (SELECT 1 FROM assets WHERE assets.id = asset_collection_items.asset_id)"
+      );
+      deletedCollectionItems = removedItems.rowCount ?? 0;
+    }
+
+    return {
+      counters: classification.counters,
+      deletedAssets,
+      deletedCollectionItems,
+      danglingCollectionItems,
+      newlyMarkedOrphans: newMarks.length,
+      clearedOrphanMarks: staleMarks.length
+    };
   });
 }
 
