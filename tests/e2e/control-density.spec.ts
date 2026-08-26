@@ -52,7 +52,10 @@ const SURFACES: Surface[] = [
   // The overlay editor, where editing is the point — so this one is folded rather than trimmed. Was
   // 79; twenty-four of those were three buttons on each of eight layers, held open permanently, and
   // one more was a select offering the same six presets as the cards beside it.
-  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 55, primaryActions: 1 },
+  // 56: the M57 source layer adds an eighth button to the add-layer palette. Hiding one palette
+  // button while its seven siblings stay visible would suggest the layer kind does not exist, so
+  // the ratchet moves by exactly that button; the source manager's add/edit form folds instead.
+  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 56, primaryActions: 1 },
   // 31, was 30: M56 moved the EventSub webhook secret into the managed credentials form, and a
   // secret belongs beside the other secrets rather than in a fold of its own — every sibling
   // ("client secret", "SMTP password") is permanently visible, and hiding just this one would

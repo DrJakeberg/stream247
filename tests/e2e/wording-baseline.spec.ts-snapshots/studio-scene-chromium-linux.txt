@@ -137,6 +137,7 @@ Add Image Layer
 Add Website Embed
 Add Widget Embed
 Add Chat Game
+Add Video Source
 No positioned layers yet. Add one when you need custom text, logos, stills, or embed-safe widgets.
 SCENE PRESET LIBRARY
 Save the current draft as a reusable scene preset, then re-apply it later without rebuilding every control by hand.
@@ -167,6 +168,9 @@ Draft saved not yet saved
 PUBLISH STATUS
 Live and draft match
 Draft is based on live scene updated at unknown.
+Cameras and feeds the scene layers can show. The feed address is stored encrypted and never shown again — this list only says whether one is stored. Saving with an empty address keeps the stored one.
+Add video source
+No video sources stored yet.
 VIEWER SCENE
 Published scene state
 Live scene preset

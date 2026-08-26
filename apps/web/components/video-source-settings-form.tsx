@@ -53,45 +53,53 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
         Cameras and feeds the scene layers can show. The feed address is stored encrypted and never
         shown again — this list only says whether one is stored. Saving with an empty address keeps the stored one.
       </p>
-      <div className="form-grid">
-        <label>
-          <span className="label">Name</span>
-          <input onChange={(event) => setName(event.target.value)} placeholder="e.g. Studio camera" value={name} />
-        </label>
-        <label>
-          <span className="label">Feed address</span>
-          <input
-            autoComplete="off"
-            onChange={(event) => setUrl(event.target.value)}
-            placeholder={editingId ? "Leave empty to keep the stored address" : "e.g. a camera stream URL"}
-            value={url}
-          />
-        </label>
-      </div>
-      <div className="inline-form">
-        <button
-          className="button secondary"
-          disabled={isPending || name.trim() === ""}
-          onClick={() => submit({ id: editingId || undefined, name, url }, "PUT")}
-          type="button"
-        >
-          {isPending ? "Saving..." : editingId ? "Save video source" : "Add video source"}
-        </button>
-        {editingId ? (
-          <button
-            className="button secondary"
-            disabled={isPending}
-            onClick={() => {
-              setEditingId("");
-              setName("");
-              setUrl("");
-            }}
-            type="button"
-          >
-            Cancel
-          </button>
-        ) : null}
-      </div>
+      {/* Folded like the repair actions on the live page: adding a feed is an occasional job, and
+          the scene page's control budget is a ratchet worth keeping. Editing reuses this form, so
+          it opens itself when a source is being edited. */}
+      <details className="disclosure" open={editingId !== ""}>
+        <summary>{editingId ? "Edit video source" : "Add video source"}</summary>
+        <div className="stack-form" style={{ marginTop: 8 }}>
+          <div className="form-grid">
+            <label>
+              <span className="label">Name</span>
+              <input onChange={(event) => setName(event.target.value)} placeholder="e.g. Studio camera" value={name} />
+            </label>
+            <label>
+              <span className="label">Feed address</span>
+              <input
+                autoComplete="off"
+                onChange={(event) => setUrl(event.target.value)}
+                placeholder={editingId ? "Leave empty to keep the stored address" : "e.g. a camera stream URL"}
+                value={url}
+              />
+            </label>
+          </div>
+          <div className="inline-form">
+            <button
+              className="button secondary"
+              disabled={isPending || name.trim() === ""}
+              onClick={() => submit({ id: editingId || undefined, name, url }, "PUT")}
+              type="button"
+            >
+              {isPending ? "Saving..." : editingId ? "Save video source" : "Add video source"}
+            </button>
+            {editingId ? (
+              <button
+                className="button secondary"
+                disabled={isPending}
+                onClick={() => {
+                  setEditingId("");
+                  setName("");
+                  setUrl("");
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </details>
       {error ? <p className="danger">{error}</p> : null}
       {message ? <p className="subtle">{message}</p> : null}
       <div className="list">
