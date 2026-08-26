@@ -381,9 +381,10 @@ let latestChatInteractionConfig = createDefaultChatInteractionConfig();
 // Latest engagement settings, cached by the worker cycle for the chat-overlay flush. Null until
 // the first cycle: flushing before settings are known could only write a wrong gate.
 let latestEngagementSettings: AppState["engagement"] | null = null;
-// Managed config from the same cycle read, for the runtime gates that fire between cycles
-// (the throttled chat flush). Null only before the first cycle, which resolves as env-only —
-// exactly the pre-M56 behaviour.
+// Managed config from the most recent cycle read of whichever mode this process runs (worker,
+// playout and uplink each refresh it), for the readers that fire between or inside cycles: the
+// throttled chat flush, the watchdog thresholds, the feed geometry and the VOD cache tuning.
+// Null only before the first cycle, which resolves as env-only — exactly the pre-M56 behaviour.
 let latestManagedConfig: AppState["managedConfig"] | null = null;
 // Effects the socket handler cannot apply itself; drained by the worker cycle.
 const pendingChatEffects: ChatControlEffect[] = [];
@@ -632,9 +633,6 @@ let twitchLiveStatusLastSyncKey = "";
 let twitchLiveStatusNextSyncAt = 0;
 // Process-lifetime cache for the broadcast channel's user id; see twitch-broadcast-channel.ts.
 const twitchUserIdResolver = createTwitchUserIdResolver();
-let twitchVodCacheRuntimeConfig:
-  | ReturnType<typeof getTwitchVodCacheConfig>
-  | null = null;
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -679,11 +677,10 @@ function getMediaRoot(): string {
   return process.env.MEDIA_LIBRARY_ROOT || path.join(process.cwd(), "data", "media");
 }
 
+// Re-resolved on every call rather than memoised: since M56 part 2 the tuning is managed config
+// first, and a value saved in the GUI must take effect on the next cycle, not the next deploy.
 function getTwitchVodCacheRuntimeConfig() {
-  if (!twitchVodCacheRuntimeConfig) {
-    twitchVodCacheRuntimeConfig = getTwitchVodCacheConfig(process.env, getMediaRoot());
-  }
-  return twitchVodCacheRuntimeConfig;
+  return getTwitchVodCacheConfig(process.env, getMediaRoot(), latestManagedConfig);
 }
 
 function isAssetBlockedForAutomaticSelection(asset: AssetRecord): boolean {
@@ -716,7 +713,7 @@ const vodCacheJobRunner = new VodCacheJobRunner({
       logRuntimeEvent("vod.cache.too_large", {
         assetId: asset.id,
         sizeBytes: result.sizeBytes,
-        limitBytes: getTwitchVodCacheConfig(process.env, getMediaRoot()).maxAssetBytes
+        limitBytes: getTwitchVodCacheRuntimeConfig().maxAssetBytes
       });
       await resolveIncident("playout.twitch-cache.failed", "Twitch VOD is streamed directly.");
       return;
@@ -746,7 +743,7 @@ async function releaseWatchedVodCache(
   state: AppState
 ): Promise<void> {
   try {
-    const config = getTwitchVodCacheConfig(process.env, getMediaRoot());
+    const config = getTwitchVodCacheRuntimeConfig();
     if (!config.enabled || !canReleaseVodCache(currentAssetId)) {
       return;
     }
@@ -903,7 +900,7 @@ async function runDiskWatermarkStage(
   }
 
   if (stage === "vod-cache") {
-    const config = getTwitchVodCacheConfig(process.env, getMediaRoot());
+    const config = getTwitchVodCacheRuntimeConfig();
 
     // The same gate the boundary release uses: a playout that cannot say what it is playing is
     // reconnecting, in standby, or freshly restarted — exactly the moments its runtime keep-list
@@ -5045,6 +5042,10 @@ function emitDueAssetChapterBoundaries(asset: AssetRecord | null): void {
 
 async function runPlayoutCycle(): Promise<void> {
   let state = await readAppState();
+  // The playout and uplink modes run as their own processes, so each cycle refreshes the managed
+  // config it hands to the between-cycle readers (watchdog options, feed geometry, VOD cache
+  // tuning). Before the first cycle those resolve env-only — exactly the pre-M56 behaviour.
+  latestManagedConfig = state.managedConfig;
   if (
     (state.playout.overrideUntil !== "" && !isTimestampActive(state.playout.overrideUntil)) ||
     (state.playout.skipUntil !== "" && !isTimestampActive(state.playout.skipUntil))
@@ -6088,6 +6089,9 @@ async function runUplinkCycle(): Promise<void> {
   }
 
   const state = await readAppState();
+  // Same refresh as the playout cycle: this mode is its own process and must not depend on the
+  // worker cycle having run to see a managed value.
+  latestManagedConfig = state.managedConfig;
   const managedDestinationKeys = await readManagedDestinationStreamKeys(state.destinations.map((entry) => entry.id));
   const activeDestinationGroup = selectDestinationRuntimeTargets({
     destinations: state.destinations,
