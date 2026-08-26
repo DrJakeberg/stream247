@@ -60,7 +60,10 @@ const SURFACES: Surface[] = [
   // secret belongs beside the other secrets rather than in a fold of its own — every sibling
   // ("client secret", "SMTP password") is permanently visible, and hiding just this one would
   // make the page suggest it does not exist. Everything else M56 added to this page (disk
-  // watermark, feature switches) is folded and adds nothing to the count.
+  // watermark, feature switches) is folded and adds nothing to the count. M56 part 2 continued
+  // the same way: the replay cache, the watchdog thresholds and the feed tuning are three more
+  // folded groups in the operations panel — twenty-six controls that would have tripled this
+  // page, all behind summaries, so the budget does not move.
   { name: "admin-settings", path: "/admin?tab=settings", maxControls: 31, primaryActions: 1 },
   { name: "login", path: "/login", maxControls: 3, primaryActions: 1, authenticated: false },
   { name: "live-moderation", path: "/live?tab=moderation", maxControls: 20, primaryActions: 1 },
