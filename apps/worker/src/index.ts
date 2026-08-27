@@ -2258,6 +2258,13 @@ async function resolveLiveSourceAttach(
   managed: ManagedConfigRecord,
   selectionIsAsset: boolean
 ): Promise<ResolvedLiveSourceAttach | null> {
+  // A live bridge or standby slate can never carry a PiP, so there is no attach decision to make or
+  // log for them — and polling the relay would be wasted traffic. The attach-decision log is an
+  // asset-playout marker; it resumes when an asset is selected again.
+  if (!selectionIsAsset) {
+    return null;
+  }
+
   const nowMs = Date.now();
   const layer = scenePayloadSourceLayer();
   const sourceId = layer?.sourceId ?? "";
@@ -2265,11 +2272,7 @@ async function resolveLiveSourceAttach(
   const sourceLayerEnabled = resolveSourceLayerRuntimeEnabled(managed, process.env);
 
   const presence =
-    selectionIsAsset &&
-    sourceLiveEnabled &&
-    sourceLayerEnabled &&
-    sourceId !== "" &&
-    !isAttachBreakerOpen(sourceLiveAttachBreaker, nowMs)
+    sourceLiveEnabled && sourceLayerEnabled && sourceId !== "" && !isAttachBreakerOpen(sourceLiveAttachBreaker, nowMs)
       ? await fetchRelaySourcePresence({ sourceId })
       : null;
 
