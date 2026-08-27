@@ -9,8 +9,25 @@
 
 import { relaySourcePath } from "@stream247/core";
 
-/** What the relay knows about a source path: is someone publishing to it right now. */
-export type RelayPathPresence = { publishing: boolean };
+/**
+ * What the relay knows about a source path: is someone publishing to it right now, and does the
+ * published stream carry an audio track. `hasAudio` is advisory (M57 stage 2, Etappe D: it decides
+ * whether the live-attach builds an audio branch at all) and only meaningful when publishing.
+ */
+export type RelayPathPresence = { publishing: boolean; hasAudio?: boolean };
+
+/**
+ * Whether a mediamtx path's `tracks` list contains an audio track. mediamtx names tracks by codec
+ * ("H264", "MPEG-4 Audio", "Opus", …), so audio is detected by codec name rather than a flag the
+ * API does not provide. Anything unrecognised is treated as not-audio, which fails safe: a source
+ * whose audio we cannot confirm attaches video-only rather than building a mix around a track that
+ * may not be there.
+ */
+const AUDIO_TRACK_PATTERN = /audio|opus|aac|mp3|g7\d\d|lpcm|\bpcm\b|vorbis|ac-?3|speex/i;
+
+export function relayTracksHaveAudio(tracks: unknown): boolean {
+  return Array.isArray(tracks) && tracks.some((track) => typeof track === "string" && AUDIO_TRACK_PATTERN.test(track));
+}
 
 // ---------------------------------------------------------------------------
 // Circuit breaker
@@ -127,14 +144,14 @@ export async function fetchRelaySourcePresence(args: {
     });
 
     if (response.status === 404) {
-      return { publishing: false };
+      return { publishing: false, hasAudio: false };
     }
     if (!response.ok) {
       return null;
     }
 
-    const body = (await response.json()) as { ready?: unknown };
-    return { publishing: body.ready === true };
+    const body = (await response.json()) as { ready?: unknown; tracks?: unknown };
+    return { publishing: body.ready === true, hasAudio: relayTracksHaveAudio(body.tracks) };
   } catch {
     return null;
   } finally {

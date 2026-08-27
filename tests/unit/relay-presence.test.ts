@@ -6,7 +6,8 @@ import {
   decideSourceLiveAttach,
   fetchRelaySourcePresence,
   isAttachBreakerOpen,
-  openAttachBreaker
+  openAttachBreaker,
+  relayTracksHaveAudio
 } from "../../apps/worker/src/relay-presence.js";
 
 // M57 stage 2, Etappe B: the attach decision is computed and logged, never acted on. The
@@ -99,16 +100,40 @@ describe("relay presence fetch", () => {
       return jsonResponse(200, { name: "src-studio-cam", ready: true });
     }) as typeof fetch;
 
-    expect(await fetchRelaySourcePresence({ sourceId: "studio-cam", fetchImpl })).toEqual({ publishing: true });
+    expect(await fetchRelaySourcePresence({ sourceId: "studio-cam", fetchImpl })).toEqual({ publishing: true, hasAudio: false });
     expect(seen).toEqual(["http://relay:9997/v3/paths/get/src-studio-cam"]);
+  });
+
+  it("reports an audio track from the path's codec list", async () => {
+    const withAudio = (async () =>
+      jsonResponse(200, { name: "src-studio-cam", ready: true, tracks: ["H264", "MPEG-4 Audio"] })) as typeof fetch;
+    expect(await fetchRelaySourcePresence({ sourceId: "studio-cam", fetchImpl: withAudio })).toEqual({
+      publishing: true,
+      hasAudio: true
+    });
+
+    const videoOnly = (async () => jsonResponse(200, { name: "src-studio-cam", ready: true, tracks: ["H264"] })) as typeof fetch;
+    expect(await fetchRelaySourcePresence({ sourceId: "studio-cam", fetchImpl: videoOnly })).toEqual({
+      publishing: true,
+      hasAudio: false
+    });
   });
 
   it("treats a known-but-idle path and a missing path as not publishing", async () => {
     const idle = (async () => jsonResponse(200, { name: "src-studio-cam", ready: false })) as typeof fetch;
-    expect(await fetchRelaySourcePresence({ sourceId: "studio-cam", fetchImpl: idle })).toEqual({ publishing: false });
+    expect(await fetchRelaySourcePresence({ sourceId: "studio-cam", fetchImpl: idle })).toEqual({ publishing: false, hasAudio: false });
 
     const missing = (async () => new Response(null, { status: 404 })) as typeof fetch;
-    expect(await fetchRelaySourcePresence({ sourceId: "studio-cam", fetchImpl: missing })).toEqual({ publishing: false });
+    expect(await fetchRelaySourcePresence({ sourceId: "studio-cam", fetchImpl: missing })).toEqual({ publishing: false, hasAudio: false });
+  });
+
+  it("recognises common audio codecs and rejects video-only track lists", () => {
+    for (const track of ["MPEG-4 Audio", "Opus", "G711", "G722", "LPCM", "MP3", "AC3", "Vorbis"]) {
+      expect(relayTracksHaveAudio(["H264", track])).toBe(true);
+    }
+    expect(relayTracksHaveAudio(["H264", "H265", "VP9", "AV1"])).toBe(false);
+    expect(relayTracksHaveAudio([])).toBe(false);
+    expect(relayTracksHaveAudio(undefined)).toBe(false);
   });
 
   it("returns unknown on server errors, network failures and timeouts", async () => {
