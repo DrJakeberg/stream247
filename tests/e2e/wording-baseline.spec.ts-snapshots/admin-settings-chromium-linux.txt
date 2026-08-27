@@ -69,9 +69,11 @@ Operations
 Operational decisions that used to live only in the server environment. Every group folds away because it is set once and then left alone; a value saved here wins over the environment.
 Disk watermark
 Feature switches
+Sound from live video sources
 Replay cache
 Watchdog thresholds
 Feed tuning
+Relay access
 SECURITY
 Local account security
 Optional two-factor authentication is available for local accounts. Team members signing in through Twitch SSO are not affected by this setting.
