@@ -144,7 +144,8 @@ queue or fallback tier still references is never touched.
 - single-output and multi-output RTMP uplinks both run through tee/fifo buffering now; a short Twitch-side write failure should recover inside the same FFmpeg process when FFmpeg can re-open the output, and a real `uplink.process.exit` still means the Twitch-facing publisher actually restarted
 - verify at least one enabled primary or backup destination has a valid RTMP URL and stream key
 - use `STREAM247_RELAY_ENABLED=0` only as a rollback because it returns external publishing to the playout process
-- since the relay checks credentials (M57 stage 2), the rtmp rollback paths (`STREAM247_RELAY_ENABLED=1`, `STREAM247_UPLINK_INPUT_MODE=rtmp`) additionally require the internal relay key embedded in `STREAM247_RELAY_OUTPUT_URL` / `STREAM247_RELAY_INPUT_URL` — see the push ingest section in `docs/deployment.md`
+- since the relay checks credentials (M57 stage 2), the rtmp rollback paths (`STREAM247_RELAY_ENABLED=1`, `STREAM247_UPLINK_INPUT_MODE=rtmp`) additionally require the internal relay key embedded in `STREAM247_RELAY_OUTPUT_URL` / `STREAM247_RELAY_INPUT_URL`; get both lines ready to paste from Settings → Operations → **Relay access** (owner/admin, one click, audited as `relay.internal_key.revealed`), copy them into the deployment environment, then restart — see the push ingest section in `docs/deployment.md`
+- the key never appears in a listing, a log, a scene payload or an error message, so a lost copy is re-fetched from that same group rather than recovered from anywhere else; if the group answers that the lines are unavailable, the workspace database is unreachable and that is the incident to fix first
 
 ## Long-Run Container Baseline
 

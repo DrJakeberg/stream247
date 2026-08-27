@@ -1318,7 +1318,7 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | M54 | Feature | Next | Done | Chat game framework with Snake as the first game (emote-per-direction, moves only on input); Minesweeper (chat digs by coordinates like "b3") and 2048 (snake's emote map on a fixed 4x4 board) follow on the same framework |
 | M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
 | M56 | UX | Now | In progress | Every operational decision configurable in the GUI, `.env` demoted to fallback. Part 1 done: encoder quality, disk watermark, engagement/schedule-sync feature switches, EventSub secret. Part 2 done: replay (VOD) cache family, watchdog/stall thresholds, reconnect + program-feed tuning — clamped resolvers in core, three folded admin groups with partial routes; SMTP/alert family confirmed already GUI-complete. Deliberately env-only: cache root, relay topology, loop stall guard. Open: the unused redis service in compose |
-| M57 | Feature | Now | In progress | Embedded video sources as scene layers. Stage 1 done: source layer kind (placement + reference), encrypted feed store, snapshot sampler at managed cadence rendering through the native overlay — plus logo/image/text layers on air. Stage 2 in progress: ingest foundation + attach decision (A+B) and the live attach itself (C+D) done — push ingest via relay with HTTP auth, publish keys, derived internal read URLs, presence poll, and the third ffmpeg input wired as a PiP under the scene with audio mixed at the configured gain, breaker armed on a failed attach; open: a mandatory DT soak gate before any deploy, plus stage E (operator surfaces beyond the switch — gain UI, internal-key reveal for rollback — and per-layer cadence) |
+| M57 | Feature | Now | In progress | Embedded video sources as scene layers. Stage 1 done: source layer kind (placement + reference), encrypted feed store, snapshot sampler at managed cadence rendering through the native overlay — plus logo/image/text layers on air. Stage 2 in progress: ingest foundation + attach decision (A+B) and the live attach itself (C+D) done — push ingest via relay with HTTP auth, publish keys, derived internal read URLs, presence poll, and the third ffmpeg input wired as a PiP under the scene with audio mixed at the configured gain, breaker armed on a failed attach; Etappe E done — the audited owner/admin reveal of the relay rollback lines (the emergency path relay auth had made unusable), the live source gain field with the known-duration caveat, and the last attach decision shown per pushed source (migration `20260826_004`); open: a mandatory DT soak gate before any deploy, plus per-layer cadence |
 
 ## M51 Broadcast Channel Split
 
@@ -1510,6 +1510,55 @@ change, no additional ffmpeg input in stage 1.
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-08-27 — M57 Stage 2, Etappe E: The Operator Surfaces
+
+- **The regression this stage exists for.** Making the relay check credentials turned the two
+  documented emergency rollback paths (`STREAM247_RELAY_ENABLED=1` publishing to `live/program`,
+  `STREAM247_UPLINK_INPUT_MODE=rtmp` reading it back) into paths nobody could walk: they need the
+  internal relay key inside `STREAM247_RELAY_OUTPUT_URL` / `_INPUT_URL`, that key generates itself
+  into `managed_secrets` and is deliberately never printed, and the runbooks therefore said to
+  treat the rollback as unavailable. A real operational regression in a failure path, fixed here.
+- **Relay access** (new folded group, Settings → Operations). `deriveRelayProgramRollbackUrl` and
+  `buildRelayRollbackEnvLines` live in `packages/core/src/relay-ingest.ts` — pure, fail-closed on
+  an empty key (a URL with an empty password authenticates against nothing and would read as a
+  working line), percent-encoded because the value is pasted into an environment file. The reveal
+  is `POST /api/settings/relay-access`: `requireApiRoles(["owner","admin"])` before anything reads
+  the key; POST rather than GET so it is an action rather than a prefetchable, linkable,
+  access-logged URL that returns a secret; the settings page ships the button and nothing else, so
+  the value is absent from the server-rendered HTML and therefore from the wording baseline; one
+  `relay.internal_key.revealed` audit line per reveal naming the actor and never the value, written
+  before the answer leaves; `RELAY_ACCESS_REVEAL_RATE_LIMIT` (10 per 15 min, keyed on the account,
+  not the peer — the role check already gates the peer, what is left is a stolen session mining the
+  key and burying the trail); `cache-control: no-store` on every answer; and one identical 503 for
+  both "no key yet" and "store unreachable", carrying neither the key nor the driver error.
+- **Wording gate.** The env names appear only inside the copied `KEY=value` lines, never in prose,
+  and the fold's contents never reach `wording-baseline` (it records summaries, not fold contents)
+  nor the visual baseline (nothing is fetched until someone clicks). No test was weakened.
+- **Sound from live video sources** (new folded group). `resolveSourceLiveGainPercent` had been
+  managed since Etappe D with no field. `isValidSourceLiveGainPercent` (whole 0..200) is enforced
+  in the form and again in `/api/settings/operations` as its own key family — refused rather than
+  clamped, because the resolver clamps so a stored value cannot break playout while a typed 500 is
+  a mistake worth showing. The group carries the C+D invariant in plain words: a live source's
+  sound is mixed only into items whose duration is known in advance, so on anything else the camera
+  is embedded picture-only and the feed-audio watchdog stays meaningful.
+- **Live attach state, visible.** Chosen as a field on the existing source rather than a runtime
+  singleton row: the decision is per source, the studio already lists sources, and M57 stage 2
+  extended this same table the same way. Migration `20260826_004_overlay_video_source_live_state`
+  (next free in that day's sequence — `_001` … `_003` were verified as the whole of 2026-08-26 and
+  nothing later is registered), mirrored in the base schema block: `live_state`, `live_state_at`,
+  `live_retry_at`, all additive, all empty on existing rows, none of them a credential.
+  `buildSourceLiveStateWrite` (pure, in `relay-presence.ts`) maps a decision to a write and returns
+  null when there is no source id, so a scene-level reason is never attributed to a stored source;
+  only the cooldown carries a retry moment. The worker writes on the same change edge that already
+  logs `playout.source-live.attach_decision`, inside a try/catch that logs
+  `playout.source-live.state_write_failed` — an observation store must never decide whether a
+  camera goes on air. `describeSourceLiveState` in core turns the stored decision word into the
+  sentence; unrecognised values return "" so a surface shows nothing rather than inventing a state.
+- Budgets unchanged: both new admin groups are folded (`<summary>` is not a counted control), and
+  studio-scene gained text only. `studio-scene` 56/1 and `admin-settings` 31/1 stand as recorded;
+  no ratchet comment was needed.
+- Still open: the mandatory DT soak gate before any deploy, and per-layer snapshot cadence.
 
 ### 2026-08-27 — M57 Stage 2, Etappen C+D: The Third Input And The Audio Mix
 

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+- the operator surfaces the live-source work had been missing (M57 stage 2, Etappe E). Most
+  importantly the emergency rollback path is usable again: since the relay started checking
+  credentials, publishing the programme through it (`STREAM247_RELAY_ENABLED=1`) and reading it
+  back on the uplink's rtmp input (`STREAM247_UPLINK_INPUT_MODE=rtmp`) only work with the internal
+  relay key embedded in the configured URLs, and nothing could produce that string — the runbooks
+  said to treat the rollback as unavailable. Settings → Operations → **Relay access** now hands an
+  owner or admin both ready-to-paste lines: owner/admin only, POST rather than a page render so the
+  key never reaches the server-rendered HTML, one `relay.internal_key.revealed` audit line per
+  reveal naming the actor and never the value, rate limited per account, and every failure answers
+  identically without the key or the underlying error
+- **Sound from live video sources** in the same panel: the live source gain (0-200, default 40)
+  had been a managed value with no field since Etappe D. Whole percents only, refused rather than
+  silently clamped, and carrying the honest caveat that a live source's sound is mixed only into
+  items whose length is known in advance — on anything else the camera is embedded as picture only,
+  so the feed-audio watchdog stays the safety net
+- the studio's video source manager now says in words what playback last decided about each pushed
+  source — live in the programme, waiting for the camera, paused after a failed attempt with the
+  cooldown counted down, or still picture only. Persisted through migration
+  `20260826_004_overlay_video_source_live_state` (three additive columns, empty on existing rows),
+  written only when the decision changes and never blocking the attach if the write fails
+
 ## 1.5.30 - 2026-08-27
 
 ### Added
