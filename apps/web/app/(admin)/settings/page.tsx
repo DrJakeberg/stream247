@@ -13,6 +13,7 @@ import {
   resolveSystemVolumeWatermarkConfig,
   resolveSourceLayerRuntimeEnabled,
   resolveSourceLiveEnabled,
+  resolveSourceLiveGainPercent,
   resolveTwitchScheduleSyncEnabled,
   resolveUplinkWatchdogMs,
   resolveVodCacheTuning
@@ -26,6 +27,7 @@ import { FeedTuningForm } from "@/components/feed-tuning-form";
 import { RelayAccessForm } from "@/components/relay-access-form";
 import { ReplayCacheForm } from "@/components/replay-cache-form";
 import { SecretSettingsForm } from "@/components/secret-settings-form";
+import { SourceLiveSoundForm } from "@/components/source-live-sound-form";
 import { TwoFactorSettingsForm } from "@/components/two-factor-settings-form";
 import { WatchdogThresholdsForm } from "@/components/watchdog-thresholds-form";
 import { getAuthenticatedUser } from "@/lib/server/auth";
@@ -162,6 +164,10 @@ export default async function SettingsPage() {
               sourceLayerEnabled: resolveSourceLayerRuntimeEnabled(null, process.env),
               sourceLiveEnabled: resolveSourceLiveEnabled(null, process.env)
             }}
+          />
+          <SourceLiveSoundForm
+            initialValue={state.managedConfig.sourceLiveGainPercent}
+            fallback={resolveSourceLiveGainPercent(null, process.env)}
           />
           <ReplayCacheForm
             initialValues={{

@@ -3,6 +3,7 @@ import {
   isValidAssetRetentionDays,
   isValidDiskWatermarkPercent,
   isValidManagedFlagText,
+  isValidSourceLiveGainPercent,
   resolveDiskWatermarkRecoverPercent,
   resolveDiskWatermarkTriggerPercent,
   resolveSystemVolumeRecoverPercent,
@@ -29,8 +30,19 @@ const PERCENT_KEYS = [...MEDIA_PERCENT_KEYS, ...SYSTEM_PERCENT_KEYS] as const;
 
 const DAY_KEYS = ["assetRetentionProtectionDays"] as const;
 
+// M57 stage 2, Etappe E. Its own family rather than another entry in PERCENT_KEYS: those are free
+// disk percentages bounded 1..99, and this one is loudness relative to the programme, where 0 is a
+// real setting (attach muted) and 200 is a legitimate ceiling.
+const GAIN_KEYS = ["sourceLiveGainPercent"] as const;
+
 type OperationsBody = Partial<
-  Record<(typeof FLAG_KEYS)[number] | (typeof PERCENT_KEYS)[number] | (typeof DAY_KEYS)[number], string>
+  Record<
+    | (typeof FLAG_KEYS)[number]
+    | (typeof PERCENT_KEYS)[number]
+    | (typeof DAY_KEYS)[number]
+    | (typeof GAIN_KEYS)[number],
+    string
+  >
 >;
 
 // The operational switches and the disk watermark. Partial on purpose: the disk form and the
@@ -83,6 +95,27 @@ export async function PUT(request: NextRequest) {
     if (trimmed !== "" && !isValidAssetRetentionDays(Number(trimmed))) {
       return NextResponse.json(
         { ok: false, message: "The protection window is a whole number of days between 1 and 365." },
+        { status: 400 }
+      );
+    }
+    updates[key] = trimmed;
+  }
+
+  for (const key of GAIN_KEYS) {
+    const value = body[key];
+    if (value === undefined) {
+      continue;
+    }
+    const trimmed = value.trim();
+    // Empty stays "follow the server". Anything else is refused rather than clamped: the resolver
+    // clamps because a stored value must never break playout, but a typed 500 here is a mistake the
+    // operator should see instead of quietly becoming 200.
+    if (trimmed !== "" && !isValidSourceLiveGainPercent(Number(trimmed))) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: "Loudness is a whole percent of the programme's level, from 0 (silent) to 200 (twice as loud)."
+        },
         { status: 400 }
       );
     }

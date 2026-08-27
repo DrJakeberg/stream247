@@ -168,6 +168,37 @@ describe("managed operations API", () => {
     expect(mockUpdateManagedConfigRecord).not.toHaveBeenCalled();
   });
 
+  // M57 stage 2, Etappe E: the live source gain finally has a form, so the route has to hold the
+  // same bound the resolver clamps to.
+  it("stores a live source gain inside the bound and clears it back to follow-the-environment", async () => {
+    const stored = await putOperations(request({ sourceLiveGainPercent: " 80 " }));
+    expect(stored.status).toBe(200);
+    expect(mockUpdateManagedConfigRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceLiveGainPercent: "80", twitchClientId: "keep-me" })
+    );
+
+    const cleared = await putOperations(request({ sourceLiveGainPercent: "" }));
+    expect(cleared.status).toBe(200);
+    expect(mockUpdateManagedConfigRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sourceLiveGainPercent: "" })
+    );
+  });
+
+  it("keeps a muted source as a real setting rather than an unset one", async () => {
+    const response = await putOperations(request({ sourceLiveGainPercent: "0" }));
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateManagedConfigRecord).toHaveBeenCalledWith(expect.objectContaining({ sourceLiveGainPercent: "0" }));
+  });
+
+  it("rejects a gain outside the bound instead of silently clamping it", async () => {
+    for (const value of ["201", "-1", "50.5", "loud"]) {
+      const response = await putOperations(request({ sourceLiveGainPercent: value }));
+      expect(response.status, `gain ${value} should be refused`).toBe(400);
+    }
+    expect(mockUpdateManagedConfigRecord).not.toHaveBeenCalled();
+  });
+
   it("validates the retention switch like every other managed flag", async () => {
     const response = await putOperations(request({ assetRetentionEnabled: "yes" }));
 
