@@ -17,6 +17,7 @@ import {
   resolveSystemVolumeTriggerPercent,
   resolveSystemVolumeWatermarkConfig,
   resolveSourceLiveEnabled,
+  isValidSourceLiveGainPercent,
   resolveSourceLiveGainPercent,
   resolveTwitchEventSubSecret,
   resolveTwitchScheduleSyncEnabled
@@ -287,5 +288,17 @@ describe("source live resolution", () => {
     // Garbage degrades to the next fallback, never to NaN.
     expect(resolveSourceLiveGainPercent({ sourceLiveGainPercent: "loud" }, { STREAM247_SOURCE_LIVE_GAIN_PERCENT: "30" })).toBe(30);
     expect(resolveSourceLiveGainPercent({ sourceLiveGainPercent: "loud" }, { STREAM247_SOURCE_LIVE_GAIN_PERCENT: "quiet" })).toBe(40);
+  });
+
+  it("tells a form which gains are worth accepting at all", () => {
+    // The resolver clamps, because a stored opinion about loudness should never break playout. A
+    // form is the opposite case: a typed 500 is a mistake the operator should see, not a silent 200.
+    expect(isValidSourceLiveGainPercent(0)).toBe(true);
+    expect(isValidSourceLiveGainPercent(40)).toBe(true);
+    expect(isValidSourceLiveGainPercent(200)).toBe(true);
+    expect(isValidSourceLiveGainPercent(201)).toBe(false);
+    expect(isValidSourceLiveGainPercent(-1)).toBe(false);
+    expect(isValidSourceLiveGainPercent(40.5)).toBe(false);
+    expect(isValidSourceLiveGainPercent(Number.NaN)).toBe(false);
   });
 });
