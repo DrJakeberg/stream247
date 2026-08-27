@@ -1009,7 +1009,9 @@ async function runDiskWatermarkStage(
   const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
   const files: ThumbnailFileInfo[] = [];
   for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".jpg")) {
+    // .jpg.tmp leftovers can only come from a process that died between the render and the
+    // rename; nothing reads them, so they are sweepable like the source-frame temps.
+    if (!entry.isFile() || !(entry.name.endsWith(".jpg") || entry.name.endsWith(".jpg.tmp"))) {
       continue;
     }
     const filePath = path.join(directory, entry.name);
