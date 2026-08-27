@@ -32,7 +32,11 @@
   runs in, close nothing at all
 - both incident panels now say how old each open entry is — last reported first, because that is
   what separates the channel's current problem from July's, then first seen — and a capped panel
-  says how many further open incidents it is not showing
+  says how many further open incidents it is not showing. The admin status chip counts every open
+  incident instead of the five the live snapshot carries, so it no longer reads "5" while forty are
+  open. An automatic resolution keeps the original message in front of its note: resolving replaces
+  the stored text, and losing the exit code and stderr tail at the moment an entry becomes history
+  would be the wrong trade
 
 ## 1.5.31 - 2026-08-27
 

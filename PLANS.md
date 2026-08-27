@@ -1583,11 +1583,19 @@ every single one described something that had finished long ago.
   about a rollback to the previous image, which would write that shape again.
 - **Unclassified fingerprints are left open.** A string the registry does not own is more likely a
   state incident from another build than a finished event, and guessing wrong hides a real problem.
+- **Resolving overwrites.** `resolveIncident` sets `message` to whatever it is handed, so the
+  automatic note prefixes the original text rather than replacing it. Otherwise the sweep would
+  delete the exit code, the stderr tail and the asset from forty entries at the exact moment they
+  become history — the only thing a post-mortem would have wanted from them.
 - **Surfaces.** Both incident panels now carry the age of each open entry — last reported first,
   because that is what separates the channel's current problem from July's — and say how many
-  further open incidents a capped panel is not showing. Text only, so the control-density budgets
-  (`live-status` 27/1, `admin-settings` 31/1) are untouched. The e2e fixture seeds no incidents, so
-  the empty-state branch still renders and no wording or design baseline moves.
+  further open incidents a capped panel is not showing. The admin status chip counted the capped
+  list, so it read "5" while forty were open; it now counts them all. Text only, so the
+  control-density budgets (`live-status` 27/1, `admin-settings` 31/1) are untouched. The e2e fixture
+  seeds no incidents, so the empty-state branch still renders and no wording or design baseline
+  moves. The clock for the ages lives outside the render — a server helper for the dashboard, the
+  snapshot's own `generatedAt` for the control room — because eslint's `react-hooks/purity` rejects
+  `Date.now()` there, and the snapshot timestamp also makes the server and hydrated renders agree.
 
 ### 2026-08-27 — M57 Stage 2, Etappe E: The Operator Surfaces
 
