@@ -565,7 +565,7 @@ export type IncidentResolutionPlanEntry = {
 };
 
 export type IncidentResolutionInput = {
-  incidents: ReadonlyArray<{ fingerprint: string; status: string; updatedAt: string }>;
+  incidents: ReadonlyArray<{ fingerprint: string; status: string; updatedAt: string; message?: string }>;
   healthyAreas: ReadonlyArray<IncidentArea>;
   nowMs: number;
   stableMs?: number;
@@ -637,13 +637,21 @@ export function planIncidentResolutions(input: IncidentResolutionInput): Inciden
     .filter((candidate) => ageMs(candidate.incident.updatedAt, input.nowMs) >= stableMs)
     .filter((candidate) => (lastEventAgeMs.get(candidate.area) ?? Number.POSITIVE_INFINITY) >= stableMs)
     .filter((candidate) => candidate.reason === "recovered" || ageMs(candidate.incident.updatedAt, input.nowMs) >= backlogGraceMs)
-    .map((candidate) => ({
-      fingerprint: candidate.incident.fingerprint,
-      area: candidate.area,
-      reason: candidate.reason,
-      message:
+    .map((candidate) => {
+      const note =
         candidate.reason === "recovered"
           ? `Closed automatically: this entry describes a past event, and ${AREA_LABEL[candidate.area]} has been healthy with nothing new reported for ${stableMinutes} minutes.`
-          : `Closed automatically: this entry describes a past event under a fingerprint this build no longer uses, it was last reported more than ${graceDays} days ago, and ${AREA_LABEL[candidate.area]} is healthy now. It stayed open only because nothing ever closed it.`
-    }));
+          : `Closed automatically: this entry describes a past event under a fingerprint this build no longer uses, it was last reported more than ${graceDays} days ago, and ${AREA_LABEL[candidate.area]} is healthy now. It stayed open only because nothing ever closed it.`;
+      // resolveIncident replaces the stored message with whatever it is given, so the note carries
+      // the original with it. Dropping it would delete the only record of what actually happened --
+      // the exit code, the stderr tail, the asset -- at the moment the entry becomes history.
+      const original = (candidate.incident.message ?? "").trim();
+
+      return {
+        fingerprint: candidate.incident.fingerprint,
+        area: candidate.area,
+        reason: candidate.reason,
+        message: original === "" ? note : `${original} — ${note}`
+      };
+    });
 }

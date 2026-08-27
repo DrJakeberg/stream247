@@ -11,8 +11,13 @@ const minutes = (value: number) => value * 60_000;
 const days = (value: number) => value * 24 * 60 * 60_000;
 const at = (offsetMs: number) => new Date(NOW - offsetMs).toISOString();
 
-function incident(fingerprint: string, updatedOffsetMs: number, status: "open" | "resolved" = "open") {
-  return { fingerprint, status, updatedAt: at(updatedOffsetMs) };
+function incident(
+  fingerprint: string,
+  updatedOffsetMs: number,
+  status: "open" | "resolved" = "open",
+  message = ""
+) {
+  return { fingerprint, status, updatedAt: at(updatedOffsetMs), message };
 }
 
 describe("incident area health", () => {
@@ -160,6 +165,18 @@ describe("incident auto-resolution", () => {
       nowMs: NOW
     });
     expect(plan).toEqual([]);
+  });
+
+  it("keeps what the incident said, because resolving overwrites the message", () => {
+    // resolveIncident replaces the stored message with the resolution note, so a note that did not
+    // carry the original would delete the only record of what actually happened in July.
+    const plan = planIncidentResolutions({
+      incidents: [incident("playout.ffmpeg.exit", days(50), "open", "FFmpeg exited with code 255. Asset asset_x.")],
+      healthyAreas: ["playout"],
+      nowMs: NOW
+    });
+    expect(plan[0]?.message).toContain("FFmpeg exited with code 255. Asset asset_x.");
+    expect(plan[0]?.message).toContain("Closed automatically");
   });
 
   it("says in the resolution note that nobody looked at it", () => {
