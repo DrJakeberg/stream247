@@ -113,3 +113,7 @@ export function getClientIdentifier(headers: Headers): string {
 
 export const LOGIN_RATE_LIMIT: RateLimitRule = { limit: 10, windowMs: 15 * 60_000 };
 export const TWO_FACTOR_RATE_LIMIT: RateLimitRule = { limit: 8, windowMs: 15 * 60_000 };
+// Keyed on the address mediamtx reports for the connecting client. Generous enough for a flaky
+// publisher reconnecting in a loop (the relay asks once per connection, not per frame), far too
+// tight for guessing a generated key — and it bounds the audit noise a scanner can produce.
+export const RELAY_AUTH_RATE_LIMIT: RateLimitRule = { limit: 60, windowMs: 60_000 };
