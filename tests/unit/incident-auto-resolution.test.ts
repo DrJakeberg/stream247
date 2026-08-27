@@ -97,6 +97,27 @@ describe("incident auto-resolution", () => {
     expect(plan).toEqual([]);
   });
 
+  it("does not let a routine ffmpeg stderr line hold a whole area open", () => {
+    // `line.toLowerCase().includes("error")` is what raises these, and a healthy encode prints
+    // "Error while decoding stream" over a single corrupt packet often enough that treating it as
+    // proof the area is unwell would keep the list frozen on a channel that is perfectly fine.
+    const plan = planIncidentResolutions({
+      incidents: [incident("playout.feed-audio", days(20)), incident("playout.ffmpeg.stderr", minutes(1))],
+      healthyAreas: ["playout"],
+      nowMs: NOW
+    });
+    expect(plan.map((entry) => entry.fingerprint)).toEqual(["playout.feed-audio"]);
+  });
+
+  it("still waits out a noisy family's own repeats before closing it", () => {
+    const plan = planIncidentResolutions({
+      incidents: [incident("uplink.ffmpeg.stderr", minutes(2))],
+      healthyAreas: ["uplink"],
+      nowMs: NOW
+    });
+    expect(plan).toEqual([]);
+  });
+
   it("never touches an incident that describes a lasting state", () => {
     const plan = planIncidentResolutions({
       incidents: [incident("system.volume.low", days(40)), incident("playout.no-asset", days(40))],

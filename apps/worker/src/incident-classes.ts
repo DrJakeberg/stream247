@@ -47,6 +47,15 @@ export type IncidentFamily = {
   keySuffix?: string;
   kind: IncidentKind;
   area: IncidentArea;
+  /**
+   * Set on event families whose repeats are not evidence that anything is wrong, so they do not
+   * hold the rest of their area open. Only the two `*.ffmpeg.stderr` families qualify: they are
+   * raised by `line.toLowerCase().includes("error")`, and a perfectly healthy encode prints
+   * "Error while decoding stream" over a single corrupt packet often enough that letting one gate
+   * an area would freeze the list on a channel that is fine. They are still closed themselves, on
+   * their own repeats.
+   */
+  noisy?: true;
   /** Why this is a state or an event. One sentence, so the next reader does not have to guess. */
   why: string;
 };
@@ -271,6 +280,7 @@ const EVENT_FAMILIES: IncidentFamily[] = [
     keyed: false,
     kind: "event",
     area: "playout",
+    noisy: true,
     why: "One stderr line mentioning an error was printed at one moment; nothing about it stays true."
   },
   {
@@ -292,6 +302,7 @@ const EVENT_FAMILIES: IncidentFamily[] = [
     keyed: false,
     kind: "event",
     area: "uplink",
+    noisy: true,
     why: "One uplink stderr line mentioning an error was printed at one moment."
   },
   {
@@ -564,12 +575,14 @@ export type IncidentResolutionInput = {
 /**
  * Which open event incidents are demonstrably over.
  *
- * Two conditions, both required. The area must be measurably healthy right now (the caller's
- * `healthyAreas`), and nothing in that area may have been reported for the whole stability window.
- * The second condition is read off the incidents themselves: their `updatedAt` is refreshed by
- * every repeat of the same fingerprint, so the newest open event in an area is exactly "when this
- * part of the system last misbehaved". One fresh event therefore holds the whole area open, which
- * is the honest answer -- an area that is still producing events has not recovered.
+ * Three conditions, all required. The area must be measurably healthy right now (the caller's
+ * `healthyAreas`); the incident itself must not have been re-reported inside the stability window;
+ * and nothing else in its area may have been reported inside it either. The last two are read off
+ * the incidents themselves: `updatedAt` is refreshed by every repeat of the same fingerprint, so
+ * the newest open event in an area is exactly "when this part of the system last misbehaved". One
+ * fresh event therefore holds the whole area open, which is the honest answer -- an area that is
+ * still producing events has not recovered. The exception is the families marked `noisy`, which
+ * still have to wait out their own repeats but do not speak for their area.
  *
  * State incidents are never returned. They are closed by the code that knows their condition, and
  * closing one from here would claim a disk had space or a token had refreshed without checking.
@@ -583,22 +596,32 @@ export function planIncidentResolutions(input: IncidentResolutionInput): Inciden
   const healthy = new Set(input.healthyAreas);
   const open = input.incidents.filter((incident) => incident.status === "open");
 
+  type Candidate = {
+    incident: (typeof open)[number];
+    area: IncidentArea;
+    reason: "recovered" | "backlog";
+    noisy: boolean;
+  };
+
   const candidates = open
-    .map((incident) => {
+    .map((incident): Candidate | null => {
       const family = classifyIncidentFingerprint(incident.fingerprint);
       if (family) {
-        return family.kind === "event" ? { incident, area: family.area, reason: "recovered" as const } : null;
+        return family.kind === "event"
+          ? { incident, area: family.area, reason: "recovered", noisy: family.noisy === true }
+          : null;
       }
       const retired = RETIRED_INCIDENT_FINGERPRINTS.find((entry) => incident.fingerprint.startsWith(entry.prefix));
-      return retired ? { incident, area: retired.area, reason: "backlog" as const } : null;
+      return retired ? { incident, area: retired.area, reason: "backlog", noisy: false } : null;
     })
-    .filter((entry): entry is { incident: (typeof open)[number]; area: IncidentArea; reason: "recovered" | "backlog" } =>
-      entry !== null
-    );
+    .filter((entry): entry is Candidate => entry !== null);
 
   // "Quiet" is per area and counts every open event in it, including the ones about to be closed.
   const lastEventAgeMs = new Map<IncidentArea, number>();
   for (const candidate of candidates) {
+    if (candidate.noisy) {
+      continue;
+    }
     const age = ageMs(candidate.incident.updatedAt, input.nowMs);
     const known = lastEventAgeMs.get(candidate.area);
     if (known === undefined || age < known) {
@@ -611,7 +634,8 @@ export function planIncidentResolutions(input: IncidentResolutionInput): Inciden
 
   return candidates
     .filter((candidate) => healthy.has(candidate.area))
-    .filter((candidate) => (lastEventAgeMs.get(candidate.area) ?? 0) >= stableMs)
+    .filter((candidate) => ageMs(candidate.incident.updatedAt, input.nowMs) >= stableMs)
+    .filter((candidate) => (lastEventAgeMs.get(candidate.area) ?? Number.POSITIVE_INFINITY) >= stableMs)
     .filter((candidate) => candidate.reason === "recovered" || ageMs(candidate.incident.updatedAt, input.nowMs) >= backlogGraceMs)
     .map((candidate) => ({
       fingerprint: candidate.incident.fingerprint,
