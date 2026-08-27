@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### Fixed
+
+- a failed source ingest no longer takes the running programme off air. `syncTwitchVodSources` and
+  `syncYoutubePlaylistSources` collect assets from every enabled source and finish with
+  `replaceAssetsForSourceIds(allSourceIds, collected)` — a delete-then-reinsert. A source whose
+  ingest threw contributed zero assets but stayed in the delete list, so one transient yt-dlp error
+  deleted that source's entire archive. Measured on the running channel (v1.5.31): eight process
+  starts in the eight minutes after 18:57 against a normal two to three per hour, strictly
+  alternating fallback slate and scheduled programme, each programme item cut after 76-91 seconds.
+  With the pool emptied, `choosePlaybackCandidate` found no preferred asset and fell to
+  `global_fallback`; because the on-air asset's row no longer existed, neither stickiness guard
+  could re-select it, and the cycle cut the running item through `stopPlayoutProcess("switch")`.
+  The next worker sync re-inserted the rows and playout switched back — hence the alternation. A
+  sync may now only delete a source's stored assets when it has positive evidence the source holds
+  that content: a throw, or an unexpectedly empty listing for a source that currently has assets,
+  keeps the stored rows and emits `source.sync.assets_preserved`. Stale rows are recoverable and
+  invisible to viewers; deleted rows take the channel off air
+- a deliberate playout stop now says why. `stopPlayoutProcess(reason)` took a reason string,
+  consumed it as a boolean and threw it away, and `playout.process.exit` reported only
+  `planned: true` — which conflated "a watchdog or a target switch killed it" with "ffmpeg reached
+  the end of the asset cleanly". Five of the eight stop paths (`switch`, `destination-missing`,
+  `scheduled-reconnect`, `crash-loop-reset`, `restart-requested`) emitted no event of their own, so
+  eight consecutive deliberate stops left no trace of their cause and the diagnosis above had to be
+  reconstructed from timestamps. The exit event now carries `plannedReason` and `ranForMs`
+- the playout loop no longer sleeps through a wake it was explicitly asked for.
+  `requestImmediatePlayoutCycle` read a callback handle that `waitForNextLoop` installs only while
+  the loop sleeps, so a wake requested from inside a running cycle found it null and was dropped.
+  Both in-cycle callers were affected: the boundary fallback bridge and the deferred-prefetch
+  follow-up, whose own comment promises the queue warms "immediately instead of waiting out the
+  loop delay". It never did. This is the 15 seconds of the ~18s fallback bridge measured at two of
+  three asset boundaries; the remaining ~3s is the follow-up cycle's own work. Wakes are now
+  latched and consumed before the loop sleeps, edge-triggered and burst-limited so the loop-stall
+  guard and the cycle-await budget are untouched
+- a stale prefetch is now structurally unable to redirect a boundary. `decideBoundaryPlaybackInput`
+  trusted that the caller had looked the probe up under the right key; it now takes the selected
+  asset id and the probe carries the asset it was resolved for, so a probe belonging to a different
+  asset is ignored. Declining a prefetch costs a few seconds of fallback, while honouring one that
+  belongs to a previously queued asset would put the wrong programme on air
+
+### Added
+
+- `playout.boundary.gap` reports, per boundary, how long viewers spent off programme content
+  (`gapMs`) and how many fallback processes covered it (`bridgeStarts`). The bridging duration was
+  previously only recoverable by hand-subtracting timestamps of two unrelated
+  `playout.process.start` events. Observation only — nothing it produces feeds a decision
+
 ## 1.5.32 - 2026-08-27
 
 ### Fixed

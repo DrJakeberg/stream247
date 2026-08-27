@@ -1901,6 +1901,64 @@ every single one described something that had finished long ago.
 - Deliberately left for later M56 parts: VOD cache family, watchdog thresholds, relay topology,
   reconnect tuning, and the unused redis service in compose.
 
+### 2026-08-27 — M59 Boundary Continuity: Source Wipe, Lost Wake, Silent Stops
+
+- Started from a viewer-visible symptom — ~18s of fallback slate at two of three asset boundaries —
+  and ended at a more serious one the measurement exposed: the running programme being cut every
+  60-90 seconds. Both are fixed; the cut had priority.
+- **Root cause of the cutting.** `syncTwitchVodSources` / `syncYoutubePlaylistSources` end with
+  `replaceAssetsForSourceIds(allSourceIds, collected)` (`apps/worker/src/index.ts`), a
+  delete-then-reinsert under one transaction. The per-source `catch` records an incident and
+  contributes zero assets but leaves the source id in the delete list, so a transient yt-dlp error
+  deletes that source's whole archive. Consequences chain exactly as observed on v1.5.31: the pool
+  empties, so `choosePlaybackCandidate` finds no `preferredAsset` and falls to `global_fallback`;
+  the on-air asset's row is gone, so neither stickiness guard (`runningScheduledAsset`,
+  `currentPoolAsset`) can re-select it; `isMatchingRunningSelection` compares asset ids and
+  mismatches, so the cycle cuts the running item via `stopPlayoutProcess("switch")`; the next
+  worker sync restores the rows and playout switches back. Eight starts in eight minutes, strictly
+  alternating fallback and programme.
+- New pure `apps/worker/src/source-sync-scope.ts` decides per source whether a wholesale replace is
+  safe. The rule is deliberately asymmetric in the direction that protects the broadcast: only
+  positive evidence that a source holds its content permits deletion. A throw keeps the rows; so
+  does an unexpectedly empty listing for a source that currently has assets, because that is far
+  more often a soft failure (rate limit, empty playlist response, auth blip) than a channel that
+  genuinely lost its archive. Held-back sources emit `source.sync.assets_preserved` rather than
+  skipping silently, and the decision is per source so one failure never blocks a healthy sibling.
+- **Root cause of the ~18s gap.** `requestImmediatePlayoutCycle` read a `wakePlayoutLoop` handle
+  that `waitForNextLoop` installs only while the loop sleeps; a wake requested from inside a cycle
+  found it null and returned. Both in-cycle callers were dead code in effect — the boundary
+  fallback bridge and the deferred-prefetch follow-up. That is 15s of the ~18s (the playout loop
+  delay); the remaining ~3s is the follow-up cycle's own work, including the inline resolve that
+  returns a local Twitch cache path quickly. New `apps/worker/src/loop-wake.ts` latches a wake with
+  no waiter armed and the loop consumes it before sleeping. Edge-triggered, and burst-limited to
+  three consecutive immediate cycles so a future unconditional caller degrades to normal polling
+  instead of spinning — `cycle-budget.ts`, `getCycleAwaitCeilingMs` and the loop-stall guard are
+  untouched.
+- **Diagnosability.** `stopPlayoutProcess(reason)` consumed its reason as a boolean and discarded
+  it, and five of eight stop paths (`switch`, `destination-missing`, `scheduled-reconnect`,
+  `crash-loop-reset`, `restart-requested`) logged nothing of their own, so `planned: true` covered
+  both a deliberate kill and a clean end-of-asset. `playout.process.exit` now carries
+  `plannedReason` and `ranForMs`.
+- **Prefetch safety.** `decideBoundaryPlaybackInput` relied on call-site discipline for key
+  correctness. It now takes the selected asset id and the probe carries its own `assetId`, so a
+  probe for a different asset is ignored — a queue change between prefetch and boundary (skip vote,
+  operator insert, schedule flip) cannot redirect playout to stale content. Tests pin the dangerous
+  direction explicitly: a stale probe must yield `resolve` with an empty input, never the stale one.
+- **Measurement.** New `apps/worker/src/playout-gap.ts` emits `playout.boundary.gap` with `gapMs`
+  and `bridgeStarts` per boundary, so the improvement is measurable on the device instead of
+  believed. Observation only; nothing it produces feeds a decision.
+- Hypotheses tested and rejected, kept here so they are not re-run: the chapter backfill writing
+  `chaptersJson` / probe-status columns cannot restart playout (`isMatchingRunningSelection`
+  compares asset ids only, and the affected rows had empty probe columns); `duration-bound`,
+  `feed-stalled` and `feed-audio-stalled` all log before stopping and none appeared; the
+  delete-then-reinsert runs inside `withSerializedStateWrite` (BEGIN/COMMIT plus an advisory lock),
+  so readers never observe the empty window — the wipe is persisted, not transient.
+- Deliberately left alone: the watchdog family, the fallback chain, the cycle-budget invariant, and
+  the four remaining silent stop paths' own events (the exit event now names them, which was the
+  diagnostic gap). Not attempted: pre-start detection of a dead remote source — a deleted VOD is
+  still only discovered when `resolveAssetPlaybackInput` throws at the boundary, which the fallback
+  chain already handles; `queueProbeCache` failures still do not feed selection eligibility.
+
 ### 2026-08-25 — M53 Chapters Per Video
 
 - Added the pure `packages/core/src/asset-chapters.ts` model: normalisation (sort, drop
