@@ -12,6 +12,7 @@ import {
   resolveProgramFeedTuning,
   resolveSystemVolumeWatermarkConfig,
   resolveSourceLayerRuntimeEnabled,
+  resolveSourceLiveEnabled,
   resolveTwitchScheduleSyncEnabled,
   resolveUplinkWatchdogMs,
   resolveVodCacheTuning
@@ -150,13 +151,15 @@ export default async function SettingsPage() {
               streamChatOverlayEnabled: state.managedConfig.streamChatOverlayEnabled,
               streamAlertsEnabled: state.managedConfig.streamAlertsEnabled,
               twitchScheduleSyncEnabled: state.managedConfig.twitchScheduleSyncEnabled,
-              sourceLayerEnabled: state.managedConfig.sourceLayerEnabled
+              sourceLayerEnabled: state.managedConfig.sourceLayerEnabled,
+              sourceLiveEnabled: state.managedConfig.sourceLiveEnabled
             }}
             fallback={{
               streamChatOverlayEnabled: resolveChatOverlayRuntimeEnabled(null, process.env),
               streamAlertsEnabled: resolveAlertsRuntimeEnabled(null, process.env),
               twitchScheduleSyncEnabled: resolveTwitchScheduleSyncEnabled(null, process.env),
-              sourceLayerEnabled: resolveSourceLayerRuntimeEnabled(null, process.env)
+              sourceLayerEnabled: resolveSourceLayerRuntimeEnabled(null, process.env),
+              sourceLiveEnabled: resolveSourceLiveEnabled(null, process.env)
             }}
           />
           <ReplayCacheForm

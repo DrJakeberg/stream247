@@ -323,6 +323,52 @@ export function resolveSourceLayerRuntimeEnabled(managed: ManagedRuntimeToggleIn
 }
 
 // ---------------------------------------------------------------------------
+// Source live attach (M57 stage 2)
+// ---------------------------------------------------------------------------
+
+export type ManagedSourceLiveInput =
+  | Partial<{ sourceLiveEnabled: string; sourceLiveGainPercent: string }>
+  | null
+  | undefined;
+
+/**
+ * Whether a pushed video source may become a LIVE input of the playout (sound and full motion),
+ * rather than the stage-1 snapshot panel. Defaults OFF, separately from the source layer gate:
+ * drawing a slow-refresh picture and attaching a third live input to the encode are different
+ * risks, and each needs its own explicit decision. Same only-"1"-enables env semantics as the
+ * other runtime gates.
+ */
+export function resolveSourceLiveEnabled(managed: ManagedSourceLiveInput, env: EnvLike): boolean {
+  return readManagedFlag(managed?.sourceLiveEnabled) ?? env.STREAM247_SOURCE_LIVE_ENABLED === "1";
+}
+
+export const DEFAULT_SOURCE_LIVE_GAIN_PERCENT = 40;
+export const SOURCE_LIVE_GAIN_LIMITS = { min: 0, max: 200 } as const;
+
+/**
+ * How loud a live-attached source starts, as percent of the programme's level. 0 is a real
+ * setting (attach muted) and 200 doubles a quiet feed; the default of 40 keeps an untamed
+ * camera under the programme instead of over it. Managed first, env fallback, clamped rather
+ * than rejected — an out-of-range number is an opinion about loudness, not a broken config.
+ */
+export function resolveSourceLiveGainPercent(managed: ManagedSourceLiveInput, env: EnvLike): number {
+  const clamp = (value: number) =>
+    Math.min(SOURCE_LIVE_GAIN_LIMITS.max, Math.max(SOURCE_LIVE_GAIN_LIMITS.min, Math.round(value)));
+
+  const managedValue = Number(text(managed?.sourceLiveGainPercent) || "x");
+  if (text(managed?.sourceLiveGainPercent) !== "" && Number.isFinite(managedValue)) {
+    return clamp(managedValue);
+  }
+
+  const envValue = Number(text(env.STREAM247_SOURCE_LIVE_GAIN_PERCENT) || "x");
+  if (Number.isFinite(envValue)) {
+    return clamp(envValue);
+  }
+
+  return DEFAULT_SOURCE_LIVE_GAIN_PERCENT;
+}
+
+// ---------------------------------------------------------------------------
 // Source snapshot cadence
 // ---------------------------------------------------------------------------
 

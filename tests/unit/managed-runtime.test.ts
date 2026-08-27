@@ -16,6 +16,8 @@ import {
   resolveSystemVolumeRecoverPercent,
   resolveSystemVolumeTriggerPercent,
   resolveSystemVolumeWatermarkConfig,
+  resolveSourceLiveEnabled,
+  resolveSourceLiveGainPercent,
   resolveTwitchEventSubSecret,
   resolveTwitchScheduleSyncEnabled
 } from "../../packages/core/src/index.js";
@@ -255,5 +257,35 @@ describe("asset retention resolution", () => {
     expect(isValidAssetRetentionDays(2.5)).toBe(false);
     expect(isValidAssetRetentionDays(366)).toBe(false);
     expect(isValidAssetRetentionDays(Number.NaN)).toBe(false);
+  });
+});
+
+// M57 stage 2: whether the playout may treat a pushed source as a live input at all, and how
+// loud that input starts. Stage B only computes and logs the decision, but the gates are built
+// (and pinned) now so stage C changes behaviour without changing configuration.
+describe("source live resolution", () => {
+  it('defaults off and keeps the only-"1"-enables env semantics', () => {
+    expect(resolveSourceLiveEnabled(null, {})).toBe(false);
+    expect(resolveSourceLiveEnabled({}, { STREAM247_SOURCE_LIVE_ENABLED: "true" })).toBe(false);
+    expect(resolveSourceLiveEnabled({ sourceLiveEnabled: "" }, { STREAM247_SOURCE_LIVE_ENABLED: "1" })).toBe(true);
+  });
+
+  it("lets the managed switch override the env in both directions", () => {
+    expect(resolveSourceLiveEnabled({ sourceLiveEnabled: "1" }, {})).toBe(true);
+    expect(resolveSourceLiveEnabled({ sourceLiveEnabled: "0" }, { STREAM247_SOURCE_LIVE_ENABLED: "1" })).toBe(false);
+  });
+
+  it("clamps the gain into 0..200 with the managed value first and 40 as the default", () => {
+    expect(resolveSourceLiveGainPercent(null, {})).toBe(40);
+    expect(resolveSourceLiveGainPercent({ sourceLiveGainPercent: "80" }, { STREAM247_SOURCE_LIVE_GAIN_PERCENT: "10" })).toBe(80);
+    expect(resolveSourceLiveGainPercent({ sourceLiveGainPercent: "" }, { STREAM247_SOURCE_LIVE_GAIN_PERCENT: "10" })).toBe(10);
+    // Zero is a real setting (attach muted), not an unset value.
+    expect(resolveSourceLiveGainPercent({ sourceLiveGainPercent: "0" }, { STREAM247_SOURCE_LIVE_GAIN_PERCENT: "90" })).toBe(0);
+    expect(resolveSourceLiveGainPercent({ sourceLiveGainPercent: "1000" }, {})).toBe(200);
+    expect(resolveSourceLiveGainPercent({ sourceLiveGainPercent: "-5" }, {})).toBe(0);
+    expect(resolveSourceLiveGainPercent({ sourceLiveGainPercent: "97.6" }, {})).toBe(98);
+    // Garbage degrades to the next fallback, never to NaN.
+    expect(resolveSourceLiveGainPercent({ sourceLiveGainPercent: "loud" }, { STREAM247_SOURCE_LIVE_GAIN_PERCENT: "30" })).toBe(30);
+    expect(resolveSourceLiveGainPercent({ sourceLiveGainPercent: "loud" }, { STREAM247_SOURCE_LIVE_GAIN_PERCENT: "quiet" })).toBe(40);
   });
 });

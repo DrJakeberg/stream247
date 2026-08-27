@@ -6,6 +6,7 @@ export * from "./chat-game-minesweeper.js";
 export * from "./chat-interaction.js";
 export * from "./managed-runtime.js";
 export * from "./overlay-layout.js";
+export * from "./relay-ingest.js";
 
 import {
   resolveAlertsRuntimeEnabled,

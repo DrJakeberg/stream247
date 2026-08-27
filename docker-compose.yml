@@ -97,8 +97,19 @@ services:
     image: ${STREAM247_RELAY_IMAGE:-bluenviron/mediamtx:1.15.4}
     restart: unless-stopped
     logging: *default-logging
+    # M57 stage 2: the relay stops running on image defaults. The mounted config turns on HTTP
+    # auth against the web app, keeps the control API and RTSP read side container-internal, and
+    # the ONLY host ports are the two ingest doors for pushed camera feeds. The API port (9997)
+    # must never be published to the host — it can inject and kick streams.
+    volumes:
+      - ./docker/mediamtx.yml:/mediamtx.yml:ro
     expose:
       - "1935"
+      - "8554"
+      - "9997"
+    ports:
+      - "1935:1935"
+      - "8890:8890/udp"
   playout:
     image: ${STREAM247_PLAYOUT_IMAGE:-ghcr.io/drjakeberg/stream247-playout:v1.5.20}
     restart: unless-stopped

@@ -15,9 +15,15 @@ import {
   readAppState,
   updateAppState,
   updatePlayoutRuntime,
+  deleteOverlayVideoSourceRecord,
+  listOverlayVideoSourceRecords,
   readChatOverlayMessagesRecord,
   readChatSkipVoteRecord,
   readManagedDestinationStreamKeys,
+  readOverlayVideoSourceIngestCredentials,
+  readOverlayVideoSourceUrls,
+  readRelayInternalKey,
+  upsertOverlayVideoSourceRecord,
   readOverlayStudioState,
   resetDatabaseConnectionsForTests,
   resetOverlayDraftRecord,
@@ -80,6 +86,8 @@ const engagementLayerMigrationId = "20260420_002_engagement_layer";
 const chatInteractionMigrationId = "20260818_001_chat_interaction";
 const chatSkipVoteMigrationId = "20260825_004_chat_skip_vote";
 const chatOverlayMessagesMigrationId = "20260825_005_chat_overlay_messages";
+const overlayVideoSourcePushIngestMigrationId = "20260826_002_overlay_video_source_push_ingest";
+const managedSecretsMigrationId = "20260826_003_managed_secrets";
 const engagementAlertTypesMigrationId = "20260421_001_engagement_alert_types";
 const engagementSettingsColumns = [
   "singleton_id",
@@ -1440,6 +1448,75 @@ describe.sequential("database roundtrip", () => {
     const cleared = await readChatOverlayMessagesRecord();
     expect(cleared.enabled).toBe(false);
     expect(cleared.messages).toEqual([]);
+  }, 60_000);
+
+  it("adds push ingest to an existing database and derives the internal read URL", async () => {
+    // M57 stage 2, Etappe A. The same upgrade story as every additive migration: strip the new
+    // columns and the managed-secrets table plus their migration rows, boot again, and both must
+    // come back through migrations 20260826_002/_003 (the base-schema block only ever builds
+    // databases from nothing).
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      ALTER TABLE overlay_video_sources DROP COLUMN IF EXISTS ingest_kind;
+      ALTER TABLE overlay_video_sources DROP COLUMN IF EXISTS encrypted_publish_key;
+      DROP TABLE IF EXISTS managed_secrets;
+      DELETE FROM schema_migrations WHERE id = '${overlayVideoSourcePushIngestMigrationId}';
+      DELETE FROM schema_migrations WHERE id = '${managedSecretsMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const migrationsApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id IN ('${overlayVideoSourcePushIngestMigrationId}', '${managedSecretsMigrationId}');`
+    );
+    expect(migrationsApplied).toBe("2");
+
+    // A push source stores a publish key but never a playback URL; a pull source stays exactly
+    // what it was before stage 2.
+    await upsertOverlayVideoSourceRecord(
+      { id: "push-cam", name: "Push camera" },
+      { ingestKind: "push", managedPublishKey: "publish-key-roundtrip" }
+    );
+    await upsertOverlayVideoSourceRecord(
+      { id: "pull-cam", name: "Pull camera" },
+      { managedUrl: "rtsp://user:secret@camera.example/stream" }
+    );
+
+    const listed = await listOverlayVideoSourceRecords();
+    const pushCam = listed.find((entry) => entry.id === "push-cam");
+    const pullCam = listed.find((entry) => entry.id === "pull-cam");
+    expect(pushCam).toMatchObject({ ingestKind: "push", publishKeyPresent: true, urlPresent: false });
+    expect(pullCam).toMatchObject({ ingestKind: "pull", publishKeyPresent: false, urlPresent: true });
+
+    // The internal relay key self-generates on first use and every later read adopts the stored
+    // value — including a fresh process, simulated by resetting the in-process caches.
+    const relayKey = await readRelayInternalKey();
+    expect(relayKey.length).toBeGreaterThanOrEqual(32);
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+    expect(await readRelayInternalKey()).toBe(relayKey);
+
+    // The push source's playback URL is derived from that key, never stored; the pull source
+    // still decrypts to what was written.
+    const urls = await readOverlayVideoSourceUrls();
+    expect(urls["push-cam"]).toBe(`rtsp://reader:${relayKey}@relay:8554/src-push-cam`);
+    expect(urls["pull-cam"]).toBe("rtsp://user:secret@camera.example/stream");
+    const storedUrl = await executeSql("SELECT encrypted_url FROM overlay_video_sources WHERE id = 'push-cam';");
+    expect(storedUrl).toBe("");
+
+    // The auth endpoint's reader sees the decrypted publish key; a pull source carries none.
+    const credentials = await readOverlayVideoSourceIngestCredentials();
+    expect(credentials.find((entry) => entry.id === "push-cam")?.publishKey).toBe("publish-key-roundtrip");
+    expect(credentials.find((entry) => entry.id === "pull-cam")?.publishKey).toBe("");
+
+    // Keep-on-empty custody: a rename without key options must not drop the stored key.
+    await upsertOverlayVideoSourceRecord({ id: "push-cam", name: "Push camera renamed" });
+    const renamed = (await listOverlayVideoSourceRecords()).find((entry) => entry.id === "push-cam");
+    expect(renamed).toMatchObject({ name: "Push camera renamed", ingestKind: "push", publishKeyPresent: true });
+
+    await deleteOverlayVideoSourceRecord("push-cam");
+    await deleteOverlayVideoSourceRecord("pull-cam");
   }, 60_000);
 
   describe("schedule writes validated under the lock", () => {

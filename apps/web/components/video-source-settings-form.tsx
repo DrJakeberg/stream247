@@ -3,20 +3,31 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
-type VideoSourceListEntry = { id: string; name: string; urlPresent: boolean; updatedAt: string };
+type VideoSourceListEntry = {
+  id: string;
+  name: string;
+  urlPresent: boolean;
+  ingestKind: "pull" | "push";
+  publishKeyPresent: boolean;
+  updatedAt: string;
+};
 
 /**
  * Stored external video sources for the scene's source layer (M57).
  *
  * The feed address is write-only on purpose: it goes in encrypted, the list only ever shows that
  * an address is stored, and leaving the field empty on a later save keeps whatever is stored —
- * the same keep-on-empty custody every other stored secret follows.
+ * the same keep-on-empty custody every other stored secret follows. A pushed source works the
+ * other way around — the camera sends to this server — and its publish key appears exactly once,
+ * in the response that issued it; afterwards the list only says that one exists.
  */
 export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEntry[] }) {
   const [sources, setSources] = useState(props.videoSources);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [ingestKind, setIngestKind] = useState<"pull" | "push">("pull");
   const [editingId, setEditingId] = useState("");
+  const [issuedKey, setIssuedKey] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -25,13 +36,18 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
   const submit = (body: Record<string, unknown>, method: "PUT" | "DELETE") => {
     setError("");
     setMessage("");
+    setIssuedKey("");
     startTransition(async () => {
       const response = await fetch("/api/overlay/video-sources", {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       });
-      const payload = (await response.json()) as { message?: string; videoSources?: VideoSourceListEntry[] };
+      const payload = (await response.json()) as {
+        message?: string;
+        videoSources?: VideoSourceListEntry[];
+        publishKey?: string;
+      };
       if (!response.ok) {
         setError(payload.message ?? "Could not save the video source.");
         return;
@@ -39,9 +55,14 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
       if (payload.videoSources) {
         setSources(payload.videoSources);
       }
+      if (payload.publishKey) {
+        // Held only in this component's state, until the next action replaces it.
+        setIssuedKey(payload.publishKey);
+      }
       setMessage(payload.message ?? "Saved.");
       setName("");
       setUrl("");
+      setIngestKind("pull");
       setEditingId("");
       router.refresh();
     });
@@ -65,20 +86,44 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
               <input onChange={(event) => setName(event.target.value)} placeholder="e.g. Studio camera" value={name} />
             </label>
             <label>
-              <span className="label">Feed address</span>
-              <input
-                autoComplete="off"
-                onChange={(event) => setUrl(event.target.value)}
-                placeholder={editingId ? "Leave empty to keep the stored address" : "e.g. a camera stream URL"}
-                value={url}
-              />
+              <span className="label">How the picture arrives</span>
+              <select
+                onChange={(event) => setIngestKind(event.target.value === "push" ? "push" : "pull")}
+                value={ingestKind}
+              >
+                <option value="pull">This server fetches a stream address</option>
+                <option value="push">The camera sends to this server</option>
+              </select>
             </label>
+            {ingestKind === "pull" ? (
+              <label>
+                <span className="label">Feed address</span>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setUrl(event.target.value)}
+                  placeholder={editingId ? "Leave empty to keep the stored address" : "e.g. a camera stream URL"}
+                  value={url}
+                />
+              </label>
+            ) : (
+              <p className="subtle">
+                Saving creates a publish key for the camera. It is shown once, right here — copy it
+                then, because afterwards this page only remembers that one exists.
+              </p>
+            )}
           </div>
           <div className="inline-form">
             <button
               className="button secondary"
               disabled={isPending || name.trim() === ""}
-              onClick={() => submit({ id: editingId || undefined, name, url }, "PUT")}
+              onClick={() =>
+                submit(
+                  ingestKind === "push"
+                    ? { id: editingId || undefined, name, ingestKind }
+                    : { id: editingId || undefined, name, ingestKind, url },
+                  "PUT"
+                )
+              }
               type="button"
             >
               {isPending ? "Saving..." : editingId ? "Save video source" : "Add video source"}
@@ -102,13 +147,24 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
       </details>
       {error ? <p className="danger">{error}</p> : null}
       {message ? <p className="subtle">{message}</p> : null}
+      {issuedKey ? (
+        <p>
+          Publish key: <code>{issuedKey}</code>
+        </p>
+      ) : null}
       <div className="list">
         {sources.length > 0 ? (
           sources.map((source) => (
             <div className="item" key={source.id}>
               <strong>{source.name}</strong>
               <div className="subtle">
-                {source.urlPresent ? "Feed address stored." : "No feed address stored yet."}
+                {source.ingestKind === "push"
+                  ? source.publishKeyPresent
+                    ? "The camera sends to this server. A publish key is stored."
+                    : "The camera sends to this server. No publish key yet."
+                  : source.urlPresent
+                    ? "Feed address stored."
+                    : "No feed address stored yet."}
                 {source.updatedAt ? ` Updated ${source.updatedAt}.` : ""}
               </div>
               <div className="inline-form" style={{ marginTop: 8 }}>
@@ -119,6 +175,7 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
                     setEditingId(source.id);
                     setName(source.name);
                     setUrl("");
+                    setIngestKind(source.ingestKind);
                   }}
                   type="button"
                 >
@@ -140,6 +197,21 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
                     type="button"
                   >
                     Forget stored address
+                  </button>
+                ) : null}
+                {source.ingestKind === "push" ? (
+                  <button
+                    className="button secondary"
+                    disabled={isPending}
+                    onClick={() =>
+                      submit(
+                        { id: source.id, name: source.name, ingestKind: "push", rotatePublishKey: true },
+                        "PUT"
+                      )
+                    }
+                    type="button"
+                  >
+                    New publish key
                   </button>
                 ) : null}
               </div>

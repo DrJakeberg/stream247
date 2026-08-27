@@ -1318,7 +1318,7 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | M54 | Feature | Next | Done | Chat game framework with Snake as the first game (emote-per-direction, moves only on input); Minesweeper (chat digs by coordinates like "b3") and 2048 (snake's emote map on a fixed 4x4 board) follow on the same framework |
 | M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
 | M56 | UX | Now | In progress | Every operational decision configurable in the GUI, `.env` demoted to fallback. Part 1 done: encoder quality, disk watermark, engagement/schedule-sync feature switches, EventSub secret. Part 2 done: replay (VOD) cache family, watchdog/stall thresholds, reconnect + program-feed tuning — clamped resolvers in core, three folded admin groups with partial routes; SMTP/alert family confirmed already GUI-complete. Deliberately env-only: cache root, relay topology, loop stall guard. Open: the unused redis service in compose |
-| M57 | Feature | Now | In progress | Embedded video sources as scene layers. Stage 1 done: source layer kind (placement + reference), encrypted feed store, snapshot sampler at managed cadence rendering through the native overlay — plus logo/image/text layers on air. Stage 2 open: multiple simultaneous source frames, per-layer cadence, and any move beyond snapshot cadence |
+| M57 | Feature | Now | In progress | Embedded video sources as scene layers. Stage 1 done: source layer kind (placement + reference), encrypted feed store, snapshot sampler at managed cadence rendering through the native overlay — plus logo/image/text layers on air. Stage 2 in progress: ingest foundation and attach decision done (push ingest via relay with HTTP auth, publish keys, derived internal read URLs, presence poll + logged attach decision); open: the actual ffmpeg attach path, audio gain wiring, and operator surfaces beyond the switch |
 
 ## M51 Broadcast Channel Split
 
@@ -1481,8 +1481,13 @@ change, no additional ffmpeg input in stage 1.
 - Runtime gate `sourceLayerEnabled` defaults off; capture cadence is managed with env fallback
   (default 5s); the sampler runs on the renderer loop, detached, timeout pinned under the cycle
   stall budget; its directory is the cheapest disk-watermark stage
-- Stage 2 (open): several simultaneous source frames per scene, per-layer cadence, and — if the
-  cadence ceiling ever matters — revisiting the two-input decision with the relay in the loop
+- Stage 2 (in progress): the relay joins the loop. Etappen A+B are done — push ingest (RTMP +
+  SRT host ports, both owner-approved), relay HTTP auth against the web app, per-source publish
+  keys, the self-generating internal relay key, derived (never stored) internal read URLs, and
+  the per-cycle attach decision with presence poll and circuit breaker, logged but never acted
+  on. Etappen C-E stay open: the actual ffmpeg attach/detach path (which also arms the breaker),
+  the audio gain wiring (the resolver exists), and whatever operator surface the attach needs
+  beyond the feature switch
 
 ## Rollback Notes
 
@@ -1505,6 +1510,46 @@ change, no additional ffmpeg input in stage 1.
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-08-27 — M57 Stage 2, Etappen A+B: Push Ingest Foundation And The Attach Decision
+
+- Schema additive on `overlay_video_sources`: `ingest_kind` (default `'pull'`, so every existing
+  row keeps its meaning) and `encrypted_publish_key` — base block plus migration
+  `20260826_002_overlay_video_source_push_ingest`; new `managed_secrets` table
+  (`20260826_003_managed_secrets`) for the self-generating internal relay key (app-secret
+  first-boot semantics with `ON CONFLICT DO NOTHING` as the exclusive-create flag, value
+  encrypted like every stored credential). Numbers verified free: 2026-08-26 held only `_001`.
+- The internal read URL of a push source is derived, never stored:
+  `rtsp://reader:<internal-key>@relay:8554/src-<id>` out of `readOverlayVideoSourceUrls`, so the
+  stage-1 snapshot sampler covers pushed cameras for free. Pinned in the db roundtrip.
+- Relay auth as a pure core function (`evaluateRelayAuth`): publish on `src-<id>` only with that
+  push source's key, read anywhere and publish on `live/program` only with the internal key,
+  everything else 403 — with exactly one constant-time comparison per decision (hand-built,
+  because `node:crypto` must not enter the client-shared core barrel; the constant-read property
+  is pinned structurally via instrumented inputs). The web endpoint `/api/relay/auth` carries no
+  session (mediamtx calls it server-side), answers every refusal with the same bare 403,
+  rate-limits per reported address and audits rejected publishes only.
+- `docker/mediamtx.yml` (mounted, validated against mediamtx 1.15.4): authMethod http toward the
+  web app with the default api/metrics/pprof exclusions, RTSP read side and control API
+  container-internal, host ports only RTMP 1935/tcp + SRT 8890/udp (owner: both).
+- Studio source manager: arrival choice (fetched address vs pushed), publish key issued
+  server-side and shown exactly once, rotation button, kind switches retire the other kind's
+  secret. All inside the existing fold — studio-scene budget 56/1 untouched.
+- Etappe B: `relay-presence.ts` with the I/O-free `decideSourceLiveAttach` (every uncertain
+  input decides skip), the three-minute in-memory attach breaker (trigger arrives with C, state
+  machine tested now) and the 2s-bounded presence fetch against `relay:9997`; the playout cycle
+  logs `playout.source-live.attach_decision` on change and acts on nothing. New resolvers
+  `resolveSourceLiveEnabled` (default off) and `resolveSourceLiveGainPercent` (clamp 0..200,
+  default 40, zero means attach muted); the switch joins the feature-switches fold
+  (admin-settings budget 31/1 untouched), the gain waits for its stage.
+- Rollback note: with relay auth active the rtmp relay rollback URLs need the internal key
+  embedded; documented in deployment/operations docs as unavailable-until-surfaced rather than
+  a reason to weaken the auth config.
+- Deliberately left for C-E: any ffmpeg change (attach/detach, the third input, gain filter),
+  arming the breaker, revealing the internal key to operators, and any per-layer cadence work.
+- Affected baselines: none expected to move — every new control and sentence sits inside a
+  closed fold (closed `<details>` content is excluded from the control count and the wording
+  text alike); re-record only if a run proves otherwise.
 
 ### 2026-08-26 — M56 Part 2: Replay Cache, Watchdogs And Feed Tuning Into The GUI
 

@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Added
+
+- pushed video sources (M57 stage 2, ingest foundation): a stored video source can now receive
+  its picture instead of naming an address. The relay runs a mounted config with HTTP auth
+  against the web app — publishing `src-<id>` needs that source's publish key (issued once in
+  the studio's video source manager, rotatable, stored encrypted, migration `20260826_002`),
+  internal reads and the legacy programme path need a self-generating internal relay key (new
+  `managed_secrets` table, migration `20260826_003`). Ingest host ports are RTMP `1935/tcp` and
+  SRT `8890/udp`; the relay API and RTSP read side stay container-internal. The auth endpoint
+  answers every refusal with the same bare 403, rate-limits per address, audits rejected
+  publishes, and the policy itself is a pure, constant-time-compared function. A pushed source's
+  internal playback URL is derived on read — never stored — so the stage-1 snapshot sampler
+  shows pushed cameras with no further configuration
+- the live-attach groundwork for pushed sources (decision only): each playout cycle computes
+  whether it would attach the scene's pushed source as a live input and logs
+  `playout.source-live.attach_decision` (decision + reason, on change) without acting. Presence
+  is asked from the relay API with a 2s bound only when the new managed gate (default off, env
+  fallback) and the source layer gate are both on and the scene carries a source layer; every
+  uncertain answer decides "skip". The three-minute attach circuit breaker exists and is pinned
+  by tests; its trigger arrives with the attach stage, as does the starting-gain setting
+  (clamped 0–200, default 40) that already resolves through managed config
+
+### Changed
+
+- the rtmp relay rollback paths now require the internal relay key embedded in the relay URL
+  overrides; until an operator surface reveals that key, treat the rtmp rollback as unavailable
+  rather than weakening the relay auth config (see docs/deployment.md)
+
+### Security
+
+- hardened `/api/relay/auth`, which is internet-facing (the `web` port is published and Traefik
+  routes the host), against two abuse paths found in review. Its rate limit now keys on the real
+  transport peer (`X-Forwarded-For` from our Traefik) instead of the attacker-controlled `ip`
+  field in the request body, so the limit can neither be evaded by rotating that value nor turned
+  against a legitimate publisher by spoofing its address. Rejected-publish audit writes are now
+  throttled — at most one line per source per minute and a hard global ceiling per minute — so a
+  flood of bad publishes can no longer erase the security audit trail (each write runs an
+  INSERT+DELETE against the 100-row cap) or starve legitimate state writes by holding the
+  serialized write lock. A non-object JSON body (literal `null`, a string, an array) now returns
+  the same bare 403 as every other refusal instead of a distinguishable 500.
+
 ## 1.5.29 - 2026-08-26
 
 ### Added
