@@ -1,5 +1,6 @@
 "use client";
 
+import { describeSourceLiveState } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -9,6 +10,10 @@ type VideoSourceListEntry = {
   urlPresent: boolean;
   ingestKind: "pull" | "push";
   publishKeyPresent: boolean;
+  /** The worker's last attach decision, as its own decision word; "" until one was ever made. */
+  liveState: string;
+  liveStateAt: string;
+  liveRetryAt: string;
   updatedAt: string;
 };
 
@@ -32,6 +37,19 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+
+  // What playback last decided about each pushed source, as a sentence. Projected here rather than
+  // on the server so the countdown inside a cooldown state runs against the reader's own clock
+  // instead of against whenever the page happened to be rendered. A fetched source is never a live
+  // input, so it gets no line at all — one would describe a decision nobody makes about it.
+  const liveStateBySource = new Map(
+    sources.map((source) => [
+      source.id,
+      source.ingestKind === "push"
+        ? describeSourceLiveState({ state: source.liveState, retryAt: source.liveRetryAt })
+        : ""
+    ])
+  );
 
   const submit = (body: Record<string, unknown>, method: "PUT" | "DELETE") => {
     setError("");
@@ -167,6 +185,12 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
                     : "No feed address stored yet."}
                 {source.updatedAt ? ` Updated ${source.updatedAt}.` : ""}
               </div>
+              {/* The last thing playback decided about this source, in words (M57 stage 2, Etappe
+                  E). Empty until playback has decided once — an invented "not live" would be a
+                  claim rather than an observation. */}
+              {liveStateBySource.get(source.id) ? (
+                <div className="subtle">{liveStateBySource.get(source.id)}</div>
+              ) : null}
               <div className="inline-form" style={{ marginTop: 8 }}>
                 <button
                   className="button secondary"

@@ -117,3 +117,13 @@ export const TWO_FACTOR_RATE_LIMIT: RateLimitRule = { limit: 8, windowMs: 15 * 6
 // publisher reconnecting in a loop (the relay asks once per connection, not per frame), far too
 // tight for guessing a generated key — and it bounds the audit noise a scanner can produce.
 export const RELAY_AUTH_RATE_LIMIT: RateLimitRule = { limit: 60, windowMs: 60_000 };
+// Keyed on the signed-in account, not the peer: the endpoint is already behind an owner/admin role
+// check, so what is left to bound is a stolen or careless session harvesting the key in a loop. Ten
+// reveals per quarter hour is far more than the twice an operator needs during an incident, and far
+// too few to be worth automating.
+//
+// It does NOT make the audit trail durable, and the comment used to claim otherwise: appendAuditEvent
+// keeps only the newest 100 entries and roughly thirty other routes write into the same ring
+// unthrottled, so an actor can still push their own reveal out of it with ordinary settings traffic.
+// A privileged actor with a second account also gets a second bucket. Both are known and accepted.
+export const RELAY_ACCESS_REVEAL_RATE_LIMIT: RateLimitRule = { limit: 10, windowMs: 15 * 60_000 };

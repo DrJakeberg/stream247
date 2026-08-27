@@ -351,6 +351,17 @@ export const SOURCE_LIVE_GAIN_LIMITS = { min: 0, max: 200 } as const;
  * camera under the programme instead of over it. Managed first, env fallback, clamped rather
  * than rejected — an out-of-range number is an opinion about loudness, not a broken config.
  */
+/**
+ * What a settings form may accept. The resolver clamps, deliberately — a stored opinion about
+ * loudness must never break playout — but a typed 500 is a mistake worth showing the operator
+ * rather than silently turning into 200.
+ */
+export function isValidSourceLiveGainPercent(value: number): boolean {
+  return (
+    Number.isInteger(value) && value >= SOURCE_LIVE_GAIN_LIMITS.min && value <= SOURCE_LIVE_GAIN_LIMITS.max
+  );
+}
+
 export function resolveSourceLiveGainPercent(managed: ManagedSourceLiveInput, env: EnvLike): number {
   const clamp = (value: number) =>
     Math.min(SOURCE_LIVE_GAIN_LIMITS.max, Math.max(SOURCE_LIVE_GAIN_LIMITS.min, Math.round(value)));

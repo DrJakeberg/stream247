@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Added
+
+- the operator surfaces the live-source work had been missing (M57 stage 2, Etappe E). Most
+  importantly the emergency rollback path is usable again: since the relay started checking
+  credentials, publishing the programme through it (`STREAM247_RELAY_ENABLED=1`) and reading it
+  back on the uplink's rtmp input (`STREAM247_UPLINK_INPUT_MODE=rtmp`) only work with the internal
+  relay key embedded in the configured URLs, and nothing could produce that string — the runbooks
+  said to treat the rollback as unavailable. Settings → Operations → **Relay access** now hands an
+  owner or admin both ready-to-paste lines: the group is rendered only for those roles and the route
+  enforces them again, POST rather than a page render so the key never reaches the server-rendered
+  HTML, one `relay.internal_key.revealed` audit line per reveal naming the actor and never the
+  value, rate limited per account, fail-closed when the session can no longer be named, and every
+  failure answers identically without the key or the underlying error. The reveal is strictly a
+  READ: it uses a new non-generating reader, so clicking it can neither mint a key on an install
+  that has none nor overwrite one that the current app secret cannot decrypt — either would have
+  invalidated the key every running container still holds, during the incident the button exists
+  for. The rate limit bounds repeated harvesting; it does not make the audit line durable, since the
+  audit ring keeps only the newest 100 entries across all routes
+- **Sound from live video sources** in the same panel: the live source gain (0-200, default 40)
+  had been a managed value with no field since Etappe D. Whole percents only, refused rather than
+  silently clamped, and carrying the honest caveat that a live source's sound is mixed only into
+  items whose length is known in advance — on anything else the camera is embedded as picture only,
+  so the feed-audio watchdog stays the safety net
+- the studio's video source manager now says in words what playback last did with each pushed
+  source — live in the programme, waiting for the camera, paused after a failed attempt with the
+  cooldown counted down, or still picture only with the reason. "Live" is reported only from the
+  fact that a live input really went into the running command, never from the decision to attach
+  one: an intent that never landed (no resolvable address, or a start that took no input) reads as
+  picture-only, and a live bridge or standby slate clears the state instead of leaving a stale
+  "live" standing. Persisted through migration `20260826_004_overlay_video_source_live_state`
+  (three additive columns, empty on existing rows), written only when the state changes, and kept
+  off the broadcast path entirely — the write is detached and order-chained, so an observation can
+  never slow down or block a camera going on air
+
 ## 1.5.30 - 2026-08-27
 
 ### Added

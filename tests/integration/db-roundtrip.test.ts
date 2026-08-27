@@ -23,6 +23,7 @@ import {
   readOverlayVideoSourceIngestCredentials,
   readOverlayVideoSourceUrls,
   readRelayInternalKey,
+  readRelayInternalKeyIfPresent,
   upsertOverlayVideoSourceRecord,
   readOverlayStudioState,
   resetDatabaseConnectionsForTests,
@@ -88,6 +89,9 @@ const chatSkipVoteMigrationId = "20260825_004_chat_skip_vote";
 const chatOverlayMessagesMigrationId = "20260825_005_chat_overlay_messages";
 const overlayVideoSourcePushIngestMigrationId = "20260826_002_overlay_video_source_push_ingest";
 const managedSecretsMigrationId = "20260826_003_managed_secrets";
+// The row id the internal relay key lives under, mirrored from packages/db so the non-write proofs
+// below can look at the stored ciphertext directly rather than through any reader.
+const RELAY_INTERNAL_KEY_SECRET_ID = "relay-internal-key";
 const engagementAlertTypesMigrationId = "20260421_001_engagement_alert_types";
 const engagementSettingsColumns = [
   "singleton_id",
@@ -1489,6 +1493,13 @@ describe.sequential("database roundtrip", () => {
     expect(pushCam).toMatchObject({ ingestKind: "push", publishKeyPresent: true, urlPresent: false });
     expect(pullCam).toMatchObject({ ingestKind: "pull", publishKeyPresent: false, urlPresent: true });
 
+    // The reveal surface's reader must never CREATE the key (M57 stage 2, Etappe E). On an install
+    // that has none yet it answers "" and leaves the table exactly as empty as it found it — a
+    // reveal that minted a key would hand out a value no running worker holds.
+    expect(await executeSql(`SELECT COUNT(*) FROM managed_secrets WHERE id = '${RELAY_INTERNAL_KEY_SECRET_ID}';`)).toBe("0");
+    expect(await readRelayInternalKeyIfPresent()).toBe("");
+    expect(await executeSql(`SELECT COUNT(*) FROM managed_secrets WHERE id = '${RELAY_INTERNAL_KEY_SECRET_ID}';`)).toBe("0");
+
     // The internal relay key self-generates on first use and every later read adopts the stored
     // value — including a fresh process, simulated by resetting the in-process caches.
     const relayKey = await readRelayInternalKey();
@@ -1517,6 +1528,32 @@ describe.sequential("database roundtrip", () => {
 
     await deleteOverlayVideoSourceRecord("push-cam");
     await deleteOverlayVideoSourceRecord("pull-cam");
+
+    // And it must never REPLACE the key either. A row this APP_SECRET can no longer decrypt is the
+    // rotation case the generating reader recovers from by overwriting; the reveal surface's reader
+    // answers "" and leaves the ciphertext byte-for-byte where it was, so a click during an
+    // incident cannot invalidate the key every running container still holds.
+    const storedCiphertext = await executeSql(
+      `SELECT encrypted_value FROM managed_secrets WHERE id = '${RELAY_INTERNAL_KEY_SECRET_ID}';`
+    );
+    await executeSql(
+      `UPDATE managed_secrets SET encrypted_value = 'not-decryptable-by-this-app-secret' WHERE id = '${RELAY_INTERNAL_KEY_SECRET_ID}';`
+    );
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    expect(await readRelayInternalKeyIfPresent()).toBe("");
+    expect(
+      await executeSql(`SELECT encrypted_value FROM managed_secrets WHERE id = '${RELAY_INTERNAL_KEY_SECRET_ID}';`)
+    ).toBe("not-decryptable-by-this-app-secret");
+
+    // Restore, so nothing after this block inherits a poisoned key.
+    await executeSql(
+      `UPDATE managed_secrets SET encrypted_value = '${storedCiphertext}' WHERE id = '${RELAY_INTERNAL_KEY_SECRET_ID}';`
+    );
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+    expect(await readRelayInternalKeyIfPresent()).toBe(relayKey);
   }, 60_000);
 
   describe("schedule writes validated under the lock", () => {
