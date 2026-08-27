@@ -22,6 +22,7 @@ import {
   normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
   normalizeCuepointOffsetsSeconds,
+  describeSourceHealth,
   selectActiveDestinationGroup,
   isLikelyTwitchChannelUrl,
   isLikelyTwitchVodUrl,
@@ -476,16 +477,33 @@ export function getSourceHealthSnapshot(state: AppState, sourceId: string) {
   const assets = state.assets.filter((asset) => asset.sourceId === sourceId);
   const readyAssets = assets.filter((asset) => asset.status === "ready");
   const openIncidents = getSourceIncidents(state, sourceId).filter((incident) => incident.status === "open");
-  const latestRun = getSourceSyncRuns(state, sourceId, 1)[0] ?? null;
+  // Enough history to describe a drought rather than only its newest minute. `latestRun` stays for
+  // the callers that only want the last error line.
+  const runs = getSourceSyncRuns(state, sourceId, 12);
   const references = getSourceReferences(state, sourceId);
+  // Read here, not in the component: a render must stay pure, and every age in one panel should
+  // share a single "now". Same rule as getOpenIncidentPanel above.
+  const nowMs = Date.now();
 
   return {
     source,
     assetCount: assets.length,
     readyAssetCount: readyAssets.length,
     openIncidentCount: openIncidents.length,
-    latestRun,
-    references
+    latestRun: runs[0] ?? null,
+    references,
+    /**
+     * The sentences the sources page had no way to say on 2026-08-27: when this was last checked,
+     * what it found, how long it has been finding nothing, and which scheduled blocks that reaches.
+     */
+    health: describeSourceHealth({
+      lastSyncedAt: source?.lastSyncedAt ?? "",
+      runs,
+      storedAssetCount: assets.length,
+      poolNames: references.pools.map((pool) => pool.name),
+      blockNames: [...new Set(references.scheduleBlocks.map((block) => block.title))],
+      nowMs
+    })
   };
 }
 

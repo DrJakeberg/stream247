@@ -60,6 +60,14 @@ const VOLATILE: Array<[RegExp, string]> = [
   [/\b\d+d \d+h\b/g, "<age>"],
   [/\b\d+h \d+m\b/g, "<age>"],
   [/\b\d+m \d+s\b/g, "<age>"],
+  // The spoken form of the same thing, from the source-health sentences ("Last checked 4 minutes
+  // ago, found 49 videos"). Separate from the compact shapes above because it is a different
+  // sentence, not a different unit. Anchored on the trailing "ago" on purpose: that is what makes
+  // it an age rather than a configured duration, so "180 minutes" in a settings field stays
+  // deliberately uncovered exactly like the note above says it should. `describeElapsed` emits
+  // "less than a minute ago" rather than "just now" so that this one pattern covers every age it
+  // can produce.
+  [/\b(?:\d+ (?:seconds?|minutes?|hours?|days?)|less than a minute) ago\b/g, "<age> ago"],
   // What is on air, and on which day.
   //
   // Two separate clocks reach these pages. Making the seeded week gapless fixed the first — there is

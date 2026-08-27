@@ -62,18 +62,22 @@ export function SourcesWorkspacePanels({ state }: { state: AppState }) {
                     <span className="subtle">{source.enabled ?? true ? "Enabled" : "Disabled"}</span>
                     <span className="subtle">{assetCountBySource.get(source.id) ?? 0} assets</span>
                     <span className="subtle">{readyAssetCountBySource.get(source.id) ?? 0} ready</span>
-                    <span className="subtle">{source.lastSyncedAt || "Not synced yet"}</span>
                   </div>
-                  <div className="subtle">
-                    {snapshot.latestRun
-                      ? `${snapshot.latestRun.summary} · ${snapshot.latestRun.finishedAt}`
-                      : "No sync run recorded yet."}
-                  </div>
+                  {/*
+                    The line that was missing on 2026-08-27. This page used to print the stored
+                    summary next to a raw ISO timestamp and, above it, the last-synced stamp again —
+                    which answered neither "is this happening now" nor "does the programme care".
+                    It now says when it was last checked, what came back, and, once a drought is
+                    long enough to matter, which scheduled blocks it reaches. Text only: no control
+                    is added, so the page's density budget is untouched.
+                  */}
+                  <div className="subtle">{snapshot.health.headline}</div>
+                  {snapshot.health.impact ? <div className="danger">{snapshot.health.impact}</div> : null}
                   {snapshot.latestRun?.errorMessage ? <div className="danger">{snapshot.latestRun.errorMessage}</div> : null}
                   <div className="stats-row">
-                    <span className="subtle">{snapshot.references.pools.length} pool refs</span>
-                    <span className="subtle">{snapshot.references.scheduleBlocks.length} schedule refs</span>
-                    <span className="subtle">{snapshot.openIncidentCount} open incident(s)</span>
+                    <span className="subtle">In {snapshot.references.pools.length} pools</span>
+                    <span className="subtle">{snapshot.references.scheduleBlocks.length} scheduled blocks</span>
+                    <span className="subtle">{snapshot.openIncidentCount} open incidents</span>
                   </div>
                   <div className="stats-row">
                     <Link className="subtle-link" href={buildWorkspaceHref("program", "sources", { sourceId: source.id })}>
