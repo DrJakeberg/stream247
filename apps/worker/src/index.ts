@@ -66,12 +66,19 @@ import {
   resolveEncoderQualitySettings,
   resolveSystemVolumeWatermarkConfig,
   resolveSourceLayerRuntimeEnabled,
+  resolveSourceLiveEnabled,
   resolveSourceSnapshotIntervalSeconds,
   resolveTwitchEventSubSecret,
   resolveTwitchScheduleSyncEnabled,
   type OverlaySourceFrameView,
   type ResolvedEncoderQualitySettings
 } from "@stream247/core";
+import {
+  closedAttachBreaker,
+  decideSourceLiveAttach,
+  fetchRelaySourcePresence,
+  isAttachBreakerOpen
+} from "./relay-presence.js";
 import {
   appendSourceSyncRuns,
   appendAuditEvent,
@@ -114,7 +121,8 @@ import {
   runAssetRetentionSweep,
   writeChatGameRuntimeRecord,
   readManagedConfigRecord,
-  readOverlayVideoSourceUrls
+  readOverlayVideoSourceUrls,
+  type ManagedConfigRecord
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
@@ -2138,6 +2146,53 @@ async function refreshSceneSourceFrame(): Promise<void> {
           capturedAt: sourceSnapshotCapturedAt
         }
       : null;
+}
+
+// --- Source live attach decision (M57 stage 2, Etappe B) -------------------------------------
+
+// In-memory by design (see relay-presence.ts). Stage B never opens the breaker — its trigger is
+// the failed attach start that arrives with stage C — but the cooldown already participates in
+// the decision so the logged behaviour is the final behaviour.
+let sourceLiveAttachBreaker = closedAttachBreaker();
+let lastSourceLiveAttachLogKey = "";
+
+/**
+ * Computes what the playout WOULD do about a live source attach this cycle, and logs it — the
+ * whole of Etappe B. Nothing is acted on. The presence fetch only happens when both switches
+ * are on, the scene has an active source layer and the breaker is closed, so the disabled
+ * feature costs zero relay traffic; the fetch itself is bounded far under the cycle budget.
+ * Logged on change rather than per cycle: the event marks a transition an operator can line up
+ * with a camera going live or away, instead of a heartbeat that buries it.
+ */
+async function reportSourceLiveAttachDecision(managed: ManagedConfigRecord): Promise<void> {
+  const nowMs = Date.now();
+  const sourceId = scenePayloadSourceLayerId();
+  const sourceLiveEnabled = resolveSourceLiveEnabled(managed, process.env);
+  const sourceLayerEnabled = resolveSourceLayerRuntimeEnabled(managed, process.env);
+
+  const presence =
+    sourceLiveEnabled && sourceLayerEnabled && sourceId !== "" && !isAttachBreakerOpen(sourceLiveAttachBreaker, nowMs)
+      ? await fetchRelaySourcePresence({ sourceId })
+      : null;
+
+  const outcome = decideSourceLiveAttach({
+    sourceLiveEnabled,
+    sourceLayerEnabled,
+    sourceId,
+    presence,
+    breaker: sourceLiveAttachBreaker,
+    nowMs
+  });
+
+  const logKey = `${outcome.decision}:${outcome.reason}:${sourceId}`;
+  if (logKey !== lastSourceLiveAttachLogKey) {
+    lastSourceLiveAttachLogKey = logKey;
+    logRuntimeEvent("playout.source-live.attach_decision", {
+      decision: outcome.decision,
+      reason: outcome.reason,
+      ...(sourceId ? { source: sourceId } : {})
+    });
+  }
 }
 
 /** One detached capture at a time; the guard in shouldStartSourceCapture is the backpressure. */
@@ -5047,6 +5102,8 @@ async function runPlayoutCycle(): Promise<void> {
   // config it hands to the between-cycle readers (watchdog options, feed geometry, VOD cache
   // tuning). Before the first cycle those resolve env-only — exactly the pre-M56 behaviour.
   latestManagedConfig = state.managedConfig;
+  // M57 stage 2, Etappe B: decision only, logged, never acted on.
+  await reportSourceLiveAttachDecision(state.managedConfig);
   if (
     (state.playout.overrideUntil !== "" && !isTimestampActive(state.playout.overrideUntil)) ||
     (state.playout.skipUntil !== "" && !isTimestampActive(state.playout.skipUntil))
