@@ -191,6 +191,7 @@ import {
   buildFfmpegInputArgs,
   buildSourceLivePipFilterComplex,
   buildSourceLivePipInputArgs,
+  decideLiveSourceAudio,
   getProgramFeedConfig,
   getRelayInputUrl,
   getRelayPublishUrl,
@@ -1814,9 +1815,13 @@ function getFfmpegCommand(
   }
 
   // The lane's volume is applied by -af only when the lane audio was NOT already folded into the
-  // PiP mix (where the graph carries the volume). -shortest is set whenever an audio lane loops OR
-  // a PiP input is live, so a source that keeps publishing past the programme's end can never hold
-  // the process open artificially.
+  // PiP mix (where the graph carries the volume). -shortest is set whenever an audio lane loops OR a
+  // PiP input is live: it bounds the encode to the programme's OWN stream — [vout] follows the
+  // programme video (overlay's main input) and [aout] is amix duration=first — so a looping lane, the
+  // ever-fed scene pipe (which never EOFs), or a still-publishing PiP cannot stretch a programme that
+  // ends. Note it does NOT rescue a programme that never delivers EOF (a remote source that hangs):
+  // [vout] then never ends either, and the duration-bound and feed-audio watchdogs are the net there,
+  // exactly as without a PiP.
   if (audioLane && !pipAudioMapped) {
     command.push("-af", `volume=${Math.max(0, Math.min(1, audioLane.volumePercent / 100)).toFixed(3)}`);
   }
@@ -2243,11 +2248,16 @@ type ResolvedLiveSourceAttach = {
  * Decides whether this cycle would attach the scene's pushed source as a live PiP input, logs the
  * decision on change (the operator-facing transition marker from Etappe B), and — when the answer
  * is attach — resolves the read URL and placement the start path needs. The presence fetch only
- * happens when both switches are on, the scene has an active source layer and the breaker is
- * closed, so the disabled feature costs zero relay traffic; the URL read only happens on an actual
- * attach. Returns null whenever the source stays on the stage-1 snapshot panel.
+ * happens when the upcoming selection is an ASSET (a live bridge or standby slate never builds a
+ * PiP, so polling the relay for them is wasted traffic), both switches are on, the scene has an
+ * active source layer and the breaker is closed — so a disabled feature, or any non-asset selection,
+ * costs zero relay traffic; the URL read only happens on an actual attach. Returns null whenever the
+ * source stays on the stage-1 snapshot panel.
  */
-async function resolveLiveSourceAttach(managed: ManagedConfigRecord): Promise<ResolvedLiveSourceAttach | null> {
+async function resolveLiveSourceAttach(
+  managed: ManagedConfigRecord,
+  selectionIsAsset: boolean
+): Promise<ResolvedLiveSourceAttach | null> {
   const nowMs = Date.now();
   const layer = scenePayloadSourceLayer();
   const sourceId = layer?.sourceId ?? "";
@@ -2255,7 +2265,11 @@ async function resolveLiveSourceAttach(managed: ManagedConfigRecord): Promise<Re
   const sourceLayerEnabled = resolveSourceLayerRuntimeEnabled(managed, process.env);
 
   const presence =
-    sourceLiveEnabled && sourceLayerEnabled && sourceId !== "" && !isAttachBreakerOpen(sourceLiveAttachBreaker, nowMs)
+    selectionIsAsset &&
+    sourceLiveEnabled &&
+    sourceLayerEnabled &&
+    sourceId !== "" &&
+    !isAttachBreakerOpen(sourceLiveAttachBreaker, nowMs)
       ? await fetchRelaySourcePresence({ sourceId })
       : null;
 
@@ -4629,45 +4643,49 @@ async function promoteRecoveringDestinations(reason: "manual" | "transition"): P
   return recoveringDestinations.length;
 }
 
-// Program-audio presence, keyed by asset id. A dedicated cache rather than a field on
-// queueProbeCache: the resolution probe overwrites its entry wholesale on every re-resolve, which
-// would silently wipe an audio verdict carried on the same record, and program-audio presence is
-// only ever read on the rare attach-with-audio path. Same freshness window as the resolution probe.
-type ProgramAudioProbeEntry = { checkedAt: number; hasAudio: boolean };
-const programAudioProbeCache = new Map<string, ProgramAudioProbeEntry>();
+// Audio-presence probe results, keyed by a caller-chosen string. A dedicated cache rather than a
+// field on queueProbeCache: the resolution probe overwrites its entry wholesale on every re-resolve,
+// which would silently wipe an audio verdict carried on the same record. The programme input caches
+// by asset id (a stable input); the live SOURCE never caches (see probeInputHasAudio's caller).
+type AudioProbeEntry = { checkedAt: number; hasAudio: boolean };
+const audioProbeCache = new Map<string, AudioProbeEntry>();
 
 /**
- * Whether the resolved program input carries an audio stream, bounded and cached (M57 stage 2,
- * Etappe D). Only called on the attach-with-audio path, and never a start blockade: any probe
- * failure or timeout resolves to "no audio", which downgrades the attach to video-only rather than
- * holding the channel. The timeout is clamped to the cycle-await ceiling so a slow remote probe
- * cannot eat the reconciliation budget.
+ * Whether an input carries an audio stream, bounded (M57 stage 2, Etappe D). Never a start blockade:
+ * any probe failure or timeout resolves to "no audio", which downgrades the attach to video-only
+ * rather than holding the channel. The timeout is clamped to the cycle-await ceiling so a slow remote
+ * probe cannot eat the reconciliation budget; RTSP inputs are pinned to TCP like every other read.
+ * A cacheKey caches the verdict (stable programme inputs); omit it for the live source, whose audio
+ * can change between attaches — a stale "has audio" would reintroduce the graph-init crash it exists
+ * to prevent, so the source is probed fresh every time.
  */
-async function probeProgramInputHasAudio(input: string, assetId: string): Promise<boolean> {
-  const cached = assetId ? programAudioProbeCache.get(assetId) : null;
+async function probeInputHasAudio(input: string, options: { cacheKey?: string } = {}): Promise<boolean> {
+  const cacheKey = options.cacheKey ?? "";
+  const cached = cacheKey ? audioProbeCache.get(cacheKey) : null;
   if (cached && Date.now() - cached.checkedAt < NEXT_ASSET_PROBE_READY_TTL_MS) {
     return cached.hasAudio;
   }
 
   const { effectiveMs } = clampToCycleAwaitCeiling(4_000, process.env);
+  const transport = input.startsWith("rtsp://") || input.startsWith("rtsps://") ? ["-rtsp_transport", "tcp"] : [];
   let hasAudio = false;
   try {
     const output = await execFileText(
       process.env.FFPROBE_BIN || "ffprobe",
-      ["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", input],
+      ["-v", "error", ...transport, "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", input],
       { timeoutMs: effectiveMs, killProcessGroup: true, maxBufferBytes: 256 * 1024 }
     );
     hasAudio = output.split("\n").some((line) => line.trim() !== "");
   } catch (error) {
-    logRuntimeEvent("playout.source-live.program_audio_probe_failed", {
-      assetId,
+    logRuntimeEvent("playout.source-live.audio_probe_failed", {
+      probe: cacheKey || "source",
       error: error instanceof Error ? error.message : String(error)
     });
     hasAudio = false;
   }
 
-  if (assetId) {
-    programAudioProbeCache.set(assetId, { checkedAt: Date.now(), hasAudio });
+  if (cacheKey) {
+    audioProbeCache.set(cacheKey, { checkedAt: Date.now(), hasAudio });
   }
   return hasAudio;
 }
@@ -4675,9 +4693,10 @@ async function probeProgramInputHasAudio(input: string, assetId: string): Promis
 /**
  * Turns a decided attach into the concrete PiP command config: the RTSP input args, the pixel box
  * (computed against the renderer's own viewport, so the live window lands exactly where the skipped
- * snapshot panel would have), and the audio branch. The audio branch is built only when the source
- * carries a track AND there is a confirmed programme/lane audio to mix it against — otherwise the
- * attach is video-only, never blocked.
+ * snapshot panel would have), and the audio branch. The audio branch is gated by decideLiveSourceAudio
+ * on the programme having a KNOWN finite duration (else the feed-audio watchdog must stay the net) and
+ * only ever references the source audio after PROBING it (the relay's advisory track flag alone would
+ * risk a graph-init crash on a lying or racing publisher). Otherwise video-only, never blocked.
  */
 async function buildLiveSourceCommandConfig(args: {
   attach: ResolvedLiveSourceAttach;
@@ -4685,23 +4704,29 @@ async function buildLiveSourceCommandConfig(args: {
   audioLane: ResolvedAudioLane | null;
   programInput: string;
   assetId: string;
+  programDurationSeconds: number;
 }): Promise<LiveSourceCommandConfig> {
   const viewport = getSceneRendererViewport(process.env, args.outputSettings);
   const box = resolveSourceLayerPixelBox(args.attach.placement, viewport);
-  const sourceGain = args.attach.gainPercent / 100;
 
   let audio: SourceLivePipAudio | null = null;
-  if (args.attach.hasAudioTrack) {
-    if (args.audioLane) {
-      // The lane is an audio asset — audio is guaranteed, no probe needed.
-      audio = {
-        programLabel: "[1:a]",
-        programVolume: args.audioLane.volumePercent / 100,
-        sourceGain
-      };
-    } else if (await probeProgramInputHasAudio(args.programInput, args.assetId)) {
-      audio = { programLabel: "[0:a]", programVolume: 1, sourceGain };
-    }
+  const programKnownDuration = Number.isFinite(args.programDurationSeconds) && args.programDurationSeconds > 0;
+  // Probe only on the path that could actually mix: known-duration programme AND the relay's advisory
+  // flag hinting at audio (skips the RTSP open when there is plainly none). The source probe is the
+  // authority — never the advisory flag — so a relay that reports audio the pull cannot deliver falls
+  // back to video-only here instead of crashing ffmpeg into the breaker.
+  if (programKnownDuration && args.attach.hasAudioTrack && (await probeInputHasAudio(args.attach.readUrl))) {
+    const programAudioConfirmed = args.audioLane
+      ? true
+      : await probeInputHasAudio(args.programInput, { cacheKey: args.assetId });
+    audio = decideLiveSourceAudio({
+      programDurationSeconds: args.programDurationSeconds,
+      sourceAudioConfirmed: true,
+      hasAudioLane: Boolean(args.audioLane),
+      laneVolumePercent: args.audioLane?.volumePercent ?? 0,
+      programAudioConfirmed,
+      sourceGainPercent: args.attach.gainPercent
+    });
   }
 
   return { inputArgs: buildSourceLivePipInputArgs(args.attach.readUrl), box, audio };
@@ -4822,7 +4847,8 @@ async function startOrSwitchPlayout(args: {
           outputSettings,
           audioLane: resolvedAudioLaneInput && args.audioLane ? args.audioLane : null,
           programInput: resolvedProgramInput,
-          assetId: args.asset.id
+          assetId: args.asset.id,
+          programDurationSeconds: args.asset.durationSeconds ?? 0
         })
       : null;
   playoutLiveSourceInputActive = Boolean(liveSourceConfig);
@@ -5341,12 +5367,6 @@ async function runPlayoutCycle(): Promise<void> {
   // config it hands to the between-cycle readers (watchdog options, feed geometry, VOD cache
   // tuning). Before the first cycle those resolve env-only — exactly the pre-M56 behaviour.
   latestManagedConfig = state.managedConfig;
-  // M57 stage 2, Etappes B–D: decide the live-source attach for this cycle (logged on change) and
-  // carry the resolved intent to the start calls below. Null leaves the source on the stage-1
-  // snapshot panel; a non-null intent is only consumed when a process actually (re)starts, so an
-  // already-running target is never restarted mid-asset to attach — the attach lands at the next
-  // natural boundary instead.
-  const liveSourceAttach = await resolveLiveSourceAttach(state.managedConfig);
   if (
     (state.playout.overrideUntil !== "" && !isTimestampActive(state.playout.overrideUntil)) ||
     (state.playout.skipUntil !== "" && !isTimestampActive(state.playout.skipUntil))
@@ -5786,6 +5806,14 @@ async function runPlayoutCycle(): Promise<void> {
     queueKind: selection.queueKind,
     reasonCode: selection.reasonCode
   });
+  // M57 stage 2, Etappes B–D: decide the live-source attach for this cycle (logged on change) once
+  // the selection is final, so the relay presence poll runs only when the upcoming programme is an
+  // ASSET — never during a live bridge or standby slate, which can never carry a PiP. Null leaves the
+  // source on the stage-1 snapshot panel; a non-null intent is consumed only when a process actually
+  // (re)starts, so an already-running target is never restarted mid-asset to attach — the attach
+  // lands at the next natural boundary instead.
+  const selectionIsAsset = selection.queueKind !== "live" && Boolean(selection.asset);
+  const liveSourceAttach = await resolveLiveSourceAttach(state.managedConfig, selectionIsAsset);
   const manualNextQueueAsset =
     state.playout.manualNextAssetId !== "" && state.playout.manualNextAssetId !== selection.asset?.id
       ? state.assets.find(

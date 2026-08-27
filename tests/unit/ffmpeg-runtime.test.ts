@@ -6,6 +6,7 @@ import {
   buildFfmpegInputArgs,
   buildSourceLivePipFilterComplex,
   buildSourceLivePipInputArgs,
+  decideLiveSourceAudio,
   describeFfmpegExit,
   getProgramFeedConfig,
   getRelayInputUrl,
@@ -632,5 +633,47 @@ describe("live-attached source filter graph (M57 stage 2, Etappes C/D)", () => {
       audio: { programLabel: "[0:a]", programVolume: 1, sourceGain: -1 }
     });
     expect(negative.filterComplex).toContain("volume=0.000[pip_a]");
+  });
+});
+
+describe("live-source audio decision (M57 stage 2, Etappe D + review)", () => {
+  const base = {
+    programDurationSeconds: 1800,
+    sourceAudioConfirmed: true,
+    hasAudioLane: false,
+    laneVolumePercent: 80,
+    programAudioConfirmed: true,
+    sourceGainPercent: 40
+  };
+
+  it("refuses to mix when the programme has no known finite duration (feed-audio watchdog stays the net)", () => {
+    // This is the blocker fix: an unknown-duration programme keeps its own audio as the sole track,
+    // so a silent-but-still-running source is caught by the feed-audio watchdog instead of masked by
+    // live PiP sound. Zero, negative, NaN and Infinity all read as unknown.
+    for (const durationSeconds of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(decideLiveSourceAudio({ ...base, programDurationSeconds: durationSeconds })).toBeNull();
+    }
+  });
+
+  it("refuses to mix when the source's audio is not probe-confirmed, whatever the relay advised", () => {
+    // The TOCTOU fix: referencing [L:a] on a source that has no audio crashes ffmpeg at graph init,
+    // so an unconfirmed source is video-only regardless of the advisory track flag.
+    expect(decideLiveSourceAudio({ ...base, sourceAudioConfirmed: false })).toBeNull();
+  });
+
+  it("mixes lane audio first at its lane volume for a known-duration programme", () => {
+    expect(decideLiveSourceAudio({ ...base, hasAudioLane: true, laneVolumePercent: 80 })).toEqual({
+      programLabel: "[1:a]",
+      programVolume: 0.8,
+      sourceGain: 0.4
+    });
+  });
+
+  it("mixes programme audio (identity level) when there is no lane and the programme audio is confirmed", () => {
+    expect(decideLiveSourceAudio(base)).toEqual({ programLabel: "[0:a]", programVolume: 1, sourceGain: 0.4 });
+  });
+
+  it("stays video-only when there is no lane and the programme has no confirmed audio", () => {
+    expect(decideLiveSourceAudio({ ...base, programAudioConfirmed: false })).toBeNull();
   });
 });

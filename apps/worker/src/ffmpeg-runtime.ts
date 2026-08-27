@@ -332,6 +332,56 @@ export function buildSourceLivePipFilterComplex(args: {
   return { filterComplex: `${video};${audio}`, audioMapped: true };
 }
 
+export type LiveSourceAudioDecisionInput = {
+  /** The programme asset's known duration in seconds; <= 0 or non-finite means unknown. */
+  programDurationSeconds: number;
+  /**
+   * Whether the live source actually carries an audio stream — the PROBED verdict, never the relay's
+   * advisory track flag alone. Referencing `[L:a]` when the source has no audio makes ffmpeg abort at
+   * graph init ("matches no streams"), so the caller must confirm the stream before mixing it.
+   */
+  sourceAudioConfirmed: boolean;
+  /** An audio lane replaces the programme's own audio; a looped audio asset always carries sound. */
+  hasAudioLane: boolean;
+  laneVolumePercent: number;
+  /** Whether the resolved programme input carries audio — the probed verdict; unused with a lane. */
+  programAudioConfirmed: boolean;
+  /** resolveSourceLiveGainPercent (0..200); the graph builder clamps and formats it. */
+  sourceGainPercent: number;
+};
+
+/**
+ * Whether — and how — the live source's audio may be folded into the programme mix.
+ *
+ * The feed-audio watchdog (feed-audio-health.ts) reads the programme's own audio out of the muxed
+ * HLS segment to catch a source that runs dry WITHOUT delivering EOF: the fps filter keeps inventing
+ * video from the last frame, so video packets are worthless as a liveness signal and audio is the
+ * honest one. Folding live PiP audio into that segment would mask a silent programme behind the PiP's
+ * sound — the watchdog would see audio packets and never fire, and the channel could sit indefinitely
+ * on a frozen programme picture with live PiP audio.
+ *
+ * So the mix is built ONLY when the programme has a KNOWN finite duration: duration-bound
+ * (duration-bound.ts) then ends the asset once it plays past its duration, making the masking
+ * harmless. An unknown-duration programme keeps its own audio as the sole track, so the feed-audio
+ * watchdog stays the honest net it exists to be. Returns null → attach video-only, never blocked.
+ */
+export function decideLiveSourceAudio(input: LiveSourceAudioDecisionInput): SourceLivePipAudio | null {
+  if (!(Number.isFinite(input.programDurationSeconds) && input.programDurationSeconds > 0)) {
+    return null;
+  }
+  if (!input.sourceAudioConfirmed) {
+    return null;
+  }
+  const sourceGain = input.sourceGainPercent / 100;
+  if (input.hasAudioLane) {
+    return { programLabel: "[1:a]", programVolume: input.laneVolumePercent / 100, sourceGain };
+  }
+  if (input.programAudioConfirmed) {
+    return { programLabel: "[0:a]", programVolume: 1, sourceGain };
+  }
+  return null;
+}
+
 export function isLikelyDestinationOutputError(line: string): boolean {
   const sample = line.toLowerCase();
 

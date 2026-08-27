@@ -2,8 +2,15 @@ import { describe, expect, it } from "vitest";
 import { WATCHDOG_LIMITS } from "@stream247/core";
 import {
   buildSourceLivePipFilterComplex,
+  decideLiveSourceAudio,
   SOURCE_LIVE_RTSP_TIMEOUT_US
 } from "../../apps/worker/src/ffmpeg-runtime";
+import {
+  createFeedAudioState,
+  isFeedAudioStalled,
+  observeFeedAudio,
+  type FeedAudioOptions
+} from "../../apps/worker/src/feed-audio-health";
 import {
   ATTACH_FAILURE_COOLDOWN_MS,
   closedAttachBreaker,
@@ -33,29 +40,118 @@ function mixed(programLabel: string, programVolume: number) {
   }).filterComplex;
 }
 
-describe("feed-audio watchdog is not falsely tripped by a live source", () => {
-  it("the mix cannot mute programme audio: a dead PiP still lets programme packets flow", () => {
-    const graph = mixed("[0:a]", 1);
-    // normalize=0 is the whole proof: with normalize=1 amix scales every input by 1/N, so the
-    // programme would halve when the PiP joins and jump back when it leaves — a level change the
-    // feed-audio grace could read across. normalize=0 keeps the programme at its own level whether
-    // the PiP is present, absent, or dying.
-    expect(graph).toContain("normalize=0");
-    // The programme is the FIRST amix input and the mix is duration=first, so the mix lives exactly
-    // as long as the programme audio does — it can neither end before the programme nor outlast it.
-    expect(graph).toContain("[prog_a][pip_a]amix=inputs=2:duration=first");
-    expect(graph.indexOf("[prog_a];")).toBeLessThan(graph.indexOf("[pip_a];"));
-    // The programme branch carries its own gain (identity here), never a reduced level.
-    expect(graph).toContain("[0:a]volume=1.000[prog_a]");
-    // No apad on the PiP branch: a source that ends is DROPPED by amix, not padded into endless
-    // silence that would mask the programme's own audio and defeat the point of the mix.
-    expect(graph).not.toContain("apad");
+// The real feed-audio watchdog reads the audio-packet count of the newest muxed HLS segment (see
+// enforceProgramFeedAudio / probeProgramFeedPackets in index.ts, which feed exactly these functions).
+// audioPackets is therefore whatever the ENCODE writes into the segment: the programme's own audio
+// when no PiP audio is folded in, or programme+PiP when it is.
+const FEED_AUDIO_OPTIONS: FeedAudioOptions = {
+  silenceMs: WATCHDOG_LIMITS.feedAudioSilenceSeconds.default * 1000,
+  graceMs: WATCHDOG_LIMITS.feedAudioGraceSeconds.default * 1000
+};
+
+/**
+ * Runs the REAL feed-audio state machine over a sequence of per-segment audio-packet counts (video
+ * always flowing, as the fps filter guarantees) and returns whether it ever declares the feed
+ * stalled. The first sample carries audio so the watchdog begins judging; the rest are the caller's.
+ */
+function feedEverStalls(audioPacketsAfterFirst: number[]): boolean {
+  const startedAtMs = 0;
+  let state = createFeedAudioState(startedAtMs);
+  const seed = { audioPackets: 4, videoPackets: 30, atMs: 1_000 };
+  state = observeFeedAudio(state, seed);
+
+  // One sample every 10 s, well past the 60 s grace and across the 90 s silence window.
+  for (let index = 0; index < audioPacketsAfterFirst.length; index += 1) {
+    const sample = { audioPackets: audioPacketsAfterFirst[index]!, videoPackets: 30, atMs: 10_000 + index * 10_000 };
+    state = observeFeedAudio(state, sample);
+    if (isFeedAudioStalled(state, sample, startedAtMs, FEED_AUDIO_OPTIONS)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+describe("feed-audio watchdog stays honest with a live source (proven against the real state machine)", () => {
+  // 20 samples over ~200 s — enough to cross grace + silence.
+  const silent = Array.from({ length: 20 }, () => 0);
+  const mixedAlive = Array.from({ length: 20 }, () => 3);
+
+  it("a silent-but-still-running programme (video flowing, no audio) still trips the real watchdog", () => {
+    // The invariant the review demands, proven against enforceProgramFeedAudio's own state machine
+    // rather than a graph string: when the segment carries no audio, the watchdog fires.
+    expect(feedEverStalls(silent)).toBe(true);
   });
 
-  it("keeps the watchdog's real purpose: an audio-lane programme is mixed at its lane volume, undimmed", () => {
-    const graph = mixed("[1:a]", 0.8);
-    expect(graph).toContain("[1:a]volume=0.800[prog_a]");
+  it("shows the masking the duration gate prevents: mixed-in PiP audio would hide that same silence", () => {
+    // If PiP audio reached the segment, every sample carries audio packets and the SAME real watchdog
+    // never fires — a frozen programme with live PiP sound would stand indefinitely. This is exactly
+    // why decideLiveSourceAudio refuses to mix for an unknown-duration programme.
+    expect(feedEverStalls(mixedAlive)).toBe(false);
+  });
+
+  it("an unknown-duration programme is never given a PiP audio branch, so its segment stays honest", () => {
+    // decideLiveSourceAudio is the gate that keeps the two facts above connected: with an unknown
+    // duration it returns null (no [aout], program audio is the sole track), so a silent programme's
+    // segment reads zero audio packets and the real watchdog above fires.
+    const decision = decideLiveSourceAudio({
+      programDurationSeconds: 0,
+      sourceAudioConfirmed: true,
+      hasAudioLane: false,
+      laneVolumePercent: 80,
+      programAudioConfirmed: true,
+      sourceGainPercent: 40
+    });
+    expect(decision).toBeNull();
+    // And a known-duration programme (where duration-bound is the net) may mix — masking is harmless.
+    expect(
+      decideLiveSourceAudio({
+        programDurationSeconds: 1800,
+        sourceAudioConfirmed: true,
+        hasAudioLane: false,
+        laneVolumePercent: 80,
+        programAudioConfirmed: true,
+        sourceGainPercent: 40
+      })
+    ).not.toBeNull();
+  });
+
+  it("keeps the mix structure honest when it IS built: programme first, normalize=0, no apad", () => {
+    const graph = mixed("[0:a]", 1);
     expect(graph).toContain("normalize=0");
+    expect(graph).toContain("[prog_a][pip_a]amix=inputs=2:duration=first");
+    expect(graph.indexOf("[prog_a];")).toBeLessThan(graph.indexOf("[pip_a];"));
+    expect(graph).toContain("[0:a]volume=1.000[prog_a]");
+    expect(graph).not.toContain("apad");
+  });
+});
+
+describe("a lying or racing relay never crashes the encode into the breaker", () => {
+  it("advisory-audio-true but the source delivers no audio → video-only, never a [L:a] reference", () => {
+    // The relay's track flag is advisory. The build path probes the source and passes the PROBED
+    // verdict as sourceAudioConfirmed; when the probe finds no audio (publisher race, lying relay),
+    // decideLiveSourceAudio returns null and the graph omits [L:a] entirely — so ffmpeg never aborts
+    // at graph init ("matches no streams", exit 234) and the attach falls back to video-only instead
+    // of failing every start until presence self-corrects.
+    const decision = decideLiveSourceAudio({
+      programDurationSeconds: 1800,
+      sourceAudioConfirmed: false,
+      hasAudioLane: false,
+      laneVolumePercent: 80,
+      programAudioConfirmed: true,
+      sourceGainPercent: 40
+    });
+    expect(decision).toBeNull();
+    // A video-only build carries no audio graph at all — nothing references the source's audio.
+    const videoOnly = buildSourceLivePipFilterComplex({
+      outputVideoFilter: "scale=1920:1080",
+      sceneInputIndex: 2,
+      pipInputIndex: 3,
+      fps: 30,
+      box,
+      audio: null
+    }).filterComplex;
+    expect(videoOnly).not.toContain("[3:a]");
+    expect(videoOnly).not.toContain("amix");
   });
 });
 
