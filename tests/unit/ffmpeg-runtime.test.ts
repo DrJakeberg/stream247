@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { WATCHDOG_LIMITS } from "@stream247/core";
 import {
   buildProgramFeedOutputTarget,
   buildUplinkFfmpegCommand,
   buildFfmpegInputArgs,
+  buildSourceLivePipFilterComplex,
+  buildSourceLivePipInputArgs,
   describeFfmpegExit,
   getProgramFeedConfig,
   getRelayInputUrl,
@@ -14,7 +17,8 @@ import {
   isLikelyProgramFeedInputError,
   isNaturalPlayoutBoundary,
   shouldRequestImmediatePlayoutRetry,
-  shouldSkipInitialSceneCapture
+  shouldSkipInitialSceneCapture,
+  SOURCE_LIVE_RTSP_TIMEOUT_US
 } from "../../apps/worker/src/ffmpeg-runtime";
 import {
   getOutputGopSize,
@@ -480,5 +484,153 @@ describe("ffmpeg runtime helpers", () => {
         nowMs: new Date("2026-04-10T14:26:00.000Z").getTime()
       })
     ).toBe(false);
+  });
+});
+
+describe("live-attached source input args (M57 stage 2, Etappe C)", () => {
+  it("pins RTSP to TCP with the bounded socket timeout, in that order", () => {
+    expect(buildSourceLivePipInputArgs("rtsp://reader:key@relay:8554/src-front-desk")).toEqual([
+      "-rtsp_transport",
+      "tcp",
+      "-timeout",
+      "4000000",
+      "-i",
+      "rtsp://reader:key@relay:8554/src-front-desk"
+    ]);
+  });
+
+  it("carries no -re, no loop and no reconnect: a dropped source must fall away, not hold the encode", () => {
+    const args = buildSourceLivePipInputArgs("rtsp://reader:key@relay:8554/src-front-desk");
+    expect(args).not.toContain("-re");
+    expect(args).not.toContain("-stream_loop");
+    expect(args).not.toContain("-reconnect");
+  });
+
+  it("keeps the RTSP timeout strictly under the smallest duration-bound margin the watchdog allows", () => {
+    // The whole point of the 4 s ceiling: a source that never opens gives up well inside the
+    // smallest configurable duration-bound margin, so a slow PiP connect can never be what trips
+    // the duration bound. If either number moves, this invariant must be re-proven.
+    expect(SOURCE_LIVE_RTSP_TIMEOUT_US).toBe(4_000_000);
+    expect(SOURCE_LIVE_RTSP_TIMEOUT_US).toBeLessThan(WATCHDOG_LIMITS.durationBoundMarginSeconds.min * 1_000_000);
+  });
+});
+
+describe("live-attached source filter graph (M57 stage 2, Etappes C/D)", () => {
+  const box = { left: 1152, top: 120, width: 512, height: 288 };
+
+  it("scales the source to cover its box, resets pts, and lays it UNDER the scene PNG", () => {
+    const { filterComplex } = buildSourceLivePipFilterComplex({
+      outputVideoFilter: "scale=1920:1080,setsar=1",
+      sceneInputIndex: 2,
+      pipInputIndex: 3,
+      fps: 30,
+      box,
+      audio: null
+    });
+    expect(filterComplex).toBe(
+      "[0:v]scale=1920:1080,setsar=1[base];" +
+        "[3:v]fps=30,scale=512:288:force_original_aspect_ratio=increase,crop=512:288,setpts=PTS-STARTPTS[pipv];" +
+        "[base][pipv]overlay=1152:120:eof_action=pass[vpip];" +
+        "[vpip][2:v]overlay=0:0:format=auto[vout]"
+    );
+  });
+
+  it("reads the raw program video when output scaling is off", () => {
+    const { filterComplex } = buildSourceLivePipFilterComplex({
+      outputVideoFilter: "",
+      sceneInputIndex: 1,
+      pipInputIndex: 2,
+      fps: 25,
+      box,
+      audio: null
+    });
+    expect(filterComplex.startsWith("[2:v]fps=25,")).toBe(true);
+    expect(filterComplex).toContain("[0:v][pipv]overlay=1152:120:eof_action=pass[vpip]");
+    expect(filterComplex.endsWith("[vpip][1:v]overlay=0:0:format=auto[vout]")).toBe(true);
+    expect(filterComplex).not.toContain("[base]");
+  });
+
+  it("overlays the ended source with eof_action=pass so a lost feed never freezes the frame", () => {
+    const { filterComplex } = buildSourceLivePipFilterComplex({
+      outputVideoFilter: "scale=1280:720",
+      sceneInputIndex: 2,
+      pipInputIndex: 3,
+      fps: 30,
+      box,
+      audio: null
+    });
+    expect(filterComplex).toContain("overlay=1152:120:eof_action=pass");
+  });
+
+  it("does not map audio when the source carries none", () => {
+    const parts = buildSourceLivePipFilterComplex({
+      outputVideoFilter: "scale=1920:1080",
+      sceneInputIndex: 2,
+      pipInputIndex: 3,
+      fps: 30,
+      box,
+      audio: null
+    });
+    expect(parts.audioMapped).toBe(false);
+    expect(parts.filterComplex).not.toContain("amix");
+    expect(parts.filterComplex).not.toContain("[aout]");
+  });
+
+  it("mixes programme/lane audio FIRST at duration=first with normalize=0 and no apad", () => {
+    const parts = buildSourceLivePipFilterComplex({
+      outputVideoFilter: "scale=1920:1080",
+      sceneInputIndex: 2,
+      pipInputIndex: 3,
+      fps: 30,
+      box,
+      audio: { programLabel: "[1:a]", programVolume: 0.8, sourceGain: 0.4 }
+    });
+    expect(parts.audioMapped).toBe(true);
+    const audio = parts.filterComplex.slice(parts.filterComplex.indexOf("[vout]") + "[vout]".length + 1);
+    expect(audio).toBe(
+      "[1:a]volume=0.800[prog_a];" +
+        "[3:a]aresample=async=1:first_pts=0,volume=0.400[pip_a];" +
+        "[prog_a][pip_a]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]"
+    );
+    // The three pins the plan calls out, asserted directly against the emitted graph.
+    expect(audio).toContain("normalize=0");
+    expect(audio).toContain("duration=first");
+    expect(audio.indexOf("[prog_a]")).toBeLessThan(audio.indexOf("[pip_a]"));
+    expect(audio.indexOf("[prog_a][pip_a]amix")).toBeGreaterThan(-1);
+    expect(audio).not.toContain("apad");
+  });
+
+  it("reads programme audio directly ([0:a]) when there is no audio lane", () => {
+    const parts = buildSourceLivePipFilterComplex({
+      outputVideoFilter: "scale=1920:1080",
+      sceneInputIndex: 1,
+      pipInputIndex: 2,
+      fps: 30,
+      box,
+      audio: { programLabel: "[0:a]", programVolume: 1, sourceGain: 0.4 }
+    });
+    expect(parts.filterComplex).toContain("[0:a]volume=1.000[prog_a];");
+    expect(parts.filterComplex).toContain("[2:a]aresample=async=1:first_pts=0,volume=0.400[pip_a];");
+  });
+
+  it("clamps the source gain into 0..2 (200%) and formats it like the lane volume", () => {
+    const loud = buildSourceLivePipFilterComplex({
+      outputVideoFilter: "",
+      sceneInputIndex: 1,
+      pipInputIndex: 2,
+      fps: 30,
+      box,
+      audio: { programLabel: "[0:a]", programVolume: 1, sourceGain: 5 }
+    });
+    expect(loud.filterComplex).toContain("volume=2.000[pip_a]");
+    const negative = buildSourceLivePipFilterComplex({
+      outputVideoFilter: "",
+      sceneInputIndex: 1,
+      pipInputIndex: 2,
+      fps: 30,
+      box,
+      audio: { programLabel: "[0:a]", programVolume: 1, sourceGain: -1 }
+    });
+    expect(negative.filterComplex).toContain("volume=0.000[pip_a]");
   });
 });

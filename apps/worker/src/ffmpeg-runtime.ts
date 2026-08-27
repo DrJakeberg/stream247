@@ -245,6 +245,93 @@ export function buildFfmpegInputArgs(args: {
   return command;
 }
 
+// --- Live-attached source (PiP) input + filter graph (M57 stage 2, Etappes C/D) --------------
+
+/**
+ * The RTSP socket timeout for a live-attached source, in microseconds (ffmpeg's rtsp demuxer
+ * unit). 4 s on purpose: a source that never opens must give up well inside the smallest
+ * duration-bound margin the watchdog can be configured to
+ * (WATCHDOG_LIMITS.durationBoundMarginSeconds.min, 5 s), so a slow PiP connect can never be what
+ * trips the duration bound. See the clamp-invariant test in ffmpeg-runtime.test.ts.
+ */
+export const SOURCE_LIVE_RTSP_TIMEOUT_US = 4_000_000;
+
+/**
+ * Input arguments for the live PiP source: RTSP pinned to TCP (UDP loses packets silently across
+ * container networks — the snapshot sampler pins TCP for the same reason) with the bounded socket
+ * timeout. No -re: the feed is already realtime. No loop and no reconnect: a source that drops is
+ * meant to fall away (amix drops the ended input), not to hold the encode open.
+ */
+export function buildSourceLivePipInputArgs(url: string): string[] {
+  return ["-rtsp_transport", "tcp", "-timeout", String(SOURCE_LIVE_RTSP_TIMEOUT_US), "-i", url];
+}
+
+/** A gain/volume fraction, clamped to [min, max] and formatted the way the audio-lane filter is. */
+function formatGain(fraction: number, max: number): string {
+  return Math.max(0, Math.min(max, Number.isFinite(fraction) ? fraction : 0)).toFixed(3);
+}
+
+export type SourceLivePipAudio = {
+  /** "[1:a]" for the audio lane, "[0:a]" for programme audio: the mix's FIRST input. */
+  programLabel: string;
+  /** Programme/lane level as a fraction (lane volume, or 1 for untouched programme). */
+  programVolume: number;
+  /** Live source gain as a fraction (resolveSourceLiveGainPercent / 100), clamped 0..2. */
+  sourceGain: number;
+};
+
+export type SourceLivePipCommandParts = {
+  /** The whole -filter_complex value: video always, audio only when `audio` was supplied. */
+  filterComplex: string;
+  /** True when the graph produced [aout]; the caller maps it instead of the legacy audio map. */
+  audioMapped: boolean;
+};
+
+/**
+ * The video (and, when the source carries sound, audio) filter graph for a live-attached PiP,
+ * for scene overlay mode. The PiP input is always the LAST ffmpeg input, so the scene pipe keeps
+ * its existing index and the caller passes both indices in rather than this builder guessing them.
+ *
+ * Video: the source is scaled to cover its placement box and cropped to it (matching the sampled
+ * panel's object-fit), timestamps reset, then overlaid UNDER the scene PNG — eof_action=pass so a
+ * source that ends leaves the programme frame untouched instead of freezing or blanking it.
+ *
+ * Audio: the programme/lane audio is the FIRST amix input at duration=first, so the mix ends with
+ * the programme and never outlives it; normalize=0 keeps the programme's level from jumping when
+ * the source drops out; the PiP branch is resampled (async) and gained but carries NO apad, so a
+ * source that ends is simply dropped by amix rather than padded into endless masking silence.
+ */
+export function buildSourceLivePipFilterComplex(args: {
+  outputVideoFilter: string;
+  sceneInputIndex: number;
+  pipInputIndex: number;
+  fps: number;
+  box: { left: number; top: number; width: number; height: number };
+  audio: SourceLivePipAudio | null;
+}): SourceLivePipCommandParts {
+  const { box, pipInputIndex: pip, sceneInputIndex: scene, fps } = args;
+  const baseChain = args.outputVideoFilter ? `[0:v]${args.outputVideoFilter}[base];` : "";
+  const baseLabel = args.outputVideoFilter ? "[base]" : "[0:v]";
+
+  const video =
+    `${baseChain}` +
+    `[${pip}:v]fps=${fps},scale=${box.width}:${box.height}:force_original_aspect_ratio=increase,` +
+    `crop=${box.width}:${box.height},setpts=PTS-STARTPTS[pipv];` +
+    `${baseLabel}[pipv]overlay=${box.left}:${box.top}:eof_action=pass[vpip];` +
+    `[vpip][${scene}:v]overlay=0:0:format=auto[vout]`;
+
+  if (!args.audio) {
+    return { filterComplex: video, audioMapped: false };
+  }
+
+  const audio =
+    `${args.audio.programLabel}volume=${formatGain(args.audio.programVolume, 1)}[prog_a];` +
+    `[${pip}:a]aresample=async=1:first_pts=0,volume=${formatGain(args.audio.sourceGain, 2)}[pip_a];` +
+    `[prog_a][pip_a]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]`;
+
+  return { filterComplex: `${video};${audio}`, audioMapped: true };
+}
+
 export function isLikelyDestinationOutputError(line: string): boolean {
   const sample = line.toLowerCase();
 
