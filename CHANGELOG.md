@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.32 - 2026-08-27
+
 ### Fixed
 
 - the incident list tells the truth about what is broken now (M58). Measured on the running
