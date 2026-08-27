@@ -1960,9 +1960,9 @@ every single one described something that had finished long ago.
   per-source set was already being built two lines away.
 - Deliberately not done: no UI work at all (the sources health display is a parallel change; the
   worker side keeps its data shape plain and self-describing — a status string plus a preserved
-  note — so the display needs no new contract). `mediaExtensions` in `index.ts` is now an alias of
-  the shared `MEDIA_FILE_EXTENSIONS` rather than a wider refactor of that file. No baseline
-  updates.
+  note — so the display needs no new contract). The extension set and the direct-media URL check
+  moved out of `index.ts` because the new modules needed them, not as a wider refactor of that
+  file. No baseline updates.
 
 ### 2026-08-27 — M59 Boundary Continuity: Source Wipe, Lost Wake, Silent Stops
 

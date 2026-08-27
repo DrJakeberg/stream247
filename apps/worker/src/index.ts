@@ -147,12 +147,7 @@ import {
 import { incrementQueueVersion, prioritizeManualNextAsset } from "./broadcast-queue.js";
 import { getChapterBackfillConfig, probeAssetChapters, selectChapterBackfillCandidates } from "./chapter-backfill.js";
 import { isDirectMediaUrl, planDirectMediaSync } from "./direct-media.js";
-import {
-  MEDIA_FILE_EXTENSIONS,
-  buildLocalLibraryAssetId,
-  buildLocalLibraryFolderPath,
-  scanMediaFiles
-} from "./local-library.js";
+import { buildLocalLibraryAssetId, buildLocalLibraryFolderPath, scanMediaFiles } from "./local-library.js";
 import { resolvePoolAudioLane, type ResolvedAudioLane } from "./audio-lanes.js";
 import { getCuepointInsertPlan } from "./cuepoints.js";
 import {
@@ -296,7 +291,6 @@ import { syncTwitchEventSubSubscriptions } from "./twitch-eventsub.js";
 import { fetchTwitchLiveStatus } from "./twitch-live-status.js";
 import { decideTwitchChannelMetadataWrite } from "./twitch-sync-policy.js";
 
-const mediaExtensions = MEDIA_FILE_EXTENSIONS;
 /** The single synthetic source every locally mounted file belongs to — the global fallback included. */
 const LOCAL_LIBRARY_SOURCE_ID = "source-local-library";
 let playoutProcess: ChildProcess | null = null;
