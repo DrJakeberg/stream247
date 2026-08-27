@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.33 - 2026-08-27
+
 ### Fixed
 
 - a failed source ingest no longer takes the running programme off air. `syncTwitchVodSources` and
