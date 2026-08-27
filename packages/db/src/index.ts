@@ -465,6 +465,11 @@ export type ManagedConfigRecord = {
   // managed-first family in packages/core managed-runtime.ts.
   sourceLayerEnabled: string;
   sourceSnapshotIntervalSeconds: string;
+  // M57 stage 2: whether a pushed source may become a live playout input, and how loud it
+  // starts. Stage B only logs the attach decision; the keys exist now so enabling stage C is a
+  // configuration the operator already owns.
+  sourceLiveEnabled: string;
+  sourceLiveGainPercent: string;
   // M56 part 2: the replay (Twitch VOD) cache family. Sizes are GB here because that is what the
   // form asks for; the resolver converts. The cache root path stays env-only (infrastructure).
   vodCacheEnabled: string;
@@ -1520,6 +1525,8 @@ function defaultState(): AppState {
       twitchScheduleSyncEnabled: "",
       sourceLayerEnabled: "",
       sourceSnapshotIntervalSeconds: "",
+      sourceLiveEnabled: "",
+      sourceLiveGainPercent: "",
       vodCacheEnabled: "",
       vodCacheAllowRemoteFallback: "",
       vodCacheMaxGb: "",

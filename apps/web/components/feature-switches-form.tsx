@@ -3,7 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
-type SwitchKey = "streamChatOverlayEnabled" | "streamAlertsEnabled" | "twitchScheduleSyncEnabled" | "sourceLayerEnabled";
+type SwitchKey =
+  | "streamChatOverlayEnabled"
+  | "streamAlertsEnabled"
+  | "twitchScheduleSyncEnabled"
+  | "sourceLayerEnabled"
+  | "sourceLiveEnabled";
 
 const SWITCHES: Array<{ key: SwitchKey; label: string; hint: string }> = [
   {
@@ -25,6 +30,11 @@ const SWITCHES: Array<{ key: SwitchKey; label: string; hint: string }> = [
     key: "sourceLayerEnabled",
     label: "Video sources on the stream",
     hint: "Samples stored cameras or feeds and draws the picture into positioned scene layers."
+  },
+  {
+    key: "sourceLiveEnabled",
+    label: "Live video from sources",
+    hint: "Allows a pushed camera to become live picture and sound; today the worker only reports what it would attach."
   }
 ];
 
