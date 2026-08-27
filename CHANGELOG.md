@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.34 - 2026-08-28
+
 ### Fixed
 
 - a broken media mount no longer deletes the local library, the global fallback with it. The audit
