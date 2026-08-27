@@ -23,6 +23,18 @@
   uncertain answer decides "skip". The three-minute attach circuit breaker exists and is pinned
   by tests; its trigger arrives with the attach stage, as does the starting-gain setting
   (clamped 0–200, default 40) that already resolves through managed config
+- pushed video sources can now be attached LIVE, not just sampled (M57 stage 2, Etappen C+D):
+  when the feature is on, the scene carries a source layer, and the relay reports the source
+  publishing, the playout attaches it as a third ffmpeg input — a picture-in-picture window laid
+  under the scene overlay exactly where the snapshot panel would sit, with `eof_action=pass` so a
+  feed that drops never freezes the frame. Its audio is mixed under the programme at the configured
+  gain (default 40%) with `normalize=0` (no level jump when the source comes or goes) and no
+  padding (a lost source simply falls silent); the mix is built only when the source carries an
+  audio track and there is confirmed programme audio to mix against, otherwise the attach is
+  video-only. The RTSP read is bounded at 4 s, the live window is computed bit-identically to the
+  renderer's panel, and a failed attach start opens the attach breaker so the next starts go
+  attach-free — a bad feed cannot crash-loop the channel. Attach and detach happen only at natural
+  asset boundaries, never mid-asset. Off by default; a DT soak gate precedes any deploy
 
 ### Changed
 
