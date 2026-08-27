@@ -15,6 +15,7 @@ import {
   DESTINATION_STATUS_LABELS,
   describeStreamKey
 } from "@/lib/destination-wording";
+import { describeIncidentAge, describeOpenIncidentOverflow } from "@/lib/incident-age";
 import { describePlayoutReason } from "@/lib/playout-reason";
 import { describeScenePreset } from "@/lib/scene-preset-names";
 
@@ -34,6 +35,9 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
   const activeDestinationCount = snapshot.destinations.filter((destination) => destination.active).length;
   const stagedDestinationCount = snapshot.destinations.filter((destination) => destination.recoveryState === "staged").length;
   const coolingDestinationCount = snapshot.destinations.filter((destination) => destination.recoveryState === "cooldown").length;
+  // Ages are measured against the snapshot's own timestamp rather than the browser clock, so the
+  // server render and the hydrated render agree, and every age on the panel shares one "now".
+  const incidentNowMs = new Date(snapshot.generatedAt).getTime() || Date.now();
 
   return (
     <div className="stack-form">
@@ -335,6 +339,13 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                   <strong>
                     {incident.severity.toUpperCase()} · {incident.scope} · {incident.title}
                   </strong>
+                  <div className="subtle">
+                    {describeIncidentAge({
+                      createdAt: incident.createdAt,
+                      updatedAt: incident.updatedAt,
+                      nowMs: incidentNowMs
+                    })}
+                  </div>
                   <div className="subtle">{incident.message}</div>
                 </div>
               ))
@@ -344,6 +355,13 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 <div className="subtle">The live system currently reports no unresolved incidents.</div>
               </div>
             )}
+            {describeOpenIncidentOverflow(snapshot.openIncidents.length, snapshot.openIncidentCount) ? (
+              <div className="item">
+                <div className="subtle">
+                  {describeOpenIncidentOverflow(snapshot.openIncidents.length, snapshot.openIncidentCount)}
+                </div>
+              </div>
+            ) : null}
           </div>
         </article>
 

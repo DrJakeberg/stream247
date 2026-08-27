@@ -10,6 +10,7 @@ import { Panel } from "@/components/panel";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
 import { getGoLiveChecklist } from "@/lib/server/onboarding";
 import { DESTINATION_ROLE_LABELS, DESTINATION_STATUS_LABELS, describeStreamKey } from "@/lib/destination-wording";
+import { describeIncidentAge, describeOpenIncidentOverflow } from "@/lib/incident-age";
 import {
   getActivePresenceWindows,
   getCurrentScheduleItem,
@@ -35,6 +36,11 @@ export default async function DashboardPage() {
   const presenceStatus = getPresenceStatus(state);
   const activeWindows = getActivePresenceWindows(state);
   const openIncidents = state.incidents.filter((incident) => incident.status === "open");
+  // Newest first, so the four that fit are the four most likely to be the current problem.
+  const listedIncidents = [...openIncidents]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, 4);
+  const incidentNowMs = Date.now();
   const recentIncidents = [...state.incidents]
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, 8);
@@ -232,11 +238,18 @@ export default async function DashboardPage() {
               </div>
             </div>
             {openIncidents.length > 0 ? (
-              openIncidents.slice(0, 4).map((incident) => (
+              listedIncidents.map((incident) => (
                 <div className="item" key={incident.id}>
                   <strong>
                     {incident.severity.toUpperCase()} · {incident.title}
                   </strong>
+                  <div className="subtle">
+                    {describeIncidentAge({
+                      createdAt: incident.createdAt,
+                      updatedAt: incident.updatedAt,
+                      nowMs: incidentNowMs
+                    })}
+                  </div>
                   <div className="subtle">{incident.message}</div>
                   <div className="subtle">
                     {incident.acknowledgedAt
@@ -258,6 +271,11 @@ export default async function DashboardPage() {
                 </div>
               </div>
             )}
+            {describeOpenIncidentOverflow(listedIncidents.length, openIncidents.length) ? (
+              <div className="item">
+                <div className="subtle">{describeOpenIncidentOverflow(listedIncidents.length, openIncidents.length)}</div>
+              </div>
+            ) : null}
             <div className="item">
               <strong>Active moderation presence</strong>
               <div className="subtle">

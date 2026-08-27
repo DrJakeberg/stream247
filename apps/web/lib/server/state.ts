@@ -860,6 +860,7 @@ function summarizeOpenIncidents(state: AppState, limit = 5): LiveIncidentSummary
       scope: incident.scope,
       fingerprint: incident.fingerprint,
       createdAt: incident.createdAt,
+      updatedAt: incident.updatedAt,
       acknowledgedAt: incident.acknowledgedAt,
       resolvedAt: incident.resolvedAt
     }));
@@ -1286,7 +1287,8 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
     queueItems: summarizeQueueItems(state),
     currentScheduleItem: summarizeScheduleItem(currentScheduleItem),
     nextScheduleItem: summarizeScheduleItem(nextScheduleItem),
-    openIncidents: summarizeOpenIncidents(state)
+    openIncidents: summarizeOpenIncidents(state),
+    openIncidentCount: state.incidents.filter((incident) => incident.status === "open").length
   };
 }
 

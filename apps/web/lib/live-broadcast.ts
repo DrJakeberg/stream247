@@ -65,6 +65,8 @@ export type LiveIncidentSummary = {
   scope: "worker" | "playout" | "twitch" | "source" | "system";
   fingerprint: string;
   createdAt: string;
+  /** Refreshed by every repeat of the same fingerprint, so this is "when it last happened". */
+  updatedAt: string;
   acknowledgedAt: string;
   resolvedAt: string;
 };
@@ -355,6 +357,8 @@ export type BroadcastSnapshot = {
   currentScheduleItem: LiveScheduleSummary | null;
   nextScheduleItem: LiveScheduleSummary | null;
   openIncidents: LiveIncidentSummary[];
+  /** Every open incident, not only the few `openIncidents` carries, so a capped panel can say so. */
+  openIncidentCount: number;
 };
 
 export type PublicChannelSnapshot = {
