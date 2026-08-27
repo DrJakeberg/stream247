@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added
+
+- pushed video sources (M57 stage 2, ingest foundation): a stored video source can now receive
+  its picture instead of naming an address. The relay runs a mounted config with HTTP auth
+  against the web app — publishing `src-<id>` needs that source's publish key (issued once in
+  the studio's video source manager, rotatable, stored encrypted, migration `20260826_002`),
+  internal reads and the legacy programme path need a self-generating internal relay key (new
+  `managed_secrets` table, migration `20260826_003`). Ingest host ports are RTMP `1935/tcp` and
+  SRT `8890/udp`; the relay API and RTSP read side stay container-internal. The auth endpoint
+  answers every refusal with the same bare 403, rate-limits per address, audits rejected
+  publishes, and the policy itself is a pure, constant-time-compared function. A pushed source's
+  internal playback URL is derived on read — never stored — so the stage-1 snapshot sampler
+  shows pushed cameras with no further configuration
+- the live-attach groundwork for pushed sources (decision only): each playout cycle computes
+  whether it would attach the scene's pushed source as a live input and logs
+  `playout.source-live.attach_decision` (decision + reason, on change) without acting. Presence
+  is asked from the relay API with a 2s bound only when the new managed gate (default off, env
+  fallback) and the source layer gate are both on and the scene carries a source layer; every
+  uncertain answer decides "skip". The three-minute attach circuit breaker exists and is pinned
+  by tests; its trigger arrives with the attach stage, as does the starting-gain setting
+  (clamped 0–200, default 40) that already resolves through managed config
+
+### Changed
+
+- the rtmp relay rollback paths now require the internal relay key embedded in the relay URL
+  overrides; until an operator surface reveals that key, treat the rtmp rollback as unavailable
+  rather than weakening the relay auth config (see docs/deployment.md)
+
 ## 1.5.29 - 2026-08-26
 
 ### Added
