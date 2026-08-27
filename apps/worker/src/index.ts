@@ -3375,13 +3375,19 @@ async function reconcileSourceDroughtIncident(args: {
     nowMs: Date.now()
   });
 
+  // This upsert overwrites whatever the per-source catch wrote a moment ago, so the newest run's
+  // error travels with it. Without that, a source failing for the third cycle would trade its
+  // "HTTP 503" for a sentence about how long it has been failing, and the diagnosis would be gone
+  // from the one place an operator reads during an incident.
+  const lastError = runs[0]?.errorMessage?.trim() ?? "";
+
   await upsertIncident({
     scope: "source",
     // Nothing stored and something scheduled from it is the channel on the filler slate; a drought
     // in front of an intact archive is a stale programme, which is a different night.
     severity: args.storedAssetCount > 0 ? "warning" : "critical",
     title: `${source.name} has stopped delivering`,
-    message: [health.headline, health.impact].filter(Boolean).join(" "),
+    message: [health.headline, health.impact, lastError].filter(Boolean).join(" "),
     fingerprint: `source.${source.connectorKind}.${source.id}`
   });
 }
@@ -3439,10 +3445,11 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       (source.connectorKind === "youtube-playlist" || source.connectorKind === "youtube-channel") && (source.enabled ?? true)
   );
   const youtubeAssets: AssetRecord[] = [];
-  // Per-source, not just the global hadFailure flag: a source we learned nothing about must keep
-  // its stored assets instead of being wiped by the wholesale replace below. See source-sync-scope.ts.
+  // Per source, never connector-wide: a source we learned nothing about must keep its stored assets
+  // instead of being wiped by the wholesale replace below. See source-sync-scope.ts. The
+  // connector-wide `hadFailure` flag this replaces had no readers left once the incident decision
+  // became per source, and its last one had been suppressing healthy siblings' resolves.
   const failedSourceIds = new Set<string>();
-  let hadFailure = false;
   const syncRuns: AppState["sourceSyncRuns"] = [];
 
   for (const source of youtubeSources) {
@@ -3453,7 +3460,6 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         ? isLikelyYouTubePlaylistUrl(externalUrl)
         : isLikelyYouTubeChannelUrl(externalUrl);
     if (!isValid) {
-      hadFailure = true;
       failedSourceIds.add(source.id);
       syncRuns.push(buildSourceSyncRun({
         sourceId: source.id,
@@ -3513,7 +3519,6 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         errorMessage: ""
       }));
     } catch (error) {
-      hadFailure = true;
       failedSourceIds.add(source.id);
       const message = error instanceof Error ? error.message : "Unknown YouTube playlist ingestion error.";
       syncRuns.push(buildSourceSyncRun({
@@ -3559,16 +3564,18 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   });
   await appendSourceSyncRuns(syncRuns);
 
-  if (!hadFailure) {
-    for (const source of youtubeSources) {
-      await reconcileSourceDroughtIncident({
-        state,
-        source,
-        runsThisCycle: syncRuns,
-        // The archive as it stands before this sync's replace — what the channel still has to play.
-        storedAssetCount: state.assets.filter((asset) => asset.sourceId === source.id).length
-      });
-    }
+  // Every source, not only when the whole connector had a clean cycle. The old `if (!hadFailure)`
+  // guard around the resolve was already too coarse — one failing playlist suppressed the resolve
+  // for every healthy sibling — and applied to reporting it would suppress the drought entry too.
+  // The decision is per source and already knows what each source's own history says.
+  for (const source of youtubeSources) {
+    await reconcileSourceDroughtIncident({
+      state,
+      source,
+      runsThisCycle: syncRuns,
+      // The archive as it stands before this sync's replace — what the channel still has to play.
+      storedAssetCount: state.assets.filter((asset) => asset.sourceId === source.id).length
+    });
   }
 }
 
