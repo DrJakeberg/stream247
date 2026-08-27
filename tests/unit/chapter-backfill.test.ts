@@ -12,6 +12,7 @@ import {
 
 const NOW = Date.parse("2026-08-25T12:00:00.000Z");
 const COOLDOWN_MS = 30 * 60 * 1000;
+const RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
 const sources: ChapterBackfillSource[] = [
   { id: "src_yt_playlist", connectorKind: "youtube-playlist", enabled: true },
@@ -39,6 +40,7 @@ function select(assets: ChapterBackfillAsset[], budget = 10, nowMs = NOW) {
     sources,
     budget,
     failureCooldownMs: COOLDOWN_MS,
+    emptyResultRecheckMs: RECHECK_MS,
     nowMs
   });
 }
@@ -75,9 +77,16 @@ describe("chapter backfill candidate selection", () => {
     expect(candidates.map((candidate) => candidate.assetId)).toEqual(["a_empty"]);
   });
 
-  it("never re-fetches after a successful probe, even when the source had no chapters", () => {
+  // An empty success is provisional and gets one recheck a week later, never sooner. See
+  // chapter-backfill-recheck.test.ts for the recheck rules themselves.
+  it("does not re-fetch a recent empty probe result", () => {
     const candidates = select([
-      makeAsset({ id: "a_probed", sourceId: "src_yt_playlist", chaptersProbeStatus: "ok", chaptersProbedAt: "2026-08-01T00:00:00.000Z" }),
+      makeAsset({
+        id: "a_probed",
+        sourceId: "src_yt_playlist",
+        chaptersProbeStatus: "ok",
+        chaptersProbedAt: new Date(NOW - 60_000).toISOString()
+      }),
       makeAsset({ id: "a_fresh", sourceId: "src_yt_playlist" })
     ]);
     expect(candidates.map((candidate) => candidate.assetId)).toEqual(["a_fresh"]);

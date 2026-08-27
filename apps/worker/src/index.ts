@@ -3719,11 +3719,12 @@ async function syncTwitchVodSources(): Promise<void> {
  * Collection connectors list their items with --flat-playlist, which never carries chapters, so
  * YouTube items, Twitch archive VODs and direct media arrive chapterless. This step spends a small
  * per-cycle probe budget on those assets (one metadata-only call each, no download) and stores the
- * result through the same only-fill-empty rule re-ingest uses — operator edits always win, and a
- * settled probe (chapters or a final "there are none") is never paid for again. Failures go into a
- * cooldown instead of an incident: a missing chapter list degrades nothing on air, so the log
- * entry is enough. The written chaptersJson feeds the existing boundary emission and Helix sync
- * untouched.
+ * result through the same only-fill-empty rule re-ingest uses — operator edits always win, and an
+ * asset that has chapters is never probed again. A probe that came back empty is trusted for a
+ * week and then asked once more, because "no chapters" is also what a rate limit and a broken
+ * extractor return. Failures go into a short cooldown instead of an incident: a missing chapter
+ * list degrades nothing on air, so the log entry is enough. The written chaptersJson feeds the
+ * existing boundary emission and Helix sync untouched.
  */
 async function backfillAssetChapters(): Promise<void> {
   const config = getChapterBackfillConfig(process.env);
@@ -3737,6 +3738,7 @@ async function backfillAssetChapters(): Promise<void> {
     sources: state.sources,
     budget: config.perCycleBudget,
     failureCooldownMs: config.failureCooldownMs,
+    emptyResultRecheckMs: config.emptyResultRecheckMs,
     nowMs: Date.now()
   });
 
