@@ -26,8 +26,9 @@ vi.mock("next/server", () => ({
   }
 }));
 
-import { POST, clearRelayAuditThrottleForTests } from "../../apps/web/app/api/relay/auth/route";
+import { POST } from "../../apps/web/app/api/relay/auth/route";
 import { clearAllRateLimits, RELAY_AUTH_RATE_LIMIT } from "../../apps/web/lib/server/rate-limit";
+import { clearRelayAuditThrottleForTests } from "../../apps/web/lib/server/relay-audit-throttle";
 
 // The endpoint mediamtx asks about every publish and read. It carries no session — the relay
 // calls it server-side, and the credential under test IS the request body — which is exactly why
