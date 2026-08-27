@@ -10,12 +10,12 @@ import { Panel } from "@/components/panel";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
 import { getGoLiveChecklist } from "@/lib/server/onboarding";
 import { DESTINATION_ROLE_LABELS, DESTINATION_STATUS_LABELS, describeStreamKey } from "@/lib/destination-wording";
-import { describeIncidentAge, describeOpenIncidentOverflow } from "@/lib/incident-age";
 import {
   getActivePresenceWindows,
   getCurrentScheduleItem,
   getManagedTwitchConfig,
   getNextScheduleItem,
+  getOpenIncidentPanel,
   getPlayoutQueueAssets,
   getPresenceStatus,
   getSchedulePreview,
@@ -35,12 +35,7 @@ export default async function DashboardPage() {
   const schedulePreview = getSchedulePreview(state);
   const presenceStatus = getPresenceStatus(state);
   const activeWindows = getActivePresenceWindows(state);
-  const openIncidents = state.incidents.filter((incident) => incident.status === "open");
-  // Newest first, so the four that fit are the four most likely to be the current problem.
-  const listedIncidents = [...openIncidents]
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-    .slice(0, 4);
-  const incidentNowMs = Date.now();
+  const incidentPanel = getOpenIncidentPanel(state);
   const recentIncidents = [...state.incidents]
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, 8);
@@ -131,9 +126,9 @@ export default async function DashboardPage() {
         </article>
         <article className="metric">
           <span className="label">Incidents</span>
-          <div className="value">{openIncidents.length}</div>
+          <div className="value">{incidentPanel.openCount}</div>
           <p className="subtle">
-            {openIncidents.length > 0 ? `${openIncidents[0].title}` : "No open incidents at the moment."}
+            {incidentPanel.listed[0] ? incidentPanel.listed[0].title : "No open incidents at the moment."}
           </p>
         </article>
         <article className="metric">
@@ -237,19 +232,13 @@ export default async function DashboardPage() {
                 Use Live control for skip, fallback, restart, override, replay, and Live Bridge actions. This status view stays read-only.
               </div>
             </div>
-            {openIncidents.length > 0 ? (
-              listedIncidents.map((incident) => (
+            {incidentPanel.listed.length > 0 ? (
+              incidentPanel.listed.map((incident) => (
                 <div className="item" key={incident.id}>
                   <strong>
                     {incident.severity.toUpperCase()} · {incident.title}
                   </strong>
-                  <div className="subtle">
-                    {describeIncidentAge({
-                      createdAt: incident.createdAt,
-                      updatedAt: incident.updatedAt,
-                      nowMs: incidentNowMs
-                    })}
-                  </div>
+                  <div className="subtle">{incident.ageLabel}</div>
                   <div className="subtle">{incident.message}</div>
                   <div className="subtle">
                     {incident.acknowledgedAt
@@ -271,9 +260,9 @@ export default async function DashboardPage() {
                 </div>
               </div>
             )}
-            {describeOpenIncidentOverflow(listedIncidents.length, openIncidents.length) ? (
+            {incidentPanel.overflow ? (
               <div className="item">
-                <div className="subtle">{describeOpenIncidentOverflow(listedIncidents.length, openIncidents.length)}</div>
+                <div className="subtle">{incidentPanel.overflow}</div>
               </div>
             ) : null}
             <div className="item">

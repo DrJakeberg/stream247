@@ -36,8 +36,9 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
   const stagedDestinationCount = snapshot.destinations.filter((destination) => destination.recoveryState === "staged").length;
   const coolingDestinationCount = snapshot.destinations.filter((destination) => destination.recoveryState === "cooldown").length;
   // Ages are measured against the snapshot's own timestamp rather than the browser clock, so the
-  // server render and the hydrated render agree, and every age on the panel shares one "now".
-  const incidentNowMs = new Date(snapshot.generatedAt).getTime() || Date.now();
+  // server render and the hydrated render agree, every age on the panel shares one "now", and the
+  // render stays pure. An unusable timestamp produces no age line rather than a wrong one.
+  const incidentNowMs = new Date(snapshot.generatedAt).getTime();
 
   return (
     <div className="stack-form">

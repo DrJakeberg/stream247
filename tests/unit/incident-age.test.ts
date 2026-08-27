@@ -24,6 +24,9 @@ describe("how long an incident has been standing", () => {
   it("does not pretend to know an age it was not given", () => {
     expect(describeIncidentAge({ createdAt: "", updatedAt: "", nowMs: NOW })).toBe("");
     expect(describeIncidentAge({ createdAt: "not a date", updatedAt: "not a date", nowMs: NOW })).toBe("");
+    // The control room measures against the snapshot's own timestamp; an unparseable one must
+    // produce no line rather than "NaNd NaNh ago".
+    expect(describeIncidentAge({ createdAt: at(days(2)), updatedAt: at(days(2)), nowMs: Number.NaN })).toBe("");
   });
 
   it("rounds a fresh incident to something readable rather than to zero", () => {
@@ -46,14 +49,25 @@ describe("open incidents beyond the ones listed", () => {
 describe("the surfaces that show open incidents", () => {
   const dashboardSource = readFileSync(path.join(process.cwd(), "apps/web/app/(admin)/dashboard/page.tsx"), "utf8");
   const controlRoomSource = readFileSync(path.join(process.cwd(), "apps/web/components/broadcast-control-room.tsx"), "utf8");
+  const serverStateSource = readFileSync(path.join(process.cwd(), "apps/web/lib/server/state.ts"), "utf8");
 
   it("tells the operator how old each open entry is", () => {
-    expect(dashboardSource).toContain("describeIncidentAge");
+    expect(serverStateSource).toContain("describeIncidentAge");
+    expect(dashboardSource).toContain("incident.ageLabel");
     expect(controlRoomSource).toContain("describeIncidentAge");
   });
 
   it("admits when more are open than fit on the panel", () => {
-    expect(dashboardSource).toContain("describeOpenIncidentOverflow");
+    expect(serverStateSource).toContain("describeOpenIncidentOverflow");
+    expect(dashboardSource).toContain("incidentPanel.overflow");
     expect(controlRoomSource).toContain("describeOpenIncidentOverflow");
+  });
+
+  it("keeps the clock out of the render, so both panels stay pure", () => {
+    // eslint's react-hooks/purity rule is the enforcer; this states the intent next to the code
+    // that has to keep satisfying it.
+    expect(dashboardSource).not.toContain("Date.now()");
+    expect(controlRoomSource).not.toContain("Date.now()");
+    expect(controlRoomSource).toContain("new Date(snapshot.generatedAt).getTime()");
   });
 });

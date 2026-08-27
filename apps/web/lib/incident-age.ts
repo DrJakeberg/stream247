@@ -17,7 +17,9 @@
 
 function ageLabel(fromIso: string, nowMs: number): string {
   const fromMs = fromIso ? new Date(fromIso).getTime() : Number.NaN;
-  if (!Number.isFinite(fromMs)) {
+  // The reference clock is passed in rather than read here, because both callers render inside a
+  // React component where `Date.now()` is not allowed. An unusable one says nothing at all.
+  if (!Number.isFinite(fromMs) || !Number.isFinite(nowMs)) {
     return "";
   }
 
