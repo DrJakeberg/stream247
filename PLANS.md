@@ -1901,6 +1901,69 @@ every single one described something that had finished long ago.
 - Deliberately left for later M56 parts: VOD cache family, watchdog thresholds, relay topology,
   reconnect tuning, and the unused redis service in compose.
 
+### 2026-08-28 — M59 Follow-Up: The Same Deletion Shape In Four More Places
+
+- Audit after the v1.5.33 sync wipe, looking for the same shape everywhere: a failure that
+  produces no data, and a caller that reads "no data" as "the data is gone". Four hits, one of them
+  worse than the original.
+- **A1, the serious one.** `walkMediaFiles` wrapped the entire recursive scan in
+  `catch { return []; }`. An unmounted volume, an NFS timeout, EACCES, EMFILE or one unreadable
+  subdirectory all produced an empty list, and `syncLocalMediaLibrary` handed that straight to
+  `replaceAssetsForSourceIds(["source-local-library"], [])`. Worse than the Twitch incident,
+  because the local library is where the global fallback lives (`isGlobalFallback` is derived from
+  the filename): the Twitch wipe dropped the channel onto the standby video, this one deletes the
+  standby video as well. It also cascades — an emptied `state.assets` defeats
+  `collectDiskProtectedAssetIds`, so the watermark sweep is free to evict the VOD cache and
+  thumbnails of assets the schedule still references. `scanMediaFiles` (in `local-library.ts`, with
+  an injectable readdir so the failure modes are testable) now reports whether the walk completed;
+  a partial failure counts, not just a failure at the root. The sync feeds that in as
+  `ingestFailed` and reuses `decideSourceAssetReplacement` — no second special case.
+- **The last line of defence.** `replaceAssetsForSourceIds` checked only `sourceIds.length === 0`
+  and never looked at the incoming asset list, which is why each of these bugs reached the
+  database. It now refuses to empty a populated source unless the caller passes
+  `allowEmptyReplacement`. Deliberately keyed on zero, not on a percentage: a source shrinking from
+  49 items to 1 is an ordinary playlist edit, and blocking that would pin stale rows on air with no
+  way out. Zero is the only count that is both catastrophic and never distinguishable from a
+  failure that produced no listing. A genuinely emptied source stays emptiable — the syncs that
+  built both lists from the same evidence opt in. It refuses rather than throws: reaching it means
+  a caller's scope decision was wrong, and failing the cycle would hurt the broadcast the guard
+  exists to protect, so it warns instead.
+- **A2.** `syncDirectMediaSources` skipped asset building for an invalid URL but left the source id
+  in the delete list. `planDirectMediaSync` derives the usable entries and the unusable ids in one
+  pass, so the two lists cannot drift. The Twitch invalid-URL branch had the same gap, saved only
+  by the keep-empty-result rule catching it by accident; it is now explicit.
+- **B2.** The status write knew nothing about the preservation, so a protected source and a wiped
+  one both read `Ingestion failed`. `describeSourceSyncStatus` derives status, a `assetsPreserved`
+  flag and the count still playable from the same outcome the replacement decision uses. Writing
+  its test surfaced a wart worth keeping fixed: the replacement rule holds a failed source back
+  even when it stores nothing, and the status must not round that into "assets preserved" when
+  there were none.
+- **B1.** A valid chapter probe that found nothing wrote `chaptersProbeStatus: "ok"` — absorbing,
+  with no re-probe path and no reset in the UI. A rate limit, a geo/subscriber-only variant and a
+  yt-dlp extractor regression all answer exactly that, and the consequence is on-air: wrong
+  category, wrong title. The asymmetry was the tell — `"failed"` healed through its cooldown,
+  `"ok"` never did. An empty result now gets its own, much longer interval
+  (`CHAPTER_BACKFILL_EMPTY_RECHECK_SECONDS`, default one week, `0` disables) and rechecks sort
+  behind never-probed assets and failure retries, so `CHAPTER_BACKFILL_PER_CYCLE` and the
+  cycle-await ceiling are untouched. No schema change was needed and none was made:
+  `chapters_probe_status` is already TEXT, and `"ok"` with an empty `chapters_json` is exactly and
+  only the empty-result case — a new status value would have needed a data migration to heal rows
+  that now heal by themselves on their next recheck. Assets that have chapters are still never
+  selected, so operator edits keep winning outright.
+- **C1.** `ensureLocalAssetThumbnail` deleted the existing thumbnail and let `ffmpeg -y` write
+  straight to the target, so an OOM kill or disk pressure left nothing, or a torn file readers
+  would serve. Adopted the temp+rename that `captureSourceSnapshot` already used; the disk sweep
+  now also collects `.jpg.tmp` leftovers, which can only come from a process that died between
+  render and rename.
+- **C2.** YouTube incident resolution hung off a global `hadFailure`, so one failing source kept
+  every healthy sibling's incident open — and with a permanently broken source, forever. The
+  per-source set was already being built two lines away.
+- Deliberately not done: no UI work at all (the sources health display is a parallel change; the
+  worker side keeps its data shape plain and self-describing — a status string plus a preserved
+  note — so the display needs no new contract). `mediaExtensions` in `index.ts` is now an alias of
+  the shared `MEDIA_FILE_EXTENSIONS` rather than a wider refactor of that file. No baseline
+  updates.
+
 ### 2026-08-27 — M59 Boundary Continuity: Source Wipe, Lost Wake, Silent Stops
 
 - Started from a viewer-visible symptom — ~18s of fallback slate at two of three asset boundaries —

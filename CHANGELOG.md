@@ -2,6 +2,56 @@
 
 ## Unreleased
 
+### Fixed
+
+- a broken media mount no longer deletes the local library, the global fallback with it. The audit
+  that followed the v1.5.33 sync wipe found the same absence-of-evidence shape four more times, and
+  this one was worse than the original: `walkMediaFiles` wrapped the whole recursive scan in
+  `catch { return []; }`, so an unmounted volume, an NFS timeout, EACCES, EMFILE or a single
+  unreadable subdirectory was indistinguishable from an empty library — and `syncLocalMediaLibrary`
+  then handed that empty list to `replaceAssetsForSourceIds` and deleted every local asset. Where
+  the Twitch incident dropped the channel onto the standby video, this path deleted the standby
+  video too, and the emptied `state.assets` then defeated `collectDiskProtectedAssetIds`, releasing
+  the VOD cache and thumbnails of still-scheduled assets to the watermark sweep. `scanMediaFiles`
+  now reports whether the walk completed, and a scan that did not is fed to the same
+  `decideSourceAssetReplacement` rule the connector syncs use, so the stored rows survive and emit
+  `source.sync.assets_preserved`. The source status, notes, incident and sync run name the scan
+  failure instead of claiming an empty library
+- a direct media source whose URL fails validation keeps its stored asset. The invalid-URL branch
+  in `syncDirectMediaSources` skipped asset building but left the source id in the wholesale delete
+  list, so a typo or a mid-cycle edit silently deleted the asset. `planDirectMediaSync` now derives
+  the usable entries and the unusable source ids in one pass, and the sync routes through the same
+  per-source preservation. The Twitch sync's own invalid-URL branch, which relied on the
+  keep-empty-result rule catching it by accident, is now explicit as well
+- `replaceAssetsForSourceIds` refuses to empty a populated source unless the caller opts in with
+  `allowEmptyReplacement`. Its only guard was `sourceIds.length === 0`; the incoming asset list was
+  never looked at, which is what let every one of these bugs reach the database. Emptying a source
+  is still legitimate — the syncs that computed both lists from the same evidence say so — and a
+  merely shrinking result is untouched, because a source going from 49 items to 1 is an ordinary
+  playlist edit
+- a source status now says whether a failed sync kept its assets. Both the YouTube and Twitch
+  status writes reported `Ingestion failed` from the raw incoming count, so a source whose archive
+  had just been protected looked identical to one that had been emptied — opposite situations for
+  an operator. `describeSourceSyncStatus` derives the status, the preserved flag and the count that
+  is actually still playable from the same outcome the replacement decision uses
+- a chapter probe that came back empty is no longer a final answer. `chaptersProbeStatus: "ok"` was
+  an absorbing state with no re-probe path and no reset in the UI, but a rate limit, a geo- or
+  subscriber-restricted variant and a yt-dlp extractor regression all report "no chapters" too — so
+  an asset could sit on the wrong category and title on air indefinitely. The asymmetry made it
+  worse: `"failed"` healed through its cooldown, `"ok"` never healed. An empty result is now
+  trusted for `CHAPTER_BACKFILL_EMPTY_RECHECK_SECONDS` (default one week, `0` disables) and then
+  probed once more, sorted behind never-probed assets and failure retries so the per-cycle budget
+  and the cycle-await ceiling are unchanged. Assets that have chapters are still never selected, so
+  operator edits keep winning outright
+- a failed thumbnail render no longer destroys the good thumbnail. `ensureLocalAssetThumbnail`
+  deleted the existing file and pointed `ffmpeg -y` straight at the target path, so an OOM kill,
+  disk pressure or plain load left the asset with no picture, or a truncated one readers would
+  serve. It now renders to a temp path and renames only a finished file, the pattern
+  `captureSourceSnapshot` already used; the disk sweep collects `.jpg.tmp` leftovers
+- YouTube ingestion incidents resolve per source instead of behind a global `hadFailure` flag. One
+  failing source kept every healthy sibling's incident open, and with a permanently broken source
+  they never resolved at all
+
 ## 1.5.33 - 2026-08-27
 
 ### Fixed
