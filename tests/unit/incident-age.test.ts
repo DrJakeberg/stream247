@@ -63,6 +63,12 @@ describe("the surfaces that show open incidents", () => {
     expect(controlRoomSource).toContain("describeOpenIncidentOverflow");
   });
 
+  it("counts every open incident on the status chip, not just the ones carried", () => {
+    const statusRailSource = readFileSync(path.join(process.cwd(), "apps/web/components/admin-status-rail.tsx"), "utf8");
+    expect(statusRailSource).toContain("snapshot.openIncidentCount");
+    expect(statusRailSource).not.toContain("snapshot.openIncidents.length");
+  });
+
   it("keeps the clock out of the render, so both panels stay pure", () => {
     // eslint's react-hooks/purity rule is the enforcer; this states the intent next to the code
     // that has to keep satisfying it.
