@@ -22,6 +22,13 @@ import { execFileText } from "./process-utils.js";
 export const DEFAULT_CHAPTER_BACKFILL_PER_CYCLE = 3;
 /** Matches the twitch-vod-cache failure cooldown: long enough to be polite, short enough to heal. */
 const DEFAULT_FAILURE_COOLDOWN_SECONDS = 30 * 60;
+/**
+ * How long an "the probe worked and there were no chapters" answer is trusted before it is
+ * checked once more. A week: long enough that rechecks are a rounding error against the per-cycle
+ * budget even for a large library, short enough that a video whose chapters were hidden behind a
+ * rate limit or an extractor regression is not mis-categorised on air for a season.
+ */
+export const DEFAULT_CHAPTER_EMPTY_RECHECK_SECONDS = 7 * 24 * 60 * 60;
 /** A probe only reads metadata; anything slower than this is a hung network call. */
 const CHAPTER_PROBE_TIMEOUT_MS = 30_000;
 
@@ -29,6 +36,8 @@ export type ChapterBackfillConfig = {
   /** Maximum probes per reconciliation cycle. 0 disables the backfill. */
   perCycleBudget: number;
   failureCooldownMs: number;
+  /** How long an empty-but-valid result is trusted before one recheck. 0 disables rechecks. */
+  emptyResultRecheckMs: number;
   probeTimeoutMs: number;
   ytDlpBinary: string;
   ffprobeBinary: string;
@@ -47,9 +56,19 @@ export function getChapterBackfillConfig(env: NodeJS.ProcessEnv): ChapterBackfil
   const rawCooldown = Number(env.CHAPTER_BACKFILL_FAILURE_COOLDOWN_SECONDS);
   const cooldownSeconds = Number.isFinite(rawCooldown) && rawCooldown > 0 ? rawCooldown : DEFAULT_FAILURE_COOLDOWN_SECONDS;
 
+  // 0 is a meaningful setting here (never recheck), so it is kept rather than replaced by the
+  // default the way a nonsensical value is. An unset or blank variable is not a 0.
+  const rawRecheckText = env.CHAPTER_BACKFILL_EMPTY_RECHECK_SECONDS?.trim() ?? "";
+  const rawRecheck = Number(rawRecheckText);
+  const recheckSeconds =
+    rawRecheckText !== "" && Number.isFinite(rawRecheck) && rawRecheck >= 0
+      ? Math.floor(rawRecheck)
+      : DEFAULT_CHAPTER_EMPTY_RECHECK_SECONDS;
+
   return {
     perCycleBudget: Math.min(requestedBudget, budgetCeiling),
     failureCooldownMs: cooldownSeconds * 1000,
+    emptyResultRecheckMs: recheckSeconds * 1000,
     probeTimeoutMs,
     ytDlpBinary: env.YT_DLP_BIN || "yt-dlp",
     ffprobeBinary: env.FFPROBE_BIN || "ffprobe"
@@ -82,30 +101,74 @@ const PROBE_BY_CONNECTOR_KIND: Partial<
   "direct-media": { probe: "ffprobe", chapterTitleNamesCategory: false }
 };
 
-function isProbeCoolingDown(asset: ChapterBackfillAsset, cooldownMs: number, nowMs: number): boolean {
-  if (cooldownMs <= 0 || asset.chaptersProbeStatus !== "failed" || !asset.chaptersProbedAt) {
+/**
+ * True while a probe outcome is still within its waiting period.
+ *
+ * An unreadable or missing timestamp cannot prove the outcome was recent, so the asset stays
+ * probeable — the same call isTwitchVodCacheCoolingDown makes.
+ */
+function isWithinProbeInterval(probedAt: string | undefined, intervalMs: number, nowMs: number): boolean {
+  if (intervalMs <= 0 || !probedAt) {
     return false;
   }
 
-  const probedAtMs = new Date(asset.chaptersProbedAt).getTime();
-  // An unreadable timestamp cannot prove the failure was recent, so the asset stays retryable —
-  // the same call isTwitchVodCacheCoolingDown makes.
-  return Number.isFinite(probedAtMs) && nowMs - probedAtMs < cooldownMs;
+  const probedAtMs = new Date(probedAt).getTime();
+  return Number.isFinite(probedAtMs) && nowMs - probedAtMs < intervalMs;
+}
+
+/**
+ * How this asset's stored probe outcome bears on spending budget now.
+ *
+ * `settled` used to include every successful probe, which made "the probe worked and found no
+ * chapters" an absorbing state. That answer is also what a rate limit, a geo- or subscriber-only
+ * variant and a yt-dlp extractor regression produce, and there was no way back out of it: unlike
+ * "failed", which healed through its cooldown, "ok" never healed. So an empty success is treated
+ * as provisional and rechecked once, much later.
+ */
+type ProbeDisposition = "never-probed" | "retry-failure" | "recheck-empty" | "waiting";
+
+function classifyProbeDisposition(
+  asset: ChapterBackfillAsset,
+  args: { failureCooldownMs: number; emptyResultRecheckMs: number; nowMs: number }
+): ProbeDisposition {
+  if (asset.chaptersProbeStatus === "failed") {
+    return isWithinProbeInterval(asset.chaptersProbedAt, args.failureCooldownMs, args.nowMs) ? "waiting" : "retry-failure";
+  }
+
+  // Only ever an *empty* success reaches here: a probe that found chapters stored them, and an
+  // asset with stored chapters was filtered out before this point.
+  if (asset.chaptersProbeStatus === "ok") {
+    // 0 means an operator turned rechecks off and accepts the old absorbing behaviour.
+    if (args.emptyResultRecheckMs <= 0) {
+      return "waiting";
+    }
+    return isWithinProbeInterval(asset.chaptersProbedAt, args.emptyResultRecheckMs, args.nowMs)
+      ? "waiting"
+      : "recheck-empty";
+  }
+
+  return "never-probed";
 }
 
 /**
  * Pick which assets this cycle spends its probe budget on.
  *
- * Skips anything that already has chapters (operator edits and earlier fills are final), anything
- * probed successfully (even a "no chapters" answer is settled), and failures still inside the
- * cooldown. Never-probed assets go before retries so a stock of failing assets cannot starve new
- * arrivals of the budget.
+ * Skips anything that already has chapters — operator edits and earlier fills are final and are
+ * never re-probed — plus failures inside their cooldown and empty results inside their (much
+ * longer) recheck interval.
+ *
+ * Priority is never-probed, then failure retries, then empty-result rechecks. A newly ingested
+ * asset must get its first probe before the library's settled backlog is revisited, and rechecks
+ * are the least urgent of the three: they are re-asking a question that already has a plausible
+ * answer. The per-cycle budget is unchanged, so rechecks cost cycle time only in cycles where
+ * nothing more urgent is waiting — the cycle-await ceiling invariant is untouched.
  */
 export function selectChapterBackfillCandidates(args: {
   assets: ChapterBackfillAsset[];
   sources: ChapterBackfillSource[];
   budget: number;
   failureCooldownMs: number;
+  emptyResultRecheckMs: number;
   nowMs: number;
 }): ChapterBackfillCandidate[] {
   if (args.budget <= 0) {
@@ -113,7 +176,11 @@ export function selectChapterBackfillCandidates(args: {
   }
 
   const sourceById = new Map(args.sources.map((source) => [source.id, source] as const));
-  const eligible: Array<{ asset: ChapterBackfillAsset; candidate: ChapterBackfillCandidate }> = [];
+  const buckets: Record<Exclude<ProbeDisposition, "waiting">, Array<{ asset: ChapterBackfillAsset; candidate: ChapterBackfillCandidate }>> = {
+    "never-probed": [],
+    "retry-failure": [],
+    "recheck-empty": []
+  };
 
   for (const asset of args.assets) {
     const source = sourceById.get(asset.sourceId);
@@ -126,19 +193,31 @@ export function selectChapterBackfillCandidates(args: {
       continue;
     }
 
-    if (asset.chaptersProbeStatus === "ok" || isProbeCoolingDown(asset, args.failureCooldownMs, args.nowMs)) {
+    const disposition = classifyProbeDisposition(asset, {
+      failureCooldownMs: args.failureCooldownMs,
+      emptyResultRecheckMs: args.emptyResultRecheckMs,
+      nowMs: args.nowMs
+    });
+    if (disposition === "waiting") {
       continue;
     }
 
-    eligible.push({ asset, candidate: { assetId: asset.id, path: asset.path, ...probe } });
+    buckets[disposition].push({ asset, candidate: { assetId: asset.id, path: asset.path, ...probe } });
   }
 
-  const neverProbed = eligible.filter((entry) => entry.asset.chaptersProbeStatus !== "failed");
-  const retries = eligible
-    .filter((entry) => entry.asset.chaptersProbeStatus === "failed")
-    .sort((left, right) => String(left.asset.chaptersProbedAt).localeCompare(String(right.asset.chaptersProbedAt)));
+  // Oldest outcome first within a bucket, so nothing sits at the back of the queue forever.
+  const byProbedAt = (
+    left: { asset: ChapterBackfillAsset },
+    right: { asset: ChapterBackfillAsset }
+  ): number => String(left.asset.chaptersProbedAt).localeCompare(String(right.asset.chaptersProbedAt));
 
-  return [...neverProbed, ...retries].slice(0, args.budget).map((entry) => entry.candidate);
+  return [
+    ...buckets["never-probed"],
+    ...buckets["retry-failure"].sort(byProbedAt),
+    ...buckets["recheck-empty"].sort(byProbedAt)
+  ]
+    .slice(0, args.budget)
+    .map((entry) => entry.candidate);
 }
 
 /**

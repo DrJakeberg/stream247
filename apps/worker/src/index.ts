@@ -146,7 +146,8 @@ import {
 } from "./on-air-scene.js";
 import { incrementQueueVersion, prioritizeManualNextAsset } from "./broadcast-queue.js";
 import { getChapterBackfillConfig, probeAssetChapters, selectChapterBackfillCandidates } from "./chapter-backfill.js";
-import { buildLocalLibraryAssetId, buildLocalLibraryFolderPath } from "./local-library.js";
+import { isDirectMediaUrl, planDirectMediaSync } from "./direct-media.js";
+import { buildLocalLibraryAssetId, buildLocalLibraryFolderPath, scanMediaFiles } from "./local-library.js";
 import { resolvePoolAudioLane, type ResolvedAudioLane } from "./audio-lanes.js";
 import { getCuepointInsertPlan } from "./cuepoints.js";
 import {
@@ -265,7 +266,13 @@ import {
 import { decideQueuePrefetchBudget, planQueuePrefetch, raceResolveAgainstDeath } from "./queue-prefetch.js";
 import { LoopWakeLatch } from "./loop-wake.js";
 import { ProgrammeGapTracker } from "./playout-gap.js";
-import { decideSourceAssetReplacement, selectReplaceableSourceIds, type SourceSyncOutcome } from "./source-sync-scope.js";
+import {
+  buildPreservedAssetsNote,
+  describeSourceSyncStatus,
+  planSourceAssetReplacement,
+  planSourceIncidentResolution,
+  type SourceSyncOutcome
+} from "./source-sync-scope.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 import { EngagementGameTracker } from "./engagement-game.js";
@@ -284,7 +291,8 @@ import { syncTwitchEventSubSubscriptions } from "./twitch-eventsub.js";
 import { fetchTwitchLiveStatus } from "./twitch-live-status.js";
 import { decideTwitchChannelMetadataWrite } from "./twitch-sync-policy.js";
 
-const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
+/** The single synthetic source every locally mounted file belongs to — the global fallback included. */
+const LOCAL_LIBRARY_SOURCE_ID = "source-local-library";
 let playoutProcess: ChildProcess | null = null;
 let playoutProcessStartedAtMs = 0;
 let playoutAssetId = "";
@@ -995,7 +1003,9 @@ async function runDiskWatermarkStage(
   const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
   const files: ThumbnailFileInfo[] = [];
   for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".jpg")) {
+    // .jpg.tmp leftovers can only come from a process that died between the render and the
+    // rename; nothing reads them, so they are sweepable like the source-frame temps.
+    if (!entry.isFile() || !(entry.name.endsWith(".jpg") || entry.name.endsWith(".jpg.tmp"))) {
       continue;
     }
     const filePath = path.join(directory, entry.name);
@@ -1483,15 +1493,6 @@ async function updateProgramFeedRuntimeStatus(): Promise<Awaited<ReturnType<type
   await enforceProgramFeedAudio(feed.playlistPath);
   await enforceProgramFeedProgress(feed);
   return feed;
-}
-
-function isDirectMediaUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return ["http:", "https:"].includes(url.protocol) && mediaExtensions.has(path.extname(url.pathname).toLowerCase());
-  } catch {
-    return false;
-  }
 }
 
 function isResolvableRemoteVideoUrl(value: string): boolean {
@@ -2988,34 +2989,13 @@ async function resolveTwitchCategory(args: {
     : null;
 }
 
-async function walkMediaFiles(root: string): Promise<string[]> {
-  try {
-    const entries = await fs.readdir(root, { withFileTypes: true });
-    const files = await Promise.all(
-      entries.map(async (entry) => {
-        const absolutePath = path.join(root, entry.name);
-        if (isInternalMediaCachePath(absolutePath, getMediaRoot())) {
-          return [];
-        }
-        if (entry.isDirectory()) {
-          return walkMediaFiles(absolutePath);
-        }
-        return mediaExtensions.has(path.extname(entry.name).toLowerCase()) ? [absolutePath] : [];
-      })
-    );
-    return files.flat();
-  } catch {
-    return [];
-  }
-}
-
 function buildAssetFromPath(filePath: string, now: string): AssetRecord {
   const mediaRoot = getMediaRoot();
   const isFallback = filePath.toLowerCase().includes("fallback") || filePath.toLowerCase().includes("standby");
   const id = buildLocalLibraryAssetId(filePath);
   return {
     id,
-    sourceId: "source-local-library",
+    sourceId: LOCAL_LIBRARY_SOURCE_ID,
     title: path.basename(filePath, path.extname(filePath)).replace(/[_-]+/g, " "),
     path: filePath,
     folderPath: buildLocalLibraryFolderPath(filePath, mediaRoot),
@@ -3032,9 +3012,12 @@ function buildAssetFromPath(filePath: string, now: string): AssetRecord {
 async function syncLocalMediaLibrary(): Promise<void> {
   const mediaRoot = getMediaRoot();
   const startedAt = new Date().toISOString();
-  const discoveredFiles = await walkMediaFiles(mediaRoot);
+  const scan = await scanMediaFiles({
+    root: mediaRoot,
+    isExcluded: (absolutePath) => isInternalMediaCachePath(absolutePath, mediaRoot)
+  });
   const now = new Date().toISOString();
-  const discoveredAssets = discoveredFiles.map((filePath) => buildAssetFromPath(filePath, now));
+  const discoveredAssets = scan.files.map((filePath) => buildAssetFromPath(filePath, now));
   const state = await readAppState();
   const existingByPath = new Map(state.assets.map((asset) => [asset.path, asset]));
   const nextAssets: AssetRecord[] = discoveredAssets.map((asset) => {
@@ -3061,24 +3044,63 @@ async function syncLocalMediaLibrary(): Promise<void> {
     });
   }
 
+  // A scan that could not list some directory proves nothing about the library's contents, so it
+  // is fed in as a failed ingest and the wholesale replace below is skipped. Without that, an
+  // unmounted volume deleted every local asset — the global fallback among them, which is the one
+  // asset the channel needs when everything else is gone.
+  const outcome: SourceSyncOutcome = {
+    sourceId: LOCAL_LIBRARY_SOURCE_ID,
+    ingestFailed: scan.failed,
+    incomingAssetCount: nextAssets.length,
+    storedAssetCount: state.assets.filter((asset) => asset.sourceId === LOCAL_LIBRARY_SOURCE_ID).length
+  };
+  const description = describeSourceSyncStatus(outcome, {
+    ready: "Ready",
+    empty: "Empty",
+    preserved: "Scan failed (assets preserved)"
+  });
+  const failedDirectories = scan.failedDirectories.join(", ");
+
   await upsertSources([
     {
-      id: "source-local-library",
+      id: LOCAL_LIBRARY_SOURCE_ID,
       name: "Local Media Library",
       type: "Filesystem scan",
       connectorKind: "local-library",
       enabled: true,
-      status: nextAssets.length > 0 ? "Ready" : "Empty",
+      status: description.status,
       externalUrl: "",
-      notes: "Scans files mounted into the media library volume.",
+      notes: description.assetsPreserved
+        ? `Could not read ${failedDirectories}; kept the ${description.effectiveAssetCount} stored item(s) rather than treating an unreadable mount as an empty library.`
+        : "Scans files mounted into the media library volume.",
       lastSyncedAt: now
     }
   ]);
-  await replaceAssetsForSourceIds(["source-local-library"], nextAssets);
+  await replaceSyncedSourceAssets({
+    connector: "local-library",
+    sources: [{ id: LOCAL_LIBRARY_SOURCE_ID }],
+    storedAssets: state.assets,
+    incomingAssets: nextAssets,
+    failedSourceIds: scan.failed ? new Set([LOCAL_LIBRARY_SOURCE_ID]) : new Set()
+  });
 
+  if (scan.failed) {
+    await upsertIncident({
+      scope: "source",
+      severity: "warning",
+      title: "Local media library scan failed",
+      message: `Could not read ${failedDirectories} under ${mediaRoot}. The ${description.effectiveAssetCount} stored item(s) were kept.`,
+      fingerprint: "source.local-library.scan-failed"
+    });
+  } else {
+    await resolveIncident("source.local-library.scan-failed", "The local media library scan completed without read errors.");
+  }
+
+  // The "library is empty" incident only makes sense once the scan is trustworthy; raising it on a
+  // broken mount would point the operator at their content instead of their storage.
   if (discoveredAssets.length > 0) {
     await resolveIncident("source.local-library.empty", "Local media library now contains playable assets.");
-  } else {
+  } else if (!scan.failed) {
     await upsertIncident({
       scope: "source",
       severity: "warning",
@@ -3090,16 +3112,18 @@ async function syncLocalMediaLibrary(): Promise<void> {
 
   await appendSourceSyncRuns([
     buildSourceSyncRun({
-      sourceId: "source-local-library",
+      sourceId: LOCAL_LIBRARY_SOURCE_ID,
       startedAt,
       finishedAt: now,
-      status: discoveredAssets.length > 0 ? "success" : "skipped",
-      summary:
-        discoveredAssets.length > 0
+      status: scan.failed ? "error" : discoveredAssets.length > 0 ? "success" : "skipped",
+      summary: scan.failed
+        ? "Local media library scan could not be completed; stored assets were kept."
+        : discoveredAssets.length > 0
           ? `Discovered ${discoveredAssets.length} file(s) in the local media library.`
           : "Local media library scan completed with no playable files.",
       discoveredAssets: discoveredAssets.length,
-      readyAssets: discoveredAssets.length
+      readyAssets: discoveredAssets.length,
+      errorMessage: scan.failed ? `Could not read ${failedDirectories}.` : ""
     })
   ]);
 }
@@ -3110,75 +3134,75 @@ async function syncDirectMediaSources(): Promise<void> {
   const directSources = state.sources.filter(
     (source) => source.connectorKind === "direct-media" && (source.enabled ?? true)
   );
-  const directAssets: AssetRecord[] = [];
-  let hasInvalidSource = false;
-  const syncRuns: AppState["sourceSyncRuns"] = [];
+  const startedAt = new Date().toISOString();
+  // One pass decides both which sources produced an asset and which may be emptied, so the two
+  // lists cannot drift apart the way they did when the invalid-URL branch only skipped the first.
+  const plan = planDirectMediaSync(directSources);
+  const directAssets: AssetRecord[] = plan.entries.map(({ source, url }) => ({
+    id: `asset_${source.id}`,
+    sourceId: source.id,
+    title: source.name,
+    path: url,
+    folderPath: buildSourceFolderPath(source.connectorKind, source.name),
+    tags: [],
+    status: "ready",
+    includeInProgramming: true,
+    externalId: source.id,
+    fallbackPriority: 100,
+    isGlobalFallback: false,
+    createdAt: now,
+    updatedAt: now
+  }));
+  const storedBySource = new Map<string, number>();
+  for (const asset of state.assets) {
+    storedBySource.set(asset.sourceId, (storedBySource.get(asset.sourceId) ?? 0) + 1);
+  }
 
-  for (const source of directSources) {
-    const startedAt = new Date().toISOString();
-    const url = source.externalUrl?.trim() ?? "";
-    if (!isDirectMediaUrl(url)) {
-      hasInvalidSource = true;
-      syncRuns.push(buildSourceSyncRun({
-        sourceId: source.id,
-        startedAt,
-        finishedAt: now,
-        status: "error",
-        summary: "Direct media URL validation failed.",
-        discoveredAssets: 0,
-        readyAssets: 0,
-        errorMessage: "Direct media URLs must be http(s) links ending in a supported media file extension."
-      }));
-      continue;
-    }
-
-    directAssets.push({
-      id: `asset_${source.id}`,
-      sourceId: source.id,
-      title: source.name,
-      path: url,
-      folderPath: buildSourceFolderPath(source.connectorKind, source.name),
-      tags: [],
-      status: "ready",
-      includeInProgramming: true,
-      externalId: source.id,
-      fallbackPriority: 100,
-      isGlobalFallback: false,
-      createdAt: now,
-      updatedAt: now
-    });
-    syncRuns.push(buildSourceSyncRun({
+  const syncRuns: AppState["sourceSyncRuns"] = directSources.map((source) => {
+    const invalid = plan.invalidSourceIds.has(source.id);
+    const preservedAssets = invalid ? (storedBySource.get(source.id) ?? 0) : 0;
+    return buildSourceSyncRun({
       sourceId: source.id,
       startedAt,
       finishedAt: now,
-      status: "success",
-      summary: "Direct media URL normalized into a playable asset.",
-      discoveredAssets: 1,
-      readyAssets: 1,
-      errorMessage: ""
-    }));
-  }
+      status: invalid ? "error" : "success",
+      summary: invalid
+        ? preservedAssets > 0
+          ? "Direct media URL validation failed; the stored asset was kept."
+          : "Direct media URL validation failed."
+        : "Direct media URL normalized into a playable asset.",
+      discoveredAssets: invalid ? 0 : 1,
+      readyAssets: invalid ? 0 : 1,
+      errorMessage: invalid ? "Direct media URLs must be http(s) links ending in a supported media file extension." : ""
+    });
+  });
 
   await upsertSources(
     directSources.map((source) => {
-      const valid = isDirectMediaUrl(source.externalUrl?.trim() ?? "");
+      const invalid = plan.invalidSourceIds.has(source.id);
+      const preservedAssets = invalid ? (storedBySource.get(source.id) ?? 0) : 0;
       return {
         ...source,
-        status: valid ? "Ready" : "Invalid URL",
-        notes: valid
-          ? "Direct media URL normalized into the playout asset catalog."
-          : "Direct media sources currently require an http(s) URL ending in a supported media file extension.",
+        status: invalid ? (preservedAssets > 0 ? "Invalid URL (asset preserved)" : "Invalid URL") : "Ready",
+        notes: invalid
+          ? preservedAssets > 0
+            ? "Direct media sources require an http(s) URL ending in a supported media file extension. The previously ingested asset stays available until the URL is fixed."
+            : "Direct media sources currently require an http(s) URL ending in a supported media file extension."
+          : "Direct media URL normalized into the playout asset catalog.",
         lastSyncedAt: now
       };
     })
   );
-  await replaceAssetsForSourceIds(
-    directSources.map((source) => source.id),
-    directAssets
-  );
+  await replaceSyncedSourceAssets({
+    connector: "direct-media",
+    sources: directSources,
+    storedAssets: state.assets,
+    incomingAssets: directAssets,
+    failedSourceIds: plan.invalidSourceIds
+  });
   await appendSourceSyncRuns(syncRuns);
 
-  if (hasInvalidSource) {
+  if (plan.invalidSourceIds.size > 0) {
     await upsertIncident({
       scope: "source",
       severity: "warning",
@@ -3332,34 +3356,28 @@ async function replaceSyncedSourceAssets(args: {
   incomingAssets: AssetRecord[];
   failedSourceIds: Set<string>;
 }): Promise<void> {
-  const outcomes: SourceSyncOutcome[] = args.sources.map((source) => ({
-    sourceId: source.id,
-    ingestFailed: args.failedSourceIds.has(source.id),
-    incomingAssetCount: args.incomingAssets.filter((asset) => asset.sourceId === source.id).length,
-    storedAssetCount: args.storedAssets.filter((asset) => asset.sourceId === source.id).length
-  }));
-  const replaceable = new Set(selectReplaceableSourceIds(outcomes));
+  const plan = planSourceAssetReplacement({
+    sources: args.sources,
+    storedAssets: args.storedAssets,
+    incomingAssets: args.incomingAssets,
+    failedSourceIds: args.failedSourceIds
+  });
 
-  for (const outcome of outcomes) {
-    if (replaceable.has(outcome.sourceId)) {
-      continue;
-    }
+  for (const preserved of plan.preserved) {
     logRuntimeEvent("source.sync.assets_preserved", {
       connector: args.connector,
-      sourceId: outcome.sourceId,
-      decision: decideSourceAssetReplacement(outcome),
-      storedAssets: outcome.storedAssetCount
+      sourceId: preserved.sourceId,
+      decision: preserved.decision,
+      storedAssets: preserved.storedAssetCount
     });
   }
 
-  if (replaceable.size === 0) {
+  if (plan.replaceableSourceIds.length === 0) {
     return;
   }
 
-  await replaceAssetsForSourceIds(
-    [...replaceable],
-    args.incomingAssets.filter((asset) => replaceable.has(asset.sourceId))
-  );
+  // The sync computed both lists together, so an empty write here really is an emptied source.
+  await replaceAssetsForSourceIds(plan.replaceableSourceIds, plan.assetsToWrite, { allowEmptyReplacement: true });
 }
 
 async function syncYoutubePlaylistSources(): Promise<void> {
@@ -3370,10 +3388,11 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       (source.connectorKind === "youtube-playlist" || source.connectorKind === "youtube-channel") && (source.enabled ?? true)
   );
   const youtubeAssets: AssetRecord[] = [];
-  // Per-source, not just the global hadFailure flag: a source we learned nothing about must keep
-  // its stored assets instead of being wiped by the wholesale replace below. See source-sync-scope.ts.
+  // Per-source throughout — asset replacement, status wording and incident resolution all read
+  // this set. A source we learned nothing about must keep its stored assets instead of being wiped
+  // by the wholesale replace below, and must not drag its healthy siblings' incidents open with
+  // it. See source-sync-scope.ts.
   const failedSourceIds = new Set<string>();
-  let hadFailure = false;
   const syncRuns: AppState["sourceSyncRuns"] = [];
 
   for (const source of youtubeSources) {
@@ -3384,7 +3403,6 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         ? isLikelyYouTubePlaylistUrl(externalUrl)
         : isLikelyYouTubeChannelUrl(externalUrl);
     if (!isValid) {
-      hadFailure = true;
       failedSourceIds.add(source.id);
       syncRuns.push(buildSourceSyncRun({
         sourceId: source.id,
@@ -3444,7 +3462,6 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         errorMessage: ""
       }));
     } catch (error) {
-      hadFailure = true;
       failedSourceIds.add(source.id);
       const message = error instanceof Error ? error.message : "Unknown YouTube playlist ingestion error.";
       syncRuns.push(buildSourceSyncRun({
@@ -3469,13 +3486,21 @@ async function syncYoutubePlaylistSources(): Promise<void> {
 
   await upsertSources(
     youtubeSources.map((source) => {
-      const sourceAssetCount = youtubeAssets.filter((asset) => asset.sourceId === source.id).length;
+      // Describing the source from the same outcome the replacement decision uses is the point:
+      // "Ingestion failed" alone read identically whether the archive survived or was deleted.
+      const description = describeSourceSyncStatus({
+        sourceId: source.id,
+        ingestFailed: failedSourceIds.has(source.id),
+        incomingAssetCount: youtubeAssets.filter((asset) => asset.sourceId === source.id).length,
+        storedAssetCount: state.assets.filter((asset) => asset.sourceId === source.id).length
+      });
       return {
         ...source,
-        status: sourceAssetCount > 0 ? "Ready" : "Ingestion failed",
-        notes:
-          sourceAssetCount > 0
-            ? `Ingested ${sourceAssetCount} YouTube item(s) via yt-dlp.`
+        status: description.status,
+        notes: description.assetsPreserved
+          ? buildPreservedAssetsNote(description.effectiveAssetCount)
+          : description.effectiveAssetCount > 0
+            ? `Ingested ${description.effectiveAssetCount} YouTube item(s) via yt-dlp.`
             : "Could not ingest this YouTube source. Check the URL and worker incident log.",
         lastSyncedAt: now
       };
@@ -3490,10 +3515,12 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   });
   await appendSourceSyncRuns(syncRuns);
 
-  if (!hadFailure) {
-    for (const source of youtubeSources) {
-      await resolveIncident(`source.${source.connectorKind}.${source.id}`, `YouTube source ${source.name} ingested successfully.`);
+  const resolvable = new Set(planSourceIncidentResolution({ sources: youtubeSources, failedSourceIds }).resolve);
+  for (const source of youtubeSources) {
+    if (!resolvable.has(source.id)) {
+      continue;
     }
+    await resolveIncident(`source.${source.connectorKind}.${source.id}`, `YouTube source ${source.name} ingested successfully.`);
   }
 }
 
@@ -3516,6 +3543,8 @@ async function syncTwitchVodSources(): Promise<void> {
     const isValid =
       source.connectorKind === "twitch-vod" ? isLikelyTwitchVodUrl(externalUrl) : isLikelyTwitchChannelUrl(externalUrl);
     if (!isValid) {
+      // A URL that fails validation is not evidence the archive is gone — the stored VODs stay.
+      failedSourceIds.add(source.id);
       syncRuns.push(buildSourceSyncRun({
         sourceId: source.id,
         startedAt,
@@ -3645,14 +3674,21 @@ async function syncTwitchVodSources(): Promise<void> {
 
   await upsertSources(
     twitchSources.map((source) => {
-      const sourceAssetCount = twitchAssets.filter((asset) => asset.sourceId === source.id).length;
+      // The source of the original wipe. The status now says whether the archive survived it.
+      const description = describeSourceSyncStatus({
+        sourceId: source.id,
+        ingestFailed: failedSourceIds.has(source.id),
+        incomingAssetCount: twitchAssets.filter((asset) => asset.sourceId === source.id).length,
+        storedAssetCount: state.assets.filter((asset) => asset.sourceId === source.id).length
+      });
       return {
         ...source,
-        status: sourceAssetCount > 0 ? "Ready" : "Ingestion failed",
-        notes:
-          sourceAssetCount > 0
+        status: description.status,
+        notes: description.assetsPreserved
+          ? buildPreservedAssetsNote(description.effectiveAssetCount)
+          : description.effectiveAssetCount > 0
             ? source.connectorKind === "twitch-channel"
-              ? `Ingested ${sourceAssetCount} Twitch archive item(s) via yt-dlp.`
+              ? `Ingested ${description.effectiveAssetCount} Twitch archive item(s) via yt-dlp.`
               : "Ingested the Twitch VOD into a playable asset via yt-dlp."
             : source.connectorKind === "twitch-channel"
               ? "Could not ingest Twitch channel archives. Check the URL and worker incident log."
@@ -3677,11 +3713,12 @@ async function syncTwitchVodSources(): Promise<void> {
  * Collection connectors list their items with --flat-playlist, which never carries chapters, so
  * YouTube items, Twitch archive VODs and direct media arrive chapterless. This step spends a small
  * per-cycle probe budget on those assets (one metadata-only call each, no download) and stores the
- * result through the same only-fill-empty rule re-ingest uses — operator edits always win, and a
- * settled probe (chapters or a final "there are none") is never paid for again. Failures go into a
- * cooldown instead of an incident: a missing chapter list degrades nothing on air, so the log
- * entry is enough. The written chaptersJson feeds the existing boundary emission and Helix sync
- * untouched.
+ * result through the same only-fill-empty rule re-ingest uses — operator edits always win, and an
+ * asset that has chapters is never probed again. A probe that came back empty is trusted for a
+ * week and then asked once more, because "no chapters" is also what a rate limit and a broken
+ * extractor return. Failures go into a short cooldown instead of an incident: a missing chapter
+ * list degrades nothing on air, so the log entry is enough. The written chaptersJson feeds the
+ * existing boundary emission and Helix sync untouched.
  */
 async function backfillAssetChapters(): Promise<void> {
   const config = getChapterBackfillConfig(process.env);
@@ -3695,6 +3732,7 @@ async function backfillAssetChapters(): Promise<void> {
     sources: state.sources,
     budget: config.perCycleBudget,
     failureCooldownMs: config.failureCooldownMs,
+    emptyResultRecheckMs: config.emptyResultRecheckMs,
     nowMs: Date.now()
   });
 
