@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Fixed
+
+- a source that answers with nothing no longer closes its own incident. v1.5.34 made the resolve
+  per source, which was necessary and not sufficient: it keys on `failedSourceIds`, and a listing
+  that comes back empty without throwing never enters that set. So both connector syncs still
+  finished such a run with `resolveIncident("source.<kind>.<id>")`. A Twitch archive listing that
+  comes back empty does not throw, so on 2026-08-27 each 30-second cycle wrote a `skipped` run with
+  zero discovered assets and then re-closed the one entry that could have explained the hours of
+  filler — and the same call erased entries a genuine failure had raised a cycle earlier. The
+  source row said "Ingestion failed" while the incident list said nothing at all. The two halves
+  now compose: the per-source gate says whether this cycle's ingest was clean, the run history says
+  whether the source is actually delivering, and a resolve needs both. A gate-only resolve still
+  closes the entry for a source that answered with nothing; a history-only resolve still closes it
+  for a partial `scanMediaFiles` walk that returned files while a directory was unreadable. A
+  source that has stopped delivering is reported under the same existing fingerprint, which
+  `incident-classes.ts` already registers as a state in the source area: it holds while the drought
+  holds and the next delivering run closes it. No new family, so one broken source cannot appear
+  twice. Reporting waits for three consecutive barren checks — one empty listing is the blip the
+  v1.5.33 asset-preserve rule absorbs correctly, and at the 30s worker cadence three is still under
+  two minutes. A source with nothing stored that no pool draws on stays out of the list: that is a
+  setting, not an incident, and an entry no action can close is the failure M58 removed
+- the Twitch sync reconciles its incidents after the loop, like the YouTube sync. The call sat
+  inside the per-source `try`, which the invalid-URL branch `continue`s past — so the one source an
+  operator is most likely to be in the middle of fixing was the one whose entry never resolved
+
+### Changed
+
+- the sources page says what it knows instead of printing what it stored. It showed the last run's
+  summary next to a raw ISO timestamp, the last-synced stamp again above that, and three counts
+  ending in "pool refs" / "schedule refs" — none of which answers "is this happening now" or "does
+  the programme care". It now reads "Last checked 4 minutes ago, found 49 videos", or "Nothing came
+  back the last 3 times, the first of them 12 minutes ago. The 49 stored videos stay playable.",
+  and once a drought is long enough to matter it names the scheduled blocks it reaches and whether
+  they still have anything to play. That source → pool → block chain already existed in
+  `getSourceReferences` and had never been said out loud; it is what nobody could see on the day.
+  The same sentences go into the incident message, so the live status view carries the consequence
+  rather than only the fault. Text only — no control was added, so the page's density budget is
+  unchanged. This sits one level above v1.5.34's `describeSourceSyncStatus`, which stays the
+  authority on what a single sync did to the archive and keeps writing the status badge and the
+  source note; the sentence describes the run history the badge cannot see — how long the drought
+  has run and what it costs the schedule — and reports the count of still-playable items rather
+  than repeating the badge's "(assets preserved)" back at the operator two centimetres away
+
 ## 1.5.34 - 2026-08-28
 
 ### Fixed

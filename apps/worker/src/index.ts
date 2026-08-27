@@ -57,6 +57,7 @@ import {
   resolveTwitchMetadataSyncGate,
   buildAssetChaptersFromSourceMetadata,
   buildAssetChapterWindowKey,
+  describeSourceHealth,
   getAssetChapterAt,
   getDueAssetChapterBoundaries,
   parseAssetChaptersJson,
@@ -268,6 +269,7 @@ import { LoopWakeLatch } from "./loop-wake.js";
 import { ProgrammeGapTracker } from "./playout-gap.js";
 import {
   buildPreservedAssetsNote,
+  decideSourceDroughtIncident,
   describeSourceSyncStatus,
   planSourceAssetReplacement,
   planSourceIncidentResolution,
@@ -3342,6 +3344,78 @@ async function loadFlatCollection(url: string): Promise<YtDlpPlaylistResponse> {
 }
 
 /**
+ * Open or close the per-source entry from what the run history now says.
+ *
+ * Replaces the unconditional `resolveIncident` both connector syncs used to call on any run that
+ * did not throw. On 2026-08-27 that call closed the Twitch source's entry on every cycle while the
+ * archive listing kept coming back empty, so the incident list stayed clean through hours of filler
+ * — and it also erased entries a genuine failure had raised one cycle earlier.
+ *
+ * The fingerprint is the existing keyed `source` family, which incident-classes.ts already
+ * classifies as a state: a source that is not delivering is a condition, and the next delivering
+ * run is what ends it. Nothing new is registered, and a source cannot appear twice.
+ */
+async function reconcileSourceDroughtIncident(args: {
+  state: AppState;
+  source: AppState["sources"][number];
+  /** Runs this cycle produced, not yet in `state`. */
+  runsThisCycle: AppState["sourceSyncRuns"];
+  /** `planSourceIncidentResolution`'s verdict for this source, inverted. */
+  ingestFailedThisCycle: boolean;
+  storedAssetCount: number;
+}): Promise<void> {
+  const { source } = args;
+  const runs = [...args.runsThisCycle, ...args.state.sourceSyncRuns]
+    .filter((run) => run.sourceId === source.id)
+    .sort((left, right) => new Date(right.finishedAt || right.startedAt).getTime() - new Date(left.finishedAt || left.startedAt).getTime());
+
+  const pools = args.state.pools.filter((pool) => pool.sourceIds.includes(source.id));
+  const poolIds = new Set(pools.map((pool) => pool.id));
+  const blocks = args.state.scheduleBlocks.filter((block) => block.poolId && poolIds.has(block.poolId));
+
+  const decision = decideSourceDroughtIncident({
+    runs,
+    storedAssetCount: args.storedAssetCount,
+    referencedByPool: pools.length > 0,
+    ingestFailedThisCycle: args.ingestFailedThisCycle
+  });
+
+  if (decision.action === "resolve") {
+    await resolveIncident(`source.${source.connectorKind}.${source.id}`, `${source.name} is delivering again.`);
+    return;
+  }
+
+  if (decision.action === "leave") {
+    return;
+  }
+
+  const health = describeSourceHealth({
+    lastSyncedAt: source.lastSyncedAt ?? "",
+    runs,
+    storedAssetCount: args.storedAssetCount,
+    poolNames: pools.map((pool) => pool.name),
+    blockNames: [...new Set(blocks.map((block) => block.title))],
+    nowMs: Date.now()
+  });
+
+  // This upsert overwrites whatever the per-source catch wrote a moment ago, so the newest run's
+  // error travels with it. Without that, a source failing for the third cycle would trade its
+  // "HTTP 503" for a sentence about how long it has been failing, and the diagnosis would be gone
+  // from the one place an operator reads during an incident.
+  const lastError = runs[0]?.errorMessage?.trim() ?? "";
+
+  await upsertIncident({
+    scope: "source",
+    // Nothing stored and something scheduled from it is the channel on the filler slate; a drought
+    // in front of an intact archive is a stale programme, which is a different night.
+    severity: args.storedAssetCount > 0 ? "warning" : "critical",
+    title: `${source.name} has stopped delivering`,
+    message: [health.headline, health.impact, lastError].filter(Boolean).join(" "),
+    fingerprint: `source.${source.connectorKind}.${source.id}`
+  });
+}
+
+/**
  * Replace stored assets only for the sources this sync actually learned something about.
  *
  * The wholesale `replaceAssetsForSourceIds` is a delete-then-reinsert, so including a source whose
@@ -3391,7 +3465,9 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   // Per-source throughout — asset replacement, status wording and incident resolution all read
   // this set. A source we learned nothing about must keep its stored assets instead of being wiped
   // by the wholesale replace below, and must not drag its healthy siblings' incidents open with
-  // it. See source-sync-scope.ts.
+  // it. See source-sync-scope.ts. It is a necessary input to the incident decision and not a
+  // sufficient one: a listing that comes back empty without failing never enters this set, which is
+  // why the resolve below also reads the run history.
   const failedSourceIds = new Set<string>();
   const syncRuns: AppState["sourceSyncRuns"] = [];
 
@@ -3515,12 +3591,21 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   });
   await appendSourceSyncRuns(syncRuns);
 
+  // Every source gets a verdict, and the two halves compose: the per-source gate says whether THIS
+  // cycle's ingest was clean, the run history says whether the source is actually delivering. A
+  // gate-only resolve still closes the entry for a source that answered with nothing, which is the
+  // 2026-08-27 failure; a history-only resolve still closes it for a partial library scan that
+  // returned files while a directory was unreadable.
   const resolvable = new Set(planSourceIncidentResolution({ sources: youtubeSources, failedSourceIds }).resolve);
   for (const source of youtubeSources) {
-    if (!resolvable.has(source.id)) {
-      continue;
-    }
-    await resolveIncident(`source.${source.connectorKind}.${source.id}`, `YouTube source ${source.name} ingested successfully.`);
+    await reconcileSourceDroughtIncident({
+      state,
+      source,
+      runsThisCycle: syncRuns,
+      ingestFailedThisCycle: !resolvable.has(source.id),
+      // The archive as it stands before this sync's replace — what the channel still has to play.
+      storedAssetCount: state.assets.filter((asset) => asset.sourceId === source.id).length
+    });
   }
 }
 
@@ -3648,7 +3733,6 @@ async function syncTwitchVodSources(): Promise<void> {
         }));
       }
 
-      await resolveIncident(`source.${source.connectorKind}.${source.id}`, `Twitch source ${source.name} ingested successfully.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Twitch VOD ingestion error.";
       failedSourceIds.add(source.id);
@@ -3705,6 +3789,21 @@ async function syncTwitchVodSources(): Promise<void> {
     failedSourceIds
   });
   await appendSourceSyncRuns(syncRuns);
+
+  // After the loop, like the YouTube sync, so the invalid-URL branch — which `continue`s before the
+  // try — is reconciled too. Inside the try it was unreachable for exactly the source whose URL an
+  // operator is most likely to be fixing.
+  const resolvable = new Set(planSourceIncidentResolution({ sources: twitchSources, failedSourceIds }).resolve);
+  for (const source of twitchSources) {
+    await reconcileSourceDroughtIncident({
+      state,
+      source,
+      runsThisCycle: syncRuns,
+      ingestFailedThisCycle: !resolvable.has(source.id),
+      // The archive as it stands before this sync's replace — what the channel still has to play.
+      storedAssetCount: state.assets.filter((asset) => asset.sourceId === source.id).length
+    });
+  }
 }
 
 /**

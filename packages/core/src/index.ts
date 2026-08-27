@@ -7,6 +7,7 @@ export * from "./chat-interaction.js";
 export * from "./managed-runtime.js";
 export * from "./overlay-layout.js";
 export * from "./relay-ingest.js";
+export * from "./source-health.js";
 
 import {
   resolveAlertsRuntimeEnabled,

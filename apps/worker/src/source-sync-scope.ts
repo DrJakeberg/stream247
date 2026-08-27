@@ -18,6 +18,8 @@
 // that was populated a moment ago) keeps the existing rows. Stale rows are recoverable and
 // invisible to viewers; deleted rows take the channel off air.
 
+import { SOURCE_BARREN_RUN_ALERT_THRESHOLD, countBarrenSyncRuns, type SourceSyncRunView } from "@stream247/core";
+
 export interface SourceSyncOutcome {
   sourceId: string;
   /**
@@ -210,4 +212,74 @@ export function buildPreservedAssetsNote(storedAssetCount: number): string {
   return storedAssetCount > 0
     ? `This sync produced no usable listing, so the ${storedAssetCount} stored item(s) were kept and stay playable. The next sync retries.`
     : "This sync produced no usable listing. There were no stored items to keep. The next sync retries.";
+}
+
+// ---------------------------------------------------------------------------
+// Whether a source that keeps coming back empty belongs in the incident list.
+//
+// Everything above decides what a single sync may delete and how to label it. None of it makes a
+// source that has quietly stopped delivering visible, and on 2026-08-27 that was the other half of
+// the outage: the Twitch listing returned no entries WITHOUT throwing, so the sync took its success
+// path, wrote the run as "skipped" with zero discovered assets, and resolved
+// `source.<kind>.<id>` — closing the only entry that could have said anything. `failedSourceIds`
+// does not catch that case by construction, because nothing failed; the source answered, with
+// nothing. So `planSourceIncidentResolution` above is necessary and not sufficient, and this is the
+// part that reads the run history rather than the single cycle.
+//
+// This is deliberately not a new fingerprint. Per incident-classes.ts the keyed `source` family is
+// already a STATE ("One named source fails to ingest until its next run succeeds; that run closes
+// it per source"), and "answered with nothing" is the same open question for an operator as "threw"
+// — same source, same consequence, resolved by the same event. A second fingerprint would list one
+// broken source twice.
+
+export interface SourceDroughtInput {
+  /** This source's runs, newest first, including the one the current cycle has just produced. */
+  runs: readonly SourceSyncRunView[];
+  /** Assets currently stored for the source — evidence that it used to deliver. */
+  storedAssetCount: number;
+  /** True when at least one pool draws on this source, so its emptiness reaches the programme. */
+  referencedByPool: boolean;
+  /**
+   * This cycle's per-source verdict from `planSourceIncidentResolution` — true when the source is
+   * in `failedSourceIds`.
+   *
+   * Not redundant with a barren newest run, which is why it is passed rather than inferred. A
+   * partial local-library scan reports `failed` while still returning files, so the run looks
+   * healthy and the ingest was not: `scanMediaFiles` could not list some directory, and resolving
+   * on that would claim a library is complete while part of it is unreadable.
+   */
+  ingestFailedThisCycle: boolean;
+}
+
+export type SourceDroughtDecision = {
+  /**
+   * `resolve` when the newest check delivered and the ingest itself was clean, `report` while the
+   * drought is worth an operator's attention, `leave` when there is nothing to say and nothing to
+   * take back.
+   */
+  action: "resolve" | "report" | "leave";
+  barrenRuns: number;
+};
+
+export function decideSourceDroughtIncident(input: SourceDroughtInput): SourceDroughtDecision {
+  const barrenRuns = countBarrenSyncRuns(input.runs);
+
+  if (input.runs.length > 0 && barrenRuns === 0 && !input.ingestFailedThisCycle) {
+    return { action: "resolve", barrenRuns };
+  }
+
+  if (barrenRuns < SOURCE_BARREN_RUN_ALERT_THRESHOLD) {
+    // Below the threshold this says nothing — and, importantly, does not resolve either. The
+    // unconditional resolve this replaces is what let an empty listing erase the entry a genuine
+    // failure had raised one cycle earlier.
+    return { action: "leave", barrenRuns };
+  }
+
+  // A source with an archive has demonstrably delivered before, so a drought is a regression. A
+  // source with nothing stored only matters once something plays from it. Neither: an unused source
+  // with an empty archive is a setting, not an incident, and reporting it would park a permanently
+  // open entry in the list that no action can close.
+  const matters = input.storedAssetCount > 0 || input.referencedByPool;
+
+  return { action: matters ? "report" : "leave", barrenRuns };
 }
