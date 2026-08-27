@@ -78,11 +78,13 @@ import {
 } from "@stream247/core";
 import {
   buildSourceLiveStateWrite,
+  buildStartedSourceLiveStateWrite,
   closedAttachBreaker,
   decideSourceLiveAttach,
   fetchRelaySourcePresence,
   isAttachBreakerOpen,
-  openAttachBreaker
+  openAttachBreaker,
+  type SourceLiveStateWrite
 } from "./relay-presence.js";
 import {
   appendSourceSyncRuns,
@@ -299,6 +301,19 @@ let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
 // there.
 let playoutLiveSourceAttached = false;
 let playoutLiveSourceInputActive = false;
+// M57 stage 2, Etappe E. What the studio was last told about a pushed source, and the chain the
+// telling runs on.
+//
+// The write is fire-and-forget on purpose: it sits on the reconciliation path, which the comment
+// at resolveLiveSourceAttach's caller warns must not await anything expensive before
+// startOrSwitchPlayout, and recordOverlayVideoSourceLiveState takes the global state-write lock
+// with no timeout of its own. Observation data must never be able to hold up the broadcast path.
+//
+// Chained rather than simply detached because the lock is a Postgres advisory lock, not an
+// in-process queue: two loose writes could commit in the wrong order and leave the studio showing
+// the older state. Tail-chaining keeps submission order, and the dedupe key keeps the chain short.
+let lastSourceLiveStateKey = "";
+let sourceLiveStateWriteChain: Promise<void> = Promise.resolve();
 // Chapter boundaries already announced for the current playback window. In-memory on purpose:
 // the window key is (asset id, process start), and both this fired set and the ffmpeg process
 // die together — a worker restart replays the asset from second zero, so the boundaries must
@@ -2247,6 +2262,34 @@ type ResolvedLiveSourceAttach = {
 };
 
 /**
+ * Hands the studio the last thing that actually happened to a pushed source (M57 stage 2, Etappe E).
+ *
+ * Deduped on the whole write, so a state that has not changed costs nothing, and detached from the
+ * caller: the broadcast path must never wait on an observation write (see the chain declaration
+ * above). A failure is logged and dropped — the next change writes again.
+ */
+function recordSourceLiveState(write: SourceLiveStateWrite | null): void {
+  if (!write) {
+    return;
+  }
+
+  const key = `${write.sourceId}:${write.state}:${write.retryAt}`;
+  if (key === lastSourceLiveStateKey) {
+    return;
+  }
+  lastSourceLiveStateKey = key;
+
+  sourceLiveStateWriteChain = sourceLiveStateWriteChain
+    .then(() => recordOverlayVideoSourceLiveState(write))
+    .catch((error: unknown) => {
+      logRuntimeEvent("playout.source-live.state_write_failed", {
+        source: write.sourceId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+}
+
+/**
  * Decides whether this cycle would attach the scene's pushed source as a live PiP input, logs the
  * decision on change (the operator-facing transition marker from Etappe B), and — when the answer
  * is attach — resolves the read URL and placement the start path needs. The presence fetch only
@@ -2260,16 +2303,22 @@ async function resolveLiveSourceAttach(
   managed: ManagedConfigRecord,
   selectionIsAsset: boolean
 ): Promise<ResolvedLiveSourceAttach | null> {
-  // A live bridge or standby slate can never carry a PiP, so there is no attach decision to make or
-  // log for them — and polling the relay would be wasted traffic. The attach-decision log is an
-  // asset-playout marker; it resumes when an asset is selected again.
-  if (!selectionIsAsset) {
-    return null;
-  }
-
   const nowMs = Date.now();
   const layer = scenePayloadSourceLayer();
   const sourceId = layer?.sourceId ?? "";
+
+  // A live bridge or standby slate can never carry a PiP, so there is no attach decision to make or
+  // log for them — and polling the relay would be wasted traffic. The attach-decision log is an
+  // asset-playout marker; it resumes when an asset is selected again.
+  //
+  // The studio state, however, must NOT simply pause here: a source that was live when the last
+  // asset ended would otherwise keep claiming to be on air right through a live bridge or a standby
+  // slate. So the honest state for that stretch is written before returning.
+  if (!selectionIsAsset) {
+    recordSourceLiveState(sourceId ? { sourceId, state: "not-asset-playout", retryAt: "" } : null);
+    return null;
+  }
+
   const sourceLiveEnabled = resolveSourceLiveEnabled(managed, process.env);
   const sourceLayerEnabled = resolveSourceLayerRuntimeEnabled(managed, process.env);
 
@@ -2295,23 +2344,14 @@ async function resolveLiveSourceAttach(
       reason: outcome.reason,
       ...(sourceId ? { source: sourceId } : {})
     });
-
-    // The same edge, projected for the operator (Etappe E). Written on change only, so this is a
-    // rare write rather than a per-cycle one, and it never blocks the attach: a store that cannot
-    // take the observation must not decide whether a camera goes on air, so the failure is logged
-    // and the cycle continues.
-    const stateWrite = buildSourceLiveStateWrite({ sourceId, outcome, breaker: sourceLiveAttachBreaker, nowMs });
-    if (stateWrite) {
-      try {
-        await recordOverlayVideoSourceLiveState(stateWrite);
-      } catch (error) {
-        logRuntimeEvent("playout.source-live.state_write_failed", {
-          source: sourceId,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
   }
+
+  // The same decision, projected for the operator (Etappe E) — but only where the decision is
+  // already the final answer. buildSourceLiveStateWrite returns null for an ATTACH precisely
+  // because deciding to attach is not attaching: the URL still has to resolve below, and even then
+  // the intent is only consumed if a process actually (re)starts. The live state is written by the
+  // start path instead, from the flag that means an input really went into the command.
+  recordSourceLiveState(buildSourceLiveStateWrite({ sourceId, outcome, breaker: sourceLiveAttachBreaker, nowMs }));
 
   if (outcome.decision !== "attach" || !layer) {
     return null;
@@ -2330,6 +2370,10 @@ async function resolveLiveSourceAttach(
     });
   }
   if (!readUrl) {
+    // Decided to attach, but the source has no address to read from — not provisioned, or the
+    // internal key could not be resolved. The answer is final here, so it is recorded here: the
+    // start path will never see this intent and could not correct a stale "live" on its own.
+    recordSourceLiveState({ sourceId, state: "attach-unavailable", retryAt: "" });
     return null;
   }
 
@@ -4873,6 +4917,16 @@ async function startOrSwitchPlayout(args: {
         })
       : null;
   playoutLiveSourceInputActive = Boolean(liveSourceConfig);
+  // The only place that may tell the studio a source is live (M57 stage 2, Etappe E). Everything
+  // upstream of here is an intention: the decision, the resolved URL, even a non-null liveSource on
+  // this call — a start that turned out to be a live bridge or fell back to text mode takes no PiP
+  // input at all. `playoutLiveSourceInputActive` is the fact, and it is what gets reported.
+  recordSourceLiveState(
+    buildStartedSourceLiveStateWrite({
+      intendedSourceId: args.liveSource?.sourceId ?? "",
+      inputActive: playoutLiveSourceInputActive
+    })
+  );
   const command = args.liveBridge
     ? getLiveBridgeFfmpegCommand(args.liveBridge.inputUrl, args.outputTarget, overlayMode, outputSettings, encoder)
     : args.asset

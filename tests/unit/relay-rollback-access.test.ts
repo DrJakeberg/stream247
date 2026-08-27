@@ -62,6 +62,17 @@ describe("what the live attach state says to an operator", () => {
     );
   });
 
+  it("separates an intention that never landed from one that was never made", () => {
+    // Both mean "not on air", and saying so is the whole point: an attach that was decided but
+    // never became an input used to leave the studio claiming the camera was live.
+    expect(describeSourceLiveState({ state: "attach-unavailable", nowMs })).toBe(
+      "Still picture only. The live connection could not be prepared."
+    );
+    expect(describeSourceLiveState({ state: "not-asset-playout", nowMs })).toBe(
+      "Still picture only. A camera joins only while a recorded item is playing."
+    );
+  });
+
   it("counts the cooldown down in whole minutes", () => {
     expect(
       describeSourceLiveState({ state: "breaker-cooldown", retryAt: "2026-08-27T10:02:30.000Z", nowMs })
@@ -88,7 +99,9 @@ describe("what the live attach state says to an operator", () => {
       "breaker-cooldown",
       "switched-off",
       "no-source-layer",
-      "presence-unknown"
+      "presence-unknown",
+      "attach-unavailable",
+      "not-asset-playout"
     ]) {
       expect(describeSourceLiveState({ state, nowMs })).not.toContain(state);
     }

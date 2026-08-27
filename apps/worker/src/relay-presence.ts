@@ -120,10 +120,17 @@ export function decideSourceLiveAttach(input: SourceLiveAttachInput): SourceLive
 export type SourceLiveStateWrite = { sourceId: string; state: string; retryAt: string };
 
 /**
- * Turns a decision into the state a surface can show, or null when there is nothing to write.
+ * Turns a SKIP decision into the state a surface can show, or null when there is nothing to write.
  *
- * Pure and separate from the playout cycle so the mapping is pinned by tests rather than buried in
- * it. Two rules matter: a decision without a source id ("no-source-layer" — a statement about the
+ * A skip is true the moment it is decided — nothing is attached, and nothing later in the cycle can
+ * change that. An ATTACH is not: it is an intention. Between deciding and being on air the read URL
+ * still has to resolve, the start path still has to be an asset in scene mode, and a process still
+ * has to actually take the input — and the cycle deliberately does not restart a running process
+ * just to attach, so an intention can go a whole item without ever landing. Writing "live" here was
+ * exactly that lie, so this builder returns null for an attach and buildStartedSourceLiveStateWrite
+ * below owns the live state instead.
+ *
+ * The other two rules: a decision without a source id ("no-source-layer" — a statement about the
  * scene, not about any stored source) is written nowhere, and only the cooldown carries a retry
  * moment, so a surface counts down from a real deadline instead of re-deriving one from a stale
  * timestamp.
@@ -134,7 +141,7 @@ export function buildSourceLiveStateWrite(args: {
   breaker: AttachBreakerState;
   nowMs: number;
 }): SourceLiveStateWrite | null {
-  if (!args.sourceId) {
+  if (!args.sourceId || args.outcome.decision === "attach") {
     return null;
   }
 
@@ -143,6 +150,32 @@ export function buildSourceLiveStateWrite(args: {
     sourceId: args.sourceId,
     state: args.outcome.reason,
     retryAt: remainingMs > 0 ? new Date(args.nowMs + remainingMs).toISOString() : ""
+  };
+}
+
+/**
+ * The state after a process start, where the answer is finally a fact rather than an intention.
+ *
+ * `inputActive` must come from the flag C+D introduced for exactly this distinction
+ * (`playoutLiveSourceInputActive`): true only when a live PiP input was really placed in the
+ * command that was spawned. An intention that did not become an input — an unresolvable read URL, a
+ * scene-render fallback to text mode, a start that turned out to be a live bridge — is reported as
+ * picture-only, never as live.
+ */
+export function buildStartedSourceLiveStateWrite(args: {
+  /** The source the cycle intended to attach; "" when it intended none. */
+  intendedSourceId: string;
+  /** Whether a live PiP input really went into the running command. */
+  inputActive: boolean;
+}): SourceLiveStateWrite | null {
+  if (!args.intendedSourceId) {
+    return null;
+  }
+
+  return {
+    sourceId: args.intendedSourceId,
+    state: args.inputActive ? "publishing" : "attach-unavailable",
+    retryAt: ""
   };
 }
 

@@ -211,7 +211,11 @@ export type SourceLiveStateName =
   | "breaker-cooldown"
   | "switched-off"
   | "no-source-layer"
-  | "presence-unknown";
+  | "presence-unknown"
+  /** Decided to attach, but it never became an input: no address to read, or a start that took none. */
+  | "attach-unavailable"
+  /** Nothing is playing that a camera could join — a live bridge or the standby slate. */
+  | "not-asset-playout";
 
 /**
  * The stored decision as a sentence.
@@ -235,6 +239,10 @@ export function describeSourceLiveState(input: { state: string; retryAt?: string
       return "Still picture only.";
     case "presence-unknown":
       return "Still picture only. The camera could not be checked just now.";
+    case "attach-unavailable":
+      return "Still picture only. The live connection could not be prepared.";
+    case "not-asset-playout":
+      return "Still picture only. A camera joins only while a recorded item is playing.";
     default:
       return "";
   }

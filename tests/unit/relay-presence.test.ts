@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   ATTACH_FAILURE_COOLDOWN_MS,
   attachBreakerRemainingMs,
   buildSourceLiveStateWrite,
+  buildStartedSourceLiveStateWrite,
   closedAttachBreaker,
   decideSourceLiveAttach,
   fetchRelaySourcePresence,
@@ -92,8 +94,15 @@ describe("attach circuit breaker", () => {
 
 // M57 stage 2, Etappe E: the same decision the worker logs is also projected to the operator, so
 // the write it hands the store is pure and pinned here rather than buried in the playout cycle.
+//
+// The central rule, and the reason these two builders are separate: a DECISION to attach is an
+// intention, not an outcome. Between deciding and being on air the read URL still has to resolve,
+// the start path still has to be an asset in scene mode, and a process still has to actually take
+// the input — the cycle deliberately does not restart a running process just to attach, so an
+// intention can go a whole item without ever landing. Only the start path knows, so only the start
+// path may say "live".
 describe("what the attach decision leaves behind for the operator", () => {
-  it("records the decision reason against the source it is about", () => {
+  it("refuses to call an attach live, because deciding is not attaching", () => {
     expect(
       buildSourceLiveStateWrite({
         sourceId: "studio-cam",
@@ -101,7 +110,18 @@ describe("what the attach decision leaves behind for the operator", () => {
         breaker: closedAttachBreaker(),
         nowMs: NOW
       })
-    ).toEqual({ sourceId: "studio-cam", state: "publishing", retryAt: "" });
+    ).toBeNull();
+  });
+
+  it("records a skip, which is true the moment it is decided", () => {
+    expect(
+      buildSourceLiveStateWrite({
+        sourceId: "studio-cam",
+        outcome: { decision: "skip", reason: "not-publishing" },
+        breaker: closedAttachBreaker(),
+        nowMs: NOW
+      })
+    ).toEqual({ sourceId: "studio-cam", state: "not-publishing", retryAt: "" });
   });
 
   it("writes nothing when there is no source the state could belong to", () => {
@@ -139,6 +159,65 @@ describe("what the attach decision leaves behind for the operator", () => {
       });
       expect(write?.retryAt, `${reason} should carry no countdown`).toBe("");
     }
+  });
+});
+
+describe("what the process start leaves behind for the operator", () => {
+  it("says live only when a live input really went into the running command", () => {
+    expect(buildStartedSourceLiveStateWrite({ intendedSourceId: "studio-cam", inputActive: true })).toEqual({
+      sourceId: "studio-cam",
+      state: "publishing",
+      retryAt: ""
+    });
+  });
+
+  it("says picture-only when the intention did not become an input", () => {
+    // The regression this exists for: a source whose read URL does not resolve, or a start that
+    // fell back to text mode, used to leave the studio saying "Live in the programme" while nothing
+    // at all had been attached.
+    expect(buildStartedSourceLiveStateWrite({ intendedSourceId: "studio-cam", inputActive: false })).toEqual({
+      sourceId: "studio-cam",
+      state: "attach-unavailable",
+      retryAt: ""
+    });
+  });
+
+  it("writes nothing when no attach was even intended", () => {
+    expect(buildStartedSourceLiveStateWrite({ intendedSourceId: "", inputActive: false })).toBeNull();
+    expect(buildStartedSourceLiveStateWrite({ intendedSourceId: "", inputActive: true })).toBeNull();
+  });
+
+  it("is the only producer of the live state in the whole module", () => {
+    // Structural, because the bug was structural: the live state was written from the decision
+    // branch, where "attach" means "intends to". If any other builder can emit "publishing", the
+    // separation above is decorative.
+    const source = readFileSync(new URL("../../apps/worker/src/relay-presence.ts", import.meta.url), "utf8");
+    const producers = source.split("\n").filter((line) => line.includes('"publishing"') && line.includes("state:"));
+    expect(producers).toHaveLength(1);
+  });
+});
+
+describe("the worker feeds those builders from reality, not from intent", () => {
+  // The pure builders above cannot protect themselves from being called with the wrong argument,
+  // and apps/worker/src/index.ts is not importable (it starts a worker on import). So the wiring is
+  // pinned by reading it: the live state must be fed by playoutLiveSourceInputActive — the flag C+D
+  // introduced precisely to mean "a live PiP input was really placed in the running command" — and
+  // never by the intent object the decision produced.
+  const workerSource = readFileSync(new URL("../../apps/worker/src/index.ts", import.meta.url), "utf8");
+
+  it("derives the started state from the input-active flag", () => {
+    expect(workerSource).toContain("inputActive: playoutLiveSourceInputActive");
+  });
+
+  it("keeps the decision path from ever claiming a live attach", () => {
+    // buildSourceLiveStateWrite returns null for an attach, so the decision branch cannot write
+    // "publishing" — but it must also not hand-roll one.
+    const decisionBranch = workerSource.slice(
+      workerSource.indexOf("async function resolveLiveSourceAttach"),
+      workerSource.indexOf("function startSourceSnapshotCapture")
+    );
+    expect(decisionBranch.length).toBeGreaterThan(0);
+    expect(decisionBranch).not.toContain('"publishing"');
   });
 });
 
