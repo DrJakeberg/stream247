@@ -1529,9 +1529,40 @@ change, no additional ffmpeg input in stage 1.
   the value is absent from the server-rendered HTML and therefore from the wording baseline; one
   `relay.internal_key.revealed` audit line per reveal naming the actor and never the value, written
   before the answer leaves; `RELAY_ACCESS_REVEAL_RATE_LIMIT` (10 per 15 min, keyed on the account,
-  not the peer — the role check already gates the peer, what is left is a stolen session mining the
-  key and burying the trail); `cache-control: no-store` on every answer; and one identical 503 for
-  both "no key yet" and "store unreachable", carrying neither the key nor the driver error.
+  not the peer — the role check already gates the peer, what is left is a stolen session harvesting
+  the key); `cache-control: no-store` on every answer; and one identical 503 for every "no key to
+  give you", carrying neither the key nor the driver error.
+- **The reveal must not be a write.** `readRelayInternalKey` is self-generating: on an install with
+  no key it mints one, and on an install whose `APP_SECRET` has rotated it blindly overwrites the
+  stored row and returns the NEW value. Wiring the button to it made clicking "show" a key rotation —
+  every already-running container keeps the old value in its process cache, so every relay read and
+  publish would start failing as "wrong password" until each one restarted, during the exact incident
+  the button exists for. It also made the 503 branch unreachable outside tests. Fixed with
+  `readRelayInternalKeyIfPresent` in `packages/db`: one SELECT, no INSERT, no UPDATE, and no
+  interaction with the process cache either, so "does not write" holds for the whole call. Missing
+  row and undecryptable row both return `""`, and the route does not distinguish them to the caller.
+  Proven in `tests/integration/db-roundtrip.test.ts` against a real database — empty table stays at
+  zero rows, and a deliberately poisoned ciphertext comes back byte-for-byte unchanged — plus a unit
+  test where the generating reader is mocked to throw, so reaching it fails loudly.
+- **Who may see the button.** `/admin?tab=settings` has no role gate of its own (the admin layout
+  only requires a session), so every signed-in account including viewer and moderator was shown a
+  control labelled as the way to obtain the relay's credentials. The key never leaked — the route
+  answers them 403 — but a surface should not advertise the existence and retrieval path of a
+  credential to people who cannot have it. The group is now rendered only for owner/admin, checked
+  inline rather than with `requireRoles` (which redirects, and the rest of the page is legitimately
+  readable by anyone signed in). The e2e fixture signs in as owner, so the group still appears there
+  and the `admin-settings` baselines move exactly as described below.
+- **Fail closed on an unnameable session.** The route reads the user a second time to name the
+  actor; if that came back null (deleted or demoted between the two reads) it used to reveal anyway,
+  audit it as "an unnamed session", and collapse every such caller into one shared rate-limit
+  bucket. It now answers 403 before touching the key.
+- **Honest about what the rate limit does.** The earlier comment claimed it protected the audit
+  trail. It does not: `appendAuditEvent` keeps only the newest 100 entries and roughly thirty other
+  routes write into the same ring unthrottled, so an actor can push their own reveal line out of it
+  with ordinary settings traffic. Fixing that means changing the audit mechanic, which is out of
+  scope; the claim is corrected rather than the mechanic patched. Also accepted and now stated: the
+  401/403 answers come from `requireApiRoles` and carry no `cache-control`, and a second privileged
+  account is a second bucket.
 - **Wording gate.** The env names appear only inside the copied `KEY=value` lines, never in prose,
   and the fold's contents never reach `wording-baseline` (it records summaries, not fold contents)
   nor the visual baseline (nothing is fetched until someone clicks). No test was weakened.
@@ -1548,13 +1579,30 @@ change, no additional ffmpeg input in stage 1.
   (next free in that day's sequence — `_001` … `_003` were verified as the whole of 2026-08-26 and
   nothing later is registered), mirrored in the base schema block: `live_state`, `live_state_at`,
   `live_retry_at`, all additive, all empty on existing rows, none of them a credential.
-  `buildSourceLiveStateWrite` (pure, in `relay-presence.ts`) maps a decision to a write and returns
-  null when there is no source id, so a scene-level reason is never attributed to a stored source;
-  only the cooldown carries a retry moment. The worker writes on the same change edge that already
-  logs `playout.source-live.attach_decision`, inside a try/catch that logs
-  `playout.source-live.state_write_failed` — an observation store must never decide whether a
-  camera goes on air. `describeSourceLiveState` in core turns the stored decision word into the
-  sentence; unrecognised values return "" so a surface shows nothing rather than inventing a state.
+  `describeSourceLiveState` in core turns the stored decision word into the sentence; unrecognised
+  values return "" so a surface shows nothing rather than inventing a state.
+- **Deciding to attach is not attaching.** The first cut wrote the state from the decision edge, so
+  a source whose read URL did not resolve — or whose intent was never consumed, because the cycle
+  deliberately does not restart a running process just to attach — left the studio saying "Live in
+  the programme" while nothing had been attached at all. The truth condition is now split in two:
+  `buildSourceLiveStateWrite` returns `null` for an ATTACH and only ever records skips (true the
+  moment they are decided), and `buildStartedSourceLiveStateWrite` owns the live state, fed from
+  `playoutLiveSourceInputActive` — the flag C+D introduced to mean "a live PiP input was really
+  placed in the running command". An intent that did not become an input records
+  `attach-unavailable`, not silence. Two further holes closed: an attach decided but with no
+  resolvable address records `attach-unavailable` at the point that becomes final, and a non-asset
+  selection (live bridge, standby slate) records `not-asset-playout` instead of leaving a stale
+  "live" standing for the whole stretch. `apps/worker/src/index.ts` is not importable — it starts a
+  worker — so the wiring is pinned by reading the source: the started state must be derived from
+  `playoutLiveSourceInputActive`, and the decision function must not contain `"publishing"` at all.
+- **The observation write left the broadcast path.** It had been an inline `await` inside
+  `resolveLiveSourceAttach`, which is awaited before `startOrSwitchPlayout` — under the global
+  state-write lock, with no timeout, right beside the comment warning not to await anything
+  expensive there. It is now fire-and-forget through `recordSourceLiveState`, deduped on the whole
+  write and tail-chained on one promise so submission order survives (the lock is a Postgres
+  advisory lock, not an in-process queue, so two loose writes could otherwise commit out of order).
+  Failures still log `playout.source-live.state_write_failed` and are dropped — an observation store
+  must never decide whether a camera goes on air, nor how fast it gets there.
 - Budgets unchanged: both new admin groups are folded (`<summary>` is not a counted control), and
   studio-scene gained text only. `studio-scene` 56/1 and `admin-settings` 31/1 stand as recorded;
   no ratchet comment was needed.
