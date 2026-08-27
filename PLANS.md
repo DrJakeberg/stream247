@@ -1545,15 +1545,53 @@ every single one described something that had finished long ago.
   reads every `fingerprint:` expression out of the worker source, including the literal prefix of a
   template, and fails on anything unclassified: a new reporting site cannot avoid the decision.
   Chosen over a branded-type wrapper because the repo already scans source in a dozen tests and
-  rewriting ~48 call sites for the same guarantee is diff, not safety.
-- **The health proof.** `measureIncidentAreaHealth` uses only what already exists. Playout is the
-  program feed's own freshness (`readProgramFeedRuntimeStatus` stats the playlist, and both the
-  playout and the uplink cycle recompute it, so a dead playout goes stale within seconds) or, with
-  no program feed, the playout status plus a live heartbeat. Uplink is `uplinkStatus === "running"`
-  with the *current* process older than the window — `uplinkStartedAt` is reset by every restart and
-  every uplink event restarts the process, so a flapping uplink can never qualify. Worker is the
-  freshness of its own `worker.cycle` audit line. A relay that is switched off counts as healthy:
-  no uplink process runs, so nothing there can be failing.
+  rewriting ~48 call sites for the same guarantee is diff, not safety. The first version of that
+  scanner had a hole exactly where it mattered: it took `raw.split("${")[0]` as the family prefix
+  and dropped empty results, so a template *beginning* with an interpolation vanished — and both
+  loop watchdogs are written `` `${mode}.loop.stalled` ``. The guard skipped the two families whose
+  incidents are the loudest thing in the list. A leading slot is now expanded when its values are an
+  enumerable union we know (`RuntimeMode`), and otherwise emitted as an unresolvable marker that no
+  registry entry can match, so the check goes red instead of quiet. Three tests cover it, including
+  one that feeds the scanner an invented `` `${somethingNew}.foo.bar` `` and proves it comes back
+  unclassified.
+- **The health proof, and the two versions of it that were wrong.** An adversarial review took the
+  first version apart with two demonstrations against the real module, both correct:
+  - `programFeedStatus` is written *only* by the playout and uplink processes (`updateProgramFeedRuntimeStatus`).
+    The worker, which runs the sweep, never recomputes it. Stop both processes and the last "fresh"
+    stands in the database forever — so a check on that word alone declared playout permanently
+    healthy and closed `playout.loop.crashed` and `playout.start.failed` *because* playout had died.
+    The direct-output branch had always checked heartbeat freshness; the asymmetry was the bug. Feed
+    mode now needs all three: the word, the playlist mtime (`programFeedUpdatedAt`, which keeps
+    ageing when nobody recomputes it) inside the same allowance `readProgramFeedRuntimeStatus` uses,
+    and a live playout heartbeat.
+  - a running uplink proved nothing. In hls mode `canBlameUplinkForStall` disarms every stall
+    watchdog while the feed is not fresh, so nothing restarts the process, `uplinkStartedAt` ages
+    past any window, and the cycle tail still writes status `running` with a fresh heartbeat. That
+    is verbatim the outage our own comment documents — 65 minutes running without encoding a frame
+    while the channel was dark — and the first version would have closed `uplink.no-progress.*` and
+    `uplink.process.exit` in the middle of it. The claim in that docstring, that every uplink event
+    restarts the process, is false on exactly this path. Uplink health now asks
+    `canBlameUplinkForStall` first (no armed watchdogs, no conclusion), then requires destinations
+    out of error and uptime longer than the *resolved* watchdog windows rather than a fixed ten
+    minutes — those are managed and can be raised to hours, and uptime is only evidence because a
+    watchdog would have fired.
+  - `getRunningUplinkStartedAt` took the oldest running process, so with several output profiles one
+    permanently crash-looping profile read as "up for 45 minutes" on its sibling's number. It now
+    takes the youngest, via `pickUplinkGroupStartedAt` in `uplink-progress.ts`. Everything that asks
+    "has the uplink been stable" — the sweep and the scheduled reconnect — means all of it.
+  - the worker area is the honest exception and the docstring now says so: the pass runs immediately
+    after the `worker.cycle` line it reads, so "the worker is alive" is close to a tautology. It is
+    kept for the case it does catch (a stale snapshot, or an audit write that is failing), not as
+    independent evidence. A relay that is switched off still counts as healthy: no uplink process
+    runs, so nothing there can be failing.
+- **Quiet has to outlast the fault's own cycle.** Ten minutes of silence says nothing about a fault
+  on a fifteen-minute cycle: it would be closed in every gap and reported again in every burst, and
+  the list would read green for ten minutes out of every fifteen while the channel kept falling
+  over. `upsertIncident` preserves `created_at` across a reopen, so first-to-last report is exactly
+  how long the family has been recurring, and the quiet demanded is `max(base, min(span, 6h))`. The
+  cap is where the requirement stops adding safety — an area measurably healthy and silent for six
+  hours is not mid-incident — and it is what keeps the July backlog closeable. A genuine one-off has
+  a span of zero and is unaffected.
 - **Ten minutes, fixed.** Longer than any recovery the runtime performs on its own — the longest
   default watchdog window is the uplink's 300s "never encoded a frame" restart — so a channel that
   restarts every few minutes cannot clear its own list between restarts and look calm while it

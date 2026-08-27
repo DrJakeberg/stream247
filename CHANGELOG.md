@@ -13,15 +13,26 @@
   a missing destination, a metadata sync waiting for the broadcaster connection; closed by the code
   that knows the condition, as before) or an **event** (something that happened and is over — a
   process exit, a stall the runtime restarted out of, a crashed loop). Event incidents are now
-  closed from outside, once their part of the system has been measurably healthy and quiet for ten
-  minutes, with a resolution note that says plainly they were closed automatically because they
-  describe a past event. The health proof uses only signals the runtime already writes — the
-  program feed's own freshness, the uplink's status and how long the current uplink process has
-  stood, the worker cycle's audit line — so nothing new is measured. A new reporting site cannot
-  skip the decision: a test reads every `fingerprint:` in the worker and fails on anything the
-  registry does not classify. The ten minutes and the seven-day backlog grace are deliberately
-  constants and not managed settings — they are the honesty threshold of a reporting surface, and a
-  field would invite setting them to nothing
+  closed from outside, once their part of the system has been measurably healthy and quiet, with a
+  resolution note that says plainly they were closed automatically because they describe a past
+  event. The health proof uses only signals the runtime already writes, and weighs each one against
+  what it is actually worth: the program feed's status word is believed only beside the playlist
+  mtime that ages on its own and a live playout heartbeat, because the worker never recomputes that
+  word and a frozen "fresh" would otherwise let it close the incidents that say playout died; a
+  running uplink counts only once its input is fresh (with a stale feed every uplink watchdog is
+  disarmed, which is exactly the documented outage where the process ran 65 minutes without
+  encoding a frame while the channel was dark), its destinations are out of error, and its youngest
+  process has stood longer than the operator's own watchdog windows. A new reporting site cannot
+  skip the decision: a test reads every `fingerprint:` in the worker — including templates that
+  begin with an interpolation, which is how both loop watchdogs are written and how they slipped
+  past the first version of the scan — and fails on anything the registry does not classify. The
+  windows are deliberately constants and not managed settings: they are the honesty threshold of a
+  reporting surface, and a field would invite setting them to nothing
+- a fault that keeps coming back is not declared over in the gaps between its bursts. The quiet an
+  entry has to prove scales with how long its family has been recurring — `created_at` survives a
+  reopen, so first-to-last report is that span — capped at six hours so a bad week does not demand a
+  week of silence. Without it a channel failing every quarter of an hour would have read green for
+  ten minutes out of every fifteen
 - one entry per ffmpeg exit instead of one per asset. `playout.ffmpeg.exit.<assetId>` gave every
   asset that ever failed its own permanently open critical row, which is most of what filled the
   list; the deduplication on fingerprint was working all along, the fingerprint was simply too

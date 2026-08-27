@@ -29,6 +29,8 @@
  * No I/O lives here, so the thresholds and the classification can be tested without a database.
  */
 
+import { canBlameUplinkForStall } from "./uplink-progress.js";
+
 export type IncidentArea = "playout" | "uplink" | "worker" | "twitch" | "source" | "system";
 
 export type IncidentKind = "state" | "event";
@@ -475,6 +477,18 @@ export const INCIDENT_AREA_STABLE_MS = 10 * 60_000;
  */
 export const INCIDENT_BACKLOG_GRACE_MS = 7 * 24 * 60 * 60_000;
 
+/**
+ * The most quiet a recurring fault can be asked for.
+ *
+ * The quiet a fault has to prove scales with how long it has been coming back (see
+ * `planIncidentResolutions`), which is what stops a fault on a longer cycle than the base window
+ * from being closed in every gap and reported again in every burst. Uncapped, a fault that recurred
+ * across a bad week would demand a week of silence and the list would never recover from it. Six
+ * hours is where the requirement stops adding safety: an area that is measurably healthy and has
+ * said nothing for six hours is not in the middle of anything.
+ */
+export const INCIDENT_RECURRENCE_QUIET_CAP_MS = 6 * 60 * 60_000;
+
 /** How stale the worker's last cycle may be before the worker area stops counting as healthy. */
 const WORKER_CYCLE_FRESH_MS = 120_000;
 
@@ -499,15 +513,30 @@ export type IncidentAreaHealthInput = {
   nowMs: number;
   /** True when the programme is produced as an HLS feed the uplink reads back. */
   programFeedMode: boolean;
+  /** `STREAM247_UPLINK_INPUT_MODE`, so this can ask `canBlameUplinkForStall` the same question. */
+  uplinkInputMode: string;
   /** True when the persistent relay uplink is switched on at all. */
   relayEnabled: boolean;
   /** `createdAt` of the newest `worker.cycle` audit event, or "" when there is none. */
   lastWorkerCycleAt: string;
+  /** The same allowance `readProgramFeedRuntimeStatus` uses to call the playlist stale. */
+  programFeedStaleMs: number;
+  /** The resolved uplink watchdog windows, which decide how much uptime proves anything. */
+  uplinkWatchdogMs: { stallMs: number; graceMs: number; noProgressRestartMs: number };
+  /** False when any destination the uplink publishes to is currently in its error state. */
+  uplinkDestinationsHealthy: boolean;
   playout: {
     status: string;
     heartbeatAt: string;
     programFeedStatus: string;
+    /** The playlist's mtime. Unlike the status word, this keeps ageing when nobody recomputes it. */
+    programFeedUpdatedAt: string;
     uplinkStatus: string;
+    /**
+     * The start of the YOUNGEST running uplink process (`getRunningUplinkStartedAt`). With several
+     * output profiles the oldest would let one permanently crash-looping profile read as "up for
+     * 45 minutes".
+     */
     uplinkStartedAt: string;
     uplinkHeartbeatAt: string;
   };
@@ -516,36 +545,68 @@ export type IncidentAreaHealthInput = {
 /**
  * Which areas are measurably healthy right now.
  *
- * Every signal here is one the runtime already writes -- no new probing. Playout health is the
- * program feed's own freshness (`readProgramFeedRuntimeStatus` stats the playlist, so a dead
- * playout goes stale within seconds and both the playout and the uplink cycle recompute it), or,
- * without a program feed, the playout runtime status plus a live heartbeat. Uplink health is the
- * current uplink process having stood for the whole stability window: `uplinkStartedAt` is reset by
- * every restart, and every uplink event incident restarts the process, so a flapping uplink can
- * never satisfy it.
+ * Every signal is one the runtime already writes; nothing new is probed. What each one is worth,
+ * though, is not obvious, and two earlier versions of this function got it wrong in ways worth
+ * recording:
+ *
+ * - `programFeedStatus` is written only by the playout and uplink PROCESSES. The worker, which runs
+ *   the resolution pass, never recomputes it. If both stop, the last "fresh" sits in the database
+ *   unchanged forever and a check on that word alone declares playout permanently healthy -- and
+ *   then closes `playout.loop.crashed` precisely because playout crashed. The word is therefore
+ *   only believed alongside two things that age on their own: the playlist's mtime
+ *   (`programFeedUpdatedAt`) within the same allowance the status itself uses, and a live playout
+ *   heartbeat. Direct output has no feed and uses the heartbeat alone, which is where the
+ *   asymmetry came from.
+ * - a running uplink proves nothing by itself. In hls mode `canBlameUplinkForStall` switches off
+ *   every stall watchdog while the feed is not fresh, so nothing restarts the uplink, its uptime
+ *   grows past any window, and the cycle tail still writes status "running" with a fresh
+ *   heartbeat. That is the documented 65-minute outage where the channel was dark the whole time.
+ *   Uplink health therefore requires the input to be fresh FIRST -- if the watchdogs are disarmed
+ *   there is nothing to conclude -- and only then treats uptime as evidence, because with the
+ *   watchdogs armed a process that has not been restarted is a process whose out_time advanced.
+ *   That inference is only as good as the windows themselves, which are managed and can be raised
+ *   to hours, so the required uptime is the longest of them rather than a fixed ten minutes.
+ *
+ * The worker area is the honest exception: the pass runs immediately after the `worker.cycle` audit
+ * line it reads, so "the worker is alive" is very nearly a tautology. It is kept because the check
+ * still catches the case that matters -- a pass running from a stale snapshot, or a worker whose
+ * audit write is failing -- not because it is independent evidence.
  */
 export function measureIncidentAreaHealth(input: IncidentAreaHealthInput): IncidentArea[] {
   const healthy: IncidentArea[] = [];
   const { playout, nowMs } = input;
+  const playoutHeartbeatFresh = ageMs(playout.heartbeatAt, nowMs) <= PLAYOUT_HEARTBEAT_FRESH_MS;
 
   if (input.programFeedMode) {
-    if (playout.programFeedStatus === "fresh") {
+    if (
+      playout.programFeedStatus === "fresh" &&
+      ageMs(playout.programFeedUpdatedAt, nowMs) <= input.programFeedStaleMs &&
+      playoutHeartbeatFresh
+    ) {
       healthy.push("playout");
     }
-  } else if (
-    ["running", "standby"].includes(playout.status) &&
-    ageMs(playout.heartbeatAt, nowMs) <= PLAYOUT_HEARTBEAT_FRESH_MS
-  ) {
+  } else if (["running", "standby"].includes(playout.status) && playoutHeartbeatFresh) {
     healthy.push("playout");
   }
+
+  // The watchdogs only restart an uplink they are allowed to blame, and uptime is only evidence
+  // once every one of them has had its full window to fire.
+  const uplinkWatchdogsArmed = canBlameUplinkForStall(input.uplinkInputMode, playout.programFeedStatus);
+  const requiredUplinkUptimeMs = Math.max(
+    INCIDENT_AREA_STABLE_MS,
+    input.uplinkWatchdogMs.stallMs + input.uplinkWatchdogMs.graceMs,
+    input.uplinkWatchdogMs.noProgressRestartMs
+  );
 
   if (!input.relayEnabled) {
     // No uplink process runs at all, so nothing in that area can be failing right now.
     healthy.push("uplink");
   } else if (
+    uplinkWatchdogsArmed &&
+    input.uplinkDestinationsHealthy &&
     playout.uplinkStatus === "running" &&
     ageMs(playout.uplinkHeartbeatAt, nowMs) <= PLAYOUT_HEARTBEAT_FRESH_MS &&
-    ageMs(playout.uplinkStartedAt, nowMs) >= INCIDENT_AREA_STABLE_MS
+    ageMs(playout.uplinkStartedAt, nowMs) >= requiredUplinkUptimeMs
   ) {
     healthy.push("uplink");
   }
@@ -565,24 +626,41 @@ export type IncidentResolutionPlanEntry = {
 };
 
 export type IncidentResolutionInput = {
-  incidents: ReadonlyArray<{ fingerprint: string; status: string; updatedAt: string; message?: string }>;
+  incidents: ReadonlyArray<{
+    fingerprint: string;
+    status: string;
+    /** Kept across a reopen by `upsertIncident`, so it is the family's first-ever report. */
+    createdAt?: string;
+    updatedAt: string;
+    message?: string;
+  }>;
   healthyAreas: ReadonlyArray<IncidentArea>;
   nowMs: number;
   stableMs?: number;
   backlogGraceMs?: number;
+  recurrenceQuietCapMs?: number;
 };
 
 /**
  * Which open event incidents are demonstrably over.
  *
  * Three conditions, all required. The area must be measurably healthy right now (the caller's
- * `healthyAreas`); the incident itself must not have been re-reported inside the stability window;
- * and nothing else in its area may have been reported inside it either. The last two are read off
- * the incidents themselves: `updatedAt` is refreshed by every repeat of the same fingerprint, so
- * the newest open event in an area is exactly "when this part of the system last misbehaved". One
- * fresh event therefore holds the whole area open, which is the honest answer -- an area that is
- * still producing events has not recovered. The exception is the families marked `noisy`, which
- * still have to wait out their own repeats but do not speak for their area.
+ * `healthyAreas`); the incident itself must not have been re-reported inside its own quiet window;
+ * and nothing else in its area may have been reported inside the base window either. The last two
+ * are read off the incidents themselves: `updatedAt` is refreshed by every repeat of the same
+ * fingerprint, so the newest open event in an area is exactly "when this part of the system last
+ * misbehaved". One fresh event therefore holds the whole area open, which is the honest answer --
+ * an area that is still producing events has not recovered. The exception is the families marked
+ * `noisy`, which still have to wait out their own repeats but do not speak for their area.
+ *
+ * The per-incident window is not fixed, because "quiet for ten minutes" is worthless against a
+ * fault whose cycle is longer than ten minutes. A programme that fails at every item boundary, or
+ * an uplink that drops every quarter of an hour, would be closed in every gap and reported again in
+ * every burst: green for ten minutes out of fifteen while the channel keeps falling over.
+ * `upsertIncident` preserves `created_at` across a reopen, so the distance between first and last
+ * report is exactly how long this family has been coming back, and the quiet demanded scales with
+ * it -- capped, so a bad week does not demand a week of silence. A genuine one-off has a span of
+ * zero and closes on the base window, unchanged.
  *
  * State incidents are never returned. They are closed by the code that knows their condition, and
  * closing one from here would claim a disk had space or a token had refreshed without checking.
@@ -629,18 +707,27 @@ export function planIncidentResolutions(input: IncidentResolutionInput): Inciden
     }
   }
 
-  const stableMinutes = Math.round(stableMs / 60_000);
   const graceDays = Math.round(backlogGraceMs / (24 * 60 * 60_000));
+  const recurrenceCapMs = input.recurrenceQuietCapMs ?? INCIDENT_RECURRENCE_QUIET_CAP_MS;
+
+  /** How long this particular entry has to have been silent, given how long it kept coming back. */
+  const requiredQuietMs = (candidate: Candidate): number => {
+    const firstSeenAgeMs = ageMs(candidate.incident.createdAt ?? candidate.incident.updatedAt, input.nowMs);
+    const lastSeenAgeMs = ageMs(candidate.incident.updatedAt, input.nowMs);
+    const recurrenceSpanMs = Number.isFinite(firstSeenAgeMs) ? Math.max(0, firstSeenAgeMs - lastSeenAgeMs) : 0;
+    return Math.max(stableMs, Math.min(recurrenceSpanMs, recurrenceCapMs));
+  };
 
   return candidates
     .filter((candidate) => healthy.has(candidate.area))
-    .filter((candidate) => ageMs(candidate.incident.updatedAt, input.nowMs) >= stableMs)
+    .filter((candidate) => ageMs(candidate.incident.updatedAt, input.nowMs) >= requiredQuietMs(candidate))
     .filter((candidate) => (lastEventAgeMs.get(candidate.area) ?? Number.POSITIVE_INFINITY) >= stableMs)
     .filter((candidate) => candidate.reason === "recovered" || ageMs(candidate.incident.updatedAt, input.nowMs) >= backlogGraceMs)
     .map((candidate) => {
+      const quietMinutes = Math.round(requiredQuietMs(candidate) / 60_000);
       const note =
         candidate.reason === "recovered"
-          ? `Closed automatically: this entry describes a past event, and ${AREA_LABEL[candidate.area]} has been healthy with nothing new reported for ${stableMinutes} minutes.`
+          ? `Closed automatically: this entry describes a past event, and ${AREA_LABEL[candidate.area]} has been healthy with nothing new reported for ${quietMinutes} minutes.`
           : `Closed automatically: this entry describes a past event under a fingerprint this build no longer uses, it was last reported more than ${graceDays} days ago, and ${AREA_LABEL[candidate.area]} is healthy now. It stayed open only because nothing ever closed it.`;
       // resolveIncident replaces the stored message with whatever it is given, so the note carries
       // the original with it. Dropping it would delete the only record of what actually happened --

@@ -14,6 +14,7 @@ import {
   isUplinkStalled,
   shouldRestartForNoProgress,
   observeUplinkProgress,
+  pickUplinkGroupStartedAt,
   type UplinkProgressState
 } from "./uplink-progress.js";
 import nodemailer from "nodemailer";
@@ -1701,12 +1702,7 @@ function getRunningUplinkDestinationIds(): string[] {
 }
 
 function getRunningUplinkStartedAt(): string {
-  return (
-    [...getRunningUplinkProcesses()]
-      .map((entry) => entry.startedAt)
-      .filter(Boolean)
-      .sort()[0] ?? ""
-  );
+  return pickUplinkGroupStartedAt(getRunningUplinkProcesses().map((entry) => entry.startedAt));
 }
 
 function isMatchingRunningUplinkGroup(group: DestinationRuntimeTargetGroup): boolean {
@@ -7680,11 +7676,15 @@ async function reconcileChatGame(): Promise<void> {
 /**
  * Closes the incidents that describe an event which is over.
  *
- * The classification and both thresholds are in incident-classes.ts; this is only the I/O around
- * it. It runs in the worker cycle rather than in the playout or uplink process because it is the
- * one loop that reads whole application state anyway, and because every health signal it needs is
- * already persisted there by the other two: the program feed's freshness, the uplink's status and
- * start time, and the worker cycle's own audit trail. Nothing new is measured.
+ * The classification, both thresholds and every health rule are in incident-classes.ts; this is
+ * only the I/O around it. It runs in the worker cycle rather than in the playout or uplink process
+ * because it is the one loop that reads whole application state anyway, and because every signal it
+ * needs is already persisted there by the other two: the playlist mtime and the playout heartbeat,
+ * the uplink's status, uptime and destination states, and the worker cycle's own audit trail.
+ * Nothing new is measured. The two windows that decide what those signals are worth -- the program
+ * feed's staleness allowance and the uplink watchdogs -- are resolved from the same config the
+ * runtime resolves them from, so a raised threshold cannot make the sweep more confident than the
+ * mechanism it is reasoning about.
  *
  * It is not a one-shot startup step on purpose. An install whose channel is down at boot would get
  * nothing out of a startup sweep -- the areas are not healthy yet, and correctly so. Running every
@@ -7693,16 +7693,29 @@ async function reconcileChatGame(): Promise<void> {
  */
 async function resolveFinishedIncidents(state: AppState): Promise<void> {
   try {
+    const nowMs = Date.now();
+    const feedConfig = getProgramFeedConfig(process.env, getMediaRoot(), state.managedConfig);
+    // The uplink publishes through the destinations the runtime last recorded for it; any of them
+    // sitting in "error" is what evaluateUplinkDestinationStall watches, and it is reason enough to
+    // stop calling the area healthy.
+    const uplinkDestinationIds = new Set(state.playout.uplinkDestinationIds);
     const plan = planIncidentResolutions({
       incidents: state.incidents,
       healthyAreas: measureIncidentAreaHealth({
-        nowMs: Date.now(),
+        nowMs,
         programFeedMode: isProgramFeedMode(),
+        uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
         relayEnabled: STREAM247_RELAY_ENABLED,
         lastWorkerCycleAt: state.auditEvents.find((event) => event.type === "worker.cycle")?.createdAt ?? "",
+        // Exactly the allowance readProgramFeedRuntimeStatus uses to call the playlist stale.
+        programFeedStaleMs: (feedConfig.bufferedSeconds + feedConfig.failoverSeconds) * 1000,
+        uplinkWatchdogMs: getUplinkStallOptions(process.env, state.managedConfig),
+        uplinkDestinationsHealthy: state.destinations
+          .filter((destination) => uplinkDestinationIds.has(destination.id))
+          .every((destination) => destination.status !== "error"),
         playout: state.playout
       }),
-      nowMs: Date.now()
+      nowMs
     });
 
     for (const entry of plan) {

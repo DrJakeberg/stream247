@@ -20,27 +20,80 @@ import {
 
 const workerSource = readFileSync(path.join(process.cwd(), "apps/worker/src/index.ts"), "utf8");
 
-/** Every `fingerprint: <expr>` literal the worker actually reports under. */
-function collectReportedFingerprints(): string[] {
+/** The `RuntimeMode` union, which is what `${mode}` in a fingerprint template can be. */
+const RUNTIME_MODES = ["worker", "playout", "uplink"];
+
+/**
+ * Every fingerprint the worker actually reports under.
+ *
+ * The first version of this scanner took `raw.split("${")[0]` as the family prefix, which is empty
+ * for a template that BEGINS with an interpolation -- and it then dropped empty entries. The two
+ * loop-watchdog sites are written exactly that way (`` `${mode}.loop.stalled` ``), so the guard that
+ * exists to prove every reporting site is classified silently skipped the two whose incidents are
+ * the loudest thing in the list. A leading slot is now either expanded, when the values are an
+ * enumerable union we know, or surfaced as an unresolvable marker that no registry entry can match.
+ */
+export function collectReportedFingerprints(source: string): string[] {
   const found = new Set<string>();
-  for (const match of workerSource.matchAll(/fingerprint:\s*(.+)/g)) {
+
+  for (const match of source.matchAll(/fingerprint:\s*(.+)/g)) {
     const expression = (match[1] ?? "").trim().replace(/,$/, "");
+
     for (const literal of expression.matchAll(/"([^"]+)"/g)) {
       found.add(literal[1] ?? "");
     }
+
     for (const template of expression.matchAll(/`([^`]+)`/g)) {
-      // `uplink.no-progress.${running.key}` -> the family prefix in front of the first slot.
       const raw = template[1] ?? "";
-      const prefix = raw.split("${")[0] ?? "";
-      found.add(prefix.replace(/\.$/, ""));
+      if (!raw.startsWith("${")) {
+        // `uplink.no-progress.${running.key}` -> the family prefix in front of the first slot.
+        found.add((raw.split("${")[0] ?? "").replace(/\.$/, ""));
+        continue;
+      }
+
+      const closing = raw.indexOf("}");
+      const slot = closing === -1 ? "" : raw.slice(2, closing);
+      const tail = closing === -1 ? "" : raw.slice(closing + 1);
+      if (slot === "mode") {
+        for (const mode of RUNTIME_MODES) {
+          found.add(`${mode}${tail}`);
+        }
+        continue;
+      }
+
+      // Anything else that leads with a slot cannot be resolved from the source alone. Reported as
+      // a marker rather than dropped, so the classification check goes red and someone decides.
+      found.add(`unresolvable-leading-slot:${raw}`);
     }
   }
+
   return [...found].filter((entry) => entry !== "");
 }
 
+describe("the scan that forces every reporting site to decide", () => {
+  it("sees the loop watchdogs, whose templates begin with the interpolation", () => {
+    const found = collectReportedFingerprints(workerSource);
+    expect(found).toContain("worker.loop.stalled");
+    expect(found).toContain("playout.loop.crashed");
+    expect(found).toContain("uplink.loop.crashed");
+  });
+
+  it("goes red on a leading slot it cannot resolve instead of dropping it", () => {
+    const invented = 'fingerprint: `${somethingNew}.foo.bar`\n';
+    const found = collectReportedFingerprints(invented);
+    expect(found).toHaveLength(1);
+    expect(found.every((entry) => classifyIncidentReference(entry) === null)).toBe(true);
+  });
+
+  it("still reads plain literals and trailing-slot templates", () => {
+    const source = 'fingerprint: "playout.feed-audio"\nfingerprint: `uplink.encoder-stall.${key}`\n';
+    expect(collectReportedFingerprints(source).sort()).toEqual(["playout.feed-audio", "uplink.encoder-stall"]);
+  });
+});
+
 describe("incident family registry", () => {
   it("classifies every fingerprint the worker reports under", () => {
-    const unregistered = collectReportedFingerprints().filter(
+    const unregistered = collectReportedFingerprints(workerSource).filter(
       (fingerprint) => classifyIncidentReference(fingerprint) === null
     );
     expect(unregistered).toEqual([]);
@@ -117,6 +170,20 @@ describe("incident family registry", () => {
   it("runs the resolution pass from the worker cycle", () => {
     expect(workerSource).toContain("await resolveFinishedIncidents(await readAppState());");
     expect(workerSource).toContain('logRuntimeEvent("incident.auto_resolved"');
+  });
+
+  it("hands the pass every signal the health rules need", () => {
+    // Each of these was a demonstrated false "healthy" before it was passed: the frozen feed status
+    // without its mtime allowance, the running uplink without its input mode, and uptime weighed
+    // against watchdog windows an operator can raise to hours.
+    expect(workerSource).toContain("uplinkInputMode: STREAM247_UPLINK_INPUT_MODE");
+    expect(workerSource).toContain("programFeedStaleMs:");
+    expect(workerSource).toContain("uplinkWatchdogMs: getUplinkStallOptions(process.env, state.managedConfig)");
+    expect(workerSource).toContain("uplinkDestinationsHealthy:");
+  });
+
+  it("measures uplink uptime from the youngest running process", () => {
+    expect(workerSource).toContain("pickUplinkGroupStartedAt(getRunningUplinkProcesses().map((entry) => entry.startedAt))");
   });
 
   it("keeps the two thresholds out of managed configuration", () => {

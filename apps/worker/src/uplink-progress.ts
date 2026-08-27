@@ -46,6 +46,24 @@ export function getUplinkStallOptions(env: NodeJS.ProcessEnv, managed?: ManagedW
   return resolveUplinkWatchdogMs(managed ?? null, env);
 }
 
+/**
+ * How long the uplink group as a whole has been standing, as one timestamp.
+ *
+ * The youngest start, not the oldest. With several output profiles the oldest lets one profile that
+ * is permanently crash-looping read as "up for 45 minutes", because the other profile's undisturbed
+ * process supplies the number. Anything that asks "has the uplink been stable" -- the incident sweep
+ * and the scheduled reconnect alike -- means all of it, so the most recently (re)started process is
+ * the honest answer. Empty when nothing is running.
+ */
+export function pickUplinkGroupStartedAt(startedAts: readonly string[]): string {
+  return (
+    [...startedAts]
+      .filter(Boolean)
+      .sort()
+      .at(-1) ?? ""
+  );
+}
+
 export function createUplinkProgressState(nowMs: number): UplinkProgressState {
   return { lastValue: 0, lastAdvanceAtMs: nowMs, seenProgress: false, pending: "" };
 }
