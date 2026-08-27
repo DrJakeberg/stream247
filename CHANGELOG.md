@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.31 - 2026-08-27
+
 ### Added
 
 - the operator surfaces the live-source work had been missing (M57 stage 2, Etappe E). Most
