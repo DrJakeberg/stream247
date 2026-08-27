@@ -1,5 +1,6 @@
 "use client";
 
+import { describeSourceLiveState } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -9,6 +10,10 @@ type VideoSourceListEntry = {
   urlPresent: boolean;
   ingestKind: "pull" | "push";
   publishKeyPresent: boolean;
+  /** The worker's last attach decision, as its own decision word; "" until one was ever made. */
+  liveState: string;
+  liveStateAt: string;
+  liveRetryAt: string;
   updatedAt: string;
 };
 
@@ -21,6 +26,14 @@ type VideoSourceListEntry = {
  * other way around — the camera sends to this server — and its publish key appears exactly once,
  * in the response that issued it; afterwards the list only says that one exists.
  */
+/**
+ * The stored decision as a sentence. Computed on the client so the countdown inside a cooldown
+ * state is read against the reader's own clock rather than against whenever the page was rendered.
+ */
+function liveStateText(source: VideoSourceListEntry): string {
+  return describeSourceLiveState({ state: source.liveState, retryAt: source.liveRetryAt });
+}
+
 export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEntry[] }) {
   const [sources, setSources] = useState(props.videoSources);
   const [name, setName] = useState("");
@@ -167,6 +180,13 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
                     : "No feed address stored yet."}
                 {source.updatedAt ? ` Updated ${source.updatedAt}.` : ""}
               </div>
+              {/* The last thing playback decided about this source, in words (M57 stage 2, Etappe
+                  E). Only for pushed sources: a fetched feed is never a live input, so a line here
+                  would describe a decision nobody makes about it. Empty until playback has decided
+                  once — an invented "not live" would be a claim, not an observation. */}
+              {source.ingestKind === "push" && liveStateText(source) ? (
+                <div className="subtle">{liveStateText(source)}</div>
+              ) : null}
               <div className="inline-form" style={{ marginTop: 8 }}>
                 <button
                   className="button secondary"

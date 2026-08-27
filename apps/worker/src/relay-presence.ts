@@ -113,6 +113,40 @@ export function decideSourceLiveAttach(input: SourceLiveAttachInput): SourceLive
 }
 
 // ---------------------------------------------------------------------------
+// What the decision leaves behind for the operator (M57 stage 2, Etappe E)
+// ---------------------------------------------------------------------------
+
+/** One row's worth of live state: the decision reason, and when the cooldown ends if there is one. */
+export type SourceLiveStateWrite = { sourceId: string; state: string; retryAt: string };
+
+/**
+ * Turns a decision into the state a surface can show, or null when there is nothing to write.
+ *
+ * Pure and separate from the playout cycle so the mapping is pinned by tests rather than buried in
+ * it. Two rules matter: a decision without a source id ("no-source-layer" — a statement about the
+ * scene, not about any stored source) is written nowhere, and only the cooldown carries a retry
+ * moment, so a surface counts down from a real deadline instead of re-deriving one from a stale
+ * timestamp.
+ */
+export function buildSourceLiveStateWrite(args: {
+  sourceId: string;
+  outcome: SourceLiveAttachDecision;
+  breaker: AttachBreakerState;
+  nowMs: number;
+}): SourceLiveStateWrite | null {
+  if (!args.sourceId) {
+    return null;
+  }
+
+  const remainingMs = args.outcome.reason === "breaker-cooldown" ? attachBreakerRemainingMs(args.breaker, args.nowMs) : 0;
+  return {
+    sourceId: args.sourceId,
+    state: args.outcome.reason,
+    retryAt: remainingMs > 0 ? new Date(args.nowMs + remainingMs).toISOString() : ""
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The bounded presence fetch
 // ---------------------------------------------------------------------------
 

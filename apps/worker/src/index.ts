@@ -77,6 +77,7 @@ import {
   type ResolvedEncoderQualitySettings
 } from "@stream247/core";
 import {
+  buildSourceLiveStateWrite,
   closedAttachBreaker,
   decideSourceLiveAttach,
   fetchRelaySourcePresence,
@@ -126,6 +127,7 @@ import {
   writeChatGameRuntimeRecord,
   readManagedConfigRecord,
   readOverlayVideoSourceUrls,
+  recordOverlayVideoSourceLiveState,
   type ManagedConfigRecord
 } from "@stream247/db";
 import {
@@ -2293,6 +2295,22 @@ async function resolveLiveSourceAttach(
       reason: outcome.reason,
       ...(sourceId ? { source: sourceId } : {})
     });
+
+    // The same edge, projected for the operator (Etappe E). Written on change only, so this is a
+    // rare write rather than a per-cycle one, and it never blocks the attach: a store that cannot
+    // take the observation must not decide whether a camera goes on air, so the failure is logged
+    // and the cycle continues.
+    const stateWrite = buildSourceLiveStateWrite({ sourceId, outcome, breaker: sourceLiveAttachBreaker, nowMs });
+    if (stateWrite) {
+      try {
+        await recordOverlayVideoSourceLiveState(stateWrite);
+      } catch (error) {
+        logRuntimeEvent("playout.source-live.state_write_failed", {
+          source: sourceId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
   }
 
   if (outcome.decision !== "attach" || !layer) {

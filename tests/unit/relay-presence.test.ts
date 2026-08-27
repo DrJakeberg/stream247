@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ATTACH_FAILURE_COOLDOWN_MS,
   attachBreakerRemainingMs,
+  buildSourceLiveStateWrite,
   closedAttachBreaker,
   decideSourceLiveAttach,
   fetchRelaySourcePresence,
@@ -86,6 +87,58 @@ describe("attach circuit breaker", () => {
     const opened = openAttachBreaker(NOW);
     expect(attachBreakerRemainingMs(opened, NOW + 60_000)).toBe(ATTACH_FAILURE_COOLDOWN_MS - 60_000);
     expect(attachBreakerRemainingMs(opened, NOW + ATTACH_FAILURE_COOLDOWN_MS + 5)).toBe(0);
+  });
+});
+
+// M57 stage 2, Etappe E: the same decision the worker logs is also projected to the operator, so
+// the write it hands the store is pure and pinned here rather than buried in the playout cycle.
+describe("what the attach decision leaves behind for the operator", () => {
+  it("records the decision reason against the source it is about", () => {
+    expect(
+      buildSourceLiveStateWrite({
+        sourceId: "studio-cam",
+        outcome: { decision: "attach", reason: "publishing" },
+        breaker: closedAttachBreaker(),
+        nowMs: NOW
+      })
+    ).toEqual({ sourceId: "studio-cam", state: "publishing", retryAt: "" });
+  });
+
+  it("writes nothing when there is no source the state could belong to", () => {
+    // "no-source-layer" is a statement about the scene, not about any stored source; attributing
+    // it to one would leave a source claiming a state nobody decided about it.
+    expect(
+      buildSourceLiveStateWrite({
+        sourceId: "",
+        outcome: { decision: "skip", reason: "no-source-layer" },
+        breaker: closedAttachBreaker(),
+        nowMs: NOW
+      })
+    ).toBeNull();
+  });
+
+  it("carries the moment the cooldown ends, so the surface can count down instead of guessing", () => {
+    const write = buildSourceLiveStateWrite({
+      sourceId: "studio-cam",
+      outcome: { decision: "skip", reason: "breaker-cooldown" },
+      breaker: openAttachBreaker(NOW),
+      nowMs: NOW + 30_000
+    });
+
+    expect(write?.state).toBe("breaker-cooldown");
+    expect(write?.retryAt).toBe(new Date(NOW + ATTACH_FAILURE_COOLDOWN_MS).toISOString());
+  });
+
+  it("leaves the retry moment empty for every state that is not a cooldown", () => {
+    for (const reason of ["switched-off", "not-publishing", "presence-unknown"] as const) {
+      const write = buildSourceLiveStateWrite({
+        sourceId: "studio-cam",
+        outcome: { decision: "skip", reason },
+        breaker: openAttachBreaker(NOW),
+        nowMs: NOW + 30_000
+      });
+      expect(write?.retryAt, `${reason} should carry no countdown`).toBe("");
+    }
   });
 });
 
