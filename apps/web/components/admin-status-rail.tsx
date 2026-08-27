@@ -40,7 +40,9 @@ export function AdminStatusRail(props: { initialSnapshot: BroadcastSnapshot }) {
       </div>
       <div className="admin-status-chip">
         <span className="label">Incidents</span>
-        <strong>{snapshot.openIncidents.length}</strong>
+        {/* Every open incident, not the five the snapshot carries: a chip that stops counting at
+            five is a chip that reads "5" while forty are open. */}
+        <strong>{snapshot.openIncidentCount}</strong>
         <span className="subtle">
           {snapshot.openIncidents[0]
             ? `${snapshot.openIncidents[0].severity} · ${snapshot.openIncidents[0].title}`

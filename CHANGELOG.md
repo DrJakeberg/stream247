@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+### Fixed
+
+- the incident list tells the truth about what is broken now (M58). Measured on the running
+  channel: 50+ open entries, 40+ of them "critical", the oldest from 5 July — and every one of them
+  a past event that nothing ever closed. Only a handful of fingerprints ever called `resolveIncident`;
+  the rest were reported and then carried forever, so the surface an operator opens during an
+  outage answered "what is broken?" with forty corpses. Every fingerprint family is now classified
+  in one registry as either a **state** (a condition that is true until it is not — a filling disk,
+  a missing destination, a metadata sync waiting for the broadcaster connection; closed by the code
+  that knows the condition, as before) or an **event** (something that happened and is over — a
+  process exit, a stall the runtime restarted out of, a crashed loop). Event incidents are now
+  closed from outside, once their part of the system has been measurably healthy and quiet, with a
+  resolution note that says plainly they were closed automatically because they describe a past
+  event. The health proof uses only signals the runtime already writes, and weighs each one against
+  what it is actually worth: the program feed's status word is believed only beside the playlist
+  mtime that ages on its own and a live playout heartbeat, because the worker never recomputes that
+  word and a frozen "fresh" would otherwise let it close the incidents that say playout died; a
+  running uplink counts only once its input is fresh (with a stale feed every uplink watchdog is
+  disarmed, which is exactly the documented outage where the process ran 65 minutes without
+  encoding a frame while the channel was dark), its destinations are out of error, and its youngest
+  process has stood longer than the operator's own watchdog windows. A new reporting site cannot
+  skip the decision: a test reads every `fingerprint:` in the worker — including templates that
+  begin with an interpolation, which is how both loop watchdogs are written and how they slipped
+  past the first version of the scan — and fails on anything the registry does not classify. The
+  windows are deliberately constants and not managed settings: they are the honesty threshold of a
+  reporting surface, and a field would invite setting them to nothing
+- a fault that keeps coming back is not declared over in the gaps between its bursts. The quiet an
+  entry has to prove scales with how long its family has been recurring — `created_at` survives a
+  reopen, so first-to-last report is that span — capped at six hours so a bad week does not demand a
+  week of silence. Without it a channel failing every quarter of an hour would have read green for
+  ten minutes out of every fifteen
+- one entry per ffmpeg exit instead of one per asset. `playout.ffmpeg.exit.<assetId>` gave every
+  asset that ever failed its own permanently open critical row, which is most of what filled the
+  list; the deduplication on fingerprint was working all along, the fingerprint was simply too
+  granular. The asset now names itself in the message, where the detail belongs. Old per-asset rows
+  are unreachable by any running code, so the sweep closes them by their retired shape once they
+  are past the grace and playout is healthy — no migration, because a migration cannot see whether
+  the channel is well and would either close them blindly or, on the freshly restarted container it
+  runs in, close nothing at all
+- both incident panels now say how old each open entry is — last reported first, because that is
+  what separates the channel's current problem from July's, then first seen — and a capped panel
+  says how many further open incidents it is not showing. The admin status chip counts every open
+  incident instead of the five the live snapshot carries, so it no longer reads "5" while forty are
+  open. An automatic resolution keeps the original message in front of its note: resolving replaces
+  the stored text, and losing the exit code and stderr tail at the moment an entry becomes history
+  would be the wrong trade
+
 ## 1.5.31 - 2026-08-27
 
 ### Added

@@ -14,7 +14,8 @@ import {
   hasNeverProgressed,
   isUplinkStalled,
   shouldRestartForNoProgress,
-  observeUplinkProgress
+  observeUplinkProgress,
+  pickUplinkGroupStartedAt
 } from "../../apps/worker/src/uplink-progress.js";
 
 // The outage this guards against: the uplink ffmpeg stayed alive at 0.02% CPU, encoded nothing, and
@@ -219,5 +220,21 @@ describe("managed uplink thresholds (M56 part 2)", () => {
     expect(options.stallMs).toBe(90_000);
     expect(options.graceMs).toBe(60_000);
     expect(options.noProgressRestartMs).toBe(120_000);
+  });
+});
+
+describe("how long the uplink group has been standing", () => {
+  it("reports the youngest start, so one crash-looping profile cannot borrow another's uptime", () => {
+    // With two output profiles, taking the oldest let a profile that restarts every few seconds
+    // read as "up for 45 minutes" -- the number came from the undisturbed sibling process.
+    const stable = "2026-08-27T11:15:00.000Z";
+    const flapping = "2026-08-27T12:00:00.000Z";
+    expect(pickUplinkGroupStartedAt([stable, flapping])).toBe(flapping);
+    expect(pickUplinkGroupStartedAt([flapping, stable])).toBe(flapping);
+  });
+
+  it("says nothing when nothing is running", () => {
+    expect(pickUplinkGroupStartedAt([])).toBe("");
+    expect(pickUplinkGroupStartedAt(["", ""])).toBe("");
   });
 });

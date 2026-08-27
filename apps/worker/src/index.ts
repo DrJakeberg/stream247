@@ -14,6 +14,7 @@ import {
   isUplinkStalled,
   shouldRestartForNoProgress,
   observeUplinkProgress,
+  pickUplinkGroupStartedAt,
   type UplinkProgressState
 } from "./uplink-progress.js";
 import nodemailer from "nodemailer";
@@ -247,6 +248,7 @@ import {
   isTwitchVodCacheCoolingDown
 } from "./twitch-vod-cache.js";
 import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
+import { measureIncidentAreaHealth, planIncidentResolutions } from "./incident-classes.js";
 import { getPlayoutFeedHealthOptions, shouldRestartStalledPlayout } from "./playout-feed-health.js";
 import { getDurationBoundOptions, shouldEndAssetAtDurationBound } from "./duration-bound.js";
 import {
@@ -1700,12 +1702,7 @@ function getRunningUplinkDestinationIds(): string[] {
 }
 
 function getRunningUplinkStartedAt(): string {
-  return (
-    [...getRunningUplinkProcesses()]
-      .map((entry) => entry.startedAt)
-      .filter(Boolean)
-      .sort()[0] ?? ""
-  );
+  return pickUplinkGroupStartedAt(getRunningUplinkProcesses().map((entry) => entry.startedAt));
 }
 
 function isMatchingRunningUplinkGroup(group: DestinationRuntimeTargetGroup): boolean {
@@ -5064,10 +5061,12 @@ async function startOrSwitchPlayout(args: {
     message: args.reason
   }));
 
-  if (args.asset) {
-    await resolveIncident(`playout.ffmpeg.exit.${args.asset.id}`, `Asset ${args.asset.title} started successfully.`);
-  }
-  await resolveIncident("playout.ffmpeg.exit", "Playout process started successfully.");
+  // One fingerprint for the whole family, not one per asset: see incident-classes.ts. The asset
+  // that failed is named in the incident's message, which is where the detail belongs.
+  await resolveIncident(
+    "playout.ffmpeg.exit",
+    args.asset ? `Asset ${args.asset.title} started successfully.` : "Playout process started successfully."
+  );
 
   if (args.updateDestinations !== false) {
     for (const destination of args.destinations) {
@@ -5307,7 +5306,11 @@ async function startOrSwitchPlayout(args: {
         message: lastAssetId
           ? `${incidentMessage} Asset ${lastAssetId}${lastInputSummary ? ` (${lastInputSummary})` : ""}.`
           : incidentMessage,
-        fingerprint: lastAssetId ? `playout.ffmpeg.exit.${lastAssetId}` : "playout.ffmpeg.exit"
+        // Deliberately not keyed by asset. It used to be, and every asset that ever failed left a
+        // separate permanently open critical entry -- dozens of rows for one recurring cause. The
+        // upsert already collapses repeats onto one row and refreshes its timestamp; the fingerprint
+        // was simply too granular for that to help.
+        fingerprint: "playout.ffmpeg.exit"
       });
       if (!exitedCleanly) {
         if (lastTargetKind === "live") {
@@ -7670,6 +7673,66 @@ async function reconcileChatGame(): Promise<void> {
   await flushChatGameRuntime();
 }
 
+/**
+ * Closes the incidents that describe an event which is over.
+ *
+ * The classification, both thresholds and every health rule are in incident-classes.ts; this is
+ * only the I/O around it. It runs in the worker cycle rather than in the playout or uplink process
+ * because it is the one loop that reads whole application state anyway, and because every signal it
+ * needs is already persisted there by the other two: the playlist mtime and the playout heartbeat,
+ * the uplink's status, uptime and destination states, and the worker cycle's own audit trail.
+ * Nothing new is measured. The two windows that decide what those signals are worth -- the program
+ * feed's staleness allowance and the uplink watchdogs -- are resolved from the same config the
+ * runtime resolves them from, so a raised threshold cannot make the sweep more confident than the
+ * mechanism it is reasoning about.
+ *
+ * It is not a one-shot startup step on purpose. An install whose channel is down at boot would get
+ * nothing out of a startup sweep -- the areas are not healthy yet, and correctly so. Running every
+ * cycle means the backlog clears the moment the channel has genuinely been well for the stability
+ * window, which is exactly the claim the resolution note makes.
+ */
+async function resolveFinishedIncidents(state: AppState): Promise<void> {
+  try {
+    const nowMs = Date.now();
+    const feedConfig = getProgramFeedConfig(process.env, getMediaRoot(), state.managedConfig);
+    // The uplink publishes through the destinations the runtime last recorded for it; any of them
+    // sitting in "error" is what evaluateUplinkDestinationStall watches, and it is reason enough to
+    // stop calling the area healthy.
+    const uplinkDestinationIds = new Set(state.playout.uplinkDestinationIds);
+    const plan = planIncidentResolutions({
+      incidents: state.incidents,
+      healthyAreas: measureIncidentAreaHealth({
+        nowMs,
+        programFeedMode: isProgramFeedMode(),
+        uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
+        relayEnabled: STREAM247_RELAY_ENABLED,
+        lastWorkerCycleAt: state.auditEvents.find((event) => event.type === "worker.cycle")?.createdAt ?? "",
+        // Exactly the allowance readProgramFeedRuntimeStatus uses to call the playlist stale.
+        programFeedStaleMs: (feedConfig.bufferedSeconds + feedConfig.failoverSeconds) * 1000,
+        uplinkWatchdogMs: getUplinkStallOptions(process.env, state.managedConfig),
+        uplinkDestinationsHealthy: state.destinations
+          .filter((destination) => uplinkDestinationIds.has(destination.id))
+          .every((destination) => destination.status !== "error"),
+        playout: state.playout
+      }),
+      nowMs
+    });
+
+    for (const entry of plan) {
+      await resolveIncident(entry.fingerprint, entry.message);
+      logRuntimeEvent("incident.auto_resolved", {
+        fingerprint: entry.fingerprint,
+        area: entry.area,
+        reason: entry.reason
+      });
+    }
+  } catch (error) {
+    logRuntimeEvent("incident.auto_resolve_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
 async function runWorkerCycle(): Promise<void> {
   // Disk self-protection runs before the syncs so a failing external integration — Twitch down, a
   // source erroring — can never stand between a filling disk and the one mechanism that frees it.
@@ -7703,6 +7766,9 @@ async function runWorkerCycle(): Promise<void> {
   await reconcileChatInteraction();
   await reconcileChatGame();
   await appendAuditEvent("worker.cycle", "Worker reconciliation cycle completed.");
+  // Last, and reading state again: the audit line above is this cycle's own proof that the worker
+  // loop is alive, and the syncs before it may have raised or closed incidents of their own.
+  await resolveFinishedIncidents(await readAppState());
 }
 
 type RuntimeMode = "worker" | "playout" | "uplink";

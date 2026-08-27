@@ -130,6 +130,7 @@ import {
   type OutputSettingsRecord,
   type ManagedConfigRecord
 } from "@stream247/db";
+import { describeIncidentAge, describeOpenIncidentOverflow } from "@/lib/incident-age";
 import { buildTwitchWatchUrl } from "@/lib/watch-url";
 import type {
   BroadcastSnapshot,
@@ -410,6 +411,32 @@ export function getFilteredIncidents(
         .includes(query);
     })
     .sort((left, right) => new Date(right.updatedAt || right.createdAt).getTime() - new Date(left.updatedAt || left.createdAt).getTime());
+}
+
+/**
+ * The open incidents a panel should list, with their age, plus what it is leaving out.
+ *
+ * The clock is read here rather than in the page: a component render must stay pure, and every age
+ * on one panel should share a single "now" anyway. Newest first, so the few that fit are the few
+ * most likely to be the channel's current problem, and the overflow line makes the cap visible --
+ * with forty entries open, a silent cap hides the one being looked for.
+ */
+export function getOpenIncidentPanel(
+  state: AppState,
+  limit = 4
+): { listed: Array<IncidentRecord & { ageLabel: string }>; openCount: number; overflow: string } {
+  const nowMs = Date.now();
+  const open = getFilteredIncidents(state, { status: "open" });
+  const listed = open.slice(0, limit).map((incident) => ({
+    ...incident,
+    ageLabel: describeIncidentAge({ createdAt: incident.createdAt, updatedAt: incident.updatedAt, nowMs })
+  }));
+
+  return {
+    listed,
+    openCount: open.length,
+    overflow: describeOpenIncidentOverflow(listed.length, open.length)
+  };
 }
 
 export function getSourceIncidents(state: AppState, sourceId: string): IncidentRecord[] {
@@ -860,6 +887,7 @@ function summarizeOpenIncidents(state: AppState, limit = 5): LiveIncidentSummary
       scope: incident.scope,
       fingerprint: incident.fingerprint,
       createdAt: incident.createdAt,
+      updatedAt: incident.updatedAt,
       acknowledgedAt: incident.acknowledgedAt,
       resolvedAt: incident.resolvedAt
     }));
@@ -1286,7 +1314,8 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
     queueItems: summarizeQueueItems(state),
     currentScheduleItem: summarizeScheduleItem(currentScheduleItem),
     nextScheduleItem: summarizeScheduleItem(nextScheduleItem),
-    openIncidents: summarizeOpenIncidents(state)
+    openIncidents: summarizeOpenIncidents(state),
+    openIncidentCount: state.incidents.filter((incident) => incident.status === "open").length
   };
 }
 

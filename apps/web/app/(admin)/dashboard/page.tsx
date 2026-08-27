@@ -15,6 +15,7 @@ import {
   getCurrentScheduleItem,
   getManagedTwitchConfig,
   getNextScheduleItem,
+  getOpenIncidentPanel,
   getPlayoutQueueAssets,
   getPresenceStatus,
   getSchedulePreview,
@@ -34,7 +35,7 @@ export default async function DashboardPage() {
   const schedulePreview = getSchedulePreview(state);
   const presenceStatus = getPresenceStatus(state);
   const activeWindows = getActivePresenceWindows(state);
-  const openIncidents = state.incidents.filter((incident) => incident.status === "open");
+  const incidentPanel = getOpenIncidentPanel(state);
   const recentIncidents = [...state.incidents]
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, 8);
@@ -125,9 +126,9 @@ export default async function DashboardPage() {
         </article>
         <article className="metric">
           <span className="label">Incidents</span>
-          <div className="value">{openIncidents.length}</div>
+          <div className="value">{incidentPanel.openCount}</div>
           <p className="subtle">
-            {openIncidents.length > 0 ? `${openIncidents[0].title}` : "No open incidents at the moment."}
+            {incidentPanel.listed[0] ? incidentPanel.listed[0].title : "No open incidents at the moment."}
           </p>
         </article>
         <article className="metric">
@@ -231,12 +232,13 @@ export default async function DashboardPage() {
                 Use Live control for skip, fallback, restart, override, replay, and Live Bridge actions. This status view stays read-only.
               </div>
             </div>
-            {openIncidents.length > 0 ? (
-              openIncidents.slice(0, 4).map((incident) => (
+            {incidentPanel.listed.length > 0 ? (
+              incidentPanel.listed.map((incident) => (
                 <div className="item" key={incident.id}>
                   <strong>
                     {incident.severity.toUpperCase()} · {incident.title}
                   </strong>
+                  <div className="subtle">{incident.ageLabel}</div>
                   <div className="subtle">{incident.message}</div>
                   <div className="subtle">
                     {incident.acknowledgedAt
@@ -258,6 +260,11 @@ export default async function DashboardPage() {
                 </div>
               </div>
             )}
+            {incidentPanel.overflow ? (
+              <div className="item">
+                <div className="subtle">{incidentPanel.overflow}</div>
+              </div>
+            ) : null}
             <div className="item">
               <strong>Active moderation presence</strong>
               <div className="subtle">

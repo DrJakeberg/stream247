@@ -1319,6 +1319,7 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
 | M56 | UX | Now | In progress | Every operational decision configurable in the GUI, `.env` demoted to fallback. Part 1 done: encoder quality, disk watermark, engagement/schedule-sync feature switches, EventSub secret. Part 2 done: replay (VOD) cache family, watchdog/stall thresholds, reconnect + program-feed tuning — clamped resolvers in core, three folded admin groups with partial routes; SMTP/alert family confirmed already GUI-complete. Deliberately env-only: cache root, relay topology, loop stall guard. Open: the unused redis service in compose |
 | M57 | Feature | Now | In progress | Embedded video sources as scene layers. Stage 1 done: source layer kind (placement + reference), encrypted feed store, snapshot sampler at managed cadence rendering through the native overlay — plus logo/image/text layers on air. Stage 2 in progress: ingest foundation + attach decision (A+B) and the live attach itself (C+D) done — push ingest via relay with HTTP auth, publish keys, derived internal read URLs, presence poll, and the third ffmpeg input wired as a PiP under the scene with audio mixed at the configured gain, breaker armed on a failed attach; Etappe E done — the audited owner/admin reveal of the relay rollback lines (the emergency path relay auth had made unusable), the live source gain field with the known-duration caveat, and the last attach decision shown per pushed source (migration `20260826_004`); open: a mandatory DT soak gate before any deploy, plus per-layer cadence |
+| M58 | Ops | Now | Done | Make the incident list truthful: classify every fingerprint family as a lasting state or a finished event, close event incidents once their area is provably healthy, and stop the per-asset fingerprint explosion |
 
 ## M51 Broadcast Channel Split
 
@@ -1489,6 +1490,21 @@ change, no additional ffmpeg input in stage 1.
   the audio gain wiring (the resolver exists), and whatever operator surface the attach needs
   beyond the feature switch
 
+## M58 Truthful Incident List
+
+The incident list is the surface an operator opens during an outage. Measured on the running
+channel on 2026-08-27 it held 50+ open entries, 40+ of them `critical`, the oldest from 5 July, and
+every single one described something that had finished long ago.
+
+- Classify every fingerprint family once, in one registry, as a **state** (a condition that holds
+  until it stops holding; the raising code already knows when that is) or an **event** (something
+  that happened and is over the moment it is written). A new reporting site must land in the
+  registry or the test suite refuses it
+- Close event incidents from outside, on proof that their area has been healthy and quiet for a
+  fixed window, using only measurements the runtime already writes
+- Collapse the per-asset ffmpeg-exit fingerprint into one family and clear the rows the old shape
+  left behind
+
 ## Rollback Notes
 
 - Docs-only milestones roll back by reverting the doc commit.
@@ -1510,6 +1526,114 @@ change, no additional ffmpeg input in stage 1.
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-08-27 — M58: The Incident List Says What Is Broken Now
+
+- **What was measured.** 50+ open incidents, 40+ `critical`, oldest 5 July. Verified in code: of
+  the ~45 fingerprint families the worker raises, only some called `resolveIncident` at all, and the
+  ones that never did were exactly the ones describing finished events — `playout.feed-audio`,
+  `playout.feed-stall`, `playout.ffmpeg.exit.*`, `playout.ffmpeg.stderr`, `playout.start.failed`,
+  `playout.switch.failed`, `uplink.ffmpeg.stderr`, `uplink.process.exit`, the four keyed
+  `uplink.*-stall` / `no-progress` / `discontinuity-storm` families, and both loop watchdogs. The
+  survey also corrected the starting assumption: the state families (disk watermarks, system volume,
+  every `twitch.*`, every `source.*`, `playout.no-asset`, `playout.output.missing`, the per-
+  destination cooldown) all already resolve themselves. The bug was never "resolution is missing",
+  it was "one of the two kinds of incident has no possible resolver at its reporting site".
+- **The registry.** `apps/worker/src/incident-classes.ts` holds every family with its kind, its
+  area and a written reason. Keyed families are allowed only where the key names a bounded,
+  configured thing — a destination, an output profile, a stored source. `tests/unit/incident-classes.test.ts`
+  reads every `fingerprint:` expression out of the worker source, including the literal prefix of a
+  template, and fails on anything unclassified: a new reporting site cannot avoid the decision.
+  Chosen over a branded-type wrapper because the repo already scans source in a dozen tests and
+  rewriting ~48 call sites for the same guarantee is diff, not safety. The first version of that
+  scanner had a hole exactly where it mattered: it took `raw.split("${")[0]` as the family prefix
+  and dropped empty results, so a template *beginning* with an interpolation vanished — and both
+  loop watchdogs are written `` `${mode}.loop.stalled` ``. The guard skipped the two families whose
+  incidents are the loudest thing in the list. A leading slot is now expanded when its values are an
+  enumerable union we know (`RuntimeMode`), and otherwise emitted as an unresolvable marker that no
+  registry entry can match, so the check goes red instead of quiet. Three tests cover it, including
+  one that feeds the scanner an invented `` `${somethingNew}.foo.bar` `` and proves it comes back
+  unclassified.
+- **The health proof, and the two versions of it that were wrong.** An adversarial review took the
+  first version apart with two demonstrations against the real module, both correct:
+  - `programFeedStatus` is written *only* by the playout and uplink processes (`updateProgramFeedRuntimeStatus`).
+    The worker, which runs the sweep, never recomputes it. Stop both processes and the last "fresh"
+    stands in the database forever — so a check on that word alone declared playout permanently
+    healthy and closed `playout.loop.crashed` and `playout.start.failed` *because* playout had died.
+    The direct-output branch had always checked heartbeat freshness; the asymmetry was the bug. Feed
+    mode now needs all three: the word, the playlist mtime (`programFeedUpdatedAt`, which keeps
+    ageing when nobody recomputes it) inside the same allowance `readProgramFeedRuntimeStatus` uses,
+    and a live playout heartbeat.
+  - a running uplink proved nothing. In hls mode `canBlameUplinkForStall` disarms every stall
+    watchdog while the feed is not fresh, so nothing restarts the process, `uplinkStartedAt` ages
+    past any window, and the cycle tail still writes status `running` with a fresh heartbeat. That
+    is verbatim the outage our own comment documents — 65 minutes running without encoding a frame
+    while the channel was dark — and the first version would have closed `uplink.no-progress.*` and
+    `uplink.process.exit` in the middle of it. The claim in that docstring, that every uplink event
+    restarts the process, is false on exactly this path. Uplink health now asks
+    `canBlameUplinkForStall` first (no armed watchdogs, no conclusion), then requires destinations
+    out of error and uptime longer than the *resolved* watchdog windows rather than a fixed ten
+    minutes — those are managed and can be raised to hours, and uptime is only evidence because a
+    watchdog would have fired.
+  - `getRunningUplinkStartedAt` took the oldest running process, so with several output profiles one
+    permanently crash-looping profile read as "up for 45 minutes" on its sibling's number. It now
+    takes the youngest, via `pickUplinkGroupStartedAt` in `uplink-progress.ts`. Everything that asks
+    "has the uplink been stable" — the sweep and the scheduled reconnect — means all of it.
+  - the worker area is the honest exception and the docstring now says so: the pass runs immediately
+    after the `worker.cycle` line it reads, so "the worker is alive" is close to a tautology. It is
+    kept for the case it does catch (a stale snapshot, or an audit write that is failing), not as
+    independent evidence. A relay that is switched off still counts as healthy: no uplink process
+    runs, so nothing there can be failing.
+- **Quiet has to outlast the fault's own cycle.** Ten minutes of silence says nothing about a fault
+  on a fifteen-minute cycle: it would be closed in every gap and reported again in every burst, and
+  the list would read green for ten minutes out of every fifteen while the channel kept falling
+  over. `upsertIncident` preserves `created_at` across a reopen, so first-to-last report is exactly
+  how long the family has been recurring, and the quiet demanded is `max(base, min(span, 6h))`. The
+  cap is where the requirement stops adding safety — an area measurably healthy and silent for six
+  hours is not mid-incident — and it is what keeps the July backlog closeable. A genuine one-off has
+  a span of zero and is unaffected.
+- **Ten minutes, fixed.** Longer than any recovery the runtime performs on its own — the longest
+  default watchdog window is the uplink's 300s "never encoded a frame" restart — so a channel that
+  restarts every few minutes cannot clear its own list between restarts and look calm while it
+  flaps. Short enough that an operator who fixed something watches the list clear. Deliberately not
+  a managed setting: this is the honesty threshold of a reporting surface, not plant tuning, and a
+  field would invite setting it to thirty seconds and getting the lying list back. A test asserts
+  both constants and that neither reached `managed-runtime.ts`.
+- **Noise that is not evidence.** `playout.ffmpeg.stderr` and `uplink.ffmpeg.stderr` are raised by
+  `line.toLowerCase().includes("error")`, and a healthy encode prints "Error while decoding stream"
+  over a single corrupt packet. Letting one gate an area would have frozen the whole list on a
+  channel that is fine, which is the same failure in a new costume. They are marked `noisy`: still
+  closed themselves, still made to wait out their own repeats, but they do not speak for their area.
+- **The fingerprint explosion.** `playout.ffmpeg.exit.<assetId>` gave every asset that ever failed
+  its own permanently open critical row. The `upsertIncident` dedupe was working the whole time —
+  it upserts on fingerprint and refreshes `updated_at` — the fingerprint was simply too granular for
+  it to help. Collapsed to `playout.ffmpeg.exit`; the asset id and input summary were already in the
+  message and stay there.
+- **No migration, on purpose.** `20260827_001` was verified free (the 2026-08-26 sequence runs _001
+  through _004 and nothing later is registered) and deliberately left unused. The cleanup condition
+  the milestone needs is "the area is healthy now", and a SQL migration cannot see that: it runs at
+  schema time, on a container that has just started, where the persisted runtime says whatever it
+  said before the restart. It would either close the backlog blindly or, on exactly the install
+  worth cleaning, close nothing. The sweep therefore lives in the worker cycle, where the health
+  proof is real. The retired `playout.ffmpeg.exit.<assetId>` shape is recognised by
+  `RETIRED_INCIDENT_FINGERPRINTS` and closed once it is past a seven-day grace and playout is
+  healthy — the grace is not about those rows being finished (no running code can raise them) but
+  about a rollback to the previous image, which would write that shape again.
+- **Unclassified fingerprints are left open.** A string the registry does not own is more likely a
+  state incident from another build than a finished event, and guessing wrong hides a real problem.
+- **Resolving overwrites.** `resolveIncident` sets `message` to whatever it is handed, so the
+  automatic note prefixes the original text rather than replacing it. Otherwise the sweep would
+  delete the exit code, the stderr tail and the asset from forty entries at the exact moment they
+  become history — the only thing a post-mortem would have wanted from them.
+- **Surfaces.** Both incident panels now carry the age of each open entry — last reported first,
+  because that is what separates the channel's current problem from July's — and say how many
+  further open incidents a capped panel is not showing. The admin status chip counted the capped
+  list, so it read "5" while forty were open; it now counts them all. Text only, so the
+  control-density budgets (`live-status` 27/1, `admin-settings` 31/1) are untouched. The e2e fixture
+  seeds no incidents, so the empty-state branch still renders and no wording or design baseline
+  moves. The clock for the ages lives outside the render — a server helper for the dashboard, the
+  snapshot's own `generatedAt` for the control room — because eslint's `react-hooks/purity` rejects
+  `Date.now()` there, and the snapshot timestamp also makes the server and hydrated renders agree.
 
 ### 2026-08-27 — M57 Stage 2, Etappe E: The Operator Surfaces
 
