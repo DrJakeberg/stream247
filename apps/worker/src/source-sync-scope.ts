@@ -18,6 +18,8 @@
 // that was populated a moment ago) keeps the existing rows. Stale rows are recoverable and
 // invisible to viewers; deleted rows take the channel off air.
 
+import { SOURCE_BARREN_RUN_ALERT_THRESHOLD, countBarrenSyncRuns, type SourceSyncRunView } from "@stream247/core";
+
 export interface SourceSyncOutcome {
   sourceId: string;
   /** The per-source ingest threw and was caught; nothing was learned about its content. */
@@ -55,4 +57,61 @@ export function decideSourceAssetReplacement(outcome: SourceSyncOutcome): Source
  */
 export function selectReplaceableSourceIds(outcomes: SourceSyncOutcome[]): string[] {
   return outcomes.filter((outcome) => decideSourceAssetReplacement(outcome) === "replace").map((outcome) => outcome.sourceId);
+}
+
+// ---------------------------------------------------------------------------
+// Whether a source that keeps coming back empty belongs in the incident list.
+//
+// The rule above stops an empty listing from deleting an archive. It does not make the emptiness
+// visible, and on 2026-08-27 that was the other half of the outage: the Twitch listing returned no
+// entries without throwing, so the sync took its success path, wrote the run as "skipped" with zero
+// discovered assets, and called resolveIncident on `source.<kind>.<id>` — closing the only entry
+// that could have said anything. The sources page showed the words "Ingestion failed" and the
+// incident list showed nothing, for hours, with the channel on the filler slate.
+//
+// This is deliberately not a new fingerprint. Per incident-classes.ts the keyed `source` family is
+// already a STATE ("One named source fails to ingest until its next run succeeds; that run closes
+// it per source"), and "answered with nothing" is the same open question for an operator as "threw"
+// — same source, same consequence, resolved by the same event. A second fingerprint would list one
+// broken source twice.
+
+export interface SourceDroughtInput {
+  /** This source's runs, newest first, including the one the current cycle has just produced. */
+  runs: readonly SourceSyncRunView[];
+  /** Assets currently stored for the source — evidence that it used to deliver. */
+  storedAssetCount: number;
+  /** True when at least one pool draws on this source, so its emptiness reaches the programme. */
+  referencedByPool: boolean;
+}
+
+export type SourceDroughtDecision = {
+  /**
+   * `resolve` when the newest check delivered, `report` while the drought is worth an operator's
+   * attention, `leave` when there is nothing to say and nothing to take back.
+   */
+  action: "resolve" | "report" | "leave";
+  barrenRuns: number;
+};
+
+export function decideSourceDroughtIncident(input: SourceDroughtInput): SourceDroughtDecision {
+  const barrenRuns = countBarrenSyncRuns(input.runs);
+
+  if (input.runs.length > 0 && barrenRuns === 0) {
+    return { action: "resolve", barrenRuns };
+  }
+
+  if (barrenRuns < SOURCE_BARREN_RUN_ALERT_THRESHOLD) {
+    // Below the threshold this says nothing — and, importantly, does not resolve either. The old
+    // code's unconditional resolve is what let an empty listing erase the entry a genuine failure
+    // had raised one cycle earlier.
+    return { action: "leave", barrenRuns };
+  }
+
+  // A source with an archive has demonstrably delivered before, so a drought is a regression. A
+  // source with nothing stored only matters once something plays from it. Neither: an unused source
+  // with an empty archive is a setting, not an incident, and reporting it would park a permanently
+  // open entry in the list that no action can close.
+  const matters = input.storedAssetCount > 0 || input.referencedByPool;
+
+  return { action: matters ? "report" : "leave", barrenRuns };
 }
