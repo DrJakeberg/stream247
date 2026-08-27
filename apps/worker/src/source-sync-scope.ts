@@ -123,6 +123,28 @@ export function planSourceAssetReplacement<TAsset extends AssetOfSource>(args: {
   };
 }
 
+/**
+ * Which sources' ingestion incidents this sync may resolve.
+ *
+ * Per-source for the same reason the replacement decision is: a single "did anything fail" flag
+ * couples sources that have nothing to do with each other. Behind one, a healthy source's incident
+ * stayed open because a sibling failed — and with a permanently broken sibling it never resolved
+ * at all, so the incident list stopped describing what was actually wrong.
+ */
+export function planSourceIncidentResolution(args: {
+  sources: readonly { id: string }[];
+  failedSourceIds: ReadonlySet<string>;
+}): { resolve: string[]; keepOpen: string[] } {
+  const resolve: string[] = [];
+  const keepOpen: string[] = [];
+
+  for (const source of args.sources) {
+    (args.failedSourceIds.has(source.id) ? keepOpen : resolve).push(source.id);
+  }
+
+  return { resolve, keepOpen };
+}
+
 export type SourceSyncStatusLabels = {
   /** The sync collected content. */
   ready: string;

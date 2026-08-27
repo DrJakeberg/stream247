@@ -275,6 +275,7 @@ import {
   buildPreservedAssetsNote,
   describeSourceSyncStatus,
   planSourceAssetReplacement,
+  planSourceIncidentResolution,
   type SourceSyncOutcome
 } from "./source-sync-scope.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
@@ -3391,10 +3392,11 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       (source.connectorKind === "youtube-playlist" || source.connectorKind === "youtube-channel") && (source.enabled ?? true)
   );
   const youtubeAssets: AssetRecord[] = [];
-  // Per-source, not just the global hadFailure flag: a source we learned nothing about must keep
-  // its stored assets instead of being wiped by the wholesale replace below. See source-sync-scope.ts.
+  // Per-source throughout — asset replacement, status wording and incident resolution all read
+  // this set. A source we learned nothing about must keep its stored assets instead of being wiped
+  // by the wholesale replace below, and must not drag its healthy siblings' incidents open with
+  // it. See source-sync-scope.ts.
   const failedSourceIds = new Set<string>();
-  let hadFailure = false;
   const syncRuns: AppState["sourceSyncRuns"] = [];
 
   for (const source of youtubeSources) {
@@ -3405,7 +3407,6 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         ? isLikelyYouTubePlaylistUrl(externalUrl)
         : isLikelyYouTubeChannelUrl(externalUrl);
     if (!isValid) {
-      hadFailure = true;
       failedSourceIds.add(source.id);
       syncRuns.push(buildSourceSyncRun({
         sourceId: source.id,
@@ -3465,7 +3466,6 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         errorMessage: ""
       }));
     } catch (error) {
-      hadFailure = true;
       failedSourceIds.add(source.id);
       const message = error instanceof Error ? error.message : "Unknown YouTube playlist ingestion error.";
       syncRuns.push(buildSourceSyncRun({
@@ -3519,10 +3519,12 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   });
   await appendSourceSyncRuns(syncRuns);
 
-  if (!hadFailure) {
-    for (const source of youtubeSources) {
-      await resolveIncident(`source.${source.connectorKind}.${source.id}`, `YouTube source ${source.name} ingested successfully.`);
+  const resolvable = new Set(planSourceIncidentResolution({ sources: youtubeSources, failedSourceIds }).resolve);
+  for (const source of youtubeSources) {
+    if (!resolvable.has(source.id)) {
+      continue;
     }
+    await resolveIncident(`source.${source.connectorKind}.${source.id}`, `YouTube source ${source.name} ingested successfully.`);
   }
 }
 
