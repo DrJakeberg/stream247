@@ -4,9 +4,12 @@ import {
   clampOverlayText,
   formatOverlayClock,
   overlayScale,
+  resolveSourceLayerPixelBox,
+  type OverlayCustomLayerView,
   type OverlayEngagementView,
   type OverlayLayoutNode,
-  type OverlayScenePayloadView
+  type OverlayScenePayloadView,
+  type OverlaySourceFrameView
 } from "@stream247/core";
 
 function createPayload(overrides: Partial<OverlayScenePayloadView> = {}): OverlayScenePayloadView {
@@ -231,5 +234,114 @@ describe("buildOverlaySceneLayout", () => {
         expect(() => buildOverlaySceneLayout({ payload }, options)).not.toThrow();
       }
     }
+  });
+});
+
+describe("resolveSourceLayerPixelBox (M57 stage 2, Etappe C)", () => {
+  function sourceLayer(overrides: Partial<OverlayCustomLayerView> = {}): OverlayCustomLayerView {
+    return {
+      kind: "source",
+      enabled: true,
+      xPercent: 60,
+      yPercent: 10,
+      widthPercent: 30,
+      heightPercent: 30,
+      opacityPercent: 100,
+      allowOutsideSafeArea: false,
+      sourceId: "front-desk",
+      ...overrides
+    };
+  }
+
+  function payloadWith(layer: OverlayCustomLayerView): OverlayScenePayloadView {
+    const payload = createPayload();
+    payload.scene = { ...payload.scene, customLayers: [layer] };
+    return payload;
+  }
+
+  const liveFrame: OverlaySourceFrameView = {
+    dataUri: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    status: "live",
+    capturedAt: "2026-08-26T10:00:00.000Z"
+  };
+
+  function walk(node: OverlayLayoutNode, out: OverlayLayoutNode[] = []): OverlayLayoutNode[] {
+    out.push(node);
+    const children = node.props.children;
+    if (Array.isArray(children)) {
+      for (const child of children) {
+        if (child && typeof child === "object") {
+          walk(child as OverlayLayoutNode, out);
+        }
+      }
+    } else if (children && typeof children === "object") {
+      walk(children as OverlayLayoutNode, out);
+    }
+    return out;
+  }
+
+  // The box the renderer actually draws: the absolute-positioned panel whose own child is the
+  // sampled picture. Located by that image so the parity assertion compares the wrapper's
+  // arithmetic against the renderer's real output, not a re-derivation of it.
+  function rendererSourceBox(
+    layer: OverlayCustomLayerView,
+    frame: { width: number; height: number }
+  ): { left: number; top: number; width: number; height: number } {
+    const tree = buildOverlaySceneLayout(
+      { payload: payloadWith(layer), sourceFrame: liveFrame },
+      { width: frame.width, height: frame.height, now: new Date(0) }
+    );
+    const panel = walk(tree).find((node) => {
+      if (node.props.style?.position !== "absolute") {
+        return false;
+      }
+      const children = node.props.children;
+      const kids = Array.isArray(children) ? children : children ? [children] : [];
+      return kids.some(
+        (kid) => kid && typeof kid === "object" && (kid as OverlayLayoutNode).type === "img" &&
+          ((kid as OverlayLayoutNode).props as { src?: string }).src === liveFrame.dataUri
+      );
+    });
+    if (!panel) {
+      throw new Error("no source panel found in the rendered layout");
+    }
+    const style = panel.props.style!;
+    return {
+      left: Number(style.left),
+      top: Number(style.top),
+      width: Number(style.width),
+      height: Number(style.height)
+    };
+  }
+
+  it("computes the same pixel box the renderer draws the source panel into", () => {
+    for (const frame of [
+      { width: 1920, height: 1080 },
+      { width: 1280, height: 720 },
+      { width: 854, height: 480 }
+    ]) {
+      for (const layer of [
+        sourceLayer(),
+        sourceLayer({ xPercent: 0, yPercent: 0, widthPercent: 100, heightPercent: 100 }),
+        sourceLayer({ xPercent: 90, yPercent: 90, widthPercent: 100, heightPercent: 100 }),
+        sourceLayer({ allowOutsideSafeArea: true, xPercent: 12, yPercent: 34, widthPercent: 45, heightPercent: 55 })
+      ]) {
+        expect(resolveSourceLayerPixelBox(layer, frame)).toEqual(rendererSourceBox(layer, frame));
+      }
+    }
+  });
+
+  it("derives the design-grid scale from the frame width, exactly like the renderer", () => {
+    const frame = { width: 1280, height: 720 };
+    const layer = sourceLayer({ allowOutsideSafeArea: true, xPercent: 25, yPercent: 25, widthPercent: 50, heightPercent: 50 });
+    // allowOutsideSafeArea removes the margins, so left/top land on the raw percentage of the
+    // frame and the assertion pins the exact wrapper output, not just renderer parity.
+    expect(resolveSourceLayerPixelBox(layer, frame)).toEqual({
+      left: Math.round((1280 * 25) / 100),
+      top: Math.round((720 * 25) / 100),
+      width: Math.round((1280 * 50) / 100),
+      height: Math.round((720 * 50) / 100)
+    });
+    expect(overlayScale(frame.width)).toBeCloseTo(0.667, 2);
   });
 });

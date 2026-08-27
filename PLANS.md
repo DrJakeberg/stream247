@@ -1318,7 +1318,7 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | M54 | Feature | Next | Done | Chat game framework with Snake as the first game (emote-per-direction, moves only on input); Minesweeper (chat digs by coordinates like "b3") and 2048 (snake's emote map on a fixed 4x4 board) follow on the same framework |
 | M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
 | M56 | UX | Now | In progress | Every operational decision configurable in the GUI, `.env` demoted to fallback. Part 1 done: encoder quality, disk watermark, engagement/schedule-sync feature switches, EventSub secret. Part 2 done: replay (VOD) cache family, watchdog/stall thresholds, reconnect + program-feed tuning — clamped resolvers in core, three folded admin groups with partial routes; SMTP/alert family confirmed already GUI-complete. Deliberately env-only: cache root, relay topology, loop stall guard. Open: the unused redis service in compose |
-| M57 | Feature | Now | In progress | Embedded video sources as scene layers. Stage 1 done: source layer kind (placement + reference), encrypted feed store, snapshot sampler at managed cadence rendering through the native overlay — plus logo/image/text layers on air. Stage 2 in progress: ingest foundation and attach decision done (push ingest via relay with HTTP auth, publish keys, derived internal read URLs, presence poll + logged attach decision); open: the actual ffmpeg attach path, audio gain wiring, and operator surfaces beyond the switch |
+| M57 | Feature | Now | In progress | Embedded video sources as scene layers. Stage 1 done: source layer kind (placement + reference), encrypted feed store, snapshot sampler at managed cadence rendering through the native overlay — plus logo/image/text layers on air. Stage 2 in progress: ingest foundation + attach decision (A+B) and the live attach itself (C+D) done — push ingest via relay with HTTP auth, publish keys, derived internal read URLs, presence poll, and the third ffmpeg input wired as a PiP under the scene with audio mixed at the configured gain, breaker armed on a failed attach; open: a mandatory DT soak gate before any deploy, plus stage E (operator surfaces beyond the switch — gain UI, internal-key reveal for rollback — and per-layer cadence) |
 
 ## M51 Broadcast Channel Split
 
@@ -1510,6 +1510,61 @@ change, no additional ffmpeg input in stage 1.
 - summary written with changed files, risks, and follow-up items
 
 ## Progress Notes
+
+### 2026-08-27 — M57 Stage 2, Etappen C+D: The Third Input And The Audio Mix
+
+- Etappe C wires the pushed source as a live PiP input. `getFfmpegCommand` and
+  `startOrSwitchPlayout` gained an optional `liveSource`; the PiP is always the LAST ffmpeg input,
+  so the scene pipe keeps its index and the builder derives `pipInputIndex = sceneInputIndex + 1`.
+  Video graph (scene mode): `[L:v]fps=<fps>,scale=W:H:force_original_aspect_ratio=increase,crop=W:H,setpts=PTS-STARTPTS[pipv]; [base][pipv]overlay=X:Y:eof_action=pass[vpip]; [vpip][scene:v]overlay=0:0:format=auto[vout]` —
+  the PiP sits UNDER the scene PNG, `eof_action=pass` so a lost source never freezes the frame.
+  X/Y/W/H come from `resolveSourceLayerPixelBox`, exported from `overlay-layout.ts` as a thin
+  wrapper over the renderer's own `resolvePlacementBox` (parity test pins bit-identical boxes), so
+  the live window lands exactly where the snapshot panel would. The RTSP read is pinned to TCP with
+  a 4 s timeout, held strictly under the smallest duration-bound margin (5 s) as a pinned invariant.
+- Renderer skip: while a source is live-attached, the scene renderer nulls its source frame so the
+  opaque snapshot panel never renders over the live video (v1 draws no chrome around the window).
+  A process-scoped flag set before the first frame, so no panel flash on attach.
+- Attach wiring: the Etappe B decision now drives the parameter — `resolveLiveSourceAttach` logs on
+  change AND, on an attach, resolves the read URL + placement. A failed attach start (unplanned,
+  non-clean exit of a process that actually carried a PiP) opens the attach breaker, arming the
+  trigger B prepared. Attach is consumed only when a process (re)starts, so a source going live
+  mid-asset waits for the next natural boundary (`isNaturalPlayoutBoundary`).
+- Etappe D mixes audio: `[prog]volume=<v>[prog_a]; [L:a]aresample=async=1:first_pts=0,volume=<gain>[pip_a]; [prog_a][pip_a]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]`.
+  Pins: `normalize=0` (no programme level jump on source EOF), programme/lane FIRST at
+  `duration=first`, no `apad` on the PiP branch (amix drops the ended input — the only way "source
+  gone" is acoustically folgenlos). `-shortest` is set, but note it bounds the encode to the
+  PROGRAMME's own stream ([vout] follows the programme video, [aout] is duration=first); the ever-fed
+  scene PNG pipe never EOFs, so `-shortest` does NOT end a programme that never delivers EOF — the
+  watchdogs are the net there. Gain from `resolveSourceLiveGainPercent` (default 40 → 0.40).
+- BLOCKER fixed from the adversarial ffmpeg review (real ffmpeg-6.1.1 runs): PiP audio would MASK the
+  feed-audio watchdog. The playout encode IS the program-feed writer, and `enforceProgramFeedAudio`
+  counts the audio packets of the newest segment to catch a source that runs dry without EOF (the fps
+  filter keeps video flowing; audio is the honest signal). Folding live PiP audio in masks a silent
+  programme. Fix: `decideLiveSourceAudio` builds the mix ONLY when the programme asset has a known
+  finite duration (duration-bound is then the net, masking harmless); unknown duration → PiP
+  video-only, programme audio stays the sole track, watchdog honest. Proven against the REAL state
+  machine (`observeFeedAudio`/`isFeedAudioStalled`), not the mix string.
+- MINOR fixed: the `[L:a]` reference no longer trusts the relay's advisory `tracks` flag alone (a
+  lying/racing publisher would crash ffmpeg at graph init, exit 234 → breaker). The source's audio is
+  now probe-confirmed (`probeInputHasAudio`, RTSP pinned to TCP, fresh each attach — never cached, so
+  no stale-verdict TOCTOU); an unconfirmed source falls back to video-only. Programme-audio (no-lane)
+  stays a bounded, asset-id-cached probe.
+- NOTE fixed: the relay presence poll is now gated on the upcoming selection being an ASSET, so a live
+  bridge or standby slate (which can never carry a PiP) costs zero relay traffic.
+- Guardian proofs as tests (`source-live-watchdog-proof.test.ts`): feed-audio proven against the real
+  watchdog state machine (silent programme fires; mixed-in PiP audio would mask it; the duration gate
+  keeps them connected); a lying-relay source → video-only, no graph-init crash; feed-stall/uplink
+  (eof_action=pass keeps the frame flowing); duration-bound (clamp invariant); loop-stall (probes
+  clamped to the cycle-await ceiling); crash-loop (a failed attach makes the next start attach-free,
+  so a PiP alone cannot reach the threshold of 3).
+- Deliberately left for E and the soak gate: operator surfaces beyond the switch (gain UI,
+  revealing/threading the internal key for rollback), per-layer cadence, and the mandatory DT soak
+  before any deploy — attach latency, breaker behaviour under a flapping feed, the audio mix on a real
+  programme with and without its own audio track, and confirming the feed-audio watchdog still fires
+  on a silent unknown-duration source with an active PiP.
+- Affected baselines: none — every change is worker-side (ffmpeg command, filter graphs, exit
+  wiring) with no studio surface touched.
 
 ### 2026-08-27 — M57 Stage 2, Etappen A+B: Push Ingest Foundation And The Attach Decision
 

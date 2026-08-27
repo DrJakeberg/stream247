@@ -67,9 +67,12 @@ import {
   resolveSystemVolumeWatermarkConfig,
   resolveSourceLayerRuntimeEnabled,
   resolveSourceLiveEnabled,
+  resolveSourceLiveGainPercent,
+  resolveSourceLayerPixelBox,
   resolveSourceSnapshotIntervalSeconds,
   resolveTwitchEventSubSecret,
   resolveTwitchScheduleSyncEnabled,
+  type OverlayCustomLayerView,
   type OverlaySourceFrameView,
   type ResolvedEncoderQualitySettings
 } from "@stream247/core";
@@ -77,7 +80,8 @@ import {
   closedAttachBreaker,
   decideSourceLiveAttach,
   fetchRelaySourcePresence,
-  isAttachBreakerOpen
+  isAttachBreakerOpen,
+  openAttachBreaker
 } from "./relay-presence.js";
 import {
   appendSourceSyncRuns,
@@ -185,6 +189,9 @@ import {
   buildUplinkFfmpegCommand,
   describeFfmpegExit,
   buildFfmpegInputArgs,
+  buildSourceLivePipFilterComplex,
+  buildSourceLivePipInputArgs,
+  decideLiveSourceAudio,
   getProgramFeedConfig,
   getRelayInputUrl,
   getRelayPublishUrl,
@@ -195,7 +202,8 @@ import {
   isLikelyProgramFeedInputError,
   isNaturalPlayoutBoundary,
   shouldRequestImmediatePlayoutRetry,
-  shouldSkipInitialSceneCapture
+  shouldSkipInitialSceneCapture,
+  type SourceLivePipAudio
 } from "./ffmpeg-runtime.js";
 import { clampToCycleAwaitCeiling, getLoopStallTimeoutMs } from "./cycle-budget.js";
 import { VodCacheJobRunner } from "./vod-cache-jobs.js";
@@ -279,6 +287,16 @@ let playoutResolvedInput = "";
 let playoutLastStderrSample = "";
 let playoutLiveBridgeInputUrl = "";
 let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
+// M57 stage 2, Etappe C. Two flags because the renderer and the breaker ask different questions.
+// `playoutLiveSourceAttached` is the renderer's: skip the opaque snapshot panel whenever we INTEND
+// to attach (set before the initial frame is drawn, so the panel never flashes over the live
+// video); harmless if a scene-render fallback means no PiP is actually built, because text mode
+// draws no source panel anyway. `playoutLiveSourceInputActive` is the breaker's: it is true only
+// when a live PiP input was really placed in the running command, so a plain program failure in a
+// scene-render fallback can never be blamed on — and open the breaker over — a PiP that was never
+// there.
+let playoutLiveSourceAttached = false;
+let playoutLiveSourceInputActive = false;
 // Chapter boundaries already announced for the current playback window. In-memory on purpose:
 // the window key is (asset id, process start), and both this fired set and the ffmpeg process
 // die together — a worker restart replays the asset from second zero, so the boundaries must
@@ -1710,13 +1728,27 @@ type AudioLaneCommandConfig = {
   volumePercent: number;
 };
 
+/**
+ * A pushed source attached as a live PiP input (M57 stage 2, Etappes C/D). Only ever consumed in
+ * scene overlay mode — the graph overlays the live picture under the scene PNG, which non-scene
+ * modes do not produce — and its input is always appended LAST so the scene pipe keeps its index.
+ * `audio` is null when the source carries no audio track OR the programme has no confirmed audio to
+ * mix against: video-only attach, never a start blockade.
+ */
+type LiveSourceCommandConfig = {
+  inputArgs: string[];
+  box: { left: number; top: number; width: number; height: number };
+  audio: SourceLivePipAudio | null;
+};
+
 function getFfmpegCommand(
   input: string,
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
   overlayMode: OnAirOverlayMode,
   audioLane: AudioLaneCommandConfig | null,
   output: WorkerStreamOutputSettings,
-  encoder: ResolvedEncoderQualitySettings
+  encoder: ResolvedEncoderQualitySettings,
+  liveSource: LiveSourceCommandConfig | null = null
 ): string[] {
   const command = ["-hide_banner", "-loglevel", "warning", "-y", ...buildFfmpegInputArgs({ input, realtime: true })];
   const outputVideoFilter = isStreamScaleEnabled(process.env) ? getOutputVideoFilter(output) : "";
@@ -1724,6 +1756,12 @@ function getFfmpegCommand(
   if (audioLane) {
     command.push(...buildFfmpegInputArgs({ input: audioLane.input, loop: true }));
   }
+
+  // A live source only makes sense in scene mode: the PiP overlays under the scene PNG, and text /
+  // none modes have no scene pipe to overlay onto. Everywhere else it is ignored, so a scene-render
+  // fallback silently drops the attach for this start rather than building an untested graph.
+  const attachLive = Boolean(liveSource) && overlayMode === "scene";
+  let pipAudioMapped = false;
 
   if (overlayMode === "scene") {
     const sceneInputIndex = audioLane ? 2 : 1;
@@ -1739,15 +1777,33 @@ function getFfmpegCommand(
       "-i",
       `pipe:${ON_AIR_SCENE_PIPE_FD}`
     );
-    command.push(
-      "-filter_complex",
-      outputVideoFilter
-        ? `[0:v]${outputVideoFilter}[base];[base][${sceneInputIndex}:v]overlay=0:0:format=auto[vout]`
-        : `[0:v][${sceneInputIndex}:v]overlay=0:0:format=auto[vout]`,
-      "-map",
-      "[vout]"
-    );
-    command.push("-map", audioLane ? "1:a:0" : "0:a?");
+    if (attachLive && liveSource) {
+      // The PiP is the LAST input, so its index follows the scene pipe: the arithmetic ties the
+      // two together rather than hard-coding either.
+      const pipInputIndex = sceneInputIndex + 1;
+      command.push(...liveSource.inputArgs);
+      const parts = buildSourceLivePipFilterComplex({
+        outputVideoFilter,
+        sceneInputIndex,
+        pipInputIndex,
+        fps: output.fps,
+        box: liveSource.box,
+        audio: liveSource.audio
+      });
+      pipAudioMapped = parts.audioMapped;
+      command.push("-filter_complex", parts.filterComplex, "-map", "[vout]");
+      command.push("-map", pipAudioMapped ? "[aout]" : audioLane ? "1:a:0" : "0:a?");
+    } else {
+      command.push(
+        "-filter_complex",
+        outputVideoFilter
+          ? `[0:v]${outputVideoFilter}[base];[base][${sceneInputIndex}:v]overlay=0:0:format=auto[vout]`
+          : `[0:v][${sceneInputIndex}:v]overlay=0:0:format=auto[vout]`,
+        "-map",
+        "[vout]"
+      );
+      command.push("-map", audioLane ? "1:a:0" : "0:a?");
+    }
   } else if (overlayMode === "text") {
     command.push("-vf", joinVideoFilters([outputVideoFilter, getMediaOverlayFilter(onAirOverlayPath, output)]));
     command.push("-map", "0:v:0", "-map", audioLane ? "1:a:0" : "0:a?");
@@ -1758,8 +1814,19 @@ function getFfmpegCommand(
     command.push("-map", "0:v:0", "-map", audioLane ? "1:a:0" : "0:a?");
   }
 
-  if (audioLane) {
-    command.push("-af", `volume=${Math.max(0, Math.min(1, audioLane.volumePercent / 100)).toFixed(3)}`, "-shortest");
+  // The lane's volume is applied by -af only when the lane audio was NOT already folded into the
+  // PiP mix (where the graph carries the volume). -shortest is set whenever an audio lane loops OR a
+  // PiP input is live: it bounds the encode to the programme's OWN stream — [vout] follows the
+  // programme video (overlay's main input) and [aout] is amix duration=first — so a looping lane, the
+  // ever-fed scene pipe (which never EOFs), or a still-publishing PiP cannot stretch a programme that
+  // ends. Note it does NOT rescue a programme that never delivers EOF (a remote source that hangs):
+  // [vout] then never ends either, and the duration-bound and feed-audio watchdogs are the net there,
+  // exactly as without a PiP.
+  if (audioLane && !pipAudioMapped) {
+    command.push("-af", `volume=${Math.max(0, Math.min(1, audioLane.volumePercent / 100)).toFixed(3)}`);
+  }
+  if ((audioLane && !pipAudioMapped) || attachLive) {
+    command.push("-shortest");
   }
 
   command.push(
@@ -1965,7 +2032,12 @@ function buildSceneRenderRequest(outputSettings: WorkerStreamOutputSettings): Sc
     engagement: currentSceneEngagement,
     game: currentSceneGame,
     chat: currentSceneChat,
-    sourceFrame: currentSceneSourceFrame,
+    // When the source is attached as a live PiP input, the renderer must NOT draw its snapshot
+    // panel: that panel is opaque and would sit ON TOP of the live video (which the encoder lays
+    // under the scene PNG). Nulling the frame here makes buildOverlaySceneLayout skip the source
+    // layer entirely, leaving a hole for the live picture to show through. v1 draws no chrome
+    // around the live window.
+    sourceFrame: playoutLiveSourceAttached ? null : currentSceneSourceFrame,
     width: viewport.width,
     height: viewport.height
   };
@@ -2064,13 +2136,17 @@ async function refreshSceneChatView(): Promise<void> {
 }
 
 /** The first enabled source layer with a linked source; one frame input, one drawn layer. */
-function scenePayloadSourceLayerId(): string {
+function scenePayloadSourceLayer(): OverlayCustomLayerView | null {
   for (const entry of currentScenePayload?.scene.customLayers ?? []) {
     if (entry.kind === "source" && entry.enabled && entry.sourceId) {
-      return entry.sourceId;
+      return entry;
     }
   }
-  return "";
+  return null;
+}
+
+function scenePayloadSourceLayerId(): string {
+  return scenePayloadSourceLayer()?.sourceId ?? "";
 }
 
 /**
@@ -2148,25 +2224,50 @@ async function refreshSceneSourceFrame(): Promise<void> {
       : null;
 }
 
-// --- Source live attach decision (M57 stage 2, Etappe B) -------------------------------------
+// --- Source live attach decision (M57 stage 2, Etappes B–D) ----------------------------------
 
-// In-memory by design (see relay-presence.ts). Stage B never opens the breaker — its trigger is
-// the failed attach start that arrives with stage C — but the cooldown already participates in
-// the decision so the logged behaviour is the final behaviour.
+// In-memory by design (see relay-presence.ts). The breaker opens on a failed attach start (wired
+// in Etappe C, in the playout exit handler) and its cooldown already participated in the decision
+// from Etappe B, so the logged behaviour is the acted-on behaviour.
 let sourceLiveAttachBreaker = closedAttachBreaker();
 let lastSourceLiveAttachLogKey = "";
 
 /**
- * Computes what the playout WOULD do about a live source attach this cycle, and logs it — the
- * whole of Etappe B. Nothing is acted on. The presence fetch only happens when both switches
- * are on, the scene has an active source layer and the breaker is closed, so the disabled
- * feature costs zero relay traffic; the fetch itself is bounded far under the cycle budget.
- * Logged on change rather than per cycle: the event marks a transition an operator can line up
- * with a camera going live or away, instead of a heartbeat that buries it.
+ * What a decided attach carries into the playout start: the read URL, the layer placement (for the
+ * PiP box), the configured gain, and whether the relay reported an audio track on the source.
  */
-async function reportSourceLiveAttachDecision(managed: ManagedConfigRecord): Promise<void> {
+type ResolvedLiveSourceAttach = {
+  sourceId: string;
+  readUrl: string;
+  placement: OverlayCustomLayerView;
+  gainPercent: number;
+  hasAudioTrack: boolean;
+};
+
+/**
+ * Decides whether this cycle would attach the scene's pushed source as a live PiP input, logs the
+ * decision on change (the operator-facing transition marker from Etappe B), and — when the answer
+ * is attach — resolves the read URL and placement the start path needs. The presence fetch only
+ * happens when the upcoming selection is an ASSET (a live bridge or standby slate never builds a
+ * PiP, so polling the relay for them is wasted traffic), both switches are on, the scene has an
+ * active source layer and the breaker is closed — so a disabled feature, or any non-asset selection,
+ * costs zero relay traffic; the URL read only happens on an actual attach. Returns null whenever the
+ * source stays on the stage-1 snapshot panel.
+ */
+async function resolveLiveSourceAttach(
+  managed: ManagedConfigRecord,
+  selectionIsAsset: boolean
+): Promise<ResolvedLiveSourceAttach | null> {
+  // A live bridge or standby slate can never carry a PiP, so there is no attach decision to make or
+  // log for them — and polling the relay would be wasted traffic. The attach-decision log is an
+  // asset-playout marker; it resumes when an asset is selected again.
+  if (!selectionIsAsset) {
+    return null;
+  }
+
   const nowMs = Date.now();
-  const sourceId = scenePayloadSourceLayerId();
+  const layer = scenePayloadSourceLayer();
+  const sourceId = layer?.sourceId ?? "";
   const sourceLiveEnabled = resolveSourceLiveEnabled(managed, process.env);
   const sourceLayerEnabled = resolveSourceLayerRuntimeEnabled(managed, process.env);
 
@@ -2193,6 +2294,34 @@ async function reportSourceLiveAttachDecision(managed: ManagedConfigRecord): Pro
       ...(sourceId ? { source: sourceId } : {})
     });
   }
+
+  if (outcome.decision !== "attach" || !layer) {
+    return null;
+  }
+
+  // Attach decided: resolve the internal read URL now (never stored — derived on read). A missing
+  // URL means the source is not fully provisioned, so fall back to the snapshot panel rather than
+  // starting ffmpeg against an empty input.
+  let readUrl = "";
+  try {
+    readUrl = (await readOverlayVideoSourceUrls([sourceId]))[sourceId] ?? "";
+  } catch (error) {
+    logRuntimeEvent("playout.source-live.url_read_failed", {
+      source: sourceId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+  if (!readUrl) {
+    return null;
+  }
+
+  return {
+    sourceId,
+    readUrl,
+    placement: layer,
+    gainPercent: resolveSourceLiveGainPercent(managed, process.env),
+    hasAudioTrack: presence?.hasAudio === true
+  };
 }
 
 /** One detached capture at a time; the guard in shouldStartSourceCapture is the backpressure. */
@@ -4517,6 +4646,95 @@ async function promoteRecoveringDestinations(reason: "manual" | "transition"): P
   return recoveringDestinations.length;
 }
 
+// Audio-presence probe results, keyed by a caller-chosen string. A dedicated cache rather than a
+// field on queueProbeCache: the resolution probe overwrites its entry wholesale on every re-resolve,
+// which would silently wipe an audio verdict carried on the same record. The programme input caches
+// by asset id (a stable input); the live SOURCE never caches (see probeInputHasAudio's caller).
+type AudioProbeEntry = { checkedAt: number; hasAudio: boolean };
+const audioProbeCache = new Map<string, AudioProbeEntry>();
+
+/**
+ * Whether an input carries an audio stream, bounded (M57 stage 2, Etappe D). Never a start blockade:
+ * any probe failure or timeout resolves to "no audio", which downgrades the attach to video-only
+ * rather than holding the channel. The timeout is clamped to the cycle-await ceiling so a slow remote
+ * probe cannot eat the reconciliation budget; RTSP inputs are pinned to TCP like every other read.
+ * A cacheKey caches the verdict (stable programme inputs); omit it for the live source, whose audio
+ * can change between attaches — a stale "has audio" would reintroduce the graph-init crash it exists
+ * to prevent, so the source is probed fresh every time.
+ */
+async function probeInputHasAudio(input: string, options: { cacheKey?: string } = {}): Promise<boolean> {
+  const cacheKey = options.cacheKey ?? "";
+  const cached = cacheKey ? audioProbeCache.get(cacheKey) : null;
+  if (cached && Date.now() - cached.checkedAt < NEXT_ASSET_PROBE_READY_TTL_MS) {
+    return cached.hasAudio;
+  }
+
+  const { effectiveMs } = clampToCycleAwaitCeiling(4_000, process.env);
+  const transport = input.startsWith("rtsp://") || input.startsWith("rtsps://") ? ["-rtsp_transport", "tcp"] : [];
+  let hasAudio = false;
+  try {
+    const output = await execFileText(
+      process.env.FFPROBE_BIN || "ffprobe",
+      ["-v", "error", ...transport, "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", input],
+      { timeoutMs: effectiveMs, killProcessGroup: true, maxBufferBytes: 256 * 1024 }
+    );
+    hasAudio = output.split("\n").some((line) => line.trim() !== "");
+  } catch (error) {
+    logRuntimeEvent("playout.source-live.audio_probe_failed", {
+      probe: cacheKey || "source",
+      error: error instanceof Error ? error.message : String(error)
+    });
+    hasAudio = false;
+  }
+
+  if (cacheKey) {
+    audioProbeCache.set(cacheKey, { checkedAt: Date.now(), hasAudio });
+  }
+  return hasAudio;
+}
+
+/**
+ * Turns a decided attach into the concrete PiP command config: the RTSP input args, the pixel box
+ * (computed against the renderer's own viewport, so the live window lands exactly where the skipped
+ * snapshot panel would have), and the audio branch. The audio branch is gated by decideLiveSourceAudio
+ * on the programme having a KNOWN finite duration (else the feed-audio watchdog must stay the net) and
+ * only ever references the source audio after PROBING it (the relay's advisory track flag alone would
+ * risk a graph-init crash on a lying or racing publisher). Otherwise video-only, never blocked.
+ */
+async function buildLiveSourceCommandConfig(args: {
+  attach: ResolvedLiveSourceAttach;
+  outputSettings: WorkerStreamOutputSettings;
+  audioLane: ResolvedAudioLane | null;
+  programInput: string;
+  assetId: string;
+  programDurationSeconds: number;
+}): Promise<LiveSourceCommandConfig> {
+  const viewport = getSceneRendererViewport(process.env, args.outputSettings);
+  const box = resolveSourceLayerPixelBox(args.attach.placement, viewport);
+
+  let audio: SourceLivePipAudio | null = null;
+  const programKnownDuration = Number.isFinite(args.programDurationSeconds) && args.programDurationSeconds > 0;
+  // Probe only on the path that could actually mix: known-duration programme AND the relay's advisory
+  // flag hinting at audio (skips the RTSP open when there is plainly none). The source probe is the
+  // authority — never the advisory flag — so a relay that reports audio the pull cannot deliver falls
+  // back to video-only here instead of crashing ffmpeg into the breaker.
+  if (programKnownDuration && args.attach.hasAudioTrack && (await probeInputHasAudio(args.attach.readUrl))) {
+    const programAudioConfirmed = args.audioLane
+      ? true
+      : await probeInputHasAudio(args.programInput, { cacheKey: args.assetId });
+    audio = decideLiveSourceAudio({
+      programDurationSeconds: args.programDurationSeconds,
+      sourceAudioConfirmed: true,
+      hasAudioLane: Boolean(args.audioLane),
+      laneVolumePercent: args.audioLane?.volumePercent ?? 0,
+      programAudioConfirmed,
+      sourceGainPercent: args.attach.gainPercent
+    });
+  }
+
+  return { inputArgs: buildSourceLivePipInputArgs(args.attach.readUrl), box, audio };
+}
+
 async function startOrSwitchPlayout(args: {
   asset: AssetRecord | null;
   resolvedAssetInput?: string;
@@ -4528,6 +4746,13 @@ async function startOrSwitchPlayout(args: {
       }
     | null;
   audioLane: ResolvedAudioLane | null;
+  /**
+   * A pushed source to attach as a live PiP input this start, or null to leave the source on the
+   * stage-1 snapshot panel. Non-null only at natural playout boundaries with the feature on, the
+   * layer present, the source publishing and the breaker closed — the decision is made by the
+   * caller (resolveLiveSourceAttach); this function turns it into ffmpeg inputs.
+   */
+  liveSource: ResolvedLiveSourceAttach | null;
   destinations: StreamDestinationRecord[];
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>;
   updateDestinations?: boolean;
@@ -4572,6 +4797,11 @@ async function startOrSwitchPlayout(args: {
     });
   }
   const outputSettings = getWorkerStreamOutputSettings(process.env, args.outputSettings);
+  // Set the renderer skip BEFORE the initial frame is drawn, so a live attach's very first frame
+  // already omits the snapshot panel instead of flashing it over the live video. Only the asset
+  // path (no liveBridge) can carry a PiP; overlay must be on for any scene panel to exist at all.
+  const intendLiveAttach = Boolean(args.liveSource) && Boolean(args.asset) && !args.liveBridge && args.overlayEnabled;
+  playoutLiveSourceAttached = intendLiveAttach;
   if (args.overlayEnabled && !skipInitialSceneCapture) {
     await ensureScenePayload(args.asset ?? null);
   }
@@ -4610,6 +4840,21 @@ async function startOrSwitchPlayout(args: {
       ? args.resolvedAssetInput || cachedResolvedInput || (await resolveAssetPlaybackInput(args.asset)).input
       : "";
   const encoder = resolveEncoderQualitySettings(args.managedConfig, process.env);
+  // Resolve the PiP config only when we will actually build it: asset path, scene mode, attach
+  // decided. buildLiveSourceCommandConfig may run a bounded ffprobe for programme audio, so it is
+  // awaited here, off the reconciliation loop's own timing (this start is already asynchronous).
+  const liveSourceConfig =
+    args.liveSource && args.asset && !args.liveBridge && overlayMode === "scene"
+      ? await buildLiveSourceCommandConfig({
+          attach: args.liveSource,
+          outputSettings,
+          audioLane: resolvedAudioLaneInput && args.audioLane ? args.audioLane : null,
+          programInput: resolvedProgramInput,
+          assetId: args.asset.id,
+          programDurationSeconds: args.asset.durationSeconds ?? 0
+        })
+      : null;
+  playoutLiveSourceInputActive = Boolean(liveSourceConfig);
   const command = args.liveBridge
     ? getLiveBridgeFfmpegCommand(args.liveBridge.inputUrl, args.outputTarget, overlayMode, outputSettings, encoder)
     : args.asset
@@ -4624,9 +4869,16 @@ async function startOrSwitchPlayout(args: {
               }
             : null,
           outputSettings,
-          encoder
+          encoder,
+          liveSourceConfig
         )
       : getStandbyFfmpegCommand(args.outputTarget, overlayMode, outputSettings, encoder);
+  if (liveSourceConfig) {
+    logRuntimeEvent("playout.source-live.attached", {
+      source: args.liveSource?.sourceId ?? "",
+      audio: liveSourceConfig.audio ? "mixed" : "video-only"
+    });
+  }
   const child = spawn(ffmpegBinary, command, {
     stdio: ["ignore", "pipe", "pipe", "pipe"]
   });
@@ -4819,6 +5071,7 @@ async function startOrSwitchPlayout(args: {
       });
     const nonFailureExit = wasPlanned || exitedCleanly;
     const lastLiveBridgeInputUrl = playoutLiveBridgeInputUrl;
+    const hadLiveSourceInput = playoutLiveSourceInputActive;
     const ranForMs = playoutProcessStartedAtMs > 0 ? Date.now() - playoutProcessStartedAtMs : null;
     plannedStopReason = "";
     stopSceneRendererLoop();
@@ -4833,6 +5086,21 @@ async function startOrSwitchPlayout(args: {
     playoutLastStderrSample = "";
     playoutLiveBridgeInputUrl = "";
     playoutLiveBridgeInputType = "";
+    playoutLiveSourceInputActive = false;
+    // A failed attach start — an unplanned, non-clean exit of a process that actually carried a
+    // live PiP input — opens the attach breaker (M57 stage 2, Etappe C). For the cooldown the
+    // next starts skip the presence fetch and decide "skip", so a feed that kills the encode is
+    // retried at breaker cadence (minutes), not cycle cadence, and cannot drive the crash-loop
+    // counter to its threshold on its own. A natural boundary or a clean/planned stop is not a
+    // failure and never opens it.
+    if (hadLiveSourceInput && !wasPlanned && !naturalBoundary && !exitedCleanly) {
+      sourceLiveAttachBreaker = openAttachBreaker(Date.now());
+      logRuntimeEvent("playout.source-live.attach_failed", {
+        exitCode: code ?? "",
+        exitSignal: signal ?? "",
+        assetId: lastAssetId
+      });
+    }
     const exitedAt = new Date().toISOString();
     logRuntimeEvent("playout.process.exit", {
       exitCode: code ?? "",
@@ -5102,8 +5370,6 @@ async function runPlayoutCycle(): Promise<void> {
   // config it hands to the between-cycle readers (watchdog options, feed geometry, VOD cache
   // tuning). Before the first cycle those resolve env-only — exactly the pre-M56 behaviour.
   latestManagedConfig = state.managedConfig;
-  // M57 stage 2, Etappe B: decision only, logged, never acted on.
-  await reportSourceLiveAttachDecision(state.managedConfig);
   if (
     (state.playout.overrideUntil !== "" && !isTimestampActive(state.playout.overrideUntil)) ||
     (state.playout.skipUntil !== "" && !isTimestampActive(state.playout.skipUntil))
@@ -5543,6 +5809,14 @@ async function runPlayoutCycle(): Promise<void> {
     queueKind: selection.queueKind,
     reasonCode: selection.reasonCode
   });
+  // M57 stage 2, Etappes B–D: decide the live-source attach for this cycle (logged on change) once
+  // the selection is final, so the relay presence poll runs only when the upcoming programme is an
+  // ASSET — never during a live bridge or standby slate, which can never carry a PiP. Null leaves the
+  // source on the stage-1 snapshot panel; a non-null intent is consumed only when a process actually
+  // (re)starts, so an already-running target is never restarted mid-asset to attach — the attach
+  // lands at the next natural boundary instead.
+  const selectionIsAsset = selection.queueKind !== "live" && Boolean(selection.asset);
+  const liveSourceAttach = await resolveLiveSourceAttach(state.managedConfig, selectionIsAsset);
   const manualNextQueueAsset =
     state.playout.manualNextAssetId !== "" && state.playout.manualNextAssetId !== selection.asset?.id
       ? state.assets.find(
@@ -5635,6 +5909,7 @@ async function runPlayoutCycle(): Promise<void> {
               }
             : null,
         audioLane: currentAudioLane,
+        liveSource: liveSourceAttach,
         destinations: playoutTargets.map((entry) => entry.destination),
         outputTarget,
         updateDestinations: !STREAM247_RELAY_ENABLED,
@@ -5703,6 +5978,7 @@ async function runPlayoutCycle(): Promise<void> {
               }
             : null,
         audioLane: currentAudioLane,
+        liveSource: liveSourceAttach,
         destinations: playoutTargets.map((entry) => entry.destination),
         outputTarget,
         updateDestinations: !STREAM247_RELAY_ENABLED,
