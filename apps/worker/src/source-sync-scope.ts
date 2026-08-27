@@ -159,7 +159,11 @@ export function describeSourceSyncStatus(
   outcome: SourceSyncOutcome,
   labels: SourceSyncStatusLabels = DEFAULT_SOURCE_SYNC_STATUS_LABELS
 ): SourceSyncStatusDescription {
-  if (decideSourceAssetReplacement(outcome) !== "replace") {
+  // The replacement rule holds back a failed source even when it stores nothing, because not
+  // deleting is the safer invariant. The status must not inherit that rounding: telling an
+  // operator assets were preserved when there were none to preserve is exactly the kind of
+  // reassuring-but-wrong reading this finding is about.
+  if (decideSourceAssetReplacement(outcome) !== "replace" && outcome.storedAssetCount > 0) {
     return {
       status: labels.preserved,
       assetsPreserved: true,
@@ -172,4 +176,16 @@ export function describeSourceSyncStatus(
     assetsPreserved: false,
     effectiveAssetCount: outcome.incomingAssetCount
   };
+}
+
+/**
+ * The operator-facing sentence for a sync that produced nothing usable.
+ *
+ * Shared across connectors so the preserved case reads the same everywhere: what is still
+ * playable, and that no action is needed unless it keeps happening.
+ */
+export function buildPreservedAssetsNote(storedAssetCount: number): string {
+  return storedAssetCount > 0
+    ? `This sync produced no usable listing, so the ${storedAssetCount} stored item(s) were kept and stay playable. The next sync retries.`
+    : "This sync produced no usable listing. There were no stored items to keep. The next sync retries.";
 }

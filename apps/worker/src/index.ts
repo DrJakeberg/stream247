@@ -272,6 +272,7 @@ import { decideQueuePrefetchBudget, planQueuePrefetch, raceResolveAgainstDeath }
 import { LoopWakeLatch } from "./loop-wake.js";
 import { ProgrammeGapTracker } from "./playout-gap.js";
 import {
+  buildPreservedAssetsNote,
   describeSourceSyncStatus,
   planSourceAssetReplacement,
   type SourceSyncOutcome
@@ -3489,13 +3490,21 @@ async function syncYoutubePlaylistSources(): Promise<void> {
 
   await upsertSources(
     youtubeSources.map((source) => {
-      const sourceAssetCount = youtubeAssets.filter((asset) => asset.sourceId === source.id).length;
+      // Describing the source from the same outcome the replacement decision uses is the point:
+      // "Ingestion failed" alone read identically whether the archive survived or was deleted.
+      const description = describeSourceSyncStatus({
+        sourceId: source.id,
+        ingestFailed: failedSourceIds.has(source.id),
+        incomingAssetCount: youtubeAssets.filter((asset) => asset.sourceId === source.id).length,
+        storedAssetCount: state.assets.filter((asset) => asset.sourceId === source.id).length
+      });
       return {
         ...source,
-        status: sourceAssetCount > 0 ? "Ready" : "Ingestion failed",
-        notes:
-          sourceAssetCount > 0
-            ? `Ingested ${sourceAssetCount} YouTube item(s) via yt-dlp.`
+        status: description.status,
+        notes: description.assetsPreserved
+          ? buildPreservedAssetsNote(description.effectiveAssetCount)
+          : description.effectiveAssetCount > 0
+            ? `Ingested ${description.effectiveAssetCount} YouTube item(s) via yt-dlp.`
             : "Could not ingest this YouTube source. Check the URL and worker incident log.",
         lastSyncedAt: now
       };
@@ -3667,14 +3676,21 @@ async function syncTwitchVodSources(): Promise<void> {
 
   await upsertSources(
     twitchSources.map((source) => {
-      const sourceAssetCount = twitchAssets.filter((asset) => asset.sourceId === source.id).length;
+      // The source of the original wipe. The status now says whether the archive survived it.
+      const description = describeSourceSyncStatus({
+        sourceId: source.id,
+        ingestFailed: failedSourceIds.has(source.id),
+        incomingAssetCount: twitchAssets.filter((asset) => asset.sourceId === source.id).length,
+        storedAssetCount: state.assets.filter((asset) => asset.sourceId === source.id).length
+      });
       return {
         ...source,
-        status: sourceAssetCount > 0 ? "Ready" : "Ingestion failed",
-        notes:
-          sourceAssetCount > 0
+        status: description.status,
+        notes: description.assetsPreserved
+          ? buildPreservedAssetsNote(description.effectiveAssetCount)
+          : description.effectiveAssetCount > 0
             ? source.connectorKind === "twitch-channel"
-              ? `Ingested ${sourceAssetCount} Twitch archive item(s) via yt-dlp.`
+              ? `Ingested ${description.effectiveAssetCount} Twitch archive item(s) via yt-dlp.`
               : "Ingested the Twitch VOD into a playable asset via yt-dlp."
             : source.connectorKind === "twitch-channel"
               ? "Could not ingest Twitch channel archives. Check the URL and worker incident log."
