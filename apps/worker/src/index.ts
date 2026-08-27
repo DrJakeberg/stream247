@@ -263,6 +263,9 @@ import {
   shouldBridgeToFallbackBeforeResolve
 } from "./playout-boundary.js";
 import { decideQueuePrefetchBudget, planQueuePrefetch, raceResolveAgainstDeath } from "./queue-prefetch.js";
+import { LoopWakeLatch } from "./loop-wake.js";
+import { ProgrammeGapTracker } from "./playout-gap.js";
+import { decideSourceAssetReplacement, selectReplaceableSourceIds, type SourceSyncOutcome } from "./source-sync-scope.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 import { EngagementGameTracker } from "./engagement-game.js";
@@ -653,6 +656,9 @@ type QueueProbeCacheEntry = {
   checkedAt: number;
   resolvedInput: string;
   error: string;
+  // The asset this entry was resolved for, so the boundary can verify the prefetched input belongs
+  // to the asset it is about to start instead of trusting the map key. See playout-boundary.ts.
+  assetId: string;
 };
 
 type UplinkProcessRuntime = {
@@ -672,7 +678,12 @@ type UplinkProcessRuntime = {
 const queueProbeCache = new Map<string, QueueProbeCacheEntry>();
 let sceneRendererAbortController: AbortController | null = null;
 const PLAYOUT_RECOVERY_SCENE_CAPTURE_SKIP_WINDOW_MS = 60_000;
-let wakePlayoutLoop: (() => void) | null = null;
+// Wakes requested from inside a running cycle are latched, not dropped. See loop-wake.ts.
+const playoutLoopWake = new LoopWakeLatch();
+// True while the running process carries real programme content (scheduled tier) rather than a
+// fallback/bridge. Only used to measure boundary gaps. See playout-gap.ts.
+let playoutIsProgramme = false;
+const programmeGapTracker = new ProgrammeGapTracker();
 let twitchEventSubLastSyncKey = "";
 let twitchEventSubNextSyncAt = 0;
 let twitchLiveStatusLastSyncKey = "";
@@ -3306,6 +3317,51 @@ async function loadFlatCollection(url: string): Promise<YtDlpPlaylistResponse> {
   return JSON.parse(output) as YtDlpPlaylistResponse;
 }
 
+/**
+ * Replace stored assets only for the sources this sync actually learned something about.
+ *
+ * The wholesale `replaceAssetsForSourceIds` is a delete-then-reinsert, so including a source whose
+ * ingest failed deletes its entire archive — including whatever is on air right now. Sources that
+ * are held back keep their existing rows and emit `source.sync.assets_preserved` so the skip is
+ * visible instead of silent. See source-sync-scope.ts.
+ */
+async function replaceSyncedSourceAssets(args: {
+  connector: string;
+  sources: { id: string }[];
+  storedAssets: AssetRecord[];
+  incomingAssets: AssetRecord[];
+  failedSourceIds: Set<string>;
+}): Promise<void> {
+  const outcomes: SourceSyncOutcome[] = args.sources.map((source) => ({
+    sourceId: source.id,
+    ingestFailed: args.failedSourceIds.has(source.id),
+    incomingAssetCount: args.incomingAssets.filter((asset) => asset.sourceId === source.id).length,
+    storedAssetCount: args.storedAssets.filter((asset) => asset.sourceId === source.id).length
+  }));
+  const replaceable = new Set(selectReplaceableSourceIds(outcomes));
+
+  for (const outcome of outcomes) {
+    if (replaceable.has(outcome.sourceId)) {
+      continue;
+    }
+    logRuntimeEvent("source.sync.assets_preserved", {
+      connector: args.connector,
+      sourceId: outcome.sourceId,
+      decision: decideSourceAssetReplacement(outcome),
+      storedAssets: outcome.storedAssetCount
+    });
+  }
+
+  if (replaceable.size === 0) {
+    return;
+  }
+
+  await replaceAssetsForSourceIds(
+    [...replaceable],
+    args.incomingAssets.filter((asset) => replaceable.has(asset.sourceId))
+  );
+}
+
 async function syncYoutubePlaylistSources(): Promise<void> {
   const state = await readAppState();
   const now = new Date().toISOString();
@@ -3314,6 +3370,9 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       (source.connectorKind === "youtube-playlist" || source.connectorKind === "youtube-channel") && (source.enabled ?? true)
   );
   const youtubeAssets: AssetRecord[] = [];
+  // Per-source, not just the global hadFailure flag: a source we learned nothing about must keep
+  // its stored assets instead of being wiped by the wholesale replace below. See source-sync-scope.ts.
+  const failedSourceIds = new Set<string>();
   let hadFailure = false;
   const syncRuns: AppState["sourceSyncRuns"] = [];
 
@@ -3326,6 +3385,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         : isLikelyYouTubeChannelUrl(externalUrl);
     if (!isValid) {
       hadFailure = true;
+      failedSourceIds.add(source.id);
       syncRuns.push(buildSourceSyncRun({
         sourceId: source.id,
         startedAt,
@@ -3385,6 +3445,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       }));
     } catch (error) {
       hadFailure = true;
+      failedSourceIds.add(source.id);
       const message = error instanceof Error ? error.message : "Unknown YouTube playlist ingestion error.";
       syncRuns.push(buildSourceSyncRun({
         sourceId: source.id,
@@ -3420,10 +3481,13 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       };
     })
   );
-  await replaceAssetsForSourceIds(
-    youtubeSources.map((source) => source.id),
-    youtubeAssets
-  );
+  await replaceSyncedSourceAssets({
+    connector: "youtube",
+    sources: youtubeSources,
+    storedAssets: state.assets,
+    incomingAssets: youtubeAssets,
+    failedSourceIds
+  });
   await appendSourceSyncRuns(syncRuns);
 
   if (!hadFailure) {
@@ -3441,6 +3505,9 @@ async function syncTwitchVodSources(): Promise<void> {
     (source) => (source.connectorKind === "twitch-vod" || source.connectorKind === "twitch-channel") && (source.enabled ?? true)
   );
   const twitchAssets: AssetRecord[] = [];
+  // A source whose ingest threw contributed nothing; it must keep its stored assets rather than be
+  // wiped by the wholesale replace below. See source-sync-scope.ts.
+  const failedSourceIds = new Set<string>();
   const syncRuns: AppState["sourceSyncRuns"] = [];
 
   for (const source of twitchSources) {
@@ -3555,6 +3622,7 @@ async function syncTwitchVodSources(): Promise<void> {
       await resolveIncident(`source.${source.connectorKind}.${source.id}`, `Twitch source ${source.name} ingested successfully.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Twitch VOD ingestion error.";
+      failedSourceIds.add(source.id);
       syncRuns.push(buildSourceSyncRun({
         sourceId: source.id,
         startedAt,
@@ -3593,10 +3661,13 @@ async function syncTwitchVodSources(): Promise<void> {
       };
     })
   );
-  await replaceAssetsForSourceIds(
-    twitchSources.map((source) => source.id),
-    twitchAssets
-  );
+  await replaceSyncedSourceAssets({
+    connector: "twitch",
+    sources: twitchSources,
+    storedAssets: state.assets,
+    incomingAssets: twitchAssets,
+    failedSourceIds
+  });
   await appendSourceSyncRuns(syncRuns);
 }
 
@@ -3866,7 +3937,8 @@ function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: A
         status: "ready",
         checkedAt: Date.now(),
         resolvedInput: prepared.input,
-        error: ""
+        error: "",
+        assetId: asset.id
       });
       return prepared;
     })
@@ -3876,7 +3948,8 @@ function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: A
         status: "failed",
         checkedAt: Date.now(),
         resolvedInput: "",
-        error: message
+        error: message,
+        assetId: asset.id
       });
       throw error;
     })
@@ -4993,6 +5066,24 @@ async function startOrSwitchPlayout(args: {
     lifecycleStatus: args.lifecycleStatus
   });
 
+  // Boundary gap measurement. "scheduled" tier is real programme content; every other tier is a
+  // fallback/bridge covering the boundary. Observation only — nothing below feeds a decision.
+  playoutIsProgramme = (playoutTargetKind === "asset" || playoutTargetKind === "insert") && args.fallbackTier === "scheduled";
+  if (playoutIsProgramme && args.asset) {
+    const gap = programmeGapTracker.closeGap(args.asset.id, Date.now());
+    if (gap) {
+      logRuntimeEvent("playout.boundary.gap", {
+        fromAssetId: gap.fromAssetId,
+        toAssetId: gap.toAssetId,
+        gapMs: gap.gapMs,
+        bridgeStarts: gap.bridgeStarts,
+        reasonCode: args.reasonCode
+      });
+    }
+  } else if (args.asset) {
+    programmeGapTracker.noteBridge(args.asset.id);
+  }
+
   const pid = child.pid ?? 0;
   const startedAt = new Date().toISOString();
   const programFeedConfig = isProgramFeedMode() ? getProgramFeedRuntimeConfig() : null;
@@ -5123,7 +5214,11 @@ async function startOrSwitchPlayout(args: {
   });
 
   child.on("exit", (code, signal) => {
-    const wasPlanned = plannedStopReason !== "";
+    // Keep the reason string, not just the boolean: a `planned: true` exit used to be
+    // indistinguishable between "a watchdog/switch deliberately killed it" and "ffmpeg reached EOF
+    // cleanly", which made three consecutive mid-asset stops on the DUT undiagnosable from the log.
+    const plannedReason = plannedStopReason;
+    const wasPlanned = plannedReason !== "";
     const exitedCleanly = code === 0 && !signal;
     const exitReason = describeFfmpegExit(code, signal ?? null);
     const lastDestinationIds = [...playoutDestinationIds];
@@ -5144,6 +5239,12 @@ async function startOrSwitchPlayout(args: {
     const lastLiveBridgeInputUrl = playoutLiveBridgeInputUrl;
     const hadLiveSourceInput = playoutLiveSourceInputActive;
     const ranForMs = playoutProcessStartedAtMs > 0 ? Date.now() - playoutProcessStartedAtMs : null;
+    // Open a boundary measurement only when real programme content left the air; a fallback ending
+    // is part of the gap that is already being measured, not the start of a new one.
+    if (playoutIsProgramme && lastAssetId) {
+      programmeGapTracker.openGap(lastAssetId, Date.now());
+    }
+    playoutIsProgramme = false;
     plannedStopReason = "";
     stopSceneRendererLoop();
     playoutProcess = null;
@@ -5179,6 +5280,10 @@ async function startOrSwitchPlayout(args: {
       exitReason,
       planned: wasPlanned || naturalBoundary,
       naturalBoundary,
+      // "" for a natural EOF; otherwise names which stop path cut the process ("switch",
+      // "duration-bound", "feed-stalled", "scheduled-reconnect", ...).
+      plannedReason,
+      ranForMs: ranForMs ?? -1,
       targetKind: lastTargetKind,
       assetId: lastAssetId,
       input: lastInputSummary,
@@ -5689,7 +5794,7 @@ async function runPlayoutCycle(): Promise<void> {
       // runs inline at the asset boundary and leaves playout idle with an empty currentAsset
       // (broadcastReady=false) until it completes. On a cache miss we fall through to the
       // same inline resolve, so this is never worse than before.
-      const boundaryDecision = decideBoundaryPlaybackInput(getFreshProbeCache(failedAsset.id));
+      const boundaryDecision = decideBoundaryPlaybackInput(getFreshProbeCache(failedAsset.id), failedAsset.id);
       if (boundaryDecision.source === "cache") {
         selection = { ...selection, asset: failedAsset };
         resolvedSelectionInput = boundaryDecision.input;
@@ -7831,18 +7936,21 @@ async function runHealthcheck(mode: RuntimeMode): Promise<void> {
 }
 
 function requestImmediatePlayoutCycle(reason: string): void {
-  const wake = wakePlayoutLoop;
-  if (!wake) {
-    return;
-  }
-
-  logRuntimeEvent("playout.loop.wake", { reason });
-  wake();
+  // Never drops the request: with no waiter armed (i.e. called from inside a running cycle) the
+  // latch remembers it and waitForNextLoop skips the delay below.
+  const delivery = playoutLoopWake.request(reason);
+  logRuntimeEvent("playout.loop.wake", { reason, delivery });
 }
 
 async function waitForNextLoop(mode: RuntimeMode, delay: number): Promise<void> {
   if (mode !== "playout") {
     await new Promise((resolve) => setTimeout(resolve, delay));
+    return;
+  }
+
+  const latchedReason = playoutLoopWake.takePending();
+  if (latchedReason !== "") {
+    logRuntimeEvent("playout.loop.wake.immediate", { reason: latchedReason });
     return;
   }
 
@@ -7855,13 +7963,11 @@ async function waitForNextLoop(mode: RuntimeMode, delay: number): Promise<void> 
       }
       settled = true;
       clearTimeout(timeout);
-      if (wakePlayoutLoop === finish) {
-        wakePlayoutLoop = null;
-      }
+      playoutLoopWake.disarm(finish);
       resolve();
     };
     timeout = setTimeout(finish, delay);
-    wakePlayoutLoop = finish;
+    playoutLoopWake.arm(finish);
   });
 }
 

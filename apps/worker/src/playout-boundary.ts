@@ -1,6 +1,10 @@
 export interface BoundaryProbe {
   status: "ready" | "failed";
   resolvedInput: string;
+  // The asset this probe was resolved for. Carried on the entry itself so the boundary can prove
+  // the prefetched input belongs to the asset it is about to start, rather than trusting that the
+  // caller looked it up under the right key.
+  assetId: string;
 }
 
 export interface BoundaryInputDecision {
@@ -18,12 +22,22 @@ export interface BoundaryInputDecision {
  * inline resolve is what left playout idle with an empty currentAsset (broadcastReady=false)
  * in the v1.5.10 CLEAN4 soak. On a stale/missing/failed probe (or one with no resolvedInput)
  * it returns "resolve", preserving the previous inline behavior — never worse than before.
+ *
+ * The asymmetry that matters: a prefetch is an optimisation, so declining one costs a few seconds
+ * of fallback, while honouring a probe that belongs to a *different* asset would put the wrong
+ * programme on air. Any doubt therefore resolves to "resolve". `selectedAssetId` is the asset the
+ * cycle actually decided to start; a probe that does not name that asset is ignored, so a queue
+ * change between prefetch and boundary (skip vote, operator insert, schedule flip, chapter jump)
+ * can never redirect playout to stale content.
  */
-export function decideBoundaryPlaybackInput(probe: BoundaryProbe | null): BoundaryInputDecision {
-  if (probe && probe.status === "ready" && probe.resolvedInput) {
-    return { source: "cache", input: probe.resolvedInput };
+export function decideBoundaryPlaybackInput(probe: BoundaryProbe | null, selectedAssetId: string): BoundaryInputDecision {
+  if (!probe || probe.status !== "ready" || !probe.resolvedInput) {
+    return { source: "resolve", input: "" };
   }
-  return { source: "resolve", input: "" };
+  if (!selectedAssetId || probe.assetId !== selectedAssetId) {
+    return { source: "resolve", input: "" };
+  }
+  return { source: "cache", input: probe.resolvedInput };
 }
 
 // An ffmpeg process that fails this quickly after start did not play any content — it failed at
