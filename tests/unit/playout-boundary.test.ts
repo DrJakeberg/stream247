@@ -13,36 +13,73 @@ describe("playout boundary input selection", () => {
   // the resolve completed. When the next asset was already prefetched, the boundary must
   // reuse that resolved input and NOT trigger an inline resolve.
   it("reuses the prefetched resolved input when the probe is fresh-ready (no inline resolve)", () => {
-    const decision = decideBoundaryPlaybackInput({
-      status: "ready",
-      resolvedInput: "https://cdn.example/vod/720p.m3u8"
-    });
+    const decision = decideBoundaryPlaybackInput(
+      {
+        status: "ready",
+        resolvedInput: "https://cdn.example/vod/720p.m3u8",
+        assetId: "asset_next"
+      },
+      "asset_next"
+    );
 
     expect(decision.source).toBe("cache");
     expect(decision.input).toBe("https://cdn.example/vod/720p.m3u8");
   });
 
   it("falls through to an inline resolve when there is no probe (stale/missing TTL)", () => {
-    const decision = decideBoundaryPlaybackInput(null);
+    const decision = decideBoundaryPlaybackInput(null, "asset_next");
 
     expect(decision.source).toBe("resolve");
     expect(decision.input).toBe("");
   });
 
   it("falls through to an inline resolve when the probe failed", () => {
-    const decision = decideBoundaryPlaybackInput({
-      status: "failed",
-      resolvedInput: ""
-    });
+    const decision = decideBoundaryPlaybackInput({ status: "failed", resolvedInput: "", assetId: "asset_next" }, "asset_next");
 
     expect(decision.source).toBe("resolve");
   });
 
   it("falls through to an inline resolve when a ready probe carries no resolved input", () => {
-    const decision = decideBoundaryPlaybackInput({
-      status: "ready",
-      resolvedInput: ""
-    });
+    const decision = decideBoundaryPlaybackInput({ status: "ready", resolvedInput: "", assetId: "asset_next" }, "asset_next");
+
+    expect(decision.source).toBe("resolve");
+  });
+});
+
+describe("stale prefetch never redirects the boundary", () => {
+  // The dangerous failure direction. A prefetch resolved for the asset the queue *used* to point
+  // at must never supply the input for whatever the cycle actually selected after a skip vote,
+  // operator insert, schedule flip or chapter jump changed the queue. Declining the prefetch costs
+  // a few seconds of fallback; honouring it would put the wrong programme on air.
+  it("ignores a ready probe that belongs to a different asset", () => {
+    const decision = decideBoundaryPlaybackInput(
+      {
+        status: "ready",
+        resolvedInput: "https://cdn.example/previously-queued.m3u8",
+        assetId: "asset_stale"
+      },
+      "asset_selected_after_skip_vote"
+    );
+
+    expect(decision.source).toBe("resolve");
+    // The stale input must not leak through under any circumstance.
+    expect(decision.input).toBe("");
+  });
+
+  it("ignores a probe with no asset attribution", () => {
+    const decision = decideBoundaryPlaybackInput(
+      { status: "ready", resolvedInput: "https://cdn.example/unattributed.m3u8", assetId: "" },
+      "asset_selected"
+    );
+
+    expect(decision.source).toBe("resolve");
+  });
+
+  it("refuses to use any probe when the cycle has no selected asset id", () => {
+    const decision = decideBoundaryPlaybackInput(
+      { status: "ready", resolvedInput: "https://cdn.example/vod.m3u8", assetId: "asset_next" },
+      ""
+    );
 
     expect(decision.source).toBe("resolve");
   });
