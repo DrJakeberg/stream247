@@ -20,7 +20,15 @@
 
 export interface SourceSyncOutcome {
   sourceId: string;
-  /** The per-source ingest threw and was caught; nothing was learned about its content. */
+  /**
+   * The per-source ingest did not complete, so nothing was learned about the source's content.
+   *
+   * Covers every way a sync can end without evidence, not just a throw: a caught yt-dlp error, a
+   * URL that failed validation before any call went out, and a filesystem walk that could not
+   * list some directory. All of them produce a short or empty listing that looks exactly like a
+   * source that genuinely lost its content, which is why the distinction has to be carried here
+   * rather than inferred from the asset count.
+   */
   ingestFailed: boolean;
   /** Assets this sync collected for the source. */
   incomingAssetCount: number;
@@ -55,4 +63,113 @@ export function decideSourceAssetReplacement(outcome: SourceSyncOutcome): Source
  */
 export function selectReplaceableSourceIds(outcomes: SourceSyncOutcome[]): string[] {
   return outcomes.filter((outcome) => decideSourceAssetReplacement(outcome) === "replace").map((outcome) => outcome.sourceId);
+}
+
+/** The only thing this module needs to know about an asset. */
+type AssetOfSource = { sourceId: string };
+
+export type PreservedSourceAssets = {
+  sourceId: string;
+  decision: Exclude<SourceReplaceDecision, "replace">;
+  storedAssetCount: number;
+};
+
+export type SourceAssetReplacementPlan<TAsset extends AssetOfSource> = {
+  /** Source ids whose stored assets this sync may delete and rewrite. */
+  replaceableSourceIds: string[];
+  /** Assets to insert, already narrowed to the replaceable sources. */
+  assetsToWrite: TAsset[];
+  /** Sources whose stored assets stay untouched, with the reason — one log line each. */
+  preserved: PreservedSourceAssets[];
+};
+
+/**
+ * Turn a sync's raw results into "what may be deleted and what gets written".
+ *
+ * Pure on purpose: every wipe this repo has suffered came from a caller that computed the delete
+ * list and the insert list in two different places and let them drift apart. Here they are one
+ * value, so a source that is not replaceable cannot contribute a delete, and an asset cannot be
+ * written for a source that is not being replaced.
+ */
+export function planSourceAssetReplacement<TAsset extends AssetOfSource>(args: {
+  sources: readonly { id: string }[];
+  storedAssets: readonly AssetOfSource[];
+  incomingAssets: readonly TAsset[];
+  failedSourceIds: ReadonlySet<string>;
+}): SourceAssetReplacementPlan<TAsset> {
+  const outcomes: SourceSyncOutcome[] = args.sources.map((source) => ({
+    sourceId: source.id,
+    ingestFailed: args.failedSourceIds.has(source.id),
+    incomingAssetCount: args.incomingAssets.filter((asset) => asset.sourceId === source.id).length,
+    storedAssetCount: args.storedAssets.filter((asset) => asset.sourceId === source.id).length
+  }));
+
+  const replaceable = new Set<string>();
+  const preserved: PreservedSourceAssets[] = [];
+
+  for (const outcome of outcomes) {
+    const decision = decideSourceAssetReplacement(outcome);
+    if (decision === "replace") {
+      replaceable.add(outcome.sourceId);
+      continue;
+    }
+    preserved.push({ sourceId: outcome.sourceId, decision, storedAssetCount: outcome.storedAssetCount });
+  }
+
+  return {
+    replaceableSourceIds: [...replaceable],
+    assetsToWrite: args.incomingAssets.filter((asset) => replaceable.has(asset.sourceId)),
+    preserved
+  };
+}
+
+export type SourceSyncStatusLabels = {
+  /** The sync collected content. */
+  ready: string;
+  /** The sync completed with nothing, and there was nothing stored to protect. */
+  empty: string;
+  /** The sync produced no usable evidence, and stored assets were kept because of it. */
+  preserved: string;
+};
+
+export const DEFAULT_SOURCE_SYNC_STATUS_LABELS: SourceSyncStatusLabels = {
+  ready: "Ready",
+  empty: "Ingestion failed",
+  preserved: "Ingestion failed (assets preserved)"
+};
+
+export type SourceSyncStatusDescription = {
+  /** Value for the source's `status` column. */
+  status: string;
+  /** Whether this sync deliberately kept previously stored assets instead of replacing them. */
+  assetsPreserved: boolean;
+  /** How many assets the source holds once this sync has been written. */
+  effectiveAssetCount: number;
+};
+
+/**
+ * Describe how a sync ended, in the terms an operator needs.
+ *
+ * "Ingestion failed" alone cannot be acted on: it reads identically whether the source still has
+ * its archive or was just emptied, which is precisely the difference between "wait for the next
+ * cycle" and "the channel is about to fall back". So the preserved case gets its own status and
+ * reports the count that is actually still playable, rather than the zero this sync collected.
+ */
+export function describeSourceSyncStatus(
+  outcome: SourceSyncOutcome,
+  labels: SourceSyncStatusLabels = DEFAULT_SOURCE_SYNC_STATUS_LABELS
+): SourceSyncStatusDescription {
+  if (decideSourceAssetReplacement(outcome) !== "replace") {
+    return {
+      status: labels.preserved,
+      assetsPreserved: true,
+      effectiveAssetCount: outcome.storedAssetCount
+    };
+  }
+
+  return {
+    status: outcome.incomingAssetCount > 0 ? labels.ready : labels.empty,
+    assetsPreserved: false,
+    effectiveAssetCount: outcome.incomingAssetCount
+  };
 }

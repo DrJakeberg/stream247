@@ -146,7 +146,12 @@ import {
 } from "./on-air-scene.js";
 import { incrementQueueVersion, prioritizeManualNextAsset } from "./broadcast-queue.js";
 import { getChapterBackfillConfig, probeAssetChapters, selectChapterBackfillCandidates } from "./chapter-backfill.js";
-import { buildLocalLibraryAssetId, buildLocalLibraryFolderPath } from "./local-library.js";
+import {
+  MEDIA_FILE_EXTENSIONS,
+  buildLocalLibraryAssetId,
+  buildLocalLibraryFolderPath,
+  scanMediaFiles
+} from "./local-library.js";
 import { resolvePoolAudioLane, type ResolvedAudioLane } from "./audio-lanes.js";
 import { getCuepointInsertPlan } from "./cuepoints.js";
 import {
@@ -265,7 +270,11 @@ import {
 import { decideQueuePrefetchBudget, planQueuePrefetch, raceResolveAgainstDeath } from "./queue-prefetch.js";
 import { LoopWakeLatch } from "./loop-wake.js";
 import { ProgrammeGapTracker } from "./playout-gap.js";
-import { decideSourceAssetReplacement, selectReplaceableSourceIds, type SourceSyncOutcome } from "./source-sync-scope.js";
+import {
+  describeSourceSyncStatus,
+  planSourceAssetReplacement,
+  type SourceSyncOutcome
+} from "./source-sync-scope.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 import { EngagementGameTracker } from "./engagement-game.js";
@@ -284,7 +293,9 @@ import { syncTwitchEventSubSubscriptions } from "./twitch-eventsub.js";
 import { fetchTwitchLiveStatus } from "./twitch-live-status.js";
 import { decideTwitchChannelMetadataWrite } from "./twitch-sync-policy.js";
 
-const mediaExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
+const mediaExtensions = MEDIA_FILE_EXTENSIONS;
+/** The single synthetic source every locally mounted file belongs to — the global fallback included. */
+const LOCAL_LIBRARY_SOURCE_ID = "source-local-library";
 let playoutProcess: ChildProcess | null = null;
 let playoutProcessStartedAtMs = 0;
 let playoutAssetId = "";
@@ -2988,34 +2999,13 @@ async function resolveTwitchCategory(args: {
     : null;
 }
 
-async function walkMediaFiles(root: string): Promise<string[]> {
-  try {
-    const entries = await fs.readdir(root, { withFileTypes: true });
-    const files = await Promise.all(
-      entries.map(async (entry) => {
-        const absolutePath = path.join(root, entry.name);
-        if (isInternalMediaCachePath(absolutePath, getMediaRoot())) {
-          return [];
-        }
-        if (entry.isDirectory()) {
-          return walkMediaFiles(absolutePath);
-        }
-        return mediaExtensions.has(path.extname(entry.name).toLowerCase()) ? [absolutePath] : [];
-      })
-    );
-    return files.flat();
-  } catch {
-    return [];
-  }
-}
-
 function buildAssetFromPath(filePath: string, now: string): AssetRecord {
   const mediaRoot = getMediaRoot();
   const isFallback = filePath.toLowerCase().includes("fallback") || filePath.toLowerCase().includes("standby");
   const id = buildLocalLibraryAssetId(filePath);
   return {
     id,
-    sourceId: "source-local-library",
+    sourceId: LOCAL_LIBRARY_SOURCE_ID,
     title: path.basename(filePath, path.extname(filePath)).replace(/[_-]+/g, " "),
     path: filePath,
     folderPath: buildLocalLibraryFolderPath(filePath, mediaRoot),
@@ -3032,9 +3022,12 @@ function buildAssetFromPath(filePath: string, now: string): AssetRecord {
 async function syncLocalMediaLibrary(): Promise<void> {
   const mediaRoot = getMediaRoot();
   const startedAt = new Date().toISOString();
-  const discoveredFiles = await walkMediaFiles(mediaRoot);
+  const scan = await scanMediaFiles({
+    root: mediaRoot,
+    isExcluded: (absolutePath) => isInternalMediaCachePath(absolutePath, mediaRoot)
+  });
   const now = new Date().toISOString();
-  const discoveredAssets = discoveredFiles.map((filePath) => buildAssetFromPath(filePath, now));
+  const discoveredAssets = scan.files.map((filePath) => buildAssetFromPath(filePath, now));
   const state = await readAppState();
   const existingByPath = new Map(state.assets.map((asset) => [asset.path, asset]));
   const nextAssets: AssetRecord[] = discoveredAssets.map((asset) => {
@@ -3061,24 +3054,63 @@ async function syncLocalMediaLibrary(): Promise<void> {
     });
   }
 
+  // A scan that could not list some directory proves nothing about the library's contents, so it
+  // is fed in as a failed ingest and the wholesale replace below is skipped. Without that, an
+  // unmounted volume deleted every local asset — the global fallback among them, which is the one
+  // asset the channel needs when everything else is gone.
+  const outcome: SourceSyncOutcome = {
+    sourceId: LOCAL_LIBRARY_SOURCE_ID,
+    ingestFailed: scan.failed,
+    incomingAssetCount: nextAssets.length,
+    storedAssetCount: state.assets.filter((asset) => asset.sourceId === LOCAL_LIBRARY_SOURCE_ID).length
+  };
+  const description = describeSourceSyncStatus(outcome, {
+    ready: "Ready",
+    empty: "Empty",
+    preserved: "Scan failed (assets preserved)"
+  });
+  const failedDirectories = scan.failedDirectories.join(", ");
+
   await upsertSources([
     {
-      id: "source-local-library",
+      id: LOCAL_LIBRARY_SOURCE_ID,
       name: "Local Media Library",
       type: "Filesystem scan",
       connectorKind: "local-library",
       enabled: true,
-      status: nextAssets.length > 0 ? "Ready" : "Empty",
+      status: description.status,
       externalUrl: "",
-      notes: "Scans files mounted into the media library volume.",
+      notes: description.assetsPreserved
+        ? `Could not read ${failedDirectories}; kept the ${description.effectiveAssetCount} stored item(s) rather than treating an unreadable mount as an empty library.`
+        : "Scans files mounted into the media library volume.",
       lastSyncedAt: now
     }
   ]);
-  await replaceAssetsForSourceIds(["source-local-library"], nextAssets);
+  await replaceSyncedSourceAssets({
+    connector: "local-library",
+    sources: [{ id: LOCAL_LIBRARY_SOURCE_ID }],
+    storedAssets: state.assets,
+    incomingAssets: nextAssets,
+    failedSourceIds: scan.failed ? new Set([LOCAL_LIBRARY_SOURCE_ID]) : new Set()
+  });
 
+  if (scan.failed) {
+    await upsertIncident({
+      scope: "source",
+      severity: "warning",
+      title: "Local media library scan failed",
+      message: `Could not read ${failedDirectories} under ${mediaRoot}. The ${description.effectiveAssetCount} stored item(s) were kept.`,
+      fingerprint: "source.local-library.scan-failed"
+    });
+  } else {
+    await resolveIncident("source.local-library.scan-failed", "The local media library scan completed without read errors.");
+  }
+
+  // The "library is empty" incident only makes sense once the scan is trustworthy; raising it on a
+  // broken mount would point the operator at their content instead of their storage.
   if (discoveredAssets.length > 0) {
     await resolveIncident("source.local-library.empty", "Local media library now contains playable assets.");
-  } else {
+  } else if (!scan.failed) {
     await upsertIncident({
       scope: "source",
       severity: "warning",
@@ -3090,16 +3122,18 @@ async function syncLocalMediaLibrary(): Promise<void> {
 
   await appendSourceSyncRuns([
     buildSourceSyncRun({
-      sourceId: "source-local-library",
+      sourceId: LOCAL_LIBRARY_SOURCE_ID,
       startedAt,
       finishedAt: now,
-      status: discoveredAssets.length > 0 ? "success" : "skipped",
-      summary:
-        discoveredAssets.length > 0
+      status: scan.failed ? "error" : discoveredAssets.length > 0 ? "success" : "skipped",
+      summary: scan.failed
+        ? "Local media library scan could not be completed; stored assets were kept."
+        : discoveredAssets.length > 0
           ? `Discovered ${discoveredAssets.length} file(s) in the local media library.`
           : "Local media library scan completed with no playable files.",
       discoveredAssets: discoveredAssets.length,
-      readyAssets: discoveredAssets.length
+      readyAssets: discoveredAssets.length,
+      errorMessage: scan.failed ? `Could not read ${failedDirectories}.` : ""
     })
   ]);
 }
@@ -3332,34 +3366,28 @@ async function replaceSyncedSourceAssets(args: {
   incomingAssets: AssetRecord[];
   failedSourceIds: Set<string>;
 }): Promise<void> {
-  const outcomes: SourceSyncOutcome[] = args.sources.map((source) => ({
-    sourceId: source.id,
-    ingestFailed: args.failedSourceIds.has(source.id),
-    incomingAssetCount: args.incomingAssets.filter((asset) => asset.sourceId === source.id).length,
-    storedAssetCount: args.storedAssets.filter((asset) => asset.sourceId === source.id).length
-  }));
-  const replaceable = new Set(selectReplaceableSourceIds(outcomes));
+  const plan = planSourceAssetReplacement({
+    sources: args.sources,
+    storedAssets: args.storedAssets,
+    incomingAssets: args.incomingAssets,
+    failedSourceIds: args.failedSourceIds
+  });
 
-  for (const outcome of outcomes) {
-    if (replaceable.has(outcome.sourceId)) {
-      continue;
-    }
+  for (const preserved of plan.preserved) {
     logRuntimeEvent("source.sync.assets_preserved", {
       connector: args.connector,
-      sourceId: outcome.sourceId,
-      decision: decideSourceAssetReplacement(outcome),
-      storedAssets: outcome.storedAssetCount
+      sourceId: preserved.sourceId,
+      decision: preserved.decision,
+      storedAssets: preserved.storedAssetCount
     });
   }
 
-  if (replaceable.size === 0) {
+  if (plan.replaceableSourceIds.length === 0) {
     return;
   }
 
-  await replaceAssetsForSourceIds(
-    [...replaceable],
-    args.incomingAssets.filter((asset) => replaceable.has(asset.sourceId))
-  );
+  // The sync computed both lists together, so an empty write here really is an emptied source.
+  await replaceAssetsForSourceIds(plan.replaceableSourceIds, plan.assetsToWrite, { allowEmptyReplacement: true });
 }
 
 async function syncYoutubePlaylistSources(): Promise<void> {

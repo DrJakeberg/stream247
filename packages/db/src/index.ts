@@ -5323,7 +5323,40 @@ export async function updateSourceFieldRecords(updates: SourceFieldUpdateRecord[
   });
 }
 
-export async function replaceAssetsForSourceIds(sourceIds: string[], assets: AssetRecord[]): Promise<void> {
+export type ReplaceAssetsOptions = {
+  /**
+   * Permit a replacement that leaves a currently populated source with no assets.
+   *
+   * Off by default. A caller that genuinely emptied a source knows it did — it built the delete
+   * list and the insert list from the same evidence — and says so here. A caller that merely
+   * ended up with an empty list (a throw it swallowed, a listing it could not read, a `continue`
+   * that skipped the collection step but not the delete list) does not, and gets refused.
+   */
+  allowEmptyReplacement?: boolean;
+};
+
+/**
+ * Whether a wholesale replacement would empty a populated source without being told to.
+ *
+ * The threshold is deliberately "zero incoming", not a percentage of the stored count: a source
+ * shrinking from 49 items to 1 is an ordinary playlist edit, and blocking it would pin stale rows
+ * on air with no way out. Zero is the only count that is simultaneously catastrophic (the pool
+ * empties, playback falls to the global fallback) and never distinguishable from a failure that
+ * produced no listing — so it is the only one worth an explicit opt-in.
+ */
+export function shouldRefuseEmptyAssetReplacement(args: {
+  incomingAssetCount: number;
+  storedAssetCount: number;
+  allowEmptyReplacement: boolean;
+}): boolean {
+  return !args.allowEmptyReplacement && args.incomingAssetCount === 0 && args.storedAssetCount > 0;
+}
+
+export async function replaceAssetsForSourceIds(
+  sourceIds: string[],
+  assets: AssetRecord[],
+  options: ReplaceAssetsOptions = {}
+): Promise<void> {
   if (sourceIds.length === 0) {
     return;
   }
@@ -5359,6 +5392,23 @@ export async function replaceAssetsForSourceIds(sourceIds: string[], assets: Ass
       existingResult.rows.filter((row) => row.external_id).map((row) => [`${row.source_id}:${row.external_id}`, row] as const)
     );
     const existingByPath = new Map(existingResult.rows.map((row) => [`${row.source_id}:${row.path}`, row] as const));
+
+    if (
+      shouldRefuseEmptyAssetReplacement({
+        incomingAssetCount: assets.length,
+        storedAssetCount: existingResult.rows.length,
+        allowEmptyReplacement: options.allowEmptyReplacement ?? false
+      })
+    ) {
+      // Refuse rather than throw: reaching this line means a caller's scope decision was wrong,
+      // and taking the worker cycle down over it would hurt the broadcast the guard exists to
+      // protect. The warning is what turns a silent wipe into something an operator can find.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[stream247-db] replaceAssetsForSourceIds refused to empty ${existingResult.rows.length} asset(s) of ${sourceIds.join(", ")} without allowEmptyReplacement.`
+      );
+      return;
+    }
 
     await client.query("DELETE FROM assets WHERE source_id = ANY($1::text[])", [sourceIds]);
 
