@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Fixed
+
+- a source that answers with nothing no longer closes its own incident. Both connector syncs
+  finished every non-throwing run with `resolveIncident("source.<kind>.<id>")`. A Twitch archive
+  listing that comes back empty does not throw, so on 2026-08-27 each 30-second cycle wrote a
+  `skipped` run with zero discovered assets and then re-closed the one entry that could have
+  explained the hours of filler — and the same call erased entries a genuine failure had raised a
+  cycle earlier. The source row said "Ingestion failed" while the incident list said nothing at
+  all. A source that has stopped delivering is now reported under that same existing fingerprint,
+  which `incident-classes.ts` already registers as a state in the source area: it holds while the
+  drought holds and the next delivering run closes it. No new family, so one broken source cannot
+  appear twice. Reporting waits for three consecutive barren checks — one empty listing is the blip
+  the v1.5.33 asset-preserve rule absorbs correctly, and at the 30s worker cadence three is still
+  under two minutes. A source with nothing stored that no pool draws on stays out of the list:
+  that is a setting, not an incident, and an entry no action can close is the failure M58 removed
+
+### Changed
+
+- the sources page says what it knows instead of printing what it stored. It showed the last run's
+  summary next to a raw ISO timestamp, the last-synced stamp again above that, and three counts
+  ending in "pool refs" / "schedule refs" — none of which answers "is this happening now" or "does
+  the programme care". It now reads "Last checked 4 minutes ago, found 49 videos", or "Nothing came
+  back the last 3 times, the first of them 12 minutes ago. The stored videos are being kept.", and
+  once a drought is long enough to matter it names the scheduled blocks it reaches and whether they
+  still have anything to play. That source → pool → block chain already existed in
+  `getSourceReferences` and had never been said out loud; it is what nobody could see on the day.
+  The same sentences go into the incident message, so the live status view carries the consequence
+  rather than only the fault. Text only — no control was added, so the page's density budget is
+  unchanged
+
 ## 1.5.33 - 2026-08-27
 
 ### Fixed
