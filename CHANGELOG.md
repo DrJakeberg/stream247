@@ -24,17 +24,22 @@
   by tests; its trigger arrives with the attach stage, as does the starting-gain setting
   (clamped 0–200, default 40) that already resolves through managed config
 - pushed video sources can now be attached LIVE, not just sampled (M57 stage 2, Etappen C+D):
-  when the feature is on, the scene carries a source layer, and the relay reports the source
-  publishing, the playout attaches it as a third ffmpeg input — a picture-in-picture window laid
-  under the scene overlay exactly where the snapshot panel would sit, with `eof_action=pass` so a
-  feed that drops never freezes the frame. Its audio is mixed under the programme at the configured
-  gain (default 40%) with `normalize=0` (no level jump when the source comes or goes) and no
-  padding (a lost source simply falls silent); the mix is built only when the source carries an
-  audio track and there is confirmed programme audio to mix against, otherwise the attach is
-  video-only. The RTSP read is bounded at 4 s, the live window is computed bit-identically to the
-  renderer's panel, and a failed attach start opens the attach breaker so the next starts go
-  attach-free — a bad feed cannot crash-loop the channel. Attach and detach happen only at natural
-  asset boundaries, never mid-asset. Off by default; a DT soak gate precedes any deploy
+  when the feature is on, the upcoming programme is an asset, the scene carries a source layer, and
+  the relay reports the source publishing, the playout attaches it as a third ffmpeg input — a
+  picture-in-picture window laid under the scene overlay exactly where the snapshot panel would sit,
+  with `eof_action=pass` so a feed that drops never freezes the frame. Its audio is mixed under the
+  programme at the configured gain (default 40%) with `normalize=0` (no level jump when the source
+  comes or goes) and no padding (a lost source simply falls silent). The mix is built only when the
+  programme asset has a KNOWN finite duration — an unknown-duration programme keeps its own audio as
+  the sole track so the feed-audio watchdog (which reads the programme's audio out of the muxed
+  segment to catch a source that runs dry without EOF) is never masked by live PiP sound — and only
+  after the source's audio is probe-confirmed, so a relay that advertises a track the pull cannot
+  deliver falls back to video-only instead of crashing ffmpeg. The RTSP read is bounded at 4 s, the
+  live window is computed bit-identically to the renderer's panel, and a failed attach start opens
+  the attach breaker so the next starts go attach-free — a bad feed cannot crash-loop the channel.
+  Attach and detach happen only at natural asset boundaries, never mid-asset; the relay presence poll
+  runs only while an asset is selected, never during a live bridge or standby slate. Off by default;
+  a DT soak gate precedes any deploy
 
 ### Changed
 

@@ -1532,20 +1532,37 @@ change, no additional ffmpeg input in stage 1.
   mid-asset waits for the next natural boundary (`isNaturalPlayoutBoundary`).
 - Etappe D mixes audio: `[prog]volume=<v>[prog_a]; [L:a]aresample=async=1:first_pts=0,volume=<gain>[pip_a]; [prog_a][pip_a]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]`.
   Pins: `normalize=0` (no programme level jump on source EOF), programme/lane FIRST at
-  `duration=first`, `-shortest` in the PiP case, no `apad` on the PiP branch (amix drops the ended
-  input — the only way "source gone" is acoustically folgenlos). Gain from
-  `resolveSourceLiveGainPercent` (default 40 → 0.40). Programme-audio presence is a bounded, cached
-  ffprobe only on the attach-with-audio no-lane path; unconfirmed → video-only attach, never a start
-  blockade. PiP without an audio track (relay `tracks`) → no audio branch built.
-- Guardian proofs as tests (`source-live-watchdog-proof.test.ts`): one per watchdog that a
-  PiP-source problem does not false-fire it and its real purpose survives — feed-audio (the mix
-  cannot mute programme audio), feed-stall/uplink (eof_action=pass keeps the frame flowing),
-  duration-bound (clamp invariant), loop-stall (probe clamped to the cycle-await ceiling), crash-loop
-  (a failed attach makes the next start attach-free, so a PiP alone cannot reach the threshold of 3).
+  `duration=first`, no `apad` on the PiP branch (amix drops the ended input — the only way "source
+  gone" is acoustically folgenlos). `-shortest` is set, but note it bounds the encode to the
+  PROGRAMME's own stream ([vout] follows the programme video, [aout] is duration=first); the ever-fed
+  scene PNG pipe never EOFs, so `-shortest` does NOT end a programme that never delivers EOF — the
+  watchdogs are the net there. Gain from `resolveSourceLiveGainPercent` (default 40 → 0.40).
+- BLOCKER fixed from the adversarial ffmpeg review (real ffmpeg-6.1.1 runs): PiP audio would MASK the
+  feed-audio watchdog. The playout encode IS the program-feed writer, and `enforceProgramFeedAudio`
+  counts the audio packets of the newest segment to catch a source that runs dry without EOF (the fps
+  filter keeps video flowing; audio is the honest signal). Folding live PiP audio in masks a silent
+  programme. Fix: `decideLiveSourceAudio` builds the mix ONLY when the programme asset has a known
+  finite duration (duration-bound is then the net, masking harmless); unknown duration → PiP
+  video-only, programme audio stays the sole track, watchdog honest. Proven against the REAL state
+  machine (`observeFeedAudio`/`isFeedAudioStalled`), not the mix string.
+- MINOR fixed: the `[L:a]` reference no longer trusts the relay's advisory `tracks` flag alone (a
+  lying/racing publisher would crash ffmpeg at graph init, exit 234 → breaker). The source's audio is
+  now probe-confirmed (`probeInputHasAudio`, RTSP pinned to TCP, fresh each attach — never cached, so
+  no stale-verdict TOCTOU); an unconfirmed source falls back to video-only. Programme-audio (no-lane)
+  stays a bounded, asset-id-cached probe.
+- NOTE fixed: the relay presence poll is now gated on the upcoming selection being an ASSET, so a live
+  bridge or standby slate (which can never carry a PiP) costs zero relay traffic.
+- Guardian proofs as tests (`source-live-watchdog-proof.test.ts`): feed-audio proven against the real
+  watchdog state machine (silent programme fires; mixed-in PiP audio would mask it; the duration gate
+  keeps them connected); a lying-relay source → video-only, no graph-init crash; feed-stall/uplink
+  (eof_action=pass keeps the frame flowing); duration-bound (clamp invariant); loop-stall (probes
+  clamped to the cycle-await ceiling); crash-loop (a failed attach makes the next start attach-free,
+  so a PiP alone cannot reach the threshold of 3).
 - Deliberately left for E and the soak gate: operator surfaces beyond the switch (gain UI,
   revealing/threading the internal key for rollback), per-layer cadence, and the mandatory DT soak
-  before any deploy — attach latency, breaker behaviour under a flapping feed, and the audio mix on
-  a real programme with and without its own audio track.
+  before any deploy — attach latency, breaker behaviour under a flapping feed, the audio mix on a real
+  programme with and without its own audio track, and confirming the feed-audio watchdog still fires
+  on a silent unknown-duration source with an active PiP.
 - Affected baselines: none — every change is worker-side (ffmpeg command, filter graphs, exit
   wiring) with no studio surface touched.
 
