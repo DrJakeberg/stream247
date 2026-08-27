@@ -1,13 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockRequireApiRoles, mockGetAuthenticatedUser, mockAppendAuditEvent, mockReadRelayInternalKey } = vi.hoisted(
-  () => ({
-    mockRequireApiRoles: vi.fn(),
-    mockGetAuthenticatedUser: vi.fn(),
-    mockAppendAuditEvent: vi.fn(),
-    mockReadRelayInternalKey: vi.fn()
-  })
-);
+const {
+  mockRequireApiRoles,
+  mockGetAuthenticatedUser,
+  mockAppendAuditEvent,
+  mockReadRelayInternalKey,
+  mockReadRelayInternalKeyIfPresent
+} = vi.hoisted(() => ({
+  mockRequireApiRoles: vi.fn(),
+  mockGetAuthenticatedUser: vi.fn(),
+  mockAppendAuditEvent: vi.fn(),
+  mockReadRelayInternalKey: vi.fn(),
+  mockReadRelayInternalKeyIfPresent: vi.fn()
+}));
 
 vi.mock("@/lib/server/auth", () => ({
   requireApiRoles: mockRequireApiRoles,
@@ -18,8 +23,13 @@ vi.mock("@/lib/server/state", () => ({
   appendAuditEvent: mockAppendAuditEvent
 }));
 
+// Both readers are exposed, so "the route never calls the self-generating one" is an assertion
+// rather than an assumption. readRelayInternalKey is the only code path in the repo that can INSERT
+// or UPDATE the stored key, so never calling it IS the non-write proof at this level; the
+// row-count and ciphertext proofs live in tests/integration/db-roundtrip.test.ts.
 vi.mock("@stream247/db", () => ({
-  readRelayInternalKey: mockReadRelayInternalKey
+  readRelayInternalKey: mockReadRelayInternalKey,
+  readRelayInternalKeyIfPresent: mockReadRelayInternalKeyIfPresent
 }));
 
 vi.mock("next/server", () => ({
@@ -50,7 +60,11 @@ beforeEach(() => {
   clearAllRateLimits();
   mockRequireApiRoles.mockResolvedValue(null);
   mockGetAuthenticatedUser.mockResolvedValue({ id: "user-1", email: "owner@example.com", role: "owner" });
-  mockReadRelayInternalKey.mockResolvedValue(INTERNAL_KEY);
+  mockReadRelayInternalKeyIfPresent.mockResolvedValue(INTERNAL_KEY);
+  // Deliberately made to throw: nothing in this route may reach the self-generating reader, and a
+  // test that only checked "not called" would still pass if a future edit called it in a branch
+  // these cases do not cover.
+  mockReadRelayInternalKey.mockRejectedValue(new Error("the reveal route must never generate a key"));
 });
 
 describe("revealing the relay rollback lines", () => {
@@ -60,13 +74,37 @@ describe("revealing the relay rollback lines", () => {
     const response = await POST();
 
     expect(response.status).toBe(403);
-    expect(mockReadRelayInternalKey).not.toHaveBeenCalled();
+    expect(mockReadRelayInternalKeyIfPresent).not.toHaveBeenCalled();
     expect(mockAppendAuditEvent).not.toHaveBeenCalled();
   });
 
   it("asks for owner or admin, never a wider set", async () => {
     await POST();
     expect(mockRequireApiRoles).toHaveBeenCalledWith(["owner", "admin"]);
+  });
+
+  it("only ever LOOKS at the key — it can neither create nor replace one", async () => {
+    await POST();
+
+    expect(mockReadRelayInternalKeyIfPresent).toHaveBeenCalledTimes(1);
+    // The self-generating reader is the only path in the repo that INSERTs or UPDATEs the stored
+    // key. A reveal that touched it would mint or overwrite a value no running container holds, and
+    // every relay read and publish would fail until each one restarted.
+    expect(mockReadRelayInternalKey).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the session can no longer be named, without handing anything over", async () => {
+    // Deleted or demoted between the role check and this read. Carrying on would reveal the key
+    // against an unnamed audit line and collapse every such caller into one rate-limit bucket.
+    mockGetAuthenticatedUser.mockResolvedValue(null);
+
+    const response = await POST();
+    const body = await response.text();
+
+    expect(response.status).toBe(403);
+    expect(body).not.toContain(INTERNAL_KEY);
+    expect(mockReadRelayInternalKeyIfPresent).not.toHaveBeenCalled();
+    expect(mockAppendAuditEvent).not.toHaveBeenCalled();
   });
 
   it("hands back both lines with the key embedded", async () => {
@@ -110,19 +148,29 @@ describe("revealing the relay rollback lines", () => {
     expect(mockAppendAuditEvent).toHaveBeenCalledTimes(RELAY_ACCESS_REVEAL_RATE_LIMIT.limit);
   });
 
-  it("says the key is not provisioned rather than emitting a line that could never authenticate", async () => {
-    mockReadRelayInternalKey.mockResolvedValue("");
+  it("refuses rather than minting a key when none is stored, and answers the same way when one cannot be read", async () => {
+    // A real branch, not dead code: the peek returns "" both on an install that has no key yet and
+    // on one whose stored row this APP_SECRET can no longer decrypt. Neither may be answered by
+    // generating a fresh key, and neither is distinguished to the caller.
+    for (const _case of ["no key stored", "key unreadable"]) {
+      mockReadRelayInternalKeyIfPresent.mockResolvedValue("");
+      clearAllRateLimits();
 
-    const response = await POST();
-    const payload = (await response.json()) as { ok: boolean; lines?: string[]; message?: string };
+      const response = await POST();
+      const payload = (await response.json()) as { ok: boolean; lines?: string[]; message?: string };
 
-    expect(response.status).toBe(503);
-    expect(payload.ok).toBe(false);
-    expect(payload.lines).toBeUndefined();
+      expect(response.status).toBe(503);
+      expect(payload.ok).toBe(false);
+      expect(payload.lines).toBeUndefined();
+      expect(mockReadRelayInternalKey).not.toHaveBeenCalled();
+      expect(mockAppendAuditEvent).not.toHaveBeenCalled();
+    }
   });
 
   it("says nothing about the key when the store is unreachable", async () => {
-    mockReadRelayInternalKey.mockRejectedValue(new Error(`connect ECONNREFUSED while holding ${INTERNAL_KEY}`));
+    mockReadRelayInternalKeyIfPresent.mockRejectedValue(
+      new Error(`connect ECONNREFUSED while holding ${INTERNAL_KEY}`)
+    );
 
     const response = await POST();
     const body = await response.text();

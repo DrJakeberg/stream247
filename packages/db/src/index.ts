@@ -7077,11 +7077,44 @@ const RELAY_INTERNAL_KEY_SECRET_ID = "relay-internal-key";
 let cachedRelayInternalKey = "";
 
 /**
+ * The internal relay key as it is STORED — never created, never replaced (M57 stage 2, Etappe E).
+ *
+ * `readRelayInternalKey` below is self-generating, which is right for the two parties that need a
+ * key to exist (the worker deriving read URLs, the relay auth check) and badly wrong for anything
+ * that only wants to look. A reveal surface calling the generating variant would be a WRITE: on a
+ * first-boot install it would mint the key, and on an install whose APP_SECRET has rotated it would
+ * blindly overwrite the stored row — while every already-running worker keeps the old value in its
+ * process cache and every relay read and publish starts failing as "wrong password" until each
+ * container restarts. That is the exact incident the reveal button exists to help with.
+ *
+ * So this variant does one SELECT and nothing else: no INSERT, no UPDATE, and deliberately no
+ * interaction with the process cache either, so "does not write" is true of the whole call. A
+ * missing row and a row this APP_SECRET can no longer decrypt both come back as "" — the caller
+ * must not distinguish them to a user, and neither is a key it may hand out.
+ */
+export async function readRelayInternalKeyIfPresent(): Promise<string> {
+  await ensureDatabase();
+  const client = await getPool().connect();
+  try {
+    const result = await client.query<{ encrypted_value: string }>(
+      "SELECT encrypted_value FROM managed_secrets WHERE id = $1 LIMIT 1",
+      [RELAY_INTERNAL_KEY_SECRET_ID]
+    );
+    return decryptSecretString(result.rows[0]?.encrypted_value || "");
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * The internal relay key: what the worker embeds in derived read URLs and what the web relay
  * auth endpoint accepts for reads and for the programme rollback publish. Self-generating on
  * first use (app-secret pattern, with the database as the shared store): several containers may
  * race here, ON CONFLICT DO NOTHING elects exactly one writer, and everyone adopts the winner
  * by re-reading. Treat the value as a credential — never log it, never list it.
+ *
+ * Only for callers that need the key to EXIST. Anything that merely wants to show or check it must
+ * use readRelayInternalKeyIfPresent above, or it silently becomes a key-rotation surface.
  */
 export async function readRelayInternalKey(): Promise<string> {
   if (cachedRelayInternalKey) {

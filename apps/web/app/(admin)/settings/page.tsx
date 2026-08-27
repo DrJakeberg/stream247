@@ -53,6 +53,10 @@ export default async function SettingsPage() {
   const reconnectFallback = resolvePlayoutReconnectTuning(null, process.env);
   const programFeedFallback = resolveProgramFeedTuning(null, process.env);
   const toGb = (bytes: number) => Math.round((bytes / (1024 * 1024 * 1024)) * 10) / 10;
+  // Same roles the reveal route enforces, so the surface and the endpoint agree about who this is
+  // for. Kept as a plain check rather than requireRoles(), which redirects: the rest of this page
+  // is legitimately readable by any signed-in account and must stay that way.
+  const mayRevealRelayAccess = user?.role === "owner" || user?.role === "admin";
 
   return (
     <div className="stack-form">
@@ -235,8 +239,15 @@ export default async function SettingsPage() {
           />
           {/* No initial values and no fallback: this group ships a button and nothing else, so the
               relay access key is absent from the rendered page and only ever arrives through the
-              deliberate, audited, rate-limited reveal. */}
-          <RelayAccessForm />
+              deliberate, audited, rate-limited reveal.
+
+              Rendered only for owner/admin. This page itself has no role gate — the admin layout
+              only requires a session — so without this condition every signed-in account, viewer
+              and moderator included, would be shown a button labelled as the way to obtain the
+              relay's credentials. The key never leaked (the route answers them 403), but a surface
+              should not advertise the existence and retrieval path of a credential to people who
+              may not have it. */}
+          {mayRevealRelayAccess ? <RelayAccessForm /> : null}
         </Panel>
 
         <Panel title="Local account security" eyebrow="Security">
