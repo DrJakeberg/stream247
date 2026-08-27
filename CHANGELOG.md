@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.30 - 2026-08-27
+
 ### Added
 
 - pushed video sources (M57 stage 2, ingest foundation): a stored video source can now receive
