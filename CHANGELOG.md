@@ -30,6 +30,19 @@
   overrides; until an operator surface reveals that key, treat the rtmp rollback as unavailable
   rather than weakening the relay auth config (see docs/deployment.md)
 
+### Security
+
+- hardened `/api/relay/auth`, which is internet-facing (the `web` port is published and Traefik
+  routes the host), against two abuse paths found in review. Its rate limit now keys on the real
+  transport peer (`X-Forwarded-For` from our Traefik) instead of the attacker-controlled `ip`
+  field in the request body, so the limit can neither be evaded by rotating that value nor turned
+  against a legitimate publisher by spoofing its address. Rejected-publish audit writes are now
+  throttled — at most one line per source per minute and a hard global ceiling per minute — so a
+  flood of bad publishes can no longer erase the security audit trail (each write runs an
+  INSERT+DELETE against the 100-row cap) or starve legitimate state writes by holding the
+  serialized write lock. A non-object JSON body (literal `null`, a string, an array) now returns
+  the same bare 403 as every other refusal instead of a distinguishable 500.
+
 ## 1.5.29 - 2026-08-26
 
 ### Added

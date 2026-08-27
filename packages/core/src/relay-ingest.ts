@@ -56,6 +56,11 @@ export function deriveRelaySourceReadUrl(sourceId: string, internalKey: string):
  * exactly once whichever position differs, the verdict is accumulated bitwise, and only the
  * final accumulator branches. (`charCodeAt` past the end yields NaN, which `^` coerces to 0, so
  * unequal lengths fold into the accumulator instead of exiting early.)
+ *
+ * The loop runs max(len(a), len(b)) iterations, so the length of the presented credential is
+ * observable through timing. That is accepted: the secrets compared here (publish keys, the
+ * internal relay key) are fixed-length generated values whose length is not itself secret — only
+ * their content is.
  */
 export function constantTimeEqualStrings(a: string, b: string): boolean {
   const length = Math.max(a.length, b.length);
@@ -124,8 +129,15 @@ export function evaluateRelayAuth(args: {
   if (args.request.action === "publish") {
     const sourceId = parseRelaySourcePath(args.request.path);
     if (sourceId !== null) {
-      const source = args.sources.find((entry) => entry.id === sourceId);
-      const expected = source && source.ingestKind === "push" ? source.publishKey : "";
+      // A full scan rather than find(), so the loop's duration does not reveal the matching
+      // source's position in the list (or whether one exists at all). Source ids are effectively
+      // public, so this only closes a low-value oracle — but the scan is free at this list size.
+      let expected = "";
+      for (const entry of args.sources) {
+        if (entry.id === sourceId && entry.ingestKind === "push") {
+          expected = entry.publishKey;
+        }
+      }
       return matches(expected) ? { allow: true, role: "source-publisher" } : { allow: false, reason: "bad-source-key" };
     }
 
