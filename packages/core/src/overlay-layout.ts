@@ -733,6 +733,21 @@ function resolvePlacementBox(
 }
 
 /**
+ * The frame-pixel box a source layer occupies, for callers outside the renderer (M57 stage 2,
+ * Etappe C: the worker's live-attach path draws a PiP window exactly where the sampled panel would
+ * sit). A thin wrapper over the renderer's own placement resolver, deriving the design-grid scale
+ * from the frame width the same way buildOverlaySceneLayout does — so the box the worker overlays
+ * and the box the renderer would have drawn are bit-identical, and the PiP never drifts from where
+ * the skipped snapshot panel used to be. Pure and dependency-free, safe to call off the render path.
+ */
+export function resolveSourceLayerPixelBox(
+  placement: OverlayCustomLayerView,
+  frame: { width: number; height: number }
+): { left: number; top: number; width: number; height: number } {
+  return resolvePlacementBox(placement, overlayScale(frame.width), frame);
+}
+
+/**
  * The chat-game panel: heading, score, the cell grid, and the how-to-play hint.
  *
  * Rendered natively because this is the surface the audience actually plays on — the game is
