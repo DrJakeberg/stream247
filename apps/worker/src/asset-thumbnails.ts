@@ -19,6 +19,15 @@ export function getAssetThumbnailPath(assetId: string, mediaRoot: string): strin
 }
 
 /**
+ * Where a render lands before the rename. The suffix keeps it out of the readers' way — they only
+ * ever open the final .jpg — and makes leftovers recognisable to the disk sweep. Same shape as
+ * getSourceSnapshotTempPath.
+ */
+export function getAssetThumbnailTempPath(assetId: string, mediaRoot: string): string {
+  return `${getAssetThumbnailPath(assetId, mediaRoot)}.tmp`;
+}
+
+/**
  * How many thumbnails one disk-watermark sweep may remove. Thumbnails are small, so the cap is
  * about bounding the number of filesystem operations a single worker cycle performs — the same
  * reasoning as the program feed sweep cap — not about limiting how much space comes back.
@@ -58,6 +67,17 @@ export function selectEvictableThumbnails(args: {
     .slice(0, args.limit ?? THUMBNAIL_SWEEP_LIMIT);
 }
 
+/**
+ * Render the asset's thumbnail, atomically.
+ *
+ * ffmpeg writes the temp path; only a completed render is renamed onto the final name (rename
+ * within one directory is atomic on POSIX). The predecessor deleted the existing thumbnail first
+ * and pointed `ffmpeg -y` straight at the target, so an OOM kill, disk pressure or plain load left
+ * the asset with no picture at all, or with a half-written one that readers would happily serve —
+ * and the previous, perfectly good frame was already gone. A failed render now degrades to
+ * "yesterday's thumbnail", which is not a defect anyone can see. Same pattern as
+ * captureSourceSnapshot.
+ */
 export async function ensureLocalAssetThumbnail(args: {
   assetId: string;
   inputPath: string;
@@ -69,6 +89,7 @@ export async function ensureLocalAssetThumbnail(args: {
   }
 
   const targetPath = getAssetThumbnailPath(args.assetId, args.mediaRoot);
+  const tempPath = getAssetThumbnailTempPath(args.assetId, args.mediaRoot);
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
 
   try {
@@ -97,11 +118,13 @@ export async function ensureLocalAssetThumbnail(args: {
       "1",
       "-vf",
       "scale=640:-2",
-      targetPath
+      tempPath
     ]);
+    await fs.rename(tempPath, targetPath);
     return true;
   } catch {
-    await fs.unlink(targetPath).catch(() => {});
+    // Only the incomplete render is removed. Whatever was already on the final path stays.
+    await fs.unlink(tempPath).catch(() => {});
     return false;
   }
 }

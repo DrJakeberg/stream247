@@ -145,7 +145,7 @@ describe("what the source page should say", () => {
     });
 
     expect(report.headline).toBe(
-      "Nothing came back the last 3 times, the first of them 12 minutes ago. The stored videos are being kept."
+      "Nothing came back the last 3 times, the first of them 12 minutes ago. The 49 stored videos stay playable."
     );
     expect(report.barrenRuns).toBe(3);
     expect(report.alerting).toBe(true);
@@ -160,7 +160,7 @@ describe("what the source page should say", () => {
       nowMs
     });
 
-    expect(report.headline).toBe("The last check failed 2 minutes ago. The stored videos are being kept.");
+    expect(report.headline).toBe("The last check failed 2 minutes ago. The 49 stored videos stay playable.");
     expect(report.alerting).toBe(false);
   });
 
@@ -177,7 +177,7 @@ describe("what the source page should say", () => {
       nowMs
     });
 
-    expect(report.headline).toBe("The last 3 checks failed, the first of them 9 minutes ago. The stored videos are being kept.");
+    expect(report.headline).toBe("The last 3 checks failed, the first of them 9 minutes ago. The 49 stored videos stay playable.");
   });
 
   it("does not promise stored videos it does not have", () => {

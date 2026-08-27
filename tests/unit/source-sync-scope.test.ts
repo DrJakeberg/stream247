@@ -131,14 +131,14 @@ const delivered: SourceSyncRunView = {
 
 describe("decideSourceDroughtIncident", () => {
   it("closes the entry as soon as a check delivers again", () => {
-    expect(decideSourceDroughtIncident({ runs: [delivered, ...barren(9)], storedAssetCount: 49, referencedByPool: true })).toEqual({
+    expect(decideSourceDroughtIncident({ runs: [delivered, ...barren(9)], storedAssetCount: 49, referencedByPool: true, ingestFailedThisCycle: false })).toEqual({
       action: "resolve",
       barrenRuns: 0
     });
   });
 
   it("stays silent while a single empty listing is still a blip", () => {
-    expect(decideSourceDroughtIncident({ runs: barren(1), storedAssetCount: 49, referencedByPool: true })).toEqual({
+    expect(decideSourceDroughtIncident({ runs: barren(1), storedAssetCount: 49, referencedByPool: true, ingestFailedThisCycle: false })).toEqual({
       action: "leave",
       barrenRuns: 1
     });
@@ -147,7 +147,7 @@ describe("decideSourceDroughtIncident", () => {
   it("does not resolve the entry the throw path opened while the source is still barren", () => {
     // The regression this replaces: the old code resolved unconditionally on any non-throwing run,
     // so an empty listing wiped out an entry raised by the previous cycle's genuine failure.
-    expect(decideSourceDroughtIncident({ runs: barren(2), storedAssetCount: 49, referencedByPool: true }).action).toBe("leave");
+    expect(decideSourceDroughtIncident({ runs: barren(2), storedAssetCount: 49, referencedByPool: true, ingestFailedThisCycle: false }).action).toBe("leave");
   });
 
   it("reports once the drought reaches the threshold", () => {
@@ -155,28 +155,59 @@ describe("decideSourceDroughtIncident", () => {
       decideSourceDroughtIncident({
         runs: barren(SOURCE_BARREN_RUN_ALERT_THRESHOLD),
         storedAssetCount: 49,
-        referencedByPool: true
+        referencedByPool: true,
+        ingestFailedThisCycle: false
       })
     ).toEqual({ action: "report", barrenRuns: SOURCE_BARREN_RUN_ALERT_THRESHOLD });
   });
 
   it("reports a source nothing plays from yet, as long as it used to deliver", () => {
-    expect(decideSourceDroughtIncident({ runs: barren(4), storedAssetCount: 12, referencedByPool: false }).action).toBe("report");
+    expect(decideSourceDroughtIncident({ runs: barren(4), storedAssetCount: 12, referencedByPool: false, ingestFailedThisCycle: false }).action).toBe("report");
   });
 
   it("reports an empty source that a pool depends on, because that is the dark channel", () => {
-    expect(decideSourceDroughtIncident({ runs: barren(4), storedAssetCount: 0, referencedByPool: true }).action).toBe("report");
+    expect(decideSourceDroughtIncident({ runs: barren(4), storedAssetCount: 0, referencedByPool: true, ingestFailedThisCycle: false }).action).toBe("report");
   });
 
   it("leaves a source alone that has nothing and that nothing plays from", () => {
     // A configured-but-unused source with an empty archive is not an incident, it is a setting.
     // Reporting it would put a permanently open entry in the list that no action can ever close --
     // which is the exact failure mode M58 removed.
-    expect(decideSourceDroughtIncident({ runs: barren(40), storedAssetCount: 0, referencedByPool: false }).action).toBe("leave");
+    expect(decideSourceDroughtIncident({ runs: barren(40), storedAssetCount: 0, referencedByPool: false, ingestFailedThisCycle: false }).action).toBe("leave");
+  });
+
+  // Why the per-source gate is passed in rather than inferred from the run count.
+  //
+  // v1.5.34 made incident resolution per source via planSourceIncidentResolution, keyed on
+  // failedSourceIds. That set is necessary and not sufficient in both directions, so the two halves
+  // have to compose: an empty listing never enters the set (the gate alone would resolve, which is
+  // the 2026-08-27 failure), and a partial local-library scan enters it while still returning files
+  // (the history alone would resolve, claiming a library is complete while a directory is
+  // unreadable).
+  it("does not resolve on a scan that returned files while part of it was unreadable", () => {
+    expect(
+      decideSourceDroughtIncident({
+        runs: [delivered],
+        storedAssetCount: 49,
+        referencedByPool: true,
+        ingestFailedThisCycle: true
+      })
+    ).toEqual({ action: "leave", barrenRuns: 0 });
+  });
+
+  it("still resolves the same history once the scan completes cleanly", () => {
+    expect(
+      decideSourceDroughtIncident({
+        runs: [delivered],
+        storedAssetCount: 49,
+        referencedByPool: true,
+        ingestFailedThisCycle: false
+      }).action
+    ).toBe("resolve");
   });
 
   it("has nothing to say about a source that has never run", () => {
-    expect(decideSourceDroughtIncident({ runs: [], storedAssetCount: 0, referencedByPool: true })).toEqual({
+    expect(decideSourceDroughtIncident({ runs: [], storedAssetCount: 0, referencedByPool: true, ingestFailedThisCycle: false })).toEqual({
       action: "leave",
       barrenRuns: 0
     });

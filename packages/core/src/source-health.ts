@@ -146,7 +146,15 @@ function describePreservation(storedAssetCount: number): string {
   // The distinction the operator actually needs. Since v1.5.33 a barren sync keeps the stored rows
   // instead of deleting them, so a drought with an archive behind it is a stale channel and a
   // drought without one is a dark channel. Those are different nights.
-  return storedAssetCount > 0 ? "The stored videos are being kept." : "Nothing is stored for it either.";
+  //
+  // The COUNT, not the fact of preservation. Since v1.5.34 the status badge on the same row already
+  // reads "Ingestion failed (assets preserved)", and repeating "the stored videos are being kept"
+  // two centimetres away would be one fact in two wordings — the thing an operator has to reconcile
+  // rather than read. What the badge cannot say is how much is still playable, so that is what this
+  // says.
+  return storedAssetCount > 0
+    ? `The ${storedAssetCount} stored video${storedAssetCount === 1 ? "" : "s"} stay playable.`
+    : "Nothing is stored for it either.";
 }
 
 function describeLastCheck(input: SourceHealthInput, barrenRuns: number): string {
