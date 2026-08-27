@@ -117,3 +117,8 @@ export const TWO_FACTOR_RATE_LIMIT: RateLimitRule = { limit: 8, windowMs: 15 * 6
 // publisher reconnecting in a loop (the relay asks once per connection, not per frame), far too
 // tight for guessing a generated key — and it bounds the audit noise a scanner can produce.
 export const RELAY_AUTH_RATE_LIMIT: RateLimitRule = { limit: 60, windowMs: 60_000 };
+// Keyed on the signed-in account, not the peer: the endpoint is already behind an owner/admin
+// role check, so what is left to bound is a stolen or careless session mining the key in a loop
+// and burying the audit trail underneath it. Ten reveals per quarter hour is far more than the
+// twice an operator needs during an incident, and far too few to be worth automating.
+export const RELAY_ACCESS_REVEAL_RATE_LIMIT: RateLimitRule = { limit: 10, windowMs: 15 * 60_000 };

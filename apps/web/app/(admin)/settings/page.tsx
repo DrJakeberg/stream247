@@ -23,6 +23,7 @@ import { ChannelBlueprintForm } from "@/components/channel-blueprint-form";
 import { DiskWatermarkForm } from "@/components/disk-watermark-form";
 import { FeatureSwitchesForm } from "@/components/feature-switches-form";
 import { FeedTuningForm } from "@/components/feed-tuning-form";
+import { RelayAccessForm } from "@/components/relay-access-form";
 import { ReplayCacheForm } from "@/components/replay-cache-form";
 import { SecretSettingsForm } from "@/components/secret-settings-form";
 import { TwoFactorSettingsForm } from "@/components/two-factor-settings-form";
@@ -226,6 +227,10 @@ export default async function SettingsPage() {
               programFeedFailoverSeconds: programFeedFallback.failoverSeconds
             }}
           />
+          {/* No initial values and no fallback: this group ships a button and nothing else, so the
+              relay access key is absent from the rendered page and only ever arrives through the
+              deliberate, audited, rate-limited reveal. */}
+          <RelayAccessForm />
         </Panel>
 
         <Panel title="Local account security" eyebrow="Security">
