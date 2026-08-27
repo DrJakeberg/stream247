@@ -146,6 +146,7 @@ import {
 } from "./on-air-scene.js";
 import { incrementQueueVersion, prioritizeManualNextAsset } from "./broadcast-queue.js";
 import { getChapterBackfillConfig, probeAssetChapters, selectChapterBackfillCandidates } from "./chapter-backfill.js";
+import { isDirectMediaUrl, planDirectMediaSync } from "./direct-media.js";
 import {
   MEDIA_FILE_EXTENSIONS,
   buildLocalLibraryAssetId,
@@ -1494,15 +1495,6 @@ async function updateProgramFeedRuntimeStatus(): Promise<Awaited<ReturnType<type
   await enforceProgramFeedAudio(feed.playlistPath);
   await enforceProgramFeedProgress(feed);
   return feed;
-}
-
-function isDirectMediaUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return ["http:", "https:"].includes(url.protocol) && mediaExtensions.has(path.extname(url.pathname).toLowerCase());
-  } catch {
-    return false;
-  }
 }
 
 function isResolvableRemoteVideoUrl(value: string): boolean {
@@ -3144,75 +3136,75 @@ async function syncDirectMediaSources(): Promise<void> {
   const directSources = state.sources.filter(
     (source) => source.connectorKind === "direct-media" && (source.enabled ?? true)
   );
-  const directAssets: AssetRecord[] = [];
-  let hasInvalidSource = false;
-  const syncRuns: AppState["sourceSyncRuns"] = [];
+  const startedAt = new Date().toISOString();
+  // One pass decides both which sources produced an asset and which may be emptied, so the two
+  // lists cannot drift apart the way they did when the invalid-URL branch only skipped the first.
+  const plan = planDirectMediaSync(directSources);
+  const directAssets: AssetRecord[] = plan.entries.map(({ source, url }) => ({
+    id: `asset_${source.id}`,
+    sourceId: source.id,
+    title: source.name,
+    path: url,
+    folderPath: buildSourceFolderPath(source.connectorKind, source.name),
+    tags: [],
+    status: "ready",
+    includeInProgramming: true,
+    externalId: source.id,
+    fallbackPriority: 100,
+    isGlobalFallback: false,
+    createdAt: now,
+    updatedAt: now
+  }));
+  const storedBySource = new Map<string, number>();
+  for (const asset of state.assets) {
+    storedBySource.set(asset.sourceId, (storedBySource.get(asset.sourceId) ?? 0) + 1);
+  }
 
-  for (const source of directSources) {
-    const startedAt = new Date().toISOString();
-    const url = source.externalUrl?.trim() ?? "";
-    if (!isDirectMediaUrl(url)) {
-      hasInvalidSource = true;
-      syncRuns.push(buildSourceSyncRun({
-        sourceId: source.id,
-        startedAt,
-        finishedAt: now,
-        status: "error",
-        summary: "Direct media URL validation failed.",
-        discoveredAssets: 0,
-        readyAssets: 0,
-        errorMessage: "Direct media URLs must be http(s) links ending in a supported media file extension."
-      }));
-      continue;
-    }
-
-    directAssets.push({
-      id: `asset_${source.id}`,
-      sourceId: source.id,
-      title: source.name,
-      path: url,
-      folderPath: buildSourceFolderPath(source.connectorKind, source.name),
-      tags: [],
-      status: "ready",
-      includeInProgramming: true,
-      externalId: source.id,
-      fallbackPriority: 100,
-      isGlobalFallback: false,
-      createdAt: now,
-      updatedAt: now
-    });
-    syncRuns.push(buildSourceSyncRun({
+  const syncRuns: AppState["sourceSyncRuns"] = directSources.map((source) => {
+    const invalid = plan.invalidSourceIds.has(source.id);
+    const preservedAssets = invalid ? (storedBySource.get(source.id) ?? 0) : 0;
+    return buildSourceSyncRun({
       sourceId: source.id,
       startedAt,
       finishedAt: now,
-      status: "success",
-      summary: "Direct media URL normalized into a playable asset.",
-      discoveredAssets: 1,
-      readyAssets: 1,
-      errorMessage: ""
-    }));
-  }
+      status: invalid ? "error" : "success",
+      summary: invalid
+        ? preservedAssets > 0
+          ? "Direct media URL validation failed; the stored asset was kept."
+          : "Direct media URL validation failed."
+        : "Direct media URL normalized into a playable asset.",
+      discoveredAssets: invalid ? 0 : 1,
+      readyAssets: invalid ? 0 : 1,
+      errorMessage: invalid ? "Direct media URLs must be http(s) links ending in a supported media file extension." : ""
+    });
+  });
 
   await upsertSources(
     directSources.map((source) => {
-      const valid = isDirectMediaUrl(source.externalUrl?.trim() ?? "");
+      const invalid = plan.invalidSourceIds.has(source.id);
+      const preservedAssets = invalid ? (storedBySource.get(source.id) ?? 0) : 0;
       return {
         ...source,
-        status: valid ? "Ready" : "Invalid URL",
-        notes: valid
-          ? "Direct media URL normalized into the playout asset catalog."
-          : "Direct media sources currently require an http(s) URL ending in a supported media file extension.",
+        status: invalid ? (preservedAssets > 0 ? "Invalid URL (asset preserved)" : "Invalid URL") : "Ready",
+        notes: invalid
+          ? preservedAssets > 0
+            ? "Direct media sources require an http(s) URL ending in a supported media file extension. The previously ingested asset stays available until the URL is fixed."
+            : "Direct media sources currently require an http(s) URL ending in a supported media file extension."
+          : "Direct media URL normalized into the playout asset catalog.",
         lastSyncedAt: now
       };
     })
   );
-  await replaceAssetsForSourceIds(
-    directSources.map((source) => source.id),
-    directAssets
-  );
+  await replaceSyncedSourceAssets({
+    connector: "direct-media",
+    sources: directSources,
+    storedAssets: state.assets,
+    incomingAssets: directAssets,
+    failedSourceIds: plan.invalidSourceIds
+  });
   await appendSourceSyncRuns(syncRuns);
 
-  if (hasInvalidSource) {
+  if (plan.invalidSourceIds.size > 0) {
     await upsertIncident({
       scope: "source",
       severity: "warning",
@@ -3544,6 +3536,8 @@ async function syncTwitchVodSources(): Promise<void> {
     const isValid =
       source.connectorKind === "twitch-vod" ? isLikelyTwitchVodUrl(externalUrl) : isLikelyTwitchChannelUrl(externalUrl);
     if (!isValid) {
+      // A URL that fails validation is not evidence the archive is gone — the stored VODs stay.
+      failedSourceIds.add(source.id);
       syncRuns.push(buildSourceSyncRun({
         sourceId: source.id,
         startedAt,
