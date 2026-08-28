@@ -9,7 +9,7 @@ import {
 } from "@stream247/core";
 import type { AppState, EngagementEventRecord } from "@stream247/db";
 import { appendEngagementEventRecord } from "@stream247/db";
-import { logRuntimeEvent } from "./runtime-log";
+import { logRuntimeEvent } from "./runtime-log.js";
 
 // Twitch pings roughly every five minutes; silence past six means the connection is gone even if
 // the socket still reports itself open.
