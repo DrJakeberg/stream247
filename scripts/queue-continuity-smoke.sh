@@ -157,7 +157,7 @@ require_command docker
 . "$(dirname "$0")/lib/ffmpeg-fallback.sh"
 require_command wget
 
-mkdir -p "$TMP_DIR/media" "$TMP_DIR/postgres" "$TMP_DIR/redis" "$TMP_DIR/output"
+mkdir -p "$TMP_DIR/media" "$TMP_DIR/postgres" "$TMP_DIR/output"
 
 enable_ffmpeg_fallback "$TMP_DIR"
 
@@ -173,7 +173,6 @@ POSTGRES_DB=stream247
 POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247
 DATABASE_URL=postgresql://stream247:stream247@postgres:5432/stream247
-REDIS_URL=redis://redis:6379
 STREAM247_WEB_IMAGE=stream247-web:test
 STREAM247_WORKER_IMAGE=stream247-worker:test
 STREAM247_PLAYOUT_IMAGE=stream247-worker:test
@@ -205,9 +204,6 @@ services:
   postgres:
     volumes:
       - ${TMP_DIR}/postgres:/var/lib/postgresql/data
-  redis:
-    volumes:
-      - ${TMP_DIR}/redis:/data
 EOF
 
 if [ -f "$ROOT_ENV_FILE" ]; then

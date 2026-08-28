@@ -20,7 +20,6 @@ SECONDARY_OUTPUT_FILE="$SECONDARY_OUTPUT_DIR/secondary.flv"
 FIXTURE_DIR="$TMP_DIR/fixtures"
 MEDIA_DIR="$TMP_DIR/media"
 POSTGRES_DIR="$TMP_DIR/postgres"
-REDIS_DIR="$TMP_DIR/redis"
 BASE_URL="http://127.0.0.1:${PORT}"
 PROGRAM_A_FILE="runtime-program-a.mp4"
 PROGRAM_B_FILE="runtime-program-b.mp4"
@@ -277,7 +276,7 @@ require_command docker
 . "$(dirname "$0")/lib/ffmpeg-fallback.sh"
 require_command jq
 
-mkdir -p "$FIXTURE_DIR" "$MEDIA_DIR" "$POSTGRES_DIR" "$REDIS_DIR" "$PRIMARY_OUTPUT_DIR" "$SECONDARY_OUTPUT_DIR"
+mkdir -p "$FIXTURE_DIR" "$MEDIA_DIR" "$POSTGRES_DIR" "$PRIMARY_OUTPUT_DIR" "$SECONDARY_OUTPUT_DIR"
 
 enable_ffmpeg_fallback "$TMP_DIR"
 touch "$COOKIE_JAR"
@@ -298,7 +297,6 @@ POSTGRES_DB=stream247
 POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247
 DATABASE_URL=postgresql://stream247:stream247@postgres:5432/stream247
-REDIS_URL=redis://redis:6379
 STREAM247_WEB_IMAGE=stream247-web:test
 STREAM247_WORKER_IMAGE=stream247-worker:test
 STREAM247_PLAYOUT_IMAGE=stream247-worker:test
@@ -330,9 +328,6 @@ services:
   postgres:
     volumes:
       - ${POSTGRES_DIR}:/var/lib/postgresql/data
-  redis:
-    volumes:
-      - ${REDIS_DIR}:/data
   fixtures:
     image: python:3.12-alpine
     command: ["sh", "-c", "python -m http.server 8000 -d /fixtures"]

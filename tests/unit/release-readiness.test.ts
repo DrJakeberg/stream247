@@ -379,7 +379,7 @@ describe("release readiness files", () => {
   });
 
   it("adds restart policies to the always-on production services", () => {
-    for (const serviceName of ["traefik", "web", "worker", "relay", "playout", "uplink", "postgres", "redis"]) {
+    for (const serviceName of ["traefik", "web", "worker", "relay", "playout", "uplink", "postgres"]) {
       expect(extractComposeServiceBlock(serviceName)).toContain("restart: unless-stopped");
     }
   });

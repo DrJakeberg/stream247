@@ -1317,7 +1317,7 @@ link points at it. Everything Twitch-facing therefore talks to the wrong room to
 | M53 | Feature | Next | Done | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
 | M54 | Feature | Next | Done | Chat game framework with Snake as the first game (emote-per-direction, moves only on input); Minesweeper (chat digs by coordinates like "b3") and 2048 (snake's emote map on a fixed 4x4 board) follow on the same framework |
 | M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
-| M56 | UX | Now | In progress | Every operational decision configurable in the GUI, `.env` demoted to fallback. Part 1 done: encoder quality, disk watermark, engagement/schedule-sync feature switches, EventSub secret. Part 2 done: replay (VOD) cache family, watchdog/stall thresholds, reconnect + program-feed tuning — clamped resolvers in core, three folded admin groups with partial routes; SMTP/alert family confirmed already GUI-complete. Deliberately env-only: cache root, relay topology, loop stall guard. Open: the unused redis service in compose |
+| M56 | UX | Now | Done | Every operational decision configurable in the GUI, `.env` demoted to fallback. Part 1 done: encoder quality, disk watermark, engagement/schedule-sync feature switches, EventSub secret. Part 2 done: replay (VOD) cache family, watchdog/stall thresholds, reconnect + program-feed tuning — clamped resolvers in core, three folded admin groups with partial routes; SMTP/alert family confirmed already GUI-complete. Deliberately env-only: cache root, relay topology, loop stall guard. Part 3 done: the unused redis service is out of compose, the stack scripts, the env examples and the docs |
 | M57 | Feature | Now | In progress | Embedded video sources as scene layers. Stage 1 done: source layer kind (placement + reference), encrypted feed store, snapshot sampler at managed cadence rendering through the native overlay — plus logo/image/text layers on air. Stage 2 in progress: ingest foundation + attach decision (A+B) and the live attach itself (C+D) done — push ingest via relay with HTTP auth, publish keys, derived internal read URLs, presence poll, and the third ffmpeg input wired as a PiP under the scene with audio mixed at the configured gain, breaker armed on a failed attach; Etappe E done — the audited owner/admin reveal of the relay rollback lines (the emergency path relay auth had made unusable), the live source gain field with the known-duration caveat, and the last attach decision shown per pushed source (migration `20260826_004`); open: a mandatory DT soak gate before any deploy, plus per-layer cadence |
 | M58 | Ops | Now | Done | Make the incident list truthful: classify every fingerprint family as a lasting state or a finished event, close event incidents once their area is provably healthy, and stop the per-asset fingerprint explosion |
 
@@ -1456,8 +1456,8 @@ value contradicting the running compose file would be a lie with a save button),
 `STREAM247_LOOP_STALL_TIMEOUT_SECONDS` (the process's own self-protection; the GUI must not be
 able to lower the guard that catches a wedged worker).
 
-Still open for later parts: the redis service that compose still provisions although no code
-reads it.
+Closed the last open part: the redis service compose provisioned although no code read it is
+gone from both compose files, the five stack-generating scripts, both env examples and the docs.
 
 - Acceptance: an operator changes the encoder preset in the studio, the next encoder start uses
   it; clearing the field returns the install to its env-driven behaviour bit for bit

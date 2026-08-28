@@ -347,7 +347,6 @@ Important:
 - optional built-in Traefik profile for HTTPS and Let's Encrypt
 - persistent storage for:
   - PostgreSQL
-  - Redis
   - `data/media`
 
 See [docs/deployment.md](docs/deployment.md) for the deployment-focused guide.
@@ -542,7 +541,7 @@ Notes:
 1. Copy `.env.example` to `.env`.
 2. Start dependencies:
    ```bash
-   docker compose up -d postgres redis
+   docker compose up -d postgres
    ```
 3. Install dependencies:
    ```bash
