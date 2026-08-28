@@ -71,8 +71,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
   worker:
     image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.20}
     restart: unless-stopped
@@ -90,8 +88,6 @@ services:
       start_period: 60s
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
   relay:
     image: ${STREAM247_RELAY_IMAGE:-bluenviron/mediamtx:1.15.4}
@@ -131,8 +127,6 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
   uplink:
     image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.20}
     restart: unless-stopped
@@ -154,8 +148,6 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -172,15 +164,3 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    logging: *default-logging
-    volumes:
-      - ./data/redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
