@@ -85,13 +85,33 @@ for _ in $(seq 1 40); do
   sleep 2
 done
 
-RUNNING_SERVICES="$(
-  docker compose --project-name "$PROJECT_NAME" --env-file "$ENV_FILE" -f docker-compose.yml -f "$OVERRIDE_FILE" ps --services --status running
-)"
+# Asked repeatedly, not once. The wait above ends as soon as web answers its health check, and the
+# runtime containers restart on their own while a fresh install has nothing to play — so a single
+# reading can land in a restart window and report a healthy service as missing. That is what turned
+# this smoke red on CI while it passed on every developer machine. The assertion itself is
+# unchanged: all four must be running, this only stops demanding it in one particular instant.
+RUNTIME_SERVICES_UP=0
+for _ in $(seq 1 30); do
+  RUNNING_SERVICES="$(
+    docker compose --project-name "$PROJECT_NAME" --env-file "$ENV_FILE" -f docker-compose.yml -f "$OVERRIDE_FILE" ps --services --status running
+  )"
 
-printf '%s\n' "$RUNNING_SERVICES" | grep -q '^worker$'
-printf '%s\n' "$RUNNING_SERVICES" | grep -q '^relay$'
-printf '%s\n' "$RUNNING_SERVICES" | grep -q '^playout$'
-printf '%s\n' "$RUNNING_SERVICES" | grep -q '^uplink$'
+  if printf '%s\n' "$RUNNING_SERVICES" | grep -q '^worker$' &&
+    printf '%s\n' "$RUNNING_SERVICES" | grep -q '^relay$' &&
+    printf '%s\n' "$RUNNING_SERVICES" | grep -q '^playout$' &&
+    printf '%s\n' "$RUNNING_SERVICES" | grep -q '^uplink$'; then
+    RUNTIME_SERVICES_UP=1
+    break
+  fi
+
+  sleep 2
+done
+
+if [ "$RUNTIME_SERVICES_UP" -ne 1 ]; then
+  echo "Runtime services never all reported running. Last reading:" >&2
+  printf '%s\n' "$RUNNING_SERVICES" >&2
+  docker compose --project-name "$PROJECT_NAME" --env-file "$ENV_FILE" -f docker-compose.yml -f "$OVERRIDE_FILE" ps >&2
+  exit 1
+fi
 
 wget -qO- "http://127.0.0.1:${PORT}/api/system/readiness" >/dev/null
