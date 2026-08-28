@@ -45,6 +45,29 @@
   has run and what it costs the schedule — and reports the count of still-playable items rather
   than repeating the badge's "(assets preserved)" back at the operator two centimetres away
 
+### Removed
+
+- the `redis` service. It is not being retired after outliving its use — it was never used at all.
+  Compose provisioned a `redis:7-alpine` container with a `./data/redis` volume and a `redis-cli
+  ping` healthcheck, and `web`, `worker`, `playout` and `uplink` each declared
+  `depends_on: redis: condition: service_healthy`, so four services waited on a container no code
+  ever opened a connection to. There is no redis client anywhere in `apps/` or `packages/` and no
+  `redis` or `ioredis` dependency in any `package.json`. The single thing that ever read `REDIS_URL`
+  was `packages/config`'s `getConfig`, deleted outright in M56 part 1 as dead code; the container
+  it pointed at outlived it by four milestones. Removing it takes a container, a bind mount, a
+  healthcheck and four start-order gates out of every install, and shortens cold start by however
+  long the redis healthcheck took to pass. Also gone from `docker-compose.dev.yml`, the five
+  scripts that generate their own stacks (`dev-stack.sh`, `e2e-smoke.sh`,
+  `fresh-compose-bootstrap-smoke.sh`, `queue-continuity-smoke.sh`, `runtime-parity-smoke.sh`), both
+  `.env` examples, and the docs that described it as part of the persistence model. No smoke script
+  needed a count adjusted — they all assert on service names, not on how many containers came up.
+- for operators, at the next stack update: the `redis` container is stopped and removed and the
+  stack starts one service fewer. Its bind mount `./data/redis` remains on disk as an empty
+  leftover directory and can be deleted by hand whenever convenient. Nothing to migrate and nothing
+  to back up first, because nothing was ever stored in it. A stale `REDIS_URL` left in an existing
+  `stack.env` is inert. This does not reach a running install on its own — it lands the next time
+  the stack file itself is updated, not when image tags are re-pinned
+
 ## 1.5.34 - 2026-08-28
 
 ### Fixed
