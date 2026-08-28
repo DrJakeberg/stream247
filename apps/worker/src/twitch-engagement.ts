@@ -454,6 +454,12 @@ export class TwitchChatBridge {
     // blank on a reconnect and refills as the room talks.
     this.onOverlayMessagesChanged?.();
     if (reason === "disabled") {
+      // Turning chat off must also clear a refusal: the incident asks the operator to reconnect
+      // the account, and that is no longer something they need to do once chat is disabled.
+      this.loginRejectedAt = null;
+      this.loginRejectedToken = "";
+      this.loginRejectedReason = "";
+      this.setPhase("idle");
       await appendChatStatus("disconnected", "disabled");
     }
   }

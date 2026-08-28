@@ -1035,6 +1035,18 @@ describe("twitch chat login handling", () => {
     expect(bridge["isLoginCoolingDown"]("fresh-token")).toBe(false);
   });
 
+  it("clears a refusal when chat is switched off, so the incident cannot outlive it", async () => {
+    const bridge = new TwitchChatBridge();
+    bridge["loginRejectedAt"] = Date.now();
+    bridge["loginRejectedToken"] = "identity-token";
+    bridge["phase"] = "login-rejected";
+
+    await bridge.sync(chatBridgeState(), {} as NodeJS.ProcessEnv);
+
+    expect(bridge.getConnectionPhase()).toBe("idle");
+    expect(bridge["isLoginCoolingDown"]("identity-token")).toBe(false);
+  });
+
   it("puts the connection state into words the operator can act on", () => {
     expect(describeChatConnectionPhase("connected")).toBe("Chat connected");
     expect(describeChatConnectionPhase("login-rejected")).toBe(

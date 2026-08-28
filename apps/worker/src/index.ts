@@ -448,7 +448,9 @@ const twitchChatBridge = new TwitchChatBridge({
       return;
     }
 
-    if (phase === "connected") {
+    // "idle" means chat was switched off, which retires the request to reconnect just as a
+    // successful login does — otherwise the incident would outlive the feature it describes.
+    if (phase === "connected" || phase === "idle") {
       void resolveIncident("twitch.chat.login-rejected", describeChatConnectionPhase(phase)).catch(() => undefined);
     }
   }
