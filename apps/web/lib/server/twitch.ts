@@ -82,7 +82,14 @@ export async function getTwitchAuthorizeUrl(kind: OAuthFlowKind = "broadcaster-c
             "channel:read:redemptions",
             "moderator:manage:chat_settings",
             "moderator:read:followers",
-            "channel:read:subscriptions"
+            "channel:read:subscriptions",
+            // The IRC bridge authenticates with this token. Without chat:read Twitch refuses the
+            // login outright ("Login unsuccessful") and closes the socket, which is not
+            // distinguishable from a network fault at the socket level -- chat simply never
+            // arrived, and every poll closed with no votes. chat:edit is what lets the bridge
+            // answer a moderator check-in in the room it is reading.
+            "chat:read",
+            "chat:edit"
           ].join(" ");
   const redirectUri =
     kind === "team-login"
