@@ -4,6 +4,28 @@
 
 ### Fixed
 
+- Twitch chat never connected, and said it did. The identity OAuth flow asked for seven scopes,
+  none of them `chat:read` — but the IRC bridge authenticates with that same token, so Twitch
+  refused every login. Measured against the running DUT on 2026-08-28: `/oauth2/validate` returns
+  the token's scopes with no chat scope among them, and an IRC handshake using it answers
+  `:tmi.twitch.tv NOTICE * :Login unsuccessful` and closes the socket ten seconds later. The bridge
+  saw none of that. `parseTwitchIrcMessage` matches PRIVMSG and nothing else, so the refusal fell
+  through unread, and `sync()` reconnected into the same refusal on every worker cycle — roughly
+  fifteen seconds connected, fifteen seconds gone, around the clock. It also wrote its `connected`
+  status from the TLS connect callback, before Twitch had looked at the token at all, so the stored
+  status alternated `connected`/`disconnected` and read as a flaky network rather than a login that
+  could never succeed. Every poll closed `no-votes` with `voterCount: 0` because no chat line ever
+  arrived. Four changes: the flow now requests `chat:read` and `chat:edit`; the bridge reads NOTICE
+  and recognises Twitch's refusal wordings; `connected` is reported only on the `001` welcome, the
+  one signal that means the token was accepted; and a refused login goes into a five-minute
+  cooldown keyed to the token, so it stops hammering Twitch but retries immediately once the
+  operator reconnects the account. The refusal is raised as a Twitch incident quoting what Twitch
+  said, resolved by the next real login, and the opening handshake lines are logged — capped, and
+  never the token — so the next occurrence is readable from the log instead of inferred from socket
+  counts. PING/PONG was checked and was already correct; it was not the cause.
+  **Existing installs must reconnect the Twitch account once**: tokens already stored carry the old
+  grant, and no code change can add a scope to a token Twitch has already issued.
+
 - a source that answers with nothing no longer closes its own incident. v1.5.34 made the resolve
   per source, which was necessary and not sufficient: it keys on `failedSourceIds`, and a listing
   that comes back empty without throwing never enters that set. So both connector syncs still
