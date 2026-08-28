@@ -11,6 +11,11 @@ import { SourceCreateForm } from "@/components/source-create-form";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { getSourceHealthSnapshot, type AppState } from "@/lib/server/state";
 
+/** "1 pool", "2 pools" — the row read "In 1 pools" until a source happened to sit in exactly one. */
+function countOf(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 function buildSourceAssetCounts(state: AppState) {
   const assetCountBySource = new Map<string, number>();
   const readyAssetCountBySource = new Map<string, number>();
@@ -75,9 +80,9 @@ export function SourcesWorkspacePanels({ state }: { state: AppState }) {
                   {snapshot.health.impact ? <div className="danger">{snapshot.health.impact}</div> : null}
                   {snapshot.latestRun?.errorMessage ? <div className="danger">{snapshot.latestRun.errorMessage}</div> : null}
                   <div className="stats-row">
-                    <span className="subtle">In {snapshot.references.pools.length} pools</span>
-                    <span className="subtle">{snapshot.references.scheduleBlocks.length} scheduled blocks</span>
-                    <span className="subtle">{snapshot.openIncidentCount} open incidents</span>
+                    <span className="subtle">In {countOf(snapshot.references.pools.length, "pool")}</span>
+                    <span className="subtle">{countOf(snapshot.references.scheduleBlocks.length, "scheduled block")}</span>
+                    <span className="subtle">{countOf(snapshot.openIncidentCount, "open incident")}</span>
                   </div>
                   <div className="stats-row">
                     <Link className="subtle-link" href={buildWorkspaceHref("program", "sources", { sourceId: source.id })}>

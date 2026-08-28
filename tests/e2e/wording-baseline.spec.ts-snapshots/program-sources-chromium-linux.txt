@@ -89,11 +89,10 @@ Pending scan
 Enabled
 2 assets
 2 ready
-Not synced yet
-No sync run recorded yet.
-2 pool refs
-20 schedule refs
-0 open incident(s)
+Never checked yet.
+In 2 pools
+20 scheduled blocks
+0 open incidents
 Open detail
 Change this source
 Twitch Archive
@@ -102,11 +101,10 @@ Planned
 Enabled
 0 assets
 0 ready
-Not synced yet
-No sync run recorded yet.
-1 pool refs
-0 schedule refs
-0 open incident(s)
+Never checked yet.
+In 1 pool
+0 scheduled blocks
+0 open incidents
 Open detail
 Change this source
 YouTube Playlist
@@ -115,10 +113,9 @@ Planned
 Enabled
 0 assets
 0 ready
-Not synced yet
-No sync run recorded yet.
-2 pool refs
-0 schedule refs
-0 open incident(s)
+Never checked yet.
+In 2 pools
+0 scheduled blocks
+0 open incidents
 Open detail
 Change this source
