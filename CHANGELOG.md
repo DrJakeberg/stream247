@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.35 - 2026-08-28
+
 ### Fixed
 
 - Twitch chat never connected, and said it did. The identity OAuth flow asked for seven scopes,
