@@ -219,6 +219,13 @@ const STATE_FAMILIES: IncidentFamily[] = [
     why: "The stored token cannot be refreshed, so the connection stays unusable until a refresh works."
   },
   {
+    fingerprint: "twitch.chat.login-rejected",
+    keyed: false,
+    kind: "state",
+    area: "twitch",
+    why: "Twitch refuses the chat login while the token lacks chat access; a successful login closes it."
+  },
+  {
     fingerprint: "twitch.reconcile.failed",
     keyed: false,
     kind: "state",

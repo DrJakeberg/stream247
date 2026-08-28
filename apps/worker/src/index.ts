@@ -288,7 +288,7 @@ import {
   type WorkerStreamOutputSettings
 } from "./output-settings.js";
 import { createTwitchUserIdResolver } from "./twitch-broadcast-channel.js";
-import { TwitchChatBridge } from "./twitch-engagement.js";
+import { describeChatConnectionPhase, TwitchChatBridge } from "./twitch-engagement.js";
 import { syncTwitchEventSubSubscriptions } from "./twitch-eventsub.js";
 import { fetchTwitchLiveStatus } from "./twitch-live-status.js";
 import { decideTwitchChannelMetadataWrite } from "./twitch-sync-policy.js";
@@ -431,6 +431,28 @@ const twitchChatBridge = new TwitchChatBridge({
   // must leave the broadcast in about a second, not in up to thirty.
   onOverlayMessagesChanged() {
     scheduleChatOverlayFlush();
+  },
+  // A refused login is the one chat fault an operator has to act on: the token cannot read chat,
+  // so no amount of reconnecting will help. It gets an incident rather than another disconnect
+  // line, because the fix is granting chat access and reconnecting the Twitch account.
+  onConnectionPhaseChanged(phase, detail) {
+    logRuntimeEvent("chat.connection.phase", { phase, detail });
+    if (phase === "login-rejected") {
+      void upsertIncident({
+        scope: "twitch",
+        severity: "warning",
+        title: "Twitch chat login refused",
+        message: `${describeChatConnectionPhase(phase)}. Twitch said: ${detail || "login refused"}.`,
+        fingerprint: "twitch.chat.login-rejected"
+      }).catch(() => undefined);
+      return;
+    }
+
+    // "idle" means chat was switched off, which retires the request to reconnect just as a
+    // successful login does — otherwise the incident would outlive the feature it describes.
+    if (phase === "connected" || phase === "idle") {
+      void resolveIncident("twitch.chat.login-rejected", describeChatConnectionPhase(phase)).catch(() => undefined);
+    }
   }
 });
 // Latest values the IRC handler needs but cannot fetch itself, refreshed by the worker cycle.

@@ -9,10 +9,83 @@ import {
 } from "@stream247/core";
 import type { AppState, EngagementEventRecord } from "@stream247/db";
 import { appendEngagementEventRecord } from "@stream247/db";
+import { logRuntimeEvent } from "./runtime-log";
 
 // Twitch pings roughly every five minutes; silence past six means the connection is gone even if
 // the socket still reports itself open.
 export const CHAT_IDLE_TIMEOUT_MS = 6 * 60_000;
+
+/**
+ * How long the bridge waits before trying a login Twitch already refused.
+ *
+ * A refused login is not a transient fault: the token is missing a scope, or it is expired or
+ * revoked. Retrying it on the worker cycle reconnected roughly every fifteen seconds forever,
+ * which is a login flood against Twitch that cannot succeed and buries the one line that explains
+ * why. The cooldown is keyed to the token, so reconnecting the account retries immediately rather
+ * than waiting this out.
+ */
+export const CHAT_LOGIN_REJECTED_COOLDOWN_MS = 5 * 60_000;
+
+/** What the bridge is actually doing, as opposed to whether a socket happens to be open. */
+export type ChatConnectionPhase = "idle" | "connecting" | "connected" | "login-rejected" | "waiting";
+
+/**
+ * The connection phase as a sentence for the operator.
+ *
+ * "disconnected" was the only word chat ever had, and it covered a refused login just as happily
+ * as a network blip -- so the one state that needs an operator action looked like the one that
+ * needs nothing.
+ */
+export function describeChatConnectionPhase(phase: ChatConnectionPhase): string {
+  switch (phase) {
+    case "connected":
+      return "Chat connected";
+    case "connecting":
+      return "Chat connecting";
+    case "login-rejected":
+      return "Chat login refused by Twitch — reconnect the Twitch account to grant chat access";
+    case "waiting":
+      return "Chat waiting before the next login attempt";
+    default:
+      return "Chat idle";
+  }
+}
+
+/**
+ * Reads a NOTICE line. Twitch reports a refused login only this way -- there is no numeric and no
+ * error frame -- and it then closes the socket a few seconds later without further explanation.
+ */
+export function parseTwitchIrcNotice(line: string): { target: string; message: string } | null {
+  const match = line.match(/^(?:@[^ ]+ )?:[^ ]+ NOTICE (?<target>[^ ]+) :(?<message>.*)$/);
+  if (!match?.groups) {
+    return null;
+  }
+
+  return { target: match.groups.target, message: match.groups.message.trim() };
+}
+
+/** The wordings Twitch uses to refuse a login. All of them mean: this token will never work. */
+export function isTwitchLoginFailureNotice(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("login unsuccessful") ||
+    normalized.includes("login authentication failed") ||
+    normalized.includes("improperly formatted auth") ||
+    normalized.includes("invalid nick")
+  );
+}
+
+export function isChatLoginRejectedCoolingDown(args: {
+  rejectedAt: number | null;
+  now: number;
+  cooldownMs?: number;
+}): boolean {
+  if (args.rejectedAt === null) {
+    return false;
+  }
+
+  return args.now - args.rejectedAt <= (args.cooldownMs ?? CHAT_LOGIN_REJECTED_COOLDOWN_MS);
+}
 
 export type TwitchChatMessage = {
   id: string;
@@ -65,6 +138,9 @@ type TwitchChatBridgeOptions = {
    * a moderation line removed something, or a disconnect cleared the buffer. The worker throttles
    * the resulting flush, so firing per change is cheap. */
   onOverlayMessagesChanged?: () => void;
+  /** Fired when the bridge changes phase, so the worker can raise or clear the operator incident.
+   * `detail` carries the server's own words on a refusal — never the token. */
+  onConnectionPhaseChanged?: (phase: ChatConnectionPhase, detail: string) => void;
 };
 
 /**
@@ -191,14 +267,20 @@ export function createChatRateLimiter(limitPerMinute: number) {
   };
 }
 
-async function appendChatStatus(status: "connected" | "disconnected", message: string): Promise<void> {
+async function appendChatStatus(
+  status: "connected" | "disconnected" | "login-rejected",
+  message: string
+): Promise<void> {
+  // The status line is a report about the connection, so it must never be able to break the
+  // connection: a database that is briefly unreachable would otherwise reject straight out of
+  // sync() and skip the reconnect this line was only describing.
   await appendEngagementEventRecord({
     id: `chat-status-${status}`,
     kind: "status",
     actor: "chat",
     message,
     createdAt: new Date().toISOString()
-  });
+  }).catch(() => undefined);
 }
 
 export class TwitchChatBridge {
@@ -213,14 +295,56 @@ export class TwitchChatBridge {
   private moderationConfig: AppState["moderation"] = createDefaultModerationConfig();
   /** Last time the socket produced anything; 0 while never connected. */
   private lastActivityAt = 0;
+  private phase: ChatConnectionPhase = "idle";
+  /** When Twitch last refused a login, and the token it refused. Null once a login succeeds. */
+  private loginRejectedAt: number | null = null;
+  private loginRejectedToken = "";
+  private loginRejectedReason = "";
+  /** The token the current connection authenticated with, so a refusal can be pinned to it. */
+  private activeToken = "";
+  /** How many handshake lines still get logged on the current connection. Twitch answers the
+   * handshake in a handful of lines and then streams chat forever; logging the whole stream would
+   * be both useless and a privacy problem, so only the opening lines are kept. */
+  private handshakeLogBudget = 0;
   private readonly onModeratorPresenceCheckIn?: TwitchChatBridgeOptions["onModeratorPresenceCheckIn"];
   private readonly onChatMessage?: TwitchChatBridgeOptions["onChatMessage"];
   private readonly onOverlayMessagesChanged?: TwitchChatBridgeOptions["onOverlayMessagesChanged"];
+  private readonly onConnectionPhaseChanged?: TwitchChatBridgeOptions["onConnectionPhaseChanged"];
 
   constructor(options: TwitchChatBridgeOptions = {}) {
     this.onModeratorPresenceCheckIn = options.onModeratorPresenceCheckIn;
     this.onChatMessage = options.onChatMessage;
     this.onOverlayMessagesChanged = options.onOverlayMessagesChanged;
+    this.onConnectionPhaseChanged = options.onConnectionPhaseChanged;
+  }
+
+  getConnectionPhase(): ChatConnectionPhase {
+    return this.phase;
+  }
+
+  /** The refusal in the server's own words, for the incident the operator reads. */
+  getLoginRejectedReason(): string {
+    return this.loginRejectedReason;
+  }
+
+  private setPhase(phase: ChatConnectionPhase, detail = ""): void {
+    if (this.phase === phase) {
+      return;
+    }
+    this.phase = phase;
+    this.onConnectionPhaseChanged?.(phase, detail);
+  }
+
+  /**
+   * True while a refusal of *this same token* is still cooling down. A different token means the
+   * operator reconnected the account, which is exactly the fix — so it retries at once.
+   */
+  private isLoginCoolingDown(accessToken: string, nowMs = Date.now()): boolean {
+    if (this.loginRejectedToken !== accessToken) {
+      return false;
+    }
+
+    return isChatLoginRejectedCoolingDown({ rejectedAt: this.loginRejectedAt, now: nowMs });
   }
 
   getRecentMessages(): EngagementEventRecord[] {
@@ -244,7 +368,17 @@ export class TwitchChatBridge {
       return;
     }
 
+    // A login Twitch already refused must not be retried on every cycle. Without this the bridge
+    // reconnected roughly every fifteen seconds around the clock: TLS came up, Twitch answered
+    // "Login unsuccessful", closed the socket, and the next cycle started over.
+    if (this.isLoginCoolingDown(accessToken)) {
+      this.setPhase("login-rejected", this.loginRejectedReason);
+      return;
+    }
+
     await this.disconnect("reconnecting");
+    this.setPhase("connecting");
+    this.activeToken = accessToken;
     this.channel = channel;
     this.limiter = createChatRateLimiter(state.engagement.rateLimitPerMinute);
     this.socket = tls.connect({ host: "irc.chat.twitch.tv", port: 6697, servername: "irc.chat.twitch.tv" }, () => {
@@ -254,8 +388,11 @@ export class TwitchChatBridge {
       // differ, and sending the channel as NICK would fail the login outright.
       this.socket?.write(`NICK ${nick}\r\n`);
       this.socket?.write(`JOIN #${channel}\r\n`);
-      void appendChatStatus("connected", "connected");
+      // Deliberately no "connected" status here. A completed TLS handshake says only that the
+      // socket opened; Twitch has not yet looked at the token. Reporting success at this point is
+      // what made a permanently refused login read as a healthy connection that kept dropping.
     });
+    this.handshakeLogBudget = 8;
 
     this.socket.setEncoding("utf8");
     this.lastActivityAt = Date.now();
@@ -275,11 +412,24 @@ export class TwitchChatBridge {
       this.handleChunk(String(chunk));
     });
     this.socket.on("error", () => {
-      void appendChatStatus("disconnected", "disconnected");
+      this.noteDisconnected();
     });
     this.socket.on("close", () => {
-      void appendChatStatus("disconnected", "disconnected");
+      this.noteDisconnected();
     });
+  }
+
+  /**
+   * The socket ended. A close that follows a refusal must keep the refused phase: Twitch closes a
+   * refused connection a few seconds after the NOTICE, and letting that close overwrite the phase
+   * would hide the reason behind a generic disconnect again.
+   */
+  private noteDisconnected(): void {
+    if (this.phase === "login-rejected") {
+      return;
+    }
+    this.setPhase("waiting");
+    void appendChatStatus("disconnected", "disconnected");
   }
 
   /**
@@ -304,6 +454,12 @@ export class TwitchChatBridge {
     // blank on a reconnect and refills as the room talks.
     this.onOverlayMessagesChanged?.();
     if (reason === "disabled") {
+      // Turning chat off must also clear a refusal: the incident asks the operator to reconnect
+      // the account, and that is no longer something they need to do once chat is disabled.
+      this.loginRejectedAt = null;
+      this.loginRejectedToken = "";
+      this.loginRejectedReason = "";
+      this.setPhase("idle");
       await appendChatStatus("disconnected", "disabled");
     }
   }
@@ -324,6 +480,42 @@ export class TwitchChatBridge {
     for (const line of lines) {
       if (line.startsWith("PING ")) {
         this.socket?.write(line.replace("PING", "PONG") + "\r\n");
+        continue;
+      }
+
+      // The opening lines of a connection, kept so the next failure is readable from the log.
+      // Only the handshake, and only lines the server sends about the session -- never chat, and
+      // never anything carrying the token, which is only ever written and never echoed back.
+      if (this.handshakeLogBudget > 0 && !line.includes("PRIVMSG")) {
+        this.handshakeLogBudget -= 1;
+        logRuntimeEvent("chat.handshake", { line: line.slice(0, 200) });
+      }
+
+      // Twitch reports a refused login as a NOTICE and nothing else, then closes the socket a few
+      // seconds later. Until this was read, the refusal fell through the PRIVMSG-only parser and
+      // the bridge saw only an unexplained disconnect.
+      const notice = parseTwitchIrcNotice(line);
+      if (notice) {
+        if (isTwitchLoginFailureNotice(notice.message)) {
+          this.loginRejectedAt = Date.now();
+          this.loginRejectedToken = this.activeToken;
+          this.loginRejectedReason = notice.message;
+          this.setPhase("login-rejected", notice.message);
+          void appendChatStatus("login-rejected", describeChatConnectionPhase("login-rejected"));
+          // Closing here rather than waiting for Twitch keeps the cooldown anchored to the refusal.
+          this.socket?.destroy();
+        }
+        continue;
+      }
+
+      // 001 is the first thing Twitch sends once it has accepted the token: the only honest
+      // "connected" signal there is.
+      if (/^:[^ ]+ 001 /.test(line)) {
+        this.loginRejectedAt = null;
+        this.loginRejectedToken = "";
+        this.loginRejectedReason = "";
+        this.setPhase("connected", "");
+        void appendChatStatus("connected", describeChatConnectionPhase("connected"));
         continue;
       }
 
