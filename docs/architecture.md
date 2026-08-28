@@ -18,7 +18,6 @@ Explicit non-goals:
 - `worker`: ingestion, Twitch reconciliation, incidents, alerts, and playout supervision
 - `playout`: playout runtime image used for FFmpeg-oriented broadcast execution
 - `postgres`: durable relational state
-- `redis`: transient runtime support and queue/lock-oriented infrastructure
 
 ## Persistence Model
 

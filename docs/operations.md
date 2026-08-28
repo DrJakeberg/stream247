@@ -166,8 +166,6 @@ For future long runs, treat the baseline as:
 - active deployment env file such as `.env` or `stack.env`
 - `data/media`
 
-Redis is not a primary durability source and does not need to be treated as a release-critical backup target.
-
 ### Before Every Upgrade
 
 Create a PostgreSQL dump and copy the active env file.

@@ -10,7 +10,6 @@ Recommended production shape:
 - optional built-in Traefik profile for HTTPS and Let's Encrypt
 - persistent storage for:
   - PostgreSQL
-  - Redis
   - `data/media`
 
 Stream247 is currently designed as a self-hosted single-workspace deployment.
@@ -143,9 +142,22 @@ Important current limitation:
 ## Media And Persistence
 
 - local media is read from `data/media`
-- PostgreSQL and Redis must use persistent volumes
+- PostgreSQL must use a persistent volume
 - deleting your database volume resets workspace state
 - deleting `data/media` removes locally mounted playable files
+
+### Removed Redis Service
+
+Stacks deployed before this release ran a `redis` container. No part of Stream247
+ever connected to it — it was provisioned in Compose but never had a client. It is
+gone from `docker-compose.yml`.
+
+What an operator sees at the next stack update: the `redis` container is stopped and
+removed, and the stack comes up with one service fewer. Its bind mount `./data/redis`
+stays behind on disk as an empty leftover directory and can be deleted by hand at any
+time. There is no data migration and no backup step, because nothing ever wrote to it.
+`REDIS_URL` is no longer read anywhere; leaving it in an existing `stack.env` or `.env`
+is harmless, and it can be dropped at the next edit.
 
 ## GHCR Images
 
@@ -325,7 +337,7 @@ PORTAINER_STACK_NAME=stream247 \
 
 The script does not update, redeploy, or restart anything. It only reports whether the currently running DT stack matches the pinned release env file.
 
-Production `traefik`, `web`, `worker`, `relay`, `playout`, `uplink`, `postgres`, and `redis` services now use `restart: unless-stopped` in `docker-compose.yml`, so the documented always-on Compose paths, including `docker compose --profile proxy up -d`, recover their stack processes after daemon and host restarts.
+Production `traefik`, `web`, `worker`, `relay`, `playout`, `uplink`, and `postgres` services now use `restart: unless-stopped` in `docker-compose.yml`, so the documented always-on Compose paths, including `docker compose --profile proxy up -d`, recover their stack processes after daemon and host restarts.
 
 The worker-family image uses a small init process before Node so long-running playout containers reap short-lived Chromium scene-renderer children. Worker, playout, and uplink Docker healthchecks use 45-second intervals/timeouts and a 60-second start period because FFmpeg and scene rendering can briefly saturate the playout container during normal broadcast operation.
 
