@@ -12,10 +12,15 @@ import {
 } from "@stream247/core";
 import type { AppState } from "@stream247/db";
 import {
+  CHAT_LOGIN_REJECTED_COOLDOWN_MS,
   createChatRateLimiter,
   createRingBuffer,
+  describeChatConnectionPhase,
+  isChatLoginRejectedCoolingDown,
+  isTwitchLoginFailureNotice,
   parseModeratorPresenceWindowFromChatMessage,
   parseTwitchIrcMessage,
+  parseTwitchIrcNotice,
   TwitchChatBridge
 } from "../../apps/worker/src/twitch-engagement";
 import { syncTwitchEventSubSubscriptions } from "../../apps/worker/src/twitch-eventsub";
@@ -932,5 +937,109 @@ describe("engagement EventSub and SSE routes", () => {
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     expect(text).toContain("event: engagement");
     expect(text).toContain(JSON.stringify(engagement));
+  });
+});
+
+describe("twitch chat login handling", () => {
+  function chatBridgeState(overrides: { accessToken?: string } = {}): AppState {
+    return {
+      engagement: baseEngagement({ chatEnabled: true }),
+      moderation: createDefaultModerationConfig(),
+      managedConfig: { twitchBroadcastChannelLogin: "jimpanse247" },
+      twitch: {
+        status: "connected",
+        broadcasterLogin: "3jakec",
+        accessToken: overrides.accessToken ?? "identity-token"
+      }
+    } as unknown as AppState;
+  }
+
+  it("answers a server PING with a PONG carrying the same token", () => {
+    const write = vi.fn();
+    const bridge = new TwitchChatBridge();
+    bridge["socket"] = { write, destroyed: false } as never;
+
+    bridge["handleChunk"]("PING :tmi.twitch.tv\r\n");
+
+    expect(write).toHaveBeenCalledWith("PONG :tmi.twitch.tv\r\n");
+  });
+
+  it("reads the NOTICE Twitch sends when the login is refused", () => {
+    expect(parseTwitchIrcNotice(":tmi.twitch.tv NOTICE * :Login unsuccessful")).toEqual({
+      target: "*",
+      message: "Login unsuccessful"
+    });
+    expect(parseTwitchIrcNotice(":tmi.twitch.tv NOTICE #room :Now hosting")).toEqual({
+      target: "#room",
+      message: "Now hosting"
+    });
+    expect(parseTwitchIrcNotice(":tmi.twitch.tv 001 3jakec :Welcome, GLHF!")).toBeNull();
+  });
+
+  it("recognises every login refusal Twitch words differently", () => {
+    expect(isTwitchLoginFailureNotice("Login unsuccessful")).toBe(true);
+    expect(isTwitchLoginFailureNotice("Login authentication failed")).toBe(true);
+    expect(isTwitchLoginFailureNotice("Improperly formatted auth")).toBe(true);
+    expect(isTwitchLoginFailureNotice("Invalid NICK")).toBe(true);
+    expect(isTwitchLoginFailureNotice("Now hosting someone")).toBe(false);
+  });
+
+  it("treats a refused login as rejected rather than connected", () => {
+    const destroy = vi.fn();
+    const phases: string[] = [];
+    const bridge = new TwitchChatBridge({ onConnectionPhaseChanged: (phase) => phases.push(phase) });
+    bridge["socket"] = { write: vi.fn(), destroyed: false, destroy } as never;
+
+    bridge["handleChunk"](":tmi.twitch.tv NOTICE * :Login unsuccessful\r\n");
+
+    expect(bridge.getConnectionPhase()).toBe("login-rejected");
+    expect(phases).toContain("login-rejected");
+    expect(destroy).toHaveBeenCalled();
+  });
+
+  it("only reports connected once Twitch acknowledges the login", () => {
+    const bridge = new TwitchChatBridge();
+    bridge["socket"] = { write: vi.fn(), destroyed: false } as never;
+    expect(bridge.getConnectionPhase()).not.toBe("connected");
+
+    bridge["handleChunk"](":tmi.twitch.tv 001 3jakec :Welcome, GLHF!\r\n");
+
+    expect(bridge.getConnectionPhase()).toBe("connected");
+  });
+
+  it("holds a refused login in cooldown instead of retrying every cycle", () => {
+    expect(isChatLoginRejectedCoolingDown({ rejectedAt: 1_000, now: 1_000 + 15_000 })).toBe(true);
+    expect(
+      isChatLoginRejectedCoolingDown({ rejectedAt: 1_000, now: 1_000 + CHAT_LOGIN_REJECTED_COOLDOWN_MS + 1 })
+    ).toBe(false);
+    expect(isChatLoginRejectedCoolingDown({ rejectedAt: null, now: 5_000 })).toBe(false);
+  });
+
+  it("does not reconnect while the refused login is cooling down", async () => {
+    const bridge = new TwitchChatBridge();
+    bridge["loginRejectedAt"] = Date.now();
+    bridge["loginRejectedToken"] = "identity-token";
+
+    await bridge.sync(chatBridgeState(), { STREAM_CHAT_OVERLAY_ENABLED: "1" } as NodeJS.ProcessEnv);
+
+    expect(bridge["socket"]).toBeNull();
+    expect(bridge.getConnectionPhase()).toBe("login-rejected");
+  });
+
+  it("retries at once when the operator reconnects and the token changes", () => {
+    const bridge = new TwitchChatBridge();
+    bridge["loginRejectedAt"] = Date.now();
+    bridge["loginRejectedToken"] = "old-token";
+
+    expect(bridge["isLoginCoolingDown"]("old-token")).toBe(true);
+    expect(bridge["isLoginCoolingDown"]("fresh-token")).toBe(false);
+  });
+
+  it("puts the connection state into words the operator can act on", () => {
+    expect(describeChatConnectionPhase("connected")).toBe("Chat connected");
+    expect(describeChatConnectionPhase("login-rejected")).toBe(
+      "Chat login refused by Twitch — reconnect the Twitch account to grant chat access"
+    );
+    expect(describeChatConnectionPhase("waiting")).toBe("Chat waiting before the next login attempt");
   });
 });
