@@ -26,7 +26,7 @@ cleanup() {
 
 trap cleanup EXIT
 
-mkdir -p "$TMP_DIR/media" "$TMP_DIR/postgres" "$TMP_DIR/redis"
+mkdir -p "$TMP_DIR/media" "$TMP_DIR/postgres"
 
 cat >"$ENV_FILE" <<EOF
 NODE_ENV=production
@@ -37,7 +37,6 @@ POSTGRES_DB=stream247
 POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247
 DATABASE_URL=postgresql://stream247:stream247@postgres:5432/stream247
-REDIS_URL=redis://redis:6379
 STREAM247_WEB_IMAGE=${WEB_IMAGE}
 STREAM247_WORKER_IMAGE=${WORKER_IMAGE}
 STREAM247_PLAYOUT_IMAGE=${PLAYOUT_IMAGE}
@@ -69,9 +68,6 @@ services:
   postgres:
     volumes:
       - ${TMP_DIR}/postgres:/var/lib/postgresql/data
-  redis:
-    volumes:
-      - ${TMP_DIR}/redis:/data
 EOF
 
 if [ -f "$ROOT_ENV_FILE" ]; then

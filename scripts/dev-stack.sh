@@ -42,10 +42,10 @@ require curl
 require jq
 
 RUNTIME_SERVICES="worker playout uplink relay"
-SERVICES="postgres redis web"
+SERVICES="postgres web"
 
 write_config() {
-  mkdir -p "$STATE_DIR/media" "$STATE_DIR/postgres" "$STATE_DIR/redis"
+  mkdir -p "$STATE_DIR/media" "$STATE_DIR/postgres"
 
   cat >"$ENV_FILE" <<EOF
 NODE_ENV=production
@@ -56,7 +56,6 @@ POSTGRES_DB=stream247
 POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247
 DATABASE_URL=postgresql://stream247:stream247@postgres:5432/stream247
-REDIS_URL=redis://redis:6379
 STREAM247_WEB_IMAGE=stream247-web:test
 STREAM247_WORKER_IMAGE=stream247-worker:test
 STREAM247_PLAYOUT_IMAGE=stream247-worker:test
@@ -106,9 +105,6 @@ services:
       - ${ENV_FILE}
     volumes:
       - ${STATE_DIR}/postgres:/var/lib/postgresql/data
-  redis:
-    volumes:
-      - ${STATE_DIR}/redis:/data
 EOF
 }
 
@@ -182,7 +178,7 @@ cmd_down() { [ -f "$ENV_FILE" ] && compose down -v >/dev/null 2>&1 || true; echo
 # up. Removing the contents rather than the directory keeps the bind-mount target in place.
 cmd_purge_state() {
   if [ -d "$STATE_DIR" ]; then
-    docker run --rm -v "$STATE_DIR:/state" alpine:3 sh -c 'rm -rf /state/postgres /state/redis /state/media' >/dev/null 2>&1 || true
+    docker run --rm -v "$STATE_DIR:/state" alpine:3 sh -c 'rm -rf /state/postgres /state/media' >/dev/null 2>&1 || true
     rm -rf "$STATE_DIR" 2>/dev/null || true
   fi
 }
