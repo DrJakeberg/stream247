@@ -292,6 +292,7 @@ import { describeChatConnectionPhase, TwitchChatBridge } from "./twitch-engageme
 import { syncTwitchEventSubSubscriptions } from "./twitch-eventsub.js";
 import { fetchTwitchLiveStatus } from "./twitch-live-status.js";
 import { decideTwitchChannelMetadataWrite } from "./twitch-sync-policy.js";
+import { decideTwitchConnectionHeal, validateTwitchAccessToken } from "./twitch-connection-heal.js";
 
 /** The single synthetic source every locally mounted file belongs to — the global fallback included. */
 const LOCAL_LIBRARY_SOURCE_ID = "source-local-library";
@@ -720,6 +721,9 @@ let twitchEventSubLastSyncKey = "";
 let twitchEventSubNextSyncAt = 0;
 let twitchLiveStatusLastSyncKey = "";
 let twitchLiveStatusNextSyncAt = 0;
+// When the stored Twitch token was last re-checked against Twitch. Process-lifetime only: a
+// restart re-checking once is cheap, and persisting it would be one more field to keep honest.
+let twitchConnectionHealLastAttemptAt = 0;
 // Process-lifetime cache for the broadcast channel's user id; see twitch-broadcast-channel.ts.
 const twitchUserIdResolver = createTwitchUserIdResolver();
 
@@ -7226,6 +7230,62 @@ async function syncTwitchSchedule(args: {
   }
 }
 
+/**
+ * Puts the connection status back on measurement when the record says broken but the token is not.
+ *
+ * Runs before reconcileTwitch on purpose: that function returns immediately unless the status is
+ * connected, and so do the moderation sync, the schedule sync and the event registration behind
+ * it. A record wrongly stuck on error therefore switches three features off and keeps them off,
+ * with no path back that does not involve a second trip through OAuth — which is a lot to ask of
+ * an operator whose token was fine the whole time.
+ *
+ * Deliberately narrow. It only ever moves error to connected, never the other way: deciding that a
+ * connection is broken stays with the code that actually tried to use it. Everything about the
+ * record other than the status and the stale error text is left exactly as it was, so the healed
+ * connection carries the same token, the same account and the same sync history it always had.
+ */
+async function healTwitchConnection(): Promise<void> {
+  const state = await readAppState();
+  const decision = decideTwitchConnectionHeal({
+    status: state.twitch.status,
+    accessToken: state.twitch.accessToken,
+    lastAttemptAt: twitchConnectionHealLastAttemptAt,
+    now: Date.now()
+  });
+
+  if (!decision.attempt) {
+    return;
+  }
+
+  twitchConnectionHealLastAttemptAt = Date.now();
+  const verdict = await validateTwitchAccessToken(state.twitch.accessToken);
+
+  if (!verdict.healthy) {
+    // Logged rather than acted on. A rejected token means the error status was right all along,
+    // a short grant means only a reconnect will do, and an unreachable Twitch means we learned
+    // nothing — none of the three is a reason to write anything to the record.
+    logRuntimeEvent("twitch.connection.heal.declined", {
+      reason: verdict.reason,
+      ...(verdict.reason === "rejected" ? { status: verdict.status } : {}),
+      ...(verdict.reason === "missing-scopes" ? { missingScopes: verdict.missingScopes.join(" ") } : {}),
+      ...(verdict.reason === "unreachable" ? { error: verdict.message } : {})
+    });
+    return;
+  }
+
+  await updateTwitchConnectionRecord({
+    ...state.twitch,
+    status: "connected",
+    error: ""
+  });
+
+  await appendAuditEvent(
+    "twitch.connected",
+    `Restored the Twitch connection for ${verdict.login || state.twitch.broadcasterLogin} after the stored access still checked out.`
+  );
+  logRuntimeEvent("twitch.connection.heal.restored", { login: verdict.login, userId: verdict.userId });
+}
+
 async function reconcileTwitch(): Promise<void> {
   const state = await readAppState();
   if (state.twitch.status !== "connected" || !state.twitch.accessToken || !state.twitch.broadcasterId) {
@@ -8013,6 +8073,9 @@ async function runWorkerCycle(): Promise<void> {
   await syncTwitchVodSources();
   // After the syncs, so assets discovered this cycle can already receive their chapters.
   await backfillAssetChapters();
+  // Ahead of the reconcile, because everything below is gated on the connected status and a
+  // record wrongly stuck on error would otherwise keep gating it away forever.
+  await healTwitchConnection();
   await reconcileTwitch();
   await reconcileTwitchLiveStatus();
   await reconcileTwitchEventSub();

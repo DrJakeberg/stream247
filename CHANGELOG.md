@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+### Fixed
+
+- A rejected Twitch connect attempt marked a working connection broken, and three features went
+  quiet behind it. Measured on the running DUT on 2026-09-01: the identity connection record read
+  `status: error` with the message about a callback arriving without a matching state cookie, while
+  the token stored beside it had been issued minutes earlier, validated against Twitch with all
+  nine scopes including `chat:read` and `chat:edit`, and was carrying a live IRC session that had
+  completed its handshake and stayed up. `lastMetadataSyncAt` was empty — it had never run once.
+
+  `recordTwitchError` wrote the error status unconditionally. Directly beside it, the broadcaster
+  slot's equivalent has always refused to downgrade a connected slot for exactly this reason; the
+  identity slot never got that guard. So a double-clicked connect button, a stale tab, or a second
+  callback arriving late was enough to take a healthy connection down. Metadata sync, moderation
+  sync and event registration are all gated on the connected status, so all three stopped at once:
+  the emote-only switch was never toggled even though the presence calculation correctly asked for
+  the normal chat mode from three active windows, Twitch stayed on emote-only, and
+  `twitch.eventsub.sync.skipped` reported registration skipped for a connection that was not
+  actually missing. To the operator this looked like the check-in command doing nothing, when the
+  command had in fact been recognised and had created its presence windows.
+
+  Both slots now share one decision, and it turns on what a failure is evidence *about*. A rejected
+  connect attempt says nothing about the token already stored and cannot touch the status. A
+  failure of the stored connection itself — a revoked or expired token, the shape a refresh reports
+  as a 401 — still marks it broken, because suppressing that would leave the dashboard claiming a
+  connection that cannot do any work. Every failure still reaches the audit trail either way.
+
+### Added
+
+- The Twitch connection status now has a second source: measurement. The error status was written
+  from memory — something failed once, and the record kept saying so — which left the install above
+  with no way back that did not involve another trip through OAuth for a token that was fine the
+  whole time. When the record says broken and a token is still stored, the worker now asks Twitch
+  whether that token works and what it may do, and puts the connection back to connected when the
+  answer is at least as capable as reconnecting would be. It only ever moves in that one direction:
+  deciding a connection is broken stays with the code that actually tried to use it. Triggered by
+  the error status rather than by a timer, so a healthy connection is never re-checked, and limited
+  to one check per ten minutes so a permanently dead token cannot turn into steady background load
+  against Twitch's rate limit. Every outcome is logged, including the three different reasons not
+  to heal: a rejected token, a valid token whose grant is too short, and an unreachable Twitch that
+  told us nothing.
+
+### Changed
+
+- The dashboard's Twitch card speaks. It printed the stored status value directly, so an operator
+  read the single word "error" above a raw upstream message, and a workspace that had never
+  connected read a hyphenated database token. Neither said the thing that mattered — that title and
+  category updates and the emote-only switch had gone quiet behind that one word. The card now
+  names the state in ordinary language, names what is paused while it lasts, and distinguishes a
+  connection that is repairing itself from one that genuinely needs the account connected again.
+  The stored message stays available underneath rather than leading.
+
 ## 1.5.36 - 2026-09-01
 
 ### Fixed
