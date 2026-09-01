@@ -146,11 +146,13 @@ function createState(overrides: Partial<AppState["playout"]> = {}): AppState {
       }
     ],
     incidents: [],
+    // Deliberately not a `worker.cycle` line: readiness reads the runtime heartbeat now, and the
+    // audit trail carries only security-relevant entries.
     auditEvents: [
       {
         id: "audit-worker",
-        type: "worker.cycle",
-        message: "cycle",
+        type: "settings.managed-config.updated",
+        message: "Managed configuration changed.",
         createdAt: "2026-04-23T01:00:00.000Z"
       }
     ],
@@ -191,6 +193,7 @@ function createState(overrides: Partial<AppState["playout"]> = {}): AppState {
       processPid: 1,
       processStartedAt: "2026-04-23T00:50:00.000Z",
       heartbeatAt: "2026-04-23T00:50:00.000Z",
+      workerHeartbeatAt: "2026-04-23T01:00:00.000Z",
       restartCount: 2,
       crashCountWindow: 0,
       crashLoopDetected: false,

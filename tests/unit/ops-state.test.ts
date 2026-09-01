@@ -274,6 +274,7 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       currentDestinationId: "destination-primary",
       restartRequestedAt: "",
       heartbeatAt: new Date().toISOString(),
+      workerHeartbeatAt: new Date().toISOString(),
       processPid: 123,
       processStartedAt: new Date().toISOString(),
       lastTransitionAt: new Date().toISOString(),
@@ -355,18 +356,11 @@ describe("ops state helpers", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-09T18:01:26.424Z"));
 
-    const result = getWorkerHealth(
-      createState({
-        auditEvents: [
-          {
-            id: "audit-1",
-            type: "worker.cycle",
-            message: "done",
-            createdAt: "2026-04-09T17:58:13.424Z"
-          }
-        ]
-      })
-    );
+    const base = createState();
+    const result = getWorkerHealth({
+      ...base,
+      playout: { ...base.playout, workerHeartbeatAt: "2026-04-09T17:58:13.424Z" }
+    });
 
     expect(result.status).toBe("healthy");
   });
@@ -375,20 +369,26 @@ describe("ops state helpers", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-09T18:02:14.000Z"));
 
-    const result = getWorkerHealth(
-      createState({
-        auditEvents: [
-          {
-            id: "audit-1",
-            type: "worker.cycle",
-            message: "done",
-            createdAt: "2026-04-09T17:58:13.424Z"
-          }
-        ]
-      })
-    );
+    const base = createState();
+    const result = getWorkerHealth({
+      ...base,
+      playout: { ...base.playout, workerHeartbeatAt: "2026-04-09T17:58:13.424Z" }
+    });
 
     expect(result.status).toBe("stale");
+  });
+
+  it("reports a missing worker heartbeat when the runtime row has never recorded one", () => {
+    const base = createState();
+    const result = getWorkerHealth({
+      ...base,
+      // A trail full of routine noise used to be what answered this question. It no longer is,
+      // so an audit entry must not be able to stand in for a heartbeat that never happened.
+      auditEvents: [{ id: "audit-1", type: "worker.cycle", message: "done", createdAt: new Date().toISOString() }],
+      playout: { ...base.playout, workerHeartbeatAt: "" }
+    });
+
+    expect(result.status).toBe("missing");
   });
 
   it("reports schedule drift when current asset source differs from schedule source", () => {

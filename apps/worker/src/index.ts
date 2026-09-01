@@ -6758,7 +6758,6 @@ async function runUplinkCycle(): Promise<void> {
       uplinkHeartbeatAt: new Date().toISOString(),
       uplinkDestinationIds: []
     }));
-    await appendAuditEvent("uplink.cycle", "Uplink relay mode is disabled.");
     return;
   }
 
@@ -6799,7 +6798,6 @@ async function runUplinkCycle(): Promise<void> {
       message: "Configure at least one enabled output with an RTMP URL and stream key so the uplink can publish from the local relay.",
       fingerprint: "uplink.output.missing"
     });
-    await appendAuditEvent("uplink.cycle", "Uplink destination is not configured.");
     return;
   }
 
@@ -6813,7 +6811,6 @@ async function runUplinkCycle(): Promise<void> {
       uplinkHeartbeatAt: new Date().toISOString(),
       uplinkDestinationIds: destinationIds
     }));
-    await appendAuditEvent("uplink.cycle", `Uplink is waiting for a fresh program feed (${programFeed.status}).`);
     return;
   }
   if (programFeed?.status === "fresh") {
@@ -6830,7 +6827,14 @@ async function runUplinkCycle(): Promise<void> {
   if (reconnectDue) {
     uplinkReconnectUntil = new Date(now + uplinkReconnect.windowMs).toISOString();
     await stopAllUplinkProcesses("scheduled-reconnect");
-    await appendAuditEvent("uplink.cycle", `Scheduled ${uplinkReconnect.intervalHours}h uplink reconnect started.`);
+    // The only cycle exit that did not already record a heartbeat of its own: the process exit
+    // handler writes one, but fire-and-forget, so the healthcheck could see a stale timestamp
+    // through a scheduled reconnect. Record it here where the cycle can await it.
+    await updatePlayoutRuntime((playout) => ({
+      ...playout,
+      uplinkHeartbeatAt: new Date().toISOString(),
+      uplinkReconnectUntil
+    }));
     return;
   }
 
@@ -6844,7 +6848,6 @@ async function runUplinkCycle(): Promise<void> {
       uplinkDestinationIds: destinationIds,
       uplinkReconnectUntil
     }));
-    await appendAuditEvent("uplink.cycle", `Scheduled ${uplinkReconnect.intervalHours}h uplink reconnect window is active.`);
     return;
   }
 
@@ -7003,8 +7006,6 @@ async function runUplinkCycle(): Promise<void> {
     uplinkDestinationIds: runningDestinationIds.length > 0 ? runningDestinationIds : destinationIds,
     uplinkReconnectUntil
   }));
-
-  await appendAuditEvent("uplink.cycle", "Persistent uplink cycle completed.");
 }
 
 async function sendDiscordAlert(message: string): Promise<void> {
@@ -7970,7 +7971,7 @@ async function resolveFinishedIncidents(state: AppState): Promise<void> {
         programFeedMode: isProgramFeedMode(),
         uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
         relayEnabled: STREAM247_RELAY_ENABLED,
-        lastWorkerCycleAt: state.auditEvents.find((event) => event.type === "worker.cycle")?.createdAt ?? "",
+        workerHeartbeatAt: state.playout.workerHeartbeatAt,
         // Exactly the allowance readProgramFeedRuntimeStatus uses to call the playlist stale.
         programFeedStaleMs: (feedConfig.bufferedSeconds + feedConfig.failoverSeconds) * 1000,
         uplinkWatchdogMs: getUplinkStallOptions(process.env, state.managedConfig),
@@ -8029,8 +8030,11 @@ async function runWorkerCycle(): Promise<void> {
   await reconcileEngagementGame();
   await reconcileChatInteraction();
   await reconcileChatGame();
-  await appendAuditEvent("worker.cycle", "Worker reconciliation cycle completed.");
-  // Last, and reading state again: the audit line above is this cycle's own proof that the worker
+  // A runtime heartbeat, not an audit entry. This fires every 30 seconds; writing it to the audit
+  // trail filled that 100-row ring with routine noise and evicted every security-relevant entry
+  // within about fifteen minutes.
+  await updatePlayoutRuntime((playout) => ({ ...playout, workerHeartbeatAt: new Date().toISOString() }));
+  // Last, and reading state again: the heartbeat above is this cycle's own proof that the worker
   // loop is alive, and the syncs before it may have raised or closed incidents of their own.
   await resolveFinishedIncidents(await readAppState());
 }
@@ -8042,7 +8046,7 @@ async function runHealthcheck(mode: RuntimeMode): Promise<void> {
   const now = Date.now();
 
   if (mode === "worker") {
-    const lastWorkerCycle = state.auditEvents.find((event) => event.type === "worker.cycle")?.createdAt ?? "";
+    const lastWorkerCycle = state.playout.workerHeartbeatAt;
     if (!lastWorkerCycle) {
       throw new Error("No worker heartbeat has been recorded yet.");
     }
@@ -8059,7 +8063,9 @@ async function runHealthcheck(mode: RuntimeMode): Promise<void> {
       return;
     }
 
-    const lastUplinkCycle = state.auditEvents.find((event) => event.type === "uplink.cycle")?.createdAt ?? "";
+    // The uplink cycle already wrote this on every path it can exit through, so the `uplink.cycle`
+    // audit entry it used to append alongside was never the only evidence -- just the noisier copy.
+    const lastUplinkCycle = state.playout.uplinkHeartbeatAt;
     if (!lastUplinkCycle) {
       throw new Error("No uplink heartbeat has been recorded yet.");
     }

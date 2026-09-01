@@ -524,8 +524,8 @@ export type IncidentAreaHealthInput = {
   uplinkInputMode: string;
   /** True when the persistent relay uplink is switched on at all. */
   relayEnabled: boolean;
-  /** `createdAt` of the newest `worker.cycle` audit event, or "" when there is none. */
-  lastWorkerCycleAt: string;
+  /** `playout.workerHeartbeatAt`: when the worker loop last completed a cycle, "" when never. */
+  workerHeartbeatAt: string;
   /** The same allowance `readProgramFeedRuntimeStatus` uses to call the playlist stale. */
   programFeedStaleMs: number;
   /** The resolved uplink watchdog windows, which decide how much uptime proves anything. */
@@ -574,10 +574,10 @@ export type IncidentAreaHealthInput = {
  *   That inference is only as good as the windows themselves, which are managed and can be raised
  *   to hours, so the required uptime is the longest of them rather than a fixed ten minutes.
  *
- * The worker area is the honest exception: the pass runs immediately after the `worker.cycle` audit
- * line it reads, so "the worker is alive" is very nearly a tautology. It is kept because the check
- * still catches the case that matters -- a pass running from a stale snapshot, or a worker whose
- * audit write is failing -- not because it is independent evidence.
+ * The worker area is the honest exception: the pass runs immediately after the heartbeat write it
+ * reads, so "the worker is alive" is very nearly a tautology. It is kept because the check still
+ * catches the case that matters -- a pass running from a stale snapshot, or a worker whose
+ * heartbeat write is failing -- not because it is independent evidence.
  */
 export function measureIncidentAreaHealth(input: IncidentAreaHealthInput): IncidentArea[] {
   const healthy: IncidentArea[] = [];
@@ -618,7 +618,7 @@ export function measureIncidentAreaHealth(input: IncidentAreaHealthInput): Incid
     healthy.push("uplink");
   }
 
-  if (ageMs(input.lastWorkerCycleAt, nowMs) <= WORKER_CYCLE_FRESH_MS) {
+  if (ageMs(input.workerHeartbeatAt, nowMs) <= WORKER_CYCLE_FRESH_MS) {
     healthy.push("worker");
   }
 
