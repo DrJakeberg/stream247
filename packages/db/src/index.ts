@@ -146,6 +146,30 @@ export type AuditEvent = {
   createdAt: string;
 };
 
+/**
+ * How many audit entries the trail keeps.
+ *
+ * Three places have to agree on this: `appendAuditEvent` prunes to it, `hydrateState` reads that
+ * many back, and `persistState` writes that many out. They are coupled -- a `LIMIT` lower than the
+ * prune bound would silently truncate the table on the next state write -- so they share one
+ * constant rather than three literals.
+ *
+ * Why 500. The trail now holds only operator- and security-driven entries, because the 30-second
+ * `worker.cycle`/`uplink.cycle` writes moved to runtime heartbeats. What remains is 57 event types,
+ * all of them request-scoped; on a single-workspace appliance that is a burst of a few dozen while
+ * something is being configured and near-silence otherwise, so 500 entries spans weeks to months of
+ * ordinary use. The one writer an attacker can drive is `relay.publish_rejected`, and the throttle
+ * in the web tier caps that at ten per minute globally: 500 entries is a little under an hour of
+ * sustained attack, against ten minutes at the old bound. The ceiling exists at all because the
+ * table is carried through the full state serialisation on every read and write; at the 85 bytes a
+ * row measures in practice this is about 42 KB, which is proportionate to the 250-row sync-run and
+ * 100-row incident tables already travelling with it.
+ *
+ * Deliberately not an age bound: an audit trail's failure mode is losing evidence, and an age rule
+ * only ever deletes more than a count rule. Nothing here needs data minimisation.
+ */
+export const AUDIT_EVENT_RETENTION_LIMIT = 500;
+
 export type SourceRecord = {
   id: string;
   name: string;
@@ -604,6 +628,15 @@ export type PlayoutRuntimeRecord = {
   currentDestinationId: string;
   restartRequestedAt: string;
   heartbeatAt: string;
+  /**
+   * Freshness of the worker reconciliation loop, written once per cycle.
+   *
+   * This used to be inferred from the newest `worker.cycle` audit event. That put a 30-second
+   * routine write into the security audit trail, which is a 100-row ring: the trail held nothing
+   * but heartbeats and evicted every meaningful entry within about fifteen minutes. The heartbeat
+   * lives here now, beside the playout and uplink ones, so the trail can stay meaningful.
+   */
+  workerHeartbeatAt: string;
   processPid: number;
   processStartedAt: string;
   lastTransitionAt: string;
@@ -1703,6 +1736,7 @@ function defaultState(): AppState {
       currentDestinationId: "destination-primary",
       restartRequestedAt: "",
       heartbeatAt: "",
+      workerHeartbeatAt: "",
       processPid: 0,
       processStartedAt: "",
       lastTransitionAt: "",
@@ -2594,6 +2628,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       current_destination_id TEXT NOT NULL DEFAULT '',
       restart_requested_at TEXT NOT NULL DEFAULT '',
       heartbeat_at TEXT NOT NULL DEFAULT '',
+      worker_heartbeat_at TEXT NOT NULL DEFAULT '',
       process_pid INTEGER NOT NULL DEFAULT 0,
       process_started_at TEXT NOT NULL DEFAULT '',
       last_transition_at TEXT NOT NULL DEFAULT '',
@@ -3500,6 +3535,24 @@ if (!schemaMigrations.some((migration) => migration.id === overlayVideoSourceLiv
   schemaMigrations.push(overlayVideoSourceLiveStateMigration);
 }
 
+const workerHeartbeatRuntimeMigration: MigrationDefinition = {
+  id: "20260901_001_worker_heartbeat_runtime",
+  description: "Give the worker reconciliation loop a runtime heartbeat so it stops writing to the audit trail.",
+  apply: async (client) => {
+    await client.query(`
+      -- Additive, matching the base-schema block. Empty means "no cycle recorded yet", which is
+      -- what every existing row is until the worker next completes a pass -- at most 30 seconds
+      -- after the upgrade. The readers treat empty as "missing", the same answer they gave when
+      -- no worker.cycle audit event existed, so the upgrade window degrades exactly as before.
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS worker_heartbeat_at TEXT NOT NULL DEFAULT '';
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === workerHeartbeatRuntimeMigration.id)) {
+  schemaMigrations.push(workerHeartbeatRuntimeMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -4225,14 +4278,16 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   }
 
   await client.query("DELETE FROM audit_events");
-  for (const event of next.auditEvents.slice(0, 100)) {
-    await client.query(
-      `
-        INSERT INTO audit_events (id, type, message, created_at)
-        VALUES ($1, $2, $3, $4)
-      `,
-      [event.id, event.type, event.message, event.createdAt]
-    );
+  const retainedAuditEvents = next.auditEvents.slice(0, AUDIT_EVENT_RETENTION_LIMIT);
+  if (retainedAuditEvents.length > 0) {
+    // One statement rather than a query per row. This rewrite runs inside the global serialized
+    // write lock on every state mutation, so a row-at-a-time loop made the retention bound a
+    // direct cost on every write; batching keeps raising the bound from showing up there.
+    const values = retainedAuditEvents.flatMap((event) => [event.id, event.type, event.message, event.createdAt]);
+    const tuples = retainedAuditEvents
+      .map((_, index) => `($${index * 4 + 1}, $${index * 4 + 2}, $${index * 4 + 3}, $${index * 4 + 4})`)
+      .join(", ");
+    await client.query(`INSERT INTO audit_events (id, type, message, created_at) VALUES ${tuples}`, values);
   }
 }
 
@@ -4249,9 +4304,10 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         live_bridge_released_at, live_bridge_last_error, cuepoint_window_key, cuepoint_fired_keys, cuepoint_last_triggered_at, cuepoint_last_asset_id, manual_next_asset_id, manual_next_requested_at, insert_asset_id, insert_requested_at, insert_status, skip_asset_id, skip_until,
         pending_action, pending_action_requested_at, message, uplink_status, uplink_input_mode, uplink_started_at, uplink_heartbeat_at, uplink_destination_ids,
         uplink_restart_count, uplink_unplanned_restart_count, uplink_last_exit_code, uplink_last_exit_reason, uplink_last_exit_planned, uplink_reconnect_until,
-        program_feed_status, program_feed_updated_at, program_feed_playlist_path, program_feed_target_seconds, program_feed_buffered_seconds
+        program_feed_status, program_feed_updated_at, program_feed_playlist_path, program_feed_target_seconds, program_feed_buffered_seconds,
+        worker_heartbeat_at
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74, $75, $76, $77, $78)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74, $75, $76, $77, $78, $79)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         transition_state = EXCLUDED.transition_state,
@@ -4330,7 +4386,8 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         program_feed_updated_at = EXCLUDED.program_feed_updated_at,
         program_feed_playlist_path = EXCLUDED.program_feed_playlist_path,
         program_feed_target_seconds = EXCLUDED.program_feed_target_seconds,
-        program_feed_buffered_seconds = EXCLUDED.program_feed_buffered_seconds
+        program_feed_buffered_seconds = EXCLUDED.program_feed_buffered_seconds,
+        worker_heartbeat_at = EXCLUDED.worker_heartbeat_at
     `,
     [
       playout.status,
@@ -4410,7 +4467,8 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
       playout.programFeedUpdatedAt,
       playout.programFeedPlaylistPath,
       playout.programFeedTargetSeconds,
-      playout.programFeedBufferedSeconds
+      playout.programFeedBufferedSeconds,
+      playout.workerHeartbeatAt
     ]
   );
 }
@@ -4649,7 +4707,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     resolved_at: string;
   }>("SELECT * FROM incidents ORDER BY updated_at DESC");
   const auditResult = await client.query<{ id: string; type: string; message: string; created_at: string }>(
-    "SELECT * FROM audit_events ORDER BY created_at DESC LIMIT 100"
+    "SELECT * FROM audit_events ORDER BY created_at DESC LIMIT $1",
+    [AUDIT_EVENT_RETENTION_LIMIT]
   );
   const playoutResult = await client.query<{
     status: PlayoutRuntimeRecord["status"];
@@ -4676,6 +4735,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     current_destination_id: string;
     restart_requested_at: string;
     heartbeat_at: string;
+    worker_heartbeat_at: string;
     process_pid: number;
     process_started_at: string;
     last_transition_at: string;
@@ -5022,6 +5082,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           currentDestinationId: playoutRow.current_destination_id,
           restartRequestedAt: playoutRow.restart_requested_at,
           heartbeatAt: playoutRow.heartbeat_at,
+          workerHeartbeatAt: playoutRow.worker_heartbeat_at || "",
           processPid: playoutRow.process_pid,
           processStartedAt: playoutRow.process_started_at,
           lastTransitionAt: playoutRow.last_transition_at,
@@ -5213,14 +5274,17 @@ export async function appendAuditEvent(type: string, message: string): Promise<v
       message,
       createdAt
     ]);
-    await client.query(`
+    await client.query(
+      `
       DELETE FROM audit_events
       WHERE id IN (
         SELECT id FROM audit_events
         ORDER BY created_at DESC
-        OFFSET 100
+        OFFSET $1
       )
-    `);
+    `,
+      [AUDIT_EVENT_RETENTION_LIMIT]
+    );
   });
 }
 
