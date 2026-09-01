@@ -34,6 +34,12 @@ const RUNTIME_STATE_SELECTORS = [
   // surface failed on one viewport and passed on the other in the same run. page.clock cannot reach
   // the server, so the region is masked instead.
   ".overlay-clock",
+  // The same clock again, in the preview drawn by the on-air renderer — but this one is inside an
+  // SVG the renderer produced, so there is no element to reach for: satori labels nothing. The
+  // frame also arrives over the network a moment after the page does, so a screenshot lands either
+  // side of it. Both are runtime state, so the whole picture is masked rather than the clock.
+  // Its box is reserved by aspect-ratio, so the page is the same height with or without it.
+  ".scene-render-preview",
   // Build identity — app version and image tags. The version moves on every release, so a snapshot
   // asserting it would go red on release bumps rather than on design changes.
   //
