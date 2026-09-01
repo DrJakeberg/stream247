@@ -51,6 +51,74 @@ export const TWITCH_METADATA_WAITING_MESSAGE = "Waiting for broadcast channel co
 // for no benefit; the identity connection keeps every other scope.
 export const TWITCH_BROADCASTER_SLOT_SCOPES = ["channel:manage:broadcast", "channel:manage:schedule"];
 
+/**
+ * Everything the identity connection is asked to grant.
+ *
+ * Lives here rather than inline in the authorize URL because two places need the same list: the
+ * connect flow that requests it, and the heal path that has to decide whether a token already in
+ * hand is as capable as reconnecting would make it. Reading it from one constant is what keeps
+ * those two answers from drifting apart.
+ */
+export const TWITCH_IDENTITY_SCOPES = [
+  "channel:manage:broadcast",
+  "channel:manage:schedule",
+  "bits:read",
+  "channel:read:redemptions",
+  "moderator:manage:chat_settings",
+  "moderator:read:followers",
+  "channel:read:subscriptions",
+  // The IRC bridge authenticates with this token. Without chat:read Twitch refuses the login
+  // outright ("Login unsuccessful") and closes the socket, which is not distinguishable from a
+  // network fault at the socket level -- chat simply never arrived, and every poll closed with no
+  // votes. chat:edit is what lets the bridge answer a moderator check-in in the room it is reading.
+  "chat:read",
+  "chat:edit"
+];
+
+/**
+ * Which of the required scopes a reported grant does not carry, in the order they are required.
+ *
+ * Returns the names rather than a boolean because "reconnect, the grant is short" is not an
+ * instruction anyone can act on — the missing scope is what tells an operator which capability
+ * they lost. Whitespace and empty entries are tolerated: Twitch reports the grant as a JSON array
+ * here and as a space-separated string elsewhere, and a split of the latter leaves both behind.
+ */
+export function findMissingTwitchIdentityScopes(grantedScopes: readonly string[]): string[] {
+  const granted = new Set(grantedScopes.map((scope) => scope.trim()).filter((scope) => scope !== ""));
+  return TWITCH_IDENTITY_SCOPES.filter((scope) => !granted.has(scope));
+}
+
+/** What a failure says something about: the attempt that just failed, or the stored connection. */
+export type TwitchConnectionFailureKind = "connect-attempt" | "existing-connection";
+
+/**
+ * Whether a failure may flip a Twitch connection record into the error status.
+ *
+ * One rule for both slots. The broadcaster slot has always refused to downgrade a working
+ * connection; the identity slot did not, so a rejected second callback — a double-clicked connect
+ * button, a stale tab — marked a healthy connection broken. Metadata sync, moderation sync and
+ * event registration are all gated on the connected status, so three features stopped at once
+ * while the token itself kept working and chat kept flowing. The operator saw a check-in command
+ * that appeared to do nothing.
+ *
+ * The distinction the guard turns on is what the failure is evidence *about*. A rejected connect
+ * attempt says nothing about the token already stored, so it must not touch the status. A failure
+ * of the stored connection itself — a revoked or expired token, the shape a refresh reports as a
+ * 401 — is exactly that evidence, and suppressing it would leave the dashboard claiming a
+ * connection that cannot do any work. Callers state which one they hold; the audit trail records
+ * every failure either way.
+ */
+export function twitchFailureDowngradesStatus(args: {
+  currentStatus: string;
+  kind: TwitchConnectionFailureKind;
+}): boolean {
+  if (args.kind === "existing-connection") {
+    return true;
+  }
+
+  return args.currentStatus !== "connected";
+}
+
 export type TwitchMetadataSyncGate =
   | { mode: "identity" }
   | { mode: "waiting-for-broadcaster"; broadcastChannelLogin: string }
