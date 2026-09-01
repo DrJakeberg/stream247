@@ -185,7 +185,10 @@ describe("engagement layer helpers", () => {
       actor: "Test Viewer",
       login: "testviewer",
       message: "Hello chat",
-      isModerator: false
+      isModerator: false,
+      // No emotes tag on this line, and none in the text: the emote ranges come from the tag, so
+      // a message without one carries an empty list rather than a guess at what "Kappa" meant.
+      emotes: []
     });
   });
 

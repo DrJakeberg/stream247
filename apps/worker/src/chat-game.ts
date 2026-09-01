@@ -19,7 +19,77 @@ import {
   type ChatGameState,
   type OverlayGameView
 } from "@stream247/core";
+import type { OverlaySceneCustomLayer } from "@stream247/core";
 import type { ChatGameRuntimeRecord } from "@stream247/db";
+
+/** The overlay fields a chat-started game has to be able to switch on. */
+export type ChatGameLayerProvisioningInput = {
+  enabled: boolean;
+  customLayers: OverlaySceneCustomLayer[];
+};
+
+// Where a game panel lands when chat, not the studio, put it there. Deliberately identical to the
+// studio's own "Chat Game" default (apps/web/lib/overlay-studio-defaults.ts): a round started from
+// chat must be the same object the operator would have created by hand, so they can move it,
+// rename it, or switch it off afterwards exactly as usual.
+const CHAT_GAME_LAYER_DEFAULTS = {
+  name: "Chat Game",
+  xPercent: 60,
+  yPercent: 10,
+  widthPercent: 30,
+  heightPercent: 44,
+  opacityPercent: 100,
+  allowOutsideSafeArea: false
+} as const;
+
+/**
+ * The overlay a chat-started game needs, from the overlay there is.
+ *
+ * The game only runs while the published overlay is on *and* some enabled layer of kind "game"
+ * exists (see reconcileChatGame). A fresh install has neither: overlay.enabled is false and
+ * customLayers is empty, so every direction emote the room sent was resolved against a runtime
+ * that had no settings and no state, and did nothing. That is not a state a viewer can fix and not
+ * one an operator can guess, so starting a game from chat provisions it.
+ *
+ * An existing game layer is re-enabled rather than duplicated — the operator's placement is their
+ * decision, and a second panel would draw two boards. Pure, so the worker can persist the result
+ * in one write and the rule is testable without a database.
+ */
+export function resolveChatGameLayerProvisioning(
+  overlay: ChatGameLayerProvisioningInput
+): ChatGameLayerProvisioningInput {
+  const existing = overlay.customLayers.findIndex((layer) => layer.kind === "game");
+  if (existing >= 0) {
+    const customLayers = overlay.customLayers.map((layer, index) =>
+      index === existing ? { ...layer, enabled: true } : layer
+    );
+    return { enabled: true, customLayers };
+  }
+
+  return {
+    enabled: true,
+    customLayers: [
+      ...overlay.customLayers,
+      { id: `game-${Date.now().toString(36)}`, kind: "game", enabled: true, ...CHAT_GAME_LAYER_DEFAULTS }
+    ]
+  };
+}
+
+/**
+ * The overlay after chat ended a round: the game layers switch off, everything else is untouched.
+ *
+ * The layer is kept rather than deleted so the operator's placement survives the next "!snake",
+ * and overlay.enabled is left alone — chat started the game, it did not publish the overlay, so
+ * it has no business switching the whole overlay off again.
+ */
+export function resolveChatGameLayerTeardown(
+  overlay: ChatGameLayerProvisioningInput
+): ChatGameLayerProvisioningInput {
+  return {
+    enabled: overlay.enabled,
+    customLayers: overlay.customLayers.map((layer) => (layer.kind === "game" ? { ...layer, enabled: false } : layer))
+  };
+}
 
 export type ChatGameRuntimeOptions = {
   /** Seed for fresh rounds, injected so tests get deterministic boards. */
