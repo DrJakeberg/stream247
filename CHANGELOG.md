@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.36 - 2026-09-01
+
 ### Fixed
 
 - The audit trail held nothing but heartbeats. `audit_events` is a ring buffer capped at 100 rows,
