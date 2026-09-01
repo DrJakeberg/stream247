@@ -5,6 +5,10 @@ import { setSessionCookie } from "@/lib/server/auth";
 import { readAppState } from "@/lib/server/state";
 import { exchangeTwitchLoginCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
 
+// A team member signing in is a connect attempt of its own, and a failed one is even further from
+// evidence about the workspace's stored Twitch connection than a failed broadcaster connect is —
+// it is about somebody else's session entirely. So these stay on the default reading and cannot
+// downgrade the identity connection.
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const error = request.nextUrl.searchParams.get("error");

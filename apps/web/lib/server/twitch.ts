@@ -1,4 +1,10 @@
-import { TWITCH_BROADCASTER_SLOT_SCOPES, evaluateBroadcasterConnectLogin } from "@stream247/core";
+import {
+  TWITCH_BROADCASTER_SLOT_SCOPES,
+  TWITCH_IDENTITY_SCOPES,
+  evaluateBroadcasterConnectLogin,
+  twitchFailureDowngradesStatus,
+  type TwitchConnectionFailureKind
+} from "@stream247/core";
 import { resolveAppBaseUrl } from "@stream247/db";
 import { issueOAuthState, type OAuthFlowKind } from "./oauth-state";
 import {
@@ -75,22 +81,9 @@ export async function getTwitchAuthorizeUrl(kind: OAuthFlowKind = "broadcaster-c
       ? ["user:read:email"].join(" ")
       : kind === "broadcast-channel-connect"
         ? TWITCH_BROADCASTER_SLOT_SCOPES.join(" ")
-        : [
-            "channel:manage:broadcast",
-            "channel:manage:schedule",
-            "bits:read",
-            "channel:read:redemptions",
-            "moderator:manage:chat_settings",
-            "moderator:read:followers",
-            "channel:read:subscriptions",
-            // The IRC bridge authenticates with this token. Without chat:read Twitch refuses the
-            // login outright ("Login unsuccessful") and closes the socket, which is not
-            // distinguishable from a network fault at the socket level -- chat simply never
-            // arrived, and every poll closed with no votes. chat:edit is what lets the bridge
-            // answer a moderator check-in in the room it is reading.
-            "chat:read",
-            "chat:edit"
-          ].join(" ");
+        : // The same constant the heal path measures a stored token against, so "reconnect to fix
+          // this" and "the token in hand is already good enough" can never disagree.
+          TWITCH_IDENTITY_SCOPES.join(" ");
   const redirectUri =
     kind === "team-login"
       ? getAbsoluteAppUrl(state, "/api/auth/twitch/callback")
@@ -215,13 +208,26 @@ export async function exchangeTwitchCode(code: string) {
   await appendAuditEvent("twitch.connected", `Connected Twitch broadcaster ${broadcasterId}.`);
 }
 
-export async function recordTwitchError(message: string) {
+/**
+ * Failure bookkeeping for the identity connection.
+ *
+ * The `kind` is the whole decision — see twitchFailureDowngradesStatus for why. It defaults to
+ * the connect-attempt reading because every caller today is an OAuth callback: a flow that
+ * failed before it produced anything, which is no evidence about the token already stored. A
+ * caller that does hold that evidence — a refresh that came back 401, a grant the operator
+ * revoked — passes "existing-connection" and still takes the connection down. The audit trail
+ * records the failure either way, so nothing goes missing when the status is left alone.
+ */
+export async function recordTwitchError(message: string, kind: TwitchConnectionFailureKind = "connect-attempt") {
   const state = await readAppState();
-  await updateTwitchConnectionRecord({
-    ...state.twitch,
-    status: "error",
-    error: message
-  });
+
+  if (twitchFailureDowngradesStatus({ currentStatus: state.twitch.status, kind })) {
+    await updateTwitchConnectionRecord({
+      ...state.twitch,
+      status: "error",
+      error: message
+    });
+  }
 
   await appendAuditEvent("twitch.error", message);
 }
@@ -278,15 +284,15 @@ export async function exchangeTwitchBroadcasterCode(code: string) {
 }
 
 /**
- * Failure bookkeeping for the broadcaster slot. Unlike the identity's recordTwitchError this
- * never downgrades a connected slot: a rejected connect attempt (wrong account, cancelled
- * consent) must not flip a working broadcaster connection into an error and silently stop
- * metadata sync — the audit trail still records every failure.
+ * Failure bookkeeping for the broadcaster slot. Every caller is a rejected connect attempt
+ * (wrong account, cancelled consent, forged state), which must not flip a working broadcaster
+ * connection into an error and silently stop metadata sync. The rule itself now lives beside the
+ * identity's — the two slots were drifting apart, and only one of them had the guard.
  */
 export async function recordTwitchBroadcasterError(message: string) {
   const state = await readAppState();
 
-  if (state.twitchBroadcaster.status !== "connected") {
+  if (twitchFailureDowngradesStatus({ currentStatus: state.twitchBroadcaster.status, kind: "connect-attempt" })) {
     await updateTwitchBroadcasterConnectionRecord({
       ...state.twitchBroadcaster,
       status: "error",

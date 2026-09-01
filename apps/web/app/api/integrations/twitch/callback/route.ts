@@ -5,6 +5,10 @@ import { readAppState } from "@/lib/server/state";
 import { exchangeTwitchCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
 import { requireApiRoles } from "@/lib/server/auth";
 
+// Every failure recorded below is a connect attempt that produced nothing: a rejected state
+// cookie, a cancelled consent, a missing code, a failed exchange. None of them says anything
+// about a connection already in place, so none of them passes "existing-connection" — which is
+// what keeps a double-clicked connect button or a stale tab from taking a working connection down.
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const error = request.nextUrl.searchParams.get("error");
