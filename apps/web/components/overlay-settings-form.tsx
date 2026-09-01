@@ -24,6 +24,7 @@ import {
 } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { OverlayRenderPreview } from "@/components/overlay-render-preview";
 import { OverlaySceneCanvas } from "@/components/overlay-scene-canvas";
 import { useToast } from "@/components/ui/Toast";
 import { buildOverlayPublishReviewSections, type OverlayPublishReviewSection } from "@/lib/overlay-publish-review";
@@ -554,9 +555,28 @@ export function OverlaySettingsForm(props: {
               <option value="reconnect">Reconnect</option>
             </select>
           </div>
-          <div className="scene-preview-shell">
-            <div aria-hidden="true" className="scene-preview-safe-area" />
-            <OverlaySceneCanvas payload={previewPayload} />
+          {/*
+            Two previews of one scene, side by side, on purpose — and only until the imitation is
+            removed. The left is what the studio has always drawn: an HTML rebuild of the overlay
+            that uses a 5% safe area where the renderer uses 3.75% by 5.19%, allows panel sizes and
+            opacities the renderer clamps away, and shows relative-path images the renderer cannot
+            fetch at all. The right is the frame the renderer actually puts on air. Where they
+            disagree, the right one is the truth, and seeing the gap is the point.
+          */}
+          <div className="scene-preview-pair">
+            <figure className="scene-preview-figure">
+              <figcaption className="label">Studio rebuild</figcaption>
+              <div className="scene-preview-shell">
+                <div aria-hidden="true" className="scene-preview-safe-area" />
+                <OverlaySceneCanvas payload={previewPayload} />
+              </div>
+            </figure>
+            <figure className="scene-preview-figure">
+              <figcaption className="label">On-air renderer</figcaption>
+              <div className="scene-preview-shell scene-preview-shell-render">
+                <OverlayRenderPreview payload={previewPayload} />
+              </div>
+            </figure>
           </div>
         </div>
 

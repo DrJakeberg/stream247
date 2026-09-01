@@ -5,6 +5,16 @@ import { buildWorkspaceHref } from "./lib/workspace-navigation";
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
+  // No serverExternalPackages entry for satori, on purpose.
+  //
+  // The obvious instinct with a layout engine is to mark it external so Next leaves it alone. Here
+  // that would be the wrong way round: satori ships its layout engine already inlined as base64
+  // inside its own bundle, with no .node binary and no separate .wasm file to find, so webpack
+  // bundles the whole thing into a server chunk that "output: standalone" copies wholesale.
+  // Externalising it would instead make the runtime resolve satori from node_modules and leave the
+  // image depending on file tracing having copied it — a failure that only appears in production.
+  // Verified after a build: the engine's payload lands in .next/standalone/apps/web/.next/server.
+
   // The workspace packages are consumed as TypeScript source and compile with NodeNext, which
   // requires explicit ".js" specifiers in relative imports. Webpack has to be told that a ".js"
   // specifier may resolve to the ".ts" file it was written for.

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { loadSceneRendererFonts, renderSceneSvg, type SceneRenderFont } from "@stream247/overlay-render";
 import { getAuthenticatedUserId, requireApiRoles } from "@/lib/server/auth";
 import { normalizeScenePreviewRequest } from "@/lib/scene-preview-request";
+import { checkScenePreviewRenderer, renderScenePreviewSvg } from "@/lib/server/scene-preview-renderer";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,55 +16,38 @@ export const runtime = "nodejs";
  *
  * SVG rather than PNG, and without embedded glyph outlines, because the answer is inlined into the
  * studio page: there it inherits the page's @font-face rules, which resolve to the very file this
- * process just read for satori. Sent as an <img> instead it would be an isolated document with no
+ * process reads for satori. Sent as an <img> instead it would be an isolated document with no
  * fonts, and every frame would have to carry the outlines again.
  */
 
 const PREVIEW_ROLES = ["owner", "admin", "operator", "moderator", "viewer"] as const;
 
-let fontsPromise: Promise<SceneRenderFont[]> | null = null;
-
-function sceneFonts(): Promise<SceneRenderFont[]> {
-  if (!fontsPromise) {
-    fontsPromise = loadSceneRendererFonts(process.env).catch((error: unknown) => {
-      // Not cached as a rejection: installing the font should fix the studio without a restart.
-      fontsPromise = null;
-      throw error;
+/**
+ * Can this deployment draw an overlay at all?
+ *
+ * satori builds its layout engine on the first render, not when it is imported — so a bundle that
+ * lost the engine's payload starts, serves, answers every other check, and fails the first time an
+ * operator opens the scene editor. This draws a scene compiled into the build, once, and remembers
+ * the answer.
+ *
+ * Unauthenticated on purpose, and safe to be: it takes no parameters, reads no workspace state,
+ * returns no picture, and renders at most once per process. The image smoke test calls it, which is
+ * the whole point — a production-only failure needs a production-shaped check.
+ */
+export async function GET() {
+  try {
+    return NextResponse.json(await checkScenePreviewRenderer(), {
+      headers: { "cache-control": "no-store" }
     });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        renderer: "failed",
+        message: error instanceof Error ? error.message : "The overlay renderer could not draw a frame."
+      },
+      { status: 503, headers: { "cache-control": "no-store" } }
+    );
   }
-
-  return fontsPromise;
-}
-
-// Renders run one at a time, always.
-//
-// This box encodes a 24/7 channel while it serves the studio, and the scene editor asks for a
-// frame every time the operator changes something. Six concurrent renders would be six cores taken
-// away from the encoder for as long as they run. A queue costs the operator a few milliseconds of
-// latency; it costs the channel nothing.
-let renderQueue: Promise<unknown> = Promise.resolve();
-let activeRenders = 0;
-let peakRenders = 0;
-
-/** Test seam: the highest number of renders ever in flight together. Must never exceed one. */
-export function peakConcurrentScenePreviewRenders(): number {
-  return peakRenders;
-}
-
-function queueRender<T>(task: () => Promise<T>): Promise<T> {
-  const result = renderQueue.then(async () => {
-    activeRenders += 1;
-    peakRenders = Math.max(peakRenders, activeRenders);
-    try {
-      return await task();
-    } finally {
-      activeRenders -= 1;
-    }
-  });
-
-  // The chain must survive a failed render, or one bad body would wedge every later preview.
-  renderQueue = result.catch(() => undefined);
-  return result;
 }
 
 export async function POST(request: Request) {
@@ -95,7 +78,7 @@ export async function POST(request: Request) {
 
   let svg: string;
   try {
-    svg = await queueRender(async () => renderSceneSvg(scene, await sceneFonts(), { embedFont: false }));
+    svg = await renderScenePreviewSvg(scene);
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "The overlay renderer could not draw this scene." },

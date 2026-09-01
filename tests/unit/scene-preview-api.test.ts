@@ -21,7 +21,7 @@ vi.mock("next/server", () => ({
   }
 }));
 
-import { POST } from "../../apps/web/app/api/scenes/preview/route";
+import { GET, POST } from "../../apps/web/app/api/scenes/preview/route";
 
 function previewRequest(body: Record<string, unknown>): never {
   return new Request("http://localhost/api/scenes/preview", {
@@ -142,7 +142,7 @@ describe("scene preview API", () => {
       expect(response.status).toBe(200);
     }
 
-    const { peakConcurrentScenePreviewRenders } = await import("../../apps/web/app/api/scenes/preview/route");
+    const { peakConcurrentScenePreviewRenders } = await import("../../apps/web/lib/server/scene-preview-renderer");
     expect(peakConcurrentScenePreviewRenders()).toBe(1);
   }, 60_000);
 
@@ -150,5 +150,36 @@ describe("scene preview API", () => {
     const response = await POST(previewRequest({ payload: null }));
 
     expect(response.status).toBe(400);
+  });
+
+  /**
+   * The self-check exists for one reason: satori builds its layout engine on the first render, not
+   * when it is imported. That was measured, not assumed — importing satori instantiates nothing.
+   * So a route that merely loads proves nothing about a route that can draw, and the failure this
+   * whole endpoint risks (a production bundle that did not carry the engine's payload) would show
+   * up on an operator's first preview rather than in any check.
+   *
+   * It renders a scene compiled into this file, at a small size, and remembers that it worked.
+   */
+  describe("renderer self-check", () => {
+    it("draws a frame and reports that the renderer works", async () => {
+      const response = await GET();
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { renderer: string; bytes: number };
+      expect(body.renderer).toBe("ok");
+      expect(body.bytes).toBeGreaterThan(0);
+    }, 30_000);
+
+    it("takes no input at all and renders at most once", async () => {
+      // Nothing about it varies with the request, and after the first success it answers from
+      // memory — so it cannot be used to make this machine draw, over and over, for free.
+      const { scenePreviewSelfTestRenderCount } = await import("../../apps/web/lib/server/scene-preview-renderer");
+      const before = scenePreviewSelfTestRenderCount();
+
+      await Promise.all([GET(), GET(), GET()]);
+
+      expect(scenePreviewSelfTestRenderCount()).toBe(before);
+    }, 30_000);
   });
 });
