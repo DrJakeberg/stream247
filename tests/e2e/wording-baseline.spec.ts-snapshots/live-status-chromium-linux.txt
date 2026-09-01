@@ -51,7 +51,7 @@ WORKSPACE
 Ready
 Owner: owner@example.com
 TWITCH
-connected
+Connected
 Broadcaster stream247dev
 Last metadata sync: no title · no category
 MODERATION PRESENCE

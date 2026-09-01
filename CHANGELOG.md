@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.37 - 2026-09-01
+
 ### Fixed
 
 - A rejected Twitch connect attempt marked a working connection broken, and three features went
