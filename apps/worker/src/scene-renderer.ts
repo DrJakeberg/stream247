@@ -7,107 +7,28 @@
 // 10 seconds for the failure.
 //
 // Measured on the same class of machine: ~70ms per 1920x1080 frame, warm.
+//
+// The satori half and the font resolution now live in @stream247/overlay-render, because the studio
+// preview draws the same frame in the browser. What stays here is the part only a video pipeline
+// needs: turning the SVG into pixels, and knowing when a frame is worth redrawing at all.
 
-import { promises as fs } from "node:fs";
 import { Resvg } from "@resvg/resvg-js";
-import satori from "satori";
-import {
-  buildOverlaySceneLayout,
-  type OverlayChatView,
-  type OverlayEngagementView,
-  type OverlayGameView,
-  type OverlayScenePayloadView,
-  type OverlaySourceFrameView
-} from "@stream247/core";
+import { renderSceneSvg, type SceneRenderFont, type SceneRenderRequest } from "@stream247/overlay-render";
 
-export type SceneRenderFont = {
-  name: string;
-  data: Buffer;
-  weight: 400 | 700;
-  style: "normal";
-};
-
-// Families referenced by the layout's typography presets. Every preset resolves to a real loaded
-// family; satori drops text silently if a referenced family is missing, so all three are aliased
-// onto whatever font files are available rather than left dangling.
-const LAYOUT_FONT_FAMILIES = ["Stream247 Sans", "Stream247 Serif", "Stream247 Mono"] as const;
-
-const DEFAULT_FONT_CANDIDATES = {
-  regular: [
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans.ttf"
-  ],
-  bold: [
-    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf"
-  ]
-} as const;
-
-async function readFirstAvailable(candidates: readonly string[], override: string): Promise<Buffer | null> {
-  for (const candidate of [override, ...candidates].filter(Boolean)) {
-    try {
-      return await fs.readFile(candidate);
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Loads the font files once. Fonts are the only external input the renderer needs; without at
- * least a regular face satori cannot lay out any text.
- */
-export async function loadSceneRendererFonts(env: NodeJS.ProcessEnv): Promise<SceneRenderFont[]> {
-  const regular = await readFirstAvailable(DEFAULT_FONT_CANDIDATES.regular, env.OVERLAY_FONT_REGULAR_PATH || "");
-  if (!regular) {
-    throw new Error(
-      `No overlay font found. Set OVERLAY_FONT_REGULAR_PATH or install a font at one of: ${DEFAULT_FONT_CANDIDATES.regular.join(", ")}`
-    );
-  }
-
-  const bold = (await readFirstAvailable(DEFAULT_FONT_CANDIDATES.bold, env.OVERLAY_FONT_BOLD_PATH || "")) ?? regular;
-
-  return LAYOUT_FONT_FAMILIES.flatMap<SceneRenderFont>((name) => [
-    { name, data: regular, weight: 400, style: "normal" },
-    { name, data: bold, weight: 700, style: "normal" }
-  ]);
-}
-
-export type SceneRenderRequest = {
-  payload: OverlayScenePayloadView;
-  engagement?: OverlayEngagementView | null;
-  game?: OverlayGameView | null;
-  chat?: OverlayChatView | null;
-  sourceFrame?: OverlaySourceFrameView | null;
-  width: number;
-  height: number;
-};
+export {
+  loadSceneRendererFonts,
+  renderSceneSvg,
+  type SceneRenderFont,
+  type SceneRenderRequest
+} from "@stream247/overlay-render";
 
 /**
  * Renders one overlay frame to a transparent PNG.
  */
 export async function renderSceneFrame(request: SceneRenderRequest, fonts: SceneRenderFont[]): Promise<Buffer> {
-  const svg = await satori(
-    buildOverlaySceneLayout(
-      {
-        payload: request.payload,
-        engagement: request.engagement ?? null,
-        game: request.game ?? null,
-        chat: request.chat ?? null,
-        sourceFrame: request.sourceFrame ?? null
-      },
-      { width: request.width, height: request.height }
-    ) as Parameters<typeof satori>[0],
-    {
-      width: request.width,
-      height: request.height,
-      fonts
-    }
-  );
+  // Outlines are embedded: resvg rasterises the SVG as an isolated document with no font of its
+  // own to fall back on.
+  const svg = await renderSceneSvg(request, fonts, { embedFont: true });
 
   const png = new Resvg(svg, {
     fitTo: { mode: "width", value: request.width },

@@ -141,6 +141,13 @@ test.describe("wording baseline", () => {
         for (const value of root.querySelectorAll(".admin-status-rail strong, .admin-status-rail .subtle, .status-rail strong")) {
           value.textContent = "<runtime>";
         }
+        // The preview drawn by the on-air renderer is a picture of the scene, not wording. Its text
+        // is the operator's own draft laid out by satori — including a live clock — and it arrives
+        // a moment after the page, so it is neither this baseline's subject nor stable enough to be
+        // in it. The caption above it is wording and stays.
+        for (const frame of root.querySelectorAll(".scene-render-preview")) {
+          frame.textContent = "<rendered scene>";
+        }
         return (root as HTMLElement).innerText;
       });
 

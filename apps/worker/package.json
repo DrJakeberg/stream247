@@ -14,8 +14,8 @@
     "@resvg/resvg-js": "^2.6.2",
     "@stream247/core": "workspace:*",
     "@stream247/db": "workspace:*",
-    "nodemailer": "^8.0.4",
-    "satori": "^0.29.0"
+    "@stream247/overlay-render": "workspace:*",
+    "nodemailer": "^8.0.4"
   },
   "devDependencies": {
     "@types/nodemailer": "^7.0.11"

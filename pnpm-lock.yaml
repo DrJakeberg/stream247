@@ -41,6 +41,9 @@ importers:
       '@stream247/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@stream247/overlay-render':
+        specifier: workspace:*
+        version: link:../../packages/render
       next:
         specifier: ^15.2.4
         version: 15.5.14(@babel/core@7.29.0)(@playwright/test@1.56.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -50,6 +53,9 @@ importers:
       react-dom:
         specifier: ^19.0.0
         version: 19.2.4(react@19.2.4)
+      satori:
+        specifier: ^0.29.0
+        version: 0.29.0
     devDependencies:
       '@eslint/eslintrc':
         specifier: ^3.3.5
@@ -87,12 +93,12 @@ importers:
       '@stream247/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@stream247/overlay-render':
+        specifier: workspace:*
+        version: link:../../packages/render
       nodemailer:
         specifier: ^8.0.4
         version: 8.0.4
-      satori:
-        specifier: ^0.29.0
-        version: 0.29.0
     devDependencies:
       '@types/nodemailer':
         specifier: ^7.0.11
@@ -112,6 +118,15 @@ importers:
       '@types/pg':
         specifier: ^8.15.6
         version: 8.20.0
+
+  packages/render:
+    dependencies:
+      '@stream247/core':
+        specifier: workspace:*
+        version: link:../core
+      satori:
+        specifier: ^0.29.0
+        version: 0.29.0
 
 packages:
 

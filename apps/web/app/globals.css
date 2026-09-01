@@ -1446,6 +1446,110 @@ button.collection-chip {
   min-height: 100%;
 }
 
+/*
+ * The fonts the on-air renderer laid the preview out with.
+ *
+ * The preview SVG is inlined into this page carrying font-family="stream247 sans" (and serif, and
+ * mono) with no embedded outlines — that is what keeps a frame at kilobytes instead of tens of
+ * kilobytes on a surface that redraws as the operator types. The glyphs therefore have to come from
+ * here, and they have to be the same glyphs: the route below serves the exact file the renderer
+ * read, not a lookalike. The renderer aliases all three families onto one DejaVu pair, so this does
+ * too — a preview that quietly substituted a real serif would be lying about the typography.
+ *
+ * Family matching in CSS is case-insensitive, which is why the lower-cased names satori writes into
+ * the SVG resolve against the capitalised ones declared here.
+ */
+@font-face {
+  font-family: "Stream247 Sans";
+  font-style: normal;
+  font-weight: 400;
+  src: url("/api/scenes/preview/font?face=regular") format("truetype");
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Stream247 Sans";
+  font-style: normal;
+  font-weight: 700;
+  src: url("/api/scenes/preview/font?face=bold") format("truetype");
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Stream247 Serif";
+  font-style: normal;
+  font-weight: 400;
+  src: url("/api/scenes/preview/font?face=regular") format("truetype");
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Stream247 Serif";
+  font-style: normal;
+  font-weight: 700;
+  src: url("/api/scenes/preview/font?face=bold") format("truetype");
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Stream247 Mono";
+  font-style: normal;
+  font-weight: 400;
+  src: url("/api/scenes/preview/font?face=regular") format("truetype");
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Stream247 Mono";
+  font-style: normal;
+  font-weight: 700;
+  src: url("/api/scenes/preview/font?face=bold") format("truetype");
+  font-display: block;
+}
+
+/* Both previews of one scene, at one width, so the differences line up rather than have to be
+   remembered across a scroll. */
+.scene-preview-pair {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 1400px) {
+  .scene-preview-pair {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.scene-preview-figure {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+}
+
+/* The renderer draws the full 1920x1080 frame, so its shell follows the frame rather than the
+   rebuild's fixed height. */
+.scene-preview-shell-render {
+  display: grid;
+  min-height: 0;
+  align-content: center;
+  aspect-ratio: 16 / 9;
+}
+
+.scene-render-preview svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.scene-render-preview-empty {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+}
+
 .studio-dialog-backdrop {
   position: fixed;
   inset: 0;

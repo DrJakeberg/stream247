@@ -12,6 +12,9 @@
       ],
       "@stream247/db": [
         "../../packages/db/src/index.ts"
+      ],
+      "@stream247/overlay-render": [
+        "../../packages/render/src/index.ts"
       ]
     },
     "plugins": [
