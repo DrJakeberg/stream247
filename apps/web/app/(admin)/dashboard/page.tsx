@@ -8,6 +8,7 @@ import { DestinationSettingsForm } from "@/components/destination-settings-form"
 import { IncidentActionForm } from "@/components/incident-action-form";
 import { Panel } from "@/components/panel";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
+import { describeTwitchConnection } from "@/components/twitch-connection-status";
 import { getGoLiveChecklist } from "@/lib/server/onboarding";
 import { DESTINATION_ROLE_LABELS, DESTINATION_STATUS_LABELS, describeStreamKey } from "@/lib/destination-wording";
 import {
@@ -31,6 +32,7 @@ export default async function DashboardPage() {
     identityLogin: state.twitch.broadcasterLogin,
     broadcasterConnection: state.twitchBroadcaster
   });
+  const twitchConnection = describeTwitchConnection(state.twitch);
   const checklist = getGoLiveChecklist(state);
   const schedulePreview = getSchedulePreview(state);
   const presenceStatus = getPresenceStatus(state);
@@ -77,12 +79,15 @@ export default async function DashboardPage() {
         </article>
         <article className="metric">
           <span className="label">Twitch</span>
-          <div className="value">{state.twitch.status}</div>
-          <p className="subtle">
-            {state.twitch.status === "connected"
-              ? `Broadcaster ${state.twitch.broadcasterLogin || state.twitch.broadcasterId}`
-              : state.twitch.error || "OAuth connection not completed yet."}
-          </p>
+          <div className="value">{twitchConnection.label}</div>
+          <p className="subtle">{twitchConnection.detail}</p>
+          {twitchConnection.consequence ? <p className="subtle">{twitchConnection.consequence}</p> : null}
+          {/* The stored message stays available underneath. It is the only place the upstream
+              wording survives on this surface, and dropping it would trade one kind of blindness
+              for another — but it is no longer the first thing anyone reads. */}
+          {state.twitch.status !== "connected" && state.twitch.error ? (
+            <p className="subtle">Reported by Twitch: {state.twitch.error}</p>
+          ) : null}
           {state.twitch.lastMetadataSyncAt ? (
             <p className="subtle">
               Last metadata sync: {state.twitch.lastSyncedTitle || "no title"} ·{" "}
