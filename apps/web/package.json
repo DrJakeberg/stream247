@@ -13,7 +13,9 @@
   "dependencies": {
     "@stream247/core": "workspace:*",
     "@stream247/db": "workspace:*",
+    "@stream247/overlay-render": "workspace:*",
     "next": "^15.2.4",
+    "satori": "^0.29.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

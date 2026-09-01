@@ -16,6 +16,7 @@ export default defineConfig({
       "@/": `${path.resolve(import.meta.dirname, "apps/web")}/`,
       "@stream247/core": path.resolve(import.meta.dirname, "packages/core/src/index.ts"),
       "@stream247/config": path.resolve(import.meta.dirname, "packages/config/src/index.ts"),
+      "@stream247/overlay-render": path.resolve(import.meta.dirname, "packages/render/src/index.ts"),
       "@stream247/db": path.resolve(import.meta.dirname, "packages/db/src/index.ts")
     }
   }
