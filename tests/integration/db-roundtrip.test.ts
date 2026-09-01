@@ -11,6 +11,7 @@ import {
   ensureDatabase,
   listOverlayScenePresetRecords,
   publishOverlayDraftRecord,
+  appendAuditEvent,
   appendPresenceWindowRecord,
   readAppState,
   updateAppState,
@@ -48,6 +49,7 @@ type TestDatabase = {
 };
 
 const persistentProgramFeedRuntimeMigrationId = "20260419_001_persistent_program_feed_runtime";
+const workerHeartbeatRuntimeMigrationId = "20260901_001_worker_heartbeat_runtime";
 const persistentProgramFeedRuntimeColumns = [
   "uplink_status",
   "uplink_input_mode",
@@ -1735,5 +1737,64 @@ describe.sequential("database roundtrip", () => {
       const after = await readAppState();
       expect(after.playout.restartCount).toBe(before.playout.restartCount + 3);
     });
+  });
+
+  describe("audit trail durability", () => {
+    it("keeps a security-relevant entry through a flood of routine worker heartbeats", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql("DELETE FROM audit_events;");
+      await appendAuditEvent("relay.internal_key.revealed", "The relay internal key was revealed.");
+
+      // The routine loop runs every 30 seconds. Far more cycles than the audit trail could ever
+      // have held under the old 100-row ring, where this entry was gone inside fifteen minutes.
+      for (let index = 0; index < 40; index += 1) {
+        await updatePlayoutRuntime((playout) => ({
+          ...playout,
+          workerHeartbeatAt: new Date().toISOString()
+        }));
+      }
+
+      const state = await readAppState();
+      // The point of the change: routine traffic no longer occupies the trail at all, so it has
+      // no way to displace anything, whatever the cap happens to be.
+      expect(state.auditEvents.some((event) => event.type === "worker.cycle")).toBe(false);
+      expect(state.auditEvents.some((event) => event.type === "uplink.cycle")).toBe(false);
+      expect(state.auditEvents.some((event) => event.type === "relay.internal_key.revealed")).toBe(true);
+      // And the heartbeat those cycles used to prove is still readable.
+      expect(state.playout.workerHeartbeatAt).not.toBe("");
+    }, 120_000);
+
+    it("carries more than the old hundred-row cap through a state round trip", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql("DELETE FROM audit_events;");
+
+      const seeded = Array.from({ length: 200 }, (_, index) => ({
+        id: `audit_seed_${String(index).padStart(3, "0")}`,
+        type: "settings.managed-config.updated",
+        message: `Seeded entry ${index}`,
+        createdAt: new Date(Date.UTC(2026, 8, 1, 0, 0, index)).toISOString()
+      }));
+
+      await updateAppState((current) => ({ ...current, auditEvents: seeded }));
+
+      const reread = await readAppState();
+      expect(reread.auditEvents).toHaveLength(200);
+    }, 60_000);
+
+    it("adds the worker heartbeat column to an existing playout runtime row", async () => {
+      await ensureDatabaseWithRetry();
+      await updatePlayoutRuntime((playout) => ({ ...playout, restartCount: 7 }));
+      await executeSql(`
+        ALTER TABLE playout_runtime DROP COLUMN IF EXISTS worker_heartbeat_at;
+        DELETE FROM schema_migrations WHERE id = '${workerHeartbeatRuntimeMigrationId}';
+      `);
+
+      await ensureDatabaseWithRetry();
+
+      const reread = await readAppState();
+      expect(reread.playout.workerHeartbeatAt).toBe("");
+      // The pre-existing row survived the upgrade rather than being replaced.
+      expect(reread.playout.restartCount).toBe(7);
+    }, 60_000);
   });
 });

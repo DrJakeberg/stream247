@@ -39,7 +39,7 @@ describe("incident area health", () => {
     programFeedMode: true,
     uplinkInputMode: "hls",
     relayEnabled: true,
-    lastWorkerCycleAt: at(minutes(0.2)),
+    workerHeartbeatAt: at(minutes(0.2)),
     programFeedStaleMs: minutes(1),
     uplinkWatchdogMs: { stallMs: 45_000, graceMs: 60_000, noProgressRestartMs: 300_000 },
     uplinkDestinationsHealthy: true,
@@ -162,7 +162,7 @@ describe("incident area health", () => {
 
   it("needs a recent worker cycle before the worker area counts as healthy", () => {
     expect(measureIncidentAreaHealth(base)).toContain("worker");
-    expect(measureIncidentAreaHealth({ ...base, lastWorkerCycleAt: at(minutes(30)) })).not.toContain("worker");
+    expect(measureIncidentAreaHealth({ ...base, workerHeartbeatAt: at(minutes(30)) })).not.toContain("worker");
   });
 });
 
