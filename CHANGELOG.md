@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Fixed
+
+- The audit trail held nothing but heartbeats. `audit_events` is a ring buffer capped at 100 rows,
+  and the worker and uplink loops each wrote a routine entry into it every 30 seconds. Measured on
+  the running DUT on 2026-09-01: all 100 rows were `worker.cycle` (32) and `uplink.cycle` (68), and
+  the oldest of them was 17 minutes old. Not one security-relevant entry had survived. Everything
+  the trail exists to answer was gone within about a quarter of an hour — Twitch account
+  connections and their OAuth callbacks, `relay.internal_key.revealed` (added specifically so that
+  reading a secret leaves a mark), rejected relay publishes, sign-ins, settings changes. An earlier
+  review had noted that the rate limit bounds repeated harvesting without making the audit line
+  durable; this is that gap, measured.
+
+  Routine liveness and security evidence no longer share a table. The worker loop records
+  `playout_runtime.worker_heartbeat_at`, beside the playout and uplink heartbeats that were already
+  there, and the uplink loop simply stops writing `uplink.cycle` — it had already written
+  `uplink_heartbeat_at` on every path it can exit through, so the audit entry was only ever the
+  noisier copy of a timestamp the runtime row already held. With no routine writer left, a
+  security-relevant entry cannot be displaced by routine traffic at all; the property holds by
+  construction rather than by a retention policy that has to keep classifying events correctly.
+
+  All five readers move to the runtime heartbeat: system readiness, `getWorkerHealth`, the incident
+  area classifier that decides whether the worker area is healthy, and the worker and uplink
+  healthchecks. The scheduled-reconnect path turned out to be the one uplink exit that never
+  awaited a heartbeat write of its own — it relied on a fire-and-forget write in the process exit
+  handler — so it records one directly now.
+
+  The retention bound rises from 100 to 500 and becomes a single shared constant, because the
+  prune, the hydrate `LIMIT` and the persist slice all have to agree or the table silently
+  truncates on the next state write. 500 covers weeks to months of operator activity now that the
+  routine traffic is gone, and just under an hour of the worst case an attacker can drive — the
+  relay throttle caps rejected-publish entries at ten a minute — against ten minutes before. The
+  table still travels with the full state serialisation, so it stays bounded; at the 85 bytes a row
+  measures, 500 rows is about 42 KB, proportionate to the sync-run and incident tables already
+  carried alongside it. The per-row insert in that rewrite became one batched statement so the
+  higher bound does not land on every state write.
+
+  Schema: `20260901_001_worker_heartbeat_runtime`, additive. Existing rows keep their data and
+  start with an empty heartbeat, which reads as "missing" exactly as an absent `worker.cycle` entry
+  did, until the worker completes its next cycle at most 30 seconds later.
+
+  Visible change: the per-source activity panel in the admin UI now shows only real events. It was
+  already filtered by source, so in practice it had been showing nothing at all.
+
 ## 1.5.35 - 2026-08-28
 
 ### Fixed
