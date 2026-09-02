@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.40 - 2026-09-02
+
 ### Fixed
 
 - The on-air clock stood still on a quiet channel. Found while measuring the ticker: the overlay
