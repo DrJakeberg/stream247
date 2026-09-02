@@ -23,7 +23,7 @@ describe("moderator check-in persistence", () => {
     await new Promise((resolve) => setImmediate(resolve));
     const said = write.mock.calls.map((call) => String(call[0]));
     expect(said.some((line) => /could not be saved/i.test(line))).toBe(true);
-    expect(said.some((line) => /checked in/i.test(line))).toBe(false);
+    expect(said.some((line) => /presence window/i.test(line))).toBe(false);
   });
 
   it("confirms only after the window has been written", async () => {
@@ -36,6 +36,6 @@ describe("moderator check-in persistence", () => {
     release();
     await new Promise((resolve) => setImmediate(resolve));
     expect(write).toHaveBeenCalledTimes(1);
-    expect(String(write.mock.calls[0]?.[0])).toMatch(/checked in/i);
+    expect(String(write.mock.calls[0]?.[0])).toMatch(/presence window/i);
   });
 });
