@@ -11,12 +11,14 @@ import {
   OVERLAY_TYPOGRAPHY_PRESETS,
   OVERLAY_TITLE_SCALES,
   MAX_NAMED_OVERLAY_SCENES,
+  OVERLAY_PANEL_IDS,
   buildOverlayScenePayload,
   deriveDefaultPlacements,
   describeOverlaySceneFrameSupport,
   resolveActiveOverlayNamedSceneId,
   resolveOverlayHeadlineForQueueKind,
   resolveOverlayNamedSceneCustomLayers,
+  resolvePlacementPixelBox,
   type OverlayNamedScene,
   type OverlayPanelId,
   type OverlayQueueKind,
@@ -31,6 +33,7 @@ import {
 } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { OverlayPlacementCanvas, type PlacementTarget } from "@/components/overlay-placement-canvas";
 import { OverlayRenderPreview } from "@/components/overlay-render-preview";
 import { useToast } from "@/components/ui/Toast";
 import { buildOverlayPublishReviewSections, type OverlayPublishReviewSection } from "@/lib/overlay-publish-review";
@@ -105,23 +108,26 @@ const OVERLAY_PANEL_LABELS: { id: OverlayPanelId; label: string; hint: string }[
   { id: "banner", label: "Emergency banner", hint: "Only on air while the banner has text." }
 ];
 
+/** The design grid. Design pixels are frame pixels at this size, which is what makes it the grid. */
+const DESIGN_FRAME = { width: 1920, height: 1080 };
+
 /**
- * The box in frame pixels, for the caption under each panel's name.
+ * The box in design pixels, for the caption under each panel's name.
  *
  * Percentages are what is stored, because they survive an output size change; pixels are what an
  * operator recognises on the picture. This says the same thing the four number fields say, in one
  * readable line, so a folded panel still tells you where it is.
+ *
+ * Resolved by the renderer's own resolver rather than by repeating its arithmetic here. The
+ * hand-written version this replaces had the safe-area margins, the origin and the clamps written
+ * out a second time, so a caption could disagree with the picture — and did, for any box the
+ * renderer clamps.
  */
 function describePanelBox(placement: OverlayScenePanelPlacement): string {
-  const safeWidth = placement.allowOutsideSafeArea ? 1920 : 1920 - 144;
-  const safeHeight = placement.allowOutsideSafeArea ? 1080 : 1080 - 112;
-  const originX = placement.allowOutsideSafeArea ? 0 : 72;
-  const originY = placement.allowOutsideSafeArea ? 0 : 56;
-  const round = (value: number) => String(Math.round(value));
+  const box = resolvePlacementPixelBox(placement, DESIGN_FRAME);
   return (
-    `x ${round(originX + (safeWidth * placement.xPercent) / 100)} · ` +
-    `y ${round(originY + (safeHeight * placement.yPercent) / 100)} · ` +
-    `${round((safeWidth * placement.widthPercent) / 100)} × ${round((safeHeight * placement.heightPercent) / 100)} · ` +
+    `x ${String(box.left)} · y ${String(box.top)} · ` +
+    `${String(box.width)} × ${String(box.height)} · ` +
     `${String(placement.opacityPercent)}% opacity`
   );
 }
@@ -196,6 +202,15 @@ export function OverlaySettingsForm(props: {
    * the corner itself.
    */
   chatPosition?: string;
+  /**
+   * The size this channel actually encodes, from the output profile.
+   *
+   * Not 1920x1080 unless the profile says so. overlayScale has a floor at 0.35 and every dimension
+   * is rounded, so at 1280x720 the safe band is 646px of 720 where at 1920x1080 it is 968 of 1080 —
+   * the picture is genuinely different, and a preview at the wrong size would put the drag handles
+   * somewhere the broadcast does not.
+   */
+  outputSize: { width: number; height: number };
 }) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -205,6 +220,15 @@ export function OverlaySettingsForm(props: {
   const [presetName, setPresetName] = useState("");
   const [presetDescription, setPresetDescription] = useState("");
   const [isPublishReviewOpen, setIsPublishReviewOpen] = useState(false);
+  // Which box on the preview the operator has hold of, as "panel:<id>" or "layer:<id>". Selecting
+  // one opens the sidebar at it, so the number fields stay available as the exact way to say what
+  // a drag can only approximate.
+  const [selectedPlacementId, setSelectedPlacementId] = useState("");
+  const [placementFoldOpen, setPlacementFoldOpen] = useState(false);
+  const [overlapNotice, setOverlapNotice] = useState("");
+  // Bumped on every drop and every arrow key, so the preview renders that change at once instead of
+  // waiting out the settle beat that exists for typing.
+  const [placementRevision, setPlacementRevision] = useState(0);
   const router = useRouter();
   const { pushToast } = useToast();
   const hasLocalChanges = overlaySignature(draft) !== overlaySignature(props.draftOverlay);
@@ -302,6 +326,25 @@ export function OverlaySettingsForm(props: {
         return current;
       }
       return { ...current, panelPlacements: { ...current.panelPlacements, [id]: { ...existing, ...patch } } };
+    });
+  };
+
+  // --- Direct manipulation -------------------------------------------------
+  //
+  // Dragging a panel that is still in the flow places it, seeded from where the flow put it, and
+  // then applies the drag. Making the operator find a checkbox first is the complaint this whole
+  // stage exists to answer: "I cannot move the fields."
+  const placePanelFromCanvas = (id: OverlayPanelId, patch: Partial<OverlayScenePanelPlacement>) => {
+    setDraft((current) => {
+      const seed = current.panelPlacements[id] ?? {
+        ...deriveDefaultPlacements(current.panelAnchor, props.chatPosition)[id],
+        opacityPercent: 100,
+        allowOutsideSafeArea: false
+      };
+      return {
+        ...current,
+        panelPlacements: { ...current.panelPlacements, [id]: { ...seed, ...patch } as OverlayScenePanelPlacement }
+      };
     });
   };
 
@@ -501,6 +544,85 @@ export function OverlaySettingsForm(props: {
     timeZone: props.preview.timeZone
   });
 
+  /**
+   * The panels and layers the preview frame actually draws, as boxes on that frame.
+   *
+   * Only what is on the picture gets a handle. The vote and chat panels are never drawn in the
+   * studio preview — the renderer builds them from a live engagement and a live chat, neither of
+   * which the preview payload carries — so they get a box only once the operator has placed one
+   * from the sidebar, rather than a handle hovering over nothing. Embed and widget layers never
+   * get one at all: satori cannot run an iframe, so those exist only on the browser overlay.
+   */
+  const placementTargets: PlacementTarget[] = [
+    ...OVERLAY_PANEL_IDS.filter((id) => {
+      if (draft.panelPlacements[id]) {
+        return true;
+      }
+      if (id === "hero" || id === "clock") {
+        return true;
+      }
+      if (id === "next") {
+        return Boolean(previewNextTitle);
+      }
+      if (id === "banner") {
+        return Boolean(draft.emergencyBanner.trim());
+      }
+      return false;
+    }).map((id) => ({
+      id: `panel:${id}`,
+      label: OVERLAY_PANEL_LABELS.find((panel) => panel.id === id)?.label ?? id,
+      placement:
+        draft.panelPlacements[id] ?? deriveDefaultPlacements(draft.panelAnchor, props.chatPosition)[id]
+    })),
+    ...draft.customLayers
+      .filter((layer) => layer.enabled && ["logo", "image", "text"].includes(layer.kind))
+      .map((layer) => ({
+        id: `layer:${layer.id}`,
+        label: layer.name,
+        placement: layer,
+        // A logo drawn with fit: contain is letterboxed inside its box, so a box of the wrong
+        // shape adds margin the operator cannot see here and cannot remove later. The ratio itself
+        // is taken from the resolved box at the moment the drag starts, not from the two percents:
+        // those are measured against different axes, so their quotient is not a shape.
+        lockAspect: (layer.kind === "logo" || layer.kind === "image") && layer.fit === "contain"
+      }))
+  ];
+
+  const commitPlacement = (
+    id: string,
+    percent: { xPercent: number; yPercent: number; widthPercent: number; heightPercent: number }
+  ) => {
+    const round = (value: number) => Math.round(value * 100) / 100;
+    const patch = {
+      xPercent: round(percent.xPercent),
+      yPercent: round(percent.yPercent),
+      widthPercent: round(percent.widthPercent),
+      heightPercent: round(percent.heightPercent)
+    };
+
+    if (id.startsWith("panel:")) {
+      placePanelFromCanvas(id.slice("panel:".length) as OverlayPanelId, patch);
+    } else {
+      updateCustomLayer(id.slice("layer:".length), (current) => ({ ...current, ...patch }));
+    }
+
+    setPlacementRevision((current) => current + 1);
+  };
+
+  const selectPlacement = (id: string) => {
+    setSelectedPlacementId(id);
+    if (id.startsWith("panel:")) {
+      setPlacementFoldOpen(true);
+    }
+    // The sidebar jumps to what was just clicked. Not focus — focus belongs to the box on the
+    // preview, which is the thing the arrow keys move.
+    if (typeof document !== "undefined") {
+      requestAnimationFrame(() => {
+        document.getElementById(`placement-${id.replace(":", "-")}`)?.scrollIntoView({ block: "nearest" });
+      });
+    }
+  };
+
   const saveScenePreset = () => {
     setError("");
 
@@ -693,11 +815,34 @@ export function OverlaySettingsForm(props: {
             What is shown here is the same drawing the playout puts on the picture.
           */}
           <figure className="scene-preview-figure">
-            <figcaption className="label">As it goes on air</figcaption>
-            <div className="scene-preview-shell scene-preview-shell-render">
-              <OverlayRenderPreview payload={previewPayload} />
+            <figcaption className="label">
+              As it goes on air, at {props.outputSize.width}x{props.outputSize.height}
+            </figcaption>
+            <div
+              className="scene-preview-shell scene-preview-shell-render"
+              style={{ aspectRatio: `${String(props.outputSize.width)} / ${String(props.outputSize.height)}` }}
+            >
+              <OverlayRenderPreview
+                height={props.outputSize.height}
+                immediateRevision={placementRevision}
+                payload={previewPayload}
+                width={props.outputSize.width}
+              />
+              <OverlayPlacementCanvas
+                frame={props.outputSize}
+                onCommit={commitPlacement}
+                onOverlapChange={setOverlapNotice}
+                onSelect={selectPlacement}
+                selectedId={selectedPlacementId}
+                targets={placementTargets}
+              />
             </div>
           </figure>
+          <p className="subtle">
+            {overlapNotice
+              ? overlapNotice
+              : "Drag a box to move it, drag a handle to resize, arrow keys to nudge by one pixel and shift for eight. Hold Alt to ignore the grid and the guides."}
+          </p>
         </div>
 
         <div className="scene-designer-sidebar">
@@ -980,7 +1125,10 @@ export function OverlaySettingsForm(props: {
 
           <div className="list">
             <div className="item">
-              <details>
+              {/* Controlled, so clicking a box on the preview can open the fold at the panel it
+                  belongs to. The number fields stay: a drag says "about here", the fields say
+                  exactly where, and an operator setting up a channel wants both. */}
+              <details onToggle={(event) => setPlacementFoldOpen(event.currentTarget.open)} open={placementFoldOpen}>
                 <summary>
                   <span className="label">Panel placement</span>
                   <span className="subtle">
@@ -999,7 +1147,12 @@ export function OverlaySettingsForm(props: {
                   {OVERLAY_PANEL_LABELS.map((panel) => {
                     const placement = draft.panelPlacements[panel.id];
                     return (
-                      <div className="item" key={panel.id}>
+                      <div
+                        className="item"
+                        data-selected={selectedPlacementId === `panel:${panel.id}` ? "true" : "false"}
+                        id={`placement-panel-${panel.id}`}
+                        key={panel.id}
+                      >
                         <label className="toggle-row">
                           <input checked={Boolean(placement)} onChange={() => togglePanelPlacement(panel.id)} type="checkbox" />
                           <span>
@@ -1104,7 +1257,12 @@ export function OverlaySettingsForm(props: {
               <div className="list" style={{ marginTop: 12 }}>
                 {draft.customLayers.length > 0 ? (
                   draft.customLayers.map((layer, index) => (
-                    <div className="item" key={layer.id}>
+                    <div
+                      className="item"
+                      data-selected={selectedPlacementId === `layer:${layer.id}` ? "true" : "false"}
+                      id={`placement-layer-${layer.id}`}
+                      key={layer.id}
+                    >
                       <div className="inline-form" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div>
                           <strong>{layer.name}</strong>

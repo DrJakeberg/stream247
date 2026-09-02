@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { AdminPageHeader } from "@/components/admin-page-header";
+import { resolveStreamOutputSettings } from "@stream247/core";
 import { listOverlayVideoSourceRecords } from "@stream247/db";
 import { OverlaySettingsForm } from "@/components/overlay-settings-form";
 import { Panel } from "@/components/panel";
@@ -13,6 +14,10 @@ export default async function OverlayStudioPage() {
   const studioState = await readOverlayStudioState();
   const scenePresets = await listOverlayScenePresetRecords();
   const videoSources = await listOverlayVideoSourceRecords();
+  // The size the channel actually encodes. The preview is drawn at it and the drag handles are
+  // placed against it, because the picture at 1280x720 is not a scaled 1080p one: overlayScale
+  // floors at 0.35 and every dimension is rounded to whole pixels.
+  const outputSettings = resolveStreamOutputSettings({ settings: state.output, env: process.env });
   const currentItem = getCurrentScheduleItem(state);
   const nextItem = getNextScheduleItem(state);
   const previewQueueTitles = state.playout.queueItems.slice(1, 5).map((item) => item.title).filter(Boolean);
@@ -43,6 +48,7 @@ export default async function OverlayStudioPage() {
             draftOverlay={studioState.draftOverlay}
             hasUnpublishedChanges={studioState.hasUnpublishedChanges}
             liveOverlay={studioState.liveOverlay}
+            outputSize={{ width: outputSettings.width, height: outputSettings.height }}
             scenePresets={scenePresets}
             videoSources={videoSources}
             preview={{

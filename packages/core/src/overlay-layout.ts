@@ -925,10 +925,14 @@ export const OVERLAY_PLACEMENT_MIN_HEIGHT_PERCENT = 8;
  * the frame: 56 design pixels at 1280x720 rounds to 37, so the safe band is 646px of 720 (89.72%)
  * where at 1920x1080 it is 968px of 1080 (89.63%). Percents therefore mean slightly different
  * pixels at different output sizes, which is exactly why the studio has to be told the real one.
+ *
+ * Exported because the studio's drag handles snap to this rectangle. A studio that hardcoded
+ * "72 and 56" would be right at 1920x1080 and wrong everywhere else — which is the class of bug
+ * the hand-written HTML preview was removed for.
  */
-function placementSafeArea(
+export function resolvePlacementSafeArea(
   frame: { width: number; height: number },
-  allowOutsideSafeArea: boolean
+  allowOutsideSafeArea = false
 ): { left: number; top: number; width: number; height: number } {
   const px = (value: number) => Math.round(value * overlayScale(frame.width));
   const left = allowOutsideSafeArea ? 0 : px(72);
@@ -1004,7 +1008,7 @@ export function resolvePlacementPercent(
   frame: { width: number; height: number },
   options: { allowOutsideSafeArea?: boolean } = {}
 ): { xPercent: number; yPercent: number; widthPercent: number; heightPercent: number } {
-  const safe = placementSafeArea(frame, options.allowOutsideSafeArea === true);
+  const safe = resolvePlacementSafeArea(frame, options.allowOutsideSafeArea === true);
 
   const xPercent = clampPlacementPercent(((box.left - safe.left) / safe.width) * 100, 0, 100);
   const yPercent = clampPlacementPercent(((box.top - safe.top) / safe.height) * 100, 0, 100);
