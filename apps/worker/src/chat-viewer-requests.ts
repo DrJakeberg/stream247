@@ -38,9 +38,17 @@ export type ChatViewerRequestOutcome = {
  *
  * A pass is one worker cycle's worth of chat: drainChatEffects takes everything the IRC handler
  * recorded since the last cycle and decides it in a loop.
+ *
+ * The pass, not the cycle snapshot, is what a request is judged against. state.playout.queuedAssetIds
+ * is read once per cycle and does not move while the loop runs — an accepted request only reaches
+ * it through updatePlayoutRuntime, whose write the loop never reads back. Judging every request of
+ * a pass against the snapshot alone let ten viewers walk past a cap of two inside one ~30 second
+ * cycle, and let the same title into the queue as often as it was asked for. So the pass carries
+ * what it has already accepted and adds it to the queue every later decision sees.
  */
 export class ChatViewerRequestPass {
   private readonly queuedAssetIds: string[];
+  private readonly accepted: string[] = [];
   private readonly history: ChatViewerRequestHistory;
 
   constructor(args: { queuedAssetIds: string[]; history: ChatViewerRequestHistory }) {
@@ -48,9 +56,9 @@ export class ChatViewerRequestPass {
     this.history = args.history;
   }
 
-  /** The queue the next request of this pass is judged against. */
+  /** The queue the next request of this pass is judged against: the snapshot plus this pass. */
   queueView(): string[] {
-    return [...this.queuedAssetIds];
+    return [...this.queuedAssetIds, ...this.accepted];
   }
 
   /**
@@ -81,6 +89,13 @@ export class ChatViewerRequestPass {
       config: request.config,
       now: request.now
     });
+
+    // Recorded here rather than by the caller, so the cap and the already-queued check cannot
+    // drift apart from what the pass actually honoured. The row the caller writes for it is
+    // counted by countQueued on the next decision, because that asset is now in the queue view.
+    if (verdict.accepted && verdict.assetId) {
+      this.accepted.push(verdict.assetId);
+    }
 
     return { verdict, queuedRequestCount };
   }
