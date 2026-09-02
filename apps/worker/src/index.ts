@@ -295,6 +295,7 @@ import {
   ChatGameRuntime,
   buildChatGameOverlayViewFromRuntimeRecord,
   hasActiveChatGameLayer,
+  hasChatGameBridgeConsumer,
   resolveChatGameLayerProvisioning,
   resolveChatGameLayerTeardown
 } from "./chat-game.js";
@@ -8245,10 +8246,13 @@ async function runWorkerCycle(): Promise<void> {
   const chatCycleState = await readAppState();
   latestEngagementSettings = chatCycleState.engagement;
   latestManagedConfig = chatCycleState.managedConfig;
-  const [chatInteractionForBridge, chatGameForBridge] = await Promise.all([readChatInteractionSettingsRecord(), readChatGameSettingsRecord()]);
+  const chatInteractionForBridge = await readChatInteractionSettingsRecord();
   await twitchChatBridge.sync(chatCycleState, process.env, {
     chatInteractionEnabled: chatInteractionForBridge.enabled,
-    chatGameEnabled: Boolean(chatGameForBridge.gameId)
+    // Not the settings row: it has no enabled column, its gameId defaults to "snake" and is never
+    // empty, so `Boolean(gameId)` was constant true and held a connection open on installs with
+    // every chat consumer switched off. The scene is where the operator's decision actually lives.
+    chatGameEnabled: hasChatGameBridgeConsumer(chatCycleState.overlay)
   });
   // The cycle flush is what carries settings changes (position, count, the enable gate) to the
   // row when no chat is arriving to trigger the throttled one; identical content writes nothing.

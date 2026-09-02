@@ -61,6 +61,28 @@ export function hasActiveChatGameLayer(overlay: ChatGameLayerProvisioningInput):
 }
 
 /**
+ * Whether the chat game needs the Twitch connection kept up.
+ *
+ * Deliberately a weaker rule than hasActiveChatGameLayer, and the two are not interchangeable.
+ * "On air" is what the runtime is reconciled against — the overlay published and a game layer
+ * enabled. "Needs chat" is what the bridge is gated on, and it has to survive the gaps in that:
+ *
+ *   - The teardown after "!stop" disables the game layer and keeps it, so the operator's placement
+ *     survives. Gating on the enabled flag would drop the connection the moment a round ended, and
+ *     the "!snake" that would start the next one would never arrive.
+ *   - Provisioning publishes the overlay itself, so a game layer under an unpublished overlay is
+ *     still one command away from being on air.
+ *
+ * What it is not is a guess: chat_game_settings has no enabled column, and the layer in the scene
+ * is the only place the operator's decision about this feature is recorded. A studio with no game
+ * layer at all is an install that has never switched the chat game on, and that is the one case
+ * where the connection is not needed for it.
+ */
+export function hasChatGameBridgeConsumer(overlay: ChatGameLayerProvisioningInput): boolean {
+  return overlay.customLayers.some((layer) => layer.kind === "game");
+}
+
+/**
  * The overlay a chat-started game needs, from the overlay there is.
  *
  * The game only runs while the published overlay is on *and* some enabled layer of kind "game"
