@@ -49,8 +49,9 @@ Regular asset
 Insert / bumper
 Standby
 Reconnect
-AS IT GOES ON AIR
+AS IT GOES ON AIR, AT 1280X720
 <rendered scene>
+Drag a box to move it, drag a handle to resize, arrow keys to nudge by one pixel and shift for eight. Hold Alt to ignore the grid and the guides.
 Enable overlay output
 SCENE
 Main scene
