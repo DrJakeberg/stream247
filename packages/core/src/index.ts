@@ -2208,7 +2208,17 @@ export function describePresenceStatus(args: {
   activeWindows: PresenceWindow[];
   now: Date;
   fallbackEmoteOnly: boolean;
+  /** The moderation policy's own switch. Off means Stream247 does not manage the chat mode. */
+  enabled?: boolean;
 }): PresenceStatus {
+  if (args.enabled === false) {
+    return {
+      active: false,
+      chatMode: "normal",
+      summary: "Moderator presence policy is off; Stream247 leaves the chat mode alone."
+    };
+  }
+
   const activeWindows = args.activeWindows.filter((window) => window.expiresAt > args.now);
 
   if (activeWindows.length > 0) {
@@ -2231,6 +2241,38 @@ export function describePresenceStatus(args: {
       ? "No moderator presence window is active. Emote-only fallback should be enabled."
       : "No moderator presence window is active."
   };
+}
+
+/**
+ * Whether this cycle should PATCH Twitch's chat settings at all.
+ *
+ * The write used to happen on every reconcile — every 30 s — with no memory of what it last
+ * wrote and no regard for the policy switch. Now: a switched-off policy never writes, so a
+ * moderator's hand change on Twitch stands; an unchanged mode is not rewritten inside the
+ * re-assert interval; and after that interval it is written once more, so a hand change does
+ * not silently become permanent while the policy is on.
+ */
+export function resolveChatSettingsWrite(args: {
+  moderationEnabled: boolean;
+  desiredEmoteOnly: boolean;
+  lastWrittenEmoteOnly: boolean | null;
+  lastWriteAtMs: number;
+  nowMs: number;
+  reassertIntervalMs: number;
+}): { write: boolean; reason: "policy-off" | "first" | "changed" | "unchanged" | "reassert" } {
+  if (!args.moderationEnabled) {
+    return { write: false, reason: "policy-off" };
+  }
+  if (args.lastWrittenEmoteOnly === null) {
+    return { write: true, reason: "first" };
+  }
+  if (args.lastWrittenEmoteOnly !== args.desiredEmoteOnly) {
+    return { write: true, reason: "changed" };
+  }
+  if (args.nowMs - args.lastWriteAtMs > args.reassertIntervalMs) {
+    return { write: true, reason: "reassert" };
+  }
+  return { write: false, reason: "unchanged" };
 }
 
 export function buildSchedulePreview(args: {
