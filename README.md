@@ -112,9 +112,8 @@ are not retroactively revoked.
   - explicit import warnings when referenced media is not present locally
 - viewer-facing pages with:
   - public schedule page
-  - the internal `/overlay` route used by Stream247's own in-stream scene and overlay pipeline
-- one canonical Scene payload shared across overlay capture, scene APIs, and playout overlay consumers
-  - on-air scene renderer v1 that captures the published browser scene into the FFmpeg playout path with safe text-overlay fallback
+- one canonical Scene payload shared across the studio preview, scene APIs, and the playout renderer
+  - on-air scene renderer that draws the published scene natively into the FFmpeg playout path, with a text-overlay fallback; the studio preview is the same drawing
   - overlay studio with draft-save, reusable scene preset library, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, built-in typography presets, conservative local font-stack overrides, positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, and publish-live scene controls
   - admin-managed replay branding, scene presets, and ticker/badge styling
 
@@ -237,10 +236,8 @@ docker compose --profile proxy up -d
 - `DESTINATION_FAILURE_COOLDOWN_SECONDS`: how long a failed destination stays on hold before the worker will retry it automatically
 - `PLAYOUT_RECONNECT_HOURS`: interval for planned Twitch/output reconnect windows; defaults to `48`
 - `PLAYOUT_RECONNECT_SECONDS`: duration of the planned reconnect standby window; defaults to `20`
-- `SCENE_RENDER_BASE_URL`: optional internal base URL that the worker should use when capturing published Scene overlays for on-air rendering; defaults to `INTERNAL_APP_URL`, then `APP_URL`, then `http://web:3000`
-- `SCENE_RENDERER_ENABLED`: set to `0` to keep production on the text overlay path when Chromium capture is unstable
-- `SCENE_RENDER_INTERVAL_MS`: how often the worker refreshes captured on-air scene frames; defaults to `2000`
-- `SCENE_RENDER_CHROMIUM_PATH`: optional explicit Chromium binary path for the on-air scene renderer
+- `SCENE_RENDERER_ENABLED`: set to `0` to keep production on the text overlay path when the scene renderer is unstable
+- `SCENE_RENDER_INTERVAL_MS`: how often the worker redraws the on-air scene frame; defaults to `2000`
 - `CHANNEL_TIMEZONE`: schedule timezone, for example `Europe/Berlin`
 - `DISCORD_WEBHOOK_URL`: Discord alert target
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL_TO`: email alerting

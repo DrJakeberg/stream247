@@ -29,16 +29,13 @@ const RUNTIME_STATE_SELECTORS = [
   ".status-chip",
   ".readiness-timestamps",
   ".incident-list",
-  // The scene preview renders a wall clock. The server paints the real time, hydration replaces it
-  // with the frozen one, and the screenshot lands on whichever came first — which is why this
-  // surface failed on one viewport and passed on the other in the same run. page.clock cannot reach
-  // the server, so the region is masked instead.
-  ".overlay-clock",
-  // The same clock again, in the preview drawn by the on-air renderer — but this one is inside an
-  // SVG the renderer produced, so there is no element to reach for: satori labels nothing. The
-  // frame also arrives over the network a moment after the page does, so a screenshot lands either
-  // side of it. Both are runtime state, so the whole picture is masked rather than the clock.
-  // Its box is reserved by aspect-ratio, so the page is the same height with or without it.
+  // The scene preview is drawn by the on-air renderer, and it draws a wall clock. The clock is
+  // inside an SVG the renderer produced, so there is no element to reach for: satori labels
+  // nothing. The frame also arrives over the network a moment after the page does, so a screenshot
+  // lands either side of it. Both are runtime state, so the whole picture is masked rather than the
+  // clock. Its box is reserved by aspect-ratio, so the page is the same height with or without it.
+  // (The studio's own HTML imitation of the overlay, whose .overlay-clock used to be masked here,
+  // is gone: there is one preview now, and it is the renderer's.)
   ".scene-render-preview",
   // Build identity — app version and image tags. The version moves on every release, so a snapshot
   // asserting it would go red on release bumps rather than on design changes.
@@ -95,8 +92,8 @@ async function waitForStableHeight(target: Locator) {
 }
 
 async function freezeClock(page: Page) {
-  // Covers client-rendered clocks (the overlay preview ticks every second) and anything computed
-  // from Date.now() after hydration.
+  // Covers anything computed from Date.now() after hydration. (The clock in the scene preview is
+  // drawn server-side by the renderer, which this cannot reach; that region is masked instead.)
   await page.clock.setFixedTime(FROZEN_NOW);
 }
 

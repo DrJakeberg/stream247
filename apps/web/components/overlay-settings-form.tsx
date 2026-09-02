@@ -25,7 +25,6 @@ import {
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { OverlayRenderPreview } from "@/components/overlay-render-preview";
-import { OverlaySceneCanvas } from "@/components/overlay-scene-canvas";
 import { useToast } from "@/components/ui/Toast";
 import { buildOverlayPublishReviewSections, type OverlayPublishReviewSection } from "@/lib/overlay-publish-review";
 import { createDefaultCustomLayer } from "@/lib/overlay-studio-defaults";
@@ -556,28 +555,18 @@ export function OverlaySettingsForm(props: {
             </select>
           </div>
           {/*
-            Two previews of one scene, side by side, on purpose — and only until the imitation is
-            removed. The left is what the studio has always drawn: an HTML rebuild of the overlay
-            that uses a 5% safe area where the renderer uses 3.75% by 5.19%, allows panel sizes and
-            opacities the renderer clamps away, and shows relative-path images the renderer cannot
-            fetch at all. The right is the frame the renderer actually puts on air. Where they
-            disagree, the right one is the truth, and seeing the gap is the point.
+            One preview, drawn by the renderer that goes on air. The studio used to draw its own
+            HTML imitation of the overlay next to this one; it used a 5% safe area where the
+            renderer uses 3.75% by 5.19%, allowed panel sizes and opacities the renderer clamps
+            away, and at 1280x720 drew every panel half again as large as the broadcast. It is gone.
+            What is shown here is the same drawing the playout puts on the picture.
           */}
-          <div className="scene-preview-pair">
-            <figure className="scene-preview-figure">
-              <figcaption className="label">Studio rebuild</figcaption>
-              <div className="scene-preview-shell">
-                <div aria-hidden="true" className="scene-preview-safe-area" />
-                <OverlaySceneCanvas payload={previewPayload} />
-              </div>
-            </figure>
-            <figure className="scene-preview-figure">
-              <figcaption className="label">On-air renderer</figcaption>
-              <div className="scene-preview-shell scene-preview-shell-render">
-                <OverlayRenderPreview payload={previewPayload} />
-              </div>
-            </figure>
-          </div>
+          <figure className="scene-preview-figure">
+            <figcaption className="label">As it goes on air</figcaption>
+            <div className="scene-preview-shell scene-preview-shell-render">
+              <OverlayRenderPreview payload={previewPayload} />
+            </div>
+          </figure>
         </div>
 
         <div className="scene-designer-sidebar">

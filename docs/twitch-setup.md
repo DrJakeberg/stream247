@@ -138,4 +138,4 @@ That creates an explicit moderation presence window. While such a window is acti
 ## Current Limitations
 
 - Twitch integration is Twitch-first, not multi-destination
-- overlay is not yet a native Twitch-scene/plans system; it remains Stream247's internal browser capture surface
+- overlay is not yet a native Twitch-scene/plans system; it remains Stream247's own on-air overlay, drawn by the playout renderer
