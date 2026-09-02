@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+- The overlay can hold several named scenes, and one of them is on air. Until now a channel had
+  exactly one layer set: building a second look meant rebuilding the first one afterwards. An
+  operator can now add, rename, duplicate and delete scenes in the studio, and the scene picked
+  there is the one that goes on air at the next publish — the switch reaches the picture through
+  the same payload the renderer already reads, so it costs no process restart and no gap: the
+  overlay is a pipe of frames whose content changes, not an ffmpeg argument. A scene may
+  optionally name one of the stored video sources (M57); that source fills in for any source
+  layer in the scene that names none, so a duplicated scene can be pointed at another camera in
+  one step. If that source is later removed, the layer falls back to the still picture exactly as
+  an unlinked layer does. Migration `20260902_003_named_overlay_scenes` adds `scenes_json` and
+  `active_scene_id` to `overlay_settings` and `overlay_drafts` and turns what was on air into the
+  first scene, named "Main scene". Existing installations keep their picture unchanged: the reader
+  derives that one scene from the stored layer set even before the backfill has run, so the
+  upgrade window has no state in which the overlay draws something else. The studio's control
+  budget moves from 56 to 62 — a select for the scene, its name, its video source, and add /
+  duplicate / delete; the picker is a select precisely so the count cannot grow with the number of
+  scenes.
+
 ### Security
 
 - A lost or rotated `APP_SECRET` silently turned two-factor login off. Finding [10] of the
