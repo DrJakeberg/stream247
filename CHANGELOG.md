@@ -27,8 +27,19 @@
   On air the band is drawn empty and belongs to the process rather than to the current text: a
   ticker cleared mid-programme would otherwise take the band away and leave the line crawling over
   bare video. A strip that fails to render leaves the renderer drawing the line at rest, so a
-  failure costs the motion and never the picture. The cost of rendering the strip once instead of
-  feeding it is that a ticker edited mid-programme reaches the screen at the next block.
+  failure costs the motion and never the picture — and it now raises an incident, because the
+  fallback is quiet enough to hide: the band still draws and the line still appears, standing still
+  instead of running.
+
+  The cost of rendering the strip once instead of feeding it is real and worth stating plainly: a
+  ticker edited mid-programme reaches the screen at the next block, where the dwell replaced it
+  within one render tick. The period the encoder moves the line by is derived from the ink's own
+  width, so a new text needs a new graph, and the graph is fixed for the life of the process. On a
+  channel playing assets that is a few minutes. On the standby slate or a live bridge, which run
+  until the selection changes, there may be no next block at all, and the only way to replace a
+  ticker is a playout restart — which interrupts the stream. The emergency banner is a separate
+  field still drawn on the two-second tick, so an actual emergency keeps its own way onto the
+  screen.
 
 ### Fixed
 

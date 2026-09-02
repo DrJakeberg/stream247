@@ -1014,7 +1014,8 @@ export function OverlaySettingsForm(props: {
                 : ""}{" "}
               The preview shows the line at rest, because a still picture cannot show it moving, and a change
               here reaches the screen with the next programme rather than the next second: the line is one image
-              the encoder moves, and it is made when a programme starts.
+              the encoder moves, and it is made when a programme starts. On the standby slate or a live session,
+              which have no next programme, it waits until the channel moves on.
             </p>
           ) : null}
 

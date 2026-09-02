@@ -2744,7 +2744,13 @@ async function prepareTickerCrawl(outputSettings: WorkerStreamOutputSettings): P
     if (!strip || strip.inkWidth <= 0) {
       return null;
     }
-    await fs.writeFile(tickerStripPath, strip.png);
+    // Written aside and renamed, so no reader can ever meet a half-written PNG. Not reachable
+    // today — the write is awaited before ffmpeg is spawned and no second writer exists — but the
+    // failure it rules out is asymmetric and ugly: measured, a zero-byte strip makes ffmpeg exit
+    // cleanly, while a PARTIAL one wedges it spinning at 100% CPU with -t ignored, no frames and no
+    // exit. Rename is atomic on the same filesystem; that class of failure now cannot form.
+    await fs.writeFile(`${tickerStripPath}.tmp`, strip.png);
+    await fs.rename(`${tickerStripPath}.tmp`, tickerStripPath);
     // How many copies the band needs is decided by the ink, not by a constant: two only ever
     // tiled a bed narrower than one period, and every ordinary short notice is narrower than that.
     const { copies, periodPx } = resolveTickerCrawlCopies({
@@ -2759,6 +2765,7 @@ async function prepareTickerCrawl(outputSettings: WorkerStreamOutputSettings): P
       pxPerSecond: plan.pxPerSecond,
       seconds: Math.round(periodPx / Math.max(1, plan.pxPerSecond))
     });
+    await resolveIncident("playout.ticker-strip.failed", "The ticker strip renders again.");
     return {
       stripPath: tickerStripPath,
       placement: plan.placement,
@@ -2768,8 +2775,18 @@ async function prepareTickerCrawl(outputSettings: WorkerStreamOutputSettings): P
       copies
     };
   } catch (error) {
-    logRuntimeEvent("scene.ticker.failed", {
-      error: error instanceof Error ? error.message : "Unknown ticker strip failure."
+    const message = error instanceof Error ? error.message : "Unknown ticker strip failure.";
+    logRuntimeEvent("scene.ticker.failed", { error: message });
+    // Said out loud, because the fallback is quiet enough to hide: the band still draws and the
+    // line still appears, standing still instead of running, and at the default band height a long
+    // line is clipped to what one line holds. Every sibling failure in this start path raises one;
+    // this one used to write a log line into container stdout and nothing else.
+    await upsertIncident({
+      scope: "playout",
+      severity: "warning",
+      title: "Ticker strip did not render; the line is standing still",
+      message: `${message} The ticker is drawn at rest for the programme now on air rather than crawling, and a line longer than its band is cut to what one line holds.`,
+      fingerprint: "playout.ticker-strip.failed"
     });
     return null;
   } finally {

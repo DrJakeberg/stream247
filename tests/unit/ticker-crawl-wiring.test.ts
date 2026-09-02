@@ -48,3 +48,19 @@ describe("ticker crawl wiring", () => {
     expect(workerSource).toContain('if (overlayMode !== "scene") {\n    activeTickerCrawl = null;\n  }');
   });
 });
+
+describe("ticker crawl failure is not silent", () => {
+  it("raises an incident when the strip does not render, and resolves it when it does", () => {
+    // Every sibling failure in this start path raises one. This one wrote a log line into container
+    // stdout and nothing else, and the fallback is quiet enough to hide: the band still draws and
+    // the line still appears, standing still instead of running.
+    expect(workerSource).toContain('fingerprint: "playout.ticker-strip.failed"');
+    expect(workerSource).toContain('await resolveIncident("playout.ticker-strip.failed"');
+  });
+
+  it("puts the strip in place with a rename, never a partial file", () => {
+    // Measured: a zero-byte strip makes ffmpeg exit cleanly; a PARTIAL one wedges it spinning at
+    // 100% CPU with -t ignored, no frames and no exit.
+    expect(workerSource).toContain("await fs.rename(`${tickerStripPath}.tmp`, tickerStripPath);");
+  });
+});

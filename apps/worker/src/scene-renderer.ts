@@ -167,5 +167,8 @@ export async function renderTickerStrip(
     canvasWidth = Math.min(TICKER_STRIP_MAX_WIDTH, strip.width * 2);
   }
 
-  return null;
+  // Distinct from the null above, which means "there is no line". Reaching here means the line
+  // could not be drawn whole at four times the estimate, and the caller must hear about that
+  // rather than quietly fall back to a ticker standing still.
+  throw new Error("Ticker strip could not be drawn without cutting the line.");
 }
