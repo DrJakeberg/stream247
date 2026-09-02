@@ -57,7 +57,14 @@ const SURFACES: Surface[] = [
   // 56: the M57 source layer adds an eighth button to the add-layer palette. Hiding one palette
   // button while its seven siblings stay visible would suggest the layer kind does not exist, so
   // the ratchet moves by exactly that button; the source manager's add/edit form folds instead.
-  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 56, primaryActions: 1 },
+  // 62: M58 named scenes add six, and the count must not grow with the number of scenes — which is
+  // why the picker is a select and not one control per scene, the way program-pools was fixed. The
+  // six are: which scene (select), its name (input), the video source it is about (select), and
+  // add / duplicate / delete. None of them folds. A fold would say "you may have several scenes,
+  // but not here", and the whole point of the page is now that a channel has more than one scene;
+  // the name and the source binding belong beside the picker because they describe the thing the
+  // picker just selected.
+  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 62, primaryActions: 1 },
   // 31, was 30: M56 moved the EventSub webhook secret into the managed credentials form, and a
   // secret belongs beside the other secrets rather than in a fold of its own — every sibling
   // ("client secret", "SMTP password") is permanently visible, and hiding just this one would

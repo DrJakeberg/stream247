@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import {
+  normalizeOverlayNamedScenes,
   normalizeOverlayPanelAnchor,
   normalizeOverlaySceneCustomLayers,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
+  resolveActiveOverlayNamedSceneId,
+  resolveOverlayNamedSceneCustomLayers,
   stripInvisibleCharacters,
   normalizeOverlaySurfaceStyle,
   normalizeOverlayTypographyPreset,
@@ -45,6 +48,8 @@ type OverlayPayload = Partial<{
   layerOrder: string[];
   disabledLayers: string[];
   customLayers: unknown[];
+  scenes: unknown[];
+  activeSceneId: string;
   emergencyBanner: string;
   tickerText: string;
   replayLabel: string;
@@ -53,6 +58,23 @@ type OverlayPayload = Partial<{
 function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnType<typeof readOverlayStudioState>>["draftOverlay"], updatedAt: string) {
   const disabledLayersSource = payload.disabledLayers ?? base.disabledLayers;
   const normalizeText = (value: unknown, maxLength: number) => stripInvisibleCharacters(String(value ?? "")).trim().slice(0, maxLength);
+  // The scene list decides the picture, so a request that sends one wins over the layer array it
+  // also sends. A request that sends neither keeps the stored scenes; one that sends only
+  // `customLayers` (an older client, or the preset-apply path) has them folded into the active
+  // scene rather than into a field nothing reads any more.
+  const scenes = payload.scenes
+    ? normalizeOverlayNamedScenes(payload.scenes, base.customLayers)
+    : payload.customLayers
+      ? normalizeOverlayNamedScenes(
+          base.scenes.map((scene) =>
+            scene.id === base.activeSceneId
+              ? { ...scene, customLayers: normalizeOverlaySceneCustomLayers(payload.customLayers) }
+              : scene
+          ),
+          payload.customLayers
+        )
+      : normalizeOverlayNamedScenes(base.scenes, base.customLayers);
+  const activeSceneId = resolveActiveOverlayNamedSceneId(scenes, payload.activeSceneId ?? base.activeSceneId);
   return {
     ...base,
     enabled: payload.enabled ?? base.enabled,
@@ -81,7 +103,9 @@ function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnTyp
     queuePreviewCount: Math.max(1, Math.min(5, Number(payload.queuePreviewCount ?? base.queuePreviewCount) || 3)),
     layerOrder: normalizeOverlaySceneLayerOrder(payload.layerOrder ?? base.layerOrder),
     disabledLayers: normalizeOverlaySceneLayerOrder(disabledLayersSource).filter((kind) => disabledLayersSource.includes(kind)),
-    customLayers: normalizeOverlaySceneCustomLayers(payload.customLayers ?? base.customLayers),
+    scenes,
+    activeSceneId,
+    customLayers: resolveOverlayNamedSceneCustomLayers(scenes, activeSceneId),
     emergencyBanner: normalizeText(payload.emergencyBanner ?? base.emergencyBanner, 180),
     tickerText: normalizeText(payload.tickerText ?? base.tickerText, 180),
     replayLabel: normalizeText(payload.replayLabel ?? base.replayLabel, 80) || "Replay stream",

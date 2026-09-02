@@ -1,13 +1,15 @@
 import {
   normalizeAudioLaneVolumePercent,
   normalizeCuepointOffsetsSeconds,
+  normalizeOverlayNamedScenes,
   normalizeOverlayPanelAnchor,
-  normalizeOverlaySceneCustomLayers,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
   normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
+  resolveActiveOverlayNamedSceneId,
+  resolveOverlayNamedSceneCustomLayers,
   type ModerationConfig
 } from "@stream247/core";
 import {
@@ -242,7 +244,17 @@ function normalizeOverlaySettings(value: unknown, fallback: OverlaySettingsRecor
   }
 
   const candidate = value as Partial<OverlaySettingsRecord>;
+  // A blueprint written before named scenes carries one layer set and no scene list. It becomes
+  // that blueprint's single scene -- deliberately NOT the importing installation's scenes, which
+  // would silently mix a foreign layer set into local scenes it was never part of.
+  const scenes = normalizeOverlayNamedScenes(
+    Array.isArray(candidate.scenes) ? candidate.scenes : [],
+    Array.isArray(candidate.customLayers) ? candidate.customLayers : fallback.customLayers
+  );
+  const activeSceneId = resolveActiveOverlayNamedSceneId(scenes, candidate.activeSceneId);
   return {
+    scenes,
+    activeSceneId,
     enabled: typeof candidate.enabled === "boolean" ? candidate.enabled : fallback.enabled,
     channelName: asString(candidate.channelName) || fallback.channelName,
     headline: asString(candidate.headline) || fallback.headline,
@@ -277,7 +289,8 @@ function normalizeOverlaySettings(value: unknown, fallback: OverlaySettingsRecor
     disabledLayers: normalizeOverlaySceneLayerOrder(
       Array.isArray(candidate.disabledLayers) ? candidate.disabledLayers : fallback.disabledLayers
     ),
-    customLayers: normalizeOverlaySceneCustomLayers(Array.isArray(candidate.customLayers) ? candidate.customLayers : fallback.customLayers),
+    // The projection of the active scene, exactly as the store computes it.
+    customLayers: resolveOverlayNamedSceneCustomLayers(scenes, activeSceneId),
     emergencyBanner: asString(candidate.emergencyBanner),
     tickerText: asString(candidate.tickerText),
     updatedAt: asString(candidate.updatedAt) || now
