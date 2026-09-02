@@ -584,12 +584,18 @@ export function OverlaySettingsForm(props: {
     id: string,
     percent: { xPercent: number; yPercent: number; widthPercent: number; heightPercent: number }
   ) => {
-    const round = (value: number) => Math.round(value * 100) / 100;
+    // Three decimals, not two. One design pixel is 0.0563% of the safe area's width, so rounding
+    // to hundredths turns a one-pixel arrow key into a 1.07-pixel move; thousandths cost 0.018 of
+    // a pixel, which is under the rounding resolvePlacementBox does anyway.
+    const round = (value: number) => Math.round(value * 1000) / 1000;
+    // x and y stop at 90 because that is where the stored schema stops them. A studio that let the
+    // operator drag to 95 and then wrote 90 would move the panel on save.
+    const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
     const patch = {
-      xPercent: round(percent.xPercent),
-      yPercent: round(percent.yPercent),
-      widthPercent: round(percent.widthPercent),
-      heightPercent: round(percent.heightPercent)
+      xPercent: round(clamp(percent.xPercent, 0, 90)),
+      yPercent: round(clamp(percent.yPercent, 0, 90)),
+      widthPercent: round(clamp(percent.widthPercent, 10, 100)),
+      heightPercent: round(clamp(percent.heightPercent, 8, 100))
     };
 
     if (id.startsWith("panel:")) {

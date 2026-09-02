@@ -151,9 +151,13 @@ export function OverlayPlacementCanvas(props: {
     if (event.button !== 0) {
       return;
     }
+    // preventDefault stops the browser from starting a text selection across the preview; it also
+    // stops the click from moving focus, so the box takes focus itself. It has to have it: the
+    // arrow keys are the only way to ask for a single design pixel.
     event.preventDefault();
     event.stopPropagation();
     props.onSelect(id);
+    event.currentTarget.closest<HTMLElement>(".placement-box")?.focus();
     event.currentTarget.setPointerCapture(event.pointerId);
     const origin = boxOf(id);
     setDrag({
@@ -216,6 +220,17 @@ export function OverlayPlacementCanvas(props: {
     props.onOverlapChange("");
   };
 
+  /**
+   * Arrow keys, in percent space rather than through the resolved box.
+   *
+   * Necessary, not fussy. resolvePlacementPixelBox rounds to whole OUTPUT pixels, and at 1280x720
+   * one output pixel is 1.5 design pixels — so nudging the *resolved* box by one design pixel and
+   * converting back lands on the next drawable pixel, and eight presses then add up to 8.5 design
+   * pixels instead of eight. Measured: 0.0285% of drift over one shift-press, half a design pixel.
+   * Moving the stored percent by exactly one design pixel's worth keeps eight presses equal to one
+   * shift-press, and lets the drawn box stand still on the presses where the output pixel does not
+   * change — which is the truth about a 720p frame, not a bug to hide.
+   */
   const nudge = (event: React.KeyboardEvent<HTMLButtonElement>, id: string) => {
     const step = event.shiftKey ? PLACEMENT_KEY_STEP_COARSE_DESIGN_PX : PLACEMENT_KEY_STEP_DESIGN_PX;
     const delta: Record<string, [number, number]> = {
@@ -225,13 +240,19 @@ export function OverlayPlacementCanvas(props: {
       ArrowDown: [0, step]
     };
     const shift = delta[event.key];
-    if (!shift) {
+    const target = props.targets.find((entry) => entry.id === id);
+    if (!shift || !target) {
       return;
     }
 
     event.preventDefault();
-    const box = boxOf(id);
-    commit(id, { ...box, left: box.left + shift[0], top: box.top + shift[1] });
+    const safe = resolvePlacementSafeArea(props.frame, target.placement.allowOutsideSafeArea === true);
+    props.onCommit(id, {
+      xPercent: target.placement.xPercent + ((shift[0] * scale) / safe.width) * 100,
+      yPercent: target.placement.yPercent + ((shift[1] * scale) / safe.height) * 100,
+      widthPercent: target.placement.widthPercent,
+      heightPercent: target.placement.heightPercent
+    });
   };
 
   const percent = (value: number, of: number) => `${String((value / of) * 100)}%`;
@@ -273,7 +294,11 @@ export function OverlayPlacementCanvas(props: {
             }}
             type="button"
           >
-            <span className="placement-box-name">{target.label}</span>
+            {/* The name is drawn for the selected box only. Every box carries it in its aria-label
+                either way; drawing six of them at once would put six labels side by side in the
+                page's extracted text, where "Now playing" and "Up next" become one camelCase word
+                the wording baseline is right to object to. */}
+            {selected ? <span className="placement-box-name">{target.label}</span> : null}
             {selected
               ? GRIPS.map((grip) => (
                   <span
