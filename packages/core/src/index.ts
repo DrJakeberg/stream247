@@ -767,7 +767,7 @@ export type OverlayScenePayload = {
   scheduleBody: string;
   scheduleAux: string;
   tickerText: string;
-  /** Seconds one ticker message stands before the next takes its place. See overlayTickerLine. */
+  /** Seconds the running ticker line takes to cross its band. See overlayTickerCrawlPlan. */
   tickerRotateSeconds: number;
   emergencyBanner: string;
   timeZone: string;
@@ -809,7 +809,7 @@ export type OverlaySceneSource = {
   queuePreviewCount: number;
   emergencyBanner: string;
   tickerText: string;
-  /** Seconds one ticker message stands before the next takes its place. See overlayTickerLine. */
+  /** Seconds the running ticker line takes to cross its band. See overlayTickerCrawlPlan. */
   tickerRotateSeconds: number;
   layerOrder: OverlaySceneLayerKind[];
   disabledLayers: OverlaySceneLayerKind[];

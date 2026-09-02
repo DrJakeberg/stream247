@@ -115,38 +115,35 @@ describe("ticker panel", () => {
     }
   });
 
-  it("holds one message for its dwell and then shows the next", () => {
+  it("draws the whole ticker as one line, whatever the clock says", () => {
     const text = "First notice · Second notice · Third notice";
-    const at = (seconds: number) => overlayTickerLine(payload(text, 8), new Date(seconds * 1000));
+    // The clock is taken and ignored on purpose: proving it does not matter is the point.
+    const at = (_seconds: number) => overlayTickerLine(payload(text, 8));
 
-    // Inside one dwell the drawn line does not move; at the boundary it steps to the next message.
+    // The dwell is gone: there is one line, it carries every message, and no instant differs from
+    // any other. What moves is the strip ffmpeg runs across the band, and no clock in here decides
+    // where that strip is.
     expect(at(0)).toBe(at(7));
-    expect(at(8)).not.toBe(at(0));
-    expect(new Set([at(0), at(8), at(16)]).size).toBe(3);
-    // And it comes back round rather than running out.
-    expect(at(24)).toBe(at(0));
-    // A single message is not a rotation; it is a line that stands.
-    expect(overlayTickerLine(payload("Only one", 8), new Date(0))).toBe("Only one");
-    expect(overlayTickerLine(payload("Only one", 8), new Date(999_000))).toBe("Only one");
-    expect(overlayTickerLine(payload(""), new Date(0))).toBe("");
+    expect(at(0)).toBe(at(8));
+    expect(at(0)).toBe("First notice · Second notice · Third notice");
+    // A single message is a line like any other, and an empty one is no line at all.
+    expect(overlayTickerLine(payload("Only one", 8))).toBe("Only one");
+    expect(overlayTickerLine(payload(""))).toBe("");
   });
 
-  it("moves the frame cache key when it advances, and never otherwise", () => {
-    const text = "First notice · Second notice";
-    const key = (seconds: number) => sceneFrameCacheKey(request(text, new Date(seconds * 1000), 8));
-    expect(key(0)).toBe(key(7));
-    expect(key(8)).not.toBe(key(0));
+  it("moves the frame cache key when the text changes, and never with the clock", () => {
+    // The band the rasteriser paints no longer carries the line, but it does still depend on it:
+    // an empty ticker draws no band at all. So a text that appears or vanishes has to re-rasterise
+    // and a clock that ticks must not.
+    const key = (ticker: string, seconds: number) => sceneFrameCacheKey(request(ticker, new Date(seconds * 1000), 8));
+    expect(key("First notice", 0)).not.toBe(key("Second notice", 0));
+    expect(key("First notice", 0)).not.toBe(key("", 0));
 
-    // An empty ticker must leave the key exactly as it was, or every cached frame in the fleet
-    // re-rasterises for a panel that draws nothing. Compared inside one minute on purpose: the key
-    // also carries the drawn clock, which moves once a minute by design and is pinned by
-    // tests/unit/scene-cache-key-clock.test.ts. Crossing a minute here would prove nothing about
-    // the ticker.
-    const empty = (seconds: number) => sceneFrameCacheKey(request("", new Date(seconds * 1000)));
-    expect(empty(0)).toBe(empty(59));
-    // As must a single message: nothing about it changes over time.
-    const single = (seconds: number) => sceneFrameCacheKey(request("Only one", new Date(seconds * 1000), 8));
-    expect(single(0)).toBe(single(59));
+    // Compared inside one minute on purpose: the key also carries the drawn clock, which moves
+    // once a minute by design and is pinned by tests/unit/scene-cache-key-clock.test.ts. Crossing
+    // a minute here would prove nothing about the ticker.
+    expect(key("", 0)).toBe(key("", 59));
+    expect(key("First notice · Second notice", 0)).toBe(key("First notice · Second notice", 59));
   });
 });
 

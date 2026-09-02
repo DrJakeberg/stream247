@@ -457,7 +457,7 @@ export type OverlaySettingsRecord = {
   panelPlacements: OverlayScenePanelPlacementMap;
   emergencyBanner: string;
   tickerText: string;
-  /** Seconds one ticker message stands before the next. See overlayTickerLine in core. */
+  /** Seconds the running ticker line takes to cross its band. See overlayTickerCrawlPlan in core. */
   tickerRotateSeconds: number;
   updatedAt: string;
 };

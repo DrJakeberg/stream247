@@ -71,7 +71,7 @@ export function sceneFrameCacheKey(request: SceneRenderRequest): string {
     // with one message it is that message forever. Only a rotation moves it, and then exactly once
     // per dwell, which is what makes the renderer redraw at all: without this term the ticker
     // would advance in the layout and never reach a viewer.
-    overlayTickerLine(request.payload, request.now ?? new Date()),
+    overlayTickerLine(request.payload),
     // The clock is the other thing on the frame that moves without its data moving, and it moved
     // unseen: on a channel where nothing else changes -- a long VOD, no chat, no game -- the
     // renderer kept pushing the PNG it had and the on-air time stood at a stale minute. Same

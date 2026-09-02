@@ -43,6 +43,15 @@ export type OverlayLayoutOptions = {
   height: number;
   /** Wall clock used for the on-air clock, injected so renders stay deterministic in tests. */
   now?: Date;
+  /**
+   * How the ticker band is drawn.
+   *
+   * "crawl" leaves the band empty because ffmpeg runs the line across it at the output frame rate;
+   * "static" draws the line at rest inside it, which is what a still picture — the studio preview,
+   * a baseline screenshot — has to show, because a still cannot show motion. Default is "static",
+   * so every caller that has not thought about this keeps the picture it had.
+   */
+  tickerMode?: "static" | "crawl";
 };
 
 /** Scales every dimension from the 1920x1080 design grid to the configured output size. */
@@ -333,10 +342,40 @@ export type OverlayScenePayloadView = {
 /** Messages in one ticker text are separated by a middot or a line break. */
 const TICKER_SEPARATORS = /[\n\r·]+/;
 
-/** Bounds on the dwell. See overlayTickerLine for where the floor comes from. */
+/** What rejoins them once they are one running line again. */
+const TICKER_JOIN = " · ";
+
+/**
+ * Bounds on the seconds setting. They are the old dwell's bounds, kept because the stored column
+ * is the same one — only its meaning changed, from how long a message stands to how long the line
+ * takes to cross its band.
+ */
 export const OVERLAY_TICKER_MIN_SECONDS = 4;
 export const OVERLAY_TICKER_MAX_SECONDS = 60;
 export const OVERLAY_TICKER_DEFAULT_SECONDS = 8;
+
+/**
+ * The legible window the crawl speed is held inside, on the 1920x1080 design grid.
+ *
+ * A crawl is read by a viewer who did not choose to look at it, so both ends matter. The ceiling
+ * is where a line stops being readable: at fontSize 26 a Latin glyph advances about 15px, so
+ * 240px/s is 16 glyphs a second, which is fast reading and the fastest anybody should be able to
+ * configure. The floor is where the motion stops reading as motion and starts looking like a
+ * picture that is subtly broken; 40px/s crosses the band in three quarters of a minute.
+ *
+ * Both scale with the frame, so 720p crawls at the same visual pace rather than the same pixel
+ * pace.
+ */
+export const OVERLAY_TICKER_CRAWL_MIN_PX_PER_SECOND = 40;
+export const OVERLAY_TICKER_CRAWL_MAX_PX_PER_SECOND = 240;
+
+/** The empty run between the end of the line and the start of its next pass, on the design grid. */
+export const OVERLAY_TICKER_CRAWL_GAP = 240;
+
+/** The band's own insets, shared by the panel that draws it and the plan that crawls inside it. */
+const TICKER_PAD_X = 24;
+const TICKER_PAD_Y = 10;
+const TICKER_ACCENT_BORDER = 6;
 
 /**
  * The messages a ticker text holds, in order.
@@ -352,43 +391,89 @@ export function overlayTickerMessages(text: string): string[] {
 }
 
 /**
- * The one ticker message on air at this instant.
+ * The whole ticker as one running line.
  *
- * This is a dwell, not a scroll, and the reason is the update rate. The on-air renderer redraws on
- * SCENE_RENDER_INTERVAL_MS — 2000ms by default, floored at 1000ms — so the picture changes at most
- * once or twice a second; the 1fps pipe re-pushes the cached PNG in between and never produces a
- * frame the renderer did not draw. Measured on this rasteriser: a Latin glyph at fontSize 24
- * advances 14.24px, so crawling the 1776px safe area in 30s at the default rate means 118.4px per
- * frame, which is 8.3 characters of sideways jump per step. The most generous configuration
- * anybody would accept — the 1000ms floor and a full minute per crossing — still jumps 29.6px,
- * 2.1 characters. A smooth crawl wants 25-60 frames a second and this pipeline has half of one.
- * So the text holds still and the messages take turns, which is sharp at every rate above.
+ * It used to be one message at a time, quantised against the epoch so every renderer picked the
+ * same one. That was a dwell, and the reason was the update rate: the renderer redraws on
+ * SCENE_RENDER_INTERVAL_MS — 2000ms by default, floored at 1000ms — so text drawn INTO the frame
+ * cannot crawl, it can only teleport, 118px at a time.
  *
- * The dwell floor of 4s is that same arithmetic: the boundary is only noticed on a render tick, so
- * a dwell is honoured to within one interval, and below two intervals the rotation is jitter
- * rather than timing.
+ * The crawl was never the rasteriser's job. ffmpeg moves the line over the band at the output
+ * frame rate for nothing per frame (measured: exactly 4px per frame at 120px/s and 30fps, clipped
+ * to the band, seamless across the wrap), so the line holds still in the picture the renderer
+ * makes and moves in the picture the viewer sees. There is nothing left for a clock to decide
+ * here, which is why this takes none.
  */
-export function overlayTickerLine(
-  payload: Pick<OverlayScenePayloadView, "tickerText" | "tickerRotateSeconds">,
-  now: Date
-): string {
-  const messages = overlayTickerMessages(payload.tickerText);
-  if (messages.length === 0) {
-    return "";
+export function overlayTickerLine(payload: Pick<OverlayScenePayloadView, "tickerText">): string {
+  return overlayTickerMessages(payload.tickerText).join(TICKER_JOIN);
+}
+
+/**
+ * Everything ffmpeg needs to run the line across the band, and nothing it does not.
+ *
+ * `box` is the band the renderer draws; `crawl` is the clear run inside it, past the accent border
+ * and the padding, which is where the label used to sit and where the moving strip goes.
+ */
+export type OverlayTickerCrawlPlan = {
+  line: string;
+  box: { left: number; top: number; width: number; height: number };
+  crawl: { left: number; top: number; width: number; height: number };
+  pxPerSecond: number;
+  gapPx: number;
+};
+
+/**
+ * Where the ticker crawls and how fast, resolved from the same placement the renderer uses.
+ *
+ * Deliberately reads the placement through resolvePlacementBox rather than repeating its
+ * arithmetic: the band ffmpeg draws into and the band the rasteriser draws have to be the same
+ * rectangle, and the only way to be sure of that is for there to be one function that decides it.
+ */
+export function overlayTickerCrawlPlan(
+  input: Pick<OverlayLayoutInput, "payload" | "chat">,
+  options: { width: number; height: number }
+): OverlayTickerCrawlPlan | null {
+  const line = overlayTickerLine(input.payload);
+  if (!line) {
+    return null;
   }
-  if (messages.length === 1) {
-    return messages[0]!;
-  }
+
+  const scale = overlayScale(options.width);
+  const px = (value: number) => Math.round(value * scale);
+  const frameSize = { width: options.width, height: options.height };
+  const placement =
+    input.payload.scene.panelPlacements?.ticker ??
+    deriveDefaultPlacements(input.payload.scene.panelAnchor, String(input.chat?.position ?? "")).ticker;
+  const box = resolvePlacementBox(placement, scale, frameSize);
 
   const seconds = Math.min(
     OVERLAY_TICKER_MAX_SECONDS,
-    Math.max(OVERLAY_TICKER_MIN_SECONDS, Math.round(payload.tickerRotateSeconds ?? OVERLAY_TICKER_DEFAULT_SECONDS) || OVERLAY_TICKER_DEFAULT_SECONDS)
+    Math.max(
+      OVERLAY_TICKER_MIN_SECONDS,
+      Math.round(input.payload.tickerRotateSeconds ?? OVERLAY_TICKER_DEFAULT_SECONDS) || OVERLAY_TICKER_DEFAULT_SECONDS
+    )
   );
-  // Quantised against the epoch rather than counted from a start, because there is no loop here to
-  // hold a counter: every renderer, the studio preview included, derives the same slot from the
-  // same clock and therefore draws the same message.
-  const slot = Math.floor(now.getTime() / (seconds * 1000)) % messages.length;
-  return messages[((slot % messages.length) + messages.length) % messages.length]!;
+
+  const pxPerSecond = Math.round(
+    Math.min(
+      OVERLAY_TICKER_CRAWL_MAX_PX_PER_SECOND * scale,
+      Math.max(OVERLAY_TICKER_CRAWL_MIN_PX_PER_SECOND * scale, box.width / seconds)
+    )
+  );
+
+  const inset = px(TICKER_ACCENT_BORDER) + px(TICKER_PAD_X);
+  return {
+    line,
+    box,
+    crawl: {
+      left: box.left + inset,
+      top: box.top + px(TICKER_PAD_Y),
+      width: Math.max(1, box.width - inset - px(TICKER_PAD_X)),
+      height: Math.max(1, box.height - px(TICKER_PAD_Y) * 2)
+    },
+    pxPerSecond,
+    gapPx: px(OVERLAY_TICKER_CRAWL_GAP)
+  };
 }
 
 const FONT_STACKS: Record<string, string> = {
@@ -1804,8 +1889,8 @@ function buildTickerPanel(
   const px = (value: number) => Math.round(value * scale);
   const fontSize = px(26);
   const lineHeight = 1.25;
-  const padY = px(10);
-  const padX = px(24);
+  const padY = px(TICKER_PAD_Y);
+  const padX = px(TICKER_PAD_X);
 
   // What the box actually holds, the way buildChatPanel derives its message count from its height.
   // At the default 56-tall band this is one line; an operator who drags the box taller gets the
@@ -1823,10 +1908,14 @@ function buildTickerPanel(
         padding: `${String(padY)}px ${String(padX)}px`,
         borderRadius: px(12),
         backgroundColor: `rgba(8,10,15,${String(OVERLAY_TICKER_FILL_ALPHA)})`,
-        borderLeft: `${String(px(6))}px solid ${accent}`,
+        borderLeft: `${String(px(TICKER_ACCENT_BORDER))}px solid ${accent}`,
         overflow: "hidden"
       },
-      children: [
+      // An empty message draws the band and nothing in it. That is not a degenerate case: it is
+      // the on-air case, where the line is a strip ffmpeg moves across this very rectangle, and
+      // drawing it here as well would put a second, motionless copy under the moving one.
+      children: message
+        ? [
         label(message, {
           color: INK_PRIMARY,
           fontSize,
@@ -1841,7 +1930,8 @@ function buildTickerPanel(
           minWidth: 0,
           overflow: "hidden"
         })
-      ]
+          ]
+        : []
     }
   };
 }
@@ -2007,13 +2097,21 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
   // had one, because it was never drawn. So it is always placed, from the operator's box when they
   // have moved it and from the derived default otherwise, and it is the empty text rather than a
   // missing placement that keeps it off the picture.
-  const tickerLine = overlayTickerLine(payload, options.now ?? new Date());
-  if (tickerLine) {
+  // Placed from the very plan ffmpeg crawls in, so the rectangle the moving strip runs across and
+  // the rectangle this paints the band into cannot drift apart.
+  const tickerPlan = overlayTickerCrawlPlan(input, frameSize);
+  if (tickerPlan) {
     const tickerPlacement =
       placements.ticker ?? deriveDefaultPlacements(payload.scene.panelAnchor, String(input.chat?.position ?? "")).ticker;
     placedPanels.push(
       placePanel(
-        buildTickerPanel(tickerLine, accent, scale, fontFamily, resolvePlacementBox(tickerPlacement, scale, frameSize)),
+        buildTickerPanel(
+          options.tickerMode === "crawl" ? "" : tickerPlan.line,
+          accent,
+          scale,
+          fontFamily,
+          resolvePlacementBox(tickerPlacement, scale, frameSize)
+        ),
         "ticker",
         tickerPlacement,
         scale,
