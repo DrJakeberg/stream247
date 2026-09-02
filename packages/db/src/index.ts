@@ -49,7 +49,8 @@ import {
   type OverlaySceneCustomLayer,
   type OverlaySceneLayerKind,
   type StreamOutputProfileId,
-  type OverlayTypographyPreset
+  type OverlayTypographyPreset,
+  redactSecrets,
 } from "@stream247/core";
 
 export type OwnerAccount = {
@@ -3551,6 +3552,32 @@ const workerHeartbeatRuntimeMigration: MigrationDefinition = {
 
 if (!schemaMigrations.some((migration) => migration.id === workerHeartbeatRuntimeMigration.id)) {
   schemaMigrations.push(workerHeartbeatRuntimeMigration);
+}
+
+const redactStoredSecretsMigration: MigrationDefinition = {
+  id: "20260902_001_redact_stored_secrets",
+  description: "Scrub credential-shaped text out of incidents and the audit trail that was written before the sinks redacted.",
+  apply: async (client) => {
+    // Idempotent: rows that redactSecrets leaves unchanged are not touched, so re-running is free.
+    const incidents = await client.query<{ id: string; title: string; message: string }>("SELECT id, title, message FROM incidents");
+    for (const row of incidents.rows) {
+      const title = redactSecrets(row.title);
+      const message = redactSecrets(row.message);
+      if (title !== row.title || message !== row.message) {
+        await client.query("UPDATE incidents SET title = $2, message = $3 WHERE id = $1", [row.id, title, message]);
+      }
+    }
+    const audit = await client.query<{ id: string; message: string }>("SELECT id, message FROM audit_events");
+    for (const row of audit.rows) {
+      const message = redactSecrets(row.message);
+      if (message !== row.message) {
+        await client.query("UPDATE audit_events SET message = $2 WHERE id = $1", [row.id, message]);
+      }
+    }
+  }
+};
+if (!schemaMigrations.some((migration) => migration.id === redactStoredSecretsMigration.id)) {
+  schemaMigrations.push(redactStoredSecretsMigration);
 }
 
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
@@ -7937,6 +7964,10 @@ export async function upsertIncident(args: {
   message: string;
   fingerprint: string;
 }): Promise<void> {
+  // The sink redacts, so no caller has to remember to: an ffmpeg line quoting the publish URL
+  // reached this table with the stream key intact on 2026-09-01.
+  const title = redactSecrets(args.title);
+  const message = redactSecrets(args.message);
   await withSerializedStateWrite("upsertIncident", async (client) => {
     const existingResult = await client.query<{
       id: string;
@@ -7960,7 +7991,7 @@ export async function upsertIncident(args: {
               resolved_at = ''
           WHERE fingerprint = $1
         `,
-        [args.fingerprint, args.scope, args.severity, args.title, args.message, now]
+        [args.fingerprint, args.scope, args.severity, title, message, now]
       );
       return;
     }
@@ -7972,7 +8003,7 @@ export async function upsertIncident(args: {
         )
         VALUES ($1, $2, $3, 'open', '', '', $4, $5, $6, $7, $7, '')
       `,
-      [createId("incident"), args.scope, args.severity, args.title, args.message, args.fingerprint, now]
+      [createId("incident"), args.scope, args.severity, title, message, args.fingerprint, now]
     );
 
     await client.query(`

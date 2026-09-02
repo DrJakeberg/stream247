@@ -79,7 +79,8 @@ import {
   resolveTwitchScheduleSyncEnabled,
   type OverlayCustomLayerView,
   type OverlaySourceFrameView,
-  type ResolvedEncoderQualitySettings
+  type ResolvedEncoderQualitySettings,
+  redactSecrets,
 } from "@stream247/core";
 import {
   buildSourceLiveStateWrite,
@@ -5422,7 +5423,7 @@ async function startOrSwitchPlayout(args: {
   }
 
   child.stderr?.on("data", (chunk) => {
-    const line = chunk.toString().trim();
+    const line = redactSecrets(chunk.toString().trim());
     if (!line) {
       return;
     }
@@ -6722,7 +6723,7 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
   }
 
   child.stderr?.on("data", (chunk) => {
-    const line = chunk.toString().trim();
+    const line = redactSecrets(chunk.toString().trim());
     if (!line) {
       return;
     }
