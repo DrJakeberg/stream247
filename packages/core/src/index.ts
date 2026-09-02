@@ -3271,3 +3271,5 @@ export function selectActiveDestinationGroup(destinations: DestinationRoutingRec
     leadDestinationId: ""
   };
 }
+
+export { redactSecrets, redactSecretsDeep } from "./redact.js";
