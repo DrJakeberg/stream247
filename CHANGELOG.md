@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.42 - 2026-09-02
+
 ### Fixed
 
 - The overlay in the studio was not the overlay on air. The preview drew the scene; the broadcast
