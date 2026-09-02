@@ -6,6 +6,7 @@ import type {
   EngagementOverlayPosition,
   EngagementOverlayStyle,
   OverlaySceneCustomLayer,
+  OverlayScenePanelPlacementMap,
   OverlaySceneLayerKind,
   OverlayScenePayload,
   PresenceClampReason,
@@ -238,6 +239,8 @@ export type LiveOverlaySummary = {
   layerOrder: OverlaySceneLayerKind[];
   disabledLayers: OverlaySceneLayerKind[];
   customLayers: OverlaySceneCustomLayer[];
+  /** Only the renderer's own panels somebody has moved; the studio seeds the rest from the flow. */
+  panelPlacements: OverlayScenePanelPlacementMap;
   emergencyBanner: string;
   tickerText: string;
   replayLabel: string;

@@ -15,6 +15,7 @@ import {
   resolveChatOverlayRuntimeEnabled,
   type ManagedRuntimeToggleInput
 } from "./managed-runtime.js";
+import { OVERLAY_PANEL_IDS, type OverlayPanelId } from "./overlay-layout.js";
 
 export type ModerationConfig = {
   enabled: boolean;
@@ -692,6 +693,26 @@ export type OverlaySceneCustomSourceLayer = OverlaySceneCustomLayerBase & {
   sourceId: string;
 };
 
+/**
+ * Where one of the renderer's own panels sits, in the same percentages a custom layer uses.
+ *
+ * Stored per panel and only for the panels somebody has actually moved. An absent entry is not a
+ * default written down — it is "this panel is still in the flow", which is what keeps a scene
+ * nobody has rearranged drawing exactly the picture it drew before any of this existed. The studio
+ * seeds a new entry from deriveDefaultPlacements, so the first thing an operator sees when they
+ * take hold of a panel is where that panel already is.
+ */
+export type OverlayScenePanelPlacement = {
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
+  opacityPercent: number;
+  allowOutsideSafeArea: boolean;
+};
+
+export type OverlayScenePanelPlacementMap = Partial<Record<OverlayPanelId, OverlayScenePanelPlacement>>;
+
 export type OverlaySceneCustomLayer =
   | OverlaySceneCustomTextLayer
   | OverlaySceneCustomMediaLayer
@@ -721,6 +742,8 @@ export type OverlaySceneDefinition = {
   typographyPreset: OverlayTypographyPreset;
   layers: OverlaySceneLayerDefinition[];
   customLayers: OverlaySceneCustomLayer[];
+  /** Only the renderer's own panels an operator has moved; the rest stay in the flow. */
+  panelPlacements: OverlayScenePanelPlacementMap;
 };
 
 export type OverlayScenePayload = {
@@ -787,6 +810,7 @@ export type OverlaySceneSource = {
   layerOrder: OverlaySceneLayerKind[];
   disabledLayers: OverlaySceneLayerKind[];
   customLayers: OverlaySceneCustomLayer[];
+  panelPlacements: OverlayScenePanelPlacementMap;
 };
 
 export type OverlayOptionDefinition<T extends string> = {
@@ -1324,6 +1348,41 @@ function clampOverlaySceneNumber(value: unknown, min: number, max: number, fallb
   return Math.min(max, Math.max(min, numeric));
 }
 
+/**
+ * Reads back the placements an operator has set for the renderer's own panels.
+ *
+ * Same clamps as a custom layer's, because it is the same box: x and y stop at 90 so a panel can
+ * never be pushed off the frame it is measured against, width at 10 and height at 8 so nothing is
+ * saved at a size that draws as a smudge, opacity at 5 so nothing is saved invisible. A key that
+ * is not a panel is dropped, and a panel with no entry stays out of the map — that absence is what
+ * says "still in the flow", so writing a default here would move the picture.
+ */
+export function normalizeOverlayScenePanelPlacements(value: unknown): OverlayScenePanelPlacementMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const source = value as Record<string, unknown>;
+  const placements: OverlayScenePanelPlacementMap = {};
+  for (const id of OVERLAY_PANEL_IDS) {
+    const entry = source[id];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    const raw = entry as Record<string, unknown>;
+    placements[id] = {
+      xPercent: clampOverlaySceneNumber(raw.xPercent, 0, 90, 0),
+      yPercent: clampOverlaySceneNumber(raw.yPercent, 0, 90, 0),
+      widthPercent: clampOverlaySceneNumber(raw.widthPercent, 10, 100, 40),
+      heightPercent: clampOverlaySceneNumber(raw.heightPercent, 8, 100, 20),
+      opacityPercent: clampOverlaySceneNumber(raw.opacityPercent, 5, 100, 100),
+      allowOutsideSafeArea: raw.allowOutsideSafeArea === true
+    };
+  }
+
+  return placements;
+}
+
 function sanitizeOverlaySceneUrl(value: unknown): string {
   const trimmed = String(value || "").trim();
   if (!trimmed) {
@@ -1757,7 +1816,8 @@ export function buildOverlaySceneDefinition(args: {
       label: OVERLAY_SCENE_LAYERS.find((layer) => layer.id === kind)?.label || kind,
       enabled: enabledMap[kind] && !disabledLayers.has(kind)
     })),
-    customLayers: normalizeOverlaySceneCustomLayers(args.overlay.customLayers)
+    customLayers: normalizeOverlaySceneCustomLayers(args.overlay.customLayers),
+    panelPlacements: normalizeOverlayScenePanelPlacements(args.overlay.panelPlacements)
   };
 }
 
@@ -1967,6 +2027,7 @@ export function buildOverlayTextLines(args: {
         layerOrder: DEFAULT_OVERLAY_SCENE_LAYER_ORDER,
         disabledLayers: [],
         customLayers: [],
+        panelPlacements: {},
         showCurrentCategory: args.showCurrentCategory ?? false,
         showSourceLabel: args.showSourceLabel ?? false
       },

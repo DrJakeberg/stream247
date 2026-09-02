@@ -3,6 +3,7 @@ import {
   normalizeCuepointOffsetsSeconds,
   normalizeOverlayPanelAnchor,
   normalizeOverlaySceneCustomLayers,
+  normalizeOverlayScenePanelPlacements,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
@@ -278,6 +279,7 @@ function normalizeOverlaySettings(value: unknown, fallback: OverlaySettingsRecor
       Array.isArray(candidate.disabledLayers) ? candidate.disabledLayers : fallback.disabledLayers
     ),
     customLayers: normalizeOverlaySceneCustomLayers(Array.isArray(candidate.customLayers) ? candidate.customLayers : fallback.customLayers),
+    panelPlacements: normalizeOverlayScenePanelPlacements(candidate.panelPlacements ?? fallback.panelPlacements),
     emergencyBanner: asString(candidate.emergencyBanner),
     tickerText: asString(candidate.tickerText),
     updatedAt: asString(candidate.updatedAt) || now

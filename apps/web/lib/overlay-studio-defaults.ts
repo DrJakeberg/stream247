@@ -85,6 +85,9 @@ export function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): Ove
       widthPercent: 30,
       heightPercent: 44,
       opacityPercent: 100,
+      // The board keeps its backdrop until somebody turns it down; a game over bare video is a
+      // choice, not a default.
+      backgroundOpacityPercent: 100,
       allowOutsideSafeArea: false
     };
   }

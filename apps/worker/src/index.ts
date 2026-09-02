@@ -2849,7 +2849,8 @@ function buildWorkerScenePayload(args: {
       tickerText: args.state.overlay.tickerText,
       layerOrder: args.state.overlay.layerOrder,
       disabledLayers: args.state.overlay.disabledLayers,
-      customLayers: args.state.overlay.customLayers
+      customLayers: args.state.overlay.customLayers,
+      panelPlacements: args.state.overlay.panelPlacements
     },
     queueKind: args.queueKind || "asset",
     target: "on-air-text",

@@ -940,6 +940,7 @@ function summarizeOverlay(overlay: OverlaySettingsRecord): LiveOverlaySummary {
     layerOrder: overlay.layerOrder,
     disabledLayers: overlay.disabledLayers,
     customLayers: overlay.customLayers,
+    panelPlacements: overlay.panelPlacements,
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText,
     replayLabel: overlay.replayLabel,
@@ -1056,7 +1057,8 @@ function buildOverlaySceneSource(overlay: OverlaySettingsRecord) {
     tickerText: overlay.tickerText,
     layerOrder: overlay.layerOrder,
     disabledLayers: overlay.disabledLayers,
-    customLayers: overlay.customLayers
+    customLayers: overlay.customLayers,
+    panelPlacements: overlay.panelPlacements
   };
 }
 
