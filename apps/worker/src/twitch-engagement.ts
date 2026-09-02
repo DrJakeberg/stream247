@@ -590,16 +590,27 @@ export class TwitchChatBridge {
         config: this.moderationConfig
       });
       if (presenceWindow) {
-        this.sendChatMessage(
-          formatPresenceClampReply({
-            commandInput: message.message,
-            requestedMinutes: presenceWindow.requestedMinutes,
-            appliedMinutes: presenceWindow.appliedMinutes,
-            clampReason: presenceWindow.clampReason,
-            config: this.moderationConfig
-          })
+        // The reply follows the write. Telling the moderator "checked in" before the window exists
+        // was the finding: a failed write left them believing in coverage that never started. The
+        // socket handler stays non-blocking — the confirmation lands once the write has happened,
+        // and a rejected write is said out loud instead of vanishing.
+        const reply = formatPresenceClampReply({
+          commandInput: message.message,
+          requestedMinutes: presenceWindow.requestedMinutes,
+          appliedMinutes: presenceWindow.appliedMinutes,
+          clampReason: presenceWindow.clampReason,
+          config: this.moderationConfig
+        });
+        void Promise.resolve(this.onModeratorPresenceCheckIn?.(presenceWindow)).then(
+          () => this.sendChatMessage(reply),
+          (error: unknown) => {
+            logRuntimeEvent("moderation.checkin.persist_failed", {
+              actor: presenceWindow.actor,
+              error: error instanceof Error ? error.message : String(error)
+            });
+            this.sendChatMessage(`@${presenceWindow.actor} your check-in could not be saved — please try again in a moment.`);
+          }
         );
-        void Promise.resolve(this.onModeratorPresenceCheckIn?.(presenceWindow)).catch(() => undefined);
         continue;
       }
 

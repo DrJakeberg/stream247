@@ -278,6 +278,13 @@ const STATE_FAMILIES: IncidentFamily[] = [
 
 const EVENT_FAMILIES: IncidentFamily[] = [
   {
+    fingerprint: "moderation.checkin.persist-failed",
+    keyed: false,
+    kind: "event",
+    area: "twitch",
+    why: "A moderator's check-in could not be written; the moderator was told and can try again, so nothing holds."
+  },
+  {
     fingerprint: "playout.feed-audio",
     keyed: false,
     kind: "event",

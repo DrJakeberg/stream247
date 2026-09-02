@@ -11,6 +11,12 @@
   claimed a per-viewer cooldown and a cap. Every accepted request is recorded now, the cooldown
   looks back over the history, a request whose asset has left the queue stops counting against the
   cap, and the cap is the number of requests still waiting.
+- A moderator's `!here` was confirmed in chat before the window was saved, and a failed save
+  vanished. Finding [11] of the codebase review, verified twice: the bridge answered "checked in"
+  at once, then fired the write and discarded its rejection — a pool timeout or a transient
+  Postgres error left the moderator believing in coverage that never started, with no window, no
+  audit entry and no log line. The confirmation now follows the write; a rejected write is said
+  in the room ("could not be saved — please try again"), logged, and raised as an incident.
 
 - Alerts said nothing when they failed, and said the same thing every 30 seconds when they did
   not. Findings [12] and [9] of the codebase review, verified twice: the Discord webhook's

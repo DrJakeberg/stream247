@@ -403,19 +403,31 @@ const chatGameRuntime = new ChatGameRuntime({
 });
 const twitchChatBridge = new TwitchChatBridge({
   async onModeratorPresenceCheckIn(window) {
-    await appendPresenceWindowRecord({
-      actor: window.actor,
-      minutes: window.minutes,
-      requestedMinutes: window.requestedMinutes,
-      appliedMinutes: window.appliedMinutes,
-      clampReason: window.clampReason,
-      createdAt: window.createdAt.toISOString(),
-      expiresAt: window.expiresAt.toISOString()
-    });
-    await appendAuditEvent(
-      "moderation.checkin",
-      `${window.actor} checked in for ${window.appliedMinutes} minutes via Twitch chat (${window.clampReason}).`
-    );
+    try {
+      await appendPresenceWindowRecord({
+        actor: window.actor,
+        minutes: window.minutes,
+        requestedMinutes: window.requestedMinutes,
+        appliedMinutes: window.appliedMinutes,
+        clampReason: window.clampReason,
+        createdAt: window.createdAt.toISOString(),
+        expiresAt: window.expiresAt.toISOString()
+      });
+      await appendAuditEvent(
+        "moderation.checkin",
+        `${window.actor} checked in for ${window.appliedMinutes} minutes via Twitch chat (${window.clampReason}).`
+      );
+    } catch (error) {
+      // Recorded where the operator looks, then rethrown so the bridge tells the moderator.
+      await upsertIncident({
+        scope: "twitch",
+        severity: "warning",
+        title: "A moderator check-in was not saved",
+        message: `${window.actor}'s check-in for ${window.appliedMinutes} minutes could not be written: ${error instanceof Error ? error.message : String(error)}`,
+        fingerprint: "moderation.checkin.persist-failed"
+      }).catch(() => undefined);
+      throw error;
+    }
   },
   onChatMessage(message) {
     engagementGameTracker.recordChatMessage({
