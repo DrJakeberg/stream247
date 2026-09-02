@@ -1,5 +1,10 @@
-import { OVERLAY_PANEL_IDS } from "@stream247/core";
+import { OVERLAY_PANEL_IDS, resolvePlacementPixelBox } from "@stream247/core";
+import { intersectDesignBoxes, type DesignBox } from "@/lib/overlay-placement-drag";
+import { overlayPanelLabel } from "@/lib/overlay-panel-labels";
 import type { OverlaySettingsRecord } from "@/lib/server/state";
+
+/** The design grid: at this size design pixels and frame pixels are the same number. */
+const DESIGN_FRAME = { width: 1920, height: 1080 };
 
 export type OverlayPublishReviewSection = {
   title: string;
@@ -139,14 +144,75 @@ function buildLayerSection(live: OverlaySettingsRecord, draft: OverlaySettingsRe
   return items.length > 0 ? { title: "Layer stack", items } : null;
 }
 
+/**
+ * Which boxes on the draft share a rectangle, and which one.
+ *
+ * Overlap is named, not forbidden — the operator's decision, and the right one: a logo is supposed
+ * to be able to sit on a panel, and a channel whose studio refused could not be laid out at all.
+ * What must not happen is a collision nobody noticed going out live, so the review says the two
+ * names and the rectangle and leaves the judgement where it belongs.
+ *
+ * Measured on the 1920x1080 design grid rather than the profile's output size: the review is read
+ * next to the sidebar's captions, which are in design pixels, and a review whose numbers changed
+ * when somebody switched the encoder to 720p would be telling the operator about the encoder.
+ */
+function buildOverlapSection(draft: OverlaySettingsRecord): OverlayPublishReviewSection | null {
+  const boxes: Array<{ label: string; box: DesignBox }> = [];
+
+  for (const id of OVERLAY_PANEL_IDS) {
+    const placement = draft.panelPlacements[id];
+    if (placement) {
+      boxes.push({ label: overlayPanelLabel(id), box: resolvePlacementPixelBox(placement, DESIGN_FRAME) });
+    }
+  }
+
+  // A layer that is switched off draws nothing, so it collides with nothing. Embed and widget
+  // layers are left in: satori does not draw them, but the browser overlay does, and this review
+  // is about the scene rather than about one of the two things that render it.
+  for (const layer of draft.customLayers) {
+    if (layer.enabled) {
+      boxes.push({ label: layer.name, box: resolvePlacementPixelBox(layer, DESIGN_FRAME) });
+    }
+  }
+
+  const items: string[] = [];
+  for (let first = 0; first < boxes.length; first += 1) {
+    for (let second = first + 1; second < boxes.length; second += 1) {
+      const left = boxes[first]!;
+      const right = boxes[second]!;
+      const shared = intersectDesignBoxes(left.box, right.box);
+      if (shared) {
+        items.push(
+          `${left.label} and ${right.label} overlap at ` +
+            `x ${String(Math.round(shared.left))} · y ${String(Math.round(shared.top))} · ` +
+            `${String(Math.round(shared.width))} × ${String(Math.round(shared.height))}`
+        );
+      }
+    }
+  }
+
+  return items.length > 0 ? { title: "Overlapping panels", items } : null;
+}
+
 export function buildOverlayPublishReviewSections(
   live: OverlaySettingsRecord,
   draft: OverlaySettingsRecord
 ): OverlayPublishReviewSection[] {
-  return [
+  const changes = [
     buildScalarSection(live, draft),
     buildPresetSection(live, draft),
     buildVisibilitySection(live, draft),
     buildLayerSection(live, draft)
   ].filter((section): section is OverlayPublishReviewSection => section !== null);
+
+  // Overlap is a property of the draft, not a difference from live, so it is only worth saying
+  // when there is a publish to say it about. Emitting it on an unchanged draft would make an
+  // empty review look like a pending change, and the dialog reads exactly that emptiness to decide
+  // whether there is anything to publish.
+  if (changes.length === 0) {
+    return changes;
+  }
+
+  const overlaps = buildOverlapSection(draft);
+  return overlaps ? [...changes, overlaps] : changes;
 }

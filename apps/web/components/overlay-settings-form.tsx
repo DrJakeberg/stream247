@@ -37,6 +37,7 @@ import { OverlayPlacementCanvas, type PlacementTarget } from "@/components/overl
 import { OverlayRenderPreview } from "@/components/overlay-render-preview";
 import { useToast } from "@/components/ui/Toast";
 import { buildOverlayPublishReviewSections, type OverlayPublishReviewSection } from "@/lib/overlay-publish-review";
+import { OVERLAY_PANEL_LABELS } from "@/lib/overlay-panel-labels";
 import { createDefaultCustomLayer } from "@/lib/overlay-studio-defaults";
 import type { OverlayScenePresetRecord, OverlaySettingsRecord } from "@/lib/server/state";
 import { describeScenePreset, describeTypographyPreset } from "@/lib/scene-preset-names";
@@ -99,15 +100,6 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
  * Not the internal ids and not the layer names from the visibility list: these are the six things
  * an operator points at on the picture, and "Now playing" is what they call the lower third.
  */
-const OVERLAY_PANEL_LABELS: { id: OverlayPanelId; label: string; hint: string }[] = [
-  { id: "hero", label: "Now playing", hint: "The lower third: label, title, and the line under it." },
-  { id: "next", label: "Up next", hint: "The small card in the right rail, when no vote is running." },
-  { id: "vote", label: "Vote panel", hint: "Takes the rail's corner while chat is voting." },
-  { id: "chat", label: "Chat", hint: "Fits as many of the newest messages as its height holds." },
-  { id: "clock", label: "Clock", hint: "Channel time, top right." },
-  { id: "banner", label: "Emergency banner", hint: "Only on air while the banner has text." }
-];
-
 /** The design grid. Design pixels are frame pixels at this size, which is what makes it the grid. */
 const DESIGN_FRAME = { width: 1920, height: 1080 };
 
