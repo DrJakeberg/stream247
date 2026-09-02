@@ -1657,6 +1657,149 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
   return normalized;
 }
 
+// ---------------------------------------------------------------------------
+// Named overlay scenes (M58)
+// ---------------------------------------------------------------------------
+
+/**
+ * One named scene: a name, its own set of custom layers, and — optionally — the video source the
+ * scene is about.
+ *
+ * The layer shape is deliberately the existing `customLayers` one, unchanged. A scene is not a new
+ * kind of drawing; it is a name put on a layer set the renderer already knows how to draw, so
+ * everything downstream of `resolveOverlayNamedSceneCustomLayers` stays exactly as it was.
+ */
+export type OverlayNamedScene = {
+  id: string;
+  name: string;
+  customLayers: OverlaySceneCustomLayer[];
+  /**
+   * The stored video source (M57) this scene is about, or "" when the scene is not bound to one.
+   *
+   * It is a DEFAULT for the scene's source layers, not a second place a source can be switched on:
+   * a `source` layer that names no source of its own inherits this id. That is what makes
+   * duplicating a scene and pointing the copy at another camera one edit instead of one per layer.
+   * A binding naming a source that no longer exists needs no special handling — it resolves into
+   * the layer exactly like a hand-typed id would, and the worker already answers an unresolvable
+   * source with the still picture (attach-unavailable).
+   */
+  sourceId: string;
+};
+
+/** Enough scenes for a show; few enough that the picker stays a list an operator can read. */
+export const MAX_NAMED_OVERLAY_SCENES = 12;
+
+/**
+ * The id and name given to the scene an upgrade creates out of an existing layer set.
+ *
+ * Fixed rather than generated on purpose: the live row and the draft row are seeded independently
+ * (by the migration, and by the normaliser on read), and a random id would make the two differ and
+ * the studio report unpublished changes that nobody made.
+ */
+export const DEFAULT_NAMED_OVERLAY_SCENE_ID = "scene-main";
+export const DEFAULT_NAMED_OVERLAY_SCENE_NAME = "Main scene";
+
+function sanitizeOverlayNamedSceneId(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+/**
+ * The stored scene list, made safe to render.
+ *
+ * Never returns an empty list: something has to be on air. When nothing usable was stored, the
+ * caller's existing single layer set becomes the one scene, which is the entire upgrade path for an
+ * installation that predates this feature — no migration data is needed for the picture to stay the
+ * same, the migration only makes the same answer durable.
+ */
+export function normalizeOverlayNamedScenes(value: unknown, fallbackLayers: unknown): OverlayNamedScene[] {
+  const scenes: OverlayNamedScene[] = [];
+  const seenIds = new Set<string>();
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+
+      const raw = entry as Partial<OverlayNamedScene>;
+      const id = sanitizeOverlayNamedSceneId(raw.id);
+      if (!id || seenIds.has(id)) {
+        continue;
+      }
+      seenIds.add(id);
+
+      scenes.push({
+        id,
+        name: sanitizeTextValue(raw.name, 60) || `Scene ${String(scenes.length + 1)}`,
+        customLayers: normalizeOverlaySceneCustomLayers(raw.customLayers),
+        sourceId: sanitizeOverlayVideoSourceId(raw.sourceId)
+      });
+
+      if (scenes.length >= MAX_NAMED_OVERLAY_SCENES) {
+        break;
+      }
+    }
+  }
+
+  if (scenes.length > 0) {
+    return scenes;
+  }
+
+  return [
+    {
+      id: DEFAULT_NAMED_OVERLAY_SCENE_ID,
+      name: DEFAULT_NAMED_OVERLAY_SCENE_NAME,
+      customLayers: normalizeOverlaySceneCustomLayers(fallbackLayers),
+      sourceId: ""
+    }
+  ];
+}
+
+/**
+ * Which scene is on air.
+ *
+ * An id that names no scene — deleted while it was active, or written by a newer studio — resolves
+ * to the first scene rather than to nothing: a channel with the overlay switched on must always
+ * have a picture, and "the first scene" is the only answer that needs no operator present to pick.
+ */
+export function resolveActiveOverlayNamedSceneId(scenes: OverlayNamedScene[], activeSceneId: unknown): string {
+  const wanted = sanitizeOverlayNamedSceneId(activeSceneId);
+  const match = scenes.find((scene) => scene.id === wanted);
+  return match ? match.id : scenes[0]?.id || "";
+}
+
+/**
+ * The layer set the renderer actually draws: the active scene's layers, with the scene's bound
+ * source filled into any source layer that names none.
+ *
+ * This is the single point where scenes touch the broadcast picture. Everything below it —
+ * buildOverlaySceneDefinition, the on-air rasteriser, the studio preview — keeps reading one flat
+ * `customLayers` array and cannot tell that scenes exist.
+ */
+export function resolveOverlayNamedSceneCustomLayers(
+  scenes: OverlayNamedScene[],
+  activeSceneId: unknown
+): OverlaySceneCustomLayer[] {
+  const activeId = resolveActiveOverlayNamedSceneId(scenes, activeSceneId);
+  const scene = scenes.find((entry) => entry.id === activeId);
+  if (!scene) {
+    return [];
+  }
+
+  if (!scene.sourceId) {
+    return scene.customLayers;
+  }
+
+  return scene.customLayers.map((layer) =>
+    layer.kind === "source" && !layer.sourceId ? { ...layer, sourceId: scene.sourceId } : layer
+  );
+}
+
 export function resolveOverlayScenePresetForQueueKind(
   scenePreset: OverlayScenePreset,
   queueKind: OverlayQueueKind,
