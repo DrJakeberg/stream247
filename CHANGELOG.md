@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.39 - 2026-09-02
+
 ### Added
 
 - The overlay panels can be dragged and resized on the studio preview, the way an OBS layout is
