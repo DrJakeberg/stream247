@@ -8120,3 +8120,50 @@ export function findUserByEmail(state: AppState, email: string): UserRecord | nu
 export function findTeamGrantByLogin(state: AppState, twitchLogin: string): TeamAccessGrant | null {
   return state.teamAccessGrants.find((grant) => grant.twitchLogin.toLowerCase() === twitchLogin.toLowerCase()) ?? null;
 }
+
+// Viewer request history — what the !request cooldown and the queue cap are decided on.
+//
+// Finding [5] of the codebase review: chat_viewer_requests existed, nothing wrote to it, and the
+// worker evaluated every request against an empty history and a queue count of zero, so a single
+// viewer could push any number of items into the running channel while the settings page claimed
+// a per-viewer cooldown and a cap.
+
+export async function appendChatViewerRequestRecord(args: { actor: string; assetId: string }): Promise<void> {
+  await ensureDatabase();
+  await getPool().query(
+    "INSERT INTO chat_viewer_requests (id, actor, asset_id, status, created_at) VALUES ($1, $2, $3, 'queued', $4)",
+    [createId("chatreq"), args.actor.trim().toLowerCase(), args.assetId, new Date().toISOString()]
+  );
+}
+
+/** Requests newer than `sinceIso`, newest first — the cooldown only needs the actor's latest. */
+export async function listRecentChatViewerRequests(sinceIso: string): Promise<{ actor: string; assetId: string; createdAt: string }[]> {
+  await ensureDatabase();
+  const result = await getPool().query<{ actor: string; asset_id: string; created_at: string }>(
+    "SELECT actor, asset_id, created_at FROM chat_viewer_requests WHERE created_at > $1 ORDER BY created_at DESC LIMIT 500",
+    [sinceIso]
+  );
+  return result.rows.map((row) => ({ actor: row.actor, assetId: row.asset_id, createdAt: row.created_at }));
+}
+
+/** Requests still waiting in the queue: queued rows whose asset is one of the ids the playout holds. */
+export async function countQueuedChatViewerRequests(queuedAssetIds: string[]): Promise<number> {
+  await ensureDatabase();
+  if (queuedAssetIds.length === 0) {
+    return 0;
+  }
+  const result = await getPool().query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM chat_viewer_requests WHERE status = 'queued' AND asset_id = ANY($1::text[])",
+    [queuedAssetIds]
+  );
+  return Number(result.rows[0]?.count ?? "0");
+}
+
+/** A queued request whose asset is no longer in the queue has been played (or dropped) — say so. */
+export async function markChatViewerRequestsPlayed(queuedAssetIds: string[]): Promise<void> {
+  await ensureDatabase();
+  await getPool().query(
+    "UPDATE chat_viewer_requests SET status = 'played' WHERE status = 'queued' AND NOT (asset_id = ANY($1::text[]))",
+    [queuedAssetIds]
+  );
+}
