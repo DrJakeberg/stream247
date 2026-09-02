@@ -14,11 +14,21 @@
 
 import { Resvg } from "@resvg/resvg-js";
 import { overlayTickerLine, formatOverlayClock} from "@stream247/core";
-import { renderSceneSvg, type SceneRenderFont, type SceneRenderRequest } from "@stream247/overlay-render";
+import {
+  renderSceneSvg,
+  renderTickerStripSvg,
+  type SceneRenderFont,
+  type SceneRenderRequest,
+  type TickerStripRequest,
+  type TickerStripSvg
+} from "@stream247/overlay-render";
 
 export {
   loadSceneRendererFonts,
   renderSceneSvg,
+  renderTickerStripSvg,
+  type TickerStripRequest,
+  type TickerStripSvg,
   type SceneRenderFont,
   type SceneRenderRequest
 } from "@stream247/overlay-render";
@@ -79,4 +89,54 @@ export function sceneFrameCacheKey(request: SceneRenderRequest): string {
     // term changes once a minute instead of once a render.
     formatOverlayClock(request.now ?? new Date(), request.payload.timeZone)
   ]);
+}
+
+/** A rendered ticker strip, with the pixels ffmpeg reads and the ink width its period is built from. */
+export type TickerStripFrame = TickerStripSvg & { png: Buffer; inkWidth: number };
+
+/**
+ * The last column the strip actually painted.
+ *
+ * Measured on the pixels rather than taken from satori's layout, because the two disagree: on this
+ * rasteriser the laid-out text node ended 3px before the ink did, and the crawl period is built
+ * from this number. Three pixels of overlap in a 240px gap would never be seen, but a period built
+ * from a guess is a period that has to be re-guessed the next time the face or the size changes.
+ *
+ * Scans from the right and stops at the first painted column, and reads the framebuffer ONCE into
+ * a local: resvg's pixels is a getter that copies the whole buffer per access, and a scan that
+ * touched it per pixel allocated 21GB and had the kernel kill the test runner.
+ */
+function measureInkWidth(image: { width: number; height: number; pixels: Buffer }): number {
+  const pixels = image.pixels;
+  const { width, height } = image;
+  for (let x = width - 1; x >= 0; x--) {
+    for (let y = 0; y < height; y++) {
+      if (pixels[(y * width + x) * 4 + 3]! > 16) {
+        return x + 1;
+      }
+    }
+  }
+  return 0;
+}
+
+/**
+ * Renders the ticker line to the transparent strip ffmpeg crawls across the band.
+ *
+ * Rasterised once per ticker text, not once per frame: the motion is ffmpeg moving this image, so
+ * nothing here runs on the render tick. Null when there is no line, which is also how the caller
+ * learns to build a graph without a crawl in it.
+ */
+export async function renderTickerStrip(
+  request: TickerStripRequest,
+  fonts: SceneRenderFont[]
+): Promise<TickerStripFrame | null> {
+  const strip = await renderTickerStripSvg(request, fonts);
+  if (!strip) {
+    return null;
+  }
+  const image = new Resvg(strip.svg, {
+    fitTo: { mode: "width", value: strip.width },
+    background: "rgba(0,0,0,0)"
+  }).render();
+  return { ...strip, png: Buffer.from(image.asPng()), inkWidth: measureInkWidth(image) };
 }

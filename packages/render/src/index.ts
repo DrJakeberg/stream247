@@ -7,4 +7,11 @@ export {
   type SceneRenderFontFile,
   type SceneRenderFontFiles
 } from "./fonts.js";
-export { renderSceneSvg, type SceneRenderRequest, type SceneRenderSvgOptions } from "./render.js";
+export {
+  renderSceneSvg,
+  renderTickerStripSvg,
+  type SceneRenderRequest,
+  type SceneRenderSvgOptions,
+  type TickerStripRequest,
+  type TickerStripSvg
+} from "./render.js";

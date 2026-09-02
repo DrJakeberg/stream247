@@ -372,6 +372,15 @@ export const OVERLAY_TICKER_CRAWL_MAX_PX_PER_SECOND = 240;
 /** The empty run between the end of the line and the start of its next pass, on the design grid. */
 export const OVERLAY_TICKER_CRAWL_GAP = 240;
 
+/**
+ * The ink of the ticker line, on the design grid.
+ *
+ * Shared, because the band used to draw this line and now ffmpeg moves a strip of it across the
+ * band instead: two pictures of the same sentence that must be the same sentence in the same face
+ * at the same size, or the studio preview and the broadcast disagree about the ticker again.
+ */
+export const OVERLAY_TICKER_TEXT = { fontSize: 26, fontWeight: 600, lineHeight: 1.25, letterSpacing: 1 } as const;
+
 /** The band's own insets, shared by the panel that draws it and the plan that crawls inside it. */
 const TICKER_PAD_X = 24;
 const TICKER_PAD_Y = 10;
@@ -474,6 +483,11 @@ export function overlayTickerCrawlPlan(
     pxPerSecond,
     gapPx: px(OVERLAY_TICKER_CRAWL_GAP)
   };
+}
+
+/** The face a typography preset resolves to, for anyone rendering overlay text outside the tree. */
+export function overlayFontFamily(typographyPreset: string): string {
+  return FONT_STACKS[typographyPreset] ?? FONT_STACKS["studio-sans"]!;
 }
 
 const FONT_STACKS: Record<string, string> = {
@@ -1887,8 +1901,8 @@ function buildTickerPanel(
   fit: PanelFit
 ): OverlayLayoutNode {
   const px = (value: number) => Math.round(value * scale);
-  const fontSize = px(26);
-  const lineHeight = 1.25;
+  const fontSize = px(OVERLAY_TICKER_TEXT.fontSize);
+  const lineHeight = OVERLAY_TICKER_TEXT.lineHeight;
   const padY = px(TICKER_PAD_Y);
   const padX = px(TICKER_PAD_X);
 
@@ -1920,9 +1934,9 @@ function buildTickerPanel(
           color: INK_PRIMARY,
           fontSize,
           fontFamily,
-          fontWeight: 600,
+          fontWeight: OVERLAY_TICKER_TEXT.fontWeight,
           lineHeight,
-          letterSpacing: px(1),
+          letterSpacing: px(OVERLAY_TICKER_TEXT.letterSpacing),
           // The three together are what makes satori cut rather than overflow, exactly as the chat
           // panel's message label does.
           lineClamp: lines,
@@ -1947,7 +1961,7 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
   const scale = overlayScale(options.width);
   const px = (value: number) => Math.round(value * scale);
   const accent = sanitizeAccent(payload.accentColor);
-  const fontFamily = FONT_STACKS[payload.scene.typographyPreset] ?? FONT_STACKS["studio-sans"]!;
+  const fontFamily = overlayFontFamily(payload.scene.typographyPreset);
   const anchorTop = payload.scene.panelAnchor === "center";
 
   const frameSize = { width: options.width, height: options.height };
