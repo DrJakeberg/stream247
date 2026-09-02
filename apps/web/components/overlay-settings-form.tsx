@@ -12,8 +12,11 @@ import {
   OVERLAY_TITLE_SCALES,
   MAX_NAMED_OVERLAY_SCENES,
   OVERLAY_PANEL_IDS,
+  OVERLAY_TICKER_MAX_SECONDS,
+  OVERLAY_TICKER_MIN_SECONDS,
   buildOverlayScenePayload,
   deriveDefaultPlacements,
+  overlayTickerMessages,
   describeOverlaySceneFrameSupport,
   resolveActiveOverlayNamedSceneId,
   resolveOverlayHeadlineForQueueKind,
@@ -90,7 +93,8 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
     customLayers: overlay.customLayers,
     panelPlacements: overlay.panelPlacements,
     emergencyBanner: overlay.emergencyBanner,
-    tickerText: overlay.tickerText
+    tickerText: overlay.tickerText,
+    tickerRotateSeconds: overlay.tickerRotateSeconds
   });
 }
 
@@ -536,6 +540,10 @@ export function OverlaySettingsForm(props: {
     timeZone: props.preview.timeZone
   });
 
+  // Split by the renderer's own rule rather than by counting separators here, so the studio and the
+  // picture never disagree about what one message is.
+  const tickerMessageCount = overlayTickerMessages(draft.tickerText).length;
+
   /**
    * The panels and layers the preview frame actually draws, as boxes on that frame.
    *
@@ -558,6 +566,11 @@ export function OverlaySettingsForm(props: {
       }
       if (id === "banner") {
         return Boolean(draft.emergencyBanner.trim());
+      }
+      // Same rule as the banner, for the same reason: the renderer draws the ticker only while it
+      // has something to say, so a handle over an empty band would be a handle over nothing.
+      if (id === "ticker") {
+        return Boolean(draft.tickerText.trim());
       }
       return false;
     }).map((id) => ({
@@ -965,9 +978,41 @@ export function OverlaySettingsForm(props: {
             </label>
             <label>
               <span className="label">Ticker text</span>
-              <input onChange={(event) => setDraftField("tickerText", event.target.value)} placeholder="Optional lower ticker line" value={draft.tickerText} />
+              <input
+                onChange={(event) => setDraftField("tickerText", event.target.value)}
+                placeholder="Optional notice. Separate several with ·"
+                value={draft.tickerText}
+              />
             </label>
+            {/*
+              Only once there is more than one message.
+
+              The dwell is meaningless for a single notice, and a permanently visible field that
+              does nothing on most channels is exactly the kind of control this page is measured
+              for. It appears when the operator types the separator that makes it mean something,
+              beside the text it belongs to.
+            */}
+            {tickerMessageCount > 1 ? (
+              <label>
+                <span className="label">Ticker seconds per message</span>
+                <input
+                  max={OVERLAY_TICKER_MAX_SECONDS}
+                  min={OVERLAY_TICKER_MIN_SECONDS}
+                  onChange={(event) =>
+                    setDraftField("tickerRotateSeconds", Number(event.target.value) || draft.tickerRotateSeconds)
+                  }
+                  type="number"
+                  value={draft.tickerRotateSeconds}
+                />
+              </label>
+            ) : null}
           </div>
+          {tickerMessageCount > 1 ? (
+            <p className="subtle">
+              {tickerMessageCount} ticker messages take turns, one at a time. The picture is redrawn about twice a
+              second, so a message stands for as long as you ask here give or take one redraw.
+            </p>
+          ) : null}
 
           {/*
             The cards below are the only way to choose this now. A select offering the same six

@@ -115,6 +115,7 @@ export function normalizeScenePreviewRequest(body: unknown): ScenePreviewRequest
       nextTimeLabel: str(source.nextTimeLabel),
       queueTitles: queueTitles.map(str),
       tickerText: str(source.tickerText),
+      tickerRotateSeconds: Number(source.tickerRotateSeconds) || undefined,
       emergencyBanner: str(source.emergencyBanner),
       timeZone: str(source.timeZone)
     }

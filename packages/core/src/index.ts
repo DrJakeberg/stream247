@@ -15,7 +15,7 @@ import {
   resolveChatOverlayRuntimeEnabled,
   type ManagedRuntimeToggleInput
 } from "./managed-runtime.js";
-import { OVERLAY_PANEL_IDS, type OverlayPanelId } from "./overlay-layout.js";
+import { OVERLAY_PANEL_IDS, OVERLAY_TICKER_DEFAULT_SECONDS, type OverlayPanelId } from "./overlay-layout.js";
 
 export type ModerationConfig = {
   enabled: boolean;
@@ -767,6 +767,8 @@ export type OverlayScenePayload = {
   scheduleBody: string;
   scheduleAux: string;
   tickerText: string;
+  /** Seconds one ticker message stands before the next takes its place. See overlayTickerLine. */
+  tickerRotateSeconds: number;
   emergencyBanner: string;
   timeZone: string;
 };
@@ -807,6 +809,8 @@ export type OverlaySceneSource = {
   queuePreviewCount: number;
   emergencyBanner: string;
   tickerText: string;
+  /** Seconds one ticker message stands before the next takes its place. See overlayTickerLine. */
+  tickerRotateSeconds: number;
   layerOrder: OverlaySceneLayerKind[];
   disabledLayers: OverlaySceneLayerKind[];
   customLayers: OverlaySceneCustomLayer[];
@@ -2118,6 +2122,7 @@ export function buildOverlayScenePayload(args: {
     scheduleBody,
     scheduleAux,
     tickerText: normalizeOverlayVisibleText(args.overlay.tickerText),
+    tickerRotateSeconds: args.overlay.tickerRotateSeconds,
     emergencyBanner: normalizeOverlayVisibleText(args.overlay.emergencyBanner),
     timeZone: args.timeZone || "UTC"
   };
@@ -2225,6 +2230,7 @@ export function buildOverlayTextLines(args: {
         queuePreviewCount: Math.max((args.queueTitles || []).length, 1),
         emergencyBanner: "",
         tickerText: args.tickerText || "",
+        tickerRotateSeconds: OVERLAY_TICKER_DEFAULT_SECONDS,
         layerOrder: DEFAULT_OVERLAY_SCENE_LAYER_ORDER,
         disabledLayers: [],
         customLayers: [],

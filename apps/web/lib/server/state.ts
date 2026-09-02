@@ -1055,6 +1055,7 @@ function buildOverlaySceneSource(overlay: OverlaySettingsRecord) {
     queuePreviewCount: overlay.queuePreviewCount,
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText,
+    tickerRotateSeconds: overlay.tickerRotateSeconds,
     layerOrder: overlay.layerOrder,
     disabledLayers: overlay.disabledLayers,
     customLayers: overlay.customLayers,

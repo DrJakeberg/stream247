@@ -84,6 +84,12 @@ function buildVisibilitySection(live: OverlaySettingsRecord, draft: OverlaySetti
     draft.showQueuePreview ? `shown (${draft.queuePreviewCount})` : "hidden"
   );
   pushChange(items, "Ticker", live.tickerText || "none", draft.tickerText || "none");
+  pushChange(
+    items,
+    "Ticker rotation",
+    `${String(live.tickerRotateSeconds)}s`,
+    `${String(draft.tickerRotateSeconds)}s`
+  );
   pushChange(items, "Emergency banner", live.emergencyBanner || "off", draft.emergencyBanner || "off");
 
   return items.length > 0 ? { title: "Visibility and alerts", items } : null;

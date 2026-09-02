@@ -2207,7 +2207,13 @@ function buildSceneRenderRequest(outputSettings: WorkerStreamOutputSettings): Sc
     // around the live window.
     sourceFrame: playoutLiveSourceAttached ? null : currentSceneSourceFrame,
     width: viewport.width,
-    height: viewport.height
+    height: viewport.height,
+    // One clock for both halves of the tick. The layout has always fallen back to new Date() and
+    // still would, but the frame cache key now derives the ticker's message from this instant too,
+    // and reading the clock twice a few milliseconds apart could key one message and draw the
+    // next one across a dwell boundary — a frame cached under the wrong name until something else
+    // moved. Passing it makes the two exact rather than nearly always in agreement.
+    now: new Date()
   };
 }
 
@@ -2847,6 +2853,7 @@ function buildWorkerScenePayload(args: {
       queuePreviewCount: args.state.overlay.queuePreviewCount,
       emergencyBanner: args.state.overlay.emergencyBanner,
       tickerText: args.state.overlay.tickerText,
+      tickerRotateSeconds: args.state.overlay.tickerRotateSeconds,
       layerOrder: args.state.overlay.layerOrder,
       disabledLayers: args.state.overlay.disabledLayers,
       customLayers: args.state.overlay.customLayers,

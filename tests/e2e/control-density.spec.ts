@@ -79,6 +79,14 @@ const SURFACES: Surface[] = [
   // chat panel from the sidebar adds one each, and an enabled logo or text layer adds one, the same
   // way program-library's budget tracks the seeded assets. A layer already brings ten controls to
   // the sidebar; its handle is not what makes that grow.
+  //
+  // Still 64 after the ticker became the seventh panel, and that is a measurement rather than an
+  // oversight. Three things could have moved it and none does on this fixture: the ticker's row in
+  // the panel placement list is inside a fold that starts closed, so checkVisibility does not count
+  // it; its drag handle follows the emergency banner's rule and appears only while the ticker has
+  // text, which the fixture does not set; and the dwell field appears only once that text holds
+  // more than one message. A channel that runs a rotating ticker will measure two more than this,
+  // by the same rule that says a placed vote panel measures one more.
   { name: "studio-scene", path: "/studio?tab=scene", maxControls: 64, primaryActions: 1 },
   // 31, was 30: M56 moved the EventSub webhook secret into the managed credentials form, and a
   // secret belongs beside the other secrets rather than in a fold of its own — every sibling

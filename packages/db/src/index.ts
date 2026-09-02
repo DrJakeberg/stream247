@@ -58,6 +58,9 @@ import {
   type StreamOutputProfileId,
   type OverlayTypographyPreset,
   redactSecrets,
+  OVERLAY_TICKER_DEFAULT_SECONDS,
+  OVERLAY_TICKER_MAX_SECONDS,
+  OVERLAY_TICKER_MIN_SECONDS,
 } from "@stream247/core";
 
 export type OwnerAccount = {
@@ -454,6 +457,8 @@ export type OverlaySettingsRecord = {
   panelPlacements: OverlayScenePanelPlacementMap;
   emergencyBanner: string;
   tickerText: string;
+  /** Seconds one ticker message stands before the next. See overlayTickerLine in core. */
+  tickerRotateSeconds: number;
   updatedAt: string;
 };
 
@@ -801,6 +806,7 @@ type OverlaySettingsRow = {
   emergency_banner: string;
   replay_label: string;
   ticker_text: string;
+  ticker_rotate_seconds: number;
   updated_at: string;
 };
 
@@ -938,6 +944,15 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
     panelPlacements: normalizeOverlayScenePanelPlacements(overlay.panelPlacements ?? defaults.panelPlacements),
     emergencyBanner: sanitizeStoredText(overlay.emergencyBanner ?? defaults.emergencyBanner, 180),
     tickerText: sanitizeStoredText(overlay.tickerText ?? defaults.tickerText, 180),
+    // Clamped to the same bounds the renderer clamps to, so what is stored is what goes on air.
+    // The floor is two render intervals: a dwell shorter than that is jitter, not timing.
+    tickerRotateSeconds: Math.max(
+      OVERLAY_TICKER_MIN_SECONDS,
+      Math.min(
+        OVERLAY_TICKER_MAX_SECONDS,
+        Math.round(Number(overlay.tickerRotateSeconds ?? defaults.tickerRotateSeconds)) || OVERLAY_TICKER_DEFAULT_SECONDS
+      )
+    ),
     updatedAt: overlay.updatedAt ?? defaults.updatedAt
   };
 }
@@ -1021,6 +1036,7 @@ function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: Ov
         panelPlacements: JSON.parse(row.panel_placements_json || "{}") as OverlayScenePanelPlacementMap,
         emergencyBanner: row.emergency_banner,
         tickerText: row.ticker_text,
+        tickerRotateSeconds: row.ticker_rotate_seconds,
         updatedAt: row.updated_at
       })
     : fallback;
@@ -1159,9 +1175,9 @@ async function upsertOverlaySettingsTable(
     await client.query(
       `
         INSERT INTO overlay_drafts (
-          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, based_on_updated_at, scenes_json, active_scene_id, panel_placements_json
+          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, based_on_updated_at, scenes_json, active_scene_id, panel_placements_json, ticker_rotate_seconds
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           channel_name = EXCLUDED.channel_name,
@@ -1196,7 +1212,8 @@ async function upsertOverlaySettingsTable(
           based_on_updated_at = EXCLUDED.based_on_updated_at,
           scenes_json = EXCLUDED.scenes_json,
           active_scene_id = EXCLUDED.active_scene_id,
-          panel_placements_json = EXCLUDED.panel_placements_json
+          panel_placements_json = EXCLUDED.panel_placements_json,
+          ticker_rotate_seconds = EXCLUDED.ticker_rotate_seconds
       `,
       [
         normalized.enabled,
@@ -1232,7 +1249,8 @@ async function upsertOverlaySettingsTable(
         basedOnUpdatedAt,
         JSON.stringify(normalized.scenes),
         normalized.activeSceneId,
-        JSON.stringify(normalized.panelPlacements)
+        JSON.stringify(normalized.panelPlacements),
+        normalized.tickerRotateSeconds
       ]
     );
     return;
@@ -1241,9 +1259,9 @@ async function upsertOverlaySettingsTable(
   await client.query(
     `
       INSERT INTO overlay_settings (
-          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, scenes_json, active_scene_id, panel_placements_json
+          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, scenes_json, active_scene_id, panel_placements_json, ticker_rotate_seconds
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
       ON CONFLICT (singleton_id) DO UPDATE SET
         enabled = EXCLUDED.enabled,
         channel_name = EXCLUDED.channel_name,
@@ -1277,7 +1295,8 @@ async function upsertOverlaySettingsTable(
         updated_at = EXCLUDED.updated_at,
         scenes_json = EXCLUDED.scenes_json,
         active_scene_id = EXCLUDED.active_scene_id,
-        panel_placements_json = EXCLUDED.panel_placements_json
+        panel_placements_json = EXCLUDED.panel_placements_json,
+        ticker_rotate_seconds = EXCLUDED.ticker_rotate_seconds
     `,
     [
       normalized.enabled,
@@ -1312,7 +1331,8 @@ async function upsertOverlaySettingsTable(
       normalized.updatedAt,
       JSON.stringify(normalized.scenes),
       normalized.activeSceneId,
-      JSON.stringify(normalized.panelPlacements)
+      JSON.stringify(normalized.panelPlacements),
+      normalized.tickerRotateSeconds
     ]
   );
 }
@@ -1653,6 +1673,7 @@ function defaultState(): AppState {
       panelPlacements: {},
       emergencyBanner: "",
       tickerText: "",
+      tickerRotateSeconds: 8,
       updatedAt: ""
     },
     managedConfig: {
@@ -2352,6 +2373,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       panel_placements_json TEXT NOT NULL DEFAULT '{}',
       emergency_banner TEXT NOT NULL DEFAULT '',
       ticker_text TEXT NOT NULL DEFAULT '',
+      ticker_rotate_seconds INTEGER NOT NULL DEFAULT 8,
       updated_at TEXT NOT NULL DEFAULT ''
     );
 
@@ -2391,6 +2413,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       panel_placements_json TEXT NOT NULL DEFAULT '{}',
       emergency_banner TEXT NOT NULL DEFAULT '',
       ticker_text TEXT NOT NULL DEFAULT '',
+      ticker_rotate_seconds INTEGER NOT NULL DEFAULT 8,
       updated_at TEXT NOT NULL DEFAULT '',
       based_on_updated_at TEXT NOT NULL DEFAULT ''
     );
@@ -2873,6 +2896,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS ticker_text TEXT NOT NULL DEFAULT '';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS ticker_rotate_seconds INTEGER NOT NULL DEFAULT 8;
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS channel_name TEXT NOT NULL DEFAULT 'Stream247';
@@ -2909,6 +2933,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS ticker_text TEXT NOT NULL DEFAULT '';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS ticker_rotate_seconds INTEGER NOT NULL DEFAULT 8;
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS based_on_updated_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE managed_config ADD COLUMN IF NOT EXISTS encrypted_payload TEXT NOT NULL DEFAULT '';
@@ -3941,9 +3966,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   await client.query(
     `
         INSERT INTO overlay_settings (
-          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, panel_placements_json, scenes_json, active_scene_id
+          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, panel_placements_json, scenes_json, active_scene_id, ticker_rotate_seconds
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           channel_name = EXCLUDED.channel_name,
@@ -3977,7 +4002,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
           updated_at = EXCLUDED.updated_at,
           panel_placements_json = EXCLUDED.panel_placements_json,
           scenes_json = EXCLUDED.scenes_json,
-          active_scene_id = EXCLUDED.active_scene_id
+          active_scene_id = EXCLUDED.active_scene_id,
+          ticker_rotate_seconds = EXCLUDED.ticker_rotate_seconds
       `,
       [
         next.overlay.enabled,
@@ -4014,7 +4040,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         // Writing folds, reading projects: a caller that appended a layer to `customLayers`
         // without knowing scenes exist -- the chat game's provisioning does -- must not lose it.
         JSON.stringify(next.overlay.scenes),
-        next.overlay.activeSceneId
+        next.overlay.activeSceneId,
+        next.overlay.tickerRotateSeconds
       ]
     );
 

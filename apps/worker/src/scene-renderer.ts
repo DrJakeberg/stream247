@@ -13,6 +13,7 @@
 // needs: turning the SVG into pixels, and knowing when a frame is worth redrawing at all.
 
 import { Resvg } from "@resvg/resvg-js";
+import { overlayTickerLine } from "@stream247/core";
 import { renderSceneSvg, type SceneRenderFont, type SceneRenderRequest } from "@stream247/overlay-render";
 
 export {
@@ -62,6 +63,14 @@ export function sceneFrameCacheKey(request: SceneRenderRequest): string {
     // memory, and a few hundred kilobytes of base64 in every key would make both of those costs
     // scale with image size for zero extra information — capturedAt already changes exactly when
     // the picture does.
-    request.sourceFrame ? [request.sourceFrame.status, request.sourceFrame.capturedAt] : null
+    request.sourceFrame ? [request.sourceFrame.status, request.sourceFrame.capturedAt] : null,
+    // The ticker is the only thing on the frame that changes without its data changing, so it is
+    // the only reason this key carries a clock — and it carries the drawn line rather than the
+    // clock itself, which would make every key unique and turn the cache off. With no ticker text
+    // this is "" forever and the key is byte-for-byte the key it was before the panel existed;
+    // with one message it is that message forever. Only a rotation moves it, and then exactly once
+    // per dwell, which is what makes the renderer redraw at all: without this term the ticker
+    // would advance in the layout and never reach a viewer.
+    overlayTickerLine(request.payload, request.now ?? new Date())
   ]);
 }
