@@ -273,7 +273,7 @@ describe("engagement layer helpers", () => {
     expect(window?.clampReason).toBe("default");
   });
 
-  it("clamps low moderator requests and formats the reply for chat", () => {
+  it("clamps low moderator requests and formats the reply for chat", async () => {
     const write = vi.fn();
     const onModeratorPresenceCheckIn = vi.fn();
     const bridge = new TwitchChatBridge({ onModeratorPresenceCheckIn });
@@ -291,6 +291,8 @@ describe("engagement layer helpers", () => {
       "@badge-info=;badges=moderator/1;display-name=Mod;id=chat-1;mod=1 :mod!mod@mod.tmi.twitch.tv PRIVMSG #stream247 :!here 5\r\n"
     );
 
+    // The confirmation follows the persisted write (finding [11]); it lands on the next turn.
+    await new Promise((resolve) => setImmediate(resolve));
     expect(write).toHaveBeenCalledWith("PRIVMSG #stream247 :received !here 5, minimum is 10; window set to 10 min\r\n");
     expect(onModeratorPresenceCheckIn).toHaveBeenCalledWith(
       expect.objectContaining({
