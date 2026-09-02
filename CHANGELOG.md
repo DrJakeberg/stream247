@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- The on-air clock stood still on a quiet channel. Found while measuring the ticker: the overlay
+  clock is drawn from the wall clock, but the frame cache key never carried it, so on a channel
+  where nothing else moved — a long VOD, no chat, no game — the renderer kept pushing the picture
+  it already had and the time on screen stayed at whatever minute it was when something last
+  changed. The key now carries the clock string that is drawn rather than the instant it came
+  from, so it changes once a minute instead of once a render and the cache still spares the
+  rasteriser in between.
+
 ### Added
 
 - The ticker goes on air. The scene payload has carried `tickerText` since the first overlay, the

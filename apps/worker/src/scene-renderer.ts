@@ -13,7 +13,7 @@
 // needs: turning the SVG into pixels, and knowing when a frame is worth redrawing at all.
 
 import { Resvg } from "@resvg/resvg-js";
-import { overlayTickerLine } from "@stream247/core";
+import { overlayTickerLine, formatOverlayClock} from "@stream247/core";
 import { renderSceneSvg, type SceneRenderFont, type SceneRenderRequest } from "@stream247/overlay-render";
 
 export {
@@ -71,6 +71,12 @@ export function sceneFrameCacheKey(request: SceneRenderRequest): string {
     // with one message it is that message forever. Only a rotation moves it, and then exactly once
     // per dwell, which is what makes the renderer redraw at all: without this term the ticker
     // would advance in the layout and never reach a viewer.
-    overlayTickerLine(request.payload, request.now ?? new Date())
+    overlayTickerLine(request.payload, request.now ?? new Date()),
+    // The clock is the other thing on the frame that moves without its data moving, and it moved
+    // unseen: on a channel where nothing else changes -- a long VOD, no chat, no game -- the
+    // renderer kept pushing the PNG it had and the on-air time stood at a stale minute. Same
+    // remedy as the ticker: carry the string that is drawn, not the instant it came from, so this
+    // term changes once a minute instead of once a render.
+    formatOverlayClock(request.now ?? new Date(), request.payload.timeZone)
   ]);
 }
