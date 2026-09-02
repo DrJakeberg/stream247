@@ -1515,6 +1515,23 @@ function encryptManagedConfig(value: ManagedConfigRecord): string {
   return `v1:${iv.toString("base64url")}:${authTag.toString("base64url")}:${encrypted.toString("base64url")}`;
 }
 
+/**
+ * The ciphertext to store for a user's two-factor secret.
+ *
+ * An unreadable secret -- something is stored and this process cannot open it, which is what a
+ * rotated or lost APP_SECRET looks like -- is kept exactly as it is. Overwriting it would destroy
+ * the only copy and silently re-open the two-factor bypass the refusal was written to close.
+ */
+function preservedTwoFactorSecret(
+  user: { twoFactorSecret?: string; twoFactorSecretUnreadable?: boolean },
+  storedCiphertext: string
+): string {
+  if (storedCiphertext && (user.twoFactorSecretUnreadable || !user.twoFactorSecret)) {
+    return storedCiphertext;
+  }
+  return encryptSecretString(user.twoFactorSecret ?? "");
+}
+
 function encryptSecretString(value: string): string {
   if (!value) {
     return "";
@@ -4045,16 +4062,26 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
       ]
     );
 
-  await client.query(
-    `
-      INSERT INTO managed_config (singleton_id, encrypted_payload, updated_at)
-      VALUES (1, $1, $2)
-      ON CONFLICT (singleton_id) DO UPDATE SET
-        encrypted_payload = EXCLUDED.encrypted_payload,
-        updated_at = EXCLUDED.updated_at
-    `,
-    [encryptManagedConfig(next.managedConfig), next.managedConfig.updatedAt]
+  // The same rule as the users above, and the stakes are higher: this payload holds the Twitch
+  // credentials, the stream keys and the relay key. A payload this process cannot decrypt reads as
+  // "unconfigured", and writing the defaults over it would erase all of them permanently -- the
+  // operator could not get them back even with the right APP_SECRET restored.
+  const storedManagedResult = await client.query<{ encrypted_payload: string }>(
+    "SELECT encrypted_payload FROM managed_config WHERE singleton_id = 1"
   );
+  const storedManagedPayload = storedManagedResult.rows[0]?.encrypted_payload ?? "";
+  if (!storedManagedPayload || decryptManagedConfig(storedManagedPayload) !== null) {
+    await client.query(
+      `
+        INSERT INTO managed_config (singleton_id, encrypted_payload, updated_at)
+        VALUES (1, $1, $2)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          encrypted_payload = EXCLUDED.encrypted_payload,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [encryptManagedConfig(next.managedConfig), next.managedConfig.updatedAt]
+    );
+  }
 
   await client.query(
     `
@@ -4241,6 +4268,17 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
 
   await persistPlayoutRuntime(client, next.playout);
 
+  // Never encrypt over a ciphertext this process could not read. With a rotated or lost APP_SECRET
+  // every stored secret decrypts to "", and writing that "" back under the new key destroys the
+  // original beyond recovery -- and clears the very flag that makes a two-factor login refuse, so
+  // the next sign-in skips the second factor again. The destinations below already carry their
+  // ciphertext across this same rewrite; users did not.
+  const existingUserSecretsResult = await client.query<{ id: string; two_factor_secret: string }>(
+    "SELECT id, two_factor_secret FROM users"
+  );
+  const existingUserSecrets = new Map(
+    existingUserSecretsResult.rows.map((row) => [row.id, row.two_factor_secret || ""] as const)
+  );
   await client.query("DELETE FROM users");
   for (const user of next.users) {
     await client.query(
@@ -4261,7 +4299,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         user.twitchLogin,
         user.passwordHash ?? "",
         user.twoFactorEnabled ?? false,
-        encryptSecretString(user.twoFactorSecret ?? ""),
+        preservedTwoFactorSecret(user, existingUserSecrets.get(user.id) ?? ""),
         user.twoFactorConfirmedAt ?? "",
         user.createdAt,
         user.lastLoginAt
@@ -7723,6 +7761,12 @@ export async function replaceTwitchScheduleSegments(segments: TwitchScheduleSegm
 
 export async function upsertUserRecord(user: UserRecord): Promise<void> {
   await withSerializedStateWrite("upsertUserRecord", async (client) => {
+  // Same rule as persistState: a secret this process cannot decrypt is not ours to overwrite.
+  const storedTwoFactorResult = await getPool().query<{ two_factor_secret: string }>(
+    "SELECT two_factor_secret FROM users WHERE id = $1",
+    [user.id]
+  );
+  const storedTwoFactorSecret = storedTwoFactorResult.rows[0]?.two_factor_secret ?? "";
     await client.query(
       `
         INSERT INTO users (
@@ -7754,7 +7798,7 @@ export async function upsertUserRecord(user: UserRecord): Promise<void> {
         user.twitchLogin,
         user.passwordHash ?? "",
         user.twoFactorEnabled ?? false,
-        encryptSecretString(user.twoFactorSecret ?? ""),
+        preservedTwoFactorSecret(user, storedTwoFactorSecret),
         user.twoFactorConfirmedAt ?? "",
         user.createdAt,
         user.lastLoginAt

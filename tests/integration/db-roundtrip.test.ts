@@ -15,6 +15,7 @@ import {
   appendPresenceWindowRecord,
   readAppState,
   updateAppState,
+  upsertUserRecord,
   updatePlayoutRuntime,
   deleteOverlayVideoSourceRecord,
   listOverlayVideoSourceRecords,
@@ -1948,6 +1949,47 @@ describe.sequential("database roundtrip", () => {
       expect(await countQueuedChatViewerRequests(["asset_req_b"])).toBe(1);
       const played = await executeSql("SELECT status FROM chat_viewer_requests WHERE asset_id = 'asset_req_a';");
       expect(played).toBe("played");
+    }, 60_000);
+
+    it("never encrypts over a secret it could not read, so a rotated APP_SECRET is survivable", async () => {
+      // The adversarial review of v1.5.39 found this: detection alone was not enough. With a key
+      // it cannot open, the first full-state write -- a moderator's !game is enough to trigger one
+      // -- deleted and re-inserted every user with an empty secret and wrote encrypted defaults
+      // over the managed config. That destroyed the only copy AND cleared the flag that makes the
+      // login refuse, so the two-factor bypass came back permanently.
+      const ownerId = "user_secret_guard";
+      await upsertUserRecord({
+        id: ownerId,
+        email: "guard@example.com",
+        displayName: "Guard",
+        authProvider: "local",
+        role: "owner",
+        twitchUserId: "",
+        twitchLogin: "",
+        passwordHash: "hash",
+        twoFactorEnabled: true,
+        twoFactorSecret: "JBSWY3DPEHPK3PXP",
+        twoFactorConfirmedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        lastLoginAt: ""
+      });
+      const sealedSecret = await executeSql(`SELECT two_factor_secret FROM users WHERE id = '${ownerId}';`);
+      const sealedManaged = await executeSql("SELECT left(encrypted_payload, 24) FROM managed_config WHERE singleton_id = 1;");
+      expect(sealedSecret).not.toBe("");
+
+      // Rotate the key underneath the store, exactly as losing the secret file would.
+      process.env.APP_SECRET = `${process.env.APP_SECRET ?? ""}-rotated`;
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      const unreadable = await readAppState();
+      expect(unreadable.users.find((user) => user.id === ownerId)?.twoFactorSecretUnreadable).toBe(true);
+
+      // The write that used to destroy everything.
+      await updateAppState((state) => ({ ...state, overlay: { ...state.overlay, channelName: "Guarded" } }));
+
+      expect(await executeSql(`SELECT two_factor_secret FROM users WHERE id = '${ownerId}';`)).toBe(sealedSecret);
+      expect(await executeSql("SELECT left(encrypted_payload, 24) FROM managed_config WHERE singleton_id = 1;")).toBe(sealedManaged);
     }, 60_000);
   });
 });
