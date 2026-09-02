@@ -48,6 +48,7 @@ function normalizeCustomLayer(value: unknown): OverlayCustomLayerView {
     widthPercent: num(raw.widthPercent, 0),
     heightPercent: num(raw.heightPercent, 0),
     opacityPercent: num(raw.opacityPercent, 100),
+    backgroundOpacityPercent: num(raw.backgroundOpacityPercent, 100),
     allowOutsideSafeArea: bool(raw.allowOutsideSafeArea),
     sourceId: str(raw.sourceId),
     url: str(raw.url),

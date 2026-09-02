@@ -177,6 +177,15 @@ export type OverlayCustomLayerView = {
   widthPercent: number;
   heightPercent: number;
   opacityPercent: number;
+  /**
+   * game layers: how much of the panel's own backdrop is drawn, independent of opacityPercent.
+   *
+   * opacityPercent fades the whole panel, board included — at 5 the snake measured alpha 11 on
+   * the rasteriser, which is not "a transparent game" but "no game". This fades only the fill and
+   * border behind the board, so an operator who wants the playfield over bare video can have it
+   * without the board going with it. Absent means 100: the panel as it has always been drawn.
+   */
+  backgroundOpacityPercent?: number;
   allowOutsideSafeArea: boolean;
   /** source layers: reference into the stored video sources. Never a URL. */
   sourceId?: string;
@@ -890,11 +899,20 @@ function buildGamePanel(
   const gridWidth = Math.max(1, Math.round(game.gridWidth));
   const gridHeight = Math.max(1, Math.round(game.gridHeight));
 
+  const hint = text(game.hintLine);
+
   // Text rows above and below the grid share the box with it; whatever is left decides the cell
   // size. The floor keeps cells visible even when an operator draws a tiny box. A coordinate
   // gutter, when the game asks for one, costs exactly one extra cell in each direction.
+  //
+  // The allowance used to be a flat px(84) whatever the panel actually drew. Measured on the
+  // rasteriser at 1920x1080: the header row is 26px tall plus its 10px margin, the hint 19px plus
+  // its 10px margin — 65 with a hint, 36 without. The flat number therefore took 19px of board
+  // height away from every game and 48px from every game without a hint, which on a full-frame
+  // box is a whole cell. Reserving what the rows measure instead is the same arithmetic the rows
+  // are laid out by, so the board can grow into what nothing else is using.
   const framePadding = px(18);
-  const textAllowance = px(84);
+  const textAllowance = px(26) + px(10) + (hint ? px(19) + px(10) : 0);
   const gap = Math.max(1, px(2));
   const axis = game.showCoordinates ? 1 : 0;
   const innerWidth = boxWidth - framePadding * 2;
@@ -908,6 +926,8 @@ function buildGamePanel(
       )
     )
   );
+
+  const cellBorder = Math.max(1, px(2));
 
   const cellContents = new Map<string, { kind: string; label?: string }>();
   for (const cell of game.cells) {
@@ -959,6 +979,14 @@ function buildGamePanel(
         width: cellSize,
         height: cellSize,
         borderRadius: Math.max(1, px(3)),
+        // Every cell is outlined, because the backdrop behind it may not be there.
+        //
+        // The board's marks are white or accent-coloured; on the panel fill that is all the
+        // contrast they need, and over bare white video with the fill turned off the white snake
+        // head measured 1.00:1 against its own surroundings — the board was simply gone. The
+        // outline is the one mark that survives both ends: composited over white it measures
+        // 14.4:1 against the head it encloses, and over black the head itself is 21:1 against it.
+        border: `${String(cellBorder)}px solid rgba(5,7,12,0.85)`,
         backgroundColor: "rgba(255,255,255,0.10)"
       };
       let labelColor = INK_PRIMARY;
@@ -1017,7 +1045,24 @@ function buildGamePanel(
     })
   ]);
 
-  const hint = text(game.hintLine);
+  // The backdrop is its own node rather than a fill on the panel, so it can fade on its own.
+  // Everything the operator can turn off lives here: the surface fill and its border.
+  const backdrop: OverlayLayoutNode = {
+    type: "div",
+    props: {
+      style: {
+        display: "flex",
+        position: "absolute",
+        left: 0,
+        top: 0,
+        width: boxWidth,
+        height: boxHeight,
+        borderRadius: px(16),
+        opacity: clampPlacementPercent(placement.backgroundOpacityPercent ?? 100, 0, 100) / 100,
+        ...resolveSurface(surfaceStyle, accent)
+      }
+    }
+  };
 
   return {
     type: "div",
@@ -1029,15 +1074,37 @@ function buildGamePanel(
         left: boxLeft,
         top: boxTop,
         width: boxWidth,
-        padding: `${framePadding}px`,
+        // The panel is the box the operator drew, not whatever its content happened to need. A
+        // full-frame box measured 1055px of the 1080 it was given, so the backdrop stopped short
+        // of the frame and the board sat wherever the content ended.
+        height: boxHeight,
+        padding: `${String(framePadding)}px`,
         borderRadius: px(16),
         opacity: clampPlacementPercent(placement.opacityPercent, 5, 100) / 100,
-        fontFamily,
-        ...resolveSurface(surfaceStyle, accent)
+        fontFamily
       },
       children: [
+        backdrop,
         header,
-        { type: "div", props: { style: { display: "flex", flexDirection: "column", gap }, children: gridRows } },
+        // The board takes the room between the two text rows and centres itself in it. Square
+        // cells almost never match the box's aspect exactly, so there is always slack on one
+        // axis; left-aligned it read as a board shoved into a corner of its own panel (measured
+        // 19px of margin on the left against 207px on the right at 1920x1080).
+        {
+          type: "div",
+          props: {
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              flexGrow: 1,
+              width: "100%",
+              gap
+            },
+            children: gridRows
+          }
+        },
         ...(hint
           ? [
               label(clampOverlayText(hint, 70), {

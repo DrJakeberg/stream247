@@ -669,6 +669,15 @@ export type OverlaySceneCustomWidgetLayer = OverlaySceneCustomLayerBase & {
  */
 export type OverlaySceneCustomGameLayer = OverlaySceneCustomLayerBase & {
   kind: "game";
+  /**
+   * How much of the panel's backdrop is drawn, 0-100, independent of opacityPercent.
+   *
+   * The games are the one surface an operator asks to be "as transparent as possible", and
+   * opacityPercent could not give them that: it fades the board along with the fill, so a game
+   * at 5% is not a transparent game but an invisible one. This fades only what is behind the
+   * board. The board itself is outlined so it survives the fill going away.
+   */
+  backgroundOpacityPercent: number;
 };
 
 /**
@@ -1627,9 +1636,12 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
       });
     } else if (raw.kind === "game") {
       // Placement only: everything about the game itself lives in the chat-game settings.
+      // The backdrop floor is 0, not the 5 every other opacity uses — the point of the control is
+      // that the fill can go away completely, and the outlined board is what stays legible.
       normalized.push({
         ...base,
-        kind: "game"
+        kind: "game",
+        backgroundOpacityPercent: clampOverlaySceneNumber(raw.backgroundOpacityPercent, 0, 100, 100)
       });
     } else if (raw.kind === "source") {
       // Placement plus a reference into the encrypted video-source store. Deliberately no URL
