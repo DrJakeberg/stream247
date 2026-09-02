@@ -205,6 +205,68 @@ export type OverlayCustomLayerView = {
 export type OverlayGameLayerPlacement = OverlayCustomLayerView;
 
 /**
+ * Where a box sits and how loud it is — the whole placement vocabulary, for anything on the frame.
+ *
+ * There is exactly one of these. A custom layer carries it inline (it always has), and a built-in
+ * panel now carries the same fields under the same names, resolved by the same resolvePlacementBox
+ * against the same safe area. A second placement model would be a second set of rounding rules and
+ * a second set of clamps, and the two would drift the first time one of them was fixed.
+ */
+export type OverlayPlacementView = {
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
+  /** 5-100, clamped. Below 5 a panel is not "subtle", it is a thing nobody can see but everybody pays for. */
+  opacityPercent?: number;
+  allowOutsideSafeArea?: boolean;
+};
+
+/**
+ * The panels the renderer draws itself, as the operator names them.
+ *
+ * "ticker" is deliberately absent: the payload carries tickerText and the renderer has never drawn
+ * it, so there is no box to place. Giving it a placement would be inventing a panel, which is a
+ * change to the picture, not a change to where the picture's parts sit.
+ */
+export type OverlayPanelId = "hero" | "next" | "vote" | "chat" | "clock" | "banner";
+
+export const OVERLAY_PANEL_IDS: OverlayPanelId[] = ["hero", "next", "vote", "chat", "clock", "banner"];
+
+/**
+ * Placements the operator has set, by panel.
+ *
+ * Absent means "wherever the layout puts it" — the panel stays in the flex flow it has always been
+ * in, and the tree is byte-for-byte the tree that was on air before placement existed. That is the
+ * whole compatibility story: the picture moves when somebody moves it, and not before.
+ */
+export type OverlayPanelPlacementMap = Partial<Record<OverlayPanelId, OverlayPlacementView>>;
+
+/**
+ * The pixel box a placed panel has to fit into.
+ *
+ * Passed to the panel builders rather than enforced from outside, because fitting is the panel's
+ * own arithmetic: the chat panel decides how many messages a height holds, the vote panel how many
+ * options, and both would rather draw fewer rows than rows nobody can see. It is exactly what
+ * buildGamePanel has always done with its cell size. Undefined means the panel is in the flex flow
+ * and keeps every number it has always had.
+ */
+type PanelFit = { width: number; height: number };
+
+/** Which corner of its box a placed panel holds, so its default box reproduces the flow exactly. */
+type PanelAnchorPoint = { x: "start" | "center" | "end"; y: "start" | "center" | "end" };
+
+const PANEL_ANCHOR_POINTS: Record<OverlayPanelId, PanelAnchorPoint> = {
+  // The lower third grows upwards from the bottom-left of the safe area, as the flow's last row does.
+  hero: { x: "start", y: "end" },
+  next: { x: "end", y: "end" },
+  vote: { x: "end", y: "end" },
+  chat: { x: "start", y: "end" },
+  clock: { x: "end", y: "start" },
+  banner: { x: "start", y: "start" }
+};
+
+/**
  * One sampled picture from the scene's video source, as the layout draws it. The data URI is the
  * capture itself; capturedAt is its identity for caching, so the frame cache key can react to a
  * new capture without hashing image bytes.
@@ -234,6 +296,11 @@ export type OverlayScenePayloadView = {
     resolvedPresetId: string;
     /** Optional because older cached payloads predate custom-layer-aware native rendering. */
     customLayers?: OverlayCustomLayerView[];
+    /**
+     * Placements the operator has set for the renderer's own panels. Absent, or absent for one
+     * panel, means that panel stays in the flex flow it has always been in.
+     */
+    panelPlacements?: OverlayPanelPlacementMap;
   };
   channelName: string;
   accentColor: string;
@@ -395,7 +462,8 @@ function buildLowerThird(
   payload: OverlayScenePayloadView,
   accent: string,
   scale: number,
-  fontFamily: string
+  fontFamily: string,
+  fit?: PanelFit
 ): OverlayLayoutNode {
   const px = (value: number) => Math.round(value * scale);
   const titleSize = px(TITLE_SIZES[payload.scene.titleScale] ?? TITLE_SIZES.balanced!);
@@ -458,7 +526,7 @@ function buildLowerThird(
       style: {
         display: "flex",
         flexDirection: "column",
-        maxWidth: px(1180),
+        maxWidth: fit ? fit.width : px(1180),
         padding: `${px(26)}px ${px(34)}px`,
         borderRadius: px(18),
         fontFamily,
@@ -474,7 +542,8 @@ function buildVotePanel(
   accent: string,
   scale: number,
   fontFamily: string,
-  surfaceStyle: string
+  surfaceStyle: string,
+  fit?: PanelFit
 ): OverlayLayoutNode | null {
   if (engagement.kind === "none") {
     return null;
@@ -501,7 +570,12 @@ function buildVotePanel(
     })
   ]);
 
-  const options = engagement.options.slice(0, 5).map((option) => {
+  // In the flow the panel grows with its options and pushes its neighbours down; in a box there is
+  // nothing to push, so it drops the options that would not fit rather than drawing them over
+  // whatever is underneath. Measured on the rasteriser: 115 design-px of header, hint and padding
+  // plus 51 per option (217 at two options, 370 at five).
+  const optionCapacity = fit ? Math.floor((fit.height - px(115)) / px(51)) : 5;
+  const options = engagement.options.slice(0, Math.max(1, Math.min(5, optionCapacity))).map((option) => {
     const share = Math.round((option.votes / total) * 100);
     return {
       type: "div",
@@ -563,7 +637,7 @@ function buildVotePanel(
       style: {
         display: "flex",
         flexDirection: "column",
-        width: px(520),
+        width: fit ? fit.width : px(520),
         padding: `${px(22)}px ${px(24)}px`,
         borderRadius: px(18),
         fontFamily,
@@ -580,7 +654,8 @@ function buildNextCard(
   payload: OverlayScenePayloadView,
   accent: string,
   scale: number,
-  fontFamily: string
+  fontFamily: string,
+  fit?: PanelFit
 ): OverlayLayoutNode | null {
   const nextTitle = clampOverlayText(payload.nextTitle, 44);
   if (!nextTitle) {
@@ -596,7 +671,7 @@ function buildNextCard(
       style: {
         display: "flex",
         flexDirection: "column",
-        maxWidth: px(520),
+        maxWidth: fit ? fit.width : px(520),
         padding: `${px(16)}px ${px(20)}px`,
         // 16 like the game panel: the right rail's small cards share one radius, and only the two
         // full panels (lower third, vote) carry the larger 18.
@@ -754,11 +829,18 @@ function buildChatPanel(
   accent: string,
   scale: number,
   fontFamily: string,
-  surfaceStyle: string
+  surfaceStyle: string,
+  fit?: PanelFit
 ): OverlayLayoutNode | null {
   const px = (value: number) => Math.round(value * scale);
   const operatorLimit = Number.isFinite(chat.maxMessages) ? Math.round(chat.maxMessages) : 1;
-  const limit = Math.min(Math.max(1, operatorLimit), OVERLAY_CHAT_PANEL_MAX_MESSAGES);
+  // In the flow the cap is a height budget derived from what the panel could stack with (see
+  // OVERLAY_CHAT_PANEL_MAX_MESSAGES). In a box there is nothing to stack with and nothing to push,
+  // so the box height is the budget: measured on the rasteriser the panel is 26 design-px of
+  // padding plus 30 per message (56 at one, 86 at two, 176 at five, 266 at eight), and it draws as
+  // many of the newest messages as that arithmetic allows. The cap still applies on top of it.
+  const boxCapacity = fit ? Math.floor((fit.height - px(26)) / px(30)) : OVERLAY_CHAT_PANEL_MAX_MESSAGES;
+  const limit = Math.max(1, Math.min(operatorLimit, OVERLAY_CHAT_PANEL_MAX_MESSAGES, boxCapacity));
 
   const messages = chat.messages
     .map((message) => ({
@@ -808,7 +890,7 @@ function buildChatPanel(
       style: {
         display: "flex",
         flexDirection: "column",
-        width: px(680),
+        width: fit ? fit.width : px(680),
         padding: `${px(16)}px ${px(20)}px`,
         // 16 like the other small rail cards; only the two full panels carry 18.
         borderRadius: px(16),
@@ -832,7 +914,7 @@ function clampPlacementPercent(value: number, min: number, max: number): number 
  * and width/height are clamped against the remaining room so no box can leave the frame.
  */
 function resolvePlacementBox(
-  placement: OverlayCustomLayerView,
+  placement: OverlayPlacementView,
   scale: number,
   frame: { width: number; height: number }
 ): { left: number; top: number; width: number; height: number } {
@@ -869,6 +951,160 @@ export function resolveSourceLayerPixelBox(
   frame: { width: number; height: number }
 ): { left: number; top: number; width: number; height: number } {
   return resolvePlacementBox(placement, overlayScale(frame.width), frame);
+}
+
+// The safe area on the 1920x1080 design grid, the rectangle resolvePlacementBox measures percents
+// against: 72px in from each side, 56px from top and bottom.
+const SAFE_AREA = { left: 72, top: 56, width: 1920 - 144, height: 1080 - 112 };
+
+/**
+ * The size each built-in panel is given room for when it is placed, on the design grid.
+ *
+ * Measured on the rasteriser at 1920x1080, then rounded up to the panel's own worst case, because
+ * a placed panel fits into its box instead of growing out of it: the lower third drew 683x220 at
+ * the balanced title scale and needs room for the cinematic one, the vote panel 217 at two options
+ * and 370 at its five, the chat panel 56 at one message and 266 at its eight, the next card 219x87,
+ * the clock 126x48, the banner 1636x52.
+ */
+const PANEL_DEFAULT_SIZES: Record<OverlayPanelId, { width: number; height: number }> = {
+  hero: { width: 1180, height: 260 },
+  next: { width: 520, height: 90 },
+  vote: { width: 520, height: 370 },
+  chat: { width: 680, height: 266 },
+  clock: { width: 150, height: 48 },
+  banner: { width: 1636, height: 60 }
+};
+
+/**
+ * What each panel actually measured in the flow, as opposed to the room its box reserves.
+ *
+ * The two differ on purpose. A box is generous, because a panel that outgrows it is cut off — the
+ * lower third has to hold a cinematic title, so its box is 260 tall where the balanced title drew
+ * 220. But the panel the flow stacked *above* it started at the drawn edge, not at the generous
+ * one, so the stack offsets have to use what was drawn or the chat panel lands 40px high.
+ */
+const PANEL_FLOW_HEIGHTS: Record<"hero" | "next" | "vote" | "chat", number> = {
+  hero: 220,
+  next: 87,
+  vote: 370,
+  chat: 266
+};
+
+function percentBox(left: number, top: number, width: number, height: number): OverlayPlacementView {
+  const round = (value: number) => Math.round(value * 10) / 10;
+  return {
+    xPercent: round(((left - SAFE_AREA.left) / SAFE_AREA.width) * 100),
+    yPercent: round(((top - SAFE_AREA.top) / SAFE_AREA.height) * 100),
+    widthPercent: round((width / SAFE_AREA.width) * 100),
+    heightPercent: round((height / SAFE_AREA.height) * 100),
+    opacityPercent: 100,
+    allowOutsideSafeArea: false
+  };
+}
+
+/**
+ * Where the flex flow puts every built-in panel today, as placement boxes.
+ *
+ * This is the seed the studio shows before anybody has moved anything, and the box a panel is
+ * given the moment it is placed. It is derived, not recorded: each panel holds one corner of its
+ * box (PANEL_ANCHOR_POINTS), and the boxes below put that corner exactly where the flow puts it,
+ * so the panel lands on the same pixel whatever its content measures.
+ *
+ * Exact for every panel the flow anchors to a corner of the safe area — the lower third, the vote
+ * panel, the next card, the clock, the banner. The chat panel is the one the flow stacks (above
+ * the lower third at bottom-left, above the rail at bottom-right) or centres (at a top position,
+ * where space-between drops it into the middle band rather than under the clock); its box is the
+ * room the flow leaves it, measured against a nominal neighbour, and the studio's numbers say
+ * where it is rather than pretending the stacking was a choice.
+ */
+export function deriveDefaultPlacements(
+  panelAnchor: string,
+  chatPosition = "bottom-left",
+  onFrame: { vote?: boolean } = {}
+): Record<OverlayPanelId, OverlayPlacementView> {
+  const size = PANEL_DEFAULT_SIZES;
+  const drawn = PANEL_FLOW_HEIGHTS;
+  const safeRight = SAFE_AREA.left + SAFE_AREA.width;
+  const safeBottom = SAFE_AREA.top + SAFE_AREA.height;
+  // The centre anchor stops the root's space-between and stacks the clock and the lower third as
+  // one block in the middle of the frame. Where that block ends up depends on everything else on
+  // the frame, so this centres the panels on the frame — which is what the setting means — and the
+  // flow's own answer for one particular scene may sit a few dozen pixels off it.
+  const heroTop = panelAnchor === "center" ? Math.round((1080 - size.hero.height) / 2) : safeBottom - size.hero.height;
+  const heroDrawnTop = heroTop + size.hero.height - drawn.hero;
+  const clockTop = panelAnchor === "center" ? heroTop - size.clock.height : SAFE_AREA.top;
+  const railBottom = panelAnchor === "center" ? heroTop + size.hero.height : safeBottom;
+  // Whichever of the two the rail actually carries is what the chat panel stacks on: the vote
+  // panel takes the corner when a vote is running, and the next card has it the rest of the time.
+  const railHeight = onFrame.vote ? drawn.vote : drawn.next;
+
+  const chatBox = () => {
+    const width = size.chat.width;
+    const height = size.chat.height;
+    if (chatPosition === "top-left" || chatPosition === "top-right") {
+      // Under the top bar, which is where a "top" chat reads as belonging. The flow's
+      // space-between currently drops it into the middle band instead — an accident of the root's
+      // justification rather than a decision, and not one worth freezing into a default.
+      const left = chatPosition === "top-left" ? SAFE_AREA.left : safeRight - width;
+      return percentBox(left, SAFE_AREA.top + size.clock.height + 16, width, height);
+    }
+    if (chatPosition === "bottom-right") {
+      return percentBox(safeRight - width, railBottom - railHeight - 14 - height, width, height);
+    }
+    return percentBox(SAFE_AREA.left, heroDrawnTop - 14 - height, width, height);
+  };
+
+  return {
+    hero: percentBox(SAFE_AREA.left, heroTop, size.hero.width, size.hero.height),
+    next: percentBox(safeRight - size.next.width, railBottom - size.next.height, size.next.width, size.next.height),
+    vote: percentBox(safeRight - size.vote.width, railBottom - size.vote.height, size.vote.width, size.vote.height),
+    chat: chatBox(),
+    clock: percentBox(safeRight - size.clock.width, clockTop, size.clock.width, size.clock.height),
+    banner: percentBox(SAFE_AREA.left, SAFE_AREA.top, size.banner.width, size.banner.height)
+  };
+}
+
+function flexAlign(edge: "start" | "center" | "end"): string {
+  return edge === "center" ? "center" : edge === "end" ? "flex-end" : "flex-start";
+}
+
+/**
+ * Puts a built-in panel in its placement box.
+ *
+ * The box is absolute, the panel inside it is not: it is held against the corner it holds in the
+ * flow, at its own size, so a box that is roomier than the content does not stretch the panel and
+ * a shorter lower third still ends where the flow ended it. overflow: hidden is the promise the
+ * flow used to make by construction — a panel that outgrows its box is cut off at the box rather
+ * than drawn across its neighbour.
+ */
+function placePanel(
+  panel: OverlayLayoutNode,
+  id: OverlayPanelId,
+  placement: OverlayPlacementView,
+  scale: number,
+  frame: { width: number; height: number },
+  anchorOverride?: PanelAnchorPoint
+): OverlayLayoutNode {
+  const box = resolvePlacementBox(placement, scale, frame);
+  const anchor = anchorOverride ?? PANEL_ANCHOR_POINTS[id];
+  return {
+    type: "div",
+    props: {
+      style: {
+        display: "flex",
+        position: "absolute",
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
+        justifyContent: flexAlign(anchor.x),
+        alignItems: flexAlign(anchor.y),
+        overflow: "hidden",
+        opacity: clampPlacementPercent(placement.opacityPercent ?? 100, 5, 100) / 100
+      },
+      children: [panel]
+    }
+  };
 }
 
 /**
@@ -1309,14 +1545,14 @@ function buildTextPanel(
   };
 }
 
-function buildBanner(message: string, scale: number, fontFamily: string): OverlayLayoutNode {
+function buildBanner(message: string, scale: number, fontFamily: string, fit?: PanelFit): OverlayLayoutNode {
   const px = (value: number) => Math.round(value * scale);
   return {
     type: "div",
     props: {
       style: {
         display: "flex",
-        width: "100%",
+        width: fit ? fit.width : "100%",
         justifyContent: "center",
         padding: `${px(12)}px ${px(24)}px`,
         // 12 keeps the banner within the panel radius family (12/16/18) instead of being the one
@@ -1348,9 +1584,37 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
   const fontFamily = FONT_STACKS[payload.scene.typographyPreset] ?? FONT_STACKS["studio-sans"]!;
   const anchorTop = payload.scene.panelAnchor === "center";
 
+  const frameSize = { width: options.width, height: options.height };
+
+  // Placements the operator has set. A panel with no entry here is not placed: it stays in the
+  // flex flow below and nothing about it changes, which is why a scene nobody has rearranged draws
+  // the tree it drew before placement existed.
+  const placements = payload.scene.panelPlacements ?? {};
+  const placedPanels: OverlayLayoutNode[] = [];
+  const fitFor = (id: OverlayPanelId): PanelFit | undefined => {
+    const placement = placements[id];
+    return placement ? resolvePlacementBox(placement, scale, frameSize) : undefined;
+  };
+  /** Sends a built panel to its box, or hands it back to the flow when it has none. */
+  const routed = (
+    id: OverlayPanelId,
+    panel: OverlayLayoutNode | null,
+    anchor?: PanelAnchorPoint
+  ): OverlayLayoutNode | null => {
+    const placement = placements[id];
+    if (!panel || !placement) {
+      return panel;
+    }
+    placedPanels.push(placePanel(panel, id, placement, scale, frameSize, anchor));
+    return null;
+  };
+
   const banner = text(payload.emergencyBanner);
-  const votePanel = input.engagement ? buildVotePanel(input.engagement, accent, scale, fontFamily, payload.scene.surfaceStyle) : null;
-  const nextCard = buildNextCard(payload, accent, scale, fontFamily);
+  const votePanel = routed(
+    "vote",
+    input.engagement ? buildVotePanel(input.engagement, accent, scale, fontFamily, payload.scene.surfaceStyle, fitFor("vote")) : null
+  );
+  const nextCard = routed("next", buildNextCard(payload, accent, scale, fontFamily, fitFor("next")));
 
   // The game renders only when this scene carries an enabled game layer AND a game is actually
   // running. Either alone is not enough: a scene without the layer stays game-free however lively
@@ -1370,7 +1634,6 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
   // means one drawn source layer per scene; the first enabled one wins, like the game panel.
   // embed and widget layers never appear here — satori cannot run an iframe, so they stay
   // browser-overlay-only and the studio says so.
-  const frameSize = { width: options.width, height: options.height };
   const customPanels: OverlayLayoutNode[] = [];
   let sourceDrawn = false;
   for (const layer of payload.scene.customLayers ?? []) {
@@ -1396,8 +1659,15 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
   // Chat is gated upstream (enabled setting, freshness) by the projection that builds the view;
   // here the only gate left is content. An empty or fully-sanitised-away chat builds no panel,
   // and with no panel every placement below collapses back to exactly the chatless tree.
-  const chatPanel = input.chat ? buildChatPanel(input.chat, accent, scale, fontFamily, payload.scene.surfaceStyle) : null;
-  const chatPosition = chatPanel ? String(input.chat?.position ?? "") : "";
+  const chatBuilt = input.chat ? buildChatPanel(input.chat, accent, scale, fontFamily, payload.scene.surfaceStyle, fitFor("chat")) : null;
+  // A placed chat panel still holds the corner the operator picked, so moving the box does not
+  // silently re-anchor it: a top-right chat grows downwards from the box's top-right corner.
+  const requested = String(input.chat?.position ?? "");
+  const chatPanel = routed("chat", chatBuilt, {
+    x: requested === "top-right" || requested === "bottom-right" ? "end" : "start",
+    y: requested === "top-left" || requested === "top-right" ? "start" : "end"
+  });
+  const chatPosition = chatPanel ? requested : "";
 
   const clock = formatOverlayClock(options.now ?? new Date(), payload.timeZone);
   const clockChip = label(clock, {
@@ -1411,12 +1681,16 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
     ...resolveSurface(payload.scene.surfaceStyle, accent)
   });
 
+  // The placeholder an absent banner already used stands in for a placed one too, so the row keeps
+  // its shape whichever of the two has left it.
+  const emptyCell = (): OverlayLayoutNode => ({ type: "div", props: { style: { display: "flex" } } });
+  const bannerCell = banner ? routed("banner", buildBanner(banner, scale, fontFamily, fitFor("banner"))) : null;
+  const clockCell = routed("clock", clockChip);
+
   const topBar: OverlayLayoutNode[] = [
     row({ alignItems: "flex-start", justifyContent: "space-between", width: "100%", gap: px(24) }, [
-      banner
-        ? buildBanner(banner, scale, fontFamily)
-        : { type: "div", props: { style: { display: "flex" } } },
-      clockChip
+      bannerCell ?? emptyCell(),
+      clockCell ?? emptyCell()
     ])
   ];
 
@@ -1453,17 +1727,17 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
     rail.push(nextCard);
   }
 
-  const lowerThird = buildLowerThird(payload, accent, scale, fontFamily);
+  const lowerThird = routed("hero", buildLowerThird(payload, accent, scale, fontFamily, fitFor("hero")));
   const chatAtBottomLeft = chatPanel && !(chatPosition === "bottom-right" || chatPosition === "top-left" || chatPosition === "top-right");
   const leftCell: OverlayLayoutNode = chatAtBottomLeft
     ? {
         type: "div",
         props: {
           style: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: px(14) },
-          children: [chatPanel, lowerThird]
+          children: [chatPanel, ...(lowerThird ? [lowerThird] : [])]
         }
       }
-    : lowerThird;
+    : lowerThird ?? emptyCell();
 
   const bottom = row({ alignItems: "flex-end", justifyContent: "space-between", width: "100%", gap: px(28) }, [
     leftCell,
@@ -1486,7 +1760,9 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
         // containing block rather than the browser default of the nearest positioned ancestor.
         position: "relative"
       },
-      children: [...topBar, bottom, ...(gamePanel ? [gamePanel] : []), ...customPanels]
+      // Placed built-in panels go after the flow and before the custom layers: a panel the operator
+      // moved is still the renderer's own furniture, so anything they added on top stays on top.
+      children: [...topBar, bottom, ...placedPanels, ...(gamePanel ? [gamePanel] : []), ...customPanels]
     }
   };
 }
