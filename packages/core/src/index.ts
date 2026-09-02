@@ -1872,7 +1872,30 @@ export function foldCustomLayersIntoActiveScene(
   }
 
   const activeId = resolveActiveOverlayNamedSceneId(scenes, activeSceneId);
-  const next = normalizeOverlaySceneCustomLayers(customLayers);
+  const active = scenes.find((scene) => scene.id === activeId);
+  if (!active) {
+    return scenes;
+  }
+
+  const stored = new Map(active.customLayers.map((layer) => [layer.id, layer]));
+  const next = normalizeOverlaySceneCustomLayers(customLayers).map((layer) => {
+    // A layer that inherits the scene's source arrives from the projection carrying that source.
+    // Folding it back verbatim would freeze the inheritance, so a scene pointed at another camera
+    // would stop moving its layers. Restore the empty id the scene actually stores.
+    const before = stored.get(layer.id);
+    if (
+      active.sourceId &&
+      before &&
+      "sourceId" in before &&
+      "sourceId" in layer &&
+      before.sourceId === "" &&
+      layer.sourceId === active.sourceId
+    ) {
+      return { ...layer, sourceId: "" };
+    }
+    return layer;
+  });
+
   return scenes.map((scene) => (scene.id === activeId ? { ...scene, customLayers: next } : scene));
 }
 

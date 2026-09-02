@@ -902,8 +902,12 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
   // only knows the old shape — gets its single layer set turned into the one scene here, which is
   // why the picture cannot change on upgrade and why a writer that never mentions scenes still
   // writes a consistent row.
-  const scenes = normalizeOverlayNamedScenes(overlay.scenes, overlay.customLayers ?? defaults.customLayers);
-  const activeSceneId = resolveActiveOverlayNamedSceneId(scenes, overlay.activeSceneId);
+  const storedScenes = normalizeOverlayNamedScenes(overlay.scenes, overlay.customLayers ?? defaults.customLayers);
+  const activeSceneId = resolveActiveOverlayNamedSceneId(storedScenes, overlay.activeSceneId);
+  // Reading projects, writing folds. Every writer that predates named scenes edits `customLayers`
+  // and never mentions a scene -- the chat game's own layer provisioning does it through
+  // updateAppState -- and re-projecting here threw those edits away inside the same transaction.
+  const scenes = foldCustomLayersIntoActiveScene(storedScenes, activeSceneId, overlay.customLayers);
   return {
     ...defaults,
     ...overlay,
@@ -4009,7 +4013,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         JSON.stringify(next.overlay.panelPlacements),
         // Writing folds, reading projects: a caller that appended a layer to `customLayers`
         // without knowing scenes exist -- the chat game's provisioning does -- must not lose it.
-        JSON.stringify(foldCustomLayersIntoActiveScene(next.overlay.scenes, next.overlay.activeSceneId, next.overlay.customLayers)),
+        JSON.stringify(next.overlay.scenes),
         next.overlay.activeSceneId
       ]
     );
