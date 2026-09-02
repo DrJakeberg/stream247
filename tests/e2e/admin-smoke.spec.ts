@@ -49,7 +49,7 @@ async function ensureSignedIn(page: Page) {
   await expect(page).toHaveURL(/\/live(?:\?tab=control|status)?$/);
 }
 
-test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publishes a live scene update", async ({ browser, page }) => {
+test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publishes a live scene update", async ({ page }) => {
   const stamp = Date.now();
   const channelName = `Smoke Channel ${stamp}`;
   const customText = `Scene Studio V2 ${stamp}`;
@@ -198,9 +198,14 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await publishLiveButton.click();
   await expect(page.getByText("Scene changes published live.")).toBeVisible();
 
-  const publicOverlay = await browser.newPage();
-  await publicOverlay.goto("/overlay");
-  await expect(publicOverlay.locator(".overlay-frame.overlay-typography-editorial-serif")).toBeVisible();
-  await expect(publicOverlay.getByText(channelNameMatcher)).toBeVisible();
-  await expect(publicOverlay.getByText(customText)).toBeVisible();
+  // What went on air is what the studio shows: since stage 2 there is no browser overlay page to
+  // open, and the studio's preview is the on-air renderer's own frame — satori with embedFont off,
+  // so every word is a <text> node and the typography preset is the SVG's font family. This is a
+  // stronger claim than the old page made: it is the renderer that drew this, not an imitation.
+  const renderedScene = page.getByLabel("Scene as the on-air renderer draws it");
+  await expect(renderedScene.locator("svg")).toBeVisible({ timeout: 30_000 });
+  await expect(renderedScene.getByText(channelNameMatcher)).toBeVisible({ timeout: 30_000 });
+  await expect(renderedScene.getByText(customText)).toBeVisible();
+  // satori lower-cases the family it writes into the SVG: font-family="stream247 serif".
+  expect((await renderedScene.locator("svg").innerHTML()).toLowerCase()).toContain("stream247 serif");
 });
