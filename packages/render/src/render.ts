@@ -29,6 +29,12 @@ export type SceneRenderRequest = {
   height: number;
   /** Wall clock for the on-air clock. Injected so a render can be made byte-for-byte repeatable. */
   now?: Date;
+  /**
+   * How the ticker band is drawn. "crawl" when ffmpeg is running the line across it — the band is
+   * drawn empty and belongs to the process. Anything else draws the line at rest, which is what a
+   * still picture has to show.
+   */
+  tickerMode?: "static" | "crawl";
 };
 
 export type SceneRenderSvgOptions = {
@@ -62,7 +68,7 @@ export async function renderSceneSvg(
         chat: request.chat ?? null,
         sourceFrame: request.sourceFrame ?? null
       },
-      { width: request.width, height: request.height, now: request.now }
+      { width: request.width, height: request.height, now: request.now, tickerMode: request.tickerMode }
     ) as Parameters<typeof satori>[0],
     {
       width: request.width,

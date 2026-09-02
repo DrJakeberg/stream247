@@ -81,6 +81,8 @@ import {
   type ResolvedEncoderQualitySettings,
   redactSecrets,
   resolveChatSettingsWrite,
+  overlayScale,
+  overlayTickerCrawlPlan,
 } from "@stream247/core";
 import {
   buildSourceLiveStateWrite,
@@ -207,6 +209,7 @@ import {
   buildUplinkFfmpegCommand,
   describeFfmpegExit,
   buildFfmpegInputArgs,
+  buildSceneOverlayFilterComplex,
   buildSourceLivePipFilterComplex,
   buildSourceLivePipInputArgs,
   decideLiveSourceAudio,
@@ -236,6 +239,7 @@ import { buildChatOverlayViewFromMessages } from "./chat-overlay.js";
 import {
   loadSceneRendererFonts,
   renderSceneFrame,
+  renderTickerStrip,
   sceneFrameCacheKey,
   type SceneRenderFont,
   type SceneRenderRequest
@@ -798,6 +802,17 @@ const SOURCE_SNAPSHOT_POLICY_TTL_MS = 10_000;
 let sceneRendererFonts: SceneRenderFont[] | null = null;
 const standbySlatePath = "/tmp/stream247-standby.txt";
 const onAirOverlayPath = "/tmp/stream247-on-air.txt";
+const tickerStripPath = "/tmp/stream247-ticker-strip.png";
+
+/**
+ * The crawl this playout process is running, or null when it is running none.
+ *
+ * Set once per start and held for the life of the process, because the ffmpeg graph is fixed for
+ * the life of the process: the strip is one file, read once, and moved by the encoder. It is also
+ * what puts the renderer into crawl mode, so the band is only ever drawn empty when there really
+ * is a line being moved across it.
+ */
+let activeTickerCrawl: TickerCrawlCommandConfig | null = null;
 
 type QueueProbeCacheEntry = {
   status: "ready" | "failed";
@@ -1903,6 +1918,26 @@ type AudioLaneCommandConfig = {
  * `audio` is null when the source carries no audio track OR the programme has no confirmed audio to
  * mix against: video-only attach, never a start blockade.
  */
+/**
+ * The ticker crawl for one start: the strip on disk and the numbers the graph moves it by.
+ *
+ * The strip is a file rather than a second pipe on purpose. It is rasterised once, at the start of
+ * a programme, and the motion is ffmpeg moving that one image — so there is nothing to feed and no
+ * second writer on the most delicate path in the system. The cost is that a ticker text edited
+ * mid-programme reaches the picture at the next block rather than within two seconds.
+ */
+type TickerCrawlCommandConfig = {
+  stripPath: string;
+  crawl: { left: number; top: number; width: number; height: number };
+  pxPerSecond: number;
+  periodPx: number;
+};
+
+/** The strip input, always appended after every other input so no existing index moves. */
+function tickerStripInputArgs(crawl: TickerCrawlCommandConfig, fps: number): string[] {
+  return ["-loop", "1", "-framerate", String(fps), "-i", crawl.stripPath];
+}
+
 type LiveSourceCommandConfig = {
   inputArgs: string[];
   box: { left: number; top: number; width: number; height: number };
@@ -1916,7 +1951,8 @@ function getFfmpegCommand(
   audioLane: AudioLaneCommandConfig | null,
   output: WorkerStreamOutputSettings,
   encoder: ResolvedEncoderQualitySettings,
-  liveSource: LiveSourceCommandConfig | null = null
+  liveSource: LiveSourceCommandConfig | null = null,
+  tickerCrawl: TickerCrawlCommandConfig | null = null
 ): string[] {
   const command = ["-hide_banner", "-loglevel", "warning", "-y", ...buildFfmpegInputArgs({ input, realtime: true })];
   const outputVideoFilter = isStreamScaleEnabled(process.env) ? getOutputVideoFilter(output) : "";
@@ -1945,18 +1981,35 @@ function getFfmpegCommand(
       "-i",
       `pipe:${ON_AIR_SCENE_PIPE_FD}`
     );
+    // The PiP is an input, so it goes in before the strip does: the arithmetic ties every index
+    // to the one before it rather than hard-coding any of them.
+    const pipInputIndex = sceneInputIndex + 1;
     if (attachLive && liveSource) {
-      // The PiP is the LAST input, so its index follows the scene pipe: the arithmetic ties the
-      // two together rather than hard-coding either.
-      const pipInputIndex = sceneInputIndex + 1;
       command.push(...liveSource.inputArgs);
+    }
+    // The strip is the LAST input of all, so neither the scene pipe nor the PiP moves when a
+    // ticker appears or is cleared.
+    const ticker = tickerCrawl
+      ? {
+          crawl: tickerCrawl.crawl,
+          pxPerSecond: tickerCrawl.pxPerSecond,
+          periodPx: tickerCrawl.periodPx,
+          stripInputIndex: (attachLive && liveSource ? pipInputIndex : sceneInputIndex) + 1,
+          fps: output.fps
+        }
+      : null;
+    if (tickerCrawl) {
+      command.push(...tickerStripInputArgs(tickerCrawl, output.fps));
+    }
+    if (attachLive && liveSource) {
       const parts = buildSourceLivePipFilterComplex({
         outputVideoFilter,
         sceneInputIndex,
         pipInputIndex,
         fps: output.fps,
         box: liveSource.box,
-        audio: liveSource.audio
+        audio: liveSource.audio,
+        ticker
       });
       pipAudioMapped = parts.audioMapped;
       command.push("-filter_complex", parts.filterComplex, "-map", "[vout]");
@@ -1964,9 +2017,7 @@ function getFfmpegCommand(
     } else {
       command.push(
         "-filter_complex",
-        outputVideoFilter
-          ? `[0:v]${outputVideoFilter}[base];[base][${sceneInputIndex}:v]overlay=0:0:format=auto[vout]`
-          : `[0:v][${sceneInputIndex}:v]overlay=0:0:format=auto[vout]`,
+        buildSceneOverlayFilterComplex({ outputVideoFilter, sceneInputIndex, ticker }),
         "-map",
         "[vout]"
       );
@@ -2031,7 +2082,8 @@ function getLiveBridgeFfmpegCommand(
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
   overlayMode: OnAirOverlayMode,
   output: WorkerStreamOutputSettings,
-  encoder: ResolvedEncoderQualitySettings
+  encoder: ResolvedEncoderQualitySettings,
+  tickerCrawl: TickerCrawlCommandConfig | null = null
 ): string[] {
   const command = ["-hide_banner", "-loglevel", "warning", "-y", ...buildFfmpegInputArgs({ input })];
   const outputVideoFilter = isStreamScaleEnabled(process.env) ? getOutputVideoFilter(output) : "";
@@ -2049,11 +2101,16 @@ function getLiveBridgeFfmpegCommand(
       "-i",
       `pipe:${ON_AIR_SCENE_PIPE_FD}`
     );
+    if (tickerCrawl) {
+      command.push(...tickerStripInputArgs(tickerCrawl, output.fps));
+    }
     command.push(
       "-filter_complex",
-      outputVideoFilter
-        ? `[0:v]${outputVideoFilter}[base];[base][1:v]overlay=0:0:format=auto[vout]`
-        : "[0:v][1:v]overlay=0:0:format=auto[vout]",
+      buildSceneOverlayFilterComplex({
+        outputVideoFilter,
+        sceneInputIndex: 1,
+        ticker: tickerCrawl ? { ...tickerCrawl, stripInputIndex: 2, fps: output.fps } : null
+      }),
       "-map",
       "[vout]",
       "-map",
@@ -2102,7 +2159,8 @@ function getStandbyFfmpegCommand(
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
   overlayMode: OnAirOverlayMode,
   output: WorkerStreamOutputSettings,
-  encoder: ResolvedEncoderQualitySettings
+  encoder: ResolvedEncoderQualitySettings,
+  tickerCrawl: TickerCrawlCommandConfig | null = null
 ): string[] {
   const scale = getOutputScaleFactor(output);
   const command = [
@@ -2134,7 +2192,21 @@ function getStandbyFfmpegCommand(
       "-i",
       `pipe:${ON_AIR_SCENE_PIPE_FD}`
     );
-    command.push("-filter_complex", "[0:v][2:v]overlay=0:0:format=auto[vout]", "-map", "[vout]", "-map", "1:a");
+    if (tickerCrawl) {
+      command.push(...tickerStripInputArgs(tickerCrawl, output.fps));
+    }
+    command.push(
+      "-filter_complex",
+      buildSceneOverlayFilterComplex({
+        outputVideoFilter: "",
+        sceneInputIndex: 2,
+        ticker: tickerCrawl ? { ...tickerCrawl, stripInputIndex: 3, fps: output.fps } : null
+      }),
+      "-map",
+      "[vout]",
+      "-map",
+      "1:a"
+    );
   } else {
     command.push(
       "-vf",
@@ -2213,7 +2285,10 @@ function buildSceneRenderRequest(outputSettings: WorkerStreamOutputSettings): Sc
     // and reading the clock twice a few milliseconds apart could key one message and draw the
     // next one across a dwell boundary — a frame cached under the wrong name until something else
     // moved. Passing it makes the two exact rather than nearly always in agreement.
-    now: new Date()
+    now: new Date(),
+    // Only ever "crawl" when a crawl is actually running: a band drawn empty with nothing moving
+    // over it is a worse picture than a line standing still.
+    tickerMode: activeTickerCrawl ? "crawl" : "static"
   };
 }
 
@@ -2608,6 +2683,62 @@ async function captureRenderedSceneFrame(outputSettings: WorkerStreamOutputSetti
   }
 
   return renderSceneFrame(request, await getSceneRendererFonts());
+}
+
+/**
+ * Renders this programme's ticker strip and returns the crawl its ffmpeg graph will run.
+ *
+ * Once per start, never per frame: the motion is the encoder moving one image, so a strip costs a
+ * single rasterisation of a band-tall picture and nothing after that. The period is the ink's own
+ * measured width plus the gap, so the empty run between one pass and the next is the same however
+ * long the line is.
+ *
+ * Returns null for anything that would leave a band with nothing moving in it — no payload, no
+ * ticker text, a strip that failed to render — and a null crawl keeps the renderer in static mode,
+ * where the line is simply drawn at rest. A failure here costs the motion, never the picture.
+ */
+async function prepareTickerCrawl(outputSettings: WorkerStreamOutputSettings): Promise<TickerCrawlCommandConfig | null> {
+  if (!shouldUseSceneRenderer() || !currentScenePayload) {
+    return null;
+  }
+
+  const viewport = getSceneRendererViewport(process.env, outputSettings);
+  const plan = overlayTickerCrawlPlan(
+    { payload: currentScenePayload, chat: currentSceneChat },
+    { width: viewport.width, height: viewport.height }
+  );
+  if (!plan) {
+    return null;
+  }
+
+  try {
+    const strip = await renderTickerStrip(
+      {
+        line: plan.line,
+        height: plan.crawl.height,
+        scale: overlayScale(viewport.width),
+        typographyPreset: currentScenePayload.scene.typographyPreset
+      },
+      await getSceneRendererFonts()
+    );
+    if (!strip || strip.inkWidth <= 0) {
+      return null;
+    }
+    await fs.writeFile(tickerStripPath, strip.png);
+    const periodPx = strip.inkWidth + plan.gapPx;
+    logRuntimeEvent("scene.ticker.crawl", {
+      ink: strip.inkWidth,
+      period: periodPx,
+      pxPerSecond: plan.pxPerSecond,
+      seconds: Math.round(periodPx / Math.max(1, plan.pxPerSecond))
+    });
+    return { stripPath: tickerStripPath, crawl: plan.crawl, pxPerSecond: plan.pxPerSecond, periodPx };
+  } catch (error) {
+    logRuntimeEvent("scene.ticker.failed", {
+      error: error instanceof Error ? error.message : "Unknown ticker strip failure."
+    });
+    return null;
+  }
 }
 
 /**
@@ -5235,11 +5366,19 @@ async function startOrSwitchPlayout(args: {
   if (args.overlayEnabled) {
     await ensureScenePayload(args.asset ?? null);
   }
+  // Before the first frame, because the first frame has to already draw the band empty: putting
+  // the renderer into crawl mode afterwards would flash one motionless copy of the line.
+  activeTickerCrawl = args.overlayEnabled ? await prepareTickerCrawl(outputSettings) : null;
   const initialSceneFrame = args.overlayEnabled ? await prepareSceneRendererFrame(outputSettings) : null;
   const overlayMode: OnAirOverlayMode = resolveOnAirOverlayMode({
     overlayEnabled: args.overlayEnabled,
     sceneFrameRendered: Boolean(initialSceneFrame)
   });
+  // Text mode has no scene and therefore no band; a crawl left standing here would only put the
+  // renderer into a mode nothing is drawing.
+  if (overlayMode !== "scene") {
+    activeTickerCrawl = null;
+  }
   let resolvedAudioLaneInput = "";
 
   if (args.audioLane) {
@@ -5299,7 +5438,14 @@ async function startOrSwitchPlayout(args: {
     })
   );
   const command = args.liveBridge
-    ? getLiveBridgeFfmpegCommand(args.liveBridge.inputUrl, args.outputTarget, overlayMode, outputSettings, encoder)
+    ? getLiveBridgeFfmpegCommand(
+        args.liveBridge.inputUrl,
+        args.outputTarget,
+        overlayMode,
+        outputSettings,
+        encoder,
+        activeTickerCrawl
+      )
     : args.asset
       ? getFfmpegCommand(
           resolvedProgramInput,
@@ -5313,9 +5459,10 @@ async function startOrSwitchPlayout(args: {
             : null,
           outputSettings,
           encoder,
-          liveSourceConfig
+          liveSourceConfig,
+          activeTickerCrawl
         )
-      : getStandbyFfmpegCommand(args.outputTarget, overlayMode, outputSettings, encoder);
+      : getStandbyFfmpegCommand(args.outputTarget, overlayMode, outputSettings, encoder, activeTickerCrawl);
   if (liveSourceConfig) {
     logRuntimeEvent("playout.source-live.attached", {
       source: args.liveSource?.sourceId ?? "",

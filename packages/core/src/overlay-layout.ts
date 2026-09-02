@@ -2114,13 +2114,17 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
   // Placed from the very plan ffmpeg crawls in, so the rectangle the moving strip runs across and
   // the rectangle this paints the band into cannot drift apart.
   const tickerPlan = overlayTickerCrawlPlan(input, frameSize);
-  if (tickerPlan) {
+  // In crawl mode the band belongs to the PROCESS, not to the current text: ffmpeg is moving a
+  // strip across this rectangle for the whole programme, and a text cleared mid-block would
+  // otherwise take the band away and leave the line crawling over bare video.
+  const crawling = options.tickerMode === "crawl";
+  if (tickerPlan || crawling) {
     const tickerPlacement =
       placements.ticker ?? deriveDefaultPlacements(payload.scene.panelAnchor, String(input.chat?.position ?? "")).ticker;
     placedPanels.push(
       placePanel(
         buildTickerPanel(
-          options.tickerMode === "crawl" ? "" : tickerPlan.line,
+          crawling ? "" : (tickerPlan?.line ?? ""),
           accent,
           scale,
           fontFamily,

@@ -317,17 +317,21 @@ export function buildSourceLivePipFilterComplex(args: {
   fps: number;
   box: { left: number; top: number; width: number; height: number };
   audio: SourceLivePipAudio | null;
+  /** The ticker crawl, drawn over the finished scene exactly as it is without a PiP. */
+  ticker: TickerCrawlGraph | null;
 }): SourceLivePipCommandParts {
   const { box, pipInputIndex: pip, sceneInputIndex: scene, fps } = args;
   const baseChain = args.outputVideoFilter ? `[0:v]${args.outputVideoFilter}[base];` : "";
   const baseLabel = args.outputVideoFilter ? "[base]" : "[0:v]";
 
+  const sceneOut = args.ticker ? "vscene" : "vout";
   const video =
     `${baseChain}` +
     `[${pip}:v]fps=${fps},scale=${box.width}:${box.height}:force_original_aspect_ratio=increase,` +
     `crop=${box.width}:${box.height},setpts=PTS-STARTPTS[pipv];` +
     `${baseLabel}[pipv]overlay=${box.left}:${box.top}:eof_action=pass[vpip];` +
-    `[vpip][${scene}:v]overlay=0:0:format=auto[vout]`;
+    `[vpip][${scene}:v]overlay=0:0:format=auto[${sceneOut}]` +
+    (args.ticker ? `;${buildTickerCrawlFilter({ ...args.ticker, from: sceneOut, to: "vout" })}` : "");
 
   if (!args.audio) {
     return { filterComplex: video, audioMapped: false };
@@ -371,19 +375,25 @@ export function buildSourceLivePipFilterComplex(args: {
  * It cannot truncate anything either: the only finite input on that overlay is the picture it is
  * drawing onto.
  */
-export function buildTickerCrawlFilter(args: {
+export type TickerCrawlGraph = {
   /** The clear run inside the band, from overlayTickerCrawlPlan. */
   crawl: { left: number; top: number; width: number; height: number };
   pxPerSecond: number;
   /** Ink width plus gap: how far the line travels before it repeats. */
   periodPx: number;
+  /** Index of the strip input, which is always appended after every other input. */
   stripInputIndex: number;
   fps: number;
-  /** Label of the video to draw onto, without brackets. */
-  from: string;
-  /** Label to produce, without brackets. */
-  to: string;
-}): string {
+};
+
+export function buildTickerCrawlFilter(
+  args: TickerCrawlGraph & {
+    /** Label of the video to draw onto, without brackets. */
+    from: string;
+    /** Label to produce, without brackets. */
+    to: string;
+  }
+): string {
   const { crawl } = args;
   const speed = Math.max(1, Math.round(args.pxPerSecond));
   const period = Math.max(1, Math.round(args.periodPx));
@@ -395,6 +405,28 @@ export function buildTickerCrawlFilter(args: {
     `[tk1][tkb]overlay=x='${x}+${period}':y=0:format=auto[tkband];` +
     `[${args.from}][tkband]overlay=x=${crawl.left}:y=${crawl.top}:format=auto:shortest=1[${args.to}]`
   );
+}
+
+/**
+ * The scene overlay: the rendered PNG composited onto the programme, and the ticker crawled over
+ * the result when there is one.
+ *
+ * This string used to be written out three times in index.ts — for an asset, for a live bridge and
+ * for the standby slate — and none of the three could be reached from a test. They agreed with one
+ * another by luck. The crawl has to reach all three or the band draws empty wherever it was
+ * missed, so the string lives here now and the builders call it.
+ */
+export function buildSceneOverlayFilterComplex(args: {
+  outputVideoFilter: string;
+  sceneInputIndex: number;
+  ticker: TickerCrawlGraph | null;
+}): string {
+  const baseChain = args.outputVideoFilter ? `[0:v]${args.outputVideoFilter}[base];` : "";
+  const baseLabel = args.outputVideoFilter ? "[base]" : "[0:v]";
+  // With a crawl the scene is no longer the end of the graph: it is what the line is drawn onto.
+  const sceneOut = args.ticker ? "vscene" : "vout";
+  const scene = `${baseChain}${baseLabel}[${args.sceneInputIndex}:v]overlay=0:0:format=auto[${sceneOut}]`;
+  return args.ticker ? `${scene};${buildTickerCrawlFilter({ ...args.ticker, from: sceneOut, to: "vout" })}` : scene;
 }
 
 export type LiveSourceAudioDecisionInput = {

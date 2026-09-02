@@ -985,16 +985,15 @@ export function OverlaySettingsForm(props: {
               />
             </label>
             {/*
-              Only once there is more than one message.
+              Shown whenever there is a ticker at all.
 
-              The dwell is meaningless for a single notice, and a permanently visible field that
-              does nothing on most channels is exactly the kind of control this page is measured
-              for. It appears when the operator types the separator that makes it mean something,
-              beside the text it belongs to.
+              It used to appear only for several messages, because it set how long each one stood
+              still. It now sets the speed of the running line, which one notice needs exactly as
+              much as five do.
             */}
-            {tickerMessageCount > 1 ? (
+            {draft.tickerText.trim() ? (
               <label>
-                <span className="label">Ticker seconds per message</span>
+                <span className="label">Ticker seconds per crossing</span>
                 <input
                   max={OVERLAY_TICKER_MAX_SECONDS}
                   min={OVERLAY_TICKER_MIN_SECONDS}
@@ -1007,10 +1006,13 @@ export function OverlaySettingsForm(props: {
               </label>
             ) : null}
           </div>
-          {tickerMessageCount > 1 ? (
+          {draft.tickerText.trim() ? (
             <p className="subtle">
-              {tickerMessageCount} ticker messages take turns, one at a time. The picture is redrawn about twice a
-              second, so a message stands for as long as you ask here give or take one redraw.
+              The ticker runs from right to left across its band, and this is how long one crossing of the band takes.
+              {tickerMessageCount > 1
+                ? ` Your ${String(tickerMessageCount)} messages are joined into one line, separated by a middot.`
+                : ""}{" "}
+              The preview shows the line at rest, because a still picture cannot show it moving.
             </p>
           ) : null}
 

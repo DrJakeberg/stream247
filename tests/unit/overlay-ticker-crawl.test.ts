@@ -7,6 +7,7 @@ import {
   resolvePlacementPixelBox,
   OVERLAY_TICKER_CRAWL_MAX_PX_PER_SECOND,
   OVERLAY_TICKER_CRAWL_MIN_PX_PER_SECOND,
+  OVERLAY_TICKER_FILL_ALPHA,
   type OverlayScenePayloadView
 } from "@stream247/core";
 
@@ -30,6 +31,9 @@ import {
  * meaning "how long one message stands" and starts meaning "how long the line takes to cross".
  */
 const FRAME = { width: 1920, height: 1080 };
+
+/** The band's own fill, which nothing else on the frame uses — so it is how a band is spotted. */
+const BAND_FILL = `rgba(8,10,15,${String(OVERLAY_TICKER_FILL_ALPHA)})`;
 
 function payload(ticker: string, rotateSeconds?: number): OverlayScenePayloadView {
   return {
@@ -121,13 +125,29 @@ describe("ticker crawl", () => {
   });
 
   it("still draws the band itself on air — only its text moved out", () => {
-    const withText = buildOverlaySceneLayout({ payload: payload("The line that crawls") }, { ...FRAME, tickerMode: "crawl" });
-    const without = buildOverlaySceneLayout({ payload: payload("") }, { ...FRAME, tickerMode: "crawl" });
-    expect(JSON.stringify(withText)).not.toBe(JSON.stringify(without));
+    const onAir = JSON.stringify(buildOverlaySceneLayout({ payload: payload("The line that crawls") }, { ...FRAME, tickerMode: "crawl" }));
+    expect(onAir).toContain(BAND_FILL);
   });
 
   it("draws the line at rest for anyone who did not ask for the crawl", () => {
     const tree = JSON.stringify(buildOverlaySceneLayout({ payload: payload("At rest") }, FRAME));
     expect(tree).toContain("At rest");
+  });
+});
+
+describe("ticker crawl, mid-programme edits", () => {
+  it("keeps the band while a crawl is running, even after the text is cleared", () => {
+    // ffmpeg is moving a strip across this rectangle for the whole programme. Taking the band away
+    // because the operator emptied the field would leave the line crawling over bare video until
+    // the next block.
+    const cleared = buildOverlaySceneLayout({ payload: payload("") }, { ...FRAME, tickerMode: "crawl" });
+    const none = buildOverlaySceneLayout({ payload: payload("") }, { ...FRAME, tickerMode: "static" });
+    expect(JSON.stringify(cleared)).not.toBe(JSON.stringify(none));
+    expect(JSON.stringify(cleared)).toContain(BAND_FILL);
+  });
+
+  it("draws no band at all when nothing is crawling and there is no text", () => {
+    const none = JSON.stringify(buildOverlaySceneLayout({ payload: payload("") }, { ...FRAME, tickerMode: "static" }));
+    expect(none).not.toContain(BAND_FILL);
   });
 });

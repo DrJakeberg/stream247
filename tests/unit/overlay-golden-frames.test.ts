@@ -205,9 +205,9 @@ const FRAMES: GoldenFrame[] = [
     svg: "c162d027ac944dca"
   },
   {
-    // The deliberate change. Three messages, so the frame drawn here is the one the dwell picks at
-    // FROZEN_AT — the same instant every other fixture is frozen at, which is what makes a rotating
-    // panel checksummable at all.
+    // The deliberate change. Three messages, and all three are drawn: they are one running line
+    // now, not one at a time, so this fixture no longer depends on the instant it is frozen at.
+    // On air the band is drawn empty and ffmpeg moves the line across it; this is the still.
     name: "a ticker, the one panel that only exists while it has something to say",
     input: {
       payload: {
@@ -218,8 +218,8 @@ const FRAMES: GoldenFrame[] = [
     },
     width: 1920,
     height: 1080,
-    layout: "34942d9a801c6cc0",
-    svg: "f4276601a9324c32"
+    layout: "29117d8c1a850ffb",
+    svg: "03d7e7fd915bcc43"
   }
 ];
 
