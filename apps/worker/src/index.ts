@@ -5442,6 +5442,8 @@ async function startOrSwitchPlayout(args: {
         ...destination,
         status: "ready",
         lastValidatedAt: startedAt,
+        // Failures since the last clean start — the counter meant nothing while it only ever grew.
+        failureCount: 0,
         lastError: "",
         notes: `${destination.role === "backup" ? "Backup" : "Primary"} destination is active in the current multi-output group.`
       });
@@ -6741,6 +6743,8 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
       ...destination,
       status: "ready",
       lastValidatedAt: startedAt,
+      // Failures since the last clean start — the counter meant nothing while it only ever grew.
+      failureCount: 0,
       lastError: "",
       notes: `${
         destination.role === "backup" ? "Backup" : "Primary"
