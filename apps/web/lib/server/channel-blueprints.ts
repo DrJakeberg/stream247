@@ -3,6 +3,8 @@ import {
   normalizeCuepointOffsetsSeconds,
   normalizeOverlayNamedScenes,
   normalizeOverlayPanelAnchor,
+  normalizeOverlaySceneCustomLayers,
+  normalizeOverlayScenePanelPlacements,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
@@ -291,6 +293,7 @@ function normalizeOverlaySettings(value: unknown, fallback: OverlaySettingsRecor
     ),
     // The projection of the active scene, exactly as the store computes it.
     customLayers: resolveOverlayNamedSceneCustomLayers(scenes, activeSceneId),
+    panelPlacements: normalizeOverlayScenePanelPlacements(candidate.panelPlacements ?? fallback.panelPlacements),
     emergencyBanner: asString(candidate.emergencyBanner),
     tickerText: asString(candidate.tickerText),
     updatedAt: asString(candidate.updatedAt) || now

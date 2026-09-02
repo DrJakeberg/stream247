@@ -6,7 +6,11 @@
 // not re-validate meaning — it bounds *size*. Without that, one request could ask the renderer to
 // lay out a megabyte of text or ten thousand layers, on the machine that is encoding the channel.
 
-import type { OverlayCustomLayerView, OverlayScenePayloadView } from "@stream247/core";
+import {
+  normalizeOverlayScenePanelPlacements,
+  type OverlayCustomLayerView,
+  type OverlayScenePayloadView
+} from "@stream247/core";
 
 /** Broadcast geometry by default: the preview is only honest at the size that goes out. */
 export const SCENE_PREVIEW_DEFAULT_WIDTH = 1920;
@@ -48,6 +52,7 @@ function normalizeCustomLayer(value: unknown): OverlayCustomLayerView {
     widthPercent: num(raw.widthPercent, 0),
     heightPercent: num(raw.heightPercent, 0),
     opacityPercent: num(raw.opacityPercent, 100),
+    backgroundOpacityPercent: num(raw.backgroundOpacityPercent, 100),
     allowOutsideSafeArea: bool(raw.allowOutsideSafeArea),
     sourceId: str(raw.sourceId),
     url: str(raw.url),
@@ -93,7 +98,10 @@ export function normalizeScenePreviewRequest(body: unknown): ScenePreviewRequest
         titleScale: str(scene.titleScale),
         typographyPreset: str(scene.typographyPreset),
         resolvedPresetId: str(scene.resolvedPresetId),
-        customLayers: customLayers.map(normalizeCustomLayer)
+        customLayers: customLayers.map(normalizeCustomLayer),
+        // Straight through the same normaliser the stored scene uses, so the preview draws the
+        // panels where the broadcast frame will draw them rather than where the flow would.
+        panelPlacements: normalizeOverlayScenePanelPlacements(scene.panelPlacements)
       },
       channelName: str(source.channelName),
       accentColor: str(source.accentColor),

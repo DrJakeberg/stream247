@@ -29,9 +29,11 @@ import {
   normalizeOverlayNamedScenes,
   normalizeOverlaySceneCustomLayers,
   resolveActiveOverlayNamedSceneId,
+  foldCustomLayersIntoActiveScene,
   resolveOverlayNamedSceneCustomLayers,
   deriveRelaySourceReadUrl,
   normalizeOverlaySceneLayerOrder,
+  normalizeOverlayScenePanelPlacements,
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
   normalizeDestinationOutputProfileId,
@@ -51,6 +53,7 @@ import {
   type ModerationConfig,
   type OverlayNamedScene,
   type OverlaySceneCustomLayer,
+  type OverlayScenePanelPlacementMap,
   type OverlaySceneLayerKind,
   type StreamOutputProfileId,
   type OverlayTypographyPreset,
@@ -447,6 +450,8 @@ export type OverlaySettingsRecord = {
   /** The named scenes (M58). Never empty after normalisation — something has to be on air. */
   scenes: OverlayNamedScene[];
   activeSceneId: string;
+  /** Only the renderer's own panels somebody has moved; an absent panel is still in the flow. */
+  panelPlacements: OverlayScenePanelPlacementMap;
   emergencyBanner: string;
   tickerText: string;
   updatedAt: string;
@@ -792,6 +797,7 @@ type OverlaySettingsRow = {
   custom_layers_json: string;
   scenes_json: string;
   active_scene_id: string;
+  panel_placements_json: string;
   emergency_banner: string;
   replay_label: string;
   ticker_text: string;
@@ -925,6 +931,7 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
     scenes,
     activeSceneId,
     customLayers: resolveOverlayNamedSceneCustomLayers(scenes, activeSceneId),
+    panelPlacements: normalizeOverlayScenePanelPlacements(overlay.panelPlacements ?? defaults.panelPlacements),
     emergencyBanner: sanitizeStoredText(overlay.emergencyBanner ?? defaults.emergencyBanner, 180),
     tickerText: sanitizeStoredText(overlay.tickerText ?? defaults.tickerText, 180),
     updatedAt: overlay.updatedAt ?? defaults.updatedAt
@@ -1005,6 +1012,9 @@ function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: Ov
         customLayers: JSON.parse(row.custom_layers_json || "[]") as OverlaySceneCustomLayer[],
         scenes: JSON.parse(row.scenes_json || "[]") as OverlayNamedScene[],
         activeSceneId: row.active_scene_id || "",
+        // "{}" for every row written before the column existed: no panel placed, everything in the
+        // flow, which is the picture those installations already have.
+        panelPlacements: JSON.parse(row.panel_placements_json || "{}") as OverlayScenePanelPlacementMap,
         emergencyBanner: row.emergency_banner,
         tickerText: row.ticker_text,
         updatedAt: row.updated_at
@@ -1145,9 +1155,9 @@ async function upsertOverlaySettingsTable(
     await client.query(
       `
         INSERT INTO overlay_drafts (
-          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, based_on_updated_at, scenes_json, active_scene_id
+          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, based_on_updated_at, scenes_json, active_scene_id, panel_placements_json
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           channel_name = EXCLUDED.channel_name,
@@ -1181,7 +1191,8 @@ async function upsertOverlaySettingsTable(
           updated_at = EXCLUDED.updated_at,
           based_on_updated_at = EXCLUDED.based_on_updated_at,
           scenes_json = EXCLUDED.scenes_json,
-          active_scene_id = EXCLUDED.active_scene_id
+          active_scene_id = EXCLUDED.active_scene_id,
+          panel_placements_json = EXCLUDED.panel_placements_json
       `,
       [
         normalized.enabled,
@@ -1216,7 +1227,8 @@ async function upsertOverlaySettingsTable(
         normalized.updatedAt,
         basedOnUpdatedAt,
         JSON.stringify(normalized.scenes),
-        normalized.activeSceneId
+        normalized.activeSceneId,
+        JSON.stringify(normalized.panelPlacements)
       ]
     );
     return;
@@ -1225,9 +1237,9 @@ async function upsertOverlaySettingsTable(
   await client.query(
     `
       INSERT INTO overlay_settings (
-          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, scenes_json, active_scene_id
+          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, scenes_json, active_scene_id, panel_placements_json
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
       ON CONFLICT (singleton_id) DO UPDATE SET
         enabled = EXCLUDED.enabled,
         channel_name = EXCLUDED.channel_name,
@@ -1260,7 +1272,8 @@ async function upsertOverlaySettingsTable(
         ticker_text = EXCLUDED.ticker_text,
         updated_at = EXCLUDED.updated_at,
         scenes_json = EXCLUDED.scenes_json,
-        active_scene_id = EXCLUDED.active_scene_id
+        active_scene_id = EXCLUDED.active_scene_id,
+        panel_placements_json = EXCLUDED.panel_placements_json
     `,
     [
       normalized.enabled,
@@ -1294,7 +1307,8 @@ async function upsertOverlaySettingsTable(
       normalized.tickerText,
       normalized.updatedAt,
       JSON.stringify(normalized.scenes),
-      normalized.activeSceneId
+      normalized.activeSceneId,
+      JSON.stringify(normalized.panelPlacements)
     ]
   );
 }
@@ -1632,6 +1646,7 @@ function defaultState(): AppState {
       customLayers: [],
       scenes: [],
       activeSceneId: "",
+      panelPlacements: {},
       emergencyBanner: "",
       tickerText: "",
       updatedAt: ""
@@ -2330,6 +2345,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       -- out of custom_layers_json, which is what keeps an upgraded installation on the same picture.
       scenes_json TEXT NOT NULL DEFAULT '[]',
       active_scene_id TEXT NOT NULL DEFAULT '',
+      panel_placements_json TEXT NOT NULL DEFAULT '{}',
       emergency_banner TEXT NOT NULL DEFAULT '',
       ticker_text TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT ''
@@ -2368,6 +2384,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       -- out of custom_layers_json, which is what keeps an upgraded installation on the same picture.
       scenes_json TEXT NOT NULL DEFAULT '[]',
       active_scene_id TEXT NOT NULL DEFAULT '',
+      panel_placements_json TEXT NOT NULL DEFAULT '{}',
       emergency_banner TEXT NOT NULL DEFAULT '',
       ticker_text TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT '',
@@ -2847,6 +2864,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS custom_layers_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS scenes_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS active_scene_id TEXT NOT NULL DEFAULT '';
+    -- '{}' is "no panel has been moved", so an existing install keeps the picture it has.
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS panel_placements_json TEXT NOT NULL DEFAULT '{}';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS ticker_text TEXT NOT NULL DEFAULT '';
@@ -2882,6 +2901,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS custom_layers_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS scenes_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS active_scene_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS panel_placements_json TEXT NOT NULL DEFAULT '{}';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS ticker_text TEXT NOT NULL DEFAULT '';
@@ -3917,9 +3937,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   await client.query(
     `
         INSERT INTO overlay_settings (
-          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at
+          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, panel_placements_json, scenes_json, active_scene_id
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           channel_name = EXCLUDED.channel_name,
@@ -3950,7 +3970,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
           custom_layers_json = EXCLUDED.custom_layers_json,
           emergency_banner = EXCLUDED.emergency_banner,
           ticker_text = EXCLUDED.ticker_text,
-          updated_at = EXCLUDED.updated_at
+          updated_at = EXCLUDED.updated_at,
+          panel_placements_json = EXCLUDED.panel_placements_json,
+          scenes_json = EXCLUDED.scenes_json,
+          active_scene_id = EXCLUDED.active_scene_id
       `,
       [
         next.overlay.enabled,
@@ -3982,7 +4005,12 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         JSON.stringify(next.overlay.customLayers),
         next.overlay.emergencyBanner,
         next.overlay.tickerText,
-        next.overlay.updatedAt
+        next.overlay.updatedAt,
+        JSON.stringify(next.overlay.panelPlacements),
+        // Writing folds, reading projects: a caller that appended a layer to `customLayers`
+        // without knowing scenes exist -- the chat game's provisioning does -- must not lose it.
+        JSON.stringify(foldCustomLayersIntoActiveScene(next.overlay.scenes, next.overlay.activeSceneId, next.overlay.customLayers)),
+        next.overlay.activeSceneId
       ]
     );
 

@@ -40,6 +40,9 @@ const CHAT_GAME_LAYER_DEFAULTS = {
   widthPercent: 30,
   heightPercent: 44,
   opacityPercent: 100,
+  // The panel keeps its backdrop by default; an operator who wants the board over bare video
+  // turns this down in the studio, and the outlined cells stay legible when they do.
+  backgroundOpacityPercent: 100,
   allowOutsideSafeArea: false
 } as const;
 

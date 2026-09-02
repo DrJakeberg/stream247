@@ -3,6 +3,7 @@ import {
   normalizeOverlayNamedScenes,
   normalizeOverlayPanelAnchor,
   normalizeOverlaySceneCustomLayers,
+  normalizeOverlayScenePanelPlacements,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
   resolveActiveOverlayNamedSceneId,
@@ -50,6 +51,7 @@ type OverlayPayload = Partial<{
   customLayers: unknown[];
   scenes: unknown[];
   activeSceneId: string;
+  panelPlacements: unknown;
   emergencyBanner: string;
   tickerText: string;
   replayLabel: string;
@@ -106,6 +108,7 @@ function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnTyp
     scenes,
     activeSceneId,
     customLayers: resolveOverlayNamedSceneCustomLayers(scenes, activeSceneId),
+    panelPlacements: normalizeOverlayScenePanelPlacements(payload.panelPlacements ?? base.panelPlacements),
     emergencyBanner: normalizeText(payload.emergencyBanner ?? base.emergencyBanner, 180),
     tickerText: normalizeText(payload.tickerText ?? base.tickerText, 180),
     replayLabel: normalizeText(payload.replayLabel ?? base.replayLabel, 80) || "Replay stream",

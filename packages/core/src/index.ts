@@ -15,6 +15,7 @@ import {
   resolveChatOverlayRuntimeEnabled,
   type ManagedRuntimeToggleInput
 } from "./managed-runtime.js";
+import { OVERLAY_PANEL_IDS, type OverlayPanelId } from "./overlay-layout.js";
 
 export type ModerationConfig = {
   enabled: boolean;
@@ -669,6 +670,15 @@ export type OverlaySceneCustomWidgetLayer = OverlaySceneCustomLayerBase & {
  */
 export type OverlaySceneCustomGameLayer = OverlaySceneCustomLayerBase & {
   kind: "game";
+  /**
+   * How much of the panel's backdrop is drawn, 0-100, independent of opacityPercent.
+   *
+   * The games are the one surface an operator asks to be "as transparent as possible", and
+   * opacityPercent could not give them that: it fades the board along with the fill, so a game
+   * at 5% is not a transparent game but an invisible one. This fades only what is behind the
+   * board. The board itself is outlined so it survives the fill going away.
+   */
+  backgroundOpacityPercent: number;
 };
 
 /**
@@ -682,6 +692,26 @@ export type OverlaySceneCustomSourceLayer = OverlaySceneCustomLayerBase & {
   /** Id of the stored video source; empty until the operator links one. */
   sourceId: string;
 };
+
+/**
+ * Where one of the renderer's own panels sits, in the same percentages a custom layer uses.
+ *
+ * Stored per panel and only for the panels somebody has actually moved. An absent entry is not a
+ * default written down — it is "this panel is still in the flow", which is what keeps a scene
+ * nobody has rearranged drawing exactly the picture it drew before any of this existed. The studio
+ * seeds a new entry from deriveDefaultPlacements, so the first thing an operator sees when they
+ * take hold of a panel is where that panel already is.
+ */
+export type OverlayScenePanelPlacement = {
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
+  opacityPercent: number;
+  allowOutsideSafeArea: boolean;
+};
+
+export type OverlayScenePanelPlacementMap = Partial<Record<OverlayPanelId, OverlayScenePanelPlacement>>;
 
 export type OverlaySceneCustomLayer =
   | OverlaySceneCustomTextLayer
@@ -712,6 +742,8 @@ export type OverlaySceneDefinition = {
   typographyPreset: OverlayTypographyPreset;
   layers: OverlaySceneLayerDefinition[];
   customLayers: OverlaySceneCustomLayer[];
+  /** Only the renderer's own panels an operator has moved; the rest stay in the flow. */
+  panelPlacements: OverlayScenePanelPlacementMap;
 };
 
 export type OverlayScenePayload = {
@@ -778,6 +810,7 @@ export type OverlaySceneSource = {
   layerOrder: OverlaySceneLayerKind[];
   disabledLayers: OverlaySceneLayerKind[];
   customLayers: OverlaySceneCustomLayer[];
+  panelPlacements: OverlayScenePanelPlacementMap;
 };
 
 export type OverlayOptionDefinition<T extends string> = {
@@ -1315,6 +1348,41 @@ function clampOverlaySceneNumber(value: unknown, min: number, max: number, fallb
   return Math.min(max, Math.max(min, numeric));
 }
 
+/**
+ * Reads back the placements an operator has set for the renderer's own panels.
+ *
+ * Same clamps as a custom layer's, because it is the same box: x and y stop at 90 so a panel can
+ * never be pushed off the frame it is measured against, width at 10 and height at 8 so nothing is
+ * saved at a size that draws as a smudge, opacity at 5 so nothing is saved invisible. A key that
+ * is not a panel is dropped, and a panel with no entry stays out of the map — that absence is what
+ * says "still in the flow", so writing a default here would move the picture.
+ */
+export function normalizeOverlayScenePanelPlacements(value: unknown): OverlayScenePanelPlacementMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const source = value as Record<string, unknown>;
+  const placements: OverlayScenePanelPlacementMap = {};
+  for (const id of OVERLAY_PANEL_IDS) {
+    const entry = source[id];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    const raw = entry as Record<string, unknown>;
+    placements[id] = {
+      xPercent: clampOverlaySceneNumber(raw.xPercent, 0, 90, 0),
+      yPercent: clampOverlaySceneNumber(raw.yPercent, 0, 90, 0),
+      widthPercent: clampOverlaySceneNumber(raw.widthPercent, 10, 100, 40),
+      heightPercent: clampOverlaySceneNumber(raw.heightPercent, 8, 100, 20),
+      opacityPercent: clampOverlaySceneNumber(raw.opacityPercent, 5, 100, 100),
+      allowOutsideSafeArea: raw.allowOutsideSafeArea === true
+    };
+  }
+
+  return placements;
+}
+
 function sanitizeOverlaySceneUrl(value: unknown): string {
   const trimmed = String(value || "").trim();
   if (!trimmed) {
@@ -1627,9 +1695,12 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
       });
     } else if (raw.kind === "game") {
       // Placement only: everything about the game itself lives in the chat-game settings.
+      // The backdrop floor is 0, not the 5 every other opacity uses — the point of the control is
+      // that the fill can go away completely, and the outlined board is what stays legible.
       normalized.push({
         ...base,
-        kind: "game"
+        kind: "game",
+        backgroundOpacityPercent: clampOverlaySceneNumber(raw.backgroundOpacityPercent, 0, 100, 100)
       });
     } else if (raw.kind === "source") {
       // Placement plus a reference into the encrypted video-source store. Deliberately no URL
@@ -1781,6 +1852,30 @@ export function resolveActiveOverlayNamedSceneId(scenes: OverlayNamedScene[], ac
  * buildOverlaySceneDefinition, the on-air rasteriser, the studio preview — keeps reading one flat
  * `customLayers` array and cannot tell that scenes exist.
  */
+/**
+ * Puts a caller's layer array into the active scene instead of throwing it away.
+ *
+ * `customLayers` is a projection of the active scene, and every writer that predates named scenes
+ * edits that array without knowing scenes exist — the chat game's own layer provisioning does it
+ * through updateAppState. Re-projecting on write discarded those edits inside the same
+ * transaction: a moderator's `!snake` wrote a layer that vanished before it reached the picture.
+ * Reading projects; writing folds. Scenes other than the active one are never touched, and a
+ * caller that hands over nothing changes nothing.
+ */
+export function foldCustomLayersIntoActiveScene(
+  scenes: OverlayNamedScene[],
+  activeSceneId: unknown,
+  customLayers: unknown
+): OverlayNamedScene[] {
+  if (customLayers === undefined || customLayers === null) {
+    return scenes;
+  }
+
+  const activeId = resolveActiveOverlayNamedSceneId(scenes, activeSceneId);
+  const next = normalizeOverlaySceneCustomLayers(customLayers);
+  return scenes.map((scene) => (scene.id === activeId ? { ...scene, customLayers: next } : scene));
+}
+
 export function resolveOverlayNamedSceneCustomLayers(
   scenes: OverlayNamedScene[],
   activeSceneId: unknown
@@ -1888,7 +1983,8 @@ export function buildOverlaySceneDefinition(args: {
       label: OVERLAY_SCENE_LAYERS.find((layer) => layer.id === kind)?.label || kind,
       enabled: enabledMap[kind] && !disabledLayers.has(kind)
     })),
-    customLayers: normalizeOverlaySceneCustomLayers(args.overlay.customLayers)
+    customLayers: normalizeOverlaySceneCustomLayers(args.overlay.customLayers),
+    panelPlacements: normalizeOverlayScenePanelPlacements(args.overlay.panelPlacements)
   };
 }
 
@@ -2098,6 +2194,7 @@ export function buildOverlayTextLines(args: {
         layerOrder: DEFAULT_OVERLAY_SCENE_LAYER_ORDER,
         disabledLayers: [],
         customLayers: [],
+        panelPlacements: {},
         showCurrentCategory: args.showCurrentCategory ?? false,
         showSourceLabel: args.showSourceLabel ?? false
       },

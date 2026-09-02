@@ -12,12 +12,15 @@ import {
   OVERLAY_TITLE_SCALES,
   MAX_NAMED_OVERLAY_SCENES,
   buildOverlayScenePayload,
+  deriveDefaultPlacements,
   describeOverlaySceneFrameSupport,
   resolveActiveOverlayNamedSceneId,
   resolveOverlayHeadlineForQueueKind,
   resolveOverlayNamedSceneCustomLayers,
   type OverlayNamedScene,
+  type OverlayPanelId,
   type OverlayQueueKind,
+  type OverlayScenePanelPlacement,
   type OverlaySceneCustomMediaFit,
   type OverlaySceneCustomTextAlign,
   type OverlaySceneCustomTextFontMode,
@@ -80,9 +83,47 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
     // projection read as an unsaved change.
     scenes: overlay.scenes,
     activeSceneId: overlay.activeSceneId,
+    customLayers: overlay.customLayers,
+    panelPlacements: overlay.panelPlacements,
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText
   });
+}
+
+/**
+ * What each of the renderer's own panels is called where an operator can see it.
+ *
+ * Not the internal ids and not the layer names from the visibility list: these are the six things
+ * an operator points at on the picture, and "Now playing" is what they call the lower third.
+ */
+const OVERLAY_PANEL_LABELS: { id: OverlayPanelId; label: string; hint: string }[] = [
+  { id: "hero", label: "Now playing", hint: "The lower third: label, title, and the line under it." },
+  { id: "next", label: "Up next", hint: "The small card in the right rail, when no vote is running." },
+  { id: "vote", label: "Vote panel", hint: "Takes the rail's corner while chat is voting." },
+  { id: "chat", label: "Chat", hint: "Fits as many of the newest messages as its height holds." },
+  { id: "clock", label: "Clock", hint: "Channel time, top right." },
+  { id: "banner", label: "Emergency banner", hint: "Only on air while the banner has text." }
+];
+
+/**
+ * The box in frame pixels, for the caption under each panel's name.
+ *
+ * Percentages are what is stored, because they survive an output size change; pixels are what an
+ * operator recognises on the picture. This says the same thing the four number fields say, in one
+ * readable line, so a folded panel still tells you where it is.
+ */
+function describePanelBox(placement: OverlayScenePanelPlacement): string {
+  const safeWidth = placement.allowOutsideSafeArea ? 1920 : 1920 - 144;
+  const safeHeight = placement.allowOutsideSafeArea ? 1080 : 1080 - 112;
+  const originX = placement.allowOutsideSafeArea ? 0 : 72;
+  const originY = placement.allowOutsideSafeArea ? 0 : 56;
+  const round = (value: number) => String(Math.round(value));
+  return (
+    `x ${round(originX + (safeWidth * placement.xPercent) / 100)} · ` +
+    `y ${round(originY + (safeHeight * placement.yPercent) / 100)} · ` +
+    `${round((safeWidth * placement.widthPercent) / 100)} × ${round((safeHeight * placement.heightPercent) / 100)} · ` +
+    `${String(placement.opacityPercent)}% opacity`
+  );
 }
 
 function ScenePublishReviewDialog(props: {
@@ -149,6 +190,12 @@ export function OverlaySettingsForm(props: {
   preview: OverlayPreviewSeed;
   /** Stored external video sources a source layer can link to. Name and presence only. */
   videoSources?: Array<{ id: string; name: string; urlPresent: boolean }>;
+  /**
+   * Which corner the chat panel is set to, from the engagement settings that own it. Only used to
+   * seed the chat panel's first box from where the flow currently puts it; the scene never stores
+   * the corner itself.
+   */
+  chatPosition?: string;
 }) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -232,6 +279,24 @@ export function OverlaySettingsForm(props: {
     applyScenes(scenes.filter((scene) => scene.id !== selectedScene.id), "");
   };
 
+  // Taking hold of a panel seeds its box from where the flow already puts it, so the first save
+  // moves nothing: the operator sees the numbers for the panel's current position and changes the
+  // ones they mean to. Letting go removes the entry entirely, which puts the panel back in the flow
+  // rather than leaving it pinned to whatever it was last dragged to.
+  const togglePanelPlacement = (id: OverlayPanelId) => {
+      const next = { ...current.panelPlacements };
+      if (next[id]) {
+        delete next[id];
+        return { ...current, panelPlacements: next };
+      }
+      const seed = deriveDefaultPlacements(current.panelAnchor, props.chatPosition)[id];
+      return { ...current, panelPlacements: { ...next, [id]: { ...seed, opacityPercent: seed.opacityPercent ?? 100, allowOutsideSafeArea: seed.allowOutsideSafeArea ?? false } } };
+  const updatePanelPlacement = (id: OverlayPanelId, patch: Partial<OverlayScenePanelPlacement>) => {
+      const existing = current.panelPlacements[id];
+      if (!existing) {
+        return current;
+      }
+      return { ...current, panelPlacements: { ...current.panelPlacements, [id]: { ...existing, ...patch } } };
   const addCustomLayer = (kind: OverlaySceneCustomLayerKind) => {
     updateSelectedScene((scene) => ({ ...scene, customLayers: [...scene.customLayers, createDefaultCustomLayer(kind)] }));
   };
@@ -907,6 +972,108 @@ export function OverlaySettingsForm(props: {
 
           <div className="list">
             <div className="item">
+              <details>
+                <summary>
+                  <span className="label">Panel placement</span>
+                  <span className="subtle">
+                    {" "}
+                    {Object.keys(draft.panelPlacements).length > 0
+                      ? `${String(Object.keys(draft.panelPlacements).length)} panel${Object.keys(draft.panelPlacements).length === 1 ? "" : "s"} placed`
+                      : "Every panel where the layout puts it"}
+                  </span>
+                </summary>
+                <div className="subtle" style={{ marginTop: 8 }}>
+                  The panels the overlay draws itself take the same box a positioned layer takes: x, y, width and height as
+                  percentages of the safe area, plus opacity. A panel you have not placed stays exactly where the layout puts
+                  it, so nothing on air moves until you move it. Placing one seeds its box from where it already is.
+                </div>
+                <div className="list" style={{ marginTop: 12 }}>
+                  {OVERLAY_PANEL_LABELS.map((panel) => {
+                    const placement = draft.panelPlacements[panel.id];
+                    return (
+                      <div className="item" key={panel.id}>
+                        <label className="toggle-row">
+                          <input checked={Boolean(placement)} onChange={() => togglePanelPlacement(panel.id)} type="checkbox" />
+                          <span>
+                            <strong>{panel.label}</strong>
+                            <span className="subtle"> {placement ? describePanelBox(placement) : panel.hint}</span>
+                          </span>
+                        </label>
+                        {placement ? (
+                          <div className="form-grid" style={{ marginTop: 12 }}>
+                            <label>
+                              <span className="label">X position (%)</span>
+                              <input
+                                max={90}
+                                min={0}
+                                onChange={(event) => updatePanelPlacement(panel.id, { xPercent: Number(event.target.value) || 0 })}
+                                type="number"
+                                value={placement.xPercent}
+                              />
+                            </label>
+                            <label>
+                              <span className="label">Y position (%)</span>
+                              <input
+                                max={90}
+                                min={0}
+                                onChange={(event) => updatePanelPlacement(panel.id, { yPercent: Number(event.target.value) || 0 })}
+                                type="number"
+                                value={placement.yPercent}
+                              />
+                            </label>
+                            <label>
+                              <span className="label">Width (%)</span>
+                              <input
+                                max={100}
+                                min={10}
+                                onChange={(event) =>
+                                  updatePanelPlacement(panel.id, { widthPercent: Number(event.target.value) || placement.widthPercent })
+                                }
+                                type="number"
+                                value={placement.widthPercent}
+                              />
+                            </label>
+                            <label>
+                              <span className="label">Height (%)</span>
+                              <input
+                                max={100}
+                                min={8}
+                                onChange={(event) =>
+                                  updatePanelPlacement(panel.id, { heightPercent: Number(event.target.value) || placement.heightPercent })
+                                }
+                                type="number"
+                                value={placement.heightPercent}
+                              />
+                            </label>
+                            <label>
+                              <span className="label">Opacity (%)</span>
+                              <input
+                                max={100}
+                                min={5}
+                                onChange={(event) =>
+                                  updatePanelPlacement(panel.id, { opacityPercent: Number(event.target.value) || placement.opacityPercent })
+                                }
+                                type="number"
+                                value={placement.opacityPercent}
+                              />
+                            </label>
+                            <label className="toggle-row">
+                              <input
+                                checked={placement.allowOutsideSafeArea}
+                                onChange={(event) => updatePanelPlacement(panel.id, { allowOutsideSafeArea: event.target.checked })}
+                                type="checkbox"
+                              />
+                              <span>Allow outside safe area</span>
+                            </label>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
+            </div>
+            <div className="item">
               <span className="label">Positioned layers</span>
               <div className="subtle">
                 Add custom text, logo, image, website, widget, or chat-game layers on top of the preset layout. Text layers can switch to safe
@@ -1315,11 +1482,33 @@ export function OverlaySettingsForm(props: {
                         </div>
                       ) : null}
                       {layer.kind === "game" ? (
-                        <div className="subtle" style={{ marginTop: 12 }}>
-                          This layer places the chat game panel in the scene. Which game runs, its grid, and the
-                          emote controls are configured under Overlays → Chat game, because the same round continues
-                          across scene changes.
-                        </div>
+                        <>
+                          <div className="form-grid" style={{ marginTop: 12 }}>
+                            <label>
+                              <span className="label">Board backdrop (%)</span>
+                              <input
+                                max={100}
+                                min={0}
+                                onChange={(event) =>
+                                  updateCustomLayer(layer.id, (current) =>
+                                    current.kind === "game"
+                                      ? { ...current, backgroundOpacityPercent: Math.max(0, Math.min(100, Number(event.target.value) || 0)) }
+                                      : current
+                                  )
+                                }
+                                type="number"
+                                value={layer.backgroundOpacityPercent}
+                              />
+                            </label>
+                          </div>
+                          <div className="subtle" style={{ marginTop: 12 }}>
+                            This layer places the chat game panel in the scene. Which game runs, its grid, and the
+                            emote controls are configured under Overlays → Chat game, because the same round continues
+                            across scene changes. The backdrop is the fill behind the board and goes all the way to 0 —
+                            the cells stay outlined, so the game reads over the programme picture with no panel at all.
+                            A box over the whole frame gives a board over the whole frame.
+                          </div>
+                        </>
                       ) : null}
                       {layer.kind === "source" ? (
                         <div className="form-grid" style={{ marginTop: 12 }}>

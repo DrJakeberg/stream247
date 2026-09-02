@@ -39,6 +39,7 @@ export default async function OverlayStudioPage() {
           </p>
           <OverlaySettingsForm
             basedOnUpdatedAt={studioState.basedOnUpdatedAt}
+            chatPosition={state.engagement.chatPosition}
             draftOverlay={studioState.draftOverlay}
             hasUnpublishedChanges={studioState.hasUnpublishedChanges}
             liveOverlay={studioState.liveOverlay}
