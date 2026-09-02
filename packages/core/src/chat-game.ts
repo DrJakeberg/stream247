@@ -84,7 +84,7 @@ const CHAT_GAME_STOP_WORDS = ["stop", "off", "end"];
 /**
  * Resolves one chat line into a game command, or null when it is not one.
  *
- * The "!" is optional, exactly like the moderator check-in: the operator's own notes say "!game",
+ * The "!" is optional only for the question ("game" answers like "!game"); a start or stop needs it.
  * and a room that types "game" and gets nothing reads as the feature being broken. Matching is on
  * the whole line — a command is the entire message, never a word buried in a sentence, so talking
  * *about* snake cannot start a round.
@@ -98,21 +98,25 @@ export function resolveChatGameCommand(message: string): ChatGameCommand | null 
     return null;
   }
 
-  const body = normalized.startsWith("!") ? normalized.slice(1) : normalized;
+  // The bang is what separates a command from conversation. Asking about the games costs nothing
+  // on air, so "game" answers with or without it; starting or stopping a round changes the
+  // broadcast, so a bare game name — "2048" typed in passing — is ordinary chat and does nothing.
+  const bang = normalized.startsWith("!");
+  const body = bang ? normalized.slice(1) : normalized;
   const separator = body.indexOf(" ");
   const head = separator === -1 ? body : body.slice(0, separator);
   const rest = separator === -1 ? "" : body.slice(separator + 1).trim();
 
   const startedGame = CHAT_GAMES.find((game) => game.id === head);
   if (startedGame) {
-    return rest ? null : { kind: "start", gameId: startedGame.id };
+    return rest || !bang ? null : { kind: "start", gameId: startedGame.id };
   }
 
   if (head !== CHAT_GAME_INFO_COMMAND) {
     return null;
   }
 
-  if (!rest) {
+  if (!rest || !bang) {
     return { kind: "info" };
   }
   if (CHAT_GAME_STOP_WORDS.includes(rest)) {

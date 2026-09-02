@@ -197,9 +197,9 @@ describe("symptom 2: !game", () => {
     expect(reply).toContain("!2048");
   });
 
-  it("starts a game from its own command, with the ! optional like !here", () => {
+  it("starts a game from its own command — only with the bang, unlike the !here check-in", () => {
     expect(resolveChatGameCommand("!snake")).toEqual({ kind: "start", gameId: "snake" });
-    expect(resolveChatGameCommand("2048")).toEqual({ kind: "start", gameId: "2048" });
+    expect(resolveChatGameCommand("!2048")).toEqual({ kind: "start", gameId: "2048" });
     expect(resolveChatGameCommand("!minesweeper")).toEqual({ kind: "start", gameId: "minesweeper" });
     expect(resolveChatGameCommand("hello there")).toBeNull();
   });
@@ -343,5 +343,26 @@ describe("finding: the studio's layer cap", () => {
     expect(stored.customLayers).toHaveLength(8);
     expect(onAir).toBe(true);
     expect(reply).toContain("on air");
+  });
+});
+
+describe("operator decision: a game start needs the bang", () => {
+  // A bare game name is ordinary chat. "2048" typed in passing must not put a game on air;
+  // only the deliberate command form starts or stops a round. The info question keeps the
+  // bang optional, because answering "game" with the command list costs nothing on air.
+  it("does not start a round from a bare game name", () => {
+    expect(resolveChatGameCommand("2048")).toBeNull();
+    expect(resolveChatGameCommand("snake")).toBeNull();
+    expect(resolveChatGameCommand("Minesweeper")).toBeNull();
+  });
+  it("does not start or stop a round from a bare 'game <x>'", () => {
+    expect(resolveChatGameCommand("game snake")).toEqual({ kind: "info" });
+    expect(resolveChatGameCommand("game stop")).toEqual({ kind: "info" });
+  });
+  it("still starts and stops with the bang", () => {
+    expect(resolveChatGameCommand("!2048")).toEqual({ kind: "start", gameId: "2048" });
+    expect(resolveChatGameCommand("!game snake")).toEqual({ kind: "start", gameId: "snake" });
+    expect(resolveChatGameCommand("!game stop")).toEqual({ kind: "stop" });
+    expect(resolveChatGameCommand("game")).toEqual({ kind: "info" });
   });
 });
