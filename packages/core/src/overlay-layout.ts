@@ -44,14 +44,18 @@ export type OverlayLayoutOptions = {
   /** Wall clock used for the on-air clock, injected so renders stay deterministic in tests. */
   now?: Date;
   /**
-   * How the ticker band is drawn.
+   * The placement a running crawl was built against, when one is running.
    *
-   * "crawl" leaves the band empty because ffmpeg runs the line across it at the output frame rate;
-   * "static" draws the line at rest inside it, which is what a still picture — the studio preview,
-   * a baseline screenshot — has to show, because a still cannot show motion. Default is "static",
-   * so every caller that has not thought about this keeps the picture it had.
+   * Present means ffmpeg is moving the line across this exact rectangle for the life of the
+   * process, so the band is drawn empty and drawn HERE — not at whatever the payload says now. The
+   * two would otherwise part company the moment an operator drags the panel in the studio: the
+   * graph is fixed when the programme starts, so the band would move and the line would go on
+   * crawling where the band used to be, over bare video, until the next block.
+   *
+   * Absent means draw the line at rest, which is what a still picture — the studio preview, a
+   * baseline screenshot — has to show, because a still cannot show motion.
    */
-  tickerMode?: "static" | "crawl";
+  tickerCrawl?: OverlayPlacementView;
 };
 
 /** Scales every dimension from the 1920x1080 design grid to the configured output size. */
@@ -425,6 +429,8 @@ export function overlayTickerLine(payload: Pick<OverlayScenePayloadView, "ticker
  */
 export type OverlayTickerCrawlPlan = {
   line: string;
+  /** The placement the boxes were resolved from, so the caller can freeze it for the renderer. */
+  placement: OverlayPlacementView;
   box: { left: number; top: number; width: number; height: number };
   crawl: { left: number; top: number; width: number; height: number };
   pxPerSecond: number;
@@ -440,7 +446,9 @@ export type OverlayTickerCrawlPlan = {
  */
 export function overlayTickerCrawlPlan(
   input: Pick<OverlayLayoutInput, "payload" | "chat">,
-  options: { width: number; height: number }
+  options: { width: number; height: number },
+  /** A frozen placement, when a crawl is already running against one. */
+  override?: OverlayPlacementView
 ): OverlayTickerCrawlPlan | null {
   const line = overlayTickerLine(input.payload);
   if (!line) {
@@ -451,6 +459,7 @@ export function overlayTickerCrawlPlan(
   const px = (value: number) => Math.round(value * scale);
   const frameSize = { width: options.width, height: options.height };
   const placement =
+    override ??
     input.payload.scene.panelPlacements?.ticker ??
     deriveDefaultPlacements(input.payload.scene.panelAnchor, String(input.chat?.position ?? "")).ticker;
   const box = resolvePlacementBox(placement, scale, frameSize);
@@ -473,6 +482,7 @@ export function overlayTickerCrawlPlan(
   const inset = px(TICKER_ACCENT_BORDER) + px(TICKER_PAD_X);
   return {
     line,
+    placement,
     box,
     crawl: {
       left: box.left + inset,
@@ -2113,14 +2123,16 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
   // missing placement that keeps it off the picture.
   // Placed from the very plan ffmpeg crawls in, so the rectangle the moving strip runs across and
   // the rectangle this paints the band into cannot drift apart.
-  const tickerPlan = overlayTickerCrawlPlan(input, frameSize);
-  // In crawl mode the band belongs to the PROCESS, not to the current text: ffmpeg is moving a
-  // strip across this rectangle for the whole programme, and a text cleared mid-block would
-  // otherwise take the band away and leave the line crawling over bare video.
-  const crawling = options.tickerMode === "crawl";
+  // In crawl mode the band belongs to the PROCESS, not to the current payload: ffmpeg is moving a
+  // strip across one rectangle for the whole programme, so neither a text cleared mid-block nor a
+  // panel dragged mid-block may take the band away from the line running across it.
+  const crawling = Boolean(options.tickerCrawl);
+  const tickerPlan = overlayTickerCrawlPlan(input, frameSize, options.tickerCrawl);
   if (tickerPlan || crawling) {
     const tickerPlacement =
-      placements.ticker ?? deriveDefaultPlacements(payload.scene.panelAnchor, String(input.chat?.position ?? "")).ticker;
+      options.tickerCrawl ??
+      placements.ticker ??
+      deriveDefaultPlacements(payload.scene.panelAnchor, String(input.chat?.position ?? "")).ticker;
     placedPanels.push(
       placePanel(
         buildTickerPanel(

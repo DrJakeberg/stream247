@@ -35,6 +35,9 @@ const FRAME = { width: 1920, height: 1080 };
 /** The band's own fill, which nothing else on the frame uses — so it is how a band is spotted. */
 const BAND_FILL = `rgba(8,10,15,${String(OVERLAY_TICKER_FILL_ALPHA)})`;
 
+/** The placement a running crawl was built against — its presence is what "on air" means here. */
+const CRAWLING = deriveDefaultPlacements("bottom", "bottom-left").ticker;
+
 function payload(ticker: string, rotateSeconds?: number): OverlayScenePayloadView {
   return {
     scene: {
@@ -118,14 +121,14 @@ describe("ticker crawl", () => {
 
   it("leaves the band empty on air, because ffmpeg puts the line there", () => {
     const text = "The line that crawls";
-    const onAir = JSON.stringify(buildOverlaySceneLayout({ payload: payload(text) }, { ...FRAME, tickerMode: "crawl" }));
-    const still = JSON.stringify(buildOverlaySceneLayout({ payload: payload(text) }, { ...FRAME, tickerMode: "static" }));
+    const onAir = JSON.stringify(buildOverlaySceneLayout({ payload: payload(text) }, { ...FRAME, tickerCrawl: CRAWLING }));
+    const still = JSON.stringify(buildOverlaySceneLayout({ payload: payload(text) }, FRAME));
     expect(still).toContain(text);
     expect(onAir).not.toContain(text);
   });
 
   it("still draws the band itself on air — only its text moved out", () => {
-    const onAir = JSON.stringify(buildOverlaySceneLayout({ payload: payload("The line that crawls") }, { ...FRAME, tickerMode: "crawl" }));
+    const onAir = JSON.stringify(buildOverlaySceneLayout({ payload: payload("The line that crawls") }, { ...FRAME, tickerCrawl: CRAWLING }));
     expect(onAir).toContain(BAND_FILL);
   });
 
@@ -140,14 +143,42 @@ describe("ticker crawl, mid-programme edits", () => {
     // ffmpeg is moving a strip across this rectangle for the whole programme. Taking the band away
     // because the operator emptied the field would leave the line crawling over bare video until
     // the next block.
-    const cleared = buildOverlaySceneLayout({ payload: payload("") }, { ...FRAME, tickerMode: "crawl" });
-    const none = buildOverlaySceneLayout({ payload: payload("") }, { ...FRAME, tickerMode: "static" });
+    const cleared = buildOverlaySceneLayout({ payload: payload("") }, { ...FRAME, tickerCrawl: CRAWLING });
+    const none = buildOverlaySceneLayout({ payload: payload("") }, FRAME);
     expect(JSON.stringify(cleared)).not.toBe(JSON.stringify(none));
     expect(JSON.stringify(cleared)).toContain(BAND_FILL);
   });
 
   it("draws no band at all when nothing is crawling and there is no text", () => {
-    const none = JSON.stringify(buildOverlaySceneLayout({ payload: payload("") }, { ...FRAME, tickerMode: "static" }));
+    const none = JSON.stringify(buildOverlaySceneLayout({ payload: payload("") }, FRAME));
     expect(none).not.toContain(BAND_FILL);
+  });
+});
+
+describe("ticker crawl, a panel dragged mid-programme", () => {
+  it("draws the band where the line is crawling, not where the payload now says", () => {
+    // The graph is fixed when the programme starts. If the band followed a drag and the line did
+    // not, the operator would get an empty band in the new place and a line crawling over bare
+    // video in the old one, for the rest of the programme — hours, on a long recording.
+    const dragged = payload("The line that crawls");
+    dragged.scene.panelPlacements = { ticker: { ...CRAWLING, yPercent: 70, xPercent: 5 } };
+
+    const onAir = buildOverlaySceneLayout({ payload: dragged }, { ...FRAME, tickerCrawl: CRAWLING });
+    const frozen = buildOverlaySceneLayout({ payload: payload("The line that crawls") }, { ...FRAME, tickerCrawl: CRAWLING });
+    expect(JSON.stringify(onAir)).toBe(JSON.stringify(frozen));
+
+    // And the still picture does follow the drag, because nothing is moving in it.
+    const still = buildOverlaySceneLayout({ payload: dragged }, FRAME);
+    expect(JSON.stringify(still)).not.toBe(JSON.stringify(buildOverlaySceneLayout({ payload: payload("The line that crawls") }, FRAME)));
+  });
+
+  it("plans the crawl against the frozen placement when it is given one", () => {
+    const dragged = payload("A running line");
+    dragged.scene.panelPlacements = { ticker: { ...CRAWLING, yPercent: 70 } };
+    const live = overlayTickerCrawlPlan({ payload: dragged }, FRAME)!;
+    const frozen = overlayTickerCrawlPlan({ payload: dragged }, FRAME, CRAWLING)!;
+    expect(frozen.box).not.toEqual(live.box);
+    expect(frozen.box).toEqual(resolvePlacementPixelBox(CRAWLING, FRAME));
+    expect(frozen.placement).toEqual(CRAWLING);
   });
 });

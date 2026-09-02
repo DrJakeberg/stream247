@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { overlayScale, overlayTickerCrawlPlan, type OverlayScenePayloadView } from "@stream247/core";
 import { loadSceneRendererFonts, renderSceneFrame, renderTickerStrip } from "../../apps/worker/src/scene-renderer";
-import { buildTickerCrawlFilter } from "../../apps/worker/src/ffmpeg-runtime";
+import { buildTickerCrawlFilter, resolveTickerCrawlCopies } from "../../apps/worker/src/ffmpeg-runtime";
 
 /**
  * The whole ticker, end to end: the scene the rasteriser draws, the strip it draws beside it, and
@@ -49,6 +49,32 @@ function payload(): OverlayScenePayloadView {
   };
 }
 
+
+/**
+ * How far the picture moved between two frames, by matching one against the other.
+ *
+ * Not "where is the last ink": with the band tiled by several copies of the line, the rightmost
+ * ink belongs to whichever copy happens to be furthest right, and a new copy entering makes that
+ * measurement jump. Matching the whole scanline measures the motion itself.
+ */
+function shiftBetween(buf: Buffer, w: number, h: number, a: number, b: number, maxShift: number): number {
+  const rowA = a * w * h + (h >> 1) * w;
+  const rowB = b * w * h + (h >> 1) * w;
+  let best = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let d = 0; d <= maxShift; d++) {
+    let score = 0;
+    for (let x = maxShift; x < w - maxShift; x += 2) {
+      score += Math.abs(buf[rowA + x]! - buf[rowB + x - d]!);
+    }
+    if (score < bestScore) {
+      bestScore = score;
+      best = d;
+    }
+  }
+  return best;
+}
+
 describe.runIf(ffmpegAvailable)("ticker crawl end to end", () => {
   it("draws the band once, the line once, and moves the line", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ticker-e2e-"));
@@ -58,7 +84,7 @@ describe.runIf(ffmpegAvailable)("ticker crawl end to end", () => {
     const scenePng = join(dir, "scene.png");
     writeFileSync(
       scenePng,
-      await renderSceneFrame({ payload: payload(), ...FRAME, tickerMode: "crawl" }, fonts)
+      await renderSceneFrame({ payload: payload(), ...FRAME, tickerCrawl: plan.placement }, fonts)
     );
     const strip = (await renderTickerStrip(
       { line: plan.line, height: plan.crawl.height, scale: overlayScale(FRAME.width), typographyPreset: "studio-sans" },
@@ -81,6 +107,7 @@ describe.runIf(ffmpegAvailable)("ticker crawl end to end", () => {
       crawl: plan.crawl,
       pxPerSecond: plan.pxPerSecond,
       periodPx: strip.inkWidth + plan.gapPx,
+      copies: resolveTickerCrawlCopies({ inkWidth: strip.inkWidth, gapPx: plan.gapPx, bandWidth: plan.crawl.width }).copies,
       stripInputIndex: 2,
       fps: FPS,
       from: "vscene",
@@ -108,25 +135,11 @@ describe.runIf(ffmpegAvailable)("ticker crawl end to end", () => {
     const h = plan.box.height;
     expect(buf.length / (w * h)).toBe(FPS);
 
-    // Ink inside the crawl run, per frame. The band's own fill is dark; the line is white.
-    const inkTail = (frame: number) => {
-      const base = frame * w * h;
-      const x0 = plan.crawl.left - plan.box.left;
-      for (let x = x0 + plan.crawl.width - 1; x >= x0; x--) {
-        for (let y = 0; y < h; y++) {
-          if (buf[base + y * w + x]! > 200) return x;
-        }
-      }
-      return -1;
-    };
-
-    const first = inkTail(0);
-    const later = inkTail(15);
     // The band is there: the scene PNG painted a dark bar where nothing was.
     expect(buf[0 * w * h + (h >> 1) * w + (w >> 1)]).toBeGreaterThan(0);
     // The line is there, and it moved by half a second of travel.
-    expect(first).toBeGreaterThan(0);
-    expect(Math.abs(first - later - Math.round(plan.pxPerSecond / 2))).toBeLessThanOrEqual(3);
+    const expected = Math.round(plan.pxPerSecond / 2);
+    expect(shiftBetween(buf, w, h, 0, 15, expected + 20)).toBeCloseTo(expected, -1);
 
     // And it is drawn ONCE: the scene PNG alone must carry no white ink in the crawl run.
     const sceneOnly = spawnSync(

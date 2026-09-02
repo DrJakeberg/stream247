@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { overlayTickerCrawlPlan, type OverlayScenePayloadView } from "@stream247/core";
-import { buildTickerCrawlFilter } from "../../apps/worker/src/ffmpeg-runtime";
+import { buildTickerCrawlFilter, resolveTickerCrawlCopies } from "../../apps/worker/src/ffmpeg-runtime";
 import { loadSceneRendererFonts, renderTickerStrip } from "../../apps/worker/src/scene-renderer";
 
 /**
@@ -52,6 +52,32 @@ function payload(ticker: string, seconds: number): OverlayScenePayloadView {
   };
 }
 
+
+/**
+ * How far the picture moved between two frames, by matching one against the other.
+ *
+ * Not "where is the last ink": with the band tiled by several copies of the line, the rightmost
+ * ink belongs to whichever copy happens to be furthest right, and a new copy entering makes that
+ * measurement jump. Matching the whole scanline measures the motion itself.
+ */
+function shiftBetween(buf: Buffer, w: number, h: number, a: number, b: number, maxShift: number): number {
+  const rowA = a * w * h + (h >> 1) * w;
+  const rowB = b * w * h + (h >> 1) * w;
+  let best = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let d = 0; d <= maxShift; d++) {
+    let score = 0;
+    for (let x = maxShift; x < w - maxShift; x += 2) {
+      score += Math.abs(buf[rowA + x]! - buf[rowB + x - d]!);
+    }
+    if (score < bestScore) {
+      bestScore = score;
+      best = d;
+    }
+  }
+  return best;
+}
+
 describe("ticker crawl filter", () => {
   it("wires the label it was given through to the one it was asked for", () => {
     const plan = overlayTickerCrawlPlan({ payload: payload("A line", 20) }, FRAME)!;
@@ -59,6 +85,7 @@ describe("ticker crawl filter", () => {
       crawl: plan.crawl,
       pxPerSecond: plan.pxPerSecond,
       periodPx: 300 + plan.gapPx,
+      copies: 3,
       stripInputIndex: 3,
       fps: FPS,
       from: "vscene",
@@ -103,6 +130,7 @@ describe("ticker crawl filter", () => {
         crawl: plan.crawl,
         pxPerSecond: plan.pxPerSecond,
         periodPx: strip.inkWidth + plan.gapPx,
+        copies: resolveTickerCrawlCopies({ inkWidth: strip.inkWidth, gapPx: plan.gapPx, bandWidth: plan.crawl.width }).copies,
         stripInputIndex: 1,
         fps: FPS,
         from: "0:v",
@@ -133,21 +161,11 @@ describe("ticker crawl filter", () => {
       const frames = buf.length / (w * h);
       expect(frames).toBe(2 * FPS);
 
-      const tailAt = (frame: number) => {
-        const base = frame * w * h;
-        for (let x = w - 1; x >= 0; x--) {
-          for (let y = 0; y < h; y++) {
-            if (buf[base + y * w + x]! > 32) return x;
-          }
-        }
-        return -1;
-      };
-
-      const first = tailAt(0);
-      const later = tailAt(10);
-      expect(first).toBeGreaterThan(0);
-      // Ten frames at the planned rate, to within a pixel of rounding at each end.
-      expect(Math.abs(first - later - Math.round((10 * plan.pxPerSecond) / FPS))).toBeLessThanOrEqual(2);
+      // Ten frames at the planned rate, measured by matching one frame against the other: with the
+      // band tiled by several copies, the rightmost ink belongs to whichever copy is furthest
+      // right, and a copy entering would make that jump.
+      const expected = Math.round((10 * plan.pxPerSecond) / FPS);
+      expect(shiftBetween(buf, w, h, 0, 10, expected + 20)).toBeCloseTo(expected, -1);
     },
     180_000
   );

@@ -77,6 +77,7 @@ import {
   resolveTwitchEventSubSecret,
   resolveTwitchScheduleSyncEnabled,
   type OverlayCustomLayerView,
+  type OverlayPlacementView,
   type OverlaySourceFrameView,
   type ResolvedEncoderQualitySettings,
   redactSecrets,
@@ -210,6 +211,7 @@ import {
   describeFfmpegExit,
   buildFfmpegInputArgs,
   buildSceneOverlayFilterComplex,
+  resolveTickerCrawlCopies,
   buildSourceLivePipFilterComplex,
   buildSourceLivePipInputArgs,
   decideLiveSourceAudio,
@@ -1928,9 +1930,12 @@ type AudioLaneCommandConfig = {
  */
 type TickerCrawlCommandConfig = {
   stripPath: string;
+  /** The placement the crawl was built against, frozen for the life of the process. */
+  placement: OverlayPlacementView;
   crawl: { left: number; top: number; width: number; height: number };
   pxPerSecond: number;
   periodPx: number;
+  copies: number;
 };
 
 /** The strip input, always appended after every other input so no existing index moves. */
@@ -1994,6 +1999,7 @@ function getFfmpegCommand(
           crawl: tickerCrawl.crawl,
           pxPerSecond: tickerCrawl.pxPerSecond,
           periodPx: tickerCrawl.periodPx,
+          copies: tickerCrawl.copies,
           stripInputIndex: (attachLive && liveSource ? pipInputIndex : sceneInputIndex) + 1,
           fps: output.fps
         }
@@ -2286,9 +2292,10 @@ function buildSceneRenderRequest(outputSettings: WorkerStreamOutputSettings): Sc
     // next one across a dwell boundary — a frame cached under the wrong name until something else
     // moved. Passing it makes the two exact rather than nearly always in agreement.
     now: new Date(),
-    // Only ever "crawl" when a crawl is actually running: a band drawn empty with nothing moving
-    // over it is a worse picture than a line standing still.
-    tickerMode: activeTickerCrawl ? "crawl" : "static"
+    // Only ever set when a crawl is actually running: a band drawn empty with nothing moving over
+    // it is a worse picture than a line standing still. It carries the placement rather than a flag
+    // so the band cannot be dragged out from under the line mid-programme.
+    tickerCrawl: activeTickerCrawl?.placement
   };
 }
 
@@ -2738,14 +2745,28 @@ async function prepareTickerCrawl(outputSettings: WorkerStreamOutputSettings): P
       return null;
     }
     await fs.writeFile(tickerStripPath, strip.png);
-    const periodPx = strip.inkWidth + plan.gapPx;
+    // How many copies the band needs is decided by the ink, not by a constant: two only ever
+    // tiled a bed narrower than one period, and every ordinary short notice is narrower than that.
+    const { copies, periodPx } = resolveTickerCrawlCopies({
+      inkWidth: strip.inkWidth,
+      gapPx: plan.gapPx,
+      bandWidth: plan.crawl.width
+    });
     logRuntimeEvent("scene.ticker.crawl", {
       ink: strip.inkWidth,
       period: periodPx,
+      copies,
       pxPerSecond: plan.pxPerSecond,
       seconds: Math.round(periodPx / Math.max(1, plan.pxPerSecond))
     });
-    return { stripPath: tickerStripPath, crawl: plan.crawl, pxPerSecond: plan.pxPerSecond, periodPx };
+    return {
+      stripPath: tickerStripPath,
+      placement: plan.placement,
+      crawl: plan.crawl,
+      pxPerSecond: plan.pxPerSecond,
+      periodPx,
+      copies
+    };
   } catch (error) {
     logRuntimeEvent("scene.ticker.failed", {
       error: error instanceof Error ? error.message : "Unknown ticker strip failure."
@@ -5018,6 +5039,10 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
   plannedStopReason = reason;
   const currentProcess = playoutProcess;
   stopSceneRendererLoop();
+  // The crawl belonged to the ffmpeg that is going away. No consumer can read it between here and
+  // the next start, which reassigns it — but leaving a dead process's geometry lying in a module
+  // variable is how the next reader gets it wrong.
+  activeTickerCrawl = null;
 
   if (!currentProcess || currentProcess.killed) {
     playoutProcess = null;

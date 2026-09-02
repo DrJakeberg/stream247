@@ -14,6 +14,7 @@ import {
   type OverlayChatView,
   type OverlayEngagementView,
   type OverlayGameView,
+  type OverlayPlacementView,
   type OverlayScenePayloadView,
   type OverlaySourceFrameView
 } from "@stream247/core";
@@ -30,11 +31,11 @@ export type SceneRenderRequest = {
   /** Wall clock for the on-air clock. Injected so a render can be made byte-for-byte repeatable. */
   now?: Date;
   /**
-   * How the ticker band is drawn. "crawl" when ffmpeg is running the line across it — the band is
-   * drawn empty and belongs to the process. Anything else draws the line at rest, which is what a
-   * still picture has to show.
+   * The placement a running crawl was built against, when one is running. Present means ffmpeg is
+   * moving the line across that exact rectangle, so the band is drawn empty and drawn there.
+   * Absent means draw the line at rest, which is what a still picture has to show.
    */
-  tickerMode?: "static" | "crawl";
+  tickerCrawl?: OverlayPlacementView;
 };
 
 export type SceneRenderSvgOptions = {
@@ -68,7 +69,7 @@ export async function renderSceneSvg(
         chat: request.chat ?? null,
         sourceFrame: request.sourceFrame ?? null
       },
-      { width: request.width, height: request.height, now: request.now, tickerMode: request.tickerMode }
+      { width: request.width, height: request.height, now: request.now, tickerCrawl: request.tickerCrawl }
     ) as Parameters<typeof satori>[0],
     {
       width: request.width,
@@ -87,6 +88,11 @@ export type TickerStripRequest = {
   /** overlayScale of the frame, so the strip's ink matches the band's at any output size. */
   scale: number;
   typographyPreset: string;
+  /**
+   * Canvas width override. Omitted, the width is estimated from the line length; the caller grows
+   * it and asks again when the rasterised ink reaches the edge, because the estimate is an estimate.
+   */
+  canvasWidth?: number;
 };
 
 export type TickerStripSvg = {
@@ -103,10 +109,11 @@ export type TickerStripSvg = {
  * waste: two copies of this strip are overlaid a period apart, and a transparent tail is what lets
  * the second copy show through the first's empty run instead of punching a hole in it.
  *
- * The width estimate is the 180-character stored cap against the worst glyph anybody can type — a
- * full-width CJK advance is one em, so line length times font size plus letter spacing, with a
- * third again on top and a margin past that. A line that outgrew its canvas would be cut, and a
- * cut line crawls a period that does not match its ink.
+ * The width is an ESTIMATE and is treated as one: line length times font size plus letter spacing,
+ * a third again on top, and a margin past that. It is right for anything anybody types and wrong
+ * for a wall of glyphs wider than 1.3 em — measured on the loaded face, U+1671 advances 2.02 em and
+ * the sleeping-face emoji 1.62, so 180 of either would be cut. A cut line crawls a period that does
+ * not match its ink, so the caller rasterises, measures, and asks again with a wider canvas.
  */
 export async function renderTickerStripSvg(
   request: TickerStripRequest,
@@ -120,7 +127,7 @@ export async function renderTickerStripSvg(
   const px = (value: number) => Math.round(value * request.scale);
   const fontSize = px(OVERLAY_TICKER_TEXT.fontSize);
   const letterSpacing = px(OVERLAY_TICKER_TEXT.letterSpacing);
-  const width = Math.ceil([...line].length * (fontSize + letterSpacing) * 1.3) + px(64);
+  const width = request.canvasWidth ?? Math.ceil([...line].length * (fontSize + letterSpacing) * 1.3) + px(64);
 
   const svg = await satori(
     {

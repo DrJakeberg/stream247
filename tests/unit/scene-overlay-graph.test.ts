@@ -13,6 +13,7 @@ const CRAWL = {
   crawl: { left: 102, top: 160, width: 1776, height: 58 },
   pxPerSecond: 89,
   periodPx: 540,
+  copies: 4,
   stripInputIndex: 3,
   fps: 30
 };

@@ -1012,7 +1012,9 @@ export function OverlaySettingsForm(props: {
               {tickerMessageCount > 1
                 ? ` Your ${String(tickerMessageCount)} messages are joined into one line, separated by a middot.`
                 : ""}{" "}
-              The preview shows the line at rest, because a still picture cannot show it moving.
+              The preview shows the line at rest, because a still picture cannot show it moving, and a change
+              here reaches the screen with the next programme rather than the next second: the line is one image
+              the encoder moves, and it is made when a programme starts.
             </p>
           ) : null}
 

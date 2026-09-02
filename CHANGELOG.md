@@ -12,10 +12,9 @@
 
   ffmpeg moves it now, at the output frame rate, for nothing per frame. The line is rendered once
   per programme as a transparent strip; a bed the size of the band's clear run does the clipping,
-  and two copies of the strip are laid down one period apart so the wrap is seamless rather than a
-  jump. Measured before any of it was written: exactly 4px of travel per frame at 120px/s and
-  30fps, clipped to the band, and the frame at the wrap carrying the same picture as the frames
-  three either side of it.
+  and as many copies of the strip as the bed needs are laid down a period apart, so the line tiles
+  the band continuously and enters at its right-hand edge. Measured before any of it was written:
+  exactly 4px of travel per frame at 120px/s and 30fps, clipped to the band.
 
   All the messages join into one running line, so the automatic rotation is gone. The seconds
   setting stops meaning how long a message stands and starts meaning how long one crossing of the
@@ -36,12 +35,37 @@
   a test. They agreed with one another by luck. They now build one graph from one function, which
   is also what let the ticker crawl reach all three instead of whichever was remembered.
 
+- The crawl laid down exactly two copies of the strip, which tiles only a bed narrower than one
+  period. Measured on the ordinary case — "Welcome to the stream" at 1080p, 213px of ink in a
+  1722-wide band — the rightmost column ever painted was 665: a thousand pixels of permanently
+  black bar, and the next pass materialising a quarter of the way across the band every three
+  seconds instead of entering at its right edge, which is the teleport the crawl exists to remove.
+  The copy count now comes out of the ink: `(K-1)*period + ink >= bandWidth`. Found by review
+  before it shipped; the suite could not see it because its ffmpeg probe ran two seconds and one
+  wrap takes nearly seven. There is now a test that runs a whole period, and with the old two
+  copies it fails with 761px of dead band and a 593px jump.
+
+- The strip's canvas was an estimate treated as a fact. A line of glyphs wider than 1.3 em — the
+  loaded face carries some at 2.02 — outgrew it and was silently CUT, so the crawl ran a period
+  that did not match its ink and the tail of the operator's text never reached air. The ink is now
+  measured against the canvas and the strip redrawn on a wider one when it has reached the edge.
+
+- A ticker panel dragged in the studio during a programme moved the band and left the line crawling
+  where the band used to be, over bare video, until the next block: the ffmpeg graph is fixed when
+  the programme starts and the renderer was reading the placement live. In crawl mode the band is
+  now drawn at the placement the crawl was built against, so the two cannot part company.
+
 - `overlay` ends with its LONGEST input, not with the picture it is drawing onto. The crawl adds a
   looped image and a colour source, both endless, so without `shortest=1` on the last overlay a
   two-second programme produced thirteen minutes of output and was still running when the probe
-  killed it — every block would have hung at its boundary and the channel would have stopped. Found
-  before it shipped, by a test that runs the real binary to its own end and reads the length back
-  instead of bounding the output with `-frames:v` the way the first probe did.
+  killed it. The crawl now ends with the picture it draws onto, whenever that picture ends.
+
+  Stated more carefully than it first was: this does not change when a playout process ends today.
+  On air the scene pipe never EOFs either, so the picture being drawn onto is itself endless and
+  the graph is bounded by nothing — exactly as it was before the crawl existed. What ends a
+  programme is the worker, through the duration bound or a stop. The first draft of this entry
+  claimed the channel would have hung at every boundary without it; that was measured against a
+  finite scene input and is not true of production.
 
 ## 1.5.42 - 2026-09-02
 

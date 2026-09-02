@@ -82,6 +82,9 @@ export function sceneFrameCacheKey(request: SceneRenderRequest): string {
     // per dwell, which is what makes the renderer redraw at all: without this term the ticker
     // would advance in the layout and never reach a viewer.
     overlayTickerLine(request.payload),
+    // The band is drawn from this, not from the text, whenever a crawl is running: a key that
+    // ignored it would let a frame rendered in one mode be pushed in the other.
+    request.tickerCrawl ?? null,
     // The clock is the other thing on the frame that moves without its data moving, and it moved
     // unseen: on a channel where nothing else changes -- a long VOD, no chat, no game -- the
     // renderer kept pushing the PNG it had and the on-air time stood at a stale minute. Same
@@ -120,23 +123,49 @@ function measureInkWidth(image: { width: number; height: number; pixels: Buffer 
 }
 
 /**
+ * The widest strip worth rasterising, on the design grid.
+ *
+ * 180 stored characters at the widest glyph the loaded face carries — U+1671 advances 2.02 em at
+ * font size 26 — is about 9500px, so this is roughly two and a half times the worst line anybody
+ * can type. It exists so a runaway estimate cannot ask for a framebuffer the box has to find.
+ */
+const TICKER_STRIP_MAX_WIDTH = 24_000;
+
+/**
  * Renders the ticker line to the transparent strip ffmpeg crawls across the band.
  *
  * Rasterised once per ticker text, not once per frame: the motion is ffmpeg moving this image, so
  * nothing here runs on the render tick. Null when there is no line, which is also how the caller
  * learns to build a graph without a crawl in it.
+ *
+ * The canvas is estimated from the line length and the estimate can be wrong — a wall of glyphs
+ * wider than 1.3 em outgrows it and the line is silently CUT, which puts a period on the crawl that
+ * does not match its ink and a tail on the picture that never reaches air. So the ink is measured
+ * and, if it has reached the edge, the canvas is doubled and the strip drawn again. Twice at most:
+ * four times the estimate covers every glyph in the face, and a strip is one band-tall picture.
  */
 export async function renderTickerStrip(
   request: TickerStripRequest,
   fonts: SceneRenderFont[]
 ): Promise<TickerStripFrame | null> {
-  const strip = await renderTickerStripSvg(request, fonts);
-  if (!strip) {
-    return null;
+  let canvasWidth = request.canvasWidth;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const strip = await renderTickerStripSvg({ ...request, canvasWidth }, fonts);
+    if (!strip) {
+      return null;
+    }
+    const image = new Resvg(strip.svg, {
+      fitTo: { mode: "width", value: strip.width },
+      background: "rgba(0,0,0,0)"
+    }).render();
+    const inkWidth = measureInkWidth(image);
+    const cut = inkWidth >= strip.width - 1;
+    if (!cut || strip.width >= TICKER_STRIP_MAX_WIDTH) {
+      return { ...strip, png: Buffer.from(image.asPng()), inkWidth };
+    }
+    canvasWidth = Math.min(TICKER_STRIP_MAX_WIDTH, strip.width * 2);
   }
-  const image = new Resvg(strip.svg, {
-    fitTo: { mode: "width", value: strip.width },
-    background: "rgba(0,0,0,0)"
-  }).render();
-  return { ...strip, png: Buffer.from(image.asPng()), inkWidth: measureInkWidth(image) };
+
+  return null;
 }

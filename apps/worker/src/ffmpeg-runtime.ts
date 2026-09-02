@@ -366,21 +366,51 @@ export function buildSourceLivePipFilterComplex(args: {
  * The x expression is wrapped in ffmpeg-level single quotes so its comma stays an argument
  * separator for mod() and does not end the filter.
  *
- * shortest=1 on the LAST overlay is not a detail, it is the difference between a channel and a
- * hung one. overlay ends with its LONGEST input, not its main one, and both of this chain's own
- * inputs — the looped strip and the colour bed — are endless. Measured without it: a two-second
- * programme produced thirteen minutes of output and was still going when the probe killed it, so
- * every block would have hung and the channel would have stopped at the first boundary. With it,
- * the same programme produces exactly 60 frames and 2.000000 seconds and ffmpeg exits by itself.
- * It cannot truncate anything either: the only finite input on that overlay is the picture it is
- * drawing onto.
+ * shortest=1 on the LAST overlay bounds the crawl to the picture it draws onto. overlay ends with
+ * its LONGEST input, not its main one, and both of this chain's own inputs — the looped strip and
+ * the colour bed — are endless. Measured on a graph whose only finite input was the programme: a
+ * two-second programme produced thirteen minutes of output and was still going when the probe
+ * killed it; with shortest=1, exactly 60 frames and 2.000000 seconds.
+ *
+ * It does NOT decide when a playout process ends today, and the first version of this comment
+ * wrongly said it did. On air the scene pipe never EOFs either, so [vscene] is endless and this
+ * overlay is bounded by nothing — exactly as the graph was before the crawl existed. What ends a
+ * programme is the worker: the duration bound, or stopPlayoutProcess. So this is correctness, not
+ * a rescue: it makes the crawl end with the picture whenever that picture ends, and it can never
+ * extend one, because the only input it could be bounded by is the one it is drawing onto
  */
+/**
+ * How many copies of the strip the band needs, and how far apart they run.
+ *
+ * The first version laid down exactly two, which tiles only a bed narrower than one period. Two
+ * copies reach at most `2*ink + gap`, so measured on the ordinary case — "Welcome to the stream" at
+ * 1080p, ink 213 against a 1722-wide band — the rightmost column ever painted was 665: a thousand
+ * pixels of permanently black bar, and the next pass materialising a quarter of the way across the
+ * band every three seconds instead of entering at its right edge. Which is the teleport the crawl
+ * exists to remove.
+ *
+ * The condition is coverage at the worst instant. With copies at x + iP for i = 0..K-1 and x in
+ * (-P, 0], the leftmost copy has just left the bed and the rest must already span it:
+ * (K-1)P + ink >= bandWidth. Two is the floor, because the wrap needs a copy standing where the
+ * first one began.
+ */
+export function resolveTickerCrawlCopies(args: { inkWidth: number; gapPx: number; bandWidth: number }): {
+  copies: number;
+  periodPx: number;
+} {
+  const periodPx = Math.max(1, Math.round(args.inkWidth + args.gapPx));
+  const needed = Math.ceil(Math.max(0, args.bandWidth - args.inkWidth) / periodPx) + 1;
+  return { copies: Math.max(2, needed), periodPx };
+}
+
 export type TickerCrawlGraph = {
   /** The clear run inside the band, from overlayTickerCrawlPlan. */
   crawl: { left: number; top: number; width: number; height: number };
   pxPerSecond: number;
   /** Ink width plus gap: how far the line travels before it repeats. */
   periodPx: number;
+  /** How many copies of the strip tile the bed. See resolveTickerCrawlCopies. */
+  copies: number;
   /** Index of the strip input, which is always appended after every other input. */
   stripInputIndex: number;
   fps: number;
@@ -397,12 +427,25 @@ export function buildTickerCrawlFilter(
   const { crawl } = args;
   const speed = Math.max(1, Math.round(args.pxPerSecond));
   const period = Math.max(1, Math.round(args.periodPx));
+  const copies = Math.max(2, Math.round(args.copies));
   const x = `-mod(t*${speed},${period})`;
+
+  const labels = Array.from({ length: copies }, (_value, index) => `tkc${String(index)}`);
+  let bed = "tkbed";
+  const stack = labels
+    .map((label, index) => {
+      const next = index === copies - 1 ? "tkband" : `tk${String(index)}`;
+      const at = index === 0 ? x : `${x}+${String(period * index)}`;
+      const chain = `[${bed}][${label}]overlay=x='${at}':y=0:format=auto[${next}];`;
+      bed = next;
+      return chain;
+    })
+    .join("");
+
   return (
     `color=c=black@0.0:s=${crawl.width}x${crawl.height}:r=${args.fps},format=rgba[tkbed];` +
-    `[${args.stripInputIndex}:v]format=rgba,split=2[tka][tkb];` +
-    `[tkbed][tka]overlay=x='${x}':y=0:format=auto[tk1];` +
-    `[tk1][tkb]overlay=x='${x}+${period}':y=0:format=auto[tkband];` +
+    `[${args.stripInputIndex}:v]format=rgba,split=${copies}${labels.map((label) => `[${label}]`).join("")};` +
+    stack +
     `[${args.from}][tkband]overlay=x=${crawl.left}:y=${crawl.top}:format=auto:shortest=1[${args.to}]`
   );
 }
