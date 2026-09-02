@@ -52,7 +52,6 @@ import {
   formatChatGameInfoReply,
   formatChatGameNoRoomReply,
   type ChatGameCommand,
-  evaluateViewerRequest,
   type ChatInteractionConfig,
   TWITCH_METADATA_WAITING_MESSAGE,
   isBroadcastChannelSplit,
@@ -290,6 +289,7 @@ import {
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 import { ActiveChatterRoster } from "./active-chatters.js";
+import { ChatViewerRequestPass } from "./chat-viewer-requests.js";
 import { EngagementGameTracker } from "./engagement-game.js";
 import {
   ChatGameRuntime,
@@ -7985,6 +7985,15 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
     return;
   }
 
+  const requestPass = new ChatViewerRequestPass({
+    queuedAssetIds: state.playout.queuedAssetIds,
+    history: {
+      markPlayed: markChatViewerRequestsPlayed,
+      listRecent: listRecentChatViewerRequests,
+      countQueued: countQueuedChatViewerRequests
+    }
+  });
+
   for (const effect of effects) {
     if (effect.kind === "skip-passed") {
       const now = new Date().toISOString();
@@ -8010,15 +8019,7 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
       continue;
     }
 
-    // The history the cooldown and the cap are decided on. A request whose asset has left the
-    // queue has been played and no longer counts against the cap; the cooldown looks back exactly
-    // as far as it is long.
-    await markChatViewerRequestsPlayed(state.playout.queuedAssetIds);
-    const [recentRequests, queuedRequestCount] = await Promise.all([
-      listRecentChatViewerRequests(new Date(Date.now() - Math.max(0, config.requestCooldownSeconds) * 1000).toISOString()),
-      countQueuedChatViewerRequests(state.playout.queuedAssetIds)
-    ]);
-    const verdict = evaluateViewerRequest({
+    const { verdict, queuedRequestCount } = await requestPass.decide({
       actor: effect.actor,
       query: effect.query,
       candidates: state.assets.map((asset) => ({
@@ -8027,9 +8028,6 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
         // Only assets that are ready and not blocked may be requested.
         requestable: asset.status === "ready" && !isAssetBlockedForAutomaticSelection(asset)
       })),
-      recentRequests,
-      queuedRequestCount,
-      queuedAssetIds: state.playout.queuedAssetIds,
       config,
       now: new Date()
     });
