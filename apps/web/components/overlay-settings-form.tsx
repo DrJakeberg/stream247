@@ -753,7 +753,7 @@ export function OverlaySettingsForm(props: {
                 ))}
               </select>
             </label>
-            <div className="button-row" style={{ gridColumn: "1 / -1" }}>
+            <div className="inline-form" style={{ gridColumn: "1 / -1" }}>
               <button
                 className="button secondary"
                 disabled={scenes.length >= MAX_NAMED_OVERLAY_SCENES}

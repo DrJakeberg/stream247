@@ -57,7 +57,9 @@ Main scene
 SCENE NAME
 SCENE VIDEO SOURCE
 Not linked to a source
-Add sceneDuplicate sceneDelete scene
+Add scene
+Duplicate scene
+Delete scene
 The scene you pick here is the one being edited and the one that goes on air when you publish. A linked video source fills in for any source layer in this scene that names none, so a duplicated scene can be pointed at another camera in one step. If that source is later removed, the scene keeps the name but the layer falls back to the still picture, exactly as an unlinked layer does.
 CHANNEL NAME
 HEADLINE
@@ -125,6 +127,8 @@ Signal Mono
 Neutral broadcast sans stack for everyday replay channels.
 Scene layer order
 Asset, insert, standby, and reconnect modes can now each resolve to different scene presets without changing the main live scene.
+PANEL PLACEMENT
+Every panel where the layout puts it
 POSITIONED LAYERS
 Add custom text, logo, image, website, widget, or chat-game layers on top of the preset layout. Text layers can switch to safe local font stacks, metadata widgets can read from the canonical scene payload, and browser frames remain limited by each provider's iframe and CSP rules.
 Add Text Layer
