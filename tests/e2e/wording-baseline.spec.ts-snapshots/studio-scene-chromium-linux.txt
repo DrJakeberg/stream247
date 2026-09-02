@@ -52,6 +52,13 @@ Reconnect
 AS IT GOES ON AIR
 <rendered scene>
 Enable overlay output
+SCENE
+Main scene
+SCENE NAME
+SCENE VIDEO SOURCE
+Not linked to a source
+Add sceneDuplicate sceneDelete scene
+The scene you pick here is the one being edited and the one that goes on air when you publish. A linked video source fills in for any source layer in this scene that names none, so a duplicated scene can be pointed at another camera in one step. If that source is later removed, the scene keeps the name but the layer falls back to the still picture, exactly as an unlinked layer does.
 CHANNEL NAME
 HEADLINE
 INSERT HEADLINE

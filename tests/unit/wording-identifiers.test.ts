@@ -47,6 +47,10 @@ const ENGLISH_COMPOUNDS = new Set([
   "on-screen",
   "chatter-participation",
   "check-in",
+  // The plural, from the sentence on the engagement page that says the chat connection stays up
+  // for moderator check-ins whether or not the rail is shown. Same English compound as the
+  // singular above, and no more a stored id than it is.
+  "check-ins",
   "curated-set",
   "dual-card",
   "embed-safe",
