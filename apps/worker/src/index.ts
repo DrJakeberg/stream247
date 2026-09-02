@@ -49,6 +49,9 @@ import {
   type LiveBridgeInputType,
   toUtcIsoForLocalDateTime,
   createDefaultChatInteractionConfig,
+  formatChatGameInfoReply,
+  formatChatGameNoRoomReply,
+  type ChatGameCommand,
   evaluateViewerRequest,
   type ChatInteractionConfig,
   TWITCH_METADATA_WAITING_MESSAGE,
@@ -126,6 +129,8 @@ import {
   clearChatGameRuntimeRecord,
   readChatGameRuntimeRecord,
   readChatGameSettingsRecord,
+  writeChatGameSettingsRecord,
+  updateAppState,
   readDatabaseSizeBytes,
   runAssetRetentionSweep,
   writeChatGameRuntimeRecord,
@@ -278,7 +283,13 @@ import {
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 import { EngagementGameTracker } from "./engagement-game.js";
-import { ChatGameRuntime, buildChatGameOverlayViewFromRuntimeRecord } from "./chat-game.js";
+import {
+  ChatGameRuntime,
+  buildChatGameOverlayViewFromRuntimeRecord,
+  hasActiveChatGameLayer,
+  resolveChatGameLayerProvisioning,
+  resolveChatGameLayerTeardown
+} from "./chat-game.js";
 import {
   getOutputGopSize,
   getOutputScaleFactor,
@@ -426,6 +437,7 @@ const twitchChatBridge = new TwitchChatBridge({
       scheduleChatGameFlush();
     }
   },
+  onChatGameCommand: (args) => handleChatGameCommand(args),
   // Any change to the overlay-facing buffer — a message that passed the display limiter, a
   // moderation removal, a disconnect clearing everything — reaches the persisted row within the
   // flush window. Moderation is why this cannot wait for the worker cycle: a deleted message
@@ -469,6 +481,80 @@ let latestEngagementSettings: AppState["engagement"] | null = null;
 let latestManagedConfig: AppState["managedConfig"] | null = null;
 // Effects the socket handler cannot apply itself; drained by the worker cycle.
 const pendingChatEffects: ChatControlEffect[] = [];
+
+// A game command may do real work at most this often. Info is a pair of reads, starting a round is
+// an overlay write plus a settings write plus a reconcile — a room typing "!game" in unison must
+// not turn that into a write storm, and Twitch would drop the duplicate replies anyway.
+const CHAT_GAME_COMMAND_COOLDOWN_MS = 5_000;
+let lastChatGameCommandAt = 0;
+
+/**
+ * Answers a game command from chat.
+ *
+ * Info is open to the room; starting and stopping a round are moderator-only, because they switch
+ * a panel on and off in the live broadcast — the one surface viewers cannot opt out of. The
+ * moderator badge is what Twitch puts on the operator's own account, so this needs no broadcaster
+ * right and no API call: the badge arrives in the PRIVMSG tags.
+ *
+ * Returns the line to say back, or "" for silence.
+ */
+async function handleChatGameCommand(args: {
+  command: ChatGameCommand;
+  actor: string;
+  isModerator: boolean;
+}): Promise<string> {
+  const now = Date.now();
+  if (now - lastChatGameCommandAt < CHAT_GAME_COMMAND_COOLDOWN_MS) {
+    return "";
+  }
+  lastChatGameCommandAt = now;
+
+  const settings = await readChatGameSettingsRecord();
+
+  if (args.command.kind === "info") {
+    // The settings row names which game the rules are for; the runtime says whether a round is
+    // actually on air. Both are needed: settings alone would announce a game nobody can see.
+    return formatChatGameInfoReply({
+      running: chatGameRuntime.isActive() ? { gameId: settings.gameId } : null,
+      settings
+    });
+  }
+
+  if (!args.isModerator) {
+    return `${args.actor}: only a moderator can start or stop a game. Type !game to see what is running.`;
+  }
+
+  if (args.command.kind === "stop") {
+    await updateAppState((state) => ({ ...state, overlay: { ...state.overlay, ...resolveChatGameLayerTeardown(state.overlay) } }));
+    await reconcileChatGame();
+    await appendAuditEvent("chat.game.stopped", `${args.actor} stopped the chat game from Twitch chat.`);
+    return "Game stopped.";
+  }
+
+  const gameId = args.command.gameId;
+  // The overlay first, then the rules: reconcileChatGame reads both, and a settings row naming a
+  // game nobody can see would be the exact state the operator reported — a game that "does
+  // nothing". Writing the layer first means the worst interleaving is an empty panel for one
+  // cycle, never a silently ignored round.
+  const written = await updateAppState((state) => {
+    const provisioning = resolveChatGameLayerProvisioning(state.overlay);
+    return provisioning.ok ? { ...state, overlay: { ...state.overlay, ...provisioning.overlay } } : state;
+  });
+  // Judged on the state as written, never on what chat asked for: normalizeState drops layers past
+  // the studio's cap without a word, and a reply built from the intent would announce a board
+  // nobody can see. Nothing else is touched on a refusal — no rules row, no audit line, and the
+  // overlay is exactly as the operator left it.
+  if (!hasActiveChatGameLayer(written.overlay)) {
+    return formatChatGameNoRoomReply({ gameId, layerCount: written.overlay.customLayers.length });
+  }
+  await writeChatGameSettingsRecord({ ...settings, gameId, updatedAt: new Date().toISOString() });
+  // Immediately, not on the next cycle: a viewer who typed "!snake" and waits half a minute for a
+  // board concludes the command did not work and types it again.
+  await reconcileChatGame();
+  await appendAuditEvent("chat.game.started", `${args.actor} started ${gameId} from Twitch chat.`);
+
+  return formatChatGameInfoReply({ running: { gameId }, settings: { ...settings, gameId } });
+}
 
 // Game-state writes are throttled to one per this window. State writes go through the global
 // serialisation lock, and a room hammering four emotes must not turn into a write per message —
@@ -586,7 +672,8 @@ async function flushChatOverlayMessages(): Promise<void> {
       ? twitchChatBridge.getRecentMessages().map((event) => ({
           name: event.actor,
           text: event.message,
-          at: event.createdAt
+          at: event.createdAt,
+          ...(event.segments.length > 0 ? { segments: event.segments } : {})
         }))
       : []
   };
@@ -7981,8 +8068,7 @@ async function reconcileChatInteraction(): Promise<void> {
 async function reconcileChatGame(): Promise<void> {
   const settings = await readChatGameSettingsRecord();
   const state = await readAppState();
-  const active =
-    state.overlay.enabled && state.overlay.customLayers.some((layer) => layer.kind === "game" && layer.enabled);
+  const active = hasActiveChatGameLayer(state.overlay);
 
   // The persisted round is only fetched when the runtime might adopt it: on activation, or after
   // a restart when memory is empty. A running round never re-reads its own writes.

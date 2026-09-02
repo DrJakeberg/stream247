@@ -70,6 +70,99 @@ export const CHAT_GAMES: ChatGameOptionDefinition[] = [
 
 export const CHAT_GAME_DIRECTIONS: ChatGameDirection[] = ["up", "down", "left", "right"];
 
+/**
+ * What a chat line asked the game system to do. Distinct from ChatGameInput on purpose: an input
+ * steers a running round, a command decides which round is running at all.
+ */
+export type ChatGameCommand = { kind: "info" } | { kind: "start"; gameId: ChatGameId } | { kind: "stop" };
+
+/** The word that asks for help. Every other command is a game's own id. */
+export const CHAT_GAME_INFO_COMMAND = "game";
+
+const CHAT_GAME_STOP_WORDS = ["stop", "off", "end"];
+
+/**
+ * Resolves one chat line into a game command, or null when it is not one.
+ *
+ * The "!" is optional only for the question ("game" answers like "!game"); a start or stop needs it.
+ * and a room that types "game" and gets nothing reads as the feature being broken. Matching is on
+ * the whole line — a command is the entire message, never a word buried in a sentence, so talking
+ * *about* snake cannot start a round.
+ *
+ * An unrecognised argument after "game" answers with the help text rather than nothing: someone
+ * who typed "!game snek" was asking what the games are.
+ */
+export function resolveChatGameCommand(message: string): ChatGameCommand | null {
+  const normalized = String(message ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  // The bang is what separates a command from conversation. Asking about the games costs nothing
+  // on air, so "game" answers with or without it; starting or stopping a round changes the
+  // broadcast, so a bare game name — "2048" typed in passing — is ordinary chat and does nothing.
+  const bang = normalized.startsWith("!");
+  const body = bang ? normalized.slice(1) : normalized;
+  const separator = body.indexOf(" ");
+  const head = separator === -1 ? body : body.slice(0, separator);
+  const rest = separator === -1 ? "" : body.slice(separator + 1).trim();
+
+  const startedGame = CHAT_GAMES.find((game) => game.id === head);
+  if (startedGame) {
+    return rest || !bang ? null : { kind: "start", gameId: startedGame.id };
+  }
+
+  if (head !== CHAT_GAME_INFO_COMMAND) {
+    return null;
+  }
+
+  if (!rest || !bang) {
+    return { kind: "info" };
+  }
+  if (CHAT_GAME_STOP_WORDS.includes(rest)) {
+    return { kind: "stop" };
+  }
+
+  const requested = CHAT_GAMES.find((game) => game.id === rest);
+  return requested ? { kind: "start", gameId: requested.id } : { kind: "info" };
+}
+
+/**
+ * The reply "!game" gets, as one chat line.
+ *
+ * Viewer-facing and literally true: it names what is running right now, and every command it
+ * mentions is one resolveChatGameCommand accepts. Kept well under Twitch's 500-character message
+ * limit so it is never truncated mid-command.
+ */
+export function formatChatGameInfoReply(args: {
+  /** The round on air, or null when nothing is running. */
+  running: { gameId: ChatGameId } | null;
+  settings: ChatGameSettings;
+}): string {
+  const commands = CHAT_GAMES.map((game) => `!${game.id}`).join(" ");
+  const map = args.settings.emoteMap;
+
+  if (!args.running) {
+    return `No game is running. Start one: ${commands} — then steer with ${map.up} ${map.down} ${map.left} ${map.right}, or type a cell like b3 in Minesweeper. !game stop ends a round.`;
+  }
+
+  const running = CHAT_GAMES.find((game) => game.id === args.running?.gameId);
+  const steering =
+    running?.input === "cells" ? "type a cell like b3" : `steer with ${map.up} ${map.down} ${map.left} ${map.right}`;
+  return `${running?.label ?? "A game"} is on air — ${steering}. Other games: ${commands}. !game stop ends the round.`;
+}
+
+/**
+ * The reply a start gets when the studio's layer cap left no room for the game layer.
+ *
+ * Names what is in the way and what fixes it, and nothing about a game: the board is not on air,
+ * and the room is not told otherwise. The count is the studio's own, so an operator reading over
+ * the moderator's shoulder recognises their scene in it.
+ */
+export function formatChatGameNoRoomReply(args: { gameId: ChatGameId; layerCount: number }): string {
+  return `No room for the game layer: the studio already has ${args.layerCount} layers. Remove one in the studio, then try !${args.gameId} again.`;
+}
+
 // Bounds on the playfield. Below the minimum a round is over in a handful of inputs; above the
 // maximum the cells become unreadable at broadcast resolution.
 const MIN_GRID_WIDTH = 8;

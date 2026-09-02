@@ -66,7 +66,8 @@ export function ChatGameSettingsForm({ chatGame }: { chatGame: ChatGameSettingsR
           <span className="label">Chat game</span>
           <div className="subtle">
             The game moves only when chat sends the mapped emotes — one accepted message, one move. It appears on
-            air wherever a scene has an enabled Chat Game layer in Scene Studio.
+            air wherever a scene has an enabled Chat Game layer, which a moderator can add from chat with !snake,
+            !minesweeper, or !2048 without opening Scene Studio.
           </div>
           <div className="form-grid" style={{ marginTop: 12 }}>
             <label>

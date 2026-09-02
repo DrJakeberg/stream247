@@ -6475,6 +6475,13 @@ export type ChatOverlayMessageRecord = {
   text: string;
   /** ISO timestamp of arrival; the projection uses it to age messages off air. */
   at: string;
+  /**
+   * The message split into text runs and emote pictures, from the PRIVMSG tag the worker read.
+   * Optional, and empty for a message without emotes: rows written before emotes existed simply
+   * have no key here and draw as plain text, so no migration is involved — this lives inside the
+   * existing `messages` jsonb column.
+   */
+  segments?: { kind: string; text?: string; id?: string; url?: string }[];
 };
 
 export type ChatOverlayMessagesRecord = {
@@ -6495,6 +6502,40 @@ const CHAT_OVERLAY_MESSAGES_STORED_MAX = 12;
  * an old shape, a hand edit — comes back as bounded plain strings. Zero-width and control
  * characters are stripped here because this text's only consumer is a broadcast frame.
  */
+// The one host that may end up as an <img src> on the broadcast. The segments are derived from a
+// message a stranger typed, and the renderer will fetch whatever URL reaches it — so the address
+// is pinned here rather than trusted, and a hand-edited row cannot make the overlay call out to
+// somewhere else. Twitch serves every emote, global and channel, from this host.
+const CHAT_EMOTE_URL_PREFIX = "https://static-cdn.jtvnw.net/emoticons/";
+
+/** At most this many pieces per message; the panel draws far fewer, this only bounds the row. */
+const CHAT_OVERLAY_SEGMENTS_MAX = 24;
+
+function normalizeChatOverlaySegments(value: unknown): ChatOverlayMessageRecord["segments"] {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const segments = value
+    .map((entry) => {
+      const record = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+      if (record.kind === "emote") {
+        const url = String(record.url ?? "");
+        return url.startsWith(CHAT_EMOTE_URL_PREFIX)
+          ? { kind: "emote", id: String(record.id ?? "").slice(0, 64), url: url.slice(0, 200) }
+          : null;
+      }
+      const text = stripInvisibleCharacters(String(record.text ?? "")).slice(0, 200);
+      return text ? { kind: "text", text } : null;
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .slice(0, CHAT_OVERLAY_SEGMENTS_MAX);
+
+  // A message with no emote left after filtering is a plain line; storing an empty or text-only
+  // segment list would only add bytes the renderer would ignore.
+  return segments.some((entry) => entry.kind === "emote") ? segments : undefined;
+}
+
 function normalizeChatOverlayMessages(value: unknown): ChatOverlayMessageRecord[] {
   if (!Array.isArray(value)) {
     return [];
@@ -6503,10 +6544,12 @@ function normalizeChatOverlayMessages(value: unknown): ChatOverlayMessageRecord[
   return value
     .map((entry) => {
       const record = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+      const segments = normalizeChatOverlaySegments(record.segments);
       return {
         name: stripInvisibleCharacters(String(record.name ?? "")).trim().slice(0, 80),
         text: stripInvisibleCharacters(String(record.text ?? "")).trim().slice(0, 200),
-        at: stripInvisibleCharacters(String(record.at ?? "")).trim().slice(0, 40)
+        at: stripInvisibleCharacters(String(record.at ?? "")).trim().slice(0, 40),
+        ...(segments ? { segments } : {})
       };
     })
     .filter((entry) => entry.name && entry.text && entry.at)

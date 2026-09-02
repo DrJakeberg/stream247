@@ -27,6 +27,14 @@ export type OverlayLayoutNode = {
      * URL is fetched by satori itself and only re-fetched when the frame's cache key changes.
      */
     src?: string;
+    /**
+     * Image nodes only: the intrinsic size, declared so satori never has to derive it from the
+     * bytes. Mandatory for any picture it might fail to fetch — without a declared size satori
+     * throws "Image size cannot be determined" and the whole frame is lost, so one unreachable
+     * chat emote would take the entire overlay off air.
+     */
+    width?: number;
+    height?: number;
   };
 };
 
@@ -117,6 +125,12 @@ export type OverlayEngagementView = {
 export type OverlayChatMessageView = {
   name: string;
   text: string;
+  /**
+   * The message split into literal text and emote pictures, from the PRIVMSG `emotes` tag. Absent
+   * on rows written before emotes were read, and on messages that contain none — the panel then
+   * draws `text` exactly as it always did.
+   */
+  segments?: { kind: string; text?: string; id?: string; url?: string }[];
 };
 
 /**
@@ -616,9 +630,9 @@ const CHAT_TEXT_MAX_CHARS = 40;
  * Chat text arrives from strangers. Control characters can break satori's text shaping, bidi
  * overrides can reverse what the frame appears to say, and zero-width characters smuggle both —
  * all of it is stripped, and runs of whitespace (including newlines) collapse to single spaces so
- * a message is one line of plain text before any clamping happens. Twitch emote codes are not
- * special-cased: satori draws text, not emote images, so a code like "Kappa" stays visible as its
- * word.
+ * a message is one line of plain text before any clamping happens. A message whose emote ranges
+ * were read draws its emotes as pictures instead (see buildChatMessageNodes); this remains the
+ * path for the text between them, and the whole path for a message with no emotes in it.
  */
 function sanitizeChatLine(value: unknown): string {
   return (
@@ -630,6 +644,89 @@ function sanitizeChatLine(value: unknown): string {
       .replace(/ {2,}/g, " ")
       .trim()
   );
+}
+
+// How many emote pictures one message may put on air. A room can paste thirty emotes into one
+// line; drawing them all would push the row past the panel and cost a network fetch each. Past
+// this many the rest of the message degrades to its literal text, which is what the panel drew
+// before emotes existed.
+const CHAT_MESSAGE_MAX_EMOTES = 6;
+
+// An emote picture is drawn one line-height tall, so a message with emotes is exactly as tall as
+// one without and the panel's height claim at OVERLAY_CHAT_PANEL_MAX_MESSAGES still holds.
+const CHAT_EMOTE_BOX = 22;
+
+/**
+ * One chat message as drawn nodes: text runs, with emote pictures placed inline where the PRIVMSG
+ * tag said they are.
+ *
+ * The `width`/`height` props on the image are not decoration. satori determines an image's
+ * intrinsic size by fetching it, and when the fetch fails it throws "Image size cannot be
+ * determined" — which loses the entire overlay frame, not just the emote. With both declared it
+ * skips the unreachable picture and renders everything else, so a CDN outage costs an emote rather
+ * than the broadcast overlay. Measured against satori 0.29: unreachable URL with declared size
+ * renders in ~19ms and draws no image; without it, the render throws.
+ *
+ * Returns null when the message has no usable segments, so callers fall back to plain text. The
+ * pieces come back inside their own row so the panel's name/body gap stays one gap: inside a
+ * message, text and the emote next to it sit tight against each other the way chat renders them.
+ */
+function buildChatMessageBody(
+  message: OverlayChatMessageView,
+  scale: number,
+  budget: number
+): OverlayLayoutNode | null {
+  const segments = message.segments ?? [];
+  if (!segments.some((segment) => segment.kind === "emote" && segment.url)) {
+    return null;
+  }
+
+  const px = (value: number) => Math.round(value * scale);
+  const nodes: OverlayLayoutNode[] = [];
+  let remaining = budget;
+  let emotes = 0;
+
+  for (const segment of segments) {
+    if (remaining <= 0) {
+      break;
+    }
+
+    if (segment.kind === "emote") {
+      const url = String(segment.url ?? "");
+      // Only what the rasteriser can resolve, the same rule buildMediaPanel applies to logos.
+      if (emotes >= CHAT_MESSAGE_MAX_EMOTES || !/^(data:image\/|https:\/\/)/.test(url)) {
+        continue;
+      }
+      emotes += 1;
+      // An emote costs three characters of the row budget: its 22px box plus the 4px gap is about
+      // 2.6 glyphs of the 19px text beside it, so a wall of emotes clamps like a wall of words.
+      remaining -= 3;
+      nodes.push({
+        type: "img",
+        props: {
+          src: url,
+          width: px(CHAT_EMOTE_BOX),
+          height: px(CHAT_EMOTE_BOX),
+          style: { width: px(CHAT_EMOTE_BOX), height: px(CHAT_EMOTE_BOX), objectFit: "contain" }
+        }
+      });
+      continue;
+    }
+
+    const value = clampOverlayText(sanitizeChatLine(segment.text), remaining);
+    if (!value) {
+      continue;
+    }
+    remaining -= value.length;
+    nodes.push(label(value, { color: INK_PRIMARY, fontSize: px(19), lineClamp: 1 }));
+  }
+
+  // The row must yield to the panel, not the other way round: a nowrap row of labels and pictures
+  // has an intrinsic width no character budget can bound (glyph widths are not characters), and
+  // without minWidth 0 it would push the chatter's name to nothing and run onto bare video.
+  return nodes.length > 0
+    ? row({ alignItems: "center", gap: px(4), minWidth: 0, flexShrink: 1, overflow: "hidden" }, nodes)
+    : null;
 }
 
 /**
@@ -653,9 +750,12 @@ function buildChatPanel(
   const messages = chat.messages
     .map((message) => ({
       name: clampOverlayText(sanitizeChatLine(message.name), CHAT_NAME_MAX_CHARS),
-      text: clampOverlayText(sanitizeChatLine(message.text), CHAT_TEXT_MAX_CHARS)
+      text: clampOverlayText(sanitizeChatLine(message.text), CHAT_TEXT_MAX_CHARS),
+      // Emote pictures replace the codes inside the text, so a message that is nothing but emotes
+      // has no text left to pass the filter below — the body decides whether the row is drawable.
+      body: buildChatMessageBody(message, scale, CHAT_TEXT_MAX_CHARS)
     }))
-    .filter((message) => message.name && message.text)
+    .filter((message) => message.name && (message.text || message.body))
     .slice(-limit);
 
   if (messages.length === 0) {
@@ -663,18 +763,29 @@ function buildChatPanel(
   }
 
   const rows = messages.map((message, index) =>
-    row({ alignItems: "flex-start", gap: px(10), ...(index > 0 ? { marginTop: px(8) } : {}) }, [
+    row({ alignItems: "center", gap: px(10), ...(index > 0 ? { marginTop: px(8) } : {}) }, [
       label(message.name, {
         color: accentTextColor(accent),
         fontSize: px(19),
-        fontWeight: 700
+        fontWeight: 700,
+        // The name is the fixed part of the row; the message yields, never the name.
+        flexShrink: 0
       }),
-      label(message.text, {
-        color: INK_PRIMARY,
-        fontSize: px(19),
-        // One drawn line per message, whatever the glyph widths — the height claim depends on it.
-        lineClamp: 1
-      })
+      message.body ??
+        label(message.text, {
+          color: INK_PRIMARY,
+          fontSize: px(19),
+          // One drawn line per message, whatever the glyph widths — the height claim depends on it.
+          // satori honours lineClamp only on a block container; on the flex label it never
+          // applied, and a 34-wide-glyph message measured 44px — two lines — on the rasteriser.
+          // Block display makes the clamp real, and the row yields to the panel instead of
+          // pushing the name to nothing.
+          lineClamp: 1,
+          display: "block",
+          minWidth: 0,
+          flexShrink: 1,
+          overflow: "hidden"
+        })
     ])
   );
 

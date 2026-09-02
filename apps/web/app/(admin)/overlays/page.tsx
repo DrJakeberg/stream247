@@ -123,7 +123,7 @@ export default async function OverlaysPage() {
             ? chatGameRuntime.gameId
               ? "A round is running. The board renders in every scene whose Chat Game layer is enabled."
               : "The Chat Game layer is enabled; the worker starts a round on its next cycle."
-            : "No scene has an enabled Chat Game layer. Add one in Scene Studio to put the game on air."}
+            : "No scene has an enabled Chat Game layer yet. A moderator typing !snake, !minesweeper, or !2048 in chat adds and enables one; !game answers with the list, and !game stop takes the board off air."}
         </div>
         {!chatRuntimeEnabled ? (
           <div className="subtle" style={{ marginBottom: 12 }}>

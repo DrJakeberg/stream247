@@ -17,7 +17,13 @@ export type ChatOverlayMessagesSource = {
   enabled: boolean;
   position: string;
   maxMessages: number;
-  messages: { name: string; text: string; at: string }[];
+  messages: {
+    name: string;
+    text: string;
+    at: string;
+    /** Text runs and emote pictures, when the worker read emote ranges off the PRIVMSG tag. */
+    segments?: { kind: string; text?: string; id?: string; url?: string }[];
+  }[];
 };
 
 // How long one message stays on air. Five minutes on purpose: it is the same window
@@ -54,6 +60,12 @@ export function buildChatOverlayViewFromMessages(
   return {
     position: source.position,
     maxMessages,
-    messages: fresh.slice(-maxMessages).map((message) => ({ name: message.name, text: message.text }))
+    messages: fresh.slice(-maxMessages).map((message) => ({
+      name: message.name,
+      text: message.text,
+      // Passed through rather than re-derived: the emote ranges only ever existed in the IRC tag,
+      // which this container never sees. Absent for a message without emotes, which draws as text.
+      ...(message.segments && message.segments.length > 0 ? { segments: message.segments } : {})
+    }))
   };
 }

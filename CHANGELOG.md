@@ -54,6 +54,74 @@
   names the state in ordinary language, names what is paused while it lasts, and distinguishes a
   connection that is repairing itself from one that genuinely needs the account connected again.
   The stored message stays available underneath rather than leading.
+### Fixed
+
+- Chat games and emotes, three things the adversarial review of that change found and measured
+  before it shipped. A studio already holding its maximum of eight custom layers accepted `!snake`,
+  silently dropped the ninth layer the game needed, still flipped the overlay on and still told the
+  room "Snake is on air" while nothing was drawn; a start the store has no room for is now refused
+  with a reply that says so, and nothing is written. On the broadcast renderer a message at every
+  documented limit — a 14-glyph name, six emotes, 40 characters — drew its emote row 84px past the
+  chat panel onto bare video and squeezed the chatter's name to 0px; the name is now fixed and the
+  row yields. The same measurement showed a fault older than emotes: satori applies `lineClamp`
+  only to a block container, and the text label was flex, so a wide message had always drawn two
+  lines where the panel's height budget assumes one. And a bare game name typed in passing —
+  "2048" — started a round, because the parser copied the check-in's optional "!"; starting or
+  stopping now needs the bang, while asking about the games still answers without it.
+- The chat overlay drew emote codes as words. Twitch never sends emote pictures: a PRIVMSG carries
+  the literal text plus an `emotes` tag naming which ranges of that text are emotes. The bridge's
+  IRC parser read `display-name`, `badges`, `mod` and `id` out of the tags and dropped `emotes`
+  entirely, so nothing downstream could tell "Kappa" the emote from "Kappa" the word, and the panel
+  had no choice but to draw the word.
+
+  The tag is now read into ordered occurrences, split into text runs and emote pictures once per
+  message (not per frame), carried through the `chat_overlay_messages` row, and drawn as inline
+  `<img>` nodes. Positions are counted in code points, which is Twitch's own unit — slicing the
+  raw string would put every emote after an emoji two characters off — and the trim the parser
+  already applied shifts them by the same amount.
+
+  Measured against satori 0.29 and resvg on this machine, 1920x1080: a text-only frame rasterises
+  in ~81ms (satori 2.9ms, resvg 78ms). One emote by https URL costs satori 61.6ms cold and 12.8ms
+  once satori's own image cache is warm; the same emote inlined as a data URI costs 2.0ms. At the
+  renderer's one-frame-per-second cadence the URL path is affordable, so no separate image cache
+  was added.
+
+  What did need care: satori determines an image's intrinsic size by fetching it, and on a failed
+  fetch it throws `Image size cannot be determined` — which loses the whole frame, not just the
+  emote. Measured: twelve emote URLs of which two 404 threw the entire render; one unresolvable
+  host threw in 2.5ms. Declaring `width` and `height` on the image node makes satori skip the
+  unreachable picture and render everything else (~19ms). Every emote node therefore carries a
+  declared size, and a smoke test rasterises a frame with a deliberately unresolvable emote host to
+  hold that property. The stored emote address is also pinned to `static-cdn.jtvnw.net/emoticons/`
+  on the way into and out of the row, so text a stranger typed can never become an outbound request
+  to somewhere else. No schema change: the segments live inside the existing `messages` jsonb
+  column, and a row written before this change simply has no segments and draws as plain text.
+
+  Twitch sends the `emotes` tag to every member of the room and serves the pictures from an
+  unauthenticated CDN, so this works with the moderator account exactly as it would with the
+  broadcaster's.
+
+- The chat game's direction emotes did nothing. `reconcileChatGame` treats a game as active only
+  while `overlay.enabled` is true *and* some scene layer of kind `game` is enabled — and a fresh
+  install has `enabled: false` and `customLayers: []`. Every `⬆` the room sent was resolved against
+  a runtime with no settings and no state and was discarded silently. There was no way for a viewer
+  to fix that and no way for an operator to guess it: the only cure was adding a Chat Game layer by
+  hand in Scene Studio first.
+
+- Chat had no way to ask about games or start one. `!game` now answers in chat with what is
+  running, the games there are, and how to steer them; `!snake`, `!minesweeper` and `!2048` start a
+  round and `!game stop` ends it. The "!" is optional, matching the moderator check-in, and a
+  command must be the whole message — talking about snake cannot start one.
+
+  Starting a round provisions what it needs: it enables the overlay and adds an enabled Chat Game
+  layer, using the studio's own default placement so the operator can move, rename or switch off
+  afterwards exactly as usual. An existing game layer is re-enabled rather than duplicated, and
+  stopping switches the layer off while leaving the overlay published — chat started the game, it
+  did not publish the overlay. The reconcile runs immediately rather than on the next 30s cycle, so
+  a board appears while the viewer is still looking. Info is open to the room; starting and
+  stopping require the moderator badge Twitch puts in the message tags, because they change a live
+  broadcast — no broadcaster right and no API call is involved. Commands do real work at most once
+  every five seconds, so a room typing in unison cannot become a write storm.
 
 ## 1.5.36 - 2026-09-01
 

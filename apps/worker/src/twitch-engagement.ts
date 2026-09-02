@@ -3,9 +3,15 @@ import { randomUUID } from "node:crypto";
 import {
   createDefaultModerationConfig,
   formatPresenceClampReply,
+  buildChatMessageSegments,
   isEngagementChatRuntimeEnabled,
+  parseTwitchEmoteTag,
   resolveBroadcastChannelLogin,
-  resolveModeratorCheckIn
+  resolveChatGameCommand,
+  resolveModeratorCheckIn,
+  type ChatEmoteOccurrence,
+  type ChatGameCommand,
+  type ChatMessageSegment
 } from "@stream247/core";
 import type { AppState, EngagementEventRecord } from "@stream247/db";
 import { appendEngagementEventRecord } from "@stream247/db";
@@ -96,6 +102,12 @@ export type TwitchChatMessage = {
   login: string;
   message: string;
   isModerator: boolean;
+  /**
+   * Which ranges of `message` are emotes, from the PRIVMSG `emotes` tag. Twitch sends the tag to
+   * every member of the room, so a moderator account reads exactly what a broadcaster would — this
+   * needs no scope and no API call. Empty when the message contains no emotes.
+   */
+  emotes: ChatEmoteOccurrence[];
 };
 
 /**
@@ -134,6 +146,16 @@ type ModeratorPresenceWindow = NonNullable<ReturnType<typeof resolveModeratorChe
 type TwitchChatBridgeOptions = {
   onModeratorPresenceCheckIn?: (window: ModeratorPresenceWindow) => Promise<void> | void;
   onChatMessage?: (message: TwitchChatMessage & { createdAt: string }) => Promise<void> | void;
+  /**
+   * A game command from the room ("!game", "!snake", "!game stop"). Returns the line to say back,
+   * or "" to stay silent. Async because starting a round touches the overlay and the game rows —
+   * unlike the check-in reply, which is pure formatting.
+   */
+  onChatGameCommand?: (args: {
+    command: ChatGameCommand;
+    actor: string;
+    isModerator: boolean;
+  }) => Promise<string> | string;
   /** Fired whenever the overlay-facing message buffer changes: a display-worthy message arrived,
    * a moderation line removed something, or a disconnect cleared the buffer. The worker throttles
    * the resulting flush, so firing per change is cheap. */
@@ -210,7 +232,19 @@ export function parseTwitchIrcMessage(line: string): TwitchChatMessage | null {
   );
   const login = (match.groups.source.split("!")[0] || "").toLowerCase();
   const actor = (tags["display-name"] || "").replace(/\\s/g, " ").trim() || login || "Viewer";
-  const message = match.groups.message.trim();
+  const raw = match.groups.message;
+  const message = raw.trim();
+  // Twitch numbers the emote ranges against the message as sent, so trimming has to move them by
+  // the same amount or every emote after a leading space would be drawn one position too far left.
+  // Counted in code points because that is the unit the tag uses.
+  const leading = [...raw.slice(0, raw.length - raw.trimStart().length)].length;
+  const emotes = parseTwitchEmoteTag(tags.emotes || "")
+    .map((occurrence) => ({
+      id: occurrence.id,
+      start: occurrence.start - leading,
+      end: occurrence.end - leading
+    }))
+    .filter((occurrence) => occurrence.start >= 0);
   const badges = String(tags.badges || "");
   const isModerator =
     tags.mod === "1" ||
@@ -224,7 +258,8 @@ export function parseTwitchIrcMessage(line: string): TwitchChatMessage | null {
     actor,
     login,
     message,
-    isModerator
+    isModerator,
+    emotes
   };
 }
 
@@ -290,7 +325,7 @@ export class TwitchChatBridge {
   // Entries carry the login alongside the display event: CLEARCHAT names the login, and a
   // localised display name may share no characters with it. The login never leaves this buffer —
   // getRecentMessages and everything downstream see only the display record.
-  private readonly messages = createRingBuffer<EngagementEventRecord & { login: string }>(50);
+  private readonly messages = createRingBuffer<EngagementEventRecord & { login: string; segments: ChatMessageSegment[] }>(50);
   private limiter = createChatRateLimiter(30);
   private moderationConfig: AppState["moderation"] = createDefaultModerationConfig();
   /** Last time the socket produced anything; 0 while never connected. */
@@ -308,12 +343,14 @@ export class TwitchChatBridge {
   private handshakeLogBudget = 0;
   private readonly onModeratorPresenceCheckIn?: TwitchChatBridgeOptions["onModeratorPresenceCheckIn"];
   private readonly onChatMessage?: TwitchChatBridgeOptions["onChatMessage"];
+  private readonly onChatGameCommand?: TwitchChatBridgeOptions["onChatGameCommand"];
   private readonly onOverlayMessagesChanged?: TwitchChatBridgeOptions["onOverlayMessagesChanged"];
   private readonly onConnectionPhaseChanged?: TwitchChatBridgeOptions["onConnectionPhaseChanged"];
 
   constructor(options: TwitchChatBridgeOptions = {}) {
     this.onModeratorPresenceCheckIn = options.onModeratorPresenceCheckIn;
     this.onChatMessage = options.onChatMessage;
+    this.onChatGameCommand = options.onChatGameCommand;
     this.onOverlayMessagesChanged = options.onOverlayMessagesChanged;
     this.onConnectionPhaseChanged = options.onConnectionPhaseChanged;
   }
@@ -347,7 +384,12 @@ export class TwitchChatBridge {
     return isChatLoginRejectedCoolingDown({ rejectedAt: this.loginRejectedAt, now: nowMs });
   }
 
-  getRecentMessages(): EngagementEventRecord[] {
+  /**
+   * The overlay-facing buffer. The login stays behind — it exists only so CLEARCHAT can match a
+   * banned account — while the emote segments travel with the message, because the panel cannot
+   * re-derive them: the ranges live in the IRC tag, which only this bridge ever sees.
+   */
+  getRecentMessages(): (EngagementEventRecord & { segments: ChatMessageSegment[] })[] {
     return this.messages.values().map(({ login: _login, ...event }) => event);
   }
 
@@ -561,6 +603,23 @@ export class TwitchChatBridge {
         continue;
       }
 
+      // Game commands do not "continue": unlike the moderator check-in this is viewer vocabulary,
+      // so the line stays visible on the chat panel and still counts its author as an active
+      // chatter. The handler is async — starting a round writes rows — so it is fired and left to
+      // finish; a rejection here must never take the socket handler down.
+      const gameCommand = resolveChatGameCommand(message.message);
+      if (gameCommand && this.onChatGameCommand) {
+        void Promise.resolve(
+          this.onChatGameCommand({ command: gameCommand, actor: message.actor, isModerator: message.isModerator })
+        )
+          .then((reply) => {
+            if (reply) {
+              this.sendChatMessage(reply);
+            }
+          })
+          .catch(() => undefined);
+      }
+
       // Command handling runs before the limiter. The limiter bounds how much chat reaches the
       // on-air overlay and the event log; it must not decide who gets to vote. During a poll
       // dozens of viewers answer within seconds, and rate-limiting that path would silently
@@ -583,7 +642,13 @@ export class TwitchChatBridge {
         message: message.message,
         createdAt: now.toISOString()
       };
-      this.messages.push({ ...event, login: message.login });
+      // Segments are computed here, once per message, rather than per rendered frame: the overlay
+      // redraws on its own cadence and re-splitting the same line every second would be pure waste.
+      this.messages.push({
+        ...event,
+        login: message.login,
+        segments: message.emotes.length > 0 ? buildChatMessageSegments(message.message, message.emotes) : []
+      });
       this.onOverlayMessagesChanged?.();
       void appendEngagementEventRecord(event).catch(() => undefined);
     }

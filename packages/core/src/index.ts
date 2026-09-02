@@ -1,5 +1,6 @@
 export * from "./asset-chapters.js";
 export * from "./broadcast-channel.js";
+export * from "./chat-emotes.js";
 export * from "./chat-game.js";
 export * from "./chat-game-2048.js";
 export * from "./chat-game-minesweeper.js";

@@ -116,8 +116,8 @@ const FRAMES: GoldenFrame[] = [
     input: { payload: basePayload(), chat, engagement },
     width: 1920,
     height: 1080,
-    layout: "2cc652ce5052d1df",
-    svg: "ef81feb4a86812be"
+    layout: "dbaca76a0bef975b",
+    svg: "00d29615f2fbfa81"
   },
   {
     name: "positioned layers, including the ones the renderer clamps or refuses",
@@ -189,8 +189,8 @@ const FRAMES: GoldenFrame[] = [
     input: { payload: basePayload(), chat },
     width: 1280,
     height: 720,
-    layout: "79225452b28eb236",
-    svg: "b5cf1e4f13922560"
+    layout: "9f10b3f1d6502a2e",
+    svg: "c162d027ac944dca"
   }
 ];
 
