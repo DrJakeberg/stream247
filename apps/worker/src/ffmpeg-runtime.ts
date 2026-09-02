@@ -8,6 +8,7 @@ import {
   type StreamOutputSettings
 } from "@stream247/core";
 import { getOutputGopSize, getOutputVideoFilter, isStreamScaleEnabled } from "./output-settings.js";
+import type { OnAirOverlayMode } from "./on-air-scene.js";
 
 const OUTPUT_FAILURE_NEEDLES = [
   "broken pipe",
@@ -188,29 +189,37 @@ export function shouldRequestImmediatePlayoutRetry(args: {
   return true;
 }
 
-export function shouldSkipInitialSceneCapture(args: {
+/**
+ * What the overlay draws for a whole playout process.
+ *
+ * This is decided exactly once per start, because the choice is baked into the ffmpeg command: the
+ * scene is a PNG pipe composited with `overlay`, text is a `drawtext` filter, and the two cannot be
+ * exchanged without restarting ffmpeg. A process that starts in text mode therefore stays in text
+ * mode for the entire programme -- hours, for a VOD -- so this decision is worth its own function
+ * and its own tests.
+ *
+ * There used to be a fourth input here: a "recovery" skip that suppressed the initial frame when
+ * the previous process had exited recently. It was written when a frame came from a Chromium
+ * screenshot that took about ten seconds, and skipping it kept a recovery from stalling that long.
+ * The renderer is native now and the frame is worth milliseconds -- measured on the production box
+ * while it was encoding the channel: 201ms cold and 125ms warm at 1920x1080, 82ms cold at 1280x720,
+ * 106ms for the busiest frame the overlay ever draws. Against that, the skip's own cost is a whole
+ * programme with no scene, no chat, no ticker and no clock, so it no longer buys anything and is
+ * gone. Every process now renders its first frame.
+ *
+ * Note also what the skip could never do: it keyed off the previous exit code, which says nothing
+ * about whether the renderer is healthy. Guarding against a renderer that genuinely stalls belongs
+ * on the render call itself, where it is bounded by a timeout, not here.
+ */
+export function resolveOnAirOverlayMode(args: {
   overlayEnabled: boolean;
-  switching: boolean;
-  playoutStatus: string;
-  lastExitCode: string;
-  heartbeatAt: string;
-  nowMs?: number;
-  windowMs?: number;
-}): boolean {
-  if (!args.overlayEnabled || args.switching || !args.lastExitCode || !args.heartbeatAt) {
-    return false;
+  sceneFrameRendered: boolean;
+}): OnAirOverlayMode {
+  if (!args.overlayEnabled) {
+    return "none";
   }
 
-  if (args.playoutStatus !== "failed" && args.playoutStatus !== "idle" && args.playoutStatus !== "recovering") {
-    return false;
-  }
-
-  const heartbeatMs = new Date(args.heartbeatAt).getTime();
-  if (!Number.isFinite(heartbeatMs)) {
-    return false;
-  }
-
-  return (args.nowMs ?? Date.now()) - heartbeatMs <= (args.windowMs ?? 60_000);
+  return args.sceneFrameRendered ? "scene" : "text";
 }
 
 export function buildFfmpegInputArgs(args: {

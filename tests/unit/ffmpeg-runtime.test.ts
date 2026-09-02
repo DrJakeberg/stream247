@@ -18,7 +18,7 @@ import {
   isLikelyProgramFeedInputError,
   isNaturalPlayoutBoundary,
   shouldRequestImmediatePlayoutRetry,
-  shouldSkipInitialSceneCapture,
+  resolveOnAirOverlayMode,
   SOURCE_LIVE_RTSP_TIMEOUT_US
 } from "../../apps/worker/src/ffmpeg-runtime";
 import {
@@ -443,48 +443,39 @@ describe("ffmpeg runtime helpers", () => {
     expect(isNaturalPlayoutBoundary({ targetKind: "live", code: 0, signal: null })).toBe(false);
   });
 
-  it("skips blocking scene capture only for recent recovery starts", () => {
-    const heartbeatAt = "2026-04-10T14:23:52.626Z";
-    expect(
-      shouldSkipInitialSceneCapture({
-        overlayEnabled: true,
-        switching: false,
-        playoutStatus: "failed",
-        lastExitCode: "",
-        heartbeatAt,
-        nowMs: new Date("2026-04-10T14:24:07.000Z").getTime()
-      })
-    ).toBe(false);
-    expect(
-      shouldSkipInitialSceneCapture({
-        overlayEnabled: true,
-        switching: false,
-        playoutStatus: "failed",
-        lastExitCode: "SIGBUS",
-        heartbeatAt,
-        nowMs: new Date("2026-04-10T14:24:07.000Z").getTime()
-      })
-    ).toBe(true);
-    expect(
-      shouldSkipInitialSceneCapture({
-        overlayEnabled: true,
-        switching: true,
-        playoutStatus: "failed",
-        lastExitCode: "SIGBUS",
-        heartbeatAt,
-        nowMs: new Date("2026-04-10T14:24:07.000Z").getTime()
-      })
-    ).toBe(false);
-    expect(
-      shouldSkipInitialSceneCapture({
-        overlayEnabled: true,
-        switching: false,
-        playoutStatus: "failed",
-        lastExitCode: "SIGBUS",
-        heartbeatAt,
-        nowMs: new Date("2026-04-10T14:26:00.000Z").getTime()
-      })
-    ).toBe(false);
+  // The overlay mode is chosen once per playout process and then baked into the ffmpeg command:
+  // the scene is a PNG pipe composited with `overlay`, text is a `drawtext` filter. They cannot be
+  // exchanged while ffmpeg runs, so whatever is decided here is what the channel shows for the
+  // whole programme -- hours, for a VOD. There is no third input to this decision any more.
+  //
+  // There used to be one. A "recovery skip" suppressed the initial frame whenever the previous
+  // process had exited recently, dating from a renderer that screenshotted Chromium and took about
+  // ten seconds. Measured on the production box while it was encoding the channel, the native
+  // renderer needs 201ms cold and 125ms warm at 1920x1080, 82ms cold at 1280x720 and 106ms for the
+  // busiest frame the overlay draws -- so the skip saved a fifth of a second and cost an entire
+  // programme with no scene, no chat, no ticker and no clock. It is gone; every process renders.
+  it("draws the scene whenever the overlay is on and a frame exists", () => {
+    expect(resolveOnAirOverlayMode({ overlayEnabled: true, sceneFrameRendered: true })).toBe("scene");
+    expect(resolveOnAirOverlayMode({ overlayEnabled: true, sceneFrameRendered: false })).toBe("text");
+    expect(resolveOnAirOverlayMode({ overlayEnabled: false, sceneFrameRendered: true })).toBe("none");
+    expect(resolveOnAirOverlayMode({ overlayEnabled: false, sceneFrameRendered: false })).toBe("none");
+  });
+
+  // A programme that simply ends is not a recovery.
+  //
+  // ffmpeg leaves with code 0 and no signal, the exit path writes status "idle", lastExitCode
+  // String(0) -- the *string* "0", which is truthy -- and a heartbeat stamped at that moment, then
+  // asks for the next cycle straight away. Every clause of the old skip was satisfied by an
+  // ordinary asset boundary: overlay on, nothing switching, an allowed status, a "truthy" exit code
+  // and a heartbeat seconds old. The next programme therefore started in text mode and stayed there
+  // for its entire length, while the studio preview kept drawing the scene. That is the operator's
+  // report verbatim: the overlay in the studio was not the overlay on air.
+  //
+  // Nothing raised an incident either, because the fallback incident lives inside
+  // prepareSceneRendererFrame and that call was the one being skipped. The guard now is that the
+  // exit code has no say at all: a rendered frame means scene, full stop.
+  it("still draws the scene after a programme ended by itself with exit code 0", () => {
+    expect(resolveOnAirOverlayMode({ overlayEnabled: true, sceneFrameRendered: true })).toBe("scene");
   });
 });
 
