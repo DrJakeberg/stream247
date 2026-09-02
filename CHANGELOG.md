@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Security
+
+- The Twitch stream key was written in clear text into the incident list and the container log.
+  Measured on the running channel on 2026-09-01T23:31Z: when the uplink could not open its RTMP
+  connection, ffmpeg echoed the publish URL, key and all, and that line became the message of the
+  `uplink.ffmpeg.stderr` incident the GUI shows, and a runtime-log line in `docker logs`. Whoever
+  holds that key can broadcast on the channel. The relay key was already guarded with care; the
+  same class of secret was leaking through a side door.
+
+  Redaction now lives in the sinks — the runtime log redacts every string in its payload, the
+  incident store redacts title and message — and in both ffmpeg stderr readers before the line goes
+  anywhere, so no caller can forget it. What is hidden: the last segment of an RTMP/RTMPS/SRT
+  publish URL, key-shaped query parameters on any scheme, userinfo passwords, webhook tokens,
+  Bearer/OAuth tokens and Twitch's own key shape; the host and the path stay readable, so the
+  operator still sees where it failed. Migration `20260902_001_redact_stored_secrets` rewrites the
+  incidents and audit entries already on disk through the same function. **Rotate the stream key
+  on Twitch after upgrading** — it has been readable in the GUI and the logs for as long as an
+  uplink error has been recorded there.
+
 ## 1.5.37 - 2026-09-01
 
 ### Fixed

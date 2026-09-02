@@ -36,6 +36,7 @@ import {
   updateEngagementSettingsRecord,
   updateOutputSettingsRecord,
   updateSourceFieldRecords,
+  upsertIncident,
   writeAppState,
   writeChatOverlayMessagesRecord,
   writeChatSkipVoteRecord
@@ -50,6 +51,7 @@ type TestDatabase = {
 
 const persistentProgramFeedRuntimeMigrationId = "20260419_001_persistent_program_feed_runtime";
 const workerHeartbeatRuntimeMigrationId = "20260901_001_worker_heartbeat_runtime";
+const redactStoredSecretsMigrationId = "20260902_001_redact_stored_secrets";
 const persistentProgramFeedRuntimeColumns = [
   "uplink_status",
   "uplink_input_mode",
@@ -1795,6 +1797,34 @@ describe.sequential("database roundtrip", () => {
       expect(reread.playout.workerHeartbeatAt).toBe("");
       // The pre-existing row survived the upgrade rather than being replaced.
       expect(reread.playout.restartCount).toBe(7);
+    }, 60_000);
+
+    it("stores a redacted incident, and the migration scrubs a row written before the sink redacted", async () => {
+      // The sink itself, on a real table.
+      await upsertIncident({
+        scope: "worker",
+        severity: "warning",
+        title: "FFmpeg reported an error",
+        message: "[fifo @ 0x1] Error opening rtmp://live.twitch.tv/app/live_123456_AbCdEfGhIjKlMnOpQrStUv",
+        fingerprint: "test.redaction"
+      });
+      const stored = await executeSql("SELECT message FROM incidents WHERE fingerprint = 'test.redaction';");
+      expect(stored).toBe("[fifo @ 0x1] Error opening rtmp://live.twitch.tv/app/<redacted>");
+
+      // A row from before the sink redacted, then the upgrade that scrubs it.
+      await executeSql(`
+        UPDATE incidents SET message = 'Error opening rtmp://live.twitch.tv/app/live_123456_AbCdEfGhIjKlMnOpQrStUv' WHERE fingerprint = 'test.redaction';
+        DELETE FROM schema_migrations WHERE id = '${redactStoredSecretsMigrationId}';
+      `);
+      const before = await executeSql("SELECT id FROM schema_migrations WHERE id LIKE '20260902%';");
+      // ensureDatabase applies migrations once per process; the reset is what lets it look again.
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+      const after = await executeSql("SELECT id FROM schema_migrations WHERE id LIKE '20260902%';");
+      const scrubbed = await executeSql("SELECT message FROM incidents WHERE fingerprint = 'test.redaction';");
+      expect(scrubbed, `migrations before=[${before}] after=[${after}] stored=<${scrubbed}>`).toBe("Error opening rtmp://live.twitch.tv/app/<redacted>");
+      const migrationApplied = await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${redactStoredSecretsMigrationId}';`);
+      expect(migrationApplied).toBe("1");
     }, 60_000);
   });
 });
