@@ -57,7 +57,19 @@ function basePayload(): OverlayScenePayloadView {
     nextTitle: "Retro Night",
     nextTimeLabel: "21:30",
     queueTitles: ["Prime time replay", "Late night standby"],
-    tickerText: "Stream247 keeps the channel on air around the clock",
+    // Empty, where every fixture below used to carry a line.
+    //
+    // It carried one for as long as these checksums have existed, and it never reached the
+    // picture: the renderer had no ticker panel, so setting, clearing or replacing the text
+    // produced the same tree. Now that the panel exists, a ticker text in the shared payload
+    // would put a band on all five of these frames at once and there would be nothing left
+    // measuring the frame without one.
+    //
+    // So the shared payload has none, and the five checksums below are the ones that were already
+    // recorded — unchanged, which is the proof that a channel with no ticker text is on air with
+    // exactly the picture it had before. The frame that does draw one is the sixth fixture, and
+    // its numbers are new because that picture is new.
+    tickerText: "",
     emergencyBanner: "",
     timeZone: "Europe/Berlin"
   };
@@ -191,6 +203,23 @@ const FRAMES: GoldenFrame[] = [
     height: 720,
     layout: "9f10b3f1d6502a2e",
     svg: "c162d027ac944dca"
+  },
+  {
+    // The deliberate change. Three messages, so the frame drawn here is the one the dwell picks at
+    // FROZEN_AT — the same instant every other fixture is frozen at, which is what makes a rotating
+    // panel checksummable at all.
+    name: "a ticker, the one panel that only exists while it has something to say",
+    input: {
+      payload: {
+        ...basePayload(),
+        tickerText: "Schedule at stream247.example · Requests open in chat · Back live at 22:00",
+        tickerRotateSeconds: 8
+      }
+    },
+    width: 1920,
+    height: 1080,
+    layout: "34942d9a801c6cc0",
+    svg: "f4276601a9324c32"
   }
 ];
 

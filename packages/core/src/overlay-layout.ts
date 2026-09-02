@@ -225,13 +225,14 @@ export type OverlayPlacementView = {
 /**
  * The panels the renderer draws itself, as the operator names them.
  *
- * "ticker" is deliberately absent: the payload carries tickerText and the renderer has never drawn
- * it, so there is no box to place. Giving it a placement would be inventing a panel, which is a
- * change to the picture, not a change to where the picture's parts sit.
+ * "ticker" was absent until the panel existed: the payload carried tickerText and the renderer drew
+ * it nowhere — measured, not read, on this rasteriser, where setting, clearing and replacing the
+ * text all produced the same layout checksum. It is a panel now, with the same placement, the same
+ * opacity and the same drag handle as the other six, and it draws only while it has a text.
  */
-export type OverlayPanelId = "hero" | "next" | "vote" | "chat" | "clock" | "banner";
+export type OverlayPanelId = "hero" | "next" | "vote" | "chat" | "clock" | "banner" | "ticker";
 
-export const OVERLAY_PANEL_IDS: OverlayPanelId[] = ["hero", "next", "vote", "chat", "clock", "banner"];
+export const OVERLAY_PANEL_IDS: OverlayPanelId[] = ["hero", "next", "vote", "chat", "clock", "banner", "ticker"];
 
 /**
  * Placements the operator has set, by panel.
@@ -263,7 +264,10 @@ const PANEL_ANCHOR_POINTS: Record<OverlayPanelId, PanelAnchorPoint> = {
   vote: { x: "end", y: "end" },
   chat: { x: "start", y: "end" },
   clock: { x: "end", y: "start" },
-  banner: { x: "start", y: "start" }
+  banner: { x: "start", y: "start" },
+  // The ticker fills its box rather than sitting in a corner of it: it is a band, and a band that
+  // held one corner of a box the operator widened would leave the rest of the band empty.
+  ticker: { x: "start", y: "start" }
 };
 
 /**
@@ -314,9 +318,78 @@ export type OverlayScenePayloadView = {
   nextTimeLabel: string;
   queueTitles: string[];
   tickerText: string;
+  /**
+   * How long one ticker message stands before the next one takes its place.
+   *
+   * Optional because payloads cached before the ticker panel existed do not carry it, and because
+   * a single message ignores it entirely. See overlayTickerLine for why this is a dwell and not a
+   * scroll speed.
+   */
+  tickerRotateSeconds?: number;
   emergencyBanner: string;
   timeZone: string;
 };
+
+/** Messages in one ticker text are separated by a middot or a line break. */
+const TICKER_SEPARATORS = /[\n\r·]+/;
+
+/** Bounds on the dwell. See overlayTickerLine for where the floor comes from. */
+export const OVERLAY_TICKER_MIN_SECONDS = 4;
+export const OVERLAY_TICKER_MAX_SECONDS = 60;
+export const OVERLAY_TICKER_DEFAULT_SECONDS = 8;
+
+/**
+ * The messages a ticker text holds, in order.
+ *
+ * Exported so the studio can say how many there are without splitting the string a second time
+ * and disagreeing about what counts as a separator.
+ */
+export function overlayTickerMessages(text: string): string[] {
+  return text
+    .split(TICKER_SEPARATORS)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+/**
+ * The one ticker message on air at this instant.
+ *
+ * This is a dwell, not a scroll, and the reason is the update rate. The on-air renderer redraws on
+ * SCENE_RENDER_INTERVAL_MS — 2000ms by default, floored at 1000ms — so the picture changes at most
+ * once or twice a second; the 1fps pipe re-pushes the cached PNG in between and never produces a
+ * frame the renderer did not draw. Measured on this rasteriser: a Latin glyph at fontSize 24
+ * advances 14.24px, so crawling the 1776px safe area in 30s at the default rate means 118.4px per
+ * frame, which is 8.3 characters of sideways jump per step. The most generous configuration
+ * anybody would accept — the 1000ms floor and a full minute per crossing — still jumps 29.6px,
+ * 2.1 characters. A smooth crawl wants 25-60 frames a second and this pipeline has half of one.
+ * So the text holds still and the messages take turns, which is sharp at every rate above.
+ *
+ * The dwell floor of 4s is that same arithmetic: the boundary is only noticed on a render tick, so
+ * a dwell is honoured to within one interval, and below two intervals the rotation is jitter
+ * rather than timing.
+ */
+export function overlayTickerLine(
+  payload: Pick<OverlayScenePayloadView, "tickerText" | "tickerRotateSeconds">,
+  now: Date
+): string {
+  const messages = overlayTickerMessages(payload.tickerText);
+  if (messages.length === 0) {
+    return "";
+  }
+  if (messages.length === 1) {
+    return messages[0]!;
+  }
+
+  const seconds = Math.min(
+    OVERLAY_TICKER_MAX_SECONDS,
+    Math.max(OVERLAY_TICKER_MIN_SECONDS, Math.round(payload.tickerRotateSeconds ?? OVERLAY_TICKER_DEFAULT_SECONDS) || OVERLAY_TICKER_DEFAULT_SECONDS)
+  );
+  // Quantised against the epoch rather than counted from a start, because there is no loop here to
+  // hold a counter: every renderer, the studio preview included, derives the same slot from the
+  // same clock and therefore draws the same message.
+  const slot = Math.floor(now.getTime() / (seconds * 1000)) % messages.length;
+  return messages[((slot % messages.length) + messages.length) % messages.length]!;
+}
 
 const FONT_STACKS: Record<string, string> = {
   "studio-sans": "Stream247 Sans",
@@ -1049,6 +1122,16 @@ export function resolveSourceLayerPixelBox(
 const SAFE_AREA = { left: 72, top: 56, width: 1920 - 144, height: 1080 - 112 };
 
 /**
+ * The shortest box resolvePlacementBox will actually produce, in design pixels.
+ *
+ * Every placement's height is clamped up to OVERLAY_PLACEMENT_MIN_HEIGHT_PERCENT, so a panel whose
+ * default asks for less gets more and the studio's caption disagrees with the picture. The clock's
+ * box has always been this tall — it asks for 48 and resolves to 77 — which is why the ticker's
+ * default has to clear this rather than the 48 the clock draws.
+ */
+const PLACEMENT_MIN_BOX_HEIGHT = Math.ceil((SAFE_AREA.height * OVERLAY_PLACEMENT_MIN_HEIGHT_PERCENT) / 100);
+
+/**
  * The size each built-in panel is given room for when it is placed, on the design grid.
  *
  * Measured on the rasteriser at 1920x1080, then rounded up to the panel's own worst case, because
@@ -1063,7 +1146,16 @@ const PANEL_DEFAULT_SIZES: Record<OverlayPanelId, { width: number; height: numbe
   vote: { width: 520, height: 370 },
   chat: { width: 680, height: 266 },
   clock: { width: 150, height: 48 },
-  banner: { width: 1636, height: 60 }
+  banner: { width: 1636, height: 60 },
+  // Full safe width, because a notice read in passing wants the longest line it can get: measured
+  // on this rasteriser, a Latin glyph at fontSize 26 advances 15.43px, so 1776px less the panel's
+  // own 48px of padding holds 112 characters of a message the store caps at 180.
+  //
+  // 78 tall, not the 56 a single line needs, because resolvePlacementBox floors every box at
+  // OVERLAY_PLACEMENT_MIN_HEIGHT_PERCENT — 8% of 968 is 77.44 design pixels, so a shorter number
+  // here would be a number the studio showed and the renderer ignored. Measured: asking for 56
+  // resolved to 77. This is the floor, rounded up so the percent round trip lands back on it.
+  ticker: { width: 1776, height: PLACEMENT_MIN_BOX_HEIGHT }
 };
 
 /**
@@ -1151,7 +1243,23 @@ export function deriveDefaultPlacements(
     vote: percentBox(safeRight - size.vote.width, railBottom - size.vote.height, size.vote.width, size.vote.height),
     chat: chatBox(),
     clock: percentBox(safeRight - size.clock.width, clockTop, size.clock.width, size.clock.height),
-    banner: percentBox(SAFE_AREA.left, SAFE_AREA.top, size.banner.width, size.banner.height)
+    banner: percentBox(SAFE_AREA.left, SAFE_AREA.top, size.banner.width, size.banner.height),
+    // The one panel the flow never placed, so this is a choice rather than a reproduction. It is
+    // the band directly under the top bar, clearing the deepest box up there: the banner asks for
+    // 60 and the clock for 48, and both resolve to the 78-pixel floor, so the top bar's boxes end
+    // at 134 and the ticker starts at 150. Measured, not assumed — the first attempt put it at 120
+    // and overlapped the clock's box by 13 pixels, which is exactly the gap between what the clock
+    // draws and the box it is given.
+    //
+    // The lower third is at 764-1024, so there is nothing below to clear. Deliberately not tied to
+    // panelAnchor: the centre anchor pulls the clock down to meet the lower third, and following it
+    // there would put the ticker inside the block it was moved out of the way of.
+    ticker: percentBox(
+      SAFE_AREA.left,
+      SAFE_AREA.top + Math.max(size.banner.height, size.clock.height, PLACEMENT_MIN_BOX_HEIGHT) + 16,
+      size.ticker.width,
+      size.ticker.height
+    )
   };
 }
 
@@ -1662,6 +1770,83 @@ function buildBanner(message: string, scale: number, fontFamily: string, fit?: P
 }
 
 /**
+ * Opacity of the ticker's own fill.
+ *
+ * Exported because it is the number the legibility of this panel rests on, and a test that had to
+ * re-read it out of a style string would be testing the parser.
+ *
+ * The ticker is the one panel a viewer reads without having chosen to look at it, over whatever
+ * the programme happens to be showing, so it is the most opaque thing on the frame rather than the
+ * least. 0.94 is not a new number: it is exactly the "solid" surface style's fill, so the palette
+ * gains nothing to keep in step. Measured, white ink on this fill: 19.80:1 over black video,
+ * 17.64:1 over white video — the two ends of what a video frame can be. The softest surface in the
+ * family, signal's 0.72, would still clear the 4.5:1 bar at 8.25:1; 0.94 is chosen because a
+ * ticker that is hard to read is a ticker nobody reads, not because 0.72 would fail.
+ */
+export const OVERLAY_TICKER_FILL_ALPHA = 0.94;
+
+/**
+ * The ticker band: one message, held still, inside the box the operator gave it.
+ *
+ * The fit rule is the chat panel's, not a character budget: the number of lines comes out of the
+ * box's own height, and satori clamps the text to that. A character budget cannot promise a fit
+ * because glyphs are not characters — the same 180 characters are 2775px of Latin and 5060px of
+ * full-width CJK at this size, and only one of those was ever going to overflow a box measured in
+ * characters.
+ */
+function buildTickerPanel(
+  message: string,
+  accent: string,
+  scale: number,
+  fontFamily: string,
+  fit: PanelFit
+): OverlayLayoutNode {
+  const px = (value: number) => Math.round(value * scale);
+  const fontSize = px(26);
+  const lineHeight = 1.25;
+  const padY = px(10);
+  const padX = px(24);
+
+  // What the box actually holds, the way buildChatPanel derives its message count from its height.
+  // At the default 56-tall band this is one line; an operator who drags the box taller gets the
+  // lines they made room for instead of a panel that ignores them.
+  const lines = Math.max(1, Math.min(4, Math.floor((fit.height - padY * 2) / Math.round(fontSize * lineHeight))));
+
+  return {
+    type: "div",
+    props: {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        width: fit.width,
+        height: fit.height,
+        padding: `${String(padY)}px ${String(padX)}px`,
+        borderRadius: px(12),
+        backgroundColor: `rgba(8,10,15,${String(OVERLAY_TICKER_FILL_ALPHA)})`,
+        borderLeft: `${String(px(6))}px solid ${accent}`,
+        overflow: "hidden"
+      },
+      children: [
+        label(message, {
+          color: INK_PRIMARY,
+          fontSize,
+          fontFamily,
+          fontWeight: 600,
+          lineHeight,
+          letterSpacing: px(1),
+          // The three together are what makes satori cut rather than overflow, exactly as the chat
+          // panel's message label does.
+          lineClamp: lines,
+          display: "block",
+          minWidth: 0,
+          overflow: "hidden"
+        })
+      ]
+    }
+  };
+}
+
+/**
  * Builds the full-frame overlay tree.
  *
  * The root is a transparent, output-sized canvas: the rasterised PNG is composited by ffmpeg at
@@ -1816,6 +2001,25 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
     rail.push(votePanel);
   } else if (nextCard) {
     rail.push(nextCard);
+  }
+
+  // The ticker is the one built-in panel with no position in the flow to fall back on — it never
+  // had one, because it was never drawn. So it is always placed, from the operator's box when they
+  // have moved it and from the derived default otherwise, and it is the empty text rather than a
+  // missing placement that keeps it off the picture.
+  const tickerLine = overlayTickerLine(payload, options.now ?? new Date());
+  if (tickerLine) {
+    const tickerPlacement =
+      placements.ticker ?? deriveDefaultPlacements(payload.scene.panelAnchor, String(input.chat?.position ?? "")).ticker;
+    placedPanels.push(
+      placePanel(
+        buildTickerPanel(tickerLine, accent, scale, fontFamily, resolvePlacementBox(tickerPlacement, scale, frameSize)),
+        "ticker",
+        tickerPlacement,
+        scale,
+        frameSize
+      )
+    );
   }
 
   const lowerThird = routed("hero", buildLowerThird(payload, accent, scale, fontFamily, fitFor("hero")));
