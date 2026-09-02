@@ -3,7 +3,6 @@ import {
   normalizeCuepointOffsetsSeconds,
   normalizeOverlayNamedScenes,
   normalizeOverlayPanelAnchor,
-  normalizeOverlaySceneCustomLayers,
   normalizeOverlayScenePanelPlacements,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,

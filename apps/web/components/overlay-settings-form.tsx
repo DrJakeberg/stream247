@@ -284,6 +284,7 @@ export function OverlaySettingsForm(props: {
   // ones they mean to. Letting go removes the entry entirely, which puts the panel back in the flow
   // rather than leaving it pinned to whatever it was last dragged to.
   const togglePanelPlacement = (id: OverlayPanelId) => {
+    setDraft((current) => {
       const next = { ...current.panelPlacements };
       if (next[id]) {
         delete next[id];
@@ -291,12 +292,19 @@ export function OverlaySettingsForm(props: {
       }
       const seed = deriveDefaultPlacements(current.panelAnchor, props.chatPosition)[id];
       return { ...current, panelPlacements: { ...next, [id]: { ...seed, opacityPercent: seed.opacityPercent ?? 100, allowOutsideSafeArea: seed.allowOutsideSafeArea ?? false } } };
+    });
+  };
+
   const updatePanelPlacement = (id: OverlayPanelId, patch: Partial<OverlayScenePanelPlacement>) => {
+    setDraft((current) => {
       const existing = current.panelPlacements[id];
       if (!existing) {
         return current;
       }
       return { ...current, panelPlacements: { ...current.panelPlacements, [id]: { ...existing, ...patch } } };
+    });
+  };
+
   const addCustomLayer = (kind: OverlaySceneCustomLayerKind) => {
     updateSelectedScene((scene) => ({ ...scene, customLayers: [...scene.customLayers, createDefaultCustomLayer(kind)] }));
   };
