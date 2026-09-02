@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Fixed
+
+- The Twitch chat connection could not be switched off. An install with the chat rail hidden, the
+  moderation policy off and viewer control off still held an IRC connection open around the clock,
+  and the note in 1.5.40 about the bridge following its consumers claimed the opposite. The
+  consumer flag for the chat game was `Boolean(chatGameForBridge.gameId)`, and the chat game's
+  settings row has no enabled field at all: `gameId` defaults to `snake` and is never empty, so
+  that expression was constant true and one always-on consumer kept the bridge up for everyone.
+
+  The chat game's on and off is the overlay scene — a layer of kind "game" — and the bridge follows
+  that now. It follows the layer's presence rather than its enabled flag on purpose: stopping a
+  round keeps the layer and only disables it, so a bridge that watched the flag would drop the
+  connection the moment a game ended and the next `!snake` would never arrive. A studio with no
+  game layer at all has never had the chat game switched on, and that is the case where the
+  connection is not needed for it.
+
+- The queue limit for `!request` did not hold within a cycle. With the limit at two and ten viewers
+  typing `!request` inside the same thirty-second window, all ten were accepted, and the same title
+  went into the queue once per asker. Both the limit and the "that one is already in the queue"
+  check were decided against the cycle's snapshot of the playout queue, and the worker decides
+  every request accumulated since the last cycle in one loop — the snapshot does not move while
+  that loop runs, so all ten saw the same number. The record written for an accepted request was
+  then retired as played on the loop's very next turn, for the same reason, so even the count that
+  did reach the database was wiped before it could be read.
+
+  The pass now carries what it has already accepted, and the limit and the duplicate check are
+  decided against that. Two are accepted and the remaining eight are told the queue is full; the
+  same title is queued once. Nothing new is stored.
+
 ## 1.5.41 - 2026-09-02
 
 ### Security
