@@ -184,7 +184,7 @@ No Twitch schedule sync has completed yet.
 Future schedule blocks will be mirrored to Twitch after the worker syncs them.
 Overlay output
 Overlay is currently disabled.
-Stream247 captures http://<version>.1:3020/overlay as the internal overlay output.
+The picture is drawn by the playout; the studio preview is the same drawing.
 Twitch OAuth not configured
 Set APP_URL and provide Twitch client credentials in .env or the admin settings page to enable browser-based Twitch connection.
 INCIDENTS

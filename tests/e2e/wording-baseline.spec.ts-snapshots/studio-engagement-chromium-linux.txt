@@ -33,11 +33,11 @@ Engagement
 Output
 Engagement
 Manage in-stream engagement from one tab.
-Control the live chat rail, Twitch alert types, and the chatter-participation game that all render through the same captured overlay.
+Control the live chat rail, Twitch alert types, and the chatter-participation game that all render through the same on-air overlay.
 CHAT AND ALERTS
 Engagement controls
 CHAT OVERLAY
-Configure the on-stream Twitch chat rail that renders inside the captured overlay.
+Configure the on-stream Twitch chat rail that renders inside the on-air overlay.
 Enable chat overlay
 CHAT MODE
 Quiet
@@ -120,10 +120,10 @@ COLLECTION WINDOW (SECONDS)
 Save viewer control
 CHAT PLAYS ON AIR
 Chat game
-No scene has an enabled Chat Game layer. Add one in Scene Studio to put the game on air.
+No scene has an enabled Chat Game layer yet. A moderator typing !snake, !minesweeper, or !2048 in chat adds and enables one; !game answers with the list, and !game stop takes the board off air.
 The game reads its emotes through the same Twitch IRC runtime as the chat rail, which is currently disabled. Enable chat in the engagement controls and turn on the chat feature switch in the admin settings so inputs can arrive; the on-screen chat rail itself can stay hidden.
 CHAT GAME
-The game moves only when chat sends the mapped emotes — one accepted message, one move. It appears on air wherever a scene has an enabled Chat Game layer in Scene Studio.
+The game moves only when chat sends the mapped emotes — one accepted message, one move. It appears on air wherever a scene has an enabled Chat Game layer, which a moderator can add from chat with !snake, !minesweeper, or !2048 without opening Scene Studio.
 GAME
 Snake
 Minesweeper

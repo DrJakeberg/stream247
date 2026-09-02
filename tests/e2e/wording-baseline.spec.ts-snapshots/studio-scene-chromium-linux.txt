@@ -33,10 +33,10 @@ Engagement
 Output
 Scene
 Publish the viewer-facing scene without leaving the control room.
-Scene controls the published viewer-facing scene. Draft changes stay isolated until you review and publish them to Stream247's internal overlay output and the on-air renderer.
+Scene controls the published viewer-facing scene. Draft changes stay isolated until you review and publish them to the on-air renderer.
 SCENE
 Scene controls
-Stream247 captures http://<version>.1:3020/overlay as its internal overlay output. Draft changes stay inside the studio until you publish them, and the same live scene settings also drive the on-air replay text overlay inside the FFmpeg playout path. Metadata widgets stay inside that canonical scene payload, custom font stacks resolve only against fonts already installed on the browser host or worker image, and positioned embeds remain conservative: remote CSP and iframe policies still decide whether a website or widget can actually render.
+The picture is drawn by the playout; the studio preview is the same drawing. Draft changes stay inside the studio until you publish them, and the published scene settings also drive the on-air replay text overlay inside the FFmpeg playout path. Metadata widgets stay inside that canonical scene payload, and custom font stacks resolve only against fonts already installed on the worker image.
 SCENE DRAFT
 Live and draft match
 Draft is based on live scene updated at unknown.
@@ -49,21 +49,7 @@ Regular asset
 Insert / bumper
 Standby
 Reconnect
-STUDIO REBUILD
-REPLAY STREAM · STREAM247 · NOW PLAYING
-NOW PLAYING
-<block>
-Always on air
-<category> · Lokale Bibliothek
-NEXT
-<block>
-<time> to <time>
-SCENE
-<block>
-<category>
-Lokale Bibliothek
-<time> EUROPE/BERLIN
-ON-AIR RENDERER
+AS IT GOES ON AIR
 <rendered scene>
 Enable overlay output
 CHANNEL NAME
@@ -193,7 +179,5 @@ Current block
 <block> · <time> to <time>
 Next block
 <block> · <time> to <time>
-Internal overlay output
-Open overlay page
 Emergency banner
 No emergency banner is active.

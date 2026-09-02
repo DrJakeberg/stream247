@@ -137,7 +137,6 @@ Queue preview no · Current category yes · Source label yes
 Active scene Replay Lower Third · layers Brand Chip → Hero Card → Next Card → Schedule Teaser → Clock
 Hidden layers none
 Open overlay studio
-Open public overlay
 INCIDENTS
 Open problems
 No open incidents
