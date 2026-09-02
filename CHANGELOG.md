@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 1.5.44 - 2026-09-03
+
+### Fixed
+
+- The design studio could not save. `panel_placements_json` and `ticker_rotate_seconds` were added
+  to the base-schema block and to nothing else, and that block is itself a migration under one fixed
+  id — once the id is recorded it never runs again, so a fresh install had the columns and every
+  existing one did not. Measured on the live channel: `overlay_settings` carried 33 columns and
+  neither of these two, in `overlay_settings` and `overlay_drafts` alike, and
+  `SELECT panel_placements_json` answered `column ... does not exist`.
+
+  Both are in the column list of `upsertOverlaySettingsTable`, which `updateOverlaySettingsRecord`
+  and `publishOverlayDraftRecord` call, so every save and every publish out of the studio failed
+  against that database — including the one an operator makes by dragging a panel, which is exactly
+  what writes `panel_placements_json`. Nothing said so: that write only happens on an explicit
+  save, so the channel ran on and the logs stayed clean.
+
+  The migration it never got is now written. It is additive and idempotent, and its defaults are the
+  readers' own fallbacks, so there is nothing to backfill.
+
 ## 1.5.43 - 2026-09-02
 
 ### Changed

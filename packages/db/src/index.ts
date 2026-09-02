@@ -3818,6 +3818,40 @@ if (!schemaMigrations.some((migration) => migration.id === namedOverlayScenesMig
   schemaMigrations.push(namedOverlayScenesMigration);
 }
 
+/**
+ * The migration that was missing, found on the live database rather than in a test.
+ *
+ * panel_placements_json and ticker_rotate_seconds were added to the base-schema block and to
+ * nothing else. That block is itself a migration under one fixed id, so once the id is recorded it
+ * never runs again and an existing install gets nothing. Measured on the live channel at v1.5.43:
+ * overlay_settings had 33 columns and neither of these two, and SELECT panel_placements_json
+ * answered "column ... does not exist".
+ *
+ * Both are in the column list of upsertOverlaySettingsTable, so every save and every publish out of
+ * the design studio failed against that database — including the one an operator makes by dragging
+ * a panel, which is precisely what writes panel_placements_json.
+ *
+ * Additive and idempotent, matching the base-schema block word for word. The defaults are the
+ * readers' own fallbacks — '{}' is "no panel has been moved" and 8 is the ticker's default seconds
+ * — so the picture is right the moment the columns exist and there is nothing to backfill.
+ */
+export const overlayPlacementColumnsMigration: MigrationDefinition = {
+  id: "20260903_001_overlay_placement_columns",
+  description: "Add the overlay panel placements and ticker seconds columns an existing install never got.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS panel_placements_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS ticker_rotate_seconds INTEGER NOT NULL DEFAULT 8;
+      ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS panel_placements_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS ticker_rotate_seconds INTEGER NOT NULL DEFAULT 8;
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === overlayPlacementColumnsMigration.id)) {
+  schemaMigrations.push(overlayPlacementColumnsMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
