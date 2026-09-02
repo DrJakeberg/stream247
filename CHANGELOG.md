@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.43 - 2026-09-02
+
 ### Changed
 
 - The ticker runs. It used to be a dwell: one message held still, the next taking its place on a
