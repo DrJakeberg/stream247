@@ -486,6 +486,35 @@ describe("ffmpeg runtime helpers", () => {
       })
     ).toBe(false);
   });
+
+  // A programme that simply ends is not a recovery.
+  //
+  // ffmpeg leaves with code 0 and no signal, the exit path writes status "idle", lastExitCode
+  // String(0) -- the *string* "0", which is truthy -- and a heartbeat stamped at that moment, then
+  // asks for the next cycle straight away. Every clause of the old skip was then satisfied by an
+  // ordinary asset boundary: overlay on, nothing switching, an allowed status, a "truthy" exit
+  // code and a heartbeat seconds old. The next programme therefore started in text mode and stayed
+  // there for its entire length -- hours, for a VOD -- with no scene, no chat, no ticker and no
+  // clock, while the studio preview kept drawing the scene. That is the operator's report
+  // verbatim: the overlay in the studio was not the overlay on air.
+  //
+  // Nothing raised an incident either, because the fallback incident lives inside
+  // prepareSceneRendererFrame and that call was the one being skipped.
+  it("never skips the scene frame when a programme ended by itself", () => {
+    const heartbeatAt = "2026-04-10T14:23:52.626Z";
+    const nowMs = new Date("2026-04-10T14:23:56.000Z").getTime();
+
+    expect(
+      shouldSkipInitialSceneCapture({
+        overlayEnabled: true,
+        switching: false,
+        playoutStatus: "idle",
+        lastExitCode: "0",
+        heartbeatAt,
+        nowMs
+      })
+    ).toBe(false);
+  });
 });
 
 describe("live-attached source input args (M57 stage 2, Etappe C)", () => {
