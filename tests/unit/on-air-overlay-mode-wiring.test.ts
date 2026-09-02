@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
  * drew the scene while the broadcast ran the old drawtext overlay -- no scene, no custom layers, no
  * chat, no game, no ticker, no clock -- for the entire length of a programme, hours for a VOD.
  *
- * The cause was upstream of every unit under test. `startPlayoutProcess` skipped the initial scene
+ * The cause was upstream of every unit under test. `startOrSwitchPlayout` skipped the initial scene
  * frame whenever the previous ffmpeg process had exited recently, and a programme that simply ends
  * looks exactly like that: ffmpeg leaves with code 0, the exit path writes status "idle" and
  * lastExitCode String(0) -- the truthy string "0" -- plus a heartbeat stamped at that moment, then
