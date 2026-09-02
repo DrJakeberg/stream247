@@ -139,7 +139,11 @@ import {
   readManagedConfigRecord,
   readOverlayVideoSourceUrls,
   recordOverlayVideoSourceLiveState,
-  type ManagedConfigRecord
+  type ManagedConfigRecord,
+  appendChatViewerRequestRecord,
+  listRecentChatViewerRequests,
+  countQueuedChatViewerRequests,
+  markChatViewerRequestsPlayed,
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
@@ -7981,6 +7985,14 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
       continue;
     }
 
+    // The history the cooldown and the cap are decided on. A request whose asset has left the
+    // queue has been played and no longer counts against the cap; the cooldown looks back exactly
+    // as far as it is long.
+    await markChatViewerRequestsPlayed(state.playout.queuedAssetIds);
+    const [recentRequests, queuedRequestCount] = await Promise.all([
+      listRecentChatViewerRequests(new Date(Date.now() - Math.max(0, config.requestCooldownSeconds) * 1000).toISOString()),
+      countQueuedChatViewerRequests(state.playout.queuedAssetIds)
+    ]);
     const verdict = evaluateViewerRequest({
       actor: effect.actor,
       query: effect.query,
@@ -7990,8 +8002,8 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
         // Only assets that are ready and not blocked may be requested.
         requestable: asset.status === "ready" && !isAssetBlockedForAutomaticSelection(asset)
       })),
-      recentRequests: [],
-      queuedRequestCount: 0,
+      recentRequests,
+      queuedRequestCount,
       queuedAssetIds: state.playout.queuedAssetIds,
       config,
       now: new Date()
@@ -8006,7 +8018,8 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
       ...playout,
       queuedAssetIds: [...playout.queuedAssetIds, verdict.assetId]
     }));
-    logRuntimeEvent("chat.request.queued", { actor: effect.actor, assetId: verdict.assetId });
+    await appendChatViewerRequestRecord({ actor: effect.actor, assetId: verdict.assetId });
+    logRuntimeEvent("chat.request.queued", { actor: effect.actor, assetId: verdict.assetId, queuedRequestCount: queuedRequestCount + 1 });
     await appendAuditEvent("chat.request", `${effect.actor} requested "${verdict.title}" from chat.`);
   }
 }

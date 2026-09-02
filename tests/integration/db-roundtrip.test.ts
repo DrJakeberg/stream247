@@ -37,6 +37,10 @@ import {
   updateOutputSettingsRecord,
   updateSourceFieldRecords,
   upsertIncident,
+  appendChatViewerRequestRecord,
+  listRecentChatViewerRequests,
+  countQueuedChatViewerRequests,
+  markChatViewerRequestsPlayed,
   writeAppState,
   writeChatOverlayMessagesRecord,
   writeChatSkipVoteRecord
@@ -1825,6 +1829,24 @@ describe.sequential("database roundtrip", () => {
       expect(scrubbed, `migrations before=[${before}] after=[${after}] stored=<${scrubbed}>`).toBe("Error opening rtmp://live.twitch.tv/app/<redacted>");
       const migrationApplied = await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${redactStoredSecretsMigrationId}';`);
       expect(migrationApplied).toBe("1");
+    }, 60_000);
+
+    it("keeps the viewer request history the cooldown and the queue cap are decided on", async () => {
+      // Finding [5]: the table existed, nothing wrote to it, so the worker evaluated every request
+      // against an empty history and a queue count of zero — cooldown and cap could never fire.
+      await appendChatViewerRequestRecord({ actor: "Viewer_One", assetId: "asset_req_a" });
+      await appendChatViewerRequestRecord({ actor: "viewer_one", assetId: "asset_req_b" });
+      await appendChatViewerRequestRecord({ actor: "other", assetId: "asset_req_c" });
+      const recent = await listRecentChatViewerRequests(new Date(Date.now() - 60_000).toISOString());
+      expect(recent.map((entry) => entry.assetId).sort()).toEqual(["asset_req_a", "asset_req_b", "asset_req_c"]);
+      expect(recent.every((entry) => typeof entry.createdAt === "string" && entry.actor)).toBe(true);
+      // Two of the three are still in the queue; the third has been played and leaves the count.
+      await markChatViewerRequestsPlayed(["asset_req_a", "asset_req_b"]);
+      expect(await countQueuedChatViewerRequests(["asset_req_a", "asset_req_b"])).toBe(2);
+      await markChatViewerRequestsPlayed(["asset_req_b"]);
+      expect(await countQueuedChatViewerRequests(["asset_req_b"])).toBe(1);
+      const played = await executeSql("SELECT status FROM chat_viewer_requests WHERE asset_id = 'asset_req_a';");
+      expect(played).toBe("played");
     }, 60_000);
   });
 });
