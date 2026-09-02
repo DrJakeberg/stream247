@@ -295,6 +295,9 @@ function normalizeOverlaySettings(value: unknown, fallback: OverlaySettingsRecor
     panelPlacements: normalizeOverlayScenePanelPlacements(candidate.panelPlacements ?? fallback.panelPlacements),
     emergencyBanner: asString(candidate.emergencyBanner),
     tickerText: asString(candidate.tickerText),
+    // The store clamps this to the renderer's bounds on the way in, so a blueprint that carries
+    // nothing, or nonsense, still resolves to a dwell the ticker can actually keep.
+    tickerRotateSeconds: Number(candidate.tickerRotateSeconds) || fallback.tickerRotateSeconds,
     updatedAt: asString(candidate.updatedAt) || now
   };
 }

@@ -54,6 +54,7 @@ type OverlayPayload = Partial<{
   panelPlacements: unknown;
   emergencyBanner: string;
   tickerText: string;
+  tickerRotateSeconds: number;
   replayLabel: string;
 }>;
 
@@ -111,6 +112,9 @@ function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnTyp
     panelPlacements: normalizeOverlayScenePanelPlacements(payload.panelPlacements ?? base.panelPlacements),
     emergencyBanner: normalizeText(payload.emergencyBanner ?? base.emergencyBanner, 180),
     tickerText: normalizeText(payload.tickerText ?? base.tickerText, 180),
+    // Left unclamped here on purpose: the store clamps it to the renderer's own bounds, and a
+    // second set of bounds in the route is the second place they would have to be kept in step.
+    tickerRotateSeconds: Number(payload.tickerRotateSeconds ?? base.tickerRotateSeconds),
     replayLabel: normalizeText(payload.replayLabel ?? base.replayLabel, 80) || "Replay stream",
     updatedAt
   };

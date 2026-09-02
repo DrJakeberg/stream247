@@ -13,7 +13,8 @@ export const OVERLAY_PANEL_LABELS: { id: OverlayPanelId; label: string; hint: st
   { id: "vote", label: "Vote panel", hint: "Takes the rail's corner while chat is voting." },
   { id: "chat", label: "Chat", hint: "Fits as many of the newest messages as its height holds." },
   { id: "clock", label: "Clock", hint: "Channel time, top right." },
-  { id: "banner", label: "Emergency banner", hint: "Only on air while the banner has text." }
+  { id: "banner", label: "Emergency banner", hint: "Only on air while the banner has text." },
+  { id: "ticker", label: "Ticker", hint: "Only on air while the ticker has text. One message at a time." }
 ];
 
 export function overlayPanelLabel(id: OverlayPanelId): string {

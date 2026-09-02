@@ -301,10 +301,13 @@ describe("built-in panel placement", () => {
     if (!loaded) {
       return;
     }
-    // Six panels stacked into one corner: boxes too small for any of them, all overlapping. In the
+    // Every panel stacked into one corner: boxes too small for any of them, all overlapping. In the
     // flow this could not happen — panels displaced each other — so this is the case the box model
     // has to answer for, and the answer is that a panel is cut off at its box rather than drawn
     // across the picture.
+    //
+    // The banner and the ticker both need text to exist at all, so both are given some: without it
+    // they draw nothing and this would be measuring five panels while claiming to measure seven.
     const cramped = Object.fromEntries(
       OVERLAY_PANEL_IDS.map((id) => [
         id,
@@ -316,6 +319,7 @@ describe("built-in panel placement", () => {
         payload: {
           ...basePayload(),
           emergencyBanner: "Transmission resumes at 22:00",
+          tickerText: "Schedule at stream247.example · Requests open in chat",
           scene: { ...basePayload().scene, panelPlacements: cramped }
         },
         chat: chatWith("bottom-left", 8),
