@@ -178,4 +178,27 @@ describe("chat emote row geometry", () => {
     expect(emote.second.right).toBeLessThanOrEqual(emote.panelInnerRight);
     expect(emote.leakedAlpha).toBe(0);
   }, 30_000);
+  it.each([
+    ["emotes only", [{ kind: "emote", id: "e1", url: EMOTE }, { kind: "emote", id: "e2", url: EMOTE }]],
+    ["emote first, then a sentence", [{ kind: "emote", id: "e1", url: EMOTE }, { kind: "text", text: "this stream is the best thing ever seen" }]],
+    ["six emotes around a sentence", [
+      { kind: "emote", id: "e1", url: EMOTE }, { kind: "text", text: "lets goooo" }, { kind: "emote", id: "e2", url: EMOTE },
+      { kind: "emote", id: "e3", url: EMOTE }, { kind: "text", text: "best stream ever" }, { kind: "emote", id: "e4", url: EMOTE },
+      { kind: "emote", id: "e5", url: EMOTE }, { kind: "emote", id: "e6", url: EMOTE }
+    ]]
+  ] as const)("stays one line and inside the panel: %s", async (_name, segments) => {
+    let fonts: unknown[];
+    try {
+      fonts = await loadSceneRendererFonts(process.env);
+    } catch {
+      return;
+    }
+    const emote = await measure(chatWith([...segments]), fonts);
+    const text = await measure(chatWith(), fonts);
+    expect(emote.name.width).toBeGreaterThan(0);
+    expect(emote.messageRow.height, `row ${emote.messageRow.height}px vs text ${text.messageRow.height}px`).toBe(text.messageRow.height);
+    expect(emote.second.right).toBeLessThanOrEqual(emote.panelInnerRight);
+    if (emote.imagesRight !== null) expect(emote.imagesRight).toBeLessThanOrEqual(emote.panelInnerRight);
+    expect(emote.leakedAlpha).toBe(0);
+  }, 30_000);
 });
