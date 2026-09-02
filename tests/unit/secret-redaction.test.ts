@@ -17,6 +17,11 @@ describe("redactSecrets", () => {
       "rtmps://a.rtmp.youtube.com/live2/<redacted>"
     );
     expect(redactSecrets("rtmp://relay:1935/live/program")).toBe("rtmp://relay:1935/live/<redacted>");
+    // ffmpeg's real line: the key is followed by a colon and the reason, which must survive.
+    expect(redactSecrets("Error opening rtmp://live.twitch.tv/app/live_123456_AbCdEfGhIjKlMnOpQrStUv: Input/output error")).toBe(
+      "Error opening rtmp://live.twitch.tv/app/<redacted>: Input/output error"
+    );
+    expect(redactSecrets('{"url":"rtmps://a.rtmp.youtube.com/live2/abcd-efgh"}')).toBe('{"url":"rtmps://a.rtmp.youtube.com/live2/<redacted>"}');
   });
 
   it("hides key-shaped query parameters on any scheme, SRT included", () => {
@@ -26,6 +31,15 @@ describe("redactSecrets", () => {
     expect(redactSecrets("https://api.example/v1?token=eyJhbGciOi.abc&Key=xyz")).toBe(
       "https://api.example/v1?token=<redacted>&Key=<redacted>"
     );
+  });
+
+  it("hides the relay's own credential, which travels as ?user=&pass= on the program URL", () => {
+    // packages/core/src/relay-ingest.ts builds exactly this shape for MediaMTX; the user name is not
+    // a secret and stays readable, the pass is.
+    expect(redactSecrets("rtmp://relay:1935/live/program?user=internal&pass=s3cr3tRelayKey")).toBe(
+      "rtmp://relay:1935/live/<redacted>?user=internal&pass=<redacted>"
+    );
+    expect(redactSecrets("https://h/x?pwd=abc&auth=def&sig=ghi")).toBe("https://h/x?pwd=<redacted>&auth=<redacted>&sig=<redacted>");
   });
 
   it("hides userinfo passwords, webhook tokens and bearer tokens", () => {

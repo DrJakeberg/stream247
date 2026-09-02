@@ -3574,6 +3574,27 @@ export const redactStoredSecretsMigration: MigrationDefinition = {
         await client.query("UPDATE audit_events SET message = $2 WHERE id = $1", [row.id, message]);
       }
     }
+    // The same ffmpeg line that reached the incident also reached the destination's last failure
+    // and the playout runtime's last error / stderr sample, and three dashboard views render them.
+    const destinations = await client.query<{ id: string; last_error: string }>("SELECT id, last_error FROM stream_destinations");
+    for (const row of destinations.rows) {
+      const lastError = redactSecrets(row.last_error);
+      if (lastError !== row.last_error) {
+        await client.query("UPDATE stream_destinations SET last_error = $2 WHERE id = $1", [row.id, lastError]);
+      }
+    }
+    const runtime = await client.query<{ singleton_id: number; last_error: string; last_stderr_sample: string; live_bridge_last_error: string }>(
+      "SELECT singleton_id, last_error, last_stderr_sample, live_bridge_last_error FROM playout_runtime"
+    );
+    for (const row of runtime.rows) {
+      const next = [redactSecrets(row.last_error), redactSecrets(row.last_stderr_sample), redactSecrets(row.live_bridge_last_error)];
+      if (next[0] !== row.last_error || next[1] !== row.last_stderr_sample || next[2] !== row.live_bridge_last_error) {
+        await client.query(
+          "UPDATE playout_runtime SET last_error = $2, last_stderr_sample = $3, live_bridge_last_error = $4 WHERE singleton_id = $1",
+          [row.singleton_id, ...next]
+        );
+      }
+    }
   }
 };
 if (!schemaMigrations.some((migration) => migration.id === redactStoredSecretsMigration.id)) {
@@ -4273,7 +4294,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         destination.lastValidatedAt,
         destination.lastFailureAt,
         destination.failureCount,
-        destination.lastError
+        redactSecrets(destination.lastError)
       ]
     );
   }
@@ -4450,8 +4471,8 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
       playout.restartCount,
       playout.crashCountWindow,
       playout.crashLoopDetected,
-      playout.lastError,
-      playout.lastStderrSample,
+      redactSecrets(playout.lastError),
+      redactSecrets(playout.lastStderrSample),
       playout.selectionReasonCode,
       playout.fallbackTier,
       playout.overrideMode,
@@ -4464,7 +4485,7 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
       playout.liveBridgeRequestedAt,
       playout.liveBridgeStartedAt,
       playout.liveBridgeReleasedAt,
-      playout.liveBridgeLastError,
+      redactSecrets(playout.liveBridgeLastError),
       playout.cuepointWindowKey,
       JSON.stringify(playout.cuepointFiredKeys ?? []),
       playout.cuepointLastTriggeredAt,
@@ -7033,7 +7054,7 @@ export async function updateDestinationRecord(
         destination.lastValidatedAt,
         destination.lastFailureAt,
         destination.failureCount,
-        destination.lastError
+        redactSecrets(destination.lastError)
       ]
     );
   });

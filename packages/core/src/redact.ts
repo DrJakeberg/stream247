@@ -13,10 +13,10 @@
 const REDACTED = "<redacted>";
 
 /** Query parameters whose value is a credential, whatever the scheme. */
-const SECRET_QUERY_KEYS = /([?&](?:key|streamkey|stream_key|streamid|token|access_token|refresh_token|passphrase|password|secret|api_key|apikey|client_secret)=)[^&\s"'`]+/gi;
+const SECRET_QUERY_KEYS = /([?&](?:key|streamkey|stream_key|streamid|token|access_token|refresh_token|passphrase|password|pass|pwd|passwd|secret|api_key|apikey|client_secret|auth|sig|signature|credential)=)[^&\s"'`]+/gi;
 
 /** Publish URLs: the last path segment of an RTMP/RTMPS/SRT URL is the key by convention. */
-const PUBLISH_URL_KEY = /((?:rtmps?|srt):\/\/[^\s/"'`]+\/(?:[^\s/?"'`]+\/)*)([^\s/?"'`]+)/gi;
+const PUBLISH_URL_KEY = /((?:rtmps?|srt):\/\/[^\s/"'`]+\/(?:[^\s/?"'`]+\/)*)([^\s/?"'`:,;)\]>]+)/gi;
 
 /** user:password@host — the password. */
 const USERINFO_PASSWORD = /(\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@"'`]+:)([^\s@"'`]+)(@)/gi;
@@ -39,7 +39,9 @@ export function redactSecrets(text: string): string {
     .replace(WEBHOOK_TOKEN, `$1${REDACTED}`)
     .replace(USERINFO_PASSWORD, `$1${REDACTED}$3`)
     .replace(SECRET_QUERY_KEYS, `$1${REDACTED}`)
-    .replace(PUBLISH_URL_KEY, (match, prefix: string, last: string) => (last === REDACTED ? match : `${prefix}${REDACTED}`))
+    .replace(PUBLISH_URL_KEY, (match, prefix: string, last: string) =>
+      last === REDACTED || last.startsWith("<redacted") ? match : `${prefix}${REDACTED}`
+    )
     .replace(AUTH_HEADER_TOKEN, `$1${REDACTED}`)
     .replace(TWITCH_STREAM_KEY, REDACTED);
 }
