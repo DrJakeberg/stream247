@@ -37,7 +37,7 @@ Control the live chat rail, Twitch alert types, and the chatter-participation ga
 CHAT AND ALERTS
 Engagement controls
 CHAT OVERLAY
-Configure the on-stream Twitch chat rail that renders inside the on-air overlay.
+Configure the on-stream Twitch chat rail that renders inside the on-air overlay. The chat connection itself stays up for moderator check-ins, votes and the chat game whether or not the rail is shown.
 Enable chat overlay
 CHAT MODE
 Quiet
