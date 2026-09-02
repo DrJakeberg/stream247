@@ -417,6 +417,32 @@ export function isEngagementChatRuntimeEnabled(
   return normalizeEngagementSettings(settings).chatEnabled && resolveChatOverlayRuntimeEnabled(managedConfig, env);
 }
 
+/**
+ * Whether the Twitch chat connection is needed at all.
+ *
+ * Finding [7] of the codebase review: the bridge used to follow the chat rail's switch alone, and
+ * it is the only intake for moderator check-ins, votes, skip votes, viewer requests and the chat
+ * game — hiding the panel silently switched all of them off. The connection is needed when any
+ * consumer needs it; the rail is one consumer, gated separately where the panel is drawn.
+ */
+export function isChatBridgeRuntimeNeeded(
+  state: {
+    engagement: EngagementSettingsInput | null | undefined;
+    managedConfig?: ManagedRuntimeToggleInput;
+    moderation?: { enabled: boolean } | null;
+    chatInteraction?: { enabled: boolean } | null;
+    chatGame?: { enabled: boolean } | null;
+  },
+  env: Record<string, string | undefined>
+): boolean {
+  return (
+    isEngagementChatRuntimeEnabled(state.engagement, env, state.managedConfig) ||
+    Boolean(state.moderation?.enabled) ||
+    Boolean(state.chatInteraction?.enabled) ||
+    Boolean(state.chatGame?.enabled)
+  );
+}
+
 export function isEngagementAlertsRuntimeEnabled(
   settings: EngagementSettingsInput | null | undefined,
   env: Record<string, string | undefined>,
