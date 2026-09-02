@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDefaultChatInteractionConfig, type ChatInteractionConfig } from "@stream247/core";
+import { ActiveChatterRoster } from "../../apps/worker/src/active-chatters.js";
 import { ChatControlRuntime } from "../../apps/worker/src/chat-control.js";
 import { EngagementGameTracker } from "../../apps/worker/src/engagement-game.js";
 
@@ -44,16 +45,19 @@ function skipConfig(): ChatInteractionConfig {
 
 describe("active chatters", () => {
   it("counts the same room for the overlays page and for the skip threshold", () => {
+    // Wired the way the worker wires them: one roster, filled and windowed by the tracker.
+    const activeChatters = new ActiveChatterRoster();
+    const tracker = new EngagementGameTracker(activeChatters);
+    let nowMs = T0;
+    const control = new ChatControlRuntime({ activeChatters, now: () => new Date(nowMs) });
+
     // What the overlays page prints: the tracker's snapshot over the engagement window.
-    const tracker = new EngagementGameTracker();
     for (const entry of HISTORY) {
       tracker.recordChatMessage({ actor: entry.actor, createdAt: new Date(entry.atMs).toISOString() });
     }
     const guiCount = tracker.getSnapshot(SETTINGS, new Date(SKIP_AT)).activeChatterCount;
 
-    // What the skip vote divides by: the control runtime's own count after the same history.
-    let nowMs = T0;
-    const control = new ChatControlRuntime({ now: () => new Date(nowMs) });
+    // What the skip vote divides by: the control runtime's count after the same history.
     let skipEffect: ReturnType<ChatControlRuntime["handleMessage"]> = { kind: "none" };
     for (const entry of HISTORY) {
       nowMs = entry.atMs;

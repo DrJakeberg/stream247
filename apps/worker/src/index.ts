@@ -277,6 +277,7 @@ import {
 } from "./source-sync-scope.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
+import { ActiveChatterRoster } from "./active-chatters.js";
 import { EngagementGameTracker } from "./engagement-game.js";
 import { ChatGameRuntime, buildChatGameOverlayViewFromRuntimeRecord } from "./chat-game.js";
 import {
@@ -366,9 +367,13 @@ const PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS = (() => {
   const configured = Number.isFinite(parsed) && parsed > 0 ? parsed * 1000 : 60_000;
   return clampToCycleAwaitCeiling(configured, process.env).effectiveMs;
 })();
-const engagementGameTracker = new EngagementGameTracker();
+// One roster of who is talking, shared by the engagement game and the skip vote, so the count the
+// overlays page prints is the count a skip needs a share of. See active-chatters.ts.
+const activeChatters = new ActiveChatterRoster();
+const engagementGameTracker = new EngagementGameTracker(activeChatters);
 // Owns the live vote and skip tallies. See chat-control.ts.
 const chatControl = new ChatControlRuntime({
+  activeChatters,
   onEvent: (event, fields) => logRuntimeEvent(event, fields)
 });
 // Owns the running chat game (snake). See chat-game.ts.
