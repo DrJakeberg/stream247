@@ -7160,6 +7160,8 @@ async function sendAlert(subject: string, message: string): Promise<void> {
         message: `An alert was raised ("${subject}") but neither a Discord webhook nor SMTP is set up, so nobody was told.`,
         fingerprint: "alerts.unconfigured"
       });
+    } else {
+      await resolveIncident("alerts.unconfigured", "An alert channel is configured.");
     }
   } catch {
     // Recording the delivery outcome must never take the worker loop down with it.

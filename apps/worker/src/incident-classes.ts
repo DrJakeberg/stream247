@@ -259,6 +259,20 @@ const STATE_FAMILIES: IncidentFamily[] = [
     kind: "state",
     area: "twitch",
     why: "EventSub is configured incompletely, which holds until the configuration is completed."
+  },
+  {
+    fingerprint: "alerts.delivery",
+    keyed: false,
+    kind: "state",
+    area: "system",
+    why: "An alert channel is rejecting deliveries, which holds until a delivery succeeds; the next working delivery resolves it."
+  },
+  {
+    fingerprint: "alerts.unconfigured",
+    keyed: false,
+    kind: "state",
+    area: "system",
+    why: "An alert was raised with no channel configured, which holds until a webhook or SMTP is set up; the next alert that finds one resolves it."
   }
 ];
 
