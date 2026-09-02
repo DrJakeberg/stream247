@@ -7,8 +7,7 @@ import {
   resolveTwitchEventSubSecret,
   type ManagedEventSubSecretInput
 } from "@stream247/core";
-import { appendEngagementEventRecord, getBroadcastSnapshot, readAppState } from "@/lib/server/state";
-import { createSseResponse } from "@/lib/server/sse";
+import { appendEngagementEventRecord, readAppState } from "@/lib/server/state";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -93,13 +92,10 @@ function buildEventSubMessage(args: {
   return userInput ? `${base} ${userInput}` : base;
 }
 
-export async function GET(request: Request) {
-  return createSseResponse(request, "engagement", async () => getBroadcastSnapshot(await readAppState()).engagement, {
-    snapshotIntervalMs: 1000,
-    errorMessage: "Unknown engagement SSE error."
-  });
-}
-
+// Only POST. Twitch has this URL registered as its EventSub callback (apps/worker/src/twitch-eventsub.ts),
+// so the path and the behaviour below must not move. The GET that used to stream engagement over SSE
+// fed the browser overlay page, which is gone: the on-air picture is drawn by the playout renderer,
+// and the studio preview is the same drawing.
 export async function POST(request: Request) {
   const rawBody = await request.text();
   // State is read before signature verification since M56: the shared secret itself may live in

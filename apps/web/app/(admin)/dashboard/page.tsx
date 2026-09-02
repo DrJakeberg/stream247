@@ -22,7 +22,7 @@ import {
   getSchedulePreview,
   readAppState
 } from "@/lib/server/state";
-import { getAbsoluteAppUrl, isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
+import { isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
 
 export default async function DashboardPage() {
   const state = await readAppState();
@@ -325,10 +325,7 @@ export default async function DashboardPage() {
                   ? `${state.overlay.channelName} · ${state.overlay.headline}`
                   : "Overlay is currently disabled."}
               </div>
-              <div className="subtle">
-                Stream247 captures <code>{getAbsoluteAppUrl(state, "/overlay")}</code> as the
-                internal overlay output.
-              </div>
+              <div className="subtle">The picture is drawn by the playout; the studio preview is the same drawing.</div>
             </div>
             <TwitchConnectPanel
               authorizeUrl={twitchAuthorizeUrl}

@@ -222,7 +222,7 @@ The runtime now supports multiple concurrent RTMP outputs per channel.
 
 ## Overlay Model
 
-Overlay is implemented as Stream247's internal browser capture surface. Chromium captures `/overlay?chromeless=1`, and the published scene feeds the on-air overlay path.
+The overlay is drawn by the playout worker's own renderer from the published scene; the studio preview is the same drawing. There is no browser page to capture.
 
 The overlay is internal output for Stream247's own 24/7 broadcast. It is not an external overlay product or a reusable third-party embed surface.
 
@@ -236,7 +236,7 @@ Current overlay capabilities:
 - now/next teaser toggle
 - schedule teaser toggle
 
-The admin UI manages these settings; the public overlay page renders them for Stream247's internal overlay capture flow.
+The admin UI manages these settings; the playout renderer draws them onto the picture.
 
 ## Alerting And Incidents
 

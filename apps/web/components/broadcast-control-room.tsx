@@ -322,9 +322,6 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 <Link className="subtle-link" href={buildWorkspaceHref("studio", "scene")}>
                   Open overlay studio
                 </Link>
-                <Link className="subtle-link" href="/overlay" target="_blank">
-                  Open public overlay
-                </Link>
               </div>
             </div>
           </div>

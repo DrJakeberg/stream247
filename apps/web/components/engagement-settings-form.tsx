@@ -86,7 +86,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
       <div className="list">
         <div className="item">
           <span className="label">Chat overlay</span>
-          <div className="subtle">Configure the on-stream Twitch chat rail that renders inside the captured overlay.</div>
+          <div className="subtle">Configure the on-stream Twitch chat rail that renders inside the on-air overlay.</div>
           <div className="form-grid" style={{ marginTop: 12 }}>
             <label className="toggle-row">
               <input checked={chatEnabled} onChange={(event) => setChatEnabled(event.target.checked)} type="checkbox" />

@@ -52,7 +52,9 @@ vi.mock("@/lib/server/state", () => ({
 
 vi.mock("@/lib/server/sse", async () => vi.importActual("../../apps/web/lib/server/sse"));
 
-import { GET, POST } from "../../apps/web/app/api/overlay/events/route";
+import * as overlayEventsRoute from "../../apps/web/app/api/overlay/events/route";
+
+const { POST } = overlayEventsRoute;
 
 const envKeys = ["NODE_ENV", "APP_URL", "STREAM_ALERTS_ENABLED", "STREAM_CHAT_OVERLAY_ENABLED", "TWITCH_EVENTSUB_SECRET"] as const;
 const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
@@ -905,41 +907,13 @@ describe("engagement EventSub and SSE routes", () => {
     expect(mockAppendEngagementEventRecord).not.toHaveBeenCalled();
   });
 
-  it("streams the current engagement snapshot over SSE", async () => {
-    const engagement = {
-      settings: {
-        chatEnabled: true,
-        alertsEnabled: true,
-        donationsEnabled: true,
-        channelPointsEnabled: true,
-        chatRuntimeEnabled: true,
-        alertsRuntimeEnabled: true,
-        donationsRuntimeEnabled: true,
-        channelPointsRuntimeEnabled: true,
-        chatMode: "active",
-        chatPosition: "bottom-left",
-        alertPosition: "top-right",
-        style: "compact",
-        maxMessages: 5,
-        rateLimitPerMinute: 30,
-        updatedAt: ""
-      },
-      chatStatus: "connected",
-      recentEvents: []
-    };
-    mockGetBroadcastSnapshot.mockReturnValue({ engagement });
-    const abortController = new AbortController();
-
-    const response = await GET(new Request("http://localhost/api/overlay/events", { signal: abortController.signal }));
-    const reader = response.body?.getReader();
-    const chunk = await reader?.read();
-    abortController.abort();
-    await reader?.cancel().catch(() => undefined);
-    const text = new TextDecoder().decode(chunk?.value);
-
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
-    expect(text).toContain("event: engagement");
-    expect(text).toContain(JSON.stringify(engagement));
+  it("answers GET with a method error: the SSE feed left with the browser overlay", () => {
+    // The only reader of the engagement stream was the browser overlay page, and that page is gone:
+    // the on-air picture is drawn by the playout renderer, and the studio preview is the same
+    // drawing. Next answers a missing method export with 405, so the module must not export GET.
+    // POST stays: Twitch has this URL registered as its EventSub callback.
+    expect("GET" in overlayEventsRoute).toBe(false);
+    expect(typeof overlayEventsRoute.POST).toBe("function");
   });
 });
 

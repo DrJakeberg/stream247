@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  getSceneRendererBaseUrl,
   getSceneRendererIntervalMs,
   getSceneRendererViewport
 } from "../../apps/worker/src/on-air-scene";
@@ -10,18 +9,6 @@ import {
 // renderer still takes from the environment.
 
 describe("on-air scene helpers", () => {
-  it("prefers explicit internal render URLs before falling back", () => {
-    expect(
-      getSceneRendererBaseUrl({
-        SCENE_RENDER_BASE_URL: "http://internal-render:3000/",
-        INTERNAL_APP_URL: "http://web:3000",
-        APP_URL: "https://stream247.example.com"
-      })
-    ).toBe("http://internal-render:3000");
-
-    expect(getSceneRendererBaseUrl({ INTERNAL_APP_URL: "http://web:3000/" })).toBe("http://web:3000");
-  });
-
   it("normalizes viewport and interval defaults", () => {
     expect(getSceneRendererViewport({})).toEqual({
       width: 1280,

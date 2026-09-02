@@ -1347,7 +1347,6 @@ export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot
     overlay: snapshot.overlay,
     engagement: snapshot.engagement,
     activeScene: snapshot.activeScene,
-    activeScenePayload: snapshot.activeScenePayload,
     playout: {
       status: snapshot.playout.status,
       message: snapshot.playout.message,

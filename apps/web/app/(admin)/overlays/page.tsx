@@ -37,7 +37,7 @@ export default async function OverlaysPage() {
   return (
     <div className="stack-form">
       <AdminPageHeader
-        description="Control the live chat rail, Twitch alert types, and the chatter-participation game that all render through the same captured overlay."
+        description="Control the live chat rail, Twitch alert types, and the chatter-participation game that all render through the same on-air overlay."
         eyebrow="Engagement"
         title="Manage in-stream engagement from one tab."
       />

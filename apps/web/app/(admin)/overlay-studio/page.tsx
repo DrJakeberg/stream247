@@ -1,13 +1,11 @@
 export const dynamic = "force-dynamic";
 
 import { AdminPageHeader } from "@/components/admin-page-header";
-import Link from "next/link";
 import { listOverlayVideoSourceRecords } from "@stream247/db";
 import { OverlaySettingsForm } from "@/components/overlay-settings-form";
 import { Panel } from "@/components/panel";
 import { VideoSourceSettingsForm } from "@/components/video-source-settings-form";
 import { getCurrentScheduleItem, getNextScheduleItem, getWorkspaceTimeZone, listOverlayScenePresetRecords, readAppState, readOverlayStudioState } from "@/lib/server/state";
-import { getAbsoluteAppUrl } from "@/lib/server/twitch";
 import { describeScenePreset, describeTypographyPreset } from "@/lib/scene-preset-names";
 
 export default async function OverlayStudioPage() {
@@ -26,7 +24,7 @@ export default async function OverlayStudioPage() {
     <div className="stack-form">
       <AdminPageHeader
         className={emergencyBannerActive ? "scene-header-alert" : ""}
-        description="Scene controls the published viewer-facing scene. Draft changes stay isolated until you review and publish them to Stream247's internal overlay output and the on-air renderer."
+        description="Scene controls the published viewer-facing scene. Draft changes stay isolated until you review and publish them to the on-air renderer."
         eyebrow="Scene"
         title="Publish the viewer-facing scene without leaving the control room."
       />
@@ -34,12 +32,10 @@ export default async function OverlayStudioPage() {
       <div className="grid two">
         <Panel title="Scene controls" eyebrow="Scene">
           <p className="subtle">
-            Stream247 captures <code>{getAbsoluteAppUrl(state, "/overlay")}</code> as its
-            internal overlay output. Draft changes stay inside the studio until you publish them, and the same live
-            scene settings also drive the on-air replay text overlay inside the FFmpeg playout path. Metadata widgets
-            stay inside that canonical scene payload, custom font stacks resolve only against fonts already installed
-            on the browser host or worker image, and positioned embeds remain conservative: remote CSP and iframe
-            policies still decide whether a website or widget can actually render.
+            The picture is drawn by the playout; the studio preview is the same drawing. Draft changes stay inside the
+            studio until you publish them, and the published scene settings also drive the on-air replay text overlay
+            inside the FFmpeg playout path. Metadata widgets stay inside that canonical scene payload, and custom font
+            stacks resolve only against fonts already installed on the worker image.
           </p>
           <OverlaySettingsForm
             basedOnUpdatedAt={studioState.basedOnUpdatedAt}
@@ -113,12 +109,6 @@ export default async function OverlayStudioPage() {
               <strong>Next block</strong>
               <div className="subtle">
                 {nextItem ? `${nextItem.title} · ${nextItem.startTime} to ${nextItem.endTime}` : "No next block"}
-              </div>
-            </div>
-            <div className="item">
-              <strong>Internal overlay output</strong>
-              <div className="subtle">
-                <Link href="/overlay">Open overlay page</Link>
               </div>
             </div>
             <div className="item">
