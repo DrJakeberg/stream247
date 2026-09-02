@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.38 - 2026-09-02
+
 ### Changed
 
 - One overlay, one preview. The studio's scene tab showed two drawings of the same scene side by
