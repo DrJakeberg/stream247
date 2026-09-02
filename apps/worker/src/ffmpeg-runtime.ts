@@ -341,6 +341,62 @@ export function buildSourceLivePipFilterComplex(args: {
   return { filterComplex: `${video};${audio}`, audioMapped: true };
 }
 
+/**
+ * The chain that runs the ticker line across its band, at the OUTPUT frame rate.
+ *
+ * The renderer cannot crawl: it redraws on SCENE_RENDER_INTERVAL_MS, 2000ms by default and floored
+ * at 1000ms, so a line drawn into the frame would teleport 118px a step. ffmpeg can, for nothing
+ * per frame, and this is how.
+ *
+ * A transparent bed exactly the size of the clear run inside the band is what does the clipping:
+ * overlay clips its second input to its first, so the line can hang off both ends without ever
+ * painting outside the panel. The strip is split and laid down TWICE, one period apart, which is
+ * what makes the wrap seamless rather than a jump — when the first copy has travelled a whole
+ * period the second is already exactly where the first began, and the two pictures are identical.
+ * Measured on this machine before any of it was written: 4px of travel per frame at 120px/s and
+ * 30fps, and no discontinuity at the wrap.
+ *
+ * The period is the ink plus the gap, so a longer line does not crawl faster or leave a wider hole
+ * — the gap between the end of the line and its next pass is the same however long the line is.
+ *
+ * The x expression is wrapped in ffmpeg-level single quotes so its comma stays an argument
+ * separator for mod() and does not end the filter.
+ *
+ * shortest=1 on the LAST overlay is not a detail, it is the difference between a channel and a
+ * hung one. overlay ends with its LONGEST input, not its main one, and both of this chain's own
+ * inputs — the looped strip and the colour bed — are endless. Measured without it: a two-second
+ * programme produced thirteen minutes of output and was still going when the probe killed it, so
+ * every block would have hung and the channel would have stopped at the first boundary. With it,
+ * the same programme produces exactly 60 frames and 2.000000 seconds and ffmpeg exits by itself.
+ * It cannot truncate anything either: the only finite input on that overlay is the picture it is
+ * drawing onto.
+ */
+export function buildTickerCrawlFilter(args: {
+  /** The clear run inside the band, from overlayTickerCrawlPlan. */
+  crawl: { left: number; top: number; width: number; height: number };
+  pxPerSecond: number;
+  /** Ink width plus gap: how far the line travels before it repeats. */
+  periodPx: number;
+  stripInputIndex: number;
+  fps: number;
+  /** Label of the video to draw onto, without brackets. */
+  from: string;
+  /** Label to produce, without brackets. */
+  to: string;
+}): string {
+  const { crawl } = args;
+  const speed = Math.max(1, Math.round(args.pxPerSecond));
+  const period = Math.max(1, Math.round(args.periodPx));
+  const x = `-mod(t*${speed},${period})`;
+  return (
+    `color=c=black@0.0:s=${crawl.width}x${crawl.height}:r=${args.fps},format=rgba[tkbed];` +
+    `[${args.stripInputIndex}:v]format=rgba,split=2[tka][tkb];` +
+    `[tkbed][tka]overlay=x='${x}':y=0:format=auto[tk1];` +
+    `[tk1][tkb]overlay=x='${x}+${period}':y=0:format=auto[tkband];` +
+    `[${args.from}][tkband]overlay=x=${crawl.left}:y=${crawl.top}:format=auto:shortest=1[${args.to}]`
+  );
+}
+
 export type LiveSourceAudioDecisionInput = {
   /** The programme asset's known duration in seconds; <= 0 or non-finite means unknown. */
   programDurationSeconds: number;
