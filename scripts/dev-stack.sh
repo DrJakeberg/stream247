@@ -26,6 +26,8 @@ cd "$ROOT_DIR"
 
 PROJECT_NAME="${DEV_STACK_PROJECT:-stream247-dev}"
 PORT="${DEV_STACK_PORT:-3020}"
+# One value for the stack and for every host-side script that reads its data.
+APP_SECRET_VALUE="${STREAM247_DEV_APP_SECRET:-stream247-dev-stack-secret-0123456789}"
 DB_PORT="${DEV_STACK_DB_PORT:-55432}"
 STATE_DIR="${DEV_STACK_STATE_DIR:-$ROOT_DIR/.dev-stack}"
 ENV_FILE="$STATE_DIR/.env"
@@ -51,7 +53,7 @@ write_config() {
 NODE_ENV=production
 PORT=3000
 APP_URL=${BASE_URL}
-APP_SECRET=stream247-dev-stack-secret-0123456789
+APP_SECRET=${APP_SECRET_VALUE}
 POSTGRES_DB=stream247
 POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247
@@ -158,6 +160,11 @@ cmd_up() {
 # channel would have. With the containers running the worker owns it and this would be overwritten
 # within seconds, so callers only invoke it in the deterministic configuration.
 seed_runtime() {
+  # APP_SECRET must match the stack's: this script reads app state through @stream247/db, and the
+  # managed config is encrypted with a key derived from that secret. Without it the script derives
+  # a different key, every stored secret decrypts to nothing, and since the store started saying so
+  # out loud that raises a critical incident on every admin surface. It used to fail silently.
+  APP_SECRET="$APP_SECRET_VALUE" \
   DATABASE_URL="postgresql://stream247:stream247@127.0.0.1:${DB_PORT}/stream247" \
     node "$ROOT_DIR/scripts/seed-playout-runtime.mjs" ||
     echo "Runtime seed failed; live surfaces will render idle."
