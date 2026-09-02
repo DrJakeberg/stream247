@@ -138,12 +138,15 @@ describe("ticker panel", () => {
     expect(key(8)).not.toBe(key(0));
 
     // An empty ticker must leave the key exactly as it was, or every cached frame in the fleet
-    // re-rasterises for a panel that draws nothing.
+    // re-rasterises for a panel that draws nothing. Compared inside one minute on purpose: the key
+    // also carries the drawn clock, which moves once a minute by design and is pinned by
+    // tests/unit/scene-cache-key-clock.test.ts. Crossing a minute here would prove nothing about
+    // the ticker.
     const empty = (seconds: number) => sceneFrameCacheKey(request("", new Date(seconds * 1000)));
-    expect(empty(0)).toBe(empty(999));
+    expect(empty(0)).toBe(empty(59));
     // As must a single message: nothing about it changes over time.
     const single = (seconds: number) => sceneFrameCacheKey(request("Only one", new Date(seconds * 1000), 8));
-    expect(single(0)).toBe(single(999));
+    expect(single(0)).toBe(single(59));
   });
 });
 
