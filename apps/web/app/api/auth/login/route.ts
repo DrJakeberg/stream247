@@ -30,6 +30,19 @@ export async function POST(request: NextRequest) {
   // A correct password clears the counter, so a user who fumbled a few times is not locked out.
   resetRateLimit(limitKey);
 
+  // Fail closed: a 2FA secret that exists but cannot be decrypted with the current APP_SECRET is
+  // not "no 2FA". Before this, a lost or rotated secret silently skipped the second factor.
+  if (user.authProvider === "local" && user.twoFactorEnabled && user.twoFactorSecretUnreadable) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message:
+          "Two-factor authentication is enabled for this account, but its secret cannot be decrypted with the current APP_SECRET. Restore the APP_SECRET that encrypted it (env APP_SECRET or the persisted secret file on the data volume). An administrator with database access can otherwise clear two_factor_enabled for this user."
+      },
+      { status: 423 }
+    );
+  }
+
   if (user.authProvider === "local" && user.twoFactorEnabled && user.twoFactorSecret) {
     return NextResponse.json(
       {

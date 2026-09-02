@@ -273,6 +273,13 @@ const STATE_FAMILIES: IncidentFamily[] = [
     kind: "state",
     area: "system",
     why: "An alert was raised with no channel configured, which holds until a webhook or SMTP is set up; the next alert that finds one resolves it."
+  },
+  {
+    fingerprint: "secrets.key-mismatch",
+    keyed: false,
+    kind: "state",
+    area: "system",
+    why: "Stored secrets fail to decrypt with the current APP_SECRET, which holds until that secret is restored or every value is re-entered."
   }
 ];
 

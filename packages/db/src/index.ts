@@ -72,6 +72,8 @@ export type UserRecord = {
   passwordHash?: string;
   twoFactorEnabled?: boolean;
   twoFactorSecret?: string;
+  /** The stored secret exists but will not open with the current APP_SECRET; the 2FA gate fails closed. */
+  twoFactorSecretUnreadable?: boolean;
   twoFactorConfirmedAt?: string;
   createdAt: string;
   lastLoginAt: string;
@@ -4930,7 +4932,12 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       twitchLogin: row.twitch_login,
       passwordHash: row.password_hash || undefined,
       twoFactorEnabled: row.two_factor_enabled,
-      twoFactorSecret: decryptSecretString(row.two_factor_secret),
+      // A secret that exists but will not open is not "no secret": the login gate must refuse,
+      // not skip. Finding [10] of the codebase review.
+      ...(() => {
+        const twoFactorSecret = decryptSecretString(row.two_factor_secret, "two-factor secret");
+        return { twoFactorSecret, twoFactorSecretUnreadable: Boolean(row.two_factor_secret) && !twoFactorSecret };
+      })(),
       twoFactorConfirmedAt: row.two_factor_confirmed_at,
       createdAt: row.created_at,
       lastLoginAt: row.last_login_at
