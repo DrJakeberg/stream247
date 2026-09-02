@@ -4,7 +4,7 @@ Stream247 is a self-hosted platform for running a Twitch-first 24/7 channel from
 
 It ships as Docker / Docker Compose, publishes images through GitHub Actions and GHCR, and gives operators a browser-based admin UI for scheduling, playout control, Twitch sync, moderation policy, and incident handling.
 
-The `/overlay` route is internal output for Stream247's own 24/7 broadcast pipeline. It is not a standalone overlay product or a reusable embed surface.
+There is no standalone overlay page. The on-air overlay is drawn by the playout worker's own renderer from the published scene, and the studio preview is the same drawing. Stream247 is not an overlay product or a reusable embed surface.
 
 ## License Model
 
@@ -521,7 +521,7 @@ Notes:
 ### Overlay And Viewer Pages
 
 - public schedule page at `/channel`
-- internal overlay route at `/overlay`
+- on-air overlay drawn by the playout renderer; the studio preview is the same drawing
 - `Scene` in the Studio workspace
 - configurable replay label, channel name, headline, accent color, emergency banner, and now/next teaser toggles
 

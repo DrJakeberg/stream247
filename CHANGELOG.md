@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Changed
+
+- One overlay, one preview. The studio's scene tab showed two drawings of the same scene side by
+  side — the studio's own HTML rebuild on the left, the frame the on-air renderer produces on the
+  right — and the dashboard said Stream247 "captures" an `/overlay` address as its internal overlay
+  output, with a link to open that page. Nothing captured it any more: since the native renderer
+  went on air, the browser page was a third drawing of the scene that no viewer and no pipeline
+  looked at, and the rebuild beside the preview disagreed with the broadcast in known ways — a 5%
+  safe area where the renderer uses 3.75% by 5.19%, panel sizes and opacities the renderer clamps
+  away, every panel half again as large at 1280x720. An operator looking at the studio could not
+  tell which of the three pictures was the truth.
+
+  Now there is one. The studio preview is the renderer's frame and nothing else; the dashboard and
+  the studio say that the picture is drawn by the playout and the preview is the same drawing. The
+  `/overlay` page, its chromeless variant, the `noindex` middleware that guarded it, the studio's
+  HTML rebuild and the engagement SSE stream that fed the page are gone, and ~670 lines of overlay
+  CSS with them. The on-air picture itself has not changed: the renderer in `packages/core` is
+  untouched and its golden frames still match. `POST /api/overlay/events` stays exactly where it
+  is — Twitch has that URL registered as its EventSub callback; only the `GET` that streamed
+  engagement to the browser overlay answers 405 now. `SCENE_RENDERER_ENABLED=0` still switches the
+  playout to the text overlay path.
+
 ## 1.5.37 - 2026-09-01
 
 ### Fixed

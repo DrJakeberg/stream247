@@ -41,7 +41,9 @@ const SURFACES: Surface[] = [
   // actions of equal weight, with the order to try them explained in a paragraph above the form.
   // Now 22: the repairs fold away, and so does bringing in an outside feed — a separate job whose
   // three fields and two buttons had been scattered across the page rather than kept together.
-  { name: "live-control", path: "/live?tab=control", maxControls: 22, primaryActions: 1 },
+  // Then 21: the "Open public overlay" link went with the browser overlay page it opened — the
+  // picture is drawn by the playout now, and the studio preview is the same drawing.
+  { name: "live-control", path: "/live?tab=control", maxControls: 21, primaryActions: 1 },
   // Was 62, because the full editor stood open under every destination and the count therefore grew
   // with the number of outputs configured. Folding those away leaves what the page is for.
   // 27: two of the three "Open setup" links removed as dead ends came back with real targets — the
