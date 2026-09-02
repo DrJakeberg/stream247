@@ -295,4 +295,46 @@ describe("built-in panel placement", () => {
     expect(two.options).toBe(2);
     expect(two.height).toBeLessThanOrEqual(Math.round((23 / 100) * (1080 - 112)));
   }, 60_000);
+
+  it("keeps every panel inside its box when they are all placed at once", async () => {
+    const loaded = await fonts();
+    if (!loaded) {
+      return;
+    }
+    // Six panels stacked into one corner: boxes too small for any of them, all overlapping. In the
+    // flow this could not happen — panels displaced each other — so this is the case the box model
+    // has to answer for, and the answer is that a panel is cut off at its box rather than drawn
+    // across the picture.
+    const cramped = Object.fromEntries(
+      OVERLAY_PANEL_IDS.map((id) => [
+        id,
+        { xPercent: 10, yPercent: 10, widthPercent: 20, heightPercent: 12, opacityPercent: 100, allowOutsideSafeArea: false }
+      ])
+    );
+    const nodes = await render(
+      {
+        payload: {
+          ...basePayload(),
+          emergencyBanner: "Transmission resumes at 22:00",
+          scene: { ...basePayload().scene, panelPlacements: cramped }
+        },
+        chat: chatWith("bottom-left", 8),
+        engagement
+      },
+      loaded
+    );
+
+    // The six absolute wrappers are the boxes; nothing they contain may be drawn outside one.
+    const boxes = nodes.filter((node) => style(node).position === "absolute" && style(node).overflow === "hidden");
+    expect(boxes).toHaveLength(OVERLAY_PANEL_IDS.length);
+    for (const box of boxes) {
+      expect(box.width).toBe(Math.round(((1920 - 144) * 20) / 100));
+      expect(box.height).toBe(Math.round(((1080 - 112) * 12) / 100));
+    }
+    const escaped = OVERLAY_PANEL_IDS.map((id) => panels(nodes)[id])
+      .filter((node): node is SatoriNode => Boolean(node))
+      .filter((node) => !boxes.some((box) => node.left >= box.left && node.left + node.width <= box.left + box.width + 1));
+    console.log(`cramped boxes: ${JSON.stringify(boxes.map((box) => ({ l: box.left, t: box.top, w: box.width, h: box.height })))}`);
+    expect(escaped.map((node) => node.width)).toEqual([]);
+  }, 60_000);
 });
