@@ -1351,11 +1351,19 @@ function clampOverlaySceneNumber(value: unknown, min: number, max: number, fallb
 /**
  * Reads back the placements an operator has set for the renderer's own panels.
  *
- * Same clamps as a custom layer's, because it is the same box: x and y stop at 90 so a panel can
- * never be pushed off the frame it is measured against, width at 10 and height at 8 so nothing is
- * saved at a size that draws as a smudge, opacity at 5 so nothing is saved invisible. A key that
- * is not a panel is dropped, and a panel with no entry stays out of the map — that absence is what
- * says "still in the flow", so writing a default here would move the picture.
+ * Same clamps as a custom layer's, because it is the same box: width stops at 10 and height at 8 so
+ * nothing is saved at a size that draws as a smudge, opacity at 5 so nothing is saved invisible. A
+ * key that is not a panel is dropped, and a panel with no entry stays out of the map — that absence
+ * is what says "still in the flow", so writing a default here would move the picture.
+ *
+ * x and y run to 100, not to 90. The cap was 90, on the reasoning that a panel should not be
+ * pushable off its own frame — but the panel that cannot be pushed off is the one that is already
+ * anchored to the far edge. The clock is 149 design pixels wide against a 1776-pixel safe area, so
+ * its left edge is at 91.6% by arithmetic; the next card's top is at 90.7% for the same reason.
+ * Both seeds came straight from deriveDefaultPlacements, which exists so that placing a panel moves
+ * nothing — and both were clamped on save, so placing the clock moved it 28 design pixels and the
+ * next card 8. What stops a box leaving the frame is resolvePlacementBox clamping its width against
+ * the room x leaves, which it has always done and still does.
  */
 export function normalizeOverlayScenePanelPlacements(value: unknown): OverlayScenePanelPlacementMap {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -1371,8 +1379,8 @@ export function normalizeOverlayScenePanelPlacements(value: unknown): OverlaySce
     }
     const raw = entry as Record<string, unknown>;
     placements[id] = {
-      xPercent: clampOverlaySceneNumber(raw.xPercent, 0, 90, 0),
-      yPercent: clampOverlaySceneNumber(raw.yPercent, 0, 90, 0),
+      xPercent: clampOverlaySceneNumber(raw.xPercent, 0, 100, 0),
+      yPercent: clampOverlaySceneNumber(raw.yPercent, 0, 100, 0),
       widthPercent: clampOverlaySceneNumber(raw.widthPercent, 10, 100, 40),
       heightPercent: clampOverlaySceneNumber(raw.heightPercent, 8, 100, 20),
       opacityPercent: clampOverlaySceneNumber(raw.opacityPercent, 5, 100, 100),
@@ -1656,8 +1664,11 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
       kind: raw.kind,
       name: sanitizeTextValue(raw.name, 80) || `${raw.kind[0].toUpperCase()}${raw.kind.slice(1)} Layer`,
       enabled: raw.enabled !== false,
-      xPercent: clampOverlaySceneNumber(raw.xPercent, 0, 90, raw.kind === "text" ? 4 : 62),
-      yPercent: clampOverlaySceneNumber(raw.yPercent, 0, 90, raw.kind === "text" ? 10 : 8),
+      // 0 to 100, the same range the built-in panels take. A small layer anchored to the far edge
+      // needs a position past 90 to be there at all; what keeps a box on the frame is
+      // resolvePlacementBox clamping its width against the room x leaves.
+      xPercent: clampOverlaySceneNumber(raw.xPercent, 0, 100, raw.kind === "text" ? 4 : 62),
+      yPercent: clampOverlaySceneNumber(raw.yPercent, 0, 100, raw.kind === "text" ? 10 : 8),
       widthPercent: clampOverlaySceneNumber(raw.widthPercent, 10, 100, raw.kind === "text" ? 34 : 26),
       heightPercent: clampOverlaySceneNumber(raw.heightPercent, 8, 100, raw.kind === "text" ? 18 : 20),
       opacityPercent: clampOverlaySceneNumber(raw.opacityPercent, 5, 100, 100),

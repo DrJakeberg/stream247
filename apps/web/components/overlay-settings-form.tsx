@@ -588,14 +588,19 @@ export function OverlaySettingsForm(props: {
     // to hundredths turns a one-pixel arrow key into a 1.07-pixel move; thousandths cost 0.018 of
     // a pixel, which is under the rounding resolvePlacementBox does anyway.
     const round = (value: number) => Math.round(value * 1000) / 1000;
-    // x and y stop at 90 because that is where the stored schema stops them. A studio that let the
-    // operator drag to 95 and then wrote 90 would move the panel on save.
     const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+    const widthPercent = clamp(percent.widthPercent, 10, 100);
+    const heightPercent = clamp(percent.heightPercent, 8, 100);
+    // A drag stops at the frame's edge with its size intact, the way OBS does. The renderer's own
+    // answer for a box pushed past the edge is to clamp its width against the room x leaves, so a
+    // panel dragged too far right would get narrower rather than stop; keeping x + width at 100 or
+    // below makes that clamp a no-op, which is the only way the two can agree. Numbers typed into
+    // the fields still go through unchanged, and the preview shows what the renderer does with them.
     const patch = {
-      xPercent: round(clamp(percent.xPercent, 0, 90)),
-      yPercent: round(clamp(percent.yPercent, 0, 90)),
-      widthPercent: round(clamp(percent.widthPercent, 10, 100)),
-      heightPercent: round(clamp(percent.heightPercent, 8, 100))
+      xPercent: round(clamp(percent.xPercent, 0, 100 - widthPercent)),
+      yPercent: round(clamp(percent.yPercent, 0, 100 - heightPercent)),
+      widthPercent: round(widthPercent),
+      heightPercent: round(heightPercent)
     };
 
     if (id.startsWith("panel:")) {
@@ -1163,7 +1168,7 @@ export function OverlaySettingsForm(props: {
                             <label>
                               <span className="label">X position (%)</span>
                               <input
-                                max={90}
+                                max={100}
                                 min={0}
                                 onChange={(event) => updatePanelPlacement(panel.id, { xPercent: Number(event.target.value) || 0 })}
                                 type="number"
@@ -1173,7 +1178,7 @@ export function OverlaySettingsForm(props: {
                             <label>
                               <span className="label">Y position (%)</span>
                               <input
-                                max={90}
+                                max={100}
                                 min={0}
                                 onChange={(event) => updatePanelPlacement(panel.id, { yPercent: Number(event.target.value) || 0 })}
                                 type="number"
@@ -1325,7 +1330,7 @@ export function OverlaySettingsForm(props: {
                         <label>
                           <span className="label">X position (%)</span>
                           <input
-                            max={90}
+                            max={100}
                             min={0}
                             onChange={(event) =>
                               updateCustomLayer(layer.id, (current) => ({
@@ -1340,7 +1345,7 @@ export function OverlaySettingsForm(props: {
                         <label>
                           <span className="label">Y position (%)</span>
                           <input
-                            max={90}
+                            max={100}
                             min={0}
                             onChange={(event) =>
                               updateCustomLayer(layer.id, (current) => ({
