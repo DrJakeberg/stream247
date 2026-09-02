@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   normalizeOverlayPanelAnchor,
   normalizeOverlaySceneCustomLayers,
+  normalizeOverlayScenePanelPlacements,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
   stripInvisibleCharacters,
@@ -45,6 +46,7 @@ type OverlayPayload = Partial<{
   layerOrder: string[];
   disabledLayers: string[];
   customLayers: unknown[];
+  panelPlacements: unknown;
   emergencyBanner: string;
   tickerText: string;
   replayLabel: string;
@@ -82,6 +84,7 @@ function sanitizeOverlayPayload(payload: OverlayPayload, base: Awaited<ReturnTyp
     layerOrder: normalizeOverlaySceneLayerOrder(payload.layerOrder ?? base.layerOrder),
     disabledLayers: normalizeOverlaySceneLayerOrder(disabledLayersSource).filter((kind) => disabledLayersSource.includes(kind)),
     customLayers: normalizeOverlaySceneCustomLayers(payload.customLayers ?? base.customLayers),
+    panelPlacements: normalizeOverlayScenePanelPlacements(payload.panelPlacements ?? base.panelPlacements),
     emergencyBanner: normalizeText(payload.emergencyBanner ?? base.emergencyBanner, 180),
     tickerText: normalizeText(payload.tickerText ?? base.tickerText, 180),
     replayLabel: normalizeText(payload.replayLabel ?? base.replayLabel, 80) || "Replay stream",
