@@ -64,7 +64,22 @@ const SURFACES: Surface[] = [
   // but not here", and the whole point of the page is now that a channel has more than one scene;
   // the name and the source binding belong beside the picker because they describe the thing the
   // picker just selected.
-  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 62, primaryActions: 1 },
+  // 64, measured, was 62 (and the page measured 61 against it — one of slack). The three added are
+  // the drag handles on the preview: one per box the frame actually draws, which in the fixture is
+  // the lower third, the next card and the clock. They are controls and are counted as controls,
+  // because that is what they are — the operator can now move a panel by taking hold of it, and
+  // pretending otherwise would be measuring a page that does not exist.
+  //
+  // What is NOT counted, deliberately: the eight resize grips a selected box grows. They are spans
+  // with no role and no tabindex, so eight per panel do not triple this page; the keyboard reaches
+  // the same box through the panel's own button, where the arrow keys move it. That is the whole
+  // reason the grips are not focusable.
+  //
+  // The number tracks what is on the frame rather than the number of scenes — placing the vote or
+  // chat panel from the sidebar adds one each, and an enabled logo or text layer adds one, the same
+  // way program-library's budget tracks the seeded assets. A layer already brings ten controls to
+  // the sidebar; its handle is not what makes that grow.
+  { name: "studio-scene", path: "/studio?tab=scene", maxControls: 64, primaryActions: 1 },
   // 31, was 30: M56 moved the EventSub webhook secret into the managed credentials form, and a
   // secret belongs beside the other secrets rather than in a fold of its own — every sibling
   // ("client secret", "SMTP password") is permanently visible, and hiding just this one would

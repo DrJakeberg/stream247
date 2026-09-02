@@ -1481,13 +1481,16 @@ button.collection-chip {
   min-width: 0;
 }
 
-/* The renderer draws the full 1920x1080 frame, so its shell follows the frame rather than the
-   rebuild's fixed height. */
+/* The renderer draws the whole output frame, so its shell follows the frame rather than the
+   rebuild's fixed height. The aspect ratio is set inline from the output profile: 1280x720 and
+   1920x1080 are both 16:9, 854x480 is not quite, and the drag layer has to sit exactly on the
+   picture or every box it draws is a lie. Positioned, because that layer is absolute inside it. */
 .scene-preview-shell-render {
   display: grid;
   min-height: 0;
   align-content: center;
   aspect-ratio: 16 / 9;
+  position: relative;
 }
 
 .scene-render-preview svg {
@@ -1740,4 +1743,108 @@ button.collection-chip {
 
 .disclosure[open] > summary::before {
   transform: rotate(90deg);
+}
+
+/* Direct manipulation on the preview.
+   ------------------------------------------------------------------
+   Draws outlines, grips and guides, never a picture: the picture is the renderer's SVG underneath.
+   The layer covers the shell exactly, so a box at 25% of the frame is at 25% of this element. */
+.placement-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.placement-box {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  border-radius: 2px;
+  cursor: move;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.placement-box:hover,
+.placement-box[data-selected="true"] {
+  border-style: solid;
+  border-color: var(--brand-border-active);
+  background: var(--brand-wash);
+}
+
+.placement-box:focus-visible {
+  outline: 2px solid var(--brand-focus-ring);
+  outline-offset: 2px;
+}
+
+/* While the pointer is down nothing is re-rendered; only this outline moves. */
+.placement-box[data-dragging="true"] {
+  border-style: solid;
+  border-color: var(--brand-border-active);
+  background: var(--brand-glow);
+}
+
+.placement-box-name {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translateY(-100%);
+  padding: 1px var(--space-1);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: var(--brand-strong);
+  background: var(--paper-scrim);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* Not focusable, and not a control: eight of these per panel would triple the page's control
+   count for something the keyboard reaches through the panel's own button instead. */
+.placement-grip {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px;
+  background: var(--paper-scrim);
+  border: 1px solid var(--brand-border-active);
+  border-radius: 2px;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.placement-grip-nw { top: 0; left: 0; cursor: nwse-resize; }
+.placement-grip-n { top: 0; left: 50%; cursor: ns-resize; }
+.placement-grip-ne { top: 0; left: 100%; cursor: nesw-resize; }
+.placement-grip-e { top: 50%; left: 100%; cursor: ew-resize; }
+.placement-grip-se { top: 100%; left: 100%; cursor: nwse-resize; }
+.placement-grip-s { top: 100%; left: 50%; cursor: ns-resize; }
+.placement-grip-sw { top: 100%; left: 0; cursor: nesw-resize; }
+.placement-grip-w { top: 50%; left: 0; cursor: ew-resize; }
+
+.placement-guide {
+  position: absolute;
+  background: var(--brand-border-active);
+  pointer-events: none;
+}
+
+.placement-guide-x {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.placement-guide-y {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+/* The sidebar row for the box selected on the preview. Selection is one thing in two places:
+   clicking a panel on the picture has to show you which fields belong to it. */
+.item[data-selected="true"] {
+  border-color: var(--brand-border-active);
+  background: var(--brand-wash);
 }
