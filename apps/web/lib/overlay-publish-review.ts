@@ -1,3 +1,4 @@
+import { OVERLAY_PANEL_IDS } from "@stream247/core";
 import type { OverlaySettingsRecord } from "@/lib/server/state";
 
 export type OverlayPublishReviewSection = {
@@ -118,6 +119,20 @@ function buildLayerSection(live: OverlaySettingsRecord, draft: OverlaySettingsRe
 
     if (JSON.stringify(liveLayer) !== JSON.stringify(draftLayer)) {
       items.push(`Updated custom layer: ${draftLayer.name}`);
+    }
+  }
+
+  // Moving one of the renderer's own panels changes the broadcast picture as much as adding a
+  // layer does, so it belongs in the review rather than only in the diff nobody reads.
+  for (const id of OVERLAY_PANEL_IDS) {
+    const before = live.panelPlacements[id];
+    const after = draft.panelPlacements[id];
+    if (!before && after) {
+      items.push(`Placed panel: ${id}`);
+    } else if (before && !after) {
+      items.push(`Returned panel to the layout: ${id}`);
+    } else if (before && after && JSON.stringify(before) !== JSON.stringify(after)) {
+      items.push(`Moved panel: ${id}`);
     }
   }
 

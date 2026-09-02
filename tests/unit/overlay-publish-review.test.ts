@@ -31,6 +31,7 @@ function buildOverlay(overrides: Partial<OverlaySettingsRecord> = {}): OverlaySe
     layerOrder: ["chip", "hero", "next", "queue", "schedule", "clock", "banner", "ticker"],
     disabledLayers: [],
     customLayers: [],
+    panelPlacements: {},
     emergencyBanner: "",
     tickerText: "",
     updatedAt: "2026-04-22T10:00:00.000Z",

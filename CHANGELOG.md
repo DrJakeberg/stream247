@@ -55,6 +55,33 @@
 
 ### Changed
 
+- The overlay's own panels can be moved and faded, like every layer an operator adds themselves.
+  Before: the lower third, the next card, the chat panel, the vote panel, the clock and the
+  emergency banner hung in a fixed flex flow. They had no position, no size and no opacity — the
+  four number fields the studio offers were only ever for layers the operator added, and the
+  built-in panels went where the layout decided. Now each of the six takes the same box a custom
+  layer takes — x, y, width and height as percentages of the safe area, plus opacity clamped 5-100
+  — resolved by the same function, with a folded "Panel placement" group in the scene form. A panel
+  nobody has moved is still in the flow and draws the frame it always drew: the golden-frame
+  checksums are unchanged, and the boxes the studio seeds put every panel back on the same pixel
+  (measured at 1920x1080: 0,0 drift for the lower third, vote panel, clock and chat at either
+  bottom corner). What the flow gave for free, fitting, is now arithmetic: the chat panel reads its
+  message count out of its box height (26px of padding plus 30 per message) instead of the
+  stacking budget it used to inherit, and the vote panel drops the options that would not fit
+  (115px of chrome plus 51 each).
+
+- A chat game can now fill the picture and can be as transparent as the operator wants. Before: a
+  box over the whole 1920x1080 frame drew a 104px cell and a 1694x952 board — 77.77% of the frame —
+  shoved against the left of a panel that stopped 25px short of the bottom edge, with 207px of dead
+  fill to its right; and the only way to make the panel transparent was its opacity, which faded
+  the board with it (the snake measured alpha 11 at 5%). Now the panel takes the height of the box
+  it was given, the board is centred in what the text rows leave (reserved by what those rows
+  measure, 65px, rather than a flat 84), and the same box draws a 107px cell and a 1742x979 board,
+  82.24% of the frame with 89px of margin on each side. The backdrop has its own 0-100 opacity,
+  measured alpha 0 with the snake still at 255, and every cell is outlined so the board survives
+  the fill going away: a white snake head on white video measured 1.00:1 against its surroundings
+  before and 13.79:1 now.
+
 - One overlay, one preview. The studio's scene tab showed two drawings of the same scene side by
   side — the studio's own HTML rebuild on the left, the frame the on-air renderer produces on the
   right — and the dashboard said Stream247 "captures" an `/overlay` address as its internal overlay
