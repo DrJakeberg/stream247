@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.41 - 2026-09-02
+
 ### Security
 
 - Detecting an unreadable secret was not enough: the next write destroyed it, and the two-factor
