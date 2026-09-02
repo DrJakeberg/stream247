@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Security
+
+- Detecting an unreadable secret was not enough: the next write destroyed it, and the two-factor
+  bypass came back. Found by the adversarial review of v1.5.39, reproduced against a real Postgres.
+  With a rotated or lost `APP_SECRET`, every stored secret decrypts to nothing and the login
+  correctly refuses — but the first full-state write after that, which a moderator's `!game` is
+  enough to trigger, deleted and re-inserted every user with an empty secret and wrote encrypted
+  defaults over the managed config. That erased the only copy of the two-factor secrets, the Twitch
+  credentials, the stream keys and the relay key, beyond recovery even with the right `APP_SECRET`
+  restored — and because the column was then empty, the flag that makes the login refuse went with
+  it and the second factor was silently skipped again.
+
+  Nothing now encrypts over a ciphertext the process could not read. Users keep their stored value
+  on both write paths, the managed config is left alone when its payload will not open, and the
+  test that proves it rotates the key underneath a live store: without the guard the stored
+  ciphertext reads `''`, with it the byte-for-byte original.
+
 ## 1.5.40 - 2026-09-02
 
 ### Fixed
