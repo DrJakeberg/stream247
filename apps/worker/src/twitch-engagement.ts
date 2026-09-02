@@ -11,7 +11,8 @@ import {
   resolveModeratorCheckIn,
   type ChatEmoteOccurrence,
   type ChatGameCommand,
-  type ChatMessageSegment
+  type ChatMessageSegment,
+  isChatBridgeRuntimeNeeded,
 } from "@stream247/core";
 import type { AppState, EngagementEventRecord } from "@stream247/db";
 import { appendEngagementEventRecord } from "@stream247/db";
@@ -393,8 +394,22 @@ export class TwitchChatBridge {
     return this.messages.values().map(({ login: _login, ...event }) => event);
   }
 
-  async sync(state: AppState, env: NodeJS.ProcessEnv): Promise<void> {
-    const enabled = isEngagementChatRuntimeEnabled(state.engagement, env, state.managedConfig);
+  async sync(
+    state: AppState,
+    env: NodeJS.ProcessEnv,
+    // The consumers that need the connection even when the chat rail is off — finding [7].
+    consumers: { chatInteractionEnabled: boolean; chatGameEnabled: boolean } = { chatInteractionEnabled: false, chatGameEnabled: false }
+  ): Promise<void> {
+    const enabled = isChatBridgeRuntimeNeeded(
+      {
+        engagement: state.engagement,
+        managedConfig: state.managedConfig,
+        moderation: state.moderation,
+        chatInteraction: { enabled: consumers.chatInteractionEnabled },
+        chatGame: { enabled: consumers.chatGameEnabled }
+      },
+      env
+    );
     const { nick, channel } = resolveChatConnectionTarget({
       identityLogin: state.twitch.broadcasterLogin,
       configuredBroadcastLogin: state.managedConfig.twitchBroadcastChannelLogin || env.TWITCH_BROADCAST_CHANNEL_LOGIN || ""

@@ -8233,7 +8233,11 @@ async function runWorkerCycle(): Promise<void> {
   const chatCycleState = await readAppState();
   latestEngagementSettings = chatCycleState.engagement;
   latestManagedConfig = chatCycleState.managedConfig;
-  await twitchChatBridge.sync(chatCycleState, process.env);
+  const [chatInteractionForBridge, chatGameForBridge] = await Promise.all([readChatInteractionSettingsRecord(), readChatGameSettingsRecord()]);
+  await twitchChatBridge.sync(chatCycleState, process.env, {
+    chatInteractionEnabled: chatInteractionForBridge.enabled,
+    chatGameEnabled: Boolean(chatGameForBridge.gameId)
+  });
   // The cycle flush is what carries settings changes (position, count, the enable gate) to the
   // row when no chat is arriving to trigger the throttled one; identical content writes nothing.
   await flushChatOverlayMessages().catch((error: unknown) => {
