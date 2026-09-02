@@ -2711,16 +2711,29 @@ async function prepareTickerCrawl(outputSettings: WorkerStreamOutputSettings): P
     return null;
   }
 
+  let timeoutHandle: NodeJS.Timeout | undefined;
   try {
-    const strip = await renderTickerStrip(
-      {
-        line: plan.line,
-        height: plan.crawl.height,
-        scale: overlayScale(viewport.width),
-        typographyPreset: currentScenePayload.scene.typographyPreset
-      },
-      await getSceneRendererFonts()
-    );
+    // Bounded for the same reason the first scene frame is: this is awaited on the start path,
+    // before ffmpeg is spawned, so an unbounded render here would be a programme that never goes
+    // on air. Costing the crawl is acceptable; costing the start is not. The same five seconds,
+    // against a strip that is one band-tall picture and far cheaper than a full frame.
+    const strip = await Promise.race([
+      renderTickerStrip(
+        {
+          line: plan.line,
+          height: plan.crawl.height,
+          scale: overlayScale(viewport.width),
+          typographyPreset: currentScenePayload.scene.typographyPreset
+        },
+        await getSceneRendererFonts()
+      ),
+      new Promise<never>((_resolve, reject) => {
+        timeoutHandle = setTimeout(
+          () => reject(new Error(`Ticker strip did not render within ${SCENE_FIRST_FRAME_TIMEOUT_MS}ms.`)),
+          SCENE_FIRST_FRAME_TIMEOUT_MS
+        );
+      })
+    ]);
     if (!strip || strip.inkWidth <= 0) {
       return null;
     }
@@ -2738,6 +2751,8 @@ async function prepareTickerCrawl(outputSettings: WorkerStreamOutputSettings): P
       error: error instanceof Error ? error.message : "Unknown ticker strip failure."
     });
     return null;
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 }
 

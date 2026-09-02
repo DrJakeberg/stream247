@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Changed
+
+- The ticker runs. It used to be a dwell: one message held still, the next taking its place on a
+  timer, because the renderer redraws on `SCENE_RENDER_INTERVAL_MS` — 2000ms by default, floored at
+  1000ms — and a line drawn into the frame at that rate cannot crawl, it can only teleport 118px a
+  step. That reasoning was sound and it was about the wrong thing: the crawl was never the
+  rasteriser's job.
+
+  ffmpeg moves it now, at the output frame rate, for nothing per frame. The line is rendered once
+  per programme as a transparent strip; a bed the size of the band's clear run does the clipping,
+  and two copies of the strip are laid down one period apart so the wrap is seamless rather than a
+  jump. Measured before any of it was written: exactly 4px of travel per frame at 120px/s and
+  30fps, clipped to the band, and the frame at the wrap carrying the same picture as the frames
+  three either side of it.
+
+  All the messages join into one running line, so the automatic rotation is gone. The seconds
+  setting stops meaning how long a message stands and starts meaning how long one crossing of the
+  band takes, clamped into a legible 40-240px/s on the design grid and scaled with the frame. It is
+  now offered for a single notice as well as for several. The studio preview draws the line at
+  rest, because a still picture cannot show it moving.
+
+  On air the band is drawn empty and belongs to the process rather than to the current text: a
+  ticker cleared mid-programme would otherwise take the band away and leave the line crawling over
+  bare video. A strip that fails to render leaves the renderer drawing the line at rest, so a
+  failure costs the motion and never the picture. The cost of rendering the strip once instead of
+  feeding it is that a ticker edited mid-programme reaches the screen at the next block.
+
+### Fixed
+
+- The scene overlay filter was written out three times in `apps/worker/src/index.ts` — for an
+  asset, for a live bridge and for the standby slate — and none of the three could be reached from
+  a test. They agreed with one another by luck. They now build one graph from one function, which
+  is also what let the ticker crawl reach all three instead of whichever was remembered.
+
+- `overlay` ends with its LONGEST input, not with the picture it is drawing onto. The crawl adds a
+  looped image and a colour source, both endless, so without `shortest=1` on the last overlay a
+  two-second programme produced thirteen minutes of output and was still running when the probe
+  killed it — every block would have hung at its boundary and the channel would have stopped. Found
+  before it shipped, by a test that runs the real binary to its own end and reads the length back
+  instead of bounding the output with `-frames:v` the way the first probe did.
+
 ## 1.5.42 - 2026-09-02
 
 ### Fixed
