@@ -26,7 +26,10 @@ import {
   normalizeEngagementGameRuntime,
   normalizeEngagementSettings,
   normalizeOverlayPanelAnchor,
+  normalizeOverlayNamedScenes,
   normalizeOverlaySceneCustomLayers,
+  resolveActiveOverlayNamedSceneId,
+  resolveOverlayNamedSceneCustomLayers,
   deriveRelaySourceReadUrl,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
@@ -46,6 +49,7 @@ import {
   type EngagementOverlayPosition,
   type EngagementOverlayStyle,
   type ModerationConfig,
+  type OverlayNamedScene,
   type OverlaySceneCustomLayer,
   type OverlaySceneLayerKind,
   type StreamOutputProfileId,
@@ -430,7 +434,19 @@ export type OverlaySettingsRecord = {
   queuePreviewCount: number;
   layerOrder: OverlaySceneLayerKind[];
   disabledLayers: OverlaySceneLayerKind[];
+  /**
+   * The layer set that is actually on air: a PROJECTION of the active named scene, recomputed by
+   * normalizeOverlaySettingsRecord on every read and write.
+   *
+   * It stays a field rather than becoming a getter because every reader of an overlay record —
+   * the worker's scene payload, the studio preview, the publish review, the blueprint export —
+   * already reads it, and none of them should have to learn what a scene is. Writing to it
+   * directly no longer decides anything: the active scene's `customLayers` do.
+   */
   customLayers: OverlaySceneCustomLayer[];
+  /** The named scenes (M58). Never empty after normalisation — something has to be on air. */
+  scenes: OverlayNamedScene[];
+  activeSceneId: string;
   emergencyBanner: string;
   tickerText: string;
   updatedAt: string;
@@ -774,6 +790,8 @@ type OverlaySettingsRow = {
   layer_order_json: string;
   disabled_layers_json: string;
   custom_layers_json: string;
+  scenes_json: string;
+  active_scene_id: string;
   emergency_banner: string;
   replay_label: string;
   ticker_text: string;
@@ -873,6 +891,13 @@ function getLegacyDestinationEnvConfig(destinationId: string): { url: string; ke
 
 function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): OverlaySettingsRecord {
   const defaults = defaultState().overlay;
+  // The scene list is resolved before anything else, because `customLayers` is derived from it.
+  // A record that carries no scene list yet — an installation from before M58, or a caller that
+  // only knows the old shape — gets its single layer set turned into the one scene here, which is
+  // why the picture cannot change on upgrade and why a writer that never mentions scenes still
+  // writes a consistent row.
+  const scenes = normalizeOverlayNamedScenes(overlay.scenes, overlay.customLayers ?? defaults.customLayers);
+  const activeSceneId = resolveActiveOverlayNamedSceneId(scenes, overlay.activeSceneId);
   return {
     ...defaults,
     ...overlay,
@@ -897,7 +922,9 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
     disabledLayers: normalizeOverlaySceneLayerOrder(overlay.disabledLayers ?? []).filter((kind) =>
       (overlay.disabledLayers ?? []).includes(kind)
     ),
-    customLayers: normalizeOverlaySceneCustomLayers(overlay.customLayers ?? defaults.customLayers),
+    scenes,
+    activeSceneId,
+    customLayers: resolveOverlayNamedSceneCustomLayers(scenes, activeSceneId),
     emergencyBanner: sanitizeStoredText(overlay.emergencyBanner ?? defaults.emergencyBanner, 180),
     tickerText: sanitizeStoredText(overlay.tickerText ?? defaults.tickerText, 180),
     updatedAt: overlay.updatedAt ?? defaults.updatedAt
@@ -976,6 +1003,8 @@ function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: Ov
         layerOrder: JSON.parse(row.layer_order_json || "[]") as OverlaySceneLayerKind[],
         disabledLayers: JSON.parse(row.disabled_layers_json || "[]") as OverlaySceneLayerKind[],
         customLayers: JSON.parse(row.custom_layers_json || "[]") as OverlaySceneCustomLayer[],
+        scenes: JSON.parse(row.scenes_json || "[]") as OverlayNamedScene[],
+        activeSceneId: row.active_scene_id || "",
         emergencyBanner: row.emergency_banner,
         tickerText: row.ticker_text,
         updatedAt: row.updated_at
@@ -1116,9 +1145,9 @@ async function upsertOverlaySettingsTable(
     await client.query(
       `
         INSERT INTO overlay_drafts (
-          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, based_on_updated_at
+          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, based_on_updated_at, scenes_json, active_scene_id
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           channel_name = EXCLUDED.channel_name,
@@ -1150,7 +1179,9 @@ async function upsertOverlaySettingsTable(
           emergency_banner = EXCLUDED.emergency_banner,
           ticker_text = EXCLUDED.ticker_text,
           updated_at = EXCLUDED.updated_at,
-          based_on_updated_at = EXCLUDED.based_on_updated_at
+          based_on_updated_at = EXCLUDED.based_on_updated_at,
+          scenes_json = EXCLUDED.scenes_json,
+          active_scene_id = EXCLUDED.active_scene_id
       `,
       [
         normalized.enabled,
@@ -1183,7 +1214,9 @@ async function upsertOverlaySettingsTable(
         normalized.emergencyBanner,
         normalized.tickerText,
         normalized.updatedAt,
-        basedOnUpdatedAt
+        basedOnUpdatedAt,
+        JSON.stringify(normalized.scenes),
+        normalized.activeSceneId
       ]
     );
     return;
@@ -1192,9 +1225,9 @@ async function upsertOverlaySettingsTable(
   await client.query(
     `
       INSERT INTO overlay_settings (
-          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at
+          singleton_id, enabled, channel_name, headline, insert_headline, standby_headline, reconnect_headline, replay_label, brand_badge, scene_preset, insert_scene_preset, standby_scene_preset, reconnect_scene_preset, accent_color, surface_style, panel_anchor, title_scale, typography_preset, show_clock, show_next_item, show_schedule_teaser, show_current_category, show_source_label, show_queue_preview, queue_preview_count, layer_order_json, disabled_layers_json, custom_layers_json, emergency_banner, ticker_text, updated_at, scenes_json, active_scene_id
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
       ON CONFLICT (singleton_id) DO UPDATE SET
         enabled = EXCLUDED.enabled,
         channel_name = EXCLUDED.channel_name,
@@ -1225,7 +1258,9 @@ async function upsertOverlaySettingsTable(
         custom_layers_json = EXCLUDED.custom_layers_json,
         emergency_banner = EXCLUDED.emergency_banner,
         ticker_text = EXCLUDED.ticker_text,
-        updated_at = EXCLUDED.updated_at
+        updated_at = EXCLUDED.updated_at,
+        scenes_json = EXCLUDED.scenes_json,
+        active_scene_id = EXCLUDED.active_scene_id
     `,
     [
       normalized.enabled,
@@ -1257,7 +1292,9 @@ async function upsertOverlaySettingsTable(
       JSON.stringify(normalized.customLayers),
       normalized.emergencyBanner,
       normalized.tickerText,
-      normalized.updatedAt
+      normalized.updatedAt,
+      JSON.stringify(normalized.scenes),
+      normalized.activeSceneId
     ]
   );
 }
@@ -1593,6 +1630,8 @@ function defaultState(): AppState {
       layerOrder: normalizeOverlaySceneLayerOrder([]),
       disabledLayers: [],
       customLayers: [],
+      scenes: [],
+      activeSceneId: "",
       emergencyBanner: "",
       tickerText: "",
       updatedAt: ""
@@ -2287,6 +2326,10 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       layer_order_json TEXT NOT NULL DEFAULT '[]',
       disabled_layers_json TEXT NOT NULL DEFAULT '[]',
       custom_layers_json TEXT NOT NULL DEFAULT '[]',
+      -- Named scenes (M58). Empty means "no scene list stored yet"; the reader then makes one scene
+      -- out of custom_layers_json, which is what keeps an upgraded installation on the same picture.
+      scenes_json TEXT NOT NULL DEFAULT '[]',
+      active_scene_id TEXT NOT NULL DEFAULT '',
       emergency_banner TEXT NOT NULL DEFAULT '',
       ticker_text TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT ''
@@ -2321,6 +2364,10 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       layer_order_json TEXT NOT NULL DEFAULT '[]',
       disabled_layers_json TEXT NOT NULL DEFAULT '[]',
       custom_layers_json TEXT NOT NULL DEFAULT '[]',
+      -- Named scenes (M58). Empty means "no scene list stored yet"; the reader then makes one scene
+      -- out of custom_layers_json, which is what keeps an upgraded installation on the same picture.
+      scenes_json TEXT NOT NULL DEFAULT '[]',
+      active_scene_id TEXT NOT NULL DEFAULT '',
       emergency_banner TEXT NOT NULL DEFAULT '',
       ticker_text TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT '',
@@ -2798,6 +2845,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS layer_order_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS disabled_layers_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS custom_layers_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS scenes_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS active_scene_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS ticker_text TEXT NOT NULL DEFAULT '';
@@ -2831,6 +2880,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS layer_order_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS disabled_layers_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS custom_layers_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS scenes_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS active_scene_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS emergency_banner TEXT NOT NULL DEFAULT '';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS replay_label TEXT NOT NULL DEFAULT 'Replay stream';
     ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS ticker_text TEXT NOT NULL DEFAULT '';
@@ -3658,6 +3709,47 @@ export const redactStoredSecretsMigration: MigrationDefinition = {
 };
 if (!schemaMigrations.some((migration) => migration.id === redactStoredSecretsMigration.id)) {
   schemaMigrations.push(redactStoredSecretsMigration);
+}
+
+export const namedOverlayScenesMigration: MigrationDefinition = {
+  id: "20260902_003_named_overlay_scenes",
+  description: "Give the overlay several named scenes and make the one that was on air the first of them.",
+  apply: async (client) => {
+    // Additive, matching the base-schema block. Empty means "no scene list stored yet", which the
+    // reader already answers by making one scene out of custom_layers_json -- so the picture is
+    // correct the moment the column exists, before a single row is backfilled. The backfill below
+    // only makes that answer durable, so an operator renaming the scene has something to rename.
+    await client.query(`
+      ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS scenes_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE overlay_settings ADD COLUMN IF NOT EXISTS active_scene_id TEXT NOT NULL DEFAULT '';
+      ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS scenes_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE overlay_drafts ADD COLUMN IF NOT EXISTS active_scene_id TEXT NOT NULL DEFAULT '';
+    `);
+
+    // The seeded id is fixed rather than generated: the live row and the draft row are seeded
+    // separately, and two random ids would make the studio report unpublished changes nobody made.
+    // Idempotent -- a row that already carries a scene list is left alone, so re-running is free.
+    for (const tableName of ["overlay_settings", "overlay_drafts"]) {
+      await client.query(`
+        UPDATE ${tableName}
+        SET scenes_json = json_build_array(
+              json_build_object(
+                'id', 'scene-main',
+                'name', 'Main scene',
+                -- NULLIF because an older row may hold '' rather than '[]', and ''::json throws.
+                'customLayers', COALESCE(NULLIF(custom_layers_json, ''), '[]')::json,
+                'sourceId', ''
+              )
+            )::text,
+            active_scene_id = 'scene-main'
+        WHERE COALESCE(NULLIF(scenes_json, ''), '[]') = '[]'
+      `);
+    }
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === namedOverlayScenesMigration.id)) {
+  schemaMigrations.push(namedOverlayScenesMigration);
 }
 
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {

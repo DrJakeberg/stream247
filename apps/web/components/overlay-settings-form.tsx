@@ -10,9 +10,13 @@ import {
   OVERLAY_SURFACE_STYLES,
   OVERLAY_TYPOGRAPHY_PRESETS,
   OVERLAY_TITLE_SCALES,
+  MAX_NAMED_OVERLAY_SCENES,
   buildOverlayScenePayload,
   describeOverlaySceneFrameSupport,
+  resolveActiveOverlayNamedSceneId,
   resolveOverlayHeadlineForQueueKind,
+  resolveOverlayNamedSceneCustomLayers,
+  type OverlayNamedScene,
   type OverlayQueueKind,
   type OverlaySceneCustomMediaFit,
   type OverlaySceneCustomTextAlign,
@@ -71,7 +75,11 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
     queuePreviewCount: overlay.queuePreviewCount,
     layerOrder: overlay.layerOrder,
     disabledLayers: overlay.disabledLayers,
-    customLayers: overlay.customLayers,
+    // The scene list, not the projected layer array: `customLayers` is derived from these two, so
+    // signing it as well would count one edit twice and let a rounding difference in the
+    // projection read as an unsaved change.
+    scenes: overlay.scenes,
+    activeSceneId: overlay.activeSceneId,
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText
   });
@@ -165,45 +173,95 @@ export function OverlaySettingsForm(props: {
     }));
   };
 
+  // --- Named scenes --------------------------------------------------------
+  //
+  // The scene in the picker is the scene the draft is ABOUT: editing it and putting it on air are
+  // the same act, one publish apart. Offering a separate "edit this one, keep that one live" axis
+  // would duplicate the draft/live split this form already has and give four states where the
+  // operator can only reason about two.
+  const scenes = draft.scenes.length > 0 ? draft.scenes : [];
+  const selectedScene = scenes.find((scene) => scene.id === draft.activeSceneId) ?? scenes[0];
+
+  /** Replaces the scene list and keeps the projected layer array in step with the server's. */
+  const applyScenes = (nextScenes: OverlayNamedScene[], nextActiveSceneId?: string) => {
+    setDraft((current) => {
+      const activeSceneId = resolveActiveOverlayNamedSceneId(nextScenes, nextActiveSceneId ?? current.activeSceneId);
+      return {
+        ...current,
+        scenes: nextScenes,
+        activeSceneId,
+        // The same projection the API and the store compute, so the preview draws the frame that
+        // will actually go on air rather than whatever the form last held.
+        customLayers: resolveOverlayNamedSceneCustomLayers(nextScenes, activeSceneId)
+      };
+    });
+  };
+
+  const updateSelectedScene = (updater: (scene: OverlayNamedScene) => OverlayNamedScene) => {
+    setDraft((current) => {
+      const nextScenes = current.scenes.map((scene) => (scene.id === current.activeSceneId ? updater(scene) : scene));
+      return {
+        ...current,
+        scenes: nextScenes,
+        customLayers: resolveOverlayNamedSceneCustomLayers(nextScenes, current.activeSceneId)
+      };
+    });
+  };
+
+  const addScene = () => {
+    const id = `scene-${Date.now().toString(36)}`;
+    applyScenes([...scenes, { id, name: `Scene ${String(scenes.length + 1)}`, customLayers: [], sourceId: "" }], id);
+  };
+
+  const duplicateScene = () => {
+    if (!selectedScene) {
+      return;
+    }
+    const id = `scene-${Date.now().toString(36)}`;
+    applyScenes(
+      [...scenes, { ...selectedScene, id, name: `${selectedScene.name} copy`.slice(0, 60) }],
+      id
+    );
+  };
+
+  const removeScene = () => {
+    // Never down to zero: a channel with the overlay switched on must have a scene to draw.
+    if (scenes.length <= 1 || !selectedScene) {
+      return;
+    }
+    applyScenes(scenes.filter((scene) => scene.id !== selectedScene.id), "");
+  };
+
   const addCustomLayer = (kind: OverlaySceneCustomLayerKind) => {
-    setDraft((current) => ({
-      ...current,
-      customLayers: [...current.customLayers, createDefaultCustomLayer(kind)]
-    }));
+    updateSelectedScene((scene) => ({ ...scene, customLayers: [...scene.customLayers, createDefaultCustomLayer(kind)] }));
   };
 
   const updateCustomLayer = (id: string, updater: (layer: OverlayDraftCustomLayer) => OverlayDraftCustomLayer) => {
-    setDraft((current) => ({
-      ...current,
-      customLayers: current.customLayers.map((layer) => (layer.id === id ? updater(layer) : layer))
+    updateSelectedScene((scene) => ({
+      ...scene,
+      customLayers: scene.customLayers.map((layer) => (layer.id === id ? updater(layer) : layer))
     }));
   };
 
   const removeCustomLayer = (id: string) => {
-    setDraft((current) => ({
-      ...current,
-      customLayers: current.customLayers.filter((layer) => layer.id !== id)
-    }));
+    updateSelectedScene((scene) => ({ ...scene, customLayers: scene.customLayers.filter((layer) => layer.id !== id) }));
   };
 
   const moveCustomLayer = (id: string, direction: -1 | 1) => {
-    setDraft((current) => {
-      const nextLayers = [...current.customLayers];
+    updateSelectedScene((scene) => {
+      const nextLayers = [...scene.customLayers];
       const index = nextLayers.findIndex((layer) => layer.id === id);
       if (index === -1) {
-        return current;
+        return scene;
       }
 
       const targetIndex = index + direction;
       if (targetIndex < 0 || targetIndex >= nextLayers.length) {
-        return current;
+        return scene;
       }
 
       [nextLayers[index], nextLayers[targetIndex]] = [nextLayers[targetIndex], nextLayers[index]];
-      return {
-        ...current,
-        customLayers: nextLayers
-      };
+      return { ...scene, customLayers: nextLayers };
     });
   };
 
@@ -579,6 +637,76 @@ export function OverlaySettingsForm(props: {
               type="checkbox"
             />
             <label htmlFor="overlay-enabled">Enable overlay output</label>
+          </div>
+
+          {/*
+            The scene list. Deliberately a select rather than one control per scene: a row of
+            buttons would make this page's control count grow with the number of scenes, which is
+            the pattern the control-density budget exists to keep out.
+          */}
+          <div className="form-grid">
+            <label>
+              <span className="label">Scene</span>
+              <select
+                onChange={(event) => applyScenes(scenes, event.target.value)}
+                value={selectedScene?.id ?? ""}
+              >
+                {scenes.map((scene) => (
+                  <option key={scene.id} value={scene.id}>
+                    {scene.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span className="label">Scene name</span>
+              <input
+                onChange={(event) => updateSelectedScene((scene) => ({ ...scene, name: event.target.value }))}
+                value={selectedScene?.name ?? ""}
+              />
+            </label>
+            <label>
+              <span className="label">Scene video source</span>
+              <select
+                onChange={(event) => updateSelectedScene((scene) => ({ ...scene, sourceId: event.target.value }))}
+                value={selectedScene?.sourceId ?? ""}
+              >
+                <option value="">Not linked to a source</option>
+                {(props.videoSources ?? []).map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name}
+                    {source.urlPresent ? "" : " — no feed stored yet"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="button-row" style={{ gridColumn: "1 / -1" }}>
+              <button
+                className="button secondary"
+                disabled={scenes.length >= MAX_NAMED_OVERLAY_SCENES}
+                onClick={addScene}
+                type="button"
+              >
+                Add scene
+              </button>
+              <button
+                className="button secondary"
+                disabled={scenes.length >= MAX_NAMED_OVERLAY_SCENES}
+                onClick={duplicateScene}
+                type="button"
+              >
+                Duplicate scene
+              </button>
+              <button className="button secondary" disabled={scenes.length <= 1} onClick={removeScene} type="button">
+                Delete scene
+              </button>
+            </div>
+            <div className="subtle" style={{ gridColumn: "1 / -1" }}>
+              The scene you pick here is the one being edited and the one that goes on air when you publish. A
+              linked video source fills in for any source layer in this scene that names none, so a duplicated
+              scene can be pointed at another camera in one step. If that source is later removed, the scene keeps
+              the name but the layer falls back to the still picture, exactly as an unlinked layer does.
+            </div>
           </div>
 
           <div className="form-grid">

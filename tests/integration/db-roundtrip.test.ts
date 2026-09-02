@@ -56,6 +56,7 @@ type TestDatabase = {
 const persistentProgramFeedRuntimeMigrationId = "20260419_001_persistent_program_feed_runtime";
 const workerHeartbeatRuntimeMigrationId = "20260901_001_worker_heartbeat_runtime";
 const redactStoredSecretsMigrationId = "20260902_001_redact_stored_secrets";
+const namedOverlayScenesMigrationId = "20260902_003_named_overlay_scenes";
 const persistentProgramFeedRuntimeColumns = [
   "uplink_status",
   "uplink_input_mode",
@@ -1829,6 +1830,106 @@ describe.sequential("database roundtrip", () => {
       expect(scrubbed, `migrations before=[${before}] after=[${after}] stored=<${scrubbed}>`).toBe("Error opening rtmp://live.twitch.tv/app/<redacted>");
       const migrationApplied = await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${redactStoredSecretsMigrationId}';`);
       expect(migrationApplied).toBe("1");
+    }, 60_000);
+
+    it("turns the one overlay of an existing installation into the first named scene, picture unchanged", async () => {
+      // The upgrade this test exists for: a channel that was on air before named scenes existed.
+      // Its single stored layer set must come back as one named scene and draw exactly the same
+      // frame — the studio must not report unpublished changes nobody made either.
+      const layer = {
+        id: "layer-sponsor",
+        kind: "text" as const,
+        name: "Sponsor",
+        enabled: true,
+        xPercent: 4,
+        yPercent: 10,
+        widthPercent: 34,
+        heightPercent: 12,
+        opacityPercent: 100,
+        allowOutsideSafeArea: false,
+        text: "Sponsored by",
+        secondaryText: "",
+        textTone: "headline" as const,
+        textAlign: "left" as const,
+        useAccent: false,
+        fontMode: "scene" as const,
+        customFontFamily: ""
+      };
+      const studio = await readOverlayStudioState();
+      const published = await publishOverlayDraftRecord({
+        ...studio.liveOverlay,
+        enabled: true,
+        customLayers: [layer],
+        scenes: [],
+        activeSceneId: "",
+        updatedAt: new Date().toISOString()
+      });
+      const pictureBefore = published.liveOverlay.customLayers;
+
+      // Back to the shape an older installation actually has on disk.
+      await executeSql(`
+        ALTER TABLE overlay_settings DROP COLUMN IF EXISTS scenes_json;
+        ALTER TABLE overlay_settings DROP COLUMN IF EXISTS active_scene_id;
+        ALTER TABLE overlay_drafts DROP COLUMN IF EXISTS scenes_json;
+        ALTER TABLE overlay_drafts DROP COLUMN IF EXISTS active_scene_id;
+        DELETE FROM schema_migrations WHERE id = '${namedOverlayScenesMigrationId}';
+      `);
+
+      // ensureDatabase applies migrations once per process; the reset is what lets it look again.
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      const migrationApplied = await executeSql(
+        `SELECT COUNT(*) FROM schema_migrations WHERE id = '${namedOverlayScenesMigrationId}';`
+      );
+      expect(migrationApplied).toBe("1");
+
+      // The backfill wrote a scene, not an empty list: the answer survives a reader that trusts
+      // the column rather than re-deriving it.
+      const storedActive = await executeSql("SELECT active_scene_id FROM overlay_settings WHERE singleton_id = 1;");
+      expect(storedActive).toBe("scene-main");
+      const storedSceneName = await executeSql(
+        "SELECT scenes_json::json -> 0 ->> 'name' FROM overlay_settings WHERE singleton_id = 1;"
+      );
+      expect(storedSceneName).toBe("Main scene");
+      const storedSceneLayer = await executeSql(
+        "SELECT scenes_json::json -> 0 -> 'customLayers' -> 0 ->> 'id' FROM overlay_settings WHERE singleton_id = 1;"
+      );
+      expect(storedSceneLayer).toBe("layer-sponsor");
+
+      const after = await readOverlayStudioState();
+      expect(after.liveOverlay.scenes).toHaveLength(1);
+      expect(after.liveOverlay.activeSceneId).toBe("scene-main");
+      // The picture: byte-for-byte the layer set that was on air before the upgrade.
+      expect(after.liveOverlay.customLayers).toEqual(pictureBefore);
+      expect(after.liveOverlay.customLayers.map((entry) => entry.id)).toEqual(["layer-sponsor"]);
+      expect(after.hasUnpublishedChanges).toBe(false);
+    }, 60_000);
+
+    it("roundtrips several named scenes and switches which one is on air", async () => {
+      const studio = await readOverlayStudioState();
+      const scenes = [
+        { id: "scene-main", name: "Main scene", customLayers: [], sourceId: "" },
+        { id: "scene-break", name: "Break", customLayers: [], sourceId: "source-cam" }
+      ];
+      await publishOverlayDraftRecord({
+        ...studio.liveOverlay,
+        scenes,
+        activeSceneId: "scene-break",
+        updatedAt: new Date().toISOString()
+      });
+
+      const reread = await readOverlayStudioState();
+      expect(reread.liveOverlay.scenes.map((scene) => scene.name)).toEqual(["Main scene", "Break"]);
+      expect(reread.liveOverlay.scenes[1]?.sourceId).toBe("source-cam");
+      expect(reread.liveOverlay.activeSceneId).toBe("scene-break");
+      // Deleting the active scene must not leave the channel without a picture.
+      await publishOverlayDraftRecord({
+        ...reread.liveOverlay,
+        scenes: [scenes[0]],
+        updatedAt: new Date().toISOString()
+      });
+      expect((await readOverlayStudioState()).liveOverlay.activeSceneId).toBe("scene-main");
     }, 60_000);
 
     it("keeps the viewer request history the cooldown and the queue cap are decided on", async () => {
