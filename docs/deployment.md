@@ -339,7 +339,7 @@ The script does not update, redeploy, or restart anything. It only reports wheth
 
 Production `traefik`, `web`, `worker`, `relay`, `playout`, `uplink`, and `postgres` services now use `restart: unless-stopped` in `docker-compose.yml`, so the documented always-on Compose paths, including `docker compose --profile proxy up -d`, recover their stack processes after daemon and host restarts.
 
-The worker-family image uses a small init process before Node so long-running playout containers reap short-lived Chromium scene-renderer children. Worker, playout, and uplink Docker healthchecks use 45-second intervals/timeouts and a 60-second start period because FFmpeg and scene rendering can briefly saturate the playout container during normal broadcast operation.
+The worker-family image runs Node under `tini` so long-running playout containers reap short-lived FFmpeg and yt-dlp children. Worker, playout, and uplink Docker healthchecks use 45-second intervals/timeouts and a 60-second start period because FFmpeg and the in-process scene renderer (satori → resvg) can briefly saturate the playout container during normal broadcast operation.
 
 Planned output reconnects default to every 48 hours. Set `PLAYOUT_RECONNECT_HOURS` only when the deployment needs a different Twitch reconnect cadence; `PLAYOUT_RECONNECT_SECONDS` controls the short standby window used during that planned reconnect.
 

@@ -45,7 +45,7 @@
 - distinguish planned reconnects from recovery: planned reconnects report `selectionReasonCode=scheduled_reconnect`, while FFmpeg failures usually increment `restartCount` with a signal or exit code such as `SIGBUS`, `128`, or `8`
 - in HLS program-feed mode, treat `playoutTransient=true` as a local playout recovery window, not a Twitch reconnect, as long as `uplinkStatus=running`, `programFeed=fresh`, `destination=ok`, and `uplinkUnplannedRestarts` has not increased
 - when relay/HLS is enabled, a fresh `programFeed.updatedAt` now counts as active playout liveness for `running`, `recovering`, and `switching`; do not treat a quiet FFmpeg stderr stream by itself as an outage while `programFeed=fresh` and `uplinkStatus=running`
-- if the playout container accumulates zombie Chromium or crashpad processes, recreate it after deploying an image that runs Node under the configured init process
+- if the playout container accumulates zombie FFmpeg or yt-dlp processes, recreate it: the image runs Node under `tini`, which reaps them, so an accumulation means the container is not running the shipped entrypoint
 - if the soak monitor reports `container-restart-check-failed`, inspect `docker compose ps`, `docker inspect --format '{{.RestartCount}}'`, and recent logs for `web`, `worker`, and `playout` before restarting the soak
 
 ### Remote VOD reaches its end without EOF
@@ -155,8 +155,8 @@ For future long runs, treat the baseline as:
 
 - `web`, `worker`, and `playout` Docker restart counts should remain unchanged; the soak monitor fails if any of them increases by more than one during the soak window.
 - `uplink.unplannedRestartCount` should remain unchanged; any increase means the Twitch-facing RTMP session probably reconnected outside the planned 48-hour reconnect.
-- `sseConnections` may rise while operators keep Live, Channel, or Overlay pages open, but it should return to zero after those clients disconnect.
-- Chromium renderer memory should be checked from the playout container with `docker stats` during multi-day soaks; sustained growth plus stale scene renderer children is actionable, while stable RSS with no restart-count increase is the expected baseline.
+- `sseConnections` may rise while operators keep Live, Channel, or Studio pages open, but it should return to zero after those clients disconnect.
+- playout container memory should be checked with `docker stats` during multi-day soaks; the scene renderer runs in-process (satori → resvg, no child processes), so sustained RSS growth is actionable, while stable RSS with no restart-count increase is the expected baseline.
 
 ## Backup And Restore
 
