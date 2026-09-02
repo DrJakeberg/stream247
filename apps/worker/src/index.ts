@@ -219,8 +219,8 @@ import {
   isLikelyDestinationOutputError,
   isLikelyProgramFeedInputError,
   isNaturalPlayoutBoundary,
+  resolveOnAirOverlayMode,
   shouldRequestImmediatePlayoutRetry,
-  shouldSkipInitialSceneCapture,
   type SourceLivePipAudio
 } from "./ffmpeg-runtime.js";
 import { clampToCycleAwaitCeiling, getLoopStallTimeoutMs } from "./cycle-budget.js";
@@ -825,7 +825,6 @@ type UplinkProcessRuntime = {
 
 const queueProbeCache = new Map<string, QueueProbeCacheEntry>();
 let sceneRendererAbortController: AbortController | null = null;
-const PLAYOUT_RECOVERY_SCENE_CAPTURE_SKIP_WINDOW_MS = 60_000;
 // Wakes requested from inside a running cycle are latched, not dropped. See loop-wake.ts.
 const playoutLoopWake = new LoopWakeLatch();
 // True while the running process carries real programme content (scheduled tier) rather than a
@@ -2639,13 +2638,37 @@ async function ensureScenePayload(asset: AssetRecord | null): Promise<void> {
   }
 }
 
+/**
+ * Upper bound on the first frame, so a stalled renderer cannot hold the programme off air.
+ *
+ * This is the one thing the old recovery skip was reaching for, aimed at the actual hazard. It was
+ * keyed on the previous process's exit code, which says nothing about renderer health, and it paid
+ * for that guess with a whole programme in text mode. A timeout costs nothing when the renderer is
+ * well and gives up quickly when it is not.
+ *
+ * Measured on the production box while it was encoding the channel: 201ms for a cold 1920x1080
+ * frame, 125ms warm, 106ms for the busiest frame the overlay draws. Five seconds is roughly
+ * twenty-five times the worst of those, so no healthy render can trip it; it is also half the
+ * timeout the retired Chromium screenshot used to blow through on every single start.
+ */
+const SCENE_FIRST_FRAME_TIMEOUT_MS = 5_000;
+
 async function prepareSceneRendererFrame(outputSettings: WorkerStreamOutputSettings): Promise<Buffer | null> {
   if (!shouldUseSceneRenderer()) {
     return null;
   }
 
+  let timeoutHandle: NodeJS.Timeout | undefined;
   try {
-    const frame = await captureRenderedSceneFrame(outputSettings);
+    const frame = await Promise.race([
+      captureRenderedSceneFrame(outputSettings),
+      new Promise<never>((_resolve, reject) => {
+        timeoutHandle = setTimeout(
+          () => reject(new Error(`On-air scene renderer did not produce a frame within ${SCENE_FIRST_FRAME_TIMEOUT_MS}ms.`)),
+          SCENE_FIRST_FRAME_TIMEOUT_MS
+        );
+      })
+    ]);
     await resolveIncident("playout.scene-render.failed", "On-air scene renderer is healthy.");
     return frame;
   } catch (error) {
@@ -2655,10 +2678,16 @@ async function prepareSceneRendererFrame(outputSettings: WorkerStreamOutputSetti
       scope: "playout",
       severity: "warning",
       title: "On-air scene renderer fell back to text mode",
-      message,
+      // The overlay mode is fixed for the life of the ffmpeg process, so this is not a blip: the
+      // programme now on air will run to its end with drawtext and no scene, chat, ticker or clock,
+      // however long it is. Saying so here is what turns "the stream looks wrong" into something
+      // the operator can act on.
+      message: `${message} The programme now on air will run to its end in text mode; the next one renders the scene again.`,
       fingerprint: "playout.scene-render.failed"
     });
     return null;
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 }
 
@@ -5183,9 +5212,6 @@ async function startOrSwitchPlayout(args: {
   /** Managed config from the caller's state read; the encoder settings resolve through it. */
   managedConfig: AppState["managedConfig"] | null;
   runtimeTargets: DestinationRuntimeTarget[];
-  runtimeStatus: AppState["playout"]["status"];
-  runtimeHeartbeatAt: string;
-  runtimeLastExitCode: string;
 }): Promise<void> {
   const switching = playoutProcess && !playoutProcess.killed;
   if (switching) {
@@ -5200,31 +5226,20 @@ async function startOrSwitchPlayout(args: {
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
   const cachedProbe = args.asset ? getFreshProbeCache(args.asset.id) : null;
   const cachedResolvedInput = cachedProbe?.status === "ready" ? cachedProbe.resolvedInput : "";
-  const skipInitialSceneCapture = shouldSkipInitialSceneCapture({
-    overlayEnabled: args.overlayEnabled,
-    switching: Boolean(switching),
-    playoutStatus: args.runtimeStatus,
-    lastExitCode: args.runtimeLastExitCode,
-    heartbeatAt: args.runtimeHeartbeatAt,
-    windowMs: PLAYOUT_RECOVERY_SCENE_CAPTURE_SKIP_WINDOW_MS
-  });
-  if (skipInitialSceneCapture) {
-    logRuntimeEvent("scene.render.recovery.skip", {
-      reasonCode: args.reasonCode,
-      runtimeStatus: args.runtimeStatus
-    });
-  }
   const outputSettings = getWorkerStreamOutputSettings(process.env, args.outputSettings);
   // Set the renderer skip BEFORE the initial frame is drawn, so a live attach's very first frame
   // already omits the snapshot panel instead of flashing it over the live video. Only the asset
   // path (no liveBridge) can carry a PiP; overlay must be on for any scene panel to exist at all.
   const intendLiveAttach = Boolean(args.liveSource) && Boolean(args.asset) && !args.liveBridge && args.overlayEnabled;
   playoutLiveSourceAttached = intendLiveAttach;
-  if (args.overlayEnabled && !skipInitialSceneCapture) {
+  if (args.overlayEnabled) {
     await ensureScenePayload(args.asset ?? null);
   }
-  const initialSceneFrame = args.overlayEnabled && !skipInitialSceneCapture ? await prepareSceneRendererFrame(outputSettings) : null;
-  const overlayMode: OnAirOverlayMode = !args.overlayEnabled ? "none" : initialSceneFrame ? "scene" : "text";
+  const initialSceneFrame = args.overlayEnabled ? await prepareSceneRendererFrame(outputSettings) : null;
+  const overlayMode: OnAirOverlayMode = resolveOnAirOverlayMode({
+    overlayEnabled: args.overlayEnabled,
+    sceneFrameRendered: Boolean(initialSceneFrame)
+  });
   let resolvedAudioLaneInput = "";
 
   if (args.audioLane) {
@@ -6388,10 +6403,7 @@ async function runPlayoutCycle(): Promise<void> {
         overlayEnabled: state.overlay.enabled,
         outputSettings: state.output,
         managedConfig: state.managedConfig,
-        runtimeTargets: playoutTargets,
-        runtimeStatus: state.playout.status,
-        runtimeHeartbeatAt: state.playout.heartbeatAt,
-        runtimeLastExitCode: state.playout.lastExitCode
+        runtimeTargets: playoutTargets
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout start error.";
@@ -6457,10 +6469,7 @@ async function runPlayoutCycle(): Promise<void> {
         overlayEnabled: state.overlay.enabled,
         outputSettings: state.output,
         managedConfig: state.managedConfig,
-        runtimeTargets: playoutTargets,
-        runtimeStatus: state.playout.status,
-        runtimeHeartbeatAt: state.playout.heartbeatAt,
-        runtimeLastExitCode: state.playout.lastExitCode
+        runtimeTargets: playoutTargets
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout switch error.";
