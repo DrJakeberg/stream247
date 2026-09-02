@@ -41,6 +41,23 @@
   incidents and audit entries already on disk through the same function. **Rotate the stream key
   on Twitch after upgrading** — it has been readable in the GUI and the logs for as long as an
   uplink error has been recorded there.
+### Fixed
+
+- "Active chatters" was two numbers. The overlays page reads "live with N active chatters in the
+  last W minutes" from the engagement game tracker, which counts the room over the operator's
+  engagement window (1–30 minutes, default 10). The skip vote needs a share of the active chatters,
+  and its runtime kept a roster of its own over a hard-coded five minutes. Measured with one chat
+  history through both counts — twelve viewers talk, one asks for a skip twelve minutes later,
+  window set to 15 — the page said 12 and the skip threshold counted 1, so a skip the page implied
+  needed 8 votes was decided by the absolute floor of 5 instead. Narrower windows cut the other
+  way: with the setting at 1 minute the page reported fewer people than the skip vote demanded a
+  share of.
+
+  The worker now keeps one roster of who spoke when (`active-chatters.ts`), shared by the tracker
+  and the skip vote, with one window read from the engagement settings on every snapshot. The
+  overlays page wording is unchanged; the number it prints is now the number a skip is measured
+  against. The chat panel's own five-minute message lifetime is a display lifetime, not a count,
+  and stays what it was — its comment no longer claims to mirror the chatter window.
 
 ## 1.5.37 - 2026-09-01
 

@@ -23,6 +23,7 @@ import {
   type VoteOutcome,
   type VoteSession
 } from "@stream247/core";
+import { ActiveChatterRoster } from "./active-chatters.js";
 
 export type ChatControlEffect =
   | { kind: "none" }
@@ -34,14 +35,18 @@ export type ChatControlEffect =
 export type ChatControlOptions = {
   now?: () => Date;
   onEvent?: (event: string, fields: Record<string, unknown>) => void;
+  /**
+   * Who counts as "active" for the skip threshold. The worker hands in the roster the engagement
+   * game tracker fills and windows (see active-chatters.ts), so the share of the room a skip needs
+   * is a share of the same room the overlays page reports. Left out, the runtime keeps a roster of
+   * its own over the default engagement window.
+   */
+  activeChatters?: ActiveChatterRoster;
 };
-
-/** Viewers counted as "active" for the skip threshold. */
-const ACTIVE_CHATTER_WINDOW_MS = 5 * 60_000;
 
 export class ChatControlRuntime {
   private readonly options: ChatControlOptions;
-  private readonly chatterSeenAt = new Map<string, number>();
+  private readonly activeChatters: ActiveChatterRoster;
   private session: VoteSession | null = null;
   private skipState: SkipVoteState | null = null;
   private lastOutcome: VoteOutcome | null = null;
@@ -49,6 +54,7 @@ export class ChatControlRuntime {
 
   constructor(options: ChatControlOptions = {}) {
     this.options = options;
+    this.activeChatters = options.activeChatters ?? new ActiveChatterRoster();
   }
 
   private now(): Date {
@@ -59,17 +65,8 @@ export class ChatControlRuntime {
     this.options.onEvent?.(event, fields);
   }
 
-  private pruneChatters(nowMs: number): void {
-    for (const [actor, seenAt] of this.chatterSeenAt.entries()) {
-      if (seenAt < nowMs - ACTIVE_CHATTER_WINDOW_MS) {
-        this.chatterSeenAt.delete(actor);
-      }
-    }
-  }
-
   getActiveChatterCount(): number {
-    this.pruneChatters(this.now().getTime());
-    return this.chatterSeenAt.size;
+    return this.activeChatters.countActive(this.now().getTime());
   }
 
   /**
@@ -87,9 +84,7 @@ export class ChatControlRuntime {
     try {
       const now = this.now();
       const actor = args.actor.trim();
-      if (actor) {
-        this.chatterSeenAt.set(actor.toLowerCase(), now.getTime());
-      }
+      this.activeChatters.recordSeen(actor, now.getTime());
 
       const command: ChatCommand = parseChatCommand(args.message, args.config);
 

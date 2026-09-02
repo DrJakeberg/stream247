@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDefaultChatInteractionConfig, type ChatInteractionConfig } from "@stream247/core";
+import { ActiveChatterRoster } from "../../apps/worker/src/active-chatters.js";
 import { ChatControlRuntime } from "../../apps/worker/src/chat-control.js";
 
 function config(overrides: Partial<ChatInteractionConfig> = {}): ChatInteractionConfig {
@@ -237,15 +238,22 @@ describe("ChatControlRuntime skip snapshot", () => {
 });
 
 describe("ChatControlRuntime bookkeeping", () => {
-  it("counts distinct recent chatters", () => {
-    const { runtime, advance } = createRuntime();
+  it("counts distinct recent chatters over the engagement window", () => {
+    // "Recent" is the operator's engagement window, not a constant of the skip vote: this used to
+    // pin a private five-minute window while the overlays page reported the room over the
+    // engagement setting. Now the roster carries the one window both read (active-chatters.test.ts
+    // sends one history through both), so the test sets it the way the tracker does.
+    let nowMs = Date.parse("2026-08-18T12:00:00.000Z");
+    const activeChatters = new ActiveChatterRoster();
+    activeChatters.applySettings({ gameWindowMinutes: 5 });
+    const runtime = new ChatControlRuntime({ activeChatters, now: () => new Date(nowMs) });
     for (const actor of ["a", "b", "B", "c"]) {
       runtime.handleMessage({ actor, message: "hello", currentAssetId: "x", config: config() });
     }
 
     expect(runtime.getActiveChatterCount()).toBe(3);
 
-    advance(600);
+    nowMs += 600 * 1000;
     expect(runtime.getActiveChatterCount()).toBe(0);
   });
 

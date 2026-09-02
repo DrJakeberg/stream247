@@ -26,11 +26,12 @@ export type ChatOverlayMessagesSource = {
   }[];
 };
 
-// How long one message stays on air. Five minutes on purpose: it is the same window
-// ACTIVE_CHATTER_WINDOW_MS uses to call a chatter "active", so a message stays visible exactly as
-// long as its author counts as part of the room. This is also the worker-death guard — the row
-// has no deadline of its own the way the poll and skip rows do, so message age is the only signal
-// playout has that what it is drawing stopped being live chat.
+// How long one message stays on air. This is the panel's own lifetime, not the definition of an
+// "active chatter" — that is the engagement window in the worker's shared roster (see
+// active-chatters.ts), which the operator can set anywhere from one to thirty minutes, and a panel
+// that kept every line up for half an hour would be a wall, not chat. Five minutes is also the
+// worker-death guard — the row has no deadline of its own the way the poll and skip rows do, so
+// message age is the only signal playout has that what it is drawing stopped being live chat.
 export const CHAT_OVERLAY_MESSAGE_TTL_MS = 5 * 60_000;
 
 /**
