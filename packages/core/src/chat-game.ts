@@ -148,6 +148,17 @@ export function formatChatGameInfoReply(args: {
   return `${running?.label ?? "A game"} is on air — ${steering}. Other games: ${commands}. !game stop ends the round.`;
 }
 
+/**
+ * The reply a start gets when the studio's layer cap left no room for the game layer.
+ *
+ * Names what is in the way and what fixes it, and nothing about a game: the board is not on air,
+ * and the room is not told otherwise. The count is the studio's own, so an operator reading over
+ * the moderator's shoulder recognises their scene in it.
+ */
+export function formatChatGameNoRoomReply(args: { gameId: ChatGameId; layerCount: number }): string {
+  return `No room for the game layer: the studio already has ${args.layerCount} layers. Remove one in the studio, then try !${args.gameId} again.`;
+}
+
 // Bounds on the playfield. Below the minimum a round is over in a handful of inputs; above the
 // maximum the cells become unreadable at broadcast resolution.
 const MIN_GRID_WIDTH = 8;

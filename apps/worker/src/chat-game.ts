@@ -14,6 +14,7 @@ import {
   chatGameSettingsKey,
   getChatGameDefinition,
   normalizeChatGameSettings,
+  normalizeOverlaySceneCustomLayers,
   resolveChatGameInput,
   type ChatGameSettings,
   type ChatGameState,
@@ -42,11 +43,25 @@ const CHAT_GAME_LAYER_DEFAULTS = {
   allowOutsideSafeArea: false
 } as const;
 
+/** What provisioning decided: the overlay to write, or why nothing may be written. */
+export type ChatGameLayerProvisioning =
+  | { ok: true; overlay: ChatGameLayerProvisioningInput }
+  | { ok: false; reason: "no-room"; layerCount: number };
+
+/**
+ * The one rule for "a game is on air": the overlay is published and an enabled game layer exists.
+ * reconcileChatGame runs the runtime by it, and a chat reply may only claim a board by it — judged
+ * on the state the store kept, never on the state someone meant to write.
+ */
+export function hasActiveChatGameLayer(overlay: ChatGameLayerProvisioningInput): boolean {
+  return overlay.enabled && overlay.customLayers.some((layer) => layer.kind === "game" && layer.enabled);
+}
+
 /**
  * The overlay a chat-started game needs, from the overlay there is.
  *
  * The game only runs while the published overlay is on *and* some enabled layer of kind "game"
- * exists (see reconcileChatGame). A fresh install has neither: overlay.enabled is false and
+ * exists (see hasActiveChatGameLayer). A fresh install has neither: overlay.enabled is false and
  * customLayers is empty, so every direction emote the room sent was resolved against a runtime
  * that had no settings and no state, and did nothing. That is not a state a viewer can fix and not
  * one an operator can guess, so starting a game from chat provisions it.
@@ -54,25 +69,31 @@ const CHAT_GAME_LAYER_DEFAULTS = {
  * An existing game layer is re-enabled rather than duplicated — the operator's placement is their
  * decision, and a second panel would draw two boards. Pure, so the worker can persist the result
  * in one write and the rule is testable without a database.
+ *
+ * A studio already holding its maximum of custom layers has no room for one more, and the store
+ * would not say so: normalizeState drops every layer past the cap without a word, leaving an
+ * overlay switched on with no board in it. So the appended layer is put through the same
+ * normaliser here, before anything is written, and "ok" means it survives that — the caller gets
+ * a refusal to say back instead of an overlay to write.
  */
-export function resolveChatGameLayerProvisioning(
-  overlay: ChatGameLayerProvisioningInput
-): ChatGameLayerProvisioningInput {
+export function resolveChatGameLayerProvisioning(overlay: ChatGameLayerProvisioningInput): ChatGameLayerProvisioning {
   const existing = overlay.customLayers.findIndex((layer) => layer.kind === "game");
   if (existing >= 0) {
     const customLayers = overlay.customLayers.map((layer, index) =>
       index === existing ? { ...layer, enabled: true } : layer
     );
-    return { enabled: true, customLayers };
+    return { ok: true, overlay: { enabled: true, customLayers } };
   }
 
-  return {
-    enabled: true,
-    customLayers: [
-      ...overlay.customLayers,
-      { id: `game-${Date.now().toString(36)}`, kind: "game", enabled: true, ...CHAT_GAME_LAYER_DEFAULTS }
-    ]
-  };
+  const customLayers: OverlaySceneCustomLayer[] = [
+    ...overlay.customLayers,
+    { id: `game-${Date.now().toString(36)}`, kind: "game", enabled: true, ...CHAT_GAME_LAYER_DEFAULTS }
+  ];
+  if (!hasActiveChatGameLayer({ enabled: true, customLayers: normalizeOverlaySceneCustomLayers(customLayers) })) {
+    return { ok: false, reason: "no-room", layerCount: overlay.customLayers.length };
+  }
+
+  return { ok: true, overlay: { enabled: true, customLayers } };
 }
 
 /**

@@ -50,6 +50,7 @@ import {
   toUtcIsoForLocalDateTime,
   createDefaultChatInteractionConfig,
   formatChatGameInfoReply,
+  formatChatGameNoRoomReply,
   type ChatGameCommand,
   evaluateViewerRequest,
   type ChatInteractionConfig,
@@ -285,6 +286,7 @@ import { EngagementGameTracker } from "./engagement-game.js";
 import {
   ChatGameRuntime,
   buildChatGameOverlayViewFromRuntimeRecord,
+  hasActiveChatGameLayer,
   resolveChatGameLayerProvisioning,
   resolveChatGameLayerTeardown
 } from "./chat-game.js";
@@ -533,10 +535,17 @@ async function handleChatGameCommand(args: {
   // game nobody can see would be the exact state the operator reported — a game that "does
   // nothing". Writing the layer first means the worst interleaving is an empty panel for one
   // cycle, never a silently ignored round.
-  await updateAppState((state) => ({
-    ...state,
-    overlay: { ...state.overlay, ...resolveChatGameLayerProvisioning(state.overlay) }
-  }));
+  const written = await updateAppState((state) => {
+    const provisioning = resolveChatGameLayerProvisioning(state.overlay);
+    return provisioning.ok ? { ...state, overlay: { ...state.overlay, ...provisioning.overlay } } : state;
+  });
+  // Judged on the state as written, never on what chat asked for: normalizeState drops layers past
+  // the studio's cap without a word, and a reply built from the intent would announce a board
+  // nobody can see. Nothing else is touched on a refusal — no rules row, no audit line, and the
+  // overlay is exactly as the operator left it.
+  if (!hasActiveChatGameLayer(written.overlay)) {
+    return formatChatGameNoRoomReply({ gameId, layerCount: written.overlay.customLayers.length });
+  }
   await writeChatGameSettingsRecord({ ...settings, gameId, updatedAt: new Date().toISOString() });
   // Immediately, not on the next cycle: a viewer who typed "!snake" and waits half a minute for a
   // board concludes the command did not work and types it again.
@@ -7999,8 +8008,7 @@ async function reconcileChatInteraction(): Promise<void> {
 async function reconcileChatGame(): Promise<void> {
   const settings = await readChatGameSettingsRecord();
   const state = await readAppState();
-  const active =
-    state.overlay.enabled && state.overlay.customLayers.some((layer) => layer.kind === "game" && layer.enabled);
+  const active = hasActiveChatGameLayer(state.overlay);
 
   // The persisted round is only fetched when the runtime might adopt it: on activation, or after
   // a restart when memory is empty. A running round never re-reads its own writes.

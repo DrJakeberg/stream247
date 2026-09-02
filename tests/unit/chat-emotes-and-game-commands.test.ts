@@ -5,12 +5,20 @@ import {
   buildChatMessageSegments,
   resolveChatGameCommand,
   formatChatGameInfoReply,
+  formatChatGameNoRoomReply,
   createDefaultChatGameSettings,
+  normalizeOverlaySceneCustomLayers,
+  type OverlaySceneCustomLayer,
   type OverlayLayoutNode,
   type OverlayScenePayloadView
 } from "@stream247/core";
 import { TwitchChatBridge, parseTwitchIrcMessage } from "../../apps/worker/src/twitch-engagement";
-import { resolveChatGameLayerProvisioning, resolveChatGameLayerTeardown } from "../../apps/worker/src/chat-game";
+import {
+  hasActiveChatGameLayer,
+  resolveChatGameLayerProvisioning,
+  resolveChatGameLayerTeardown,
+  type ChatGameLayerProvisioningInput
+} from "../../apps/worker/src/chat-game";
 import { buildChatOverlayViewFromMessages } from "../../apps/worker/src/chat-overlay";
 
 /**
@@ -223,16 +231,25 @@ describe("symptom 2: !game", () => {
   });
 });
 
+/** The overlay a start would write, or a thrown refusal — for the tests about the ok path. */
+function provisionedOverlay(overlay: ChatGameLayerProvisioningInput): ChatGameLayerProvisioningInput {
+  const provisioning = resolveChatGameLayerProvisioning(overlay);
+  if (!provisioning.ok) {
+    throw new Error(`refused: ${provisioning.reason}`);
+  }
+  return provisioning.overlay;
+}
+
 describe("symptom 3: the direction emotes did nothing", () => {
   it("provisions the on-air game layer, so starting a game needs no studio handwork", () => {
-    const provisioned = resolveChatGameLayerProvisioning({ enabled: false, customLayers: [] });
+    const provisioned = provisionedOverlay({ enabled: false, customLayers: [] });
 
     expect(provisioned.enabled).toBe(true);
     expect(provisioned.customLayers.some((layer) => layer.kind === "game" && layer.enabled)).toBe(true);
   });
 
   it("re-enables an existing game layer instead of adding a second one", () => {
-    const provisioned = resolveChatGameLayerProvisioning({
+    const provisioned = provisionedOverlay({
       enabled: true,
       customLayers: [
         {
@@ -255,12 +272,76 @@ describe("symptom 3: the direction emotes did nothing", () => {
   });
 
   it("switches the layer off on stop but leaves the overlay published", () => {
-    const started = resolveChatGameLayerProvisioning({ enabled: false, customLayers: [] });
+    const started = provisionedOverlay({ enabled: false, customLayers: [] });
     const stopped = resolveChatGameLayerTeardown(started);
 
     expect(stopped.customLayers.some((layer) => layer.kind === "game" && layer.enabled)).toBe(false);
     // Chat started the game; it did not publish the overlay, so it must not unpublish it either.
     expect(stopped.enabled).toBe(true);
     expect(stopped.customLayers).toHaveLength(1);
+  });
+});
+
+describe("finding: the studio's layer cap", () => {
+  function textLayer(index: number): OverlaySceneCustomLayer {
+    return {
+      id: `text-${index}`,
+      kind: "text",
+      name: `Text ${index}`,
+      enabled: true,
+      xPercent: 4,
+      yPercent: 10,
+      widthPercent: 34,
+      heightPercent: 16,
+      opacityPercent: 100,
+      allowOutsideSafeArea: false,
+      text: `Line ${index}`,
+      secondaryText: "",
+      textTone: "headline",
+      textAlign: "left",
+      useAccent: false
+    };
+  }
+
+  /**
+   * What the handler does with a start, minus the database: provisioning on the stored overlay,
+   * the write through the store's real normaliser (cap included), and the reply decided on what
+   * came out of it — never on what went in.
+   */
+  function startFromChat(overlay: ChatGameLayerProvisioningInput) {
+    const provisioning = resolveChatGameLayerProvisioning(overlay);
+    const written = provisioning.ok ? provisioning.overlay : overlay;
+    const stored = { enabled: written.enabled, customLayers: normalizeOverlaySceneCustomLayers(written.customLayers) };
+    const onAir = hasActiveChatGameLayer(stored);
+    const reply = onAir
+      ? formatChatGameInfoReply({ running: { gameId: "snake" }, settings: createDefaultChatGameSettings() })
+      : formatChatGameNoRoomReply({ gameId: "snake", layerCount: stored.customLayers.length });
+    return { provisioning, stored, onAir, reply };
+  }
+
+  it("refuses a start the store has no room to keep, and never says 'on air' for it", () => {
+    // The studio's maximum of eight layers, none of them a game, overlay not published.
+    const overlay = { enabled: false, customLayers: Array.from({ length: 8 }, (_, index) => textLayer(index)) };
+    const { provisioning, stored, onAir, reply } = startFromChat(overlay);
+
+    expect(provisioning).toEqual({ ok: false, reason: "no-room", layerCount: 8 });
+    expect(onAir).toBe(false);
+    expect(reply).not.toContain("on air");
+    expect(reply).toContain("8 layers");
+    expect(reply).toContain("!snake");
+    // A refused start leaves the overlay exactly as the operator had it: not published, no
+    // ninth layer, nothing for the normaliser to drop.
+    expect(stored.enabled).toBe(false);
+    expect(stored.customLayers.map((layer) => layer.kind)).toEqual(Array(8).fill("text"));
+  });
+
+  it("fits the game layer in beside seven others, and the store keeps it", () => {
+    const overlay = { enabled: false, customLayers: Array.from({ length: 7 }, (_, index) => textLayer(index)) };
+    const { provisioning, stored, onAir, reply } = startFromChat(overlay);
+
+    expect(provisioning.ok).toBe(true);
+    expect(stored.customLayers).toHaveLength(8);
+    expect(onAir).toBe(true);
+    expect(reply).toContain("on air");
   });
 });
