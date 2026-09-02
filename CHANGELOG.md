@@ -5,11 +5,14 @@
 ### Fixed
 
 - The Twitch chat connection could not be switched off. An install with the chat rail hidden, the
-  moderation policy off and viewer control off still held an IRC connection open around the clock,
-  and the note in 1.5.40 about the bridge following its consumers claimed the opposite. The
-  consumer flag for the chat game was `Boolean(chatGameForBridge.gameId)`, and the chat game's
-  settings row has no enabled field at all: `gameId` defaults to `snake` and is never empty, so
-  that expression was constant true and one always-on consumer kept the bridge up for everyone.
+  moderation policy off and viewer control off still held an IRC connection open around the clock.
+  The bridge was taught to stay up for any consumer that needs it — check-ins, votes, viewer
+  requests, the chat game — and the chat game's consumer flag was `Boolean(chatGameForBridge.gameId)`.
+  The chat game's settings row has no enabled field at all: `gameId` defaults to `snake` and is
+  never empty, so that expression was constant true. One consumer that could never be off kept the
+  connection up for every install, and the chat rail's description on the engagement page — which
+  promises the connection stays up for the other consumers — read as if the rest could still be
+  switched off.
 
   The chat game's on and off is the overlay scene — a layer of kind "game" — and the bridge follows
   that now. It follows the layer's presence rather than its enabled flag on purpose: stopping a
