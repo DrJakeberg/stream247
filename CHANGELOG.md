@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed
+
+- The chat mode was written to the broadcast channel every 30 seconds, whatever it was and
+  whatever the moderation policy said. Finding [6] of the codebase review, verified twice: the
+  worker PATCHed Twitch's chat settings on every reconcile with no memory of its last write and
+  no regard for the policy's own switch, so a moderator who lifted emote-only by hand on Twitch
+  was overridden within half a minute, and an operator who switched the policy off still had
+  Stream247 forcing emote-only on the channel. Now one decision runs before every write: a
+  switched-off policy never writes and the status page says so; an unchanged mode is not
+  rewritten inside ten minutes; after that it is written once more, so a hand change does not
+  silently outlive a policy that is on. Every write is logged as
+  `twitch.chat_settings.written` with the mode and the reason — the line that was missing when a
+  moderator's `!here` could not be proven from the logs.
+
 ## 1.5.38 - 2026-09-02
 
 ### Changed

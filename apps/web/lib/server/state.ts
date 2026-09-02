@@ -298,7 +298,8 @@ export function getPresenceStatus(state: AppState) {
       expiresAt: new Date(window.expiresAt)
     })),
     now: new Date(),
-    fallbackEmoteOnly: state.moderation.fallbackEmoteOnly
+    fallbackEmoteOnly: state.moderation.fallbackEmoteOnly,
+    enabled: state.moderation.enabled
   });
 }
 
