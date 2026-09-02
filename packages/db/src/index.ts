@@ -1,3 +1,5 @@
+export { DECLARED_SCHEMA } from "./schema-manifest.js";
+import { DECLARED_SCHEMA } from "./schema-manifest.js";
 import { promises as fs } from "node:fs";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import path from "node:path";
@@ -3879,6 +3881,105 @@ async function applyPendingMigrations(client: PoolClient): Promise<void> {
       new Date().toISOString()
     ]);
   }
+
+  // After the migrations, never instead of them: this reports drift, it does not repair it. A
+  // repair here would be DDL on every boot against a live database, and the lock that costs is not
+  // worth paying to save a deliberate migration. Not awaited — see reportSchemaDrift.
+  reportSchemaDrift(client);
+}
+
+/** A column the source says the database should have and the database does not. */
+export type MissingDeclaredColumn = { table: string; column: string };
+
+/**
+ * What the database is missing against what the source declares.
+ *
+ * Asked once, after the migrations have run. The failure it exists for is the quiet one: a column
+ * added to the base-schema block alone reaches a fresh install and nothing else, because that block
+ * is itself a migration under one fixed id and never runs twice. panel_placements_json and
+ * ticker_rotate_seconds lived there and nowhere else, so the live channel wrote to columns that
+ * were not there — and because they are only written on an explicit save, nothing failed loudly.
+ * The channel ran on, the logs stayed clean, and every save out of the design studio failed.
+ *
+ * Only ONE direction is reported. A column the database has and the source does not is somebody's
+ * own, or a leftover from a rollback, and neither is a write that will fail.
+ */
+export async function findMissingDeclaredColumns(client: PoolClient): Promise<MissingDeclaredColumn[]> {
+  const result = await client.query<{ table_name: string; column_name: string }>(
+    "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'"
+  );
+
+  const present = new Map<string, Set<string>>();
+  for (const row of result.rows) {
+    const columns = present.get(row.table_name) ?? new Set<string>();
+    columns.add(row.column_name);
+    present.set(row.table_name, columns);
+  }
+
+  const missing: MissingDeclaredColumn[] = [];
+  for (const [table, columns] of Object.entries(DECLARED_SCHEMA)) {
+    const have = present.get(table);
+    for (const column of columns) {
+      if (!have || !have.has(column)) {
+        missing.push({ table, column });
+      }
+    }
+  }
+  return missing;
+}
+
+/**
+ * Says out loud what the database is missing, once, after the migrations have run.
+ *
+ * Critical rather than a warning: the writes that fail on a missing column are the rare ones — an
+ * explicit save, a publish — so the operator finds out by losing work, not by seeing the channel
+ * stop. A quiet failure that costs work is worse than a loud one that costs attention.
+ *
+ * The READ runs on the migration's own client; the WRITE is pushed off it with setImmediate and
+ * never awaited, exactly as noteSecretDecryptionFailure does. Awaiting it here deadlocked: the
+ * incident store takes its own connection out of the same pool while this client still holds the
+ * migration open, and the four database roundtrip tests each sat at their 60-second limit until
+ * they were killed. Recording a problem must not become a second one.
+ */
+function reportSchemaDrift(client: PoolClient): void {
+  void (async () => {
+    let missing: MissingDeclaredColumn[];
+    try {
+      missing = await findMissingDeclaredColumns(client);
+    } catch {
+      return;
+    }
+
+    if (missing.length === 0) {
+      setImmediate(() => {
+        void resolveIncident("schema.drift", "The database has every column the source declares.").catch(
+          () => undefined
+        );
+      });
+      return;
+    }
+
+    const named = missing.map((entry) => `${entry.table}.${entry.column}`);
+    // eslint-disable-next-line no-console
+    console.error(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        component: "db",
+        event: "schema.drift",
+        missing: named.length,
+        columns: named.slice(0, 20)
+      })
+    );
+    setImmediate(() => {
+      void upsertIncident({
+        scope: "system",
+        severity: "critical",
+        title: "The database is missing columns this build writes to",
+        message: `${String(named.length)} declared column(s) are absent: ${named.slice(0, 12).join(", ")}${named.length > 12 ? ", …" : ""}. Writes that touch them fail — and the ones that do are the rare, explicit saves, so this is found by losing work rather than by the channel stopping. A column added to the base-schema block alone does not reach an existing install; it needs its own migration.`,
+        fingerprint: "schema.drift"
+      }).catch(() => undefined);
+    });
+  })();
 }
 
 async function readLegacyState(): Promise<AppState | null> {

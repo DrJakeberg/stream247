@@ -92,6 +92,13 @@ const STATE_FAMILIES: IncidentFamily[] = [
     why: "The on-air scene cannot be rendered until it can; the renderer closes it."
   },
   {
+    fingerprint: "schema.drift",
+    keyed: false,
+    kind: "state",
+    area: "system",
+    why: "The database is missing declared columns until a migration adds them; the next boot closes it."
+  },
+  {
     fingerprint: "playout.ticker-strip.failed",
     keyed: false,
     kind: "state",

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added
+
+- The database is now asked, after every set of migrations, whether it has the columns this build
+  writes to — and says so loudly when it does not. That is the check the design-studio breakage
+  needed and did not have: a column added to the base-schema block alone reaches a fresh install and
+  nothing else, and because the columns in question are only written on an explicit save, the
+  channel ran on with clean logs while every save failed.
+
+  The columns the source declares are generated into a manifest by
+  `scripts/generate-schema-manifest.mjs` and kept honest by a test that re-parses the SQL and fails,
+  naming the column, when the two disagree. Verified against the live database once written: 39
+  tables, 460 columns, nothing missing and nothing extra. That comparison also caught a fault in the
+  parser itself — `schema_migrations` closes its statement on the next line, so requiring the
+  semicolon made the body run on into the surrounding JavaScript and offer "async", "await",
+  "const" and five more as columns.
+
+  It reports drift; it does not repair it. Repairing would mean running DDL on every boot against a
+  live database, and that lock is not worth paying to save writing a migration on purpose.
+
 ## 1.5.44 - 2026-09-03
 
 ### Fixed
