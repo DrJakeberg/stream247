@@ -698,9 +698,9 @@ function buildChatMessageBody(
         continue;
       }
       emotes += 1;
-      // An emote costs two characters of the row budget: about what its picture occupies next to
-      // the 19px text it sits in, so a wall of emotes clamps like a wall of words.
-      remaining -= 2;
+      // An emote costs three characters of the row budget: its 22px box plus the 4px gap is about
+      // 2.6 glyphs of the 19px text beside it, so a wall of emotes clamps like a wall of words.
+      remaining -= 3;
       nodes.push({
         type: "img",
         props: {
@@ -721,7 +721,12 @@ function buildChatMessageBody(
     nodes.push(label(value, { color: INK_PRIMARY, fontSize: px(19), lineClamp: 1 }));
   }
 
-  return nodes.length > 0 ? row({ alignItems: "center", gap: px(4) }, nodes) : null;
+  // The row must yield to the panel, not the other way round: a nowrap row of labels and pictures
+  // has an intrinsic width no character budget can bound (glyph widths are not characters), and
+  // without minWidth 0 it would push the chatter's name to nothing and run onto bare video.
+  return nodes.length > 0
+    ? row({ alignItems: "center", gap: px(4), minWidth: 0, flexShrink: 1, overflow: "hidden" }, nodes)
+    : null;
 }
 
 /**
@@ -762,14 +767,24 @@ function buildChatPanel(
       label(message.name, {
         color: accentTextColor(accent),
         fontSize: px(19),
-        fontWeight: 700
+        fontWeight: 700,
+        // The name is the fixed part of the row; the message yields, never the name.
+        flexShrink: 0
       }),
       message.body ??
         label(message.text, {
           color: INK_PRIMARY,
           fontSize: px(19),
           // One drawn line per message, whatever the glyph widths — the height claim depends on it.
-          lineClamp: 1
+          // satori honours lineClamp only on a block container; on the flex label it never
+          // applied, and a 34-wide-glyph message measured 44px — two lines — on the rasteriser.
+          // Block display makes the clamp real, and the row yields to the panel instead of
+          // pushing the name to nothing.
+          lineClamp: 1,
+          display: "block",
+          minWidth: 0,
+          flexShrink: 1,
+          overflow: "hidden"
         })
     ])
   );
