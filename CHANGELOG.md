@@ -78,6 +78,16 @@
 
 ### Fixed
 
+- Taking hold of the clock or the "up next" card moved it. Placing a panel seeds its box from where
+  the flex flow already puts it, precisely so that the act of placing changes nothing on air — but
+  the store capped x and y at 90%, and two of the six seeds sit past that: the clock's left edge is
+  at 91.6% because it is 149 design pixels wide against a 1776-pixel safe area, and the next card's
+  top is at 90.7% for the same reason. Both were clamped on save, so the clock jumped 28 design
+  pixels and the next card 8 — nothing visible in the studio, a moved panel on air. Found by
+  dragging them. The cap moves to 100% for the built-in panels and for custom layers; what keeps a
+  box on the frame was never that cap but `resolvePlacementBox` clamping width against the room x
+  leaves, which is unchanged. A drag now stops at the frame's edge with its size intact.
+
 - The `!request` cooldown and the queue cap on the viewer-control page were never enforced.
   Finding [5] of the codebase review, verified twice: the worker evaluated every request against an
   empty history and a queue count of zero — the table for the history existed and nothing wrote to
