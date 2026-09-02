@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Security
+
+- A lost or rotated `APP_SECRET` silently turned two-factor login off. Finding [10] of the
+  codebase review, verified twice: every stored value then fails its auth tag, decryption returned
+  an empty string for all of them without a word — Twitch credentials, stream keys and the relay
+  key read as never entered, the uplink stopped — and the login gate, which tested the two-factor
+  secret for truthiness, let every local password through without the second factor while the
+  account still said 2FA was on. Now a well-formed ciphertext that will not open is a failure: the
+  first one per process is logged with the way out and raised as the critical incident "Stored
+  secrets cannot be decrypted with the current APP_SECRET", and a two-factor login whose secret is
+  unreadable is refused (423) with the same instructions instead of skipped.
+
 ### Fixed
 
 - The `!request` cooldown and the queue cap on the viewer-control page were never enforced.

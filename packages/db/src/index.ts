@@ -72,6 +72,8 @@ export type UserRecord = {
   passwordHash?: string;
   twoFactorEnabled?: boolean;
   twoFactorSecret?: string;
+  /** The stored secret exists but will not open with the current APP_SECRET; the 2FA gate fails closed. */
+  twoFactorSecretUnreadable?: boolean;
   twoFactorConfirmedAt?: string;
   createdAt: string;
   lastLoginAt: string;
@@ -1452,7 +1454,59 @@ function encryptSecretString(value: string): string {
   return `v1:${iv.toString("base64url")}:${authTag.toString("base64url")}:${encrypted.toString("base64url")}`;
 }
 
-function decryptSecretString(value: string): string {
+// A well-formed ciphertext that will not open is a failure, not an empty value.
+//
+// Finding [10] of the codebase review: with a lost or rotated APP_SECRET every AES-GCM value in
+// Postgres fails its auth tag, decryption returned "" for all of them, and the install read as
+// "unconfigured" — Twitch credentials blank, destinations missing their keys, the uplink stopped —
+// while the 2FA gate, which tests the secret for truthiness, was silently bypassed. Not one log
+// line said why. The first such failure per process is now said out loud and raised as a critical
+// incident; the readers that need to fail closed ask hasSecretDecryptionFailed().
+let secretDecryptionFailed = false;
+let secretDecryptionFailureReported = false;
+
+/** True once any well-formed ciphertext failed to decrypt with the current key in this process. */
+export function hasSecretDecryptionFailed(): boolean {
+  return secretDecryptionFailed;
+}
+
+/** Test seam: the flag is process state. */
+export function resetSecretDecryptionFailureForTests(): void {
+  secretDecryptionFailed = false;
+  secretDecryptionFailureReported = false;
+}
+
+function noteSecretDecryptionFailure(context: string): void {
+  secretDecryptionFailed = true;
+  if (secretDecryptionFailureReported) {
+    return;
+  }
+  secretDecryptionFailureReported = true;
+  // eslint-disable-next-line no-console
+  console.error(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      component: "db",
+      event: "secrets.decrypt.failed",
+      context,
+      reason: "key-mismatch",
+      hint: "The stored secrets were encrypted under a different APP_SECRET. Restore it (env APP_SECRET or the persisted secret file on the data volume); re-entering the secrets is the alternative."
+    })
+  );
+  // Off the synchronous decrypt path, and never allowed to throw into it: the incident store is
+  // this very module, and a failure to record the failure must not become a second failure.
+  setImmediate(() => {
+    void upsertIncident({
+      scope: "system",
+      severity: "critical",
+      title: "Stored secrets cannot be decrypted with the current APP_SECRET",
+      message: `A stored ${context} failed to decrypt. Twitch credentials, stream keys and the relay key read as missing, and two-factor login is refused until the APP_SECRET that encrypted them is restored (env APP_SECRET or the persisted secret file on the data volume). Re-entering every secret is the alternative.`,
+      fingerprint: "secrets.key-mismatch"
+    }).catch(() => undefined);
+  });
+}
+
+function decryptSecretString(value: string, context = "secret"): string {
   if (!value) {
     return "";
   }
@@ -1470,9 +1524,13 @@ function decryptSecretString(value: string): string {
       decipher.final()
     ]).toString("utf8");
   } catch {
+    noteSecretDecryptionFailure(context);
     return "";
   }
 }
+
+/** Test seam for the module-private decrypt. */
+export const __decryptSecretStringForTests = decryptSecretString;
 
 function decryptManagedConfig(value: string): ManagedConfigRecord | null {
   if (!value) {
@@ -1494,6 +1552,7 @@ function decryptManagedConfig(value: string): ManagedConfigRecord | null {
 
     return JSON.parse(decrypted) as ManagedConfigRecord;
   } catch {
+    noteSecretDecryptionFailure("managed config");
     return null;
   }
 }
@@ -4873,7 +4932,12 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       twitchLogin: row.twitch_login,
       passwordHash: row.password_hash || undefined,
       twoFactorEnabled: row.two_factor_enabled,
-      twoFactorSecret: decryptSecretString(row.two_factor_secret),
+      // A secret that exists but will not open is not "no secret": the login gate must refuse,
+      // not skip. Finding [10] of the codebase review.
+      ...(() => {
+        const twoFactorSecret = decryptSecretString(row.two_factor_secret, "two-factor secret");
+        return { twoFactorSecret, twoFactorSecretUnreadable: Boolean(row.two_factor_secret) && !twoFactorSecret };
+      })(),
       twoFactorConfirmedAt: row.two_factor_confirmed_at,
       createdAt: row.created_at,
       lastLoginAt: row.last_login_at
