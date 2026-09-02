@@ -908,6 +908,35 @@ function clampPlacementPercent(value: number, min: number, max: number): number 
 }
 
 /**
+ * The floors a box cannot be resized below.
+ *
+ * Named rather than inline because the studio's drag handles have to stop at exactly these numbers.
+ * A handle that let the operator pull a panel to nothing, only for the renderer to snap it back to
+ * a tenth of the frame, would be the studio lying about the picture again.
+ */
+export const OVERLAY_PLACEMENT_MIN_WIDTH_PERCENT = 10;
+export const OVERLAY_PLACEMENT_MIN_HEIGHT_PERCENT = 8;
+
+/**
+ * The rectangle percents are measured against, in frame pixels.
+ *
+ * Shared by the forward resolver and its inverse so there is one reading of the safe area, and one
+ * place where overlayScale and the rounding to whole pixels happen. It is not a fixed fraction of
+ * the frame: 56 design pixels at 1280x720 rounds to 37, so the safe band is 646px of 720 (89.72%)
+ * where at 1920x1080 it is 968px of 1080 (89.63%). Percents therefore mean slightly different
+ * pixels at different output sizes, which is exactly why the studio has to be told the real one.
+ */
+function placementSafeArea(
+  frame: { width: number; height: number },
+  allowOutsideSafeArea: boolean
+): { left: number; top: number; width: number; height: number } {
+  const px = (value: number) => Math.round(value * overlayScale(frame.width));
+  const left = allowOutsideSafeArea ? 0 : px(72);
+  const top = allowOutsideSafeArea ? 0 : px(56);
+  return { left, top, width: frame.width - left * 2, height: frame.height - top * 2 };
+}
+
+/**
  * Resolves a custom layer's percent box into frame pixels — the game panel's placement rules,
  * extracted verbatim so every positioned panel clamps identically: a layer that has not opted out
  * of the safe area positions inside the same margins the root layout keeps for its own panels,
@@ -927,14 +956,72 @@ function resolvePlacementBox(
 
   const xPercent = clampPlacementPercent(placement.xPercent, 0, 100);
   const yPercent = clampPlacementPercent(placement.yPercent, 0, 100);
-  const widthPercent = clampPlacementPercent(placement.widthPercent, 10, 100 - xPercent);
-  const heightPercent = clampPlacementPercent(placement.heightPercent, 8, 100 - yPercent);
+  const widthPercent = clampPlacementPercent(placement.widthPercent, OVERLAY_PLACEMENT_MIN_WIDTH_PERCENT, 100 - xPercent);
+  const heightPercent = clampPlacementPercent(
+    placement.heightPercent,
+    OVERLAY_PLACEMENT_MIN_HEIGHT_PERCENT,
+    100 - yPercent
+  );
 
   return {
     left: Math.round(safeX + (safeWidth * xPercent) / 100),
     top: Math.round(safeY + (safeHeight * yPercent) / 100),
     width: Math.round((safeWidth * widthPercent) / 100),
     height: Math.round((safeHeight * heightPercent) / 100)
+  };
+}
+
+/**
+ * Percent box in, frame pixels out — the renderer's own resolver, for anyone drawing the same box.
+ *
+ * The studio needs this to know where a panel actually is before it can put a drag handle on it.
+ * Calling the renderer's function rather than repeating its arithmetic is the whole point: the
+ * studio drew its own imitation once and disagreed with the picture on the safe area, the clamps
+ * and the scale all at the same time.
+ */
+export function resolvePlacementPixelBox(
+  placement: OverlayPlacementView,
+  frame: { width: number; height: number }
+): { left: number; top: number; width: number; height: number } {
+  return resolvePlacementBox(placement, overlayScale(frame.width), frame);
+}
+
+/**
+ * Frame pixels in, percent box out — the inverse of resolvePlacementBox.
+ *
+ * This is the function direct manipulation is built on. The operator drags a rectangle across the
+ * preview; this says which percents draw that rectangle, and because it reads the same safe area
+ * through the same overlayScale and applies the same clamps, "what you dragged is what gets drawn"
+ * is a property that can be tested rather than a claim (tests/unit/overlay-placement-roundtrip).
+ *
+ * The round trip is exact in pixels, not in percents. resolvePlacementBox rounds to whole frame
+ * pixels, so a percent cannot survive the trip unchanged — at 1280x720 one pixel of the 1184px
+ * safe band is 0.0845%, and the percents that come back differ by at most half of that. What does
+ * survive is the box: resolvePlacementPixelBox(resolvePlacementPercent(box)) is the same box.
+ */
+export function resolvePlacementPercent(
+  box: { left: number; top: number; width: number; height: number },
+  frame: { width: number; height: number },
+  options: { allowOutsideSafeArea?: boolean } = {}
+): { xPercent: number; yPercent: number; widthPercent: number; heightPercent: number } {
+  const safe = placementSafeArea(frame, options.allowOutsideSafeArea === true);
+
+  const xPercent = clampPlacementPercent(((box.left - safe.left) / safe.width) * 100, 0, 100);
+  const yPercent = clampPlacementPercent(((box.top - safe.top) / safe.height) * 100, 0, 100);
+
+  return {
+    xPercent,
+    yPercent,
+    widthPercent: clampPlacementPercent(
+      (box.width / safe.width) * 100,
+      OVERLAY_PLACEMENT_MIN_WIDTH_PERCENT,
+      Math.max(OVERLAY_PLACEMENT_MIN_WIDTH_PERCENT, 100 - xPercent)
+    ),
+    heightPercent: clampPlacementPercent(
+      (box.height / safe.height) * 100,
+      OVERLAY_PLACEMENT_MIN_HEIGHT_PERCENT,
+      Math.max(OVERLAY_PLACEMENT_MIN_HEIGHT_PERCENT, 100 - yPercent)
+    )
   };
 }
 
