@@ -1020,7 +1020,12 @@ describe("twitch chat login handling", () => {
     bridge["loginRejectedToken"] = "identity-token";
     bridge["phase"] = "login-rejected";
 
-    await bridge.sync(chatBridgeState(), {} as NodeJS.ProcessEnv);
+    // "Switched off" means every consumer: since finding [7] the rail alone no longer decides —
+    // moderator check-ins keep the connection up — so the moderation policy is off here too.
+    await bridge.sync(
+      { ...chatBridgeState(), moderation: { ...createDefaultModerationConfig(), enabled: false } },
+      {} as NodeJS.ProcessEnv
+    );
 
     expect(bridge.getConnectionPhase()).toBe("idle");
     expect(bridge["isLoginCoolingDown"]("identity-token")).toBe(false);
