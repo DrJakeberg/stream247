@@ -92,6 +92,13 @@ const STATE_FAMILIES: IncidentFamily[] = [
     why: "The on-air scene cannot be rendered until it can; the renderer closes it."
   },
   {
+    fingerprint: "playout.ticker-strip.failed",
+    keyed: false,
+    kind: "state",
+    area: "playout",
+    why: "The ticker line cannot be drawn as a crawl until it can; the strip renderer closes it."
+  },
+  {
     fingerprint: "playout.audio-lane.failed",
     keyed: false,
     kind: "state",
