@@ -81,6 +81,7 @@ import {
   type OverlaySourceFrameView,
   type ResolvedEncoderQualitySettings,
   redactSecrets,
+  resolveChatSettingsWrite,
 } from "@stream247/core";
 import {
   buildSourceLiveStateWrite,
@@ -353,6 +354,9 @@ let chapterBoundaryFiredKeys: string[] = [];
 // only there); losing it on restart merely allows one immediate write, which is the safe side of
 // a throttle.
 let lastChannelMetadataWriteAtMs = 0;
+// What the chat-settings sync last wrote and when: the write is decided per cycle, not repeated.
+let lastChatSettingsWrite: { emoteOnly: boolean | null; atMs: number } = { emoteOnly: null, atMs: 0 };
+const CHAT_SETTINGS_REASSERT_INTERVAL_MS = 10 * 60_000;
 let plannedStopReason = "";
 let uplinkProcesses: UplinkProcessRuntime[] = [];
 let uplinkReconnectUntil = "";
@@ -7434,7 +7438,8 @@ async function reconcileTwitch(): Promise<void> {
       expiresAt: new Date(window.expiresAt)
     })),
     now: new Date(),
-    fallbackEmoteOnly: state.moderation.fallbackEmoteOnly
+    fallbackEmoteOnly: state.moderation.fallbackEmoteOnly,
+    enabled: state.moderation.enabled
   });
   const metadataSyncGate = resolveTwitchMetadataSyncGate({
     configuredLogin: getTwitchBroadcastChannelLogin(state),
@@ -7574,25 +7579,45 @@ async function reconcileTwitch(): Promise<void> {
         })
       : state.twitch.broadcasterId;
 
-    const chatResponse = await fetch(
-      `https://api.twitch.tv/helix/chat/settings?broadcaster_id=${encodeURIComponent(
-        chatSettingsBroadcasterId
-      )}&moderator_id=${encodeURIComponent(state.twitch.broadcasterId)}`,
-      {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Client-Id": twitchClientId,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          emote_mode: presenceStatus.chatMode === "emote-only"
-        })
-      }
-    );
+    // Decided, not repeated: a switched-off policy leaves Twitch alone, an unchanged mode is not
+    // rewritten every 30 s, and a hand change on Twitch is re-asserted at most every ten minutes.
+    const desiredEmoteOnly = presenceStatus.chatMode === "emote-only";
+    const chatSettingsDecision = resolveChatSettingsWrite({
+      moderationEnabled: state.moderation.enabled,
+      desiredEmoteOnly,
+      lastWrittenEmoteOnly: lastChatSettingsWrite.emoteOnly,
+      lastWriteAtMs: lastChatSettingsWrite.atMs,
+      nowMs: Date.now(),
+      reassertIntervalMs: CHAT_SETTINGS_REASSERT_INTERVAL_MS
+    });
+    if (chatSettingsDecision.write) {
+      const chatResponse = await fetch(
+        `https://api.twitch.tv/helix/chat/settings?broadcaster_id=${encodeURIComponent(
+          chatSettingsBroadcasterId
+        )}&moderator_id=${encodeURIComponent(state.twitch.broadcasterId)}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Client-Id": twitchClientId,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ emote_mode: desiredEmoteOnly })
+        }
+      );
 
-    if (!chatResponse.ok) {
-      throw new Error(`Chat settings sync failed with status ${chatResponse.status}.`);
+      if (!chatResponse.ok) {
+        // Forget the last write so the next cycle tries again rather than believing it stuck.
+        lastChatSettingsWrite = { emoteOnly: null, atMs: 0 };
+        throw new Error(`Chat settings sync failed with status ${chatResponse.status}.`);
+      }
+      lastChatSettingsWrite = { emoteOnly: desiredEmoteOnly, atMs: Date.now() };
+      // The one line that says what Stream247 did to the channel's chat mode, and why.
+      logRuntimeEvent("twitch.chat_settings.written", {
+        emoteOnly: desiredEmoteOnly,
+        reason: chatSettingsDecision.reason,
+        broadcasterId: chatSettingsBroadcasterId
+      });
     }
 
     // Recorded only when metadata actually synced. Booking a "last synced" title while waiting
