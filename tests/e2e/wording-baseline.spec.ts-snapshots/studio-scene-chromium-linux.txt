@@ -49,6 +49,7 @@ Regular asset
 Insert / bumper
 Standby
 Reconnect
+STUDIO REBUILD
 REPLAY STREAM · STREAM247 · NOW PLAYING
 NOW PLAYING
 <block>
@@ -62,6 +63,8 @@ SCENE
 <category>
 Lokale Bibliothek
 <time> EUROPE/BERLIN
+ON-AIR RENDERER
+<rendered scene>
 Enable overlay output
 CHANNEL NAME
 HEADLINE
