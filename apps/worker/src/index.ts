@@ -171,6 +171,7 @@ import {
   type DestinationRuntimeTargetGroup
 } from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
+import { AlertDeduper, deliverAlert } from "./alerts.js";
 import {
   ensureLocalAssetThumbnail,
   getAssetThumbnailPath,
@@ -7109,58 +7110,66 @@ async function runUplinkCycle(): Promise<void> {
   }));
 }
 
-async function sendDiscordAlert(message: string): Promise<void> {
-  const state = await readAppState();
-  const webhookUrl = getDiscordWebhookUrl(state);
-  if (!webhookUrl) {
-    return;
-  }
-
-  try {
-    await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: message })
-    });
-  } catch {
-    // Alert delivery errors should not crash the worker loop.
-  }
-}
-
-async function sendEmailAlert(subject: string, message: string): Promise<void> {
-  const state = await readAppState();
-  const smtp = getSmtpConfig(state);
-  const host = smtp.host;
-  const port = smtp.port;
-  const from = smtp.from;
-  const to = smtp.to;
-
-  if (!host || !port || !from || !to) {
-    return;
-  }
-
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: smtp.user
-      ? {
-          user: smtp.user,
-          pass: smtp.password || ""
-        }
-      : undefined
-  });
-
-  await transporter.sendMail({
-    from,
-    to,
-    subject,
-    text: message
-  });
-}
+// One alert per condition per half hour; the key is the text with its numbers blanked, so a
+// message that carries a changing percentage or status still counts as the same condition.
+const alertDeduper = new AlertDeduper(30 * 60_000);
 
 async function sendAlert(subject: string, message: string): Promise<void> {
-  await Promise.allSettled([sendDiscordAlert(`Stream247: ${message}`), sendEmailAlert(subject, message)]);
+  const key = `${subject}|${message.replace(/\d+/g, "#")}`;
+  if (!alertDeduper.shouldSend(key, Date.now())) {
+    return;
+  }
+  const state = await readAppState();
+  const smtp = getSmtpConfig(state);
+  const report = await deliverAlert({
+    subject,
+    message,
+    discordWebhookUrl: getDiscordWebhookUrl(state),
+    smtp,
+    fetchImpl: fetch,
+    createTransport: (settings) =>
+      nodemailer.createTransport({
+        host: settings.host,
+        port: settings.port,
+        secure: settings.port === 465,
+        auth: settings.user ? { user: settings.user, pass: settings.password || "" } : undefined
+      })
+  });
+  logRuntimeEvent("alert.delivery", { subject, discord: report.discord, email: report.email, delivered: report.delivered });
+
+  const failures = (["discord", "email"] as const)
+    .map((channel) => ({ channel, report: report[channel] }))
+    .filter((entry): entry is { channel: "discord" | "email"; report: { outcome: "failed"; detail: string } } => entry.report.outcome === "failed");
+  try {
+    if (failures.length > 0) {
+      await upsertIncident({
+        scope: "system",
+        severity: "warning",
+        title: "Alerts are not reaching a channel",
+        message: failures.map((entry) => `${entry.channel}: ${entry.report.detail}`).join(" · "),
+        fingerprint: "alerts.delivery"
+      });
+    } else if (report.delivered) {
+      await resolveIncident("alerts.delivery", "Alert delivery is working again.");
+    }
+    if (report.discord.outcome === "unconfigured" && report.email.outcome === "unconfigured") {
+      await upsertIncident({
+        scope: "system",
+        severity: "info",
+        title: "No alert channel is configured",
+        message: `An alert was raised ("${subject}") but neither a Discord webhook nor SMTP is set up, so nobody was told.`,
+        fingerprint: "alerts.unconfigured"
+      });
+    } else {
+      await resolveIncident("alerts.unconfigured", "An alert channel is configured.");
+    }
+  } catch {
+    // Recording the delivery outcome must never take the worker loop down with it.
+  }
+  // A failed delivery is not "sent": let the next cycle try the same condition again.
+  if (!report.delivered) {
+    alertDeduper.forget(key);
+  }
 }
 
 async function syncTwitchSchedule(args: {

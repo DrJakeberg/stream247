@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- Alerts said nothing when they failed, and said the same thing every 30 seconds when they did
+  not. Findings [12] and [9] of the codebase review, verified twice: the Discord webhook's
+  response was never read, the email rejection vanished in `allSettled`, "nothing configured"
+  returned silently — so an operator with a deleted webhook believed alerts were on for hours —
+  and nothing deduplicated, so a persistent Twitch reconcile failure sent the same post and email
+  every cycle. Delivery now reports per channel and logs it; a failed channel raises the warning
+  incident "Alerts are not reaching a channel" and a working one resolves it; an alert with no
+  channel configured raises an info incident once; and one condition is sent once per half hour.
+
 - The chat mode was written to the broadcast channel every 30 seconds, whatever it was and
   whatever the moderation policy said. Finding [6] of the codebase review, verified twice: the
   worker PATCHed Twitch's chat settings on every reconcile with no memory of its last write and
