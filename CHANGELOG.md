@@ -4,6 +4,48 @@
 
 ### Added
 
+- The overlay panels can be dragged and resized on the studio preview, the way an OBS layout is
+  built. The preview has been the broadcast renderer's own picture since stage 2; it is now the
+  editing surface as well. Taking hold of a box moves an outline only — nothing is redrawn during
+  the movement — and letting go commits the percents and asks for a new frame; the last good frame
+  stays on screen until that one arrives, and a failed render no longer replaces it with an error
+  box. Dragging a panel that is still in the flex flow places it, seeded from where the flow had
+  it, so an operator no longer has to find a checkbox before they can move anything. The four
+  number fields stay beside every box: a drag says "about here", the fields say exactly where, and
+  clicking a box on the picture opens the sidebar at its row.
+
+  This rests on one new function. `resolvePlacementBox` turned percents into frame pixels and had
+  no inverse; `resolvePlacementPercent` is that inverse, next to it in the same file, reading the
+  same safe area through the same `overlayScale` and applying the same clamps. Round trip measured
+  over 65341 boxes per output size: exact at 1920x1080 and at 1280x720. At 854x480 and 640x360 the
+  forward resolver rounds offset and size separately, and 1.10% resp. 0.55% of boxes end one pixel
+  past the safe rectangle — a box no percent can reproduce, because the resolver's own width clamp
+  refuses it; the inverse returns the largest box that fits and the test says so rather than
+  hiding it.
+
+  The preview is drawn at the profile's real output size, not always 1920x1080. That matters:
+  `overlayScale` floors at 0.35 and every dimension is rounded, so at 1280x720 the safe band is
+  646px of 720 where at 1920x1080 it is 968 of 1080. Handles placed against the wrong size would
+  be handles in the wrong place.
+
+  Snapping is OBS's: an 8-design-pixel grid, edges and centres of the safe rectangle, the frame and
+  every other panel within 6 design pixels, and Alt to ignore both. Six, because the preview is
+  about a third of design size — measured at 3.137 design pixels per screen pixel on a 1440
+  viewport — and a finer threshold would fire on which physical pixel the mouse landed on. That is
+  also why the arrow keys exist: one design pixel, eight with shift. They move the stored percent
+  rather than the resolved box, because at 1280x720 one output pixel is 1.5 design pixels, and
+  nudging the resolved box made eight presses come to 8.5. A logo or image drawn with fit: contain
+  keeps its shape while it is resized, since a box of the wrong shape only adds letterbox margin.
+
+  Overlapping panels are named, not forbidden — a logo is supposed to be able to sit on a panel.
+  The warning appears live while a box is being dragged, and the publish review carries an
+  "Overlapping panels" section with both names and the shared rectangle.
+
+  Every box on the preview is one focusable control that the arrow keys operate; the eight resize
+  grips are not focusable and are not controls. The studio's control budget moves from 62 to 64:
+  the page measured 61 before, and the three added are one handle per panel the frame actually
+  draws — the lower third, the next card and the clock.
+
 - The overlay can hold several named scenes, and one of them is on air. Until now a channel had
   exactly one layer set: building a second look meant rebuilding the first one afterwards. An
   operator can now add, rename, duplicate and delete scenes in the studio, and the scene picked
