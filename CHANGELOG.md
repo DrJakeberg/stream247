@@ -13,7 +13,9 @@
   ffmpeg moves it now, at the output frame rate, for nothing per frame. The line is rendered once
   per programme as a transparent strip; a bed the size of the band's clear run does the clipping,
   and as many copies of the strip as the bed needs are laid down a period apart, so the line tiles
-  the band continuously and enters at its right-hand edge. Measured before any of it was written:
+  the band continuously and enters at its right-hand edge. The period is held at the band's own
+  width, so a short notice sweeps across on its own rather than appearing four times side by side;
+  a line longer than the band already exceeds that and keeps its designed gap. Measured before any of it was written:
   exactly 4px of travel per frame at 120px/s and 30fps, clipped to the band.
 
   All the messages join into one running line, so the automatic rotation is gone. The seconds

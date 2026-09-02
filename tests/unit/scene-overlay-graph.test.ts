@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildSceneOverlayFilterComplex, buildSourceLivePipFilterComplex } from "../../apps/worker/src/ffmpeg-runtime";
+import {
+  buildSceneOverlayFilterComplex,
+  buildSourceLivePipFilterComplex,
+  resolveTickerCrawlCopies
+} from "../../apps/worker/src/ffmpeg-runtime";
 
 /**
  * The scene overlay graph, which three separate command builders used to spell out for themselves.
@@ -82,5 +86,25 @@ describe("scene overlay graph", () => {
     expect(parts.audioMapped).toBe(true);
     expect(parts.filterComplex).toContain("[aout]");
     expect(parts.filterComplex.indexOf("[tkband]")).toBeLessThan(parts.filterComplex.indexOf("[aout]"));
+  });
+});
+
+describe("ticker crawl copies", () => {
+  it("covers the band whatever the line's length", () => {
+    for (const ink of [10, 213, 800, 1721, 1722, 2895, 9000]) {
+      const { copies, periodPx } = resolveTickerCrawlCopies({ inkWidth: ink, gapPx: 240, bandWidth: 1722 });
+      // The invariant the whole thing rests on: when the leftmost copy has just left the bed, the
+      // rest already span it.
+      expect({ ink, covered: (copies - 1) * periodPx + ink >= 1722 }).toEqual({ ink, covered: true });
+      expect(copies).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("shows one pass at a time rather than tiling a short notice across the band", () => {
+    // 213px of ink with only the designed gap would put four copies of the same sentence side by
+    // side. The period is held at the band's width so the line sweeps across on its own.
+    expect(resolveTickerCrawlCopies({ inkWidth: 213, gapPx: 240, bandWidth: 1722 }).periodPx).toBe(1722);
+    // A line longer than the band already exceeds that floor and keeps its own gap.
+    expect(resolveTickerCrawlCopies({ inkWidth: 2895, gapPx: 240, bandWidth: 1722 }).periodPx).toBe(3135);
   });
 });

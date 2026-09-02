@@ -393,12 +393,19 @@ export function buildSourceLivePipFilterComplex(args: {
  * (-P, 0], the leftmost copy has just left the bed and the rest must already span it:
  * (K-1)P + ink >= bandWidth. Two is the floor, because the wrap needs a copy standing where the
  * first one began.
+ *
+ * The period is also held at the band's own width, which is a decision about the picture rather
+ * than about coverage. A short notice with only the designed gap tiles four copies of the same
+ * sentence side by side across the band, which reads as a fault and not as a ticker. At one band
+ * per period the line sweeps across on its own and the next pass enters at the right edge exactly
+ * as the last leaves at the left, which is what a ticker looks like. A line longer than the band
+ * is unaffected: its own ink already exceeds this floor
  */
 export function resolveTickerCrawlCopies(args: { inkWidth: number; gapPx: number; bandWidth: number }): {
   copies: number;
   periodPx: number;
 } {
-  const periodPx = Math.max(1, Math.round(args.inkWidth + args.gapPx));
+  const periodPx = Math.max(1, Math.round(args.inkWidth + args.gapPx), Math.round(args.bandWidth));
   const needed = Math.ceil(Math.max(0, args.bandWidth - args.inkWidth) / periodPx) + 1;
   return { copies: Math.max(2, needed), periodPx };
 }
