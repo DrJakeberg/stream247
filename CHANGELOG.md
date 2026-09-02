@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Added
+
+- The ticker goes on air. The scene payload has carried `tickerText` since the first overlay, the
+  studio has had a field for it, and the renderer drew it nowhere — measured on the rasteriser
+  before anything was touched: setting the text, clearing it and replacing it all produced layout
+  checksum `0eca45b0776bab1f`. It is now the seventh built-in panel, with the same placement, the
+  same opacity and the same drag handle as the other six, and it draws only while it has a text.
+
+  It rotates rather than crawls, and that was decided by measurement, not taste. The on-air
+  renderer redraws on `SCENE_RENDER_INTERVAL_MS` — 2000ms by default, floored at 1000ms — so the
+  picture changes half a time to one time per second; the 1fps pipe re-pushes the cached PNG in
+  between and never produces a frame the renderer did not draw. A Latin glyph at fontSize 24
+  advances 14.24px on this rasteriser, so crawling the 1776px safe area in 30 seconds at the
+  default rate means 118.4px per frame, which is 8.3 characters of sideways teleport per step; the
+  most generous setting anybody would accept — the 1000ms floor, a full minute per crossing — still
+  jumps 29.6px, 2.1 characters. A crawl wants 25 to 60 frames a second and this pipeline has half
+  of one. So messages separated by `·` take turns instead, one standing for its dwell, which is
+  sharp at every rate above.
+
+  That made the frame cache the load-bearing part. `sceneFrameCacheKey` carried no clock, so a
+  ticker that advanced in the layout would have been rasterised exactly never. The key now carries
+  the drawn line: the empty string forever without a text, one message forever with one, and moving
+  exactly once per dwell with several — so a channel with no ticker re-renders no more often than
+  it did before.
+
+  Legibility, over video the panel has no say in: the fill is `rgba(8,10,15,0.94)`, the same alpha
+  as the existing "solid" surface so the palette gains no number to keep in step. White ink on it
+  measures 19.87:1 over black video and 17.64:1 over white — the two ends of what a video frame can
+  be. A line too long for the box is cut at the box, not drawn past it: 180 characters of Latin and
+  180 of full-width CJK both draw 1722px into 1728px of inner width, by the chat panel's own rule
+  of taking the line count from the box height rather than from a character budget.
+
+  Measured on the way and not expected: `resolvePlacementBox` floors every box at 8% of the safe
+  area, so the clock's box is 77px tall where the clock draws 48. The ticker's first default at
+  y=120 overlapped it by 13 pixels; it sits at 150 now, clearing the deepest box in the top bar.
+
+  The five golden frames keep their recorded checksums — the ticker text in their shared payload is
+  cleared, because it never reached the picture and now would. A sixth fixture is the frame that
+  draws one.
+
 ## 1.5.39 - 2026-09-02
 
 ### Added
