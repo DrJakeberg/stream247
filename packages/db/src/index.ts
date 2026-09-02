@@ -3554,7 +3554,7 @@ if (!schemaMigrations.some((migration) => migration.id === workerHeartbeatRuntim
   schemaMigrations.push(workerHeartbeatRuntimeMigration);
 }
 
-const redactStoredSecretsMigration: MigrationDefinition = {
+export const redactStoredSecretsMigration: MigrationDefinition = {
   id: "20260902_001_redact_stored_secrets",
   description: "Scrub credential-shaped text out of incidents and the audit trail that was written before the sinks redacted.",
   apply: async (client) => {
