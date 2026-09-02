@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- The `!request` cooldown and the queue cap on the viewer-control page were never enforced.
+  Finding [5] of the codebase review, verified twice: the worker evaluated every request against an
+  empty history and a queue count of zero — the table for the history existed and nothing wrote to
+  it — so one viewer could push any number of items into the running channel while the page
+  claimed a per-viewer cooldown and a cap. Every accepted request is recorded now, the cooldown
+  looks back over the history, a request whose asset has left the queue stops counting against the
+  cap, and the cap is the number of requests still waiting.
+
 - Alerts said nothing when they failed, and said the same thing every 30 seconds when they did
   not. Findings [12] and [9] of the codebase review, verified twice: the Discord webhook's
   response was never read, the email rejection vanished in `allSettled`, "nothing configured"
