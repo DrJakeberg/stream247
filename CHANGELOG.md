@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- Chat games and emotes, three things the adversarial review of that change found and measured
+  before it shipped. A studio already holding its maximum of eight custom layers accepted `!snake`,
+  silently dropped the ninth layer the game needed, still flipped the overlay on and still told the
+  room "Snake is on air" while nothing was drawn; a start the store has no room for is now refused
+  with a reply that says so, and nothing is written. On the broadcast renderer a message at every
+  documented limit — a 14-glyph name, six emotes, 40 characters — drew its emote row 84px past the
+  chat panel onto bare video and squeezed the chatter's name to 0px; the name is now fixed and the
+  row yields. The same measurement showed a fault older than emotes: satori applies `lineClamp`
+  only to a block container, and the text label was flex, so a wide message had always drawn two
+  lines where the panel's height budget assumes one. And a bare game name typed in passing —
+  "2048" — started a round, because the parser copied the check-in's optional "!"; starting or
+  stopping now needs the bang, while asking about the games still answers without it.
 - The chat overlay drew emote codes as words. Twitch never sends emote pictures: a PRIVMSG carries
   the literal text plus an `emotes` tag naming which ranges of that text are emotes. The bridge's
   IRC parser read `display-name`, `badges`, `mod` and `id` out of the tags and dropped `emotes`
