@@ -1,6 +1,36 @@
 # Changelog
 
 ## Unreleased
+
+### Fixed
+
+- The overlay in the studio was not the overlay on air. The preview drew the scene; the broadcast
+  ran the old `drawtext` overlay — no scene, no custom layers, no chat, no game, no ticker, no
+  clock — for the entire length of a programme, hours for a VOD. A camera the operator had decided
+  to attach was dropped without a word, and nothing raised an incident, so the only trace was a
+  single `scene.render.recovery.skip` log line.
+
+  The trigger was a programme ending normally. ffmpeg leaves with code 0, and the exit path writes
+  status `idle`, `lastExitCode` `String(0)` — the string `"0"`, which is truthy — and a fresh
+  heartbeat, then asks for the next cycle straight away. That satisfied every clause of the
+  recovery skip that was meant for crash restarts, so the next process skipped the initial scene
+  frame, fell back to text mode, and stayed there: the mode is baked into the ffmpeg command and
+  cannot be changed while the process runs. Since `lastExitCode` is never cleared on a successful
+  start, it stuck from the second process onward. The missing incident had the same root — the
+  fallback incident lives inside the very call that was being skipped.
+
+  The skip dated from a renderer that screenshotted Chromium and took about ten seconds. Measured
+  now on the production box while it was encoding the channel, the native renderer needs 201ms for
+  a cold 1920x1080 frame, 125ms warm, 82ms cold at 1280x720 and 106ms for the busiest frame the
+  overlay draws. It was saving a fifth of a second and costing a whole programme, so it is gone
+  along with its 60-second window: every playout process now renders its first frame, and the
+  previous exit code has no say in what the channel shows.
+
+  A renderer that genuinely stalls — the one hazard the skip gestured at — is now handled where it
+  belongs. The first frame is bounded at five seconds, about twenty-five times the worst measured
+  render, and a timeout raises the existing `playout.scene-render.failed` incident, which now also
+  states that the programme on air will run to its end in text mode.
+
 ## 1.5.41 - 2026-09-02
 
 ### Security
