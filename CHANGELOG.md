@@ -87,7 +87,9 @@
   chat panel onto bare video and squeezed the chatter's name to 0px; the name is now fixed and the
   row yields. The same measurement showed a fault older than emotes: satori applies `lineClamp`
   only to a block container, and the text label was flex, so a wide message had always drawn two
-  lines where the panel's height budget assumes one. And a bare game name typed in passing —
+  lines where the panel's height budget assumes one — and so did the text runs inside an emote row,
+  which the adversarial review caught after the first repair. Both draw one line now. And a bare
+  game name typed in passing —
   "2048" — started a round, because the parser copied the check-in's optional "!"; starting or
   stopping now needs the bang, while asking about the games still answers without it.
 - The chat overlay drew emote codes as words. Twitch never sends emote pictures: a PRIVMSG carries
