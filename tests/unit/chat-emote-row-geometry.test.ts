@@ -161,4 +161,21 @@ describe("chat emote row geometry", () => {
     // One line high on both paths, so the panel's height claim holds for emotes too.
     expect(emotes.messageRow.height).toBe(textOnly.messageRow.height);
   }, 30_000);
+  it("keeps one line when a run with spaces sits beside a wide name and an emote", async () => {
+    // The reviewers' reproduction: the first test's runs are single words with no break
+    // opportunity, so they could not wrap. A sentence can — and did, to 66px beside a 294px name.
+    let fonts: unknown[];
+    try {
+      fonts = await loadSceneRendererFonts(process.env);
+    } catch {
+      return;
+    }
+    const sentence = Array(7).fill("WWWW").join(" ");
+    const emote = await measure(chatWith([{ kind: "text", text: sentence }, { kind: "emote", id: "e1", url: EMOTE }]), fonts);
+    const text = await measure(chatWith(), fonts);
+    expect(emote.name.width).toBeGreaterThan(0);
+    expect(emote.messageRow.height, `emote row ${emote.messageRow.height}px vs text row ${text.messageRow.height}px`).toBe(text.messageRow.height);
+    expect(emote.second.right).toBeLessThanOrEqual(emote.panelInnerRight);
+    expect(emote.leakedAlpha).toBe(0);
+  }, 30_000);
 });

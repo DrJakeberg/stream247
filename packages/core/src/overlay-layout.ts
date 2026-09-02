@@ -718,7 +718,11 @@ function buildChatMessageBody(
       continue;
     }
     remaining -= value.length;
-    nodes.push(label(value, { color: INK_PRIMARY, fontSize: px(19), lineClamp: 1 }));
+    // Same rule as the text-only label: satori honours lineClamp only on a block container, and a
+    // run with a space beside a wide name measured 66px — three lines — on the rasteriser.
+    nodes.push(
+      label(value, { color: INK_PRIMARY, fontSize: px(19), lineClamp: 1, display: "block", minWidth: 0, overflow: "hidden" })
+    );
   }
 
   // The row must yield to the panel, not the other way round: a nowrap row of labels and pictures
