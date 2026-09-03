@@ -17,19 +17,37 @@
   because the protected window would then fill with the same traffic the general one does.
 
   Both writers use it: the one that appends a row and prunes around it, and the one that rewrites
-  the whole table from memory, which is the one that could drop a protected entry outright. The
-  rule is a single POSIX-compatible pattern so the pruning SQL and the predicate cannot drift;
-  verified against the live database, where Postgres and JavaScript select the same three types out
-  of the twelve present.
+  the whole table from memory. The rule is a single POSIX-compatible pattern so the pruning SQL and
+  the predicate cannot drift; verified against the live database, where Postgres and JavaScript
+  select the same three types out of the twelve present, and against four thousand fuzzed strings
+  without a disagreement.
+
+  The first version of this protected nothing. The state read was capped at the general window and
+  the rewrite replaces the table with what that read returned — so a protected entry below the cap
+  was destroyed by the very next state mutation, whatever it was. Measured: five hundred protected
+  entries gone after one no-op edit, and neither shipped integration test could see it, one because
+  it drives a different write path and the other because it seeds fewer rows than the cap. The read
+  now takes both windows. There is a test that buries a sign-in under six hundred cycle events and
+  then makes an unrelated edit.
+
+  The prune orders by `created_at` twice and the table carried only its primary key, so both
+  subqueries scanned and sorted it in full inside the serialized write lock — 1.28ms to 11.89ms at a
+  thousand rows. An index gives that back.
 
 - The studio preview did not know that chapters exist. A long recording with chapters is named on
   air by the chapter that is actually playing — the worker has resolved that from elapsed playback
   since chapters were added — and the web app named the file. So the channel said "Advent of Code ·
   Day 7" and the preview said "Advent of Code", for the same second of the same asset.
 
-  The resolver moves into the core package and both sides call it. The asset display title moves
-  with it, because the chapter title has to be built the same way or the two disagree for a second
-  reason; it had been written out three times.
+  The resolver moves into the core package and both sides call it.
+
+  Corrected from the first draft of this entry, which claimed the asset display title "moves with
+  it": it did not. It was written three times, a fourth copy joined them in core, and three stayed —
+  found by adversarial review, not by anyone reading the diff. What has since happened is smaller
+  and true: the private copy inside `apps/web/lib/server/state.ts` is gone and that file calls
+  core's, and the worker's and the web app's are now held against core's by a test over a battery of
+  inputs including whitespace-only titles, zero-width characters and a right-to-left override. They
+  agree; nothing was holding them to it before.
 
 - The studio and the channel wrote the next block's times differently — "20:00 to 22:00" in the web
   app, "20:00-22:00" on air, for the same block of the same schedule. Whichever an operator read,

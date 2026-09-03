@@ -37,6 +37,7 @@ import {
   resolveBroadcastChannelLogin,
   stripInvisibleCharacters,
   summarizeLiveBridgeInput,
+  overlayAssetDisplayTitle,
   overlayNextTimeLabel,
   overlayOnAirChapterTitle,
   type OverlaySceneRenderTarget
@@ -723,13 +724,6 @@ function summarizeAsset(state: AppState, assetId: string): LiveAssetSummary | nu
   };
 }
 
-function buildAssetDisplayTitle(asset: Pick<AssetRecord, "title" | "titlePrefix"> | null | undefined): string {
-  return [stripInvisibleCharacters(asset?.titlePrefix || "").trim(), stripInvisibleCharacters(asset?.title || "").trim()]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-}
-
 function getScheduleOccurrenceLookaheadTitle(
   state: AppState,
   item: ReturnType<typeof getNextScheduleItem> | null
@@ -1078,8 +1072,8 @@ export function buildActiveScenePayload(
   const nextScheduleItem = getNextScheduleItem(state);
   const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
   const nextAsset = state.assets.find((asset) => asset.id === state.playout.nextAssetId) ?? null;
-  const currentAssetTitle = buildAssetDisplayTitle(currentAsset);
-  const nextAssetTitle = buildAssetDisplayTitle(nextAsset);
+  const currentAssetTitle = overlayAssetDisplayTitle(currentAsset);
+  const nextAssetTitle = overlayAssetDisplayTitle(nextAsset);
   const nextScheduleLookaheadTitle = getScheduleOccurrenceLookaheadTitle(state, nextScheduleItem);
   const queueKind = options.queueKind ?? state.playout.queueItems[0]?.kind ?? "asset";
   const queuePreviewStart = state.playout.queueItems[0] ? 1 : 0;

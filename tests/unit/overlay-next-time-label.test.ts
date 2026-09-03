@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { overlayNextTimeLabel } from "@stream247/core";
+import { OVERLAY_NO_NEXT_BLOCK, overlayNextTimeLabel } from "@stream247/core";
 
 /**
  * One time format for "up next", because there was one concept and two implementations.
@@ -31,22 +31,48 @@ describe("next block time label", () => {
 });
 
 describe("nobody writes the label themselves any more", () => {
+  /**
+   * Every file that mentions the label at all, not the three I happened to remember. Adversarial
+   * review showed the first version of this waved through the multi-line form — which is the exact
+   * shape the worker's live-bridge site had the week before — because the assignment and the times
+   * sat on different lines, and it never looked at scene-preview-request.ts.
+   *
+   * This is a source-text guard and it knows it: a hoisted `const label = ...` far from the
+   * assignment, or a different wording for the fallback, still slips past. What holds behaviourally
+   * is that one function decides the format; this only makes reintroducing a second one awkward
+   * enough to notice in review.
+   */
   const sources = [
-    "apps/web/lib/server/state.ts",
     "apps/web/app/(admin)/overlay-studio/page.tsx",
+    "apps/web/components/overlay-settings-form.tsx",
+    "apps/web/lib/scene-preview-request.ts",
+    "apps/web/lib/server/scene-preview-renderer.ts",
+    "apps/web/lib/server/state.ts",
     "apps/worker/src/index.ts"
   ];
 
-  it("leaves the formatting to the one function", async () => {
+  /** The lines within five either side of one that mentions the label. */
+  function windowsAround(source: string): string[] {
+    const lines = source.split("\n");
+    const windows: string[] = [];
+    for (let index = 0; index < lines.length; index++) {
+      if (!lines[index]!.includes("nextTimeLabel")) {
+        continue;
+      }
+      windows.push(lines.slice(Math.max(0, index - 5), index + 6).join("\n"));
+    }
+    return windows;
+  }
+
+  it("leaves the formatting to the one function, wherever the label is mentioned", async () => {
     const { readFileSync } = await import("node:fs");
     for (const path of sources) {
       const source = readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
-      // The payload assignment specifically. The pages' own prose may still say "20:00 to 22:00" —
-      // that is a sentence a reader reads, not a string the channel broadcasts.
-      const inline = source
-        .split("\n")
-        .filter((line) => line.includes("nextTimeLabel") && /startTime|endTime/.test(line));
-      expect({ path, inline }).toEqual({ path, inline: [] });
+      const offenders = windowsAround(source).filter((window) => /startTime|endTime/.test(window));
+      // The pages' own prose may still say "20:00 to 22:00" — that is a sentence a reader reads,
+      // not a string the channel broadcasts. What may not happen is a time being built beside the
+      // payload field it feeds.
+      expect({ path, offenders: offenders.length }).toEqual({ path, offenders: 0 });
     }
   });
 
@@ -54,10 +80,25 @@ describe("nobody writes the label themselves any more", () => {
     const { readFileSync } = await import("node:fs");
     for (const path of sources) {
       const source = readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
-      expect({ path, repeated: source.includes('"No next block configured"') }).toEqual({
-        path,
-        repeated: false
-      });
+      expect({ path, repeated: source.includes(OVERLAY_NO_NEXT_BLOCK) }).toEqual({ path, repeated: false });
     }
+  });
+
+  it("covers every file that mentions the label, so a new one cannot appear unwatched", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const found: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(new URL(`../../${dir}`, import.meta.url))) {
+        if (entry === "node_modules" || entry === "dist" || entry === ".next") continue;
+        const path = `${dir}/${entry}`;
+        if (statSync(new URL(`../../${path}`, import.meta.url)).isDirectory()) {
+          walk(path);
+        } else if (/\.tsx?$/.test(entry) && readFileSync(new URL(`../../${path}`, import.meta.url), "utf8").includes("nextTimeLabel")) {
+          found.push(path);
+        }
+      }
+    };
+    walk("apps");
+    expect(found.sort()).toEqual([...sources].sort());
   });
 });

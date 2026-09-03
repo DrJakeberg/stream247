@@ -1789,6 +1789,46 @@ describe.sequential("database roundtrip", () => {
       expect(reread.auditEvents).toHaveLength(200);
     }, 60_000);
 
+    it("keeps a protected entry that has fallen out of the general window", async () => {
+      // The failure this exists for. persistState rewrites audit_events from memory, and memory is
+      // whatever hydrateState read — so if the read is capped at the general window, a protected
+      // entry below it is deleted by the next state mutation and the second window is theatre.
+      // Measured before the fix: 500 protected entries destroyed by one no-op edit.
+      await ensureDatabaseWithRetry();
+      await executeSql("DELETE FROM audit_events;");
+
+      // One sign-in, then enough reconciliation chatter to bury it past the newest 500.
+      const signIn = {
+        id: "audit_protected_signin",
+        type: "auth.twitch",
+        message: "operator signed in",
+        createdAt: new Date(Date.UTC(2026, 8, 1, 0, 0, 0)).toISOString()
+      };
+      const noise = Array.from({ length: 600 }, (_, index) => ({
+        id: `audit_noise_${String(index).padStart(4, "0")}`,
+        type: "uplink.cycle",
+        message: `cycle ${String(index)}`,
+        createdAt: new Date(Date.UTC(2026, 8, 1, 1, 0, index)).toISOString()
+      }));
+      await updateAppState((current) => ({
+        ...current,
+        auditEvents: [...noise].reverse().concat(signIn)
+      }));
+
+      // It survived the write that put it there.
+      const afterSeed = await readAppState();
+      expect(afterSeed.auditEvents.some((event) => event.id === signIn.id)).toBe(true);
+
+      // And it survives an ordinary mutation that touches nothing about the trail.
+      await updateAppState((current) => ({ ...current, moderation: { ...current.moderation } }));
+      const afterEdit = await readAppState();
+      expect(afterEdit.auditEvents.some((event) => event.id === signIn.id)).toBe(true);
+
+      // While the noise is still bounded: both windows together, not one per entry.
+      const rows = await executeSql("SELECT count(*) FROM audit_events;");
+      expect(Number(rows.trim().split("\n").map((line) => line.trim()).find((line) => /^\d+$/.test(line)))).toBeLessThanOrEqual(1000);
+    }, 120_000);
+
     it("adds the worker heartbeat column to an existing playout runtime row", async () => {
       await ensureDatabaseWithRetry();
       await updatePlayoutRuntime((playout) => ({ ...playout, restartCount: 7 }));

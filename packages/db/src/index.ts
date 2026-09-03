@@ -3832,6 +3832,30 @@ if (!schemaMigrations.some((migration) => migration.id === namedOverlayScenesMig
 }
 
 /**
+ * An index for the two windows the audit trail is pruned by.
+ *
+ * Both subqueries order by created_at, and the table had only its primary key — so every append
+ * sequentially scanned and sorted the whole table twice, inside the global serialized write lock.
+ * Measured at 1000 rows: the prune went from 1.28ms to 11.89ms when the second window was added,
+ * and the protected subquery's scan alone accounted for 4.4ms because the pattern is evaluated per
+ * row. Small in absolute terms and irrelevant at the current 142 rows; it is here because the
+ * regression is mine and it costs four lines to give back.
+ */
+export const auditEventsCreatedAtIndexMigration: MigrationDefinition = {
+  id: "20260903_002_audit_events_created_at_index",
+  description: "Index audit_events by created_at, which both retention windows order by.",
+  apply: async (client) => {
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS audit_events_created_at_idx ON audit_events (created_at DESC);
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === auditEventsCreatedAtIndexMigration.id)) {
+  schemaMigrations.push(auditEventsCreatedAtIndexMigration);
+}
+
+/**
  * The migration that was missing, found on the live database rather than in a test.
  *
  * panel_placements_json and ticker_rotate_seconds were added to the base-schema block and to
@@ -5151,9 +5175,14 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     updated_at: string;
     resolved_at: string;
   }>("SELECT * FROM incidents ORDER BY updated_at DESC");
+  // BOTH windows, not just the general one. persistState rewrites this table from whatever this
+  // read returned, and selectRetainedAuditEvents is a filter — it cannot hand back a row that was
+  // never read. Capped at the general window, a protected entry below it was deleted by the next
+  // state mutation, whatever that mutation was: measured, 500 protected entries destroyed by one
+  // no-op edit, which made the second window theatre exactly when it started to matter.
   const auditResult = await client.query<{ id: string; type: string; message: string; created_at: string }>(
     "SELECT * FROM audit_events ORDER BY created_at DESC LIMIT $1",
-    [AUDIT_EVENT_RETENTION_LIMIT]
+    [AUDIT_EVENT_RETENTION_LIMIT + AUDIT_EVENT_PROTECTED_RETENTION_LIMIT]
   );
   const playoutResult = await client.query<{
     status: PlayoutRuntimeRecord["status"];
