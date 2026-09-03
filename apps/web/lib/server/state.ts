@@ -1087,20 +1087,31 @@ export function buildActiveScenePayload(
     (currentAsset ? state.sources.find((source) => source.id === currentAsset.sourceId)?.name : "") ||
     "Source to be announced";
 
+  // The chapter that is actually playing, exactly as the channel resolves it: a long recording with
+  // chapters is named by its chapter on air, and this preview had no idea chapters existed.
+  //
+  // Not gated on the queue kind. `writeOnAirOverlay` in the worker passes the on-air asset straight
+  // to this helper for every kind and lets its own guards decide; gating here on "asset" meant an
+  // insert — an asset, playing, with currentAssetId pointing at it — was named by its queue entry in
+  // the studio and by its chapter on the channel. The live branch keeps its own wording because a
+  // live bridge has no asset to take a chapter from.
+  //
+  // In practice this only moves inserts. Standby and reconnect never reach writeOnAirOverlay at all
+  // — the worker draws them with writeStandbySlate, which runs precisely when there is no asset, so
+  // currentAssetId is empty and the helper returns "" on its first guard.
+  const onAirChapterTitle = overlayOnAirChapterTitle({
+    currentAssetId: state.playout.currentAssetId,
+    processStartedAt: state.playout.processStartedAt,
+    asset: currentAsset
+  });
+
   return buildOverlayScenePayload({
     overlay: buildOverlaySceneSource(overlay),
     queueKind,
     target: options.target ?? "browser",
     currentTitle:
       queueKind === "asset"
-        ? // The chapter that is actually playing, exactly as the channel resolves it: a long
-          // recording with chapters is named by its chapter on air, and this preview had no idea
-          // chapters existed.
-          overlayOnAirChapterTitle({
-            currentAssetId: state.playout.currentAssetId,
-            processStartedAt: state.playout.processStartedAt,
-            asset: currentAsset
-          }) ||
+        ? onAirChapterTitle ||
           currentAssetTitle ||
           state.playout.currentTitle ||
           currentScheduleItem?.title ||
@@ -1108,7 +1119,7 @@ export function buildActiveScenePayload(
           "Stream247"
         : queueKind === "live"
           ? queueHead?.title || state.playout.liveBridgeLabel || state.playout.currentTitle || "Live Bridge"
-        : queueHead?.title || state.playout.currentTitle || overlay.headline || "Replay stream",
+        : onAirChapterTitle || queueHead?.title || state.playout.currentTitle || overlay.headline || "Replay stream",
     currentCategory: queueKind === "live" ? "Live input" : currentScheduleItem?.categoryName || currentAsset?.categoryName || "Always on air",
     currentSourceName:
       queueKind === "live"
