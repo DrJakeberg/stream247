@@ -376,6 +376,29 @@ export const OVERLAY_TICKER_CRAWL_MAX_PX_PER_SECOND = 240;
 /** The empty run between the end of the line and the start of its next pass, on the design grid. */
 export const OVERLAY_TICKER_CRAWL_GAP = 240;
 
+/** What the overlay says when the schedule has no block after this one. */
+export const OVERLAY_NO_NEXT_BLOCK = "No next block configured";
+
+/**
+ * The times of the next block, written once.
+ *
+ * There was one concept and two implementations: the web app wrote "20:00 to 22:00" and the worker
+ * wrote "20:00-22:00", for the same block of the same schedule. The studio showed one and the
+ * channel broadcast the other, and whichever an operator read, the other was what viewers saw. The
+ * broadcast wins, because the studio preview exists to show what airs.
+ *
+ * Half a block is not a range: a row missing either end is reported as no next block rather than
+ * rendered as "20:00-".
+ */
+export function overlayNextTimeLabel(
+  block: { startTime: string; endTime: string } | null | undefined
+): string {
+  if (!block?.startTime || !block.endTime) {
+    return OVERLAY_NO_NEXT_BLOCK;
+  }
+  return `${block.startTime}-${block.endTime}`;
+}
+
 /**
  * The ink of the ticker line, on the design grid.
  *

@@ -82,6 +82,7 @@ import {
   type ResolvedEncoderQualitySettings,
   redactSecrets,
   resolveChatSettingsWrite,
+  overlayNextTimeLabel,
   overlayScale,
   overlayTickerCrawlPlan,
 } from "@stream247/core";
@@ -3113,7 +3114,7 @@ async function writeStandbySlate(
     currentTitle: currentItem?.title || "Stand by",
     nextTitle: nextItem ? nextItem.title : "Programming will resume shortly",
     nextScheduleItem: nextItem,
-    nextTimeLabel: nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured",
+    nextTimeLabel: overlayNextTimeLabel(nextItem),
     currentCategory: currentItem?.categoryName,
     currentSourceName: currentItem?.sourceName,
     queueTitles: upcomingItems.slice(0, state.overlay.queuePreviewCount).map((item) => item.title)
@@ -3187,7 +3188,7 @@ async function writeOnAirOverlay(
         "Stand by",
       nextTitle: overrides.nextTitle || nextItem?.title || "Coming up next",
       nextScheduleItem: nextItem,
-      nextTimeLabel: overrides.nextTimeLabel || (nextItem ? `${nextItem.startTime}-${nextItem.endTime}` : "No next block configured"),
+      nextTimeLabel: overrides.nextTimeLabel || overlayNextTimeLabel(nextItem),
       currentCategory: overrides.currentCategory || currentItem?.categoryName || asset?.categoryName,
       currentSourceName:
         overrides.currentSourceName ||
@@ -6432,9 +6433,7 @@ async function runPlayoutCycle(): Promise<void> {
         currentCategory: "Live input",
         currentSourceName: `Live Bridge · ${(selection.liveBridgeInputType || "rtmp").toUpperCase()}`,
         nextTitle: getNextScheduleItem(state)?.title || "Schedule resumes after live mode",
-        nextTimeLabel: getNextScheduleItem(state)
-          ? `${getNextScheduleItem(state)?.startTime}-${getNextScheduleItem(state)?.endTime}`
-          : "No next block configured"
+        nextTimeLabel: overlayNextTimeLabel(getNextScheduleItem(state))
       });
     }
     await resolveIncident("playout.no-asset", "Live Bridge is on air.");

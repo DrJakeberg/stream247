@@ -37,6 +37,7 @@ import {
   resolveBroadcastChannelLogin,
   stripInvisibleCharacters,
   summarizeLiveBridgeInput,
+  overlayNextTimeLabel,
   type OverlaySceneRenderTarget
 } from "@stream247/core";
 import {
@@ -1107,7 +1108,8 @@ export function buildActiveScenePayload(
         ? `Live Bridge · ${(state.playout.liveBridgeInputType || "rtmp").toUpperCase()}`
         : currentSourceName,
     nextTitle: nextAssetTitle || nextScheduleLookaheadTitle || state.playout.nextTitle || nextScheduleItem?.title || "Schedule not available",
-    nextTimeLabel: nextScheduleItem ? `${nextScheduleItem.startTime} to ${nextScheduleItem.endTime}` : "No next block configured",
+    // The broadcast's format, not this page's prose: the studio preview exists to show what airs.
+    nextTimeLabel: overlayNextTimeLabel(nextScheduleItem),
     queueTitles,
     timeZone: getWorkspaceTimeZone(state)
   });

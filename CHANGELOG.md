@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed
+
+- The studio and the channel wrote the next block's times differently — "20:00 to 22:00" in the web
+  app, "20:00-22:00" on air, for the same block of the same schedule. Whichever an operator read,
+  the other was what viewers saw. One concept, two implementations, and nothing making them agree:
+  the same shape as the overlay mode that ran text on air while the studio drew a scene.
+
+  The broadcast wins, because the preview exists to show what airs. Both now call one function, and
+  a test fails if any payload site starts formatting it inline again. The pages' own prose still
+  reads "20:00 to 22:00" where it is a sentence rather than something the channel broadcasts.
+
 ### Added
 
 - The database is now asked, after every set of migrations, whether it has the columns this build
