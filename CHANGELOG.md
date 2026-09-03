@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+### Fixed
+
+- The studio preview and the channel disagreed about what was on air during an insert. The worker
+  hands whatever asset is playing straight to `overlayOnAirChapterTitle` and lets that helper's own
+  guards decide; the preview gated the same lookup on `queueKind === "asset"`. An insert is an
+  asset, playing, with `currentAssetId` pointing at it — so a chaptered insert was named by its
+  queue entry in the studio and by its chapter on the channel, for the same second of the same file.
+
+  Measured before fixing: the insert case failed with `'queue entry title'` where the channel says
+  `'The middle part'`, while the plain asset case beside it passed as a control. The live branch
+  keeps its own wording and is pinned by a test, because a live bridge has no asset to take a
+  chapter from. Standby and reconnect are untouched in practice: the worker draws them with
+  `writeStandbySlate`, which runs precisely when there is no asset.
+
+- An incident could open and resolve leaving nothing behind at all. Measured on the live channel:
+  `playout.prefetch.failed` opened somewhere inside a twenty-minute window and resolved at 13:06:08.
+  Neither container logged a line — 30 of the 48 `upsertIncident` call sites have no
+  `logRuntimeEvent` beside them — and `resolveIncident` then wrote its resolution text over the
+  `message` column, which had held the probe's actual error. Log gone, message gone. The only reason
+  anyone knew was a control round that happened to poll the table inside the window.
+
+  Incidents are now announced once per ONSET, in the one place every caller already passes through
+  rather than at 30 call sites. Per onset and not per call, because an incident that stays open is
+  re-upserted on every reconciliation cycle and a line each time would bury the one that counts. The
+  announcement sits AFTER the write: `withSerializedStateWrite` re-runs its whole callback on a
+  retryable error, so a line inside would print again on every retry and print at all for a write
+  that then threw — announcing an incident the table never received. The values logged are the
+  redacted ones; an ffmpeg line quoting the publish URL reached this table with the stream key
+  intact on 2026-09-01, and a log sink is no safer a place for it than a column.
+
+  Self-resolution does not overwrite the message: it passes no resolution text, and the column only
+  changes under `COALESCE(NULLIF($2, ''), message)`. So an incident that expires on its own keeps
+  its diagnosis; only an explicit `resolveIncident(fingerprint, text)` replaces it.
+
+### Documentation
+
+- `getLiveBridgeFfmpegCommand` carries the same audio-starvation shape as the asset path, and the
+  arithmetic is now written down beside it. If the live source stops delivering audio, the picture
+  continues off the endless scene pipe, and unlike the asset path nothing cuts the run short —
+  `targetKind: "live"` is excluded from the duration bound, so only the feed-audio watchdog ends it,
+  at 90s. That is late: the uplink storms at 120 discontinuity lines in a fixed 60s window, and a
+  20-30s silent stretch measured 200-600 lines at a boundary. Left unpadded on purpose, because
+  `-shortest` is set on that path and the picture is already endless, so an unbounded `apad` has
+  nothing finite to bind to and there is no duration to bound it from. The comment says explicitly
+  that the exposure is arithmetic and NOT an observation — the live bridge has never run on this
+  installation, zero audit entries matching "live" — so the next reader checks instead of trusting
+  it. Two confident and wrong comments on this same path already cost three weeks.
+
 ## 1.5.46 - 2026-09-03
 
 ### Fixed
