@@ -216,6 +216,7 @@ import {
   describeFfmpegExit,
   buildFfmpegInputArgs,
   buildSceneOverlayFilterComplex,
+  resolveProgrammeAudioPadSeconds,
   resolveTickerCrawlCopies,
   buildSourceLivePipFilterComplex,
   buildSourceLivePipInputArgs,
@@ -2059,6 +2060,30 @@ function getFfmpegCommand(
   // exactly as without a PiP.
   if (audioLane && !pipAudioMapped) {
     command.push("-af", `volume=${Math.max(0, Math.min(1, audioLane.volumePercent / 100)).toFixed(3)}`);
+  }
+  // Silence after the input runs dry, so the feed never carries picture without sound. In scene
+  // mode the picture outlives the file — overlay ends with its longest input and the scene pipe
+  // never ends — and the duration bound lets that run for its margin. Measured on air: the reader
+  // freezes audio's next_dts across that stretch and then oscillates for hundreds of packets when
+  // the next asset brings sound back, restarting the uplink at every boundary.
+  //
+  // BOUNDED, deliberately. An unbounded apad would also blind the feed-audio watchdog for ever,
+  // because that watchdog keys on audio packet presence and apad manufactures AAC frames
+  // indefinitely — and on an unknown-duration asset, which every local-library file and the global
+  // fallback are, it is the only net there is. The pad covers the overrun and then stops, so the
+  // silence signal comes back and the watchdog is delayed rather than removed.
+  //
+  // Mutually exclusive with the volume filter above, which needs the very audio lane this case is
+  // defined by not having, so the two can never both write -af.
+  const programmeAudioPadSeconds = resolveProgrammeAudioPadSeconds({
+    overlayMode,
+    hasAudioLane: Boolean(audioLane),
+    pipAudioMapped,
+    attachLive,
+    durationBoundMarginSeconds: getDurationBoundOptions(process.env, latestManagedConfig).marginSeconds
+  });
+  if (programmeAudioPadSeconds > 0) {
+    command.push("-af", `apad=pad_dur=${String(programmeAudioPadSeconds)}`);
   }
   if ((audioLane && !pipAudioMapped) || attachLive) {
     command.push("-shortest");

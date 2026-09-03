@@ -4,6 +4,58 @@
 
 ### Fixed
 
+- Every programme boundary restarted the uplink, and had done since 2026-08-19. Viewers saw an
+  interruption at every asset change on a 24/7 channel.
+
+  The feed carried **video without audio for the last 20-30 seconds of every asset**. The input
+  reaches EOF and `-map 0:a?` simply stops — but the picture does not, because `overlay` ends with
+  its LONGEST input and the scene pipe never ends, and the duration bound only cuts at
+  `duration + margin`. The uplink's reader keeps its timestamp offset per FILE and `next_dts` per
+  STREAM, so across that silent stretch audio's clock freezes while video advances; when the next
+  asset restores audio, no single offset satisfies both streams and the reader oscillates — video
+  backwards, audio forwards, packet after packet — until the storm guard kills the uplink.
+
+  The proof is arithmetic rather than argument. The two `new offset` clusters sit exactly the silent
+  stretch apart, and the lower one is exactly the outgoing asset's recorded duration:
+
+  | boundary | lower cluster | recorded duration | separation | overrun |
+  |---|---|---|---|---|
+  | 03:33 | — | — | 31.897 s | 32.04 s |
+  | 07:44 | 15040.05 s | 15040 s | 26.93 s | 26.95 s |
+  | 07:56 | 739.04 s | 739 s | 20.92 s | 18.98 s + start |
+
+  Three boundaries, three different separations, each one predicted by how far that asset overran.
+  Reproduced locally in the production shape: 321 discontinuity lines, and the tail segments carry
+  no audio stream at all. With the audio padded: 1 line, and 86 audio packets in the same segment.
+
+  The programme's own audio is now padded with silence, for the duration bound's margin plus thirty
+  seconds of slack, so it lasts through the overrun and then stops. The conditions are all
+  exclusions and each is load-bearing: scene mode only, because text and none take video straight
+  from the input and the picture ends with the file; never where `-shortest` is set, because it
+  binds the output to the shortest stream and in scene mode the picture is endless; and not for a
+  looping audio lane or a picture-in-picture mix, neither of which starves.
+
+  **The bound is the important part, and it came out of review.** An unbounded `apad` fixes the
+  storm and disables the feed-audio watchdog for ever, because that watchdog keys on audio packet
+  PRESENCE and `apad` manufactures real AAC frames indefinitely — measured on the compiled
+  watchdog: without padding the tail segments carry `audioPackets=0` and it fires at 96s; with an
+  unbounded pad it never fires again. That is worst exactly where it is the only net.
+  `durationSeconds` is written only by the yt-dlp path, so every local-library file and every
+  direct-media URL is permanently unknown-duration — and the global fallback asset is by
+  construction a local-library file. An unbounded pad would have let the fallback, the thing that
+  plays when everything else has already failed, sit on a frozen frame with digital silence and
+  nothing in the system able to end it: the very failure the feed-audio watchdog exists to stop.
+  The picture-in-picture mix already refuses the same trade in the same words. Verified: 90s of
+  content plus `pad_dur=45` gives 134.98s of audio against 200s of video, and a test drives the
+  real watchdog over a padded feed to show it still fires once the pad runs out.
+
+  Two comments had explained this away for three weeks — one crediting `dts_delta_threshold`, which
+  is passed nowhere and gates the wrong direction, and one asserting that "a healthy uplink reports
+  zero" when a healthy boundary reports 244. Both were corrected first, which is what made anyone
+  look.
+
+### Fixed
+
 - One Docker Hub blip took a whole CI run with it. Run 33710726231 died at `pnpm test:fresh-compose`
   after hanging fifteen seconds on `auth.docker.io` without reaching a single layer, taking twelve
   green steps and seventeen unrun ones with it. Nothing in the commit was implicated: the push run

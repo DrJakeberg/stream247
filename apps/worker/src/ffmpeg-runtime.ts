@@ -231,6 +231,86 @@ export function shouldRequestImmediatePlayoutRetry(args: {
  * about whether the renderer is healthy. Guarding against a renderer that genuinely stalls belongs
  * on the render call itself, where it is bounded by a timeout, not here.
  */
+/**
+ * Headroom on top of the duration-bound margin, in seconds.
+ *
+ * The bound is checked on the reconciliation cycle, so an asset overruns by the margin PLUS however
+ * long the cycle takes to come round. Measured on air against a 15s margin: 30.4s, 22.75s and
+ * 18.98s of overrun, so the cycle term reached about 15s. Thirty is double that, and the cost of
+ * overshooting is only that the feed-audio watchdog is delayed by the same amount.
+ */
+export const PROGRAMME_AUDIO_PAD_SLACK_SECONDS = 30;
+
+/**
+ * Whether the encode carries -shortest, which bounds the output to its shortest stream.
+ *
+ * Exported so the call site and the padding decision read the SAME expression. It was written out
+ * twice before, and "padded audio" plus "-shortest" is the one combination that can leave an encode
+ * with no finite stream at all — not a thing to leave to two copies staying in step.
+ */
+export function usesShortestFlag(args: { hasAudioLane: boolean; pipAudioMapped: boolean; attachLive: boolean }): boolean {
+  return (args.hasAudioLane && !args.pipAudioMapped) || args.attachLive;
+}
+
+/**
+ * How many seconds of silence to append after the programme's own audio ends. 0 means none.
+ *
+ * THE FAULT. Measured on the live channel at three consecutive boundaries: the feed carries video
+ * WITHOUT audio for the last 20-30 seconds of every asset. The input reaches EOF and `-map 0:a?`
+ * stops, but the picture does not — overlay ends with its LONGEST input and the scene pipe never
+ * ends — and the duration bound only cuts at duration + margin. The uplink's reader keeps its
+ * offset per FILE and next_dts per STREAM, so audio's clock freezes across that stretch and then
+ * oscillates against video when the next asset restores sound: 244, 279 and 212 discontinuity
+ * lines, each restarting the uplink, at every boundary since 2026-08-19. The proof is arithmetic —
+ * the two "new offset" clusters sit exactly the silent stretch apart and the lower one is exactly
+ * the asset's recorded duration (07:44: cluster 15040.05s against a recorded 15040s; 07:56:
+ * 739.04s against 739s). Reproduced: 321 lines without padding, 1 with it.
+ *
+ * WHY IT IS BOUNDED. An unbounded apad fixes the storm and disables the feed-audio watchdog for
+ * ever, because that watchdog keys on audio PACKET PRESENCE and apad manufactures real AAC frames
+ * indefinitely. Measured on the compiled watchdog: without padding the tail segments carry
+ * audioPackets=0 and it fires at 96s; with an unbounded pad it never fires again. That is worst
+ * exactly where it is the only net — durationSeconds is written only by the yt-dlp path, so every
+ * local-library file and direct-media URL is permanently unknown-duration, and the global fallback
+ * asset is by construction a local-library file. An unbounded pad would let the fallback sit on a
+ * frozen frame with digital silence and nothing able to end it: the very failure feed-audio-health
+ * was written to stop. The PiP mix already refuses the same trade for the same reason ("carries NO
+ * apad, so a source that ends is simply dropped by amix rather than padded into endless masking
+ * silence").
+ *
+ * So the pad covers the overrun and then stops, and the silence signal comes back. The cost is that
+ * the watchdog is DELAYED by the pad, never removed.
+ *
+ * The remaining conditions are exclusions, each load-bearing:
+ * - Scene mode only. Text and none take video straight from the input, so the picture ends with the
+ *   file and nothing starves; padding there would make audio outlive video.
+ * - Never where -shortest is set. It binds the output to the shortest stream, and in scene mode the
+ *   picture is endless, so infinite audio would leave it nothing finite to end on.
+ * - Not for a looping audio lane or a PiP mix. Neither starves, and both already carry a bound.
+ */
+export function resolveProgrammeAudioPadSeconds(args: {
+  overlayMode: OnAirOverlayMode;
+  hasAudioLane: boolean;
+  pipAudioMapped: boolean;
+  attachLive: boolean;
+  /** The duration bound's configured margin; the pad must outlast it or the storm survives. */
+  durationBoundMarginSeconds: number;
+}): number {
+  if (args.overlayMode !== "scene") {
+    return 0;
+  }
+  if (usesShortestFlag(args)) {
+    return 0;
+  }
+  if (args.hasAudioLane || args.pipAudioMapped) {
+    return 0;
+  }
+  if (!(Number.isFinite(args.durationBoundMarginSeconds) && args.durationBoundMarginSeconds > 0)) {
+    return 0;
+  }
+  return Math.round(args.durationBoundMarginSeconds) + PROGRAMME_AUDIO_PAD_SLACK_SECONDS;
+}
+
 export function resolveOnAirOverlayMode(args: {
   overlayEnabled: boolean;
   sceneFrameRendered: boolean;
