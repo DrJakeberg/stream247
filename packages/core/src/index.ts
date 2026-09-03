@@ -3755,3 +3755,34 @@ export function selectRetainedAuditEvents<T extends { type: string }>(
 
   return events.filter((_event, index) => keep.has(index));
 }
+
+/** Whether the line the encoder is moving is still the line the operator has configured. */
+export type TickerCrawlStaleness =
+  | { stale: false }
+  | { stale: true; onAir: string; configured: string };
+
+/**
+ * Whether a ticker edit has reached the screen, or is waiting for the next programme.
+ *
+ * The crawling line is one image, made when a programme starts, and the period the encoder moves it
+ * by comes from that line's own ink — so a new text needs a new graph, and the graph is fixed for
+ * the life of the process. A few minutes on a channel playing assets. On the standby slate or a
+ * live bridge, which run until the selection changes, there may be no next programme at all.
+ *
+ * This does not fix that. It makes it visible, which is the difference between a documented
+ * limitation and a silent one: without it the operator types a correction, watches the studio
+ * preview update, and has no way to learn that the channel is still running the old line.
+ *
+ * An empty crawl line means nothing is crawling, so whatever the payload says is drawn at rest and
+ * is by definition current. An empty payload line against a running crawl is NOT quiet: clearing
+ * the field does not take the line away, because the band belongs to the process while a crawl
+ * runs, so the old text keeps going over the video.
+ */
+export function describeTickerCrawlStaleness(args: { crawlLine: string; payloadLine: string }): TickerCrawlStaleness {
+  const onAir = args.crawlLine.trim();
+  if (!onAir) {
+    return { stale: false };
+  }
+  const configured = args.payloadLine.trim();
+  return onAir === configured ? { stale: false } : { stale: true, onAir, configured };
+}

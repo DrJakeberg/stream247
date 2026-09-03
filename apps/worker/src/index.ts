@@ -78,11 +78,14 @@ import {
   resolveTwitchScheduleSyncEnabled,
   type OverlayCustomLayerView,
   type OverlayPlacementView,
+  type OverlayScenePayloadView,
   type OverlaySourceFrameView,
   type ResolvedEncoderQualitySettings,
   redactSecrets,
   resolveChatSettingsWrite,
+  describeTickerCrawlStaleness,
   overlayNextTimeLabel,
+  overlayTickerLine,
   overlayOnAirChapterTitle,
   overlayScale,
   overlayTickerCrawlPlan,
@@ -817,6 +820,9 @@ const tickerStripPath = "/tmp/stream247-ticker-strip.png";
  * is a line being moved across it.
  */
 let activeTickerCrawl: TickerCrawlCommandConfig | null = null;
+
+/** Whether the stale-ticker incident is currently raised, so the resolve is not a per-cycle write. */
+let tickerStaleReported = false;
 
 type QueueProbeCacheEntry = {
   status: "ready" | "failed";
@@ -1931,6 +1937,8 @@ type AudioLaneCommandConfig = {
  * mid-programme reaches the picture at the next block rather than within two seconds.
  */
 type TickerCrawlCommandConfig = {
+  /** The line this process is actually moving, kept so a later edit can be seen not to have landed. */
+  line: string;
   stripPath: string;
   /** The placement the crawl was built against, frozen for the life of the process. */
   placement: OverlayPlacementView;
@@ -2769,6 +2777,7 @@ async function prepareTickerCrawl(outputSettings: WorkerStreamOutputSettings): P
     });
     await resolveIncident("playout.ticker-strip.failed", "The ticker strip renders again.");
     return {
+      line: plan.line,
       stripPath: tickerStripPath,
       placement: plan.placement,
       crawl: plan.crawl,
@@ -3124,6 +3133,46 @@ async function writeStandbySlate(
   await fs.writeFile(standbySlatePath, `${lines.join("\n")}\n`, "utf8");
 }
 
+/**
+ * Says so when a ticker edit has not reached the screen.
+ *
+ * The crawling line is one image, made when a programme starts, and the encoder's period comes from
+ * that line's own ink — so a new text needs a new graph and the graph is fixed for the life of the
+ * process. A few minutes on a channel playing assets; on the standby slate or a live bridge, which
+ * run until the selection changes, possibly not at all. This does not fix that. It makes it
+ * visible, which is the difference between a documented limitation and a silent one.
+ *
+ * On the reconciliation cycle rather than the render tick: the payload only changes here, and an
+ * incident write every two seconds would be a cost for nothing.
+ */
+async function reportTickerCrawlStaleness(payload: OverlayScenePayloadView): Promise<void> {
+  const staleness = describeTickerCrawlStaleness({
+    crawlLine: activeTickerCrawl?.line ?? "",
+    payloadLine: overlayTickerLine(payload)
+  });
+
+  if (!staleness.stale) {
+    // Only when there is something to resolve. resolveIncident takes the GLOBAL serialized write
+    // lock — the one every state mutation contends for — so resolving unconditionally would take
+    // it on every reconciliation cycle, for ever, for a zero-row update, on a channel that has no
+    // ticker configured at all. Found before this merged rather than after.
+    if (tickerStaleReported) {
+      tickerStaleReported = false;
+      await resolveIncident("overlay.ticker-stale", "The ticker on air is the ticker that is configured.");
+    }
+    return;
+  }
+
+  tickerStaleReported = true;
+  await upsertIncident({
+    scope: "playout",
+    severity: "warning",
+    title: "The ticker on air is not the ticker that is configured",
+    message: `The channel is running "${staleness.onAir}" and the setting now says ${staleness.configured ? `"${staleness.configured}"` : "nothing"}. The line is one image the encoder moves, made when a programme starts, so the change reaches the screen with the next programme. On the standby slate or a live session there may not be one, and only restarting playout — which interrupts the stream — will replace it.`,
+    fingerprint: "overlay.ticker-stale"
+  });
+}
+
 async function writeOnAirOverlay(
   state: AppState,
   asset: AssetRecord | null,
@@ -3177,6 +3226,7 @@ async function writeOnAirOverlay(
   // the payload here means every state change that already refreshes the overlay text also feeds
   // the rendered scene, without the renderer having to re-read application state per frame.
   currentScenePayload = payload;
+  await reportTickerCrawlStaleness(payload);
 
   const lines = buildOverlayTextLinesFromScenePayload(payload);
   await fs.writeFile(onAirOverlayPath, `${lines.join("\n")}\n`, "utf8");

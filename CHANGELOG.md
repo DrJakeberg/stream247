@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+- The channel now says when a ticker edit has not reached the screen. The crawling line is one image
+  the encoder moves, made when a programme starts, and the period it moves by comes from that line's
+  own ink — so a new text needs a new graph and the graph is fixed for the life of the process. A
+  few minutes on a channel playing assets; on the standby slate or a live bridge, which run until
+  the selection changes, possibly not at all.
+
+  This does not fix that. It makes it visible, which is the difference between a documented
+  limitation and a silent one: before it, an operator typed a correction, watched the studio preview
+  update, and had no way to learn that the channel was still running the old line. A cleared ticker
+  counts as stale too — the band belongs to the process while a crawl runs, so emptying the field
+  does not take the old line off the screen.
+
+  Checked where the payload is written rather than on the render tick, and the resolve only fires
+  when something was actually raised: `resolveIncident` takes the global serialized write lock,
+  the one every state mutation contends for, so resolving unconditionally would have taken it every
+  reconciliation cycle for ever, for a zero-row update, on a channel with no ticker configured at
+  all.
+
 ## 1.5.45 - 2026-09-03
 
 ### Fixed

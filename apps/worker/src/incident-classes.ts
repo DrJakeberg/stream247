@@ -99,6 +99,13 @@ const STATE_FAMILIES: IncidentFamily[] = [
     why: "The database is missing declared columns until a migration adds them; the next boot closes it."
   },
   {
+    fingerprint: "overlay.ticker-stale",
+    keyed: false,
+    kind: "state",
+    area: "playout",
+    why: "The ticker on air trails the setting until the next programme; the next programme closes it."
+  },
+  {
     fingerprint: "playout.ticker-strip.failed",
     keyed: false,
     kind: "state",

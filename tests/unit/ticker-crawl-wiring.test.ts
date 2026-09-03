@@ -64,3 +64,32 @@ describe("ticker crawl failure is not silent", () => {
     expect(workerSource).toContain("await fs.rename(`${tickerStripPath}.tmp`, tickerStripPath);");
   });
 });
+
+describe("a ticker edit that has not reached the screen", () => {
+  it("is checked where the payload is written, not on the render tick", () => {
+    // The payload only changes on the reconciliation cycle; an incident write every two seconds
+    // would be a cost for nothing.
+    expect(workerSource).toContain("currentScenePayload = payload;\n  await reportTickerCrawlStaleness(payload);");
+  });
+
+  it("compares the line the process is moving against the line that is configured", () => {
+    expect(workerSource).toContain("crawlLine: activeTickerCrawl?.line ?? \"\"");
+    expect(workerSource).toContain("payloadLine: overlayTickerLine(payload)");
+  });
+
+  it("says so, and stops saying so when the next programme picks the change up", () => {
+    expect(workerSource).toContain('fingerprint: "overlay.ticker-stale"');
+    expect(workerSource).toContain('await resolveIncident("overlay.ticker-stale"');
+  });
+})
+
+describe("the stale check does not tax the write lock", () => {
+  it("only resolves when it has actually raised", () => {
+    // resolveIncident takes the global serialized write lock, the one every state mutation
+    // contends for. Resolving unconditionally would take it on every reconciliation cycle, for
+    // ever, for a zero-row update, on a channel with no ticker configured at all.
+    expect(workerSource).toContain("if (tickerStaleReported) {");
+    expect(workerSource).toContain("tickerStaleReported = false;");
+    expect(workerSource).toContain("tickerStaleReported = true;");
+  });
+});
