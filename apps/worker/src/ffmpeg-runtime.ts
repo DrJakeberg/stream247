@@ -134,9 +134,29 @@ export function buildProgramFeedOutputTarget(config: ProgramFeedConfig, runId: s
   // (e.g. epoch_us) instead restarts the sequence at each playout run, which the uplink demuxer
   // sees as a huge forward jump ("skipping N segments ahead, expired from playlists"), hits EOF,
   // and dies on every asset boundary (the v1.5.15 soak failure: one unplanned uplink restart per
-  // boundary until destination=degraded). Boundary timestamp resets are signaled via
-  // discont_start and absorbed by ffmpeg's input discontinuity correction (dts_delta_threshold);
-  // per-run segment uniqueness comes from the runId embedded in the segment filename.
+  // boundary until destination=degraded). Per-run segment uniqueness comes from the runId embedded
+  // in the segment filename.
+  //
+  // WHAT THIS DOES NOT DO, measured 2026-09-03 after four boundaries each cost an unplanned uplink
+  // restart. This comment used to claim boundary timestamp resets were "signaled via discont_start
+  // and absorbed by ffmpeg's input discontinuity correction (dts_delta_threshold)". Every clause of
+  // that was false, and the claim is why nobody looked for weeks:
+  //
+  //   - dts_delta_threshold is passed nowhere in this repository, and passing it would not help.
+  //     Its default is 10s and it gates FORWARD jumps; a boundary produces a BACKWARDS jump, which
+  //     a separate clause catches with a fixed ~0.1s tolerance that no threshold value disables.
+  //     Measured: a -30s jump fires identically at the default and at 3600.
+  //   - discont_start does write EXT-X-DISCONTINUITY at the seam — append_list emits it on its own
+  //     even without the flag — and ffmpeg's HLS demuxer parses the tag but does not act on it for
+  //     timestamps. Reading the same feed with and without it gives byte-identical output.
+  //
+  // So a boundary IS a raw backwards jump the reader has to absorb, and on 2026-09-03 one clean
+  // scheduled boundary (gap 163ms) produced 244 discontinuity lines over 28 seconds — sustained at
+  // roughly nine a second in batches about two seconds apart, which is this muxer's segment length.
+  // A local reproduction of the same seam costs TWO lines, so something in production amplifies it
+  // by two orders of magnitude and that amplifier is not yet identified. Do not "fix" this by
+  // tuning the uplink's storm threshold (uplink-progress.ts) against a rate whose cause is
+  // unmeasured, and do not add dts_delta_threshold expecting it to help.
   return {
     muxer: "hls",
     output: config.playlistPath,

@@ -199,7 +199,20 @@ export type UplinkDiscontinuityState = {
 };
 
 export const DEFAULT_DISCONTINUITY_WINDOW_MS = 60_000;
-/** A healthy uplink reports zero; the observed failure ran at 450-530 per minute. */
+/**
+ * The sustained failure this was built for ran at 450-530 per minute.
+ *
+ * "A healthy uplink reports zero" is what this comment used to say, and it is false. Measured
+ * 2026-09-03: one clean, scheduled asset boundary — 163ms gap, both assets cached, no network
+ * trouble — produced 244 lines in 28 seconds, twice this limit, and the guard restarted the uplink.
+ * Four boundaries, four restarts, each a visible interruption for viewers.
+ *
+ * The limit is deliberately NOT raised here. The same seam reproduces locally at two lines, so
+ * production amplifies it about 120x for reasons nobody has measured yet, and tuning a threshold
+ * against an unexplained rate would only move the point at which this misfires. What separates the
+ * real failure from a boundary is that the real one is SUSTAINED and a boundary settles; this
+ * counter cannot express that. See the note in ffmpeg-runtime.ts buildProgramFeedOutputTarget.
+ */
 export const DEFAULT_DISCONTINUITY_LIMIT = 120;
 
 export function createUplinkDiscontinuityState(nowMs: number): UplinkDiscontinuityState {
