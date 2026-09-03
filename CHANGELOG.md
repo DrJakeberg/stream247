@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.46 - 2026-09-03
+
 ### Fixed
 
 - Every programme boundary restarted the uplink, and had done since 2026-08-19. Viewers saw an
