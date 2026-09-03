@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Fixed
+
+- One Docker Hub blip took a whole CI run with it. Run 33710726231 died at `pnpm test:fresh-compose`
+  after hanging fifteen seconds on `auth.docker.io` without reaching a single layer, taking twelve
+  green steps and seventeen unrun ones with it. Nothing in the commit was implicated: the push run
+  for the same SHA pulled that identical tag in the same minute and passed, and a re-run of the
+  failed one passed too. The pull inside `docker compose up -d` simply has nowhere to put a second
+  attempt.
+
+  Every image the job fetches from a registry we do not own is now pulled once, up front, with a
+  retry. The pull happens either way; this moves it.
+
+  The load-bearing part is not the retry, it is the two ceilings. Runs on a ref are serialised with
+  `cancel-in-progress: false`, so an unbounded network step blocks every later commit — the exact
+  wedge the job's own 45-minute ceiling was added for. Measured against a registry that answers
+  headers and then trickles the body: a single `docker pull` ran 98 seconds and was still going.
+  So each attempt is capped at 60s and the step at 6 minutes, and the worst case is arithmetic
+  rather than hope.
+
+  Retries cover transport failures only. A missing tag, a 429 or a denied pull is the registry
+  stating a fact, and facts are not flaky: those go red on the first attempt, so a bad version bump
+  still reads as a bad version bump. Classification is by exit status first and text second, because
+  a killed pull leaves no output at all.
+
+  Three adversarial reviews of the design and a stub-docker harness over eight scenarios found four
+  defects before it shipped, all of which read as correct: a pipe into `grep -q` that inverts under
+  `pipefail` when the writer dies on SIGPIPE; a coverage rule written as a registry denylist, which
+  would silently drop the relay the day it is mirrored into our own registry; an output-capturing
+  `$( )` that would make a hung pull a step emitting zero bytes; and `rc=$?` read after a `fi`,
+  where an `if` with no `else` returns 0 when its condition fails — so the status check was inert
+  and every timed-out pull was reported as "the registry answered". The harness found that last one;
+  reading the code did not.
+
 ### Added
 
 - The channel now says when a ticker edit has not reached the screen. The crawling line is one image
