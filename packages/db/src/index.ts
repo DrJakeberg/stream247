@@ -8458,13 +8458,17 @@ export async function upsertIncident(args: {
   // reached this table with the stream key intact on 2026-09-01.
   const title = redactSecrets(args.title);
   const message = redactSecrets(args.message);
+  let onset = false;
   await withSerializedStateWrite("upsertIncident", async (client) => {
     const existingResult = await client.query<{
       id: string;
       created_at: string;
-    }>("SELECT id, created_at FROM incidents WHERE fingerprint = $1 LIMIT 1", [args.fingerprint]);
+      status: string;
+    }>("SELECT id, created_at, status FROM incidents WHERE fingerprint = $1 LIMIT 1", [args.fingerprint]);
     const existing = existingResult.rows[0] ?? null;
     const now = new Date().toISOString();
+
+    onset = !existing || existing.status !== "open";
 
     if (existing) {
       await client.query(
@@ -8505,6 +8509,26 @@ export async function upsertIncident(args: {
       )
     `);
   });
+
+  // Said out loud once per onset, because otherwise an incident can come and go leaving nothing at
+  // all. Measured on the live channel 2026-09-03: playout.prefetch.failed opened and resolved inside
+  // twenty minutes; neither container logged a line (30 of the 48 call sites have no logRuntimeEvent
+  // beside them), and resolveIncident then wrote its resolution text over the message column, which
+  // had held the probe's actual error. Nothing was left to read afterwards.
+  //
+  // Here rather than at the call sites: one place every caller already passes through, so nobody has
+  // to remember. Per ONSET rather than per call, because an incident that stays open is re-upserted
+  // on every reconciliation cycle and a line each time would bury the one that counts.
+  //
+  // AFTER the write, not inside it. withSerializedStateWrite re-runs its whole callback on a
+  // retryable error, so a line in there would be printed again on every retry — and printed at all
+  // for a write that then threw, announcing an incident the table never received. The values are the
+  // redacted ones: an ffmpeg line quoting the publish URL reached this table with the key intact on
+  // 2026-09-01, and a log sink is no safer a place for it than a column.
+  if (onset) {
+    // eslint-disable-next-line no-console
+    console.warn(`[stream247-db] incident ${args.fingerprint} (${args.scope}/${args.severity}): ${title} — ${message}`);
+  }
 }
 
 export async function resolveIncident(fingerprint: string, resolutionMessage?: string): Promise<void> {

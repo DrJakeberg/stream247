@@ -39,6 +39,7 @@ import {
   updateOutputSettingsRecord,
   updateSourceFieldRecords,
   upsertIncident,
+  resolveIncident,
   appendChatViewerRequestRecord,
   listRecentChatViewerRequests,
   countQueuedChatViewerRequests,
@@ -786,6 +787,68 @@ describe.sequential("database roundtrip", () => {
       updatedAt: "2026-04-04T10:04:00.000Z"
     });
   }, 60_000);
+
+  /**
+   * An incident that comes and goes leaving nothing behind.
+   *
+   * Observed on the live channel 2026-09-03: `playout.prefetch.failed` opened somewhere between
+   * 12:45 and 13:06 and resolved at 13:06:08. Neither container logged a line for it — 30 of the 48
+   * upsertIncident call sites have no logRuntimeEvent beside them — and resolveIncident then wrote
+   * "Next queued asset probe succeeded." over the message column, which had held the actual probe
+   * error. Log, message, both gone. The only reason anyone knew was a round that happened to poll
+   * the table inside the twenty-minute window.
+   *
+   * So the announcement is made here, once, where every caller passes through, rather than by
+   * remembering it at 30 call sites. Once per ONSET, not per cycle: an incident that stays open is
+   * re-upserted on every reconciliation, and a line each time would bury the one that matters.
+   */
+  it("announces an incident when it opens, once per onset, so the reason outlives the resolution", async () => {
+    const fingerprint = `test.incident.announce.${randomUUID()}`;
+    const seen: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+      seen.push(args.map(String).join(" "));
+    };
+
+    try {
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Next queued asset probe failed",
+        message: "probe exited 1: Server returned 403 Forbidden",
+        fingerprint
+      });
+      const afterOpen = seen.filter((line) => line.includes(fingerprint));
+      expect(afterOpen).toHaveLength(1);
+      expect(afterOpen[0]).toContain("Server returned 403 Forbidden");
+
+      // Still open: the reconciliation loop upserts it again every cycle and must stay quiet.
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Next queued asset probe failed",
+        message: "probe exited 1: Server returned 403 Forbidden",
+        fingerprint
+      });
+      expect(seen.filter((line) => line.includes(fingerprint))).toHaveLength(1);
+
+      // Resolved and raised again is a new onset, and says so.
+      await resolveIncident(fingerprint, "Next queued asset probe succeeded.");
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Next queued asset probe failed",
+        message: "probe exited 1: connection reset",
+        fingerprint
+      });
+      const afterReopen = seen.filter((line) => line.includes(fingerprint));
+      expect(afterReopen).toHaveLength(2);
+      expect(afterReopen[1]).toContain("connection reset");
+    } finally {
+      console.warn = original;
+      await resolveIncident(fingerprint, "test cleanup");
+    }
+  });
 
   it("upgrades existing playout runtime rows with persistent uplink and program feed columns", async () => {
     await ensureDatabaseWithRetry();
