@@ -2118,6 +2118,32 @@ function getFfmpegCommand(
   return command;
 }
 
+/**
+ * The live bridge, which has the same audio-starvation shape as the asset path and no pad.
+ *
+ * When the live source stops delivering audio — it disconnects, or its encoder drops the track —
+ * this command keeps producing video, because `overlay` ends with its LONGEST input and the scene
+ * pipe never ends. That is the exact fault that cost an uplink restart at every programme boundary
+ * until `resolveProgrammeAudioPadSeconds` closed it for assets.
+ *
+ * Deliberately NOT padded here, and the reasoning is written down rather than assumed:
+ *
+ *   - There is no duration bound to cut the stretch short: `targetKind: "live"` is excluded from it,
+ *     so nothing ends the run but the feed-audio watchdog, at 90s of video without audio.
+ *   - 90s is longer than the storm threshold needs. The uplink raises a storm at 120 discontinuity
+ *     lines in a fixed 60s window, and a 20-30s silent stretch measured 200-600 lines at a boundary.
+ *     So a live source that loses audio would very likely storm the uplink BEFORE the watchdog
+ *     restarts the playout. The watchdog is a net, not a guard against this.
+ *   - Padding is not the obvious fix it looks like: `-shortest` is set on this path (attachLive),
+ *     and video here is already endless, so an unbounded `apad` leaves nothing finite to bind to.
+ *     A bound would have to come from somewhere other than a duration this path does not have.
+ *
+ * NOT MEASURED IN PRODUCTION. Measured on this installation: the live bridge has never run — zero
+ * audit entries matching "live", zero live events in the worker log, as of 2026-09-03. The exposure
+ * above is arithmetic from the asset-path measurements, not an observation of this code failing.
+ * Whoever first puts a live source on air should watch `new offset` in the uplink log across a
+ * source dropout before trusting it.
+ */
 function getLiveBridgeFfmpegCommand(
   input: string,
   outputTarget: ReturnType<typeof buildFfmpegOutputTarget>,
