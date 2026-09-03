@@ -3940,9 +3940,23 @@ export type MissingDeclaredColumn = { table: string; column: string };
  * own, or a leftover from a rollback, and neither is a write that will fail.
  */
 export async function findMissingDeclaredColumns(client: PoolClient): Promise<MissingDeclaredColumn[]> {
-  const result = await client.query<{ table_name: string; column_name: string }>(
-    "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'"
-  );
+  // pg_attribute rather than information_schema.columns, which only shows columns the current
+  // role holds a privilege on. Measured on a real database: a role with USAGE on the schema and
+  // SELECT on one table saw 26 of 460 columns — so on any deployment where the app is not the
+  // owner (managed Postgres, a restore performed as another role, least-privilege hardening) the
+  // check would report four hundred missing columns and raise a critical on every boot. Same cost,
+  // no visibility cliff. attnum > 0 skips the system columns; attisdropped skips the tombstones a
+  // dropped column leaves behind.
+  const result = await client.query<{ table_name: string; column_name: string }>(`
+    SELECT c.relname AS table_name, a.attname AS column_name
+    FROM pg_catalog.pg_attribute a
+    JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+      AND c.relkind IN ('r', 'v', 'm', 'p')
+  `);
 
   const present = new Map<string, Set<string>>();
   for (const row of result.rows) {
@@ -3971,10 +3985,19 @@ export async function findMissingDeclaredColumns(client: PoolClient): Promise<Mi
  * stop. A quiet failure that costs work is worse than a loud one that costs attention.
  *
  * The READ runs on the migration's own client; the WRITE is pushed off it with setImmediate and
- * never awaited, exactly as noteSecretDecryptionFailure does. Awaiting it here deadlocked: the
- * incident store takes its own connection out of the same pool while this client still holds the
- * migration open, and the four database roundtrip tests each sat at their 60-second limit until
- * they were killed. Recording a problem must not become a second one.
+ * never awaited, exactly as noteSecretDecryptionFailure does. Awaiting it here deadlocked and the
+ * four database roundtrip tests each sat at their 60-second limit until they were killed.
+ *
+ * The cause was NOT pool contention, which is what the first version of this comment claimed and
+ * what adversarial review corrected. upsertIncident goes through withSerializedStateWrite, which
+ * opens with `await ensureDatabase()`, and ensureDatabase awaits the very bootstrap promise that
+ * is still running these migrations. It is a promise awaiting itself, and it hangs at any pool
+ * size — so raising the pool, the obvious reading of the old wording, would have fixed nothing.
+ *
+ * The read is safe on this client because client.query() enqueues synchronously: the async
+ * function runs to its first await, which IS the query call, so the read is queued before this
+ * function returns and long before the COMMIT. Measured: 39 statements of margin, and no query
+ * ever reached a released client.
  */
 function reportSchemaDrift(client: PoolClient): void {
   void (async () => {

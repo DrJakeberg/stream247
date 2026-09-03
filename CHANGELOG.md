@@ -77,6 +77,24 @@
   It reports drift; it does not repair it. Repairing would mean running DDL on every boot against a
   live database, and that lock is not worth paying to save writing a migration on purpose.
 
+  Adversarial review then hardened it in three ways. The unit test compares the manifest against the
+  parser that produced it, so anything the parser cannot see is invisible to it — a wrapped column
+  definition contributing "default" as a column, a commented-out ALTER, a multi-line CHECK that
+  swallows five real columns, each of which would raise a critical incident on every boot of a
+  healthy channel, forever. The comparison against a real migrated database is now an integration
+  test asserting both directions, which is the only thing that has ever caught a parser fault.
+
+  The columns are read from `pg_catalog.pg_attribute` rather than `information_schema.columns`,
+  which only shows what the current role holds a privilege on: measured, a role with SELECT on one
+  table saw 26 of 460 columns, so on any deployment where the application is not the database owner
+  the check would have reported four hundred missing columns on every boot.
+
+  And the stated cause of the deadlock this feature already survived was wrong. It was not pool
+  contention: the incident write goes through the serialized state write, which opens by awaiting
+  the very bootstrap promise that is still running the migrations. A promise awaiting itself hangs
+  at any pool size, so the obvious reading of the old wording — raise the pool — would have fixed
+  nothing.
+
 ## 1.5.44 - 2026-09-03
 
 ### Fixed

@@ -20,6 +20,16 @@ import {
 
 const workerSource = readFileSync(path.join(process.cwd(), "apps/worker/src/index.ts"), "utf8");
 
+/**
+ * The storage layer raises incidents too, and this scan did not look at it.
+ *
+ * secrets.key-mismatch and schema.drift are both raised from packages/db, so the guard that "a new
+ * reporting site cannot appear without an entry in the registry" covered neither. Both happen to be
+ * registered — by hand, and noticed by adversarial review rather than by this test.
+ */
+const dbSource = readFileSync(path.join(process.cwd(), "packages/db/src/index.ts"), "utf8");
+const reportingSources = `${workerSource}\n${dbSource}`;
+
 /** The `RuntimeMode` union, which is what `${mode}` in a fingerprint template can be. */
 const RUNTIME_MODES = ["worker", "playout", "uplink"];
 
@@ -72,7 +82,7 @@ export function collectReportedFingerprints(source: string): string[] {
 
 describe("the scan that forces every reporting site to decide", () => {
   it("sees the loop watchdogs, whose templates begin with the interpolation", () => {
-    const found = collectReportedFingerprints(workerSource);
+    const found = collectReportedFingerprints(reportingSources);
     expect(found).toContain("worker.loop.stalled");
     expect(found).toContain("playout.loop.crashed");
     expect(found).toContain("uplink.loop.crashed");
@@ -93,7 +103,7 @@ describe("the scan that forces every reporting site to decide", () => {
 
 describe("incident family registry", () => {
   it("classifies every fingerprint the worker reports under", () => {
-    const unregistered = collectReportedFingerprints(workerSource).filter(
+    const unregistered = collectReportedFingerprints(reportingSources).filter(
       (fingerprint) => classifyIncidentReference(fingerprint) === null
     );
     expect(unregistered).toEqual([]);

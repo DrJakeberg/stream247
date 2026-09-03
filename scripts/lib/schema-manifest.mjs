@@ -3,6 +3,13 @@
 // One parser, two users: the generator writes the manifest, the test re-reads it and fails when the
 // two disagree. That is what keeps a generated file from going stale in a way nobody notices.
 //
+// KNOWN LIMIT: the manifest can only say what a column IS, never that one was removed. A migration
+// with DROP COLUMN or RENAME COLUMN leaves the old name declared and the drift check then raises a
+// critical incident, on every boot, about the column the migration deliberately took away. Whoever
+// writes the first such migration must edit the base-schema block in the same commit so the parser
+// stops seeing it — and the live-database comparison in tests/integration/db-roundtrip.test.ts is
+// what will say so.
+//
 // It reads the WHOLE file rather than only the base-schema block, because migrations create tables
 // too (asset_collections, chat_viewer_requests and three others) and migrations run on a fresh
 // install as well. What a fresh install ends up with is the union, and the union is what an old

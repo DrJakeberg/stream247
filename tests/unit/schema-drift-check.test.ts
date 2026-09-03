@@ -68,6 +68,6 @@ describe("schema drift check", () => {
     const client = fakeClient(await everything());
     await findMissingDeclaredColumns(client as never);
     expect(client.queries).toHaveLength(1);
-    expect(client.queries[0]).toContain("information_schema.columns");
+    expect(client.queries[0]).toContain("pg_catalog.pg_attribute");
   });
 });

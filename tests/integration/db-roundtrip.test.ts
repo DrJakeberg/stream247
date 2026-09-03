@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   applyOverlayScenePresetRecordToDraft,
+  DECLARED_SCHEMA,
   createPoolRecord,
   createScheduleBlocks,
   createScheduleBlocksChecked,
@@ -1788,6 +1789,65 @@ describe.sequential("database roundtrip", () => {
       const reread = await readAppState();
       expect(reread.auditEvents).toHaveLength(200);
     }, 60_000);
+
+    it("declares exactly the schema a real migrated database ends up with", async () => {
+      /**
+       * The only thing that has ever caught a fault in the manifest parser.
+       *
+       * schema-manifest.test.ts compares the manifest against the parser that produced it, so
+       * anything the parser cannot see is invisible to it by construction. Adversarial review
+       * demonstrated five such edits — a wrapped column definition contributing "default" as a
+       * column, a commented-out ALTER, a multi-line CHECK swallowing five real columns, a closing
+       * paren on the last column's line making a whole table disappear, and DROP/RENAME which the
+       * manifest has no way to express — each of which passed the unit tests with a wrong manifest
+       * and would then raise a critical incident on every boot of a healthy channel, forever.
+       *
+       * This asserts BOTH directions against a database that has actually run every migration.
+       */
+      await ensureDatabaseWithRetry();
+      const dump = await executeSql(`
+        SELECT c.relname || '|' || a.attname
+        FROM pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND a.attnum > 0 AND NOT a.attisdropped
+          AND c.relkind IN ('r', 'v', 'm', 'p');
+      `);
+
+      const live = new Map<string, Set<string>>();
+      for (const line of dump.split("\n")) {
+        const [table, column] = line.trim().split("|");
+        if (!table || !column) {
+          continue;
+        }
+        const columns = live.get(table) ?? new Set<string>();
+        columns.add(column);
+        live.set(table, columns);
+      }
+      expect(live.size).toBeGreaterThan(30);
+
+      const declaredMissing: string[] = [];
+      const declaredExtra: string[] = [];
+      for (const [table, columns] of Object.entries(DECLARED_SCHEMA)) {
+        const present = live.get(table);
+        for (const column of columns) {
+          if (!present?.has(column)) {
+            declaredMissing.push(`${table}.${column}`);
+          }
+        }
+      }
+      for (const [table, columns] of live) {
+        for (const column of columns) {
+          if (!DECLARED_SCHEMA[table]?.includes(column)) {
+            declaredExtra.push(`${table}.${column}`);
+          }
+        }
+      }
+
+      // Declared but absent is the fault the drift check exists for. Present but undeclared is the
+      // parser having missed something, which is how a real column stops being watched at all.
+      expect({ declaredMissing, declaredExtra }).toEqual({ declaredMissing: [], declaredExtra: [] });
+    }, 120_000);
 
     it("keeps a protected entry that has fallen out of the general window", async () => {
       // The failure this exists for. persistState rewrites audit_events from memory, and memory is
