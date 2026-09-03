@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.45 - 2026-09-03
+
 ### Fixed
 
 - The audit trail could lose a sign-in to an uplink reconnecting. Every entry competed for one
