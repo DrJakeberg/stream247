@@ -83,6 +83,7 @@ import {
   redactSecrets,
   resolveChatSettingsWrite,
   overlayNextTimeLabel,
+  overlayOnAirChapterTitle,
   overlayScale,
   overlayTickerCrawlPlan,
 } from "@stream247/core";
@@ -3123,35 +3124,6 @@ async function writeStandbySlate(
   await fs.writeFile(standbySlatePath, `${lines.join("\n")}\n`, "utf8");
 }
 
-/**
- * The chapter-aware display title for the asset that is on air right now.
- *
- * Derived from elapsed playback rather than from the boundary fired set, so every overlay
- * rewrite — the 15s cycle, an operator refresh, a scene re-render — shows the chapter that is
- * actually playing instead of the one that was current at the last boundary event. Empty when
- * the asset is not the one on air, has no chapters, or the active chapter carries no title;
- * callers then fall back to the asset title exactly as before chapters existed.
- */
-function resolveOnAirChapterTitle(state: AppState, asset: AssetRecord | null): string {
-  if (!asset || state.playout.currentAssetId !== asset.id || state.playout.processStartedAt === "") {
-    return "";
-  }
-
-  const chapters = parseAssetChaptersJson(asset.chaptersJson);
-  if (chapters.length === 0) {
-    return "";
-  }
-
-  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(state.playout.processStartedAt).getTime()) / 1000));
-  const chapter = getAssetChapterAt(chapters, elapsedSeconds);
-  if (!chapter || chapter.title === "") {
-    return "";
-  }
-
-  // The replay prefix stays: a chapter changes what plays, not the fact that it is a replay.
-  return buildAssetDisplayTitle({ title: chapter.title, titlePrefix: asset.titlePrefix });
-}
-
 async function writeOnAirOverlay(
   state: AppState,
   asset: AssetRecord | null,
@@ -3181,7 +3153,11 @@ async function writeOnAirOverlay(
       queueKind,
       currentTitle:
         overrides.currentTitle ||
-        resolveOnAirChapterTitle(state, asset) ||
+        overlayOnAirChapterTitle({
+          currentAssetId: state.playout.currentAssetId,
+          processStartedAt: state.playout.processStartedAt,
+          asset
+        }) ||
         buildAssetDisplayTitle(asset) ||
         state.playout.currentTitle ||
         currentItem?.title ||

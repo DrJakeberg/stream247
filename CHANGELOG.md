@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- The studio preview did not know that chapters exist. A long recording with chapters is named on
+  air by the chapter that is actually playing — the worker has resolved that from elapsed playback
+  since chapters were added — and the web app named the file. So the channel said "Advent of Code ·
+  Day 7" and the preview said "Advent of Code", for the same second of the same asset.
+
+  The resolver moves into the core package and both sides call it. The asset display title moves
+  with it, because the chapter title has to be built the same way or the two disagree for a second
+  reason; it had been written out three times.
+
 - The studio and the channel wrote the next block's times differently — "20:00 to 22:00" in the web
   app, "20:00-22:00" on air, for the same block of the same schedule. Whichever an operator read,
   the other was what viewers saw. One concept, two implementations, and nothing making them agree:

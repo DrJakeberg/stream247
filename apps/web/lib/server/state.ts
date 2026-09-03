@@ -38,6 +38,7 @@ import {
   stripInvisibleCharacters,
   summarizeLiveBridgeInput,
   overlayNextTimeLabel,
+  overlayOnAirChapterTitle,
   type OverlaySceneRenderTarget
 } from "@stream247/core";
 import {
@@ -1098,7 +1099,19 @@ export function buildActiveScenePayload(
     target: options.target ?? "browser",
     currentTitle:
       queueKind === "asset"
-        ? currentAssetTitle || state.playout.currentTitle || currentScheduleItem?.title || overlay.channelName || "Stream247"
+        ? // The chapter that is actually playing, exactly as the channel resolves it: a long
+          // recording with chapters is named by its chapter on air, and this preview had no idea
+          // chapters existed.
+          overlayOnAirChapterTitle({
+            currentAssetId: state.playout.currentAssetId,
+            processStartedAt: state.playout.processStartedAt,
+            asset: currentAsset
+          }) ||
+          currentAssetTitle ||
+          state.playout.currentTitle ||
+          currentScheduleItem?.title ||
+          overlay.channelName ||
+          "Stream247"
         : queueKind === "live"
           ? queueHead?.title || state.playout.liveBridgeLabel || state.playout.currentTitle || "Live Bridge"
         : queueHead?.title || state.playout.currentTitle || overlay.headline || "Replay stream",

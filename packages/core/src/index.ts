@@ -1,4 +1,5 @@
 export * from "./asset-chapters.js";
+import { getAssetChapterAt, parseAssetChaptersJson } from "./asset-chapters.js";
 export * from "./broadcast-channel.js";
 export * from "./chat-emotes.js";
 export * from "./chat-game.js";
@@ -3621,3 +3622,68 @@ export function selectActiveDestinationGroup(destinations: DestinationRoutingRec
 }
 
 export { redactSecrets, redactSecretsDeep } from "./redact.js";
+
+/**
+ * An asset's display title: the replay prefix and the title, with nothing invisible in between.
+ *
+ * Written three times before this — apps/worker/src/asset-display-title.ts,
+ * apps/web/lib/asset-metadata.ts and a private copy inside apps/web/lib/server/state.ts. They
+ * agreed, which was luck rather than design, and the chapter-aware title below has to build the
+ * same string or the studio and the channel disagree about a name for a second reason.
+ */
+export function overlayAssetDisplayTitle(
+  asset: { title?: string; titlePrefix?: string } | null | undefined,
+  fallbackTitle = ""
+): string {
+  const base = stripInvisibleCharacters(String(asset?.title || fallbackTitle || "")).trim();
+  return [stripInvisibleCharacters(asset?.titlePrefix || "").trim(), base].filter(Boolean).join(" ").trim();
+}
+
+/**
+ * The chapter-aware display title for the asset that is on air right now.
+ *
+ * Derived from elapsed playback rather than from the boundary fired set, so every overlay rewrite —
+ * the 15s cycle, an operator refresh, a scene re-render — shows the chapter that is actually
+ * playing instead of the one that was current at the last boundary event.
+ *
+ * Empty when the asset is not the one on air, has no chapters, or the active chapter carries no
+ * title; callers then fall back to the asset title exactly as before chapters existed. Empty is
+ * also the answer before the first chapter's offset: the asset's own metadata stays authoritative
+ * there rather than a synthetic chapter being invented.
+ *
+ * It lives here because the worker had it and the web app did not, so the channel named the chapter
+ * that was playing while the studio preview named the file. The preview exists to show what airs.
+ */
+export function overlayOnAirChapterTitle(args: {
+  /** state.playout.currentAssetId — which asset the channel is actually on. */
+  currentAssetId: string;
+  /** state.playout.processStartedAt, ISO; empty means nothing has started. */
+  processStartedAt: string;
+  asset: { id: string; chaptersJson?: string; titlePrefix?: string } | null | undefined;
+  /** Injected so a render can be made repeatable. */
+  now?: Date;
+}): string {
+  const { asset } = args;
+  if (!asset || args.currentAssetId !== asset.id || args.processStartedAt === "") {
+    return "";
+  }
+
+  const chapters = parseAssetChaptersJson(asset.chaptersJson);
+  if (chapters.length === 0) {
+    return "";
+  }
+
+  const startedAt = new Date(args.processStartedAt).getTime();
+  if (!Number.isFinite(startedAt)) {
+    return "";
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor(((args.now ?? new Date()).getTime() - startedAt) / 1000));
+  const chapter = getAssetChapterAt(chapters, elapsedSeconds);
+  if (!chapter || chapter.title === "") {
+    return "";
+  }
+
+  // The replay prefix stays: a chapter changes what plays, not the fact that it is a replay.
+  return overlayAssetDisplayTitle({ title: chapter.title, titlePrefix: asset.titlePrefix });
+}
