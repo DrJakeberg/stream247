@@ -5,6 +5,7 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:
 import path from "node:path";
 import { Pool, type PoolClient } from "pg";
 import { resolveAppSecret } from "./app-secret.js";
+import { AUDIT_EVENT_PROTECTED_PATTERN, selectRetainedAuditEvents } from "@stream247/core";
 
 export {
   DEV_FALLBACK_APP_SECRET,
@@ -184,6 +185,16 @@ export type AuditEvent = {
  * only ever deletes more than a count rule. Nothing here needs data minimisation.
  */
 export const AUDIT_EVENT_RETENTION_LIMIT = 500;
+
+/**
+ * A second window, for the entries an audit trail exists for.
+ *
+ * The general window is only ever as long as the noisiest writer. Measured on the live channel:
+ * 142 entries over 31 hours, of which 100 were uplink and worker reconciliation chatter — so the
+ * 500 fills in about four days, and from then on a sign-in is pushed out by an uplink reconnecting.
+ * Bounded like the other one: the trail can hold at most both windows together.
+ */
+export const AUDIT_EVENT_PROTECTED_RETENTION_LIMIT = 500;
 
 export type SourceRecord = {
   id: string;
@@ -4709,7 +4720,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   }
 
   await client.query("DELETE FROM audit_events");
-  const retainedAuditEvents = next.auditEvents.slice(0, AUDIT_EVENT_RETENTION_LIMIT);
+  const retainedAuditEvents = selectRetainedAuditEvents(next.auditEvents, {
+    general: AUDIT_EVENT_RETENTION_LIMIT,
+    protected: AUDIT_EVENT_PROTECTED_RETENTION_LIMIT
+  });
   if (retainedAuditEvents.length > 0) {
     // One statement rather than a query per row. This rewrite runs inside the global serialized
     // write lock on every state mutation, so a row-at-a-time loop made the retention bound a
@@ -5710,6 +5724,9 @@ export async function appendAuditEvent(type: string, message: string): Promise<v
       message,
       createdAt
     ]);
+    // Outside the general window AND outside the protected one. The pattern is the same string
+    // the predicate in core uses, so the row this deletes and the row that code calls unprotected
+    // cannot be different rows.
     await client.query(
       `
       DELETE FROM audit_events
@@ -5718,8 +5735,14 @@ export async function appendAuditEvent(type: string, message: string): Promise<v
         ORDER BY created_at DESC
         OFFSET $1
       )
+      AND id NOT IN (
+        SELECT id FROM audit_events
+        WHERE type ~ $2
+        ORDER BY created_at DESC
+        LIMIT $3
+      )
     `,
-      [AUDIT_EVENT_RETENTION_LIMIT]
+      [AUDIT_EVENT_RETENTION_LIMIT, AUDIT_EVENT_PROTECTED_PATTERN, AUDIT_EVENT_PROTECTED_RETENTION_LIMIT]
     );
   });
 }

@@ -4,6 +4,24 @@
 
 ### Fixed
 
+- The audit trail could lose a sign-in to an uplink reconnecting. Every entry competed for one
+  window of the newest 500, so the trail was only ever as long as the noisiest thing writing to it.
+  Measured on the live channel: 142 entries over 31 hours, of which 100 were `uplink.cycle` and
+  `worker.cycle` — 70% reconciliation chatter. At that rate the window fills in about four days,
+  and from then on an authentication, a permission grant or a deleted destination is pushed out by
+  traffic that means nothing.
+
+  A second, equally bounded window now keeps the entries a trail exists for: authentication,
+  authorisation, credentials, where the stream is sent, who silenced an alarm, and destructive
+  deletions. Deliberately not every operator action — protecting everything protects nothing,
+  because the protected window would then fill with the same traffic the general one does.
+
+  Both writers use it: the one that appends a row and prunes around it, and the one that rewrites
+  the whole table from memory, which is the one that could drop a protected entry outright. The
+  rule is a single POSIX-compatible pattern so the pruning SQL and the predicate cannot drift;
+  verified against the live database, where Postgres and JavaScript select the same three types out
+  of the twelve present.
+
 - The studio preview did not know that chapters exist. A long recording with chapters is named on
   air by the chapter that is actually playing — the worker has resolved that from elapsed playback
   since chapters were added — and the web app named the file. So the channel said "Advent of Code ·

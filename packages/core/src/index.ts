@@ -3687,3 +3687,71 @@ export function overlayOnAirChapterTitle(args: {
   // The replay prefix stays: a chapter changes what plays, not the fact that it is a replay.
   return overlayAssetDisplayTitle({ title: chapter.title, titlePrefix: asset.titlePrefix });
 }
+
+/**
+ * The audit entries a trail exists for, as one pattern.
+ *
+ * Every entry used to compete for a single window of the newest 500, so the trail was only as long
+ * as the noisiest thing writing to it. Measured on the live channel: 142 entries over 31 hours, of
+ * which 100 were `uplink.cycle` and `worker.cycle` — 70% reconciliation chatter. At that rate the
+ * window fills in about four days and a sign-in is then pushed out by an uplink reconnecting.
+ *
+ * What is protected: authentication, authorisation, credentials, where the stream is sent, who
+ * silenced an alarm, and destructive deletions. What is NOT: skipping an item, publishing an
+ * overlay, updating an asset. That line is deliberate — protecting every operator action protects
+ * nothing, because the protected window would fill with the same traffic the general one does.
+ *
+ * Written as one POSIX-compatible pattern so `type ~ $pattern` in the pruning SQL and the predicate
+ * below cannot drift into disagreeing. No lookaround, no non-greedy quantifiers: anchors,
+ * alternation and literal dots only.
+ *
+ * The deletion clause takes a dot OR an underscore: the vocabulary writes both, `source.deleted`
+ * and `overlay.video_source_deleted`, and a rule that only knew the dot left the second kind
+ * unprotected — found by the test, not by reading.
+ */
+export const AUDIT_EVENT_PROTECTED_PATTERN =
+  "^(auth|team|destination|incident)\\.|^setup\\.completed$|^settings\\.(managed-config|twitch-app)\\.updated$|^overlay\\.video_source_key_issued$|^twitch\\.(connected|error|broadcaster\\.error)$|[._]deleted$";
+
+/**
+ * Compiled once. selectRetainedAuditEvents asks this per entry over as many as a thousand of them,
+ * inside the serialized state write, so building the expression per call would put a thousand
+ * regular-expression compilations on every mutation the channel makes.
+ */
+const AUDIT_EVENT_PROTECTED = new RegExp(AUDIT_EVENT_PROTECTED_PATTERN);
+
+/** Whether an audit entry of this type survives pruning on its own account. */
+export function isProtectedAuditEventType(type: string): boolean {
+  return AUDIT_EVENT_PROTECTED.test(type);
+}
+
+/**
+ * The audit entries that survive pruning: the newest of everything, plus the newest of what an
+ * audit trail exists for.
+ *
+ * Two windows rather than one, because a single window is only as long as the noisiest writer.
+ * Both are bounded, so neither can grow without end — a channel that somehow produced nothing but
+ * sign-ins still keeps a fixed number of them.
+ *
+ * Input order is preserved, so a store that holds its trail newest first gets it back newest first.
+ * Expressed here as well as in SQL because the two writers work differently: one appends a row and
+ * prunes around it, the other rewrites the whole table from memory.
+ */
+export function selectRetainedAuditEvents<T extends { type: string }>(
+  events: T[],
+  limits: { general: number; protected: number }
+): T[] {
+  const keep = new Set<number>();
+  for (let index = 0; index < events.length && index < limits.general; index++) {
+    keep.add(index);
+  }
+
+  let protectedKept = 0;
+  for (let index = 0; index < events.length && protectedKept < limits.protected; index++) {
+    if (isProtectedAuditEventType(events[index]!.type)) {
+      keep.add(index);
+      protectedKept++;
+    }
+  }
+
+  return events.filter((_event, index) => keep.has(index));
+}
