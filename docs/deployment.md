@@ -261,6 +261,10 @@ Do not use `latest` for unattended production deployments.
 10. For production candidates, run on DUT from the repo path:
     ```bash
     ./scripts/soak-monitor.sh --hours 24
+
+    On a host that runs the stack from Portainer and has no repo `.env`, set `CHECK_BASE_URL` to the
+    public base URL instead; the script then needs no `.env`. Run it from the repository checkout so
+    `scripts/lib/soak-readiness-classifier.cjs` is found, or copy `scripts/` as a whole.
     ```
     The soak gate fails if broadcast readiness drops or never becomes ready.
 

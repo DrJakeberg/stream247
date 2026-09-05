@@ -3521,6 +3521,12 @@ a live source pushed to the relay while the channel is on air, the takeover watc
 and in `uplink.seam.skew`, then the release. That is Task #37 and it is not started alone.
 
 ## M67 Release 2.0.0
+- 2026-09-05 22:32: v2.0.0-rc.1 (7f15e04) live on the DUT via the redis-free stack file with prune; four
+  containers healthy after 60 s, `stream247-redis-1` gone, RTMP and IRC reconnected, no boundary storm.
+
+- Before tagging v2.0.0 (not the rc): bump the three `STREAM247_*_IMAGE` defaults in `docker-compose.yml` from
+  `v1.5.20` to `v2.0.0`, so a newcomer's plain `docker compose up` starts the release the docs describe.
+  The release workflow also moves `latest` onto every tag, rc included; the compose defaults do not use it.
 
 Major because an existing installation notices the change (see `docs/deployment.md`, *Upgrading To
 2.0*): the redis service leaves the deployed stack, controls leave the studio, the upload refuses
