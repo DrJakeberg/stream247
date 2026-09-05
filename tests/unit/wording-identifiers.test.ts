@@ -42,7 +42,6 @@ const ENGLISH_COMPOUNDS = new Set([
   // "mid-round" are ordinary spoken English — none of them is a stored id. Added after this test
   // correctly went red in CI while my local validate lied: the pipeline read the exit code of
   // `tail`, not of validate.
-  "chat-game",
   "mid-round",
   "on-screen",
   "chatter-participation",
