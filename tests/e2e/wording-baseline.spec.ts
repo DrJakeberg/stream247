@@ -49,7 +49,9 @@ const SURFACES: Surface[] = [
 const VOLATILE: Array<[RegExp, string]> = [
   [/\d{4}-\d{2}-\d{2}T[\d:.]+Z?/g, "<timestamp>"],
   [/\b\d{1,2}:\d{2}(:\d{2})?\b/g, "<time>"],
-  [/\bv?\d+\.\d+\.\d+\b/g, "<version>"],
+  // Full semver, including a prerelease or build suffix: "2.0.0-rc.1" must mask as one token, or every
+  // release candidate rewrites the admin-settings reference (CI on the rc.1 bump caught "<version>-rc.1").
+  [/\bv?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\b/g, "<version>"],
   [/\bsha256:[0-9a-f]+/g, "<digest>"],
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<id>"],
   // Ages, not configured durations: "162d 20h" is how long ago something happened and grows while
