@@ -175,6 +175,66 @@ describe("asset API safety regressions", () => {
     expect(mockUpdateAssetCurationRecords).not.toHaveBeenCalled();
   });
 
+  it("stores a normalised chapter list and rejects offsets beyond a known duration", async () => {
+    mockReadAppState.mockResolvedValue({
+      assetCollections: [],
+      assets: [
+        {
+          id: "asset_1",
+          sourceId: "source_1",
+          title: "Fresh worker title",
+          titlePrefix: "",
+          hashtagsJson: "[]",
+          platformNotes: "",
+          chaptersJson: "[]",
+          path: "/tmp/fresh-worker-path.mp4",
+          folderPath: "worker/folder",
+          tags: ["fresh"],
+          status: "ready",
+          includeInProgramming: true,
+          externalId: "external-1",
+          categoryName: "Archive",
+          durationSeconds: 1200,
+          publishedAt: "2026-04-05T10:00:00.000Z",
+          fallbackPriority: 5,
+          isGlobalFallback: false,
+          createdAt: "2026-04-05T10:00:00.000Z",
+          updatedAt: "2026-04-05T10:00:00.000Z"
+        }
+      ]
+    });
+
+    const patchChapters = (chapters: unknown) =>
+      PATCH(
+        new Request("http://localhost/api/assets/asset_1", {
+          method: "PATCH",
+          body: JSON.stringify({ chapters }),
+          headers: { "content-type": "application/json" }
+        }),
+        { params: Promise.resolve({ id: "asset_1" }) }
+      );
+
+    // Out-of-order, duplicated input comes back sorted and deduplicated before storage.
+    const response = await patchChapters([
+      { offsetSeconds: 600, categoryName: "Music", title: "Second act" },
+      { offsetSeconds: 0, categoryName: "Just Chatting", title: "Intro" },
+      { offsetSeconds: 600, categoryName: "Duplicate", title: "Dropped" }
+    ]);
+    expect(response.status).toBe(200);
+    expect(mockUpdateAssetMetadataRecords.mock.calls[0]?.[0]?.[0]).toMatchObject({
+      id: "asset_1",
+      chaptersJson: JSON.stringify([
+        { offsetSeconds: 0, categoryName: "Just Chatting", title: "Intro" },
+        { offsetSeconds: 600, categoryName: "Music", title: "Second act" }
+      ])
+    });
+
+    // The asset is 1200s long, so a chapter at 1200s could never come on air.
+    const rejected = await patchChapters([{ offsetSeconds: 1200, categoryName: "Gaming", title: "Too late" }]);
+    expect(rejected.status).toBe(400);
+    expect(mockUpdateAssetMetadataRecords).toHaveBeenCalledTimes(1);
+  });
+
   it("sanitizes invisible characters from metadata edits and route ids", async () => {
     mockReadAppState.mockResolvedValue({
       assetCollections: [],

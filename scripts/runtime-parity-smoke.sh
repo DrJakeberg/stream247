@@ -20,7 +20,6 @@ SECONDARY_OUTPUT_FILE="$SECONDARY_OUTPUT_DIR/secondary.flv"
 FIXTURE_DIR="$TMP_DIR/fixtures"
 MEDIA_DIR="$TMP_DIR/media"
 POSTGRES_DIR="$TMP_DIR/postgres"
-REDIS_DIR="$TMP_DIR/redis"
 BASE_URL="http://127.0.0.1:${PORT}"
 PROGRAM_A_FILE="runtime-program-a.mp4"
 PROGRAM_B_FILE="runtime-program-b.mp4"
@@ -271,10 +270,15 @@ wait_for_live_bridge_release() {
 
 require_command curl
 require_command docker
-require_command ffmpeg
+# ffmpeg is only used to synthesise fixtures. Fall back to the worker image when the host has
+# none, so CI does not depend on apt being able to install it.
+# shellcheck source=lib/ffmpeg-fallback.sh
+. "$(dirname "$0")/lib/ffmpeg-fallback.sh"
 require_command jq
 
-mkdir -p "$FIXTURE_DIR" "$MEDIA_DIR" "$POSTGRES_DIR" "$REDIS_DIR" "$PRIMARY_OUTPUT_DIR" "$SECONDARY_OUTPUT_DIR"
+mkdir -p "$FIXTURE_DIR" "$MEDIA_DIR" "$POSTGRES_DIR" "$PRIMARY_OUTPUT_DIR" "$SECONDARY_OUTPUT_DIR"
+
+enable_ffmpeg_fallback "$TMP_DIR"
 touch "$COOKIE_JAR"
 
 generate_video_fixture "$MEDIA_DIR/$PROGRAM_A_FILE" "0x124f7a" "330" "12"
@@ -288,12 +292,11 @@ cat >"$ENV_FILE" <<EOF
 NODE_ENV=production
 PORT=3000
 APP_URL=${BASE_URL}
-APP_SECRET=stream247-runtime-smoke
+APP_SECRET=stream247-runtime-smoke-0123456789abcdef
 POSTGRES_DB=stream247
 POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247
 DATABASE_URL=postgresql://stream247:stream247@postgres:5432/stream247
-REDIS_URL=redis://redis:6379
 STREAM247_WEB_IMAGE=stream247-web:test
 STREAM247_WORKER_IMAGE=stream247-worker:test
 STREAM247_PLAYOUT_IMAGE=stream247-worker:test
@@ -308,7 +311,10 @@ EOF
 cat >"$OVERRIDE_FILE" <<EOF
 services:
   web:
-    ports:
+    # !override replaces the base compose port list instead of appending to it. Without it the
+    # stack also tries to publish the base file's "3000:3000", so every smoke run fails with
+    # "port is already allocated" whenever anything else holds host port 3000.
+    ports: !override
       - "127.0.0.1:${PORT}:3000"
     volumes:
       - ${MEDIA_DIR}:/app/data/media
@@ -322,9 +328,6 @@ services:
   postgres:
     volumes:
       - ${POSTGRES_DIR}:/var/lib/postgresql/data
-  redis:
-    volumes:
-      - ${REDIS_DIR}:/data
   fixtures:
     image: python:3.12-alpine
     command: ["sh", "-c", "python -m http.server 8000 -d /fixtures"]

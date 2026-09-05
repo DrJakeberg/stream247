@@ -1,0 +1,150 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+<runtime>
+<runtime>
+CURRENT
+<runtime>
+<runtime>
+NEXT
+<runtime>
+<runtime>
+DESTINATION
+<runtime>
+<runtime>
+INCIDENTS
+<runtime>
+<runtime>
+UPDATES
+<runtime>
+<runtime>
+Live
+Keep channel and playout state visible across the whole Live workspace.
+Twitch channel state, viewer count, uptime, and playout health stay visible while you move between Live control, status, and moderation.
+Live · 128
+Feed running
+TWITCH UPTIME
+<runtime>
+VIEWERS
+<runtime>
+CHANNEL
+<runtime>
+UPDATES
+<runtime>
+Control
+Status
+Moderation
+Live
+Operate the live 24/7 output from one workspace.
+Use Live control for on-air actions. Current item, next queue, destination health, and scene state update continuously without reloading the page.
+Live · 128
+FEED
+<runtime>
+CURRENT
+<runtime>
+NEXT
+<runtime>
+DESTINATION
+<runtime>
+UPDATES
+<runtime>
+ON AIR
+Current and next
+<asset>
+<time> to <time> · <category>
+Transition idle · queue reason Matched the schedule · version 0
+<asset>
+Prefetch idle · last probe never
+Transition target none · ready not ready
+Queue preview
+No queue preview is currently available.
+ACTIONS
+Operator controls
+If something is stuck
+Temporary fallback
+Skip current
+Resume schedule
+PIN ASSET
+i
+<asset>
+<asset>
+OVERRIDE MINUTES
+i
+Bring in an outside feed
+Pin on air
+Play now
+Move next
+Play insert
+Remove next
+Replay previous
+Next queued asset: <asset>
+REPLACEMENT AUDIO
+Secondary audio
+Program audio
+No audio lane is configured for the active pool.
+Pool <block>
+TIMED INSERTS
+Timed insert
+No cuepoint insert asset
+Nothing is set to play at a fixed time in this block.
+LIVE BRIDGE
+Live takeover
+Live Bridge
+Status idle · no input type
+No live input configured.
+DESTINATION
+Sending to Twitch
+Primary Twitch Output
+primary lead · ready · /tmp/stream-output
+1 active · 0 staged · 0 cooling down
+PID 4242 · restarts 0 · crash loop clear
+Last transition <timestamp>
+The encoder has not reported any errors.
+Lokales Relay
+Primary · priority 0 · Not set up yet
+No RTMP URL configured · Stream key stored here
+Recovery: Not set up yet
+Configure a valid RTMP URL and stream key before this output can join the live destination group.
+Primary Twitch Output
+Primary · priority 0 · Ready · in use
+/tmp/stream-output · Stream key set in the server configuration
+Primary RTMP destination for the broadcast runtime.
+Recovery: In use
+Output is currently carrying the live broadcast.
+Backup RTMP Output
+Backup · priority 10 · Not set up yet
+No RTMP URL configured · Stream key missing
+Backup RTMP destination used when the primary output is unavailable or disabled.
+Recovery: Not set up yet
+Configure a valid RTMP URL and stream key before this output can join the live destination group.
+SCENES
+What the overlay shows
+Replay stream · Stream247
+Always on air
+Preset Replay Lower Third · glass surface · bottom anchor · balanced scale
+Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
+Asset Replay Lower Third · Insert Bumper Board · Standby Standby Board · Reconnect Reconnect Board
+Accent #0e6d5a · Brand badge none · Next visible yes · Clock yes
+Current category yes · Source label yes
+Active scene Replay Lower Third · layers Brand Chip → Hero Card → Next Card → Schedule Teaser → Clock
+Hidden layers none
+Open overlay studio
+INCIDENTS
+Open problems
+No open incidents
+The live system currently reports no unresolved incidents.
+WORKER
+Behind the scenes
+missing
+No worker heartbeat has been recorded yet.
+Last run: never

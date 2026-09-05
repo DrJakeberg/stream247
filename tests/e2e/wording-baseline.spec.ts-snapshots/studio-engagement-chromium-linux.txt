@@ -1,0 +1,162 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+<runtime>
+<runtime>
+CURRENT
+<runtime>
+<runtime>
+NEXT
+<runtime>
+<runtime>
+DESTINATION
+<runtime>
+<runtime>
+INCIDENTS
+<runtime>
+<runtime>
+UPDATES
+<runtime>
+<runtime>
+Scene
+Engagement
+Output
+Engagement
+Manage in-stream engagement from one tab.
+Control the live chat rail, Twitch alert types, and the chatter-participation game that all render through the same on-air overlay.
+CHAT AND ALERTS
+Engagement controls
+CHAT OVERLAY
+Configure the on-stream Twitch chat rail that renders inside the on-air overlay. The chat connection itself stays up for moderator check-ins, votes and the chat game whether or not the rail is shown.
+Enable chat overlay
+i
+CHAT POSITION
+i
+Bottom left
+Bottom right
+Top left
+Top right
+MAX CHAT MESSAGES
+i
+RATE LIMIT PER MINUTE
+i
+ALERT TYPES
+Follow, subscription, cheer, and channel-point alerts all render through the same internal overlay path.
+Enable follow and subscription alerts
+i
+Enable bits / cheer alerts
+i
+Enable channel point redemption alerts
+i
+These switches are still gated by the chat and alert feature switches in the admin settings, which fall back to the deployment environment when left on their default.
+Bits and channel point alerts also require one Twitch reconnect after M32 so the broadcaster token includes the new scopes.
+CHATTER-PARTICIPATION GAME
+The game shares the Twitch IRC runtime with the chat rail. Keep the chat feature switch on and chat enabled when you want the mode selector to stay live.
+Enable chatter-participation game
+i
+ACTIVE CHATTER WINDOW (MINUTES)
+i
+Solo mode
+i
+Small-group mode
+i
+Crowd mode
+i
+MODE AUTOMATION
+i
+Solo handles one chatter, Small-group handles 2-9, Crowd takes over at 10+. Switching lags slightly behind the numbers on purpose, so a mode does not flicker while people join and leave.
+Disable any mode you do not want auto-selected. If chat goes quiet or every mode is disabled, the game widget stays off-air.
+Save engagement settings
+LIVE STATUS
+Runtime state
+Chat overlay
+Disabled by settings or by the chat feature switch in the admin settings.
+Follow/sub alerts
+Disabled by settings or by the alerts feature switch in the admin settings.
+Bits / cheer alerts
+Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect.
+Channel point alerts
+Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect.
+Recent engagement events
+No recent chat or alert events.
+Game mode
+Disabled by settings, disabled chat runtime, or no active chatters in the current window.
+Twitch reconnect note
+Broadcasters connected before M32 must reconnect Twitch once so bits and channel point alert scopes are granted.
+CHAT STEERS THE PROGRAMME
+Viewer control
+Disabled. Chat cannot influence the running order.
+VIEWER CONTROL
+Lets Twitch chat steer the programme. A vote can only reorder what is already queued, so chat influences the running order without bypassing your schedule.
+Enable viewer control
+i
+VOTE ON WHAT PLAYS NEXT
+A poll opens once per item and closes before the boundary, so viewers see the result before it takes effect. A tie leaves the schedule untouched rather than picking for them.
+Enable voting
+i
+POLL DURATION (SECONDS)
+i
+CANDIDATES
+i
+MINIMUM VOTERS TO HONOUR A RESULT
+i
+REQUESTS
+Viewers add a ready library item to the end of the queue. Only items the library has released are eligible.
+Enable requests
+i
+COMMAND
+i
+COOLDOWN PER VIEWER (SECONDS)
+i
+MAXIMUM VIEWER REQUESTS IN THE QUEUE
+i
+SKIP VOTE
+Needs both a share of active chatters and an absolute floor, so a quiet channel cannot be skipped by a handful of people. A skipped item is held back the same way an operator skip holds it.
+Enable skip votes
+i
+COMMAND
+i
+SHARE OF ACTIVE CHATTERS (%)
+i
+MINIMUM VOTES
+i
+COLLECTION WINDOW (SECONDS)
+i
+Save viewer control
+CHAT PLAYS ON AIR
+Chat game
+No scene has an enabled Chat Game layer yet. A moderator typing !snake, !minesweeper, or !2048 in chat adds and enables one; !game answers with the list, and !game stop takes the board off air.
+The game reads its emotes through the same Twitch IRC runtime as the chat rail, which is currently disabled. Enable chat in the engagement controls and turn on the chat feature switch in the admin settings so inputs can arrive; the on-screen chat rail itself can stay hidden.
+CHAT GAME
+The game moves only when chat sends the mapped emotes — one accepted message, one move. It appears on air wherever a scene has an enabled Chat Game layer, which a moderator can add from chat with !snake, !minesweeper, or !2048 without opening Scene Studio.
+GAME
+i
+Snake
+Minesweeper
+2048
+Chat steers a snake across a grid, one cell per emote. Food grows it, walls and its own body end the round.
+GRID WIDTH (CELLS)
+i
+GRID HEIGHT (CELLS)
+i
+EMOTE CONTROLS
+One emote per direction, exactly as chat would type it. Four distinct values are required; changing them mid-round starts a fresh round under the new controls.
+UP EMOTE
+i
+DOWN EMOTE
+i
+LEFT EMOTE
+i
+RIGHT EMOTE
+i
+Save chat game settings

@@ -12,10 +12,15 @@ import {
 } from "@stream247/core";
 import type { AppState } from "@stream247/db";
 import {
+  CHAT_LOGIN_REJECTED_COOLDOWN_MS,
   createChatRateLimiter,
   createRingBuffer,
+  describeChatConnectionPhase,
+  isChatLoginRejectedCoolingDown,
+  isTwitchLoginFailureNotice,
   parseModeratorPresenceWindowFromChatMessage,
   parseTwitchIrcMessage,
+  parseTwitchIrcNotice,
   TwitchChatBridge
 } from "../../apps/worker/src/twitch-engagement";
 import { syncTwitchEventSubSubscriptions } from "../../apps/worker/src/twitch-eventsub";
@@ -47,7 +52,9 @@ vi.mock("@/lib/server/state", () => ({
 
 vi.mock("@/lib/server/sse", async () => vi.importActual("../../apps/web/lib/server/sse"));
 
-import { GET, POST } from "../../apps/web/app/api/overlay/events/route";
+import * as overlayEventsRoute from "../../apps/web/app/api/overlay/events/route";
+
+const { POST } = overlayEventsRoute;
 
 const envKeys = ["NODE_ENV", "APP_URL", "STREAM_ALERTS_ENABLED", "STREAM_CHAT_OVERLAY_ENABLED", "TWITCH_EVENTSUB_SECRET"] as const;
 const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
@@ -178,8 +185,12 @@ describe("engagement layer helpers", () => {
     expect(message).toEqual({
       id: "chat-1",
       actor: "Test Viewer",
+      login: "testviewer",
       message: "Hello chat",
-      isModerator: false
+      isModerator: false,
+      // No emotes tag on this line, and none in the text: the emote ranges come from the tag, so
+      // a message without one carries an empty list rather than a guess at what "Kappa" meant.
+      emotes: []
     });
   });
 
@@ -188,6 +199,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-1",
         actor: "Moderator",
+        login: "moderator",
         message: "!here 45",
         isModerator: true
       },
@@ -210,6 +222,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-2",
         actor: "Moderator",
+        login: "moderator",
         message: "!checkin 45",
         isModerator: true
       },
@@ -228,6 +241,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-3",
         actor: "Moderator",
+        login: "moderator",
         message: "here 30",
         isModerator: true
       },
@@ -246,6 +260,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-4",
         actor: "Moderator",
+        login: "moderator",
         message: "here",
         isModerator: true
       },
@@ -258,7 +273,7 @@ describe("engagement layer helpers", () => {
     expect(window?.clampReason).toBe("default");
   });
 
-  it("clamps low moderator requests and formats the reply for chat", () => {
+  it("clamps low moderator requests and formats the reply for chat", async () => {
     const write = vi.fn();
     const onModeratorPresenceCheckIn = vi.fn();
     const bridge = new TwitchChatBridge({ onModeratorPresenceCheckIn });
@@ -276,6 +291,8 @@ describe("engagement layer helpers", () => {
       "@badge-info=;badges=moderator/1;display-name=Mod;id=chat-1;mod=1 :mod!mod@mod.tmi.twitch.tv PRIVMSG #stream247 :!here 5\r\n"
     );
 
+    // The confirmation follows the persisted write (finding [11]); it lands on the next turn.
+    await new Promise((resolve) => setImmediate(resolve));
     expect(write).toHaveBeenCalledWith("PRIVMSG #stream247 :received !here 5, minimum is 10; window set to 10 min\r\n");
     expect(onModeratorPresenceCheckIn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -292,6 +309,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-6",
         actor: "Moderator",
+        login: "moderator",
         message: "!here 9999",
         isModerator: true
       },
@@ -805,13 +823,35 @@ describe("engagement EventSub and SSE routes", () => {
   });
 
   it("returns the EventSub challenge after signature verification", async () => {
+    // Since M56 the challenge path DOES read state before verifying: the shared secret may live
+    // only in managed config, so verification cannot answer from env alone any more.
     const body = JSON.stringify({ challenge: "challenge-token" });
 
     const response = await POST(signedEventSubRequest(body, "eventsub-secret", { "twitch-eventsub-message-type": "webhook_callback_verification" }));
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("challenge-token");
-    expect(mockReadAppState).not.toHaveBeenCalled();
+  });
+
+  it("verifies signatures against the managed EventSub secret when env has none (M56)", async () => {
+    delete process.env.TWITCH_EVENTSUB_SECRET;
+    mockReadAppState.mockResolvedValue({
+      engagement: baseEngagement({ alertsEnabled: true }),
+      engagementEvents: [],
+      managedConfig: { twitchEventsubSecret: "managed-eventsub-secret" }
+    });
+    const body = JSON.stringify({ challenge: "challenge-token" });
+
+    const wrongSecret = await POST(
+      signedEventSubRequest(body, "eventsub-secret", { "twitch-eventsub-message-type": "webhook_callback_verification" })
+    );
+    expect(wrongSecret.status).toBe(403);
+
+    const managedSecret = await POST(
+      signedEventSubRequest(body, "managed-eventsub-secret", { "twitch-eventsub-message-type": "webhook_callback_verification" })
+    );
+    expect(managedSecret.status).toBe(200);
+    expect(await managedSecret.text()).toBe("challenge-token");
   });
 
   it("rejects invalid EventSub signatures in production", async () => {
@@ -869,40 +909,133 @@ describe("engagement EventSub and SSE routes", () => {
     expect(mockAppendEngagementEventRecord).not.toHaveBeenCalled();
   });
 
-  it("streams the current engagement snapshot over SSE", async () => {
-    const engagement = {
-      settings: {
-        chatEnabled: true,
-        alertsEnabled: true,
-        donationsEnabled: true,
-        channelPointsEnabled: true,
-        chatRuntimeEnabled: true,
-        alertsRuntimeEnabled: true,
-        donationsRuntimeEnabled: true,
-        channelPointsRuntimeEnabled: true,
-        chatMode: "active",
-        chatPosition: "bottom-left",
-        alertPosition: "top-right",
-        style: "compact",
-        maxMessages: 5,
-        rateLimitPerMinute: 30,
-        updatedAt: ""
-      },
-      chatStatus: "connected",
-      recentEvents: []
-    };
-    mockGetBroadcastSnapshot.mockReturnValue({ engagement });
-    const abortController = new AbortController();
+  it("answers GET with a method error: the SSE feed left with the browser overlay", () => {
+    // The only reader of the engagement stream was the browser overlay page, and that page is gone:
+    // the on-air picture is drawn by the playout renderer, and the studio preview is the same
+    // drawing. Next answers a missing method export with 405, so the module must not export GET.
+    // POST stays: Twitch has this URL registered as its EventSub callback.
+    expect("GET" in overlayEventsRoute).toBe(false);
+    expect(typeof overlayEventsRoute.POST).toBe("function");
+  });
+});
 
-    const response = await GET(new Request("http://localhost/api/overlay/events", { signal: abortController.signal }));
-    const reader = response.body?.getReader();
-    const chunk = await reader?.read();
-    abortController.abort();
-    await reader?.cancel().catch(() => undefined);
-    const text = new TextDecoder().decode(chunk?.value);
+describe("twitch chat login handling", () => {
+  function chatBridgeState(overrides: { accessToken?: string } = {}): AppState {
+    return {
+      engagement: baseEngagement({ chatEnabled: true }),
+      moderation: createDefaultModerationConfig(),
+      managedConfig: { twitchBroadcastChannelLogin: "jimpanse247" },
+      twitch: {
+        status: "connected",
+        broadcasterLogin: "3jakec",
+        accessToken: overrides.accessToken ?? "identity-token"
+      }
+    } as unknown as AppState;
+  }
 
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
-    expect(text).toContain("event: engagement");
-    expect(text).toContain(JSON.stringify(engagement));
+  it("answers a server PING with a PONG carrying the same token", () => {
+    const write = vi.fn();
+    const bridge = new TwitchChatBridge();
+    bridge["socket"] = { write, destroyed: false } as never;
+
+    bridge["handleChunk"]("PING :tmi.twitch.tv\r\n");
+
+    expect(write).toHaveBeenCalledWith("PONG :tmi.twitch.tv\r\n");
+  });
+
+  it("reads the NOTICE Twitch sends when the login is refused", () => {
+    expect(parseTwitchIrcNotice(":tmi.twitch.tv NOTICE * :Login unsuccessful")).toEqual({
+      target: "*",
+      message: "Login unsuccessful"
+    });
+    expect(parseTwitchIrcNotice(":tmi.twitch.tv NOTICE #room :Now hosting")).toEqual({
+      target: "#room",
+      message: "Now hosting"
+    });
+    expect(parseTwitchIrcNotice(":tmi.twitch.tv 001 3jakec :Welcome, GLHF!")).toBeNull();
+  });
+
+  it("recognises every login refusal Twitch words differently", () => {
+    expect(isTwitchLoginFailureNotice("Login unsuccessful")).toBe(true);
+    expect(isTwitchLoginFailureNotice("Login authentication failed")).toBe(true);
+    expect(isTwitchLoginFailureNotice("Improperly formatted auth")).toBe(true);
+    expect(isTwitchLoginFailureNotice("Invalid NICK")).toBe(true);
+    expect(isTwitchLoginFailureNotice("Now hosting someone")).toBe(false);
+  });
+
+  it("treats a refused login as rejected rather than connected", () => {
+    const destroy = vi.fn();
+    const phases: string[] = [];
+    const bridge = new TwitchChatBridge({ onConnectionPhaseChanged: (phase) => phases.push(phase) });
+    bridge["socket"] = { write: vi.fn(), destroyed: false, destroy } as never;
+
+    bridge["handleChunk"](":tmi.twitch.tv NOTICE * :Login unsuccessful\r\n");
+
+    expect(bridge.getConnectionPhase()).toBe("login-rejected");
+    expect(phases).toContain("login-rejected");
+    expect(destroy).toHaveBeenCalled();
+  });
+
+  it("only reports connected once Twitch acknowledges the login", () => {
+    const bridge = new TwitchChatBridge();
+    bridge["socket"] = { write: vi.fn(), destroyed: false } as never;
+    expect(bridge.getConnectionPhase()).not.toBe("connected");
+
+    bridge["handleChunk"](":tmi.twitch.tv 001 3jakec :Welcome, GLHF!\r\n");
+
+    expect(bridge.getConnectionPhase()).toBe("connected");
+  });
+
+  it("holds a refused login in cooldown instead of retrying every cycle", () => {
+    expect(isChatLoginRejectedCoolingDown({ rejectedAt: 1_000, now: 1_000 + 15_000 })).toBe(true);
+    expect(
+      isChatLoginRejectedCoolingDown({ rejectedAt: 1_000, now: 1_000 + CHAT_LOGIN_REJECTED_COOLDOWN_MS + 1 })
+    ).toBe(false);
+    expect(isChatLoginRejectedCoolingDown({ rejectedAt: null, now: 5_000 })).toBe(false);
+  });
+
+  it("does not reconnect while the refused login is cooling down", async () => {
+    const bridge = new TwitchChatBridge();
+    bridge["loginRejectedAt"] = Date.now();
+    bridge["loginRejectedToken"] = "identity-token";
+
+    await bridge.sync(chatBridgeState(), { STREAM_CHAT_OVERLAY_ENABLED: "1" } as NodeJS.ProcessEnv);
+
+    expect(bridge["socket"]).toBeNull();
+    expect(bridge.getConnectionPhase()).toBe("login-rejected");
+  });
+
+  it("retries at once when the operator reconnects and the token changes", () => {
+    const bridge = new TwitchChatBridge();
+    bridge["loginRejectedAt"] = Date.now();
+    bridge["loginRejectedToken"] = "old-token";
+
+    expect(bridge["isLoginCoolingDown"]("old-token")).toBe(true);
+    expect(bridge["isLoginCoolingDown"]("fresh-token")).toBe(false);
+  });
+
+  it("clears a refusal when chat is switched off, so the incident cannot outlive it", async () => {
+    const bridge = new TwitchChatBridge();
+    bridge["loginRejectedAt"] = Date.now();
+    bridge["loginRejectedToken"] = "identity-token";
+    bridge["phase"] = "login-rejected";
+
+    // "Switched off" means every consumer: since finding [7] the rail alone no longer decides —
+    // moderator check-ins keep the connection up — so the moderation policy is off here too.
+    await bridge.sync(
+      { ...chatBridgeState(), moderation: { ...createDefaultModerationConfig(), enabled: false } },
+      {} as NodeJS.ProcessEnv
+    );
+
+    expect(bridge.getConnectionPhase()).toBe("idle");
+    expect(bridge["isLoginCoolingDown"]("identity-token")).toBe(false);
+  });
+
+  it("puts the connection state into words the operator can act on", () => {
+    expect(describeChatConnectionPhase("connected")).toBe("Chat connected");
+    expect(describeChatConnectionPhase("login-rejected")).toBe(
+      "Chat login refused by Twitch — reconnect the Twitch account to grant chat access"
+    );
+    expect(describeChatConnectionPhase("waiting")).toBe("Chat waiting before the next login attempt");
   });
 });

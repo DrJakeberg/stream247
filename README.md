@@ -4,7 +4,7 @@ Stream247 is a self-hosted platform for running a Twitch-first 24/7 channel from
 
 It ships as Docker / Docker Compose, publishes images through GitHub Actions and GHCR, and gives operators a browser-based admin UI for scheduling, playout control, Twitch sync, moderation policy, and incident handling.
 
-The `/overlay` route is internal output for Stream247's own 24/7 broadcast pipeline. It is not a standalone overlay product or a reusable embed surface.
+There is no standalone overlay page. The on-air overlay is drawn by the playout worker's own renderer from the published scene, and the studio preview is the same drawing. Stream247 is not an overlay product or a reusable embed surface.
 
 ## License Model
 
@@ -112,15 +112,14 @@ are not retroactively revoked.
   - explicit import warnings when referenced media is not present locally
 - viewer-facing pages with:
   - public schedule page
-  - the internal `/overlay` route used by Stream247's own in-stream scene and overlay pipeline
-- one canonical Scene payload shared across overlay capture, scene APIs, and playout overlay consumers
-  - on-air scene renderer v1 that captures the published browser scene into the FFmpeg playout path with safe text-overlay fallback
+- one canonical Scene payload shared across the studio preview, scene APIs, and the playout renderer
+  - on-air scene renderer that draws the published scene natively into the FFmpeg playout path, with a text-overlay fallback; the studio preview is the same drawing
   - overlay studio with draft-save, reusable scene preset library, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, built-in typography presets, conservative local font-stack overrides, positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, and publish-live scene controls
   - admin-managed replay branding, scene presets, and ticker/badge styling
 
 ## What Is Not Done Yet
 
-- Scene now supports positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, built-in typography presets, and conservative local font-stack overrides, but deeper remote-widget compatibility still depends on CSP / iframe rules and broader cloud-style composition remains partial.
+- Scene supports positioned text/logo/image/video-source layers, built-in typography presets, and conservative local font-stack overrides. Website-embed and widget layers were removed from the studio in M60: the on-air renderer cannot draw an external page and there is no separate browser overlay, so they never reached the picture. Broader cloud-style composition remains partial.
 - richer multi-scene composition inside the playout runtime beyond the current scene-presets + draft/publish workflow
 - more advanced playout transitions, stronger continuity semantics, and less restart-heavy normal switchovers beyond the current staged output recovery model
 - deeper per-output platform guidance and recovery automation beyond the current failure attribution, cooldown visibility, and staged recovery controls
@@ -131,6 +130,9 @@ are not retroactively revoked.
 - deeper cross-install media remapping automation and richer reusable programming packages beyond the current curated-set and selective-blueprint workflows
 
 ## Quick Start
+
+The one-page path from an empty host to a green channel, with the traps where they bite, is
+[`docs/getting-started.md`](docs/getting-started.md). The steps below are the short form.
 
 1. Copy `.env.example` to `.env`.
 2. Set:
@@ -237,10 +239,8 @@ docker compose --profile proxy up -d
 - `DESTINATION_FAILURE_COOLDOWN_SECONDS`: how long a failed destination stays on hold before the worker will retry it automatically
 - `PLAYOUT_RECONNECT_HOURS`: interval for planned Twitch/output reconnect windows; defaults to `48`
 - `PLAYOUT_RECONNECT_SECONDS`: duration of the planned reconnect standby window; defaults to `20`
-- `SCENE_RENDER_BASE_URL`: optional internal base URL that the worker should use when capturing published Scene overlays for on-air rendering; defaults to `INTERNAL_APP_URL`, then `APP_URL`, then `http://web:3000`
-- `SCENE_RENDERER_ENABLED`: set to `0` to keep production on the text overlay path when Chromium capture is unstable
-- `SCENE_RENDER_INTERVAL_MS`: how often the worker refreshes captured on-air scene frames; defaults to `2000`
-- `SCENE_RENDER_CHROMIUM_PATH`: optional explicit Chromium binary path for the on-air scene renderer
+- `SCENE_RENDERER_ENABLED`: set to `0` to keep production on the text overlay path when the scene renderer is unstable
+- `SCENE_RENDER_INTERVAL_MS`: how often the worker redraws the on-air scene frame; defaults to `2000`
 - `CHANNEL_TIMEZONE`: schedule timezone, for example `Europe/Berlin`
 - `DISCORD_WEBHOOK_URL`: Discord alert target
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL_TO`: email alerting
@@ -347,7 +347,6 @@ Important:
 - optional built-in Traefik profile for HTTPS and Let's Encrypt
 - persistent storage for:
   - PostgreSQL
-  - Redis
   - `data/media`
 
 See [docs/deployment.md](docs/deployment.md) for the deployment-focused guide.
@@ -525,7 +524,7 @@ Notes:
 ### Overlay And Viewer Pages
 
 - public schedule page at `/channel`
-- internal overlay route at `/overlay`
+- on-air overlay drawn by the playout renderer; the studio preview is the same drawing
 - `Scene` in the Studio workspace
 - configurable replay label, channel name, headline, accent color, emergency banner, and now/next teaser toggles
 
@@ -542,7 +541,7 @@ Notes:
 1. Copy `.env.example` to `.env`.
 2. Start dependencies:
    ```bash
-   docker compose up -d postgres redis
+   docker compose up -d postgres
    ```
 3. Install dependencies:
    ```bash
@@ -623,7 +622,6 @@ Current validation covers:
 - `apps/web`: Next.js admin UI, public pages, and API routes
 - `apps/worker`: background ingestion, reconciliation, and playout logic
 - `packages/core`: scheduling and moderation domain logic
-- `packages/config`: runtime config helpers
 - `packages/db`: PostgreSQL-backed application state layer
 - `docs`: architecture, deployment, and Twitch setup docs
 - `.github`: CI, release, issues, and PR templates

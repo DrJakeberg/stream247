@@ -1,6 +1,10 @@
 import { promises as fs } from "node:fs";
+import { resolveVodDownloadTimeoutMs } from "./vod-download-timeout.js";
 import path from "node:path";
+import { normalizeVodCacheLimitRate, resolveVodCacheTuning, type ManagedVodCacheInput } from "@stream247/core";
 import type { AssetRecord } from "@stream247/db";
+import { clampToCycleAwaitCeiling } from "./cycle-budget.js";
+import { DEFAULT_LOCK_STALE_MS, acquireFileLock, type FileLock } from "./file-lock.js";
 import { execFileText } from "./process-utils.js";
 
 export const INTERNAL_MEDIA_CACHE_DIRNAME = ".stream247-cache";
@@ -12,12 +16,39 @@ export type TwitchVodCacheConfig = {
   cacheRoot: string;
   ytDlpBinary: string;
   ffprobeBinary: string;
+  /**
+   * Timeout for a download awaited inside a reconciliation cycle. Clamped to the cycle-await
+   * ceiling so a long configured timeout can never outlive the loop stall guard.
+   */
   downloadTimeoutMs: number;
+  /**
+   * Timeout for a download run as a detached background job, where nothing is waiting on it.
+   * This is the operator-configured value, unclamped.
+   */
+  backgroundDownloadTimeoutMs: number;
+  /** True when the configured download timeout was unsafe for cycle use and had to be reduced. */
+  downloadTimeoutClamped: boolean;
   retentionMs: number;
   partialMaxAgeMs: number;
   maxCacheBytes: number;
   minFreeBytes: number;
   failureCooldownMs: number;
+  /**
+   * Size above which a VOD is not cached at all.
+   *
+   * Downloading something larger than the cache can hold is pure waste: it saturates the line for
+   * as long as it runs and is then evicted, so it never becomes a local file and the next attempt
+   * starts over. Past this size the channel plays the VOD from Twitch directly.
+   */
+  maxAssetBytes: number;
+  /**
+   * Bandwidth ceiling handed to yt-dlp, in yt-dlp's own notation (e.g. "8M"), or "" for unlimited.
+   *
+   * A background job left unbounded takes the whole line: this cache was measured pulling
+   * 145 Mbit/s on a host whose job is to push a live stream out. Capping it keeps caching a
+   * background activity rather than something that competes with playout for the uplink.
+   */
+  limitRate: string;
 };
 
 export type TwitchVodCacheResult =
@@ -32,40 +63,106 @@ export type TwitchVodCacheResult =
       cachePath: string;
       cacheUpdatedAt: string;
       cacheError: string;
+    }
+  | {
+      /**
+       * The VOD is bigger than a single cache entry may be, so it is played straight from Twitch
+       * instead. Distinct from "failed" on purpose: nothing went wrong and retrying cannot help, so
+       * the caller must not put the asset into a failure cooldown and try again later.
+       */
+      status: "too-large";
+      cachePath: string;
+      cacheUpdatedAt: string;
+      cacheError: string;
+      sizeBytes: number;
     };
 
 type ExecText = typeof execFileText;
 
-const DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 2 * 60;
-const DEFAULT_RETENTION_HOURS = 72;
-const DEFAULT_PARTIAL_MAX_AGE_HOURS = 6;
-const DEFAULT_MAX_CACHE_BYTES = 20 * 1024 * 1024 * 1024;
-const DEFAULT_MIN_FREE_BYTES = 15 * 1024 * 1024 * 1024;
-const DEFAULT_FAILURE_COOLDOWN_SECONDS = 30 * 60;
+/** The probe only reads a manifest; anything slower than this is a hung network call. */
+const PROBE_TIMEOUT_MS = 30_000;
 
-function readPositiveNumber(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-export function getTwitchVodCacheConfig(env: NodeJS.ProcessEnv, mediaRoot: string): TwitchVodCacheConfig {
+/**
+ * M56 part 2: the tuning numbers resolve through the shared core resolver — managed value first,
+ * env second, built-in default last — so the settings page and this worker can never disagree
+ * about what is in effect. Only the pieces that are genuinely infrastructure stay env-only here:
+ * the cache root (a mount point) and the tool binaries.
+ */
+export function getTwitchVodCacheConfig(
+  env: NodeJS.ProcessEnv,
+  mediaRoot: string,
+  managed?: ManagedVodCacheInput
+): TwitchVodCacheConfig {
+  const tuning = resolveVodCacheTuning(managed ?? null, env);
   const cacheRoot = env.TWITCH_VOD_CACHE_ROOT || path.join(mediaRoot, INTERNAL_MEDIA_CACHE_DIRNAME, "twitch");
+  const configuredDownloadTimeoutMs = tuning.downloadTimeoutSeconds * 1000;
+  // The cycle-budget invariant is applied AFTER managed resolution on purpose: however the
+  // timeout was configured — env or GUI — an awaited download must never outlive the loop stall
+  // guard. Only the detached background job honours the configured value in full.
+  const awaitedDownloadTimeout = clampToCycleAwaitCeiling(configuredDownloadTimeoutMs, env);
   return {
-    enabled: env.TWITCH_VOD_CACHE_ENABLED !== "0",
-    allowRemoteFallback: env.TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK === "1",
+    enabled: tuning.enabled,
+    allowRemoteFallback: tuning.allowRemoteFallback,
     mediaRoot,
     cacheRoot,
     ytDlpBinary: env.YT_DLP_BIN || "yt-dlp",
     ffprobeBinary: env.FFPROBE_BIN || "ffprobe",
-    downloadTimeoutMs: readPositiveNumber(env.TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS, DEFAULT_DOWNLOAD_TIMEOUT_SECONDS) * 1000,
-    retentionMs: readPositiveNumber(env.TWITCH_VOD_CACHE_RETENTION_HOURS, DEFAULT_RETENTION_HOURS) * 60 * 60 * 1000,
-    partialMaxAgeMs:
-      readPositiveNumber(env.TWITCH_VOD_CACHE_PARTIAL_MAX_AGE_HOURS, DEFAULT_PARTIAL_MAX_AGE_HOURS) * 60 * 60 * 1000,
-    maxCacheBytes: readPositiveNumber(env.TWITCH_VOD_CACHE_MAX_BYTES, DEFAULT_MAX_CACHE_BYTES),
-    minFreeBytes: readPositiveNumber(env.TWITCH_VOD_CACHE_MIN_FREE_BYTES, DEFAULT_MIN_FREE_BYTES),
-    failureCooldownMs:
-      readPositiveNumber(env.TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS, DEFAULT_FAILURE_COOLDOWN_SECONDS) * 1000
+    downloadTimeoutMs: awaitedDownloadTimeout.effectiveMs,
+    backgroundDownloadTimeoutMs: configuredDownloadTimeoutMs,
+    downloadTimeoutClamped: awaitedDownloadTimeout.clamped,
+    retentionMs: tuning.retentionHours * 60 * 60 * 1000,
+    partialMaxAgeMs: tuning.partialMaxAgeHours * 60 * 60 * 1000,
+    maxCacheBytes: tuning.maxCacheBytes,
+    minFreeBytes: tuning.minFreeBytes,
+    failureCooldownMs: tuning.failureCooldownSeconds * 1000,
+    maxAssetBytes: tuning.maxAssetBytes,
+    limitRate: tuning.limitRate
   };
+}
+
+/**
+ * Accepts yt-dlp's rate notation (a number with an optional K/M/G suffix) and rejects anything else
+ * rather than passing it through, since a malformed value would make yt-dlp exit and turn a
+ * throttling setting into a cache that never downloads. "0" and "" both mean unlimited.
+ * Delegates to the shared core rule so the settings form validates exactly what runs.
+ */
+export function normalizeLimitRate(value: string | undefined): string {
+  return normalizeVodCacheLimitRate(value);
+}
+
+/**
+ * Reads a download size out of yt-dlp's `--print` output.
+ *
+ * Twitch never reports one directly: both `filesize` and `filesize_approx` come back as "NA" for
+ * its HLS VODs, on every yt-dlp version tried. What is available is the bitrate and the duration,
+ * which pin the size closely enough for a 20GB decision — a 48000-second VOD at 6499kbit/s is
+ * unambiguously above the limit however the estimate rounds.
+ *
+ * Each selected format prints one line, so a merged video+audio selection yields two that add up.
+ * Returns 0 when a line offers neither a size nor both of its parts, which callers must read as "no
+ * answer" rather than "empty": refusing to cache on a missing answer would disable caching outright.
+ */
+export function parseVodSizeBytes(output: string): number {
+  let total = 0;
+
+  for (const line of String(output ?? "").split("\n")) {
+    const [rawSize, rawBitrateKbps, rawDurationSeconds] = line.trim().split("|");
+
+    const size = Number(rawSize);
+    if (Number.isFinite(size) && size > 0) {
+      total += size;
+      continue;
+    }
+
+    // tbr is kilobits per second; 1000/8 converts to bytes per second.
+    const bitrateKbps = Number(rawBitrateKbps);
+    const durationSeconds = Number(rawDurationSeconds);
+    if (Number.isFinite(bitrateKbps) && bitrateKbps > 0 && Number.isFinite(durationSeconds) && durationSeconds > 0) {
+      total += Math.round(bitrateKbps * 125 * durationSeconds);
+    }
+  }
+
+  return total;
 }
 
 export function isInternalMediaCachePath(filePath: string, mediaRoot: string): boolean {
@@ -109,11 +206,48 @@ export function buildTwitchVodCachePath(asset: Pick<AssetRecord, "sourceId" | "e
   return path.join(cacheRoot, sourceSegment, `${idSegment}.mp4`);
 }
 
+/**
+ * Read-only cache lookup. Does no network work and starts no download, so it is always safe to
+ * await on a reconciliation cycle. Returns "ready" only when a complete, usable cache file exists.
+ */
+export async function peekTwitchVodCache(
+  asset: Pick<AssetRecord, "sourceId" | "externalId" | "path" | "cachePath">,
+  config: TwitchVodCacheConfig
+): Promise<TwitchVodCacheResult> {
+  const cachePath = asset.cachePath || buildTwitchVodCachePath(asset, config.cacheRoot);
+  const cacheUpdatedAt = new Date().toISOString();
+
+  if (await hasUsableFile(cachePath)) {
+    return { status: "ready", cachePath, cacheUpdatedAt, cacheError: "" };
+  }
+
+  return {
+    status: "missing",
+    cachePath,
+    cacheUpdatedAt,
+    cacheError: config.enabled ? "Twitch VOD is not cached yet." : "Twitch VOD cache is disabled."
+  };
+}
+
+export type TwitchVodCacheMode =
+  /** Awaited inside a reconciliation cycle: bounded by the clamped cycle-await timeout. */
+  | "cycle"
+  /** Detached background job: nothing waits on it, so the full configured timeout applies. */
+  | "background";
+
 export async function ensureTwitchVodCache(
   asset: AssetRecord,
   config: TwitchVodCacheConfig,
-  execText: ExecText = execFileText
+  execText: ExecText = execFileText,
+  options: { mode?: TwitchVodCacheMode } = {}
 ): Promise<TwitchVodCacheResult> {
+  const mode: TwitchVodCacheMode = options.mode ?? "cycle";
+  // Background downloads get at least the content's running time (M62); the awaited cycle path keeps
+  // its clamp — it must never outlive the loop's stall guard.
+  const downloadTimeoutMs =
+    mode === "background"
+      ? resolveVodDownloadTimeoutMs({ configuredMs: config.backgroundDownloadTimeoutMs, durationSeconds: asset.durationSeconds ?? 0 })
+      : config.downloadTimeoutMs;
   const cachePath = asset.cachePath || buildTwitchVodCachePath(asset, config.cacheRoot);
   const existing = await hasUsableFile(cachePath);
   if (existing) {
@@ -134,10 +268,54 @@ export async function ensureTwitchVodCache(
     };
   }
 
-  const tmpPath = `${cachePath}.part-${String(process.pid)}-${Math.random().toString(36).slice(2)}.mp4`;
+  // A background job owns a stable part path so an interrupted download resumes where it stopped.
+  // A per-attempt random path (still used for the bounded cycle path, where nothing is expected to
+  // survive) meant every playout restart re-downloaded a multi-GB VOD from zero — with the process
+  // restarting every ~5 minutes, the download could never finish no matter how long it ran.
+  const tmpPath =
+    mode === "background"
+      ? `${cachePath}.part-resume.mp4`
+      : `${cachePath}.part-${String(process.pid)}-${Math.random().toString(36).slice(2)}.mp4`;
+
+  // Only one process may own the stable resume path at a time; the worker and playout containers
+  // share the media volume and can both request the same asset.
+  let lock: FileLock | null = null;
+  if (mode === "background") {
+    await fs.mkdir(path.dirname(cachePath), { recursive: true });
+    lock = await acquireFileLock(`${cachePath}.lock`);
+    if (!lock) {
+      return {
+        status: "missing",
+        cachePath,
+        cacheUpdatedAt: new Date().toISOString(),
+        cacheError: "Another Twitch VOD cache job already holds this asset."
+      };
+    }
+  }
+
   try {
     await fs.mkdir(path.dirname(cachePath), { recursive: true });
-    await removeTargetTransientCacheFiles(cachePath);
+    if (mode !== "background") {
+      await removeTargetTransientCacheFiles(cachePath);
+    }
+    // Ask how big it is before spending any bandwidth on it. A VOD larger than one cache entry may
+    // be can never end up as a local file: it would saturate the line for as long as it ran and
+    // then be evicted, so the next attempt would start from zero again. Streaming it from Twitch is
+    // the correct outcome, not a fallback.
+    // The estimate is the only enforcement there is. --max-filesize was tried and removed: yt-dlp
+    // consults it only for progressive HTTP downloads with a known Content-Length, never for the
+    // fragmented HLS every Twitch VOD arrives as -- measured downloading 95MB against a 1MiB cap.
+    const probedSizeBytes = await probeTwitchVodSizeBytes(asset.path, config, execText);
+    if (probedSizeBytes > config.maxAssetBytes) {
+      return {
+        status: "too-large",
+        cachePath,
+        cacheUpdatedAt: new Date().toISOString(),
+        cacheError: `Twitch VOD is ${formatGigabytes(probedSizeBytes)}, above the ${formatGigabytes(config.maxAssetBytes)} cache limit; streaming it directly instead.`,
+        sizeBytes: probedSizeBytes
+      };
+    }
+
     const maintenance = await pruneTwitchVodCache(config, cachePath);
     if (maintenance.freeBytes < config.minFreeBytes) {
       return {
@@ -153,6 +331,8 @@ export async function ensureTwitchVodCache(
       [
         "--no-playlist",
         "--no-warnings",
+        ...(mode === "background" ? ["--continue"] : ["--no-continue"]),
+        ...(config.limitRate ? ["--limit-rate", config.limitRate] : []),
         "--format",
         "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format",
@@ -162,7 +342,7 @@ export async function ensureTwitchVodCache(
         asset.path
       ],
       {
-        timeoutMs: config.downloadTimeoutMs,
+        timeoutMs: downloadTimeoutMs,
         killProcessGroup: true,
         forceKillAfterMs: 5_000,
         maxBufferBytes: 1024 * 1024 * 20
@@ -177,13 +357,62 @@ export async function ensureTwitchVodCache(
       cacheError: ""
     };
   } catch (error) {
-    await fs.rm(tmpPath, { force: true }).catch(() => undefined);
+    // Keep a background job's partial download so the next attempt resumes instead of restarting
+    // from zero. Stale partials are reaped by pruneTwitchVodCache once they exceed partialMaxAgeMs.
+    if (mode !== "background") {
+      await fs.rm(tmpPath, { force: true }).catch(() => undefined);
+    }
     return {
       status: "failed",
       cachePath,
       cacheUpdatedAt: new Date().toISOString(),
       cacheError: error instanceof Error ? error.message : "Unknown Twitch VOD cache failure."
     };
+  } finally {
+    await lock?.release();
+  }
+}
+
+/** Renders a byte count the way the operator-facing messages talk about VOD sizes. */
+export function formatGigabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+}
+
+/**
+ * Asks yt-dlp for the download size without fetching anything.
+ *
+ * Returns 0 when the answer is unavailable, and deliberately swallows probe failures: a broken
+ * probe must not stop a download that would otherwise have succeeded, since --max-filesize still
+ * enforces the same limit during the transfer.
+ */
+async function probeTwitchVodSizeBytes(
+  url: string,
+  config: TwitchVodCacheConfig,
+  execText: ExecText
+): Promise<number> {
+  try {
+    const output = await execText(
+      config.ytDlpBinary,
+      [
+        "--no-playlist",
+        "--no-warnings",
+        "--simulate",
+        "--format",
+        "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "--print",
+        "%(filesize,filesize_approx)s|%(tbr)s|%(duration)s",
+        url
+      ],
+      {
+        timeoutMs: PROBE_TIMEOUT_MS,
+        killProcessGroup: true,
+        forceKillAfterMs: 5_000,
+        maxBufferBytes: 1024 * 64
+      }
+    );
+    return parseVodSizeBytes(output);
+  } catch {
+    return 0;
   }
 }
 
@@ -214,6 +443,130 @@ type CacheFileInfo = {
   transient: boolean;
 };
 
+/**
+ * True when a live download job holds the lock for the cache entry this file belongs to.
+ *
+ * Partial downloads used to be disposable: each attempt wrote a uniquely named part file and the
+ * next attempt started over. Since background jobs resume into a stable part path, a partial is
+ * accumulated work — often tens of gigabytes — and evicting one mid-flight means it can never
+ * finish. With several large VODs queued that is an endless loop: every new job destroys the
+ * previous job's progress, which is the same "never completes" failure the download timeout used
+ * to cause, only moved into the background.
+ *
+ * The lock file the running job maintains (with a heartbeat) is the signal for "someone is working
+ * on this right now"; a stale lock means the holder died and the partial is fair game again.
+ */
+async function isLockedByLiveJob(filePath: string, nowMs: number): Promise<boolean> {
+  // ".../<id>.mp4.part-resume.mp4" and its fragment siblings all belong to ".../<id>.mp4".
+  const marker = filePath.indexOf(".part-resume");
+  if (marker === -1) {
+    return false;
+  }
+
+  const lockPath = `${filePath.slice(0, marker)}.lock`;
+  const stat = await fs.stat(lockPath).catch(() => null);
+  if (!stat?.isFile()) {
+    return false;
+  }
+
+  return nowMs - stat.mtimeMs < DEFAULT_LOCK_STALE_MS;
+}
+
+/**
+ * Deletes cached VODs that are neither playing now nor queued next.
+ *
+ * The retention window and the size cap only free space lazily -- once the cache is already full,
+ * or once a file is old enough. Neither matches how this channel uses the cache: a VOD is watched
+ * once and then has no further purpose, so holding it costs disk for nothing and makes the next
+ * download prune something it should not have to.
+ *
+ * `keepPaths` must name everything that has not been watched yet, not merely what is on air. The
+ * first version passed only the current asset, the runtime queue and the jobs still downloading —
+ * so a VOD fetched ahead of its slot was deleted the instant its download finished, because by then
+ * the playout had moved on and the job was no longer pending. Measured on the production channel:
+ * a 19.1GB download that ran for 52 minutes, removed seconds after it completed.
+ *
+ * Partial downloads are collected separately, by age and by the absence of a live lock.
+ */
+/**
+ * Whether the playout knows enough about what it is doing for an eviction to be safe.
+ *
+ * An empty keep list must never be read as "nothing is in use". The playout deliberately reports no
+ * current asset while reconnecting, while in standby, and on a freshly restarted process whose
+ * probe cache is still cold — all states in which it is about to need exactly the files it would
+ * otherwise be told to delete. Wiping the cache there converts a routine restart into a full
+ * re-download of every scheduled VOD.
+ */
+export function canReleaseVodCache(currentAssetId: string): boolean {
+  return Boolean(currentAssetId);
+}
+
+/**
+ * Names every completed cache file that disk pressure may take: everything on disk except the
+ * entries in `protectedPaths` — the cache paths of assets the schedule or queue still references.
+ *
+ * This inverts the keep-list for the disk watermark monitor. The boundary release names the one
+ * file that just finished playing; under disk pressure the question is the opposite — "what may
+ * go?" — and the answer has to come from a directory walk, because a cache file whose asset record
+ * has been deleted (a removed source, a re-synced library) is referenced by nothing and would
+ * otherwise be invisible to any asset-driven enumeration. Transient files are left out: the
+ * eviction pass collects those by its own age-and-lock rules, and naming them here would bypass
+ * the live-download protection.
+ */
+export async function collectReleasableVodCachePaths(
+  config: TwitchVodCacheConfig,
+  protectedPaths: readonly string[]
+): Promise<string[]> {
+  const protectedResolved = new Set(protectedPaths.filter((entry) => entry).map((entry) => path.resolve(entry)));
+
+  return (await listCacheFiles(config.cacheRoot))
+    .filter((file) => !file.transient)
+    .map((file) => file.filePath)
+    .filter((filePath) => !protectedResolved.has(path.resolve(filePath)));
+}
+
+export async function evictUnusedTwitchVodCache(
+  config: TwitchVodCacheConfig,
+  watchedPaths: readonly string[]
+): Promise<{ removed: string[]; freedBytes: number }> {
+  const watched = new Set(watchedPaths.filter((entry) => entry).map((entry) => path.resolve(entry)));
+  const removed: string[] = [];
+  let freedBytes = 0;
+  const nowMs = Date.now();
+
+  for (const file of await listCacheFiles(config.cacheRoot)) {
+    if (file.filePath.endsWith(".lock")) {
+      continue;
+    }
+
+    if (file.transient) {
+      // Abandoned partials are collected by age and by the absence of a live lock -- the same test
+      // the prune applies. The prune only runs immediately before a download, and once every
+      // scheduled VOD is over the size limit no download ever starts, so nothing else would ever
+      // collect them: 13.8GB measured on the production channel.
+      if (nowMs - file.mtimeMs < config.partialMaxAgeMs || (await isLockedByLiveJob(file.filePath, nowMs))) {
+        continue;
+      }
+    } else if (!watched.has(path.resolve(file.filePath))) {
+      // Named, not inferred. Deleting whatever was not currently in use removed VODs that had been
+      // fetched ahead of their slot and never played -- a 19.1GB download, gone seconds after the
+      // 52 minutes it took to fetch. Only a file whose asset has actually finished playing goes.
+      continue;
+    }
+
+    const deleted = await fs.rm(file.filePath, { force: true }).then(
+      () => true,
+      () => false
+    );
+    if (deleted) {
+      removed.push(file.filePath);
+      freedBytes += file.size;
+    }
+  }
+
+  return { removed, freedBytes };
+}
+
 async function pruneTwitchVodCache(
   config: TwitchVodCacheConfig,
   preservedCachePath: string
@@ -223,6 +576,9 @@ async function pruneTwitchVodCache(
 
   for (const entry of cacheFiles) {
     if (entry.transient && (entry.size === 0 || nowMs - entry.mtimeMs >= config.partialMaxAgeMs)) {
+      if (await isLockedByLiveJob(entry.filePath, nowMs)) {
+        continue;
+      }
       await fs.rm(entry.filePath, { force: true }).catch(() => undefined);
     }
   }
@@ -236,6 +592,10 @@ async function pruneTwitchVodCache(
   for (const entry of cacheEntries.filter((candidate) => candidate.transient)) {
     if (totalCacheBytes <= config.maxCacheBytes && freeBytes >= config.minFreeBytes) {
       break;
+    }
+
+    if (await isLockedByLiveJob(entry.filePath, nowMs)) {
+      continue;
     }
 
     await fs.rm(entry.filePath, { force: true }).catch(() => undefined);
@@ -342,6 +702,7 @@ function isTransientCacheFile(filePath: string): boolean {
     fileName.endsWith(".part") ||
     fileName.endsWith(".tmp") ||
     fileName.endsWith(".ytdl") ||
+    fileName.endsWith(".lock") ||
     fileName.endsWith(".temp.mp4")
   );
 }

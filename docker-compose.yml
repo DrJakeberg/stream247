@@ -1,8 +1,18 @@
+# Applied to every service: without a cap the default json-file driver grows without bound, and a
+# 24/7 worker that logs every ffmpeg stderr line will eventually fill the OS disk — the one
+# partition the media-root disk watermark does not watch.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   traefik:
     image: traefik:v3.4
     profiles: ["proxy"]
     restart: unless-stopped
+    logging: *default-logging
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
@@ -26,14 +36,19 @@ services:
       retries: 5
       start_period: 20s
   web:
-    image: ${STREAM247_WEB_IMAGE:-ghcr.io/drjakeberg/stream247-web:v1.5.17}
+    image: ${STREAM247_WEB_IMAGE:-ghcr.io/drjakeberg/stream247-web:v1.5.20}
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "3000:3000"
     expose:
       - "3000"
+    # Optional since M52: a fresh install can start with no hand-written env file at all — the app
+    # secret generates itself onto the data volume, the bundled Postgres matches the code defaults,
+    # and the /setup wizard covers the rest. A present .env still overrides everything.
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./data/media:/app/data/media
     labels:
@@ -56,13 +71,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
   worker:
-    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.17}
+    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.20}
     restart: unless-stopped
+    logging: *default-logging
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./data/media:/app/data/media
     healthcheck:
@@ -74,19 +89,31 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
   relay:
     image: ${STREAM247_RELAY_IMAGE:-bluenviron/mediamtx:1.15.4}
     restart: unless-stopped
+    logging: *default-logging
+    # M57 stage 2: the relay stops running on image defaults. The mounted config turns on HTTP
+    # auth against the web app, keeps the control API and RTSP read side container-internal, and
+    # the ONLY host ports are the two ingest doors for pushed camera feeds. The API port (9997)
+    # must never be published to the host — it can inject and kick streams.
+    volumes:
+      - ./docker/mediamtx.yml:/mediamtx.yml:ro
     expose:
       - "1935"
+      - "8554"
+      - "9997"
+    ports:
+      - "1935:1935"
+      - "8890:8890/udp"
   playout:
-    image: ${STREAM247_PLAYOUT_IMAGE:-ghcr.io/drjakeberg/stream247-playout:v1.5.17}
+    image: ${STREAM247_PLAYOUT_IMAGE:-ghcr.io/drjakeberg/stream247-playout:v1.5.20}
     restart: unless-stopped
+    logging: *default-logging
     command: ["node", "apps/worker/dist/index.js", "playout"]
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./data/media:/app/data/media
     healthcheck:
@@ -100,14 +127,14 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
   uplink:
-    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.17}
+    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.20}
     restart: unless-stopped
+    logging: *default-logging
     command: ["node", "apps/worker/dist/index.js", "uplink"]
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./data/media:/app/data/media
     healthcheck:
@@ -121,11 +148,10 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-stream247}
       POSTGRES_USER: ${POSTGRES_USER:-stream247}
@@ -138,14 +164,3 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    volumes:
-      - ./data/redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s

@@ -4,14 +4,30 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   applyOverlayScenePresetRecordToDraft,
+  DECLARED_SCHEMA,
   createPoolRecord,
   createScheduleBlocks,
+  createScheduleBlocksChecked,
   deleteOverlayScenePresetRecord,
   ensureDatabase,
   listOverlayScenePresetRecords,
   publishOverlayDraftRecord,
+  appendAuditEvent,
+  appendPresenceWindowRecord,
   readAppState,
+  updateAppState,
+  upsertUserRecord,
+  updatePlayoutRuntime,
+  deleteOverlayVideoSourceRecord,
+  listOverlayVideoSourceRecords,
+  readChatOverlayMessagesRecord,
+  readChatSkipVoteRecord,
   readManagedDestinationStreamKeys,
+  readOverlayVideoSourceIngestCredentials,
+  readOverlayVideoSourceUrls,
+  readRelayInternalKey,
+  readRelayInternalKeyIfPresent,
+  upsertOverlayVideoSourceRecord,
   readOverlayStudioState,
   resetDatabaseConnectionsForTests,
   resetOverlayDraftRecord,
@@ -22,7 +38,15 @@ import {
   updateEngagementSettingsRecord,
   updateOutputSettingsRecord,
   updateSourceFieldRecords,
-  writeAppState
+  upsertIncident,
+  resolveIncident,
+  appendChatViewerRequestRecord,
+  listRecentChatViewerRequests,
+  countQueuedChatViewerRequests,
+  markChatViewerRequestsPlayed,
+  writeAppState,
+  writeChatOverlayMessagesRecord,
+  writeChatSkipVoteRecord
 } from "@stream247/db";
 
 const execFileAsync = promisify(execFile);
@@ -33,6 +57,9 @@ type TestDatabase = {
 };
 
 const persistentProgramFeedRuntimeMigrationId = "20260419_001_persistent_program_feed_runtime";
+const workerHeartbeatRuntimeMigrationId = "20260901_001_worker_heartbeat_runtime";
+const redactStoredSecretsMigrationId = "20260902_001_redact_stored_secrets";
+const namedOverlayScenesMigrationId = "20260902_003_named_overlay_scenes";
 const persistentProgramFeedRuntimeColumns = [
   "uplink_status",
   "uplink_input_mode",
@@ -69,6 +96,14 @@ const engagementGameMigrationId = "20260422_001_engagement_game";
 const twitchLiveStartedAtMigrationId = "20260422_002_twitch_live_started_at";
 const outputSettingsColumns = ["singleton_id", "profile_id", "width", "height", "fps", "updated_at"].sort();
 const engagementLayerMigrationId = "20260420_002_engagement_layer";
+const chatInteractionMigrationId = "20260818_001_chat_interaction";
+const chatSkipVoteMigrationId = "20260825_004_chat_skip_vote";
+const chatOverlayMessagesMigrationId = "20260825_005_chat_overlay_messages";
+const overlayVideoSourcePushIngestMigrationId = "20260826_002_overlay_video_source_push_ingest";
+const managedSecretsMigrationId = "20260826_003_managed_secrets";
+// The row id the internal relay key lives under, mirrored from packages/db so the non-write proofs
+// below can look at the stored ciphertext directly rather than through any reader.
+const RELAY_INTERNAL_KEY_SECRET_ID = "relay-internal-key";
 const engagementAlertTypesMigrationId = "20260421_001_engagement_alert_types";
 const engagementSettingsColumns = [
   "singleton_id",
@@ -753,6 +788,68 @@ describe.sequential("database roundtrip", () => {
     });
   }, 60_000);
 
+  /**
+   * An incident that comes and goes leaving nothing behind.
+   *
+   * Observed on the live channel 2026-09-03: `playout.prefetch.failed` opened somewhere between
+   * 12:45 and 13:06 and resolved at 13:06:08. Neither container logged a line for it — 30 of the 48
+   * upsertIncident call sites have no logRuntimeEvent beside them — and resolveIncident then wrote
+   * "Next queued asset probe succeeded." over the message column, which had held the actual probe
+   * error. Log, message, both gone. The only reason anyone knew was a round that happened to poll
+   * the table inside the twenty-minute window.
+   *
+   * So the announcement is made here, once, where every caller passes through, rather than by
+   * remembering it at 30 call sites. Once per ONSET, not per cycle: an incident that stays open is
+   * re-upserted on every reconciliation, and a line each time would bury the one that matters.
+   */
+  it("announces an incident when it opens, once per onset, so the reason outlives the resolution", async () => {
+    const fingerprint = `test.incident.announce.${randomUUID()}`;
+    const seen: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+      seen.push(args.map(String).join(" "));
+    };
+
+    try {
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Next queued asset probe failed",
+        message: "probe exited 1: Server returned 403 Forbidden",
+        fingerprint
+      });
+      const afterOpen = seen.filter((line) => line.includes(fingerprint));
+      expect(afterOpen).toHaveLength(1);
+      expect(afterOpen[0]).toContain("Server returned 403 Forbidden");
+
+      // Still open: the reconciliation loop upserts it again every cycle and must stay quiet.
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Next queued asset probe failed",
+        message: "probe exited 1: Server returned 403 Forbidden",
+        fingerprint
+      });
+      expect(seen.filter((line) => line.includes(fingerprint))).toHaveLength(1);
+
+      // Resolved and raised again is a new onset, and says so.
+      await resolveIncident(fingerprint, "Next queued asset probe succeeded.");
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: "Next queued asset probe failed",
+        message: "probe exited 1: connection reset",
+        fingerprint
+      });
+      const afterReopen = seen.filter((line) => line.includes(fingerprint));
+      expect(afterReopen).toHaveLength(2);
+      expect(afterReopen[1]).toContain("connection reset");
+    } finally {
+      console.warn = original;
+      await resolveIncident(fingerprint, "test cleanup");
+    }
+  });
+
   it("upgrades existing playout runtime rows with persistent uplink and program feed columns", async () => {
     await ensureDatabaseWithRetry();
     await executeSql(`
@@ -1293,4 +1390,769 @@ describe.sequential("database roundtrip", () => {
       lastSyncedAt: "2026-04-05T10:00:00.000Z"
     });
   }, 60_000);
+
+  it("creates the chat-interaction schema on an existing database", async () => {
+    // The tables are new in 1.5.19, so an already-migrated deployment must pick them up on upgrade
+    // rather than only appearing on a fresh install.
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      DROP TABLE IF EXISTS chat_viewer_requests;
+      DROP TABLE IF EXISTS chat_vote_session;
+      DROP TABLE IF EXISTS chat_interaction_settings;
+      DELETE FROM schema_migrations WHERE id = '${chatInteractionMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const tables = (
+      await executeSql(`
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_name IN ('chat_interaction_settings', 'chat_vote_session', 'chat_viewer_requests')
+        ORDER BY table_name;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+
+    const indexes = (
+      await executeSql(`
+        SELECT indexname
+        FROM pg_indexes
+        WHERE tablename = 'chat_viewer_requests'
+        ORDER BY indexname;
+      `)
+    )
+      .split("\n")
+      .filter(Boolean);
+
+    const migrationApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id = '${chatInteractionMigrationId}';`
+    );
+
+    // Sorted locally rather than trusting the database collation for the ordering.
+    expect([...tables].sort()).toEqual(
+      ["chat_interaction_settings", "chat_viewer_requests", "chat_vote_session"].sort()
+    );
+    // Cooldown checks filter by actor and order by recency; without the index every check would be
+    // a sequential scan over unbounded request history.
+    expect(indexes).toContain("chat_viewer_requests_actor_created_idx");
+    expect(migrationApplied).toBe("1");
+  }, 60_000);
+
+  it("creates the chat-skip-vote schema on an existing database and roundtrips a campaign", async () => {
+    // The table is new, so an already-migrated deployment must pick it up on upgrade rather than
+    // only appearing on a fresh install — the base-schema block alone never reaches them.
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      DROP TABLE IF EXISTS chat_skip_vote;
+      DELETE FROM schema_migrations WHERE id = '${chatSkipVoteMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const migrationApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id = '${chatSkipVoteMigrationId}';`
+    );
+    expect(migrationApplied).toBe("1");
+
+    // The helpers are exercised against the real table: the singleton upsert and the column
+    // mapping are exactly the parts a unit test with a mocked pool would wave through.
+    const campaign = {
+      assetId: "asset-skip-1",
+      skipCommand: "skip",
+      votes: 3,
+      votesNeeded: 5,
+      startedAt: "2026-08-25T20:00:00.000Z",
+      expiresAt: "2026-08-25T20:02:00.000Z",
+      updatedAt: "2026-08-25T20:00:30.000Z"
+    };
+    await writeChatSkipVoteRecord(campaign);
+    expect(await readChatSkipVoteRecord()).toEqual(campaign);
+
+    // Clearing writes the empty record over the same row rather than deleting it.
+    await writeChatSkipVoteRecord({ updatedAt: "2026-08-25T20:03:00.000Z" });
+    const cleared = await readChatSkipVoteRecord();
+    expect(cleared.votes).toBe(0);
+    expect(cleared.assetId).toBe("");
+  }, 60_000);
+
+  it("creates the chat-overlay-messages schema on an existing database and roundtrips the row", async () => {
+    // Same upgrade story as the skip vote: the base-schema block only ever runs for databases
+    // created from nothing, so an already-migrated deployment gets the table from the migration.
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      DROP TABLE IF EXISTS chat_overlay_messages;
+      DELETE FROM schema_migrations WHERE id = '${chatOverlayMessagesMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const migrationApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id = '${chatOverlayMessagesMigrationId}';`
+    );
+    expect(migrationApplied).toBe("1");
+
+    // Exercised against the real table: singleton upsert, jsonb column mapping, and the
+    // sanitising normalisation a mocked pool would wave through.
+    await writeChatOverlayMessagesRecord({
+      enabled: true,
+      position: "top-right",
+      maxMessages: 6,
+      messages: [
+        { name: "viewer_one", text: "hello​ stream", at: "2026-08-25T20:00:00.000Z" },
+        { name: "", text: "no name, never stored", at: "2026-08-25T20:00:01.000Z" },
+        { name: "viewer_two", text: "second", at: "2026-08-25T20:00:02.000Z" }
+      ],
+      updatedAt: "2026-08-25T20:00:03.000Z"
+    });
+
+    const reread = await readChatOverlayMessagesRecord();
+    expect(reread.enabled).toBe(true);
+    expect(reread.position).toBe("top-right");
+    expect(reread.maxMessages).toBe(6);
+    expect(reread.updatedAt).toBe("2026-08-25T20:00:03.000Z");
+    expect(reread.messages).toEqual([
+      { name: "viewer_one", text: "hello stream", at: "2026-08-25T20:00:00.000Z" },
+      { name: "viewer_two", text: "second", at: "2026-08-25T20:00:02.000Z" }
+    ]);
+
+    // Clearing writes the empty record over the same row rather than deleting it — the shape a
+    // disabled chat overlay leaves behind.
+    await writeChatOverlayMessagesRecord({ updatedAt: "2026-08-25T20:05:00.000Z" });
+    const cleared = await readChatOverlayMessagesRecord();
+    expect(cleared.enabled).toBe(false);
+    expect(cleared.messages).toEqual([]);
+  }, 60_000);
+
+  it("adds push ingest to an existing database and derives the internal read URL", async () => {
+    // M57 stage 2, Etappe A. The same upgrade story as every additive migration: strip the new
+    // columns and the managed-secrets table plus their migration rows, boot again, and both must
+    // come back through migrations 20260826_002/_003 (the base-schema block only ever builds
+    // databases from nothing).
+    await ensureDatabaseWithRetry();
+    await executeSql(`
+      ALTER TABLE overlay_video_sources DROP COLUMN IF EXISTS ingest_kind;
+      ALTER TABLE overlay_video_sources DROP COLUMN IF EXISTS encrypted_publish_key;
+      DROP TABLE IF EXISTS managed_secrets;
+      DELETE FROM schema_migrations WHERE id = '${overlayVideoSourcePushIngestMigrationId}';
+      DELETE FROM schema_migrations WHERE id = '${managedSecretsMigrationId}';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const migrationsApplied = await executeSql(
+      `SELECT COUNT(*) FROM schema_migrations WHERE id IN ('${overlayVideoSourcePushIngestMigrationId}', '${managedSecretsMigrationId}');`
+    );
+    expect(migrationsApplied).toBe("2");
+
+    // A push source stores a publish key but never a playback URL; a pull source stays exactly
+    // what it was before stage 2.
+    await upsertOverlayVideoSourceRecord(
+      { id: "push-cam", name: "Push camera" },
+      { ingestKind: "push", managedPublishKey: "publish-key-roundtrip" }
+    );
+    await upsertOverlayVideoSourceRecord(
+      { id: "pull-cam", name: "Pull camera" },
+      { managedUrl: "rtsp://user:secret@camera.example/stream" }
+    );
+
+    const listed = await listOverlayVideoSourceRecords();
+    const pushCam = listed.find((entry) => entry.id === "push-cam");
+    const pullCam = listed.find((entry) => entry.id === "pull-cam");
+    expect(pushCam).toMatchObject({ ingestKind: "push", publishKeyPresent: true, urlPresent: false });
+    expect(pullCam).toMatchObject({ ingestKind: "pull", publishKeyPresent: false, urlPresent: true });
+
+    // The reveal surface's reader must never CREATE the key (M57 stage 2, Etappe E). On an install
+    // that has none yet it answers "" and leaves the table exactly as empty as it found it — a
+    // reveal that minted a key would hand out a value no running worker holds.
+    expect(await executeSql(`SELECT COUNT(*) FROM managed_secrets WHERE id = '${RELAY_INTERNAL_KEY_SECRET_ID}';`)).toBe("0");
+    expect(await readRelayInternalKeyIfPresent()).toBe("");
+    expect(await executeSql(`SELECT COUNT(*) FROM managed_secrets WHERE id = '${RELAY_INTERNAL_KEY_SECRET_ID}';`)).toBe("0");
+
+    // The internal relay key self-generates on first use and every later read adopts the stored
+    // value — including a fresh process, simulated by resetting the in-process caches.
+    const relayKey = await readRelayInternalKey();
+    expect(relayKey.length).toBeGreaterThanOrEqual(32);
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+    expect(await readRelayInternalKey()).toBe(relayKey);
+
+    // The push source's playback URL is derived from that key, never stored; the pull source
+    // still decrypts to what was written.
+    const urls = await readOverlayVideoSourceUrls();
+    expect(urls["push-cam"]).toBe(`rtsp://reader:${relayKey}@relay:8554/src-push-cam`);
+    expect(urls["pull-cam"]).toBe("rtsp://user:secret@camera.example/stream");
+    const storedUrl = await executeSql("SELECT encrypted_url FROM overlay_video_sources WHERE id = 'push-cam';");
+    expect(storedUrl).toBe("");
+
+    // The auth endpoint's reader sees the decrypted publish key; a pull source carries none.
+    const credentials = await readOverlayVideoSourceIngestCredentials();
+    expect(credentials.find((entry) => entry.id === "push-cam")?.publishKey).toBe("publish-key-roundtrip");
+    expect(credentials.find((entry) => entry.id === "pull-cam")?.publishKey).toBe("");
+
+    // Keep-on-empty custody: a rename without key options must not drop the stored key.
+    await upsertOverlayVideoSourceRecord({ id: "push-cam", name: "Push camera renamed" });
+    const renamed = (await listOverlayVideoSourceRecords()).find((entry) => entry.id === "push-cam");
+    expect(renamed).toMatchObject({ name: "Push camera renamed", ingestKind: "push", publishKeyPresent: true });
+
+    await deleteOverlayVideoSourceRecord("push-cam");
+    await deleteOverlayVideoSourceRecord("pull-cam");
+
+    // And it must never REPLACE the key either. A row this APP_SECRET can no longer decrypt is the
+    // rotation case the generating reader recovers from by overwriting; the reveal surface's reader
+    // answers "" and leaves the ciphertext byte-for-byte where it was, so a click during an
+    // incident cannot invalidate the key every running container still holds.
+    const storedCiphertext = await executeSql(
+      `SELECT encrypted_value FROM managed_secrets WHERE id = '${RELAY_INTERNAL_KEY_SECRET_ID}';`
+    );
+    await executeSql(
+      `UPDATE managed_secrets SET encrypted_value = 'not-decryptable-by-this-app-secret' WHERE id = '${RELAY_INTERNAL_KEY_SECRET_ID}';`
+    );
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    expect(await readRelayInternalKeyIfPresent()).toBe("");
+    expect(
+      await executeSql(`SELECT encrypted_value FROM managed_secrets WHERE id = '${RELAY_INTERNAL_KEY_SECRET_ID}';`)
+    ).toBe("not-decryptable-by-this-app-secret");
+
+    // Restore, so nothing after this block inherits a poisoned key.
+    await executeSql(
+      `UPDATE managed_secrets SET encrypted_value = '${storedCiphertext}' WHERE id = '${RELAY_INTERNAL_KEY_SECRET_ID}';`
+    );
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+    expect(await readRelayInternalKeyIfPresent()).toBe(relayKey);
+  }, 60_000);
+
+  describe("schedule writes validated under the lock", () => {
+    // The overlap check used to run against a state read before the write, leaving a window in
+    // which another editor committed a block the check never saw: both writes succeeded and the
+    // schedule ended up overlapping anyway, which the editor then refuses to save past.
+
+    it("sees blocks already stored when it validates", async () => {
+      const existingId = `block-existing-${randomUUID()}`;
+      await createScheduleBlocks([
+        {
+          id: existingId,
+          title: "Existing",
+          categoryName: "Replay",
+          startMinuteOfDay: 10 * 60,
+          durationMinutes: 120,
+          dayOfWeek: 4,
+          poolId: "",
+          sourceName: "Pool",
+          repeatMode: "single",
+          repeatGroupId: "",
+          cuepointAssetId: "",
+          cuepointOffsetsSeconds: []
+        }
+      ]);
+
+      let seenExisting = false;
+      await createScheduleBlocksChecked(
+        [
+          {
+            id: `block-new-${randomUUID()}`,
+            title: "New",
+            categoryName: "Replay",
+            startMinuteOfDay: 20 * 60,
+            durationMinutes: 60,
+            dayOfWeek: 4,
+            poolId: "",
+            sourceName: "Pool",
+            repeatMode: "single",
+            repeatGroupId: "",
+            cuepointAssetId: "",
+            cuepointOffsetsSeconds: []
+          }
+        ],
+        (existing) => {
+          seenExisting = existing.some((block) => block.id === existingId);
+        }
+      );
+
+      expect(seenExisting).toBe(true);
+    });
+
+    it("writes nothing when the validator rejects", async () => {
+      const rejectedId = `block-rejected-${randomUUID()}`;
+
+      await expect(
+        createScheduleBlocksChecked(
+          [
+            {
+              id: rejectedId,
+              title: "Rejected",
+              categoryName: "Replay",
+              startMinuteOfDay: 60,
+              durationMinutes: 60,
+              dayOfWeek: 5,
+              poolId: "",
+              sourceName: "Pool",
+              repeatMode: "single",
+              repeatGroupId: "",
+              cuepointAssetId: "",
+              cuepointOffsetsSeconds: []
+            }
+          ],
+          () => {
+            throw new Error("overlaps");
+          }
+        )
+      ).rejects.toThrow("overlaps");
+
+      const state = await readAppState();
+      expect(state.scheduleBlocks.some((block) => block.id === rejectedId)).toBe(false);
+    });
+  });
+
+  describe("moderator presence check-ins", () => {
+    // expires_at used to be the primary key. It is the check-in time plus a duration picked from a
+    // short list, so two moderators checking in during the same second for the same length produced
+    // the identical value — and the insert runs inside the Twitch chat callback, where the unique
+    // violation surfaced as a check-in that simply did not happen.
+
+    it("accepts two check-ins that expire at the same instant", async () => {
+      const expiresAt = "2026-08-19T21:00:00.000Z";
+      const createdAt = "2026-08-19T20:30:00.000Z";
+
+      await appendPresenceWindowRecord({
+        actor: "first_moderator",
+        minutes: 30,
+        requestedMinutes: 30,
+        appliedMinutes: 30,
+        clampReason: "",
+        createdAt,
+        expiresAt
+      });
+
+      await expect(
+        appendPresenceWindowRecord({
+          actor: "second_moderator",
+          minutes: 30,
+          requestedMinutes: 30,
+          appliedMinutes: 30,
+          clampReason: "",
+          createdAt,
+          expiresAt
+        })
+      ).resolves.toBeUndefined();
+
+      const state = await readAppState();
+      const both = state.presenceWindows.filter((window) => window.expiresAt === expiresAt);
+      expect(both.map((window) => window.actor).sort()).toEqual(["first_moderator", "second_moderator"]);
+    });
+
+    it("keeps the same actor's repeated check-in rather than replacing it", async () => {
+      const expiresAt = "2026-08-19T22:00:00.000Z";
+      for (let index = 0; index < 3; index += 1) {
+        await appendPresenceWindowRecord({
+          actor: "same_moderator",
+          minutes: 30,
+          requestedMinutes: 30,
+          appliedMinutes: 30,
+          clampReason: "",
+          createdAt: "2026-08-19T21:30:00.000Z",
+          expiresAt
+        });
+      }
+
+      const state = await readAppState();
+      expect(state.presenceWindows.filter((window) => window.expiresAt === expiresAt)).toHaveLength(3);
+    });
+  });
+
+  describe("state writes and the live playout runtime", () => {
+    // Why the blueprint import uses updateAppState instead of readAppState + writeAppState.
+    //
+    // The whole AppState is written as one row set, playout runtime included. A caller that reads the
+    // state, spends time building a new one and then writes it back carries a snapshot of `playout`
+    // from before the write -- so importing a blueprint while the channel was on air rewound the
+    // worker's heartbeats, restart counters and uplink status to whatever they were when the request
+    // began. updateAppState reads inside the same locked transaction it writes in, which is what
+    // makes that impossible rather than merely unlikely.
+
+    it("hands the updater state that already includes writes made after an earlier read", async () => {
+      const staleSnapshot = await readAppState();
+
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        restartCount: playout.restartCount + 7,
+        uplinkStatus: "running"
+      }));
+
+      let observedRestartCount = -1;
+      await updateAppState((current) => {
+        observedRestartCount = current.playout.restartCount;
+        return current;
+      });
+
+      expect(observedRestartCount).toBe(staleSnapshot.playout.restartCount + 7);
+      // The read-then-write pattern would have written the left-hand value back over the right-hand
+      // one, which is exactly the runtime loss this guards against.
+      expect(staleSnapshot.playout.restartCount).not.toBe(observedRestartCount);
+    });
+
+    it("preserves a concurrent runtime advance across an unrelated state edit", async () => {
+      const before = await readAppState();
+
+      await updatePlayoutRuntime((playout) => ({ ...playout, restartCount: playout.restartCount + 3 }));
+
+      await updateAppState((current) => ({ ...current, moderation: { ...current.moderation } }));
+
+      const after = await readAppState();
+      expect(after.playout.restartCount).toBe(before.playout.restartCount + 3);
+    });
+  });
+
+  describe("audit trail durability", () => {
+    it("keeps a security-relevant entry through a flood of routine worker heartbeats", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql("DELETE FROM audit_events;");
+      await appendAuditEvent("relay.internal_key.revealed", "The relay internal key was revealed.");
+
+      // The routine loop runs every 30 seconds. Far more cycles than the audit trail could ever
+      // have held under the old 100-row ring, where this entry was gone inside fifteen minutes.
+      for (let index = 0; index < 40; index += 1) {
+        await updatePlayoutRuntime((playout) => ({
+          ...playout,
+          workerHeartbeatAt: new Date().toISOString()
+        }));
+      }
+
+      const state = await readAppState();
+      // The point of the change: routine traffic no longer occupies the trail at all, so it has
+      // no way to displace anything, whatever the cap happens to be.
+      expect(state.auditEvents.some((event) => event.type === "worker.cycle")).toBe(false);
+      expect(state.auditEvents.some((event) => event.type === "uplink.cycle")).toBe(false);
+      expect(state.auditEvents.some((event) => event.type === "relay.internal_key.revealed")).toBe(true);
+      // And the heartbeat those cycles used to prove is still readable.
+      expect(state.playout.workerHeartbeatAt).not.toBe("");
+    }, 120_000);
+
+    it("carries more than the old hundred-row cap through a state round trip", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql("DELETE FROM audit_events;");
+
+      const seeded = Array.from({ length: 200 }, (_, index) => ({
+        id: `audit_seed_${String(index).padStart(3, "0")}`,
+        type: "settings.managed-config.updated",
+        message: `Seeded entry ${index}`,
+        createdAt: new Date(Date.UTC(2026, 8, 1, 0, 0, index)).toISOString()
+      }));
+
+      await updateAppState((current) => ({ ...current, auditEvents: seeded }));
+
+      const reread = await readAppState();
+      expect(reread.auditEvents).toHaveLength(200);
+    }, 60_000);
+
+    it("declares exactly the schema a real migrated database ends up with", async () => {
+      /**
+       * The only thing that has ever caught a fault in the manifest parser.
+       *
+       * schema-manifest.test.ts compares the manifest against the parser that produced it, so
+       * anything the parser cannot see is invisible to it by construction. Adversarial review
+       * demonstrated five such edits — a wrapped column definition contributing "default" as a
+       * column, a commented-out ALTER, a multi-line CHECK swallowing five real columns, a closing
+       * paren on the last column's line making a whole table disappear, and DROP/RENAME which the
+       * manifest has no way to express — each of which passed the unit tests with a wrong manifest
+       * and would then raise a critical incident on every boot of a healthy channel, forever.
+       *
+       * This asserts BOTH directions against a database that has actually run every migration.
+       */
+      await ensureDatabaseWithRetry();
+      const dump = await executeSql(`
+        SELECT c.relname || '|' || a.attname
+        FROM pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND a.attnum > 0 AND NOT a.attisdropped
+          AND c.relkind IN ('r', 'v', 'm', 'p');
+      `);
+
+      const live = new Map<string, Set<string>>();
+      for (const line of dump.split("\n")) {
+        const [table, column] = line.trim().split("|");
+        if (!table || !column) {
+          continue;
+        }
+        const columns = live.get(table) ?? new Set<string>();
+        columns.add(column);
+        live.set(table, columns);
+      }
+      expect(live.size).toBeGreaterThan(30);
+
+      const declaredMissing: string[] = [];
+      const declaredExtra: string[] = [];
+      for (const [table, columns] of Object.entries(DECLARED_SCHEMA)) {
+        const present = live.get(table);
+        for (const column of columns) {
+          if (!present?.has(column)) {
+            declaredMissing.push(`${table}.${column}`);
+          }
+        }
+      }
+      for (const [table, columns] of live) {
+        for (const column of columns) {
+          if (!DECLARED_SCHEMA[table]?.includes(column)) {
+            declaredExtra.push(`${table}.${column}`);
+          }
+        }
+      }
+
+      // Declared but absent is the fault the drift check exists for. Present but undeclared is the
+      // parser having missed something, which is how a real column stops being watched at all.
+      expect({ declaredMissing, declaredExtra }).toEqual({ declaredMissing: [], declaredExtra: [] });
+    }, 120_000);
+
+    it("keeps a protected entry that has fallen out of the general window", async () => {
+      // The failure this exists for. persistState rewrites audit_events from memory, and memory is
+      // whatever hydrateState read — so if the read is capped at the general window, a protected
+      // entry below it is deleted by the next state mutation and the second window is theatre.
+      // Measured before the fix: 500 protected entries destroyed by one no-op edit.
+      await ensureDatabaseWithRetry();
+      await executeSql("DELETE FROM audit_events;");
+
+      // One sign-in, then enough reconciliation chatter to bury it past the newest 500.
+      const signIn = {
+        id: "audit_protected_signin",
+        type: "auth.twitch",
+        message: "operator signed in",
+        createdAt: new Date(Date.UTC(2026, 8, 1, 0, 0, 0)).toISOString()
+      };
+      const noise = Array.from({ length: 600 }, (_, index) => ({
+        id: `audit_noise_${String(index).padStart(4, "0")}`,
+        type: "uplink.cycle",
+        message: `cycle ${String(index)}`,
+        createdAt: new Date(Date.UTC(2026, 8, 1, 1, 0, index)).toISOString()
+      }));
+      await updateAppState((current) => ({
+        ...current,
+        auditEvents: [...noise].reverse().concat(signIn)
+      }));
+
+      // It survived the write that put it there.
+      const afterSeed = await readAppState();
+      expect(afterSeed.auditEvents.some((event) => event.id === signIn.id)).toBe(true);
+
+      // And it survives an ordinary mutation that touches nothing about the trail.
+      await updateAppState((current) => ({ ...current, moderation: { ...current.moderation } }));
+      const afterEdit = await readAppState();
+      expect(afterEdit.auditEvents.some((event) => event.id === signIn.id)).toBe(true);
+
+      // While the noise is still bounded: both windows together, not one per entry.
+      const rows = await executeSql("SELECT count(*) FROM audit_events;");
+      expect(Number(rows.trim().split("\n").map((line) => line.trim()).find((line) => /^\d+$/.test(line)))).toBeLessThanOrEqual(1000);
+    }, 120_000);
+
+    it("adds the worker heartbeat column to an existing playout runtime row", async () => {
+      await ensureDatabaseWithRetry();
+      await updatePlayoutRuntime((playout) => ({ ...playout, restartCount: 7 }));
+      await executeSql(`
+        ALTER TABLE playout_runtime DROP COLUMN IF EXISTS worker_heartbeat_at;
+        DELETE FROM schema_migrations WHERE id = '${workerHeartbeatRuntimeMigrationId}';
+      `);
+
+      await ensureDatabaseWithRetry();
+
+      const reread = await readAppState();
+      expect(reread.playout.workerHeartbeatAt).toBe("");
+      // The pre-existing row survived the upgrade rather than being replaced.
+      expect(reread.playout.restartCount).toBe(7);
+    }, 60_000);
+
+    it("stores a redacted incident, and the migration scrubs a row written before the sink redacted", async () => {
+      // The sink itself, on a real table.
+      await upsertIncident({
+        scope: "worker",
+        severity: "warning",
+        title: "FFmpeg reported an error",
+        message: "[fifo @ 0x1] Error opening rtmp://live.twitch.tv/app/live_123456_AbCdEfGhIjKlMnOpQrStUv",
+        fingerprint: "test.redaction"
+      });
+      const stored = await executeSql("SELECT message FROM incidents WHERE fingerprint = 'test.redaction';");
+      expect(stored).toBe("[fifo @ 0x1] Error opening rtmp://live.twitch.tv/app/<redacted>");
+
+      // A row from before the sink redacted, then the upgrade that scrubs it.
+      await executeSql(`
+        UPDATE incidents SET message = 'Error opening rtmp://live.twitch.tv/app/live_123456_AbCdEfGhIjKlMnOpQrStUv' WHERE fingerprint = 'test.redaction';
+        DELETE FROM schema_migrations WHERE id = '${redactStoredSecretsMigrationId}';
+      `);
+      const before = await executeSql("SELECT id FROM schema_migrations WHERE id LIKE '20260902%';");
+      // ensureDatabase applies migrations once per process; the reset is what lets it look again.
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+      const after = await executeSql("SELECT id FROM schema_migrations WHERE id LIKE '20260902%';");
+      const scrubbed = await executeSql("SELECT message FROM incidents WHERE fingerprint = 'test.redaction';");
+      expect(scrubbed, `migrations before=[${before}] after=[${after}] stored=<${scrubbed}>`).toBe("Error opening rtmp://live.twitch.tv/app/<redacted>");
+      const migrationApplied = await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${redactStoredSecretsMigrationId}';`);
+      expect(migrationApplied).toBe("1");
+    }, 60_000);
+
+    it("turns the one overlay of an existing installation into the first named scene, picture unchanged", async () => {
+      // The upgrade this test exists for: a channel that was on air before named scenes existed.
+      // Its single stored layer set must come back as one named scene and draw exactly the same
+      // frame — the studio must not report unpublished changes nobody made either.
+      const layer = {
+        id: "layer-sponsor",
+        kind: "text" as const,
+        name: "Sponsor",
+        enabled: true,
+        xPercent: 4,
+        yPercent: 10,
+        widthPercent: 34,
+        heightPercent: 12,
+        opacityPercent: 100,
+        allowOutsideSafeArea: false,
+        text: "Sponsored by",
+        secondaryText: "",
+        textTone: "headline" as const,
+        textAlign: "left" as const,
+        useAccent: false,
+        fontMode: "scene" as const,
+        customFontFamily: ""
+      };
+      const studio = await readOverlayStudioState();
+      const published = await publishOverlayDraftRecord({
+        ...studio.liveOverlay,
+        enabled: true,
+        customLayers: [layer],
+        scenes: [],
+        activeSceneId: "",
+        updatedAt: new Date().toISOString()
+      });
+      const pictureBefore = published.liveOverlay.customLayers;
+
+      // Back to the shape an older installation actually has on disk.
+      await executeSql(`
+        ALTER TABLE overlay_settings DROP COLUMN IF EXISTS scenes_json;
+        ALTER TABLE overlay_settings DROP COLUMN IF EXISTS active_scene_id;
+        ALTER TABLE overlay_drafts DROP COLUMN IF EXISTS scenes_json;
+        ALTER TABLE overlay_drafts DROP COLUMN IF EXISTS active_scene_id;
+        DELETE FROM schema_migrations WHERE id = '${namedOverlayScenesMigrationId}';
+      `);
+
+      // ensureDatabase applies migrations once per process; the reset is what lets it look again.
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      const migrationApplied = await executeSql(
+        `SELECT COUNT(*) FROM schema_migrations WHERE id = '${namedOverlayScenesMigrationId}';`
+      );
+      expect(migrationApplied).toBe("1");
+
+      // The backfill wrote a scene, not an empty list: the answer survives a reader that trusts
+      // the column rather than re-deriving it.
+      const storedActive = await executeSql("SELECT active_scene_id FROM overlay_settings WHERE singleton_id = 1;");
+      expect(storedActive).toBe("scene-main");
+      const storedSceneName = await executeSql(
+        "SELECT scenes_json::json -> 0 ->> 'name' FROM overlay_settings WHERE singleton_id = 1;"
+      );
+      expect(storedSceneName).toBe("Main scene");
+      const storedSceneLayer = await executeSql(
+        "SELECT scenes_json::json -> 0 -> 'customLayers' -> 0 ->> 'id' FROM overlay_settings WHERE singleton_id = 1;"
+      );
+      expect(storedSceneLayer).toBe("layer-sponsor");
+
+      const after = await readOverlayStudioState();
+      expect(after.liveOverlay.scenes).toHaveLength(1);
+      expect(after.liveOverlay.activeSceneId).toBe("scene-main");
+      // The picture: byte-for-byte the layer set that was on air before the upgrade.
+      expect(after.liveOverlay.customLayers).toEqual(pictureBefore);
+      expect(after.liveOverlay.customLayers.map((entry) => entry.id)).toEqual(["layer-sponsor"]);
+      expect(after.hasUnpublishedChanges).toBe(false);
+    }, 60_000);
+
+    it("roundtrips several named scenes and switches which one is on air", async () => {
+      const studio = await readOverlayStudioState();
+      const scenes = [
+        { id: "scene-main", name: "Main scene", customLayers: [], sourceId: "" },
+        { id: "scene-break", name: "Break", customLayers: [], sourceId: "source-cam" }
+      ];
+      await publishOverlayDraftRecord({
+        ...studio.liveOverlay,
+        scenes,
+        activeSceneId: "scene-break",
+        updatedAt: new Date().toISOString()
+      });
+
+      const reread = await readOverlayStudioState();
+      expect(reread.liveOverlay.scenes.map((scene) => scene.name)).toEqual(["Main scene", "Break"]);
+      expect(reread.liveOverlay.scenes[1]?.sourceId).toBe("source-cam");
+      expect(reread.liveOverlay.activeSceneId).toBe("scene-break");
+      // Deleting the active scene must not leave the channel without a picture.
+      await publishOverlayDraftRecord({
+        ...reread.liveOverlay,
+        scenes: [scenes[0]],
+        updatedAt: new Date().toISOString()
+      });
+      expect((await readOverlayStudioState()).liveOverlay.activeSceneId).toBe("scene-main");
+    }, 60_000);
+
+    it("keeps the viewer request history the cooldown and the queue cap are decided on", async () => {
+      // Finding [5]: the table existed, nothing wrote to it, so the worker evaluated every request
+      // against an empty history and a queue count of zero — cooldown and cap could never fire.
+      await appendChatViewerRequestRecord({ actor: "Viewer_One", assetId: "asset_req_a" });
+      await appendChatViewerRequestRecord({ actor: "viewer_one", assetId: "asset_req_b" });
+      await appendChatViewerRequestRecord({ actor: "other", assetId: "asset_req_c" });
+      const recent = await listRecentChatViewerRequests(new Date(Date.now() - 60_000).toISOString());
+      expect(recent.map((entry) => entry.assetId).sort()).toEqual(["asset_req_a", "asset_req_b", "asset_req_c"]);
+      expect(recent.every((entry) => typeof entry.createdAt === "string" && entry.actor)).toBe(true);
+      // Two of the three are still in the queue; the third has been played and leaves the count.
+      await markChatViewerRequestsPlayed(["asset_req_a", "asset_req_b"]);
+      expect(await countQueuedChatViewerRequests(["asset_req_a", "asset_req_b"])).toBe(2);
+      await markChatViewerRequestsPlayed(["asset_req_b"]);
+      expect(await countQueuedChatViewerRequests(["asset_req_b"])).toBe(1);
+      const played = await executeSql("SELECT status FROM chat_viewer_requests WHERE asset_id = 'asset_req_a';");
+      expect(played).toBe("played");
+    }, 60_000);
+
+    it("never encrypts over a secret it could not read, so a rotated APP_SECRET is survivable", async () => {
+      // The adversarial review of v1.5.39 found this: detection alone was not enough. With a key
+      // it cannot open, the first full-state write -- a moderator's !game is enough to trigger one
+      // -- deleted and re-inserted every user with an empty secret and wrote encrypted defaults
+      // over the managed config. That destroyed the only copy AND cleared the flag that makes the
+      // login refuse, so the two-factor bypass came back permanently.
+      const ownerId = "user_secret_guard";
+      await upsertUserRecord({
+        id: ownerId,
+        email: "guard@example.com",
+        displayName: "Guard",
+        authProvider: "local",
+        role: "owner",
+        twitchUserId: "",
+        twitchLogin: "",
+        passwordHash: "hash",
+        twoFactorEnabled: true,
+        twoFactorSecret: "JBSWY3DPEHPK3PXP",
+        twoFactorConfirmedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        lastLoginAt: ""
+      });
+      const sealedSecret = await executeSql(`SELECT two_factor_secret FROM users WHERE id = '${ownerId}';`);
+      const sealedManaged = await executeSql("SELECT left(encrypted_payload, 24) FROM managed_config WHERE singleton_id = 1;");
+      expect(sealedSecret).not.toBe("");
+
+      // Rotate the key underneath the store, exactly as losing the secret file would.
+      process.env.APP_SECRET = `${process.env.APP_SECRET ?? ""}-rotated`;
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      const unreadable = await readAppState();
+      expect(unreadable.users.find((user) => user.id === ownerId)?.twoFactorSecretUnreadable).toBe(true);
+
+      // The write that used to destroy everything.
+      await updateAppState((state) => ({ ...state, overlay: { ...state.overlay, channelName: "Guarded" } }));
+
+      expect(await executeSql(`SELECT two_factor_secret FROM users WHERE id = '${ownerId}';`)).toBe(sealedSecret);
+      expect(await executeSql("SELECT left(encrypted_payload, 24) FROM managed_config WHERE singleton_id = 1;")).toBe(sealedManaged);
+    }, 60_000);
+  });
 });

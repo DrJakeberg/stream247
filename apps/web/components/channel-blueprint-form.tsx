@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 import type { BlueprintImportSectionState } from "@/lib/server/channel-blueprints";
 
 const DEFAULT_SECTIONS: BlueprintImportSectionState = {
@@ -81,8 +82,14 @@ export function ChannelBlueprintForm() {
         memberships only remap when matching media is already present locally in the target workspace.
       </div>
       <div className="toggle-row">
+        {/*
+          Secondary, not primary. The settings page carried two primary buttons — saving the
+          settings and exporting a blueprint — and two of them means neither leads. Saving is what
+          the page is for; exporting is a thing you do occasionally, on purpose, having come here to
+          do it.
+        */}
         <button
-          className="button"
+          className="button button-secondary"
           disabled={isPending}
           onClick={() => {
             setError("");
@@ -145,7 +152,7 @@ export function ChannelBlueprintForm() {
         </div>
       </div>
       <label>
-        <span className="label">Import blueprint JSON</span>
+        <span className="label label-with-info">Import blueprint JSON<InfoTip text="Replaces every enabled section above with what this document holds; a part the document lacks is emptied, not kept, so a document with no destinations removes all outputs when routing is enabled. Curated-set items with no matching local media, and programming imported while the library section is off, are reported as warnings below." /></span>
         <textarea
           className="textarea"
           onChange={(event) => setBlueprintText(event.target.value)}
@@ -155,7 +162,7 @@ export function ChannelBlueprintForm() {
         />
       </label>
       <label>
-        <span className="label">Load blueprint file</span>
+        <span className="label label-with-info">Load blueprint file<InfoTip text="Reads a blueprint file from your computer into the text box above so you can check it first. Nothing is imported until you press Import blueprint." /></span>
         <input
           accept=".json,application/json"
           onChange={async (event) => {

@@ -11,6 +11,7 @@ import { ScheduleBlockDuplicateForm } from "@/components/schedule-block-duplicat
 import { ScheduleBlockForm } from "@/components/schedule-block-form";
 import { ScheduleTimeline } from "@/components/schedule-timeline";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { InfoTip } from "@/components/ui/InfoTip";
 import type { ShowProfileRecord } from "@/lib/server/state";
 
 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -117,7 +118,7 @@ export function ScheduleEditorWorkspace({
       </p>
       <div className="form-grid">
         <label>
-          <span className="label">Search</span>
+          <span className="label label-with-info">Search<InfoTip text="Narrows the list and the timeline to blocks whose title, category, source or show name contains the text. It only filters the view; the schedule itself does not change." /></span>
           <input
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search title, category, source, or show"
@@ -125,7 +126,7 @@ export function ScheduleEditorWorkspace({
           />
         </label>
         <label>
-          <span className="label">Pool</span>
+          <span className="label label-with-info">Pool<InfoTip text="Shows only the blocks that draw their material from this pool. Blocks with no pool are hidden while one is chosen." /></span>
           <select onChange={(event) => setPoolId(event.target.value)} value={poolId}>
             <option value="">All pools</option>
             {pools.map((pool) => (
@@ -136,7 +137,7 @@ export function ScheduleEditorWorkspace({
           </select>
         </label>
         <label>
-          <span className="label">Show profile</span>
+          <span className="label label-with-info">Show profile<InfoTip text="Shows only the blocks assigned to this show. Blocks without a show are hidden while one is chosen." /></span>
           <select onChange={(event) => setShowId(event.target.value)} value={showId}>
             <option value="">All shows</option>
             {showProfiles.map((show) => (
@@ -150,7 +151,7 @@ export function ScheduleEditorWorkspace({
       <div className="toggle-row" style={{ flexWrap: "wrap", gap: 8 }}>
         <label className={`chip-toggle${conflictsOnly ? " chip-toggle-active" : ""}`}>
           <input checked={conflictsOnly} onChange={(event) => setConflictsOnly(event.target.checked)} type="checkbox" />
-          <span>Conflicts only</span>
+          <span>Conflicts only<InfoTip text="Keeps only blocks that overlap another block on the same weekday, so clashes can be fixed without scrolling past everything that is fine." /></span>
         </label>
         <button
           className="button secondary"
@@ -171,7 +172,7 @@ export function ScheduleEditorWorkspace({
 
       <div className="programming-workspace-grid">
         <div className="programming-workspace-card">
-          <span className="label">Day fill</span>
+          <span className="label label-with-info">Day fill<InfoTip text="A dry run of the chosen weekday: how many blocks it has, and how many would repeat material, run late or have nothing to play. Scheduled minutes are set against what the material really adds up to." /></span>
           <strong>
             {activeMaterializedDay?.blockCount
               ? `${activeMaterializedDay.blockCount} materialized block${activeMaterializedDay.blockCount === 1 ? "" : "s"}`
@@ -192,7 +193,7 @@ export function ScheduleEditorWorkspace({
           </div>
         </div>
         <div className="programming-workspace-card">
-          <span className="label">Live queue context</span>
+          <span className="label label-with-info">Live queue context<InfoTip text="What is on air now and the next few items queued behind it, so the plan for this day can be checked against what is really playing." /></span>
           <strong>{liveQueueItems.length > 0 ? "Current runtime queue" : "No live queue published"}</strong>
           <div className="subtle">
             {liveQueueItems.length > 0
@@ -302,7 +303,7 @@ export function ScheduleEditorWorkspace({
                           {block.poolId ? "Open pools" : "Open library"}
                         </Link>
                       }
-                      description="This block has no playable asset slots yet. Check the linked pool cursor or the ready library inventory."
+                      description="Nothing in this block can play yet. Check that its pool has assets marked ready in the library."
                       title="No playable video slots"
                     />
                   )}

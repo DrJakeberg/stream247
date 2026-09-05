@@ -59,4 +59,39 @@ describe("twitch live status helpers", () => {
     expect(fetchImpl.mock.calls[0]?.[0]).toBe("https://id.twitch.tv/oauth2/token");
     expect(fetchImpl.mock.calls[1]?.[0]).toBe("https://api.twitch.tv/helix/streams?user_id=broadcaster-1");
   });
+
+  it("looks the stream up by login when the broadcast channel is not the connected account", async () => {
+    // With a broadcast-channel split the only identifier the workspace holds for the watched
+    // channel is its login; the stored broadcaster id belongs to the moderator account, whose
+    // stream status is not the one anybody asked about.
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access_token: "app-token" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      );
+
+    await expect(
+      fetchTwitchLiveStatus({
+        broadcasterLogin: "jimpanse247",
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        fetchImpl
+      })
+    ).resolves.toEqual({
+      liveStatus: "offline",
+      viewerCount: 0,
+      startedAt: ""
+    });
+
+    expect(fetchImpl.mock.calls[1]?.[0]).toBe("https://api.twitch.tv/helix/streams?user_login=jimpanse247");
+  });
 });

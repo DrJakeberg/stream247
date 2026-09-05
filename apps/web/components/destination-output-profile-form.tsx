@@ -3,6 +3,7 @@
 import { DESTINATION_OUTPUT_PROFILES, type DestinationOutputProfileId } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { useToast } from "@/components/ui/Toast";
 import { resolveDestinationStatusChip } from "@/lib/destination-status";
@@ -64,7 +65,10 @@ export function DestinationOutputProfileForm(props: {
         <StatusChip label={statusChip.label} status={statusChip.status} />
       </div>
       <label>
-        <span className="label">Destination profile</span>
+        <span className="label label-with-info">
+          Destination profile
+          <InfoTip text="Picks the picture size and frame rate this destination receives when the channel goes out through the persistent uplink; without it every destination gets the stream profile. “Use stream profile” follows the channel's stream profile; any other choice makes the uplink encode that rendition once, shared by every destination that picks the same one." />
+        </span>
         <select
           onChange={(event) => setOutputProfileId(event.target.value as DestinationOutputProfileId)}
           value={outputProfileId}

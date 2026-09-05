@@ -1,13 +1,16 @@
 import {
   normalizeAudioLaneVolumePercent,
   normalizeCuepointOffsetsSeconds,
+  normalizeOverlayNamedScenes,
   normalizeOverlayPanelAnchor,
-  normalizeOverlaySceneCustomLayers,
+  normalizeOverlayScenePanelPlacements,
   normalizeOverlaySceneLayerOrder,
   normalizeOverlayScenePreset,
   normalizeOverlaySurfaceStyle,
   normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
+  resolveActiveOverlayNamedSceneId,
+  resolveOverlayNamedSceneCustomLayers,
   type ModerationConfig
 } from "@stream247/core";
 import {
@@ -19,7 +22,7 @@ import {
   readOverlayStudioState,
   replaceOverlayScenePresetRecords,
   saveOverlayDraftRecord,
-  writeAppState,
+  updateAppState,
   type AppState,
   type OverlayScenePresetRecord,
   type OverlaySettingsRecord,
@@ -242,7 +245,17 @@ function normalizeOverlaySettings(value: unknown, fallback: OverlaySettingsRecor
   }
 
   const candidate = value as Partial<OverlaySettingsRecord>;
+  // A blueprint written before named scenes carries one layer set and no scene list. It becomes
+  // that blueprint's single scene -- deliberately NOT the importing installation's scenes, which
+  // would silently mix a foreign layer set into local scenes it was never part of.
+  const scenes = normalizeOverlayNamedScenes(
+    Array.isArray(candidate.scenes) ? candidate.scenes : [],
+    Array.isArray(candidate.customLayers) ? candidate.customLayers : fallback.customLayers
+  );
+  const activeSceneId = resolveActiveOverlayNamedSceneId(scenes, candidate.activeSceneId);
   return {
+    scenes,
+    activeSceneId,
     enabled: typeof candidate.enabled === "boolean" ? candidate.enabled : fallback.enabled,
     channelName: asString(candidate.channelName) || fallback.channelName,
     headline: asString(candidate.headline) || fallback.headline,
@@ -277,9 +290,14 @@ function normalizeOverlaySettings(value: unknown, fallback: OverlaySettingsRecor
     disabledLayers: normalizeOverlaySceneLayerOrder(
       Array.isArray(candidate.disabledLayers) ? candidate.disabledLayers : fallback.disabledLayers
     ),
-    customLayers: normalizeOverlaySceneCustomLayers(Array.isArray(candidate.customLayers) ? candidate.customLayers : fallback.customLayers),
+    // The projection of the active scene, exactly as the store computes it.
+    customLayers: resolveOverlayNamedSceneCustomLayers(scenes, activeSceneId),
+    panelPlacements: normalizeOverlayScenePanelPlacements(candidate.panelPlacements ?? fallback.panelPlacements),
     emergencyBanner: asString(candidate.emergencyBanner),
     tickerText: asString(candidate.tickerText),
+    // The store clamps this to the renderer's bounds on the way in, so a blueprint that carries
+    // nothing, or nonsense, still resolves to a dwell the ticker can actually keep.
+    tickerRotateSeconds: Number(candidate.tickerRotateSeconds) || fallback.tickerRotateSeconds,
     updatedAt: asString(candidate.updatedAt) || now
   };
 }
@@ -891,29 +909,37 @@ export async function exportChannelBlueprint(): Promise<ChannelBlueprintDocument
 }
 
 export async function importChannelBlueprint(input: unknown, options?: BlueprintImportOptions): Promise<NormalizedBlueprint> {
-  const [currentState, studio] = await Promise.all([readAppState(), readOverlayStudioState()]);
-  const normalized = normalizeChannelBlueprintDocument({
-    input,
-    currentState,
-    studio,
-    options
-  });
-  const importedSourceIds = new Set(normalized.importedSources.map((source) => source.id));
-  const importedAssets = normalized.sections.library
-    ? currentState.assets.filter((asset) => importedSourceIds.has(asset.sourceId))
-    : currentState.assets;
+  const studio = await readOverlayStudioState();
+  let normalized!: NormalizedBlueprint;
 
-  await writeAppState({
-    ...currentState,
-    moderation: normalized.importedModeration,
-    sources: normalized.importedSources,
-    assets: importedAssets,
-    assetCollections: normalized.importedAssetCollections,
-    overlay: normalized.importedLiveOverlay,
-    pools: normalized.importedPools,
-    showProfiles: normalized.importedShowProfiles,
-    scheduleBlocks: normalized.importedScheduleBlocks,
-    destinations: normalized.importedDestinations
+  // Read and write inside one locked transaction. Reading the state separately and spreading it
+  // back meant the import carried a snapshot of `playout` taken before the write, so importing a
+  // blueprint while the channel was on air rewound the worker's live runtime -- heartbeats, restart
+  // counters, uplink status, the current asset -- to whatever it had been when the request started.
+  await updateAppState((currentState) => {
+    normalized = normalizeChannelBlueprintDocument({
+      input,
+      currentState,
+      studio,
+      options
+    });
+    const importedSourceIds = new Set(normalized.importedSources.map((source) => source.id));
+    const importedAssets = normalized.sections.library
+      ? currentState.assets.filter((asset) => importedSourceIds.has(asset.sourceId))
+      : currentState.assets;
+
+    return {
+      ...currentState,
+      moderation: normalized.importedModeration,
+      sources: normalized.importedSources,
+      assets: importedAssets,
+      assetCollections: normalized.importedAssetCollections,
+      overlay: normalized.importedLiveOverlay,
+      pools: normalized.importedPools,
+      showProfiles: normalized.importedShowProfiles,
+      scheduleBlocks: normalized.importedScheduleBlocks,
+      destinations: normalized.importedDestinations
+    };
   });
   if (normalized.sections.sceneStudio) {
     await saveOverlayDraftRecord(normalized.importedDraftOverlay, normalized.importedLiveOverlay.updatedAt);

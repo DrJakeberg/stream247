@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 type PlayoutAssetOption = {
   id: string;
@@ -52,23 +53,23 @@ export function PlayoutActionForm(props: {
 
   return (
     <div className="stack-form" style={{ marginTop: 8 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button
-          className="button button-secondary"
-          disabled={isPending}
-          onClick={() => startTransition(() => void runAction({ type: "restart" }))}
-          type="button"
-        >
-          Soft restart
-        </button>
-        <button
-          className="button button-secondary"
-          disabled={isPending}
-          onClick={() => startTransition(() => void runAction({ type: "hard_reload" }))}
-          type="button"
-        >
-          Hard reload
-        </button>
+      {/*
+        The repair actions used to sit here as six buttons of equal weight, in front of everything
+        else, on the page an operator opens when something is wrong. Measured, this surface showed 33
+        controls at once and no visible hierarchy among them — while a paragraph above the form
+        explained, in prose, which ones to reach for first.
+
+        That ordering is now the layout rather than a sentence: the two the guidance calls the normal
+        path stay in front, the rest are one click away, and the group is closed by default so the
+        everyday controls are what you see. Nothing was removed.
+      */}
+      <details className="disclosure">
+        <summary>If something is stuck</summary>
+        <p className="subtle" style={{ marginTop: 8 }}>
+          Refreshing the scenes or rebuilding the queue fixes most of it, and neither interrupts what is on
+          air. The rest are stronger and worth trying in the order they appear.
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
         <button
           className="button button-secondary"
           disabled={isPending}
@@ -84,6 +85,14 @@ export function PlayoutActionForm(props: {
           type="button"
         >
           Rebuild queue
+        </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending}
+          onClick={() => startTransition(() => void runAction({ type: "restart" }))}
+          type="button"
+        >
+          Soft restart
         </button>
         <button
           className="button button-secondary"
@@ -108,6 +117,18 @@ export function PlayoutActionForm(props: {
         >
           Recover outputs now
         </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending}
+          onClick={() => startTransition(() => void runAction({ type: "hard_reload" }))}
+          type="button"
+        >
+          Hard reload
+        </button>
+        </div>
+      </details>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button
           className="button button-secondary"
           disabled={isPending}
@@ -143,7 +164,7 @@ export function PlayoutActionForm(props: {
 
       <div className="form-grid">
         <label>
-          <span className="label">Pin asset</span>
+          <span className="label label-with-info">Pin asset<InfoTip text="The asset the buttons below act on, whether you pin it on air, play it now, queue it next or run it as an insert. Starts out as whatever is on air right now." /></span>
           <select className="select" onChange={(event) => setSelectedAssetId(event.target.value)} value={selectedAssetId}>
             {props.assets.map((asset) => (
               <option key={asset.id} value={asset.id}>
@@ -153,21 +174,30 @@ export function PlayoutActionForm(props: {
           </select>
         </label>
         <label>
-          <span className="label">Override minutes</span>
+          <span className="label label-with-info">Override minutes<InfoTip text="Used by Pin on air and Skip current: a pinned asset keeps the slot for this many minutes before the schedule takes back over, and a skipped asset stays out of the queue for the same span while the schedule carries on. Kept between 5 and 240 minutes." /></span>
           <input min="5" name="minutes" onChange={(event) => setMinutes(event.target.value)} step="5" type="number" value={minutes} />
         </label>
       </div>
 
+      {/*
+        Bringing an outside feed on air is a distinct job from steering the schedule, and a rare one
+        on a channel that runs itself. Its three fields and its two buttons were spread across the
+        page — the inputs in one block, "Take live" and "Release live" among the asset actions. They
+        are one thing now, and closed until someone wants it.
+      */}
+      <details className="disclosure">
+        <summary>Bring in an outside feed</summary>
+        <div style={{ marginTop: 12 }}>
       <div className="form-grid">
         <label>
-          <span className="label">Live Bridge input</span>
+          <span className="label label-with-info">Live Bridge input<InfoTip text="The kind of feed the channel pulls in: RTMP takes an rtmp:// or rtmps:// address, HLS an http:// or https:// playlist. While the feed is on air the overlay's source line reads “Live Bridge · RTMP” or “Live Bridge · HLS”." /></span>
           <select className="select" onChange={(event) => setLiveBridgeInputType(event.target.value === "hls" ? "hls" : "rtmp")} value={liveBridgeInputType}>
             <option value="rtmp">RTMP / RTMPS</option>
             <option value="hls">HLS</option>
           </select>
         </label>
         <label>
-          <span className="label">Live Bridge label</span>
+          <span className="label label-with-info">Live Bridge label<InfoTip text="Shown on air as the title while the outside feed is playing, where an asset title would normally be, and in the Live Bridge status line under these buttons. Left empty it reads “Live Bridge”." /></span>
           <input
             maxLength={120}
             onChange={(event) => setLiveBridgeLabel(event.target.value)}
@@ -178,13 +208,40 @@ export function PlayoutActionForm(props: {
       </div>
 
       <label>
-        <span className="label">Live Bridge URL</span>
+        <span className="label label-with-info">Live Bridge URL<InfoTip text="Where the channel pulls the outside feed from; it has to match the input type chosen above. Once taken live, this feed replaces scheduled playback until you release it, and only its protocol and host are shown back here afterwards." /></span>
         <input
           onChange={(event) => setLiveBridgeUrl(event.target.value)}
           placeholder={props.liveBridgeInputSummary ? `Stored input: ${props.liveBridgeInputSummary}` : liveBridgeInputType === "hls" ? "https://example.com/live.m3u8" : "rtmp://encoder.example.com/live/key"}
           value={liveBridgeUrl}
         />
       </label>
+        <button
+          className="button button-secondary"
+          disabled={isPending || !liveBridgeUrl.trim()}
+          onClick={() =>
+            startTransition(() =>
+              void runAction({
+                type: "bridge_start",
+                inputType: liveBridgeInputType,
+                inputUrl: liveBridgeUrl,
+                label: liveBridgeLabel
+              })
+            )
+          }
+          type="button"
+        >
+          Take live
+        </button>
+        <button
+          className="button button-secondary"
+          disabled={isPending || !props.liveBridgeStatus || props.liveBridgeStatus === "idle"}
+          onClick={() => startTransition(() => void runAction({ type: "bridge_release" }))}
+          type="button"
+        >
+          Release live
+        </button>
+        </div>
+      </details>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button
@@ -247,31 +304,6 @@ export function PlayoutActionForm(props: {
           type="button"
         >
           Play insert
-        </button>
-        <button
-          className="button button-secondary"
-          disabled={isPending || !liveBridgeUrl.trim()}
-          onClick={() =>
-            startTransition(() =>
-              void runAction({
-                type: "bridge_start",
-                inputType: liveBridgeInputType,
-                inputUrl: liveBridgeUrl,
-                label: liveBridgeLabel
-              })
-            )
-          }
-          type="button"
-        >
-          Take live
-        </button>
-        <button
-          className="button button-secondary"
-          disabled={isPending || !props.liveBridgeStatus || props.liveBridgeStatus === "idle"}
-          onClick={() => startTransition(() => void runAction({ type: "bridge_release" }))}
-          type="button"
-        >
-          Release live
         </button>
         <button
           className="button button-secondary"

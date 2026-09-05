@@ -1,0 +1,125 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+<runtime>
+<runtime>
+CURRENT
+<runtime>
+<runtime>
+NEXT
+<runtime>
+<runtime>
+DESTINATION
+<runtime>
+<runtime>
+INCIDENTS
+<runtime>
+<runtime>
+UPDATES
+<runtime>
+<runtime>
+Schedule
+Pools
+Library
+Sources
+Library
+Browse the playable catalog and upload local media.
+Library is the programming-facing catalog of playable files. Use Sources for ingest configuration and Pools for schedule group logic.
+LIBRARY
+Upload local media
+Upload new files into the shared local media library. The Local media library source picks them up within a few minutes.
+MEDIA FILES
+i
+OPTIONAL SUBFOLDER
+i
+Uploaded files land in the shared local media library and become playable within a few minutes.
+Upload into local library
+CATALOG
+Asset library
+Search the playable catalog by title, source, folder, tag, or curated set. This is the programming-facing library, separate from source ingest configuration and pool rules.
+SEARCH ASSETS
+i
+SOURCE
+i
+All sources
+Local Media Library
+Twitch Archive
+YouTube Playlist
+ASSET STATUS
+i
+All statuses
+Ready
+Pending
+Error
+PROGRAM
+i
+All assets
+Included in programming
+Excluded from programming
+Global fallback only
+FOLDER
+i
+TAG
+i
+CURATED SET
+i
+All curated sets
+GROUP BY
+i
+No grouping
+Source
+Folder
+Tag
+Curated set
+Status
+Showing 2 of 2 assets across 1 library view.
+No assets selected yet.
+Curated sets
+Curated sets let operators pin reusable groups of assets without rewriting folders or tags. New sets can start with the currently selected assets.
+No curated sets yet.
+SET NAME
+i
+ACCENT COLOR
+i
+DESCRIPTION
+i
+Create curated set
+Add selected to set
+Remove selected from set
+Delete curated set
+New set draft
+BULK FOLDER PATH
+i
+BULK TAGS
+i
+Select assets to see what you can do with them.
+Local Media Library
+2 asset(s)
+Select asset
+<asset>
+Local Media Library · ready · 45m
+Replay
+Folder: root · Tags: none
+Included in programming · No global fallback flag
+No curated set
+/app/data/media/dev/abendprogramm-13.mp4
+Open asset detail
+Select asset
+<asset>
+Local Media Library · ready · 60m
+Replay
+Folder: root · Tags: none
+Included in programming · No global fallback flag
+No curated set
+/app/data/media/dev/abendprogramm-12.mp4
+Open asset detail

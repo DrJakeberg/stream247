@@ -4,6 +4,7 @@ import type { BroadcastSnapshot } from "@/lib/live-broadcast";
 import { buildAssetDisplayTitle, isReplayTitlePrefix } from "@/lib/asset-metadata";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
+import { describePlayoutReason } from "@/lib/playout-reason";
 
 function buildQueueHref(assetId: string) {
   return buildWorkspaceHref("program", "schedule", { lens: "now-next", assetId });
@@ -25,7 +26,7 @@ export function ProgramNowNextLens(props: {
         <div className="subtle">
           {props.snapshot.currentScheduleItem
             ? `${props.snapshot.currentScheduleItem.startTime} to ${props.snapshot.currentScheduleItem.endTime} · ${props.snapshot.currentScheduleItem.title}`
-            : props.snapshot.playout.selectionReasonCode || "No active schedule window"}
+            : describePlayoutReason(props.snapshot.playout.selectionReasonCode) || "No active schedule window"}
         </div>
         {currentAsset ? (
           <div className="program-item-flags">

@@ -1,9 +1,10 @@
 import {
   isEngagementAlertsRuntimeEnabled,
   isEngagementChannelPointsRuntimeEnabled,
-  isEngagementDonationAlertsRuntimeEnabled
+  isEngagementDonationAlertsRuntimeEnabled,
+  resolveTwitchEventSubSecret
 } from "@stream247/core";
-import type { AppState } from "@stream247/db";
+import { resolveAppBaseUrl, type AppState, type ManagedConfigRecord } from "@stream247/db";
 
 type FetchLike = typeof fetch;
 
@@ -76,16 +77,16 @@ function resolveDesiredEventSubSubscriptions(args: {
   state: AppState;
   env: Record<string, string | undefined>;
 }): EventSubSubscriptionDefinition[] {
-  if (!isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env)) {
+  if (!isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env, args.state.managedConfig)) {
     return [];
   }
 
   return REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS.filter((definition) => {
     if (definition.type === "channel.cheer") {
-      return isEngagementDonationAlertsRuntimeEnabled(args.state.engagement, args.env);
+      return isEngagementDonationAlertsRuntimeEnabled(args.state.engagement, args.env, args.state.managedConfig);
     }
     if (definition.type === "channel.channel_points_custom_reward_redemption.add") {
-      return isEngagementChannelPointsRuntimeEnabled(args.state.engagement, args.env);
+      return isEngagementChannelPointsRuntimeEnabled(args.state.engagement, args.env, args.state.managedConfig);
     }
     return true;
   });
@@ -102,8 +103,13 @@ function emptyResult(enabled: boolean, reason: string): TwitchEventSubSyncResult
   };
 }
 
-export function resolveTwitchEventSubCallbackUrl(env: Record<string, string | undefined>): string {
-  const appUrl = (env.APP_URL || "").trim().replace(/\/$/, "");
+export function resolveTwitchEventSubCallbackUrl(
+  managedConfig: Partial<Pick<ManagedConfigRecord, "appUrl">> | undefined,
+  env: Record<string, string | undefined>
+): string {
+  // Twitch will only deliver webhooks to a public https URL, so the wizard-managed app URL is as
+  // valid a source as the env variable — env first, per the instance-config precedence.
+  const appUrl = resolveAppBaseUrl(managedConfig, env);
   if (!appUrl || !appUrl.startsWith("https://")) {
     return "";
   }
@@ -183,6 +189,29 @@ function callbackMatches(subscription: TwitchEventSubSubscription, callbackUrl: 
     subscription.transport?.method === "webhook" &&
     (subscription.transport.callback || "").replace(/\/$/, "") === callbackUrl.replace(/\/$/, "")
   );
+}
+
+/**
+ * Statuses in which a subscription still delivers, or is about to.
+ *
+ * Twitch keeps a subscription listed after it has stopped working — `authorization_revoked` once
+ * the broadcaster withdraws the grant, `notification_failures_exceeded` after our callback was
+ * unreachable, `version_removed` when Twitch retires a schema. Matching on type and condition alone
+ * counts those as present, so the sync neither replaces nor removes them and the channel silently
+ * stops receiving events, with every health surface reporting the subscription as configured.
+ *
+ * `webhook_callback_verification_pending` is healthy on purpose: it resolves within seconds, and
+ * treating it as dead would create a duplicate on every sync pass while verification is in flight.
+ */
+const HEALTHY_EVENTSUB_STATUSES = new Set(["enabled", "webhook_callback_verification_pending"]);
+
+export function isHealthyEventSubStatus(status: string | undefined): boolean {
+  // An absent status is not evidence of a dead subscription; reading it that way would delete and
+  // recreate working subscriptions on every pass.
+  if (!status) {
+    return true;
+  }
+  return HEALTHY_EVENTSUB_STATUSES.has(status);
 }
 
 function subscriptionMatchesDefinition(args: {
@@ -285,10 +314,10 @@ export async function syncTwitchEventSubSubscriptions(args: {
   fetchImpl?: FetchLike;
 }): Promise<TwitchEventSubSyncResult> {
   const fetchImpl = args.fetchImpl ?? fetch;
-  const enabled = isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env);
+  const enabled = isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env, args.state.managedConfig);
   const broadcasterId = args.state.twitch.broadcasterId.trim();
-  const callbackUrl = resolveTwitchEventSubCallbackUrl(args.env);
-  const secret = (args.env.TWITCH_EVENTSUB_SECRET || "").trim();
+  const callbackUrl = resolveTwitchEventSubCallbackUrl(args.state.managedConfig, args.env);
+  const secret = resolveTwitchEventSubSecret(args.state.managedConfig, args.env);
   const desiredSubscriptions = resolveDesiredEventSubSubscriptions(args);
 
   if (args.state.twitch.status !== "connected" || !broadcasterId) {
@@ -359,7 +388,11 @@ export async function syncTwitchEventSubSubscriptions(args: {
         callbackUrl
       })
     );
-    if (stillDesired || !subscription.id) {
+    // A dead subscription is removed even while still desired: it is replaced further down, and
+    // leaving it in place would both keep the channel deaf and consume one of the account's
+    // subscription slots forever.
+    const healthy = isHealthyEventSubStatus(subscription.status);
+    if ((stillDesired && healthy) || !subscription.id) {
       continue;
     }
     await deleteEventSubSubscription({
@@ -372,13 +405,15 @@ export async function syncTwitchEventSubSubscriptions(args: {
   }
 
   for (const definition of desiredSubscriptions) {
-    const hasExisting = ownedSubscriptions.some((subscription) =>
-      subscriptionMatchesDefinition({
-        subscription,
-        definition,
-        broadcasterId,
-        callbackUrl
-      })
+    const hasExisting = ownedSubscriptions.some(
+      (subscription) =>
+        isHealthyEventSubStatus(subscription.status) &&
+        subscriptionMatchesDefinition({
+          subscription,
+          definition,
+          broadcasterId,
+          callbackUrl
+        })
     );
 
     if (hasExisting) {

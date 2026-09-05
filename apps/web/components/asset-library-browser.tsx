@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 import type { AssetCollectionRecord, AssetRecord, SourceRecord } from "@/lib/server/state";
 
 type GroupByMode = "none" | "source" | "folder" | "tag" | "curated-set" | "status";
@@ -326,11 +327,11 @@ export function AssetLibraryBrowser(props: {
     <div className="stack-form">
       <div className="form-grid">
         <label>
-          <span className="label">Search assets</span>
+          <span className="label label-with-info">Search assets<InfoTip text="Narrows the list to assets whose title, source category, source item id (such as a Twitch video id), file path, folder, tags or curated set name contain this text. It changes only what you see here; nothing about the channel changes." /></span>
           <input onChange={(event) => setQuery(event.target.value)} placeholder="Title, category, tag, or curated set..." value={query} />
         </label>
         <label>
-          <span className="label">Source</span>
+          <span className="label label-with-info">Source<InfoTip text="Shows only the assets one source has delivered. A view filter only; the channel keeps playing whatever its pools contain." /></span>
           <select onChange={(event) => setSourceId(event.target.value)} value={sourceId}>
             <option value="all">All sources</option>
             {props.sources.map((source) => (
@@ -341,7 +342,7 @@ export function AssetLibraryBrowser(props: {
           </select>
         </label>
         <label>
-          <span className="label">Asset status</span>
+          <span className="label label-with-info">Asset status<InfoTip text="Shows assets by whether the channel can use them. Only assets marked ready are ever picked for a pool, an insert or a fallback; pending and error assets stay in the library but never go on air automatically." /></span>
           <select onChange={(event) => setStatus(event.target.value)} value={status}>
             <option value="all">All statuses</option>
             <option value="ready">Ready</option>
@@ -350,7 +351,7 @@ export function AssetLibraryBrowser(props: {
           </select>
         </label>
         <label>
-          <span className="label">Program</span>
+          <span className="label label-with-info">Program<InfoTip text="Shows assets by how automation may use them. Included assets can be picked for pools and inserts and are the last resort when nothing else is playable, excluded ones are kept but never played automatically, and global fallbacks play whenever nothing is scheduled or the scheduled item cannot play." /></span>
           <select onChange={(event) => setProgrammingState(event.target.value)} value={programmingState}>
             <option value="all">All assets</option>
             <option value="included">Included in programming</option>
@@ -359,15 +360,15 @@ export function AssetLibraryBrowser(props: {
           </select>
         </label>
         <label>
-          <span className="label">Folder</span>
+          <span className="label label-with-info">Folder<InfoTip text="Shows assets whose library folder contains this text. Folders only organise the library: a source sync assigns one to each asset, and the bulk actions below can change it." /></span>
           <input onChange={(event) => setFolderFilter(event.target.value)} placeholder="uploads/highlights" value={folderFilter} />
         </label>
         <label>
-          <span className="label">Tag</span>
+          <span className="label label-with-info">Tag<InfoTip text="Shows assets carrying a tag that contains this text. Tags are labels for finding and grouping assets in the library; the playout does not read them." /></span>
           <input onChange={(event) => setTagFilter(event.target.value)} placeholder="retro or sponsor-safe" value={tagFilter} />
         </label>
         <label>
-          <span className="label">Curated set</span>
+          <span className="label label-with-info">Curated set<InfoTip text="Shows only the members of the chosen set. Sets are hand-picked groups of assets; if the optional library sweep is switched on, membership also protects an asset from being removed once its source is gone, and sets are included in a channel blueprint." /></span>
           <select onChange={(event) => setCollectionFilter(event.target.value)} value={collectionFilter}>
             <option value="all">All curated sets</option>
             {props.assetCollections.map((collection) => (
@@ -378,7 +379,7 @@ export function AssetLibraryBrowser(props: {
           </select>
         </label>
         <label>
-          <span className="label">Group by</span>
+          <span className="label label-with-info">Group by<InfoTip text="Splits the list below into sections by source, folder, tag, curated set or status, biggest section first. An asset with several tags or sets appears in each of its sections." /></span>
           <select onChange={(event) => setGroupBy(event.target.value as GroupByMode)} value={groupBy}>
             <option value="none">No grouping</option>
             <option value="source">Source</option>
@@ -434,7 +435,7 @@ export function AssetLibraryBrowser(props: {
           </div>
           <div className="form-grid">
             <label>
-              <span className="label">Set name</span>
+              <span className="label label-with-info">Set name<InfoTip text="Shown on the set's chip and on every member's card, and matched by the search box. Required; a new set starts with the assets currently selected, and renaming an existing set keeps its members." /></span>
               <input
                 onChange={(event) => setCollectionNameDraft(event.target.value)}
                 placeholder="Weekend marathon starters"
@@ -442,12 +443,12 @@ export function AssetLibraryBrowser(props: {
               />
             </label>
             <label>
-              <span className="label">Accent color</span>
+              <span className="label label-with-info">Accent color<InfoTip text="Tints the set's chip here and the badge on each member's card, so several sets can be told apart at a glance. A hex value such as #0e6d5a works." /></span>
               <input onChange={(event) => setCollectionColorDraft(event.target.value)} placeholder="#0e6d5a" value={collectionColorDraft} />
             </label>
           </div>
           <label>
-            <span className="label">Description</span>
+            <span className="label label-with-info">Description<InfoTip text="A note for operators about what belongs in the set; it appears only in this field when the set's chip is selected, not on the chip or on member cards. Saved with the set and carried along in a channel blueprint; it has no effect on playout." /></span>
             <input
               onChange={(event) => setCollectionDescriptionDraft(event.target.value)}
               placeholder="Starter pack for sponsor-safe weekend replays"
@@ -456,7 +457,7 @@ export function AssetLibraryBrowser(props: {
           </label>
           <div className="toggle-row">
             <button
-              className="button"
+              className="button button-secondary"
               disabled={isPending || !collectionNameDraft.trim()}
               onClick={() => {
                 setError("");
@@ -522,18 +523,27 @@ export function AssetLibraryBrowser(props: {
 
       <div className="form-grid">
         <label>
-          <span className="label">Bulk folder path</span>
+          <span className="label label-with-info">Bulk folder path<InfoTip text="Applied to every selected asset when you press Set folder, replacing whatever folder each had. Folders are flat labels, not a tree: uploads/season-1 is one folder whose name happens to contain a slash, the Folder filter matches any part of the name, and folders never change what plays." /></span>
           <input onChange={(event) => setFolderDraft(event.target.value)} placeholder="uploads/season-1" value={folderDraft} />
         </label>
         <label>
-          <span className="label">Bulk tags</span>
+          <span className="label label-with-info">Bulk tags<InfoTip text="Comma-separated list used by Add tags, which merges these into each selected asset's existing tags, and by Replace tags, which swaps the whole list out. An asset keeps at most 24 tags and extra ones are dropped without warning; tags only help you find and group assets in the library and never affect playout." /></span>
           <input onChange={(event) => setTagsDraft(event.target.value)} placeholder="retro, marathon, sponsor-safe" value={tagsDraft} />
         </label>
       </div>
 
+      {/*
+        Nine actions that need a selection to mean anything, previously shown greyed out whether or
+        not anything was selected. That is fourteen of this page's forty controls describing work
+        that cannot be done yet. They appear once there is something to apply them to, and the line
+        that replaces them says so rather than leaving the possibility undiscoverable.
+      */}
+      {selectedIds.length === 0 ? (
+        <p className="subtle">Select assets to see what you can do with them.</p>
+      ) : (
       <div className="toggle-row">
         <button
-          className="button"
+          className="button button-secondary"
           disabled={isPending || selectedIds.length === 0}
           onClick={() => {
             setError("");
@@ -641,6 +651,7 @@ export function AssetLibraryBrowser(props: {
           Clear tags
         </button>
       </div>
+      )}
 
       <div className="library-group-stack">
         {assetGroups.map((group) => (

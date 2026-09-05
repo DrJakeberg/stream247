@@ -8,6 +8,16 @@ import type { BroadcastSnapshot } from "@/lib/live-broadcast";
 import { PlayoutActionForm } from "@/components/playout-action-form";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
+import { getChannelStatusLabel } from "@/lib/channel-status";
+import {
+  DESTINATION_RECOVERY_LABELS,
+  DESTINATION_ROLE_LABELS,
+  DESTINATION_STATUS_LABELS,
+  describeStreamKey
+} from "@/lib/destination-wording";
+import { describeIncidentAge, describeOpenIncidentOverflow } from "@/lib/incident-age";
+import { describePlayoutReason } from "@/lib/playout-reason";
+import { describeScenePreset } from "@/lib/scene-preset-names";
 
 type AssetOption = {
   id: string;
@@ -25,6 +35,10 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
   const activeDestinationCount = snapshot.destinations.filter((destination) => destination.active).length;
   const stagedDestinationCount = snapshot.destinations.filter((destination) => destination.recoveryState === "staged").length;
   const coolingDestinationCount = snapshot.destinations.filter((destination) => destination.recoveryState === "cooldown").length;
+  // Ages are measured against the snapshot's own timestamp rather than the browser clock, so the
+  // server render and the hydrated render agree, every age on the panel shares one "now", and the
+  // render stays pure. An unusable timestamp produces no age line rather than a wrong one.
+  const incidentNowMs = new Date(snapshot.generatedAt).getTime();
 
   return (
     <div className="stack-form">
@@ -53,7 +67,8 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
         <div className="status-rail">
           <div>
             <span className="label">Feed</span>
-            <strong>{snapshot.playout.status}</strong>
+            {/* The same words the public page uses, rather than the value the runtime stores. */}
+            <strong>{getChannelStatusLabel(snapshot.playout.status)}</strong>
           </div>
           <div>
             <span className="label">Current</span>
@@ -67,8 +82,10 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
             <span className="label">Destination</span>
             <strong>
               {activeDestinationCount > 0
-                ? `${activeDestinationCount} active`
-                : snapshot.destination?.status || "missing"}
+                ? `${activeDestinationCount} in use`
+                : snapshot.destination
+                  ? DESTINATION_STATUS_LABELS[snapshot.destination.status]
+                  : "None set up"}
             </strong>
           </div>
           <div>
@@ -91,7 +108,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                   : currentQueueItem?.subtitle || snapshot.playout.message}
               </div>
               <div className="subtle">
-                Transition {snapshot.playout.transitionState} · queue reason {snapshot.playout.selectionReasonCode || "none"} · version{" "}
+                Transition {snapshot.playout.transitionState} · queue reason {describePlayoutReason(snapshot.playout.selectionReasonCode) || "none"} · version{" "}
                 {snapshot.playout.queueVersion}
               </div>
             </div>
@@ -129,10 +146,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
         <article className="panel">
           <span className="label">Actions</span>
           <h3>Operator controls</h3>
-          <p className="subtle">
-            Use soft actions first. Hard reload is still available, but queue rebuild and scene refresh should be the
-            normal recovery path.
-          </p>
+          {/* The recovery guidance that used to live here is now the order of the buttons themselves. */}
           <PlayoutActionForm
             assets={props.assets}
             currentAssetId={snapshot.currentAsset?.id}
@@ -152,7 +166,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
         </article>
 
         <article className="panel">
-          <span className="label">Audio lane</span>
+          <span className="label">Replacement audio</span>
           <h3>Secondary audio</h3>
           <div className="list">
             <div className="item">
@@ -169,24 +183,24 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
         </article>
 
         <article className="panel">
-          <span className="label">Cuepoints</span>
-          <h3>Timed insert state</h3>
+          <span className="label">Timed inserts</span>
+          <h3>Timed insert</h3>
           <div className="list">
             <div className="item">
               <strong>{snapshot.cuepoints.assetTitle || "No cuepoint insert asset"}</strong>
               <div className="subtle">
                 {snapshot.cuepoints.configured
                   ? `Safe-boundary mode · ${snapshot.cuepoints.firedCount}/${snapshot.cuepoints.totalCount} fired`
-                  : "No cuepoints are configured for the current schedule block."}
+                  : "Nothing is set to play at a fixed time in this block."}
               </div>
               {snapshot.cuepoints.offsetsSeconds.length > 0 ? (
                 <div className="subtle">Offsets {snapshot.cuepoints.offsetsSeconds.map((offset) => `${offset}s`).join(" · ")}</div>
               ) : null}
               {snapshot.cuepoints.nextOffsetSeconds !== null ? (
-                <div className="subtle">Next cuepoint at {snapshot.cuepoints.nextOffsetSeconds}s from block start</div>
+                <div className="subtle">Next one {snapshot.cuepoints.nextOffsetSeconds}s into the block</div>
               ) : null}
               {snapshot.cuepoints.dueOffsetSeconds !== null ? (
-                <div className="subtle">A cuepoint at {snapshot.cuepoints.dueOffsetSeconds}s is armed for the next safe insert boundary.</div>
+                <div className="subtle">The insert due at {snapshot.cuepoints.dueOffsetSeconds}s is waiting for a safe point to start.</div>
               ) : null}
               {snapshot.cuepoints.lastTriggeredAt ? (
                 <div className="subtle">
@@ -218,7 +232,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
 
         <article className="panel">
           <span className="label">Destination</span>
-          <h3>Output health</h3>
+          <h3>Sending to Twitch</h3>
           <div className="list">
             <div className="item">
               <strong>{snapshot.destination?.name || "No destination configured"}</strong>
@@ -235,22 +249,23 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 {snapshot.playout.crashLoopDetected ? "detected" : "clear"}
               </div>
               <div className="subtle">Last transition {snapshot.playout.lastTransitionAt || "not recorded yet"}</div>
-              <div className="subtle">{snapshot.playout.lastStderrSample || "No recent FFmpeg stderr sample."}</div>
+              <div className="subtle">{snapshot.playout.lastStderrSample || "The encoder has not reported any errors."}</div>
             </div>
             {snapshot.destinations.map((destination) => (
               <div className="item" key={destination.id}>
                 <strong>{destination.name}</strong>
                 <div className="subtle">
-                  {destination.role} · priority {destination.priority} · {destination.status}
-                  {destination.active ? " · active" : ""}
+                  {DESTINATION_ROLE_LABELS[destination.role]} · priority {destination.priority} ·{" "}
+                  {DESTINATION_STATUS_LABELS[destination.status]}
+                  {destination.active ? " · in use" : ""}
                 </div>
                 <div className="subtle">
-                  {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"} · key source{" "}
-                  {destination.streamKeySource}
+                  {destination.rtmpUrl || "No RTMP URL configured"} ·{" "}
+                  {describeStreamKey(destination.streamKeyPresent, destination.streamKeySource)}
                 </div>
                 <div className="subtle">{destination.notes}</div>
                 <div className="subtle">
-                  Recovery {destination.recoveryState}
+                  Recovery: {DESTINATION_RECOVERY_LABELS[destination.recoveryState]}
                   {destination.failureHoldSecondsRemaining > 0 ? ` · retry in ${destination.failureHoldSecondsRemaining}s` : ""}
                 </div>
                 <div className="subtle">{destination.recoverySummary}</div>
@@ -266,13 +281,13 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
 
         <article className="panel">
           <span className="label">Scenes</span>
-          <h3>Current overlay payload</h3>
+          <h3>What the overlay shows</h3>
           <div className="list">
             <div className="item">
               <strong>{snapshot.overlay.replayLabel} · {snapshot.overlay.channelName}</strong>
               <div className="subtle">{snapshot.overlay.headline}</div>
               <div className="subtle">
-                Preset {snapshot.overlay.scenePreset} · {snapshot.overlay.surfaceStyle} surface · {snapshot.overlay.panelAnchor} anchor ·{" "}
+                Preset {describeScenePreset(snapshot.overlay.scenePreset)} · {snapshot.overlay.surfaceStyle} surface · {snapshot.overlay.panelAnchor} anchor ·{" "}
                 {snapshot.overlay.titleScale} scale
               </div>
               <div className="subtle">
@@ -280,19 +295,19 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 Reconnect {snapshot.overlay.reconnectHeadline}
               </div>
               <div className="subtle">
-                Asset {snapshot.overlay.scenePreset} · Insert {snapshot.overlay.insertScenePreset} · Standby {snapshot.overlay.standbyScenePreset} ·
-                Reconnect {snapshot.overlay.reconnectScenePreset}
+                Asset {describeScenePreset(snapshot.overlay.scenePreset)} · Insert {describeScenePreset(snapshot.overlay.insertScenePreset)} · Standby {describeScenePreset(snapshot.overlay.standbyScenePreset)} ·
+                Reconnect {describeScenePreset(snapshot.overlay.reconnectScenePreset)}
               </div>
               <div className="subtle">
                 Accent {snapshot.overlay.accentColor} · Brand badge {snapshot.overlay.brandBadge || "none"} · Next visible{" "}
                 {snapshot.overlay.showNextItem ? "yes" : "no"} · Clock {snapshot.overlay.showClock ? "yes" : "no"}
               </div>
               <div className="subtle">
-                Queue preview {snapshot.overlay.showQueuePreview ? `yes (${snapshot.overlay.queuePreviewCount})` : "no"} · Current category{" "}
-                {snapshot.overlay.showCurrentCategory ? "yes" : "no"} · Source label {snapshot.overlay.showSourceLabel ? "yes" : "no"}
+                Current category {snapshot.overlay.showCurrentCategory ? "yes" : "no"} · Source label{" "}
+                {snapshot.overlay.showSourceLabel ? "yes" : "no"}
               </div>
               <div className="subtle">
-                Active scene {snapshot.activeScene.resolvedPresetId} · layers{" "}
+                Active scene {describeScenePreset(snapshot.activeScene.resolvedPresetId)} · layers{" "}
                 {snapshot.activeScene.layers.filter((layer) => layer.enabled).map((layer) => layer.label).join(" → ")}
               </div>
               <div className="subtle">
@@ -306,9 +321,6 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               <div className="subtle-link-row" style={{ marginTop: 8 }}>
                 <Link className="subtle-link" href={buildWorkspaceHref("studio", "scene")}>
                   Open overlay studio
-                </Link>
-                <Link className="subtle-link" href="/overlay" target="_blank">
-                  Open public overlay
                 </Link>
               </div>
             </div>
@@ -325,6 +337,13 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                   <strong>
                     {incident.severity.toUpperCase()} · {incident.scope} · {incident.title}
                   </strong>
+                  <div className="subtle">
+                    {describeIncidentAge({
+                      createdAt: incident.createdAt,
+                      updatedAt: incident.updatedAt,
+                      nowMs: incidentNowMs
+                    })}
+                  </div>
                   <div className="subtle">{incident.message}</div>
                 </div>
               ))
@@ -334,12 +353,19 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 <div className="subtle">The live system currently reports no unresolved incidents.</div>
               </div>
             )}
+            {describeOpenIncidentOverflow(snapshot.openIncidents.length, snapshot.openIncidentCount) ? (
+              <div className="item">
+                <div className="subtle">
+                  {describeOpenIncidentOverflow(snapshot.openIncidents.length, snapshot.openIncidentCount)}
+                </div>
+              </div>
+            ) : null}
           </div>
         </article>
 
         <article className="panel">
           <span className="label">Worker</span>
-          <h3>Background health</h3>
+          <h3>Behind the scenes</h3>
           <div className="list">
             <div className="item">
               <strong>{snapshot.workerHealth.status}</strong>

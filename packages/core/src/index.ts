@@ -1,3 +1,23 @@
+export * from "./asset-chapters.js";
+import { getAssetChapterAt, parseAssetChaptersJson } from "./asset-chapters.js";
+export * from "./broadcast-channel.js";
+export * from "./chat-emotes.js";
+export * from "./chat-game.js";
+export * from "./chat-game-2048.js";
+export * from "./chat-game-minesweeper.js";
+export * from "./chat-interaction.js";
+export * from "./managed-runtime.js";
+export * from "./overlay-layout.js";
+export * from "./relay-ingest.js";
+export * from "./source-health.js";
+
+import {
+  resolveAlertsRuntimeEnabled,
+  resolveChatOverlayRuntimeEnabled,
+  type ManagedRuntimeToggleInput
+} from "./managed-runtime.js";
+import { OVERLAY_PANEL_IDS, OVERLAY_TICKER_DEFAULT_SECONDS, type OverlayPanelId } from "./overlay-layout.js";
+
 export type ModerationConfig = {
   enabled: boolean;
   command: string;
@@ -48,7 +68,7 @@ export type OverlayPanelAnchor = "bottom" | "center";
 export type OverlayTitleScale = "compact" | "balanced" | "cinematic";
 export type OverlayTypographyPreset = "studio-sans" | "editorial-serif" | "signal-mono";
 export type OverlaySceneLayerKind = "chip" | "hero" | "next" | "queue" | "schedule" | "clock" | "banner" | "ticker";
-export type OverlaySceneCustomLayerKind = "text" | "logo" | "image" | "embed" | "widget";
+export type OverlaySceneCustomLayerKind = "text" | "logo" | "image" | "embed" | "widget" | "game" | "source";
 export type OverlaySceneCustomTextTone = "headline" | "body" | "caption";
 export type OverlaySceneCustomTextAlign = "left" | "center" | "right";
 export type OverlaySceneCustomMediaFit = "contain" | "cover";
@@ -237,6 +257,17 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
 const invisibleUnicodePattern =
   /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00AD\u200B-\u200D\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 
+/**
+ * Escape a string for literal use inside a RegExp.
+ *
+ * Chat commands and vote tokens are operator-configured and end up interpolated into patterns that
+ * run against every incoming IRC message. An unescaped "(" or "[" throws at RegExp construction
+ * time, inside a socket data handler where nothing catches it.
+ */
+export function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function stripInvisibleCharacters(value: string): string {
   return String(value ?? "").normalize("NFC").replace(invisibleUnicodePattern, "");
 }
@@ -377,34 +408,67 @@ export function normalizeEngagementEvent(value: EngagementEventInput): Engagemen
   };
 }
 
+// The runtime gates now resolve through managed config first (M56) and keep the env variable
+// as fallback. Callers that have application state pass state.managedConfig; omitting it keeps
+// the historical env-only behaviour, which is also what every pre-M56 call site did.
 export function isEngagementChatRuntimeEnabled(
   settings: EngagementSettingsInput | null | undefined,
+  env: Record<string, string | undefined>,
+  managedConfig?: ManagedRuntimeToggleInput
+): boolean {
+  return normalizeEngagementSettings(settings).chatEnabled && resolveChatOverlayRuntimeEnabled(managedConfig, env);
+}
+
+/**
+ * Whether the Twitch chat connection is needed at all.
+ *
+ * Finding [7] of the codebase review: the bridge used to follow the chat rail's switch alone, and
+ * it is the only intake for moderator check-ins, votes, skip votes, viewer requests and the chat
+ * game — hiding the panel silently switched all of them off. The connection is needed when any
+ * consumer needs it; the rail is one consumer, gated separately where the panel is drawn.
+ */
+export function isChatBridgeRuntimeNeeded(
+  state: {
+    engagement: EngagementSettingsInput | null | undefined;
+    managedConfig?: ManagedRuntimeToggleInput;
+    moderation?: { enabled: boolean } | null;
+    chatInteraction?: { enabled: boolean } | null;
+    chatGame?: { enabled: boolean } | null;
+  },
   env: Record<string, string | undefined>
 ): boolean {
-  return normalizeEngagementSettings(settings).chatEnabled && env.STREAM_CHAT_OVERLAY_ENABLED === "1";
+  return (
+    isEngagementChatRuntimeEnabled(state.engagement, env, state.managedConfig) ||
+    Boolean(state.moderation?.enabled) ||
+    Boolean(state.chatInteraction?.enabled) ||
+    Boolean(state.chatGame?.enabled)
+  );
 }
 
 export function isEngagementAlertsRuntimeEnabled(
   settings: EngagementSettingsInput | null | undefined,
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  managedConfig?: ManagedRuntimeToggleInput
 ): boolean {
-  return normalizeEngagementSettings(settings).alertsEnabled && env.STREAM_ALERTS_ENABLED === "1";
+  return normalizeEngagementSettings(settings).alertsEnabled && resolveAlertsRuntimeEnabled(managedConfig, env);
 }
 
 export function isEngagementDonationAlertsRuntimeEnabled(
   settings: EngagementSettingsInput | null | undefined,
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  managedConfig?: ManagedRuntimeToggleInput
 ): boolean {
   const normalized = normalizeEngagementSettings(settings);
-  return normalized.donationsEnabled && isEngagementAlertsRuntimeEnabled(normalized, env);
+  return normalized.donationsEnabled && isEngagementAlertsRuntimeEnabled(normalized, env, managedConfig);
 }
 
 export function isEngagementChannelPointsRuntimeEnabled(
   settings: EngagementSettingsInput | null | undefined,
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  managedConfig?: ManagedRuntimeToggleInput
 ): boolean {
   const normalized = normalizeEngagementSettings(settings);
-  return normalized.channelPointsEnabled && isEngagementAlertsRuntimeEnabled(normalized, env);
+  return normalized.channelPointsEnabled && isEngagementAlertsRuntimeEnabled(normalized, env, managedConfig);
 }
 
 export function hasEnabledEngagementGameModes(settings: EngagementSettingsInput | null | undefined): boolean {
@@ -414,10 +478,15 @@ export function hasEnabledEngagementGameModes(settings: EngagementSettingsInput 
 
 export function isEngagementGameRuntimeEnabled(
   settings: EngagementSettingsInput | null | undefined,
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  managedConfig?: ManagedRuntimeToggleInput
 ): boolean {
   const normalized = normalizeEngagementSettings(settings);
-  return normalized.gameEnabled && hasEnabledEngagementGameModes(normalized) && isEngagementChatRuntimeEnabled(normalized, env);
+  return (
+    normalized.gameEnabled &&
+    hasEnabledEngagementGameModes(normalized) &&
+    isEngagementChatRuntimeEnabled(normalized, env, managedConfig)
+  );
 }
 
 export function getEngagementGameWindowMs(settings: EngagementSettingsInput | null | undefined): number {
@@ -535,7 +604,7 @@ export function buildEngagementGameOverlayState(args: {
     ].map((option) => ({
       ...option,
       votes: recentChatEvents.reduce(
-        (count, event) => count + (new RegExp(`(^|\\s)${option.token.replace("!", "\\!")}($|\\s)`, "i").test(event.message) ? 1 : 0),
+        (count, event) => count + (new RegExp(`(^|\\s)${escapeRegExp(option.token)}($|\\s)`, "i").test(event.message) ? 1 : 0),
         0
       )
     }))
@@ -595,11 +664,63 @@ export type OverlaySceneCustomWidgetLayer = OverlaySceneCustomLayerBase & {
   widgetDataKey: OverlaySceneCustomWidgetDataKey;
 };
 
+/**
+ * Placement slot for the chat game. The layer only says where the game panel sits in this scene;
+ * which game runs, its grid, and its emote mapping live in the chat-game settings, because the
+ * same game continues across scene changes and must not fork per scene.
+ */
+export type OverlaySceneCustomGameLayer = OverlaySceneCustomLayerBase & {
+  kind: "game";
+  /**
+   * How much of the panel's backdrop is drawn, 0-100, independent of opacityPercent.
+   *
+   * The games are the one surface an operator asks to be "as transparent as possible", and
+   * opacityPercent could not give them that: it fades the board along with the fill, so a game
+   * at 5% is not a transparent game but an invisible one. This fades only what is behind the
+   * board. The board itself is outlined so it survives the fill going away.
+   */
+  backgroundOpacityPercent: number;
+};
+
+/**
+ * Placement slot for a sampled external video source (a camera or feed). The layer carries only
+ * where the picture sits and which stored source it shows: the source's URL frequently embeds
+ * credentials, so it lives encrypted in its own store and is referenced by id — it must never
+ * travel through the scene payload, which is cached, diffed and logged in the clear.
+ */
+export type OverlaySceneCustomSourceLayer = OverlaySceneCustomLayerBase & {
+  kind: "source";
+  /** Id of the stored video source; empty until the operator links one. */
+  sourceId: string;
+};
+
+/**
+ * Where one of the renderer's own panels sits, in the same percentages a custom layer uses.
+ *
+ * Stored per panel and only for the panels somebody has actually moved. An absent entry is not a
+ * default written down — it is "this panel is still in the flow", which is what keeps a scene
+ * nobody has rearranged drawing exactly the picture it drew before any of this existed. The studio
+ * seeds a new entry from deriveDefaultPlacements, so the first thing an operator sees when they
+ * take hold of a panel is where that panel already is.
+ */
+export type OverlayScenePanelPlacement = {
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
+  opacityPercent: number;
+  allowOutsideSafeArea: boolean;
+};
+
+export type OverlayScenePanelPlacementMap = Partial<Record<OverlayPanelId, OverlayScenePanelPlacement>>;
+
 export type OverlaySceneCustomLayer =
   | OverlaySceneCustomTextLayer
   | OverlaySceneCustomMediaLayer
   | OverlaySceneCustomEmbedLayer
-  | OverlaySceneCustomWidgetLayer;
+  | OverlaySceneCustomWidgetLayer
+  | OverlaySceneCustomGameLayer
+  | OverlaySceneCustomSourceLayer;
 
 export type OverlayScenePresetDefinition = {
   id: OverlayScenePreset;
@@ -622,6 +743,8 @@ export type OverlaySceneDefinition = {
   typographyPreset: OverlayTypographyPreset;
   layers: OverlaySceneLayerDefinition[];
   customLayers: OverlaySceneCustomLayer[];
+  /** Only the renderer's own panels an operator has moved; the rest stay in the flow. */
+  panelPlacements: OverlayScenePanelPlacementMap;
 };
 
 export type OverlayScenePayload = {
@@ -645,6 +768,8 @@ export type OverlayScenePayload = {
   scheduleBody: string;
   scheduleAux: string;
   tickerText: string;
+  /** Seconds the running ticker line takes to cross its band. See overlayTickerCrawlPlan. */
+  tickerRotateSeconds: number;
   emergencyBanner: string;
   timeZone: string;
 };
@@ -685,9 +810,12 @@ export type OverlaySceneSource = {
   queuePreviewCount: number;
   emergencyBanner: string;
   tickerText: string;
+  /** Seconds the running ticker line takes to cross its band. See overlayTickerCrawlPlan. */
+  tickerRotateSeconds: number;
   layerOrder: OverlaySceneLayerKind[];
   disabledLayers: OverlaySceneLayerKind[];
   customLayers: OverlaySceneCustomLayer[];
+  panelPlacements: OverlayScenePanelPlacementMap;
 };
 
 export type OverlayOptionDefinition<T extends string> = {
@@ -785,6 +913,18 @@ export type ScheduleOccurrence = {
   endTime: string;
   startMinuteOfDay: number;
   durationMinutes: number;
+  /**
+   * True when this occurrence started on the previous day and runs past midnight into `date`.
+   * A block scheduled Monday 23:00 for two hours produces a Monday occurrence and a Tuesday
+   * carry-over; without the latter the channel fell out of its programmed pool at 00:00.
+   */
+  carriesOverFromPreviousDay?: boolean;
+  /**
+   * Start expressed relative to `date`, so a carry-over is negative (Monday 23:00 seen from
+   * Tuesday is -60). Ordering and "is it on now" comparisons use this rather than wall-clock
+   * strings, which cannot tell a wrapping block's evening from its own morning.
+   */
+  effectiveStartMinuteOfDay: number;
   repeatMode?: ScheduleRepeatMode;
   repeatGroupId?: string;
   cuepointAssetId?: string;
@@ -1027,6 +1167,14 @@ export const OVERLAY_SCENE_CUSTOM_WIDGET_DATA_KEYS: OverlayOptionDefinition<Over
   }
 ];
 
+/**
+ * The file types the worker's library scan turns into playable assets. One list, used by the scan
+ * (apps/worker local-library) and by the upload route and form (apps/web): the upload used to accept
+ * .avi and four audio types the scan never picked up, so those files were copied to disk and then
+ * silently ignored. Audio beds are ordinary library assets — a video container carrying the sound.
+ */
+export const LIBRARY_MEDIA_FILE_EXTENSIONS = [".mp4", ".mkv", ".mov", ".m4v", ".webm"] as const;
+
 export const OVERLAY_SCENE_CUSTOM_LAYER_KINDS: OverlayOptionDefinition<OverlaySceneCustomLayerKind>[] = [
   {
     id: "text",
@@ -1052,6 +1200,16 @@ export const OVERLAY_SCENE_CUSTOM_LAYER_KINDS: OverlayOptionDefinition<OverlaySc
     id: "widget",
     label: "Widget Embed",
     description: "Sandboxed iframe slot for third-party widgets that support embeds."
+  },
+  {
+    id: "game",
+    label: "Chat Game",
+    description: "On-air panel for the chat-driven game. Which game runs and how chat steers it is configured in the game settings."
+  },
+  {
+    id: "source",
+    label: "Video Source",
+    description: "Slowly refreshing picture from a stored camera or feed. The layer only places the picture; the feed itself is stored separately."
   }
 ];
 
@@ -1203,6 +1361,49 @@ function clampOverlaySceneNumber(value: unknown, min: number, max: number, fallb
   return Math.min(max, Math.max(min, numeric));
 }
 
+/**
+ * Reads back the placements an operator has set for the renderer's own panels.
+ *
+ * Same clamps as a custom layer's, because it is the same box: width stops at 10 and height at 8 so
+ * nothing is saved at a size that draws as a smudge, opacity at 5 so nothing is saved invisible. A
+ * key that is not a panel is dropped, and a panel with no entry stays out of the map — that absence
+ * is what says "still in the flow", so writing a default here would move the picture.
+ *
+ * x and y run to 100, not to 90. The cap was 90, on the reasoning that a panel should not be
+ * pushable off its own frame — but the panel that cannot be pushed off is the one that is already
+ * anchored to the far edge. The clock is 149 design pixels wide against a 1776-pixel safe area, so
+ * its left edge is at 91.6% by arithmetic; the next card's top is at 90.7% for the same reason.
+ * Both seeds came straight from deriveDefaultPlacements, which exists so that placing a panel moves
+ * nothing — and both were clamped on save, so placing the clock moved it 28 design pixels and the
+ * next card 8. What stops a box leaving the frame is resolvePlacementBox clamping its width against
+ * the room x leaves, which it has always done and still does.
+ */
+export function normalizeOverlayScenePanelPlacements(value: unknown): OverlayScenePanelPlacementMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const source = value as Record<string, unknown>;
+  const placements: OverlayScenePanelPlacementMap = {};
+  for (const id of OVERLAY_PANEL_IDS) {
+    const entry = source[id];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    const raw = entry as Record<string, unknown>;
+    placements[id] = {
+      xPercent: clampOverlaySceneNumber(raw.xPercent, 0, 100, 0),
+      yPercent: clampOverlaySceneNumber(raw.yPercent, 0, 100, 0),
+      widthPercent: clampOverlaySceneNumber(raw.widthPercent, 10, 100, 40),
+      heightPercent: clampOverlaySceneNumber(raw.heightPercent, 8, 100, 20),
+      opacityPercent: clampOverlaySceneNumber(raw.opacityPercent, 5, 100, 100),
+      allowOutsideSafeArea: raw.allowOutsideSafeArea === true
+    };
+  }
+
+  return placements;
+}
+
 function sanitizeOverlaySceneUrl(value: unknown): string {
   const trimmed = String(value || "").trim();
   if (!trimmed) {
@@ -1248,6 +1449,19 @@ function sanitizeOverlaySceneCustomLayerId(value: unknown, index: number): strin
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
   return cleaned || `layer-${index + 1}`;
+}
+
+/**
+ * The stored-video-source reference on a source layer. Same shape rule as layer ids, but empty
+ * stays empty: an unlinked layer is a valid draft state, not something to invent an id for.
+ */
+function sanitizeOverlayVideoSourceId(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
 }
 
 function isOverlaySceneCustomLayerKind(value: unknown): value is OverlaySceneCustomLayerKind {
@@ -1410,26 +1624,26 @@ export function buildOverlaySceneMetadataWidgetContent(args: {
   if (args.widgetDataKey === "next") {
     return {
       label: labelOverride || args.payload.nextLabel || "Next",
-      title: args.payload.nextTitle || "No next block configured",
-      body: args.payload.nextTimeLabel || "Schedule timing not available",
+      title: args.payload.nextTitle || "Nothing scheduled next",
+      body: args.payload.nextTimeLabel || "Times to follow",
       secondary: args.payload.scheduleAux || ""
     };
   }
 
   if (args.widgetDataKey === "queue") {
-    const queueTitle = args.payload.queueTitles[0] || args.payload.queueTitleLine || "Queue preview pending";
+    const queueTitle = args.payload.queueTitles[0] || args.payload.queueTitleLine || "Coming up shortly";
     return {
       label: labelOverride || "Later",
       title: queueTitle,
-      body: args.payload.queueTitles.slice(1).join(" · ") || args.payload.scheduleAux || "Playout will add queue detail once it is confirmed.",
+      body: args.payload.queueTitles.slice(1).join(" · ") || args.payload.scheduleAux || "More to follow",
       secondary: args.payload.queueTitleLine || ""
     };
   }
 
   return {
     label: labelOverride || args.payload.heroLabel || "Now Playing",
-    title: args.payload.heroTitle || "Current block unavailable",
-    body: args.payload.metaLine || args.payload.heroBody || "Current scene metadata will appear here.",
+    title: args.payload.heroTitle || "On air",
+    body: args.payload.metaLine || args.payload.heroBody || "Details to follow",
     secondary: args.payload.heroBody && args.payload.heroBody !== args.payload.metaLine ? args.payload.heroBody : ""
   };
 }
@@ -1463,8 +1677,11 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
       kind: raw.kind,
       name: sanitizeTextValue(raw.name, 80) || `${raw.kind[0].toUpperCase()}${raw.kind.slice(1)} Layer`,
       enabled: raw.enabled !== false,
-      xPercent: clampOverlaySceneNumber(raw.xPercent, 0, 90, raw.kind === "text" ? 4 : 62),
-      yPercent: clampOverlaySceneNumber(raw.yPercent, 0, 90, raw.kind === "text" ? 10 : 8),
+      // 0 to 100, the same range the built-in panels take. A small layer anchored to the far edge
+      // needs a position past 90 to be there at all; what keeps a box on the frame is
+      // resolvePlacementBox clamping its width against the room x leaves.
+      xPercent: clampOverlaySceneNumber(raw.xPercent, 0, 100, raw.kind === "text" ? 4 : 62),
+      yPercent: clampOverlaySceneNumber(raw.yPercent, 0, 100, raw.kind === "text" ? 10 : 8),
       widthPercent: clampOverlaySceneNumber(raw.widthPercent, 10, 100, raw.kind === "text" ? 34 : 26),
       heightPercent: clampOverlaySceneNumber(raw.heightPercent, 8, 100, raw.kind === "text" ? 18 : 20),
       opacityPercent: clampOverlaySceneNumber(raw.opacityPercent, 5, 100, 100),
@@ -1500,6 +1717,24 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
         widgetMode: normalizeOverlaySceneCustomWidgetMode(raw.widgetMode),
         widgetDataKey: normalizeOverlaySceneCustomWidgetDataKey(raw.widgetDataKey)
       });
+    } else if (raw.kind === "game") {
+      // Placement only: everything about the game itself lives in the chat-game settings.
+      // The backdrop floor is 0, not the 5 every other opacity uses — the point of the control is
+      // that the fill can go away completely, and the outlined board is what stays legible.
+      normalized.push({
+        ...base,
+        kind: "game",
+        backgroundOpacityPercent: clampOverlaySceneNumber(raw.backgroundOpacityPercent, 0, 100, 100)
+      });
+    } else if (raw.kind === "source") {
+      // Placement plus a reference into the encrypted video-source store. Deliberately no URL
+      // field: whatever a caller sends beyond the id is dropped here, so a feed address (which
+      // may embed credentials) can never ride into the scene payload.
+      normalized.push({
+        ...base,
+        kind: "source",
+        sourceId: sanitizeOverlayVideoSourceId((raw as { sourceId?: unknown }).sourceId)
+      });
     } else {
       normalized.push({
         ...base,
@@ -1515,6 +1750,196 @@ export function normalizeOverlaySceneCustomLayers(value: unknown): OverlaySceneC
   }
 
   return normalized;
+}
+
+// ---------------------------------------------------------------------------
+// Named overlay scenes (M58)
+// ---------------------------------------------------------------------------
+
+/**
+ * One named scene: a name, its own set of custom layers, and — optionally — the video source the
+ * scene is about.
+ *
+ * The layer shape is deliberately the existing `customLayers` one, unchanged. A scene is not a new
+ * kind of drawing; it is a name put on a layer set the renderer already knows how to draw, so
+ * everything downstream of `resolveOverlayNamedSceneCustomLayers` stays exactly as it was.
+ */
+export type OverlayNamedScene = {
+  id: string;
+  name: string;
+  customLayers: OverlaySceneCustomLayer[];
+  /**
+   * The stored video source (M57) this scene is about, or "" when the scene is not bound to one.
+   *
+   * It is a DEFAULT for the scene's source layers, not a second place a source can be switched on:
+   * a `source` layer that names no source of its own inherits this id. That is what makes
+   * duplicating a scene and pointing the copy at another camera one edit instead of one per layer.
+   * A binding naming a source that no longer exists needs no special handling — it resolves into
+   * the layer exactly like a hand-typed id would, and the worker already answers an unresolvable
+   * source with the still picture (attach-unavailable).
+   */
+  sourceId: string;
+};
+
+/** Enough scenes for a show; few enough that the picker stays a list an operator can read. */
+export const MAX_NAMED_OVERLAY_SCENES = 12;
+
+/**
+ * The id and name given to the scene an upgrade creates out of an existing layer set.
+ *
+ * Fixed rather than generated on purpose: the live row and the draft row are seeded independently
+ * (by the migration, and by the normaliser on read), and a random id would make the two differ and
+ * the studio report unpublished changes that nobody made.
+ */
+export const DEFAULT_NAMED_OVERLAY_SCENE_ID = "scene-main";
+export const DEFAULT_NAMED_OVERLAY_SCENE_NAME = "Main scene";
+
+function sanitizeOverlayNamedSceneId(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+/**
+ * The stored scene list, made safe to render.
+ *
+ * Never returns an empty list: something has to be on air. When nothing usable was stored, the
+ * caller's existing single layer set becomes the one scene, which is the entire upgrade path for an
+ * installation that predates this feature — no migration data is needed for the picture to stay the
+ * same, the migration only makes the same answer durable.
+ */
+export function normalizeOverlayNamedScenes(value: unknown, fallbackLayers: unknown): OverlayNamedScene[] {
+  const scenes: OverlayNamedScene[] = [];
+  const seenIds = new Set<string>();
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+
+      const raw = entry as Partial<OverlayNamedScene>;
+      const id = sanitizeOverlayNamedSceneId(raw.id);
+      if (!id || seenIds.has(id)) {
+        continue;
+      }
+      seenIds.add(id);
+
+      scenes.push({
+        id,
+        name: sanitizeTextValue(raw.name, 60) || `Scene ${String(scenes.length + 1)}`,
+        customLayers: normalizeOverlaySceneCustomLayers(raw.customLayers),
+        sourceId: sanitizeOverlayVideoSourceId(raw.sourceId)
+      });
+
+      if (scenes.length >= MAX_NAMED_OVERLAY_SCENES) {
+        break;
+      }
+    }
+  }
+
+  if (scenes.length > 0) {
+    return scenes;
+  }
+
+  return [
+    {
+      id: DEFAULT_NAMED_OVERLAY_SCENE_ID,
+      name: DEFAULT_NAMED_OVERLAY_SCENE_NAME,
+      customLayers: normalizeOverlaySceneCustomLayers(fallbackLayers),
+      sourceId: ""
+    }
+  ];
+}
+
+/**
+ * Which scene is on air.
+ *
+ * An id that names no scene — deleted while it was active, or written by a newer studio — resolves
+ * to the first scene rather than to nothing: a channel with the overlay switched on must always
+ * have a picture, and "the first scene" is the only answer that needs no operator present to pick.
+ */
+export function resolveActiveOverlayNamedSceneId(scenes: OverlayNamedScene[], activeSceneId: unknown): string {
+  const wanted = sanitizeOverlayNamedSceneId(activeSceneId);
+  const match = scenes.find((scene) => scene.id === wanted);
+  return match ? match.id : scenes[0]?.id || "";
+}
+
+/**
+ * The layer set the renderer actually draws: the active scene's layers, with the scene's bound
+ * source filled into any source layer that names none.
+ *
+ * This is the single point where scenes touch the broadcast picture. Everything below it —
+ * buildOverlaySceneDefinition, the on-air rasteriser, the studio preview — keeps reading one flat
+ * `customLayers` array and cannot tell that scenes exist.
+ */
+/**
+ * Puts a caller's layer array into the active scene instead of throwing it away.
+ *
+ * `customLayers` is a projection of the active scene, and every writer that predates named scenes
+ * edits that array without knowing scenes exist — the chat game's own layer provisioning does it
+ * through updateAppState. Re-projecting on write discarded those edits inside the same
+ * transaction: a moderator's `!snake` wrote a layer that vanished before it reached the picture.
+ * Reading projects; writing folds. Scenes other than the active one are never touched, and a
+ * caller that hands over nothing changes nothing.
+ */
+export function foldCustomLayersIntoActiveScene(
+  scenes: OverlayNamedScene[],
+  activeSceneId: unknown,
+  customLayers: unknown
+): OverlayNamedScene[] {
+  if (customLayers === undefined || customLayers === null) {
+    return scenes;
+  }
+
+  const activeId = resolveActiveOverlayNamedSceneId(scenes, activeSceneId);
+  const active = scenes.find((scene) => scene.id === activeId);
+  if (!active) {
+    return scenes;
+  }
+
+  const stored = new Map(active.customLayers.map((layer) => [layer.id, layer]));
+  const next = normalizeOverlaySceneCustomLayers(customLayers).map((layer) => {
+    // A layer that inherits the scene's source arrives from the projection carrying that source.
+    // Folding it back verbatim would freeze the inheritance, so a scene pointed at another camera
+    // would stop moving its layers. Restore the empty id the scene actually stores.
+    const before = stored.get(layer.id);
+    if (
+      active.sourceId &&
+      before &&
+      "sourceId" in before &&
+      "sourceId" in layer &&
+      before.sourceId === "" &&
+      layer.sourceId === active.sourceId
+    ) {
+      return { ...layer, sourceId: "" };
+    }
+    return layer;
+  });
+
+  return scenes.map((scene) => (scene.id === activeId ? { ...scene, customLayers: next } : scene));
+}
+
+export function resolveOverlayNamedSceneCustomLayers(
+  scenes: OverlayNamedScene[],
+  activeSceneId: unknown
+): OverlaySceneCustomLayer[] {
+  const activeId = resolveActiveOverlayNamedSceneId(scenes, activeSceneId);
+  const scene = scenes.find((entry) => entry.id === activeId);
+  if (!scene) {
+    return [];
+  }
+
+  if (!scene.sourceId) {
+    return scene.customLayers;
+  }
+
+  return scene.customLayers.map((layer) =>
+    layer.kind === "source" && !layer.sourceId ? { ...layer, sourceId: scene.sourceId } : layer
+  );
 }
 
 export function resolveOverlayScenePresetForQueueKind(
@@ -1605,7 +2030,8 @@ export function buildOverlaySceneDefinition(args: {
       label: OVERLAY_SCENE_LAYERS.find((layer) => layer.id === kind)?.label || kind,
       enabled: enabledMap[kind] && !disabledLayers.has(kind)
     })),
-    customLayers: normalizeOverlaySceneCustomLayers(args.overlay.customLayers)
+    customLayers: normalizeOverlaySceneCustomLayers(args.overlay.customLayers),
+    panelPlacements: normalizeOverlayScenePanelPlacements(args.overlay.panelPlacements)
   };
 }
 
@@ -1697,7 +2123,7 @@ export function buildOverlayScenePayload(args: {
     metaLine,
     nextLabel,
     nextTitle: nextTitle || "Schedule not available",
-    nextTimeLabel: normalizeOverlayVisibleText(args.nextTimeLabel) || "No next block configured",
+    nextTimeLabel: normalizeOverlayVisibleText(args.nextTimeLabel) || "Nothing scheduled next",
     queueTitleLine: queueTitles.join(" · "),
     queueTitles,
     scheduleLabel: "Scene",
@@ -1705,6 +2131,7 @@ export function buildOverlayScenePayload(args: {
     scheduleBody,
     scheduleAux,
     tickerText: normalizeOverlayVisibleText(args.overlay.tickerText),
+    tickerRotateSeconds: args.overlay.tickerRotateSeconds,
     emergencyBanner: normalizeOverlayVisibleText(args.overlay.emergencyBanner),
     timeZone: args.timeZone || "UTC"
   };
@@ -1812,9 +2239,11 @@ export function buildOverlayTextLines(args: {
         queuePreviewCount: Math.max((args.queueTitles || []).length, 1),
         emergencyBanner: "",
         tickerText: args.tickerText || "",
+        tickerRotateSeconds: OVERLAY_TICKER_DEFAULT_SECONDS,
         layerOrder: DEFAULT_OVERLAY_SCENE_LAYER_ORDER,
         disabledLayers: [],
         customLayers: [],
+        panelPlacements: {},
         showCurrentCategory: args.showCurrentCategory ?? false,
         showSourceLabel: args.showSourceLabel ?? false
       },
@@ -2024,8 +2453,13 @@ export function resolveModeratorCheckIn(args: {
     return null;
   }
 
-  const prefix = config.requirePrefix ? "!" : "";
-  const match = input.trim().match(new RegExp(`^${prefix}${config.command}(?:\\s+(\\d+))?$`, "i"));
+  // requirePrefix false means the "!" is optional, not forbidden: the spec and the check-in form
+  // both say "!here 5", and a default install that silently ignored exactly that command looked
+  // like the feature not existing.
+  const prefix = config.requirePrefix ? "!" : "!?";
+  // config.command is operator-supplied. Interpolated raw, a value containing "(" or "[" made
+  // `new RegExp` throw inside the IRC message handler and take the worker process down with it.
+  const match = input.trim().match(new RegExp(`^${prefix}${escapeRegExp(config.command)}(?:\\s+(\\d+))?$`, "i"));
 
   if (!match) {
     return null;
@@ -2089,7 +2523,17 @@ export function describePresenceStatus(args: {
   activeWindows: PresenceWindow[];
   now: Date;
   fallbackEmoteOnly: boolean;
+  /** The moderation policy's own switch. Off means Stream247 does not manage the chat mode. */
+  enabled?: boolean;
 }): PresenceStatus {
+  if (args.enabled === false) {
+    return {
+      active: false,
+      chatMode: "normal",
+      summary: "Moderator presence policy is off; Stream247 leaves the chat mode alone."
+    };
+  }
+
   const activeWindows = args.activeWindows.filter((window) => window.expiresAt > args.now);
 
   if (activeWindows.length > 0) {
@@ -2112,6 +2556,38 @@ export function describePresenceStatus(args: {
       ? "No moderator presence window is active. Emote-only fallback should be enabled."
       : "No moderator presence window is active."
   };
+}
+
+/**
+ * Whether this cycle should PATCH Twitch's chat settings at all.
+ *
+ * The write used to happen on every reconcile — every 30 s — with no memory of what it last
+ * wrote and no regard for the policy switch. Now: a switched-off policy never writes, so a
+ * moderator's hand change on Twitch stands; an unchanged mode is not rewritten inside the
+ * re-assert interval; and after that interval it is written once more, so a hand change does
+ * not silently become permanent while the policy is on.
+ */
+export function resolveChatSettingsWrite(args: {
+  moderationEnabled: boolean;
+  desiredEmoteOnly: boolean;
+  lastWrittenEmoteOnly: boolean | null;
+  lastWriteAtMs: number;
+  nowMs: number;
+  reassertIntervalMs: number;
+}): { write: boolean; reason: "policy-off" | "first" | "changed" | "unchanged" | "reassert" } {
+  if (!args.moderationEnabled) {
+    return { write: false, reason: "policy-off" };
+  }
+  if (args.lastWrittenEmoteOnly === null) {
+    return { write: true, reason: "first" };
+  }
+  if (args.lastWrittenEmoteOnly !== args.desiredEmoteOnly) {
+    return { write: true, reason: "changed" };
+  }
+  if (args.nowMs - args.lastWriteAtMs > args.reassertIntervalMs) {
+    return { write: true, reason: "reassert" };
+  }
+  return { write: false, reason: "unchanged" };
 }
 
 export function buildSchedulePreview(args: {
@@ -2807,38 +3283,103 @@ function getDayOfWeekForDate(value: string): number {
   return new Date(`${value}T00:00:00.000Z`).getUTCDay();
 }
 
+const MINUTES_PER_DAY = 24 * 60;
+
+function toScheduleOccurrence(args: {
+  block: ScheduleBlock;
+  date: string;
+  carriesOverFromPreviousDay: boolean;
+}): ScheduleOccurrence {
+  const startMinutes = args.block.startMinuteOfDay;
+  const endMinutes = (startMinutes + args.block.durationMinutes) % MINUTES_PER_DAY;
+
+  return {
+    // The carry-over flag is part of the key: the same block legitimately appears on two dates,
+    // and callers de-duplicate occurrences by key.
+    key: `${args.date}:${args.block.id}:${startMinutes}:${args.block.durationMinutes}${args.carriesOverFromPreviousDay ? ":carry" : ""}`,
+    blockId: args.block.id,
+    title: args.block.title,
+    categoryName: args.block.categoryName,
+    dayOfWeek: args.block.dayOfWeek,
+    showId: args.block.showId,
+    poolId: args.block.poolId,
+    sourceName: args.block.sourceName,
+    date: args.date,
+    startTime: formatMinuteOfDay(startMinutes),
+    endTime: formatMinuteOfDay(endMinutes),
+    startMinuteOfDay: startMinutes,
+    durationMinutes: args.block.durationMinutes,
+    carriesOverFromPreviousDay: args.carriesOverFromPreviousDay,
+    effectiveStartMinuteOfDay: args.carriesOverFromPreviousDay ? startMinutes - MINUTES_PER_DAY : startMinutes,
+    repeatMode: normalizeScheduleRepeatMode(args.block.repeatMode ?? "single"),
+    repeatGroupId: args.block.repeatGroupId ?? "",
+    cuepointAssetId: args.block.cuepointAssetId ?? "",
+    cuepointOffsetsSeconds: normalizeCuepointOffsetsSeconds(
+      args.block.cuepointOffsetsSeconds ?? [],
+      args.block.durationMinutes
+    )
+  };
+}
+
+/**
+ * Every occurrence covering any part of `date`.
+ *
+ * This includes blocks that started the previous day and run past midnight. Filtering purely on
+ * the weekday of `date` dropped them, so a block scheduled Monday 23:00 for two hours vanished
+ * from the schedule at 00:00 and the channel fell out of its programmed pool for the rest of the
+ * night with nothing marked as current.
+ */
+/**
+ * The next date on or after `date` that falls on `dayOfWeek` (0 = Sunday).
+ *
+ * Forward rather than nearest, so a preview always describes programming still ahead: opening
+ * Monday on a Wednesday shows next Monday, not the one that already aired. Needed because a
+ * schedule preview is built for a date, not for a weekday — resolving a pool into the individual
+ * videos that would play requires knowing which day it is.
+ */
+export function shiftDateToDayOfWeek(date: string, dayOfWeek: number): string {
+  const base = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(base.getTime())) {
+    return date;
+  }
+  const target = ((Math.trunc(dayOfWeek) % 7) + 7) % 7;
+  base.setUTCDate(base.getUTCDate() + ((target - base.getUTCDay() + 7) % 7));
+  return base.toISOString().slice(0, 10);
+}
+
 export function buildScheduleOccurrences(args: {
   date: string;
   blocks: ScheduleBlock[];
 }): ScheduleOccurrence[] {
   const dayOfWeek = getDayOfWeekForDate(args.date);
-  return [...args.blocks]
-    .filter((block) => block.dayOfWeek === dayOfWeek)
-    .sort((a, b) => a.startMinuteOfDay - b.startMinuteOfDay)
-    .map((block) => {
-      const startMinutes = block.startMinuteOfDay;
-      const endMinutes = (startMinutes + block.durationMinutes) % (24 * 60);
+  const previousDayOfWeek = (dayOfWeek + 6) % 7;
 
-      return {
-        key: `${args.date}:${block.id}:${startMinutes}:${block.durationMinutes}`,
-        blockId: block.id,
-        title: block.title,
-        categoryName: block.categoryName,
-        dayOfWeek: block.dayOfWeek,
-        showId: block.showId,
-        poolId: block.poolId,
-        sourceName: block.sourceName,
-        date: args.date,
-        startTime: formatMinuteOfDay(startMinutes),
-        endTime: formatMinuteOfDay(endMinutes),
-        startMinuteOfDay: startMinutes,
-        durationMinutes: block.durationMinutes,
-        repeatMode: normalizeScheduleRepeatMode(block.repeatMode ?? "single"),
-        repeatGroupId: block.repeatGroupId ?? "",
-        cuepointAssetId: block.cuepointAssetId ?? "",
-        cuepointOffsetsSeconds: normalizeCuepointOffsetsSeconds(block.cuepointOffsetsSeconds ?? [], block.durationMinutes)
-      };
-    });
+  const sameDay = args.blocks
+    .filter((block) => block.dayOfWeek === dayOfWeek)
+    .map((block) => toScheduleOccurrence({ block, date: args.date, carriesOverFromPreviousDay: false }));
+
+  const carriedOver = args.blocks
+    .filter(
+      (block) =>
+        block.dayOfWeek === previousDayOfWeek && block.startMinuteOfDay + block.durationMinutes > MINUTES_PER_DAY
+    )
+    .map((block) => toScheduleOccurrence({ block, date: args.date, carriesOverFromPreviousDay: true }));
+
+  return [...carriedOver, ...sameDay].sort((a, b) => a.effectiveStartMinuteOfDay - b.effectiveStartMinuteOfDay);
+}
+
+/**
+ * Minute range an occurrence covers, relative to its `date`. The end may exceed 1440 for a block
+ * that runs into the following day, and the start may be negative for a carry-over.
+ */
+export function getScheduleOccurrenceMinuteRange(occurrence: ScheduleOccurrence): { start: number; end: number } {
+  const start = occurrence.effectiveStartMinuteOfDay;
+  return { start, end: start + occurrence.durationMinutes };
+}
+
+export function isScheduleOccurrenceOnAir(occurrence: ScheduleOccurrence, minuteOfDay: number): boolean {
+  const { start, end } = getScheduleOccurrenceMinuteRange(occurrence);
+  return minuteOfDay >= start && minuteOfDay < end;
 }
 
 function parseScheduleTimeToMinuteOfDay(value: string): number {
@@ -2846,18 +3387,30 @@ function parseScheduleTimeToMinuteOfDay(value: string): number {
   return Math.max(0, Math.min(24 * 60 - 1, hours * 60 + minutes));
 }
 
+/**
+ * The occurrence on air at `currentTime`.
+ *
+ * Matching is done on minute ranges rather than wall-clock strings. A string comparison cannot
+ * distinguish a wrapping block's evening from its own morning: a Monday 23:00-01:00 block compared
+ * as "current >= 23:00 || current < 01:00" also claimed Monday 00:30, which belongs to the block
+ * that started the *previous* night.
+ *
+ * When several occurrences overlap, the one that started most recently wins, so a later block
+ * takes over from an overrunning earlier one instead of the array order deciding.
+ */
 export function findCurrentScheduleOccurrence(args: {
   occurrences: ScheduleOccurrence[];
   currentTime: string;
 }): ScheduleOccurrence | null {
-  return (
-    args.occurrences.find((item) =>
-      isCurrentScheduleTime({
-        startTime: item.startTime,
-        endTime: item.endTime,
-        currentTime: args.currentTime
-      })
-    ) ?? null
+  const currentMinuteOfDay = parseScheduleTimeToMinuteOfDay(args.currentTime);
+  const active = args.occurrences.filter((item) => isScheduleOccurrenceOnAir(item, currentMinuteOfDay));
+
+  if (active.length === 0) {
+    return null;
+  }
+
+  return active.reduce((latest, item) =>
+    item.effectiveStartMinuteOfDay > latest.effectiveStartMinuteOfDay ? item : latest
   );
 }
 
@@ -2867,6 +3420,39 @@ export function findNextScheduleOccurrence(args: {
   currentOccurrence?: ScheduleOccurrence | null;
 }): ScheduleOccurrence | null {
   return listUpcomingScheduleOccurrences(args)[0] ?? null;
+}
+
+/**
+ * "What comes next" for a channel that never signs off. The single-day search answers "later
+ * today"; after the last block of the evening it answered nothing, and the viewer page told a
+ * 24/7 audience that nothing further was scheduled while tomorrow's programme sat in the grid.
+ * Later days skip carry-overs: an occurrence spilling past midnight was already offered on the
+ * day it starts.
+ */
+export function findNextScheduleOccurrenceAcrossDays(args: {
+  blocks: ScheduleBlock[];
+  date: string;
+  currentTime: string;
+  lookaheadDays?: number;
+}): ScheduleOccurrence | null {
+  const today = buildScheduleOccurrences({ date: args.date, blocks: args.blocks });
+  const next = findNextScheduleOccurrence({ occurrences: today, currentTime: args.currentTime });
+  if (next) {
+    return next;
+  }
+
+  const lookaheadDays = args.lookaheadDays ?? 7;
+  for (let offset = 1; offset <= lookaheadDays; offset += 1) {
+    const date = addDaysToDateString(args.date, offset);
+    const candidate = buildScheduleOccurrences({ date, blocks: args.blocks }).find(
+      (occurrence) => !occurrence.carriesOverFromPreviousDay
+    );
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 export function listUpcomingScheduleOccurrences(args: {
@@ -2880,8 +3466,9 @@ export function listUpcomingScheduleOccurrences(args: {
 
   const currentMinuteOfDay = parseScheduleTimeToMinuteOfDay(args.currentTime);
   const currentOccurrence = args.currentOccurrence ?? findCurrentScheduleOccurrence(args);
+  // effectiveStartMinuteOfDay, so a carry-over from last night is never offered as "upcoming".
   return args.occurrences.filter(
-    (item) => item.startMinuteOfDay > currentMinuteOfDay && item.key !== currentOccurrence?.key
+    (item) => item.effectiveStartMinuteOfDay > currentMinuteOfDay && item.key !== currentOccurrence?.key
   );
 }
 
@@ -3040,4 +3627,170 @@ export function selectActiveDestinationGroup(destinations: DestinationRoutingRec
     activeDestinationIds: [],
     leadDestinationId: ""
   };
+}
+
+export { redactSecrets, redactSecretsDeep } from "./redact.js";
+
+/**
+ * An asset's display title: the replay prefix and the title, with nothing invisible in between.
+ *
+ * Written three times before this — apps/worker/src/asset-display-title.ts,
+ * apps/web/lib/asset-metadata.ts and a private copy inside apps/web/lib/server/state.ts. They
+ * agreed, which was luck rather than design, and the chapter-aware title below has to build the
+ * same string or the studio and the channel disagree about a name for a second reason.
+ */
+export function overlayAssetDisplayTitle(
+  asset: { title?: string; titlePrefix?: string } | null | undefined,
+  fallbackTitle = ""
+): string {
+  const base = stripInvisibleCharacters(String(asset?.title || fallbackTitle || "")).trim();
+  return [stripInvisibleCharacters(asset?.titlePrefix || "").trim(), base].filter(Boolean).join(" ").trim();
+}
+
+/**
+ * The chapter-aware display title for the asset that is on air right now.
+ *
+ * Derived from elapsed playback rather than from the boundary fired set, so every overlay rewrite —
+ * the 15s cycle, an operator refresh, a scene re-render — shows the chapter that is actually
+ * playing instead of the one that was current at the last boundary event.
+ *
+ * Empty when the asset is not the one on air, has no chapters, or the active chapter carries no
+ * title; callers then fall back to the asset title exactly as before chapters existed. Empty is
+ * also the answer before the first chapter's offset: the asset's own metadata stays authoritative
+ * there rather than a synthetic chapter being invented.
+ *
+ * It lives here because the worker had it and the web app did not, so the channel named the chapter
+ * that was playing while the studio preview named the file. The preview exists to show what airs.
+ */
+export function overlayOnAirChapterTitle(args: {
+  /** state.playout.currentAssetId — which asset the channel is actually on. */
+  currentAssetId: string;
+  /** state.playout.processStartedAt, ISO; empty means nothing has started. */
+  processStartedAt: string;
+  asset: { id: string; chaptersJson?: string; titlePrefix?: string } | null | undefined;
+  /** Injected so a render can be made repeatable. */
+  now?: Date;
+}): string {
+  const { asset } = args;
+  if (!asset || args.currentAssetId !== asset.id || args.processStartedAt === "") {
+    return "";
+  }
+
+  const chapters = parseAssetChaptersJson(asset.chaptersJson);
+  if (chapters.length === 0) {
+    return "";
+  }
+
+  const startedAt = new Date(args.processStartedAt).getTime();
+  if (!Number.isFinite(startedAt)) {
+    return "";
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor(((args.now ?? new Date()).getTime() - startedAt) / 1000));
+  const chapter = getAssetChapterAt(chapters, elapsedSeconds);
+  if (!chapter || chapter.title === "") {
+    return "";
+  }
+
+  // The replay prefix stays: a chapter changes what plays, not the fact that it is a replay.
+  return overlayAssetDisplayTitle({ title: chapter.title, titlePrefix: asset.titlePrefix });
+}
+
+/**
+ * The audit entries a trail exists for, as one pattern.
+ *
+ * Every entry used to compete for a single window of the newest 500, so the trail was only as long
+ * as the noisiest thing writing to it. Measured on the live channel: 142 entries over 31 hours, of
+ * which 100 were `uplink.cycle` and `worker.cycle` — 70% reconciliation chatter. At that rate the
+ * window fills in about four days and a sign-in is then pushed out by an uplink reconnecting.
+ *
+ * What is protected: authentication, authorisation, credentials, where the stream is sent, who
+ * silenced an alarm, and destructive deletions. What is NOT: skipping an item, publishing an
+ * overlay, updating an asset. That line is deliberate — protecting every operator action protects
+ * nothing, because the protected window would fill with the same traffic the general one does.
+ *
+ * Written as one POSIX-compatible pattern so `type ~ $pattern` in the pruning SQL and the predicate
+ * below cannot drift into disagreeing. No lookaround, no non-greedy quantifiers: anchors,
+ * alternation and literal dots only.
+ *
+ * The deletion clause takes a dot OR an underscore: the vocabulary writes both, `source.deleted`
+ * and `overlay.video_source_deleted`, and a rule that only knew the dot left the second kind
+ * unprotected — found by the test, not by reading.
+ */
+export const AUDIT_EVENT_PROTECTED_PATTERN =
+  "^(auth|team|destination|incident)\\.|^setup\\.completed$|^settings\\.(managed-config|twitch-app)\\.updated$|^overlay\\.video_source_key_issued$|^twitch\\.(connected|error|broadcaster\\.error)$|[._]deleted$";
+
+/**
+ * Compiled once. selectRetainedAuditEvents asks this per entry over as many as a thousand of them,
+ * inside the serialized state write, so building the expression per call would put a thousand
+ * regular-expression compilations on every mutation the channel makes.
+ */
+const AUDIT_EVENT_PROTECTED = new RegExp(AUDIT_EVENT_PROTECTED_PATTERN);
+
+/** Whether an audit entry of this type survives pruning on its own account. */
+export function isProtectedAuditEventType(type: string): boolean {
+  return AUDIT_EVENT_PROTECTED.test(type);
+}
+
+/**
+ * The audit entries that survive pruning: the newest of everything, plus the newest of what an
+ * audit trail exists for.
+ *
+ * Two windows rather than one, because a single window is only as long as the noisiest writer.
+ * Both are bounded, so neither can grow without end — a channel that somehow produced nothing but
+ * sign-ins still keeps a fixed number of them.
+ *
+ * Input order is preserved, so a store that holds its trail newest first gets it back newest first.
+ * Expressed here as well as in SQL because the two writers work differently: one appends a row and
+ * prunes around it, the other rewrites the whole table from memory.
+ */
+export function selectRetainedAuditEvents<T extends { type: string }>(
+  events: T[],
+  limits: { general: number; protected: number }
+): T[] {
+  const keep = new Set<number>();
+  for (let index = 0; index < events.length && index < limits.general; index++) {
+    keep.add(index);
+  }
+
+  let protectedKept = 0;
+  for (let index = 0; index < events.length && protectedKept < limits.protected; index++) {
+    if (isProtectedAuditEventType(events[index]!.type)) {
+      keep.add(index);
+      protectedKept++;
+    }
+  }
+
+  return events.filter((_event, index) => keep.has(index));
+}
+
+/** Whether the line the encoder is moving is still the line the operator has configured. */
+export type TickerCrawlStaleness =
+  | { stale: false }
+  | { stale: true; onAir: string; configured: string };
+
+/**
+ * Whether a ticker edit has reached the screen, or is waiting for the next programme.
+ *
+ * The crawling line is one image, made when a programme starts, and the period the encoder moves it
+ * by comes from that line's own ink — so a new text needs a new graph, and the graph is fixed for
+ * the life of the process. A few minutes on a channel playing assets. On the standby slate or a
+ * live bridge, which run until the selection changes, there may be no next programme at all.
+ *
+ * This does not fix that. It makes it visible, which is the difference between a documented
+ * limitation and a silent one: without it the operator types a correction, watches the studio
+ * preview update, and has no way to learn that the channel is still running the old line.
+ *
+ * An empty crawl line means nothing is crawling, so whatever the payload says is drawn at rest and
+ * is by definition current. An empty payload line against a running crawl is NOT quiet: clearing
+ * the field does not take the line away, because the band belongs to the process while a crawl
+ * runs, so the old text keeps going over the video.
+ */
+export function describeTickerCrawlStaleness(args: { crawlLine: string; payloadLine: string }): TickerCrawlStaleness {
+  const onAir = args.crawlLine.trim();
+  if (!onAir) {
+    return { stale: false };
+  }
+  const configured = args.payloadLine.trim();
+  return onAir === configured ? { stale: false } : { stale: true, onAir, configured };
 }

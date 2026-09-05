@@ -3,10 +3,11 @@ import { NextResponse } from "next/server";
 import {
   isEngagementAlertsRuntimeEnabled,
   isEngagementChannelPointsRuntimeEnabled,
-  isEngagementDonationAlertsRuntimeEnabled
+  isEngagementDonationAlertsRuntimeEnabled,
+  resolveTwitchEventSubSecret,
+  type ManagedEventSubSecretInput
 } from "@stream247/core";
-import { appendEngagementEventRecord, getBroadcastSnapshot, readAppState } from "@/lib/server/state";
-import { createSseResponse } from "@/lib/server/sse";
+import { appendEngagementEventRecord, readAppState } from "@/lib/server/state";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,8 +33,8 @@ type EventSubPayload = {
   };
 };
 
-function verifyEventSubSignature(request: Request, rawBody: string): boolean {
-  const secret = process.env.TWITCH_EVENTSUB_SECRET || "";
+function verifyEventSubSignature(request: Request, rawBody: string, managedConfig: ManagedEventSubSecretInput): boolean {
+  const secret = resolveTwitchEventSubSecret(managedConfig, process.env);
   if (!secret) {
     return process.env.NODE_ENV !== "production";
   }
@@ -91,16 +92,16 @@ function buildEventSubMessage(args: {
   return userInput ? `${base} ${userInput}` : base;
 }
 
-export async function GET(request: Request) {
-  return createSseResponse(request, "engagement", async () => getBroadcastSnapshot(await readAppState()).engagement, {
-    snapshotIntervalMs: 1000,
-    errorMessage: "Unknown engagement SSE error."
-  });
-}
-
+// Only POST. Twitch has this URL registered as its EventSub callback (apps/worker/src/twitch-eventsub.ts),
+// so the path and the behaviour below must not move. The GET that used to stream engagement over SSE
+// fed the browser overlay page, which is gone: the on-air picture is drawn by the playout renderer,
+// and the studio preview is the same drawing.
 export async function POST(request: Request) {
   const rawBody = await request.text();
-  if (!verifyEventSubSignature(request, rawBody)) {
+  // State is read before signature verification since M56: the shared secret itself may live in
+  // managed config, with the env variable as fallback.
+  const state = await readAppState();
+  if (!verifyEventSubSignature(request, rawBody, state.managedConfig)) {
     return NextResponse.json({ message: "Invalid EventSub signature." }, { status: 403 });
   }
 
@@ -115,8 +116,18 @@ export async function POST(request: Request) {
     return new Response(payload.challenge, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
   }
 
-  const state = await readAppState();
-  if (!isEngagementAlertsRuntimeEnabled(state.engagement, process.env)) {
+  // Only notifications describe something that happened. A revocation carries the same subscription
+  // type but no event body, so falling through here turned "this subscription is dead" into a cheer
+  // or follow alert on the overlay, attributed to "Viewer". Twitch also reserves the right to add
+  // message types, so this accepts a known one rather than excluding the ones known today.
+  if (messageType !== "notification") {
+    return NextResponse.json(
+      { ok: true, ignored: true, reason: messageType === "revocation" ? "subscription-revoked" : "unsupported-message-type" },
+      { status: 202 }
+    );
+  }
+
+  if (!isEngagementAlertsRuntimeEnabled(state.engagement, process.env, state.managedConfig)) {
     return NextResponse.json({ ok: true, ignored: true, reason: "alerts-disabled" }, { status: 202 });
   }
 
@@ -124,10 +135,10 @@ export async function POST(request: Request) {
   if (!kind) {
     return NextResponse.json({ ok: true, ignored: true, reason: "unsupported-event" }, { status: 202 });
   }
-  if (kind === "cheer" && !isEngagementDonationAlertsRuntimeEnabled(state.engagement, process.env)) {
+  if (kind === "cheer" && !isEngagementDonationAlertsRuntimeEnabled(state.engagement, process.env, state.managedConfig)) {
     return NextResponse.json({ ok: true, ignored: true, reason: "donations-disabled" }, { status: 202 });
   }
-  if (kind === "channel-point" && !isEngagementChannelPointsRuntimeEnabled(state.engagement, process.env)) {
+  if (kind === "channel-point" && !isEngagementChannelPointsRuntimeEnabled(state.engagement, process.env, state.managedConfig)) {
     return NextResponse.json({ ok: true, ignored: true, reason: "channel-points-disabled" }, { status: 202 });
   }
 

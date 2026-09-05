@@ -1,0 +1,200 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+<runtime>
+<runtime>
+CURRENT
+<runtime>
+<runtime>
+NEXT
+<runtime>
+<runtime>
+DESTINATION
+<runtime>
+<runtime>
+INCIDENTS
+<runtime>
+<runtime>
+UPDATES
+<runtime>
+<runtime>
+Live
+Keep channel and playout state visible across the whole Live workspace.
+Twitch channel state, viewer count, uptime, and playout health stay visible while you move between Live control, status, and moderation.
+Live · 128
+Feed running
+TWITCH UPTIME
+<runtime>
+VIEWERS
+<runtime>
+CHANNEL
+<runtime>
+UPDATES
+<runtime>
+Control
+Status
+Moderation
+Readiness
+Check readiness, integrations, and current channel posture.
+Use Live status to decide whether the workspace is ready for sustained on-air operation. Live control remains the action surface.
+WORKSPACE
+Ready
+Owner: owner@example.com
+TWITCH
+Connected
+Broadcaster stream247dev
+Last metadata sync: no title · no category
+MODERATION PRESENCE
+Fallback
+No moderator presence window is active. Emote-only fallback should be enabled.
+PLAYOUT RUNTIME
+running
+Scheduled block is on air.
+Control mode: schedule
+DESTINATION
+1 active
+Primary Twitch Output lead · primary · stream key present
+ASSETS
+2
+Local ingestion and future connectors feed the asset catalog.
+INCIDENTS
+0
+No open incidents at the moment.
+TEAM ACCESS
+0
+1 authenticated user record(s) in the workspace.
+LAUNCH
+Readiness
+This checklist is the fastest way to understand whether the channel is configured well enough for reliable 24/7 operation.
+9 of 11 readiness steps are ready.
+Owner account
+Ready
+Owner owner@example.com is configured.
+Public app URL
+Ready
+APP_URL is set to http://<version>.1:3020.
+Open setup
+App secret and persistence
+Ready
+APP_SECRET and DATABASE_URL are configured.
+Open setup
+Twitch app credentials
+Needs action
+Save Twitch client credentials in setup or settings to enable broadcaster connect and team SSO.
+Open Admin · Settings
+Twitch broadcaster connection
+Ready
+Connected as stream247dev.
+Open Live · Status
+Live destination
+Ready
+1 active output(s) are ready. Lead destination: Primary Twitch Output.
+Open Live · Status
+Content sources
+Ready
+3 source(s) configured.
+Open Program · Sources
+Playable assets
+Ready
+2 ready asset(s) are available.
+Open Program · Library
+Program pools
+Ready
+3 pool(s) available for scheduling.
+Open Program · Pools
+Weekly schedule
+Ready
+20 schedule block(s) are configured.
+Open Program · Schedule
+Replay overlay branding
+Optional
+Optional, but recommended: enable the overlay so viewers can see current/next replay context.
+Open Studio · Scene
+SCHEDULE
+Upcoming schedule
+<block>
+<time> to <time> · <category>
+Selected from Lokale Bibliothek for <minutes> minutes · <day>.
+<block>
+<time> to <time> · <category>
+Selected from Lokale Bibliothek for <minutes> minutes · <day>.
+<block>
+<time> to <time> · <category>
+Selected from Lokale Bibliothek for <minutes> minutes · <day>.
+DELIVERY
+Output destinations
+Stream247 can now fan one channel out to multiple active outputs. Healthy primary outputs are preferred together; backup outputs take over only when no primary output group is available.
+Add output
+Create another primary or backup RTMP target.
+NAME
+i
+PROVIDER
+i
+Custom RTMP
+Twitch
+ROLE
+i
+Primary
+Backup
+PRIORITY
+i
+RTMP URL
+i
+STREAM KEY
+i
+NOTES
+i
+Add destination
+Lokales Relay
+Primary · priority 0 · Not set up yet
+No RTMP URL configured · Stream key stored here
+Change this destination
+Primary Twitch Output
+Primary · priority 0 · Ready · in use
+/tmp/stream-output · Stream key set in the server configuration
+Change this destination
+Backup RTMP Output
+Backup · priority 10 · Not set up yet
+No RTMP URL configured · Stream key missing
+Change this destination
+RUNTIME
+Alerts and drift
+Encoder runtime
+Primary Twitch Output · /tmp/stream-output
+PID 4242 · restart count 0 · asset <asset>
+Transition idle · next probe idle · next <asset>
+Last stderr: No FFmpeg stderr captured yet.
+Current schedule: <block> · Next: <block>
+Queue: <asset> → <asset>
+Use Live control for skip, fallback, restart, override, replay, and Live Bridge actions. This status view stays read-only.
+System readiness
+Database persistence, background worker reconciliation, and playout heartbeat are now active.
+Active moderation presence
+No moderation presence is active.
+Live destination
+ready · Primary RTMP destination for the broadcast runtime.
+Twitch metadata sync
+no title · no category
+Last synced at <timestamp>
+Twitch schedule sync
+No Twitch schedule sync has completed yet.
+Future schedule blocks will be mirrored to Twitch after the worker syncs them.
+Overlay output
+Overlay is currently disabled.
+The picture is drawn by the playout; the studio preview is the same drawing.
+Twitch OAuth not configured
+Set APP_URL and provide Twitch client credentials in .env or the admin settings page to enable browser-based Twitch connection.
+INCIDENTS
+Incident history
+No incidents recorded
+Incident history will appear here once the worker or playout runtime emits one.

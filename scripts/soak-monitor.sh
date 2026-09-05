@@ -35,8 +35,8 @@ TOLERATE_DEST_NOTREADY_SAMPLES="${SOAK_TOLERATE_DEST_NOTREADY_SAMPLES:-1}"
 TOLERATE_FEED_STALE_DURING_PLAYOUT_TRANSIENT_SAMPLES="${SOAK_TOLERATE_FEED_STALE_DURING_PLAYOUT_TRANSIENT_SAMPLES:-1}"
 export SOAK_UPLINK_RESTART_RUNAWAY_DELTA
 
-if [ ! -f ".env" ]; then
-  echo "Missing .env. Copy .env.example first."
+if [ -z "${CHECK_BASE_URL:-}" ] && [ ! -f ".env" ]; then
+  echo "Missing .env. Copy .env.example first, or set CHECK_BASE_URL to the public base URL."
   exit 1
 fi
 

@@ -8,9 +8,10 @@ import {
   getCuepointProgress,
   buildScheduleOccurrences,
   buildSchedulePreview,
+  shiftDateToDayOfWeek,
   describePresenceStatus,
   findCurrentScheduleOccurrence,
-  findNextScheduleOccurrence,
+  findNextScheduleOccurrenceAcrossDays,
   getDestinationFailureSecondsRemaining as getDestinationFailureHoldSecondsRemaining,
   getScheduleElapsedSeconds,
   getCurrentScheduleMoment,
@@ -21,6 +22,7 @@ import {
   normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
   normalizeCuepointOffsetsSeconds,
+  describeSourceHealth,
   selectActiveDestinationGroup,
   isLikelyTwitchChannelUrl,
   isLikelyTwitchVodUrl,
@@ -32,8 +34,12 @@ import {
   isEngagementDonationAlertsRuntimeEnabled,
   isEngagementGameRuntimeEnabled,
   normalizeEngagementSettings,
+  resolveBroadcastChannelLogin,
   stripInvisibleCharacters,
   summarizeLiveBridgeInput,
+  overlayAssetDisplayTitle,
+  overlayNextTimeLabel,
+  overlayOnAirChapterTitle,
   type OverlaySceneRenderTarget
 } from "@stream247/core";
 import {
@@ -43,6 +49,7 @@ import {
   applyOverlayScenePresetRecordToDraft,
   createPoolRecord,
   createScheduleBlocks,
+  createScheduleBlocksChecked,
   createShowProfileRecord,
   deleteAssetCollectionRecord,
   deleteDestinationRecord,
@@ -73,6 +80,7 @@ import {
   readAppState,
   replaceAllScheduleBlocks,
   replaceTwitchScheduleSegments,
+  resolveChannelTimeZone,
   resolveIncident,
   replaceAssetsForSourceIds,
   updateAssetCurationRecords,
@@ -87,6 +95,7 @@ import {
   updateScheduleRepeatGroupRecords,
   updateShowProfileRecord,
   updateSourceFieldRecords,
+  updateTwitchBroadcasterConnectionRecord,
   updateTwitchConnectionRecord,
   updateOwnerAndInitialized,
   upsertAssetCollectionRecords,
@@ -116,6 +125,7 @@ import {
   type SourceRecord,
   type StreamDestinationRecord,
   type TeamAccessGrant,
+  type TwitchBroadcasterConnection,
   type TwitchConnection,
   type UserRecord,
   type UserRole,
@@ -124,6 +134,8 @@ import {
   type OutputSettingsRecord,
   type ManagedConfigRecord
 } from "@stream247/db";
+import { describeIncidentAge, describeOpenIncidentOverflow } from "@/lib/incident-age";
+import { buildTwitchWatchUrl } from "@/lib/watch-url";
 import type {
   BroadcastSnapshot,
   LiveAssetSummary,
@@ -168,6 +180,7 @@ export type {
   SourceRecord,
   StreamDestinationRecord,
   TeamAccessGrant,
+  TwitchBroadcasterConnection,
   TwitchConnection,
   UserRecord,
   UserRole
@@ -181,6 +194,7 @@ export {
   applyOverlayScenePresetRecordToDraft,
   createPoolRecord,
   createScheduleBlocks,
+  createScheduleBlocksChecked,
   createShowProfileRecord,
   deleteAssetCollectionRecord,
   deleteDestinationRecord,
@@ -225,6 +239,7 @@ export {
   updateScheduleRepeatGroupRecords,
   updateShowProfileRecord,
   updateSourceFieldRecords,
+  updateTwitchBroadcasterConnectionRecord,
   updateTwitchConnectionRecord,
   upsertSourceRecord,
   upsertAssetCollectionRecords,
@@ -234,28 +249,39 @@ export {
   writeAppState
 };
 
-export function getWorkspaceTimeZone(): string {
-  return process.env.CHANNEL_TIMEZONE || "UTC";
+export function getWorkspaceTimeZone(state: Pick<AppState, "managedConfig">): string {
+  // Env first, then the wizard-written managed value, then UTC — the resolver owns the order.
+  return resolveChannelTimeZone(state.managedConfig);
 }
 
-export function getSchedulePreview(state: AppState) {
+/**
+ * Preview for one day of the week.
+ *
+ * `dayOfWeek` matters because a preview is built for a *date*, not for a weekday: it resolves each
+ * block's pool into the individual videos that would play. Without it the caller received today's
+ * preview and then filtered it by whichever day the user had open, which left the video timeline
+ * empty on six days out of seven — the schedule page's own day selector could not reach the data it
+ * was selecting.
+ */
+export function getSchedulePreview(state: AppState, dayOfWeek?: number) {
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
-    timeZone: getWorkspaceTimeZone()
+    timeZone: getWorkspaceTimeZone(state)
   });
 
   return buildSchedulePreview({
-    date: scheduleMoment.date,
+    date: dayOfWeek === undefined ? scheduleMoment.date : shiftDateToDayOfWeek(scheduleMoment.date, dayOfWeek),
     blocks: state.scheduleBlocks,
     pools: state.pools,
     assets: state.assets
   });
 }
 
+
 export function getMaterializedProgrammingWeekPreview(state: AppState) {
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
-    timeZone: getWorkspaceTimeZone()
+    timeZone: getWorkspaceTimeZone(state)
   });
 
   return buildMaterializedProgrammingWeek({
@@ -275,7 +301,8 @@ export function getPresenceStatus(state: AppState) {
       expiresAt: new Date(window.expiresAt)
     })),
     now: new Date(),
-    fallbackEmoteOnly: state.moderation.fallbackEmoteOnly
+    fallbackEmoteOnly: state.moderation.fallbackEmoteOnly,
+    enabled: state.moderation.enabled
   });
 }
 
@@ -291,7 +318,7 @@ export function getRecentPresenceWindows(state: AppState, limit = 10): Moderator
 }
 
 export function getManagedConfigValue<K extends keyof ManagedConfigRecord>(
-  state: AppState,
+  state: Pick<AppState, "managedConfig">,
   key: K,
   envFallback = ""
 ): ManagedConfigRecord[K] {
@@ -299,7 +326,7 @@ export function getManagedConfigValue<K extends keyof ManagedConfigRecord>(
   return ((typeof value === "string" && value !== "" ? value : envFallback) as ManagedConfigRecord[K]);
 }
 
-export function getManagedTwitchConfig(state: AppState) {
+export function getManagedTwitchConfig(state: Pick<AppState, "managedConfig">) {
   return {
     clientId: getManagedConfigValue(state, "twitchClientId", process.env.TWITCH_CLIENT_ID || ""),
     clientSecret: getManagedConfigValue(state, "twitchClientSecret", process.env.TWITCH_CLIENT_SECRET || ""),
@@ -307,6 +334,11 @@ export function getManagedTwitchConfig(state: AppState) {
       state,
       "twitchDefaultCategoryId",
       process.env.TWITCH_DEFAULT_CATEGORY_ID || ""
+    ),
+    broadcastChannelLogin: getManagedConfigValue(
+      state,
+      "twitchBroadcastChannelLogin",
+      process.env.TWITCH_BROADCAST_CHANNEL_LOGIN || ""
     )
   };
 }
@@ -326,7 +358,7 @@ export function getManagedAlertConfig(state: AppState) {
 export function getCurrentScheduleItem(state: AppState) {
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
-    timeZone: getWorkspaceTimeZone()
+    timeZone: getWorkspaceTimeZone(state)
   });
   const occurrences = buildScheduleOccurrences({
     date: scheduleMoment.date,
@@ -341,20 +373,14 @@ export function getCurrentScheduleItem(state: AppState) {
 export function getNextScheduleItem(state: AppState) {
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
-    timeZone: getWorkspaceTimeZone()
+    timeZone: getWorkspaceTimeZone(state)
   });
-  const occurrences = buildScheduleOccurrences({
+  // Across days, not just today's grid: after the evening's last block the channel is still on
+  // air, and "up next" is tomorrow's programme rather than nothing.
+  return findNextScheduleOccurrenceAcrossDays({
+    blocks: state.scheduleBlocks,
     date: scheduleMoment.date,
-    blocks: state.scheduleBlocks
-  });
-  const current = findCurrentScheduleOccurrence({
-    occurrences,
     currentTime: scheduleMoment.time
-  });
-  return findNextScheduleOccurrence({
-    occurrences,
-    currentTime: scheduleMoment.time,
-    currentOccurrence: current
   });
 }
 
@@ -390,6 +416,32 @@ export function getFilteredIncidents(
         .includes(query);
     })
     .sort((left, right) => new Date(right.updatedAt || right.createdAt).getTime() - new Date(left.updatedAt || left.createdAt).getTime());
+}
+
+/**
+ * The open incidents a panel should list, with their age, plus what it is leaving out.
+ *
+ * The clock is read here rather than in the page: a component render must stay pure, and every age
+ * on one panel should share a single "now" anyway. Newest first, so the few that fit are the few
+ * most likely to be the channel's current problem, and the overflow line makes the cap visible --
+ * with forty entries open, a silent cap hides the one being looked for.
+ */
+export function getOpenIncidentPanel(
+  state: AppState,
+  limit = 4
+): { listed: Array<IncidentRecord & { ageLabel: string }>; openCount: number; overflow: string } {
+  const nowMs = Date.now();
+  const open = getFilteredIncidents(state, { status: "open" });
+  const listed = open.slice(0, limit).map((incident) => ({
+    ...incident,
+    ageLabel: describeIncidentAge({ createdAt: incident.createdAt, updatedAt: incident.updatedAt, nowMs })
+  }));
+
+  return {
+    listed,
+    openCount: open.length,
+    overflow: describeOpenIncidentOverflow(listed.length, open.length)
+  };
 }
 
 export function getSourceIncidents(state: AppState, sourceId: string): IncidentRecord[] {
@@ -429,16 +481,33 @@ export function getSourceHealthSnapshot(state: AppState, sourceId: string) {
   const assets = state.assets.filter((asset) => asset.sourceId === sourceId);
   const readyAssets = assets.filter((asset) => asset.status === "ready");
   const openIncidents = getSourceIncidents(state, sourceId).filter((incident) => incident.status === "open");
-  const latestRun = getSourceSyncRuns(state, sourceId, 1)[0] ?? null;
+  // Enough history to describe a drought rather than only its newest minute. `latestRun` stays for
+  // the callers that only want the last error line.
+  const runs = getSourceSyncRuns(state, sourceId, 12);
   const references = getSourceReferences(state, sourceId);
+  // Read here, not in the component: a render must stay pure, and every age in one panel should
+  // share a single "now". Same rule as getOpenIncidentPanel above.
+  const nowMs = Date.now();
 
   return {
     source,
     assetCount: assets.length,
     readyAssetCount: readyAssets.length,
     openIncidentCount: openIncidents.length,
-    latestRun,
-    references
+    latestRun: runs[0] ?? null,
+    references,
+    /**
+     * The sentences the sources page had no way to say on 2026-08-27: when this was last checked,
+     * what it found, how long it has been finding nothing, and which scheduled blocks that reaches.
+     */
+    health: describeSourceHealth({
+      lastSyncedAt: source?.lastSyncedAt ?? "",
+      runs,
+      storedAssetCount: assets.length,
+      poolNames: references.pools.map((pool) => pool.name),
+      blockNames: [...new Set(references.scheduleBlocks.map((block) => block.title))],
+      nowMs
+    })
   };
 }
 
@@ -655,13 +724,6 @@ function summarizeAsset(state: AppState, assetId: string): LiveAssetSummary | nu
   };
 }
 
-function buildAssetDisplayTitle(asset: Pick<AssetRecord, "title" | "titlePrefix"> | null | undefined): string {
-  return [stripInvisibleCharacters(asset?.titlePrefix || "").trim(), stripInvisibleCharacters(asset?.title || "").trim()]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-}
-
 function getScheduleOccurrenceLookaheadTitle(
   state: AppState,
   item: ReturnType<typeof getNextScheduleItem> | null
@@ -840,6 +902,7 @@ function summarizeOpenIncidents(state: AppState, limit = 5): LiveIncidentSummary
       scope: incident.scope,
       fingerprint: incident.fingerprint,
       createdAt: incident.createdAt,
+      updatedAt: incident.updatedAt,
       acknowledgedAt: incident.acknowledgedAt,
       resolvedAt: incident.resolvedAt
     }));
@@ -873,6 +936,7 @@ function summarizeOverlay(overlay: OverlaySettingsRecord): LiveOverlaySummary {
     layerOrder: overlay.layerOrder,
     disabledLayers: overlay.disabledLayers,
     customLayers: overlay.customLayers,
+    panelPlacements: overlay.panelPlacements,
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText,
     replayLabel: overlay.replayLabel,
@@ -892,11 +956,12 @@ function summarizeEngagement(state: AppState): LiveEngagementSummary {
   const engagementEvents = Array.isArray((state as Partial<AppState>).engagementEvents)
     ? ((state as Partial<AppState>).engagementEvents as EngagementEventRecord[])
     : [];
-  const chatRuntimeEnabled = isEngagementChatRuntimeEnabled(engagement, process.env);
-  const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(engagement, process.env);
-  const donationsRuntimeEnabled = isEngagementDonationAlertsRuntimeEnabled(engagement, process.env);
-  const channelPointsRuntimeEnabled = isEngagementChannelPointsRuntimeEnabled(engagement, process.env);
-  const gameRuntimeEnabled = isEngagementGameRuntimeEnabled(engagement, process.env);
+  const managedConfig = (state as Partial<AppState>).managedConfig ?? null;
+  const chatRuntimeEnabled = isEngagementChatRuntimeEnabled(engagement, process.env, managedConfig);
+  const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(engagement, process.env, managedConfig);
+  const donationsRuntimeEnabled = isEngagementDonationAlertsRuntimeEnabled(engagement, process.env, managedConfig);
+  const channelPointsRuntimeEnabled = isEngagementChannelPointsRuntimeEnabled(engagement, process.env, managedConfig);
+  const gameRuntimeEnabled = isEngagementGameRuntimeEnabled(engagement, process.env, managedConfig);
   const latestStatus = engagementEvents.find((event) => event.kind === "status" && event.actor === "chat") ?? null;
   const chatStatus = !chatRuntimeEnabled
     ? "disabled"
@@ -986,9 +1051,11 @@ function buildOverlaySceneSource(overlay: OverlaySettingsRecord) {
     queuePreviewCount: overlay.queuePreviewCount,
     emergencyBanner: overlay.emergencyBanner,
     tickerText: overlay.tickerText,
+    tickerRotateSeconds: overlay.tickerRotateSeconds,
     layerOrder: overlay.layerOrder,
     disabledLayers: overlay.disabledLayers,
-    customLayers: overlay.customLayers
+    customLayers: overlay.customLayers,
+    panelPlacements: overlay.panelPlacements
   };
 }
 
@@ -1005,8 +1072,8 @@ export function buildActiveScenePayload(
   const nextScheduleItem = getNextScheduleItem(state);
   const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
   const nextAsset = state.assets.find((asset) => asset.id === state.playout.nextAssetId) ?? null;
-  const currentAssetTitle = buildAssetDisplayTitle(currentAsset);
-  const nextAssetTitle = buildAssetDisplayTitle(nextAsset);
+  const currentAssetTitle = overlayAssetDisplayTitle(currentAsset);
+  const nextAssetTitle = overlayAssetDisplayTitle(nextAsset);
   const nextScheduleLookaheadTitle = getScheduleOccurrenceLookaheadTitle(state, nextScheduleItem);
   const queueKind = options.queueKind ?? state.playout.queueItems[0]?.kind ?? "asset";
   const queuePreviewStart = state.playout.queueItems[0] ? 1 : 0;
@@ -1020,25 +1087,49 @@ export function buildActiveScenePayload(
     (currentAsset ? state.sources.find((source) => source.id === currentAsset.sourceId)?.name : "") ||
     "Source to be announced";
 
+  // The chapter that is actually playing, exactly as the channel resolves it: a long recording with
+  // chapters is named by its chapter on air, and this preview had no idea chapters existed.
+  //
+  // Not gated on the queue kind. `writeOnAirOverlay` in the worker passes the on-air asset straight
+  // to this helper for every kind and lets its own guards decide; gating here on "asset" meant an
+  // insert — an asset, playing, with currentAssetId pointing at it — was named by its queue entry in
+  // the studio and by its chapter on the channel. The live branch keeps its own wording because a
+  // live bridge has no asset to take a chapter from.
+  //
+  // In practice this only moves inserts. Standby and reconnect never reach writeOnAirOverlay at all
+  // — the worker draws them with writeStandbySlate, which runs precisely when there is no asset, so
+  // currentAssetId is empty and the helper returns "" on its first guard.
+  const onAirChapterTitle = overlayOnAirChapterTitle({
+    currentAssetId: state.playout.currentAssetId,
+    processStartedAt: state.playout.processStartedAt,
+    asset: currentAsset
+  });
+
   return buildOverlayScenePayload({
     overlay: buildOverlaySceneSource(overlay),
     queueKind,
     target: options.target ?? "browser",
     currentTitle:
       queueKind === "asset"
-        ? currentAssetTitle || state.playout.currentTitle || currentScheduleItem?.title || overlay.channelName || "Stream247"
+        ? onAirChapterTitle ||
+          currentAssetTitle ||
+          state.playout.currentTitle ||
+          currentScheduleItem?.title ||
+          overlay.channelName ||
+          "Stream247"
         : queueKind === "live"
           ? queueHead?.title || state.playout.liveBridgeLabel || state.playout.currentTitle || "Live Bridge"
-        : queueHead?.title || state.playout.currentTitle || overlay.headline || "Replay stream",
+        : onAirChapterTitle || queueHead?.title || state.playout.currentTitle || overlay.headline || "Replay stream",
     currentCategory: queueKind === "live" ? "Live input" : currentScheduleItem?.categoryName || currentAsset?.categoryName || "Always on air",
     currentSourceName:
       queueKind === "live"
         ? `Live Bridge · ${(state.playout.liveBridgeInputType || "rtmp").toUpperCase()}`
         : currentSourceName,
     nextTitle: nextAssetTitle || nextScheduleLookaheadTitle || state.playout.nextTitle || nextScheduleItem?.title || "Schedule not available",
-    nextTimeLabel: nextScheduleItem ? `${nextScheduleItem.startTime} to ${nextScheduleItem.endTime}` : "No next block configured",
+    // The broadcast's format, not this page's prose: the studio preview exists to show what airs.
+    nextTimeLabel: overlayNextTimeLabel(nextScheduleItem),
     queueTitles,
-    timeZone: getWorkspaceTimeZone()
+    timeZone: getWorkspaceTimeZone(state)
   });
 }
 
@@ -1156,7 +1247,7 @@ function summarizeCuepoints(
   const cuepointAsset = cuepointAssetId ? state.assets.find((entry) => entry.id === cuepointAssetId) ?? null : null;
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
-    timeZone: getWorkspaceTimeZone()
+    timeZone: getWorkspaceTimeZone(state)
   });
   const active =
     Boolean(currentScheduleItem) &&
@@ -1201,11 +1292,16 @@ function summarizeCuepoints(
   };
 }
 
-function summarizeTwitchLiveStatus(state: AppState): LiveTwitchStatusSummary {
+export function summarizeTwitchLiveStatus(state: AppState): LiveTwitchStatusSummary {
   return {
     status: state.twitch.status === "connected" ? state.twitch.liveStatus : "unknown",
     viewerCount: state.twitch.status === "connected" ? state.twitch.viewerCount : 0,
-    broadcasterLogin: state.twitch.broadcasterLogin,
+    // The broadcast channel, not the connected account: this login becomes the public watch link
+    // and the live widget's label, both of which must point where the video actually goes.
+    broadcasterLogin: resolveBroadcastChannelLogin({
+      configuredLogin: getManagedTwitchConfig(state).broadcastChannelLogin,
+      identityLogin: state.twitch.broadcasterLogin
+    }),
     startedAt: state.twitch.status === "connected" ? state.twitch.startedAt || "" : ""
   };
 }
@@ -1237,7 +1333,7 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
 
   return {
     generatedAt: new Date().toISOString(),
-    timeZone: getWorkspaceTimeZone(),
+    timeZone: getWorkspaceTimeZone(state),
     workerHealth: getWorkerHealth(state),
     twitch: summarizeTwitchLiveStatus(state),
     playout: summarizePlayout(state.playout),
@@ -1260,7 +1356,8 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
     queueItems: summarizeQueueItems(state),
     currentScheduleItem: summarizeScheduleItem(currentScheduleItem),
     nextScheduleItem: summarizeScheduleItem(nextScheduleItem),
-    openIncidents: summarizeOpenIncidents(state)
+    openIncidents: summarizeOpenIncidents(state),
+    openIncidentCount: state.incidents.filter((incident) => incident.status === "open").length
   };
 }
 
@@ -1270,10 +1367,10 @@ export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot
   return {
     generatedAt: snapshot.generatedAt,
     timeZone: snapshot.timeZone,
+    watchUrl: buildTwitchWatchUrl(snapshot.twitch.broadcasterLogin),
     overlay: snapshot.overlay,
     engagement: snapshot.engagement,
     activeScene: snapshot.activeScene,
-    activeScenePayload: snapshot.activeScenePayload,
     playout: {
       status: snapshot.playout.status,
       message: snapshot.playout.message,
@@ -1322,8 +1419,7 @@ export function getSourceReferences(state: AppState, sourceId: string) {
 
 export function getWorkerHealth(state: AppState) {
   const WORKER_HEARTBEAT_STALE_MS = 240_000;
-  const lastWorkerCycle = state.auditEvents.find((event) => event.type === "worker.cycle") ?? null;
-  const lastRunAt = lastWorkerCycle?.createdAt || "";
+  const lastRunAt = state.playout.workerHeartbeatAt || "";
   const ageMs = lastRunAt ? Date.now() - new Date(lastRunAt).getTime() : Number.POSITIVE_INFINITY;
 
   if (!lastRunAt) {

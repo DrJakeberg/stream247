@@ -2,6 +2,7 @@
 
 import type { PublicChannelSnapshot } from "@/lib/live-broadcast";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
+import { getChannelStatusLabel, getChannelUpdateNotice } from "@/lib/channel-status";
 
 export function LiveChannelPage(props: { initialSnapshot: PublicChannelSnapshot }) {
   const { snapshot, connected } = useLiveSnapshot({
@@ -13,10 +14,23 @@ export function LiveChannelPage(props: { initialSnapshot: PublicChannelSnapshot 
   return (
     <div className="stack-form">
       <div className="stats-row">
-        <span className="badge">{snapshot.playout.status}</span>
-        <span className="subtle">{connected ? "Live updates connected" : "Polling fallback active"}</span>
+        <span className="badge">{getChannelStatusLabel(snapshot.playout.status)}</span>
+        {getChannelUpdateNotice(connected) ? (
+          <span className="subtle">{getChannelUpdateNotice(connected)}</span>
+        ) : null}
         <span className="subtle">{snapshot.timeZone}</span>
       </div>
+      {/*
+        The one thing this page is for. It listed what was on air and what came next and offered no
+        way to reach any of it — measured, zero links and zero buttons on the only surface the
+        audience sees. Absent when no usable broadcaster login is configured, because a watch link
+        that goes nowhere is worse than none.
+      */}
+      {snapshot.watchUrl ? (
+        <a className="button" href={snapshot.watchUrl} rel="noreferrer" target="_blank">
+          Watch the stream
+        </a>
+      ) : null}
       <div className="list">
         <div className="item">
           <strong>On air now</strong>
@@ -41,11 +55,12 @@ export function LiveChannelPage(props: { initialSnapshot: PublicChannelSnapshot 
           </div>
         </div>
         <div className="item">
-          <strong>Queue preview</strong>
+          {/* "Queue preview" is what the operators call it. This is the audience's page. */}
+          <strong>After that</strong>
           <div className="subtle">
             {snapshot.queueItems.length > 0
               ? snapshot.queueItems.slice(0, 4).map((item) => item.title).join(" → ")
-              : "Queue preview is currently empty."}
+              : "Nothing further is scheduled yet."}
           </div>
         </div>
       </div>

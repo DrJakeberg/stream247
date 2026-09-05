@@ -67,7 +67,7 @@ export function SourceBulkActionsForm({ sources }: { sources: SourceRecord[] }) 
       {message ? <p className="subtle">{message}</p> : null}
       <div className="toggle-row">
         <button
-          className="button"
+          className="button button-secondary"
           disabled={isPending || selectedIds.length === 0}
           onClick={() => {
             setError("");

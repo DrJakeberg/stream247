@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { AssetChapterEditor } from "@/components/asset-chapter-editor";
 import { AssetCurationForm } from "@/components/asset-curation-form";
 import { AssetMetadataForm } from "@/components/asset-metadata-form";
 import { Panel } from "@/components/panel";
@@ -13,6 +14,8 @@ import {
   parseAssetHashtagsJson
 } from "@/lib/asset-metadata";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
+import { describePlayoutReason } from "@/lib/playout-reason";
+import { getChannelStatusLabel } from "@/lib/channel-status";
 import {
   getAssetPlaybackDiagnostics,
   getCurrentScheduleItem,
@@ -187,6 +190,14 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
           <AssetMetadataForm asset={asset} categoryOptions={categoryOptions} />
         </Panel>
 
+        <Panel title="Chapters" eyebrow="Publishing">
+          <div className="subtle" style={{ marginBottom: 12 }}>
+            Chapters switch the Twitch category and stream title at offsets inside this video, following the original
+            stream. Ingest fills them from VOD metadata once; edits here are never overwritten by a re-sync.
+          </div>
+          <AssetChapterEditor asset={asset} categoryOptions={categoryOptions} />
+        </Panel>
+
         <Panel title="Asset curation" eyebrow="Program">
           <div className="subtle" style={{ marginBottom: 12 }}>
             Exclude assets from automated pool rotation without deleting them, or promote them into the global fallback ladder.
@@ -201,7 +212,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
                 <strong>{pool.name}</strong>
                 <div className="subtle">
                   {pool.playbackMode} ·{" "}
-                  {pool.cursorAssetId === asset.id ? "Current pool cursor asset" : "Available in pool rotation"}
+                  {pool.cursorAssetId === asset.id ? "This pool's rotation currently stands here" : "In this pool's rotation"}
                 </div>
               </div>
             ))}
@@ -256,7 +267,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
             <div className="item">
               <strong>Playout status</strong>
               <div className="subtle">
-                {state.playout.status} · {state.playout.selectionReasonCode || "no selection reason"}
+                {getChannelStatusLabel(state.playout.status)} · {describePlayoutReason(state.playout.selectionReasonCode) || "no selection reason"}
               </div>
             </div>
             <div className="item">
