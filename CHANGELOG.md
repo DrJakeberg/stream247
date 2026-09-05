@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.47 - 2026-09-05
 
 ### Fixed
 
@@ -49,6 +49,26 @@
   that the exposure is arithmetic and NOT an observation — the live bridge has never run on this
   installation, zero audit entries matching "live" — so the next reader checks instead of trusting
   it. Two confident and wrong comments on this same path already cost three weeks.
+
+- The uplink restarted itself at some asset boundaries and not others, and the padding shipped in
+  1.5.46 did not stop it. Measured across nine boundaries: each encode's output PTS starts at zero,
+  so the reader offsets both streams by the outgoing asset's elapsed output time — separately per
+  stream. The two values disagree by how far audio had run ahead of video in the dying encode.
+  Storms 13.45/13.22/12.25/11.84s against quiet boundaries 6.69/6.52/3.52/2.43/1.07s: a total split,
+  with ffmpeg's `dts_delta_threshold` default of 10s in the gap. Under it only the backwards clause
+  fires, once; over it the forward clause fires too and every packet re-derives an offset, about ten
+  log lines a second, until the storm guard kills the process — confirmed by the kill times matching
+  the last line to the second at all four storms.
+
+  The threshold is now 60s on the HLS input only; the rtmp input carries one continuous timeline and
+  keeps the default. 60 clears the largest skew `apad` can produce rather than the largest one
+  observed, and stays finite so a dead input is still caught by out_time stall detection and the
+  feed-audio watchdog. Why audio leads by 12s at some seams and 1s at others is NOT explained: the
+  same asset, from a complete local file, produced 13.45s, 13.22s and 1.07s at comparable overruns.
+  This treats the symptom. It also records that the `apad` comment beside it diagnoses the opposite
+  sign — the outgoing file carried continuous audio 20s past its cut, and steady-state feed audio
+  tracks video to within 17ms — and leaves both readings standing, because which one holds for
+  which boundary is not known.
 
 ## 1.5.46 - 2026-09-03
 
