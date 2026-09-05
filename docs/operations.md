@@ -147,6 +147,31 @@ queue or fallback tier still references is never touched.
 - since the relay checks credentials (M57 stage 2), the rtmp rollback paths (`STREAM247_RELAY_ENABLED=1`, `STREAM247_UPLINK_INPUT_MODE=rtmp`) additionally require the internal relay key embedded in `STREAM247_RELAY_OUTPUT_URL` / `STREAM247_RELAY_INPUT_URL`; get both lines ready to paste from Settings → Operations → **Relay access** (owner/admin, one click, audited as `relay.internal_key.revealed`), copy them into the deployment environment, then restart — see the push ingest section in `docs/deployment.md`
 - the key never appears in a listing, a log, a scene payload or an error message, so a lost copy is re-fetched from that same group rather than recovered from anywhere else; if the group answers that the lines are unavailable, the workspace database is unreachable and that is the incident to fix first
 
+## Seam Skew At Boundaries (since M61)
+
+At every programme boundary the uplink's ffmpeg derives a new timestamp offset per stream. Measured
+by hand across nine boundaries on 2026-09-05, the difference between the video offset and the audio
+offset at the same seam was the one number that separated a discontinuity storm from a quiet
+boundary: storms 11.84–13.45 s, quiet 1.07–6.69 s, with ffmpeg's `dts_delta_threshold` default of
+10 s in the gap. Since 1.5.47 the uplink input carries `-dts_delta_threshold 60`; since M61 the
+number is logged instead of read off `docker logs` by hand:
+
+- `uplink.seam.skew` — `skewSeconds`, both offsets in microseconds, and the discontinuity line count
+  of the current 60 s window. One line per seam.
+- `playout.feed.av_lead` — at every duration-bound cut, the last audio and video packet times in the
+  newest segment the outgoing encoder wrote, and `audioLeadSeconds`. This is the writer's view of the
+  same seam; if it is near zero while the uplink reports a large skew, the seam is the reader's doing.
+
+To judge whether the 60 s threshold is doing its job:
+
+```bash
+docker logs stream247-uplink-1 2>&1 | grep -E "uplink.seam.skew|discontinuity-storm" | tail -20
+docker logs stream247-playout-1 2>&1 | grep "playout.feed.av_lead" | tail -20
+```
+
+A seam with `skewSeconds` above 10 and a `discontinuityCount` that stays in single digits is the
+evidence the threshold works. A seam below 10 s proves nothing either way.
+
 ## Long-Run Container Baseline
 
 Existing DUT soak notes after the persistent program-feed rollout showed the `web`, `worker`, `playout`, and `uplink` containers staying healthy with Docker restart counts at zero during the observed long run. The remaining failures were playout-runtime transients, not container restarts or Twitch uplink reconnects.

@@ -254,3 +254,79 @@ export function isDiscontinuityStorm(
   }
   return state.count >= limit;
 }
+
+/**
+ * The seam metric, automated (M61).
+ *
+ * Measured by hand across nine boundaries on 2026-09-05: what separated a discontinuity storm from a
+ * quiet boundary was the difference between the offset ffmpeg derived for the VIDEO stream and the
+ * one it derived for the AUDIO stream at the same seam — storms 11.84–13.45 s, quiet 1.07–6.69 s,
+ * ffmpeg's dts_delta_threshold default of 10 s in the gap. The values in "new offset=" are
+ * microseconds (AV_TIME_BASE). The two lines arrive within the same second; pairing them here means
+ * the number is logged with every seam instead of being read off docker logs by hand.
+ */
+export type UplinkSeamState = {
+  videoOffsetUs?: number;
+  audioOffsetUs?: number;
+  /** When the first half of the current pair arrived; the second half must follow inside the window. */
+  openedAtMs?: number;
+};
+
+export type UplinkSeamObservation = {
+  videoOffsetUs: number;
+  audioOffsetUs: number;
+  /** |audio − video| in microseconds: how far one stream's clock stood from the other's at the seam. */
+  skewUs: number;
+  skewSeconds: number;
+};
+
+/** Two halves of one seam arrive within a second or two; anything later is another seam. */
+export const UPLINK_SEAM_PAIRING_WINDOW_MS = 5_000;
+
+export function createUplinkSeamState(): UplinkSeamState {
+  return {};
+}
+
+const OFFSET_LINE = /\[(vist|aist)#\d+:\d+\/[^\]]*\][^\n]*timestamp discontinuity[^\n]*new offset=\s*(-?\d+)/;
+
+/** Reads which stream re-derived its offset and the offset itself, in microseconds. */
+export function parseDiscontinuityOffsetLine(line: string): { stream: "video" | "audio"; offsetUs: number } | null {
+  const match = OFFSET_LINE.exec(line);
+  if (!match) {
+    return null;
+  }
+  const offsetUs = Number(match[2]);
+  if (!Number.isFinite(offsetUs)) {
+    return null;
+  }
+  return { stream: match[1] === "vist" ? "video" : "audio", offsetUs };
+}
+
+export function observeSeamOffsetLine(
+  state: UplinkSeamState,
+  line: string,
+  nowMs: number,
+  windowMs: number = UPLINK_SEAM_PAIRING_WINDOW_MS
+): { state: UplinkSeamState; seam: UplinkSeamObservation | null } {
+  const parsed = parseDiscontinuityOffsetLine(line);
+  if (!parsed) {
+    return { state, seam: null };
+  }
+  const stale = state.openedAtMs !== undefined && nowMs - state.openedAtMs > windowMs;
+  const base: UplinkSeamState = stale ? {} : state;
+  const next: UplinkSeamState = {
+    ...base,
+    openedAtMs: base.openedAtMs ?? nowMs,
+    [parsed.stream === "video" ? "videoOffsetUs" : "audioOffsetUs"]: parsed.offsetUs
+  };
+  if (next.videoOffsetUs === undefined || next.audioOffsetUs === undefined) {
+    return { state: next, seam: null };
+  }
+  const skewUs = Math.abs(next.audioOffsetUs - next.videoOffsetUs);
+  // One report per pair. A flood re-derives the video offset on every packet; the next video line
+  // opens a new pair instead of being measured against the audio value of the pair just reported.
+  return {
+    state: {},
+    seam: { videoOffsetUs: next.videoOffsetUs, audioOffsetUs: next.audioOffsetUs, skewUs, skewSeconds: skewUs / 1_000_000 }
+  };
+}

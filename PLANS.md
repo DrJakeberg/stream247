@@ -70,7 +70,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M15 Coverage And Release Proof V2 | Ops | Next | Complete | Prove the highest-risk parity features with broader automated coverage | Multi-output, Live Bridge, audio/cuepoint flows, and scene publish safety have direct runtime/browser proof beyond unit tests | tests, CI, scripts, docs | high | additive coverage only; do not remove current gates until replacements are green |
 | M59 Scene Studio Layout Repair And Field Explanations | UX + Reliability | Now | In progress | Make the scene studio usable on large displays and explain every operator control in place | The preview column is as tall as its content and stays in view while the form scrolls; the published-state aside sits beside the controls from 1560px; every field, panel and page header can carry an (i) explanation through one primitive, and the studio carries them; the layout is asserted by measurement, not only by screenshot | `apps/web`, tests, docs | low-medium | drop the `grid-aside`/`workspace-wide` classes and the `info` props; the primitives stay additive |
 | M60 Truthful Controls | UX + Reliability | Now | Complete | Every visible setting does what it says or is gone | Scene clock/next toggles drive the on-air picture; schedule-teaser/queue-preview toggles, embed/widget fields and engagement chat mode/style/alert position leave the UI (storage kept, additive); the library upload accepts only what the worker scan ingests, or the scan ingests audio; tests prove each | `packages/core`, `apps/web`, `apps/worker`, tests, docs | medium | re-add the form fields; stored values were never read so nothing else moves |
-| M61 Boundary A/V Skew Instrumentation | Ops | Now | Planned | Measure the seam instead of theorising about storms | Every boundary logs the outgoing feed's last video/audio PTS lead and the reader's per-stream offsets; a query lists seam skew against discontinuity line count | `apps/worker`, `packages/db`, docs | low | drop the event; nothing consumes it |
+| M61 Boundary A/V Skew Instrumentation | Ops | Now | Complete | Measure the seam instead of theorising about storms | Every boundary logs the outgoing feed's last video/audio PTS lead and the reader's per-stream offsets; a query lists seam skew against discontinuity line count | `apps/worker`, `packages/db`, docs | low | drop the event; nothing consumes it |
 | M62 Cache Policy | Ops + Reliability | Now | Planned | Downloads that fit the content and a cache that keeps what airs next | Download time limit scales with the estimated size (floor kept); assets scheduled within the retention horizon are not released after airing; an asset with an incomplete file is not selected as ready | `apps/worker`, `packages/core`, tests, docs | medium | revert to fixed limit and release-after-play |
 | M63 Stack Alignment | Ops | Now | Planned | The deployed stack equals the repo compose | Portainer stack file no longer defines redis; `docs/deployment.md` matches; DUT verified | Portainer stack, docs | low | re-add the service block |
 | M64 Getting Started | Docs | Now | Planned | One page from zero to a green channel | `docs/getting-started.md` walks `.env.production.example` → `/setup` → `Live → Status` with the known traps in one place; README points at it; fresh-compose smoke follows it | docs, README | low | docs-only |
@@ -3452,3 +3452,20 @@ Decided per setting from what the code consumes, as found by the M59 sweep:
 
 Not done here: drawing alerts on air, a schedule/queue panel, browser embeds — those are features,
 and this milestone removes only the pretence that they exist.
+
+## M61 Boundary A/V Skew Instrumentation
+
+Point 2 of the 2.0 list: measure the seam instead of theorising about storms. Two numbers, logged
+where they arise, both described in `docs/operations.md` (*Seam Skew At Boundaries*):
+
+- `uplink.seam.skew` — the uplink supervisor parses ffmpeg's `timestamp discontinuity … new offset=`
+  lines per stream (`vist`/`aist`, microseconds) and pairs a video and an audio line that arrive
+  within five seconds; the absolute difference is the skew that separated storms (11.84–13.45 s)
+  from quiet boundaries (1.07–6.69 s) when read by hand on 2026-09-05. One line per seam, with the
+  discontinuity count of the current window. Pure functions in `uplink-progress.ts`, tests first.
+- `playout.feed.av_lead` — at every duration-bound cut, the last audio and video packet time of the
+  newest feed segment and their difference: the writer's view of the same seam, bounded to three
+  seconds so a slow probe never holds the boundary.
+
+Nothing decides on these numbers yet. They exist so that `-dts_delta_threshold 60` (1.5.47) can be
+judged against evidence: a seam above 10 s with a single-digit discontinuity count is the proof.

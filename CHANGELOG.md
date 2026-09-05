@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- The seam is measured, not remembered (M61). The uplink logs `uplink.seam.skew` — the difference
+  between the timestamp offsets ffmpeg derives for video and for audio at a boundary, the one number
+  that separated a discontinuity storm from a quiet boundary — and the playout logs
+  `playout.feed.av_lead` at every duration-bound cut, the same seam seen from the encoder's side.
+  `docs/operations.md` says how to read them.
+
 - Every visible setting now does what it says, or it is gone (M60). "Show clock" and "Show next item"
   finally reach the picture: they flipped a flag the on-air layout never read, so the clock and the
   next card were drawn regardless. Removed from the studio because nothing consumed them: "Show

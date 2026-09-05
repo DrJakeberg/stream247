@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { lastPtsSecondsFromProbeOutput, resolveFeedAvLead } from "./feed-av-lead.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { abortableDelay } from "./abortable-delay.js";
@@ -8,6 +9,9 @@ import {
   createUplinkProgressState,
   isDiscontinuityStorm,
   observeDiscontinuityLine,
+  createUplinkSeamState,
+  observeSeamOffsetLine,
+  type UplinkSeamState,
   type UplinkDiscontinuityState,
   getUplinkStallOptions,
   hasNeverProgressed,
@@ -847,6 +851,8 @@ type UplinkProcessRuntime = {
   progress: UplinkProgressState;
   /** Demuxer resyncs, watched to catch an uplink that encodes fine but with audio and video torn apart. */
   discontinuity: UplinkDiscontinuityState;
+  /** The last video/audio offsets ffmpeg derived, paired per seam so the skew is logged, not read by hand. */
+  seam: UplinkSeamState;
 };
 
 const queueProbeCache = new Map<string, QueueProbeCacheEntry>();
@@ -1453,6 +1459,34 @@ async function probeProgramFeedPackets(
   }
 }
 
+/**
+ * Last audio and video packet time in the newest segment of the feed (M61). Read right before the
+ * duration bound stops the outgoing encoder, so the seam the uplink is about to see is measured on
+ * the writer's side as well: uplink.seam.skew is the reader's number, this is the encode's.
+ */
+async function probeProgramFeedAvLead(playlistPath: string): Promise<ReturnType<typeof resolveFeedAvLead>> {
+  try {
+    const directory = path.dirname(playlistPath);
+    const playlist = await fs.readFile(playlistPath, "utf8");
+    const segments = playlist.split("\n").filter((line) => line.trim().endsWith(".ts"));
+    const newest = segments[segments.length - 1];
+    if (!newest) {
+      return null;
+    }
+    const segmentPath = path.join(directory, newest.trim());
+    const probe = (stream: "a" | "v") =>
+      execFileText(
+        process.env.FFPROBE_BIN || "ffprobe",
+        ["-v", "error", "-select_streams", stream, "-show_entries", "packet=pts_time", "-of", "csv=p=0", segmentPath],
+        { timeoutMs: 5_000, killProcessGroup: true, maxBufferBytes: 1024 * 1024 }
+      ).then(lastPtsSecondsFromProbeOutput);
+    const [lastAudioPtsSeconds, lastVideoPtsSeconds] = await Promise.all([probe("a"), probe("v")]);
+    return resolveFeedAvLead({ lastAudioPtsSeconds, lastVideoPtsSeconds });
+  } catch {
+    return null;
+  }
+}
+
 async function countPackets(segmentPath: string, stream: "a" | "v"): Promise<number> {
   const output = await execFileText(
     process.env.FFPROBE_BIN || "ffprobe",
@@ -1645,6 +1679,22 @@ async function enforceAssetDurationBound(assets: AssetRecord[]): Promise<void> {
     durationSeconds,
     elapsedSeconds: Math.round((nowMs - playoutProcessStartedAtMs) / 1000)
   });
+  // The writer's side of the seam (M61), measured before the cut so it describes this encode. Bounded
+  // to three seconds: a slow probe must not hold the boundary, so a miss is logged as absent, not waited for.
+  const feedPlaylistPath = isProgramFeedMode() ? getProgramFeedRuntimeConfig().playlistPath : "";
+  if (feedPlaylistPath) {
+    const lead = await Promise.race([
+      probeProgramFeedAvLead(feedPlaylistPath),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_000))
+    ]);
+    logRuntimeEvent("playout.feed.av_lead", {
+      assetId: playoutAssetId,
+      measured: Boolean(lead),
+      lastAudioPtsSeconds: lead?.lastAudioPtsSeconds ?? null,
+      lastVideoPtsSeconds: lead?.lastVideoPtsSeconds ?? null,
+      audioLeadSeconds: lead?.audioLeadSeconds ?? null
+    });
+  }
   await stopPlayoutProcess("duration-bound");
 }
 
@@ -7004,6 +7054,7 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
     startedAt,
     plannedStopReason: "",
     progress: createUplinkProgressState(Date.now()),
+    seam: createUplinkSeamState(),
     discontinuity: createUplinkDiscontinuityState(Date.now())
   };
 
@@ -7056,7 +7107,21 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
       return;
     }
 
-    runtime.discontinuity = observeDiscontinuityLine(runtime.discontinuity, line, Date.now());
+    const nowMs = Date.now();
+    runtime.discontinuity = observeDiscontinuityLine(runtime.discontinuity, line, nowMs);
+    const seam = observeSeamOffsetLine(runtime.seam, line, nowMs);
+    runtime.seam = seam.state;
+    if (seam.seam) {
+      // The one number that separated storms from quiet boundaries (see uplink-progress.ts): logged
+      // with every seam so the threshold can be judged against evidence instead of memory.
+      logRuntimeEvent("uplink.seam.skew", {
+        skewSeconds: Math.round(seam.seam.skewSeconds * 1000) / 1000,
+        videoOffsetUs: seam.seam.videoOffsetUs,
+        audioOffsetUs: seam.seam.audioOffsetUs,
+        discontinuityCount: runtime.discontinuity.count,
+        inputMode
+      });
+    }
 
     logRuntimeEvent("uplink.ffmpeg.stderr", {
       message: line.slice(0, 400)
