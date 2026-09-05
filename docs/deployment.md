@@ -272,6 +272,32 @@ Useful overrides:
 - `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot tag during rehearsal
 - `PORTAINER_URL`, `PORTAINER_API_KEY`, `PORTAINER_ENVIRONMENT_ID`, and `PORTAINER_STACK_NAME` for `./scripts/portainer-stack-check.sh`
 
+### Upgrading To 2.0
+
+2.0 is a major because three things an existing installation may notice change at once:
+
+- **The `redis` service leaves the stack.** Nothing ever connected to it (see *Removed Redis Service*
+  below). A stack that still defines it — the Portainer stack did until 2.0 — loses one container at
+  the update, and the four services that declared `depends_on: redis` are recreated once. `./data/redis`
+  stays on disk as an empty directory and can be deleted by hand. `REDIS_URL` is ignored.
+- **Controls that never did anything are gone from the studio** (M60): the scene's schedule-teaser and
+  queue-preview toggles, website-embed and widget layers, the engagement chat mode, style and alert
+  position. Stored values are kept and the API still accepts the fields, so a blueprint or a saved
+  draft from 1.5 imports unchanged; the fields simply no longer appear. "Show clock" and "Show next
+  item" now do what they say — an installation that had them switched off will see the clock and
+  the next card disappear from the picture after the upgrade. Switch them back on in `Studio → Scene`
+  if that was not the intent.
+- **The library upload accepts only what the scan ingests** — mp4, mkv, mov, m4v, webm. `.avi` and
+  audio files used to be copied to disk and ignored; they are now refused at upload with the list of
+  accepted formats.
+
+Also new, not breaking: every field carries an (i) explanation; the uplink tolerates a boundary seam
+of up to 60 s (`-dts_delta_threshold 60`) and logs the seam skew; a replay download gets at least the
+content's running time; a replay that airs again within the retention horizon stays cached.
+
+Upgrade path: back up PostgreSQL, repin the three `STREAM247_*_IMAGE` tags to `v2.0.0`, redeploy.
+Rollback is the reverse repin; the schema changes in 2.0 are additive.
+
 ### Patch vs Minor Upgrades
 
 - Patch upgrades should be the default production path.

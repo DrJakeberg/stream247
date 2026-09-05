@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- Layout is now asserted by measurement on every workspace (M65): no horizontal scrolling at 1440,
+  1920 and 2560, content column inside the viewport and under its cap, status rail inside its column.
+  The first run caught the studio page being 1629 px wide at a 1440 viewport — hidden tooltip bubbles
+  laid out with `visibility: hidden` still widen the document, invisibly. They are `display: none`
+  until opened.
+
+- The replay cache stops working against the schedule (M62). A download now gets at least the
+  replay's own running time, capped at a day — the fixed two-hour limit had killed a five-hour VOD at
+  7.2 GB and the replay aired from Twitch directly for the rest of the day. And a replay that just
+  finished stays on disk when a block within the retention horizon draws from its pool, instead of
+  being deleted and downloaded again for the next airing (`vod.cache.kept`).
+
 - The seam is measured, not remembered (M61). The uplink logs `uplink.seam.skew` — the difference
   between the timestamp offsets ffmpeg derives for video and for audio at a boundary, the one number
   that separated a discontinuity storm from a quiet boundary — and the playout logs

@@ -71,12 +71,12 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M59 Scene Studio Layout Repair And Field Explanations | UX + Reliability | Now | In progress | Make the scene studio usable on large displays and explain every operator control in place | The preview column is as tall as its content and stays in view while the form scrolls; the published-state aside sits beside the controls from 1560px; every field, panel and page header can carry an (i) explanation through one primitive, and the studio carries them; the layout is asserted by measurement, not only by screenshot | `apps/web`, tests, docs | low-medium | drop the `grid-aside`/`workspace-wide` classes and the `info` props; the primitives stay additive |
 | M60 Truthful Controls | UX + Reliability | Now | Complete | Every visible setting does what it says or is gone | Scene clock/next toggles drive the on-air picture; schedule-teaser/queue-preview toggles, embed/widget fields and engagement chat mode/style/alert position leave the UI (storage kept, additive); the library upload accepts only what the worker scan ingests, or the scan ingests audio; tests prove each | `packages/core`, `apps/web`, `apps/worker`, tests, docs | medium | re-add the form fields; stored values were never read so nothing else moves |
 | M61 Boundary A/V Skew Instrumentation | Ops | Now | Complete | Measure the seam instead of theorising about storms | Every boundary logs the outgoing feed's last video/audio PTS lead and the reader's per-stream offsets; a query lists seam skew against discontinuity line count | `apps/worker`, `packages/db`, docs | low | drop the event; nothing consumes it |
-| M62 Cache Policy | Ops + Reliability | Now | Planned | Downloads that fit the content and a cache that keeps what airs next | Download time limit scales with the estimated size (floor kept); assets scheduled within the retention horizon are not released after airing; an asset with an incomplete file is not selected as ready | `apps/worker`, `packages/core`, tests, docs | medium | revert to fixed limit and release-after-play |
-| M63 Stack Alignment | Ops | Now | Planned | The deployed stack equals the repo compose | Portainer stack file no longer defines redis; `docs/deployment.md` matches; DUT verified | Portainer stack, docs | low | re-add the service block |
+| M62 Cache Policy | Ops + Reliability | Now | Complete | Downloads that fit the content and a cache that keeps what airs next | Download time limit scales with the estimated size (floor kept); assets scheduled within the retention horizon are not released after airing; an asset with an incomplete file is not selected as ready | `apps/worker`, `packages/core`, tests, docs | medium | revert to fixed limit and release-after-play |
+| M63 Stack Alignment | Ops | Now | In progress | The deployed stack equals the repo compose | Portainer stack file no longer defines redis; `docs/deployment.md` matches; DUT verified | Portainer stack, docs | low | re-add the service block |
 | M64 Getting Started | Docs | Now | Planned | One page from zero to a green channel | `docs/getting-started.md` walks `.env.production.example` → `/setup` → `Live → Status` with the known traps in one place; README points at it; fresh-compose smoke follows it | docs, README | low | docs-only |
-| M65 Measured Layout Specs | Reliability | Now | Planned | Layout asserted by measurement on every workspace | Live, Program and Admin get specs in the style of `studio-layout.spec.ts`: no horizontal overflow, sticky/aside rules where they apply, control budgets | tests, scripts | low | remove specs |
-| M66 Live Bridge Rehearsal | Ops | Next | Planned | The live bridge has run under supervision before 2.0 names it | Live-bridge takeover and release observed on the DT stack with the operator present; findings recorded | DUT, docs | medium | none — observation only |
-| M67 Release 2.0.0 | Release | Next | Planned | Major because the stack drops a service and the UI drops controls | 2.0.0 tagged after M60–M66 are complete and the soak is clean | release, docs | medium | pin 1.5.x images |
+| M65 Measured Layout Specs | Reliability | Now | Complete | Layout asserted by measurement on every workspace | Live, Program and Admin get specs in the style of `studio-layout.spec.ts`: no horizontal overflow, sticky/aside rules where they apply, control budgets | tests, scripts | low | remove specs |
+| M66 Live Bridge Rehearsal | Ops | Next | In progress | The live bridge has run under supervision before 2.0 names it | Live-bridge takeover and release observed on the DT stack with the operator present; findings recorded | DUT, docs | medium | none — observation only |
+| M67 Release 2.0.0 | Release | Now | In progress | Major because the stack drops a service and the UI drops controls | 2.0.0 tagged after M60–M66 are complete and the soak is clean | release, docs | medium | pin 1.5.x images |
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
 
@@ -3469,3 +3469,74 @@ where they arise, both described in `docs/operations.md` (*Seam Skew At Boundari
 
 Nothing decides on these numbers yet. They exist so that `-dts_delta_threshold 60` (1.5.47) can be
 judged against evidence: a seam above 10 s with a single-digit discontinuity count is the proof.
+
+## M62 Cache Policy
+
+Point 3 of the 2.0 list, decided and shipped:
+
+- **A download gets at least the content's running time.** The configured limit (two hours by default)
+  stays the floor; `resolveVodDownloadTimeoutMs` raises it to the replay's own duration, capped at one
+  day. The two-hour limit had killed the download of a five-hour VOD at 7.2 GB on 2026-09-04 11:17
+  and left the partial frozen; the replay then aired from Twitch directly for the rest of the day.
+  `vod.cache.job.start` logs the effective and the configured limit and the duration.
+- **A finished replay stays if it airs again within the retention horizon.** `releaseWatchedVodCache`
+  asks `collectUpcomingPoolIds` for the pools of blocks starting within `retentionHours` (today and,
+  when the horizon crosses midnight, the following days) and keeps the file when the replay's source
+  feeds one of them, logging `vod.cache.kept`. Otherwise the release behaves as before. The size cap
+  and the disk watermark still bound the cache.
+- **Readiness was already probe-based**: `queueProbeCache` reports "ready" only after ffprobe accepts
+  the cache file, and a `.part` is not that file. Nothing to change there; the 17:04 case on 2026-09-04
+  aired from Twitch precisely because the file was not ready.
+
+The two studio explanations on the replay-cache form now describe this behaviour.
+
+## M63 Stack Alignment
+
+The deployed Portainer stack (148) still defined a `redis` service and four `depends_on: redis`
+entries that the repo compose and `docs/deployment.md` dropped long ago. The redis-free stack file is
+prepared (177 → 154 lines, nothing else touched) and goes out with the 2.0 repin in the same PUT, so
+the containers that lose a `depends_on` are recreated once, not twice. Until then the drift is
+documented here and harmless: nothing ever connected to that container.
+
+## M65 Measured Layout Specs
+
+`tests/e2e/workspace-layout.spec.ts` asserts on every operator surface, at 1440 and 1920 and on a
+2560 display: the document is never wider than the viewport, the content column ends inside it and
+never exceeds the widest cap, the status rail wraps inside the column, the workspace cap of 1440
+holds and only the scene studio widens to 1800. Registered in `scripts/design-baseline.sh`.
+
+Its first run found a real fault the pixel baseline had passed: the studio page was 1629 px wide at
+a 1440 viewport with nothing visible past the edge. Hidden `::after` tooltips, laid out with
+`visibility: hidden`, still count towards the document's scroll width; `getBoundingClientRect` over
+every element found nothing because pseudo-elements are not elements. The bubbles are `display: none`
+until hovered or focused, and capped at `min(320px, 60vw)`.
+
+## M66 Live Bridge Rehearsal
+
+The live-bridge takeover and release run on every CI pass inside `test:runtime-parity` (a full local
+stack: push ingest via the relay, `.liveBridge.status == "active"` with `selectionReasonCode ==
+"live_bridge"`, then release back to the audio lane). On this installation the path has never run on
+air — zero audit entries matching "live". The production observation needs the operator present:
+a live source pushed to the relay while the channel is on air, the takeover watched on `Live → Status`
+and in `uplink.seam.skew`, then the release. That is Task #37 and it is not started alone.
+
+## M67 Release 2.0.0
+
+Major because an existing installation notices the change (see `docs/deployment.md`, *Upgrading To
+2.0*): the redis service leaves the deployed stack, controls leave the studio, the upload refuses
+formats it used to swallow. The project's own release rule — tag only after rehearsal and a clean
+24-hour soak — is kept by shipping a candidate first:
+
+1. `v2.0.0-rc.1` tagged on the CI-green head; `release.yml` publishes the images.
+2. Repin on the DUT with the redis-free stack file in the same PUT (`~/repin.sh v2.0.0-rc.1
+   ~/portainer-compose.noredis.yml` on dt, dry-run verified: six env lines, compose 176 → 153 lines).
+3. Verify: version, four containers healthy, `dts_delta_threshold 60`, clock/next toggles honoured
+   in the picture, no redis container.
+4. `soak-monitor.sh --hours 24` from the DUT host in `tmux` against the public URL (the web port is
+   not published on the host; `/api/health` and `/api/system/readiness` answer publicly). Without an
+   owner session cookie the soak watches health and readiness, not the incident table; the incident
+   count is read each round by hand instead.
+5. `v2.0.0` tagged and repinned after a clean soak; `## Unreleased` becomes `## 2.0.0`.
+
+Open before the final tag: the operator-present live-bridge observation (M66), and the seam metric
+showing at least one boundary above 10 s with a single-digit discontinuity count.
