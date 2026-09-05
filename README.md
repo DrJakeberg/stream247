@@ -131,6 +131,9 @@ are not retroactively revoked.
 
 ## Quick Start
 
+The one-page path from an empty host to a green channel, with the traps where they bite, is
+[`docs/getting-started.md`](docs/getting-started.md). The steps below are the short form.
+
 1. Copy `.env.example` to `.env`.
 2. Set:
    - `APP_URL`
