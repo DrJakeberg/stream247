@@ -124,13 +124,13 @@ SCHEDULE
 Upcoming schedule
 <block>
 <time> to <time> · <category>
-Selected from Lokale Bibliothek for 360 minutes · <day>.
+Selected from Lokale Bibliothek for <minutes> minutes · <day>.
 <block>
 <time> to <time> · <category>
-Selected from Lokale Bibliothek for 840 minutes · <day>.
+Selected from Lokale Bibliothek for <minutes> minutes · <day>.
 <block>
 <time> to <time> · <category>
-Selected from Lokale Bibliothek for 240 minutes · <day>.
+Selected from Lokale Bibliothek for <minutes> minutes · <day>.
 DELIVERY
 Output destinations
 Stream247 can now fan one channel out to multiple active outputs. Healthy primary outputs are preferred together; backup outputs take over only when no primary output group is available.

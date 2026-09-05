@@ -82,6 +82,11 @@ const VOLATILE: Array<[RegExp, string]> = [
   [/\b(?:Nachtschleife|Tagesprogramm|Abendprogramm)\b/g, "<block>"],
   [/\b(?:Archiv|Talk|Musik)\b/g, "<category>"],
   [/\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/g, "<day>"],
+  // "Selected from Lokale Bibliothek for 840 minutes": how much of a block the fill still covers
+  // is decided by the wall clock against the seeded schedule, like the rail values above. It went
+  // 840 -> 1020 between the day the snapshot was taken and a Saturday afternoon, on CI and locally
+  // alike, and took the release run down with it. Data, not wording.
+  [/\bfor \d+ minutes\b/g, "for <minutes> minutes"],
   [/\b(?:MON|TUE|WED|THU|FRI|SAT|SUN)\b/g, "<DAY>"],
   // The week lens starts at today, so each day card's scheduled/projected total changes rows at
   // midnight — the first midnight run after the day-name fix above swapped "1440m scheduled" with

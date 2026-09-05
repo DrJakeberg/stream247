@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- The release run failed on a wording baseline that had nothing to do with the release. `live-status`
+  lists the upcoming blocks with how much of each the fill still covers — "Selected from Lokale
+  Bibliothek for 840 minutes" — and that number is decided by the wall clock against the seeded
+  schedule, exactly like the status-rail values the baseline already drops. It read 1020 on a
+  Saturday afternoon, on CI and locally alike. The minutes are now masked as data, the way times,
+  days and ages already were, and the snapshot is regenerated with the mask in place. Test-only.
+
 - The studio preview and the channel disagreed about what was on air during an insert. The worker
   hands whatever asset is playing straight to `overlayOnAirChapterTitle` and lets that helper's own
   guards decide; the preview gated the same lookup on `queueKind === "asset"`. An insert is an
