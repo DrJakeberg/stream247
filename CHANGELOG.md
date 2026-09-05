@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The scene studio was unusable on any screen, and the pixel baseline had frozen the fault as the
+  expected picture. `.scene-designer-preview` is a grid, a grid's rows stretch by default, and the
+  column was as tall as the form beside it — some 4700px — so the "Scene Preview" label sat at the
+  top, its select a screen lower, the rendered picture somewhere in the middle and the drag help at
+  the very bottom, with blank space between them. Start-aligned now, and sticky from 901px so the
+  picture stays in view while the operator scrolls the form. Measured after: toolbar at y=691,
+  picture at y=800, help at y=1209, sidebar 3484px tall beside a 570px column.
+
+- The admin content column had no width cap, against the layout rule in `docs/ui.md`: on a 2560px
+  display a paragraph ran 2200px wide. `.content-stack` caps its children at `--workspace-max`
+  (1440px); the scene studio widens that to 1800px with `workspace-wide`, because there the preview
+  is the work. Its "Published scene state" aside opts into `grid-aside` and sits beside the controls
+  from 1560px viewport width instead of below the whole form. A viewport query on purpose: the first
+  cut measured the workspace with inline-size containment, and that containment let the content
+  column grow past the viewport on every admin page.
+
+### Added
+
+- `InfoTip`, the (i) beside a label. `Input`, `Select`, `Textarea`, `Panel` and `AdminPageHeader`
+  take an `info` text and render it behind a real button that opens on hover and on keyboard focus,
+  wired through `aria-describedby`. The scene studio's header, both panels and the preview toolbar
+  carry the first four. The control-density budget does not count them: an explanation is not
+  something the operator does to the channel.
+
+- `tests/e2e/studio-layout.spec.ts` asserts the studio layout by measurement — column alignment,
+  the distances between toolbar, picture and help, the column staying shorter than half the form,
+  the picture still on screen after scrolling 1500px — and that an (i) opens on focus. The pixel
+  baseline cannot see any of that: its 1% tolerance is ~23,000px at 1440x1600, and four 16px
+  buttons passed it unnoticed.
+
 ## 1.5.47 - 2026-09-05
 
 ### Fixed

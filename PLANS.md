@@ -68,6 +68,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M13 Library And Blueprints V2 | Parity + UX | Next | Complete | Deepen library operations and make blueprints safer to reuse across installs | Thumbnails, grouped browsing, curated sets, and selective blueprint import/remap guidance are available without overpromising media portability | `apps/web`, `apps/worker`, `packages/db`, docs | medium | keep current folder/tag curation and replace-style blueprint import path intact |
 | M14 Operator UX V2 | UX | Next | Complete | Resolve admin IA drift and make the control-room model more consistent | Broadcast, Dashboard, Scene Studio, Sources/Library, and Settings have clearer roles and more consistent naming | `apps/web`, docs, tests | medium | keep current routes and navigation labels working until the new IA is proven |
 | M15 Coverage And Release Proof V2 | Ops | Next | Complete | Prove the highest-risk parity features with broader automated coverage | Multi-output, Live Bridge, audio/cuepoint flows, and scene publish safety have direct runtime/browser proof beyond unit tests | tests, CI, scripts, docs | high | additive coverage only; do not remove current gates until replacements are green |
+| M59 Scene Studio Layout Repair And Field Explanations | UX + Reliability | Now | In progress | Make the scene studio usable on large displays and explain every operator control in place | The preview column is as tall as its content and stays in view while the form scrolls; the published-state aside sits beside the controls from 1560px; every field, panel and page header can carry an (i) explanation through one primitive, and the studio carries them; the layout is asserted by measurement, not only by screenshot | `apps/web`, tests, docs | low-medium | drop the `grid-aside`/`workspace-wide` classes and the `info` props; the primitives stay additive |
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
 
@@ -3341,3 +3342,39 @@ pnpm validate
 - No Portainer API automation for deployment itself.
 - No changes to the CI pipeline.
 - No auto-promote from DUT to production.
+
+## M59 Scene Studio Layout Repair And Field Explanations
+
+Requested by the operator on 2026-09-05: the scene studio "is not displayed correctly, even on large
+screens", every control should carry an (i) with an explanation, and a 2.0 release should be prepared.
+
+### What was measured before changing anything
+
+- The committed baseline screenshot `studio-scene-desktop` shows the fault as the expected state: the
+  "Scene Preview" label at the top of its column, its select a screen lower, the rendered picture in
+  the middle, the drag help at the bottom, and blank space between them. `.scene-designer-preview` is
+  a grid without `align-content`, so its rows stretched to the height of the ~4700px form beside it.
+- The admin content column had no width cap at all, against the layout rule in `docs/ui.md`.
+- `.stack-form .grid.two` forces one column everywhere inside a form, so the studio's
+  "Published scene state" aside always sat below the whole form.
+- The pixel baseline's `maxDiffPixelRatio: 0.01` (~23,000px at 1440x1600) cannot see a 16px control
+  appear; four new (i) buttons passed it unnoticed.
+
+### Shipped
+
+- `.scene-designer-preview { align-content: start }` plus sticky positioning from 901px, so the
+  picture stays in view while the form scrolls.
+- `--workspace-max` cap on `.content-stack` (1440px), `workspace-wide` (1800px) for the studio.
+- `grid-aside` opt-in: from 1560px viewport the aside takes a 280-360px column beside the controls.
+  A viewport query, not a container query — inline-size containment on `.content-stack` let the
+  content column grow past the viewport on every admin page.
+- `InfoTip` primitive; `info` prop on `Input`, `Select`, `Textarea`, `Panel`, `AdminPageHeader`;
+  first explanations on the studio header, both panels and the preview toolbar.
+- `tests/e2e/studio-layout.spec.ts` asserts the layout by measurement and the (i) by focus.
+- Control-density budget excludes `.info-tip-button`; wording baseline masks the clock-dependent
+  block coverage minutes that took the 1.5.47 release run down.
+
+### Open
+
+- Explanations on the remaining ~250 raw `<label>` sites across 42 components.
+- The pixel gate's tolerance is a deliberate flakiness trade-off; lowering it is an operator decision.

@@ -38,6 +38,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { OverlayPlacementCanvas, type PlacementTarget } from "@/components/overlay-placement-canvas";
 import { OverlayRenderPreview } from "@/components/overlay-render-preview";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { useToast } from "@/components/ui/Toast";
 import { buildOverlayPublishReviewSections, type OverlayPublishReviewSection } from "@/lib/overlay-publish-review";
 import { OVERLAY_PANEL_LABELS } from "@/lib/overlay-panel-labels";
@@ -815,7 +816,10 @@ export function OverlaySettingsForm(props: {
       <div className="scene-designer-grid">
         <div className="scene-designer-preview">
           <div className="scene-preview-toolbar">
-            <span className="label">Scene Preview</span>
+            <span className="label label-with-info">
+              Scene Preview
+              <InfoTip text="Pick which situation the preview shows. A regular asset, an insert between two assets, the standby picture when nothing is scheduled, and the reconnect picture after a source drop each use different scene elements." />
+            </span>
             <select onChange={(event) => setPreviewMode(event.target.value as OverlayQueueKind)} value={previewMode}>
               <option value="asset">Regular asset</option>
               <option value="insert">Insert / bumper</option>

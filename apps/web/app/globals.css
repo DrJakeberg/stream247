@@ -236,6 +236,26 @@ main {
 .content-stack {
   display: grid;
   gap: 18px;
+  --workspace-max: 1440px;
+}
+
+/* docs/ui.md: content width stays capped instead of stretching arbitrarily on wide displays. The
+   content column had no cap at all, so on a 2560px monitor a paragraph ran 2200px and a form's
+   aside sat metres below its controls. The cap is a variable so one workspace can widen it — the
+   scene studio's preview IS the work there, and it earns the room. 1440 leaves every design
+   baseline untouched: at the 1440px baseline viewport the workspace is 1080px, well under it.
+
+   ON THE CONTAINER, NOT ON ITS CHILDREN. The first cut put max-width on `.content-stack > *`, and
+   every admin page shifted at every viewport: a max-width makes an auto-fit grid's size definite
+   for the purpose of counting repeats, so the status rail laid its six chips in one 1140px row
+   inside a 1080px column and pushed the page 32px past the viewport. Measured, not guessed. */
+.content-stack {
+  max-width: var(--workspace-max);
+}
+
+/* The page root carries the class; the cap lives one level up, on the layout's container. */
+.content-stack:has(> .workspace-wide) {
+  --workspace-max: 1800px;
 }
 
 .hero,
@@ -457,6 +477,23 @@ textarea {
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* A two-column grid that keeps its aside on wide workspaces. The rule above stacks every .grid.two
+   inside a form — right for a form, wrong for a surface whose second column is a status aside
+   that the operator reads WHILE editing. Opt in with .grid-aside; the aside takes a fixed narrow
+   column and the controls take the rest.
+
+   A viewport query, deliberately not a container query. The first cut measured the workspace with
+   inline-size containment on .content-stack, and that containment let the content column grow past
+   the viewport on every admin page: the status rail stopped wrapping and the panels ran off the
+   right edge. 1560px is the sidebar's 304px, the content padding's 56px and the 1200px of workspace
+   the aside needs; at the 1440px baseline viewport this still stacks. */
+@media (min-width: 1560px) {
+  .stack-form .grid.two.grid-aside {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+    align-items: start;
+  }
+}
+
 .inline-form {
   display: flex;
   flex-wrap: wrap;
@@ -637,6 +674,90 @@ textarea {
 .field-error {
   color: var(--danger);
   font-size: 0.85rem;
+}
+
+/* (i) beside a label. Hover or keyboard focus opens the bubble; the button is real so the tip
+   works without a mouse and never submits the form it sits in. Colours are tokens only — the
+   token lint ratchets on literals. */
+/* Block-level flex, not inline-flex: this lands on h2/h3 as well as on label spans, and an inline
+   heading would climb onto the same line as the eyebrow badge before it — which is exactly what the
+   first cut did to the studio title. */
+.label-with-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.info-tip-button {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-card);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.65rem;
+  font-weight: 700;
+  font-style: italic;
+  line-height: 1;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: help;
+}
+
+.info-tip-button:hover,
+.info-tip-button:focus-visible {
+  color: var(--brand-strong);
+  border-color: var(--brand-border-active);
+  background: var(--brand-tint-faint);
+}
+
+.info-tip-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.info-tip-bubble {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: max-content;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-subtle);
+  border-radius: 12px;
+  background: var(--surface-card);
+  box-shadow: var(--shadow-md);
+  color: var(--ink);
+  font-size: 0.85rem;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.info-tip:hover .info-tip-bubble,
+.info-tip:focus-within .info-tip-bubble {
+  opacity: 1;
+  visibility: visible;
 }
 
 .empty-state {
@@ -1368,6 +1489,30 @@ button.collection-chip {
 .scene-designer-sidebar {
   display: grid;
   gap: 14px;
+}
+
+/* THE HOLE UNDER "SCENE PREVIEW". A grid's align-content defaults to stretch, so this column's three
+   rows — toolbar, picture, help text — were stretched to the height of the form beside it, several
+   thousand pixels, and spread out along it: the label at the top, its select a screen lower, the
+   picture somewhere in the middle, the drag help at the very bottom. The committed baseline
+   screenshot shows exactly that and had frozen it as the expected state. Start-aligned, the column
+   is as tall as its content.
+
+   Sticky on top of that: the form runs on for pages, and the picture is what every field changes.
+   Pinned inside the grid cell so it stays in view while the operator scrolls the controls — the
+   one thing OBS gets right that this page did not. align-self: start is what makes sticky work in
+   a grid item; a stretched item has nowhere to stick. Off below the 900px breakpoint, where the
+   grid is one column and the preview should simply scroll away with the rest. */
+.scene-designer-preview {
+  align-content: start;
+}
+
+@media (min-width: 901px) {
+  .scene-designer-preview {
+    position: sticky;
+    top: 18px;
+    align-self: start;
+  }
 }
 
 .scene-workspace-toolbar {

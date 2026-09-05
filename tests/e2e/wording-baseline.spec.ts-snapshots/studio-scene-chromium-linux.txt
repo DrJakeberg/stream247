@@ -33,9 +33,11 @@ Engagement
 Output
 Scene
 Publish the viewer-facing scene without leaving the control room.
+i
 Scene controls the published viewer-facing scene. Draft changes stay isolated until you review and publish them to the on-air renderer.
 SCENE
 Scene controls
+i
 The picture is drawn by the playout; the studio preview is the same drawing. Draft changes stay inside the studio until you publish them, and the published scene settings also drive the on-air replay text overlay inside the FFmpeg playout path. Metadata widgets stay inside that canonical scene payload, and custom font stacks resolve only against fonts already installed on the worker image.
 SCENE DRAFT
 Live and draft match
@@ -45,6 +47,7 @@ Save draft
 Review changes
 Reset to live
 SCENE PREVIEW
+i
 Regular asset
 Insert / bumper
 Standby
@@ -174,6 +177,7 @@ Add video source
 No video sources stored yet.
 VIEWER SCENE
 Published scene state
+i
 Live scene preset
 Replay Lower Third · glass surface · bottom anchor · balanced title scale
 Typography Studio Sans · 0 positioned layers

@@ -57,6 +57,9 @@ and every post-owner step is skippable.
 - Nested panels do not go deeper than two levels.
 - The admin shell stays mounted across internal navigation so SSE-backed surfaces survive route changes.
 - Content width stays capped instead of stretching arbitrarily on wide displays.
+- The cap is `--workspace-max` on `.content-stack` (1440px). A workspace whose preview is the work — the scene studio — widens it with `workspace-wide` (1800px).
+- A two-column grid inside a form stacks by default. A surface whose second column is a status aside read while editing opts into `grid-aside`; from 1560px viewport width the aside sits beside the controls.
+- In the scene studio the preview column is start-aligned and sticky: it is as tall as its content and stays in view while the form scrolls.
 
 ## Component Primitives
 
@@ -78,6 +81,7 @@ Required current additions:
 - `EmptyState`
 - `Toast`
 - `Textarea`
+- `InfoTip` — the (i) beside a label, panel title or page title that explains what the thing is for; `Input`, `Select`, `Textarea`, `Panel` and `AdminPageHeader` take it as `info`
 
 New surfaces should build from those primitives instead of bespoke styled HTML controls.
 
@@ -93,6 +97,8 @@ New surfaces should build from those primitives instead of bespoke styled HTML c
 
 - Forms are vertically stacked by default.
 - Labels stay visible; placeholder-only fields are not used as labels.
+- A field, panel or page that is not self-explanatory carries an (i) explanation through `info`. The text says what the setting does to the channel, in one or two sentences, and never repeats the label.
+- (i) tips are explanations, not controls: the control-density budget does not count them.
 - Errors render inline with the field.
 - Success and failure feedback use `Toast`.
 - Primary save actions sit at the lower right of the form action row.

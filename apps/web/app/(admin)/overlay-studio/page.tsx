@@ -31,11 +31,16 @@ export default async function OverlayStudioPage() {
         className={emergencyBannerActive ? "scene-header-alert" : ""}
         description="Scene controls the published viewer-facing scene. Draft changes stay isolated until you review and publish them to the on-air renderer."
         eyebrow="Scene"
+        info="The scene is everything the playout draws over the programme picture: titles, the current and next block, the clock, custom layers. You edit a draft here; nothing reaches the channel until you publish it."
         title="Publish the viewer-facing scene without leaving the control room."
       />
 
-      <div className="grid two">
-        <Panel title="Scene controls" eyebrow="Scene">
+      <div className="grid two grid-aside">
+        <Panel
+          eyebrow="Scene"
+          info="Everything in this panel changes the draft only. The preview is drawn by the same renderer the channel uses, at the size the channel encodes, so what you see here is what goes on air after you publish."
+          title="Scene controls"
+        >
           <p className="subtle">
             The picture is drawn by the playout; the studio preview is the same drawing. Draft changes stay inside the
             studio until you publish them, and the published scene settings also drive the on-air replay text overlay
@@ -67,7 +72,11 @@ export default async function OverlayStudioPage() {
           <VideoSourceSettingsForm videoSources={videoSources} />
         </Panel>
 
-        <Panel title="Published scene state" eyebrow="Viewer scene">
+        <Panel
+          eyebrow="Viewer scene"
+          info="What viewers see right now. Compare it with your draft: when the draft differs, the publish button becomes the only way to move these values."
+          title="Published scene state"
+        >
           <div className="list">
             <div className="item">
               <strong>Live scene preset</strong>
