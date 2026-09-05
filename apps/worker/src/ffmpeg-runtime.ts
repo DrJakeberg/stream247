@@ -716,6 +716,41 @@ function getOutputRateControlSettings(
   };
 }
 
+/**
+ * Forward-jump tolerance, in seconds, for the persistent uplink's HLS input.
+ *
+ * WHAT THE SEAM ACTUALLY LOOKS LIKE, measured 2026-09-05 across nine boundaries. Each encode's
+ * output PTS starts at zero, so at a boundary the reader must offset both streams by roughly the
+ * outgoing asset's elapsed output time — and it derives that offset SEPARATELY per stream. The two
+ * values do not agree: audio's is larger, by how far audio had run ahead of video in the dying
+ * encode. That difference is the whole story:
+ *
+ *   storms   13.45  13.22  12.25  11.84 s  ->  233, 150, 265, 239 discontinuity lines
+ *   quiet     6.69   6.52   3.52   2.43   1.07 s  ->  3, 2, 3, 2, 2 lines
+ *
+ * The split is total, and ffmpeg's default of 10s sits in the gap. Under it only the backwards
+ * clause fires, once, on its fixed ~0.1s tolerance; over it the forward clause fires too and every
+ * subsequent packet re-derives an offset, ~10 lines a second, until the storm guard kills the
+ * process. Confirmed by the kill times matching the last line to the second at all four storms.
+ *
+ * WHY 60 AND NOT THE MEASURED 13.45. The skew is not bounded by what has been observed. `apad`
+ * lets audio outlive its input by PROGRAMME_AUDIO_PAD_SLACK_SECONDS plus the bound margin, so a
+ * pad-driven skew can reach that sum; 60 clears it with room. It stays finite deliberately: a
+ * threshold does not silence a broken feed, it only stops re-deriving, and out_time stall
+ * detection plus the feed-audio watchdog still cover a genuinely dead input.
+ *
+ * NOT SET ON RTMP. That input has no boundary seam — the relay carries one continuous timeline —
+ * so loosening it there would buy nothing and hide real corruption.
+ *
+ * WHAT IS STILL UNKNOWN. Why audio leads video by 12s at some seams and 1s at others is NOT
+ * explained. The same asset (v2813364934, from a complete local file both times) produced 13.45s,
+ * 13.22s and 1.07s at comparable overruns. This constant treats the symptom; it does not close
+ * that question. Note also that the apad comment above diagnoses the OPPOSITE sign — "video
+ * WITHOUT audio" — which the 2026-09-05 measurements contradict: the outgoing file carried
+ * continuous audio 20s past its cut, and steady-state feed audio tracks video to within 17ms.
+ */
+export const UPLINK_DTS_DELTA_THRESHOLD_SECONDS = 60;
+
 export function buildUplinkFfmpegCommand(
   input: string,
   outputTarget: FfmpegOutputTarget,
@@ -746,6 +781,7 @@ export function buildUplinkFfmpegCommand(
 
   if (inputMode === "hls") {
     command.push("-err_detect", "ignore_err", "-max_reload", "10", "-m3u8_hold_counters", "1200");
+    command.push("-dts_delta_threshold", String(UPLINK_DTS_DELTA_THRESHOLD_SECONDS));
   }
 
   command.push("-i", input);

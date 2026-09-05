@@ -19,7 +19,8 @@ import {
   isNaturalPlayoutBoundary,
   shouldRequestImmediatePlayoutRetry,
   resolveOnAirOverlayMode,
-  SOURCE_LIVE_RTSP_TIMEOUT_US
+  SOURCE_LIVE_RTSP_TIMEOUT_US,
+  UPLINK_DTS_DELTA_THRESHOLD_SECONDS
 } from "../../apps/worker/src/ffmpeg-runtime";
 import {
   getOutputGopSize,
@@ -166,6 +167,35 @@ describe("ffmpeg runtime helpers", () => {
       expect(String(command[fflagsIndex + 1])).toContain("+discardcorrupt");
       expect(command).toContain("-err_detect");
       expect(command).toContain("-m3u8_hold_counters");
+    });
+
+    it("lets the uplink absorb a boundary seam where audio leads video, instead of re-deriving an offset per packet", () => {
+      const command = buildUplinkFfmpegCommand(
+        "/app/data/media/.stream247-program-feed/program.m3u8",
+        { muxer: "flv", output: "rtmp://live.twitch.tv/app/key" },
+        { inputMode: "hls", env: {}, outputSettings: null }
+      );
+
+      // Measured across nine boundaries on the live channel: at the seam the two streams demand
+      // offsets that differ by how far audio had run ahead of video in the outgoing encode.
+      // Storms 11.84/12.25/13.22/13.45s, quiet boundaries 1.07/2.43/3.52/6.52/6.69s. The split is
+      // total and ffmpeg's dts_delta_threshold default of 10s sits in the gap, so the threshold
+      // must clear the largest skew the pad can produce, not merely the largest one measured.
+      const index = command.indexOf("-dts_delta_threshold");
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(index).toBeLessThan(command.indexOf("-i"));
+      expect(Number(command[index + 1])).toBe(UPLINK_DTS_DELTA_THRESHOLD_SECONDS);
+      expect(UPLINK_DTS_DELTA_THRESHOLD_SECONDS).toBeGreaterThan(13.45);
+    });
+
+    it("does not loosen timestamp handling on the rtmp input, which has no boundary seam", () => {
+      const command = buildUplinkFfmpegCommand(
+        "rtmp://relay/live/stream",
+        { muxer: "flv", output: "rtmp://live.twitch.tv/app/key" },
+        { inputMode: "rtmp", env: {}, outputSettings: null }
+      );
+
+      expect(command).not.toContain("-dts_delta_threshold");
     });
   });
 
@@ -329,6 +359,8 @@ describe("ffmpeg runtime helpers", () => {
       "10",
       "-m3u8_hold_counters",
       "1200",
+      "-dts_delta_threshold",
+      "60",
       "-i",
       "/app/data/media/.stream247-program-feed/program.m3u8",
       "-c:v",
