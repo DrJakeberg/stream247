@@ -3,6 +3,7 @@
 import type { ChatInteractionSettingsRecord } from "@stream247/db";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { useToast } from "@/components/ui/Toast";
 
 type ViewerControlFormProps = {
@@ -108,7 +109,7 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
           <div className="form-grid" style={{ marginTop: 12 }}>
             <label className="toggle-row">
               <input checked={enabled} onChange={(event) => setEnabled(event.target.checked)} type="checkbox" />
-              <span>Enable viewer control</span>
+              <span className="label-with-info">Enable viewer control<InfoTip text="Master switch for everything on this page. While it is off, chat commands are ignored, no poll opens, and a skip vote in progress is dropped." /></span>
             </label>
           </div>
         </div>
@@ -122,10 +123,10 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
           <div className="form-grid" style={{ marginTop: 12 }}>
             <label className="toggle-row">
               <input checked={votingEnabled} onChange={(event) => setVotingEnabled(event.target.checked)} type="checkbox" />
-              <span>Enable voting</span>
+              <span className="label-with-info">Enable voting<InfoTip text="Opens a poll each time a new item goes on air: viewers type !1, !2 and so on to choose among the next queued items, and the winner moves to the front of the queue. Off, those numbers are ignored and no new poll opens; a poll already running still closes on time and its result still applies." /></span>
             </label>
             <label>
-              <span className="label">Poll duration (seconds)</span>
+              <span className="label label-with-info">Poll duration (seconds)<InfoTip text="How long viewers have to vote after the poll opens; when the time is up the poll closes and the result is applied. Accepted between 15 seconds and 10 minutes, so a poll stays answerable but rarely outlives the item." /></span>
               <input
                 max={600}
                 min={15}
@@ -135,7 +136,7 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
               />
             </label>
             <label>
-              <span className="label">Candidates</span>
+              <span className="label label-with-info">Candidates<InfoTip text="How many of the next queued items the poll offers, numbered !1 upward in queue order; with fewer than two items queued, no poll opens. Two to five, because more no longer fits on the overlay." /></span>
               <input
                 max={5}
                 min={2}
@@ -145,7 +146,7 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
               />
             </label>
             <label>
-              <span className="label">Minimum voters to honour a result</span>
+              <span className="label label-with-info">Minimum voters to honour a result<InfoTip text="How many different viewers must have voted before the result counts; below this the poll closes with no winner and the queue keeps its order. Each viewer counts once, however often they change their vote." /></span>
               <input
                 min={1}
                 onChange={(event) => setVoteMinimumVoters(event.target.value)}
@@ -169,14 +170,14 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
                 onChange={(event) => setRequestsEnabled(event.target.checked)}
                 type="checkbox"
               />
-              <span>Enable requests</span>
+              <span className="label-with-info">Enable requests<InfoTip text="Lets viewers add a video to the end of the queue by naming part of its title in chat. Any item that is ready to play qualifies, including items you have excluded from programming; only a replay whose download failed is skipped until its retry wait is over. A request that does not qualify is dropped silently, with no reply in chat." /></span>
             </label>
             <label>
-              <span className="label">Command</span>
+              <span className="label label-with-info">Command<InfoTip text="The word viewers type after ! to make a request, followed by part of a title, e.g. with the default name: !request Title; case does not matter. Saved in lowercase with anything but letters, digits, - and _ removed and cut to 24 characters; a name that leaves nothing usable, or is only digits, is replaced by request." /></span>
               <input onChange={(event) => setRequestCommand(event.target.value)} type="text" value={requestCommand} />
             </label>
             <label>
-              <span className="label">Cooldown per viewer (seconds)</span>
+              <span className="label label-with-info">Cooldown per viewer (seconds)<InfoTip text="How long a viewer must wait after an accepted request before the next one is taken; requests inside that time are turned down. Never below 30 seconds and at most a day, so requests are always throttled." /></span>
               <input
                 min={30}
                 onChange={(event) => setRequestCooldownSeconds(event.target.value)}
@@ -185,7 +186,7 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
               />
             </label>
             <label>
-              <span className="label">Maximum viewer requests in the queue</span>
+              <span className="label label-with-info">Maximum viewer requests in the queue<InfoTip text="How many viewer requests may wait in the queue at once, from 1 to 50; further requests are dropped until one of those items has left the queue, whether it played or an operator removed it. Items queued by operators do not count." /></span>
               <input
                 max={50}
                 min={1}
@@ -206,14 +207,14 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
           <div className="form-grid" style={{ marginTop: 12 }}>
             <label className="toggle-row">
               <input checked={skipEnabled} onChange={(event) => setSkipEnabled(event.target.checked)} type="checkbox" />
-              <span>Enable skip votes</span>
+              <span className="label-with-info">Enable skip votes<InfoTip text="Lets chat take the current item off air by voting. When enough viewers agree, playout moves on and the skipped item is kept out of the queue for an hour, the same hold an operator skip applies unless they choose another length." /></span>
             </label>
             <label>
-              <span className="label">Command</span>
+              <span className="label label-with-info">Command<InfoTip text="The word viewers type after ! to vote for a skip, e.g. !skip; case does not matter, and the on-air skip panel shows it to them as !name. Saved in lowercase with anything but letters, digits, - and _ removed and cut to 24 characters; a name that leaves nothing usable, or is only digits, is replaced by skip." /></span>
               <input onChange={(event) => setSkipCommand(event.target.value)} type="text" value={skipCommand} />
             </label>
             <label>
-              <span className="label">Share of active chatters (%)</span>
+              <span className="label label-with-info">Share of active chatters (%)<InfoTip text="The share of active chatters that must vote before a skip passes, where active means anyone who chatted within the Active chatter window set on the Engagement page. Between 10 and 100 percent; the minimum votes below applies as well." /></span>
               <input
                 max={100}
                 min={10}
@@ -223,7 +224,7 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
               />
             </label>
             <label>
-              <span className="label">Minimum votes</span>
+              <span className="label label-with-info">Minimum votes<InfoTip text="The fewest votes a skip can ever pass with, whatever the share above works out to, so a nearly empty chat cannot skip the programme. At least 2: one viewer can never skip on their own." /></span>
               <input
                 min={2}
                 onChange={(event) => setSkipMinimumVotes(event.target.value)}
@@ -232,7 +233,7 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
               />
             </label>
             <label>
-              <span className="label">Collection window (seconds)</span>
+              <span className="label label-with-info">Collection window (seconds)<InfoTip text="How long skip votes are collected from the first one before the tally starts again from zero; the tally also resets when the next item starts. Between 30 seconds and one hour, shown as a countdown on the on-air skip panel." /></span>
               <input
                 max={3600}
                 min={30}

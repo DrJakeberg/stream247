@@ -3,6 +3,7 @@
 import { describeSourceLiveState } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 type VideoSourceListEntry = {
   id: string;
@@ -100,11 +101,17 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
         <div className="stack-form" style={{ marginTop: 8 }}>
           <div className="form-grid">
             <label>
-              <span className="label">Name</span>
+              <span className="label label-with-info">
+                Name
+                <InfoTip text="How this feed is listed in Scene Studio's scene and source-layer pickers. The first save also fixes the source's id — the name in lowercase with dashes — which a pushed camera publishes to as src-<id>; renaming keeps the id, and a new source whose name reduces to an existing id replaces that source." />
+              </span>
               <input onChange={(event) => setName(event.target.value)} placeholder="e.g. Studio camera" value={name} />
             </label>
             <label>
-              <span className="label">How the picture arrives</span>
+              <span className="label label-with-info">
+                How the picture arrives
+                <InfoTip text="Fetched: this server pulls the stored address and shows a still picture re-taken every few seconds. Pushed: the camera sends to this server with a publish key issued on save and, with Live video from sources switched on, joins a recorded item as live picture — otherwise it is a still too; switching a saved source between the two forgets the address or retires the key." />
+              </span>
               <select
                 onChange={(event) => setIngestKind(event.target.value === "push" ? "push" : "pull")}
                 value={ingestKind}
@@ -115,7 +122,10 @@ export function VideoSourceSettingsForm(props: { videoSources: VideoSourceListEn
             </label>
             {ingestKind === "pull" ? (
               <label>
-                <span className="label">Feed address</span>
+                <span className="label label-with-info">
+                  Feed address
+                  <InfoTip text="The stream or web address this server fetches the picture from — rtsp, rtmp, rtmps, srt, udp, http or https, with any login the feed needs left in the address. Only its shape is checked on save; nothing tries the feed until a scene layer points at this source." />
+                </span>
                 <input
                   autoComplete="off"
                   onChange={(event) => setUrl(event.target.value)}

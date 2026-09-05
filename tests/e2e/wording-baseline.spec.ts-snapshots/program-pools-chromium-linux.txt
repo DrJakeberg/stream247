@@ -39,20 +39,26 @@ PROGRAM
 Create pool
 Pools are the scheduler's programming units. Group ready assets from one or more sources, and set up automatic inserts or a replacement audio bed here.
 POOL NAME
+i
 INCLUDED SOURCES
+i
 Local Media Library
 Twitch Archive
 YouTube Playlist
 AUTOMATIC INSERT ASSET
+i
 No automatic insert
 <asset>
 <asset>
 INSERT EVERY N SCHEDULED ITEMS
+i
 REPLACEMENT AUDIO
+i
 Use program audio
 <asset>
 <asset>
 REPLACEMENT AUDIO LEVEL (%)
+i
 Pools currently use persistent round-robin playback across all ready assets from the selected sources.
 Replacement audio plays instead of the programme sound whenever this pool is on air. Assets from Local media library or Direct media URL sources loop most reliably.
 Add pool

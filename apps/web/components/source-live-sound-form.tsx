@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 /**
  * How loud an embedded video source is inside the programme (M57 stage 2, Etappe E).
@@ -74,7 +75,7 @@ export function SourceLiveSoundForm(props: {
         </p>
         <div className="form-grid">
           <label>
-            <span className="label">How loud the embedded source is, relative to the programme</span>
+            <span className="label label-with-info">How loud the embedded source is, relative to the programme<InfoTip text="A gain on the camera's own sound before it is mixed with the programme: 100 passes it through as it arrives, 0 embeds the picture silently, 200 doubles it. Empty follows the server setting; a change takes effect from the next item, not the one playing." /></span>
             <input
               defaultValue={props.initialValue}
               inputMode="numeric"

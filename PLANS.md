@@ -3374,7 +3374,49 @@ screens", every control should carry an (i) with an explanation, and a 2.0 relea
 - Control-density budget excludes `.info-tip-button`; wording baseline masks the clock-dependent
   block coverage minutes that took the 1.5.47 release run down.
 
+### Explanation sweep (2026-09-05, second commit of M59)
+
+Fifteen writer agents, one per label-balanced file group, each required to derive every explanation
+from the code that consumes the value (route, core, worker) and to list what it could not prove.
+Two skeptics per group (code evidence; operator intelligibility) tried to refute each text; a fixer
+applied the corrections. 254 explanations across 38 files; 33 labels left bare with a stated
+reason (section headings with their own paragraph, read-only status rows, a per-card checkbox, a
+`<summary>`); 228 objections raised and applied — among them "Off, the worker never deletes
+anything for space" (false: the switch gates only pressure eviction), "its old media disappear"
+(the sweep deletes database rows only), "the broadcaster account needs no grant" (wrong in a split
+setup). The fix stage itself was spot-checked, not re-verified in full.
+
+The first verification run after the sweep failed every authenticated test at sign-in: `InfoTip`
+rendered a `<button>`, a `<button>` is a labelable element, and most labels here are implicit —
+`<label><span class="label">…</span><input/></label>` — so the label bound the (i) instead of the
+field and "Owner email" became an unnamed textbox. The trigger is now `<span role="button"
+tabIndex={0}>`: focusable and announced as a button, not labelable, clicks stopped before the label.
+The second run then failed on `getByLabel('Password')` resolving to two fields: the hidden tooltip
+element sat inside the "Owner email" label and its text mentioned the password — a label's text is
+everything under it, hidden or not, and Playwright matches labels by text. The explanation is now a
+`data-tip` attribute drawn with CSS `::after` and exposed through `aria-description`; no tooltip
+element exists in the DOM. Both mechanisms were proven in a two-field harness before the fix went in.
+One component change for 254 sites; the four studio tips on headings were never affected.
+
+### Found on the way: settings that nothing reads
+
+The writers had to find the consumer of every value, and for these they found none — the value is
+stored and displayed back, and the picture or the worker never looks at it:
+
+- Scene: `Show clock`, `Show next item`, `Show schedule teaser`, `Show queue preview` only flip
+  `scene.layers[*].enabled`, which the on-air layout does not read (clock and next card are drawn
+  unconditionally; there is no schedule or queue panel). `Alt text`, `Widget mode`, `Scene data`,
+  `Widget label override`, `Frame title`: embed/widget layers are never drawn by the shared renderer
+  and `buildOverlaySceneMetadataWidgetContent` has no caller.
+- Engagement: `Chat mode`, `Style`, `Alert position` are persisted and never read by layout,
+  renderer or worker; alerts are logged, not drawn.
+- Library upload accepts `.mp3/.aac/.flac/.wav` that the worker's library scan does not pick up.
+
+Each of these is either a missing feature wearing a working control's clothes, or a control to
+remove. Both are product decisions; neither belongs in a stability release unresolved.
+
 ### Open
 
-- Explanations on the remaining ~250 raw `<label>` sites across 42 components.
+- Decide, per setting above: wire it or remove it.
 - The pixel gate's tolerance is a deliberate flakiness trade-off; lowering it is an operator decision.
+- Explanation texts run two to three sentences; a tighter house style is a wording pass, not a code change.

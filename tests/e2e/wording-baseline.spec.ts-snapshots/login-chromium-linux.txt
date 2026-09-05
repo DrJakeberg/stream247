@@ -2,7 +2,9 @@ LOCAL BOOTSTRAP
 Owner access
 Use the local owner account for bootstrap, recovery, or emergency access.
 OWNER EMAIL
+i
 PASSWORD
+i
 Sign in
 TWITCH SSO
 Team sign-in

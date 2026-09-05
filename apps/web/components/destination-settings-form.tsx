@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { StreamDestinationRecord } from "@/lib/server/state";
 import { DESTINATION_ROLE_LABELS, describeStreamKey } from "@/lib/destination-wording";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 function isProtectedDestination(destinationId: string): boolean {
   return destinationId === "destination-primary" || destinationId === "destination-backup";
@@ -91,19 +92,19 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
         </p>
       ) : null}
       <label>
-        <span className="label">Name</span>
+        <span className="label label-with-info">Name<InfoTip text="Shown wherever this destination is listed: the dashboard, the output page and the control room. Among destinations tied on priority, the one whose name sorts first is shown as the active destination; leaving the field empty keeps the old name." /></span>
         <input onChange={(event) => setName(event.target.value)} value={name} />
       </label>
       <div className="grid two">
         <label>
-          <span className="label">Provider</span>
+          <span className="label label-with-info">Provider<InfoTip text="Kept as a note of what kind of endpoint this is; it does not change how the channel sends. Twitch and any other RTMP server both receive the same stream at the URL below." /></span>
           <select onChange={(event) => setProvider(event.target.value as typeof provider)} value={provider}>
             <option value="twitch">Twitch</option>
             <option value="custom-rtmp">Custom RTMP</option>
           </select>
         </label>
         <label>
-          <span className="label">Role</span>
+          <span className="label label-with-info">Role<InfoTip text="Every Ready primary goes on air together; backups take over only when no primary is Ready and at least one backup is. When nothing is Ready the enabled primaries, or failing that the backups, are tried anyway; the built-in primary and backup keep their roles." /></span>
           <select
             disabled={protectedDestination}
             onChange={(event) => setRole(event.target.value as typeof role)}
@@ -116,11 +117,11 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
       </div>
       <div className="grid two">
         <label>
-          <span className="label">Priority</span>
+          <span className="label label-with-info">Priority<InfoTip text="Orders destinations of the same role, lowest number first; among the Ready ones the lowest leads the group and is shown as the active destination. Whole numbers from 0 up." /></span>
           <input min={0} onChange={(event) => setPriority(event.target.value)} type="number" value={priority} />
         </label>
         <label>
-          <span className="label">Output profile</span>
+          <span className="label label-with-info">Output profile<InfoTip text="Picture size and frame rate sent to this destination. Use stream profile follows the channel's own output settings; each distinct size and frame rate among the active destinations costs one encode, so destinations that land on the same size share it whether they chose it or inherited it." /></span>
           <select
             onChange={(event) => setOutputProfileId(event.target.value as DestinationOutputProfileId)}
             value={outputProfileId}
@@ -135,12 +136,12 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
       </div>
       <div className="grid two">
         <label>
-          <span className="label">RTMP URL</span>
+          <span className="label label-with-info">RTMP URL<InfoTip text="Address the channel pushes the stream to, with the stream key appended. Without it the destination shows Not set up yet (the built-in primary and backup fall back to the server configuration), and encoder errors that mention this address put this destination on a failure hold." /></span>
           <input onChange={(event) => setRtmpUrl(event.target.value)} placeholder="rtmp://..." value={rtmpUrl} />
         </label>
       </div>
       <label>
-        <span className="label">Managed stream key</span>
+        <span className="label label-with-info">Managed stream key<InfoTip text="Stored encrypted with the destination and used ahead of any key from the server configuration. Leave it blank to keep the current key; a new key makes the destination ready as soon as it is enabled and has an RTMP URL." /></span>
         <input
           autoComplete="new-password"
           onChange={(event) => setStreamKey(event.target.value)}
@@ -150,7 +151,7 @@ export function DestinationSettingsForm({ destination }: { destination: StreamDe
         />
       </label>
       <label>
-        <span className="label">Notes</span>
+        <span className="label label-with-info">Notes<InfoTip text="Shown under this destination in the control room and, while it is live, on the dashboard. The runtime replaces it with its own status line on every sync, so anything you type here lasts only until then." /></span>
         <input onChange={(event) => setNotes(event.target.value)} placeholder="Operator note" value={notes} />
       </label>
       <p className="subtle">

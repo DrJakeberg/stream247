@@ -82,6 +82,8 @@ Required current additions:
 - `Toast`
 - `Textarea`
 - `InfoTip` — the (i) beside a label, panel title or page title that explains what the thing is for; `Input`, `Select`, `Textarea`, `Panel` and `AdminPageHeader` take it as `info`
+  - Its trigger is a `span` with `role="button"` and `tabIndex`, never a `<button>`: a button is a labelable element, and inside an implicit `<label>` it would become the label's control and take the field's name.
+  - The text is a `data-tip` attribute drawn with CSS `::after` and exposed through `aria-description`; it is never an element, because anything inside a `<label>` is part of the label's text and would make label matching ambiguous.
 
 New surfaces should build from those primitives instead of bespoke styled HTML controls.
 

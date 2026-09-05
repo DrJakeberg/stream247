@@ -56,24 +56,37 @@ AS IT GOES ON AIR, AT 1280X720
 <rendered scene>
 Drag a box to move it, drag a handle to resize, arrow keys to nudge by one pixel and shift for eight. Hold Alt to ignore the grid and the guides.
 Enable overlay output
+i
 SCENE
+i
 Main scene
 SCENE NAME
+i
 SCENE VIDEO SOURCE
+i
 Not linked to a source
 Add scene
 Duplicate scene
 Delete scene
 The scene you pick here is the one being edited and the one that goes on air when you publish. A linked video source fills in for any source layer in this scene that names none, so a duplicated scene can be pointed at another camera in one step. If that source is later removed, the scene keeps the name but the layer falls back to the still picture, exactly as an unlinked layer does.
 CHANNEL NAME
+i
 HEADLINE
+i
 INSERT HEADLINE
+i
 STANDBY HEADLINE
+i
 RECONNECT HEADLINE
+i
 REPLAY LABEL
+i
 BRAND BADGE
+i
 ACCENT COLOR
+i
 TICKER TEXT
+i
 Replay Lower Third
 Wide now-playing panel with a compact next item card for a broadcast lower-third feel.
 Split Now / Next
@@ -87,6 +100,7 @@ Bold insert scene for channel IDs, bumpers, and manual inserts between regular p
 Reconnect Board
 Centered reconnect scene for controlled output resets without losing channel branding.
 INSERT SCENE PRESET
+i
 Replay Lower Third
 Split Now / Next
 Standby Board
@@ -95,6 +109,7 @@ Bumper Board
 Reconnect Board
 Used for manual and automatic inserts between regular programming.
 STANDBY SCENE PRESET
+i
 Replay Lower Third
 Split Now / Next
 Standby Board
@@ -103,6 +118,7 @@ Bumper Board
 Reconnect Board
 Used while the stream is on air but waiting for the next playable item.
 RECONNECT SCENE PRESET
+i
 Replay Lower Third
 Split Now / Next
 Standby Board
@@ -111,20 +127,24 @@ Bumper Board
 Reconnect Board
 Used during controlled reconnect windows and output resets.
 SURFACE STYLE
+i
 Glass
 Solid
 Signal
 Soft translucent panels with the most broadcast-style depth.
 PANEL ANCHOR
+i
 Bottom Dock
 Center Stage
 Classic lower-third placement anchored near the bottom edge.
 TITLE SCALE
+i
 Compact
 Balanced
 Cinematic
 Default heading scale for most replay channels.
 TYPOGRAPHY PRESET
+i
 Studio Sans
 Editorial Serif
 Signal Mono
@@ -146,17 +166,23 @@ No positioned layers yet. Add one when you need custom text, logos, stills, or e
 SCENE PRESET LIBRARY
 Save the current draft as a reusable scene preset, then re-apply it later without rebuilding every control by hand.
 PRESET NAME
+i
 DESCRIPTION
+i
 Save draft as preset
 No saved scene presets yet.
 EMERGENCY BANNER
+i
 Show clock
 Show next item
 Show schedule teaser
 Show current category
+i
 Show source label
+i
 Show queue preview
 QUEUE PREVIEW COUNT
+i
 LIVE SCENE
 Replay Lower Third
 Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress

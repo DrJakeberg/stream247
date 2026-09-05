@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 // Folded by default. Whole numbers only — these become process arguments and schedule
 // arithmetic. Bounds mirror the shared core limits the API enforces.
@@ -23,9 +24,12 @@ export function FeedTuningForm(props: {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
-  const field = (name: (typeof BOUNDS)[number][0], label: string, unit: string) => (
+  const field = (name: (typeof BOUNDS)[number][0], label: string, unit: string, info: string) => (
     <label key={name}>
-      <span className="label">{label}</span>
+      <span className="label label-with-info">
+        {label}
+        <InfoTip text={info} />
+      </span>
       <input
         defaultValue={props.initialValues[name]}
         inputMode="numeric"
@@ -78,8 +82,18 @@ export function FeedTuningForm(props: {
           server environment or the built-in defaults.
         </p>
         <div className="form-grid">
-          {field("playoutReconnectHours", "Planned reconnect every (hours)", " h")}
-          {field("playoutReconnectWindowSeconds", "Reconnect pause lasts (seconds)", " s")}
+          {field(
+            "playoutReconnectHours",
+            "Planned reconnect every (hours)",
+            " h",
+            "Every this many hours the channel stops its encoder and starts it fresh, counted from the encoder's last start. What is on air meanwhile is set by the pause below; whole hours from 1 to 720."
+          )}
+          {field(
+            "playoutReconnectWindowSeconds",
+            "Reconnect pause lasts (seconds)",
+            " s",
+            "How long the reconnect lasts. With a separate outgoing encoder nothing reaches your destinations for the whole pause; otherwise a standby slate is on air instead of the programme, so keep it as short as a clean restart needs; 5 to 300 seconds."
+          )}
         </div>
         <p className="subtle">
           The program feed is the hand-off between playback and the outgoing encoder: playback
@@ -88,9 +102,24 @@ export function FeedTuningForm(props: {
           material is buffered on disk. New values take effect from the next playback start.
         </p>
         <div className="form-grid">
-          {field("programFeedTargetSeconds", "Feed segment length (seconds)", " s")}
-          {field("programFeedListSize", "Feed window (segments)", "")}
-          {field("programFeedFailoverSeconds", "Feed counts as stopped this long after its window empties (seconds)", " s")}
+          {field(
+            "programFeedTargetSeconds",
+            "Feed segment length (seconds)",
+            " s",
+            "Length of each piece playback writes for the outgoing encoder to pick up; 1 to 10 seconds. Shorter pieces put changes on air sooner but leave less room for hiccups, longer ones the opposite."
+          )}
+          {field(
+            "programFeedListSize",
+            "Feed window (segments)",
+            "",
+            "How many pieces stay on disk for the outgoing encoder to read from; it does not add delay. Window times segment length is how long the feed may go quiet before the stop allowance below starts counting; 3 to 120."
+          )}
+          {field(
+            "programFeedFailoverSeconds",
+            "Feed counts as stopped this long after its window empties (seconds)",
+            " s",
+            "Extra time allowed after the buffered window has run out before the channel treats the feed as stopped; 1 to 60 seconds. A stopped feed keeps the outgoing encoder waiting rather than starting on stale material, and open feed incidents only close by themselves once the feed is back inside this allowance."
+          )}
         </div>
         {error ? <p className="danger">{error}</p> : null}
         {message ? <p className="subtle">{message}</p> : null}

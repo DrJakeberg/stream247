@@ -874,7 +874,7 @@ export function OverlaySettingsForm(props: {
               onChange={(event) => setDraftField("enabled", event.target.checked)}
               type="checkbox"
             />
-            <label htmlFor="overlay-enabled">Enable overlay output</label>
+            <label htmlFor="overlay-enabled"><span className="label-with-info">Enable overlay output<InfoTip text="Master switch for the scene graphics. On, the playout paints the scene and ticker over the programme picture and the chat game can start; off, nothing is drawn over programme video and the game cannot start, though the standby and reconnect slates still show their plain text lines." /></span></label>
           </div>
 
           {/*
@@ -884,7 +884,7 @@ export function OverlaySettingsForm(props: {
           */}
           <div className="form-grid">
             <label>
-              <span className="label">Scene</span>
+              <span className="label label-with-info">Scene<InfoTip text="The scene you edit here is also the one that goes on air when you publish. Scenes differ only in their positioned layers and linked video source; headlines, presets, colours and panel placement are shared by all of them." /></span>
               <select
                 onChange={(event) => applyScenes(scenes, event.target.value)}
                 value={selectedScene?.id ?? ""}
@@ -897,14 +897,14 @@ export function OverlaySettingsForm(props: {
               </select>
             </label>
             <label>
-              <span className="label">Scene name</span>
+              <span className="label label-with-info">Scene name<InfoTip text="How the scene is listed in the picker above; never shown on air. Up to 60 characters; left empty it is listed as Scene 1, Scene 2 and so on." /></span>
               <input
                 onChange={(event) => updateSelectedScene((scene) => ({ ...scene, name: event.target.value }))}
                 value={selectedScene?.name ?? ""}
               />
             </label>
             <label>
-              <span className="label">Scene video source</span>
+              <span className="label label-with-info">Scene video source<InfoTip text="Fills in for any video source layer in this scene that names no feed of its own, so a duplicated scene can be pointed at another camera in one step. Layers that name their own source keep it." /></span>
               <select
                 onChange={(event) => updateSelectedScene((scene) => ({ ...scene, sourceId: event.target.value }))}
                 value={selectedScene?.sourceId ?? ""}
@@ -949,39 +949,39 @@ export function OverlaySettingsForm(props: {
 
           <div className="form-grid">
             <label>
-              <span className="label">Channel name</span>
+              <span className="label label-with-info">Channel name<InfoTip text="Shown on air in the small top line of the lower third, after the replay label and brand badge. Up to 80 characters; left empty, the channel is called Stream247." /></span>
               <input onChange={(event) => setDraftField("channelName", event.target.value)} required value={draft.channelName} />
             </label>
             <label>
-              <span className="label">Headline</span>
+              <span className="label label-with-info">Headline<InfoTip text="The line under the programme title in the lower third while a regular asset or the live bridge is on air. Up to 120 characters; cleared, it goes back to Always on air." /></span>
               <input onChange={(event) => setDraftField("headline", event.target.value)} required value={draft.headline} />
             </label>
             <label>
-              <span className="label">Insert headline</span>
+              <span className="label label-with-info">Insert headline<InfoTip text="Replaces the headline in the lower third while an insert or bumper is on air, whether an operator started it or the schedule did. Up to 120 characters; cleared, it goes back to Insert on air." /></span>
               <input onChange={(event) => setDraftField("insertHeadline", event.target.value)} required value={draft.insertHeadline} />
             </label>
             <label>
-              <span className="label">Standby headline</span>
+              <span className="label label-with-info">Standby headline<InfoTip text="Replaces the headline while the channel is on air with nothing playable and is waiting for the next item. Up to 120 characters; cleared, it goes back to Please wait, restream is starting." /></span>
               <input onChange={(event) => setDraftField("standbyHeadline", event.target.value)} required value={draft.standbyHeadline} />
             </label>
             <label>
-              <span className="label">Reconnect headline</span>
+              <span className="label label-with-info">Reconnect headline<InfoTip text="Replaces the headline during a scheduled reconnect or an output reset, while the reconnect scene is on the picture. Up to 120 characters; cleared, it goes back to Scheduled reconnect in progress." /></span>
               <input onChange={(event) => setDraftField("reconnectHeadline", event.target.value)} required value={draft.reconnectHeadline} />
             </label>
             <label>
-              <span className="label">Replay label</span>
+              <span className="label label-with-info">Replay label<InfoTip text="Starts the small grey text in the lower third's top row, right after the coloured mode chip and before the brand badge and channel name; it is also the first line of the plain-text fallback. Up to 80 characters; cleared, it reads Replay stream." /></span>
               <input onChange={(event) => setDraftField("replayLabel", event.target.value)} required value={draft.replayLabel} />
             </label>
             <label>
-              <span className="label">Brand badge</span>
+              <span className="label label-with-info">Brand badge<InfoTip text="Optional text in the lower third's small top row, between the replay label and the channel name; leave it empty to show none. Up to 48 characters." /></span>
               <input onChange={(event) => setDraftField("brandBadge", event.target.value)} placeholder="e.g. Archive Channel" value={draft.brandBadge} />
             </label>
             <label>
-              <span className="label">Accent color</span>
+              <span className="label label-with-info">Accent color<InfoTip text="Colours the accent parts of every panel: the mode chip, vote pill and bars, game marks, the ticker's left bar, Solid borders and Signal side bars, and the next-card heading or any text layer set to use it (those two stay white when the colour is too dark to read on the panel). A hex value such as #0e6d5a; an empty field goes back to that default and an invalid value is drawn as cyan." /></span>
               <input onChange={(event) => setDraftField("accentColor", event.target.value)} required value={draft.accentColor} />
             </label>
             <label>
-              <span className="label">Ticker text</span>
+              <span className="label label-with-info">Ticker text<InfoTip text="A running line in a band under the top bar, drawn only while there is text; separate several messages with a middot (·) and they are joined into one line. Up to 180 characters, and an edit reaches the screen with the next programme, not at once." /></span>
               <input
                 onChange={(event) => setDraftField("tickerText", event.target.value)}
                 placeholder="Optional notice. Separate several with ·"
@@ -997,7 +997,7 @@ export function OverlaySettingsForm(props: {
             */}
             {draft.tickerText.trim() ? (
               <label>
-                <span className="label">Ticker seconds per crossing</span>
+                <span className="label label-with-info">Ticker seconds per crossing<InfoTip text="How long the line takes to cross its band, in seconds, from 4 to 60; lower is faster. The speed is also held between 40 and 240 pixels per second on a 1080p picture, so on the default full-width band settings below about 7 or above about 44 seconds are not honoured." /></span>
                 <input
                   max={OVERLAY_TICKER_MAX_SECONDS}
                   min={OVERLAY_TICKER_MIN_SECONDS}
@@ -1044,7 +1044,7 @@ export function OverlaySettingsForm(props: {
 
           <div className="form-grid">
             <label>
-              <span className="label">Insert scene preset</span>
+              <span className="label label-with-info">Insert scene preset<InfoTip text="Does not change the drawn overlay. It only picks the wording of the plain text lines the encoder falls back to when no scene picture is available while an insert or bumper is on air, and the scene name the control room shows." /></span>
               <select
                 onChange={(event) => setDraftField("insertScenePreset", event.target.value as OverlaySettingsRecord["insertScenePreset"])}
                 value={draft.insertScenePreset}
@@ -1058,7 +1058,7 @@ export function OverlaySettingsForm(props: {
               <span className="subtle">Used for manual and automatic inserts between regular programming.</span>
             </label>
             <label>
-              <span className="label">Standby scene preset</span>
+              <span className="label label-with-info">Standby scene preset<InfoTip text="Does not change the drawn overlay. It only picks the wording of the plain text lines the encoder falls back to when no scene picture is available while the channel waits with nothing playable, and the scene name the control room shows." /></span>
               <select
                 onChange={(event) => setDraftField("standbyScenePreset", event.target.value as OverlaySettingsRecord["standbyScenePreset"])}
                 value={draft.standbyScenePreset}
@@ -1072,7 +1072,7 @@ export function OverlaySettingsForm(props: {
               <span className="subtle">Used while the stream is on air but waiting for the next playable item.</span>
             </label>
             <label>
-              <span className="label">Reconnect scene preset</span>
+              <span className="label label-with-info">Reconnect scene preset<InfoTip text="Does not change the drawn overlay. It only picks the wording of the plain text lines the encoder falls back to when no scene picture is available during a reconnect or output reset, and the scene name the control room shows." /></span>
               <select
                 onChange={(event) => setDraftField("reconnectScenePreset", event.target.value as OverlaySettingsRecord["reconnectScenePreset"])}
                 value={draft.reconnectScenePreset}
@@ -1089,7 +1089,7 @@ export function OverlaySettingsForm(props: {
 
           <div className="form-grid">
             <label>
-              <span className="label">Surface style</span>
+              <span className="label label-with-info">Surface style<InfoTip text="The look of every panel the scene draws: lower third, next card, clock, chat, vote, game, text and source layers (the red banner and the ticker keep their own look). Glass is a soft translucent wash, Solid is near-opaque with an accent border, Signal adds a thick accent bar on the left." /></span>
               <select onChange={(event) => setDraftField("surfaceStyle", event.target.value as OverlaySettingsRecord["surfaceStyle"])} value={draft.surfaceStyle}>
                 {OVERLAY_SURFACE_STYLES.map((style) => (
                   <option key={style.id} value={style.id}>
@@ -1100,7 +1100,7 @@ export function OverlaySettingsForm(props: {
               <span className="subtle">{OVERLAY_SURFACE_STYLES.find((style) => style.id === draft.surfaceStyle)?.description}</span>
             </label>
             <label>
-              <span className="label">Panel anchor</span>
+              <span className="label label-with-info">Panel anchor<InfoTip text="Where the built-in panels sit when you have not placed them yourself: Bottom Dock spreads them to the edges (clock at the top, lower third at the bottom), Center Stage stacks them in the middle of the frame. A panel you have placed keeps its box either way." /></span>
               <select onChange={(event) => setDraftField("panelAnchor", event.target.value as OverlaySettingsRecord["panelAnchor"])} value={draft.panelAnchor}>
                 {OVERLAY_PANEL_ANCHORS.map((anchor) => (
                   <option key={anchor.id} value={anchor.id}>
@@ -1111,7 +1111,7 @@ export function OverlaySettingsForm(props: {
               <span className="subtle">{OVERLAY_PANEL_ANCHORS.find((anchor) => anchor.id === draft.panelAnchor)?.description}</span>
             </label>
             <label>
-              <span className="label">Title scale</span>
+              <span className="label label-with-info">Title scale<InfoTip text="Size of the programme title in the lower third: Compact, Balanced or Cinematic, growing from 40 to 52 to 66 pixels on a 1920×1080 picture and scaled with the output size. No other text changes size." /></span>
               <select onChange={(event) => setDraftField("titleScale", event.target.value as OverlaySettingsRecord["titleScale"])} value={draft.titleScale}>
                 {OVERLAY_TITLE_SCALES.map((scale) => (
                   <option key={scale.id} value={scale.id}>
@@ -1122,7 +1122,7 @@ export function OverlaySettingsForm(props: {
               <span className="subtle">{OVERLAY_TITLE_SCALES.find((scale) => scale.id === draft.titleScale)?.description}</span>
             </label>
             <label>
-              <span className="label">Typography preset</span>
+              <span className="label label-with-info">Typography preset<InfoTip text="The typeface for all overlay text: Studio Sans, Editorial Serif or Signal Mono, three families bundled with the renderer so nothing is fetched from the internet. Text layers follow it unless given a font of their own." /></span>
               <select
                 onChange={(event) => setDraftField("typographyPreset", event.target.value as OverlaySettingsRecord["typographyPreset"])}
                 value={draft.typographyPreset}
@@ -1220,7 +1220,7 @@ export function OverlaySettingsForm(props: {
                         {placement ? (
                           <div className="form-grid" style={{ marginTop: 12 }}>
                             <label>
-                              <span className="label">X position (%)</span>
+                              <span className="label label-with-info">X position (%)<InfoTip text="Left edge of the box as a share of the safe area's width: 0 is the safe area's left edge, 100 its right. A box that would run past the right edge is narrowed to fit." /></span>
                               <input
                                 max={100}
                                 min={0}
@@ -1230,7 +1230,7 @@ export function OverlaySettingsForm(props: {
                               />
                             </label>
                             <label>
-                              <span className="label">Y position (%)</span>
+                              <span className="label label-with-info">Y position (%)<InfoTip text="Top edge of the box as a share of the safe area's height: 0 is the top of the safe area, 100 its bottom. A box that would run past the bottom is shortened to fit." /></span>
                               <input
                                 max={100}
                                 min={0}
@@ -1240,7 +1240,7 @@ export function OverlaySettingsForm(props: {
                               />
                             </label>
                             <label>
-                              <span className="label">Width (%)</span>
+                              <span className="label label-with-info">Width (%)<InfoTip text="Width of the box as a share of the safe area's width, at least 10. The vote, chat and banner panels take this width; the lower third and next card shrink to it when they are wider, and no panel grows past its own size." /></span>
                               <input
                                 max={100}
                                 min={10}
@@ -1252,7 +1252,7 @@ export function OverlaySettingsForm(props: {
                               />
                             </label>
                             <label>
-                              <span className="label">Height (%)</span>
+                              <span className="label label-with-info">Height (%)<InfoTip text="Height of the box as a share of the safe area's height, at least 8. The chat and vote panels show as many rows as fit; other panels keep their own height and are cut off at the box where they do not fit." /></span>
                               <input
                                 max={100}
                                 min={8}
@@ -1264,7 +1264,7 @@ export function OverlaySettingsForm(props: {
                               />
                             </label>
                             <label>
-                              <span className="label">Opacity (%)</span>
+                              <span className="label label-with-info">Opacity (%)<InfoTip text="How solid the whole panel is drawn, text included: 100 is fully opaque, 5 is the faintest allowed." /></span>
                               <input
                                 max={100}
                                 min={5}
@@ -1281,7 +1281,7 @@ export function OverlaySettingsForm(props: {
                                 onChange={(event) => updatePanelPlacement(panel.id, { allowOutsideSafeArea: event.target.checked })}
                                 type="checkbox"
                               />
-                              <span>Allow outside safe area</span>
+                              <span className="label-with-info">Allow outside safe area<InfoTip text="Measures the box against the full frame instead of the safe area, so it can sit right at the picture's edge where the margins normally keep panels away." /></span>
                             </label>
                           </div>
                         ) : null}
@@ -1342,7 +1342,7 @@ export function OverlaySettingsForm(props: {
 
                       <div className="form-grid" style={{ marginTop: 12 }}>
                         <label>
-                          <span className="label">Layer name</span>
+                          <span className="label label-with-info">Layer name<InfoTip text="How the layer is listed here and in the publish review, and for logo, image and text layers also on its drag handle in the preview; never shown on air. Up to 80 characters; left empty it is named after its kind, such as Text Layer." /></span>
                           <input onChange={(event) => updateCustomLayer(layer.id, (current) => ({ ...current, name: event.target.value }))} value={layer.name} />
                         </label>
                         <label className="toggle-row">
@@ -1351,10 +1351,10 @@ export function OverlaySettingsForm(props: {
                             onChange={(event) => updateCustomLayer(layer.id, (current) => ({ ...current, enabled: event.target.checked }))}
                             type="checkbox"
                           />
-                          <span>Layer enabled</span>
+                          <span className="label-with-info">Layer enabled<InfoTip text="Draws the layer on air and in the preview. Off, the layer keeps its settings but is skipped entirely; for a chat game layer, off also means no game can start." /></span>
                         </label>
                         <label>
-                          <span className="label">Opacity (%)</span>
+                          <span className="label label-with-info">Opacity (%)<InfoTip text="How solid the whole layer is drawn, backdrop and content alike: 100 is fully opaque, 5 is the faintest allowed." /></span>
                           <input
                             max={100}
                             min={5}
@@ -1379,10 +1379,10 @@ export function OverlaySettingsForm(props: {
                             }
                             type="checkbox"
                           />
-                          <span>Allow outside safe area</span>
+                          <span className="label-with-info">Allow outside safe area<InfoTip text="Measures the box against the full frame instead of the safe area, so it can sit right at the picture's edge where the margins normally keep layers away." /></span>
                         </label>
                         <label>
-                          <span className="label">X position (%)</span>
+                          <span className="label label-with-info">X position (%)<InfoTip text="Left edge of the box as a share of the safe area's width: 0 is the safe area's left edge, 100 its right. A box that would run past the right edge is narrowed to fit." /></span>
                           <input
                             max={100}
                             min={0}
@@ -1397,7 +1397,7 @@ export function OverlaySettingsForm(props: {
                           />
                         </label>
                         <label>
-                          <span className="label">Y position (%)</span>
+                          <span className="label label-with-info">Y position (%)<InfoTip text="Top edge of the box as a share of the safe area's height: 0 is the top of the safe area, 100 its bottom. A box that would run past the bottom is shortened to fit." /></span>
                           <input
                             max={100}
                             min={0}
@@ -1412,7 +1412,7 @@ export function OverlaySettingsForm(props: {
                           />
                         </label>
                         <label>
-                          <span className="label">Width (%)</span>
+                          <span className="label label-with-info">Width (%)<InfoTip text="Width of the box as a share of the safe area's width, at least 10. The layer is drawn to fill it." /></span>
                           <input
                             max={100}
                             min={10}
@@ -1427,7 +1427,7 @@ export function OverlaySettingsForm(props: {
                           />
                         </label>
                         <label>
-                          <span className="label">Height (%)</span>
+                          <span className="label label-with-info">Height (%)<InfoTip text="Height of the box as a share of the safe area's height, at least 8. The layer is drawn to fill it." /></span>
                           <input
                             max={100}
                             min={8}
@@ -1447,7 +1447,7 @@ export function OverlaySettingsForm(props: {
                       {layer.kind === "text" ? (
                         <div className="form-grid" style={{ marginTop: 12 }}>
                           <label>
-                            <span className="label">Text content</span>
+                            <span className="label label-with-info">Text content<InfoTip text="The main line of the layer, drawn in the tone and alignment chosen below. Up to 180 characters; a layer with neither this nor a secondary text is not drawn." /></span>
                             <input
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -1458,7 +1458,7 @@ export function OverlaySettingsForm(props: {
                             />
                           </label>
                           <label>
-                            <span className="label">Secondary text</span>
+                            <span className="label label-with-info">Secondary text<InfoTip text="A smaller second line under the main text, in muted ink. Up to 220 characters." /></span>
                             <input
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -1469,7 +1469,7 @@ export function OverlaySettingsForm(props: {
                             />
                           </label>
                           <label>
-                            <span className="label">Text tone</span>
+                            <span className="label label-with-info">Text tone<InfoTip text="Size and weight of the main line: Headline is large and bold, Body is regular reading size, Caption is small capitals with spaced letters." /></span>
                             <select
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -1486,7 +1486,7 @@ export function OverlaySettingsForm(props: {
                             </select>
                           </label>
                           <label>
-                            <span className="label">Text align</span>
+                            <span className="label label-with-info">Text align<InfoTip text="Lines the text up at the left, the centre or the right of its box." /></span>
                             <select
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -1512,10 +1512,10 @@ export function OverlaySettingsForm(props: {
                               }
                               type="checkbox"
                             />
-                            <span>Use accent color</span>
+                            <span className="label-with-info">Use accent color<InfoTip text="Paints the main line in the scene's accent colour instead of white, but only when that colour is readable on the panel (4.5:1 contrast or better); a dark accent such as the default #0e6d5a leaves it white. The secondary line stays muted either way." /></span>
                           </label>
                           <label>
-                            <span className="label">Text font</span>
+                            <span className="label label-with-info">Text font<InfoTip text="Which typeface this layer uses: follow the scene's typography preset, or one of the three bundled broadcast faces. A custom local stack cannot reach the on-air renderer and falls back to the scene's preset there." /></span>
                             <select
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -1538,7 +1538,7 @@ export function OverlaySettingsForm(props: {
                           </label>
                           {layer.fontMode === "custom-local" ? (
                             <label>
-                              <span className="label">Custom local font stack</span>
+                              <span className="label label-with-info">Custom local font stack<InfoTip text="Font family names separated by commas, tried in order, up to six. Only names already installed where the overlay is drawn can work, and the on-air renderer ignores this and uses the scene's preset face." /></span>
                               <input
                                 onChange={(event) =>
                                   updateCustomLayer(layer.id, (current) =>
@@ -1560,7 +1560,7 @@ export function OverlaySettingsForm(props: {
                       {layer.kind === "logo" || layer.kind === "image" ? (
                         <div className="form-grid" style={{ marginTop: 12 }}>
                           <label>
-                            <span className="label">Asset URL</span>
+                            <span className="label label-with-info">Asset URL<InfoTip text="Where the picture comes from: an http(s) address, or a path starting with / for a file served by this workspace. On air only http(s) pictures are drawn and a / path is skipped, so use a full address for anything that must reach the channel." /></span>
                             <input
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -1583,7 +1583,7 @@ export function OverlaySettingsForm(props: {
                             />
                           </label>
                           <label>
-                            <span className="label">Fit</span>
+                            <span className="label label-with-info">Fit<InfoTip text="How the picture fills its box: Contain shows the whole picture with empty margins where the shapes differ, Cover fills the box and crops what does not fit. A Contain logo keeps its shape when you resize it on the preview." /></span>
                             <select
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -1670,7 +1670,7 @@ export function OverlaySettingsForm(props: {
                           {layer.kind === "embed" || (layer.kind === "widget" && layer.widgetMode === "embed") ? (
                             <>
                           <label>
-                            <span className="label">Embed URL</span>
+                            <span className="label label-with-info">Embed URL<InfoTip text="Address of the page to frame in the browser overlay; the badge below is a guess from the address alone (a short list of known providers), not a check of the site. The on-air picture cannot draw a website, so nothing from this address reaches the channel." /></span>
                             <input
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -1708,7 +1708,7 @@ export function OverlaySettingsForm(props: {
                         <>
                           <div className="form-grid" style={{ marginTop: 12 }}>
                             <label>
-                              <span className="label">Board backdrop (%)</span>
+                              <span className="label label-with-info">Board backdrop (%)<InfoTip text="How solid the fill behind the game board is, separate from the layer's opacity: 100 is a full panel, 0 leaves only the outlined cells over the programme picture." /></span>
                               <input
                                 max={100}
                                 min={0}
@@ -1736,7 +1736,7 @@ export function OverlaySettingsForm(props: {
                       {layer.kind === "source" ? (
                         <div className="form-grid" style={{ marginTop: 12 }}>
                           <label>
-                            <span className="label">Stored video source</span>
+                            <span className="label label-with-info">Stored video source<InfoTip text="Which stored feed this layer shows: a still refreshed every few seconds, or, while an asset plays and the source is pushing live with live attach enabled, live video in this box whose audio can be mixed in at the source's gain. A feed that cannot be reached hides the layer rather than freezing it, and only the first enabled source layer in a scene is drawn." /></span>
                             <select
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -1776,11 +1776,11 @@ export function OverlaySettingsForm(props: {
               <div className="subtle">Save the current draft as a reusable scene preset, then re-apply it later without rebuilding every control by hand.</div>
               <div className="form-grid" style={{ marginTop: 12 }}>
                 <label>
-                  <span className="label">Preset name</span>
+                  <span className="label label-with-info">Preset name<InfoTip text="What the saved preset is listed under in the library below. Required; up to 80 characters." /></span>
                   <input onChange={(event) => setPresetName(event.target.value)} placeholder="e.g. Prime Time Replay" value={presetName} />
                 </label>
                 <label>
-                  <span className="label">Description</span>
+                  <span className="label label-with-info">Description<InfoTip text="A note for whoever browses the library, shown under the preset's name. Optional; up to 220 characters." /></span>
                   <input
                     onChange={(event) => setPresetDescription(event.target.value)}
                     placeholder="Optional note for operators"
@@ -1826,7 +1826,7 @@ export function OverlaySettingsForm(props: {
           </div>
 
           <label>
-            <span className="label">Emergency banner</span>
+            <span className="label label-with-info">Emergency banner<InfoTip text="An urgent message in a red band at the top of the picture, drawn only while this has text; clear it to take it down. Up to 180 characters, and like everything here it reaches viewers when you publish." /></span>
             <input
               onChange={(event) => setDraftField("emergencyBanner", event.target.value)}
               placeholder="Optional urgent message"
@@ -1857,18 +1857,18 @@ export function OverlaySettingsForm(props: {
                 onChange={(event) => setDraftField("showCurrentCategory", event.target.checked)}
                 type="checkbox"
               />
-              <span>Show current category</span>
+              <span className="label-with-info">Show current category<InfoTip text="Adds the current programme's category to the small line under the headline in the lower third, while a regular asset or the live bridge is on air." /></span>
             </label>
             <label className="toggle-row">
               <input checked={draft.showSourceLabel} onChange={(event) => setDraftField("showSourceLabel", event.target.checked)} type="checkbox" />
-              <span>Show source label</span>
+              <span className="label-with-info">Show source label<InfoTip text="Adds the name of the source the current programme came from to the small line under the headline in the lower third, while a regular asset or the live bridge is on air." /></span>
             </label>
             <label className="toggle-row">
               <input checked={draft.showQueuePreview} onChange={(event) => setDraftField("showQueuePreview", event.target.checked)} type="checkbox" />
               <span>Show queue preview</span>
             </label>
             <label>
-              <span className="label">Queue preview count</span>
+              <span className="label label-with-info">Queue preview count<InfoTip text="How many upcoming titles, from 1 to 5, are listed in the queue line of the text-only fallback (the plain lines the encoder draws when no scene picture is available) and on the standby slate." /></span>
               <input
                 max={5}
                 min={1}

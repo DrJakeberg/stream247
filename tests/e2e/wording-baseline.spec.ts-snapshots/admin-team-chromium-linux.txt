@@ -34,7 +34,9 @@ IDENTITY
 Twitch team access
 Grant access by Twitch login. Team members authenticate with Twitch SSO and inherit the configured tool role.
 TWITCH LOGIN
+i
 ROLE
+i
 Admin
 Operator
 Moderator

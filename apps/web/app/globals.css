@@ -698,21 +698,25 @@ textarea {
 .info-tip-button {
   display: inline-grid;
   place-items: center;
-  width: 16px;
-  height: 16px;
+  /* 14px, not 16: a .label row is 14px tall at its 12px font, and a taller icon grew every explained
+     label by 2px — measured 14 -> 16 — which added up to a page-wide downward shift on 22 surfaces.
+     At 14px the row keeps its height and the sweep changes nothing but the icon's own pixels. */
+  width: 14px;
+  height: 14px;
   padding: 0;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   background: var(--surface-card);
   color: var(--muted);
   font: inherit;
-  font-size: 0.65rem;
+  font-size: 0.6rem;
   font-weight: 700;
   font-style: italic;
   line-height: 1;
   text-transform: none;
   letter-spacing: 0;
   cursor: help;
+  user-select: none;
 }
 
 .info-tip-button:hover,
@@ -727,7 +731,11 @@ textarea {
   box-shadow: var(--focus-ring);
 }
 
-.info-tip-bubble {
+/* The bubble is generated content from data-tip, not an element: anything inside a <label> is part
+   of its text, and Playwright's getByLabel matched a neighbouring field whose explanation happened
+   to contain its label word. Assistive technology reads the same text from aria-description. */
+.info-tip-button::after {
+  content: attr(data-tip);
   position: absolute;
   left: 0;
   bottom: calc(100% + 8px);
@@ -746,6 +754,7 @@ textarea {
   line-height: 1.45;
   letter-spacing: 0;
   text-transform: none;
+  text-align: left;
   white-space: normal;
   overflow-wrap: anywhere;
   opacity: 0;
@@ -754,8 +763,8 @@ textarea {
   transition: opacity 120ms ease;
 }
 
-.info-tip:hover .info-tip-bubble,
-.info-tip:focus-within .info-tip-bubble {
+.info-tip-button:hover::after,
+.info-tip-button:focus-visible::after {
   opacity: 1;
   visibility: visible;
 }

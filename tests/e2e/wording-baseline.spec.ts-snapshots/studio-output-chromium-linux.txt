@@ -37,14 +37,18 @@ Control the stream output profile, per-destination overrides, and the destinatio
 STREAM SETTINGS
 Output profile
 OUTPUT PROFILE
+i
 720p30
 1080p30
 480p30
 360p30
 Custom
 WIDTH
+i
 HEIGHT
+i
 FPS
+i
 A saved profile takes effect the next time playout restarts its encoder, not on the current item. If STREAM_OUTPUT_WIDTH, STREAM_OUTPUT_HEIGHT or STREAM_OUTPUT_FPS are set on the server, those win over what is chosen here.
 Save output settings
 Encoder quality
@@ -67,6 +71,7 @@ primary
 enabled
 Missing config
 DESTINATION PROFILE
+i
 Use stream profile
 720p30
 1080p30
@@ -81,6 +86,7 @@ primary
 enabled
 Ready
 DESTINATION PROFILE
+i
 Use stream profile
 720p30
 1080p30
@@ -95,6 +101,7 @@ backup
 disabled
 Disabled
 DESTINATION PROFILE
+i
 Use stream profile
 720p30
 1080p30

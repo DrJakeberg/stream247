@@ -4,6 +4,7 @@ import type { UserRole } from "@/lib/server/state";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { humanizeOptionValue } from "@/lib/option-labels";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 const roles: UserRole[] = ["admin", "operator", "moderator", "viewer"];
 
@@ -44,11 +45,11 @@ export function TeamAccessForm() {
       }}
     >
       <label>
-        <span className="label">Twitch login</span>
+        <span className="label label-with-info">Twitch login<InfoTip text="Lets this Twitch account sign in to the workspace; without a grant, sign-in is refused. Capitalisation does not matter, an existing grant is updated rather than duplicated, and only the account connected under the Twitch integration signs in as owner without one (a separately configured broadcast channel's own account still needs a grant)." /></span>
         <input name="twitchLogin" required placeholder="moderator_name" />
       </label>
       <label>
-        <span className="label">Role</span>
+        <span className="label label-with-info">Role<InfoTip text="Decides what this person may change once signed in: viewers only look, moderators can also check in for chat coverage, operators run the playout, schedule, library, sources, shows and overlay (including the moderation and chat-game settings), and admins additionally manage destinations, the Twitch connection, the Settings pages and team access. A changed role applies at that person's next Twitch sign-in." /></span>
         <select className="select" defaultValue="moderator" name="role">
           {roles.map((role) => (
             <option key={role} value={role}>

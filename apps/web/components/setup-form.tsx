@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 export function SetupForm() {
   const [error, setError] = useState("");
@@ -40,11 +41,11 @@ export function SetupForm() {
       }}
     >
       <label>
-        <span className="label">Owner email</span>
+        <span className="label label-with-info">Owner email<InfoTip text="Becomes the permanent sign-in address of the workspace owner; the app has no way to change it afterwards, so pick an address you will keep. You are signed in with it the moment the account is created." /></span>
         <input name="email" type="email" required placeholder="owner@example.com" />
       </label>
       <label>
-        <span className="label">Password</span>
+        <span className="label label-with-info">Password<InfoTip text="At least 10 characters, and there is no place in the app to change it afterwards, so store it somewhere safe. A one-time code from an authenticator app can be added later under Settings." /></span>
         <input name="password" type="password" minLength={10} required placeholder="At least 10 characters" />
       </label>
       <p className="subtle">

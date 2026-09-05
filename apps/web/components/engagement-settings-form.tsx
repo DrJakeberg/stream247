@@ -3,6 +3,7 @@
 import type { EngagementChatDisplayMode, EngagementOverlayPosition, EngagementOverlayStyle } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { useToast } from "@/components/ui/Toast";
 import type { EngagementSettingsRecord } from "@/lib/server/state";
 import { humanizeOptionValue } from "@/lib/option-labels";
@@ -90,7 +91,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
           <div className="form-grid" style={{ marginTop: 12 }}>
             <label className="toggle-row">
               <input checked={chatEnabled} onChange={(event) => setChatEnabled(event.target.checked)} type="checkbox" />
-              <span>Enable chat overlay</span>
+              <span className="label-with-info">Enable chat overlay<InfoTip text="Draws the live Twitch chat rail on the on-air picture. Off, the rail leaves the air; the Twitch chat connection itself is kept only while something else still needs it — moderation, chat interaction (votes, skips, requests) or a chat-game scene layer (snake, minesweeper). Also needs the “Chat on the stream” switch in admin settings, and the chatter-participation game below cannot run without it." /></span>
             </label>
             <label>
               <span className="label">Chat mode</span>
@@ -103,7 +104,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
               </select>
             </label>
             <label>
-              <span className="label">Chat position</span>
+              <span className="label label-with-info">Chat position<InfoTip text="Corner of the picture the chat rail sits in and grows from: top corners grow downward, bottom corners upward. Until you place the chat panel yourself, its default box follows this corner too." /></span>
               <select onChange={(event) => setChatPosition(event.target.value as EngagementOverlayPosition)} value={chatPosition}>
                 {positions.map((position) => (
                   <option key={position} value={position}>
@@ -123,11 +124,11 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
               </select>
             </label>
             <label>
-              <span className="label">Max chat messages</span>
+              <span className="label label-with-info">Max chat messages<InfoTip text="How many of the newest chat lines the rail shows at once, from 1 to 12. The panel itself never draws more than eight or more than fit its box, and a line ages off air five minutes after it was sent." /></span>
               <input max={12} min={1} onChange={(event) => setMaxMessages(event.target.value)} type="number" value={maxMessages} />
             </label>
             <label>
-              <span className="label">Rate limit per minute</span>
+              <span className="label label-with-info">Rate limit per minute<InfoTip text="Caps how many chat lines reach the on-air rail and the event log in any sixty-second window; lines over the cap are dropped from both, but commands and votes are handled before the cap, so it never costs anyone a ballot. A saved change applies at the next chat reconnect (dropped connection or worker restart), not immediately." /></span>
               <input
                 max={120}
                 min={1}
@@ -145,11 +146,11 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
           <div className="form-grid" style={{ marginTop: 12 }}>
             <label className="toggle-row">
               <input checked={alertsEnabled} onChange={(event) => setAlertsEnabled(event.target.checked)} type="checkbox" />
-              <span>Enable follow and subscription alerts</span>
+              <span className="label-with-info">Enable follow and subscription alerts<InfoTip text="Subscribes the channel to Twitch follow and subscription notifications; each one is listed under Recent engagement events on the Overlays page, and nothing is drawn on the picture. Off, no alert subscriptions are kept at all, which also silences bits and channel-point alerts; the “Viewer alerts on the stream” switch in admin settings must be on too." /></span>
             </label>
             <label className="toggle-row">
               <input checked={donationsEnabled} onChange={(event) => setDonationsEnabled(event.target.checked)} type="checkbox" />
-              <span>Enable bits / cheer alerts</span>
+              <span className="label-with-info">Enable bits / cheer alerts<InfoTip text="Adds Twitch cheer notifications to the alert subscriptions and to the event log. Only takes effect while follow and subscription alerts are on." /></span>
             </label>
             <label className="toggle-row">
               <input
@@ -157,7 +158,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
                 onChange={(event) => setChannelPointsEnabled(event.target.checked)}
                 type="checkbox"
               />
-              <span>Enable channel point redemption alerts</span>
+              <span className="label-with-info">Enable channel point redemption alerts<InfoTip text="Adds custom-reward redemption notifications to the alert subscriptions and to the event log. Only takes effect while follow and subscription alerts are on." /></span>
             </label>
             <label>
               <span className="label">Alert position</span>
@@ -187,10 +188,10 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
           <div className="form-grid" style={{ marginTop: 12 }}>
             <label className="toggle-row">
               <input checked={gameEnabled} onChange={(event) => setGameEnabled(event.target.checked)} type="checkbox" />
-              <span>Enable chatter-participation game</span>
+              <span className="label-with-info">Enable chatter-participation game<InfoTip text="Picks a game mode (Solo, Small-group or Crowd) from how many people are chatting and records it; the current mode and active-chatter count appear under Game mode on the Overlays page, and nothing is drawn on air for it. Also needs the chat overlay on (including its “Chat on the stream” admin switch) and at least one mode enabled below; otherwise the Overlays page reports it disabled." /></span>
             </label>
             <label>
-              <span className="label">Active chatter window (minutes)</span>
+              <span className="label label-with-info">Active chatter window (minutes)<InfoTip text="How long after their last message a viewer still counts as an active chatter, from 1 to 30 minutes. That count picks the game mode and is also the room size a skip vote is measured against." /></span>
               <input
                 max={30}
                 min={1}
@@ -201,7 +202,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
             </label>
             <label className="toggle-row">
               <input checked={soloModeEnabled} onChange={(event) => setSoloModeEnabled(event.target.checked)} type="checkbox" />
-              <span>Solo mode</span>
+              <span className="label-with-info">Solo mode<InfoTip text="Allows Solo mode to be selected when only one chatter is active. Off, one chatter alone falls through to Small-group, then Crowd; with all three off no mode is selected. The mode is a status on the Overlays page, not a prompt shown to the chatter." /></span>
             </label>
             <label className="toggle-row">
               <input
@@ -209,14 +210,14 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
                 onChange={(event) => setSmallGroupModeEnabled(event.target.checked)}
                 type="checkbox"
               />
-              <span>Small-group mode</span>
+              <span className="label-with-info">Small-group mode<InfoTip text="Allows Small-group mode when two to nine chatters are active, or more when Crowd is off. Off, that range falls through to Solo, or to Crowd if Solo is off as well. The mode is a status on the Overlays page; no vote is put on air." /></span>
             </label>
             <label className="toggle-row">
               <input checked={crowdModeEnabled} onChange={(event) => setCrowdModeEnabled(event.target.checked)} type="checkbox" />
-              <span>Crowd mode</span>
+              <span className="label-with-info">Crowd mode<InfoTip text="Allows Crowd mode once ten or more chatters are active. Off, a room that size falls through to Small-group, or to Solo if that is off as well. The mode is a status on the Overlays page; no prediction board is put on air." /></span>
             </label>
             <label>
-              <span className="label">Mode automation</span>
+              <span className="label label-with-info">Mode automation<InfoTip text="Chooses the mode from the active chatter count on its own, re-checked every thirty seconds with the worker cycle. A switch waits until the count has kept pointing at the new mode for about thirty seconds (the count itself may keep moving), so it lands half a minute to a minute after the room changes; a mode coming on from none takes effect at the next check. The chosen mode is recorded and shown under Game mode on the Overlays page." /></span>
               <div className="subtle">Solo handles one chatter, Small-group handles 2-9, Crowd takes over at 10+. Switching lags slightly behind the numbers on purpose, so a mode does not flicker while people join and leave.</div>
             </label>
           </div>

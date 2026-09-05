@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 // Folded by default, like every group that is configured once and then left alone. The bounds
 // here mirror the shared core limits the API enforces, so an operator hears about a bad value
@@ -123,7 +124,10 @@ export function ReplayCacheForm(props: {
         </p>
         <div className="form-grid">
           <label>
-            <span className="label">Cache replays on this machine</span>
+            <span className="label label-with-info">
+              Cache replays on this machine
+              <InfoTip text="On, a Twitch replay is downloaded when it is next up or on air and plays from disk once the download is done; the file is removed after it has aired. Off, no new download starts: replays already on disk still play from it, and any other scheduled replay airs only if 'play it from Twitch' is on." />
+            </span>
             <select defaultValue={props.initialValues.vodCacheEnabled} name="vodCacheEnabled">
               <option value="">Follow the server (now: {props.fallback.enabled ? "on" : "off"})</option>
               <option value="1">On</option>
@@ -131,7 +135,10 @@ export function ReplayCacheForm(props: {
             </select>
           </label>
           <label>
-            <span className="label">Cache ceiling (GB)</span>
+            <span className="label label-with-info">
+              Cache ceiling (GB)
+              <InfoTip text="Space the already-cached replays may use before another download starts: the oldest files are removed until the rest fits, and the new file is added on top, so plan for this plus one replay. It must be at least the 'Largest single replay' value, or saving is refused." />
+            </span>
             <input
               defaultValue={props.initialValues.vodCacheMaxGb}
               inputMode="numeric"
@@ -140,7 +147,10 @@ export function ReplayCacheForm(props: {
             />
           </label>
           <label>
-            <span className="label">Keep this much disk free (GB)</span>
+            <span className="label label-with-info">
+              Keep this much disk free (GB)
+              <InfoTip text="Free space the media disk must show before a replay download starts; older cached replays are removed to get there, and if that is not enough the download is refused. The download itself is not counted against it, so leave room for one replay on top." />
+            </span>
             <input
               defaultValue={props.initialValues.vodCacheMinFreeGb}
               inputMode="numeric"
@@ -149,7 +159,10 @@ export function ReplayCacheForm(props: {
             />
           </label>
           <label>
-            <span className="label">Largest single replay to cache (GB)</span>
+            <span className="label label-with-info">
+              Largest single replay to cache (GB)
+              <InfoTip text="A replay estimated above this size is never downloaded; it is played from Twitch directly, whatever 'play it from Twitch' says. It may not exceed the cache ceiling — saving is refused — because such a file would be downloaded, evicted and downloaded again forever." />
+            </span>
             <input
               defaultValue={props.initialValues.vodCacheMaxAssetGb}
               inputMode="numeric"
@@ -165,7 +178,10 @@ export function ReplayCacheForm(props: {
         </p>
         <div className="form-grid">
           <label>
-            <span className="label">Keep a cached replay for (hours)</span>
+            <span className="label label-with-info">
+              Keep a cached replay for (hours)
+              <InfoTip text="Applies to a downloaded replay that has not aired yet — one that has played is deleted as soon as it ends, whatever this says. A file older than this is deleted the next time any replay download starts, and fetched again when its replay is next due." />
+            </span>
             <input
               defaultValue={props.initialValues.vodCacheRetentionHours}
               inputMode="numeric"
@@ -174,7 +190,10 @@ export function ReplayCacheForm(props: {
             />
           </label>
           <label>
-            <span className="label">Discard an unfinished download after (hours)</span>
+            <span className="label label-with-info">
+              Discard an unfinished download after (hours)
+              <InfoTip text="A download that stopped part-way is kept so the next attempt can resume where it left off. Once the leftover is older than this, and no job is still writing to it, it is deleted and the next attempt starts from zero." />
+            </span>
             <input
               defaultValue={props.initialValues.vodCachePartialMaxAgeHours}
               inputMode="numeric"
@@ -183,7 +202,10 @@ export function ReplayCacheForm(props: {
             />
           </label>
           <label>
-            <span className="label">Abandon a download attempt after (seconds)</span>
+            <span className="label label-with-info">
+              Abandon a download attempt after (seconds)
+              <InfoTip text="How long one download attempt may run before it is killed and counted as failed. The partial file is kept, so after the retry wait the next attempt resumes where it stopped — a big replay arrives in slices of this length, one per retry wait." />
+            </span>
             <input
               defaultValue={props.initialValues.vodCacheDownloadTimeoutSeconds}
               inputMode="numeric"
@@ -192,7 +214,10 @@ export function ReplayCacheForm(props: {
             />
           </label>
           <label>
-            <span className="label">Retry a failed replay after (seconds)</span>
+            <span className="label label-with-info">
+              Retry a failed replay after (seconds)
+              <InfoTip text="After a download fails, the replay is left alone for this long: no new download attempt, and the schedule skips it in favour of other content, even if playing from Twitch is on. Stops a broken or unavailable replay from being hammered while it stays scheduled." />
+            </span>
             <input
               defaultValue={props.initialValues.vodCacheFailureCooldownSeconds}
               inputMode="numeric"
@@ -201,7 +226,10 @@ export function ReplayCacheForm(props: {
             />
           </label>
           <label>
-            <span className="label">Download speed ceiling (for example 8M; 0 for unlimited)</span>
+            <span className="label label-with-info">
+              Download speed ceiling (for example 8M; 0 for unlimited)
+              <InfoTip text="Bytes per second, not bits: 8M is 8 MB/s, about 64 Mbit/s of the line, with K, M or G as the unit. A value here overrides the server's; 0 lifts a cap the server sets." />
+            </span>
             <input
               defaultValue={props.initialValues.vodCacheLimitRate}
               name="vodCacheLimitRate"
@@ -209,7 +237,10 @@ export function ReplayCacheForm(props: {
             />
           </label>
           <label>
-            <span className="label">While a replay is still downloading, play it from Twitch</span>
+            <span className="label label-with-info">
+              While a replay is still downloading, play it from Twitch
+              <InfoTip text="On, a replay whose download is not finished streams straight from Twitch when its slot comes up; the next time it is due after the download completes, the local file plays instead. Off, the slot is filled from the fallback chain and a warning incident is raised until the file is complete." />
+            </span>
             <select defaultValue={props.initialValues.vodCacheAllowRemoteFallback} name="vodCacheAllowRemoteFallback">
               <option value="">Follow the server (now: {props.fallback.allowRemoteFallback ? "on" : "off"})</option>
               <option value="1">On</option>

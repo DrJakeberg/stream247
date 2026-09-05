@@ -3,6 +3,7 @@
 import { CHAT_GAMES, listChatGameEmoteMapIssues, type ChatGameDirection, type ChatGameId } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { useToast } from "@/components/ui/Toast";
 import type { ChatGameSettingsRecord } from "@stream247/db";
 
@@ -71,7 +72,10 @@ export function ChatGameSettingsForm({ chatGame }: { chatGame: ChatGameSettingsR
           </div>
           <div className="form-grid" style={{ marginTop: 12 }}>
             <label>
-              <span className="label">Game</span>
+              <span className="label label-with-info">
+                Game
+                <InfoTip text="Which game chat plays on the Chat Game layer. Snake and 2048 listen for the four direction emotes, Minesweeper for cell names like b3; switching games ends the running round and starts a fresh one." />
+              </span>
               <select onChange={(event) => setGameId(event.target.value as ChatGameId)} value={gameId}>
                 {CHAT_GAMES.map((game) => (
                   <option key={game.id} value={game.id}>
@@ -84,13 +88,19 @@ export function ChatGameSettingsForm({ chatGame }: { chatGame: ChatGameSettingsR
             {/* A game with a fixed board would silently ignore these, so they fold away instead. */}
             {activeGame.usesGrid ? (
               <label>
-                <span className="label">Grid width (cells)</span>
+                <span className="label label-with-info">
+                  Grid width (cells)
+                  <InfoTip text="How many cells wide the board is, from 8 to 32. More columns give the snake room to run and Minesweeper more letters to dig (a, b, … up to af), but every cell gets smaller on air; a change mid-round starts a new round." />
+                </span>
                 <input max={32} min={8} onChange={(event) => setGridWidth(event.target.value)} type="number" value={gridWidth} />
               </label>
             ) : null}
             {activeGame.usesGrid ? (
               <label>
-                <span className="label">Grid height (cells)</span>
+                <span className="label label-with-info">
+                  Grid height (cells)
+                  <InfoTip text="How many cells tall the board is, from 6 to 18. Rows are the numbers in a Minesweeper coordinate, counted from 1; taller boards make every cell smaller on air, and a change mid-round starts a new round." />
+                </span>
                 <input max={18} min={6} onChange={(event) => setGridHeight(event.target.value)} type="number" value={gridHeight} />
               </label>
             ) : null}
@@ -108,7 +118,12 @@ export function ChatGameSettingsForm({ chatGame }: { chatGame: ChatGameSettingsR
             <div className="form-grid" style={{ marginTop: 12 }}>
               {(Object.keys(DIRECTION_LABELS) as ChatGameDirection[]).map((direction) => (
                 <label key={direction}>
-                  <span className="label">{DIRECTION_LABELS[direction]}</span>
+                  <span className="label label-with-info">
+                    {DIRECTION_LABELS[direction]}
+                    <InfoTip
+                      text={`When chat writes this emote on its own between spaces — capitals count, so Kappa and kappa differ — the message is one move ${direction}; a message carrying several controls counts only the first.`}
+                    />
+                  </span>
                   <input
                     onChange={(event) => setEmoteMap((current) => ({ ...current, [direction]: event.target.value }))}
                     value={emoteMap[direction]}

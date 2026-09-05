@@ -138,7 +138,7 @@ test.describe("control density", () => {
       const measured = await shell.evaluate((root) => {
         // The (i) beside a label opens an explanation; it is not something the operator does to the
         // channel, so it does not count against the surface's control budget.
-        const selector = "button:not(.info-tip-button), a[href], input, select, textarea, [role=button], [role=tab]";
+        const selector = "button:not(.info-tip-button), a[href], input, select, textarea, [role=button]:not(.info-tip-button), [role=tab]";
         // checkVisibility, not bounding boxes. A control inside a closed <details> keeps its last
         // measured size — Chromium hides that content with content-visibility rather than by taking
         // it out of layout — so measuring rects reports collapsed groups as still on screen, which

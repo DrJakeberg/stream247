@@ -75,9 +75,11 @@ Temporary fallback
 Skip current
 Resume schedule
 PIN ASSET
+i
 <asset>
 <asset>
 OVERRIDE MINUTES
+i
 Bring in an outside feed
 Pin on air
 Play now

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { getSourceConnectorDefinition, sourceConnectorDefinitions, type SourceConnectorKind } from "@/lib/source-connectors";
 import type { SourceRecord } from "@/lib/server/state";
 
@@ -73,11 +74,11 @@ export function SourceActionsForm(props: { source: SourceRecord }) {
       }}
     >
       <label>
-        <span className="label">Display name</span>
+        <span className="label label-with-info">Display name<InfoTip text="Names the source in the queue caption and in the asset library's by-source view. For direct, YouTube and Twitch sources it also sets the folder their assets are filed under after the next sync; local-library assets keep their on-disk folder. On air, the source label shows the running schedule block's pool name, and this name only when no block is scheduled. Renaming keeps the source and its assets." /></span>
         <input onChange={(event) => setName(event.target.value)} value={name} />
       </label>
       <label>
-        <span className="label">Connector type</span>
+        <span className="label label-with-info">Connector type<InfoTip text="Decides where the worker fetches this source's videos from on each sync: the local media folder, one direct file URL, a YouTube playlist or channel, a single Twitch VOD, or a Twitch channel's archive. It also sets which shape the address below must have; the example and notes underneath change with it." /></span>
         <select onChange={(event) => chooseConnector(event.target.value as SourceConnectorKind)} value={connectorKind}>
           {sourceConnectorDefinitions.map((entry) => (
             <option key={entry.id} value={entry.id}>
@@ -94,7 +95,7 @@ export function SourceActionsForm(props: { source: SourceRecord }) {
         </div>
       </div>
       <label>
-        <span className="label">{connector.urlLabel}</span>
+        <span className="label label-with-info">{connector.urlLabel}<InfoTip text="Where the worker looks for this source's videos on every sync. YouTube and Twitch addresses are checked for the expected shape before saving, a direct media URL only has to be present, and the local media library needs no address at all." /></span>
         <input
           disabled={!connector.requiresUrl}
           onChange={(event) => setExternalUrl(event.target.value)}

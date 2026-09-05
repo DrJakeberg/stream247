@@ -3,6 +3,7 @@
 import { ENCODER_SPEED_PRESETS } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 // Folded by default: these four values are a "touch once, verify on air" decision, not part of
 // the everyday output workflow — and the closed group keeps the studio-output control budget
@@ -65,7 +66,10 @@ export function EncoderQualityForm(props: {
         </p>
         <div className="form-grid">
           <label>
-            <span className="label">Encoder speed preset</span>
+            <span className="label label-with-info">
+              Encoder speed preset
+              <InfoTip text="Sets how much processor time the encoder spends on each frame, from ultrafast to veryslow. Slower presets fit more picture quality under the bitrate ceiling but load the server harder; the same preset goes to every encoder the channel starts, live bridge included." />
+            </span>
             <select defaultValue={props.initialValues.ffmpegPreset} name="ffmpegPreset">
               <option value="">Follow the server (now: {props.fallback.preset})</option>
               {ENCODER_SPEED_PRESETS.map((preset) => (
@@ -76,7 +80,10 @@ export function EncoderQualityForm(props: {
             </select>
           </label>
           <label>
-            <span className="label">Video bitrate ceiling</span>
+            <span className="label label-with-info">
+              Video bitrate ceiling
+              <InfoTip text="The most bandwidth the video may use, in bits per second, written like 4500k or 6M. With all three bitrate fields empty and no server values, the uplink encoder picks a ceiling from the output size while the playout and live-bridge encoders use the built-in 4500k; filling in any one of the three (or a server value for any of them) switches that automatic choice off for all three." />
+            </span>
             <input
               defaultValue={props.initialValues.ffmpegMaxrate}
               name="ffmpegMaxrate"
@@ -84,7 +91,10 @@ export function EncoderQualityForm(props: {
             />
           </label>
           <label>
-            <span className="label">Video buffer size</span>
+            <span className="label label-with-info">
+              Video buffer size
+              <InfoTip text="Room the encoder has to spread bandwidth across neighbouring frames, so a busy moment can borrow from a quiet one, in bits like 9000k. Left empty it does not track the ceiling: with all three bitrate fields empty the uplink follows the output size (always twice its ceiling) and the other encoders use the built-in 9000k; once any bitrate field is filled, an empty buffer means the server value or 9000k." />
+            </span>
             <input
               defaultValue={props.initialValues.ffmpegBufsize}
               name="ffmpegBufsize"
@@ -92,7 +102,10 @@ export function EncoderQualityForm(props: {
             />
           </label>
           <label>
-            <span className="label">Audio bitrate</span>
+            <span className="label label-with-info">
+              Audio bitrate
+              <InfoTip text="How much bandwidth the sound gets, in bits per second like 160k, on every encoder the channel starts. Setting it counts as configuring the bitrates, so the uplink encoder stops picking its video ceiling and buffer from the output size and every encoder uses the server or built-in values for those instead." />
+            </span>
             <input
               defaultValue={props.initialValues.ffmpegAudioBitrate}
               name="ffmpegAudioBitrate"

@@ -62,21 +62,30 @@ test.describe("scene studio layout", () => {
 
   test("explains its title, panels and preview through (i) tips that open on keyboard focus", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
+    // Before signing in, while the login form is still there: the field labels resolve to exactly one
+    // control each. A tip inside a label used to break this twice — a <button> took the label's
+    // control, and a tooltip element's text made getByLabel("Password") match the e-mail field.
+    await page.goto("/login");
+    await expect(page.getByLabel("Owner email")).toHaveCount(1);
+    await expect(page.getByLabel("Password")).toHaveCount(1);
     await signIn(page);
     await page.goto("/studio?tab=scene");
     await expect(page.getByRole("heading", { name: "Scene controls" })).toBeVisible();
 
+    // At least the header, both panels and the preview toolbar; the form's own fields add many more.
     const tips = page.locator(".info-tip-button");
-    await expect(tips).toHaveCount(4);
+    expect(await tips.count()).toBeGreaterThanOrEqual(4);
 
+    // The explanation is an attribute, drawn as ::after and read out through aria-description —
+    // deliberately not an element, so it never becomes part of a <label>'s text.
     const first = tips.first();
-    const bubbleId = await first.getAttribute("aria-describedby");
-    expect(bubbleId).toBeTruthy();
-    const bubble = page.locator(`[id="${String(bubbleId)}"]`);
-    await expect(bubble).toHaveAttribute("role", "tooltip");
-    await expect(bubble).toBeHidden();
+    const description = await first.getAttribute("aria-description");
+    expect(description).toBeTruthy();
+    expect(description).toMatch(/scene/i);
+    await expect(first).toHaveAttribute("data-tip", String(description));
+    const bubbleVisibility = () => first.evaluate((el) => getComputedStyle(el, "::after").visibility);
+    expect(await bubbleVisibility()).toBe("hidden");
     await first.focus();
-    await expect(bubble).toBeVisible();
-    await expect(bubble).toContainText(/scene/i);
+    await expect.poll(bubbleVisibility).toBe("visible");
   });
 });

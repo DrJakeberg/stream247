@@ -52,17 +52,29 @@ CREDENTIALS
 Managed credentials
 Stream247 can now store integration credentials encrypted at rest in PostgreSQL. Environment variables still work as fallback values, but these settings let you manage Twitch and alert credentials from the UI.
 TWITCH CLIENT ID
+i
 TWITCH CLIENT SECRET
+i
 DEFAULT TWITCH CATEGORY ID
+i
 BROADCAST CHANNEL LOGIN
+i
 EVENTSUB WEBHOOK SECRET
+i
 DISCORD WEBHOOK URL
+i
 SMTP HOST
+i
 SMTP PORT
+i
 SMTP USER
+i
 SMTP PASSWORD
+i
 SMTP FROM
+i
 ALERT EMAIL TO
+i
 Save encrypted settings
 RUNTIME
 Operations
@@ -80,6 +92,7 @@ Optional two-factor authentication is available for local accounts. Team members
 Status
 Disabled.
 CURRENT PASSWORD
+i
 Start two-factor setup
 SETTINGS
 Admin defaults
@@ -103,5 +116,7 @@ Program pools, shows, and schedule
 Scene live, draft, and presets
 Moderation and destination routing
 IMPORT BLUEPRINT JSON
+i
 LOAD BLUEPRINT FILE
+i
 Import blueprint

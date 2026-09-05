@@ -39,6 +39,7 @@ INGEST
 Add source
 Add a connector for the upstream media feed you want Stream247 to ingest. Sources are ingestion pipelines, not the playable catalog itself.
 CHOOSE A SOURCE TYPE
+i
 Local media library
 Play files already stored on this server from the shared media folder.
 Best for self-hosted operators who want a simple, stable local catalog without relying on upstream URLs.
@@ -58,7 +59,9 @@ Twitch channel archive
 Track archived VODs from a Twitch channel and keep ingesting new ones over time.
 Best for replay channels built from an existing Twitch creator archive.
 DISPLAY NAME
+i
 CONNECTOR TYPE
+i
 Local media library
 Direct media URL
 YouTube playlist
@@ -69,6 +72,7 @@ Twitch archive
 Worker ingests archive VODs from the Twitch channel and keeps Twitch title/category metadata.
 Example: https://www.twitch.tv/username
 CHANNEL URL
+i
 Use the canonical source URL here. Stream247 will keep the original title, natural duration, and upstream metadata where available.
 Add source
 SOURCES

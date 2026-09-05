@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 // Folded by default. These thresholds decide when the channel restarts its own processes, so the
 // form repeats the same bounds the API and the shared resolver enforce and explains, per guard,
@@ -28,9 +29,12 @@ export function WatchdogThresholdsForm(props: {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
-  const field = (name: (typeof BOUNDS)[number][0], label: string) => (
+  const field = (name: (typeof BOUNDS)[number][0], label: string, info: string) => (
     <label key={name}>
-      <span className="label">{label}</span>
+      <span className="label label-with-info">
+        {label}
+        <InfoTip text={info} />
+      </span>
       <input
         defaultValue={props.initialValues[name]}
         inputMode="numeric"
@@ -90,16 +94,32 @@ export function WatchdogThresholdsForm(props: {
           gone — the shape of a source that ran out while the video track froze on its last frame.
         </p>
         <div className="form-grid">
-          {field("feedAudioSilenceSeconds", "Restart playback after sound has been gone for")}
-          {field("feedAudioGraceSeconds", "Leave a fresh playback alone for")}
+          {field(
+            "feedAudioSilenceSeconds",
+            "Restart playback after sound has been gone for",
+            "Cuts the item on air and lets the schedule choose again once the picture has kept moving this long with no sound, the shape of a source that ran out on a frozen last frame. Only a feed that has not carried any sound yet is exempt: a silent item that follows one with sound is cut when the timer runs out."
+          )}
+          {field(
+            "feedAudioGraceSeconds",
+            "Leave a fresh playback alone for",
+            "Counted from each playout start, so from every item change: for this long the silence check stays quiet, giving the new item time to put out its first sound before it is judged."
+          )}
         </div>
         <p className="subtle">
           The frozen-feed watchdog restarts playback when the process is still running but has
           stopped producing anything at all — an input that hangs without erroring.
         </p>
         <div className="form-grid">
-          {field("feedStallTimeoutSeconds", "Restart playback after the feed has stood still for")}
-          {field("feedStallGraceSeconds", "Leave a fresh playback alone for")}
+          {field(
+            "feedStallTimeoutSeconds",
+            "Restart playback after the feed has stood still for",
+            "Cuts the item on air and lets the schedule choose again when the playout process is still running but the program feed has not advanced for this long, an input that hangs without failing. Nothing fires while no playout process is running."
+          )}
+          {field(
+            "feedStallGraceSeconds",
+            "Leave a fresh playback alone for",
+            "Counted from the start of the playout: for this long a still feed is not blamed on the new process, which has had no time to produce anything yet."
+          )}
         </div>
         <p className="subtle">
           The encoder watchdog restarts the outgoing stream when the encoder is alive but no longer
@@ -107,9 +127,21 @@ export function WatchdogThresholdsForm(props: {
           that has not sent a single frame since it launched.
         </p>
         <div className="form-grid">
-          {field("uplinkStallTimeoutSeconds", "Restart the encoder after its output has stood still for")}
-          {field("uplinkStallGraceSeconds", "Leave a fresh encoder alone for")}
-          {field("uplinkNoProgressRestartSeconds", "Restart an encoder that never sent anything after")}
+          {field(
+            "uplinkStallTimeoutSeconds",
+            "Restart the encoder after its output has stood still for",
+            "Restarts the encoder when it is still running but its output has stopped advancing for this long. While the encoder reads the program feed (the default input mode) the check is skipped while that feed itself is stale, so a playback outage cannot turn into a chain of encoder restarts."
+          )}
+          {field(
+            "uplinkStallGraceSeconds",
+            "Leave a fresh encoder alone for",
+            "Counted from the encoder's start: for this long the checks on the encoder's own output stay quiet - stalled output, never encoded a frame, timeline discontinuities - giving it time to probe the feed and connect to the destination. The restart that fires when every destination sits in error state is not held back by this."
+          )}
+          {field(
+            "uplinkNoProgressRestartSeconds",
+            "Restart an encoder that never sent anything after",
+            "Restarts an encoder that has run this long without encoding a single frame, meaning nothing has reached the destination since it started. Kept long on purpose: a slow connect or a reconnecting destination must have time to resolve first."
+          )}
         </div>
         <p className="subtle">
           The planned end-of-video margin ends a video this long after its known length, instead of
@@ -117,7 +149,11 @@ export function WatchdogThresholdsForm(props: {
           few seconds of frozen last frame is invisible, cutting real content is not.
         </p>
         <div className="form-grid">
-          {field("durationBoundMarginSeconds", "End a video this long past its known length")}
+          {field(
+            "durationBoundMarginSeconds",
+            "End a video this long past its known length",
+            "Ends the video deliberately and moves on once it has run this long past its known length, so a source that never signals its end is not left showing a frozen last frame. Applies only to items with a known length; live input is never cut."
+          )}
         </div>
         {error ? <p className="danger">{error}</p> : null}
         {message ? <p className="subtle">{message}</p> : null}

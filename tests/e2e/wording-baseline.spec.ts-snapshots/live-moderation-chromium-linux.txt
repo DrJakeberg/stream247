@@ -58,11 +58,18 @@ Actor Requested Applied Clamp reason Expires
 No moderation presence entries have been recorded yet.
 Create moderation presence
 Enable moderation presence policy
+i
 COMMAND KEYWORD
+i
 Require command prefix
+i
 DEFAULT MINUTES
+i
 MINIMUM MINUTES
+i
 MAXIMUM MINUTES
+i
 Omitted durations use the default. Requests below the minimum clamp up, and requests above the maximum clamp down.
 Fallback to emote-only when no moderation presence is active
+i
 Save moderation policy

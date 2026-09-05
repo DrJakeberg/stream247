@@ -28,6 +28,23 @@
   carry the first four. The control-density budget does not count them: an explanation is not
   something the operator does to the channel.
 
+- Every field label in the admin UI now carries an (i) explanation — 254 of them across 38
+  components, each derived from the code that consumes the value rather than from the label, and
+  each tried by two independent reviewers before it stayed: 228 objections were raised and applied.
+  33 labels were left bare with a stated reason (section headings that already carry a paragraph,
+  read-only status rows, the per-card selection checkbox, a `<summary>`). The reviewers also found
+  settings that nothing reads — the scene's show/hide toggles for clock, next item, schedule teaser
+  and queue preview, the embed/widget layer fields, the engagement chat mode, style and alert
+  position — and left those without an explanation rather than describe an effect that does not
+  exist; they are listed in `PLANS.md` under M59 as decisions to take.
+
+  Two things the first verification runs taught about a tip inside a `<label>`: a `<button>` is a
+  labelable element and takes the label away from the field, so the trigger is a `span` with
+  `role="button"`; and a label's text is everything under it, hidden or not, so a tooltip element
+  made `getByLabel("Password")` match the e-mail field whose explanation mentioned the password.
+  The explanation is therefore a `data-tip` attribute drawn with CSS and exposed through
+  `aria-description` — no tooltip element in the DOM. Both were proven in a two-field harness first.
+
 - `tests/e2e/studio-layout.spec.ts` asserts the studio layout by measurement — column alignment,
   the distances between toolbar, picture and help, the column staying shorter than half the form,
   the picture still on screen after scrolling 1500px — and that an (i) opens on focus. The pixel

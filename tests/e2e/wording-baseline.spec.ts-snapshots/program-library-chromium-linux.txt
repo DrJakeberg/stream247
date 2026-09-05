@@ -39,33 +39,43 @@ LIBRARY
 Upload local media
 Upload new files into the shared local media library. The Local media library source picks them up within a few minutes.
 MEDIA FILES
+i
 OPTIONAL SUBFOLDER
+i
 Uploaded files land in the shared local media library and become playable within a few minutes.
 Upload into local library
 CATALOG
 Asset library
 Search the playable catalog by title, source, folder, tag, or curated set. This is the programming-facing library, separate from source ingest configuration and pool rules.
 SEARCH ASSETS
+i
 SOURCE
+i
 All sources
 Local Media Library
 Twitch Archive
 YouTube Playlist
 ASSET STATUS
+i
 All statuses
 Ready
 Pending
 Error
 PROGRAM
+i
 All assets
 Included in programming
 Excluded from programming
 Global fallback only
 FOLDER
+i
 TAG
+i
 CURATED SET
+i
 All curated sets
 GROUP BY
+i
 No grouping
 Source
 Folder
@@ -78,15 +88,20 @@ Curated sets
 Curated sets let operators pin reusable groups of assets without rewriting folders or tags. New sets can start with the currently selected assets.
 No curated sets yet.
 SET NAME
+i
 ACCENT COLOR
+i
 DESCRIPTION
+i
 Create curated set
 Add selected to set
 Remove selected from set
 Delete curated set
 New set draft
 BULK FOLDER PATH
+i
 BULK TAGS
+i
 Select assets to see what you can do with them.
 Local Media Library
 2 asset(s)

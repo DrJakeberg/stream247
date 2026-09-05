@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 type PlayoutAssetOption = {
   id: string;
@@ -163,7 +164,7 @@ export function PlayoutActionForm(props: {
 
       <div className="form-grid">
         <label>
-          <span className="label">Pin asset</span>
+          <span className="label label-with-info">Pin asset<InfoTip text="The asset the buttons below act on, whether you pin it on air, play it now, queue it next or run it as an insert. Starts out as whatever is on air right now." /></span>
           <select className="select" onChange={(event) => setSelectedAssetId(event.target.value)} value={selectedAssetId}>
             {props.assets.map((asset) => (
               <option key={asset.id} value={asset.id}>
@@ -173,7 +174,7 @@ export function PlayoutActionForm(props: {
           </select>
         </label>
         <label>
-          <span className="label">Override minutes</span>
+          <span className="label label-with-info">Override minutes<InfoTip text="Used by Pin on air and Skip current: a pinned asset keeps the slot for this many minutes before the schedule takes back over, and a skipped asset stays out of the queue for the same span while the schedule carries on. Kept between 5 and 240 minutes." /></span>
           <input min="5" name="minutes" onChange={(event) => setMinutes(event.target.value)} step="5" type="number" value={minutes} />
         </label>
       </div>
@@ -189,14 +190,14 @@ export function PlayoutActionForm(props: {
         <div style={{ marginTop: 12 }}>
       <div className="form-grid">
         <label>
-          <span className="label">Live Bridge input</span>
+          <span className="label label-with-info">Live Bridge input<InfoTip text="The kind of feed the channel pulls in: RTMP takes an rtmp:// or rtmps:// address, HLS an http:// or https:// playlist. While the feed is on air the overlay's source line reads “Live Bridge · RTMP” or “Live Bridge · HLS”." /></span>
           <select className="select" onChange={(event) => setLiveBridgeInputType(event.target.value === "hls" ? "hls" : "rtmp")} value={liveBridgeInputType}>
             <option value="rtmp">RTMP / RTMPS</option>
             <option value="hls">HLS</option>
           </select>
         </label>
         <label>
-          <span className="label">Live Bridge label</span>
+          <span className="label label-with-info">Live Bridge label<InfoTip text="Shown on air as the title while the outside feed is playing, where an asset title would normally be, and in the Live Bridge status line under these buttons. Left empty it reads “Live Bridge”." /></span>
           <input
             maxLength={120}
             onChange={(event) => setLiveBridgeLabel(event.target.value)}
@@ -207,7 +208,7 @@ export function PlayoutActionForm(props: {
       </div>
 
       <label>
-        <span className="label">Live Bridge URL</span>
+        <span className="label label-with-info">Live Bridge URL<InfoTip text="Where the channel pulls the outside feed from; it has to match the input type chosen above. Once taken live, this feed replaces scheduled playback until you release it, and only its protocol and host are shown back here afterwards." /></span>
         <input
           onChange={(event) => setLiveBridgeUrl(event.target.value)}
           placeholder={props.liveBridgeInputSummary ? `Stored input: ${props.liveBridgeInputSummary}` : liveBridgeInputType === "hls" ? "https://example.com/live.m3u8" : "rtmp://encoder.example.com/live/key"}

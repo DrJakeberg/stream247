@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 import type { AssetRecord } from "@/lib/server/state";
 
 export function AssetCurationForm({ asset }: { asset: AssetRecord }) {
@@ -64,7 +65,7 @@ export function AssetCurationForm({ asset }: { asset: AssetRecord }) {
           }}
           type="checkbox"
         />
-        <span>Include in programming rotation</span>
+        <span>Include in programming rotation<InfoTip text="Pools, schedule blocks and the automatic fallback may pick this asset on their own. Switched off, it stays in the library but nothing selects it automatically, Play next and Replay previous skip it, and the global fallback flag below is cleared as well; only Play now, Insert or a direct override still put it on air." /></span>
       </label>
       <label className={`chip-toggle${isGlobalFallback ? " chip-toggle-active" : ""}`}>
         <input
@@ -78,10 +79,10 @@ export function AssetCurationForm({ asset }: { asset: AssetRecord }) {
           }}
           type="checkbox"
         />
-        <span>Use as global fallback candidate</span>
+        <span>Use as global fallback candidate<InfoTip text="Puts this asset first in line, once it is ready, when the schedule has nothing playable or the current item fails to start; if several are marked, Fallback priority decides. Turning it on also includes it in programming and keeps its file out of the low-disk clean-up." /></span>
       </label>
       <label>
-        <span className="label">Fallback priority</span>
+        <span className="label label-with-info">Fallback priority<InfoTip text="Orders the fallback candidates when several are ready: the lowest number plays first. Only matters when the channel has to fall back; 1 to 9999." /></span>
         <input
           min={1}
           onChange={(event) => setFallbackPriority(Number(event.target.value || 1))}
@@ -91,7 +92,7 @@ export function AssetCurationForm({ asset }: { asset: AssetRecord }) {
         />
       </label>
       <label>
-        <span className="label">Folder path</span>
+        <span className="label label-with-info">Folder path<InfoTip text="Groups the asset under this folder in the library browser and makes it findable with the folder filter. Only the library view changes, not the stored file or what plays." /></span>
         <input
           onChange={(event) => setFolderPath(event.target.value)}
           placeholder="uploads/highlights"
@@ -99,7 +100,7 @@ export function AssetCurationForm({ asset }: { asset: AssetRecord }) {
         />
       </label>
       <label>
-        <span className="label">Tags</span>
+        <span className="label label-with-info">Tags<InfoTip text="Comma-separated labels the library's tag filter and search match on, for finding and grouping assets; a label may contain spaces. They have no effect on air; duplicates are dropped and up to 24 are kept." /></span>
         <input
           onChange={(event) => setTagsText(event.target.value)}
           placeholder="retro, marathon, sponsor-safe"

@@ -137,16 +137,23 @@ Stream247 can now fan one channel out to multiple active outputs. Healthy primar
 Add output
 Create another primary or backup RTMP target.
 NAME
+i
 PROVIDER
+i
 Custom RTMP
 Twitch
 ROLE
+i
 Primary
 Backup
 PRIORITY
+i
 RTMP URL
+i
 STREAM KEY
+i
 NOTES
+i
 Add destination
 Lokales Relay
 Primary · priority 0 · Not set up yet
