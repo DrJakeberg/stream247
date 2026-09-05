@@ -13,6 +13,7 @@
 //  - Failures are recorded with a cooldown so a permanently broken VOD is not retried every cycle.
 
 import type { AssetRecord } from "@stream247/db";
+import { resolveVodDownloadTimeoutMs } from "./vod-download-timeout.js";
 import type { TwitchVodCacheConfig, TwitchVodCacheResult } from "./twitch-vod-cache.js";
 
 export type VodCacheJobState = "queued" | "running" | "ready" | "failed";
@@ -134,7 +135,12 @@ export class VodCacheJobRunner {
   private async runJob(asset: AssetRecord, config: TwitchVodCacheConfig): Promise<void> {
     const startedAt = new Date(this.now()).toISOString();
     this.jobs.set(asset.id, { assetId: asset.id, state: "running", startedAt, finishedAt: "", error: "" });
-    this.log("vod.cache.job.start", { assetId: asset.id, timeoutMs: config.backgroundDownloadTimeoutMs });
+    this.log("vod.cache.job.start", {
+      assetId: asset.id,
+      timeoutMs: resolveVodDownloadTimeoutMs({ configuredMs: config.backgroundDownloadTimeoutMs, durationSeconds: asset.durationSeconds ?? 0 }),
+      configuredTimeoutMs: config.backgroundDownloadTimeoutMs,
+      durationSeconds: asset.durationSeconds ?? 0
+    });
 
     let result: TwitchVodCacheResult;
     try {

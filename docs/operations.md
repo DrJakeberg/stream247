@@ -48,6 +48,17 @@
 - if the playout container accumulates zombie FFmpeg or yt-dlp processes, recreate it: the image runs Node under `tini`, which reaps them, so an accumulation means the container is not running the shipped entrypoint
 - if the soak monitor reports `container-restart-check-failed`, inspect `docker compose ps`, `docker inspect --format '{{.RestartCount}}'`, and recent logs for `web`, `worker`, and `playout` before restarting the soak
 
+### Replay cache: what the log says since M62
+
+- `vod.cache.job.start` carries `timeoutMs` (effective), `configuredTimeoutMs` and `durationSeconds`:
+  a background download gets at least the replay's running time, capped at one day, so a five-hour
+  VOD is not killed at the two-hour floor.
+- `vod.cache.kept` with `reason: scheduled-within-retention` means a replay that just finished stays on
+  disk because a block within `retentionHours` draws from its pool; `vod.cache.released` is the old
+  path and still runs for everything else.
+- `playout.twitch-cache.failed` with "Command timed out" now means the download could not keep up with
+  real time for the whole running length of the content — a network problem, not a short fuse.
+
 ### Remote VOD reaches its end without EOF
 
 - remotely streamed VODs (CloudFront-backed Twitch assets too large to cache) can reach their end

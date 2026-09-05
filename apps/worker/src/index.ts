@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { collectUpcomingPoolIds, shouldKeepFinishedVodCache } from "./vod-cache-release-policy.js";
 import { lastPtsSecondsFromProbeOutput, resolveFeedAvLead } from "./feed-av-lead.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
@@ -985,6 +986,29 @@ async function releaseWatchedVodCache(
     const config = getTwitchVodCacheRuntimeConfig();
     if (!config.enabled || !canReleaseVodCache(currentAssetId)) {
       return;
+    }
+
+    // M62: a replay whose source feeds a pool that a block within the retention horizon draws from
+    // stays on disk. The cache used to delete every finished replay at once and fetch it again when
+    // the schedule came round — 2.38, 14.51, 4.04 and 9.47 GB on one day — and a replay that came
+    // round before its re-download finished aired from Twitch directly.
+    const finishedAsset = state.assets.find((asset) => asset.id === finishedAssetId && isTwitchVodAsset(asset));
+    if (finishedAsset) {
+      const moment = getCurrentScheduleMoment({ now: new Date(), timeZone: resolveChannelTimeZone(state.managedConfig) });
+      const upcomingPoolIds = collectUpcomingPoolIds({
+        blocks: state.scheduleBlocks,
+        date: moment.date,
+        time: moment.time,
+        horizonMinutes: Math.round(config.retentionMs / 60_000)
+      });
+      if (shouldKeepFinishedVodCache({ assetSourceId: finishedAsset.sourceId, pools: state.pools, upcomingPoolIds })) {
+        logRuntimeEvent("vod.cache.kept", {
+          assetId: finishedAsset.id,
+          reason: "scheduled-within-retention",
+          horizonHours: Math.round(config.retentionMs / 3_600_000)
+        });
+        return;
+      }
     }
 
     const watchedPaths = state.assets

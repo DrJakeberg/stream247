@@ -180,7 +180,7 @@ export function ReplayCacheForm(props: {
           <label>
             <span className="label label-with-info">
               Keep a cached replay for (hours)
-              <InfoTip text="Applies to a downloaded replay that has not aired yet — one that has played is deleted as soon as it ends, whatever this says. A file older than this is deleted the next time any replay download starts, and fetched again when its replay is next due." />
+              <InfoTip text="How long a downloaded replay may sit unused before it is removed. The same number decides what happens after a replay airs: if a block starting within this many hours draws from its pool, the file stays for that airing instead of being deleted and downloaded again." />
             </span>
             <input
               defaultValue={props.initialValues.vodCacheRetentionHours}
@@ -204,7 +204,7 @@ export function ReplayCacheForm(props: {
           <label>
             <span className="label label-with-info">
               Abandon a download attempt after (seconds)
-              <InfoTip text="How long one download attempt may run before it is killed and counted as failed. The partial file is kept, so after the retry wait the next attempt resumes where it stopped — a big replay arrives in slices of this length, one per retry wait." />
+              <InfoTip text="The floor for how long one download attempt may run before it is killed and counted as failed. A replay always gets at least its own running time on top of this floor, up to one day, so a five-hour VOD is not cut off at two hours while it is keeping up with real time. The partial file is kept for the next attempt." />
             </span>
             <input
               defaultValue={props.initialValues.vodCacheDownloadTimeoutSeconds}

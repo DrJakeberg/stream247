@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { resolveVodDownloadTimeoutMs } from "./vod-download-timeout.js";
 import path from "node:path";
 import { normalizeVodCacheLimitRate, resolveVodCacheTuning, type ManagedVodCacheInput } from "@stream247/core";
 import type { AssetRecord } from "@stream247/db";
@@ -241,7 +242,12 @@ export async function ensureTwitchVodCache(
   options: { mode?: TwitchVodCacheMode } = {}
 ): Promise<TwitchVodCacheResult> {
   const mode: TwitchVodCacheMode = options.mode ?? "cycle";
-  const downloadTimeoutMs = mode === "background" ? config.backgroundDownloadTimeoutMs : config.downloadTimeoutMs;
+  // Background downloads get at least the content's running time (M62); the awaited cycle path keeps
+  // its clamp — it must never outlive the loop's stall guard.
+  const downloadTimeoutMs =
+    mode === "background"
+      ? resolveVodDownloadTimeoutMs({ configuredMs: config.backgroundDownloadTimeoutMs, durationSeconds: asset.durationSeconds ?? 0 })
+      : config.downloadTimeoutMs;
   const cachePath = asset.cachePath || buildTwitchVodCachePath(asset, config.cacheRoot);
   const existing = await hasUsableFile(cachePath);
   if (existing) {
