@@ -271,6 +271,9 @@ Do not use `latest` for unattended production deployments.
 Useful overrides:
 
 - `CHECK_BASE_URL=http://127.0.0.1:3000` if `APP_URL` is externally routed and not directly reachable from the host
+- `SOAK_TOLERATE_FETCH_FAILED_SAMPLES` (default 2): consecutive readiness fetches that fail outright (DNS, TLS,
+  connection reset) before the soak fails. A one-minute network interruption is a network sample, not an
+  app sample; the log keeps each tolerated one as `readiness-fetch-failed-tolerated`.
 - `SESSION_COOKIE="stream247_session=..."` if the soak monitor should also fail on open critical incidents from the authenticated incidents API
 - `RELEASE_PREFLIGHT_ENV_FILE=/path/to/production.env` if you want `pnpm release:preflight` to validate a staged env file without replacing the current `.env`
 - `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot tag during rehearsal

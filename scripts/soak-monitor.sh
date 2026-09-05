@@ -33,6 +33,10 @@ SOAK_UPLINK_RESTART_RUNAWAY_DELTA="${SOAK_UPLINK_RESTART_RUNAWAY_DELTA:-20}"
 TOLERATE_UPLINK_NOTREADY_SAMPLES="${SOAK_TOLERATE_UPLINK_NOTREADY_SAMPLES:-1}"
 TOLERATE_DEST_NOTREADY_SAMPLES="${SOAK_TOLERATE_DEST_NOTREADY_SAMPLES:-1}"
 TOLERATE_FEED_STALE_DURING_PLAYOUT_TRANSIENT_SAMPLES="${SOAK_TOLERATE_FEED_STALE_DURING_PLAYOUT_TRANSIENT_SAMPLES:-1}"
+# A readiness fetch that fails outright (curl error: DNS, TLS, reset) is a network sample, not an app
+# sample. A one-minute path interruption killed a 24 h soak at its 58th minute on 2026-09-05; the
+# channel itself healed in 70 s. Tolerate a short run of them, fail on a longer one.
+TOLERATE_FETCH_FAILED_SAMPLES="${SOAK_TOLERATE_FETCH_FAILED_SAMPLES:-2}"
 export SOAK_UPLINK_RESTART_RUNAWAY_DELTA
 
 if [ -z "${CHECK_BASE_URL:-}" ] && [ ! -f ".env" ]; then
@@ -157,7 +161,10 @@ CLASSIFIER_MODULE="${ROOT_DIR}/scripts/lib/soak-readiness-classifier.cjs"
 # tracks consecutive count per kind on stderr). Always writes the log-friendly line
 # on stdout.
 check_readiness() {
-  response="$(curl -fsS "${APP_URL}/api/system/readiness")"
+  if ! response="$(curl -fsS "${APP_URL}/api/system/readiness" 2>&1)"; then
+    printf "fetch-failed: %s\n" "$(printf "%s" "$response" | head -n 1)" >&2
+    return 3
+  fi
   printf "%s" "$response" | node -e '
     const path = require("path");
     const fs = require("fs");
@@ -204,6 +211,7 @@ check_incidents() {
 consec_uplink_notready=0
 consec_dest_notready=0
 consec_playout_transient_stale_feed=0
+consec_fetch_failed=0
 
 while [ "$(date +%s)" -lt "$END_TIME" ]; do
   NOW="$(date -Iseconds)"
@@ -218,6 +226,7 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
 
   if [ "$readiness_rc" -eq 0 ]; then
     # Healthy sample — reset transient counters.
+    consec_fetch_failed=0
     consec_uplink_notready=0
     consec_dest_notready=0
   elif [ "$readiness_rc" -eq 2 ]; then
@@ -268,6 +277,15 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
     fi
     # Log the transient sample (kept in log for forensics) and continue.
     echo "${NOW} readiness-transient-tolerated ${readiness_line}" | tee -a "$LOG_FILE"
+    sleep "$INTERVAL"
+    continue
+  elif [ "$readiness_rc" -eq 3 ]; then
+    consec_fetch_failed=$((consec_fetch_failed + 1))
+    if [ "$consec_fetch_failed" -gt "$TOLERATE_FETCH_FAILED_SAMPLES" ]; then
+      echo "${NOW} readiness-fetch-failed-consecutive ${consec_fetch_failed} ${readiness_stderr}" | tee -a "$LOG_FILE"
+      exit 1
+    fi
+    echo "${NOW} readiness-fetch-failed-tolerated ${consec_fetch_failed}/${TOLERATE_FETCH_FAILED_SAMPLES} ${readiness_stderr}" | tee -a "$LOG_FILE"
     sleep "$INTERVAL"
     continue
   else
