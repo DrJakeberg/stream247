@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- Every visible setting now does what it says, or it is gone (M60). "Show clock" and "Show next item"
+  finally reach the picture: they flipped a flag the on-air layout never read, so the clock and the
+  next card were drawn regardless. Removed from the studio because nothing consumed them: "Show
+  schedule teaser", "Show queue preview" with its count, the website-embed and widget layer kinds
+  (the renderer cannot draw an external page and there is no browser overlay), and the engagement
+  "Chat mode", "Style" and "Alert position". Stored values stay where they are; the API keeps
+  accepting the fields. The library upload accepts exactly the formats the worker's scan ingests —
+  it used to take `.avi` and four audio types that were copied to disk and then ignored.
+
 - The scene studio was unusable on any screen, and the pixel baseline had frozen the fault as the
   expected picture. `.scene-designer-preview` is a grid, a grid's rows stretch by default, and the
   column was as tall as the form beside it — some 4700px — so the "Scene Preview" label sat at the

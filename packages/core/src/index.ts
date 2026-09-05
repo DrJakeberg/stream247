@@ -1167,6 +1167,14 @@ export const OVERLAY_SCENE_CUSTOM_WIDGET_DATA_KEYS: OverlayOptionDefinition<Over
   }
 ];
 
+/**
+ * The file types the worker's library scan turns into playable assets. One list, used by the scan
+ * (apps/worker local-library) and by the upload route and form (apps/web): the upload used to accept
+ * .avi and four audio types the scan never picked up, so those files were copied to disk and then
+ * silently ignored. Audio beds are ordinary library assets — a video container carrying the sound.
+ */
+export const LIBRARY_MEDIA_FILE_EXTENSIONS = [".mp4", ".mkv", ".mov", ".m4v", ".webm"] as const;
+
 export const OVERLAY_SCENE_CUSTOM_LAYER_KINDS: OverlayOptionDefinition<OverlaySceneCustomLayerKind>[] = [
   {
     id: "text",

@@ -1,3 +1,4 @@
+import { LIBRARY_MEDIA_FILE_EXTENSIONS } from "@stream247/core";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -11,7 +12,7 @@ export function buildLocalLibraryFolderPath(filePath: string, mediaRoot: string)
   return relativeDirectory === "." ? "" : relativeDirectory;
 }
 
-export const MEDIA_FILE_EXTENSIONS = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm"]);
+export const MEDIA_FILE_EXTENSIONS = new Set<string>(LIBRARY_MEDIA_FILE_EXTENSIONS);
 
 /** The slice of `fs.Dirent` the walk needs, so tests can drive it without a real filesystem. */
 export type MediaDirectoryEntry = { name: string; isDirectory: () => boolean };

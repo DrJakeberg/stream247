@@ -341,6 +341,14 @@ export type OverlayScenePayloadView = {
   tickerRotateSeconds?: number;
   emergencyBanner: string;
   timeZone: string;
+  /**
+   * The studio's "Show clock" and "Show next item". Until M60 these only flipped a flag in the scene
+   * definition that nothing on air read — the clock and the next card were drawn regardless — so an
+   * operator switched a toggle and saw no change. Optional because payloads cached before M60 do not
+   * carry them; absent means drawn, which is what every earlier frame did.
+   */
+  showClock?: boolean;
+  showNextItem?: boolean;
 };
 
 /** Messages in one ticker text are separated by a middot or a line break. */
@@ -862,6 +870,9 @@ function buildNextCard(
   fontFamily: string,
   fit?: PanelFit
 ): OverlayLayoutNode | null {
+  if (payload.showNextItem === false) {
+    return null;
+  }
   const nextTitle = clampOverlayText(payload.nextTitle, 44);
   if (!nextTitle) {
     return null;
@@ -2098,7 +2109,8 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
   // its shape whichever of the two has left it.
   const emptyCell = (): OverlayLayoutNode => ({ type: "div", props: { style: { display: "flex" } } });
   const bannerCell = banner ? routed("banner", buildBanner(banner, scale, fontFamily, fitFor("banner"))) : null;
-  const clockCell = routed("clock", clockChip);
+  // Hidden clock keeps its cell: the top bar is a space-between row and the banner sits on its left.
+  const clockCell = payload.showClock === false ? null : routed("clock", clockChip);
 
   const topBar: OverlayLayoutNode[] = [
     row({ alignItems: "flex-start", justifyContent: "space-between", width: "100%", gap: px(24) }, [

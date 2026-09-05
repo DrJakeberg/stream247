@@ -101,6 +101,33 @@ describe("clampOverlayText", () => {
   });
 });
 
+describe("scene show/hide toggles (M60)", () => {
+  // Until M60 these two toggles flipped a flag in the scene definition that the layout never read;
+  // the operator switched "Show clock" off and the clock stayed. The frame must now follow them,
+  // and a payload without the fields — cached before M60 — must still draw both.
+  const options = { width: 1920, height: 1080, now: new Date("2026-08-18T18:10:00.000Z") };
+
+  it("drops the clock when showClock is false and keeps it otherwise", () => {
+    const shown = collectText(buildOverlaySceneLayout({ payload: createPayload({ showClock: true }) }, options));
+    const legacy = collectText(buildOverlaySceneLayout({ payload: createPayload() }, options));
+    const hidden = collectText(buildOverlaySceneLayout({ payload: createPayload({ showClock: false }) }, options));
+    expect(shown).toContain("20:10");
+    expect(legacy).toContain("20:10");
+    expect(hidden).not.toContain("20:10");
+  });
+
+  it("drops the next card when showNextItem is false and keeps it otherwise", () => {
+    const shown = collectText(buildOverlaySceneLayout({ payload: createPayload({ showNextItem: true }) }, options));
+    const legacy = collectText(buildOverlaySceneLayout({ payload: createPayload() }, options));
+    const hidden = collectText(buildOverlaySceneLayout({ payload: createPayload({ showNextItem: false }) }, options));
+    expect(shown).toContain("Retro Night");
+    expect(legacy).toContain("Retro Night");
+    expect(hidden).not.toContain("Retro Night");
+    // The clock is untouched by the next-item toggle.
+    expect(hidden).toContain("20:10");
+  });
+});
+
 describe("formatOverlayClock", () => {
   it("renders in the channel timezone", () => {
     expect(formatOverlayClock(new Date("2026-08-18T18:10:00.000Z"), "Europe/Berlin")).toBe("20:10");

@@ -1,6 +1,6 @@
 "use client";
 
-import type { EngagementChatDisplayMode, EngagementOverlayPosition, EngagementOverlayStyle } from "@stream247/core";
+import type { EngagementOverlayPosition } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { InfoTip } from "@/components/ui/InfoTip";
@@ -8,9 +8,7 @@ import { useToast } from "@/components/ui/Toast";
 import type { EngagementSettingsRecord } from "@/lib/server/state";
 import { humanizeOptionValue } from "@/lib/option-labels";
 
-const chatModes: EngagementChatDisplayMode[] = ["quiet", "active", "flood"];
 const positions: EngagementOverlayPosition[] = ["bottom-left", "bottom-right", "top-left", "top-right"];
-const styles: EngagementOverlayStyle[] = ["compact", "card"];
 
 export function EngagementSettingsForm({ engagement }: { engagement: EngagementSettingsRecord }) {
   const [chatEnabled, setChatEnabled] = useState(engagement.chatEnabled);
@@ -22,10 +20,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
   const [smallGroupModeEnabled, setSmallGroupModeEnabled] = useState(engagement.smallGroupModeEnabled);
   const [crowdModeEnabled, setCrowdModeEnabled] = useState(engagement.crowdModeEnabled);
   const [gameWindowMinutes, setGameWindowMinutes] = useState(String(engagement.gameWindowMinutes));
-  const [chatMode, setChatMode] = useState(engagement.chatMode);
   const [chatPosition, setChatPosition] = useState(engagement.chatPosition);
-  const [alertPosition, setAlertPosition] = useState(engagement.alertPosition);
-  const [style, setStyle] = useState(engagement.style);
   const [maxMessages, setMaxMessages] = useState(String(engagement.maxMessages));
   const [rateLimitPerMinute, setRateLimitPerMinute] = useState(String(engagement.rateLimitPerMinute));
   const [error, setError] = useState("");
@@ -47,10 +42,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
         smallGroupModeEnabled,
         crowdModeEnabled,
         gameWindowMinutes,
-        chatMode,
         chatPosition,
-        alertPosition,
-        style,
         maxMessages,
         rateLimitPerMinute
       })
@@ -94,31 +86,11 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
               <span className="label-with-info">Enable chat overlay<InfoTip text="Draws the live Twitch chat rail on the on-air picture. Off, the rail leaves the air; the Twitch chat connection itself is kept only while something else still needs it — moderation, chat interaction (votes, skips, requests) or a chat-game scene layer (snake, minesweeper). Also needs the “Chat on the stream” switch in admin settings, and the chatter-participation game below cannot run without it." /></span>
             </label>
             <label>
-              <span className="label">Chat mode</span>
-              <select onChange={(event) => setChatMode(event.target.value as EngagementChatDisplayMode)} value={chatMode}>
-                {chatModes.map((mode) => (
-                  <option key={mode} value={mode}>
-                    {humanizeOptionValue(mode)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
               <span className="label label-with-info">Chat position<InfoTip text="Corner of the picture the chat rail sits in and grows from: top corners grow downward, bottom corners upward. Until you place the chat panel yourself, its default box follows this corner too." /></span>
               <select onChange={(event) => setChatPosition(event.target.value as EngagementOverlayPosition)} value={chatPosition}>
                 {positions.map((position) => (
                   <option key={position} value={position}>
                     {humanizeOptionValue(position)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span className="label">Style</span>
-              <select onChange={(event) => setStyle(event.target.value as EngagementOverlayStyle)} value={style}>
-                {styles.map((nextStyle) => (
-                  <option key={nextStyle} value={nextStyle}>
-                    {humanizeOptionValue(nextStyle)}
                   </option>
                 ))}
               </select>
@@ -159,16 +131,6 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
                 type="checkbox"
               />
               <span className="label-with-info">Enable channel point redemption alerts<InfoTip text="Adds custom-reward redemption notifications to the alert subscriptions and to the event log. Only takes effect while follow and subscription alerts are on." /></span>
-            </label>
-            <label>
-              <span className="label">Alert position</span>
-              <select onChange={(event) => setAlertPosition(event.target.value as EngagementOverlayPosition)} value={alertPosition}>
-                {positions.map((position) => (
-                  <option key={position} value={position}>
-                    {humanizeOptionValue(position)}
-                  </option>
-                ))}
-              </select>
             </label>
           </div>
           <p className="subtle">

@@ -303,8 +303,8 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 {snapshot.overlay.showNextItem ? "yes" : "no"} · Clock {snapshot.overlay.showClock ? "yes" : "no"}
               </div>
               <div className="subtle">
-                Queue preview {snapshot.overlay.showQueuePreview ? `yes (${snapshot.overlay.queuePreviewCount})` : "no"} · Current category{" "}
-                {snapshot.overlay.showCurrentCategory ? "yes" : "no"} · Source label {snapshot.overlay.showSourceLabel ? "yes" : "no"}
+                Current category {snapshot.overlay.showCurrentCategory ? "yes" : "no"} · Source label{" "}
+                {snapshot.overlay.showSourceLabel ? "yes" : "no"}
               </div>
               <div className="subtle">
                 Active scene {describeScenePreset(snapshot.activeScene.resolvedPresetId)} · layers{" "}

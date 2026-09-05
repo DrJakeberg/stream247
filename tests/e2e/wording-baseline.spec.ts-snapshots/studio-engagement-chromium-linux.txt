@@ -40,19 +40,12 @@ CHAT OVERLAY
 Configure the on-stream Twitch chat rail that renders inside the on-air overlay. The chat connection itself stays up for moderator check-ins, votes and the chat game whether or not the rail is shown.
 Enable chat overlay
 i
-CHAT MODE
-Quiet
-Active
-Flood
 CHAT POSITION
 i
 Bottom left
 Bottom right
 Top left
 Top right
-STYLE
-Compact
-Card
 MAX CHAT MESSAGES
 i
 RATE LIMIT PER MINUTE
@@ -65,11 +58,6 @@ Enable bits / cheer alerts
 i
 Enable channel point redemption alerts
 i
-ALERT POSITION
-Bottom left
-Bottom right
-Top left
-Top right
 These switches are still gated by the chat and alert feature switches in the admin settings, which fall back to the deployment environment when left on their default.
 Bits and channel point alerts also require one Twitch reconnect after M32 so the broadcaster token includes the new scopes.
 CHATTER-PARTICIPATION GAME

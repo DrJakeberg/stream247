@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { LIBRARY_MEDIA_FILE_EXTENSIONS } from "@stream247/core";
 import { useState, useTransition } from "react";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { useToast } from "@/components/ui/Toast";
@@ -44,8 +45,8 @@ export function LibraryUploadForm() {
       }}
     >
       <label>
-        <span className="label label-with-info">Media files<InfoTip text="Copied into the channel's media library; video files (mp4, mkv, mov, m4v, webm) become playable assets on the worker's next library scan, usually within a few minutes, while audio and avi files are stored but not picked up. Several files can be picked at once, and a file whose name is already taken is stored under a new name rather than replacing the old one." /></span>
-        <input accept=".mp4,.mkv,.mov,.m4v,.webm,.avi,.mp3,.aac,.flac,.wav" multiple name="files" required type="file" />
+        <span className="label label-with-info">Media files<InfoTip text="Copied into the channel's media library and turned into playable assets by the worker's next library scan, usually within a few minutes. Only the container formats the scan ingests are accepted — mp4, mkv, mov, m4v, webm — so nothing lands on disk that the channel could not play. Several files can be picked at once; a name already taken is stored under a new one." /></span>
+        <input accept={LIBRARY_MEDIA_FILE_EXTENSIONS.join(",")} multiple name="files" required type="file" />
       </label>
       <label>
         <span className="label label-with-info">Optional subfolder<InfoTip text="Puts the files into this folder inside the media library instead of the default folder named uploads; slashes create nested folders and unusual characters become dashes. In the asset library the folder can be used as a filter, or as the grouping when you switch grouping to folder." /></span>

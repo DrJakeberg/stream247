@@ -154,12 +154,10 @@ Asset, insert, standby, and reconnect modes can now each resolve to different sc
 PANEL PLACEMENT
 Every panel where the layout puts it
 POSITIONED LAYERS
-Add custom text, logo, image, website, widget, or chat-game layers on top of the preset layout. Text layers can switch to safe local font stacks, metadata widgets can read from the canonical scene payload, and browser frames remain limited by each provider's iframe and CSP rules.
+Add custom text, logo, image, video-source or chat-game layers on top of the preset layout. Text layers can switch to safe local font stacks. Website and widget layers are gone from here: the on-air renderer cannot draw an external page, and there is no separate browser overlay, so they never appeared anywhere.
 Add Text Layer
 Add Logo Layer
 Add Image Layer
-Add Website Embed
-Add Widget Embed
 Add Chat Game
 Add Video Source
 No positioned layers yet. Add one when you need custom text, logos, stills, or embed-safe widgets.
@@ -175,13 +173,9 @@ EMERGENCY BANNER
 i
 Show clock
 Show next item
-Show schedule teaser
 Show current category
 i
 Show source label
-i
-Show queue preview
-QUEUE PREVIEW COUNT
 i
 LIVE SCENE
 Replay Lower Third

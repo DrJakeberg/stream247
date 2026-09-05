@@ -14,7 +14,9 @@ const ownerEmail = process.env.E2E_OWNER_EMAIL || "owner@example.com";
 const ownerPassword = process.env.E2E_OWNER_PASSWORD || "stream247-owner-pass";
 
 const ENGAGEMENT_PATH = "/studio?tab=engagement";
-const CHAT_MODE_LABEL = "Chat mode";
+// "Chat mode" used to be the subject here; M60 removed it because nothing read the value. Chat position
+// is read by the layout (the corner the chat panel hangs in), so it is the control that must round-trip.
+const CHAT_MODE_LABEL = "Chat position";
 
 async function signIn(page: Page) {
   await page.goto("/login");
@@ -38,7 +40,7 @@ async function save(page: Page) {
   expect(response.ok(), `saving returned ${response.status()}`).toBe(true);
 }
 
-test.describe("changing the chat mode", () => {
+test.describe("changing the chat position", () => {
   test("submits the stored value, not the label shown", async ({ page }) => {
     test.setTimeout(90_000);
     await page.setViewportSize({ width: 1440, height: 1600 });
@@ -49,7 +51,7 @@ test.describe("changing the chat mode", () => {
     await expect(select).toBeVisible();
     const original = await select.inputValue();
 
-    // The options read "Quiet" and "Flood" but have to submit "quiet" and "flood".
+    // The options read "Bottom left" but have to submit "bottom-left".
     const options = await select.locator("option").evaluateAll((nodes) =>
       nodes.map((node) => ({
         value: (node as HTMLOptionElement).value,
@@ -62,7 +64,7 @@ test.describe("changing the chat mode", () => {
     }
 
     const target = options.map((option) => option.value).find((value) => value !== original);
-    expect(target, "the fixture should offer more than one mode").toBeTruthy();
+    expect(target, "the fixture should offer more than one position").toBeTruthy();
 
     try {
       await select.selectOption(target!);

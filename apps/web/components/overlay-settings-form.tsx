@@ -1294,12 +1294,12 @@ export function OverlaySettingsForm(props: {
             <div className="item">
               <span className="label">Positioned layers</span>
               <div className="subtle">
-                Add custom text, logo, image, website, widget, or chat-game layers on top of the preset layout. Text layers can switch to safe
-                local font stacks, metadata widgets can read from the canonical scene payload, and browser frames remain limited by each
-                provider&apos;s iframe and CSP rules.
+                Add custom text, logo, image, video-source or chat-game layers on top of the preset layout. Text layers can switch to
+                safe local font stacks. Website and widget layers are gone from here: the on-air renderer cannot draw an external page,
+                and there is no separate browser overlay, so they never appeared anywhere.
               </div>
               <div className="inline-form" style={{ marginTop: 12 }}>
-                {OVERLAY_SCENE_CUSTOM_LAYER_KINDS.map((layerKind) => (
+                {OVERLAY_SCENE_CUSTOM_LAYER_KINDS.filter((layerKind) => layerKind.id !== "embed" && layerKind.id !== "widget").map((layerKind) => (
                   <button
                     className="button secondary"
                     disabled={isPending}
@@ -1602,106 +1602,9 @@ export function OverlaySettingsForm(props: {
                       ) : null}
 
                       {layer.kind === "embed" || layer.kind === "widget" ? (
-                        <div className="form-grid" style={{ marginTop: 12 }}>
-                          {layer.kind === "widget" ? (
-                            <label>
-                              <span className="label">Widget mode</span>
-                              <select
-                                onChange={(event) =>
-                                  updateCustomLayer(layer.id, (current) =>
-                                    current.kind === "widget"
-                                      ? { ...current, widgetMode: event.target.value === "metadata" ? "metadata" : "embed" }
-                                      : current
-                                  )
-                                }
-                                value={layer.widgetMode}
-                              >
-                                <option value="embed">Browser widget frame</option>
-                                <option value="metadata">Scene data card</option>
-                              </select>
-                              <span className="subtle">
-                                Metadata cards render from the canonical Scene payload. Browser widget frames still depend on provider iframe
-                                support.
-                              </span>
-                            </label>
-                          ) : null}
-                          {layer.kind === "widget" && layer.widgetMode === "metadata" ? (
-                            <>
-                              <label>
-                                <span className="label">Scene data</span>
-                                <select
-                                  onChange={(event) =>
-                                    updateCustomLayer(layer.id, (current) =>
-                                      current.kind === "widget"
-                                        ? { ...current, widgetDataKey: event.target.value as OverlaySceneCustomWidgetDataKey }
-                                        : current
-                                    )
-                                  }
-                                  value={layer.widgetDataKey}
-                                >
-                                  {OVERLAY_SCENE_CUSTOM_WIDGET_DATA_KEYS.map((entry) => (
-                                    <option key={entry.id} value={entry.id}>
-                                      {entry.label}
-                                    </option>
-                                  ))}
-                                </select>
-                                <span className="subtle">
-                                  {OVERLAY_SCENE_CUSTOM_WIDGET_DATA_KEYS.find((entry) => entry.id === layer.widgetDataKey)?.description}
-                                </span>
-                              </label>
-                              <label>
-                                <span className="label">Widget label override</span>
-                                <input
-                                  onChange={(event) =>
-                                    updateCustomLayer(layer.id, (current) =>
-                                      current.kind === "widget" ? { ...current, title: event.target.value } : current
-                                    )
-                                  }
-                                  placeholder="Optional label override"
-                                  value={layer.title}
-                                />
-                              </label>
-                              <div className="subtle" style={{ gridColumn: "1 / -1" }}>
-                                This widget stays inside the published Scene contract and mirrors browser plus on-air scene data without a
-                                remote iframe.
-                              </div>
-                            </>
-                          ) : null}
-                          {layer.kind === "embed" || (layer.kind === "widget" && layer.widgetMode === "embed") ? (
-                            <>
-                          <label>
-                            <span className="label label-with-info">Embed URL<InfoTip text="Address of the page to frame in the browser overlay; the badge below is a guess from the address alone (a short list of known providers), not a check of the site. The on-air picture cannot draw a website, so nothing from this address reaches the channel." /></span>
-                            <input
-                              onChange={(event) =>
-                                updateCustomLayer(layer.id, (current) =>
-                                  current.kind === "embed" || current.kind === "widget" ? { ...current, url: event.target.value } : current
-                                )
-                              }
-                              placeholder="https://example.com/embed"
-                              value={layer.url}
-                            />
-                            <span className="subtle">
-                              {describeOverlaySceneFrameSupport(layer.url).badgeLabel} · {describeOverlaySceneFrameSupport(layer.url).providerLabel}
-                            </span>
-                          </label>
-                          <label>
-                            <span className="label">Frame title</span>
-                            <input
-                              onChange={(event) =>
-                                updateCustomLayer(layer.id, (current) =>
-                                  current.kind === "embed" || current.kind === "widget" ? { ...current, title: event.target.value } : current
-                                )
-                              }
-                              value={layer.title}
-                            />
-                          </label>
-                          <div className="subtle" style={{ gridColumn: "1 / -1" }}>
-                            {describeOverlaySceneFrameSupport(layer.url).guidance} Embedded frames render in the
-                            browser overlay page only — the on-air picture cannot draw external sites, so treat
-                            this layer as preview content.
-                          </div>
-                            </>
-                          ) : null}
+                        <div className="subtle" style={{ marginTop: 12 }}>
+                          This layer is not drawn on air: the renderer cannot embed an external page and there is no browser
+                          overlay any more. It stays in the scene definition; remove it or leave it, the picture is the same.
                         </div>
                       ) : null}
                       {layer.kind === "game" ? (
@@ -1845,14 +1748,6 @@ export function OverlaySettingsForm(props: {
             </label>
             <label className="toggle-row">
               <input
-                checked={draft.showScheduleTeaser}
-                onChange={(event) => setDraftField("showScheduleTeaser", event.target.checked)}
-                type="checkbox"
-              />
-              <span>Show schedule teaser</span>
-            </label>
-            <label className="toggle-row">
-              <input
                 checked={draft.showCurrentCategory}
                 onChange={(event) => setDraftField("showCurrentCategory", event.target.checked)}
                 type="checkbox"
@@ -1862,20 +1757,6 @@ export function OverlaySettingsForm(props: {
             <label className="toggle-row">
               <input checked={draft.showSourceLabel} onChange={(event) => setDraftField("showSourceLabel", event.target.checked)} type="checkbox" />
               <span className="label-with-info">Show source label<InfoTip text="Adds the name of the source the current programme came from to the small line under the headline in the lower third, while a regular asset or the live bridge is on air." /></span>
-            </label>
-            <label className="toggle-row">
-              <input checked={draft.showQueuePreview} onChange={(event) => setDraftField("showQueuePreview", event.target.checked)} type="checkbox" />
-              <span>Show queue preview</span>
-            </label>
-            <label>
-              <span className="label label-with-info">Queue preview count<InfoTip text="How many upcoming titles, from 1 to 5, are listed in the queue line of the text-only fallback (the plain lines the encoder draws when no scene picture is available) and on the standby slate." /></span>
-              <input
-                max={5}
-                min={1}
-                onChange={(event) => setDraftField("queuePreviewCount", Number(event.target.value) || 1)}
-                type="number"
-                value={draft.queuePreviewCount}
-              />
             </label>
           </div>
         </div>

@@ -119,7 +119,7 @@ are not retroactively revoked.
 
 ## What Is Not Done Yet
 
-- Scene now supports positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, built-in typography presets, and conservative local font-stack overrides, but deeper remote-widget compatibility still depends on CSP / iframe rules and broader cloud-style composition remains partial.
+- Scene supports positioned text/logo/image/video-source layers, built-in typography presets, and conservative local font-stack overrides. Website-embed and widget layers were removed from the studio in M60: the on-air renderer cannot draw an external page and there is no separate browser overlay, so they never reached the picture. Broader cloud-style composition remains partial.
 - richer multi-scene composition inside the playout runtime beyond the current scene-presets + draft/publish workflow
 - more advanced playout transitions, stronger continuity semantics, and less restart-heavy normal switchovers beyond the current staged output recovery model
 - deeper per-output platform guidance and recovery automation beyond the current failure attribution, cooldown visibility, and staged recovery controls
