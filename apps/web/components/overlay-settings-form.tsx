@@ -3,7 +3,7 @@
 import {
   OVERLAY_SCENE_CUSTOM_LAYER_KINDS,
   OVERLAY_SCENE_CUSTOM_TEXT_FONT_MODES,
-  OVERLAY_SCENE_CUSTOM_WIDGET_DATA_KEYS,
+
   OVERLAY_SCENE_LAYERS,
   OVERLAY_PANEL_ANCHORS,
   OVERLAY_SCENE_PRESETS,
@@ -17,7 +17,7 @@ import {
   buildOverlayScenePayload,
   deriveDefaultPlacements,
   overlayTickerMessages,
-  describeOverlaySceneFrameSupport,
+
   resolveActiveOverlayNamedSceneId,
   resolveOverlayHeadlineForQueueKind,
   resolveOverlayNamedSceneCustomLayers,
@@ -31,7 +31,7 @@ import {
   type OverlaySceneCustomTextFontMode,
   type OverlaySceneCustomTextTone,
   type OverlaySceneCustomLayerKind,
-  type OverlaySceneCustomWidgetDataKey,
+
   type OverlaySceneLayerKind
 } from "@stream247/core";
 import { useRouter } from "next/navigation";
@@ -1294,7 +1294,7 @@ export function OverlaySettingsForm(props: {
             <div className="item">
               <span className="label">Positioned layers</span>
               <div className="subtle">
-                Add custom text, logo, image, video-source or chat-game layers on top of the preset layout. Text layers can switch to
+                Add custom text, logo, image, video source or chat game layers on top of the preset layout. Text layers can switch to
                 safe local font stacks. Website and widget layers are gone from here: the on-air renderer cannot draw an external page,
                 and there is no separate browser overlay, so they never appeared anywhere.
               </div>

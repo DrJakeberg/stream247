@@ -154,7 +154,7 @@ Asset, insert, standby, and reconnect modes can now each resolve to different sc
 PANEL PLACEMENT
 Every panel where the layout puts it
 POSITIONED LAYERS
-Add custom text, logo, image, video-source or chat-game layers on top of the preset layout. Text layers can switch to safe local font stacks. Website and widget layers are gone from here: the on-air renderer cannot draw an external page, and there is no separate browser overlay, so they never appeared anywhere.
+Add custom text, logo, image, video source or chat game layers on top of the preset layout. Text layers can switch to safe local font stacks. Website and widget layers are gone from here: the on-air renderer cannot draw an external page, and there is no separate browser overlay, so they never appeared anywhere.
 Add Text Layer
 Add Logo Layer
 Add Image Layer

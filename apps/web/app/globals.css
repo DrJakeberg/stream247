@@ -741,7 +741,7 @@ textarea {
   bottom: calc(100% + 8px);
   z-index: 20;
   width: max-content;
-  max-width: 320px;
+  max-width: min(320px, 60vw);
   padding: 10px 12px;
   border: 1px solid var(--line-subtle);
   border-radius: 12px;
@@ -757,16 +757,16 @@ textarea {
   text-align: left;
   white-space: normal;
   overflow-wrap: anywhere;
-  opacity: 0;
-  visibility: hidden;
+  /* display, not visibility: a hidden-but-laid-out bubble still counts towards the document's scroll
+     width. Tips near the right edge widened the studio page to 1629px at a 1440px viewport with
+     nothing visible past the edge — the pixel baseline cannot see off-screen, the measured spec can. */
+  display: none;
   pointer-events: none;
-  transition: opacity 120ms ease;
 }
 
 .info-tip-button:hover::after,
 .info-tip-button:focus-visible::after {
-  opacity: 1;
-  visibility: visible;
+  display: block;
 }
 
 .empty-state {

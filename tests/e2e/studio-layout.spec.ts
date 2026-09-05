@@ -83,9 +83,10 @@ test.describe("scene studio layout", () => {
     expect(description).toBeTruthy();
     expect(description).toMatch(/scene/i);
     await expect(first).toHaveAttribute("data-tip", String(description));
-    const bubbleVisibility = () => first.evaluate((el) => getComputedStyle(el, "::after").visibility);
-    expect(await bubbleVisibility()).toBe("hidden");
+    // display, not visibility: a hidden-but-laid-out bubble still widened the page (workspace-layout.spec).
+    const bubbleDisplay = () => first.evaluate((el) => getComputedStyle(el, "::after").display);
+    expect(await bubbleDisplay()).toBe("none");
     await first.focus();
-    await expect.poll(bubbleVisibility).toBe("visible");
+    await expect.poll(bubbleDisplay).toBe("block");
   });
 });

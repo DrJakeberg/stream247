@@ -36,7 +36,7 @@ IMAGE="${E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.56.1-noble}"
 # loads, the snapshot fails with "140336 pixels are different" and a size mismatch, which says
 # nothing about the cause; the stability test fails with the text that changed. Same stack, same
 # container, so it costs one spec file rather than another run.
-SPEC="${DESIGN_BASELINE_SPEC:-tests/e2e/design-baseline.spec.ts tests/e2e/layout-stability.spec.ts tests/e2e/wording-baseline.spec.ts tests/e2e/control-density.spec.ts tests/e2e/scene-preset-interaction.spec.ts tests/e2e/scene-placement-drag.spec.ts tests/e2e/engagement-settings-interaction.spec.ts tests/e2e/link-targets.spec.ts tests/e2e/studio-layout.spec.ts}"
+SPEC="${DESIGN_BASELINE_SPEC:-tests/e2e/design-baseline.spec.ts tests/e2e/layout-stability.spec.ts tests/e2e/wording-baseline.spec.ts tests/e2e/control-density.spec.ts tests/e2e/scene-preset-interaction.spec.ts tests/e2e/scene-placement-drag.spec.ts tests/e2e/engagement-settings-interaction.spec.ts tests/e2e/link-targets.spec.ts tests/e2e/studio-layout.spec.ts tests/e2e/workspace-layout.spec.ts}"
 
 EXTRA_ARGS=""
 [ "${1:-}" = "--update" ] && EXTRA_ARGS="--update-snapshots"
