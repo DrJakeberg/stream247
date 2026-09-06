@@ -104,7 +104,10 @@ const SURFACES: Surface[] = [
   // library page was counted with nothing in it. Two assets bring two controls each. Of the fourteen
   // surfaces this is the only one whose count depended on that, which is why it is the only budget
   // that moved — but the number it replaces described an empty page, not a simpler one.
-  { name: "program-library", path: "/program?tab=library", maxControls: 35, primaryActions: 1 },
+  // 37, not 35: each seeded asset card's title is now a link to the asset's detail page (the small
+  // "Edit title, category, chapters" link below it was the only way in and a reader did not find
+  // it). Two cards, two links; the budget moves by exactly that.
+  { name: "program-library", path: "/program?tab=library", maxControls: 37, primaryActions: 1 },
   { name: "program-sources", path: "/program?tab=sources", maxControls: 30, primaryActions: 1 },
   // Three panels that save separately: chat and alerts, what chat is allowed to steer, and the
   // chat game. Each is its own task with its own save, which is the documented exception to the

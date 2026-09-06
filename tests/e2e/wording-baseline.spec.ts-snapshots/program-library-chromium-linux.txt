@@ -113,7 +113,7 @@ Folder: root · Tags: none
 Included in programming · No global fallback flag
 No curated set
 /app/data/media/dev/abendprogramm-13.mp4
-Open asset detail
+Edit title, category, chapters
 Select asset
 <asset>
 Local Media Library · ready · 60m
@@ -122,4 +122,4 @@ Folder: root · Tags: none
 Included in programming · No global fallback flag
 No curated set
 /app/data/media/dev/abendprogramm-12.mp4
-Open asset detail
+Edit title, category, chapters

@@ -13,7 +13,6 @@ import {
   isReplayTitlePrefix,
   parseAssetHashtagsJson
 } from "@/lib/asset-metadata";
-import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { describePlayoutReason } from "@/lib/playout-reason";
 import { getChannelStatusLabel } from "@/lib/channel-status";
 import {
@@ -245,7 +244,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
             </div>
             {sourceSnapshot.latestRun?.errorMessage ? <div className="danger">{sourceSnapshot.latestRun.errorMessage}</div> : null}
             {source ? (
-              <Link className="subtle-link" href={buildWorkspaceHref("program", "sources", { sourceId: source.id })}>
+              <Link className="subtle-link" href={`/sources/${source.id}`}>
                 Open source detail
               </Link>
             ) : null}

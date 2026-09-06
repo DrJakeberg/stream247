@@ -73,9 +73,10 @@ test.describe("links go somewhere", () => {
         //
         // Two earlier versions of this got it wrong in opposite directions. Checking for the login
         // page missed the case entirely: signed in, /setup sends you to the workspace rather than
-        // bouncing you. Comparing paths then flagged /assets/<id>, which redirects to
-        // /program?tab=library&assetId=<id> — the detail view moved into the workspace and carries
-        // the id with it. That is a route being tidied, not a link going nowhere.
+        // bouncing you. Comparing paths then flagged /assets/<id>, which at the time redirected into
+        // /program?tab=library&assetId=<id>. That redirect is gone since 2026-09-06 — the library tab
+        // never read the id, so the "detail view" was the plain list — and the detail pages own those
+        // routes again. The rule stays: a redirect is a dead end only when the subject is dropped.
         //
         // What separates them is whether the destination still knows what you were asking about.
         const landed = new URL(page.url());

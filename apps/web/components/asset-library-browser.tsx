@@ -694,7 +694,14 @@ export function AssetLibraryBrowser(props: {
                         />
                         <span>Select asset</span>
                       </label>
-                      <strong className="truncate-title">{asset.title}</strong>
+                      {/* The title is the thing people click to open a video. It was plain text and the way in
+                          was a small "Open asset detail" line further down; a reader of the card reported that
+                          clicking the title did nothing. */}
+                      <strong className="truncate-title">
+                        <Link className="asset-title-link" href={`/assets/${asset.id}`}>
+                          {asset.title}
+                        </Link>
+                      </strong>
                       <div className="subtle">
                         {sourceName} · {asset.status} · {formatDuration(asset)}
                       </div>
@@ -725,7 +732,7 @@ export function AssetLibraryBrowser(props: {
                       <div className="subtle asset-path">{asset.path}</div>
                       <div>
                         <Link className="subtle-link" href={`/assets/${asset.id}`}>
-                          Open asset detail
+                          Edit title, category, chapters
                         </Link>
                       </div>
                     </div>

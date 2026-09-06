@@ -1345,6 +1345,19 @@ button.collection-chip {
   white-space: nowrap;
 }
 
+/* The asset title in a library card is the link to the asset's detail page. It keeps the title's
+   colour so the card still reads as a card, and shows the underline on hover and focus so it is
+   discoverable as a link — the small text link below it was the only way in and went unnoticed. */
+.asset-title-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.asset-title-link:hover,
+.asset-title-link:focus-visible {
+  text-decoration: underline;
+}
+
 .line-clamp-2,
 .item .subtle,
 .asset-card-body .subtle,

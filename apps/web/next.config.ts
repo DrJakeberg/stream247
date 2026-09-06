@@ -52,6 +52,10 @@ const nextConfig: NextConfig = {
         destination: buildWorkspaceHref("program", "pools"),
         permanent: false
       },
+      // /assets/:id and /sources/:id are NOT redirected: they are the detail pages. Until 2026-09-06 they
+      // were sent to the library/sources tab with ?assetId=/?sourceId=, which nothing read, so every
+      // "Open asset detail" link landed back on the list. program/page.tsx forwards those old query
+      // links to the detail pages instead.
       {
         source: "/library",
         destination: buildWorkspaceHref("program", "library"),
@@ -60,16 +64,6 @@ const nextConfig: NextConfig = {
       {
         source: "/sources",
         destination: buildWorkspaceHref("program", "sources"),
-        permanent: false
-      },
-      {
-        source: "/assets/:id",
-        destination: buildWorkspaceHref("program", "library", { assetId: ":id" }),
-        permanent: false
-      },
-      {
-        source: "/sources/:id",
-        destination: buildWorkspaceHref("program", "sources", { sourceId: ":id" }),
         permanent: false
       },
       {
