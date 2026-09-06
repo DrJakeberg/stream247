@@ -302,11 +302,39 @@ export function parseDiscontinuityOffsetLine(line: string): { stream: "video" | 
   return { stream: match[1] === "vist" ? "video" : "audio", offsetUs };
 }
 
+/**
+ * One stderr chunk, not one line.
+ *
+ * ffmpeg writes both streams' discontinuity lines back to back, and Node hands them over in a single
+ * `data` chunk: at the 2026-09-06 03:44 seam the video and audio lines arrived together, separated by
+ * a newline. The pattern is not global, so matching the chunk as one string found the video line and
+ * never the audio one, no pair ever closed, and the seam that this instrumentation exists to measure
+ * was logged as nothing at all. Every line in the chunk is looked at; the last pair to close is the
+ * one reported, which for a chunk carrying one seam is that seam.
+ */
 export function observeSeamOffsetLine(
+  state: UplinkSeamState,
+  chunk: string,
+  nowMs: number,
+  windowMs: number = UPLINK_SEAM_PAIRING_WINDOW_MS
+): { state: UplinkSeamState; seam: UplinkSeamObservation | null } {
+  let carried = state;
+  let lastSeam: UplinkSeamObservation | null = null;
+  for (const oneLine of chunk.split("\n")) {
+    const result = observeSeamOffsetSingleLine(carried, oneLine, nowMs, windowMs);
+    carried = result.state;
+    if (result.seam) {
+      lastSeam = result.seam;
+    }
+  }
+  return { state: carried, seam: lastSeam };
+}
+
+function observeSeamOffsetSingleLine(
   state: UplinkSeamState,
   line: string,
   nowMs: number,
-  windowMs: number = UPLINK_SEAM_PAIRING_WINDOW_MS
+  windowMs: number
 ): { state: UplinkSeamState; seam: UplinkSeamObservation | null } {
   const parsed = parseDiscontinuityOffsetLine(line);
   if (!parsed) {

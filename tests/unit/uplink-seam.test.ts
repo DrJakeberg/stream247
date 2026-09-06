@@ -62,4 +62,20 @@ describe("observeSeamOffsetLine", () => {
     const again = observeSeamOffsetLine(paired.state, VIDEO.replace("11098217998", "11098218001"), 200);
     expect(again.seam).toBeNull();
   });
+
+  it("measures the seam when ffmpeg puts both streams in one stderr chunk", () => {
+    // Verbatim from the DUT at 2026-09-06 03:44:11, the first boundary under v2.0.0-rc.1: one chunk,
+    // two lines. Matching the chunk as a single string saw only the video line, so no pair closed and
+    // the seam went unmeasured — the numbers in this test had to be parsed out of the raw log by hand.
+    const chunk =
+      "[vist#0:0/h264 @ 0x7a597f7b3e00] timestamp discontinuity (stream id=0): 69543734355, new offset= -69543734355\n" +
+      "[aist#0:1/aac @ 0x7a598098ad00] timestamp discontinuity (stream id=0): -6264642, new offset= -69537469713";
+
+    const { seam } = observeSeamOffsetLine(createUplinkSeamState(), chunk, 1_000);
+
+    expect(seam).not.toBeNull();
+    expect(seam?.videoOffsetUs).toBe(-69543734355);
+    expect(seam?.audioOffsetUs).toBe(-69537469713);
+    expect(seam?.skewSeconds).toBeCloseTo(6.264642, 6);
+  });
 });
