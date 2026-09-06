@@ -36,7 +36,7 @@ services:
       retries: 5
       start_period: 20s
   web:
-    image: ${STREAM247_WEB_IMAGE:-ghcr.io/drjakeberg/stream247-web:v1.5.20}
+    image: ${STREAM247_WEB_IMAGE:-ghcr.io/drjakeberg/stream247-web:v1.5.47}
     restart: unless-stopped
     logging: *default-logging
     ports:
@@ -76,7 +76,7 @@ services:
       postgres:
         condition: service_healthy
   worker:
-    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.20}
+    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.47}
     restart: unless-stopped
     logging: *default-logging
     env_file:
@@ -115,7 +115,7 @@ services:
       - "1935:1935"
       - "8890:8890/udp"
   playout:
-    image: ${STREAM247_PLAYOUT_IMAGE:-ghcr.io/drjakeberg/stream247-playout:v1.5.20}
+    image: ${STREAM247_PLAYOUT_IMAGE:-ghcr.io/drjakeberg/stream247-playout:v1.5.47}
     restart: unless-stopped
     logging: *default-logging
     command: ["node", "apps/worker/dist/index.js", "playout"]
@@ -140,7 +140,7 @@ services:
       postgres:
         condition: service_healthy
   uplink:
-    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.20}
+    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v1.5.47}
     restart: unless-stopped
     logging: *default-logging
     command: ["node", "apps/worker/dist/index.js", "uplink"]

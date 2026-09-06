@@ -147,14 +147,15 @@ The one-page path from an empty host to a green channel, with the traps where th
    the password or remove `data/postgres` before real data exists.
 3. Optional now, or later in the wizard and `/settings`:
    - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`
-   - `TWITCH_STREAM_KEY`
-   - `CHANNEL_TIMEZONE`
+   - `TWITCH_STREAM_KEY` (later: the primary destination's stream key under `Live → Status`)
+   - `CHANNEL_TIMEZONE` (leave unset to let the wizard manage it)
 4. Start the stack:
    ```bash
    docker compose up -d
    ```
 5. Open:
-   - `http://localhost:3000/setup`
+   - `http://localhost:3000/setup` — from another machine use HTTPS; over plain HTTP the session cookie
+     only holds on `localhost`
 6. Create the owner account; that signs you in. The wizard then walks through the public URL,
    Twitch app credentials and the Twitch connection, each step skippable, and ends in a readiness
    checklist that links to wherever something is still missing.
@@ -226,7 +227,7 @@ docker compose --profile proxy up -d
 - `TWITCH_RTMP_URL`: defaults to `rtmp://live.twitch.tv/app`
 - `TWITCH_VOD_CACHE_ENABLED`: cache Twitch VOD media locally before playout; defaults to `1`
 - `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK`: allow direct remote Twitch playback if cache preparation fails; defaults to `0`
-- `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`: maximum time for a Twitch VOD cache download before playout falls back locally; production pins this to `8`
+- `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`: floor for a Twitch VOD cache download's time limit; default `120`. Since M62 the effective limit is at least the VOD's duration (24 h ceiling), so a long replay is not abandoned mid-download; the production example uses `1800`
 - `STREAM247_RELAY_ENABLED`: split program production from external publishing; defaults to `1` in the example Compose env
 - `STREAM247_UPLINK_INPUT_MODE`: `hls` keeps the uplink on a buffered local program feed; set `rtmp` only to roll back to the older MediaMTX relay input
 - `STREAM247_PROGRAM_FEED_DIR`: local HLS program-feed directory shared by `playout` and `uplink`
@@ -329,6 +330,7 @@ If you need `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`, follow this section o
 3. Register both redirect URLs:
    - `<APP_URL>/api/integrations/twitch/callback`
    - `<APP_URL>/api/auth/twitch/callback`
+   - `<APP_URL>/api/integrations/twitch/callback-broadcaster` (used by `Connect broadcast channel`)
 4. Copy the generated Client ID into `TWITCH_CLIENT_ID`.
 5. Generate, reveal, or regenerate the Client Secret and store it in `TWITCH_CLIENT_SECRET`.
 6. Restart the stack after changing `.env`.
@@ -605,7 +607,7 @@ Current validation covers:
 ### Twitch VOD stays on standby
 
 - keep `TWITCH_VOD_CACHE_ENABLED=1` so Twitch archives are downloaded and verified before playout
-- keep `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS=8` in production so slow Twitch cache prep yields to local/mixed fallback before the program feed stalls
+- `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS` is a floor, not a cap: the effective limit is at least the VOD's duration. An unfinished download does not stall the feed — the replay plays from Twitch directly for that airing (`TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK`)
 - inspect worker/playout incidents for Twitch cache failures
 - confirm the media volume has enough free space for `data/media/.stream247-cache/twitch`
 - use `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1` only as a temporary rollback because it restores unstable remote VOD playback

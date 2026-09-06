@@ -52,6 +52,10 @@ export function SetupInstanceForm(props: {
         label="Public app URL"
         onChange={setAppUrl}
         placeholder="https://stream.example.com"
+        // Saving an empty URL used to succeed silently and land on the same step; the wizard then printed
+        // localhost redirect URLs for Twitch. Required unless the environment pins the URL anyway.
+        required={!props.envAppUrl}
+        type="url"
         value={appUrl}
       />
       <Input

@@ -22,8 +22,8 @@ Most installations run with **two** accounts:
   emote-only automation and team sign-in.
 
 Everything in Stream247 works with **moderator** rights. Title, category and schedule sync are the
-exception: they need the broadcaster's own OAuth connection (`Connect Twitch` under `Live → Status`,
-later). Do not run the app as the broadcaster to "make it simpler" — you would hand the channel's
+exception: they need the broadcaster's own OAuth connection (`Connect broadcast channel` under
+`Live → Status`, section 5). Do not run the app as the broadcaster to "make it simpler" — you would hand the channel's
 own credentials to an always-on service. See `docs/twitch-setup.md`, *Broadcast Channel*.
 
 ## 2. Twitch application
@@ -33,6 +33,8 @@ base URL **exactly** (scheme, host, no trailing path differences):
 
 - `https://<your-host>/api/auth/twitch/callback`
 - `https://<your-host>/api/integrations/twitch/callback`
+- `https://<your-host>/api/integrations/twitch/callback-broadcaster` — used by `Connect broadcast channel`; without it
+  the broadcaster connect ends in Twitch's "redirect mismatch" even when the other two are right
 
 Note the Client ID and Client Secret. The full list of URLs is in `docs/twitch-setup.md`,
 *Required Redirect URLs*.
@@ -57,10 +59,11 @@ cp .env.production.example .env
 | Variable | What |
 |---|---|
 | `APP_URL` | the public base URL, `https://<your-host>` |
-| `APP_SECRET` | 32+ random characters; encrypts stored credentials — losing it means re-entering every secret |
+| `APP_SECRET` | 32+ random characters, set before the first start or left unset (then generated at `data/media/.stream247-app-secret` — back that file up together with PostgreSQL). Never change it later: it encrypts every stored credential and signs every session. To pin the generated one, copy the file's contents |
 | `POSTGRES_PASSWORD` and the same password inside `DATABASE_URL` | database access |
 | `TRAEFIK_HOST` (and `TRAEFIK_ACME_EMAIL` if the built-in Let's Encrypt profile is used) | the HTTPS front |
-| `TWITCH_STREAM_KEY` | if the channel should go on air immediately; can be entered later in `/settings` |
+| `TWITCH_STREAM_KEY` | if the channel should go on air immediately; otherwise entered later as the primary destination's stream key under `Live → Status → Output destinations` (`/settings` has no stream-key field) |
+| `CHANNEL_TIMEZONE` | leave unset to let the wizard manage it; the example file no longer pins a zone, because an env value always beats the wizard's field |
 
 Everything else — Twitch client credentials, SMTP, Discord — can be entered in the setup wizard or
 under `/settings` later, encrypted with the app secret.
@@ -85,16 +88,32 @@ docker compose --profile proxy up -d
 
 (without the built-in Traefik: `docker compose up -d`, and put your own HTTPS in front of port 3000).
 
+Create the owner immediately: until it exists, anyone who can reach the host can claim the workspace,
+so firewall the port if you cannot open the browser right away. Over plain HTTP a sign-in only holds on
+`localhost`; from any other machine use HTTPS, or the session cookie is dropped and every sign-in bounces
+back to `/login` without a message.
+
 Then open `https://<your-host>/setup`. The wizard runs in this order: **owner account → instance
-(public URL) → Twitch app credentials → Twitch connect → done**. Create the owner with an e-mail
+(public URL) → Twitch app credentials → Twitch connect → done**. Creating the owner signs you in; the
+wizard's "done" means the credentials are in place, not that the channel can air — its readiness
+checklist lists what is still missing. Reopening `/setup` later requires being signed in and continues at
+the first unfinished step. Create the owner with an e-mail
 address and a password of at least 10 characters — there is no way to change either later without
 database access, so store them.
 
 ## 5. Sign in and connect
 
-Sign in as the owner. Under `Live → Status`, use `Connect Twitch` with the **moderator** account.
-Readiness appears on the same page and at `/api/system/readiness`; the goal is
-`broadcastReady=true`.
+If not still signed in, sign in as the owner. Under `Live → Status`, use `Connect Twitch` with the
+**moderator** account. The connected account is also a sign-in: anyone who can log in to Twitch as it
+gets the owner role here, so treat it like the owner password (Twitch 2FA on, never shared).
+
+For title, category and schedule sync, first set `Admin → Settings → Managed credentials → Broadcast
+channel login` to the broadcaster's login; only then does `Live → Status` show `Connect broadcast
+channel`. Click that while signed in to Twitch as the broadcaster.
+
+Readiness appears on the same page and at `/api/system/readiness`. `broadcastReady` stays `false` until
+a destination has a stream key and one asset is ready (sections 6 and 7); the Twitch connection is a
+separate `hasTwitchConnection` field.
 
 ## 6. Media
 
@@ -119,7 +138,9 @@ that says what it does.
 ## 8. Know it is running
 
 - `Live → Status`: readiness, destinations, incidents with their age.
-- `/api/health` answers when the web app is up; `/api/system/readiness` when the channel can go on air.
+- `/api/health` answers when the web app is up. `/api/system/readiness` always answers 200 — read
+  `broadcastReady` from the body; `/api/ready` returns 503 only when the database or the initialization is
+  missing.
 - Incidents close themselves once their area has been healthy for a while; a count that rises and
   does not fall again is the signal.
 

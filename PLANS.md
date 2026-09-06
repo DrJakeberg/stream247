@@ -3523,9 +3523,15 @@ and in `uplink.seam.skew`, then the release. That is Task #37 and it is not star
 ## M67 Release 2.0.0
 - 2026-09-05 22:32: v2.0.0-rc.1 (7f15e04) live on the DUT via the redis-free stack file with prune; four
   containers healthy after 60 s, `stream247-redis-1` gone, RTMP and IRC reconnected, no boundary storm.
+- 2026-09-06 05:44, first seam under rc.1: video offset -69543.734 s, audio -69537.470 s, skew 6.264 s,
+  one discontinuity line, no restart, no incident. In the quiet family (1.07-6.69 s), so it neither proves
+  nor contradicts the 60 s threshold; the storm family (11.84-13.45 s) still has no rc.1 sample.
+  `playout.feed.av_lead` reported `measured: false` — the asset played from the Twitch CDN (too large to
+  cache), so there was no local file to probe. The lead stays unmeasured exactly at the CDN boundaries.
 
 - Before tagging v2.0.0 (not the rc): bump the three `STREAM247_*_IMAGE` defaults in `docker-compose.yml` AND
-  the three pins in `.env.production.example` from `v1.5.20` to `v2.0.0`, so a newcomer's plain `docker compose up` starts the release the docs describe.
+  the three pins in `.env.production.example` from `v1.5.47` to `v2.0.0` (moved from v1.5.20 to v1.5.47 on
+  2026-09-06 because the v1.5.20 images predate the wizard and the generated secret the docs describe), so a newcomer's plain `docker compose up` starts the release the docs describe.
   The release workflow also moves `latest` onto every tag, rc included; the compose defaults do not use it.
 
 Major because an existing installation notices the change (see `docs/deployment.md`, *Upgrading To

@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { DEV_FALLBACK_APP_SECRET, resolveAppSecret } from "@stream247/db";
+import { DEV_FALLBACK_APP_SECRET, resolveAppBaseUrl, resolveAppSecret } from "@stream247/db";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
 import { Panel } from "@/components/panel";
 import { SetupForm } from "@/components/setup-form";
@@ -17,7 +17,7 @@ import {
   type SetupWizardStepId
 } from "@/lib/server/setup-wizard";
 import { readAppState } from "@/lib/server/state";
-import { getAbsoluteAppUrl, isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
+import { getAbsoluteAppUrl, getTwitchBroadcasterRedirectUri, isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
 import { getAuthenticatedUser } from "@/lib/server/auth";
 
 const STEP_ORDER: SetupWizardStepId[] = ["owner", "instance", "twitch-app", "twitch-connect", "done"];
@@ -58,6 +58,7 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
   const activeIndex = STEP_ORDER.indexOf(active);
   const twitchAuthorizeUrl = (await isTwitchAuthorizeConfigured()) ? "/api/integrations/twitch/connect" : null;
 
+  const publicBaseUrl = resolveAppBaseUrl(state.managedConfig);
   const envAppSecret = Boolean((process.env.APP_SECRET || "").trim());
   // The secret story for the review step. resolveAppSecret only throws when production has neither
   // env nor a writable data volume — a state in which this page would not be rendering anyway.
@@ -131,8 +132,24 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
             <div className="list">
               <div className="item">
                 <strong>OAuth redirect URLs to register</strong>
-                <div className="subtle">{getAbsoluteAppUrl(state, "/api/integrations/twitch/callback")}</div>
-                <div className="subtle">{getAbsoluteAppUrl(state, "/api/auth/twitch/callback")}</div>
+                {publicBaseUrl ? (
+                  <>
+                    <div className="subtle">{getAbsoluteAppUrl(state, "/api/integrations/twitch/callback")}</div>
+                    <div className="subtle">{getAbsoluteAppUrl(state, "/api/auth/twitch/callback")}</div>
+                    <div className="subtle">{getTwitchBroadcasterRedirectUri(state)}</div>
+                    <div className="subtle">
+                      All three, exactly as printed. The third one is used by “Connect broadcast channel”; without
+                      it that step ends in Twitch’s “redirect mismatch”.
+                    </div>
+                  </>
+                ) : (
+                  // Without a public URL these would read http://localhost:3000/…, and a person would register
+                  // them on Twitch and get a redirect mismatch once the real URL is set.
+                  <div className="subtle">
+                    Set the public URL in <Link href={stepHref("instance")}>step 2</Link> first — the redirect URLs are
+                    built from it.
+                  </div>
+                )}
               </div>
             </div>
             <SetupTwitchAppForm

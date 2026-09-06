@@ -2,6 +2,8 @@
 export type TwitchConnectionSummaryInput = {
   status: string;
   accessToken: string;
+  /** The stored failure text of the last sign-in attempt, when the record carries one. */
+  error?: string;
   broadcasterLogin: string;
   broadcasterId: string;
 };
@@ -61,6 +63,17 @@ export function describeTwitchConnection(twitch: TwitchConnectionSummaryInput): 
       label: "Not connected",
       detail: "No Twitch account is linked yet.",
       consequence: ""
+    };
+  }
+
+  // A 4xx from Twitch's token endpoint means the app credentials were wrong, not the sign-in. "Connect
+  // again" would loop; the fix is under Admin → Settings (or setup step 3), so the card says so.
+  if (/token exchange failed/i.test(twitch.error ?? "")) {
+    return {
+      label: "Not connected",
+      detail:
+        "Twitch rejected the app credentials (client id or client secret). Check them under Admin → Settings or in setup step 3, then connect again.",
+      consequence: PAUSED_WHILE_DISCONNECTED
     };
   }
 

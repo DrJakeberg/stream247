@@ -168,7 +168,7 @@ Production Compose is intended to pull from:
 - `ghcr.io/drjakeberg/stream247-playout:<tag>`
 - `bluenviron/mediamtx:<tag>` for the local RTMP relay
 
-`docker-compose.yml` carries its own default tags; `.env.production.example` pins `v1.5.20` for a stable
+`docker-compose.yml` carries its own default tags; `.env.production.example` pins `v1.5.47` for a stable
 deployment, and the defaults move with each release.
 See `docs/operations.md` for the runbook and backup procedures.
 

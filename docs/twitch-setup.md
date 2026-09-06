@@ -16,10 +16,12 @@ Stream247 currently uses Twitch for:
 
 ## Required Redirect URLs
 
-Both redirect URLs must be registered on the same Twitch application:
+All three redirect URLs must be registered on the same Twitch application:
 
 - `<APP_URL>/api/integrations/twitch/callback`
 - `<APP_URL>/api/auth/twitch/callback`
+- `<APP_URL>/api/integrations/twitch/callback-broadcaster` — the `Connect broadcast channel` flow; missing it
+  ends that flow in Twitch's "redirect mismatch" even when the first two are right
 
 `<APP_URL>` here means the public base URL of your deployment — either the `APP_URL` env variable
 or, since M52, the public URL saved in the `/setup` wizard (env wins when both are set). It must
@@ -30,9 +32,10 @@ two exact URLs to register.
 
 1. Sign in to the Twitch developer console.
 2. Create a new application or edit the application you want Stream247 to use.
-3. Add both redirect URLs:
+3. Add all three redirect URLs:
    - `<APP_URL>/api/integrations/twitch/callback`
    - `<APP_URL>/api/auth/twitch/callback`
+   - `<APP_URL>/api/integrations/twitch/callback-broadcaster`
 4. Copy the Client ID into `TWITCH_CLIENT_ID`.
 5. Generate, reveal, or regenerate the Client Secret and store it in `TWITCH_CLIENT_SECRET`.
 6. Choose one of these storage paths:
@@ -111,7 +114,7 @@ If broadcaster connect is missing or invalid:
   - `moderator`
   - `viewer`
 
-The broadcaster account can effectively act as workspace owner when it matches the connected broadcaster identity and the workspace owner role.
+The connected Twitch account is also a sign-in: whoever can log in to Twitch as it gets the workspace owner role here. Treat that account like the owner password — Twitch 2FA on, never shared.
 
 ## RTMP Output
 

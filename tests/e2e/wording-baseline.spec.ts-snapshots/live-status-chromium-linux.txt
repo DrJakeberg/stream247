@@ -193,7 +193,7 @@ Overlay output
 Overlay is currently disabled.
 The picture is drawn by the playout; the studio preview is the same drawing.
 Twitch OAuth not configured
-Set APP_URL and provide Twitch client credentials in .env or the admin settings page to enable browser-based Twitch connection.
+Save the public URL (setup step 2) and the Twitch app credentials (setup step 3) in /setup, or under Admin → Settings, to enable the browser-based Twitch connection.
 INCIDENTS
 Incident history
 No incidents recorded

@@ -53,8 +53,8 @@ export function TwitchConnectPanel({
       <div className="item">
         <strong>Twitch OAuth not configured</strong>
         <div className="subtle">
-          Set <code>APP_URL</code> and provide Twitch client credentials in <code>.env</code> or the admin settings
-          page to enable browser-based Twitch connection.
+          Save the public URL (setup step 2) and the Twitch app credentials (setup step 3) in <code>/setup</code>, or
+          under Admin → Settings, to enable the browser-based Twitch connection.
         </div>
       </div>
     );
@@ -65,14 +65,13 @@ export function TwitchConnectPanel({
       <div className="item">
         <strong>Connect Twitch</strong>
         <div className="subtle">
-          Launch the Twitch OAuth flow from the browser-based setup. For actual output, also set
-          <code> TWITCH_RTMP_URL </code>
-          and
+          Launch the Twitch OAuth flow from the browser-based setup. For actual output the channel also needs a
+          stream key: on the primary destination under Live → Status → Output destinations, or as
           <code> TWITCH_STREAM_KEY </code>
-          or the generic
+          (or the generic
           <code> STREAM_OUTPUT_URL </code>
           and
-          <code> STREAM_OUTPUT_KEY </code>.
+          <code> STREAM_OUTPUT_KEY </code>) in the environment.
         </div>
         <a className="button" href={authorizeUrl}>
           Connect Twitch

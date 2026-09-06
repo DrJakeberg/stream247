@@ -51,6 +51,22 @@ describe("describing the Twitch connection", () => {
     expect(described.consequence).toContain("emote-only");
   });
 
+  it("names the app credentials when Twitch rejected the token exchange", () => {
+    // A 4xx from the token endpoint is a wrong client id or secret, not a failed sign-in. "Connect
+    // again" would loop; the card has to point at where the credentials live.
+    const described = describeTwitchConnection({
+      ...connected,
+      status: "error",
+      accessToken: "",
+      error: "Twitch identity token exchange failed with status 403."
+    });
+
+    expect(described.label).toBe("Not connected");
+    expect(described.detail).toContain("client id or client secret");
+    expect(described.detail).toContain("Admin → Settings");
+    expect(described.consequence).toContain("emote-only");
+  });
+
   it("stays quiet about consequences when nothing was ever connected", () => {
     // A workspace that has not linked Twitch yet has not lost anything, so listing what is
     // paused would read as a fault report for a setup step nobody has reached.

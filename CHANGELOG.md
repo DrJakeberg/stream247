@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- The asset and source detail pages were unreachable: `/assets/<id>` and `/sources/<id>` redirected into
+  `/program?tab=library&assetId=…` and `?tab=sources&sourceId=…`, and neither tab ever read the id, so
+  every "open this asset" link landed on the plain list. The redirects are gone and the detail pages own
+  their routes again; the program page forwards the two old query shapes, and the schedule tab keeps its
+  own `assetId` (it reads it for the metadata drawer beside the timeline). The library card's title is now
+  itself the link, and the small link below it says what it opens: edit title, category, chapters.
+- The seam instrumentation shipped in 1.5.47 measured nothing at the first real seam under 2.0.0-rc.1
+  (2026-09-06 03:44, skew 6.26 s, one line, no restart): ffmpeg wrote both streams' discontinuity lines in
+  one stderr chunk, the pattern is not global, and only the video line was ever seen, so no pair closed.
+  Every line in a chunk is read now, with that chunk verbatim as the test.
 - First run, measured on a fresh checkout with the rc.1 images (2026-09-06): `docker compose up -d` with no
   `.env` comes up healthy and `/` redirects to `/setup`; the wizard validates the owner step, signs the
   owner in, marks the public URL done when `APP_URL` is set, lets every Twitch step be skipped, and ends
@@ -18,6 +28,17 @@
     on the four app services, `.env.example` says what it is for, and README, getting-started and
     deployment describe the two real starts: no `.env`, or `.env.production.example` edited before the
     first start.
+  - The default image tags (`docker-compose.yml`, `.env.production.example`) pinned v1.5.20, cut before the
+    five-step wizard, the broadcaster connect and the generated app secret the docs describe. They pin
+    v1.5.47 now.
+  - The broadcaster connection uses a third OAuth redirect URL, `/api/integrations/twitch/callback-broadcaster`,
+    that no document, README section or wizard step named; without it that step ends in Twitch's "redirect
+    mismatch". It is listed everywhere the other two are, and the wizard prints all three — or, when the
+    public URL is still unset, points at the step that sets it instead of printing localhost URLs.
+  - Saving the wizard's public URL empty succeeded silently and returned to the same step; the field is
+    required now. A rejected client secret said "connect the account again", which loops; the card now names
+    the app credentials and where they live. The stream key is documented at the destination under
+    Live → Status, where it actually lives, not in `/settings`.
   - Changing `POSTGRES_PASSWORD` after the first start leaves every service in `password authentication
     failed` and the browser on a bare error page, because the password is fixed when `data/postgres` is
     created. Documented with the recovery.

@@ -56,7 +56,9 @@ export function getAbsoluteAppUrl(state: StateWithManagedConfig, pathname: strin
  */
 export async function isTwitchAuthorizeConfigured(): Promise<boolean> {
   const state = await readAppState();
-  return Boolean(getManagedTwitchConfig(state).clientId);
+  // A client id alone is not enough: without a public URL the redirect_uri would be the localhost
+  // fallback, Twitch would answer "redirect mismatch", and the only visible error would blame .env.
+  return Boolean(getManagedTwitchConfig(state).clientId) && Boolean(resolveAppBaseUrl(state.managedConfig));
 }
 
 /**
