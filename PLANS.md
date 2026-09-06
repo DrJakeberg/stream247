@@ -3533,6 +3533,16 @@ and in `uplink.seam.skew`, then the release. That is Task #37 and it is not star
   Ton-Bild-Differenz. Seither eigenes Ereignis `uplink.seam.wraparound`; für die Schwellenfrage zählen
   nur echte Grenzen. Messstand: eine echte Naht unter rc.1 (6,264 s, ruhige Familie), Sturmfamilie
   (11,84-13,45 s) weiterhin ohne rc.1-Beleg.
+- 2026-09-06 21:54:43, erste Naht, die das Instrument selbst gemessen hat (rc.2): Video-Offset
+  -37214,768 s, Ton-Offset -37206,701 s, Naht **8,067 s**, 2 Zeilen, kein Neustart, kein Vorfall.
+  Elf Sekunden später eine unpaarige Video-Zeile (-4,983 s), ebenfalls folgenlos. Der Ton-Sprung war
+  exakt -8,067 s, also genau die Naht: an einer Grenze springt das Bild um die abgelaufene Ausgabezeit,
+  der Ton nur um seinen Vorlauf.
+  Damit die bisherige Verteilung: ruhig 1,07 / 2,43 / 3,52 / 6,52 / 6,69 / 6,26 / **8,07** s — Sturm
+  11,84 / 12,25 / 13,22 / 13,45 s. Die Lücke zwischen den Familien ist von 6,69-11,84 auf 8,07-11,84
+  geschrumpft und umschliesst ffmpegs Vorgabe von 10 s weiterhin. Sieben ruhige Werte unter 10 s, vier
+  Stürme darüber, kein Gegenbeispiel. 8,07 s hätte auch mit der Vorgabe nicht gestürmt, prüft die
+  60-s-Schwelle also nicht; sie bleibt plausibel und unbewiesen, bis eine Naht über 10 s ruhig bleibt.
 
 - Before tagging v2.0.0 (not the rc): bump the three `STREAM247_*_IMAGE` defaults in `docker-compose.yml` AND
   the three pins in `.env.production.example` from `v1.5.47` to `v2.0.0` (moved from v1.5.20 to v1.5.47 on
