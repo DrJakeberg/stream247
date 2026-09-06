@@ -16,8 +16,8 @@ const AUDIO = '[aist#0:1/aac @ 0x749029434cc0] timestamp discontinuity (stream i
 
 describe("parseDiscontinuityOffsetLine", () => {
   it("reads the stream and the derived offset in microseconds", () => {
-    expect(parseDiscontinuityOffsetLine(VIDEO)).toEqual({ stream: "video", offsetUs: 11098217998 });
-    expect(parseDiscontinuityOffsetLine(AUDIO)).toEqual({ stream: "audio", offsetUs: -84345499692 });
+    expect(parseDiscontinuityOffsetLine(VIDEO)).toEqual({ stream: "video", offsetUs: 11098217998, deltaUs: -95443717690 });
+    expect(parseDiscontinuityOffsetLine(AUDIO)).toEqual({ stream: "audio", offsetUs: -84345499692, deltaUs: 95443717693 });
   });
 
   it("ignores every other stderr line, including the corrupt-packet and out-of-order ones", () => {
@@ -40,6 +40,9 @@ describe("observeSeamOffsetLine", () => {
     expect(result.seam?.skewSeconds).toBeCloseTo(95443.718, 3);
     expect(result.seam?.videoOffsetUs).toBe(11098217998);
     expect(result.seam?.audioOffsetUs).toBe(-84345499692);
+    // These two sample lines are a counter wraparound, not a boundary — both deltas are the 33-bit
+    // period. The "skew" they produce is that period, which says nothing about how far audio ran ahead.
+    expect(result.seam?.wraparound).toBe(true);
   });
 
   it("does not pair a video line with an audio line from a different seam", () => {
@@ -77,5 +80,26 @@ describe("observeSeamOffsetLine", () => {
     expect(seam?.videoOffsetUs).toBe(-69543734355);
     expect(seam?.audioOffsetUs).toBe(-69537469713);
     expect(seam?.skewSeconds).toBeCloseTo(6.264642, 6);
+    expect(seam?.wraparound).toBe(false);
+  });
+
+  it("labels the counter wraparound instead of reporting it as an audio lead", () => {
+    // 2026-09-06 06:44 on the DUT: video jumped one 33-bit period back, audio the same period forward,
+    // and the pair's |audio − video| came out as that very period. Reported as a skew it would argue
+    // for a dts_delta_threshold of a day; the event itself was three lines and no restart.
+    let state = createUplinkSeamState();
+    state = observeSeamOffsetLine(
+      state,
+      "[vist#0:0/h264 @ 0x1] timestamp discontinuity (stream id=0): -95443717690, new offset= 25906247976",
+      1_000
+    ).state;
+    const { seam } = observeSeamOffsetLine(
+      state,
+      "[aist#0:1/aac @ 0x2] timestamp discontinuity (stream id=0): 95443717690, new offset= -69537469705",
+      1_100
+    );
+
+    expect(seam?.wraparound).toBe(true);
+    expect(seam?.skewSeconds).toBeCloseTo(95443.718, 3);
   });
 });

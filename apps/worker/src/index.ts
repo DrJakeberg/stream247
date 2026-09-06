@@ -7137,8 +7137,10 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
     runtime.seam = seam.state;
     if (seam.seam) {
       // The one number that separated storms from quiet boundaries (see uplink-progress.ts): logged
-      // with every seam so the threshold can be judged against evidence instead of memory.
-      logRuntimeEvent("uplink.seam.skew", {
+      // with every seam so the threshold can be judged against evidence instead of memory. A counter
+      // wraparound produces the same pair of lines and a "skew" of the wraparound period, which is not
+      // an audio lead at all, so it carries its own name and stays out of that judgement.
+      logRuntimeEvent(seam.seam.wraparound ? "uplink.seam.wraparound" : "uplink.seam.skew", {
         skewSeconds: Math.round(seam.seam.skewSeconds * 1000) / 1000,
         videoOffsetUs: seam.seam.videoOffsetUs,
         audioOffsetUs: seam.seam.audioOffsetUs,

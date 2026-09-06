@@ -3528,6 +3528,11 @@ and in `uplink.seam.skew`, then the release. That is Task #37 and it is not star
   nor contradicts the 60 s threshold; the storm family (11.84-13.45 s) still has no rc.1 sample.
   `playout.feed.av_lead` reported `measured: false` — the asset played from the Twitch CDN (too large to
   cache), so there was no local file to probe. The lead stays unmeasured exactly at the CDN boundaries.
+- 2026-09-06 06:44: 33-Bit-Überlauf, kein Beitragswechsel. Video -95443,718 s, Ton +95443,718 s, drei
+  Zeilen, kein Neustart. Das Instrument meldete daraus 95443,718 s "Naht" — die Überlaufperiode, keine
+  Ton-Bild-Differenz. Seither eigenes Ereignis `uplink.seam.wraparound`; für die Schwellenfrage zählen
+  nur echte Grenzen. Messstand: eine echte Naht unter rc.1 (6,264 s, ruhige Familie), Sturmfamilie
+  (11,84-13,45 s) weiterhin ohne rc.1-Beleg.
 
 - Before tagging v2.0.0 (not the rc): bump the three `STREAM247_*_IMAGE` defaults in `docker-compose.yml` AND
   the three pins in `.env.production.example` from `v1.5.47` to `v2.0.0` (moved from v1.5.20 to v1.5.47 on

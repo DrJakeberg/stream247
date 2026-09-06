@@ -268,6 +268,9 @@ export function isDiscontinuityStorm(
 export type UplinkSeamState = {
   videoOffsetUs?: number;
   audioOffsetUs?: number;
+  /** The jump each stream reported, kept so a counter wraparound can be told from a real seam. */
+  videoDeltaUs?: number;
+  audioDeltaUs?: number;
   /** When the first half of the current pair arrived; the second half must follow inside the window. */
   openedAtMs?: number;
 };
@@ -278,7 +281,27 @@ export type UplinkSeamObservation = {
   /** |audio − video| in microseconds: how far one stream's clock stood from the other's at the seam. */
   skewUs: number;
   skewSeconds: number;
+  /**
+   * The 33-bit MPEG-TS counter turning over rather than an asset boundary.
+   *
+   * At 2026-09-06 06:44 both streams reported a delta of exactly 95443.718s, video negative and audio
+   * positive, and the pair produced a "skew" of the same 95443.718s — the wraparound period, not an
+   * audio lead. Reported as a skew it would argue for a `dts_delta_threshold` of a day. The event is
+   * benign (three lines, no restart, both times it has been seen), so it is labelled instead of
+   * measured, and the threshold question is judged on real seams only.
+   */
+  wraparound: boolean;
 };
+
+/** 2^33 ticks at 90 kHz, in microseconds: how far a 33-bit MPEG-TS timestamp runs before it turns over. */
+export const MPEGTS_WRAPAROUND_US = Math.round((2 ** 33 / 90_000) * 1_000_000);
+
+/** A tick or two of slack: the two streams' printed deltas differ in the last microseconds. */
+const WRAPAROUND_TOLERANCE_US = 1_000_000;
+
+function isWraparoundDelta(deltaUs: number | undefined): boolean {
+  return deltaUs !== undefined && Math.abs(Math.abs(deltaUs) - MPEGTS_WRAPAROUND_US) <= WRAPAROUND_TOLERANCE_US;
+}
 
 /** Two halves of one seam arrive within a second or two; anything later is another seam. */
 export const UPLINK_SEAM_PAIRING_WINDOW_MS = 5_000;
@@ -287,19 +310,26 @@ export function createUplinkSeamState(): UplinkSeamState {
   return {};
 }
 
-const OFFSET_LINE = /\[(vist|aist)#\d+:\d+\/[^\]]*\][^\n]*timestamp discontinuity[^\n]*new offset=\s*(-?\d+)/;
+const OFFSET_LINE =
+  /\[(vist|aist)#\d+:\d+\/[^\]]*\][^\n]*timestamp discontinuity[^\n]*: *(-?\d+), *new offset=\s*(-?\d+)/;
 
-/** Reads which stream re-derived its offset and the offset itself, in microseconds. */
-export function parseDiscontinuityOffsetLine(line: string): { stream: "video" | "audio"; offsetUs: number } | null {
+/** Reads which stream re-derived its offset, the jump it saw and the resulting offset, in microseconds. */
+export function parseDiscontinuityOffsetLine(
+  line: string
+): { stream: "video" | "audio"; offsetUs: number; deltaUs: number } | null {
   const match = OFFSET_LINE.exec(line);
   if (!match) {
     return null;
   }
-  const offsetUs = Number(match[2]);
+  const deltaUs = Number(match[2]);
+  const offsetUs = Number(match[3]);
+  if (!Number.isFinite(deltaUs)) {
+    return null;
+  }
   if (!Number.isFinite(offsetUs)) {
     return null;
   }
-  return { stream: match[1] === "vist" ? "video" : "audio", offsetUs };
+  return { stream: match[1] === "vist" ? "video" : "audio", offsetUs, deltaUs };
 }
 
 /**
@@ -345,7 +375,8 @@ function observeSeamOffsetSingleLine(
   const next: UplinkSeamState = {
     ...base,
     openedAtMs: base.openedAtMs ?? nowMs,
-    [parsed.stream === "video" ? "videoOffsetUs" : "audioOffsetUs"]: parsed.offsetUs
+    [parsed.stream === "video" ? "videoOffsetUs" : "audioOffsetUs"]: parsed.offsetUs,
+    [parsed.stream === "video" ? "videoDeltaUs" : "audioDeltaUs"]: parsed.deltaUs
   };
   if (next.videoOffsetUs === undefined || next.audioOffsetUs === undefined) {
     return { state: next, seam: null };
@@ -355,6 +386,12 @@ function observeSeamOffsetSingleLine(
   // opens a new pair instead of being measured against the audio value of the pair just reported.
   return {
     state: {},
-    seam: { videoOffsetUs: next.videoOffsetUs, audioOffsetUs: next.audioOffsetUs, skewUs, skewSeconds: skewUs / 1_000_000 }
+    seam: {
+      videoOffsetUs: next.videoOffsetUs,
+      audioOffsetUs: next.audioOffsetUs,
+      skewUs,
+      skewSeconds: skewUs / 1_000_000,
+      wraparound: isWraparoundDelta(next.videoDeltaUs) || isWraparoundDelta(next.audioDeltaUs)
+    }
   };
 }

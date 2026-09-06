@@ -10,6 +10,13 @@
   their routes again; the program page forwards the two old query shapes, and the schedule tab keeps its
   own `assetId` (it reads it for the metadata drawer beside the timeline). The library card's title is now
   itself the link, and the small link below it says what it opens: edit title, category, chapters.
+- The seam instrumentation reported the 33-bit counter wraparound as an audio lead. At 2026-09-06 06:44
+  video jumped one 95443.718 s period back and audio the same period forward, and the pair's
+  |audio − video| came out as that period — a number that, read as a skew, would argue for a
+  `dts_delta_threshold` of a day. The wraparound is recognised by its delta and logged as
+  `uplink.seam.wraparound`, so only real boundaries feed the threshold question. The sample lines the
+  original tests were written from turned out to be a wraparound too; both cases are now covered
+  separately, with the DUT's own lines.
 - The seam instrumentation shipped in 1.5.47 measured nothing at the first real seam under 2.0.0-rc.1
   (2026-09-06 03:44, skew 6.26 s, one line, no restart): ffmpeg wrote both streams' discontinuity lines in
   one stderr chunk, the pattern is not global, and only the video line was ever seen, so no pair closed.
