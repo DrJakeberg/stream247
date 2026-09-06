@@ -32,6 +32,16 @@ const VIEWPORTS = [
   { label: "mobile", width: 390, height: 1400 }
 ];
 
+/**
+ * Ages such as "175d 3h", "2h 05m", "7m" or "<1m" (incident age, time on air) are minute-resolution
+ * wall-clock values. They roll over between two loads whenever the clock crosses a minute, hour or
+ * day boundary in the gap, which is not layout instability. Masked before comparing; a real text
+ * change still shows, and a height change still fails.
+ */
+function maskAges(text: string | undefined): string | undefined {
+  return text?.replace(/\b\d+d \d+h\b|\b\d+h \d{2}m\b|\b\d+m\b|<1m/g, "<age>");
+}
+
 /** Long enough for second-resolution values to tick over between the two loads. */
 const SETTLE_MS = 8_000;
 
@@ -82,7 +92,7 @@ test.describe("layout stability", () => {
 
         // Reported before the height, because the changed text is what explains the height.
         const changed = first.texts
-          .map((text, index) => ({ text, after: second.texts[index] }))
+          .map((text, index) => ({ text: maskAges(text), after: maskAges(second.texts[index]) }))
           .filter((pair) => pair.after !== undefined && pair.after !== pair.text)
           .map((pair) => `${JSON.stringify(pair.text)} -> ${JSON.stringify(pair.after)}`);
 
