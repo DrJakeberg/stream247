@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- First run, measured on a fresh checkout with the rc.1 images (2026-09-06): `docker compose up -d` with no
+  `.env` comes up healthy and `/` redirects to `/setup`; the wizard validates the owner step, signs the
+  owner in, marks the public URL done when `APP_URL` is set, lets every Twitch step be skipped, and ends
+  in a readiness checklist that links to each missing piece. Three things a newcomer could still trip over
+  are closed:
+  - `cp .env.production.example .env` without editing came up healthy with the published placeholder
+    secret, because it is 33 characters long. `resolveAppSecret` now refuses the example files' placeholders
+    in production, not only the development constant and short values.
+  - The README quick start pointed at `.env.example`, the development file. On the production images it
+    set `NODE_ENV=development` and `APP_SECRET=change-me`, and the stack came up in development mode with
+    a `secrets.key-mismatch` incident on a blank install. The compose file now pins `NODE_ENV=production`
+    on the four app services, `.env.example` says what it is for, and README, getting-started and
+    deployment describe the two real starts: no `.env`, or `.env.production.example` edited before the
+    first start.
+  - Changing `POSTGRES_PASSWORD` after the first start leaves every service in `password authentication
+    failed` and the browser on a bare error page, because the password is fixed when `data/postgres` is
+    created. Documented with the recovery.
+- `scripts/soak-monitor.sh` tolerates two consecutive failed readiness fetches (`SOAK_TOLERATE_FETCH_FAILED_SAMPLES`)
+  and accepts `CHECK_BASE_URL` without a repo `.env`.
+- Wording and layout baselines mask full semver (`2.0.0-rc.1`) and minute-resolution ages, so a release
+  candidate or an hour boundary no longer turns the gates red.
+
 ## 2.0.0-rc.1 - 2026-09-05
 
 ### Fixed

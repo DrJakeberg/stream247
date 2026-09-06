@@ -40,24 +40,39 @@ Note the Client ID and Client Secret. The full list of URLs is in `docs/twitch-s
 **Trap:** `APP_URL` in `.env` and these redirect URLs disagreeing is the most common first-run
 failure. Twitch says "redirect mismatch"; nothing in Stream247 can fix that for you.
 
-## 3. Environment
+## 3. Environment — optional, but decide before the first start
+
+The stack boots without a `.env`: the app secret is generated on first boot and persisted at
+`data/media/.stream247-app-secret` (owner-only file), the bundled PostgreSQL configures itself, and
+the wizard asks for the public URL. Verified on a fresh checkout: `docker compose up -d` with no
+`.env` comes up healthy and `/` redirects to `/setup`.
+
+Set values yourself when you want them pinned — for a restore, a rollback, or because the public URL
+must be right before Twitch OAuth is configured:
 
 ```bash
 cp .env.production.example .env
 ```
 
-Set, before first start:
-
 | Variable | What |
 |---|---|
 | `APP_URL` | the public base URL, `https://<your-host>` |
-| `APP_SECRET` | a long random secret; encrypts stored credentials — losing it means re-entering every secret |
+| `APP_SECRET` | 32+ random characters; encrypts stored credentials — losing it means re-entering every secret |
 | `POSTGRES_PASSWORD` and the same password inside `DATABASE_URL` | database access |
 | `TRAEFIK_HOST` (and `TRAEFIK_ACME_EMAIL` if the built-in Let's Encrypt profile is used) | the HTTPS front |
 | `TWITCH_STREAM_KEY` | if the channel should go on air immediately; can be entered later in `/settings` |
 
 Everything else — Twitch client credentials, SMTP, Discord — can be entered in the setup wizard or
-under `/settings` later, encrypted with `APP_SECRET`.
+under `/settings` later, encrypted with the app secret.
+
+**Trap:** the database password is fixed when `data/postgres` is first created. If you start once
+and set `POSTGRES_PASSWORD` afterwards, every service fails with `password authentication failed for
+user "stream247"` and the browser shows a bare error page. Keep the password, or stop the stack and
+remove `data/postgres` while it still holds nothing you need.
+
+**Trap:** `.env.example` is the development file (`NODE_ENV=development`, `change-me` secrets). It is
+not for the Docker stack; the compose file pins `NODE_ENV=production`, and the placeholder secrets from
+both example files are refused in production.
 
 **Trap:** `pnpm release:preflight` rejects untouched example values, quoted-empty secrets and
 placeholder hosts such as `stream247.example.com`. Replace them; do not quote-empty them.

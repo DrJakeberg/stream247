@@ -43,14 +43,14 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
    uses its compose-internal defaults, and the `/setup` wizard covers the public URL, timezone,
    and Twitch credentials. An env file remains the way to pin any of these — env values always
    override wizard-written ones.
-   - evaluation:
-     ```bash
-     cp .env.example .env
-     ```
-   - production:
+   - evaluation: no env file. Start the stack and open `/setup`.
+   - production, or anything you want pinned:
      ```bash
      cp .env.production.example .env
      ```
+   `.env.example` is the development file for `pnpm dev`: it sets `NODE_ENV=development` and
+   `change-me` secrets. The compose file pins `NODE_ENV=production` for the app services and the
+   example placeholders are refused in production, so that file is not a way to start the Docker stack.
 2. If you use an env file, set what you want pinned:
    - `APP_URL` (otherwise the wizard manages it)
    - `APP_SECRET` (otherwise generated and persisted on first boot)
@@ -168,8 +168,8 @@ Production Compose is intended to pull from:
 - `ghcr.io/drjakeberg/stream247-playout:<tag>`
 - `bluenviron/mediamtx:<tag>` for the local RTMP relay
 
-`.env.example` uses `latest` for evaluation.
-`.env.production.example` pins the current baseline (`v1.5.19`) for stable deployment.
+`docker-compose.yml` carries its own default tags; `.env.production.example` pins `v1.5.20` for a stable
+deployment, and the defaults move with each release.
 See `docs/operations.md` for the runbook and backup procedures.
 
 ## Canonical Release And Rollout Flow

@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEV_FALLBACK_APP_SECRET,
+  PUBLISHED_PLACEHOLDER_SECRETS,
   getAppSecretFilePath,
   resolveAppSecret
 } from "../../packages/db/src/app-secret.js";
@@ -84,6 +85,12 @@ describe("resolveAppSecret", () => {
     // it looks like a secret while being guessable. Generation must not soften this.
     expect(() => resolveAppSecret(productionEnv({ APP_SECRET: DEV_FALLBACK_APP_SECRET }))).toThrow(/production/);
     expect(() => resolveAppSecret(productionEnv({ APP_SECRET: "short" }))).toThrow(/at least 32/);
+    // The example files' placeholders are public. The production one is 33 characters long and
+    // passed the length check until 2026-09-06, when a copied-but-unedited .env booted a healthy stack.
+    for (const placeholder of PUBLISHED_PLACEHOLDER_SECRETS) {
+      expect(() => resolveAppSecret(productionEnv({ APP_SECRET: placeholder }))).toThrow(/production/);
+    }
+    expect(PUBLISHED_PLACEHOLDER_SECRETS.has("replace-with-a-long-random-secret")).toBe(true);
   });
 
   it("refuses to run production on the development fallback when persistence is unavailable", async () => {

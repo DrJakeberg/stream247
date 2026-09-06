@@ -49,6 +49,10 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      # The images are built with NODE_ENV=production. A development .env (NODE_ENV=development) would
+      # otherwise flip the production stack into development mode through env_file.
+      NODE_ENV: production
     volumes:
       - ./data/media:/app/data/media
     labels:
@@ -78,6 +82,10 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      # The images are built with NODE_ENV=production. A development .env (NODE_ENV=development) would
+      # otherwise flip the production stack into development mode through env_file.
+      NODE_ENV: production
     volumes:
       - ./data/media:/app/data/media
     healthcheck:
@@ -114,6 +122,10 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      # The images are built with NODE_ENV=production. A development .env (NODE_ENV=development) would
+      # otherwise flip the production stack into development mode through env_file.
+      NODE_ENV: production
     volumes:
       - ./data/media:/app/data/media
     healthcheck:
@@ -135,6 +147,10 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      # The images are built with NODE_ENV=production. A development .env (NODE_ENV=development) would
+      # otherwise flip the production stack into development mode through env_file.
+      NODE_ENV: production
     volumes:
       - ./data/media:/app/data/media
     healthcheck:

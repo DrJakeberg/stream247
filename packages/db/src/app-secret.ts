@@ -19,6 +19,15 @@ import path from "node:path";
 export const DEV_FALLBACK_APP_SECRET = "stream247-dev-secret";
 
 export const MIN_APP_SECRET_LENGTH = 32;
+/**
+ * Values that ship in this repository's example env files. They are public, so they are not secrets,
+ * but the production example's placeholder is 33 characters long and slipped past the length check:
+ * `cp .env.production.example .env && docker compose up -d` came up healthy with it on 2026-09-06.
+ */
+export const PUBLISHED_PLACEHOLDER_SECRETS: ReadonlySet<string> = new Set([
+  "change-me",
+  "replace-with-a-long-random-secret"
+]);
 
 // 48 random bytes come out as 64 base64url characters — comfortably above the minimum, and in an
 // alphabet that survives .env files and shell quoting if an operator ever copies it out.
@@ -111,7 +120,12 @@ export function resolveAppSecret(env: EnvLike = process.env): string {
   if (configured) {
     // The pre-M52 guarantee, unchanged: a value that is set but weak or publicly known is worse
     // than an absent one, because it looks like a secret while being guessable.
-    if (production && (configured === DEV_FALLBACK_APP_SECRET || configured.length < MIN_APP_SECRET_LENGTH)) {
+    if (
+      production &&
+      (configured === DEV_FALLBACK_APP_SECRET ||
+        PUBLISHED_PLACEHOLDER_SECRETS.has(configured) ||
+        configured.length < MIN_APP_SECRET_LENGTH)
+    ) {
       throw new Error(
         `APP_SECRET must be a unique value of at least ${MIN_APP_SECRET_LENGTH} characters in production.`
       );

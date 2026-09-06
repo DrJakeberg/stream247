@@ -12,7 +12,7 @@ if [ -z "$TARGET_VERSION" ]; then
 fi
 
 if [ ! -f ".env" ]; then
-  echo "Missing .env. Copy .env.example first."
+  echo "Missing .env. Copy .env.production.example first (.env.example is the development file)."
   exit 1
 fi
 

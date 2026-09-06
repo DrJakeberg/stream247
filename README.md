@@ -134,15 +134,19 @@ are not retroactively revoked.
 The one-page path from an empty host to a green channel, with the traps where they bite, is
 [`docs/getting-started.md`](docs/getting-started.md). The steps below are the short form.
 
-1. Copy `.env.example` to `.env`.
-2. Set:
+1. A `.env` is optional. Without one the app secret is generated and persisted under
+   `data/media/.stream247-app-secret`, the bundled database configures itself, and the `/setup`
+   wizard asks for the public URL. To pin values yourself, copy `.env.production.example` (not
+   `.env.example`, which is the development file and would switch the stack into development mode)
+   and set them **before the first start**:
    - `APP_URL`
-   - `APP_SECRET`
-   - `POSTGRES_PASSWORD`
-   - the matching password inside `DATABASE_URL`
-3. Optional but recommended:
-   - `TWITCH_CLIENT_ID`
-   - `TWITCH_CLIENT_SECRET`
+   - `APP_SECRET` (32+ random characters; the example placeholder is refused)
+   - `POSTGRES_PASSWORD` and the same password inside `DATABASE_URL`
+2. The database password is fixed when `data/postgres` is first created. Changing it later leaves
+   every service failing with "password authentication failed" and a bare error page; either keep
+   the password or remove `data/postgres` before real data exists.
+3. Optional now, or later in the wizard and `/settings`:
+   - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`
    - `TWITCH_STREAM_KEY`
    - `CHANNEL_TIMEZONE`
 4. Start the stack:
@@ -151,8 +155,10 @@ The one-page path from an empty host to a green channel, with the traps where th
    ```
 5. Open:
    - `http://localhost:3000/setup`
-6. Create the owner account.
-7. Sign in to the admin UI.
+6. Create the owner account; that signs you in. The wizard then walks through the public URL,
+   Twitch app credentials and the Twitch connection, each step skippable, and ends in a readiness
+   checklist that links to wherever something is still missing.
+7. `Live → Status` shows the same readiness afterwards.
 8. Optional during bootstrap:
    - enter `TWITCH_CLIENT_ID`
    - enter `TWITCH_CLIENT_SECRET`
