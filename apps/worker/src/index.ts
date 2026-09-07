@@ -99,6 +99,7 @@ import {
   isAssetProbeQuarantined,
   nextAssetProbeState,
   planAssetProbeUpdates,
+  countQuarantinedBySource,
 } from "@stream247/core";
 import {
   buildSourceLiveStateWrite,
@@ -6768,8 +6769,14 @@ async function runPlayoutCycle(): Promise<void> {
   }
   // Keyed by SOURCE, not by asset. Keying an incident by asset id is forbidden for a reason recorded on
   // playout.ffmpeg.exit: it turns one recurring fault into a list that grows with the library.
-  for (const sourceId of probePlan.probedSourceIds) {
-    const quarantined = probePlan.quarantinedBySource.get(sourceId);
+  //
+  // Counted from stored state, not from this scan. A skipped item is kept out of the queue and so is
+  // never probed again: counting the scan made the incident read "1 item(s)" on the DUT while all eleven
+  // items of that source were skipped, and would have closed it once none of them was probed at all.
+  const quarantineOverrides = new Map(probePlan.updates.map((update) => [update.id, update] as const));
+  const quarantinedBySource = countQuarantinedBySource(state.assets, quarantineOverrides);
+  for (const sourceId of new Set([...probePlan.probedSourceIds, ...quarantinedBySource.keys()])) {
+    const quarantined = quarantinedBySource.get(sourceId);
     const sourceName = state.sources.find((entry) => entry.id === sourceId)?.name || sourceId;
     if (quarantined) {
       await upsertIncident({
@@ -6780,7 +6787,7 @@ async function runPlayoutCycle(): Promise<void> {
         fingerprint: `playout.source-unplayable.${sourceId}`
       });
     } else {
-      await resolveIncident(`playout.source-unplayable.${sourceId}`, "Every probed item from this source is playable again.");
+      await resolveIncident(`playout.source-unplayable.${sourceId}`, "Every item from this source is playable again.");
     }
   }
   if (prefetchStatus === "failed" && prefetchError) {

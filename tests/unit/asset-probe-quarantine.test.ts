@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ASSET_PROBE_QUARANTINE_THRESHOLD,
+  countQuarantinedBySource,
   crossedIntoQuarantine,
   isAssetProbeQuarantined,
   nextAssetProbeState,
@@ -172,5 +173,37 @@ describe("quarantine reaches the paths that actually choose", () => {
 
     expect(isAssetProbeQuarantined(quarantined)).toBe(true);
     expect(isAssetProbeQuarantined(healthy)).toBe(false);
+  });
+});
+
+describe("countQuarantinedBySource", () => {
+  const asset = (id: string, failures: number) => ({
+    id,
+    sourceId: "source-youtube",
+    title: `Video ${id}`,
+    playbackProbeFailures: failures,
+    playbackProbeError: "Requested format is not available"
+  });
+
+  it("counts every skipped item of a source, not only the ones probed in this scan", () => {
+    // A quarantined item is kept out of the queue, so it is never probed again. Counting from the scan
+    // made the incident say "1 item(s)" on the DUT while all eleven items of the source were skipped —
+    // and would have resolved it entirely once no skipped item was probed at all.
+    const assets = [asset("a", 3), asset("b", 3), asset("c", 3), asset("d", 1)];
+
+    const counted = countQuarantinedBySource(assets);
+
+    expect(counted.get("source-youtube")?.count).toBe(3);
+  });
+
+  it("uses this cycle's fresh values over the older snapshot", () => {
+    const assets = [asset("a", 2), asset("b", 3)];
+    const overrides = new Map([["a", { playbackProbeFailures: 3, playbackProbeError: "gone" }]]);
+
+    expect(countQuarantinedBySource(assets, overrides).get("source-youtube")?.count).toBe(2);
+  });
+
+  it("reports nothing for a source whose items are all playable", () => {
+    expect(countQuarantinedBySource([asset("a", 0), asset("b", 2)]).size).toBe(0);
   });
 });

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The source incident counted only the skipped items probed in one scan. A skipped item is kept out of the
+  queue and so is never probed again, so the number shrank instead of growing: on the DUT the incident read
+  "1 item(s) from YouTube Channel are being skipped" while all eleven items of that source were skipped —
+  the source serves none of its formats any more. Worse, once no skipped item was probed at all the
+  incident would have closed itself, which is the invisibility the whole change exists to remove. The
+  count comes from stored state now, and the incident closes only when the source really has nothing
+  skipped.
+
 ## 2.0.0-rc.5 - 2026-09-07
 
 ### Fixed

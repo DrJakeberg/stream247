@@ -129,3 +129,45 @@ export function planAssetProbeUpdates(outcomes: AssetProbeOutcome[], nowIso: str
     probedSourceIds: [...new Set(outcomes.map((probed) => probed.sourceId))]
   };
 }
+
+export type QuarantineCountable = {
+  id: string;
+  sourceId: string;
+  title: string;
+  playbackProbeFailures?: number;
+  playbackProbeError?: string;
+};
+
+/**
+ * How many items each source currently has out of rotation, counted from stored state.
+ *
+ * Not from the probes of one scan. A quarantined item is kept out of the queue, so it is never probed
+ * again and never appears in a later scan — count from the scan and the number shrinks to zero while the
+ * items stay skipped, and the incident resolves itself. That is the exact invisibility this whole change
+ * exists to remove. On the DUT the incident said "1 item(s)" while all eleven items of the source were
+ * skipped.
+ *
+ * `overrides` carries the values written in this cycle, which the caller's state snapshot predates.
+ */
+export function countQuarantinedBySource(
+  assets: QuarantineCountable[],
+  overrides: Map<string, AssetProbeState> = new Map()
+): Map<string, { count: number; title: string; error: string }> {
+  const bySource = new Map<string, { count: number; title: string; error: string }>();
+  for (const asset of assets) {
+    const state = overrides.get(asset.id) ?? {
+      playbackProbeFailures: asset.playbackProbeFailures,
+      playbackProbeError: asset.playbackProbeError
+    };
+    if (!isAssetProbeQuarantined(state)) {
+      continue;
+    }
+    const entry = bySource.get(asset.sourceId) ?? { count: 0, title: "", error: "" };
+    bySource.set(asset.sourceId, {
+      count: entry.count + 1,
+      title: entry.title || asset.title,
+      error: entry.error || state.playbackProbeError || ""
+    });
+  }
+  return bySource;
+}
