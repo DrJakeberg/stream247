@@ -3543,6 +3543,13 @@ and in `uplink.seam.skew`, then the release. That is Task #37 and it is not star
   geschrumpft und umschliesst ffmpegs Vorgabe von 10 s weiterhin. Sieben ruhige Werte unter 10 s, vier
   Stürme darüber, kein Gegenbeispiel. 8,07 s hätte auch mit der Vorgabe nicht gestürmt, prüft die
   60-s-Schwelle also nicht; sie bleibt plausibel und unbewiesen, bis eine Naht über 10 s ruhig bleibt.
+- 2026-09-07 08:48:20, zweite selbst gemessene Naht (rc.2): Video-Offset +26177,951 s, Ton-Offset
+  +26184,470 s, Naht **6,519 s**, 2 Zeilen, kein Neustart, kein Vorfall. Zwölf Sekunden später wieder
+  eine unpaarige Video-Zeile (-5,983 s), folgenlos — dasselbe Muster wie an der Naht um 21:54.
+  Der Ton-Sprung war erneut exakt die Naht (-6,519 s), und der Ton-Offset liegt wieder ÜBER dem des
+  Bildes: das Vorzeichen des Vorlaufs ist über beide Nähte stabil.
+  Ruhige Familie jetzt: 1,07 / 2,43 / 3,52 / 6,26 / 6,52 / 6,52 / 6,69 / 8,07 s. Sturmfamilie
+  unverändert 11,84-13,45 s, unter rc.1/rc.2 kein einziger Sturm.
 
 - Before tagging v2.0.0 (not the rc): bump the three `STREAM247_*_IMAGE` defaults in `docker-compose.yml` AND
   the three pins in `.env.production.example` from `v1.5.47` to `v2.0.0` (moved from v1.5.20 to v1.5.47 on
