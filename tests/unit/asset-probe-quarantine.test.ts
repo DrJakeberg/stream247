@@ -3,7 +3,8 @@ import {
   ASSET_PROBE_QUARANTINE_THRESHOLD,
   crossedIntoQuarantine,
   isAssetProbeQuarantined,
-  nextAssetProbeState
+  nextAssetProbeState,
+  planAssetProbeUpdates
 } from "../../packages/core/src/asset-probe-quarantine";
 
 const NOW = "2026-09-07T10:00:00.000Z";
@@ -63,5 +64,79 @@ describe("asset probe quarantine", () => {
   it("treats an asset that never probed as eligible", () => {
     expect(isAssetProbeQuarantined({})).toBe(false);
     expect(isAssetProbeQuarantined({ playbackProbeFailures: 0 })).toBe(false);
+  });
+});
+
+/**
+ * The regression this file exists for.
+ *
+ * The first cut recorded one outcome per queue scan instead of one per item. A scan that probed a healthy
+ * item after a failing one overwrote the failure, so the failing item's counter never grew — on the DUT
+ * it failed three times in twenty minutes and stayed at zero, which is exactly the loop the whole change
+ * was meant to end.
+ */
+describe("planAssetProbeUpdates", () => {
+  const failing = (current: Parameters<typeof planAssetProbeUpdates>[0][number]["current"]) => ({
+    assetId: "asset-dead",
+    sourceId: "source-youtube",
+    title: "Withdrawn video",
+    outcome: "failed" as const,
+    error: "Requested format is not available",
+    current
+  });
+  const healthy = {
+    assetId: "asset-fine",
+    sourceId: "source-youtube",
+    title: "Working video",
+    outcome: "ok" as const,
+    error: "",
+    current: {}
+  };
+
+  it("counts the failing item even when a healthy one is probed in the same scan", () => {
+    let dead = {} as Parameters<typeof planAssetProbeUpdates>[0][number]["current"];
+
+    for (let scan = 0; scan < 3; scan += 1) {
+      // The healthy item comes last, which is what used to erase the failure.
+      const plan = planAssetProbeUpdates([failing(dead), healthy], NOW);
+      const update = plan.updates.find((entry) => entry.id === "asset-dead");
+      expect(update, `scan ${scan + 1} recorded nothing for the failing item`).toBeDefined();
+      dead = { playbackProbeFailures: update!.playbackProbeFailures, playbackProbeError: update!.playbackProbeError };
+    }
+
+    expect(dead.playbackProbeFailures).toBe(3);
+    expect(isAssetProbeQuarantined(dead)).toBe(true);
+  });
+
+  it("leaves the healthy item at zero while its neighbour is quarantined", () => {
+    const plan = planAssetProbeUpdates([failing({ playbackProbeFailures: 2 }), healthy], NOW);
+
+    expect(plan.updates.find((entry) => entry.id === "asset-fine")).toBeUndefined();
+    expect(plan.quarantinedBySource.get("source-youtube")?.count).toBe(1);
+    expect(plan.crossed).toHaveLength(1);
+    expect(plan.crossed[0]?.assetId).toBe("asset-dead");
+  });
+
+  it("reports one entry per source, counting its skipped items", () => {
+    const plan = planAssetProbeUpdates(
+      [
+        failing({ playbackProbeFailures: 2 }),
+        { ...failing({ playbackProbeFailures: 5 }), assetId: "asset-dead-2", title: "Another withdrawn video" },
+        healthy
+      ],
+      NOW
+    );
+
+    expect(plan.quarantinedBySource.size).toBe(1);
+    expect(plan.quarantinedBySource.get("source-youtube")?.count).toBe(2);
+    expect(plan.probedSourceIds).toEqual(["source-youtube"]);
+  });
+
+  it("names a source with nothing quarantined so its incident can be closed", () => {
+    const plan = planAssetProbeUpdates([healthy], NOW);
+
+    expect(plan.quarantinedBySource.size).toBe(0);
+    expect(plan.probedSourceIds).toEqual(["source-youtube"]);
+    expect(plan.updates).toHaveLength(0);
   });
 });

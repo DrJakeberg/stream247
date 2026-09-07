@@ -98,6 +98,7 @@ import {
   crossedIntoQuarantine,
   isAssetProbeQuarantined,
   nextAssetProbeState,
+  planAssetProbeUpdates,
 } from "@stream247/core";
 import {
   buildSourceLiveStateWrite,
@@ -161,6 +162,7 @@ import {
   countQueuedChatViewerRequests,
   markChatViewerRequestsPlayed,
   updateAssetPlaybackProbeRecords,
+  type AssetPlaybackProbeUpdateRecord,
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
@@ -4622,18 +4624,18 @@ async function getPlayableQueuedAssets(
   prefetchedAsset: AssetRecord | null;
   prefetchStatus: "" | "ready" | "failed";
   prefetchError: string;
-  prefetchFailedAsset: AssetRecord | null;
-  prefetchProbedAsset: AssetRecord | null;
+  probeOutcomes: Array<{ asset: AssetRecord; outcome: "ok" | "failed"; error: string }>;
   deferredExpensive: boolean;
 }> {
   const playableQueue: AssetRecord[] = [];
   let prefetchedAsset: AssetRecord | null = null;
   let prefetchStatus: "" | "ready" | "failed" = "";
   let prefetchError = "";
-  // Which item failed, not just that one did: the failure is recorded on the asset so the scheduler can
-  // stop choosing an item its source will not serve (packages/core/src/asset-probe-quarantine.ts).
-  let prefetchFailedAsset: AssetRecord | null = null;
-  let prefetchProbedAsset: AssetRecord | null = null;
+  // Per asset, not per cycle. `prefetchStatus` collapses a whole queue scan into one value, so a later
+  // success overwrites an earlier failure and the failing item's count never grows -- measured on the DUT
+  // under rc.3, where the same item failed three times and stayed at zero. Every item the scan actually
+  // probed is recorded with its own outcome (packages/core/src/asset-probe-quarantine.ts).
+  const probeOutcomes: Array<{ asset: AssetRecord; outcome: "ok" | "failed"; error: string }> = [];
   let deferredExpensive = false;
 
   // Cap awaited expensive (remote) resolves per cycle (v1.5.13), with the budget forced to 0 by
@@ -4658,17 +4660,19 @@ async function getPlayableQueuedAssets(
 
     if (action === "use-cache") {
       prefetchedAsset = prefetchedAsset ?? asset;
-      prefetchProbedAsset = prefetchProbedAsset ?? asset;
       prefetchStatus = "ready";
+      probeOutcomes.push({ asset, outcome: "ok", error: "" });
       playableQueue.push(asset);
       continue;
     }
 
     if (action === "skip-failed") {
-      if (!prefetchError && cached) {
-        prefetchStatus = "failed";
-        prefetchError = cached.error;
-        prefetchFailedAsset = asset;
+      if (cached) {
+        probeOutcomes.push({ asset, outcome: "failed", error: cached.error });
+        if (!prefetchError) {
+          prefetchStatus = "failed";
+          prefetchError = cached.error;
+        }
       }
       continue;
     }
@@ -4699,7 +4703,7 @@ async function getPlayableQueuedAssets(
         // Cheap (local/direct) resolves return effectively instantly — await normally.
         const prepared = await resolveQueueAssetIntoProbeCache(asset);
         prefetchedAsset = prefetchedAsset ?? prepared.asset;
-        prefetchProbedAsset = prefetchProbedAsset ?? prepared.asset;
+        probeOutcomes.push({ asset: prepared.asset, outcome: "ok", error: "" });
         prefetchStatus = "ready";
         playableQueue.push(prepared.asset);
         continue;
@@ -4722,7 +4726,7 @@ async function getPlayableQueuedAssets(
       }
       if (outcome.kind === "resolved") {
         prefetchedAsset = prefetchedAsset ?? outcome.value.asset;
-        prefetchProbedAsset = prefetchProbedAsset ?? outcome.value.asset;
+        probeOutcomes.push({ asset: outcome.value.asset, outcome: "ok", error: "" });
         prefetchStatus = "ready";
         playableQueue.push(outcome.value.asset);
         continue;
@@ -4730,10 +4734,10 @@ async function getPlayableQueuedAssets(
       throw outcome.error;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown queue prefetch error.";
+      probeOutcomes.push({ asset, outcome: "failed", error: message });
       if (!prefetchError) {
         prefetchStatus = "failed";
         prefetchError = message;
-        prefetchFailedAsset = asset;
       }
     }
   }
@@ -4743,8 +4747,7 @@ async function getPlayableQueuedAssets(
     prefetchedAsset,
     prefetchStatus,
     prefetchError,
-    prefetchFailedAsset,
-    prefetchProbedAsset: prefetchProbedAsset ?? prefetchedAsset,
+    probeOutcomes,
     deferredExpensive
   };
 }
@@ -6712,8 +6715,7 @@ async function runPlayoutCycle(): Promise<void> {
     prefetchedAsset,
     prefetchStatus,
     prefetchError,
-    prefetchFailedAsset,
-    prefetchProbedAsset,
+    probeOutcomes,
     deferredExpensive
   } =
     await getPlayableQueuedAssets(rawQueueAssets, { expensiveBudget: prefetchBudget });
@@ -6735,57 +6737,44 @@ async function runPlayoutCycle(): Promise<void> {
   }
 
   // The probe is the only place that learns an item cannot be played before it is due on air, so what it
-  // learns is written to the asset. Without that the scheduler chose the same dead item on every cycle:
-  // bridge, incident, self-resolve, bridge again, for hours, while the library still showed it as ready.
-  const probeSubject = prefetchStatus === "failed" ? prefetchFailedAsset : prefetchProbedAsset;
-  if (probeSubject) {
-    const before = {
-      playbackProbeFailures: probeSubject.playbackProbeFailures,
-      playbackProbeError: probeSubject.playbackProbeError,
-      playbackProbedAt: probeSubject.playbackProbedAt
-    };
-    const after = nextAssetProbeState({
-      current: before,
-      outcome: prefetchStatus === "failed" ? "failed" : "ok",
-      error: prefetchError,
-      nowIso: new Date().toISOString()
-    });
-    if (
-      after.playbackProbeFailures !== (before.playbackProbeFailures ?? 0) ||
-      after.playbackProbeError !== (before.playbackProbeError ?? "")
-    ) {
-      await updateAssetPlaybackProbeRecords([{ id: probeSubject.id, ...after }]);
-    }
-    if (crossedIntoQuarantine(before, after)) {
-      logRuntimeEvent("playout.asset.quarantined", {
-        assetId: probeSubject.id,
-        title: probeSubject.title,
-        failures: after.playbackProbeFailures,
-        error: after.playbackProbeError
-      });
-    }
-    // Keyed by SOURCE, not by asset. Keying an incident by asset id is forbidden for a reason recorded on
-    // playout.ffmpeg.exit: it turns one recurring fault into a list that grows with the library. A source
-    // that stops serving its items would do exactly that here — one entry per item. One entry per source,
-    // counting its skipped items, is bounded by a configured thing and describes the fault better.
-    const quarantinedInSource = state.assets.filter(
-      (entry) =>
-        entry.sourceId === probeSubject.sourceId &&
-        (entry.id === probeSubject.id ? isAssetProbeQuarantined(after) : isAssetProbeQuarantined(entry))
-    );
-    const sourceName = state.sources.find((entry) => entry.id === probeSubject.sourceId)?.name || probeSubject.sourceId;
-    if (quarantinedInSource.length > 0) {
-      const example = quarantinedInSource.find((entry) => entry.id === probeSubject.id) ?? quarantinedInSource[0]!;
-      const exampleError = example.id === probeSubject.id ? after.playbackProbeError : example.playbackProbeError || "";
+  // learns is written to the asset -- per item, decided by planAssetProbeUpdates, which is a tested
+  // function precisely because the first cut of this did it per cycle and lost the failures.
+  const probePlan = planAssetProbeUpdates(
+    probeOutcomes.map((probed) => ({
+      assetId: probed.asset.id,
+      sourceId: probed.asset.sourceId,
+      title: probed.asset.title,
+      outcome: probed.outcome,
+      error: probed.error,
+      current: {
+        playbackProbeFailures: probed.asset.playbackProbeFailures,
+        playbackProbeError: probed.asset.playbackProbeError,
+        playbackProbedAt: probed.asset.playbackProbedAt
+      }
+    })),
+    new Date().toISOString()
+  );
+  if (probePlan.updates.length > 0) {
+    await updateAssetPlaybackProbeRecords(probePlan.updates);
+  }
+  for (const crossed of probePlan.crossed) {
+    logRuntimeEvent("playout.asset.quarantined", crossed);
+  }
+  // Keyed by SOURCE, not by asset. Keying an incident by asset id is forbidden for a reason recorded on
+  // playout.ffmpeg.exit: it turns one recurring fault into a list that grows with the library.
+  for (const sourceId of probePlan.probedSourceIds) {
+    const quarantined = probePlan.quarantinedBySource.get(sourceId);
+    const sourceName = state.sources.find((entry) => entry.id === sourceId)?.name || sourceId;
+    if (quarantined) {
       await upsertIncident({
         scope: "playout",
         severity: "warning",
-        title: `${quarantinedInSource.length} item(s) from ${sourceName} are being skipped`,
-        message: `${example.title}: ${exampleError} — items that fail ${ASSET_PROBE_QUARANTINE_THRESHOLD} probes in a row stay in the library but automatic programming passes them over. Fix the source or remove the items; a clean probe clears this by itself.`,
-        fingerprint: `playout.source-unplayable.${probeSubject.sourceId}`
+        title: `${quarantined.count} item(s) from ${sourceName} are being skipped`,
+        message: `${quarantined.title}: ${quarantined.error} — items that fail ${ASSET_PROBE_QUARANTINE_THRESHOLD} probes in a row stay in the library but automatic programming passes them over. Fix the source or remove the items; a clean probe clears this by itself.`,
+        fingerprint: `playout.source-unplayable.${sourceId}`
       });
     } else {
-      await resolveIncident(`playout.source-unplayable.${probeSubject.sourceId}`, "Every item from this source probes cleanly again.");
+      await resolveIncident(`playout.source-unplayable.${sourceId}`, "Every probed item from this source is playable again.");
     }
   }
   if (prefetchStatus === "failed" && prefetchError) {

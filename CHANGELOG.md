@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The probe quarantine shipped in 2.0.0-rc.3 counted one outcome per queue scan instead of one per item,
+  so a healthy item probed after a failing one erased the failure. On the DUT the withdrawn YouTube item
+  failed three times in twenty minutes and its counter stayed at zero — the very loop the change was meant
+  to end. Every probed item is now decided on its own outcome by `planAssetProbeUpdates`, a function with
+  a test that reproduces that scan order, rather than a few lines inside the playout cycle.
+
 ## 2.0.0-rc.3 - 2026-09-07
 
 ### Fixed

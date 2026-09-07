@@ -35,7 +35,6 @@ import {
   isEngagementGameRuntimeEnabled,
   normalizeEngagementSettings,
   resolveBroadcastChannelLogin,
-  stripInvisibleCharacters,
   summarizeLiveBridgeInput,
   overlayAssetDisplayTitle,
   overlayNextTimeLabel,
