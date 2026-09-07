@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.0-rc.5 - 2026-09-07
 
 ### Fixed
 
