@@ -1,4 +1,6 @@
 export * from "./asset-chapters.js";
+export * from "./asset-probe-quarantine.js";
+import { isAssetProbeQuarantined } from "./asset-probe-quarantine.js";
 import { getAssetChapterAt, parseAssetChaptersJson } from "./asset-chapters.js";
 export * from "./broadcast-channel.js";
 export * from "./chat-emotes.js";
@@ -888,6 +890,7 @@ export type SchedulePreviewPoolRecord = {
 };
 
 export type SchedulePreviewAssetRecord = {
+  playbackProbeFailures?: number;
   id: string;
   sourceId: string;
   title: string;
@@ -2683,6 +2686,8 @@ function getSchedulePreviewEligibleAssets(
       (asset) =>
         asset.status === "ready" &&
         asset.includeInProgramming !== false &&
+        // An item whose source will not serve it is passed over rather than chosen and bridged again.
+        !isAssetProbeQuarantined(asset) &&
         pool.sourceIds.includes(asset.sourceId) &&
         !excludedAssetIds.has(asset.id)
     )
@@ -2763,6 +2768,7 @@ type MaterializedPoolRecord = {
 };
 
 type MaterializedAssetRecord = {
+  playbackProbeFailures?: number;
   id: string;
   sourceId: string;
   title: string;
@@ -2904,6 +2910,7 @@ function materializePoolWindow(args: {
           (asset) =>
             asset.status === "ready" &&
             asset.includeInProgramming !== false &&
+            !isAssetProbeQuarantined(asset) &&
             args.pool?.sourceIds.includes(asset.sourceId) &&
             !excludedAssetIds.has(asset.id)
         )

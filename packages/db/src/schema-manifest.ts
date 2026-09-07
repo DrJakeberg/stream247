@@ -8,7 +8,7 @@ export const DECLARED_SCHEMA: Record<string, string[]> = {
   asset_collection_items: ["asset_id", "collection_id", "position"],
   asset_collections: ["color", "created_at", "description", "id", "name", "updated_at"],
   asset_retention_marks: ["asset_id", "orphan_first_seen_at"],
-  assets: ["cache_error", "cache_path", "cache_status", "cache_updated_at", "category_name", "chapters_json", "chapters_probe_status", "chapters_probed_at", "created_at", "duration_seconds", "external_id", "fallback_priority", "folder_path", "hashtags_json", "id", "include_in_programming", "is_global_fallback", "path", "platform_notes", "published_at", "source_id", "status", "tags_json", "title", "title_prefix", "updated_at"],
+  assets: ["cache_error", "cache_path", "cache_status", "cache_updated_at", "category_name", "chapters_json", "chapters_probe_status", "chapters_probed_at", "created_at", "duration_seconds", "external_id", "fallback_priority", "folder_path", "hashtags_json", "id", "include_in_programming", "is_global_fallback", "path", "platform_notes", "playback_probe_error", "playback_probe_failures", "playback_probed_at", "published_at", "source_id", "status", "tags_json", "title", "title_prefix", "updated_at"],
   audit_events: ["created_at", "id", "message", "type"],
   chat_game_runtime: ["game_id", "settings", "settings_key", "singleton_id", "state", "updated_at"],
   chat_game_settings: ["emote_down", "emote_left", "emote_right", "emote_up", "game_id", "grid_height", "grid_width", "singleton_id", "updated_at"],

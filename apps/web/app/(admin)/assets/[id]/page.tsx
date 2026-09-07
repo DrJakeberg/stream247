@@ -3,9 +3,11 @@ export const dynamic = "force-dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { isAssetProbeQuarantined } from "@stream247/core";
 import { AssetChapterEditor } from "@/components/asset-chapter-editor";
 import { AssetCurationForm } from "@/components/asset-curation-form";
 import { AssetMetadataForm } from "@/components/asset-metadata-form";
+import { AssetProbeClearForm } from "@/components/asset-probe-clear-form";
 import { Panel } from "@/components/panel";
 import {
   buildAssetDisplayTitle,
@@ -253,6 +255,9 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
 
         <Panel title="Runtime state" eyebrow="Ops">
           <div className="stack-form">
+            {isAssetProbeQuarantined(asset) ? (
+              <AssetProbeClearForm assetId={asset.id} failures={asset.playbackProbeFailures ?? 0} />
+            ) : null}
             <div className="item">
               <strong>Playback diagnostics</strong>
               <div className="subtle">{playbackDiagnostics.summary}</div>

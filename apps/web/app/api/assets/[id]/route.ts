@@ -5,6 +5,7 @@ import {
   appendAuditEvent,
   readAppState,
   updateAssetMetadataRecords,
+  updateAssetPlaybackProbeRecords,
   type AssetMetadataUpdateRecord
 } from "@/lib/server/state";
 
@@ -16,6 +17,7 @@ type AssetMetadataRequest = {
   hashtagsJson?: unknown;
   platformNotes?: unknown;
   chapters?: unknown;
+  clearPlaybackProbeFailures?: unknown;
 };
 
 function normalizeText(value: unknown, maxLength: number): string {
@@ -129,6 +131,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     update.chaptersJson = JSON.stringify(chapters);
   }
 
+  // Clearing the probe count is the operator's way back for an item that was skipped: it puts the item
+  // straight into rotation again, and the next probe decides afresh. Kept separate from the metadata
+  // fields below because it changes what airs rather than what is written on it.
+  if (body.clearPlaybackProbeFailures === true) {
+    await updateAssetPlaybackProbeRecords([
+      { id: assetId, playbackProbeFailures: 0, playbackProbeError: "", playbackProbedAt: "" }
+    ]);
+    await appendAuditEvent("asset.playback-probe.cleared", `Cleared the failed playback probe count for ${assetId}.`);
+    return NextResponse.json({ ok: true, message: "Playback probe failures cleared; the item is eligible again." });
+  }
   if (
     update.title === undefined &&
     update.titlePrefix === undefined &&

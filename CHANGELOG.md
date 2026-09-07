@@ -4,6 +4,24 @@
 
 ### Fixed
 
+- The playout no longer chooses an item its source will not serve. Measured on the DUT on 2026-09-07: a
+  YouTube item returned "Requested format is not available" on every prefetch, the probe caught it, the
+  playout bridged with the fallback and the channel stayed on air — and then the scheduler chose the same
+  item again, for hours. Nothing recorded that the item was unplayable, and the incident closed itself
+  every time another item probed cleanly, so a rotten item was invisible while never airing.
+
+  Probe failures are now counted on the asset. Three consecutive failures take the item out of automatic
+  selection (one failure is a rate limit or a CDN reset, not a dead item); a single clean probe clears the
+  count on its own. The operator's include-in-programming flag is never touched, because it is theirs. The
+  asset page says the item is being skipped, why, and offers one button to clear the count and retry, and
+  the incident is keyed by SOURCE — a source that stops serving its items is one fault, and keying it by
+  asset would grow the list with the library, which is the mistake recorded on `playout.ffmpeg.exit`.
+
+  The columns ship as their own migration, not only in the baseline block: the baseline runs once per
+  database, so columns added only there are invisible on every install that is not brand new. The dev
+  stack demonstrated exactly that during this change, and its own schema-drift guard raised and then
+  cleared a critical incident about it.
+
 - The runtime parity smoke failed on any Monday morning or Friday evening, and said only
   `curl: (22) The requested URL returned error: 400`. `curl -f` throws the response body away, so two CI
   runs recorded no method, no path and no message. The API helpers now keep the body and name the request;

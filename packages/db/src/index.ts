@@ -244,6 +244,10 @@ export type AssetRecord = {
    * "failed" puts the asset into the failure cooldown before the next attempt.
    */
   chaptersProbeStatus?: "" | "ok" | "failed";
+  /** Consecutive prefetch probe failures; see packages/core/src/asset-probe-quarantine.ts. */
+  playbackProbeFailures?: number;
+  playbackProbeError?: string;
+  playbackProbedAt?: string;
   chaptersProbedAt?: string;
   status: "ready" | "pending" | "error";
   includeInProgramming: boolean;
@@ -2673,6 +2677,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       chapters_json TEXT NOT NULL DEFAULT '[]',
       chapters_probe_status TEXT NOT NULL DEFAULT '',
       chapters_probed_at TEXT NOT NULL DEFAULT '',
+      playback_probe_failures INTEGER NOT NULL DEFAULT 0,
+      playback_probe_error TEXT NOT NULL DEFAULT '',
+      playback_probed_at TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL,
       include_in_programming BOOLEAN NOT NULL DEFAULT TRUE,
       external_id TEXT NOT NULL DEFAULT '',
@@ -2997,6 +3004,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS platform_notes TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_json TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probe_status TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probe_failures INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probe_error TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probed_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probed_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_state TEXT NOT NULL DEFAULT 'idle';
@@ -3603,6 +3613,12 @@ const assetChapterProbeMigration: MigrationDefinition = {
       -- final, the budget is not spent on it again), 'failed' = wait out the cooldown measured
       -- from chapters_probed_at before the next attempt.
       ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probe_status TEXT NOT NULL DEFAULT '';
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probe_failures INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probe_error TEXT NOT NULL DEFAULT '';
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probed_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probe_failures INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probe_error TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probed_at TEXT NOT NULL DEFAULT '';
       ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probed_at TEXT NOT NULL DEFAULT '';
     `);
   }
@@ -3887,6 +3903,30 @@ export const overlayPlacementColumnsMigration: MigrationDefinition = {
 
 if (!schemaMigrations.some((migration) => migration.id === overlayPlacementColumnsMigration.id)) {
   schemaMigrations.push(overlayPlacementColumnsMigration);
+}
+
+/**
+ * The playback probe columns, for installs that already ran the baseline.
+ *
+ * `applyCurrentSchemaDefinition` is the baseline migration and runs exactly once per database. Columns
+ * added only there are invisible on every install that already has it — which is every install that is
+ * not brand new. That trap has been hit here before; the dev stack proved it again while this column set
+ * was being added, showing 26 asset columns against a declaration of 29.
+ */
+export const assetPlaybackProbeColumnsMigration: MigrationDefinition = {
+  id: "20260907_001_asset_playback_probe_columns",
+  description: "Add the playback probe failure columns that let the scheduler skip items a source will not serve.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probe_failures INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probe_error TEXT NOT NULL DEFAULT '';
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probed_at TEXT NOT NULL DEFAULT '';
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === assetPlaybackProbeColumnsMigration.id)) {
+  schemaMigrations.push(assetPlaybackProbeColumnsMigration);
 }
 
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
@@ -5131,6 +5171,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     chapters_json: string;
     chapters_probe_status: string;
     chapters_probed_at: string;
+    playback_probe_failures: number;
+    playback_probe_error: string;
+    playback_probed_at: string;
     status: AssetRecord["status"];
     include_in_programming: boolean;
     external_id: string;
@@ -5481,6 +5524,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       chaptersJson: row.chapters_json || "[]",
       chaptersProbeStatus: normalizeAssetChapterProbeStatus(row.chapters_probe_status),
       chaptersProbedAt: row.chapters_probed_at || "",
+      playbackProbeFailures: Number(row.playback_probe_failures ?? 0),
+      playbackProbeError: row.playback_probe_error || "",
+      playbackProbedAt: row.playback_probed_at || "",
       status: row.status,
       includeInProgramming: row.include_in_programming,
       externalId: row.external_id || undefined,
@@ -6240,6 +6286,41 @@ export async function updateAssetMetadataRecords(updates: AssetMetadataUpdateRec
  * re-ingest. A vanished asset is skipped rather than raised: the probe is bookkeeping about a row
  * that no longer exists, and failing the worker cycle over it would hurt the broadcast, not help.
  */
+export type AssetPlaybackProbeUpdateRecord = {
+  id: string;
+  playbackProbeFailures: number;
+  playbackProbeError: string;
+  playbackProbedAt: string;
+};
+
+/**
+ * Records how the prefetch probe went for an item.
+ *
+ * Written from the worker's queue prefetch, which is the only place that learns an item cannot be played
+ * before it is due on air. The counter is what stops the scheduler choosing the same dead item forever
+ * (see packages/core/src/asset-probe-quarantine.ts); it is deliberately separate from the operator's
+ * include-in-programming flag, which this never touches.
+ */
+export async function updateAssetPlaybackProbeRecords(updates: AssetPlaybackProbeUpdateRecord[]): Promise<void> {
+  if (updates.length === 0) {
+    return;
+  }
+  await withSerializedStateWrite("updateAssetPlaybackProbeRecords", async (client) => {
+    for (const update of updates) {
+      await client.query(
+        "UPDATE assets SET playback_probe_failures = $2, playback_probe_error = $3, playback_probed_at = $4, updated_at = $5 WHERE id = $1",
+        [
+          update.id,
+          Math.max(0, Math.trunc(update.playbackProbeFailures)),
+          (update.playbackProbeError || "").slice(0, 500),
+          update.playbackProbedAt,
+          new Date().toISOString()
+        ]
+      );
+    }
+  });
+}
+
 export async function updateAssetChapterProbeRecords(updates: AssetChapterProbeUpdateRecord[]): Promise<void> {
   if (updates.length === 0) {
     return;

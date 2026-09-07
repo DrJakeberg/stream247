@@ -40,6 +40,7 @@ import {
   overlayAssetDisplayTitle,
   overlayNextTimeLabel,
   overlayOnAirChapterTitle,
+  isAssetProbeQuarantined,
   type OverlaySceneRenderTarget
 } from "@stream247/core";
 import {
@@ -86,6 +87,7 @@ import {
   updateAssetCurationRecords,
   updateAssetCollectionMemberships,
   updateAssetMetadataRecords,
+  updateAssetPlaybackProbeRecords,
   updateAssetRecords,
   updatePlayoutRuntime,
   updatePoolCursor,
@@ -229,6 +231,7 @@ export {
   updateAssetCurationRecords,
   updateAssetCollectionMemberships,
   updateAssetMetadataRecords,
+  updateAssetPlaybackProbeRecords,
   updateAssetRecords,
   updateAppState,
   updateOwnerAndInitialized,
@@ -621,6 +624,23 @@ export function getAssetPlaybackDiagnostics(state: AppState, assetId: string) {
 
   if (sourceSnapshot.openIncidentCount > 0) {
     details.push(`${sourceSnapshot.openIncidentCount} open source incident(s) may still affect playback quality.`);
+  }
+
+  // A quarantined item reads as ready everywhere else, so this is where it has to be said plainly:
+  // it is in the library, it is included in programming, and it is still never chosen.
+  if (isAssetProbeQuarantined(asset)) {
+    details.push(
+      `The last ${asset.playbackProbeFailures ?? 0} playback probes failed, so automatic programming passes this item over.`
+    );
+    if (asset.playbackProbeError) {
+      details.push(`Last probe error: ${asset.playbackProbeError}`);
+    }
+    details.push("A single clean probe clears this by itself; fix the source or remove the item.");
+    return {
+      status: "warning" as const,
+      summary: "Asset is skipped by automatic programming after repeated failed playback probes.",
+      details
+    };
   }
 
   return {

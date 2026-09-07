@@ -120,6 +120,16 @@ const STATE_FAMILIES: IncidentFamily[] = [
     why: "The configured audio lane has no usable input until it has one; the lane resolver closes it."
   },
   {
+    // Keyed by source, which is a stored, configured thing. Not by asset: the note on
+    // playout.ffmpeg.exit records what that produced last time -- one entry per asset id and a list
+    // that grew with the library. A source that stops serving its items is one fault, so it is one entry.
+    fingerprint: "playout.source-unplayable",
+    keyed: "suffix",
+    kind: "state",
+    area: "playout",
+    why: "Items from this source keep failing their probe until the source serves them again or they are removed."
+  },
+  {
     fingerprint: "playout.prefetch.failed",
     keyed: false,
     kind: "state",
