@@ -3550,6 +3550,17 @@ and in `uplink.seam.skew`, then the release. That is Task #37 and it is not star
   Bildes: das Vorzeichen des Vorlaufs ist über beide Nähte stabil.
   Ruhige Familie jetzt: 1,07 / 2,43 / 3,52 / 6,26 / 6,52 / 6,52 / 6,69 / 8,07 s. Sturmfamilie
   unverändert 11,84-13,45 s, unter rc.1/rc.2 kein einziger Sturm.
+- 2026-09-07 08:48, was an der zweiten Naht wirklich geschah: der nächste Beitrag der Warteschlange war
+  ein YouTube-Video, dessen Format yt-dlp nicht mehr liefert („Requested format is not available",
+  `asset_source_jjwuu0f3_2Z-0oUcFNCs`, Status weiter `ready`, weiter im Programm). Die Vorabprüfung fing
+  das ab, der Playout überbrückte mit dem Ausweichbeitrag (`playout.boundary.fallback_bridge`), der Kanal
+  blieb auf Sendung. Die gemessene Naht von 6,519 s stammt also aus einer Überbrückung, nicht aus einer
+  gewöhnlichen Übergabe.
+  **Offen für 2.0:** der Vorfall `playout.prefetch.failed` schloss sich um 09:09 selbst mit „Next queued
+  asset probe succeeded" — das heisst nur, dass die NÄCHSTE Prüfung gelang, nicht dass der kaputte Beitrag
+  repariert ist. Er steht weiter auf `ready` und im Programm und wird wieder überbrückt. Ein verrotteter
+  Fremd-Beitrag verschwindet damit still aus der Sendung, ohne dass jemand ihn je zu sehen bekommt.
+  `playout.feed.av_lead` meldete an dieser Grenze erneut `measured: false` (CDN-Quelle, keine lokale Datei).
 
 - Before tagging v2.0.0 (not the rc): bump the three `STREAM247_*_IMAGE` defaults in `docker-compose.yml` AND
   the three pins in `.env.production.example` from `v1.5.47` to `v2.0.0` (moved from v1.5.20 to v1.5.47 on
