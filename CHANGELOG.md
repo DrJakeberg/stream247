@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The runtime parity smoke raced its own fixtures. It waited for four ready local-library assets and then
+  named four specific files, but the scan marks assets ready one at a time, so the count could be met
+  while the audio-bed file was still probing. `POST /api/pools` then rejected the not-yet-ready audio lane
+  asset with a 400 that surfaced only as `curl: (22)`. It now waits for the four files it actually uses,
+  by name, and says which ones were missing when it times out.
+
 ## 2.0.0-rc.2 - 2026-09-06
 
 ### Fixed

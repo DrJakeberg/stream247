@@ -168,14 +168,19 @@ wait_for_local_library_assets() {
     sync_runs="$(psql_query "SELECT count(*) FROM source_sync_runs WHERE source_id = 'source-local-library';" 2>/dev/null || true)"
     source_rows="$(psql_query "SELECT count(*) FROM sources WHERE id = 'source-local-library';" 2>/dev/null || true)"
     ready_assets="$(psql_query "SELECT count(*) FROM assets WHERE source_id = 'source-local-library' AND status = 'ready';" 2>/dev/null || true)"
-    if [ "${sync_runs:-0}" -ge 1 ] && [ "${source_rows:-0}" -ge 1 ] && [ "${ready_assets:-0}" -ge "$minimum_ready_assets" ]; then
+    # The count alone is not enough. The scan marks assets ready one at a time, so four ready rows can
+    # exist while the very file the next request names is still probing — and POST /api/pools rejects an
+    # audio lane asset that is not ready with a 400 the script reported only as "curl: (22)". Each
+    # fixture this run goes on to use is therefore waited for by name.
+    ready_fixtures="$(psql_query "SELECT count(*) FROM assets WHERE source_id = 'source-local-library' AND status = 'ready' AND (path LIKE '%/${PROGRAM_A_FILE}' OR path LIKE '%/${PROGRAM_B_FILE}' OR path LIKE '%/${AUDIO_BED_FILE}' OR path LIKE '%/${CUE_INSERT_FILE}');" 2>/dev/null || true)"
+    if [ "${sync_runs:-0}" -ge 1 ] && [ "${source_rows:-0}" -ge 1 ] && [ "${ready_assets:-0}" -ge "$minimum_ready_assets" ] && [ "${ready_fixtures:-0}" -ge 4 ]; then
       return 0
     fi
     sleep 2
   done
 
   dump_failure_context
-  echo "Timed out waiting for the local media library to finish scanning runtime parity fixtures." >&2
+  echo "Timed out waiting for the local media library to finish scanning runtime parity fixtures (ready overall: ${ready_assets:-0}, of the four this run uses: ${ready_fixtures:-0})." >&2
   exit 1
 }
 
