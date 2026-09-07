@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The probe quarantine still did nothing on the live channel after rc.4, for two reasons the unit tests
+  could not see. Both were found by watching the counter on the DUT rather than trusting the green suite.
+  - `replaceAssetsForSourceIds` deletes a source's assets and writes them again on every sync, carrying
+    selected columns over from the old row. The probe columns were not among them, and the YouTube source
+    syncs about twice a minute, so the count was wiped long before it could reach three. It is carried
+    over now, like `cache_*` and `chapters_*` beside it.
+  - The playout builds its queue through its own predicate in the worker, not through the core preview
+    filters where the quarantine was applied. Quarantined items therefore kept entering the queue, kept
+    being probed and kept failing. `isAssetBlockedForAutomaticSelection` applies it now.
+
+  The DUT showed the shape of both at once: three items of one source crossed into quarantine together at
+  11:51 and again at 11:57, because the sync reset them in between and nothing kept them out of the queue.
+
 ## 2.0.0-rc.4 - 2026-09-07
 
 ### Fixed

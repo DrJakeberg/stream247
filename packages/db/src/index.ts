@@ -6003,8 +6003,11 @@ export async function replaceAssetsForSourceIds(
       include_in_programming: boolean;
       fallback_priority: number;
       is_global_fallback: boolean;
+      playback_probe_failures: number;
+      playback_probe_error: string;
+      playback_probed_at: string;
     }>(
-      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, fallback_priority, is_global_fallback FROM assets WHERE source_id = ANY($1::text[])",
+      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, fallback_priority, is_global_fallback, playback_probe_failures, playback_probe_error, playback_probed_at FROM assets WHERE source_id = ANY($1::text[])",
       [sourceIds]
     );
 
@@ -6044,9 +6047,10 @@ export async function replaceAssetsForSourceIds(
           INSERT INTO assets (
             id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
             title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, external_id, category_name, duration_seconds, published_at,
-            fallback_priority, is_global_fallback, created_at, updated_at
+            fallback_priority, is_global_fallback, created_at, updated_at,
+            playback_probe_failures, playback_probe_error, playback_probed_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
         `,
         [
           asset.id,
@@ -6078,7 +6082,14 @@ export async function replaceAssetsForSourceIds(
           existing?.fallback_priority ?? asset.fallbackPriority,
           existing?.is_global_fallback ?? asset.isGlobalFallback,
           asset.createdAt,
-          asset.updatedAt
+          asset.updatedAt,
+          // This function deletes a source's assets and writes them again, so anything not carried over
+          // from the existing row is reset. A YouTube source syncs about twice a minute; without these
+          // three lines the probe failure count was wiped before it could ever reach the threshold, which
+          // is exactly what the DUT showed under 2.0.0-rc.4: the counter climbed to 3 and fell back.
+          existing?.playback_probe_failures ?? 0,
+          existing?.playback_probe_error ?? "",
+          existing?.playback_probed_at ?? ""
         ]
       );
     }

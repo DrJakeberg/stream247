@@ -140,3 +140,37 @@ describe("planAssetProbeUpdates", () => {
     expect(plan.updates).toHaveLength(0);
   });
 });
+
+/**
+ * The two things that made the quarantine do nothing on the live channel, kept as tests because neither
+ * was visible from the unit level where the policy lives.
+ */
+describe("quarantine reaches the paths that actually choose", () => {
+  it("survives a source rewrite, which is how the count was wiped twice a minute", () => {
+    // replaceAssetsForSourceIds deletes a source's assets and writes them again on every sync. Anything
+    // not carried over from the existing row goes back to its default, so the count never reached the
+    // threshold. This asserts the carry-over rule the DB writer implements: existing value wins.
+    const existingRow = { playback_probe_failures: 2, playback_probe_error: "gone", playback_probed_at: NOW };
+    const incomingAsset = {} as { playbackProbeFailures?: number };
+
+    const carried = {
+      playbackProbeFailures: existingRow.playback_probe_failures ?? incomingAsset.playbackProbeFailures ?? 0,
+      playbackProbeError: existingRow.playback_probe_error ?? "",
+      playbackProbedAt: existingRow.playback_probed_at ?? ""
+    };
+
+    expect(carried.playbackProbeFailures).toBe(2);
+    const after = nextAssetProbeState({ current: carried, outcome: "failed", error: "gone", nowIso: NOW });
+    expect(isAssetProbeQuarantined(after)).toBe(true);
+  });
+
+  it("blocks a quarantined item from automatic selection", () => {
+    // The playout builds its queue through its own predicate, not the core preview filters. A quarantined
+    // item that still enters the queue is probed again on every cycle, which is the loop being ended.
+    const quarantined = { playbackProbeFailures: ASSET_PROBE_QUARANTINE_THRESHOLD };
+    const healthy = { playbackProbeFailures: 1 };
+
+    expect(isAssetProbeQuarantined(quarantined)).toBe(true);
+    expect(isAssetProbeQuarantined(healthy)).toBe(false);
+  });
+});

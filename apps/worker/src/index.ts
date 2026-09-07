@@ -931,6 +931,12 @@ function getTwitchVodCacheRuntimeConfig() {
 }
 
 function isAssetBlockedForAutomaticSelection(asset: AssetRecord): boolean {
+  // The playout builds its own queue here, not through the core preview filters, so the quarantine has to
+  // be applied at this predicate too. It was not, at first: quarantined items kept entering the queue,
+  // kept being probed and kept failing, which is the loop the quarantine exists to end.
+  if (isAssetProbeQuarantined(asset)) {
+    return true;
+  }
   return isTwitchVodCacheCoolingDown(asset, getTwitchVodCacheRuntimeConfig().failureCooldownMs);
 }
 
