@@ -3561,6 +3561,18 @@ and in `uplink.seam.skew`, then the release. That is Task #37 and it is not star
   repariert ist. Er steht weiter auf `ready` und im Programm und wird wieder überbrückt. Ein verrotteter
   Fremd-Beitrag verschwindet damit still aus der Sendung, ohne dass jemand ihn je zu sehen bekommt.
   `playout.feed.av_lead` meldete an dieser Grenze erneut `measured: false` (CDN-Quelle, keine lokale Datei).
+- 2026-09-07 23:03:41, **die Naht, die die Schwelle prüft**: Video-Offset -65750,201 s, Ton-Offset
+  -65735,140 s, **Naht 15,061 s**, drei Zeilen, kein Neustart, kein Vorfall. Zehn Sekunden später eine
+  unpaarige Video-Zeile (-4,999 s), folgenlos.
+  Damit erstmals eine Naht ÜBER ffmpegs Vorgabe von 10 s und über der bisherigen Sturmfamilie
+  (11,84-13,45 s), die ruhig blieb. Unter der Vorgabe hätte sie gestürmt. `dts_delta_threshold 60` ist
+  damit nicht mehr nur unwiderlegt, sondern einmal positiv belegt.
+  Einschränkung: die Ton-Zeile trug keinen Spurenkopf mehr (Blockgrenze mitten in der Zeile), die
+  Zuordnung „Ton" ist gefolgert — Bild meldete in derselben Millisekunde, und die Offset-Differenz
+  entspricht exakt dem Sprung dieser Zeile, wie an den Nähten 05:44 und 08:48 auch. Das Instrument hat
+  sie nicht gemeldet; seit diesem Fund setzt es Zeilen über Blockgrenzen zusammen.
+  Verteilung jetzt: ruhig 1,07 / 2,43 / 3,52 / 6,26 / 6,52 / 6,52 / 6,69 / 8,07 s — ruhig über der
+  Vorgabe: 15,06 s — Sturm (vor 1.5.47) 11,84 / 12,25 / 13,22 / 13,45 s.
 
 - Before tagging v2.0.0 (not the rc): bump the three `STREAM247_*_IMAGE` defaults in `docker-compose.yml` AND
   the three pins in `.env.production.example` from `v1.5.47` to `v2.0.0` (moved from v1.5.20 to v1.5.47 on

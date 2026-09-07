@@ -7207,6 +7207,12 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
     });
   }
 
+  // ffmpeg's stderr arrives in arbitrary chunks: two of its lines can share one chunk, and one line can
+  // be cut across two. At 2026-09-07 23:03 the audio half of a boundary arrived without its
+  // "[aist#0:1/aac @ 0x...]" head, so the seam went unmeasured and had to be read out of the raw log by
+  // hand — the seam that finally tested the threshold, at 15.061s and quiet. Whole lines are handed to
+  // the seam observer; the storm guard keeps seeing raw chunks, which is what its limit was tuned on.
+  let stderrCarry = "";
   child.stderr?.on("data", (chunk) => {
     const line = redactSecrets(chunk.toString().trim());
     if (!line) {
@@ -7215,7 +7221,13 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
 
     const nowMs = Date.now();
     runtime.discontinuity = observeDiscontinuityLine(runtime.discontinuity, line, nowMs);
-    const seam = observeSeamOffsetLine(runtime.seam, line, nowMs);
+    const carried = `${stderrCarry}${chunk.toString()}`;
+    const completed = carried.split("\n");
+    stderrCarry = completed.pop() ?? "";
+    if (stderrCarry.length > 4096) {
+      stderrCarry = "";
+    }
+    const seam = observeSeamOffsetLine(runtime.seam, redactSecrets(completed.join("\n")), nowMs);
     runtime.seam = seam.state;
     if (seam.seam) {
       // The one number that separated storms from quiet boundaries (see uplink-progress.ts): logged

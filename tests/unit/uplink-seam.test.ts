@@ -103,3 +103,34 @@ describe("observeSeamOffsetLine", () => {
     expect(seam?.skewSeconds).toBeCloseTo(95443.718, 3);
   });
 });
+
+describe("stderr arriving in arbitrary chunks", () => {
+  it("measures a seam whose audio line was cut across two chunks", () => {
+    // 2026-09-07 23:03 on the DUT. The audio half arrived without its "[aist#0:1/aac @ 0x...]" head
+    // because the chunk boundary fell inside the line, so the pattern did not match and the seam went
+    // unmeasured — the seam that finally tested the threshold: 15.061s, three lines, no restart. The
+    // caller reassembles whole lines before measuring; this is that reassembly, with the real split.
+    const first =
+      "[vist#0:0/h264 @ 0x1] timestamp discontinuity (stream id=0): 69334751022, new offset= -65750201023\n" +
+      "[aist#0:1/aac @ 0x2] ";
+    const second = "timestamp discontinuity (stream id=0): -15061275, new offset= -65735139748\n";
+
+    let carry = "";
+    let state = createUplinkSeamState();
+    let seam: ReturnType<typeof observeSeamOffsetLine>["seam"] = null;
+    for (const chunk of [first, second]) {
+      const carried = `${carry}${chunk}`;
+      const completed = carried.split("\n");
+      carry = completed.pop() ?? "";
+      const result = observeSeamOffsetLine(state, completed.join("\n"), 1_000);
+      state = result.state;
+      seam = result.seam ?? seam;
+    }
+
+    expect(seam).not.toBeNull();
+    expect(seam?.videoOffsetUs).toBe(-65750201023);
+    expect(seam?.audioOffsetUs).toBe(-65735139748);
+    expect(seam?.skewSeconds).toBeCloseTo(15.061, 3);
+    expect(seam?.wraparound).toBe(false);
+  });
+});

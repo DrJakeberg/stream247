@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The seam instrument missed a line that ffmpeg's stderr cut in half. Two of its lines can share one
+  chunk — fixed in 2.0.0-rc.1 — and one line can also be split across two, which is what happened at
+  2026-09-07 23:03: the audio half arrived without its `[aist#0:1/aac @ …]` head and matched nothing.
+  That was the seam worth having: 15.061 s, three lines, no restart, no incident — the first boundary
+  measured above ffmpeg's 10 s default and above every storm ever recorded (11.84-13.45 s) that stayed
+  quiet. Under the default it would have stormed, so `dts_delta_threshold 60` is now supported by a
+  measurement rather than only unrefuted. Whole lines are reassembled across chunks before measuring;
+  the storm guard keeps seeing raw chunks, which is what its limit was tuned on.
+
 ## 2.0.0-rc.6 - 2026-09-07
 
 ### Fixed
