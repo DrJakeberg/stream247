@@ -1,6 +1,34 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 - 2026-09-07
+
+The number is a major because the stack loses a container: `redis` is gone from the Compose file and from
+the deployed stack. Upgrading an existing install removes that service — see `docs/deployment.md`,
+*Upgrading To 2.0*. Everything else in this release is additive.
+
+What 2.0 claims, and what it does not:
+
+- **A newcomer can start without writing a `.env`.** Measured on a fresh checkout: `docker compose up -d`
+  with no env file comes up healthy, `/` redirects to `/setup`, the wizard validates each step, signs the
+  owner in, lets every Twitch step be skipped, and ends in a readiness checklist that links to what is
+  still missing. The default image tags now point at this release rather than at a build that predates the
+  wizard.
+- **The channel survives what actually happened to it.** Across two 24 h soaks on the live DUT, a network
+  path failure at 01:31 on two consecutive nights killed the CDN read, the Twitch RTMP push and the IRC
+  session within seconds of each other. The uplink healed in 49 and 70 seconds through its stall guards
+  without any intervention, and the warning incidents closed themselves six hours later, both times.
+- **Asset boundaries no longer restart the uplink.** Nine boundaries measured across the 1.5.4x line and
+  two more measured by the runtime itself under 2.0: skews of 1.07 to 8.07 s, all quiet. No storm has
+  occurred since `dts_delta_threshold` was raised.
+- **What is not proven:** every storm ever recorded had a skew above 11.8 s, and no boundary above ffmpeg's
+  10 s default has occurred since the change. The threshold of 60 s is therefore consistent with every
+  measurement and confirmed by none. It is a symptom treatment with an instrument attached, not a cure.
+- **What is known broken:** a third-party asset whose source stops serving it (a YouTube video whose format
+  is withdrawn) stays `ready` and stays in programming. The prefetch probe catches it and the playout
+  bridges with the fallback, so the channel does not go dark — but the item silently never airs and its
+  incident opens and closes in a loop. Remove it from programming or re-scan the source; the fix belongs to
+  a later release.
+
 
 ### Fixed
 
