@@ -61,21 +61,39 @@ psql_query() {
   compose exec -T postgres psql -U stream247 -d stream247 -At -F '|' -c "$1"
 }
 
+# `curl -f` prints "curl: (22) The requested URL returned error: 400" and throws the response body away.
+# Twice in a row that was the entire CI record of a failure: no method, no path, no message from the API
+# that rejected the call. These helpers keep the body and say which request it belonged to.
+api_call() {
+  local method="$1"
+  local path="$2"
+  local payload="${3:-}"
+  local response status body
+  if [ "$method" = "GET" ]; then
+    response="$(curl -sS -b "$COOKIE_JAR" -w $'\n%{http_code}' "${BASE_URL}${path}")" || return 1
+  else
+    response="$(curl -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" -H "Content-Type: application/json" \
+      -X "$method" -d "$payload" -w $'\n%{http_code}' "${BASE_URL}${path}")" || return 1
+  fi
+  status="${response##*$'\n'}"
+  body="${response%$'\n'*}"
+  if [ "${status:-0}" -ge 400 ]; then
+    echo "API ${method} ${path} answered ${status}: ${body}" >&2
+    return 1
+  fi
+  printf '%s' "$body"
+}
+
 api_get() {
-  local path="$1"
-  curl -fsS -b "$COOKIE_JAR" "${BASE_URL}${path}"
+  api_call GET "$1"
 }
 
 api_post() {
-  local path="$1"
-  local payload="$2"
-  curl -fsS -b "$COOKIE_JAR" -c "$COOKIE_JAR" -H "Content-Type: application/json" -X POST -d "$payload" "${BASE_URL}${path}"
+  api_call POST "$1" "$2"
 }
 
 api_put() {
-  local path="$1"
-  local payload="$2"
-  curl -fsS -b "$COOKIE_JAR" -c "$COOKIE_JAR" -H "Content-Type: application/json" -X PUT -d "$payload" "${BASE_URL}${path}"
+  api_call PUT "$1" "$2"
 }
 
 dump_failure_context() {
@@ -392,6 +410,15 @@ if [ -z "$SECONDARY_DESTINATION_ID" ]; then
   echo "Runtime parity smoke could not resolve the created secondary destination." >&2
   exit 1
 fi
+
+# The block below is placed at today's weekday and the current minute, because the runtime has to pick
+# it up as the block that is on air right now. The bootstrap seeds two demo blocks — Monday 06:00-10:00
+# and Friday 18:00-24:00 — and the API rejects an overlapping block with 400. So this test failed on any
+# Monday morning or Friday evening, and said only "curl: (22)". The seeded blocks are demo data, not
+# something this test measures, so the window it needs is cleared first.
+BLOCK_END_MINUTE_OF_DAY="$((START_MINUTE_OF_DAY + 20))"
+CLEARED_BLOCKS="$(psql_query "DELETE FROM schedule_blocks WHERE day_of_week = ${DAY_OF_WEEK} AND start_minute_of_day < ${BLOCK_END_MINUTE_OF_DAY} AND (start_minute_of_day + duration_minutes) > ${START_MINUTE_OF_DAY} RETURNING id;" | grep -c . || true)"
+echo "Cleared ${CLEARED_BLOCKS} seeded schedule block(s) overlapping day ${DAY_OF_WEEK} minute ${START_MINUTE_OF_DAY}-${BLOCK_END_MINUTE_OF_DAY}."
 
 api_post "/api/schedule/blocks" "$(jq -nc \
   --arg title "$BLOCK_TITLE" \

@@ -4,11 +4,16 @@
 
 ### Fixed
 
-- The runtime parity smoke raced its own fixtures. It waited for four ready local-library assets and then
-  named four specific files, but the scan marks assets ready one at a time, so the count could be met
-  while the audio-bed file was still probing. `POST /api/pools` then rejected the not-yet-ready audio lane
-  asset with a 400 that surfaced only as `curl: (22)`. It now waits for the four files it actually uses,
-  by name, and says which ones were missing when it times out.
+- The runtime parity smoke failed on any Monday morning or Friday evening, and said only
+  `curl: (22) The requested URL returned error: 400`. `curl -f` throws the response body away, so two CI
+  runs recorded no method, no path and no message. The API helpers now keep the body and name the request;
+  one local run then said it: `POST /api/schedule/blocks answered 400: Schedule blocks overlap`. The test
+  places its block at today's weekday and the current minute, because the runtime has to pick it up as the
+  block on air, and the bootstrap seeds demo blocks at Monday 06:00-10:00 and Friday 18:00-24:00. The
+  window is cleared of overlapping seeded blocks before the test claims it.
+- The same smoke also waited for four ready local-library assets before naming four specific files. The
+  scan marks assets ready one at a time, so the count could be met while a named file was still probing.
+  It now waits for the four files it actually uses, by name.
 
 ## 2.0.0-rc.2 - 2026-09-06
 
