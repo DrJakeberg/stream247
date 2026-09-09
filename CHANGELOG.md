@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 2.0.0 - 2026-09-09
+
+The release the six candidates were for. What makes it a major is stated in
+`docs/deployment.md` → *Upgrading To 2.0*: the unused `redis` service leaves the stack, controls that
+never reached the picture are gone from the studio (and "Show clock" / "Show next item" now really
+switch the clock and the next card), and the library upload refuses the formats the scan never
+ingested. The schema changes are additive and the rollback is the reverse repin.
+
+Measured before tagging: 24 h on the device under test, 2026-09-07 13:49 to 2026-09-08 13:49 UTC,
+1432 readiness samples all `status=ok`, one tolerated fetch failure from the daily network blip at
+23:32, one unplanned uplink restart from that same blip, no container restart. The reboot of the
+host twelve hours later was not part of the plan and is worth recording anyway: the stack came back
+healthy by itself and the probe quarantine still held every item it had taken out.
+
 ### Fixed
 
 - The seam instrument missed a line that ffmpeg's stderr cut in half. Two of its lines can share one

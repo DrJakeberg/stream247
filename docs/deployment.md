@@ -168,7 +168,7 @@ Production Compose is intended to pull from:
 - `ghcr.io/drjakeberg/stream247-playout:<tag>`
 - `bluenviron/mediamtx:<tag>` for the local RTMP relay
 
-`docker-compose.yml` carries its own default tags; `.env.production.example` pins `v1.5.47` for a stable
+`docker-compose.yml` carries its own default tags; `.env.production.example` pins `v2.0.0` for a stable
 deployment, and the defaults move with each release.
 See `docs/operations.md` for the runbook and backup procedures.
 
@@ -301,6 +301,14 @@ Useful overrides:
 Also new, not breaking: every field carries an (i) explanation; the uplink tolerates a boundary seam
 of up to 60 s (`-dts_delta_threshold 60`) and logs the seam skew; a replay download gets at least the
 content's running time; a replay that airs again within the retention horizon stays cached.
+
+Automatic programming also stops choosing an item whose source will not serve it. Three consecutive
+failed prefetch probes take an item out of automatic selection; one clean probe puts it back, and the
+asset page grows a **Clear probe failures and retry** button while an item is out. A warning incident
+per source (`playout.source-unplayable.<sourceId>`) names how many of its items are being skipped and
+stays open until the source serves them again. `include_in_programming` is never touched: what the
+operator chose stays theirs. Expect this incident to appear at the upgrade if a source has rotted —
+that is the point of it, the items were already being skipped silently.
 
 Upgrade path: back up PostgreSQL, repin the three `STREAM247_*_IMAGE` tags to `v2.0.0`, redeploy.
 Rollback is the reverse repin; the schema changes in 2.0 are additive.
