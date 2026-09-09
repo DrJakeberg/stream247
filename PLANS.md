@@ -76,7 +76,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M64 Getting Started | Docs | Now | Planned | One page from zero to a green channel | `docs/getting-started.md` walks `.env.production.example` → `/setup` → `Live → Status` with the known traps in one place; README points at it; fresh-compose smoke follows it | docs, README | low | docs-only |
 | M65 Measured Layout Specs | Reliability | Now | Complete | Layout asserted by measurement on every workspace | Live, Program and Admin get specs in the style of `studio-layout.spec.ts`: no horizontal overflow, sticky/aside rules where they apply, control budgets | tests, scripts | low | remove specs |
 | M66 Live Bridge Rehearsal | Ops | Next | In progress | The live bridge has run under supervision before 2.0 names it | Live-bridge takeover and release observed on the DT stack with the operator present; findings recorded | DUT, docs | medium | none — observation only |
-| M67 Release 2.0.0 | Release | Now | In progress | Major because the stack drops a service and the UI drops controls | 2.0.0 tagged after M60–M66 are complete and the soak is clean | release, docs | medium | pin 1.5.x images |
+| M67 Release 2.0.0 | Release | Now | Done 2026-09-09 | Major because the stack drops a service and the UI drops controls | 2.0.0 tagged after M60–M66 are complete and the soak is clean | release, docs | medium | pinned v2.0.0 |
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
 
@@ -3597,3 +3597,28 @@ formats it used to swallow. The project's own release rule — tag only after re
 
 Open before the final tag: the operator-present live-bridge observation (M66), and the seam metric
 showing at least one boundary above 10 s with a single-digit discontinuity count.
+
+- 2026-09-08 13:49 UTC: der Soak auf rc.6 lief die vollen 24 h durch. 1432 Proben, alle `status=ok`,
+  eine tolerierte Netzprobe (HTTP 522) um 23:32, ein unplanmässiger Uplink-Neustart aus derselben
+  Minute, kein Container-Neustart. Damit ist die Soak-Bedingung erfüllt.
+- 2026-09-09 01:07 UTC, ungeplant und trotzdem lehrreich: der Proxmox-Wirt startete für einen
+  Kernelwechsel neu (7.0.12 → 7.0.14, davor 43 Tage Laufzeit). Der Stapel kam von allein vollständig
+  gesund zurück, und die Quarantäne hielt jeden Beitrag, den sie herausgenommen hatte — die Zähler
+  überstehen einen kalten Start, nicht nur einen Dienstneustart. Um 00:23 UTC davor ein Feed-Stillstand
+  von 53 s, von der Wache aufgefangen, nach zehn Minuten selbst geschlossen.
+- 2026-09-09 02:19 UTC: **v2.0.0 getaggt** (650c191). CI grün — und damit lief zum ersten Mal
+  überhaupt eine CI über `a24510d`, für den GitHub beim Drücken keinen Lauf angelegt hatte. Release
+  grün, drei Images gebaut, Repin ohne Compose-Datei (nur die drei App-Pins; Relay unberührt auf
+  `mediamtx:1.15.4`, kein Prune), vier Container gesund nach 28 s.
+  Nachweise am laufenden Stapel: Version `2.0.0` im Bild; die drei `playback_*`-Spalten auf der
+  bestehenden Datenbank; Quarantäne unverändert 11/11 bei `source_jjwuu0f3` und 0/40 bei
+  `source_e2au8vv3`; RTMP 1935 und IRC 6697 verbunden; `status=ok`.
+  Die Beitrags-Detailseite ist am ausgelieferten Build belegt statt am Bild: `routes-manifest.json`
+  führt `/assets/[id]` und `/sources/[id]` als echte Routen und enthält keine Umleitung, die eine
+  Beitrags-ID abfängt. Das 307 auf `/login` ist die Anmeldesperre, nicht die alte Umleitung.
+- Was 2.0.0 **nicht** behauptet: der Soak mass rc.6, nicht 2.0.0. Dazwischen liegt genau `a24510d`,
+  der nur den Leser des ffmpeg-Fehlerkanals betrifft — er kann eine Naht falsch messen, den Kanal
+  aber nicht vom Sender nehmen. Der neue 24-h-Soak auf 2.0.0 läuft seit 02:26 UTC.
+- Weiter offen und bewusst so: M66 / Task #37 (Live-Brücke unter Aufsicht) wartet auf den Nutzer, und
+  der Vorfall `playout.source-unplayable.source_jjwuu0f3` steht — elf verrottete YouTube-Beiträge,
+  deren Schicksal (neu einlesen oder entfernen) dem Betreiber gehört.
