@@ -1,10 +1,10 @@
 import {
-  getEngagementGameWindowMs,
   resolveEngagementGameModeForActiveChatters,
   type EngagementGameMode,
   type EngagementGameRuntime,
   type EngagementSettings
 } from "@stream247/core";
+import { ActiveChatterRoster } from "./active-chatters.js";
 
 const MODE_SWITCH_HYSTERESIS_MS = 30_000;
 
@@ -19,33 +19,27 @@ function toTimestamp(value: string): number {
 }
 
 export class EngagementGameTracker {
-  private readonly chatterSeenAt = new Map<string, number>();
   private currentMode: EngagementGameMode | "" = "";
   private candidateMode: EngagementGameMode | "__off" | "" = "";
   private candidateSince = 0;
   private modeChangedAt = "";
   private lastSnapshotKey = "";
 
-  recordChatMessage(activity: EngagementChatActivity): void {
-    const actor = activity.actor.trim();
-    if (!actor) {
-      return;
-    }
+  /**
+   * The roster is shared with the skip vote (see active-chatters.ts): the count this snapshot
+   * reports is the count the skip threshold divides by, and this is where the window reaches it.
+   */
+  constructor(private readonly activeChatters: ActiveChatterRoster = new ActiveChatterRoster()) {}
 
-    this.chatterSeenAt.set(actor, toTimestamp(activity.createdAt));
+  recordChatMessage(activity: EngagementChatActivity): void {
+    this.activeChatters.recordSeen(activity.actor, toTimestamp(activity.createdAt));
   }
 
   getSnapshot(settings: Partial<EngagementSettings> | null | undefined, now = new Date()): EngagementGameRuntime {
     const nowMs = now.getTime();
-    const windowMs = getEngagementGameWindowMs(settings);
+    this.activeChatters.applySettings(settings);
 
-    for (const [actor, lastSeenAt] of this.chatterSeenAt.entries()) {
-      if (lastSeenAt < nowMs - windowMs) {
-        this.chatterSeenAt.delete(actor);
-      }
-    }
-
-    const activeChatterCount = this.chatterSeenAt.size;
+    const activeChatterCount = this.activeChatters.countActive(nowMs);
     const targetMode = resolveEngagementGameModeForActiveChatters(settings, activeChatterCount);
 
     if (targetMode === this.currentMode) {

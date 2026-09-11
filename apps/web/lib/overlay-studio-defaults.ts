@@ -72,6 +72,44 @@ export function createDefaultCustomLayer(kind: OverlaySceneCustomLayerKind): Ove
     };
   }
 
+  if (kind === "game") {
+    // A wide box on the right: the default 16x9 snake grid wants roughly the frame's own aspect
+    // ratio, and the right rail is where the layout already parks secondary panels.
+    return {
+      id,
+      kind,
+      name: "Chat Game",
+      enabled: true,
+      xPercent: 60,
+      yPercent: 10,
+      widthPercent: 30,
+      heightPercent: 44,
+      opacityPercent: 100,
+      // The board keeps its backdrop until somebody turns it down; a game over bare video is a
+      // choice, not a default.
+      backgroundOpacityPercent: 100,
+      allowOutsideSafeArea: false
+    };
+  }
+
+  if (kind === "source") {
+    // Corner box, picture-in-picture sized: a sampled camera wants to sit over the programme
+    // without competing with the lower third.
+    return {
+      id,
+      kind,
+      name: "Video Source",
+      enabled: true,
+      xPercent: 64,
+      yPercent: 8,
+      widthPercent: 26,
+      heightPercent: 26,
+      opacityPercent: 100,
+      allowOutsideSafeArea: false,
+      sourceId: ""
+    };
+  }
+
   if (kind === "widget") {
     return {
       id,

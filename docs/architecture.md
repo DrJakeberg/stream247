@@ -18,7 +18,6 @@ Explicit non-goals:
 - `worker`: ingestion, Twitch reconciliation, incidents, alerts, and playout supervision
 - `playout`: playout runtime image used for FFmpeg-oriented broadcast execution
 - `postgres`: durable relational state
-- `redis`: transient runtime support and queue/lock-oriented infrastructure
 
 ## Persistence Model
 
@@ -179,12 +178,24 @@ Current Twitch domains:
 
 - broadcaster OAuth connection
 - team SSO login
-- title sync from active schedule block
-- category lookup and sync from active schedule block
+- title sync from the active schedule block, the current video, or the video's current chapter
+- category lookup and sync from the same three levels — per-video chapters (auto-filled from VOD
+  metadata, editable in the library) switch category and title at offsets inside one video,
+  gated behind the broadcaster connection and throttled to one channel write per 30 seconds
 - Twitch schedule segment sync for upcoming blocks
 - moderation-related chat mode updates
 
 When Twitch reconciliation fails, Stream247 raises incidents instead of failing silently.
+
+## Chat Games
+
+Chat-driven games render into the on-air overlay through an extensible framework:
+
+- a game is a pure state machine in `packages/core/chat-game.ts`: settings, `applyInput`, and `renderModel` — deliberately no tick, so a game only ever advances on accepted chat input
+- Snake is the first game: every emote maps to one direction (configurable, four distinct emotes), and the snake moves exactly one cell per accepted message
+- the worker consumes broadcast-channel chat, applies inputs in arrival order, and persists the round in `chat_game_runtime`, so a worker restart resumes the round
+- the playout container re-derives the render model from that record and draws it wherever a scene has an enabled `Chat Game` layer; disabling the layer stops the intake and clears the round
+- game rules (game choice, grid, emote mapping) are configured once under `Engagement`, because the same round continues across scene changes
 
 ## Operator Controls
 
@@ -211,7 +222,7 @@ The runtime now supports multiple concurrent RTMP outputs per channel.
 
 ## Overlay Model
 
-Overlay is implemented as Stream247's internal browser capture surface. Chromium captures `/overlay?chromeless=1`, and the published scene feeds the on-air overlay path.
+The overlay is drawn by the playout worker's own renderer from the published scene; the studio preview is the same drawing. There is no browser page to capture.
 
 The overlay is internal output for Stream247's own 24/7 broadcast. It is not an external overlay product or a reusable third-party embed surface.
 
@@ -225,7 +236,7 @@ Current overlay capabilities:
 - now/next teaser toggle
 - schedule teaser toggle
 
-The admin UI manages these settings; the public overlay page renders them for Stream247's internal overlay capture flow.
+The admin UI manages these settings; the playout renderer draws them onto the picture.
 
 ## Alerting And Incidents
 

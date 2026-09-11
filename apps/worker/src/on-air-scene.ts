@@ -7,12 +7,45 @@ export type OnAirOverlayMode = "none" | "text" | "scene";
 
 export const ON_AIR_SCENE_PIPE_FD = 3;
 
-export function getSceneRendererBaseUrl(env: NodeJS.ProcessEnv): string {
-  return String(env.SCENE_RENDER_BASE_URL || env.INTERNAL_APP_URL || env.APP_URL || "http://web:3000").replace(/\/+$/, "");
-}
+/**
+ * Frame rate ffmpeg is told the overlay pipe delivers. `overlay` cannot emit a frame until both of
+ * its inputs have one, so the writer must keep at least this many frames per second available: an
+ * overlay input starved below this rate throttles the entire encode, not just the overlay.
+ */
+export const ON_AIR_SCENE_PIPE_FRAMERATE = 1;
 
-export function getSceneRendererOverlayUrl(env: NodeJS.ProcessEnv): string {
-  return `${getSceneRendererBaseUrl(env)}/overlay?chromeless=1`;
+/** Budget for a single written frame before the overlay input runs dry. */
+export const ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS = 1000 / ON_AIR_SCENE_PIPE_FRAMERATE;
+
+/**
+ * Bound on ffmpeg's own input packet queue for the overlay.
+ *
+ * This does NOT bound how stale the overlay can get. Frames sit in Node's stream buffer and the OS
+ * pipe buffer before they ever reach this queue, and those hold many more frames than it does — a
+ * transparent lower third compresses small, so the cheaper the frame the deeper the backlog. Only
+ * the writer's own pacing can bound staleness; see ON_AIR_SCENE_PIPE_LEAD_FRAMES.
+ */
+export const ON_AIR_SCENE_PIPE_QUEUE_FRAMES = 4;
+
+/**
+ * How many frames the writer may run ahead of real time.
+ *
+ * This is the actual staleness bound: the writer paces against the wall clock rather than writing
+ * until something pushes back, so a scene change waits at most this many frames. Large enough that
+ * the overlay input never runs dry if a rasterisation is slow — starving it throttles the entire
+ * encode, which is the failure this whole arrangement exists to prevent.
+ */
+export const ON_AIR_SCENE_PIPE_LEAD_FRAMES = 4;
+
+/**
+ * Frames that should have been handed to ffmpeg by `nowMs`, including the lead.
+ *
+ * Derived from elapsed wall-clock time rather than from a running counter, so a writer that was
+ * blocked on a full pipe catches up by itself instead of drifting permanently behind.
+ */
+export function framesDueByNow(startedAtMs: number, nowMs: number, leadFrames: number): number {
+  const elapsedMs = Math.max(0, nowMs - startedAtMs);
+  return Math.floor(elapsedMs / ON_AIR_SCENE_PIPE_FRAME_INTERVAL_MS) + leadFrames;
 }
 
 export function getSceneRendererViewport(
@@ -31,36 +64,4 @@ export function getSceneRendererViewport(
 export function getSceneRendererIntervalMs(env: NodeJS.ProcessEnv): number {
   const configured = Number(env.SCENE_RENDER_INTERVAL_MS || "2000") || 2000;
   return Math.max(1000, configured);
-}
-
-export function getChromiumBinaryCandidates(env: NodeJS.ProcessEnv): string[] {
-  return [
-    env.SCENE_RENDER_CHROMIUM_PATH || "",
-    env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || "",
-    "/usr/bin/chromium-browser",
-    "/usr/bin/chromium"
-  ].filter(Boolean);
-}
-
-export function buildChromiumSceneCaptureArgs(args: {
-  url: string;
-  outputPath: string;
-  viewport: { width: number; height: number };
-}): string[] {
-  return [
-    "--headless",
-    "--disable-gpu",
-    "--disable-crash-reporter",
-    "--disable-crashpad",
-    "--hide-scrollbars",
-    "--disable-dev-shm-usage",
-    "--no-sandbox",
-    "--no-zygote",
-    `--window-size=${args.viewport.width},${args.viewport.height}`,
-    "--default-background-color=00000000",
-    "--run-all-compositor-stages-before-draw",
-    "--virtual-time-budget=4000",
-    `--screenshot=${args.outputPath}`,
-    args.url
-  ];
 }

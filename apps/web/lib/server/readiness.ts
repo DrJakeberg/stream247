@@ -25,7 +25,7 @@ export async function getSystemReadiness() {
     const state = await readAppState();
     const persistence = await getDatabaseHealth();
     const playoutHeartbeatAt = state.playout.heartbeatAt ? new Date(state.playout.heartbeatAt).getTime() : 0;
-    const workerHeartbeat = state.auditEvents.find((event) => event.type === "worker.cycle")?.createdAt ?? "";
+    const workerHeartbeat = state.playout.workerHeartbeatAt;
     const workerHeartbeatAt = workerHeartbeat ? new Date(workerHeartbeat).getTime() : 0;
     const relayEnabled = process.env.STREAM247_RELAY_ENABLED === "1";
     const hlsProgramFeedEnabled = relayEnabled && process.env.STREAM247_UPLINK_INPUT_MODE !== "rtmp";

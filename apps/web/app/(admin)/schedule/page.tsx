@@ -58,9 +58,8 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
   const searchParams = props.searchParams ? await props.searchParams : {};
   const state = await readAppState();
   const broadcastSnapshot = getBroadcastSnapshot(state);
-  const schedulePreview = getSchedulePreview(state);
   const materializedWeek = getMaterializedProgrammingWeekPreview(state);
-  const timeZone = getWorkspaceTimeZone();
+  const timeZone = getWorkspaceTimeZone(state);
   const conflicts = new Set(findScheduleConflicts(state.scheduleBlocks));
   const poolOptions = state.pools
     .map((pool) => ({ id: pool.id, name: pool.name }))
@@ -74,6 +73,9 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
   const categoryOptions = getShowProfileCategoryOptions(shows);
   const defaultDay = materializedWeek[0]?.dayOfWeek ?? 1;
   const activeDay = resolveDayOfWeek(searchParams.day, defaultDay);
+  // Built for the day being viewed. A preview is per-date, so building it for today and filtering by
+  // the selected day left the video timeline empty on every day but one.
+  const schedulePreview = getSchedulePreview(state, activeDay);
   const materializedActiveDay = materializedWeek.find((day) => day.dayOfWeek === activeDay) ?? null;
   const liveQueue = state.playout.queueItems.slice(0, 5);
   const lens = resolveScheduleLens(searchParams.lens);
@@ -125,8 +127,8 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
             <>
               <Panel title="Week lens" eyebrow="Program">
                 <p className="subtle">
-                  The week view resolves the first playable video for every block from the current pool cursor, then
-                  lets you expand into the predicted sequence before anything goes on air.
+                  Shows the first video each block would play, continuing from wherever its pool&apos;s rotation
+                  currently stands, and lets you open a block to see what follows before any of it goes on air.
                 </p>
                 <ProgramWeekLens assets={state.assets} days={materializedWeek} pools={state.pools} />
               </Panel>

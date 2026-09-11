@@ -312,3 +312,66 @@ describe("classifyReadinessSample — soak monitor classifier", () => {
     expect(r.reasons).toContain("playout.crashLoopDetected=true");
   });
 });
+
+/**
+ * Which fails the soak monitor's outage window may carry, and which it may not.
+ *
+ * The window exists for the nightly path interruption measured on the DUT: every night at 23:31 UTC
+ * the stack loses its destination for one to three minutes and heals itself. Two soaks on v2.0.0
+ * died on it (21 h 07 min and 23 h 51 min) without any application fault. A crash loop and a
+ * runaway restart count are different: they are the fault, and no window may hide them.
+ */
+describe("classifyReadinessSample — hard fails the outage window must never carry", () => {
+  it("the nightly blip sample from 2026-09-10 23:34 UTC is a fail, but not a hard one", () => {
+    // Verbatim shape of the sample that ended the second soak: destination degraded, broadcast not
+    // ready, two unplanned uplink restarts since the baseline.
+    const data = healthy({
+      broadcastReady: false,
+      services: { web: "ok", worker: "ok", playout: "ok", uplink: "ok", programFeed: "ok", destination: "degraded" },
+      uplink: { status: "running", unplannedRestartCount: BASELINE + 2 }
+    });
+    const r = classifyReadinessSample(data, { baselineUplinkRestarts: BASELINE });
+    expect(r.kind).toBe("fail");
+    expect(r.hard).toBe(false);
+    expect(r.hardReasons).toEqual([]);
+  });
+
+  it("a playout crash loop is a hard fail", () => {
+    const data = healthy({
+      playout: {
+        status: "running",
+        crashLoopDetected: true,
+        selectionReasonCode: "scheduled_match",
+        fallbackTier: "scheduled",
+        currentAssetId: "asset_x",
+        restartCount: 1,
+        crashCountWindow: 0,
+        lastExitCode: 0
+      }
+    });
+    const r = classifyReadinessSample(data, { baselineUplinkRestarts: BASELINE });
+    expect(r.kind).toBe("fail");
+    expect(r.hard).toBe(true);
+    expect(r.hardReasons).toContain("playout.crashLoopDetected=true");
+  });
+
+  it("a runaway uplink restart count is a hard fail even while broadcast stays ready", () => {
+    const data = healthy({
+      uplink: { status: "running", unplannedRestartCount: BASELINE + DEFAULT_RUNAWAY_THRESHOLD + 1 }
+    });
+    const r = classifyReadinessSample(data, { baselineUplinkRestarts: BASELINE });
+    expect(r.kind).toBe("fail");
+    expect(r.hard).toBe(true);
+    expect(r.hardReasons[0]).toMatch(/^uplinkUnplannedRestarts\.runaway/);
+  });
+
+  it("restarts at the runaway threshold itself are not yet a hard fail", () => {
+    const data = healthy({
+      broadcastReady: false,
+      uplink: { status: "running", unplannedRestartCount: BASELINE + DEFAULT_RUNAWAY_THRESHOLD }
+    });
+    const r = classifyReadinessSample(data, { baselineUplinkRestarts: BASELINE });
+    expect(r.kind).toBe("fail");
+    expect(r.hard).toBe(false);
+  });
+});

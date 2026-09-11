@@ -3,8 +3,11 @@ export const dynamic = "force-dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { isAssetProbeQuarantined } from "@stream247/core";
+import { AssetChapterEditor } from "@/components/asset-chapter-editor";
 import { AssetCurationForm } from "@/components/asset-curation-form";
 import { AssetMetadataForm } from "@/components/asset-metadata-form";
+import { AssetProbeClearForm } from "@/components/asset-probe-clear-form";
 import { Panel } from "@/components/panel";
 import {
   buildAssetDisplayTitle,
@@ -12,7 +15,8 @@ import {
   isReplayTitlePrefix,
   parseAssetHashtagsJson
 } from "@/lib/asset-metadata";
-import { buildWorkspaceHref } from "@/lib/workspace-navigation";
+import { describePlayoutReason } from "@/lib/playout-reason";
+import { getChannelStatusLabel } from "@/lib/channel-status";
 import {
   getAssetPlaybackDiagnostics,
   getCurrentScheduleItem,
@@ -187,6 +191,14 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
           <AssetMetadataForm asset={asset} categoryOptions={categoryOptions} />
         </Panel>
 
+        <Panel title="Chapters" eyebrow="Publishing">
+          <div className="subtle" style={{ marginBottom: 12 }}>
+            Chapters switch the Twitch category and stream title at offsets inside this video, following the original
+            stream. Ingest fills them from VOD metadata once; edits here are never overwritten by a re-sync.
+          </div>
+          <AssetChapterEditor asset={asset} categoryOptions={categoryOptions} />
+        </Panel>
+
         <Panel title="Asset curation" eyebrow="Program">
           <div className="subtle" style={{ marginBottom: 12 }}>
             Exclude assets from automated pool rotation without deleting them, or promote them into the global fallback ladder.
@@ -201,7 +213,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
                 <strong>{pool.name}</strong>
                 <div className="subtle">
                   {pool.playbackMode} ·{" "}
-                  {pool.cursorAssetId === asset.id ? "Current pool cursor asset" : "Available in pool rotation"}
+                  {pool.cursorAssetId === asset.id ? "This pool's rotation currently stands here" : "In this pool's rotation"}
                 </div>
               </div>
             ))}
@@ -234,7 +246,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
             </div>
             {sourceSnapshot.latestRun?.errorMessage ? <div className="danger">{sourceSnapshot.latestRun.errorMessage}</div> : null}
             {source ? (
-              <Link className="subtle-link" href={buildWorkspaceHref("program", "sources", { sourceId: source.id })}>
+              <Link className="subtle-link" href={`/sources/${source.id}`}>
                 Open source detail
               </Link>
             ) : null}
@@ -243,6 +255,9 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
 
         <Panel title="Runtime state" eyebrow="Ops">
           <div className="stack-form">
+            {isAssetProbeQuarantined(asset) ? (
+              <AssetProbeClearForm assetId={asset.id} failures={asset.playbackProbeFailures ?? 0} />
+            ) : null}
             <div className="item">
               <strong>Playback diagnostics</strong>
               <div className="subtle">{playbackDiagnostics.summary}</div>
@@ -256,7 +271,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
             <div className="item">
               <strong>Playout status</strong>
               <div className="subtle">
-                {state.playout.status} · {state.playout.selectionReasonCode || "no selection reason"}
+                {getChannelStatusLabel(state.playout.status)} · {describePlayoutReason(state.playout.selectionReasonCode) || "no selection reason"}
               </div>
             </div>
             <div className="item">

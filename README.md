@@ -4,7 +4,7 @@ Stream247 is a self-hosted platform for running a Twitch-first 24/7 channel from
 
 It ships as Docker / Docker Compose, publishes images through GitHub Actions and GHCR, and gives operators a browser-based admin UI for scheduling, playout control, Twitch sync, moderation policy, and incident handling.
 
-The `/overlay` route is internal output for Stream247's own 24/7 broadcast pipeline. It is not a standalone overlay product or a reusable embed surface.
+There is no standalone overlay page. The on-air overlay is drawn by the playout worker's own renderer from the published scene, and the studio preview is the same drawing. Stream247 is not an overlay product or a reusable embed surface.
 
 ## License Model
 
@@ -112,15 +112,14 @@ are not retroactively revoked.
   - explicit import warnings when referenced media is not present locally
 - viewer-facing pages with:
   - public schedule page
-  - the internal `/overlay` route used by Stream247's own in-stream scene and overlay pipeline
-- one canonical Scene payload shared across overlay capture, scene APIs, and playout overlay consumers
-  - on-air scene renderer v1 that captures the published browser scene into the FFmpeg playout path with safe text-overlay fallback
+- one canonical Scene payload shared across the studio preview, scene APIs, and the playout renderer
+  - on-air scene renderer that draws the published scene natively into the FFmpeg playout path, with a text-overlay fallback; the studio preview is the same drawing
   - overlay studio with draft-save, reusable scene preset library, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, built-in typography presets, conservative local font-stack overrides, positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, and publish-live scene controls
   - admin-managed replay branding, scene presets, and ticker/badge styling
 
 ## What Is Not Done Yet
 
-- Scene now supports positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, built-in typography presets, and conservative local font-stack overrides, but deeper remote-widget compatibility still depends on CSP / iframe rules and broader cloud-style composition remains partial.
+- Scene supports positioned text/logo/image/video-source layers, built-in typography presets, and conservative local font-stack overrides. Website-embed and widget layers were removed from the studio in M60: the on-air renderer cannot draw an external page and there is no separate browser overlay, so they never reached the picture. Broader cloud-style composition remains partial.
 - richer multi-scene composition inside the playout runtime beyond the current scene-presets + draft/publish workflow
 - more advanced playout transitions, stronger continuity semantics, and less restart-heavy normal switchovers beyond the current staged output recovery model
 - deeper per-output platform guidance and recovery automation beyond the current failure attribution, cooldown visibility, and staged recovery controls
@@ -132,25 +131,35 @@ are not retroactively revoked.
 
 ## Quick Start
 
-1. Copy `.env.example` to `.env`.
-2. Set:
+The one-page path from an empty host to a green channel, with the traps where they bite, is
+[`docs/getting-started.md`](docs/getting-started.md). The steps below are the short form.
+
+1. A `.env` is optional. Without one the app secret is generated and persisted under
+   `data/media/.stream247-app-secret`, the bundled database configures itself, and the `/setup`
+   wizard asks for the public URL. To pin values yourself, copy `.env.production.example` (not
+   `.env.example`, which is the development file and would switch the stack into development mode)
+   and set them **before the first start**:
    - `APP_URL`
-   - `APP_SECRET`
-   - `POSTGRES_PASSWORD`
-   - the matching password inside `DATABASE_URL`
-3. Optional but recommended:
-   - `TWITCH_CLIENT_ID`
-   - `TWITCH_CLIENT_SECRET`
-   - `TWITCH_STREAM_KEY`
-   - `CHANNEL_TIMEZONE`
+   - `APP_SECRET` (32+ random characters; the example placeholder is refused)
+   - `POSTGRES_PASSWORD` and the same password inside `DATABASE_URL`
+2. The database password is fixed when `data/postgres` is first created. Changing it later leaves
+   every service failing with "password authentication failed" and a bare error page; either keep
+   the password or remove `data/postgres` before real data exists.
+3. Optional now, or later in the wizard and `/settings`:
+   - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`
+   - `TWITCH_STREAM_KEY` (later: the primary destination's stream key under `Live → Status`)
+   - `CHANNEL_TIMEZONE` (leave unset to let the wizard manage it)
 4. Start the stack:
    ```bash
    docker compose up -d
    ```
 5. Open:
-   - `http://localhost:3000/setup`
-6. Create the owner account.
-7. Sign in to the admin UI.
+   - `http://localhost:3000/setup` — from another machine use HTTPS; over plain HTTP the session cookie
+     only holds on `localhost`
+6. Create the owner account; that signs you in. The wizard then walks through the public URL,
+   Twitch app credentials and the Twitch connection, each step skippable, and ends in a readiness
+   checklist that links to wherever something is still missing.
+7. `Live → Status` shows the same readiness afterwards.
 8. Optional during bootstrap:
    - enter `TWITCH_CLIENT_ID`
    - enter `TWITCH_CLIENT_SECRET`
@@ -218,7 +227,7 @@ docker compose --profile proxy up -d
 - `TWITCH_RTMP_URL`: defaults to `rtmp://live.twitch.tv/app`
 - `TWITCH_VOD_CACHE_ENABLED`: cache Twitch VOD media locally before playout; defaults to `1`
 - `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK`: allow direct remote Twitch playback if cache preparation fails; defaults to `0`
-- `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`: maximum time for a Twitch VOD cache download before playout falls back locally; production pins this to `8`
+- `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`: floor for a Twitch VOD cache download's time limit; default `120`. Since M62 the effective limit is at least the VOD's duration (24 h ceiling), so a long replay is not abandoned mid-download; the production example uses `1800`
 - `STREAM247_RELAY_ENABLED`: split program production from external publishing; defaults to `1` in the example Compose env
 - `STREAM247_UPLINK_INPUT_MODE`: `hls` keeps the uplink on a buffered local program feed; set `rtmp` only to roll back to the older MediaMTX relay input
 - `STREAM247_PROGRAM_FEED_DIR`: local HLS program-feed directory shared by `playout` and `uplink`
@@ -237,10 +246,8 @@ docker compose --profile proxy up -d
 - `DESTINATION_FAILURE_COOLDOWN_SECONDS`: how long a failed destination stays on hold before the worker will retry it automatically
 - `PLAYOUT_RECONNECT_HOURS`: interval for planned Twitch/output reconnect windows; defaults to `48`
 - `PLAYOUT_RECONNECT_SECONDS`: duration of the planned reconnect standby window; defaults to `20`
-- `SCENE_RENDER_BASE_URL`: optional internal base URL that the worker should use when capturing published Scene overlays for on-air rendering; defaults to `INTERNAL_APP_URL`, then `APP_URL`, then `http://web:3000`
-- `SCENE_RENDERER_ENABLED`: set to `0` to keep production on the text overlay path when Chromium capture is unstable
-- `SCENE_RENDER_INTERVAL_MS`: how often the worker refreshes captured on-air scene frames; defaults to `2000`
-- `SCENE_RENDER_CHROMIUM_PATH`: optional explicit Chromium binary path for the on-air scene renderer
+- `SCENE_RENDERER_ENABLED`: set to `0` to keep production on the text overlay path when the scene renderer is unstable
+- `SCENE_RENDER_INTERVAL_MS`: how often the worker redraws the on-air scene frame; defaults to `2000`
 - `CHANNEL_TIMEZONE`: schedule timezone, for example `Europe/Berlin`
 - `DISCORD_WEBHOOK_URL`: Discord alert target
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL_TO`: email alerting
@@ -323,6 +330,7 @@ If you need `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`, follow this section o
 3. Register both redirect URLs:
    - `<APP_URL>/api/integrations/twitch/callback`
    - `<APP_URL>/api/auth/twitch/callback`
+   - `<APP_URL>/api/integrations/twitch/callback-broadcaster` (used by `Connect broadcast channel`)
 4. Copy the generated Client ID into `TWITCH_CLIENT_ID`.
 5. Generate, reveal, or regenerate the Client Secret and store it in `TWITCH_CLIENT_SECRET`.
 6. Restart the stack after changing `.env`.
@@ -347,7 +355,6 @@ Important:
 - optional built-in Traefik profile for HTTPS and Let's Encrypt
 - persistent storage for:
   - PostgreSQL
-  - Redis
   - `data/media`
 
 See [docs/deployment.md](docs/deployment.md) for the deployment-focused guide.
@@ -525,7 +532,7 @@ Notes:
 ### Overlay And Viewer Pages
 
 - public schedule page at `/channel`
-- internal overlay route at `/overlay`
+- on-air overlay drawn by the playout renderer; the studio preview is the same drawing
 - `Scene` in the Studio workspace
 - configurable replay label, channel name, headline, accent color, emergency banner, and now/next teaser toggles
 
@@ -542,7 +549,7 @@ Notes:
 1. Copy `.env.example` to `.env`.
 2. Start dependencies:
    ```bash
-   docker compose up -d postgres redis
+   docker compose up -d postgres
    ```
 3. Install dependencies:
    ```bash
@@ -600,7 +607,7 @@ Current validation covers:
 ### Twitch VOD stays on standby
 
 - keep `TWITCH_VOD_CACHE_ENABLED=1` so Twitch archives are downloaded and verified before playout
-- keep `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS=8` in production so slow Twitch cache prep yields to local/mixed fallback before the program feed stalls
+- `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS` is a floor, not a cap: the effective limit is at least the VOD's duration. An unfinished download does not stall the feed — the replay plays from Twitch directly for that airing (`TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK`)
 - inspect worker/playout incidents for Twitch cache failures
 - confirm the media volume has enough free space for `data/media/.stream247-cache/twitch`
 - use `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1` only as a temporary rollback because it restores unstable remote VOD playback
@@ -623,7 +630,6 @@ Current validation covers:
 - `apps/web`: Next.js admin UI, public pages, and API routes
 - `apps/worker`: background ingestion, reconciliation, and playout logic
 - `packages/core`: scheduling and moderation domain logic
-- `packages/config`: runtime config helpers
 - `packages/db`: PostgreSQL-backed application state layer
 - `docs`: architecture, deployment, and Twitch setup docs
 - `.github`: CI, release, issues, and PR templates

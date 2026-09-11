@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { findScheduleConflicts } from "@stream247/core";
 import { getAuthenticatedUser, requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, createScheduleBlocks, readAppState, replaceAllScheduleBlocks } from "@/lib/server/state";
 
@@ -166,6 +167,21 @@ export async function POST(request: NextRequest) {
                 repeatGroupId: repeatIds.prime
               })
             ]);
+
+    // The same check every other way of creating a block already applies. Without it a template
+    // laid over an existing week produced overlapping blocks, and the schedule editor refuses to
+    // save while conflicts exist — so applying a template was enough to lock the editor, with no
+    // way back except deleting blocks by hand.
+    const conflicts = findScheduleConflicts(
+      replaceExisting ? generatedBlocks : [...state.scheduleBlocks, ...generatedBlocks]
+    );
+    if (conflicts.length > 0) {
+      throw new Error(
+        replaceExisting
+          ? "This template generates overlapping blocks."
+          : "This template overlaps with existing programming. Clear the affected days first, or apply it with “replace the week”."
+      );
+    }
 
     if (replaceExisting) {
       await replaceAllScheduleBlocks(generatedBlocks);

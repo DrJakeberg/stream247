@@ -33,10 +33,33 @@ SOAK_UPLINK_RESTART_RUNAWAY_DELTA="${SOAK_UPLINK_RESTART_RUNAWAY_DELTA:-20}"
 TOLERATE_UPLINK_NOTREADY_SAMPLES="${SOAK_TOLERATE_UPLINK_NOTREADY_SAMPLES:-1}"
 TOLERATE_DEST_NOTREADY_SAMPLES="${SOAK_TOLERATE_DEST_NOTREADY_SAMPLES:-1}"
 TOLERATE_FEED_STALE_DURING_PLAYOUT_TRANSIENT_SAMPLES="${SOAK_TOLERATE_FEED_STALE_DURING_PLAYOUT_TRANSIENT_SAMPLES:-1}"
+# A readiness fetch that fails outright (curl error: DNS, TLS, reset) is a network sample, not an app
+# sample. A one-minute path interruption killed a 24 h soak at its 58th minute on 2026-09-05; the
+# channel itself healed in 70 s. Tolerate a short run of them, fail on a longer one.
+TOLERATE_FETCH_FAILED_SAMPLES="${SOAK_TOLERATE_FETCH_FAILED_SAMPLES:-2}"
+# Outage window. Every night at 23:31 UTC the DUT loses its path to Twitch for one to three minutes and
+# the stack heals itself; two 24 h soaks on v2.0.0 died on it (21 h 07 min, 23 h 51 min) without any
+# application fault, and no 24 h window can avoid that minute. So a run of failed samples no longer ends
+# the soak on its own: it opens an outage, and the soak goes on as long as the stack is healthy again
+# within this many seconds of the first bad sample. Each healed outage is logged (`outage-recovered`)
+# and counted in the completion line, so a pass with outages never reads like a clean one. Longer than
+# this, and the soak fails (`outage-exceeded`). A crash loop, a runaway restart count and a container
+# restart are never carried by the window. 0 restores the strict per-sample rules above exactly.
+OUTAGE_TOLERANCE_SECONDS="${SOAK_OUTAGE_TOLERANCE_SECONDS:-300}"
 export SOAK_UPLINK_RESTART_RUNAWAY_DELTA
 
-if [ ! -f ".env" ]; then
-  echo "Missing .env. Copy .env.example first."
+# Seconds since the epoch. SOAK_CLOCK_FILE lets the tests drive time: their sleep advances the file,
+# which is the only way to exercise a five-minute window without waiting five minutes.
+now_epoch() {
+  if [ -n "${SOAK_CLOCK_FILE:-}" ]; then
+    cat "$SOAK_CLOCK_FILE"
+  else
+    date +%s
+  fi
+}
+
+if [ -z "${CHECK_BASE_URL:-}" ] && [ ! -f ".env" ]; then
+  echo "Missing .env. Copy .env.example first, or set CHECK_BASE_URL to the public base URL."
   exit 1
 fi
 
@@ -65,7 +88,7 @@ TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 LOG_FILE="${LOG_DIR}/soak-${TIMESTAMP}.log"
 
 TOTAL_SECONDS=$((HOURS * 3600))
-END_TIME=$(( $(date +%s) + TOTAL_SECONDS ))
+END_TIME=$(( $(now_epoch) + TOTAL_SECONDS ))
 
 echo "Starting soak monitor for ${HOURS}h at ${APP_URL}" | tee -a "$LOG_FILE"
 echo "Writing log to ${LOG_FILE}" | tee -a "$LOG_FILE"
@@ -153,11 +176,14 @@ check_container_restarts() {
 
 CLASSIFIER_MODULE="${ROOT_DIR}/scripts/lib/soak-readiness-classifier.cjs"
 
-# check_readiness exits 0 (ok), 1 (fatal — exit soak now), or 2 (transient — caller
-# tracks consecutive count per kind on stderr). Always writes the log-friendly line
-# on stdout.
+# check_readiness exits 0 (ok), 1 (hard fail — exit soak now, no window carries it), 2 (transient —
+# caller tracks consecutive count per kind on stderr), 3 (the fetch itself failed) or 4 (fail the
+# outage window may carry). Always writes the log-friendly line on stdout.
 check_readiness() {
-  response="$(curl -fsS "${APP_URL}/api/system/readiness")"
+  if ! response="$(curl -fsS "${APP_URL}/api/system/readiness" 2>&1)"; then
+    printf "fetch-failed: %s\n" "$(printf "%s" "$response" | head -n 1)" >&2
+    return 3
+  fi
   printf "%s" "$response" | node -e '
     const path = require("path");
     const fs = require("fs");
@@ -168,6 +194,10 @@ check_readiness() {
       baselineUplinkRestarts: Number(process.env.BASELINE_UPLINK_UNPLANNED_RESTARTS ?? "0"),
       runawayThreshold: Number(process.env.SOAK_UPLINK_RESTART_RUNAWAY_DELTA ?? "20")
     });
+    if (result.kind === "fail" && result.hard) {
+      process.stdout.write(result.line + ", hard=" + result.hardReasons.join("+") + "\n");
+      process.exit(1);
+    }
     process.stdout.write(result.line + "\n");
     if (result.kind === "ok") {
       process.exit(0);
@@ -176,7 +206,7 @@ check_readiness() {
       process.stderr.write("transient:" + result.transientKinds.join(",") + "\n");
       process.exit(2);
     }
-    process.exit(1);
+    process.exit(4);
   '
 }
 export CLASSIFIER_MODULE
@@ -204,8 +234,61 @@ check_incidents() {
 consec_uplink_notready=0
 consec_dest_notready=0
 consec_playout_transient_stale_feed=0
+consec_fetch_failed=0
 
-while [ "$(date +%s)" -lt "$END_TIME" ]; do
+# Outage window state (see OUTAGE_TOLERANCE_SECONDS). An outage starts at the first bad sample and ends
+# at the next healthy one.
+outage_started_at=""
+outage_samples=0
+outage_elapsed=0
+outage_count=0
+outage_seconds_max=0
+outage_seconds_total=0
+
+# Called for every bad sample: opens the outage if none is running and measures how long it has lasted.
+outage_note_bad_sample() {
+  outage_now="$(now_epoch)"
+  if [ -z "$outage_started_at" ]; then
+    outage_started_at="$outage_now"
+    outage_samples=0
+  fi
+  outage_samples=$((outage_samples + 1))
+  outage_elapsed=$((outage_now - outage_started_at))
+}
+
+# True while the window may still carry the running outage.
+outage_window_open() {
+  [ "$OUTAGE_TOLERANCE_SECONDS" -gt 0 ] && [ "$outage_elapsed" -le "$OUTAGE_TOLERANCE_SECONDS" ]
+}
+
+# The hard ceiling: a running outage older than the window fails the soak, whatever the per-sample
+# rules would say about this particular sample.
+outage_fail_if_exceeded() {
+  if [ "$OUTAGE_TOLERANCE_SECONDS" -gt 0 ] && [ "$outage_elapsed" -gt "$OUTAGE_TOLERANCE_SECONDS" ]; then
+    echo "${NOW} outage-exceeded elapsed=${outage_elapsed}s tolerance=${OUTAGE_TOLERANCE_SECONDS}s samples=${outage_samples} $1" | tee -a "$LOG_FILE"
+    exit 1
+  fi
+}
+
+# Called for every healthy sample: closes a running outage and records how long it took to heal.
+outage_note_healthy_sample() {
+  if [ -n "$outage_started_at" ]; then
+    outage_elapsed=$(( $(now_epoch) - outage_started_at ))
+    outage_count=$((outage_count + 1))
+    outage_seconds_total=$((outage_seconds_total + outage_elapsed))
+    if [ "$outage_elapsed" -gt "$outage_seconds_max" ]; then
+      outage_seconds_max="$outage_elapsed"
+    fi
+    echo "${NOW} outage-recovered duration=${outage_elapsed}s samples=${outage_samples} tolerance=${OUTAGE_TOLERANCE_SECONDS}s" | tee -a "$LOG_FILE"
+    outage_started_at=""
+    outage_samples=0
+    outage_elapsed=0
+  fi
+}
+
+# The loop runs past the end while an outage is open: a soak that ends mid-outage has not shown the
+# stack healed, so it waits for the outcome — recovered, or failed at the window's ceiling.
+while [ "$(now_epoch)" -lt "$END_TIME" ] || [ -n "$outage_started_at" ]; do
   NOW="$(date -Iseconds)"
 
   readiness_err_file="$(mktemp 2>/dev/null || printf "/tmp/.soak-readiness-err.%s" "$$")"
@@ -217,10 +300,14 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
   rm -f "$readiness_err_file"
 
   if [ "$readiness_rc" -eq 0 ]; then
-    # Healthy sample — reset transient counters.
+    # Healthy sample — close a running outage and reset transient counters.
+    outage_note_healthy_sample
+    consec_fetch_failed=0
     consec_uplink_notready=0
     consec_dest_notready=0
   elif [ "$readiness_rc" -eq 2 ]; then
+    outage_note_bad_sample
+    outage_fail_if_exceeded "${readiness_line}"
     # Transient: uplink and/or destination not-ready, and/or programFeed stale during an
     # active playoutTransient recovery. Increment per-kind counters and only exit when
     # the tolerated count is exceeded.
@@ -263,6 +350,11 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
         ;;
     esac
     if [ "$exit_now" -eq 1 ]; then
+      if outage_window_open; then
+        echo "${NOW} outage-tolerated elapsed=${outage_elapsed}s/${OUTAGE_TOLERANCE_SECONDS}s ${exceeded_reason} ${readiness_line}" | tee -a "$LOG_FILE"
+        sleep "$INTERVAL"
+        continue
+      fi
       echo "${NOW} readiness-check-failed-consecutive ${exceeded_reason} ${readiness_line}" | tee -a "$LOG_FILE"
       exit 1
     fi
@@ -270,6 +362,33 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
     echo "${NOW} readiness-transient-tolerated ${readiness_line}" | tee -a "$LOG_FILE"
     sleep "$INTERVAL"
     continue
+  elif [ "$readiness_rc" -eq 3 ]; then
+    outage_note_bad_sample
+    outage_fail_if_exceeded "fetch-failed ${readiness_stderr}"
+    consec_fetch_failed=$((consec_fetch_failed + 1))
+    if [ "$consec_fetch_failed" -gt "$TOLERATE_FETCH_FAILED_SAMPLES" ]; then
+      if outage_window_open; then
+        echo "${NOW} outage-tolerated elapsed=${outage_elapsed}s/${OUTAGE_TOLERANCE_SECONDS}s fetch-failed(consecutive=${consec_fetch_failed}) ${readiness_stderr}" | tee -a "$LOG_FILE"
+        sleep "$INTERVAL"
+        continue
+      fi
+      echo "${NOW} readiness-fetch-failed-consecutive ${consec_fetch_failed} ${readiness_stderr}" | tee -a "$LOG_FILE"
+      exit 1
+    fi
+    echo "${NOW} readiness-fetch-failed-tolerated ${consec_fetch_failed}/${TOLERATE_FETCH_FAILED_SAMPLES} ${readiness_stderr}" | tee -a "$LOG_FILE"
+    sleep "$INTERVAL"
+    continue
+  elif [ "$readiness_rc" -eq 4 ]; then
+    # A fail the outage window may carry — anything but a crash loop or a runaway restart count.
+    outage_note_bad_sample
+    outage_fail_if_exceeded "${readiness_line}"
+    if outage_window_open; then
+      echo "${NOW} outage-tolerated elapsed=${outage_elapsed}s/${OUTAGE_TOLERANCE_SECONDS}s ${readiness_line}" | tee -a "$LOG_FILE"
+      sleep "$INTERVAL"
+      continue
+    fi
+    echo "${NOW} readiness-check-failed ${readiness_line}" | tee -a "$LOG_FILE"
+    exit 1
   else
     echo "${NOW} readiness-check-failed ${readiness_line}" | tee -a "$LOG_FILE"
     exit 1
@@ -293,4 +412,4 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
   sleep "$INTERVAL"
 done
 
-echo "$(date -Iseconds) soak-monitor-complete" | tee -a "$LOG_FILE"
+echo "$(date -Iseconds) soak-monitor-complete outages=${outage_count} outageSecondsMax=${outage_seconds_max} outageSecondsTotal=${outage_seconds_total}" | tee -a "$LOG_FILE"

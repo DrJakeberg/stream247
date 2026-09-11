@@ -1,6 +1,14 @@
 import path from "node:path";
-import type { StreamOutputSettings } from "@stream247/core";
+import {
+  resolveEncoderQualitySettings,
+  resolvePlayoutReconnectTuning,
+  resolveProgramFeedTuning,
+  type ManagedEncoderQualityInput,
+  type ManagedFeedTuningInput,
+  type StreamOutputSettings
+} from "@stream247/core";
 import { getOutputGopSize, getOutputVideoFilter, isStreamScaleEnabled } from "./output-settings.js";
+import type { OnAirOverlayMode } from "./on-air-scene.js";
 
 const OUTPUT_FAILURE_NEEDLES = [
   "broken pipe",
@@ -41,11 +49,6 @@ function isRemoteHttpInput(input: string): boolean {
   }
 }
 
-function readPositiveNumber(value: string | undefined, fallback: number): number {
-  const parsed = Number(value ?? "");
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
 export type FfmpegOutputTarget = {
   muxer: "flv" | "tee" | "hls";
   output: string;
@@ -64,20 +67,23 @@ export type ProgramFeedConfig = {
   failoverSeconds: number;
 };
 
-export function getPlayoutReconnectConfig(env: NodeJS.ProcessEnv = process.env): {
+/** M56 part 2: managed cadence first (clamped in core), env second, 48h/20s default last. */
+export function getPlayoutReconnectConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  managed?: ManagedFeedTuningInput
+): {
   intervalHours: number;
   intervalMs: number;
   windowSeconds: number;
   windowMs: number;
 } {
-  const intervalHours = readPositiveNumber(env.PLAYOUT_RECONNECT_HOURS, 48);
-  const windowSeconds = readPositiveNumber(env.PLAYOUT_RECONNECT_SECONDS, 20);
+  const tuning = resolvePlayoutReconnectTuning(managed ?? null, env);
 
   return {
-    intervalHours,
-    intervalMs: intervalHours * 60 * 60 * 1000,
-    windowSeconds,
-    windowMs: windowSeconds * 1000
+    intervalHours: tuning.intervalHours,
+    intervalMs: tuning.intervalHours * 60 * 60 * 1000,
+    windowSeconds: tuning.windowSeconds,
+    windowMs: tuning.windowSeconds * 1000
   };
 }
 
@@ -97,23 +103,27 @@ export function getRelayInputUrl(env: NodeJS.ProcessEnv = process.env): string {
   return env.STREAM247_RELAY_INPUT_URL || getRelayPublishUrl(env);
 }
 
+/**
+ * M56 part 2: the feed geometry (segment length, window size, failover margin) resolves managed
+ * first through the shared core clamps. The directory stays env-only — where the feed lives on
+ * disk is infrastructure, decided by the mount layout, not an operating decision.
+ */
 export function getProgramFeedConfig(
   env: NodeJS.ProcessEnv = process.env,
-  mediaRoot = "/app/data/media"
+  mediaRoot = "/app/data/media",
+  managed?: ManagedFeedTuningInput
 ): ProgramFeedConfig {
   const directory = env.STREAM247_PROGRAM_FEED_DIR || path.join(mediaRoot, ".stream247-program-feed");
-  const targetSeconds = Math.max(1, Math.floor(readPositiveNumber(env.STREAM247_PROGRAM_FEED_TARGET_SECONDS, 2)));
-  const listSize = Math.max(3, Math.floor(readPositiveNumber(env.STREAM247_PROGRAM_FEED_LIST_SIZE, 30)));
-  const failoverSeconds = Math.max(1, Math.floor(readPositiveNumber(env.STREAM247_PROGRAM_FEED_FAILOVER_SECONDS, 10)));
+  const tuning = resolveProgramFeedTuning(managed ?? null, env);
 
   return {
     directory,
     playlistPath: path.join(directory, "program.m3u8"),
     segmentPattern: path.join(directory, "segment-%s-%05d.ts"),
-    targetSeconds,
-    listSize,
-    bufferedSeconds: targetSeconds * listSize,
-    failoverSeconds
+    targetSeconds: tuning.targetSeconds,
+    listSize: tuning.listSize,
+    bufferedSeconds: tuning.targetSeconds * tuning.listSize,
+    failoverSeconds: tuning.failoverSeconds
   };
 }
 
@@ -124,9 +134,29 @@ export function buildProgramFeedOutputTarget(config: ProgramFeedConfig, runId: s
   // (e.g. epoch_us) instead restarts the sequence at each playout run, which the uplink demuxer
   // sees as a huge forward jump ("skipping N segments ahead, expired from playlists"), hits EOF,
   // and dies on every asset boundary (the v1.5.15 soak failure: one unplanned uplink restart per
-  // boundary until destination=degraded). Boundary timestamp resets are signaled via
-  // discont_start and absorbed by ffmpeg's input discontinuity correction (dts_delta_threshold);
-  // per-run segment uniqueness comes from the runId embedded in the segment filename.
+  // boundary until destination=degraded). Per-run segment uniqueness comes from the runId embedded
+  // in the segment filename.
+  //
+  // WHAT THIS DOES NOT DO, measured 2026-09-03 after four boundaries each cost an unplanned uplink
+  // restart. This comment used to claim boundary timestamp resets were "signaled via discont_start
+  // and absorbed by ffmpeg's input discontinuity correction (dts_delta_threshold)". Every clause of
+  // that was false, and the claim is why nobody looked for weeks:
+  //
+  //   - dts_delta_threshold is passed nowhere in this repository, and passing it would not help.
+  //     Its default is 10s and it gates FORWARD jumps; a boundary produces a BACKWARDS jump, which
+  //     a separate clause catches with a fixed ~0.1s tolerance that no threshold value disables.
+  //     Measured: a -30s jump fires identically at the default and at 3600.
+  //   - discont_start does write EXT-X-DISCONTINUITY at the seam — append_list emits it on its own
+  //     even without the flag — and ffmpeg's HLS demuxer parses the tag but does not act on it for
+  //     timestamps. Reading the same feed with and without it gives byte-identical output.
+  //
+  // So a boundary IS a raw backwards jump the reader has to absorb, and on 2026-09-03 one clean
+  // scheduled boundary (gap 163ms) produced 244 discontinuity lines over 28 seconds — sustained at
+  // roughly nine a second in batches about two seconds apart, which is this muxer's segment length.
+  // A local reproduction of the same seam costs TWO lines, so something in production amplifies it
+  // by two orders of magnitude and that amplifier is not yet identified. Do not "fix" this by
+  // tuning the uplink's storm threshold (uplink-progress.ts) against a rate whose cause is
+  // unmeasured, and do not add dts_delta_threshold expecting it to help.
   return {
     muxer: "hls",
     output: config.playlistPath,
@@ -179,29 +209,117 @@ export function shouldRequestImmediatePlayoutRetry(args: {
   return true;
 }
 
-export function shouldSkipInitialSceneCapture(args: {
+/**
+ * What the overlay draws for a whole playout process.
+ *
+ * This is decided exactly once per start, because the choice is baked into the ffmpeg command: the
+ * scene is a PNG pipe composited with `overlay`, text is a `drawtext` filter, and the two cannot be
+ * exchanged without restarting ffmpeg. A process that starts in text mode therefore stays in text
+ * mode for the entire programme -- hours, for a VOD -- so this decision is worth its own function
+ * and its own tests.
+ *
+ * There used to be a fourth input here: a "recovery" skip that suppressed the initial frame when
+ * the previous process had exited recently. It was written when a frame came from a Chromium
+ * screenshot that took about ten seconds, and skipping it kept a recovery from stalling that long.
+ * The renderer is native now and the frame is worth milliseconds -- measured on the production box
+ * while it was encoding the channel: 201ms cold and 125ms warm at 1920x1080, 82ms cold at 1280x720,
+ * 106ms for the busiest frame the overlay ever draws. Against that, the skip's own cost is a whole
+ * programme with no scene, no chat, no ticker and no clock, so it no longer buys anything and is
+ * gone. Every process now renders its first frame.
+ *
+ * Note also what the skip could never do: it keyed off the previous exit code, which says nothing
+ * about whether the renderer is healthy. Guarding against a renderer that genuinely stalls belongs
+ * on the render call itself, where it is bounded by a timeout, not here.
+ */
+/**
+ * Headroom on top of the duration-bound margin, in seconds.
+ *
+ * The bound is checked on the reconciliation cycle, so an asset overruns by the margin PLUS however
+ * long the cycle takes to come round. Measured on air against a 15s margin: 30.4s, 22.75s and
+ * 18.98s of overrun, so the cycle term reached about 15s. Thirty is double that, and the cost of
+ * overshooting is only that the feed-audio watchdog is delayed by the same amount.
+ */
+export const PROGRAMME_AUDIO_PAD_SLACK_SECONDS = 30;
+
+/**
+ * Whether the encode carries -shortest, which bounds the output to its shortest stream.
+ *
+ * Exported so the call site and the padding decision read the SAME expression. It was written out
+ * twice before, and "padded audio" plus "-shortest" is the one combination that can leave an encode
+ * with no finite stream at all — not a thing to leave to two copies staying in step.
+ */
+export function usesShortestFlag(args: { hasAudioLane: boolean; pipAudioMapped: boolean; attachLive: boolean }): boolean {
+  return (args.hasAudioLane && !args.pipAudioMapped) || args.attachLive;
+}
+
+/**
+ * How many seconds of silence to append after the programme's own audio ends. 0 means none.
+ *
+ * THE FAULT. Measured on the live channel at three consecutive boundaries: the feed carries video
+ * WITHOUT audio for the last 20-30 seconds of every asset. The input reaches EOF and `-map 0:a?`
+ * stops, but the picture does not — overlay ends with its LONGEST input and the scene pipe never
+ * ends — and the duration bound only cuts at duration + margin. The uplink's reader keeps its
+ * offset per FILE and next_dts per STREAM, so audio's clock freezes across that stretch and then
+ * oscillates against video when the next asset restores sound: 244, 279 and 212 discontinuity
+ * lines, each restarting the uplink, at every boundary since 2026-08-19. The proof is arithmetic —
+ * the two "new offset" clusters sit exactly the silent stretch apart and the lower one is exactly
+ * the asset's recorded duration (07:44: cluster 15040.05s against a recorded 15040s; 07:56:
+ * 739.04s against 739s). Reproduced: 321 lines without padding, 1 with it.
+ *
+ * WHY IT IS BOUNDED. An unbounded apad fixes the storm and disables the feed-audio watchdog for
+ * ever, because that watchdog keys on audio PACKET PRESENCE and apad manufactures real AAC frames
+ * indefinitely. Measured on the compiled watchdog: without padding the tail segments carry
+ * audioPackets=0 and it fires at 96s; with an unbounded pad it never fires again. That is worst
+ * exactly where it is the only net — durationSeconds is written only by the yt-dlp path, so every
+ * local-library file and direct-media URL is permanently unknown-duration, and the global fallback
+ * asset is by construction a local-library file. An unbounded pad would let the fallback sit on a
+ * frozen frame with digital silence and nothing able to end it: the very failure feed-audio-health
+ * was written to stop. The PiP mix already refuses the same trade for the same reason ("carries NO
+ * apad, so a source that ends is simply dropped by amix rather than padded into endless masking
+ * silence").
+ *
+ * So the pad covers the overrun and then stops, and the silence signal comes back. The cost is that
+ * the watchdog is DELAYED by the pad, never removed.
+ *
+ * The remaining conditions are exclusions, each load-bearing:
+ * - Scene mode only. Text and none take video straight from the input, so the picture ends with the
+ *   file and nothing starves; padding there would make audio outlive video.
+ * - Never where -shortest is set. It binds the output to the shortest stream, and in scene mode the
+ *   picture is endless, so infinite audio would leave it nothing finite to end on.
+ * - Not for a looping audio lane or a PiP mix. Neither starves, and both already carry a bound.
+ */
+export function resolveProgrammeAudioPadSeconds(args: {
+  overlayMode: OnAirOverlayMode;
+  hasAudioLane: boolean;
+  pipAudioMapped: boolean;
+  attachLive: boolean;
+  /** The duration bound's configured margin; the pad must outlast it or the storm survives. */
+  durationBoundMarginSeconds: number;
+}): number {
+  if (args.overlayMode !== "scene") {
+    return 0;
+  }
+  if (usesShortestFlag(args)) {
+    return 0;
+  }
+  if (args.hasAudioLane || args.pipAudioMapped) {
+    return 0;
+  }
+  if (!(Number.isFinite(args.durationBoundMarginSeconds) && args.durationBoundMarginSeconds > 0)) {
+    return 0;
+  }
+  return Math.round(args.durationBoundMarginSeconds) + PROGRAMME_AUDIO_PAD_SLACK_SECONDS;
+}
+
+export function resolveOnAirOverlayMode(args: {
   overlayEnabled: boolean;
-  switching: boolean;
-  playoutStatus: string;
-  lastExitCode: string;
-  heartbeatAt: string;
-  nowMs?: number;
-  windowMs?: number;
-}): boolean {
-  if (!args.overlayEnabled || args.switching || !args.lastExitCode || !args.heartbeatAt) {
-    return false;
+  sceneFrameRendered: boolean;
+}): OnAirOverlayMode {
+  if (!args.overlayEnabled) {
+    return "none";
   }
 
-  if (args.playoutStatus !== "failed" && args.playoutStatus !== "idle" && args.playoutStatus !== "recovering") {
-    return false;
-  }
-
-  const heartbeatMs = new Date(args.heartbeatAt).getTime();
-  if (!Number.isFinite(heartbeatMs)) {
-    return false;
-  }
-
-  return (args.nowMs ?? Date.now()) - heartbeatMs <= (args.windowMs ?? 60_000);
+  return args.sceneFrameRendered ? "scene" : "text";
 }
 
 export function buildFfmpegInputArgs(args: {
@@ -236,6 +354,281 @@ export function buildFfmpegInputArgs(args: {
   return command;
 }
 
+// --- Live-attached source (PiP) input + filter graph (M57 stage 2, Etappes C/D) --------------
+
+/**
+ * The RTSP socket timeout for a live-attached source, in microseconds (ffmpeg's rtsp demuxer
+ * unit). 4 s on purpose: a source that never opens must give up well inside the smallest
+ * duration-bound margin the watchdog can be configured to
+ * (WATCHDOG_LIMITS.durationBoundMarginSeconds.min, 5 s), so a slow PiP connect can never be what
+ * trips the duration bound. See the clamp-invariant test in ffmpeg-runtime.test.ts.
+ */
+export const SOURCE_LIVE_RTSP_TIMEOUT_US = 4_000_000;
+
+/**
+ * Input arguments for the live PiP source: RTSP pinned to TCP (UDP loses packets silently across
+ * container networks — the snapshot sampler pins TCP for the same reason) with the bounded socket
+ * timeout. No -re: the feed is already realtime. No loop and no reconnect: a source that drops is
+ * meant to fall away (amix drops the ended input), not to hold the encode open.
+ */
+export function buildSourceLivePipInputArgs(url: string): string[] {
+  return ["-rtsp_transport", "tcp", "-timeout", String(SOURCE_LIVE_RTSP_TIMEOUT_US), "-i", url];
+}
+
+/** A gain/volume fraction, clamped to [min, max] and formatted the way the audio-lane filter is. */
+function formatGain(fraction: number, max: number): string {
+  return Math.max(0, Math.min(max, Number.isFinite(fraction) ? fraction : 0)).toFixed(3);
+}
+
+export type SourceLivePipAudio = {
+  /** "[1:a]" for the audio lane, "[0:a]" for programme audio: the mix's FIRST input. */
+  programLabel: string;
+  /** Programme/lane level as a fraction (lane volume, or 1 for untouched programme). */
+  programVolume: number;
+  /** Live source gain as a fraction (resolveSourceLiveGainPercent / 100), clamped 0..2. */
+  sourceGain: number;
+};
+
+export type SourceLivePipCommandParts = {
+  /** The whole -filter_complex value: video always, audio only when `audio` was supplied. */
+  filterComplex: string;
+  /** True when the graph produced [aout]; the caller maps it instead of the legacy audio map. */
+  audioMapped: boolean;
+};
+
+/**
+ * The video (and, when the source carries sound, audio) filter graph for a live-attached PiP,
+ * for scene overlay mode. The PiP input is always the LAST ffmpeg input, so the scene pipe keeps
+ * its existing index and the caller passes both indices in rather than this builder guessing them.
+ *
+ * Video: the source is scaled to cover its placement box and cropped to it (matching the sampled
+ * panel's object-fit), timestamps reset, then overlaid UNDER the scene PNG — eof_action=pass so a
+ * source that ends leaves the programme frame untouched instead of freezing or blanking it.
+ *
+ * Audio: the programme/lane audio is the FIRST amix input at duration=first, so the mix ends with
+ * the programme and never outlives it; normalize=0 keeps the programme's level from jumping when
+ * the source drops out; the PiP branch is resampled (async) and gained but carries NO apad, so a
+ * source that ends is simply dropped by amix rather than padded into endless masking silence.
+ */
+export function buildSourceLivePipFilterComplex(args: {
+  outputVideoFilter: string;
+  sceneInputIndex: number;
+  pipInputIndex: number;
+  fps: number;
+  box: { left: number; top: number; width: number; height: number };
+  audio: SourceLivePipAudio | null;
+  /** The ticker crawl, drawn over the finished scene exactly as it is without a PiP. */
+  ticker: TickerCrawlGraph | null;
+}): SourceLivePipCommandParts {
+  const { box, pipInputIndex: pip, sceneInputIndex: scene, fps } = args;
+  const baseChain = args.outputVideoFilter ? `[0:v]${args.outputVideoFilter}[base];` : "";
+  const baseLabel = args.outputVideoFilter ? "[base]" : "[0:v]";
+
+  const sceneOut = args.ticker ? "vscene" : "vout";
+  const video =
+    `${baseChain}` +
+    `[${pip}:v]fps=${fps},scale=${box.width}:${box.height}:force_original_aspect_ratio=increase,` +
+    `crop=${box.width}:${box.height},setpts=PTS-STARTPTS[pipv];` +
+    `${baseLabel}[pipv]overlay=${box.left}:${box.top}:eof_action=pass[vpip];` +
+    `[vpip][${scene}:v]overlay=0:0:format=auto[${sceneOut}]` +
+    (args.ticker ? `;${buildTickerCrawlFilter({ ...args.ticker, from: sceneOut, to: "vout" })}` : "");
+
+  if (!args.audio) {
+    return { filterComplex: video, audioMapped: false };
+  }
+
+  const audio =
+    `${args.audio.programLabel}volume=${formatGain(args.audio.programVolume, 1)}[prog_a];` +
+    `[${pip}:a]aresample=async=1:first_pts=0,volume=${formatGain(args.audio.sourceGain, 2)}[pip_a];` +
+    `[prog_a][pip_a]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]`;
+
+  return { filterComplex: `${video};${audio}`, audioMapped: true };
+}
+
+/**
+ * The chain that runs the ticker line across its band, at the OUTPUT frame rate.
+ *
+ * The renderer cannot crawl: it redraws on SCENE_RENDER_INTERVAL_MS, 2000ms by default and floored
+ * at 1000ms, so a line drawn into the frame would teleport 118px a step. ffmpeg can, for nothing
+ * per frame, and this is how.
+ *
+ * A transparent bed exactly the size of the clear run inside the band is what does the clipping:
+ * overlay clips its second input to its first, so the line can hang off both ends without ever
+ * painting outside the panel. The strip is split and laid down TWICE, one period apart, which is
+ * what makes the wrap seamless rather than a jump — when the first copy has travelled a whole
+ * period the second is already exactly where the first began, and the two pictures are identical.
+ * Measured on this machine before any of it was written: 4px of travel per frame at 120px/s and
+ * 30fps, and no discontinuity at the wrap.
+ *
+ * The period is the ink plus the gap, so a longer line does not crawl faster or leave a wider hole
+ * — the gap between the end of the line and its next pass is the same however long the line is.
+ *
+ * The x expression is wrapped in ffmpeg-level single quotes so its comma stays an argument
+ * separator for mod() and does not end the filter.
+ *
+ * shortest=1 on the LAST overlay bounds the crawl to the picture it draws onto. overlay ends with
+ * its LONGEST input, not its main one, and both of this chain's own inputs — the looped strip and
+ * the colour bed — are endless. Measured on a graph whose only finite input was the programme: a
+ * two-second programme produced thirteen minutes of output and was still going when the probe
+ * killed it; with shortest=1, exactly 60 frames and 2.000000 seconds.
+ *
+ * It does NOT decide when a playout process ends today, and the first version of this comment
+ * wrongly said it did. On air the scene pipe never EOFs either, so [vscene] is endless and this
+ * overlay is bounded by nothing — exactly as the graph was before the crawl existed. What ends a
+ * programme is the worker: the duration bound, or stopPlayoutProcess. So this is correctness, not
+ * a rescue: it makes the crawl end with the picture whenever that picture ends, and it can never
+ * extend one, because the only input it could be bounded by is the one it is drawing onto
+ */
+/**
+ * How many copies of the strip the band needs, and how far apart they run.
+ *
+ * The first version laid down exactly two, which tiles only a bed narrower than one period. Two
+ * copies reach at most `2*ink + gap`, so measured on the ordinary case — "Welcome to the stream" at
+ * 1080p, ink 213 against a 1722-wide band — the rightmost column ever painted was 665: a thousand
+ * pixels of permanently black bar, and the next pass materialising a quarter of the way across the
+ * band every three seconds instead of entering at its right edge. Which is the teleport the crawl
+ * exists to remove.
+ *
+ * The condition is coverage at the worst instant. With copies at x + iP for i = 0..K-1 and x in
+ * (-P, 0], the leftmost copy has just left the bed and the rest must already span it:
+ * (K-1)P + ink >= bandWidth. Two is the floor, because the wrap needs a copy standing where the
+ * first one began.
+ *
+ * The period is also held at the band's own width, which is a decision about the picture rather
+ * than about coverage. A short notice with only the designed gap tiles four copies of the same
+ * sentence side by side across the band, which reads as a fault and not as a ticker. At one band
+ * per period the line sweeps across on its own and the next pass enters at the right edge exactly
+ * as the last leaves at the left, which is what a ticker looks like. A line longer than the band
+ * is unaffected: its own ink already exceeds this floor
+ */
+export function resolveTickerCrawlCopies(args: { inkWidth: number; gapPx: number; bandWidth: number }): {
+  copies: number;
+  periodPx: number;
+} {
+  const periodPx = Math.max(1, Math.round(args.inkWidth + args.gapPx), Math.round(args.bandWidth));
+  const needed = Math.ceil(Math.max(0, args.bandWidth - args.inkWidth) / periodPx) + 1;
+  return { copies: Math.max(2, needed), periodPx };
+}
+
+export type TickerCrawlGraph = {
+  /** The clear run inside the band, from overlayTickerCrawlPlan. */
+  crawl: { left: number; top: number; width: number; height: number };
+  pxPerSecond: number;
+  /** Ink width plus gap: how far the line travels before it repeats. */
+  periodPx: number;
+  /** How many copies of the strip tile the bed. See resolveTickerCrawlCopies. */
+  copies: number;
+  /** Index of the strip input, which is always appended after every other input. */
+  stripInputIndex: number;
+  fps: number;
+};
+
+export function buildTickerCrawlFilter(
+  args: TickerCrawlGraph & {
+    /** Label of the video to draw onto, without brackets. */
+    from: string;
+    /** Label to produce, without brackets. */
+    to: string;
+  }
+): string {
+  const { crawl } = args;
+  const speed = Math.max(1, Math.round(args.pxPerSecond));
+  const period = Math.max(1, Math.round(args.periodPx));
+  const copies = Math.max(2, Math.round(args.copies));
+  const x = `-mod(t*${speed},${period})`;
+
+  const labels = Array.from({ length: copies }, (_value, index) => `tkc${String(index)}`);
+  let bed = "tkbed";
+  const stack = labels
+    .map((label, index) => {
+      const next = index === copies - 1 ? "tkband" : `tk${String(index)}`;
+      const at = index === 0 ? x : `${x}+${String(period * index)}`;
+      const chain = `[${bed}][${label}]overlay=x='${at}':y=0:format=auto[${next}];`;
+      bed = next;
+      return chain;
+    })
+    .join("");
+
+  return (
+    `color=c=black@0.0:s=${crawl.width}x${crawl.height}:r=${args.fps},format=rgba[tkbed];` +
+    `[${args.stripInputIndex}:v]format=rgba,split=${copies}${labels.map((label) => `[${label}]`).join("")};` +
+    stack +
+    `[${args.from}][tkband]overlay=x=${crawl.left}:y=${crawl.top}:format=auto:shortest=1[${args.to}]`
+  );
+}
+
+/**
+ * The scene overlay: the rendered PNG composited onto the programme, and the ticker crawled over
+ * the result when there is one.
+ *
+ * This string used to be written out three times in index.ts — for an asset, for a live bridge and
+ * for the standby slate — and none of the three could be reached from a test. They agreed with one
+ * another by luck. The crawl has to reach all three or the band draws empty wherever it was
+ * missed, so the string lives here now and the builders call it.
+ */
+export function buildSceneOverlayFilterComplex(args: {
+  outputVideoFilter: string;
+  sceneInputIndex: number;
+  ticker: TickerCrawlGraph | null;
+}): string {
+  const baseChain = args.outputVideoFilter ? `[0:v]${args.outputVideoFilter}[base];` : "";
+  const baseLabel = args.outputVideoFilter ? "[base]" : "[0:v]";
+  // With a crawl the scene is no longer the end of the graph: it is what the line is drawn onto.
+  const sceneOut = args.ticker ? "vscene" : "vout";
+  const scene = `${baseChain}${baseLabel}[${args.sceneInputIndex}:v]overlay=0:0:format=auto[${sceneOut}]`;
+  return args.ticker ? `${scene};${buildTickerCrawlFilter({ ...args.ticker, from: sceneOut, to: "vout" })}` : scene;
+}
+
+export type LiveSourceAudioDecisionInput = {
+  /** The programme asset's known duration in seconds; <= 0 or non-finite means unknown. */
+  programDurationSeconds: number;
+  /**
+   * Whether the live source actually carries an audio stream — the PROBED verdict, never the relay's
+   * advisory track flag alone. Referencing `[L:a]` when the source has no audio makes ffmpeg abort at
+   * graph init ("matches no streams"), so the caller must confirm the stream before mixing it.
+   */
+  sourceAudioConfirmed: boolean;
+  /** An audio lane replaces the programme's own audio; a looped audio asset always carries sound. */
+  hasAudioLane: boolean;
+  laneVolumePercent: number;
+  /** Whether the resolved programme input carries audio — the probed verdict; unused with a lane. */
+  programAudioConfirmed: boolean;
+  /** resolveSourceLiveGainPercent (0..200); the graph builder clamps and formats it. */
+  sourceGainPercent: number;
+};
+
+/**
+ * Whether — and how — the live source's audio may be folded into the programme mix.
+ *
+ * The feed-audio watchdog (feed-audio-health.ts) reads the programme's own audio out of the muxed
+ * HLS segment to catch a source that runs dry WITHOUT delivering EOF: the fps filter keeps inventing
+ * video from the last frame, so video packets are worthless as a liveness signal and audio is the
+ * honest one. Folding live PiP audio into that segment would mask a silent programme behind the PiP's
+ * sound — the watchdog would see audio packets and never fire, and the channel could sit indefinitely
+ * on a frozen programme picture with live PiP audio.
+ *
+ * So the mix is built ONLY when the programme has a KNOWN finite duration: duration-bound
+ * (duration-bound.ts) then ends the asset once it plays past its duration, making the masking
+ * harmless. An unknown-duration programme keeps its own audio as the sole track, so the feed-audio
+ * watchdog stays the honest net it exists to be. Returns null → attach video-only, never blocked.
+ */
+export function decideLiveSourceAudio(input: LiveSourceAudioDecisionInput): SourceLivePipAudio | null {
+  if (!(Number.isFinite(input.programDurationSeconds) && input.programDurationSeconds > 0)) {
+    return null;
+  }
+  if (!input.sourceAudioConfirmed) {
+    return null;
+  }
+  const sourceGain = input.sourceGainPercent / 100;
+  if (input.hasAudioLane) {
+    return { programLabel: "[1:a]", programVolume: input.laneVolumePercent / 100, sourceGain };
+  }
+  if (input.programAudioConfirmed) {
+    return { programLabel: "[0:a]", programVolume: 1, sourceGain };
+  }
+  return null;
+}
+
 export function isLikelyDestinationOutputError(line: string): boolean {
   const sample = line.toLowerCase();
 
@@ -263,16 +656,24 @@ export function describeFfmpegExit(code: number | null, signal: NodeJS.Signals |
   return "exited unexpectedly";
 }
 
-function getOutputRateControlSettings(output: StreamOutputSettings | null, env: NodeJS.ProcessEnv): {
+function getOutputRateControlSettings(
+  output: StreamOutputSettings | null,
+  env: NodeJS.ProcessEnv,
+  managedConfig: ManagedEncoderQualityInput
+): {
   maxrate: string;
   bufsize: string;
   audioBitrate: string;
 } {
-  if (env.FFMPEG_MAXRATE || env.FFMPEG_BUFSIZE || env.FFMPEG_AUDIO_BITRATE) {
+  // An explicitly configured rate trio — managed config or env, resolved by the shared core
+  // resolver — beats the resolution ladder below, exactly like the old "any FFMPEG_* rate env
+  // set" check did.
+  const encoder = resolveEncoderQualitySettings(managedConfig, env);
+  if (encoder.rateControlConfigured) {
     return {
-      maxrate: env.FFMPEG_MAXRATE || "4500k",
-      bufsize: env.FFMPEG_BUFSIZE || "9000k",
-      audioBitrate: env.FFMPEG_AUDIO_BITRATE || "160k"
+      maxrate: encoder.maxrate,
+      bufsize: encoder.bufsize,
+      audioBitrate: encoder.audioBitrate
     };
   }
 
@@ -315,24 +716,72 @@ function getOutputRateControlSettings(output: StreamOutputSettings | null, env: 
   };
 }
 
+/**
+ * Forward-jump tolerance, in seconds, for the persistent uplink's HLS input.
+ *
+ * WHAT THE SEAM ACTUALLY LOOKS LIKE, measured 2026-09-05 across nine boundaries. Each encode's
+ * output PTS starts at zero, so at a boundary the reader must offset both streams by roughly the
+ * outgoing asset's elapsed output time — and it derives that offset SEPARATELY per stream. The two
+ * values do not agree: audio's is larger, by how far audio had run ahead of video in the dying
+ * encode. That difference is the whole story:
+ *
+ *   storms   13.45  13.22  12.25  11.84 s  ->  233, 150, 265, 239 discontinuity lines
+ *   quiet     6.69   6.52   3.52   2.43   1.07 s  ->  3, 2, 3, 2, 2 lines
+ *
+ * The split is total, and ffmpeg's default of 10s sits in the gap. Under it only the backwards
+ * clause fires, once, on its fixed ~0.1s tolerance; over it the forward clause fires too and every
+ * subsequent packet re-derives an offset, ~10 lines a second, until the storm guard kills the
+ * process. Confirmed by the kill times matching the last line to the second at all four storms.
+ *
+ * WHY 60 AND NOT THE MEASURED 13.45. The skew is not bounded by what has been observed. `apad`
+ * lets audio outlive its input by PROGRAMME_AUDIO_PAD_SLACK_SECONDS plus the bound margin, so a
+ * pad-driven skew can reach that sum; 60 clears it with room. It stays finite deliberately: a
+ * threshold does not silence a broken feed, it only stops re-deriving, and out_time stall
+ * detection plus the feed-audio watchdog still cover a genuinely dead input.
+ *
+ * NOT SET ON RTMP. That input has no boundary seam — the relay carries one continuous timeline —
+ * so loosening it there would buy nothing and hide real corruption.
+ *
+ * WHAT IS STILL UNKNOWN. Why audio leads video by 12s at some seams and 1s at others is NOT
+ * explained. The same asset (v2813364934, from a complete local file both times) produced 13.45s,
+ * 13.22s and 1.07s at comparable overruns. This constant treats the symptom; it does not close
+ * that question. Note also that the apad comment above diagnoses the OPPOSITE sign — "video
+ * WITHOUT audio" — which the 2026-09-05 measurements contradict: the outgoing file carried
+ * continuous audio 20s past its cut, and steady-state feed audio tracks video to within 17ms.
+ */
+export const UPLINK_DTS_DELTA_THRESHOLD_SECONDS = 60;
+
 export function buildUplinkFfmpegCommand(
   input: string,
   outputTarget: FfmpegOutputTarget,
-  options: { inputMode?: UplinkInputMode; env?: NodeJS.ProcessEnv; outputSettings?: StreamOutputSettings | null } = {}
+  options: {
+    inputMode?: UplinkInputMode;
+    env?: NodeJS.ProcessEnv;
+    outputSettings?: StreamOutputSettings | null;
+    managedConfig?: ManagedEncoderQualityInput;
+  } = {}
 ): string[] {
   const inputMode = options.inputMode ?? "rtmp";
   const env = options.env ?? process.env;
   const outputSettings = options.outputSettings ?? null;
+  const managedConfig = options.managedConfig ?? null;
   const command = [
     "-hide_banner",
     "-loglevel",
     "warning",
+    // Machine-readable progress on the otherwise unused stdout. This is the only signal that
+    // distinguishes an uplink that is running from one that is working: the supervisor watches
+    // out_time here, because a stalled ffmpeg stays alive and looks healthy from the outside.
+    "-progress",
+    "pipe:1",
+    "-nostats",
     "-fflags",
     inputMode === "hls" ? "+genpts+discardcorrupt" : "+genpts"
   ];
 
   if (inputMode === "hls") {
     command.push("-err_detect", "ignore_err", "-max_reload", "10", "-m3u8_hold_counters", "1200");
+    command.push("-dts_delta_threshold", String(UPLINK_DTS_DELTA_THRESHOLD_SECONDS));
   }
 
   command.push("-i", input);
@@ -350,13 +799,13 @@ export function buildUplinkFfmpegCommand(
   if (outputVideoFilter) {
     command.push("-vf", outputVideoFilter);
   }
-  const rateControl = getOutputRateControlSettings(outputSettings, env);
+  const rateControl = getOutputRateControlSettings(outputSettings, env, managedConfig);
 
   command.push(
     "-c:v",
     "libx264",
     "-preset",
-    env.FFMPEG_PRESET || "veryfast",
+    resolveEncoderQualitySettings(managedConfig, env).preset,
     "-maxrate",
     rateControl.maxrate,
     "-bufsize",

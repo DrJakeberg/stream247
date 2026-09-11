@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { HashtagChipInput } from "@/components/hashtag-chip-input";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
@@ -77,9 +78,19 @@ export function AssetMetadataForm({
         startTransition(() => void save());
       }}
     >
-      <Input label="Title" maxLength={200} onChange={setTitle} required value={title} />
+      <Input
+        info="Shown as the asset's name in the queue and on the overlay, and the base of the Twitch stream title while this asset plays (a chapter title replaces it during that chapter). Up to 200 characters here, but Twitch shows at most 140 including the Replay prefix and hashtags."
+        label="Title"
+        maxLength={200}
+        onChange={setTitle}
+        required
+        value={title}
+      />
       <div className="field-stack field-stack-full">
-        <span className="label">Replay</span>
+        <span className="label label-with-info">
+          Replay
+          <InfoTip text="Marks the asset as a repeat: while it plays, the worker puts “Replay:” in front of the title on the overlay and in the Twitch stream title. Turning it off removes the prefix again." />
+        </span>
         <label className={`chip-toggle${replayEnabled ? " chip-toggle-active" : ""}`}>
           <input checked={replayEnabled} onChange={(event) => setReplayEnabled(event.target.checked)} type="checkbox" />
           <span>Prepend “Replay:” in the broadcast title</span>
@@ -94,6 +105,7 @@ export function AssetMetadataForm({
       </div>
       <Select
         hint="Category options come from the current show profiles."
+        info="While this asset is on air the worker switches the channel's Twitch category to this one, unless the playing chapter sets its own. No category override keeps the schedule slot's category, or the channel default when the slot has none."
         label="Category"
         onChange={setCategoryName}
         options={selectOptions}
@@ -101,6 +113,7 @@ export function AssetMetadataForm({
       />
       <HashtagChipInput
         hint="Used for Twitch title composition. Tags are sanitized before save."
+        info="Appended to the Twitch stream title after the title itself while this asset plays, each with a leading #. Up to 12 tags; the whole title is cut at 140 characters, so the last tags may not fit."
         label="Hashtags"
         onChange={setHashtags}
         placeholder="Type a hashtag and press Enter"
@@ -108,6 +121,7 @@ export function AssetMetadataForm({
       />
       <Textarea
         hint="Operator-facing notes only. These never render to viewers."
+        info="Kept on the asset's detail page for the people running the channel. Never sent to Twitch and never drawn on the stream; up to 1000 characters."
         label="Operator notes"
         maxLength={1000}
         onChange={setPlatformNotes}

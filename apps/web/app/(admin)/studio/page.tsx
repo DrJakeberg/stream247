@@ -13,7 +13,7 @@ export default async function StudioWorkspacePage(props: {
   const tab = resolveWorkspaceTabId("studio", searchParams.tab);
 
   return (
-    <div className="stack-form">
+    <div className={tab === "scene" ? "stack-form workspace-wide" : "stack-form"}>
       <WorkspaceTabs activeTabId={tab} workspaceId="studio" />
       {tab === "scene" ? <OverlayStudioPage /> : null}
       {tab === "engagement" ? <OverlaysPage /> : null}

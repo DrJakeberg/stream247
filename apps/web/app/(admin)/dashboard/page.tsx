@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 
-import { selectActiveDestinationGroup } from "@stream247/core";
+import { TWITCH_METADATA_WAITING_MESSAGE, resolveTwitchMetadataSyncGate, selectActiveDestinationGroup } from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
 import { DestinationCreateForm } from "@/components/destination-create-form";
@@ -8,26 +8,36 @@ import { DestinationSettingsForm } from "@/components/destination-settings-form"
 import { IncidentActionForm } from "@/components/incident-action-form";
 import { Panel } from "@/components/panel";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
+import { describeTwitchConnection } from "@/components/twitch-connection-status";
 import { getGoLiveChecklist } from "@/lib/server/onboarding";
+import { DESTINATION_ROLE_LABELS, DESTINATION_STATUS_LABELS, describeStreamKey } from "@/lib/destination-wording";
 import {
   getActivePresenceWindows,
   getCurrentScheduleItem,
+  getManagedTwitchConfig,
   getNextScheduleItem,
+  getOpenIncidentPanel,
   getPlayoutQueueAssets,
   getPresenceStatus,
   getSchedulePreview,
   readAppState
 } from "@/lib/server/state";
-import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
+import { isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
 
 export default async function DashboardPage() {
   const state = await readAppState();
-  const twitchAuthorizeUrl = await getTwitchAuthorizeUrl("broadcaster-connect");
+  const twitchAuthorizeUrl = (await isTwitchAuthorizeConfigured()) ? "/api/integrations/twitch/connect" : null;
+  const metadataSyncGate = resolveTwitchMetadataSyncGate({
+    configuredLogin: getManagedTwitchConfig(state).broadcastChannelLogin,
+    identityLogin: state.twitch.broadcasterLogin,
+    broadcasterConnection: state.twitchBroadcaster
+  });
+  const twitchConnection = describeTwitchConnection(state.twitch);
   const checklist = getGoLiveChecklist(state);
   const schedulePreview = getSchedulePreview(state);
   const presenceStatus = getPresenceStatus(state);
   const activeWindows = getActivePresenceWindows(state);
-  const openIncidents = state.incidents.filter((incident) => incident.status === "open");
+  const incidentPanel = getOpenIncidentPanel(state);
   const recentIncidents = [...state.incidents]
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, 8);
@@ -69,12 +79,15 @@ export default async function DashboardPage() {
         </article>
         <article className="metric">
           <span className="label">Twitch</span>
-          <div className="value">{state.twitch.status}</div>
-          <p className="subtle">
-            {state.twitch.status === "connected"
-              ? `Broadcaster ${state.twitch.broadcasterLogin || state.twitch.broadcasterId}`
-              : state.twitch.error || "OAuth connection not completed yet."}
-          </p>
+          <div className="value">{twitchConnection.label}</div>
+          <p className="subtle">{twitchConnection.detail}</p>
+          {twitchConnection.consequence ? <p className="subtle">{twitchConnection.consequence}</p> : null}
+          {/* The stored message stays available underneath. It is the only place the upstream
+              wording survives on this surface, and dropping it would trade one kind of blindness
+              for another — but it is no longer the first thing anyone reads. */}
+          {state.twitch.status !== "connected" && state.twitch.error ? (
+            <p className="subtle">Reported by Twitch: {state.twitch.error}</p>
+          ) : null}
           {state.twitch.lastMetadataSyncAt ? (
             <p className="subtle">
               Last metadata sync: {state.twitch.lastSyncedTitle || "no title"} ·{" "}
@@ -118,9 +131,9 @@ export default async function DashboardPage() {
         </article>
         <article className="metric">
           <span className="label">Incidents</span>
-          <div className="value">{openIncidents.length}</div>
+          <div className="value">{incidentPanel.openCount}</div>
           <p className="subtle">
-            {openIncidents.length > 0 ? `${openIncidents[0].title}` : "No open incidents at the moment."}
+            {incidentPanel.listed[0] ? incidentPanel.listed[0].title : "No open incidents at the moment."}
           </p>
         </article>
         <article className="metric">
@@ -164,21 +177,32 @@ export default async function DashboardPage() {
               <div className="item" key={destination.id}>
                 <strong>{destination.name}</strong>
                 <div className="subtle">
-                  {destination.role} · priority {destination.priority} · {destination.status}
-                  {activeDestinationIds.has(destination.id) ? " · active" : ""}
+                  {DESTINATION_ROLE_LABELS[destination.role]} · priority {destination.priority} ·{" "}
+                  {DESTINATION_STATUS_LABELS[destination.status]}
+                  {activeDestinationIds.has(destination.id) ? " · in use" : ""}
                 </div>
                 <div className="subtle">
-                  {destination.rtmpUrl || "No RTMP URL configured"} · {destination.streamKeyPresent ? "stream key present" : "stream key missing"} · key source{" "}
-                  {destination.streamKeySource || "missing"}
+                  {destination.rtmpUrl || "No RTMP URL configured"} ·{" "}
+                  {describeStreamKey(destination.streamKeyPresent, destination.streamKeySource)}
                 </div>
                 {destination.lastFailureAt ? (
                   <div className="subtle">
                     Last failure {destination.lastFailureAt} · count {destination.failureCount} · {destination.lastError || "No error sample captured."}
                   </div>
                 ) : null}
-                <div style={{ marginTop: 12 }}>
-                  <DestinationSettingsForm destination={destination} />
-                </div>
+                {/*
+                  The editor used to stand open under every destination, so a page with three
+                  outputs presented three full forms at once — 62 controls on a page whose job is to
+                  tell you whether you are on air. What each destination is and how it is doing is
+                  already summarised above; the form is only needed when someone intends to change
+                  it.
+                */}
+                <details className="disclosure" style={{ marginTop: 12 }}>
+                  <summary>Change this destination</summary>
+                  <div style={{ marginTop: 12 }}>
+                    <DestinationSettingsForm destination={destination} />
+                  </div>
+                </details>
               </div>
             ))}
           </div>
@@ -213,12 +237,13 @@ export default async function DashboardPage() {
                 Use Live control for skip, fallback, restart, override, replay, and Live Bridge actions. This status view stays read-only.
               </div>
             </div>
-            {openIncidents.length > 0 ? (
-              openIncidents.slice(0, 4).map((incident) => (
+            {incidentPanel.listed.length > 0 ? (
+              incidentPanel.listed.map((incident) => (
                 <div className="item" key={incident.id}>
                   <strong>
                     {incident.severity.toUpperCase()} · {incident.title}
                   </strong>
+                  <div className="subtle">{incident.ageLabel}</div>
                   <div className="subtle">{incident.message}</div>
                   <div className="subtle">
                     {incident.acknowledgedAt
@@ -240,6 +265,11 @@ export default async function DashboardPage() {
                 </div>
               </div>
             )}
+            {incidentPanel.overflow ? (
+              <div className="item">
+                <div className="subtle">{incidentPanel.overflow}</div>
+              </div>
+            ) : null}
             <div className="item">
               <strong>Active moderation presence</strong>
               <div className="subtle">
@@ -258,6 +288,12 @@ export default async function DashboardPage() {
             </div>
             <div className="item">
               <strong>Twitch metadata sync</strong>
+              {metadataSyncGate.mode === "waiting-for-broadcaster" ? (
+                <div className="subtle">
+                  {TWITCH_METADATA_WAITING_MESSAGE} Title and category for {metadataSyncGate.broadcastChannelLogin} sync
+                  once the broadcaster account is connected.
+                </div>
+              ) : null}
               <div className="subtle">
                 {state.twitch.lastMetadataSyncAt
                   ? `${state.twitch.lastSyncedTitle || "no title"} · ${state.twitch.lastSyncedCategoryName || "no category"}`
@@ -289,12 +325,16 @@ export default async function DashboardPage() {
                   ? `${state.overlay.channelName} · ${state.overlay.headline}`
                   : "Overlay is currently disabled."}
               </div>
-              <div className="subtle">
-                Stream247 captures <code>{`${process.env.APP_URL || "http://localhost:3000"}/overlay`}</code> as the
-                internal overlay output.
-              </div>
+              <div className="subtle">The picture is drawn by the playout; the studio preview is the same drawing.</div>
             </div>
-            <TwitchConnectPanel authorizeUrl={twitchAuthorizeUrl} />
+            <TwitchConnectPanel
+              authorizeUrl={twitchAuthorizeUrl}
+              broadcastChannel={
+                metadataSyncGate.mode === "identity"
+                  ? { mode: "identity", broadcastChannelLogin: "" }
+                  : { mode: metadataSyncGate.mode, broadcastChannelLogin: metadataSyncGate.broadcastChannelLogin }
+              }
+            />
           </div>
         </Panel>
       </section>

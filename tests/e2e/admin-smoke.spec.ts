@@ -22,7 +22,11 @@ async function ensureSignedIn(page: Page) {
     await page.getByLabel("Owner email").fill(ownerEmail);
     await page.getByLabel("Password").fill(ownerPassword);
     await setupButton.click();
-    await expect(page).toHaveURL(/\/live(?:\?tab=status)?$/);
+    // Since M52 the wizard continues on /setup instead of dropping into the workspace. The wait
+    // target must be something that only renders after bootstrap actually completed — the step
+    // rail is visible before submitting too, and returning on it races the session cookie: the
+    // next navigation then bounces through /login and lands on bare /live without its tab.
+    await expect(page.getByText(`Owner ${ownerEmail} exists.`)).toBeVisible();
     return;
   }
 
@@ -45,7 +49,7 @@ async function ensureSignedIn(page: Page) {
   await expect(page).toHaveURL(/\/live(?:\?tab=control|status)?$/);
 }
 
-test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publishes a live scene update", async ({ browser, page }) => {
+test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publishes a live scene update", async ({ page }) => {
   const stamp = Date.now();
   const channelName = `Smoke Channel ${stamp}`;
   const customText = `Scene Studio V2 ${stamp}`;
@@ -164,6 +168,12 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await expect(page).toHaveURL(/\/live(?:\?tab=control)?$/);
   await expect(page.getByRole("heading", { name: /Operate the live 24\/7 output from one workspace/i })).toBeVisible();
 
+  // The repair actions moved behind a disclosure: they are for when something is wrong, and having
+  // six of them open in front of the everyday controls was the reason the live page showed
+  // thirty-three at once. The cost is this extra click, which an operator pays too — so the smoke
+  // test pays it as well rather than reaching past the interface.
+  await page.getByText("If something is stuck").click();
+
   const refreshResponse = page.waitForResponse(
     (response) => response.url().includes("/api/broadcast/actions") && response.request().method() === "POST"
   );
@@ -188,9 +198,14 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await publishLiveButton.click();
   await expect(page.getByText("Scene changes published live.")).toBeVisible();
 
-  const publicOverlay = await browser.newPage();
-  await publicOverlay.goto("/overlay");
-  await expect(publicOverlay.locator(".overlay-frame.overlay-typography-editorial-serif")).toBeVisible();
-  await expect(publicOverlay.getByText(channelNameMatcher)).toBeVisible();
-  await expect(publicOverlay.getByText(customText)).toBeVisible();
+  // What went on air is what the studio shows: since stage 2 there is no browser overlay page to
+  // open, and the studio's preview is the on-air renderer's own frame — satori with embedFont off,
+  // so every word is a <text> node and the typography preset is the SVG's font family. This is a
+  // stronger claim than the old page made: it is the renderer that drew this, not an imitation.
+  const renderedScene = page.getByLabel("Scene as the on-air renderer draws it");
+  await expect(renderedScene.locator("svg")).toBeVisible({ timeout: 30_000 });
+  await expect(renderedScene.getByText(channelNameMatcher)).toBeVisible({ timeout: 30_000 });
+  await expect(renderedScene.getByText(customText)).toBeVisible();
+  // satori lower-cases the family it writes into the SVG: font-family="stream247 serif".
+  expect((await renderedScene.locator("svg").innerHTML()).toLowerCase()).toContain("stream247 serif");
 });

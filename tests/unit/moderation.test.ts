@@ -35,6 +35,34 @@ describe("moderator presence windows", () => {
     expect(status.chatMode).toBe("emote-only");
   });
 
+  it("accepts '!here 5' with the default policy", () => {
+    // The product owner's spec is verbatim "ein Mod sagt !here 5", and the check-in form shows
+    // "!here 30" — yet the default config only matched the bare word. requirePrefix: false must
+    // mean the prefix is optional, not forbidden.
+    const now = new Date("2026-03-27T10:00:00.000Z");
+    const window = parseModeratorCheckIn({
+      actor: "mod_a",
+      input: "!here 5",
+      now,
+      config: createDefaultModerationConfig()
+    });
+
+    expect(window?.minutes).toBe(5);
+    expect(window?.expiresAt.toISOString()).toBe("2026-03-27T10:05:00.000Z");
+  });
+
+  it("still requires the prefix when configured strictly", () => {
+    const now = new Date("2026-03-27T10:00:00.000Z");
+    const window = parseModeratorCheckIn({
+      actor: "mod_b",
+      input: "here 45",
+      now,
+      config: { ...createDefaultModerationConfig(), requirePrefix: true }
+    });
+
+    expect(window).toBeNull();
+  });
+
   it("supports prefixed moderator commands when configured", () => {
     const now = new Date("2026-03-27T10:00:00.000Z");
     const config = {

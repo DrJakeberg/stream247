@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, type KeyboardEvent } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { normalizeHashtagChip } from "@/lib/asset-metadata";
 
 export function HashtagChipInput(props: {
   label: string;
   hint?: string;
+  info?: string;
   error?: string;
   values: string[];
   onChange: (values: string[]) => void;
@@ -46,7 +48,10 @@ export function HashtagChipInput(props: {
 
   return (
     <label className="field-stack field-stack-full">
-      <span className="label">{props.label}</span>
+      <span className={props.info ? "label label-with-info" : "label"}>
+        {props.label}
+        {props.info ? <InfoTip text={props.info} /> : null}
+      </span>
       <div className={`chip-input${props.error ? " chip-input-error" : ""}`}>
         <div className="chip-input-list">
           {props.values.map((tag) => (

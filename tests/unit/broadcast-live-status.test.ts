@@ -15,7 +15,9 @@ describe("broadcast live status helpers", () => {
       startedAt: "2026-04-22T09:05:00.000Z"
     };
 
-    expect(getBroadcastLiveStatusLabel(twitch)).toBe("LIVE 128");
+    // Wording lives in tests/unit/broadcast-status-wording.test.ts, which also pins the properties
+    // these labels have to keep. Asserted here too so the surrounding helpers are checked together.
+    expect(getBroadcastLiveStatusLabel(twitch)).toBe("Live · 128");
     expect(getBroadcastLiveStatusTone(twitch)).toBe("live");
     expect(getBroadcastLiveViewerCountLabel(twitch)).toBe("128");
     expect(getBroadcastLiveUptimeLabel(twitch, new Date("2026-04-22T10:15:00.000Z").getTime())).toBe("1h 10m");
@@ -29,7 +31,7 @@ describe("broadcast live status helpers", () => {
         broadcasterLogin: "stream247",
         startedAt: ""
       })
-    ).toBe("OFFLINE");
+    ).toBe("Off air");
     expect(
       getBroadcastLiveStatusTone({
         status: "unknown",

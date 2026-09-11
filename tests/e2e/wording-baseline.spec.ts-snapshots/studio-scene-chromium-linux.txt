@@ -1,0 +1,219 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+<runtime>
+<runtime>
+CURRENT
+<runtime>
+<runtime>
+NEXT
+<runtime>
+<runtime>
+DESTINATION
+<runtime>
+<runtime>
+INCIDENTS
+<runtime>
+<runtime>
+UPDATES
+<runtime>
+<runtime>
+Scene
+Engagement
+Output
+Scene
+Publish the viewer-facing scene without leaving the control room.
+i
+Scene controls the published viewer-facing scene. Draft changes stay isolated until you review and publish them to the on-air renderer.
+SCENE
+Scene controls
+i
+The picture is drawn by the playout; the studio preview is the same drawing. Draft changes stay inside the studio until you publish them, and the published scene settings also drive the on-air replay text overlay inside the FFmpeg playout path. Metadata widgets stay inside that canonical scene payload, and custom font stacks resolve only against fonts already installed on the worker image.
+SCENE DRAFT
+Live and draft match
+Draft is based on live scene updated at unknown.
+Activate emergency banner
+Save draft
+Review changes
+Reset to live
+SCENE PREVIEW
+i
+Regular asset
+Insert / bumper
+Standby
+Reconnect
+AS IT GOES ON AIR, AT 1280X720
+<rendered scene>
+Drag a box to move it, drag a handle to resize, arrow keys to nudge by one pixel and shift for eight. Hold Alt to ignore the grid and the guides.
+Enable overlay output
+i
+SCENE
+i
+Main scene
+SCENE NAME
+i
+SCENE VIDEO SOURCE
+i
+Not linked to a source
+Add scene
+Duplicate scene
+Delete scene
+The scene you pick here is the one being edited and the one that goes on air when you publish. A linked video source fills in for any source layer in this scene that names none, so a duplicated scene can be pointed at another camera in one step. If that source is later removed, the scene keeps the name but the layer falls back to the still picture, exactly as an unlinked layer does.
+CHANNEL NAME
+i
+HEADLINE
+i
+INSERT HEADLINE
+i
+STANDBY HEADLINE
+i
+RECONNECT HEADLINE
+i
+REPLAY LABEL
+i
+BRAND BADGE
+i
+ACCENT COLOR
+i
+TICKER TEXT
+i
+Replay Lower Third
+Wide now-playing panel with a compact next item card for a broadcast lower-third feel.
+Split Now / Next
+Balanced dual-card layout that keeps current and next programming equally visible.
+Standby Board
+Full-frame replay board for standby, reconnects, or channels that always want a strong branded slate.
+Minimal Chip
+Compact replay badge with current metadata for channels that want very light on-air graphics.
+Bumper Board
+Bold insert scene for channel IDs, bumpers, and manual inserts between regular programming.
+Reconnect Board
+Centered reconnect scene for controlled output resets without losing channel branding.
+INSERT SCENE PRESET
+i
+Replay Lower Third
+Split Now / Next
+Standby Board
+Minimal Chip
+Bumper Board
+Reconnect Board
+Used for manual and automatic inserts between regular programming.
+STANDBY SCENE PRESET
+i
+Replay Lower Third
+Split Now / Next
+Standby Board
+Minimal Chip
+Bumper Board
+Reconnect Board
+Used while the stream is on air but waiting for the next playable item.
+RECONNECT SCENE PRESET
+i
+Replay Lower Third
+Split Now / Next
+Standby Board
+Minimal Chip
+Bumper Board
+Reconnect Board
+Used during controlled reconnect windows and output resets.
+SURFACE STYLE
+i
+Glass
+Solid
+Signal
+Soft translucent panels with the most broadcast-style depth.
+PANEL ANCHOR
+i
+Bottom Dock
+Center Stage
+Classic lower-third placement anchored near the bottom edge.
+TITLE SCALE
+i
+Compact
+Balanced
+Cinematic
+Default heading scale for most replay channels.
+TYPOGRAPHY PRESET
+i
+Studio Sans
+Editorial Serif
+Signal Mono
+Neutral broadcast sans stack for everyday replay channels.
+Scene layer order
+Asset, insert, standby, and reconnect modes can now each resolve to different scene presets without changing the main live scene.
+PANEL PLACEMENT
+Every panel where the layout puts it
+POSITIONED LAYERS
+Add custom text, logo, image, video source or chat game layers on top of the preset layout. Text layers can switch to safe local font stacks. Website and widget layers are gone from here: the on-air renderer cannot draw an external page, and there is no separate browser overlay, so they never appeared anywhere.
+Add Text Layer
+Add Logo Layer
+Add Image Layer
+Add Chat Game
+Add Video Source
+No positioned layers yet. Add one when you need custom text, logos, stills, or embed-safe widgets.
+SCENE PRESET LIBRARY
+Save the current draft as a reusable scene preset, then re-apply it later without rebuilding every control by hand.
+PRESET NAME
+i
+DESCRIPTION
+i
+Save draft as preset
+No saved scene presets yet.
+EMERGENCY BANNER
+i
+Show clock
+Show next item
+Show current category
+i
+Show source label
+i
+LIVE SCENE
+Replay Lower Third
+Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
+Typography Studio Sans · 0 positioned layers
+Asset Replay Lower Third · Insert Bumper Board · Standby Standby Board · Reconnect Reconnect Board
+Published never
+DRAFT SCENE
+Replay Lower Third
+Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
+Typography Studio Sans · 0 positioned layers
+Asset Replay Lower Third · Insert Bumper Board · Standby Standby Board · Reconnect Reconnect Board
+Draft saved not yet saved
+PUBLISH STATUS
+Live and draft match
+Draft is based on live scene updated at unknown.
+Cameras and feeds the scene layers can show. The feed address is stored encrypted and never shown again — this list only says whether one is stored. Saving with an empty address keeps the stored one.
+Add video source
+No video sources stored yet.
+VIEWER SCENE
+Published scene state
+i
+Live scene preset
+Replay Lower Third · glass surface · bottom anchor · balanced title scale
+Typography Studio Sans · 0 positioned layers
+Current category shown · source label shown
+Queue preview hidden
+Published never
+Draft status
+Draft matches the live scene.
+Draft saved not yet saved
+Based on live scene unknown
+Draft preset Replay Lower Third · glass surface · bottom anchor
+Typography Studio Sans · 0 positioned layers
+0 saved scene presets in the library.
+Current block
+<block> · <time> to <time>
+Next block
+<block> · <time> to <time>
+Emergency banner
+No emergency banner is active.

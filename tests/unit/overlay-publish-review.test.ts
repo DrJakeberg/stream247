@@ -31,6 +31,7 @@ function buildOverlay(overrides: Partial<OverlaySettingsRecord> = {}): OverlaySe
     layerOrder: ["chip", "hero", "next", "queue", "schedule", "clock", "banner", "ticker"],
     disabledLayers: [],
     customLayers: [],
+    panelPlacements: {},
     emergencyBanner: "",
     tickerText: "",
     updatedAt: "2026-04-22T10:00:00.000Z",
@@ -121,5 +122,99 @@ describe("overlay publish review", () => {
         })
       ])
     );
+  });
+});
+
+/**
+ * Overlap is named, not forbidden.
+ *
+ * The operator's decision: a logo is supposed to be able to sit on a panel, and a studio that
+ * refused would be a studio that cannot lay out a channel. What must not happen is a collision
+ * nobody noticed going on air, so the review says which boxes share which rectangle and leaves the
+ * judgement where it belongs.
+ *
+ * Measured on the design grid, because that is the unit the sidebar's caption reads in and the
+ * only one that means the same thing whatever the profile encodes at.
+ */
+describe("overlapping panels in the publish review", () => {
+  it("names both boxes and the rectangle they share", () => {
+    const live = buildOverlay();
+    const draft = buildOverlay({
+      panelPlacements: {
+        hero: { xPercent: 0, yPercent: 70, widthPercent: 60, heightPercent: 25, opacityPercent: 100, allowOutsideSafeArea: false }
+      },
+      customLayers: [
+        {
+          id: "logo-on-hero",
+          kind: "logo",
+          name: "Corner logo",
+          enabled: true,
+          xPercent: 40,
+          yPercent: 75,
+          widthPercent: 15,
+          heightPercent: 12,
+          opacityPercent: 100,
+          allowOutsideSafeArea: false,
+          url: "/brand.svg",
+          altText: "Brand",
+          fit: "contain"
+        }
+      ]
+    });
+
+    const section = buildOverlayPublishReviewSections(live, draft).find(
+      (entry) => entry.title === "Overlapping panels"
+    );
+
+    expect(section, "the review should carry an overlap section").toBeTruthy();
+    expect(section?.items).toHaveLength(1);
+    expect(section?.items[0]).toContain("Now playing");
+    expect(section?.items[0]).toContain("Corner logo");
+    // The shared rectangle, in design pixels, so the line says where and not only whether.
+    expect(section?.items[0]).toMatch(/x \d+ · y \d+ · \d+ × \d+/);
+  });
+
+  it("says nothing when the boxes only sit next to each other", () => {
+    const live = buildOverlay();
+    const draft = buildOverlay({
+      panelPlacements: {
+        hero: { xPercent: 0, yPercent: 70, widthPercent: 40, heightPercent: 25, opacityPercent: 100, allowOutsideSafeArea: false },
+        next: { xPercent: 40, yPercent: 70, widthPercent: 40, heightPercent: 25, opacityPercent: 100, allowOutsideSafeArea: false }
+      }
+    });
+
+    expect(
+      buildOverlayPublishReviewSections(live, draft).some((entry) => entry.title === "Overlapping panels")
+    ).toBe(false);
+  });
+
+  it("ignores a layer that is switched off, because a hidden box collides with nothing", () => {
+    const live = buildOverlay();
+    const draft = buildOverlay({
+      panelPlacements: {
+        hero: { xPercent: 0, yPercent: 70, widthPercent: 60, heightPercent: 25, opacityPercent: 100, allowOutsideSafeArea: false }
+      },
+      customLayers: [
+        {
+          id: "logo-off",
+          kind: "logo",
+          name: "Corner logo",
+          enabled: false,
+          xPercent: 40,
+          yPercent: 75,
+          widthPercent: 15,
+          heightPercent: 12,
+          opacityPercent: 100,
+          allowOutsideSafeArea: false,
+          url: "/brand.svg",
+          altText: "Brand",
+          fit: "contain"
+        }
+      ]
+    });
+
+    expect(
+      buildOverlayPublishReviewSections(live, draft).some((entry) => entry.title === "Overlapping panels")
+    ).toBe(false);
   });
 });

@@ -77,6 +77,8 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       updatedAt: ""
     },
     managedConfig: {
+      appUrl: "",
+      channelTimezone: "",
       twitchClientId: "",
       twitchClientSecret: "",
       twitchDefaultCategoryId: "",
@@ -272,6 +274,7 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       currentDestinationId: "destination-primary",
       restartRequestedAt: "",
       heartbeatAt: new Date().toISOString(),
+      workerHeartbeatAt: new Date().toISOString(),
       processPid: 123,
       processStartedAt: new Date().toISOString(),
       lastTransitionAt: new Date().toISOString(),
@@ -353,18 +356,11 @@ describe("ops state helpers", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-09T18:01:26.424Z"));
 
-    const result = getWorkerHealth(
-      createState({
-        auditEvents: [
-          {
-            id: "audit-1",
-            type: "worker.cycle",
-            message: "done",
-            createdAt: "2026-04-09T17:58:13.424Z"
-          }
-        ]
-      })
-    );
+    const base = createState();
+    const result = getWorkerHealth({
+      ...base,
+      playout: { ...base.playout, workerHeartbeatAt: "2026-04-09T17:58:13.424Z" }
+    });
 
     expect(result.status).toBe("healthy");
   });
@@ -373,20 +369,26 @@ describe("ops state helpers", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-09T18:02:14.000Z"));
 
-    const result = getWorkerHealth(
-      createState({
-        auditEvents: [
-          {
-            id: "audit-1",
-            type: "worker.cycle",
-            message: "done",
-            createdAt: "2026-04-09T17:58:13.424Z"
-          }
-        ]
-      })
-    );
+    const base = createState();
+    const result = getWorkerHealth({
+      ...base,
+      playout: { ...base.playout, workerHeartbeatAt: "2026-04-09T17:58:13.424Z" }
+    });
 
     expect(result.status).toBe("stale");
+  });
+
+  it("reports a missing worker heartbeat when the runtime row has never recorded one", () => {
+    const base = createState();
+    const result = getWorkerHealth({
+      ...base,
+      // A trail full of routine noise used to be what answered this question. It no longer is,
+      // so an audit entry must not be able to stand in for a heartbeat that never happened.
+      auditEvents: [{ id: "audit-1", type: "worker.cycle", message: "done", createdAt: new Date().toISOString() }],
+      playout: { ...base.playout, workerHeartbeatAt: "" }
+    });
+
+    expect(result.status).toBe("missing");
   });
 
   it("reports schedule drift when current asset source differs from schedule source", () => {
@@ -834,7 +836,7 @@ describe("ops state helpers", () => {
     expect(snapshot.nextScheduleItem?.title).toBe("Noon Show");
   });
 
-  it("returns no current or next block after the final scheduled block has ended", () => {
+  it("wraps to the weekly grid's next occurrence after the final block of the day", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-07T14:30:00.000Z"));
     const state = createState({
@@ -865,11 +867,16 @@ describe("ops state helpers", () => {
     });
 
     expect(getCurrentScheduleItem(state)).toBeNull();
-    expect(getNextScheduleItem(state)).toBeNull();
+    // This used to expect null, which pinned the bug the wording baselines tripped over every
+    // evening: a 24/7 channel reported "nothing further scheduled" while next week's grid was
+    // fully populated. The next occurrence of a weekly block is a real answer.
+    const next = getNextScheduleItem(state);
+    expect(next?.title).toBe("Morning Show");
+    expect(next?.date).toBe("2026-04-14");
 
     const snapshot = getBroadcastSnapshot(state);
     expect(snapshot.currentScheduleItem).toBeNull();
-    expect(snapshot.nextScheduleItem).toBeNull();
+    expect(snapshot.nextScheduleItem?.title).toBe("Morning Show");
   });
 
   it("keeps the first later daytime block as next when the current block crosses midnight", () => {
@@ -879,9 +886,16 @@ describe("ops state helpers", () => {
       scheduleBlocks: [
         {
           id: "block-overnight",
+          // Tuesday 23:00 for two hours, i.e. it runs into Wednesday 01:00. The system time below
+          // is Wednesday 00:30, so this is the block genuinely on air.
+          //
+          // This fixture used to put the block on Wednesday itself and still expect it to be
+          // current at Wednesday 00:30 — 23 hours before it starts. That passed only because
+          // matching compared wall-clock strings, which cannot tell a wrapping block's evening
+          // from its own morning.
           title: "Overnight Replay",
           categoryName: "Archive",
-          dayOfWeek: 3,
+          dayOfWeek: 2,
           startMinuteOfDay: 23 * 60,
           durationMinutes: 120,
           showId: "show-1",

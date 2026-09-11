@@ -4,11 +4,14 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { LIBRARY_MEDIA_FILE_EXTENSIONS } from "@stream247/core";
 import { NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, readAppState, updateSourceFieldRecords } from "@/lib/server/state";
+import { isInsideMediaRoot, sanitizeSubfolder } from "@/lib/server/media-paths";
 
-const allowedExtensions = new Set([".mp4", ".mkv", ".mov", ".m4v", ".webm", ".avi", ".mp3", ".aac", ".flac", ".wav"]);
+// The scan decides what becomes an asset; the upload accepts exactly that and nothing it would ignore.
+const allowedExtensions = new Set<string>(LIBRARY_MEDIA_FILE_EXTENSIONS);
 const maxUploadCollisionRetries = 16;
 
 function getMediaRoot(): string {
@@ -25,20 +28,6 @@ function sanitizeFileName(fileName: string): string {
     .replace(/^-|-$/g, "")
     .slice(0, 120);
   return `${safeBaseName || "upload"}${extension}`;
-}
-
-function sanitizeSubfolder(value: string): string {
-  return value
-    .split("/")
-    .map((segment) =>
-      segment
-        .trim()
-        .replace(/[^\w.-]+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-|-$/g, "")
-    )
-    .filter(Boolean)
-    .join("/");
 }
 
 async function markLocalLibraryForRescan() {
@@ -126,7 +115,7 @@ export async function POST(request: Request) {
   const invalidFile = files.find((file) => !allowedExtensions.has(path.extname(file.name).toLowerCase()));
   if (invalidFile) {
     return NextResponse.json(
-      { message: `Unsupported file type for ${invalidFile.name}. Upload video or audio files that the local library can scan.` },
+      { message: `Unsupported file type for ${invalidFile.name}. The library scan ingests ${LIBRARY_MEDIA_FILE_EXTENSIONS.join(", ")}.` },
       { status: 400 }
     );
   }
@@ -134,6 +123,11 @@ export async function POST(request: Request) {
   const mediaRoot = getMediaRoot();
   const subfolder = sanitizeSubfolder(rawSubfolder);
   const targetRoot = path.join(mediaRoot, subfolder || "uploads");
+
+  if (!isInsideMediaRoot(targetRoot, mediaRoot)) {
+    return NextResponse.json({ message: "Upload folder must stay inside the media library." }, { status: 400 });
+  }
+
   await fs.mkdir(targetRoot, { recursive: true });
 
   const storedPaths: string[] = [];

@@ -7,22 +7,37 @@ import {
   isEngagementDonationAlertsRuntimeEnabled
 } from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
+import { ChatGameSettingsForm } from "@/components/chat-game-settings-form";
 import { EngagementSettingsForm } from "@/components/engagement-settings-form";
+import { ViewerControlForm } from "@/components/viewer-control-form";
 import { Panel } from "@/components/panel";
+import {
+  readChatGameRuntimeRecord,
+  readChatGameSettingsRecord,
+  readChatInteractionSettingsRecord,
+  readChatVoteSessionRecord
+} from "@stream247/db";
 import { getBroadcastSnapshot, readAppState } from "@/lib/server/state";
 
 export default async function OverlaysPage() {
   const state = await readAppState();
   const engagement = getBroadcastSnapshot(state).engagement;
-  const chatRuntimeEnabled = isEngagementChatRuntimeEnabled(state.engagement, process.env);
-  const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(state.engagement, process.env);
-  const donationsRuntimeEnabled = isEngagementDonationAlertsRuntimeEnabled(state.engagement, process.env);
-  const channelPointsRuntimeEnabled = isEngagementChannelPointsRuntimeEnabled(state.engagement, process.env);
+  const [viewerControl, activeVote, chatGame, chatGameRuntime] = await Promise.all([
+    readChatInteractionSettingsRecord(),
+    readChatVoteSessionRecord(),
+    readChatGameSettingsRecord(),
+    readChatGameRuntimeRecord()
+  ]);
+  const gameLayerEnabled = state.overlay.customLayers.some((layer) => layer.kind === "game" && layer.enabled);
+  const chatRuntimeEnabled = isEngagementChatRuntimeEnabled(state.engagement, process.env, state.managedConfig);
+  const alertsRuntimeEnabled = isEngagementAlertsRuntimeEnabled(state.engagement, process.env, state.managedConfig);
+  const donationsRuntimeEnabled = isEngagementDonationAlertsRuntimeEnabled(state.engagement, process.env, state.managedConfig);
+  const channelPointsRuntimeEnabled = isEngagementChannelPointsRuntimeEnabled(state.engagement, process.env, state.managedConfig);
 
   return (
     <div className="stack-form">
       <AdminPageHeader
-        description="Control the live chat rail, Twitch alert types, and the chatter-participation game that all render through the same captured overlay."
+        description="Control the live chat rail, Twitch alert types, and the chatter-participation game that all render through the same on-air overlay."
         eyebrow="Engagement"
         title="Manage in-stream engagement from one tab."
       />
@@ -37,13 +52,13 @@ export default async function OverlaysPage() {
             <div className="item">
               <strong>Chat overlay</strong>
               <div className="subtle">
-                {chatRuntimeEnabled ? `Runtime enabled, IRC ${engagement.chatStatus}.` : "Disabled by settings or STREAM_CHAT_OVERLAY_ENABLED."}
+                {chatRuntimeEnabled ? `Runtime enabled, IRC ${engagement.chatStatus}.` : "Disabled by settings or by the chat feature switch in the admin settings."}
               </div>
             </div>
             <div className="item">
               <strong>Follow/sub alerts</strong>
               <div className="subtle">
-                {alertsRuntimeEnabled ? "Runtime enabled. EventSub notifications will render as timed alerts." : "Disabled by settings or STREAM_ALERTS_ENABLED."}
+                {alertsRuntimeEnabled ? "Runtime enabled. EventSub notifications will render as timed alerts." : "Disabled by settings or by the alerts feature switch in the admin settings."}
               </div>
             </div>
             <div className="item">
@@ -51,7 +66,7 @@ export default async function OverlaysPage() {
               <div className="subtle">
                 {donationsRuntimeEnabled
                   ? "Runtime enabled. Cheer EventSub notifications will render as timed alerts."
-                  : "Disabled by settings, STREAM_ALERTS_ENABLED, or missing the post-M32 Twitch reconnect."}
+                  : "Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect."}
               </div>
             </div>
             <div className="item">
@@ -59,7 +74,7 @@ export default async function OverlaysPage() {
               <div className="subtle">
                 {channelPointsRuntimeEnabled
                   ? "Runtime enabled. Redemption EventSub notifications will render as timed alerts when a custom reward exists."
-                  : "Disabled by settings, STREAM_ALERTS_ENABLED, or missing the post-M32 Twitch reconnect."}
+                  : "Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect."}
               </div>
             </div>
             <div className="item">
@@ -90,6 +105,35 @@ export default async function OverlaysPage() {
           </div>
         </Panel>
       </div>
+
+      <Panel title="Viewer control" eyebrow="Chat steers the programme">
+        <div className="subtle" style={{ marginBottom: 12 }}>
+          {viewerControl.enabled
+            ? activeVote.status === "open"
+              ? `A poll is live with ${String(activeVote.options.reduce((sum, option) => sum + option.votes, 0))} votes from ${String(Object.keys(activeVote.ballots).length)} viewers.`
+              : "Enabled. A poll opens once per programme item."
+            : "Disabled. Chat cannot influence the running order."}
+        </div>
+        <ViewerControlForm settings={viewerControl} />
+      </Panel>
+
+      <Panel title="Chat game" eyebrow="Chat plays on air">
+        <div className="subtle" style={{ marginBottom: 12 }}>
+          {gameLayerEnabled
+            ? chatGameRuntime.gameId
+              ? "A round is running. The board renders in every scene whose Chat Game layer is enabled."
+              : "The Chat Game layer is enabled; the worker starts a round on its next cycle."
+            : "No scene has an enabled Chat Game layer yet. A moderator typing !snake, !minesweeper, or !2048 in chat adds and enables one; !game answers with the list, and !game stop takes the board off air."}
+        </div>
+        {!chatRuntimeEnabled ? (
+          <div className="subtle" style={{ marginBottom: 12 }}>
+            The game reads its emotes through the same Twitch IRC runtime as the chat rail, which is currently
+            disabled. Enable chat in the engagement controls and turn on the chat feature switch in the admin
+            settings so inputs can arrive; the on-screen chat rail itself can stay hidden.
+          </div>
+        ) : null}
+        <ChatGameSettingsForm chatGame={chatGame} />
+      </Panel>
     </div>
   );
 }

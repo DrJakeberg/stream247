@@ -1,0 +1,125 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+<runtime>
+<runtime>
+CURRENT
+<runtime>
+<runtime>
+NEXT
+<runtime>
+<runtime>
+DESTINATION
+<runtime>
+<runtime>
+INCIDENTS
+<runtime>
+<runtime>
+UPDATES
+<runtime>
+<runtime>
+Schedule
+Pools
+Library
+Sources
+Sources
+Manage ingest pipelines and source connectors.
+Sources are the ingest pipelines that fetch or scan upstream media. Use Library for playable assets and Pools for programming groups.
+INGEST
+Add source
+Add a connector for the upstream media feed you want Stream247 to ingest. Sources are ingestion pipelines, not the playable catalog itself.
+CHOOSE A SOURCE TYPE
+i
+Local media library
+Play files already stored on this server from the shared media folder.
+Best for self-hosted operators who want a simple, stable local catalog without relying on upstream URLs.
+Direct media URL
+Add a single directly reachable video file or streamable media URL.
+Useful for CDN-hosted MP4 files, one-off replay clips, or fixed archive URLs.
+YouTube playlist
+Ingest every video from a YouTube playlist into your catalog.
+Best when you already curate a replay or archive playlist on YouTube.
+YouTube channel
+Track a whole YouTube channel and ingest its uploaded videos as assets.
+Good for archive channels where the upstream creator keeps publishing new replay content.
+Twitch VOD
+Add a single Twitch VOD as a replay source.
+Useful for one-off archive imports or special event replays.
+Twitch channel archive
+Track archived VODs from a Twitch channel and keep ingesting new ones over time.
+Best for replay channels built from an existing Twitch creator archive.
+DISPLAY NAME
+i
+CONNECTOR TYPE
+i
+Local media library
+Direct media URL
+YouTube playlist
+YouTube channel
+Twitch VOD
+Twitch channel archive
+Twitch archive
+Worker ingests archive VODs from the Twitch channel and keeps Twitch title/category metadata.
+Example: https://www.twitch.tv/username
+CHANNEL URL
+i
+Use the canonical source URL here. Stream247 will keep the original title, natural duration, and upstream metadata where available.
+Add source
+SOURCES
+Source connectors
+Review connector status, bulk sync sources, and edit each ingest pipeline without mixing in uploads, pools, or the asset browser.
+Select multiple sources to enable, disable, or queue a sync in one operator action.
+Local Media Library · enabled
+Twitch Archive · enabled
+YouTube Playlist · enabled
+No sources selected yet.
+Sync selected
+Enable selected
+Disable selected
+Clear selection
+Local Media Library
+Filesystem scan
+Pending scan
+Enabled
+2 assets
+2 ready
+Never checked yet.
+In 2 pools
+20 scheduled blocks
+0 open incidents
+Open detail
+Change this source
+Twitch Archive
+Twitch VOD sync
+Planned
+Enabled
+0 assets
+0 ready
+Never checked yet.
+In 1 pool
+0 scheduled blocks
+0 open incidents
+Open detail
+Change this source
+YouTube Playlist
+Managed ingestion
+Planned
+Enabled
+0 assets
+0 ready
+Never checked yet.
+In 2 pools
+0 scheduled blocks
+0 open incidents
+Open detail
+Change this source

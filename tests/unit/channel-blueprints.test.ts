@@ -75,6 +75,8 @@ function createState(): AppState {
     presenceWindows: [],
     overlay,
     managedConfig: {
+      appUrl: "",
+      channelTimezone: "",
       twitchClientId: "",
       twitchClientSecret: "",
       twitchDefaultCategoryId: "",

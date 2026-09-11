@@ -52,7 +52,10 @@ function buildDetails(data, uplinkRestartDelta, playoutTransient) {
 /**
  * Classify one readiness sample. Returns one of:
  *   { kind: "ok",        line }                 — healthy sample, log line for the log file
- *   { kind: "fail",      reasons, line }        — immediate fail, exit the soak now
+ *   { kind: "fail",      reasons, hard, line }  — fail. `hard` marks the two failures that are
+ *       never a passing blip — a playout crash loop and a runaway uplink restart count. The
+ *       shell loop exits on those at once; any other fail it may carry through its outage
+ *       window (SOAK_OUTAGE_TOLERANCE_SECONDS) if the stack heals itself in time.
  *   { kind: "transient", transientKinds, reasons, line }
  *       — uplink and/or destination momentarily not-ready while everything else is healthy.
  *       Caller tracks consecutive occurrences per kind; only exits after exceeding the tolerated count.
@@ -100,8 +103,12 @@ function classifyReadinessSample(data, opts = {}) {
     issuesFatal.push("playout=not-ready");
   }
 
+  // Reasons that no outage window may carry: a crash loop and a runaway restart count are the
+  // fault itself, not the network path between the stack and its destination.
+  const hardReasons = [];
   if (data.playout?.crashLoopDetected) {
     issuesFatal.push("playout.crashLoopDetected=true");
+    hardReasons.push("playout.crashLoopDetected=true");
   }
 
   if (feedStale && !playoutTransientStaleFeed) {
@@ -140,6 +147,9 @@ function classifyReadinessSample(data, opts = {}) {
   if (uplinkRestartDelta > 0 && (userImpactNow || uplinkRestartDelta > runawayThreshold)) {
     issuesFatal.push(`uplinkUnplannedRestarts=${currentUplinkRestarts}(delta=${uplinkRestartDelta})`);
   }
+  if (uplinkRestartDelta > runawayThreshold) {
+    hardReasons.push(`uplinkUnplannedRestarts.runaway(delta=${uplinkRestartDelta}>${runawayThreshold})`);
+  }
 
   const details = buildDetails(data, uplinkRestartDelta, playoutTransient);
 
@@ -156,6 +166,8 @@ function classifyReadinessSample(data, opts = {}) {
     return {
       kind: "fail",
       reasons: issuesFatal,
+      hard: hardReasons.length > 0,
+      hardReasons,
       line: [...issuesFatal, ...transientReasons, ...details].join(", ")
     };
   }

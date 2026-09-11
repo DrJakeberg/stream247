@@ -5,9 +5,26 @@ on:
   push:
     branches: [main]
 
+# Runs on main push the same mutable GHCR tags (`latest`), so two in flight at once race on the
+# registry: a concurrent push was rejected with "denied: permission_denied ... 403". Serialising
+# them fixes that.
+#
+# cancel-in-progress is a literal false, not an expression. An expression form here
+# (`${{ github.event_name == 'pull_request' }}`) was evaluated as truthy on push and cancelled a
+# main run before its job even started. That is worse than the race it replaced: a cancelled run
+# publishes no `main-<sha>` snapshot, and the Release workflow waits for exactly that image, so
+# tagging such a commit would block until its timeout and then fail.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    # Without this the job inherits GitHub's 6-hour default. A hung apt mirror left a run wedged
+    # for over an hour on the ffmpeg install, and because runs are serialised that blocked every
+    # later commit behind it. Fail in a useful timeframe instead.
+    timeout-minutes: 45
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
@@ -25,6 +42,114 @@ jobs:
       - run: pnpm install --frozen-lockfile=false
       - run: pnpm lint
       - run: pnpm typecheck
+      # Every image this job pulls from a registry we do not own, fetched once with a retry, before
+      # anything depends on it. Run 33710726231 died at `pnpm test:fresh-compose` on
+      #
+      #   relay Error Head ".../v2/bluenviron/mediamtx/manifests/1.15.4": Get
+      #   "https://auth.docker.io/token?account=githubactions&...": context deadline exceeded
+      #
+      # after hanging 15s on the token endpoint without reaching a single layer. The push run for
+      # the same commit, 33710723281, pulled that identical tag in the same minute and passed, and
+      # a re-run of the failed one passed too — so nothing in the commit was implicated. The pull
+      # inside `docker compose up -d` simply has nowhere to put a second attempt, and one blip took
+      # twelve green steps and seventeen unrun ones with it. This moves the pull; it does not add
+      # one.
+      #
+      # timeout-minutes and the per-attempt `timeout` are the load-bearing part, not the retry.
+      # Runs on this ref are serialised with cancel-in-progress: false, so an unbounded network
+      # step blocks every later commit behind it — exactly the wedge the job ceiling above was
+      # added for. A registry that answers headers and then trickles the body defeats docker's own
+      # deadlines: measured, a single pull ran 98s and was still going. So each attempt is capped
+      # and the step is capped, and the worst case is arithmetic rather than hope: 3 x 60s + 2 x 10s
+      # = 200s, inside a 6-minute ceiling.
+      #
+      # Retries cover TRANSPORT failures only — no answer from the registry. A missing tag, a 429
+      # or a denied pull is the registry stating a fact, and facts are not flaky: those go red on
+      # the first attempt, in the daemon's own words, so a bad version bump still reads as a bad
+      # version bump. Classification is by exit status first and text second, because a killed pull
+      # leaves NO output, and empty text matched against a list of retryable strings otherwise
+      # reads as "the registry answered" when it answered nothing at all.
+      - name: Pre-pull external images
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+
+          # Captured first so a malformed compose file or an unresolvable ${VAR} is a real failure:
+          # `mapfile < <(...)` discards the inner status and pipefail does not reach into process
+          # substitution, so reading it directly would swallow that. --env-file /dev/null keeps a
+          # stray .env on a self-hosted runner from injecting a local tag into the pull list.
+          COMPOSE_IMAGES="$(docker compose --env-file /dev/null -f docker-compose.yml config --images)"
+
+          # Filtered by OUR service images, not by registry host. A denylist on ghcr.io/drjakeberg
+          # would silently drop the relay out of this list the day it is mirrored into our own
+          # registry — leaving it pulled un-retried inside `up -d` underneath a green, reassuring
+          # "Pre-pull external images" step.
+          mapfile -t IMAGES < <(printf '%s\n' "$COMPOSE_IMAGES" | grep -vE '/stream247-(web|worker|playout|uplink):' | sort -u)
+
+          # runtime-parity injects its fixture server through a heredoc, so compose config cannot
+          # see it. The grep is the drift guard: bump the tag there and this step fails until it is
+          # bumped here, rather than pre-pulling an image nothing uses.
+          grep -q 'image: python:3.12-alpine' scripts/runtime-parity-smoke.sh || {
+            echo "scripts/runtime-parity-smoke.sh no longer starts python:3.12-alpine; update this step." >&2
+            exit 1
+          }
+          IMAGES+=("python:3.12-alpine")
+
+          # Asserted by identity, not by count. A count cannot express "the relay is covered",
+          # which is the one property this step exists to guarantee.
+          printf '%s\n' "${IMAGES[@]}" | grep -q 'mediamtx' || { echo "no mediamtx image in the pull list" >&2; exit 1; }
+          printf '%s\n' "${IMAGES[@]}" | grep -q 'postgres' || { echo "no postgres image in the pull list" >&2; exit 1; }
+
+          # Measured against a stalling registry, not guessed: these are the strings docker actually
+          # emits when the far end never answers. "timeout awaiting response headers" and the 5xx
+          # gateway replies are the degraded-registry case this exists for; without them the retry
+          # budget is spent on the blip that self-heals and refused to the outage that does not.
+          RETRYABLE='context deadline exceeded|TLS handshake timeout|i/o timeout|timeout awaiting response headers|connection reset by peer|net/http: request canceled|unexpected EOF|502 Bad Gateway|503 Service'
+
+          for image in "${IMAGES[@]}"; do
+            for attempt in 1 2 3; do
+              log="$(mktemp)"
+              # Streamed to a file and echoed, never captured in a $( ): a command substitution
+              # buffers until exit, so a hung pull would be a named step emitting zero bytes for the
+              # whole ceiling — worse forensics than the status quo it replaces.
+              if timeout 60 docker pull "$image" >"$log" 2>&1; then
+                cat "$log"
+                echo "ok ${image} (attempt ${attempt}/3)"
+                rm -f "$log"
+                break
+              else
+                # Captured HERE, not after the fi. An if with no else returns 0 when its condition
+                # FAILS, so reading $? after the fi always saw success and every timed-out pull was
+                # reported as "the registry answered (exit 0)". The stub harness found that; reading
+                # the code did not.
+                rc=$?
+              fi
+
+              cat "$log"
+              err="$(cat "$log")"
+              rm -f "$log"
+
+              # Status first. 124 is our own timeout killing a pull that never answered, and it
+              # leaves no output at all — so the text match below cannot see it, and an empty string
+              # matched against a list of retryable strings otherwise reads as a registry verdict.
+              if [ "$rc" -ne 124 ]; then
+                # Herestring, not a pipe: grep -q exits on its first match, and under pipefail a
+                # still-writing printf then dies on SIGPIPE with status 141 — which inverts this
+                # test and refuses to retry the very error it just matched.
+                if ! grep -Eq "$RETRYABLE" <<<"$err"; then
+                  echo "${image}: the registry answered (exit ${rc}). Not retrying a verdict." >&2
+                  exit 1
+                fi
+              fi
+
+              if [ "$attempt" -eq 3 ]; then
+                echo "${image}: three attempts, no answer from the registry." >&2
+                exit 1
+              fi
+              echo "${image}: no answer (exit ${rc}), attempt ${attempt}/3 — retrying in 10s." >&2
+              sleep 10
+            done
+          done
       - run: pnpm test
       - run: pnpm build
       - run: docker build -f docker/web.Dockerfile -t stream247-web:test .
@@ -34,11 +159,35 @@ jobs:
       - id: release-preflight-env
         run: echo "path=$(./scripts/prepare-release-preflight-env.sh)" >> "$GITHUB_OUTPUT"
       - run: RELEASE_PREFLIGHT_ENV_FILE="${{ steps.release-preflight-env.outputs.path }}" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # Host ffmpeg is an optimisation, not a requirement: the smoke scripts only use it to
+      # synthesise fixtures and fall back to the worker image built above (scripts/lib/
+      # ffmpeg-fallback.sh). apt on the hosted runners has hung indefinitely and later failed
+      # outright on this step, so it must never be able to fail the build.
+      - name: Install ffmpeg (optional, fixtures fall back to the worker image)
+        continue-on-error: true
+        timeout-minutes: 8
+        run: |
+          set -uo pipefail
+          for attempt in 1 2; do
+            if sudo timeout 120 apt-get update -o Acquire::Retries=3 \
+              && sudo timeout 120 apt-get install -y --no-install-recommends ffmpeg; then
+              ffmpeg -version | head -n 1
+              exit 0
+            fi
+            echo "ffmpeg install attempt ${attempt} failed."
+            sleep 5
+          done
+          echo "Continuing without host ffmpeg; fixtures will be generated in the worker image."
       - run: pnpm test:queue-continuity
       - run: pnpm test:runtime-parity
-      - run: pnpm dlx @playwright/test@1.56.1 install --with-deps chromium
+      # Installs browsers for the workspace copy of @playwright/test; dlx would fetch a second one.
+      - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e:smoke
+      # Its own stack, deliberately, for two independent reasons: admin-smoke enables two-factor
+      # auth on the owner account, so any spec signing in after it never reaches the workspace; and
+      # the visual baseline needs the runtime containers stopped so nothing rewrites readiness
+      # mid-screenshot. Sharing one bring-up saved a minute and cost 23 tests.
+      - run: ./scripts/design-baseline.sh
       - run: chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:test
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3

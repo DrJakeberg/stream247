@@ -5,7 +5,7 @@ import {
   isCurrentScheduleTime,
   normalizeCuepointOffsetsSeconds
 } from "@stream247/core";
-import type { AppState, AssetRecord } from "@stream247/db";
+import { resolveChannelTimeZone, type AppState, type AssetRecord } from "@stream247/db";
 
 type CurrentScheduleItemLike = {
   blockId: string;
@@ -45,7 +45,7 @@ export function getCuepointInsertPlan(args: {
 
   const scheduleMoment = getCurrentScheduleMoment({
     now: args.now ?? new Date(),
-    timeZone: args.timeZone ?? process.env.CHANNEL_TIMEZONE ?? "UTC"
+    timeZone: args.timeZone ?? resolveChannelTimeZone(args.state.managedConfig)
   });
   if (
     !isCurrentScheduleTime({
