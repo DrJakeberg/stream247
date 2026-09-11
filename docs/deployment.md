@@ -266,14 +266,27 @@ Do not use `latest` for unattended production deployments.
     public base URL instead; the script then needs no `.env`. Run it from the repository checkout so
     `scripts/lib/soak-readiness-classifier.cjs` is found, or copy `scripts/` as a whole.
     ```
-    The soak gate fails if broadcast readiness drops or never becomes ready.
+    The soak gate fails if broadcast readiness never becomes ready, or drops and does not come back
+    within the outage window (five minutes by default, below). A healed outage does not fail the soak
+    but is logged as `outage-recovered duration=…s` and counted in the completion line
+    (`soak-monitor-complete outages=N outageSecondsMax=… outageSecondsTotal=…`), so a pass with outages
+    never reads like a clean one.
 
 Useful overrides:
 
 - `CHECK_BASE_URL=http://127.0.0.1:3000` if `APP_URL` is externally routed and not directly reachable from the host
-- `SOAK_TOLERATE_FETCH_FAILED_SAMPLES` (default 2): consecutive readiness fetches that fail outright (DNS, TLS,
-  connection reset) before the soak fails. A one-minute network interruption is a network sample, not an
-  app sample; the log keeps each tolerated one as `readiness-fetch-failed-tolerated`.
+- `SOAK_OUTAGE_TOLERANCE_SECONDS` (default 300): how long an outage may last, counted from its first bad
+  sample, before the soak fails with `outage-exceeded`. Any bad sample opens the outage — a failed fetch,
+  a not-ready service, `broadcastReady=false` — and the next healthy sample closes it. Written for the
+  DUT's nightly path interruption: every night at 23:31 UTC the stack loses its destination for one to
+  three minutes and heals itself, and two 24 h soaks on v2.0.0 died on it without any application fault.
+  Never carried by the window, whatever its age: a playout crash loop, a runaway uplink restart count
+  (`SOAK_UPLINK_RESTART_RUNAWAY_DELTA`) and a container restart. `0` restores the strict per-sample rules
+  below exactly.
+- `SOAK_TOLERATE_FETCH_FAILED_SAMPLES` (default 2): with the window at `0`, consecutive readiness fetches
+  that fail outright (DNS, TLS, connection reset) before the soak fails; the log keeps each tolerated one
+  as `readiness-fetch-failed-tolerated`. With the window open it only decides when a run of failed fetches
+  starts being logged as `outage-tolerated`.
 - `SESSION_COOKIE="stream247_session=..."` if the soak monitor should also fail on open critical incidents from the authenticated incidents API
 - `RELEASE_PREFLIGHT_ENV_FILE=/path/to/production.env` if you want `pnpm release:preflight` to validate a staged env file without replacing the current `.env`
 - `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot tag during rehearsal
@@ -392,7 +405,7 @@ The live attach itself stays behind `STREAM247_SOURCE_LIVE_ENABLED` (and the man
 
 Consequence for the two rollback paths above: with relay auth active, `STREAM247_RELAY_ENABLED=1` and `STREAM247_UPLINK_INPUT_MODE=rtmp` publish and read `live/program` on the relay and therefore only work when `STREAM247_RELAY_OUTPUT_URL` / `STREAM247_RELAY_INPUT_URL` carry the internal relay key as credentials (`rtmp://relay:1935/live/program?user=internal&pass=<internal-relay-key>`). Both lines, with the key already embedded, are available to an owner or admin under Settings → Operations → **Relay access**: the group ships only a button, the value is fetched on click from `POST /api/settings/relay-access`, and each reveal writes a `relay.internal_key.revealed` audit event naming the actor. Copy both lines into the deployment environment and restart before taking either rollback path. Never weaken the relay auth config to avoid the key: the same path is reachable from the internet through the published ingest port.
 
-Readiness and the soak monitor now separate Twitch/output continuity from short local playout failures in HLS program-feed mode. If `uplink` is running, the destination is ready, the program feed is fresh, and crash-loop protection is not active, a local `playout` failure is treated as a transient for `STREAM247_PLAYOUT_TRANSIENT_GRACE_SECONDS` seconds. The default grace is the larger of 20 seconds or `STREAM247_PROGRAM_FEED_FAILOVER_SECONDS`. Uplink failures, stale program feeds, destination degradation, crash loops, new unplanned uplink restarts, and repeated Docker restarts for `web`, `worker`, or `playout` still fail the soak. The readiness API also reports `sseConnections` so long-running installs can see whether browser or overlay event streams are being cleaned up after clients disconnect.
+Readiness and the soak monitor now separate Twitch/output continuity from short local playout failures in HLS program-feed mode. If `uplink` is running, the destination is ready, the program feed is fresh, and crash-loop protection is not active, a local `playout` failure is treated as a transient for `STREAM247_PLAYOUT_TRANSIENT_GRACE_SECONDS` seconds. The default grace is the larger of 20 seconds or `STREAM247_PROGRAM_FEED_FAILOVER_SECONDS`. Crash loops, a runaway unplanned uplink restart count, and Docker restarts for `web`, `worker`, or `playout` fail the soak at once. Uplink failures, stale program feeds, destination degradation and new unplanned uplink restarts fail it when they outlast the outage window (`SOAK_OUTAGE_TOLERANCE_SECONDS`, five minutes by default); healed sooner, they are logged as an outage and counted in the completion line. The readiness API also reports `sseConnections` so long-running installs can see whether browser or overlay event streams are being cleaned up after clients disconnect.
 
 Twitch VOD playback is cache-backed by default. The worker stores verified Twitch archive media under `MEDIA_LIBRARY_ROOT/.stream247-cache/twitch`, preserves the original Twitch URL on the asset record, and keeps the internal cache out of local library scans. Before each retry it deletes leftover transient partials for the same VOD, enforces the cache byte guardrail against both ready files and transient download artifacts, and times Twitch cache preparation out after `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS` so playout falls back locally instead of stalling the program feed. Production pins that timeout to `8` seconds; keep it short unless a separate background warm-cache path exists. If a Twitch VOD cannot be cached, playout skips that asset for a cooldown window and falls through to the normal global-fallback / generic-fallback ladder before it ever drops to the standby slate. Keep at least one curated local fallback asset in `data/media` with `fallback` or `standby` in the file name so the local-library source promotes it to a global fallback automatically. Set `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1` only as a temporary rollback.
 

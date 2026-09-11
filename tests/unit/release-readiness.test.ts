@@ -22,6 +22,9 @@ const composePath = path.join(rootDir, "docker-compose.yml");
 const workerDockerfilePath = path.join(rootDir, "docker", "worker.Dockerfile");
 const upgradeScriptPath = path.join(rootDir, "scripts", "upgrade-rehearsal.sh");
 const soakScriptPath = path.join(rootDir, "scripts", "soak-monitor.sh");
+// The per-sample rules as they stood before the outage window: these tests pin exactly those rules,
+// and SOAK_OUTAGE_TOLERANCE_SECONDS=0 must keep reproducing them.
+const STRICT_SOAK = { env: { SOAK_OUTAGE_TOLERANCE_SECONDS: "0" } };
 const tempDirs: string[] = [];
 let rootEnvLockHeld = false;
 
@@ -253,15 +256,36 @@ exit "$(cat "${responseDir}/$index.status")"
   chmodSync(path.join(binDir, "curl"), 0o755);
 }
 
+// A clock the soak monitor reads through SOAK_CLOCK_FILE; the stubbed sleep advances it by its argument.
+// Without it, every sample happens in the same real second and a five-minute outage window can never close.
+function createClockedSleepStub(binDir: string, clockFile: string, startEpoch: number) {
+  writeFileSync(clockFile, `${startEpoch}\n`);
+  writeFileSync(
+    path.join(binDir, "sleep"),
+    `#!/usr/bin/env sh
+now="$(cat "${clockFile}")"
+echo $((now + \${1:-0})) > "${clockFile}"
+exit 0
+`
+  );
+  chmodSync(path.join(binDir, "sleep"), 0o755);
+}
+
 function runShellScript(
   scriptPath: string,
   args: string[],
   responses: CurlResponse[],
-  options: { docker?: DockerStubOptions; env?: Record<string, string> } = {}
+  options: { docker?: DockerStubOptions; env?: Record<string, string>; clockStartEpoch?: number } = {}
 ) {
   const tempDir = rememberTempDir("stream247-release-readiness-script-");
   const { binDir, dockerLog } = createDockerStub(tempDir, options.docker);
   createSleepStub(binDir);
+  const clockEnv: Record<string, string> = {};
+  if (options.clockStartEpoch !== undefined) {
+    const clockFile = path.join(tempDir, "clock");
+    createClockedSleepStub(binDir, clockFile, options.clockStartEpoch);
+    clockEnv.SOAK_CLOCK_FILE = clockFile;
+  }
   createCurlStub(binDir, tempDir, responses);
 
   try {
@@ -272,10 +296,13 @@ function runShellScript(
         ...process.env,
         CHECK_BASE_URL: "http://127.0.0.1:3000",
         UPGRADE_REHEARSAL_SEED_LOCAL_MEDIA: "0",
+        ...clockEnv,
         ...options.env,
         PATH: `${binDir}:${process.env.PATH}`
       },
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      // A monitor that never reaches a verdict must fail the test, not hold it for a 24 h soak window.
+      timeout: 60_000
     });
 
     return {
@@ -576,7 +603,7 @@ describe("release readiness scripts", () => {
       {
         body: '{"status":"ok","broadcastReady":false,"services":{"worker":"ok","playout":"ok","destination":"not-ready"},"playout":{"status":"failed","selectionReasonCode":"fallback","fallbackTier":"standby","crashLoopDetected":false,"crashCountWindow":2,"restartCount":725,"lastExitCode":"SIGBUS","currentAssetId":"asset_current"}}\n'
       }
-    ]);
+    ], STRICT_SOAK);
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("broadcastReady=false");
@@ -608,7 +635,7 @@ describe("release readiness scripts", () => {
       { body: transientResponse },
       { body: restartedResponse },
       { body: finalFailResponse }
-    ]);
+    ], STRICT_SOAK);
 
     // First three samples must be tolerated. Only the 4th (bReady=false + stale feed)
     // is a real fail. Exactly one readiness-check-failed should appear in the log.
@@ -639,7 +666,7 @@ describe("release readiness scripts", () => {
       { body: healthyResponse },
       { body: restartedResponse },
       { body: finalFailResponse }
-    ]);
+    ], STRICT_SOAK);
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("uplinkUnplannedRestartsDelta=1");
@@ -690,7 +717,8 @@ describe("release readiness scripts", () => {
         { body: healthyResponse },
         { body: staleDuringTransient },
         { body: staleDuringTransient }
-      ]
+      ],
+      STRICT_SOAK
     );
 
     // The first stale-during-transient sample must be tolerated (transient-tolerated line).
@@ -725,4 +753,104 @@ describe("release readiness scripts", () => {
     expect(result.output).toContain("Baseline container restarts: web=0 worker=0 playout=0");
     expect(result.output).toContain("container-restart-check-failed webRestarts=2(+2)");
   });
+
+  // The outage window, driven by a clock that advances 60 s per sample. The shapes are the samples that
+  // ended the second 24 h soak on v2.0.0 at 2026-09-10 23:34 UTC: a failed fetch, then broadcast not ready
+  // with the destination degraded and two unplanned uplink restarts — healed without any hand.
+  const BLIP_BASELINE = 3895;
+  const readinessBody = (opts: { broadcastReady?: boolean; destination?: string; unplanned?: number; crashLoop?: boolean } = {}) =>
+    `${JSON.stringify({
+      status: "ok",
+      broadcastReady: opts.broadcastReady ?? true,
+      services: { worker: "ok", playout: "ok", uplink: "ok", programFeed: "ok", destination: opts.destination ?? "ok" },
+      playout: {
+        status: "running",
+        selectionReasonCode: "scheduled_match",
+        fallbackTier: "scheduled",
+        crashLoopDetected: opts.crashLoop ?? false,
+        crashCountWindow: 0,
+        restartCount: 8264,
+        lastExitCode: "",
+        currentAssetId: "asset_current"
+      },
+      uplink: { status: "running", unplannedRestartCount: opts.unplanned ?? BLIP_BASELINE },
+      programFeed: { status: "fresh" }
+    })}\n`;
+  const healthy = { body: readinessBody() };
+  const healedAfterBlip = { body: readinessBody({ unplanned: BLIP_BASELINE + 2 }) };
+  const blip = { body: readinessBody({ broadcastReady: false, destination: "degraded", unplanned: BLIP_BASELINE + 2 }) };
+  const fetch522 = { body: "curl: (22) The requested URL returned error: 522\n", status: 22 };
+  const CLOCK = 1_000_000;
+
+  it("soak monitor carries the nightly blip through the outage window, logs its recovery and completes", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
+
+    // First response is the baseline fetch; samples follow at 60 s steps on the fake clock.
+    const result = runShellScript(
+      soakScriptPath,
+      ["--hours", "1", "--interval-seconds", "60"],
+      [healthy, healthy, fetch522, blip, blip, healedAfterBlip],
+      { clockStartEpoch: CLOCK }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("readiness-fetch-failed-tolerated 1/2");
+    expect(result.output).toMatch(/outage-tolerated elapsed=60s\/300s[^\n]*broadcastReady=false/);
+    expect(result.output).toMatch(/outage-tolerated elapsed=120s\/300s/);
+    expect(result.output).toContain("outage-recovered duration=180s samples=3 tolerance=300s");
+    expect(result.output).not.toContain("readiness-check-failed");
+    // A pass with an outage must never read like a clean one.
+    expect(result.output).toContain("soak-monitor-complete outages=1 outageSecondsMax=180 outageSecondsTotal=180");
+  }, 30_000);
+
+  it("soak monitor fails once an outage outlasts five minutes", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
+
+    const result = runShellScript(
+      soakScriptPath,
+      ["--hours", "1", "--interval-seconds", "60"],
+      [healthy, healthy, blip],
+      { clockStartEpoch: CLOCK }
+    );
+
+    expect(result.status).toBe(1);
+    // Bad samples at 0, 60, 120, 180, 240 and 300 s are carried; the one at 360 s is not.
+    expect((result.output.match(/outage-tolerated /g) ?? []).length).toBe(6);
+    expect(result.output).toContain("outage-tolerated elapsed=300s/300s");
+    expect(result.output).toMatch(/outage-exceeded elapsed=360s tolerance=300s samples=7 [^\n]*broadcastReady=false/);
+    expect(result.output).not.toContain("soak-monitor-complete");
+  });
+
+  it("soak monitor never carries a crash loop, even with the outage window open", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
+
+    const crashLoop = { body: readinessBody({ crashLoop: true }) };
+    const result = runShellScript(
+      soakScriptPath,
+      ["--hours", "1", "--interval-seconds", "60"],
+      [healthy, healthy, blip, crashLoop],
+      { clockStartEpoch: CLOCK }
+    );
+
+    expect(result.status).toBe(1);
+    expect((result.output.match(/outage-tolerated /g) ?? []).length).toBe(1);
+    expect(result.output).toMatch(/readiness-check-failed [^\n]*hard=playout\.crashLoopDetected=true/);
+    expect(result.output).not.toContain("outage-exceeded");
+  });
+
+  it("soak monitor follows an outage still open at the end of the window to its outcome instead of passing mid-outage", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
+
+    // Sixty samples fill the hour (0 … 3540 s). The last of them is bad, so the window ends inside an
+    // outage; the monitor must take one more sample and only then complete.
+    const responses = [healthy, ...Array.from({ length: 59 }, () => healthy), blip, healedAfterBlip];
+    const result = runShellScript(soakScriptPath, ["--hours", "1", "--interval-seconds", "60"], responses, {
+      clockStartEpoch: CLOCK
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("outage-tolerated elapsed=0s/300s");
+    expect(result.output).toContain("outage-recovered duration=60s samples=1 tolerance=300s");
+    expect(result.output).toContain("soak-monitor-complete outages=1 outageSecondsMax=60 outageSecondsTotal=60");
+  }, 30_000);
 });

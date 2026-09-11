@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Changed
+
+- The soak monitor carries a short outage instead of dying on it. Every night at 23:31 UTC the DUT loses
+  its path to Twitch for one to three minutes and heals itself, and two 24 h soaks on v2.0.0 died on it —
+  after 21 h 07 min and after 23 h 51 min, nine minutes short — without any application fault. Since
+  every 24 h window contains that minute, no soak could pass there at all. A run of bad samples now
+  opens an outage; the soak goes on if the stack is healthy again within `SOAK_OUTAGE_TOLERANCE_SECONDS`
+  (default 300) of the first bad sample, and fails with `outage-exceeded` if not. A crash loop, a
+  runaway restart count and a container restart are never carried, whatever the window says. Each
+  healed outage is logged as `outage-recovered duration=…s`, and the completion line now reads
+  `soak-monitor-complete outages=N outageSecondsMax=… outageSecondsTotal=…`, so a pass with outages
+  never reads like a clean one. A soak that ends mid-outage waits for the outcome instead of passing.
+  `SOAK_OUTAGE_TOLERANCE_SECONDS=0` restores the strict per-sample rules exactly.
+
 ## 2.0.0 - 2026-09-09
 
 The release the six candidates were for. What makes it a major is stated in
