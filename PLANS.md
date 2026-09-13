@@ -3622,3 +3622,39 @@ showing at least one boundary above 10 s with a single-digit discontinuity count
 - Weiter offen und bewusst so: M66 / Task #37 (Live-Brücke unter Aufsicht) wartet auf den Nutzer, und
   der Vorfall `playout.source-unplayable.source_jjwuu0f3` steht — elf verrottete YouTube-Beiträge,
   deren Schicksal (neu einlesen oder entfernen) dem Betreiber gehört.
+- 2026-09-12 09:07 UTC: **der 24-h-Soak auf 2.0.0 ist durch** — 1428 Proben `status=ok`, Abschlusszeile
+  `soak-monitor-complete outages=2 outageSecondsMax=299 outageSecondsTotal=359`. Bestanden MIT Ausfällen,
+  also nicht „sauber"; die Zahlen gehören in jede Aussage über diesen Soak.
+  - **Ausfall 1, die nächtliche Störung:** 2026-09-11 23:58:06 bis 00:04:07, vier schlechte Proben, alle
+    `curl (22) 522` (Cloudflare erreicht den Ursprung nicht), gemessene Dauer **299 s bei 300 s Obergrenze**.
+    Eine Sekunde Luft. Der Kanal selbst war schneller zurück als der Messpfad: Uplink-Neustart um 23:59:15,
+    die Abrufe scheiterten noch bis 00:04.
+  - **Ausfall 2:** 2026-09-12 07:35:59, eine Probe HTTP 403, nach 60 s `outage-recovered`.
+  - **Die Entscheidung des Nutzers (2026-09-11, Commit 2c905a7)** trägt diesen Soak: ein selbstheilender
+    Ausfall bis `SOAK_OUTAGE_TOLERANCE_SECONDS` (300) bricht nicht mehr ab, Crash-Schleife, durchlaufende
+    Neustartzahl und Container-Neustart dagegen sofort (`hard=` im Fail-Satz). Grund: die nächtliche
+    Netzstörung liegt in JEDEM 24-h-Fenster — ohne Fenster konnte auf dieser DUT kein 24-h-Soak bestehen,
+    unabhängig vom Code. Mit 299 von 300 s war die Obergrenze diesmal fast erschöpft; ein fünfminütiges
+    Fenster ist für diesen Anschluss die richtige Grösse, aber keine bequeme.
+  - **Die vier Soaks davor zählen nicht als bestanden:** #1 21 h 07 (Blip 23:32), #2 23 h 51 (Blip, neun
+    Minuten vor dem Ziel), #3 23 min (zweite Störung um 23:56), #4 8 h 55 mit 534 ok und null Abweichungen,
+    vom Betreiber angehalten, weil er noch nach den alten Regeln lief. Gelaufene Zeit ist kein Bestehen.
+  - **Nähte unter 2.0.0:** 10,507 s (09-09 09:40), 2,132 s und **12,506 s** (09-11 12:39:46) — je zwei
+    Unstetigkeitszeilen, kein Neustart. 12,506 s liegt MITTEN in der alten Sturmfamilie
+    (11,84 / 12,25 / 13,22 / 13,45 s, alle vor 1.5.47), die dort viermal von vier gestürmt hat. Zusammen mit
+    15,061 s (07.09.) ist `dts_delta_threshold 60` damit unter, mitten in und über der alten Sturmfamilie
+    belegt: die „zwei Familien" waren ffmpegs 10-s-Vorgabe, nicht zwei Nahtarten. Im Soak-Fenster selbst
+    genau eine gemessene Naht (die 12,506 s) und **kein** Überlauf.
+  - Der Beitragswechsel um 19:49:25 zeigte zwei Bildzeilen ohne Tonzeile. Das Rohfenster trug in 80 s nur
+    vier vollständige Meldungen, kein zerrissenes Tonfragment: ohne Ton-Zeile gibt es keine Naht zu messen,
+    der Ton lag innerhalb der Toleranz. Ein Wechsel ohne Tonzeile ist damit kein Messausfall.
+  - **Quellensynchronisierungen ohne Verlust:** die Sperrzähler liefen über das Fenster von 42 auf 44 Proben
+    bei `source_e2au8vv3` (0 übersprungen) und blieben bei 11/11 für `source_jjwuu0f3`. Kein Zähler ging
+    bei einer Synchronisierung verloren.
+  - **Die nächtliche Störung hat die Minute gewechselt.** Bis 09-10 lag sie bei 23:31-23:32 UTC, seither bei
+    23:58 (09-11 23:58:09, 09-12 23:58:18) — beide Nächte dasselbe Bild: Playout `Connection reset by peer`,
+    Uplink `Error opening rtmp://…: I/O error`, IRC nach rund zehn Sekunden neu verbunden, Encoder-Neustart
+    nach rund 50 s. Das alte 23:31-Fenster blieb beide Nächte still. Die Drift von 10-20 s je Tag gilt
+    innerhalb einer Serie, die Serie selbst kann springen — Uhrzeiten also messen, nicht fortschreiben.
+  - Keine weitere Auslieferung ohne Anlass. Offen bleiben M66 / Task #37 (Live-Brücke, gehört dem Nutzer),
+    die elf verrotteten Beiträge in `source_jjwuu0f3` und der Netzweg selbst (Zwangstrennung am Router).
