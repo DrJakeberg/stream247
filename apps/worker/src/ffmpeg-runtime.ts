@@ -142,10 +142,13 @@ export function buildProgramFeedOutputTarget(config: ProgramFeedConfig, runId: s
   // and absorbed by ffmpeg's input discontinuity correction (dts_delta_threshold)". Every clause of
   // that was false, and the claim is why nobody looked for weeks:
   //
-  //   - dts_delta_threshold is passed nowhere in this repository, and passing it would not help.
-  //     Its default is 10s and it gates FORWARD jumps; a boundary produces a BACKWARDS jump, which
-  //     a separate clause catches with a fixed ~0.1s tolerance that no threshold value disables.
-  //     Measured: a -30s jump fires identically at the default and at 3600.
+  //   - dts_delta_threshold does not absorb the boundary's BACKWARDS jump. It gates FORWARD jumps
+  //     only; the backwards jump is caught by a separate clause with a fixed ~0.1s tolerance that
+  //     no threshold value disables. Measured: a -30s jump fires identically at the default 10 and
+  //     at 3600. What this bullet got wrong was the conclusion it drew from that — it claimed the
+  //     option was "passed nowhere in this repository, and passing it would not help". Since
+  //     1.5.47 the uplink reader does pass it, because the storms were the FORWARD clause, not the
+  //     backwards one: see UPLINK_DTS_DELTA_THRESHOLD_SECONDS below.
   //   - discont_start does write EXT-X-DISCONTINUITY at the seam — append_list emits it on its own
   //     even without the flag — and ffmpeg's HLS demuxer parses the tag but does not act on it for
   //     timestamps. Reading the same feed with and without it gives byte-identical output.
@@ -153,10 +156,13 @@ export function buildProgramFeedOutputTarget(config: ProgramFeedConfig, runId: s
   // So a boundary IS a raw backwards jump the reader has to absorb, and on 2026-09-03 one clean
   // scheduled boundary (gap 163ms) produced 244 discontinuity lines over 28 seconds — sustained at
   // roughly nine a second in batches about two seconds apart, which is this muxer's segment length.
-  // A local reproduction of the same seam costs TWO lines, so something in production amplifies it
-  // by two orders of magnitude and that amplifier is not yet identified. Do not "fix" this by
-  // tuning the uplink's storm threshold (uplink-progress.ts) against a rate whose cause is
-  // unmeasured, and do not add dts_delta_threshold expecting it to help.
+  // A local reproduction of the same seam costs TWO lines. That two-order-of-magnitude amplifier
+  // was identified on 2026-09-05 and it is not on this side of the feed: the reader derives its
+  // per-stream offsets separately at a seam, and where audio leads video by more than ffmpeg's 10s
+  // default the forward clause re-derives on every packet, ~10 lines a second. Nothing in the
+  // muxer args here is the fix; UPLINK_DTS_DELTA_THRESHOLD_SECONDS is. Still do not "fix" a storm
+  // by tuning the uplink's storm threshold (uplink-progress.ts) against a rate whose cause is
+  // unmeasured.
   return {
     muxer: "hls",
     output: config.playlistPath,
@@ -732,6 +738,12 @@ function getOutputRateControlSettings(
  * clause fires, once, on its fixed ~0.1s tolerance; over it the forward clause fires too and every
  * subsequent packet re-derives an offset, ~10 lines a second, until the storm guard kills the
  * process. Confirmed by the kill times matching the last line to the second at all four storms.
+ *
+ * CONFIRMED IN PRODUCTION since 1.5.47, from the uplink's own uplink.seam.skew events. Seams of
+ * 15.061s (2026-09-07), 10.507s (2026-09-09 09:40:03 UTC, 2 discontinuity lines) and 12.506s
+ * (2026-09-11 12:39:46 UTC, 2 lines, no uplink restart) all passed quiet, and the last of those
+ * sits inside the old storm family. With the smaller quiet seams (1.07-8.07s) that is every seam
+ * observed under 60s: none has stormed since.
  *
  * WHY 60 AND NOT THE MEASURED 13.45. The skew is not bounded by what has been observed. `apad`
  * lets audio outlive its input by PROGRAMME_AUDIO_PAD_SLACK_SECONDS plus the bound margin, so a
