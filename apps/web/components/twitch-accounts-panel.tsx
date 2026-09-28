@@ -133,7 +133,7 @@ export function TwitchAccountsPanel(props: {
     <div className="stack-form" id="twitch-accounts">
       <p className={texts.modeLine.tone === "warn" ? "warning" : "subtle"}>{texts.modeLine.text}</p>
       <div className="grid two">
-        <section className="item" aria-label="Broadcast channel">
+        <section className="item stack-form" aria-label="Broadcast channel">
           <strong>{texts.channel.title}</strong>
           <div className="subtle">{texts.channel.subtitle}</div>
           <LoginForm
@@ -148,8 +148,8 @@ export function TwitchAccountsPanel(props: {
           <div className="subtle">{texts.channel.sourceText}</div>
           <div>
             <strong>{texts.channel.liveText}</strong>
+            {texts.channel.liveHint ? <div className="subtle">{texts.channel.liveHint}</div> : null}
           </div>
-          {texts.channel.liveHint ? <div className="subtle">{texts.channel.liveHint}</div> : null}
           {owner ? (
             <div className="stack-form">
               <strong>Channel owner connection (optional)</strong>
@@ -160,13 +160,16 @@ export function TwitchAccountsPanel(props: {
                   Connect as {props.channelLogin}
                 </a>
               ) : null}
+              {owner.action === "connect" && !props.ownerConnectHref ? (
+                <div className="subtle">Save the Twitch client id and secret under Managed credentials to connect the channel owner.</div>
+              ) : null}
               {owner.action === "disconnect" ? <OwnerDisconnectButton channel={props.channelLogin} disabled={!props.canEdit} /> : null}
               <div className="subtle">{owner.hint}</div>
               <CapabilityList entries={owner.needs} title="Needs the channel owner" />
             </div>
           ) : null}
         </section>
-        <section className="item" aria-label="Bot account">
+        <section className="item stack-form" aria-label="Bot account">
           <strong>{texts.bot.title}</strong>
           <div className="subtle">{texts.bot.subtitle}</div>
           <LoginForm
