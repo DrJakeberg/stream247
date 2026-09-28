@@ -3754,3 +3754,24 @@ the dev stack: saving a channel switches the panel to the split view, an invalid
 operations (runbook "Is the broadcast channel live?"), deployment (Upgrading To 2.1), architecture and README
 follow; the env examples drop three variables no code reads and name `TWITCH_BROADCAST_CHANNEL_LOGIN` and
 `TWITCH_BOT_LOGIN`.
+
+## M71 Release 2.1.0
+
+- 2026-09-28 13:00 UTC: v2.1.0-rc.1 (bfe2773) live on the DUT via `repin.sh` (three app pins only, relay
+  `mediamtx:1.15.4` asserted, 62 env vars, no prune). No schema or compose change since v2.0.0: the bot
+  login lives in the encrypted managed-config payload. All six containers healthy after 16 s; programme back
+  on a scheduled Twitch archive 3.7 s after start (`formatCandidate: best`, 1080p60); one uplink start, no
+  restart; `jimpanse247` live.
+- Roles on the DUT: `twitch.chat_settings.written` names channel `jimpanse247` (1473383386) and bot `3jakec`
+  (144919385). First EventSub sync deleted the 4 subscriptions on the bot's own channel and created
+  `channel.follow` for the broadcast channel; `twitch.eventsub.waiting-for-channel-owner` (info) opened as
+  designed, since the channel owner is not connected.
+- YouTube: `cSabcTQLLoE`, which failed under v2.0.0 at 11:59 with "Requested format is not available",
+  resolves with candidate `split-h264-aac` to `299+140` inside the rc.1 playout container, and the pair
+  decodes 40 s off-air without an error line (past the old 3 s and 18 s abort points). No asset is at the
+  quarantine threshold (3); the on-air proof waits for the next daytime block (06:00-14:00 UTC), inside the
+  soak window.
+- 2026-09-28 13:02:55 UTC: 24-h soak started (tmux `soak`, `~/logs/soak-20260928-130255.log`), first probe
+  `status=ok broadcastReady=true`, uplink baseline 3931.
+- Open: soak result; on-air YouTube pair (`playout.process.start` with `formatCandidate: split-*`); then
+  2.1.0 pins, CHANGELOG, tag and repin.
