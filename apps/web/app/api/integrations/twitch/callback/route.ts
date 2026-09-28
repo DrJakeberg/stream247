@@ -9,6 +9,9 @@ import { requireApiRoles } from "@/lib/server/auth";
 // cookie, a cancelled consent, a missing code, a failed exchange. None of them says anything
 // about a connection already in place, so none of them passes "existing-connection" — which is
 // what keeps a double-clicked connect button or a stale tab from taking a working connection down.
+// Back to the Twitch accounts panel, where the result of this connect is shown (2.1).
+const TWITCH_ACCOUNTS_HREF = `${buildWorkspaceHref("admin", "settings")}#twitch-accounts`;
+
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const error = request.nextUrl.searchParams.get("error");
@@ -30,17 +33,17 @@ export async function GET(request: NextRequest) {
   const stateVerdict = await consumeOAuthState("broadcaster-connect", presentedState);
   if (!stateVerdict.ok) {
     await recordTwitchError(describeOAuthStateFailure(stateVerdict.reason));
-    return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));
+    return NextResponse.redirect(getAbsoluteAppUrl(appState, TWITCH_ACCOUNTS_HREF));
   }
 
   if (error) {
     await recordTwitchError(`Twitch authorization failed: ${error}.`);
-    return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));
+    return NextResponse.redirect(getAbsoluteAppUrl(appState, TWITCH_ACCOUNTS_HREF));
   }
 
   if (!code) {
     await recordTwitchError("Twitch callback did not include an authorization code.");
-    return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));
+    return NextResponse.redirect(getAbsoluteAppUrl(appState, TWITCH_ACCOUNTS_HREF));
   }
 
   try {
@@ -54,5 +57,5 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));
+  return NextResponse.redirect(getAbsoluteAppUrl(appState, TWITCH_ACCOUNTS_HREF));
 }

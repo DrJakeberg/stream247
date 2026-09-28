@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { describeTwitchConnection } from "../../apps/web/components/twitch-connection-status";
 
+// The connection this card describes is the bot account (3JakeC on the reference install), not the
+// broadcast channel -- until 2.1 this fixture used the channel's login for it, the same mix-up the
+// card's wording had.
 const connected = {
   status: "connected",
   accessToken: "identity-token",
-  broadcasterLogin: "jimpanse247",
-  broadcasterId: "3141"
+  broadcasterLogin: "3jakec",
+  broadcasterId: "144919385"
 };
 
 /**
@@ -17,16 +20,16 @@ const connected = {
  * behind that one word, and whether they had to do anything about it.
  */
 describe("describing the Twitch connection", () => {
-  it("names the account when the connection is working", () => {
+  it("names the bot account when the connection is working", () => {
     expect(describeTwitchConnection(connected)).toEqual({
       label: "Connected",
-      detail: "Broadcaster jimpanse247",
+      detail: "Bot account 3jakec",
       consequence: ""
     });
   });
 
   it("falls back to the account number when no login was stored", () => {
-    expect(describeTwitchConnection({ ...connected, broadcasterLogin: "" }).detail).toBe("Broadcaster 3141");
+    expect(describeTwitchConnection({ ...connected, broadcasterLogin: "" }).detail).toBe("Bot account 144919385");
   });
 
   it("says the connection is coming back when the stored access is still there", () => {

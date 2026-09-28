@@ -634,7 +634,9 @@ describe("ops state helpers", () => {
 
     expect(snapshot.twitch.status).toBe("live");
     expect(snapshot.twitch.viewerCount).toBe(42);
-    expect(snapshot.twitch.broadcasterLogin).toBe("owner");
+    // Without a configured broadcast channel the channel is the bot account's own, and both are named.
+    expect(snapshot.twitch.channelLogin).toBe("owner");
+    expect(snapshot.twitch.botLogin).toBe("owner");
     expect(snapshot.twitch.startedAt).toBe("2026-04-22T09:00:00.000Z");
   });
 

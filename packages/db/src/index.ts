@@ -8782,19 +8782,21 @@ export async function markChatViewerRequestsPlayed(queuedAssetIds: string[]): Pr
  * the caller has it (the worker resolves it by login).
  */
 export function resolveTwitchAccountsForState(
-  state: Pick<AppState, "managedConfig" | "twitch" | "twitchBroadcaster">,
+  state: Pick<AppState, "managedConfig" | "twitch"> & { twitchBroadcaster?: AppState["twitchBroadcaster"] },
   env: Record<string, string | undefined>,
   channelUserId = ""
 ): TwitchAccountsSummary {
+  // normalizeState always provides the owner slot; a partial state (older fixtures) means "not connected".
+  const owner = state.twitchBroadcaster ?? { status: "not-connected", broadcasterLogin: "", accessToken: "", error: "" };
   return resolveTwitchAccounts({
     channelSetting: { managed: state.managedConfig.twitchBroadcastChannelLogin ?? "", env: env.TWITCH_BROADCAST_CHANNEL_LOGIN ?? "" },
     expectedBotSetting: { managed: state.managedConfig.twitchBotLogin ?? "", env: env.TWITCH_BOT_LOGIN ?? "" },
     bot: { status: state.twitch.status, login: state.twitch.broadcasterLogin, id: state.twitch.broadcasterId },
     owner: {
-      status: state.twitchBroadcaster.status,
-      login: state.twitchBroadcaster.broadcasterLogin,
-      hasToken: state.twitchBroadcaster.accessToken !== "",
-      error: state.twitchBroadcaster.error
+      status: owner.status,
+      login: owner.broadcasterLogin,
+      hasToken: owner.accessToken !== "",
+      error: owner.error
     },
     channelUserId
   });

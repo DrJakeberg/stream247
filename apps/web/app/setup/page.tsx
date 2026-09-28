@@ -8,7 +8,8 @@ import { Panel } from "@/components/panel";
 import { SetupForm } from "@/components/setup-form";
 import { SetupInstanceForm } from "@/components/setup-instance-form";
 import { SetupTwitchAppForm } from "@/components/setup-twitch-app-form";
-import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
+import { TwitchAccountsPanel } from "@/components/twitch-accounts-panel";
+import { buildTwitchAccountsPanelProps } from "@/lib/server/twitch-accounts-panel";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { getGoLiveChecklist } from "@/lib/server/onboarding";
 import {
@@ -17,7 +18,7 @@ import {
   type SetupWizardStepId
 } from "@/lib/server/setup-wizard";
 import { readAppState } from "@/lib/server/state";
-import { getAbsoluteAppUrl, getTwitchBroadcasterRedirectUri, isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
+import { getAbsoluteAppUrl, getTwitchBroadcasterRedirectUri } from "@/lib/server/twitch";
 import { getAuthenticatedUser } from "@/lib/server/auth";
 
 const STEP_ORDER: SetupWizardStepId[] = ["owner", "instance", "twitch-app", "twitch-connect", "done"];
@@ -56,7 +57,7 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
   const steps = deriveSetupWizardSteps(state);
   const active = resolveActiveSetupWizardStep(steps, searchParams.step);
   const activeIndex = STEP_ORDER.indexOf(active);
-  const twitchAuthorizeUrl = (await isTwitchAuthorizeConfigured()) ? "/api/integrations/twitch/connect" : null;
+  const twitchAccountsPanel = await buildTwitchAccountsPanelProps(state, user?.role);
 
   const publicBaseUrl = resolveAppBaseUrl(state.managedConfig);
   const envAppSecret = Boolean((process.env.APP_SECRET || "").trim());
@@ -134,12 +135,14 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
                 <strong>OAuth redirect URLs to register</strong>
                 {publicBaseUrl ? (
                   <>
-                    <div className="subtle">{getAbsoluteAppUrl(state, "/api/integrations/twitch/callback")}</div>
-                    <div className="subtle">{getAbsoluteAppUrl(state, "/api/auth/twitch/callback")}</div>
-                    <div className="subtle">{getTwitchBroadcasterRedirectUri(state)}</div>
                     <div className="subtle">
-                      All three, exactly as printed. The third one is used by “Connect broadcast channel”; without
-                      it that step ends in Twitch’s “redirect mismatch”.
+                      Bot account connection: {getAbsoluteAppUrl(state, "/api/integrations/twitch/callback")}
+                    </div>
+                    <div className="subtle">Team sign-in with Twitch: {getAbsoluteAppUrl(state, "/api/auth/twitch/callback")}</div>
+                    <div className="subtle">Channel owner connection: {getTwitchBroadcasterRedirectUri(state)}</div>
+                    <div className="subtle">
+                      All three, exactly as printed (the URL only, without the label). A missing one ends that
+                      connection in Twitch’s “redirect mismatch”.
                     </div>
                   </>
                 ) : (
@@ -160,12 +163,15 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
           </Panel>
         ) : null}
         {active === "twitch-connect" ? (
-          <Panel title="Connect Twitch" eyebrow={`Step ${activeIndex + 1}`}>
+          <Panel title="Twitch accounts" eyebrow={`Step ${activeIndex + 1}`}>
             <p className="subtle">
-              Signs the channel&apos;s Twitch account into this workspace so metadata, schedule sync, and team access
-              can work. Twitch sends you back into the workspace when it is done.
+              Stream247 works with two Twitch accounts, which may be the same one: the broadcast channel, where the
+              video goes and viewers watch (its stream key goes into the output destination), and the bot account
+              Stream247 signs in as for chat and moderation. Name the broadcast channel, then connect the bot account;
+              the channel&apos;s own account can connect later for title, category and schedule. Twitch sends you back
+              here when it is done.
             </p>
-            <TwitchConnectPanel authorizeUrl={twitchAuthorizeUrl} />
+            <TwitchAccountsPanel {...twitchAccountsPanel.props} />
             <SkipLink from="twitch-connect" />
           </Panel>
         ) : null}
