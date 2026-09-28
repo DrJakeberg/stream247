@@ -124,6 +124,24 @@
 - keep remote Twitch fallback disabled unless you intentionally accept direct remote VOD playback risk
 - confirm fallback assets exist
 
+### A YouTube item leaves the air after a few seconds
+
+Since 2.1 a YouTube item is resolved through ordered format candidates and may play as a video+audio
+pair. To see what happened to one item:
+
+- `playout.process.start` names `formatId` (e.g. `299+140`), `formatCandidate` and, for a pair, the
+  `audioInput`; `playout.input.format_fallback` lists the candidates yt-dlp reported as unavailable;
+  `playout.input.reresolve` with a `formatCandidate` means that candidate resolved but could not be
+  opened and is skipped for the item for 30 minutes.
+- Ask yt-dlp directly, in the playout container (the playout process resolves playback, not the
+  worker): `docker exec stream247-playout-1 yt-dlp -F <watch URL>` lists what YouTube offers right
+  now; `yt-dlp --version` shows the version the image carries. yt-dlp comes from the image's Alpine
+  packages, so a newer one arrives with a rebuilt image.
+- If YouTube changes again, `STREAM247_YOUTUBE_PLAYBACK_FORMATS` (yt-dlp selectors separated by `|`)
+  replaces the candidate list without a release.
+- An item that keeps failing leaves automatic selection after three failed prefetch probes and raises
+  `playout.source-unplayable.<sourceId>`; its asset page can clear the failures once it is fixed.
+
 ### Media disk filling up
 
 The worker watches free space on the media volume as a whole, above the per-cache guardrails.

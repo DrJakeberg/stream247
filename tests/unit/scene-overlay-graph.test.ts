@@ -108,3 +108,17 @@ describe("ticker crawl copies", () => {
     expect(resolveTickerCrawlCopies({ inkWidth: 2895, gapPx: 240, bandWidth: 1722 }).periodPx).toBe(3135);
   });
 });
+
+// M68 review (2.1): for a video+audio pair the picture must end with the programme video, or a dead
+// video track would leave sound playing under a frozen frame until the asset's natural end.
+describe("scene overlay for a video+audio pair", () => {
+  it("ends the picture with the programme when asked to", () => {
+    const graph = buildSceneOverlayFilterComplex({ outputVideoFilter: "", sceneInputIndex: 2, ticker: null, endWithProgramme: true });
+    expect(graph).toBe("[0:v][2:v]overlay=0:0:format=auto:shortest=1[vout]");
+  });
+
+  it("keeps the picture outliving the file otherwise, as the seam fix needs", () => {
+    const graph = buildSceneOverlayFilterComplex({ outputVideoFilter: "", sceneInputIndex: 1, ticker: null });
+    expect(graph).toBe("[0:v][1:v]overlay=0:0:format=auto[vout]");
+  });
+});

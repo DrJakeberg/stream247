@@ -3,7 +3,8 @@ import {
   decideBoundaryPlaybackInput,
   isBroadcastCoverageDown,
   isImmediateInputOpenFailure,
-  shouldBridgeToFallbackBeforeResolve
+  shouldBridgeToFallbackBeforeResolve,
+  shouldKeepRunningInput
 } from "../../apps/worker/src/playout-boundary";
 
 describe("playout boundary input selection", () => {
@@ -247,5 +248,50 @@ describe("broadcast coverage detection (clean-boundary bridge)", () => {
     // A long-running scheduled asset re-selected with a warm cache never reaches the bridge path;
     // even if evaluated, a running process means coverage is up.
     expect(isBroadcastCoverageDown({ playoutProcessRunning: true })).toBe(false);
+  });
+});
+
+// 2.1: a YouTube programme can be a video+audio pair. The boundary must hand out the pair as a unit:
+// reusing a cached video URL with no audio, or with another probe's audio, would put a silent or
+// mismatched programme on air.
+describe("boundary reuse of a video+audio pair", () => {
+  const pairProbe = {
+    status: "ready" as const,
+    resolvedInput: "https://googlevideo.test/videoplayback?itag=299",
+    resolvedAudioInput: "https://googlevideo.test/videoplayback?itag=140",
+    assetId: "asset_source_jjwuu0f3_j4YdbIbEc9E"
+  };
+
+  it("reuses the audio track together with the video track", () => {
+    expect(decideBoundaryPlaybackInput(pairProbe, pairProbe.assetId)).toEqual({
+      source: "cache",
+      input: pairProbe.resolvedInput,
+      audioInput: pairProbe.resolvedAudioInput
+    });
+  });
+
+  it("reports no audio track for a single-file probe", () => {
+    const single = { status: "ready" as const, resolvedInput: "/app/data/media/a.mp4", assetId: "asset_local" };
+    expect(decideBoundaryPlaybackInput(single, "asset_local").audioInput).toBe("");
+  });
+
+  it("drops the audio track together with the video track when the probe is not used", () => {
+    expect(decideBoundaryPlaybackInput(pairProbe, "asset_other")).toEqual({ source: "resolve", input: "", audioInput: "" });
+    expect(decideBoundaryPlaybackInput({ ...pairProbe, status: "failed" }, pairProbe.assetId).audioInput).toBe("");
+  });
+});
+
+// M68 (2.1): the cycle re-resolved the asset on air every 15 s and a failed re-resolve switched it
+// to the global fallback -- seven of nine YouTube runs on 2026-09-28 lasted exactly 18 s.
+describe("keeping the running programme's input", () => {
+  it.each([
+    // processRunning, targetMatches, restartRequested -> keep
+    [true, true, false, true],
+    [false, true, false, false],
+    [true, false, false, false],
+    [true, true, true, false],
+    [false, false, true, false]
+  ])("running=%s matches=%s restart=%s -> keep=%s", (processRunning, targetMatches, restartRequested, keep) => {
+    expect(shouldKeepRunningInput({ processRunning, targetMatches, restartRequested })).toBe(keep);
   });
 });

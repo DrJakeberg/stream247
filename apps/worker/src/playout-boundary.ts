@@ -1,6 +1,9 @@
 export interface BoundaryProbe {
   status: "ready" | "failed";
   resolvedInput: string;
+  // The audio track of a video+audio pair (YouTube, 2.1). Travels with resolvedInput: a decision that
+  // reuses the input reuses its audio, never a different one.
+  resolvedAudioInput?: string;
   // The asset this probe was resolved for. Carried on the entry itself so the boundary can prove
   // the prefetched input belongs to the asset it is about to start, rather than trusting that the
   // caller looked it up under the right key.
@@ -12,6 +15,7 @@ export interface BoundaryInputDecision {
   // "resolve": fall through to an inline resolveAssetPlaybackInput call.
   source: "cache" | "resolve";
   input: string;
+  audioInput: string;
 }
 
 /**
@@ -32,12 +36,12 @@ export interface BoundaryInputDecision {
  */
 export function decideBoundaryPlaybackInput(probe: BoundaryProbe | null, selectedAssetId: string): BoundaryInputDecision {
   if (!probe || probe.status !== "ready" || !probe.resolvedInput) {
-    return { source: "resolve", input: "" };
+    return { source: "resolve", input: "", audioInput: "" };
   }
   if (!selectedAssetId || probe.assetId !== selectedAssetId) {
-    return { source: "resolve", input: "" };
+    return { source: "resolve", input: "", audioInput: "" };
   }
-  return { source: "cache", input: probe.resolvedInput };
+  return { source: "cache", input: probe.resolvedInput, audioInput: probe.resolvedAudioInput ?? "" };
 }
 
 // An ffmpeg process that fails this quickly after start did not play any content — it failed at
@@ -118,4 +122,29 @@ export interface BoundaryBridgeInput {
  */
 export function shouldBridgeToFallbackBeforeResolve(input: BoundaryBridgeInput): boolean {
   return input.assetExpensive && !input.cacheWarm && input.broadcastDown && input.fallbackAvailable;
+}
+
+export interface RunningInputGuardInput {
+  // A playout ffmpeg process is alive.
+  processRunning: boolean;
+  // That process plays exactly what this cycle selected, to the same destinations
+  // (isMatchingRunningTarget).
+  targetMatches: boolean;
+  // A restart or reconnect was requested; the restart needs a fresh input, so it must resolve.
+  restartRequested: boolean;
+}
+
+/**
+ * Keep the input the running programme was started with: do not resolve it again.
+ *
+ * Until 2.1 every playout cycle (every 15 s) re-resolved the asset that was already on air. A
+ * successful re-resolve was thrown away (start/switch only run when the target does not match),
+ * but a FAILED one raised playout.asset-preparation.failed and switched the running programme to
+ * the global fallback. Measured on the DUT 2026-09-28: seven of nine YouTube runs lasted exactly
+ * 18 s (15 s cycle + yt-dlp error + stop) — the "YouTube aborts after a few seconds" report.
+ * Skipping the resolve loses nothing: a start or switch that does happen still resolves (or reuses
+ * the probe cache) inside startOrSwitchPlayout.
+ */
+export function shouldKeepRunningInput(input: RunningInputGuardInput): boolean {
+  return input.processRunning && input.targetMatches && !input.restartRequested;
 }

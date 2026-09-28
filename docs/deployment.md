@@ -326,6 +326,25 @@ that is the point of it, the items were already being skipped silently.
 Upgrade path: back up PostgreSQL, repin the three `STREAM247_*_IMAGE` tags to `v2.0.0`, redeploy.
 Rollback is the reverse repin; the schema changes in 2.0 are additive.
 
+### Upgrading To 2.1
+
+2.1 changes no stack file and no schema; it is a repin of the three `STREAM247_*_IMAGE` tags.
+
+- **YouTube playback.** A YouTube item is resolved through ordered format candidates (split
+  H.264+AAC, any split tracks, a combined file, split tracks at any height) instead of
+  `--format best`, which YouTube no longer serves for most uploads, and may play as two ffmpeg inputs
+  (video and audio). A candidate that resolves but cannot be opened is skipped for that item for
+  30 minutes. `STREAM247_YOUTUBE_PLAYBACK_FORMATS` overrides the list (yt-dlp selectors separated by
+  `|`). A live-source PiP over a split YouTube item attaches video-only, since the programme sound
+  is its own input.
+- **The programme on air keeps its input.** Playout no longer re-resolves the item it is playing
+  every cycle; before 2.1 a failed re-resolve switched a running YouTube item to the fallback after
+  about 18 seconds.
+- **Quarantine.** The counters behind *three failed probes take an item out of automatic selection*
+  now survive whole-state writes (before 2.1 any of them reset every counter) and count each probe
+  result once. Expect items that were silently rotating back onto the air to stay out after the
+  upgrade; the asset page's **Clear probe failures and retry** puts one back by hand.
+
 ### Patch vs Minor Upgrades
 
 - Patch upgrades should be the default production path.

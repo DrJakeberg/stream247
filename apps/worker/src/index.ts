@@ -229,6 +229,7 @@ import {
   describeFfmpegExit,
   buildFfmpegInputArgs,
   buildSceneOverlayFilterComplex,
+  usesShortestFlag,
   resolveProgrammeAudioPadSeconds,
   resolveTickerCrawlCopies,
   buildSourceLivePipFilterComplex,
@@ -298,9 +299,25 @@ import {
   decideBoundaryPlaybackInput,
   isBroadcastCoverageDown,
   isImmediateInputOpenFailure,
-  shouldBridgeToFallbackBeforeResolve
+  shouldBridgeToFallbackBeforeResolve,
+  shouldKeepRunningInput
 } from "./playout-boundary.js";
-import { decideQueuePrefetchBudget, planQueuePrefetch, raceResolveAgainstDeath } from "./queue-prefetch.js";
+import {
+  PLAY_FAILURE_SKIP_MS,
+  buildResolveArgs,
+  isFormatUnavailableError,
+  isInvalidFormatSpecError,
+  orderCandidatesAfterPlayFailures,
+  parseResolveOutput,
+  resolveFormatCandidates,
+  type ResolvedPlayableMedia
+} from "./playable-input.js";
+import {
+  decideQueuePrefetchBudget,
+  planQueuePrefetch,
+  raceResolveAgainstDeath,
+  takeUncountedProbeOutcome
+} from "./queue-prefetch.js";
 import { LoopWakeLatch } from "./loop-wake.js";
 import { ProgrammeGapTracker } from "./playout-gap.js";
 import {
@@ -349,6 +366,13 @@ let playoutDestinationIds: string[] = [];
 let playoutRuntimeTargets: DestinationRuntimeTarget[] = [];
 let playoutTargetKind: "asset" | "insert" | "standby" | "reconnect" | "live" | "" = "";
 let playoutResolvedInput = "";
+// The audio track and format of the running programme when it was resolved as a YouTube pair.
+let playoutResolvedAudioInput = "";
+let playoutFormatId = "";
+let playoutFormatCandidateId = "";
+// Whether an open failure of this process can be blamed on its format candidate: only when the
+// programme is the only remote input. With an audio lane or a live PiP any of them may have failed.
+let playoutFormatAttributable = false;
 let playoutLastStderrSample = "";
 let playoutLiveBridgeInputUrl = "";
 let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
@@ -842,6 +866,13 @@ type QueueProbeCacheEntry = {
   status: "ready" | "failed";
   checkedAt: number;
   resolvedInput: string;
+  // The audio track when the resolve produced a video+audio pair (YouTube, 2.1); "" otherwise. The
+  // pair is only ever used as a unit, see mediaFromProbe.
+  resolvedAudioInput: string;
+  formatId: string;
+  candidateId: string;
+  // Whether the quarantine counter has already seen this result. See takeUncountedProbeOutcome.
+  outcomeCounted: boolean;
   error: string;
   // The asset this entry was resolved for, so the boundary can verify the prefetched input belongs
   // to the asset it is about to start instead of trusting the map key. See playout-boundary.ts.
@@ -1768,43 +1799,135 @@ function summarizePlaybackInput(input: string): string {
   }
 }
 
-async function resolvePlayableInput(input: string): Promise<string> {
+function unresolvedMedia(input: string): ResolvedPlayableMedia {
+  return { input, audioInput: "", formatId: "", candidateId: "" };
+}
+
+// Candidates that resolved but then failed to OPEN for an asset (403, dead URL), by asset id ->
+// candidate id -> when. The next resolve for that asset starts one candidate further down; after
+// PLAY_FAILURE_SKIP_MS the candidate is tried again. See playable-input.ts.
+const playFailedFormatCandidates = new Map<string, Map<string, number>>();
+
+function getPlayFailedCandidateIds(assetId: string): Set<string> {
+  const failed = playFailedFormatCandidates.get(assetId);
+  if (!failed) {
+    return new Set();
+  }
+  const now = Date.now();
+  for (const [candidateId, failedAt] of failed) {
+    if (now - failedAt > PLAY_FAILURE_SKIP_MS) {
+      failed.delete(candidateId);
+    }
+  }
+  if (failed.size === 0) {
+    playFailedFormatCandidates.delete(assetId);
+  }
+  return new Set(failed.keys());
+}
+
+function recordPlayFailedCandidate(assetId: string, candidateId: string): void {
+  if (!assetId || !candidateId) {
+    return;
+  }
+  const failed = playFailedFormatCandidates.get(assetId) ?? new Map<string, number>();
+  failed.set(candidateId, Date.now());
+  playFailedFormatCandidates.set(assetId, failed);
+}
+
+/**
+ * Resolve a page URL to what ffmpeg opens. Local paths, direct media URLs and URLs yt-dlp does not
+ * handle pass through unchanged. Everything else walks the format candidates of playable-input.ts
+ * inside ONE shared time budget (the pre-2.1 budget of a single call), moving on only when yt-dlp
+ * reports the format as unavailable or prints nothing usable; any other error fails at once, since
+ * every candidate would meet it too.
+ */
+async function resolvePlayableMedia(input: string, skipCandidateIds: ReadonlySet<string> = new Set()): Promise<ResolvedPlayableMedia> {
   if (!input.startsWith("http://") && !input.startsWith("https://")) {
-    return input;
+    return unresolvedMedia(input);
   }
 
   if (isDirectMediaUrl(input)) {
-    return input;
+    return unresolvedMedia(input);
   }
 
   if (!isResolvableRemoteVideoUrl(input)) {
-    return input;
+    return unresolvedMedia(input);
   }
 
   const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
-  const resolved = await execFileText(
-    ytDlpBinary,
-    ["--no-warnings", "--no-playlist", "--format", "best", "--get-url", input],
-    { timeoutMs: PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS, killProcessGroup: true }
+  const candidates = orderCandidatesAfterPlayFailures(
+    resolveFormatCandidates(input, process.env.STREAM247_YOUTUBE_PLAYBACK_FORMATS ?? ""),
+    skipCandidateIds
   );
+  const deadline = Date.now() + PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS;
+  const passedOver: string[] = [];
+  let lastError = "";
 
-  const directUrl = resolved.split("\n").find(Boolean)?.trim();
-  if (!directUrl) {
-    throw new Error(`Could not resolve a playable media URL for ${input}.`);
+  for (const candidate of candidates) {
+    const timeoutMs = deadline - Date.now();
+    if (timeoutMs <= 0) {
+      break;
+    }
+    let stdout: string;
+    try {
+      stdout = await execFileText(ytDlpBinary, buildResolveArgs(input, candidate.selector), {
+        timeoutMs,
+        killProcessGroup: true
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (isFormatUnavailableError(lastError)) {
+        passedOver.push(candidate.id);
+        continue;
+      }
+      if (isInvalidFormatSpecError(lastError)) {
+        logRuntimeEvent("playout.input.format_invalid", { candidate: candidate.id, selector: candidate.selector, error: lastError.slice(0, 300) });
+        passedOver.push(candidate.id);
+        continue;
+      }
+      throw error;
+    }
+    try {
+      const media = parseResolveOutput(stdout, candidate.id);
+      if (passedOver.length > 0 || skipCandidateIds.size > 0) {
+        logRuntimeEvent("playout.input.format_fallback", {
+          input: summarizePlaybackInput(input),
+          candidate: candidate.id,
+          formatId: media.formatId,
+          unavailable: passedOver,
+          skippedAfterPlayFailure: [...skipCandidateIds]
+        });
+      }
+      return media;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      passedOver.push(candidate.id);
+    }
   }
 
-  return directUrl;
+  throw new Error(
+    `No playable format for ${summarizePlaybackInput(input)} (tried ${passedOver.join(", ") || "none within the time budget"}). ${lastError}`.trim()
+  );
 }
 
-async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: AssetRecord; input: string }> {
+// An audio lane needs sound: a YouTube pair contributes its audio track, anything else its one input.
+async function resolveAudioLaneInput(input: string): Promise<string> {
+  const media = await resolvePlayableMedia(input);
+  return media.audioInput || media.input;
+}
+
+// `media` rather than a bare input string, on purpose: a YouTube programme can be a video+audio pair,
+// and a caller that kept only the video URL would put a silent programme on air. The field name
+// changed so every caller had to be touched when the pair was introduced.
+async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: AssetRecord; media: ResolvedPlayableMedia }> {
   const cacheConfig = getTwitchVodCacheRuntimeConfig();
 
   if (!isTwitchVodAsset(asset)) {
-    const input = await resolvePlayableInput(asset.path);
+    const media = await resolvePlayableMedia(asset.path, getPlayFailedCandidateIds(asset.id));
     await resolveIncident("playout.asset-preparation.failed", "Asset playback input resolved successfully.");
     return {
       asset,
-      input
+      media
     };
   }
 
@@ -1841,7 +1964,7 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
     await resolveIncident("playout.asset-preparation.failed", "Asset playback input resolved successfully.");
     return {
       asset: updatedAsset,
-      input: result.cachePath
+      media: unresolvedMedia(result.cachePath)
     };
   }
 
@@ -1849,11 +1972,11 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
   // the remote-fallback switch: that switch governs what happens while a cacheable VOD is still
   // downloading, which is a different question.
   if (settledTooLarge || cacheConfig.allowRemoteFallback) {
-    const input = await resolvePlayableInput(asset.path);
+    const media = await resolvePlayableMedia(asset.path);
     await resolveIncident("playout.asset-preparation.failed", "Asset playback input resolved successfully.");
     return {
       asset: updatedAsset,
-      input
+      media
     };
   }
 
@@ -2056,13 +2179,22 @@ function getFfmpegCommand(
   output: WorkerStreamOutputSettings,
   encoder: ResolvedEncoderQualitySettings,
   liveSource: LiveSourceCommandConfig | null = null,
-  tickerCrawl: TickerCrawlCommandConfig | null = null
+  tickerCrawl: TickerCrawlCommandConfig | null = null,
+  // The audio track of a YouTube video+audio pair (2.1). Input 1, where an audio lane would sit; the
+  // caller never passes both, since a lane replaces the programme's sound.
+  programAudioInput = ""
 ): string[] {
   const command = ["-hide_banner", "-loglevel", "warning", "-y", ...buildFfmpegInputArgs({ input, realtime: true })];
   const outputVideoFilter = isStreamScaleEnabled(process.env) ? getOutputVideoFilter(output) : "";
+  const separateProgramAudio = !audioLane && Boolean(programAudioInput);
+  // Mandatory once the sound has its own input: a pair whose audio cannot be read must fail at open
+  // (and move to the next format candidate), not go on air silent.
+  const audioMap = audioLane || separateProgramAudio ? "1:a:0" : "0:a?";
 
   if (audioLane) {
     command.push(...buildFfmpegInputArgs({ input: audioLane.input, loop: true }));
+  } else if (separateProgramAudio) {
+    command.push(...buildFfmpegInputArgs({ input: programAudioInput, realtime: true }));
   }
 
   // A live source only makes sense in scene mode: the PiP overlays under the scene PNG, and text /
@@ -2072,7 +2204,7 @@ function getFfmpegCommand(
   let pipAudioMapped = false;
 
   if (overlayMode === "scene") {
-    const sceneInputIndex = audioLane ? 2 : 1;
+    const sceneInputIndex = audioLane || separateProgramAudio ? 2 : 1;
     command.push(
       "-f",
       "image2pipe",
@@ -2118,24 +2250,24 @@ function getFfmpegCommand(
       });
       pipAudioMapped = parts.audioMapped;
       command.push("-filter_complex", parts.filterComplex, "-map", "[vout]");
-      command.push("-map", pipAudioMapped ? "[aout]" : audioLane ? "1:a:0" : "0:a?");
+      command.push("-map", pipAudioMapped ? "[aout]" : audioMap);
     } else {
       command.push(
         "-filter_complex",
-        buildSceneOverlayFilterComplex({ outputVideoFilter, sceneInputIndex, ticker }),
+        buildSceneOverlayFilterComplex({ outputVideoFilter, sceneInputIndex, ticker, endWithProgramme: separateProgramAudio }),
         "-map",
         "[vout]"
       );
-      command.push("-map", audioLane ? "1:a:0" : "0:a?");
+      command.push("-map", audioMap);
     }
   } else if (overlayMode === "text") {
     command.push("-vf", joinVideoFilters([outputVideoFilter, getMediaOverlayFilter(onAirOverlayPath, output)]));
-    command.push("-map", "0:v:0", "-map", audioLane ? "1:a:0" : "0:a?");
+    command.push("-map", "0:v:0", "-map", audioMap);
   } else {
     if (outputVideoFilter) {
       command.push("-vf", outputVideoFilter);
     }
-    command.push("-map", "0:v:0", "-map", audioLane ? "1:a:0" : "0:a?");
+    command.push("-map", "0:v:0", "-map", audioMap);
   }
 
   // The lane's volume is applied by -af only when the lane audio was NOT already folded into the
@@ -2168,12 +2300,13 @@ function getFfmpegCommand(
     hasAudioLane: Boolean(audioLane),
     pipAudioMapped,
     attachLive,
+    separateProgramAudio,
     durationBoundMarginSeconds: getDurationBoundOptions(process.env, latestManagedConfig).marginSeconds
   });
   if (programmeAudioPadSeconds > 0) {
     command.push("-af", `apad=pad_dur=${String(programmeAudioPadSeconds)}`);
   }
-  if ((audioLane && !pipAudioMapped) || attachLive) {
+  if (usesShortestFlag({ hasAudioLane: Boolean(audioLane), pipAudioMapped, attachLive, separateProgramAudio })) {
     command.push("-shortest");
   }
 
@@ -4529,6 +4662,15 @@ function getPoolPlaybackQueue(state: AppState, poolId: string, skippedAssetId: s
   return queue;
 }
 
+function mediaFromProbe(entry: QueueProbeCacheEntry): ResolvedPlayableMedia {
+  return {
+    input: entry.resolvedInput,
+    audioInput: entry.resolvedAudioInput,
+    formatId: entry.formatId,
+    candidateId: entry.candidateId
+  };
+}
+
 function getFreshProbeCache(assetId: string): QueueProbeCacheEntry | null {
   const entry = queueProbeCache.get(assetId);
   if (!entry) {
@@ -4594,14 +4736,18 @@ function watchPlayoutProcessExit(): { promise: Promise<void>; dispose: () => voi
 // Resolve one queue asset and write the probe cache on completion — kept as a self-contained
 // promise chain so a cycle that abandons the await (process death) still gets the cache written
 // when the resolve eventually finishes in the background.
-function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: AssetRecord; input: string }> {
+function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: AssetRecord; media: ResolvedPlayableMedia }> {
   queueResolvesInFlight.add(asset.id);
   return resolveAssetPlaybackInput(asset)
     .then((prepared) => {
       queueProbeCache.set(asset.id, {
         status: "ready",
         checkedAt: Date.now(),
-        resolvedInput: prepared.input,
+        resolvedInput: prepared.media.input,
+        resolvedAudioInput: prepared.media.audioInput,
+        formatId: prepared.media.formatId,
+        candidateId: prepared.media.candidateId,
+        outcomeCounted: false,
         error: "",
         assetId: asset.id
       });
@@ -4613,6 +4759,10 @@ function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: A
         status: "failed",
         checkedAt: Date.now(),
         resolvedInput: "",
+        resolvedAudioInput: "",
+        formatId: "",
+        candidateId: "",
+        outcomeCounted: false,
         error: message,
         assetId: asset.id
       });
@@ -4632,6 +4782,10 @@ async function getPlayableQueuedAssets(
   prefetchStatus: "" | "ready" | "failed";
   prefetchError: string;
   probeOutcomes: Array<{ asset: AssetRecord; outcome: "ok" | "failed"; error: string }>;
+  // Every source whose items this scan looked at, counted or not. The source-unplayable incident is
+  // resolved from these: with each probe counted once, probeOutcomes alone would close it only on the
+  // next fresh resolve, up to five minutes later (found by the M68 review).
+  scannedSourceIds: Set<string>;
   deferredExpensive: boolean;
 }> {
   const playableQueue: AssetRecord[] = [];
@@ -4643,6 +4797,7 @@ async function getPlayableQueuedAssets(
   // under rc.3, where the same item failed three times and stayed at zero. Every item the scan actually
   // probed is recorded with its own outcome (packages/core/src/asset-probe-quarantine.ts).
   const probeOutcomes: Array<{ asset: AssetRecord; outcome: "ok" | "failed"; error: string }> = [];
+  const scannedSourceIds = new Set(queueAssets.map((asset) => asset.sourceId));
   let deferredExpensive = false;
 
   // Cap awaited expensive (remote) resolves per cycle (v1.5.13), with the budget forced to 0 by
@@ -4668,14 +4823,19 @@ async function getPlayableQueuedAssets(
     if (action === "use-cache") {
       prefetchedAsset = prefetchedAsset ?? asset;
       prefetchStatus = "ready";
-      probeOutcomes.push({ asset, outcome: "ok", error: "" });
+      // Counted once: here only when a background resolve finished after its cycle moved on.
+      if (takeUncountedProbeOutcome(cached)) {
+        probeOutcomes.push({ asset, outcome: "ok", error: "" });
+      }
       playableQueue.push(asset);
       continue;
     }
 
     if (action === "skip-failed") {
       if (cached) {
-        probeOutcomes.push({ asset, outcome: "failed", error: cached.error });
+        if (takeUncountedProbeOutcome(cached)) {
+          probeOutcomes.push({ asset, outcome: "failed", error: cached.error });
+        }
         if (!prefetchError) {
           prefetchStatus = "failed";
           prefetchError = cached.error;
@@ -4710,6 +4870,7 @@ async function getPlayableQueuedAssets(
         // Cheap (local/direct) resolves return effectively instantly — await normally.
         const prepared = await resolveQueueAssetIntoProbeCache(asset);
         prefetchedAsset = prefetchedAsset ?? prepared.asset;
+        takeUncountedProbeOutcome(queueProbeCache.get(asset.id));
         probeOutcomes.push({ asset: prepared.asset, outcome: "ok", error: "" });
         prefetchStatus = "ready";
         playableQueue.push(prepared.asset);
@@ -4733,6 +4894,7 @@ async function getPlayableQueuedAssets(
       }
       if (outcome.kind === "resolved") {
         prefetchedAsset = prefetchedAsset ?? outcome.value.asset;
+        takeUncountedProbeOutcome(queueProbeCache.get(asset.id));
         probeOutcomes.push({ asset: outcome.value.asset, outcome: "ok", error: "" });
         prefetchStatus = "ready";
         playableQueue.push(outcome.value.asset);
@@ -4741,6 +4903,7 @@ async function getPlayableQueuedAssets(
       throw outcome.error;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown queue prefetch error.";
+      takeUncountedProbeOutcome(queueProbeCache.get(asset.id));
       probeOutcomes.push({ asset, outcome: "failed", error: message });
       if (!prefetchError) {
         prefetchStatus = "failed";
@@ -4755,6 +4918,7 @@ async function getPlayableQueuedAssets(
     prefetchStatus,
     prefetchError,
     probeOutcomes,
+    scannedSourceIds,
     deferredExpensive
   };
 }
@@ -5249,6 +5413,10 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
     playoutRuntimeTargets = [];
     playoutTargetKind = "";
     playoutResolvedInput = "";
+    playoutResolvedAudioInput = "";
+    playoutFormatId = "";
+    playoutFormatCandidateId = "";
+    playoutFormatAttributable = false;
     playoutLastStderrSample = "";
     playoutLiveBridgeInputUrl = "";
     playoutLiveBridgeInputType = "";
@@ -5276,6 +5444,10 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
         playoutRuntimeTargets = [];
         playoutTargetKind = "";
         playoutResolvedInput = "";
+        playoutResolvedAudioInput = "";
+        playoutFormatId = "";
+        playoutFormatCandidateId = "";
+        playoutFormatAttributable = false;
         playoutLastStderrSample = "";
         playoutLiveBridgeInputUrl = "";
         playoutLiveBridgeInputType = "";
@@ -5521,6 +5693,9 @@ async function buildLiveSourceCommandConfig(args: {
   outputSettings: WorkerStreamOutputSettings;
   audioLane: ResolvedAudioLane | null;
   programInput: string;
+  // The programme's sound is a separate input (YouTube pair). The PiP audio mix reads [0:a], which a
+  // video-only programme input does not have, so such a start attaches the PiP video-only.
+  programAudioSeparate: boolean;
   assetId: string;
   programDurationSeconds: number;
 }): Promise<LiveSourceCommandConfig> {
@@ -5533,7 +5708,12 @@ async function buildLiveSourceCommandConfig(args: {
   // flag hinting at audio (skips the RTSP open when there is plainly none). The source probe is the
   // authority — never the advisory flag — so a relay that reports audio the pull cannot deliver falls
   // back to video-only here instead of crashing ffmpeg into the breaker.
-  if (programKnownDuration && args.attach.hasAudioTrack && (await probeInputHasAudio(args.attach.readUrl))) {
+  if (
+    programKnownDuration &&
+    !args.programAudioSeparate &&
+    args.attach.hasAudioTrack &&
+    (await probeInputHasAudio(args.attach.readUrl))
+  ) {
     const programAudioConfirmed = args.audioLane
       ? true
       : await probeInputHasAudio(args.programInput, { cacheKey: args.assetId });
@@ -5552,7 +5732,8 @@ async function buildLiveSourceCommandConfig(args: {
 
 async function startOrSwitchPlayout(args: {
   asset: AssetRecord | null;
-  resolvedAssetInput?: string;
+  // The programme as resolved by the cycle; null lets this function use the probe cache or resolve.
+  resolvedAssetMedia?: ResolvedPlayableMedia | null;
   liveBridge:
     | {
         inputUrl: string;
@@ -5593,7 +5774,7 @@ async function startOrSwitchPlayout(args: {
 
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
   const cachedProbe = args.asset ? getFreshProbeCache(args.asset.id) : null;
-  const cachedResolvedInput = cachedProbe?.status === "ready" ? cachedProbe.resolvedInput : "";
+  const cachedMedia = cachedProbe?.status === "ready" && cachedProbe.resolvedInput ? mediaFromProbe(cachedProbe) : null;
   const outputSettings = getWorkerStreamOutputSettings(process.env, args.outputSettings);
   // Set the renderer skip BEFORE the initial frame is drawn, so a live attach's very first frame
   // already omits the snapshot panel instead of flashing it over the live video. Only the asset
@@ -5620,7 +5801,7 @@ async function startOrSwitchPlayout(args: {
 
   if (args.audioLane) {
     try {
-      resolvedAudioLaneInput = await resolvePlayableInput(args.audioLane.asset.path);
+      resolvedAudioLaneInput = await resolveAudioLaneInput(args.audioLane.asset.path);
       await resolveIncident("playout.audio-lane.failed", "Audio lane input resolved successfully.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown audio lane resolution error.";
@@ -5643,11 +5824,17 @@ async function startOrSwitchPlayout(args: {
     await ensureProgramFeedDirectory();
   }
 
-  const resolvedProgramInput = args.liveBridge
-    ? args.liveBridge.inputUrl
+  // The pair is chosen as a unit: the cycle's resolve, else the cached probe, else a fresh resolve.
+  const programMedia: ResolvedPlayableMedia = args.liveBridge
+    ? unresolvedMedia(args.liveBridge.inputUrl)
     : args.asset
-      ? args.resolvedAssetInput || cachedResolvedInput || (await resolveAssetPlaybackInput(args.asset)).input
-      : "";
+      ? args.resolvedAssetMedia?.input
+        ? args.resolvedAssetMedia
+        : cachedMedia ?? (await resolveAssetPlaybackInput(args.asset)).media
+      : unresolvedMedia("");
+  const resolvedProgramInput = programMedia.input;
+  // An audio lane replaces the programme's sound, so a pair's audio track is not opened next to one.
+  const resolvedProgramAudioInput = resolvedAudioLaneInput && args.audioLane ? "" : programMedia.audioInput;
   const encoder = resolveEncoderQualitySettings(args.managedConfig, process.env);
   // Resolve the PiP config only when we will actually build it: asset path, scene mode, attach
   // decided. buildLiveSourceCommandConfig may run a bounded ffprobe for programme audio, so it is
@@ -5659,6 +5846,7 @@ async function startOrSwitchPlayout(args: {
           outputSettings,
           audioLane: resolvedAudioLaneInput && args.audioLane ? args.audioLane : null,
           programInput: resolvedProgramInput,
+          programAudioSeparate: Boolean(resolvedProgramAudioInput),
           assetId: args.asset.id,
           programDurationSeconds: args.asset.durationSeconds ?? 0
         })
@@ -5697,7 +5885,8 @@ async function startOrSwitchPlayout(args: {
           outputSettings,
           encoder,
           liveSourceConfig,
-          activeTickerCrawl
+          activeTickerCrawl,
+          resolvedProgramAudioInput
         )
       : getStandbyFfmpegCommand(args.outputTarget, overlayMode, outputSettings, encoder, activeTickerCrawl);
   if (liveSourceConfig) {
@@ -5736,6 +5925,10 @@ async function startOrSwitchPlayout(args: {
         ? "reconnect"
         : "standby";
   playoutResolvedInput = resolvedProgramInput;
+  playoutResolvedAudioInput = resolvedProgramAudioInput;
+  playoutFormatId = programMedia.formatId;
+  playoutFormatCandidateId = programMedia.candidateId;
+  playoutFormatAttributable = !(resolvedAudioLaneInput && args.audioLane) && !liveSourceConfig;
   playoutLastStderrSample = "";
   playoutLiveBridgeInputUrl = args.liveBridge?.inputUrl ?? "";
   playoutLiveBridgeInputType = args.liveBridge?.inputType ?? "";
@@ -5745,6 +5938,9 @@ async function startOrSwitchPlayout(args: {
     targetKind: playoutTargetKind,
     assetId: args.asset?.id ?? "",
     input: summarizePlaybackInput(playoutResolvedInput),
+    audioInput: summarizePlaybackInput(playoutResolvedAudioInput),
+    formatId: playoutFormatId,
+    formatCandidate: playoutFormatCandidateId,
     liveInputType: args.liveBridge?.inputType ?? "",
     audioLaneAssetId: args.audioLane?.asset.id ?? "",
     reasonCode: args.reasonCode,
@@ -5914,6 +6110,7 @@ async function startOrSwitchPlayout(args: {
     const lastAssetId = playoutAssetId;
     const lastResolvedInput = playoutResolvedInput;
     const lastInputSummary = summarizePlaybackInput(lastResolvedInput);
+    const lastFormatCandidateId = playoutFormatAttributable ? playoutFormatCandidateId : "";
     const lastStderrSample = playoutLastStderrSample;
     const naturalBoundary =
       !wasPlanned &&
@@ -5942,6 +6139,10 @@ async function startOrSwitchPlayout(args: {
     playoutRuntimeTargets = [];
     playoutTargetKind = "";
     playoutResolvedInput = "";
+    playoutResolvedAudioInput = "";
+    playoutFormatId = "";
+    playoutFormatCandidateId = "";
+    playoutFormatAttributable = false;
     playoutLastStderrSample = "";
     playoutLiveBridgeInputUrl = "";
     playoutLiveBridgeInputType = "";
@@ -5993,11 +6194,15 @@ async function startOrSwitchPlayout(args: {
       })
     ) {
       queueProbeCache.delete(lastAssetId);
+      // "Try another format when the first does not work": the candidate that resolved but could
+      // not be opened is skipped for this asset on the next resolve (playable-input.ts).
+      recordPlayFailedCandidate(lastAssetId, lastFormatCandidateId);
       logRuntimeEvent("playout.input.reresolve", {
         assetId: lastAssetId,
         exitCode: code ?? "",
         ranForMs: ranForMs ?? -1,
-        input: lastInputSummary
+        input: lastInputSummary,
+        formatCandidate: lastFormatCandidateId
       });
     }
     let crashLoopDetectedAfterExit = false;
@@ -6471,8 +6676,20 @@ async function runPlayoutCycle(): Promise<void> {
     };
   }
 
-  let resolvedSelectionInput = "";
-  if (selection.asset) {
+  let resolvedSelection: ResolvedPlayableMedia | null = null;
+  // The programme already on air keeps its input (playout-boundary.ts: shouldKeepRunningInput). A
+  // re-resolve here could only fail it off air, never improve it.
+  const keepRunningInput =
+    selection.asset !== null &&
+    shouldKeepRunningInput({
+      processRunning: isPlayoutProcessRunning(),
+      targetMatches: isMatchingRunningTarget({
+        selection,
+        destinationIds: playoutTargets.map((entry) => entry.destination.id)
+      }),
+      restartRequested: state.playout.restartRequestedAt !== ""
+    });
+  if (selection.asset && !keepRunningInput) {
     const failedAsset = selection.asset;
     try {
       // Reuse the input already resolved by the off-boundary queue prefetch
@@ -6481,10 +6698,11 @@ async function runPlayoutCycle(): Promise<void> {
       // runs inline at the asset boundary and leaves playout idle with an empty currentAsset
       // (broadcastReady=false) until it completes. On a cache miss we fall through to the
       // same inline resolve, so this is never worse than before.
-      const boundaryDecision = decideBoundaryPlaybackInput(getFreshProbeCache(failedAsset.id), failedAsset.id);
-      if (boundaryDecision.source === "cache") {
+      const boundaryProbe = getFreshProbeCache(failedAsset.id);
+      const boundaryDecision = decideBoundaryPlaybackInput(boundaryProbe, failedAsset.id);
+      if (boundaryDecision.source === "cache" && boundaryProbe) {
         selection = { ...selection, asset: failedAsset };
-        resolvedSelectionInput = boundaryDecision.input;
+        resolvedSelection = mediaFromProbe(boundaryProbe);
       } else {
         // Cache miss → a cold expensive remote resolve is needed. (B) If no playout process is
         // currently running — a failed exit OR a clean natural-boundary exit — bridge to the
@@ -6532,12 +6750,12 @@ async function runPlayoutCycle(): Promise<void> {
             reasonCode: bridgePlan.reasonCode,
             fallbackTier: bridgePlan.fallbackTier
           };
-          resolvedSelectionInput = bridged.input;
+          resolvedSelection = bridged.media;
           requestImmediatePlayoutCycle("boundary-fallback-bridge");
         } else {
           const prepared = await resolveAssetPlaybackInput(failedAsset);
           selection = { ...selection, asset: prepared.asset };
-          resolvedSelectionInput = prepared.input;
+          resolvedSelection = prepared.media;
         }
       }
     } catch (error) {
@@ -6567,7 +6785,7 @@ async function runPlayoutCycle(): Promise<void> {
             reasonCode: recoveryPlan.reasonCode,
             fallbackTier: recoveryPlan.fallbackTier
           };
-          resolvedSelectionInput = recovered.input;
+          resolvedSelection = recovered.media;
         } catch {
           await writeStandbySlate(state, "standby");
           selection = {
@@ -6723,6 +6941,7 @@ async function runPlayoutCycle(): Promise<void> {
     prefetchStatus,
     prefetchError,
     probeOutcomes,
+    scannedSourceIds,
     deferredExpensive
   } =
     await getPlayableQueuedAssets(rawQueueAssets, { expensiveBudget: prefetchBudget });
@@ -6775,7 +6994,7 @@ async function runPlayoutCycle(): Promise<void> {
   // items of that source were skipped, and would have closed it once none of them was probed at all.
   const quarantineOverrides = new Map(probePlan.updates.map((update) => [update.id, update] as const));
   const quarantinedBySource = countQuarantinedBySource(state.assets, quarantineOverrides);
-  for (const sourceId of new Set([...probePlan.probedSourceIds, ...quarantinedBySource.keys()])) {
+  for (const sourceId of new Set([...probePlan.probedSourceIds, ...scannedSourceIds, ...quarantinedBySource.keys()])) {
     const quarantined = quarantinedBySource.get(sourceId);
     const sourceName = state.sources.find((entry) => entry.id === sourceId)?.name || sourceId;
     if (quarantined) {
@@ -6814,11 +7033,20 @@ async function runPlayoutCycle(): Promise<void> {
     state = await readAppState();
   }
 
+  // The resolve block kept the running input and resolved nothing (shouldKeepRunningInput). If that
+  // process has exited since -- a natural end between the resolve and here -- starting now would
+  // restart the old selection from a cold inline resolve with no bridge and no recovery. Let the next
+  // cycle select and resolve properly instead; it runs at once. Found by the M68 review.
+  if (keepRunningInput && !isPlayoutProcessRunning()) {
+    requestImmediatePlayoutCycle("kept-input-process-exited");
+    return;
+  }
+
   if (!playoutProcess || playoutProcess.killed || restartRequested) {
     try {
       await startOrSwitchPlayout({
         asset: selection.asset,
-        resolvedAssetInput: resolvedSelectionInput,
+        resolvedAssetMedia: resolvedSelection,
         liveBridge:
           selection.queueKind === "live"
             ? {
@@ -6884,7 +7112,7 @@ async function runPlayoutCycle(): Promise<void> {
     try {
       await startOrSwitchPlayout({
         asset: selection.asset,
-        resolvedAssetInput: resolvedSelectionInput,
+        resolvedAssetMedia: resolvedSelection,
         liveBridge:
           selection.queueKind === "live"
             ? {

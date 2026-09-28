@@ -3,7 +3,8 @@ import {
   decideQueuePrefetchBudget,
   planQueuePrefetch,
   raceResolveAgainstDeath,
-  type QueuePrefetchCandidate
+  type QueuePrefetchCandidate,
+  takeUncountedProbeOutcome
 } from "../../apps/worker/src/queue-prefetch";
 
 const remote = (cacheStatus: QueuePrefetchCandidate["cacheStatus"]): QueuePrefetchCandidate => ({
@@ -169,5 +170,22 @@ describe("raceResolveAgainstDeath (in-flight resolve unblocks on playout process
     const outcome = await raceResolveAgainstDeath(Promise.resolve(42), null);
 
     expect(outcome).toEqual({ kind: "resolved", value: 42 });
+  });
+});
+
+// M68 (2.1): every cycle used to count every cached result again -- a ready entry reset the
+// quarantine counter ~20 times, one failed resolve added +4 and quarantined the asset for good.
+describe("each probe result counts once", () => {
+  it("answers true the first time and false after that", () => {
+    const entry = { outcomeCounted: false };
+    expect(takeUncountedProbeOutcome(entry)).toBe(true);
+    expect(entry.outcomeCounted).toBe(true);
+    expect(takeUncountedProbeOutcome(entry)).toBe(false);
+    expect(takeUncountedProbeOutcome(entry)).toBe(false);
+  });
+
+  it("counts nothing when there is no entry", () => {
+    expect(takeUncountedProbeOutcome(null)).toBe(false);
+    expect(takeUncountedProbeOutcome(undefined)).toBe(false);
   });
 });
