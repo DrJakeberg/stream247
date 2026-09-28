@@ -15,26 +15,28 @@ on the public internet), and a Twitch account that will **operate** the channel.
 
 ## 1. The two Twitch accounts — decide this first
 
-Most installations run with **two** accounts:
+Most installations run with **two** accounts, and Stream247 names them by role everywhere:
 
-- the **broadcaster** — the channel viewers watch; its stream key receives the video;
-- a **moderator** account on that channel — connected to Stream247, used for chat presence,
-  emote-only automation and team sign-in.
+- the **broadcast channel** — the channel viewers watch; its stream key receives the video;
+- the **bot account** — a moderator on that channel, connected to Stream247 for chat, emote-only
+  automation, follow alerts and owner sign-in.
 
-Everything in Stream247 works with **moderator** rights. Title, category and schedule sync are the
-exception: they need the broadcaster's own OAuth connection (`Connect broadcast channel` under
-`Live → Status`, section 5). Do not run the app as the broadcaster to "make it simpler" — you would hand the channel's
-own credentials to an always-on service. See `docs/twitch-setup.md`, *Broadcast Channel*.
+Chat and moderation work with the bot account alone. Title, category, schedule and sub, cheer and
+channel-points alerts need the broadcast channel's own account (the optional **channel owner
+connection**, section 5). Do not run the app as the broadcast channel to "make it simpler" — you would
+hand the channel's own credentials to an always-on service. When you check whether the stream is
+live, check the broadcast channel, never the bot account's channel. See `docs/twitch-setup.md`,
+*Two Accounts, Named By Their Role*.
 
 ## 2. Twitch application
 
-In the Twitch developer console create an application. Two redirect URLs must match your public
+In the Twitch developer console create an application. Three redirect URLs must match your public
 base URL **exactly** (scheme, host, no trailing path differences):
 
-- `https://<your-host>/api/auth/twitch/callback`
-- `https://<your-host>/api/integrations/twitch/callback`
-- `https://<your-host>/api/integrations/twitch/callback-broadcaster` — used by `Connect broadcast channel`; without it
-  the broadcaster connect ends in Twitch's "redirect mismatch" even when the other two are right
+- `https://<your-host>/api/integrations/twitch/callback` — bot account connection
+- `https://<your-host>/api/auth/twitch/callback` — team sign-in with Twitch
+- `https://<your-host>/api/integrations/twitch/callback-broadcaster` — channel owner connection; without
+  it that connection ends in Twitch's "redirect mismatch" even when the other two are right
 
 Note the Client ID and Client Secret. The full list of URLs is in `docs/twitch-setup.md`,
 *Required Redirect URLs*.
@@ -103,13 +105,17 @@ database access, so store them.
 
 ## 5. Sign in and connect
 
-If not still signed in, sign in as the owner. Under `Live → Status`, use `Connect Twitch` with the
-**moderator** account. The connected account is also a sign-in: anyone who can log in to Twitch as it
-gets the owner role here, so treat it like the owner password (Twitch 2FA on, never shared).
+If not still signed in, sign in as the owner. Open `Admin → Settings → Twitch accounts` (also the
+"Twitch accounts" step in `/setup`):
 
-For title, category and schedule sync, first set `Admin → Settings → Managed credentials → Broadcast
-channel login` to the broadcaster's login; only then does `Live → Status` show `Connect broadcast
-channel`. Click that while signed in to Twitch as the broadcaster.
+1. **Broadcast channel** — enter the channel's login and save.
+2. **Bot account login** — optional; when set, only that account can be connected as bot.
+3. **Connect bot account** — Twitch shows which account is signing in; switch to the bot account if
+   it shows another. Stream247 refuses the broadcast channel itself here while a split is set up.
+   The bot account is also a sign-in: anyone who can log in to Twitch as it gets the owner role here,
+   so treat it like the owner password (Twitch 2FA on, never shared).
+4. **Connect as `<broadcast channel>`** — optional, for title, category, schedule and sub, cheer and
+   channel-points alerts. Click it while signed in to Twitch as the broadcast channel.
 
 Readiness appears on the same page and at `/api/system/readiness`. `broadcastReady` stays `false` until
 a destination has a stream key and one asset is ready (sections 6 and 7); the Twitch connection is a

@@ -179,14 +179,22 @@ The scheduler is deterministic and explainable: schedule preview items carry exp
 
 ## Twitch Integration
 
+Two Twitch accounts, resolved in one place (`packages/core/src/twitch-accounts.ts`, read from state
+through `resolveTwitchAccountsForState`): the **broadcast channel** (stream key, viewers, every target
+of chat, moderation, live status, metadata and alerts) and the **bot account** (the OAuth connection
+chat and moderation run as; table `twitch_connection`, whose `broadcaster_*` columns are legacy names
+for the bot). The optional **channel owner connection** (`twitch_broadcaster_connection`) carries the
+writes Twitch only accepts from the channel itself. See `docs/twitch-setup.md`.
+
 Current Twitch domains:
 
-- broadcaster OAuth connection
+- bot account OAuth connection, and the optional channel owner connection
 - team SSO login
 - title sync from the active schedule block, the current video, or the video's current chapter
 - category lookup and sync from the same three levels — per-video chapters (auto-filled from VOD
   metadata, editable in the library) switch category and title at offsets inside one video,
-  gated behind the broadcaster connection and throttled to one channel write per 30 seconds
+  gated behind the channel owner connection (or the bot account when it is the channel itself) and
+  throttled to one channel write per 30 seconds
 - Twitch schedule segment sync for upcoming blocks
 - moderation-related chat mode updates
 

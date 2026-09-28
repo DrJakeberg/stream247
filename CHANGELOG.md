@@ -22,8 +22,29 @@
   failed resolve during a network outage could add four failures and quarantine an item for good.
   Counters now survive state writes, and each probe result counts exactly once.
 
+- Twitch accounts are named by their role. Stream247 can involve two Twitch accounts — the broadcast
+  channel (where the stream key sends video and viewers watch) and the bot account (chat,
+  moderation) — and 2.0 called the bot "broadcaster" in its status card, audit trail and live payload.
+  On 2026-09-28 that sent an operator to the bot account's channel to check whether the broadcast
+  channel was live. Now:
+  - Admin → Settings (and the setup wizard) has a *Twitch accounts* panel with two cards: the
+    broadcast channel (its login, where the value came from, its live state, the optional channel
+    owner connection and what waits for it) and the bot account (expected login, connection, what runs
+    through it). The broadcast channel login moved there from *Managed credentials*, which no longer
+    blanks it on save.
+  - The bot connect refuses another login than the configured bot account and the broadcast channel
+    itself while a split is set up: nothing stored, token revoked, recorded as `twitch.bot.rejected`
+    and shown on the card. Both account connections make Twitch show which account is signing in.
+  - Viewer alerts subscribed on the bot account's own id; they now target the broadcast channel
+    (follow with the bot as moderator; sub, cheer and channel points once the channel owner, whose
+    connection now also asks for their read scopes, is connected). Old subscriptions on the bot's
+    channel are removed.
+  - `twitch.chat_settings.written` names `channelLogin`/`channelId` and `botLogin`/`botId`; the live
+    header shows the broadcast channel and the bot account; the go-live checklist has an entry for each.
+
 ### Added
 
+- `TWITCH_BOT_LOGIN` / managed `twitchBotLogin`: the login the bot account must be (optional).
 - `STREAM247_YOUTUBE_PLAYBACK_FORMATS` overrides the YouTube format candidates: yt-dlp selectors
   separated by `|`, tried in order. Unset keeps the built-in list.
 - `playout.process.start` logs the audio track, format id and candidate of a split programme;

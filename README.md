@@ -36,7 +36,7 @@ are not retroactively revoked.
 
 - Docker-first self-hosted deployment with published GHCR images
 - setup wizard with owner account bootstrap
-- local login with optional two-factor authentication, plus Twitch broadcaster connect and Twitch SSO team access
+- local login with optional two-factor authentication, plus the Twitch bot account and channel owner connections and Twitch SSO team access
 - PostgreSQL-backed runtime state
 - operator workspace IA with:
   - `Live` for control, status, and moderation
@@ -165,7 +165,7 @@ The one-page path from an empty host to a green channel, with the traps where th
    - enter `TWITCH_CLIENT_SECRET`
 9. Or add/update encrypted managed credentials later in:
    - `/settings`
-10. Open `Live → Status` and use `Connect Twitch` if you want broadcaster sync and Twitch SSO.
+10. Open `Admin → Settings → Twitch accounts`: set the broadcast channel and connect the bot account (and the channel owner for title, category and schedule sync). See `docs/twitch-setup.md`.
 11. Add media by either:
    - placing files into `data/media`
    - adding direct media URLs
@@ -222,7 +222,7 @@ docker compose --profile proxy up -d
 
 - `TWITCH_CLIENT_ID`: Twitch application client id
 - `TWITCH_CLIENT_SECRET`: Twitch application client secret
-- `TWITCH_SCHEDULE_SYNC_ENABLED`: set to `0` to skip Twitch schedule sync when the broadcaster account cannot create non-recurring Twitch schedule segments; defaults to `1`
+- `TWITCH_SCHEDULE_SYNC_ENABLED`: set to `0` to skip Twitch schedule sync when the account writing the schedule (the channel owner, or the bot in a single-account setup) cannot create non-recurring Twitch schedule segments; defaults to `1`
 - `TWITCH_STREAM_KEY`: Twitch stream key for RTMP output
 - `TWITCH_RTMP_URL`: defaults to `rtmp://live.twitch.tv/app`
 - `TWITCH_VOD_CACHE_ENABLED`: cache Twitch VOD media locally before playout; defaults to `1`
@@ -330,12 +330,12 @@ If you need `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`, follow this section o
 3. Register both redirect URLs:
    - `<APP_URL>/api/integrations/twitch/callback`
    - `<APP_URL>/api/auth/twitch/callback`
-   - `<APP_URL>/api/integrations/twitch/callback-broadcaster` (used by `Connect broadcast channel`)
+   - `<APP_URL>/api/integrations/twitch/callback-broadcaster` (the channel owner connection)
 4. Copy the generated Client ID into `TWITCH_CLIENT_ID`.
 5. Generate, reveal, or regenerate the Client Secret and store it in `TWITCH_CLIENT_SECRET`.
 6. Restart the stack after changing `.env`.
 7. Use `Live → Status` for:
-   - broadcaster connect
+   - the bot account and channel owner connections
    - Twitch SSO sign-in for team members
 
 Important:
@@ -503,7 +503,7 @@ Notes:
 
 ### Twitch Automation
 
-- broadcaster OAuth connect
+- bot account and channel owner OAuth connections
 - title sync from active asset metadata or schedule override
 - category lookup and sync from active asset metadata or schedule override
 - Twitch schedule segment sync for upcoming blocks

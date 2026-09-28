@@ -81,7 +81,7 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
    from what is actually configured rather than from a stored counter.
 7. Any skipped value can be finished later: reopen `/setup` while signed in, or use `/settings`
    for the Twitch credentials.
-8. Open `Live → Status` and use `Connect Twitch` if you want Twitch metadata sync or team SSO. Only leave Twitch schedule sync enabled when the broadcaster account can create non-recurring Twitch schedule segments.
+8. Open `Admin → Settings → Twitch accounts`: set the broadcast channel (where the stream key sends video) and connect the bot account (chat, moderation, team SSO); connect the channel owner too if you want title, category and schedule sync. Only leave Twitch schedule sync enabled when the account writing the schedule can create non-recurring Twitch schedule segments. See `docs/twitch-setup.md`.
 9. Add playable media:
    - files in `data/media`
    - direct media URL sources
@@ -328,7 +328,22 @@ Rollback is the reverse repin; the schema changes in 2.0 are additive.
 
 ### Upgrading To 2.1
 
-2.1 changes no stack file and no schema; it is a repin of the three `STREAM247_*_IMAGE` tags.
+2.1 changes no stack file and no schema; it is a repin of the three `STREAM247_*_IMAGE` tags. One new
+managed setting (`twitchBotLogin`, env fallback `TWITCH_BOT_LOGIN`) lives in the existing managed
+configuration.
+
+- **Twitch accounts.** Admin → Settings has a new *Twitch accounts* panel that separates the broadcast
+  channel (where the stream key sends video and viewers watch) from the bot account (chat,
+  moderation). The broadcast channel login moved there from *Managed credentials*; its stored value is
+  kept. The existing bot connection keeps working without reconnecting. New:
+  - the bot connect refuses another account than the configured bot login, and the broadcast channel
+    itself while a split is set up (nothing stored, token revoked, audited as `twitch.bot.rejected`);
+    both connect flows make Twitch show which account is signing in;
+  - alerts target the broadcast channel: follow with the bot as moderator; sub, cheer and
+    channel-points only once the channel owner is connected, whose connection now also asks for their
+    read scopes. Stream247's old subscriptions on the bot account's own channel are removed on the
+    first sync;
+  - labels that called the bot "broadcaster" say "bot account"; the live header shows both accounts.
 
 - **YouTube playback.** A YouTube item is resolved through ordered format candidates (split
   H.264+AAC, any split tracks, a combined file, split tracks at any height) instead of
