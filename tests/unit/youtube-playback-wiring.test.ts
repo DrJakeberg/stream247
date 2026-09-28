@@ -79,3 +79,29 @@ describe("quarantine counting", () => {
     expect(takes.length).toBe(pushes.length);
   });
 });
+
+describe("fixes from the M68 review", () => {
+  it("ends a pair's run when either track ends", () => {
+    const body = functionBody("getFfmpegCommand");
+    expect(body).toContain("buildSceneOverlayFilterComplex({ outputVideoFilter, sceneInputIndex, ticker, endWithProgramme: separateProgramAudio })");
+    expect(body).toContain("usesShortestFlag({ hasAudioLane: Boolean(audioLane), pipAudioMapped, attachLive, separateProgramAudio })");
+    expect(body).toMatch(/resolveProgrammeAudioPadSeconds\(\{[\s\S]*separateProgramAudio,/);
+  });
+
+  it("re-cycles instead of cold-starting a kept selection whose process exited", () => {
+    const guard = workerSource.indexOf("if (keepRunningInput && !isPlayoutProcessRunning()) {");
+    const start = workerSource.indexOf("if (!playoutProcess || playoutProcess.killed || restartRequested) {");
+    expect(guard).toBeGreaterThan(-1);
+    expect(start).toBeGreaterThan(guard);
+    expect(workerSource.slice(guard, start)).toContain('requestImmediatePlayoutCycle("kept-input-process-exited");');
+  });
+
+  it("blames a format candidate only when the programme was the only remote input", () => {
+    expect(workerSource).toContain("playoutFormatAttributable = !(resolvedAudioLaneInput && args.audioLane) && !liveSourceConfig;");
+    expect(workerSource).toContain('const lastFormatCandidateId = playoutFormatAttributable ? playoutFormatCandidateId : "";');
+  });
+
+  it("resolves the source-unplayable incident from every scanned source", () => {
+    expect(workerSource).toContain("new Set([...probePlan.probedSourceIds, ...scannedSourceIds, ...quarantinedBySource.keys()])");
+  });
+});

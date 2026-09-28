@@ -4,7 +4,9 @@ import {
   YOUTUBE_FORMAT_CANDIDATES,
   buildResolveArgs,
   isFormatUnavailableError,
+  isInvalidFormatSpecError,
   isYouTubeVideoUrl,
+  splitFormatOverride,
   orderCandidatesAfterPlayFailures,
   parseResolveOutput,
   resolveFormatCandidates
@@ -150,5 +152,19 @@ describe("which resolve errors move on to the next candidate", () => {
     ).toBe(true);
     expect(isFormatUnavailableError("ERROR: [youtube] abc: Video unavailable. This video is private")).toBe(false);
     expect(isFormatUnavailableError("Command timed out after 60000ms")).toBe(false);
+  });
+});
+
+describe("the override separator", () => {
+  // Found by the M68 review: yt-dlp regex filters contain "|" themselves.
+  it("splits on | only outside brackets and quotes", () => {
+    expect(splitFormatOverride("bv*[format_note~='(1080p|720p)']+ba | 18")).toEqual(["bv*[format_note~='(1080p|720p)']+ba", "18"]);
+    expect(splitFormatOverride('b[format_id~="(18|22)"]|bv*+ba')).toEqual(['b[format_id~="(18|22)"]', "bv*+ba"]);
+    expect(splitFormatOverride(" | | ")).toEqual([]);
+  });
+
+  it("skips an unparsable selector instead of failing the item", () => {
+    expect(isInvalidFormatSpecError("ERROR: Invalid format specification bv*[")).toBe(true);
+    expect(isInvalidFormatSpecError("ERROR: [youtube] x: Requested format is not available")).toBe(false);
   });
 });

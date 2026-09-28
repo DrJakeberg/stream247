@@ -254,8 +254,17 @@ export const PROGRAMME_AUDIO_PAD_SLACK_SECONDS = 30;
  * twice before, and "padded audio" plus "-shortest" is the one combination that can leave an encode
  * with no finite stream at all — not a thing to leave to two copies staying in step.
  */
-export function usesShortestFlag(args: { hasAudioLane: boolean; pipAudioMapped: boolean; attachLive: boolean }): boolean {
-  return (args.hasAudioLane && !args.pipAudioMapped) || args.attachLive;
+export function usesShortestFlag(args: {
+  hasAudioLane: boolean;
+  pipAudioMapped: boolean;
+  attachLive: boolean;
+  // A YouTube video+audio pair (2.1): picture and sound come from two remote inputs, so either can
+  // die alone mid-programme. -shortest (with the scene overlay ending on the programme, see
+  // buildSceneOverlayFilterComplex) ends the run when either does, instead of airing sound over a
+  // frozen picture, or a picture without sound, until the asset's natural end. Found by the M68 review.
+  separateProgramAudio?: boolean;
+}): boolean {
+  return (args.hasAudioLane && !args.pipAudioMapped) || args.attachLive || Boolean(args.separateProgramAudio);
 }
 
 /**
@@ -299,6 +308,8 @@ export function resolveProgrammeAudioPadSeconds(args: {
   hasAudioLane: boolean;
   pipAudioMapped: boolean;
   attachLive: boolean;
+  /** A YouTube video+audio pair: ends with -shortest on both tracks, so it is never padded. */
+  separateProgramAudio?: boolean;
   /** The duration bound's configured margin; the pad must outlast it or the storm survives. */
   durationBoundMarginSeconds: number;
 }): number {
@@ -576,12 +587,17 @@ export function buildSceneOverlayFilterComplex(args: {
   outputVideoFilter: string;
   sceneInputIndex: number;
   ticker: TickerCrawlGraph | null;
+  // End the picture with the programme video instead of outliving it on the endless scene pipe. Set
+  // for a YouTube video+audio pair (2.1): with -shortest, the run then ends when either track ends,
+  // together at a natural end and early when one remote input dies.
+  endWithProgramme?: boolean;
 }): string {
   const baseChain = args.outputVideoFilter ? `[0:v]${args.outputVideoFilter}[base];` : "";
   const baseLabel = args.outputVideoFilter ? "[base]" : "[0:v]";
   // With a crawl the scene is no longer the end of the graph: it is what the line is drawn onto.
   const sceneOut = args.ticker ? "vscene" : "vout";
-  const scene = `${baseChain}${baseLabel}[${args.sceneInputIndex}:v]overlay=0:0:format=auto[${sceneOut}]`;
+  const endOption = args.endWithProgramme ? ":shortest=1" : "";
+  const scene = `${baseChain}${baseLabel}[${args.sceneInputIndex}:v]overlay=0:0:format=auto${endOption}[${sceneOut}]`;
   return args.ticker ? `${scene};${buildTickerCrawlFilter({ ...args.ticker, from: sceneOut, to: "vout" })}` : scene;
 }
 

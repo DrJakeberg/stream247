@@ -70,18 +70,47 @@ export function isYouTubeVideoUrl(value: string): boolean {
 }
 
 /**
+ * Split the override on "|" -- but only outside [...] filters and quotes, where yt-dlp's regex
+ * filters (`[format_note~='(a|b)']`) use it. Found by the M68 review: a plain split tore such a
+ * selector in two.
+ */
+export function splitFormatOverride(override: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let depth = 0;
+  let quote = "";
+  for (const char of override) {
+    if (quote) {
+      if (char === quote) {
+        quote = "";
+      }
+    } else if (char === "'" || char === '"') {
+      quote = char;
+    } else if (char === "[") {
+      depth += 1;
+    } else if (char === "]") {
+      depth = Math.max(0, depth - 1);
+    } else if (char === "|" && depth === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  parts.push(current);
+  return parts.map((part) => part.trim()).filter(Boolean);
+}
+
+/**
  * The candidate list for a page URL. `override` is STREAM247_YOUTUBE_PLAYBACK_FORMATS: yt-dlp
- * selectors separated by "|" (a character yt-dlp's selector syntax does not use), tried in order.
- * An empty or blank override keeps the built-in list.
+ * selectors separated by "|" (outside brackets and quotes), tried in order. An empty or blank
+ * override keeps the built-in list.
  */
 export function resolveFormatCandidates(url: string, override = ""): PlayableFormatCandidate[] {
   if (!isYouTubeVideoUrl(url)) {
     return [...DEFAULT_FORMAT_CANDIDATES];
   }
-  const custom = override
-    .split("|")
-    .map((selector) => selector.trim())
-    .filter(Boolean);
+  const custom = splitFormatOverride(override);
   if (custom.length === 0) {
     return [...YOUTUBE_FORMAT_CANDIDATES];
   }
@@ -181,4 +210,10 @@ export function parseResolveOutput(stdout: string, candidateId: string): Resolve
 
 export function isFormatUnavailableError(message: string): boolean {
   return /requested format is not available/i.test(message);
+}
+
+// A selector yt-dlp cannot parse (a typo in STREAM247_YOUTUBE_PLAYBACK_FORMATS). It concerns that
+// candidate only, so the resolver skips it instead of failing the item.
+export function isInvalidFormatSpecError(message: string): boolean {
+  return /invalid (format|filter) specification/i.test(message);
 }

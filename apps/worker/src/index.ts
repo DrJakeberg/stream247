@@ -230,6 +230,7 @@ import {
   describeFfmpegExit,
   buildFfmpegInputArgs,
   buildSceneOverlayFilterComplex,
+  usesShortestFlag,
   resolveProgrammeAudioPadSeconds,
   resolveTickerCrawlCopies,
   buildSourceLivePipFilterComplex,
@@ -306,6 +307,7 @@ import {
   PLAY_FAILURE_SKIP_MS,
   buildResolveArgs,
   isFormatUnavailableError,
+  isInvalidFormatSpecError,
   orderCandidatesAfterPlayFailures,
   parseResolveOutput,
   resolveFormatCandidates,
@@ -369,6 +371,9 @@ let playoutResolvedInput = "";
 let playoutResolvedAudioInput = "";
 let playoutFormatId = "";
 let playoutFormatCandidateId = "";
+// Whether an open failure of this process can be blamed on its format candidate: only when the
+// programme is the only remote input. With an audio lane or a live PiP any of them may have failed.
+let playoutFormatAttributable = false;
 let playoutLastStderrSample = "";
 let playoutLiveBridgeInputUrl = "";
 let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
@@ -1876,6 +1881,11 @@ async function resolvePlayableMedia(input: string, skipCandidateIds: ReadonlySet
         passedOver.push(candidate.id);
         continue;
       }
+      if (isInvalidFormatSpecError(lastError)) {
+        logRuntimeEvent("playout.input.format_invalid", { candidate: candidate.id, selector: candidate.selector, error: lastError.slice(0, 300) });
+        passedOver.push(candidate.id);
+        continue;
+      }
       throw error;
     }
     try {
@@ -2245,7 +2255,7 @@ function getFfmpegCommand(
     } else {
       command.push(
         "-filter_complex",
-        buildSceneOverlayFilterComplex({ outputVideoFilter, sceneInputIndex, ticker }),
+        buildSceneOverlayFilterComplex({ outputVideoFilter, sceneInputIndex, ticker, endWithProgramme: separateProgramAudio }),
         "-map",
         "[vout]"
       );
@@ -2291,12 +2301,13 @@ function getFfmpegCommand(
     hasAudioLane: Boolean(audioLane),
     pipAudioMapped,
     attachLive,
+    separateProgramAudio,
     durationBoundMarginSeconds: getDurationBoundOptions(process.env, latestManagedConfig).marginSeconds
   });
   if (programmeAudioPadSeconds > 0) {
     command.push("-af", `apad=pad_dur=${String(programmeAudioPadSeconds)}`);
   }
-  if ((audioLane && !pipAudioMapped) || attachLive) {
+  if (usesShortestFlag({ hasAudioLane: Boolean(audioLane), pipAudioMapped, attachLive, separateProgramAudio })) {
     command.push("-shortest");
   }
 
@@ -4772,6 +4783,10 @@ async function getPlayableQueuedAssets(
   prefetchStatus: "" | "ready" | "failed";
   prefetchError: string;
   probeOutcomes: Array<{ asset: AssetRecord; outcome: "ok" | "failed"; error: string }>;
+  // Every source whose items this scan looked at, counted or not. The source-unplayable incident is
+  // resolved from these: with each probe counted once, probeOutcomes alone would close it only on the
+  // next fresh resolve, up to five minutes later (found by the M68 review).
+  scannedSourceIds: Set<string>;
   deferredExpensive: boolean;
 }> {
   const playableQueue: AssetRecord[] = [];
@@ -4783,6 +4798,7 @@ async function getPlayableQueuedAssets(
   // under rc.3, where the same item failed three times and stayed at zero. Every item the scan actually
   // probed is recorded with its own outcome (packages/core/src/asset-probe-quarantine.ts).
   const probeOutcomes: Array<{ asset: AssetRecord; outcome: "ok" | "failed"; error: string }> = [];
+  const scannedSourceIds = new Set(queueAssets.map((asset) => asset.sourceId));
   let deferredExpensive = false;
 
   // Cap awaited expensive (remote) resolves per cycle (v1.5.13), with the budget forced to 0 by
@@ -4903,6 +4919,7 @@ async function getPlayableQueuedAssets(
     prefetchStatus,
     prefetchError,
     probeOutcomes,
+    scannedSourceIds,
     deferredExpensive
   };
 }
@@ -5400,6 +5417,7 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
     playoutResolvedAudioInput = "";
     playoutFormatId = "";
     playoutFormatCandidateId = "";
+    playoutFormatAttributable = false;
     playoutLastStderrSample = "";
     playoutLiveBridgeInputUrl = "";
     playoutLiveBridgeInputType = "";
@@ -5430,6 +5448,7 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
         playoutResolvedAudioInput = "";
         playoutFormatId = "";
         playoutFormatCandidateId = "";
+        playoutFormatAttributable = false;
         playoutLastStderrSample = "";
         playoutLiveBridgeInputUrl = "";
         playoutLiveBridgeInputType = "";
@@ -5910,6 +5929,7 @@ async function startOrSwitchPlayout(args: {
   playoutResolvedAudioInput = resolvedProgramAudioInput;
   playoutFormatId = programMedia.formatId;
   playoutFormatCandidateId = programMedia.candidateId;
+  playoutFormatAttributable = !(resolvedAudioLaneInput && args.audioLane) && !liveSourceConfig;
   playoutLastStderrSample = "";
   playoutLiveBridgeInputUrl = args.liveBridge?.inputUrl ?? "";
   playoutLiveBridgeInputType = args.liveBridge?.inputType ?? "";
@@ -6091,7 +6111,7 @@ async function startOrSwitchPlayout(args: {
     const lastAssetId = playoutAssetId;
     const lastResolvedInput = playoutResolvedInput;
     const lastInputSummary = summarizePlaybackInput(lastResolvedInput);
-    const lastFormatCandidateId = playoutFormatCandidateId;
+    const lastFormatCandidateId = playoutFormatAttributable ? playoutFormatCandidateId : "";
     const lastStderrSample = playoutLastStderrSample;
     const naturalBoundary =
       !wasPlanned &&
@@ -6123,6 +6143,7 @@ async function startOrSwitchPlayout(args: {
     playoutResolvedAudioInput = "";
     playoutFormatId = "";
     playoutFormatCandidateId = "";
+    playoutFormatAttributable = false;
     playoutLastStderrSample = "";
     playoutLiveBridgeInputUrl = "";
     playoutLiveBridgeInputType = "";
@@ -6921,6 +6942,7 @@ async function runPlayoutCycle(): Promise<void> {
     prefetchStatus,
     prefetchError,
     probeOutcomes,
+    scannedSourceIds,
     deferredExpensive
   } =
     await getPlayableQueuedAssets(rawQueueAssets, { expensiveBudget: prefetchBudget });
@@ -6973,7 +6995,7 @@ async function runPlayoutCycle(): Promise<void> {
   // items of that source were skipped, and would have closed it once none of them was probed at all.
   const quarantineOverrides = new Map(probePlan.updates.map((update) => [update.id, update] as const));
   const quarantinedBySource = countQuarantinedBySource(state.assets, quarantineOverrides);
-  for (const sourceId of new Set([...probePlan.probedSourceIds, ...quarantinedBySource.keys()])) {
+  for (const sourceId of new Set([...probePlan.probedSourceIds, ...scannedSourceIds, ...quarantinedBySource.keys()])) {
     const quarantined = quarantinedBySource.get(sourceId);
     const sourceName = state.sources.find((entry) => entry.id === sourceId)?.name || sourceId;
     if (quarantined) {
@@ -7010,6 +7032,15 @@ async function runPlayoutCycle(): Promise<void> {
       restartRequestedAt: reconnectActive || selection.reasonCode === "scheduled_reconnect" ? playout.restartRequestedAt : ""
     }));
     state = await readAppState();
+  }
+
+  // The resolve block kept the running input and resolved nothing (shouldKeepRunningInput). If that
+  // process has exited since -- a natural end between the resolve and here -- starting now would
+  // restart the old selection from a cold inline resolve with no bridge and no recovery. Let the next
+  // cycle select and resolve properly instead; it runs at once. Found by the M68 review.
+  if (keepRunningInput && !isPlayoutProcessRunning()) {
+    requestImmediatePlayoutCycle("kept-input-process-exited");
+    return;
   }
 
   if (!playoutProcess || playoutProcess.killed || restartRequested) {
