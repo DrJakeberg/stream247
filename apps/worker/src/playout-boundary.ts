@@ -1,6 +1,9 @@
 export interface BoundaryProbe {
   status: "ready" | "failed";
   resolvedInput: string;
+  // The audio track of a video+audio pair (YouTube, 2.1). Travels with resolvedInput: a decision that
+  // reuses the input reuses its audio, never a different one.
+  resolvedAudioInput?: string;
   // The asset this probe was resolved for. Carried on the entry itself so the boundary can prove
   // the prefetched input belongs to the asset it is about to start, rather than trusting that the
   // caller looked it up under the right key.
@@ -12,6 +15,7 @@ export interface BoundaryInputDecision {
   // "resolve": fall through to an inline resolveAssetPlaybackInput call.
   source: "cache" | "resolve";
   input: string;
+  audioInput: string;
 }
 
 /**
@@ -32,12 +36,12 @@ export interface BoundaryInputDecision {
  */
 export function decideBoundaryPlaybackInput(probe: BoundaryProbe | null, selectedAssetId: string): BoundaryInputDecision {
   if (!probe || probe.status !== "ready" || !probe.resolvedInput) {
-    return { source: "resolve", input: "" };
+    return { source: "resolve", input: "", audioInput: "" };
   }
   if (!selectedAssetId || probe.assetId !== selectedAssetId) {
-    return { source: "resolve", input: "" };
+    return { source: "resolve", input: "", audioInput: "" };
   }
-  return { source: "cache", input: probe.resolvedInput };
+  return { source: "cache", input: probe.resolvedInput, audioInput: probe.resolvedAudioInput ?? "" };
 }
 
 // An ffmpeg process that fails this quickly after start did not play any content — it failed at
