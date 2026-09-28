@@ -4662,9 +4662,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         INSERT INTO assets (
           id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
           title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, external_id, category_name, duration_seconds, published_at,
-          fallback_priority, is_global_fallback, created_at, updated_at
+          fallback_priority, is_global_fallback, created_at, updated_at,
+          playback_probe_failures, playback_probe_error, playback_probed_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
       `,
       [
         asset.id,
@@ -4692,7 +4693,15 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         asset.fallbackPriority,
         asset.isGlobalFallback,
         asset.createdAt,
-        asset.updatedAt
+        asset.updatedAt,
+        // The quarantine counters. Until 2.1 this rewrite left them out, so every app-state write
+        // (chat game start/stop, blueprint import, ...) zeroed them and released every quarantined
+        // asset back onto the air -- how eleven skipped YouTube uploads were playing again on
+        // 2026-09-28. Clamped like updateAssetPlaybackProbeRecords. Safe to write back: the state was
+        // hydrated under the same write lock (updateAppState), so these are the current values.
+        Math.max(0, Math.trunc(Number(asset.playbackProbeFailures ?? 0)) || 0),
+        (asset.playbackProbeError ?? "").slice(0, 500),
+        asset.playbackProbedAt ?? ""
       ]
     );
   }

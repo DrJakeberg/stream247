@@ -34,6 +34,7 @@ import {
   saveOverlayDraftRecord,
   saveOverlayScenePresetRecord,
   updateAssetCurationRecords,
+  updateAssetPlaybackProbeRecords,
   updateDestinationRecord,
   updateEngagementSettingsRecord,
   updateOutputSettingsRecord,
@@ -1808,6 +1809,68 @@ describe.sequential("database roundtrip", () => {
 
       const after = await readAppState();
       expect(after.playout.restartCount).toBe(before.playout.restartCount + 3);
+    });
+  });
+
+  describe("quarantine counters and whole-state writes", () => {
+    // M68 (2.1). persistState rewrites the assets table from the hydrated state and used to leave the
+    // playback_probe_* columns out, so any app-state write zeroed every quarantine counter. On the DUT
+    // that released eleven unplayable YouTube uploads back onto the air (skipped 11 of 11 on
+    // 2026-09-13, counters 0-3 and nine of them playing on 2026-09-28).
+    it("keeps a quarantined asset's counter through an unrelated updateAppState", async () => {
+      await ensureDatabaseWithRetry();
+      const initial = await readAppState();
+      await writeAppState({
+        ...initial,
+        sources: [
+          {
+            id: "source_quarantine",
+            name: "YouTube Channel",
+            type: "YouTube channel",
+            connectorKind: "youtube-channel",
+            enabled: true,
+            status: "Ready",
+            externalUrl: "https://www.youtube.com/@example/videos",
+            notes: "",
+            lastSyncedAt: "2026-09-28T07:00:00.000Z"
+          }
+        ],
+        assets: [
+          {
+            id: "asset_source_quarantine_j4YdbIbEc9E",
+            sourceId: "source_quarantine",
+            title: "Rotten upload",
+            path: "https://www.youtube.com/watch?v=j4YdbIbEc9E",
+            status: "ready",
+            includeInProgramming: true,
+            externalId: "j4YdbIbEc9E",
+            durationSeconds: 255,
+            fallbackPriority: 0,
+            isGlobalFallback: false,
+            createdAt: "2026-09-01T00:00:00.000Z",
+            updatedAt: "2026-09-01T00:00:00.000Z"
+          }
+        ]
+      });
+
+      const error = "ERROR: [youtube] j4YdbIbEc9E: Requested format is not available.";
+      await updateAssetPlaybackProbeRecords([
+        {
+          id: "asset_source_quarantine_j4YdbIbEc9E",
+          playbackProbeFailures: 3,
+          playbackProbeError: error,
+          playbackProbedAt: "2026-09-28T08:11:42.642Z"
+        }
+      ]);
+
+      // An edit that has nothing to do with assets -- the shape of a chat game start/stop.
+      await updateAppState((current) => ({ ...current, moderation: { ...current.moderation } }));
+
+      const after = await readAppState();
+      const asset = after.assets.find((entry) => entry.id === "asset_source_quarantine_j4YdbIbEc9E");
+      expect(asset?.playbackProbeFailures).toBe(3);
+      expect(asset?.playbackProbeError).toBe(error);
+      expect(asset?.playbackProbedAt).toBe("2026-09-28T08:11:42.642Z");
     });
   });
 
