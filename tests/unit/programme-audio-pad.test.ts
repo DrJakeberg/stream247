@@ -161,3 +161,22 @@ describe("the padding is wired where the fault is", () => {
     expect(workerSource).not.toMatch(/"-af",\s*"apad"/);
   });
 });
+
+// M68 review (2.1): a YouTube video+audio pair comes from two remote inputs, either of which can die
+// alone. -shortest ends the run when one does, and a pair is therefore never padded -- padded audio
+// plus -shortest over the endless scene picture would leave nothing finite to end on.
+describe("a YouTube video+audio pair", () => {
+  const pair = { hasAudioLane: false, pipAudioMapped: false, attachLive: false, separateProgramAudio: true };
+
+  it("sets -shortest", () => {
+    expect(usesShortestFlag(pair)).toBe(true);
+    expect(usesShortestFlag({ ...pair, separateProgramAudio: false })).toBe(false);
+  });
+
+  it("is never padded, in scene mode either", () => {
+    expect(resolveProgrammeAudioPadSeconds({ ...pair, overlayMode: "scene", durationBoundMarginSeconds: 15 })).toBe(0);
+    expect(resolveProgrammeAudioPadSeconds({ ...pair, separateProgramAudio: false, overlayMode: "scene", durationBoundMarginSeconds: 15 })).toBe(
+      15 + PROGRAMME_AUDIO_PAD_SLACK_SECONDS
+    );
+  });
+});
