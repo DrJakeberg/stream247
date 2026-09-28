@@ -40,7 +40,7 @@ this rule.
 | Sign in to Stream247 with Twitch as owner | bot account | — | owner signs in locally |
 
 The bot account must be a **moderator** in the broadcast channel's chat (`/mod <bot>` there).
-Alerts are recorded and listed under Studio → Overlays; they are not drawn on air yet.
+Alerts are recorded and listed under Studio → Engagement; they are not drawn on air yet.
 
 ## Required Redirect URLs
 
@@ -75,9 +75,11 @@ Admin → Settings → **Twitch accounts** (also step "Twitch accounts" in `/set
 3. **Connect bot account.** Twitch shows which account is signing in (`force_verify`) with a
    "Not you?" switch. Stream247 refuses, without storing anything and revoking the token:
    - another account than the configured bot login;
-   - the broadcast channel itself while a split is active — storing it would silently turn the split
-     into a single account. Connect it under "Channel owner connection" instead, or clear the
-     broadcast channel to run with one account.
+   - the broadcast channel itself while another bot account is connected — storing it would silently
+     turn the split into a single account. Connect it under "Channel owner connection" instead, or
+     clear the broadcast channel to run with one account.
+   On the very first connect (no bot yet, no bot login set) the broadcast channel is accepted and the
+   install runs as a single account; set the bot account login first to rule that out.
    A refusal is recorded as `twitch.bot.rejected` and shown on the card.
 4. **Connect as `<broadcast channel>`** (optional, split setups). Sign in to Twitch as the broadcast
    channel in this browser first. The callback checks the authorised login against the broadcast

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isValidTwitchLogin } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
+import { resolveTwitchAccountsForState } from "@stream247/db";
 import { appendAuditEvent, readAppState, updateManagedConfigRecord } from "@/lib/server/state";
 
 // The two Twitch accounts of the Twitch accounts panel (2.1, M69): the broadcast channel (where the
@@ -31,16 +32,24 @@ export async function PUT(request: NextRequest) {
   const state = await readAppState();
   const channel = has("broadcastChannelLogin") ? body.broadcastChannelLogin!.trim() : state.managedConfig.twitchBroadcastChannelLogin;
   const bot = has("botLogin") ? body.botLogin!.trim() : state.managedConfig.twitchBotLogin;
-  await updateManagedConfigRecord({
-    ...state.managedConfig,
-    twitchBroadcastChannelLogin: channel,
-    twitchBotLogin: bot,
-    updatedAt: new Date().toISOString()
-  });
+  const managedConfig = { ...state.managedConfig, twitchBroadcastChannelLogin: channel, twitchBotLogin: bot, updatedAt: new Date().toISOString() };
+  await updateManagedConfigRecord(managedConfig);
 
-  await appendAuditEvent(
-    "settings.twitch-accounts.updated",
-    `Twitch accounts: broadcast channel ${channel || "(not set: the bot's own channel)"}, bot account ${bot || "(any)"}.`
-  );
-  return NextResponse.json({ ok: true, message: "Twitch accounts updated.", broadcastChannelLogin: channel, botLogin: bot });
+  // What is now in effect, not what was typed: an empty field falls back to TWITCH_BROADCAST_CHANNEL_LOGIN
+  // / TWITCH_BOT_LOGIN when the server sets them (M69 review).
+  const effective = resolveTwitchAccountsForState({ ...state, managedConfig }, process.env);
+  const channelText =
+    effective.channel.source === "settings" || effective.channel.source === "env"
+      ? `${effective.channel.login}${effective.channel.source === "env" ? " (from TWITCH_BROADCAST_CHANNEL_LOGIN)" : ""}`
+      : "(not set: the bot account's own channel)";
+  const botText = effective.bot.expectedLogin
+    ? `${effective.bot.expectedLogin}${effective.bot.expectedSource === "env" ? " (from TWITCH_BOT_LOGIN)" : ""}`
+    : "(any)";
+  await appendAuditEvent("settings.twitch-accounts.updated", `Twitch accounts: broadcast channel ${channelText}, bot account ${botText}.`);
+  return NextResponse.json({
+    ok: true,
+    message: "Twitch accounts updated.",
+    broadcastChannelLogin: effective.channel.source === "settings" || effective.channel.source === "env" ? effective.channel.login : "",
+    botLogin: effective.bot.expectedLogin
+  });
 }

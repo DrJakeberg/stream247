@@ -168,8 +168,9 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
               Stream247 works with two Twitch accounts, which may be the same one: the broadcast channel, where the
               video goes and viewers watch (its stream key goes into the output destination), and the bot account
               Stream247 signs in as for chat and moderation. Name the broadcast channel, then connect the bot account;
-              the channel&apos;s own account can connect later for title, category and schedule. Twitch sends you back
-              here when it is done.
+              the channel&apos;s own account can connect later for title, category and schedule. Twitch sends you to
+              Admin → Settings → Twitch accounts when it is done; setup is complete by then, and its last step only
+              lists what the go-live checklist still wants.
             </p>
             <TwitchAccountsPanel {...twitchAccountsPanel.props} />
             <SkipLink from="twitch-connect" />

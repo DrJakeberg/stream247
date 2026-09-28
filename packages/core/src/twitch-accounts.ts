@@ -66,7 +66,21 @@ export type TwitchAccountsInput = {
   owner: { status: string; login: string; hasToken: boolean; error: string };
   // The broadcast channel's resolved Twitch user id, when the worker has resolved it.
   channelUserId?: string;
+  // What the channel owner connection's token actually grants (oauth2/validate); null or absent when
+  // not measured. An owner connected before 2.1 lacks the alert scopes 2.1 asks for, and claiming
+  // those alerts as active would be false (M69 review).
+  ownerGrantedScopes?: readonly string[] | null;
 };
+
+// The scope each channel-owner capability needs from the broadcast channel's own grant. Shared with
+// the worker's EventSub sync, so the panel and the subscriptions decide from the same list.
+export const TWITCH_CHANNEL_OWNER_CAPABILITY_SCOPES = {
+  titleCategory: "channel:manage:broadcast",
+  schedule: "channel:manage:schedule",
+  subAlerts: "channel:read:subscriptions",
+  cheerAlerts: "bits:read",
+  redemptionAlerts: "channel:read:redemptions"
+} as const;
 
 export type TwitchAccountsSummary = {
   mode: TwitchAccountsMode;
@@ -82,6 +96,7 @@ export type TwitchAccountsSummary = {
     login: string;
     id: string;
     expectedLogin: string;
+    expectedSource: "settings" | "env" | "none";
     // null when no expected login is set.
     matchesExpected: boolean | null;
   };
@@ -153,12 +168,31 @@ export function resolveTwitchAccounts(input: TwitchAccountsInput): TwitchAccount
     ownerStatus === "wrong-account"
       ? `The channel owner connection is ${input.owner.login.trim()}, not ${channel.login} — reconnect it as ${channel.login}.`
       : `Waiting for the channel owner connection (${channel.login || "broadcast channel"}).`;
+  const ownerScopes = input.ownerGrantedScopes ? new Set(input.ownerGrantedScopes.map((scope) => scope.trim())) : null;
   // In a split, the writes Twitch only accepts from the channel itself go through the owner
-  // connection; with one account the bot IS the channel and does them.
-  const channelWrites = (key: TwitchCapabilityKey, label: string): TwitchCapability =>
-    mode === "split"
-      ? capability(key, label, "channel-owner", ownerStatus === "connected", ownerReason)
-      : capability(key, label, "bot", botConnected, botReason);
+  // connection -- but the worker runs every Twitch job behind a connected bot (reconcileTwitch and
+  // the EventSub sync return early without it), so both have to be there. With one account the bot IS
+  // the channel and does them.
+  const channelWrites = (key: keyof typeof TWITCH_CHANNEL_OWNER_CAPABILITY_SCOPES, label: string): TwitchCapability => {
+    if (mode !== "split") {
+      return capability(key, label, "bot", botConnected, botReason);
+    }
+    if (!botConnected) {
+      return capability(key, label, "channel-owner", false, botReason);
+    }
+    if (ownerStatus !== "connected") {
+      return capability(key, label, "channel-owner", false, ownerReason);
+    }
+    const scope = TWITCH_CHANNEL_OWNER_CAPABILITY_SCOPES[key];
+    const granted = ownerScopes === null || ownerScopes.has(scope);
+    return capability(
+      key,
+      label,
+      "channel-owner",
+      granted,
+      `Reconnect the channel owner (${channel.login}) to grant ${scope} — a connection made before 2.1 lacks it.`
+    );
+  };
 
   const capabilities: TwitchCapability[] = [
     capability("chat", "Chat rail", "bot", botConnected, botReason),
@@ -183,6 +217,7 @@ export function resolveTwitchAccounts(input: TwitchAccountsInput): TwitchAccount
       login: botLogin,
       id: input.bot.id.trim(),
       expectedLogin,
+      expectedSource: expectedLogin ? expected.source : "none",
       matchesExpected: expectedLogin && botLogin ? sameLogin(expectedLogin, botLogin) : null
     },
     owner: { status: ownerStatus, login: input.owner.login.trim(), error: input.owner.error.trim() },
@@ -229,3 +264,50 @@ export function evaluateBotConnectLogin(args: {
   }
   return { ok: true };
 }
+
+/**
+ * The scopes a Twitch user token grants, from id.twitch.tv/oauth2/validate; null when Twitch did not
+ * answer usefully (unreachable, rejected token). Callers cache per token -- a grant does not change
+ * while the token lives.
+ */
+export async function readTwitchTokenScopes(
+  accessToken: string,
+  fetchImpl: (url: string, init?: { headers?: Record<string, string> }) => Promise<Response> = fetch
+): Promise<string[] | null> {
+  if (!accessToken) {
+    return null;
+  }
+  try {
+    // The validate endpoint wants the OAuth scheme; with Bearer it answers 401 for a good token.
+    const response = await fetchImpl("https://id.twitch.tv/oauth2/validate", { headers: { Authorization: `OAuth ${accessToken}` } });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = (await response.json()) as { scopes?: unknown };
+    return Array.isArray(payload.scopes) ? payload.scopes.filter((scope): scope is string => typeof scope === "string") : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A per-token cache for readTwitchTokenScopes, so a page render or a worker cycle asks Twitch once per token. */
+export function createTwitchTokenScopeCache(ttlMs = 10 * 60_000) {
+  const entries = new Map<string, { scopes: string[] | null; at: number }>();
+  return async (
+    accessToken: string,
+    fetchImpl?: (url: string, init?: { headers?: Record<string, string> }) => Promise<Response>
+  ): Promise<string[] | null> => {
+    if (!accessToken) {
+      return null;
+    }
+    const cached = entries.get(accessToken);
+    if (cached && Date.now() - cached.at < ttlMs) {
+      return cached.scopes;
+    }
+    const scopes = await readTwitchTokenScopes(accessToken, fetchImpl);
+    entries.clear();
+    entries.set(accessToken, { scopes, at: Date.now() });
+    return scopes;
+  };
+}
+

@@ -1,4 +1,5 @@
 import {
+  TWITCH_CHANNEL_OWNER_CAPABILITY_SCOPES,
   isEngagementAlertsRuntimeEnabled,
   isEngagementChannelPointsRuntimeEnabled,
   isEngagementDonationAlertsRuntimeEnabled,
@@ -25,14 +26,17 @@ export type EventSubTarget = {
   // Whether the broadcast channel itself has granted what sub, cheer and channel-points events need:
   // true with one account (the bot IS the channel) or a connected channel owner in a split.
   channelOwnerCovers: boolean;
+  // The channel owner token's measured grant in a split; null when not measured or not needed. An owner
+  // connected before 2.1 lacks the alert scopes, and subscribing without them fails with 403.
+  channelOwnerScopes?: readonly string[] | null;
 };
 
 type EventSubSubscriptionDefinition = {
   type: EventSubSubscriptionType;
   version: string;
   condition: (target: EventSubTarget) => Record<string, string>;
-  // Twitch only delivers this type for a broadcaster who granted the scope; a moderator cannot.
-  needsChannelOwner: boolean;
+  // Twitch only delivers this type for a broadcaster who granted this scope; a moderator cannot.
+  ownerScope: string | null;
 };
 
 type TwitchEventSubSubscription = {
@@ -66,7 +70,7 @@ export const REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS: EventSubSubscriptionDefinit
       broadcaster_user_id: target.channelId,
       moderator_user_id: target.botId
     }),
-    needsChannelOwner: false
+    ownerScope: null
   },
   {
     type: "channel.subscribe",
@@ -74,7 +78,7 @@ export const REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS: EventSubSubscriptionDefinit
     condition: (target) => ({
       broadcaster_user_id: target.channelId
     }),
-    needsChannelOwner: true
+    ownerScope: TWITCH_CHANNEL_OWNER_CAPABILITY_SCOPES.subAlerts
   },
   {
     type: "channel.cheer",
@@ -82,7 +86,7 @@ export const REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS: EventSubSubscriptionDefinit
     condition: (target) => ({
       broadcaster_user_id: target.channelId
     }),
-    needsChannelOwner: true
+    ownerScope: TWITCH_CHANNEL_OWNER_CAPABILITY_SCOPES.cheerAlerts
   },
   {
     type: "channel.channel_points_custom_reward_redemption.add",
@@ -90,9 +94,18 @@ export const REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS: EventSubSubscriptionDefinit
     condition: (target) => ({
       broadcaster_user_id: target.channelId
     }),
-    needsChannelOwner: true
+    ownerScope: TWITCH_CHANNEL_OWNER_CAPABILITY_SCOPES.redemptionAlerts
   }
 ];
+
+// Whether the broadcast channel itself grants `scope`: covered at all (one account, or a connected owner)
+// and, when the owner's grant was measured, containing the scope.
+function channelOwnerGrants(target: EventSubTarget, scope: string): boolean {
+  if (!target.channelOwnerCovers) {
+    return false;
+  }
+  return !target.channelOwnerScopes || target.channelOwnerScopes.includes(scope);
+}
 
 function resolveDesiredEventSubSubscriptions(args: {
   state: AppState;
@@ -104,7 +117,7 @@ function resolveDesiredEventSubSubscriptions(args: {
   }
 
   return REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS.filter((definition) => {
-    if (definition.needsChannelOwner && !args.target.channelOwnerCovers) {
+    if (definition.ownerScope && !channelOwnerGrants(args.target, definition.ownerScope)) {
       return false;
     }
     if (definition.type === "channel.cheer") {
@@ -353,10 +366,6 @@ export async function syncTwitchEventSubSubscriptions(args: {
     return emptyResult(enabled, "twitch-not-connected");
   }
 
-  if (!target.channelId.trim()) {
-    return emptyResult(enabled, "broadcast-channel-unresolved");
-  }
-
   if (!args.clientId || !args.clientSecret) {
     return emptyResult(enabled, "missing-twitch-client-credentials");
   }
@@ -406,6 +415,12 @@ export async function syncTwitchEventSubSubscriptions(args: {
       deleted,
       existing: []
     };
+  }
+
+  // Only registration needs the channel's id; the cleanup above works from ownership (our callback)
+  // alone, so switching alerts off still removes everything while the id cannot be resolved (M69 review).
+  if (!target.channelId.trim()) {
+    return emptyResult(enabled, "broadcast-channel-unresolved");
   }
 
   const existing: EventSubSubscriptionType[] = [];
@@ -471,10 +486,13 @@ export async function syncTwitchEventSubSubscriptions(args: {
     created,
     deleted,
     existing,
-    waitingForChannelOwner: target.channelOwnerCovers
-      ? []
-      : resolveDesiredEventSubSubscriptions({ ...args, target: { ...target, channelOwnerCovers: true } })
-          .filter((definition) => definition.needsChannelOwner)
-          .map((definition) => definition.type)
+    // Wanted (alerts and their per-type toggles on) but withheld because the broadcast channel itself has
+    // not granted them. Surfaced by the worker as twitch.eventsub.waiting-for-channel-owner.
+    waitingForChannelOwner: resolveDesiredEventSubSubscriptions({
+      ...args,
+      target: { ...target, channelOwnerCovers: true, channelOwnerScopes: null }
+    })
+      .filter((definition) => definition.ownerScope && !channelOwnerGrants(target, definition.ownerScope))
+      .map((definition) => definition.type)
   };
 }

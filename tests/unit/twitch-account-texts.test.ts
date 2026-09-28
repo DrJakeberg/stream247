@@ -97,3 +97,32 @@ describe("Twitch accounts panel wording", () => {
     expect(textsFor({}, { lastBotRejection: { ...refused, at: "2026-08-01T00:00:00.000Z" } }).bot.lastRejection).toBe("");
   });
 });
+
+describe("wording fixes from the M69 review", () => {
+  it("does not claim a split while no bot account is connected", () => {
+    const texts = textsFor({ bot: { status: "not-connected", login: "", id: "" } });
+    expect(texts.modeLine).toEqual({ tone: "warn", text: "Broadcast channel jimpanse247 · bot account not connected yet — connect it below." });
+  });
+
+  it("shows Off, not Active, for features the runtime switches turned off", () => {
+    const texts = textsFor({}, { runtime: { chat: true, chatGames: true, alerts: false, cheerAlerts: true, channelPointsAlerts: true } });
+    const follow = texts.bot.runs.find((entry) => entry.label === "Follow alerts")!;
+    expect(follow).toMatchObject({ state: "off", available: false });
+    expect(follow.statusText).toContain("Studio → Engagement");
+    expect(texts.bot.runs.find((entry) => entry.label === "Chat rail")!.state).toBe("active");
+  });
+
+  it("drops a refused owner attempt once a later owner connection worked", () => {
+    const refused = { at: "2026-09-28T10:00:00.000Z", message: "Twitch authorised 3jakec, but the broadcast channel is jimpanse247." };
+    const owner = { status: "connected", login: "jimpanse247", hasToken: true, error: "" };
+    expect(textsFor({ owner }, { lastOwnerRejection: refused, ownerConnectedAt: "2026-09-28T10:05:00.000Z" }).channel.owner!.lastRejection).toBe("");
+    expect(textsFor({}, { lastOwnerRejection: refused }).channel.owner!.lastRejection).toContain("3jakec");
+  });
+
+  it("says where the bot account login comes from", () => {
+    expect(textsFor({ expectedBotSetting: { managed: "", env: "3jakec" } }).bot.sourceText).toBe(
+      "Bot account login from TWITCH_BOT_LOGIN — saving a value here overrides it."
+    );
+    expect(textsFor().bot.sourceText).toBe("No bot account login set — any account may connect as bot.");
+  });
+});

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { InfoTip } from "@/components/ui/InfoTip";
-import type { TwitchAccountsTexts } from "@/lib/twitch-account-texts";
+import type { TwitchAccountsTexts, TwitchCapabilityLine } from "@/lib/twitch-account-texts";
 
 // The two Twitch accounts side by side (2.1, M69): the broadcast channel (where the stream key sends
 // video and viewers watch) and the bot account (chat and moderation). Every sentence comes from
@@ -67,17 +67,20 @@ function LoginForm(props: {
   );
 }
 
-function CapabilityList(props: { title: string; entries: Array<{ label: string; available: boolean; statusText: string }> }) {
+const BADGE = {
+  active: { className: "badge badge-ready", label: "Active" },
+  waiting: { className: "badge badge-action", label: "Waiting" },
+  off: { className: "badge badge-optional", label: "Off" }
+} as const;
+
+function CapabilityList(props: { title: string; entries: TwitchCapabilityLine[] }) {
   return (
     <div className="list">
       <strong>{props.title}</strong>
       {props.entries.map((entry) => (
         <div className="item" key={entry.label}>
-          <span className={entry.available ? "badge badge-ready" : "badge badge-action"}>
-            {entry.available ? "Active" : "Waiting"}
-          </span>{" "}
-          {entry.label}
-          {entry.available ? null : <div className="subtle">{entry.statusText}</div>}
+          <span className={BADGE[entry.state].className}>{BADGE[entry.state].label}</span> {entry.label}
+          {entry.state === "active" ? null : <div className="subtle">{entry.statusText}</div>}
         </div>
       ))}
     </div>
@@ -123,6 +126,8 @@ export function TwitchAccountsPanel(props: {
   // Link targets of the OAuth start routes; null when the Twitch app is not configured yet.
   botConnectHref: string | null;
   ownerConnectHref: string | null;
+  // Why the connect links are missing, naming the missing setting; "" when they work.
+  connectBlocker: string;
   botConnected: boolean;
   canEdit: boolean;
 }) {
@@ -140,7 +145,7 @@ export function TwitchAccountsPanel(props: {
             defaultValue={props.saved.broadcastChannelLogin}
             disabled={!props.canEdit}
             field="broadcastChannelLogin"
-            info="The Twitch login of the channel viewers watch. Chat joins this room; the watch link, live status, emote-only, title, category, schedule and viewer alerts all target it. Naming it is enough — its own account only has to connect for title, category, schedule and sub, cheer and channel-points alerts. Empty means the bot account's own channel."
+            info="The Twitch login of the channel viewers watch. Chat joins this room; the watch link, live status, emote-only, title, category, schedule and viewer alerts all target it. Naming it is enough — its own account only has to connect for title, category, schedule and sub, cheer and channel-points alerts. Empty uses TWITCH_BROADCAST_CHANNEL_LOGIN when the server sets it, otherwise the bot account's own channel."
             label="Broadcast channel login"
             placeholder="e.g. yourchannel"
             submitLabel="Save broadcast channel"
@@ -160,9 +165,7 @@ export function TwitchAccountsPanel(props: {
                   Connect as {props.channelLogin}
                 </a>
               ) : null}
-              {owner.action === "connect" && !props.ownerConnectHref ? (
-                <div className="subtle">Save the Twitch client id and secret under Managed credentials to connect the channel owner.</div>
-              ) : null}
+              {owner.action === "connect" && !props.ownerConnectHref ? <div className="subtle">{props.connectBlocker}</div> : null}
               {owner.action === "disconnect" ? <OwnerDisconnectButton channel={props.channelLogin} disabled={!props.canEdit} /> : null}
               <div className="subtle">{owner.hint}</div>
               <CapabilityList entries={owner.needs} title="Needs the channel owner" />
@@ -176,11 +179,12 @@ export function TwitchAccountsPanel(props: {
             defaultValue={props.saved.botLogin}
             disabled={!props.canEdit}
             field="botLogin"
-            info="When set, connecting the bot account accepts only this Twitch login, and the panel warns if another account is connected. The bot account also signs in to Stream247 as owner. Empty accepts any account."
+            info="When set, connecting the bot account accepts only this Twitch login, and the panel warns if another account is connected. The bot account also signs in to Stream247 as owner. Empty uses TWITCH_BOT_LOGIN when the server sets it, otherwise any account is accepted."
             label="Bot account login"
             placeholder={props.botLogin ? `Connected now: ${props.botLogin}` : "e.g. yourbot"}
             submitLabel="Save bot account"
           />
+          <div className="subtle">{texts.bot.sourceText}</div>
           <div>{texts.bot.statusText}</div>
           {texts.bot.warning ? <div className="warning">{texts.bot.warning}</div> : null}
           {texts.bot.lastRejection ? <div className="warning">{texts.bot.lastRejection}</div> : null}
@@ -189,7 +193,7 @@ export function TwitchAccountsPanel(props: {
               {props.botConnected ? "Reconnect bot account" : "Connect bot account"}
             </a>
           ) : (
-            <div className="subtle">Save the Twitch client id and secret under Managed credentials to connect accounts.</div>
+            <div className="subtle">{props.connectBlocker}</div>
           )}
           <CapabilityList entries={texts.bot.runs} title="Runs through the bot account" />
         </section>

@@ -847,6 +847,43 @@ describe("EventSub in a split setup: channel jimpanse247, bot 3JakeC", () => {
     expect(created(fetchMock).map((body) => body.condition.broadcaster_user_id)).toEqual(["id-jimpanse247"]);
   });
 
+  // M69 review: an owner connected before 2.1 lacks the alert scopes; subscribing anyway fails with 403.
+  it("withholds exactly the alert types whose scope the owner's grant lacks", async () => {
+    const fetchMock = stubEventSub([]);
+    const result = await sync(fetchMock, {
+      ...splitTarget,
+      channelOwnerCovers: true,
+      channelOwnerScopes: ["channel:manage:broadcast", "channel:manage:schedule", "bits:read"]
+    });
+    const types = created(fetchMock).map((body) => body.type);
+    expect(types).toContain("channel.follow");
+    expect(types).toContain("channel.cheer");
+    expect(types).not.toContain("channel.subscribe");
+    expect(result.waitingForChannelOwner).toEqual(["channel.subscribe", "channel.channel_points_custom_reward_redemption.add"]);
+  });
+
+  it("still cleans up when alerts are off and the channel's id cannot be resolved", async () => {
+    const fetchMock = stubEventSub([
+      {
+        id: "ours",
+        type: "channel.follow",
+        version: "2",
+        status: "enabled",
+        condition: { broadcaster_user_id: "id-jimpanse247", moderator_user_id: "id-3jakec" },
+        transport: { method: "webhook", callback }
+      }
+    ]);
+    const result = await syncTwitchEventSubSubscriptions({
+      state: baseEventSubState(),
+      env: { APP_URL: "https://stream247.example", STREAM_ALERTS_ENABLED: "0" },
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      target: { ...splitTarget, channelId: "" },
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+    expect(result).toMatchObject({ status: "cleaned-up", deleted: ["ours"] });
+  });
+
   it("skips registration until the broadcast channel's id is resolved", async () => {
     const fetchMock = stubEventSub([]);
     const result = await sync(fetchMock, { ...splitTarget, channelId: "" });

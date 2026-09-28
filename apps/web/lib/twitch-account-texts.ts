@@ -10,10 +10,19 @@ export type TwitchAccountsTextExtras = {
   viewerCount: number;
   // When the bot connection was made; a refused attempt older than that is history, not news.
   botConnectedAt: string;
+  // When the channel owner connection was made; an older refusal is history (M69 review).
+  ownerConnectedAt?: string;
   // Newest audit entries of twitch.bot.rejected / twitch.broadcaster.error, if any.
   lastBotRejection: { at: string; message: string } | null;
   lastOwnerRejection: { at: string; message: string } | null;
+  // The runtime switches the worker obeys on top of the accounts (Studio → Engagement and the server).
+  // A capability the accounts allow but a switch turns off is "Off", never "Active" (M69 review).
+  runtime?: { chat: boolean; chatGames: boolean; alerts: boolean; cheerAlerts: boolean; channelPointsAlerts: boolean };
 };
+
+export type TwitchCapabilityLine = { label: string; state: "active" | "waiting" | "off"; available: boolean; statusText: string };
+
+const OFF_TEXT = "Off — switched off under Studio → Engagement or by the server.";
 
 export type TwitchAccountsTexts = {
   modeLine: { tone: "ok" | "warn"; text: string };
@@ -29,7 +38,7 @@ export type TwitchAccountsTexts = {
       action: "connect" | "disconnect" | null;
       hint: string;
       lastRejection: string;
-      needs: Array<{ label: string; available: boolean; statusText: string }>;
+      needs: TwitchCapabilityLine[];
     };
   };
   bot: {
@@ -38,7 +47,9 @@ export type TwitchAccountsTexts = {
     statusText: string;
     warning: string;
     lastRejection: string;
-    runs: Array<{ label: string; available: boolean; statusText: string }>;
+    // Where the expected bot login comes from.
+    sourceText: string;
+    runs: TwitchCapabilityLine[];
   };
   sourcesNote: string;
 };
@@ -49,12 +60,50 @@ function isNewer(at: string, than: string): boolean {
   return Number.isFinite(atMs) && (!Number.isFinite(thanMs) || atMs > thanMs);
 }
 
+// Which runtime switch gates a capability beyond the accounts; absent = none.
+function runtimeGate(key: string, runtime: TwitchAccountsTextExtras["runtime"]): boolean {
+  if (!runtime) {
+    return true;
+  }
+  switch (key) {
+    case "chat":
+      return runtime.chat;
+    case "chatGames":
+      return runtime.chatGames;
+    case "followAlerts":
+    case "subAlerts":
+      return runtime.alerts;
+    case "cheerAlerts":
+      return runtime.alerts && runtime.cheerAlerts;
+    case "redemptionAlerts":
+      return runtime.alerts && runtime.channelPointsAlerts;
+    default:
+      return true;
+  }
+}
+
 export function getTwitchAccountsTexts(summary: TwitchAccountsSummary, extras: TwitchAccountsTextExtras): TwitchAccountsTexts {
   const channel = summary.channel.login;
   const bot = summary.bot.login;
+  const line = (entry: TwitchAccountsSummary["capabilities"][number]): TwitchCapabilityLine => {
+    if (!entry.available) {
+      return { label: entry.label, state: "waiting", available: false, statusText: entry.reason };
+    }
+    if (!runtimeGate(entry.key, extras.runtime)) {
+      return { label: entry.label, state: "off", available: false, statusText: OFF_TEXT };
+    }
+    return { label: entry.label, state: "active", available: true, statusText: "Active" };
+  };
 
   let modeLine: TwitchAccountsTexts["modeLine"];
-  if (summary.mode === "split") {
+  if (summary.mode === "split" && !summary.bot.connected) {
+    // Not "Split setup" yet: the refusals that protect a split only apply once a bot account is
+    // connected (or a bot login is set), and saying "split" here promised them too early (M69 review).
+    modeLine = {
+      tone: "warn",
+      text: `Broadcast channel ${channel} · bot account not connected yet — connect it below.`
+    };
+  } else if (summary.mode === "split") {
     modeLine = {
       tone: "ok",
       text: `Split setup: broadcast channel ${channel} · bot account ${bot || "not connected yet"}.`
@@ -109,14 +158,13 @@ export function getTwitchAccountsTexts(summary: TwitchAccountsSummary, extras: T
       statusText,
       action: status === "connected" ? "disconnect" : "connect",
       hint: `Sign in to Twitch as ${channel} in this browser first — Twitch then shows which account is signing in.`,
-      lastRejection: extras.lastOwnerRejection ? `Last attempt refused: ${extras.lastOwnerRejection.message}` : "",
+      lastRejection:
+        extras.lastOwnerRejection && (status !== "connected" || isNewer(extras.lastOwnerRejection.at, extras.ownerConnectedAt ?? ""))
+          ? `Last attempt refused: ${extras.lastOwnerRejection.message}`
+          : "",
       needs: summary.capabilities
         .filter((entry) => ["titleCategory", "schedule", "subAlerts", "cheerAlerts", "redemptionAlerts"].includes(entry.key))
-        .map((entry) => ({
-          label: entry.label,
-          available: entry.available,
-          statusText: entry.available ? "Active" : "Waiting for the channel owner connection"
-        }))
+        .map((entry) => line(entry))
     };
   }
 
@@ -132,7 +180,13 @@ export function getTwitchAccountsTexts(summary: TwitchAccountsSummary, extras: T
 
   const runs = summary.capabilities
     .filter((entry) => ["chat", "moderation", "checkins", "chatGames", "followAlerts", "liveStatus", "ownerSignIn"].includes(entry.key))
-    .map((entry) => ({ label: entry.label, available: entry.available, statusText: entry.available ? "Active" : entry.reason }));
+    .map((entry) => line(entry));
+  const botSourceText =
+    summary.bot.expectedSource === "settings"
+      ? "Bot account login saved here."
+      : summary.bot.expectedSource === "env"
+        ? "Bot account login from TWITCH_BOT_LOGIN — saving a value here overrides it."
+        : "No bot account login set — any account may connect as bot.";
 
   return {
     modeLine,
@@ -150,6 +204,7 @@ export function getTwitchAccountsTexts(summary: TwitchAccountsSummary, extras: T
       statusText: summary.bot.connected ? `Connected as ${bot}.` : "Not connected.",
       warning,
       lastRejection: lastBotRejection,
+      sourceText: botSourceText,
       runs
     },
     sourcesNote:

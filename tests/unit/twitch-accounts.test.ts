@@ -127,3 +127,43 @@ describe("accepting a bot connection", () => {
     expect(evaluateBotConnectLogin({ ...base, currentBotLogin: "", authenticatedLogin: "jimpanse247" })).toEqual({ ok: true });
   });
 });
+
+// M69 review: the panel may only call a channel-owner capability active when the worker really runs it.
+describe("channel-owner capabilities, as the worker runs them", () => {
+  const ownerConnected = { status: "connected", login: "jimpanse247", hasToken: true, error: "" };
+
+  it("need the bot account too — the worker runs no Twitch job without it", () => {
+    const summary = resolveTwitchAccounts(
+      referenceInstall({ owner: ownerConnected, bot: { status: "not-connected", login: "", id: "" } })
+    );
+    expect(capabilityOf(summary, "titleCategory")).toMatchObject({ available: false, reason: "Connect the bot account." });
+  });
+
+  it("need the scope in the owner's actual grant — an owner connected before 2.1 lacks the alert scopes", () => {
+    const summary = resolveTwitchAccounts(
+      referenceInstall({ owner: ownerConnected, ownerGrantedScopes: ["channel:manage:broadcast", "channel:manage:schedule"] })
+    );
+    expect(capabilityOf(summary, "titleCategory").available).toBe(true);
+    expect(capabilityOf(summary, "schedule").available).toBe(true);
+    for (const [key, scope] of [
+      ["subAlerts", "channel:read:subscriptions"],
+      ["cheerAlerts", "bits:read"],
+      ["redemptionAlerts", "channel:read:redemptions"]
+    ]) {
+      const entry = capabilityOf(summary, key);
+      expect(entry.available).toBe(false);
+      expect(entry.reason).toContain(scope);
+      expect(entry.reason).toContain("before 2.1");
+    }
+  });
+
+  it("count as available when the grant could not be measured", () => {
+    const summary = resolveTwitchAccounts(referenceInstall({ owner: ownerConnected, ownerGrantedScopes: null }));
+    expect(capabilityOf(summary, "subAlerts").available).toBe(true);
+  });
+
+  it("say where the expected bot login comes from", () => {
+    expect(resolveTwitchAccounts(referenceInstall({ expectedBotSetting: { managed: "", env: "3jakec" } })).bot.expectedSource).toBe("env");
+    expect(resolveTwitchAccounts(referenceInstall()).bot.expectedSource).toBe("none");
+  });
+});

@@ -111,7 +111,8 @@ If not still signed in, sign in as the owner. Open `Admin → Settings → Twitc
 1. **Broadcast channel** — enter the channel's login and save.
 2. **Bot account login** — optional; when set, only that account can be connected as bot.
 3. **Connect bot account** — Twitch shows which account is signing in; switch to the bot account if
-   it shows another. Stream247 refuses the broadcast channel itself here while a split is set up.
+   it shows another. With a bot account login set (step 2), or once a bot is connected, Stream247 refuses
+   any other account here, the broadcast channel included.
    The bot account is also a sign-in: anyone who can log in to Twitch as it gets the owner role here,
    so treat it like the owner password (Twitch 2FA on, never shared).
 4. **Connect as `<broadcast channel>`** — optional, for title, category, schedule and sub, cheer and

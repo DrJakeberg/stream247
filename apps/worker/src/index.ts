@@ -100,6 +100,7 @@ import {
   nextAssetProbeState,
   planAssetProbeUpdates,
   countQuarantinedBySource,
+  createTwitchTokenScopeCache
 } from "@stream247/core";
 import {
   buildSourceLiveStateWrite,
@@ -913,6 +914,8 @@ let twitchLiveStatusNextSyncAt = 0;
 let twitchConnectionHealLastAttemptAt = 0;
 // Process-lifetime cache for the broadcast channel's user id; see twitch-broadcast-channel.ts.
 const twitchUserIdResolver = createTwitchUserIdResolver();
+// The channel owner token's measured grant, cached per token (packages/core/src/twitch-accounts.ts).
+const readChannelOwnerScopes = createTwitchTokenScopeCache();
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -8606,10 +8609,17 @@ async function reconcileTwitchEventSub(): Promise<void> {
       eventSubChannelId = "";
     }
   }
+  // What the channel owner's token really grants: an owner connected before 2.1 lacks the alert scopes,
+  // and subscribing for them anyway fails every sync with 403 (M69 review). Measured per token, cached.
+  const ownerScopes =
+    accounts.mode === "split" && accounts.owner.status === "connected"
+      ? await readChannelOwnerScopes(state.twitchBroadcaster.accessToken)
+      : null;
   const eventSubTarget = {
     channelId: eventSubChannelId,
     botId: accounts.bot.id,
-    channelOwnerCovers: accounts.mode !== "split" || accounts.owner.status === "connected"
+    channelOwnerCovers: accounts.mode !== "split" || accounts.owner.status === "connected",
+    channelOwnerScopes: ownerScopes
   };
   const syncKey = [
     state.engagement.alertsEnabled ? "alerts-on" : "alerts-off",
@@ -8618,6 +8628,7 @@ async function reconcileTwitchEventSub(): Promise<void> {
     eventSubTarget.channelId,
     eventSubTarget.botId,
     eventSubTarget.channelOwnerCovers ? "owner-covers" : "owner-missing",
+    (ownerScopes ?? ["unmeasured"]).slice().sort().join(","),
     clientId,
     resolveAppBaseUrl(state.managedConfig),
     resolveTwitchEventSubSecret(state.managedConfig, process.env) ? "secret-set" : "secret-missing"
@@ -8657,6 +8668,25 @@ async function reconcileTwitchEventSub(): Promise<void> {
 
     await resolveIncident("twitch.eventsub.sync.failed", "Twitch EventSub synchronization succeeded.");
     await resolveIncident("twitch.eventsub.sync.skipped", "Twitch EventSub configuration is complete.");
+    // Alert types that are switched on but withheld because the broadcast channel itself has not granted
+    // them: said out loud instead of a silent "configuration complete" (M69 review).
+    const withheld = result.waitingForChannelOwner ?? [];
+    if (result.enabled && withheld.length > 0) {
+      const ownerConnected = accounts.owner.status === "connected";
+      await upsertIncident({
+        scope: "twitch",
+        severity: "info",
+        title: "Some viewer alerts wait for the channel owner",
+        message: `${withheld.join(", ")} ${withheld.length === 1 ? "is" : "are"} not subscribed for the broadcast channel ${accounts.channel.login}: ${
+          ownerConnected
+            ? `the channel owner connection lacks the scope — reconnect ${accounts.channel.login} under Admin → Settings → Twitch accounts (connections made before 2.1 lack the alert scopes)`
+            : `Twitch delivers them only once ${accounts.channel.login} itself connects under Admin → Settings → Twitch accounts`
+        }. Follow alerts run through the bot account.`,
+        fingerprint: "twitch.eventsub.waiting-for-channel-owner"
+      });
+    } else {
+      await resolveIncident("twitch.eventsub.waiting-for-channel-owner", "No viewer alert type is waiting for the channel owner.");
+    }
     if (result.created.length > 0 || result.deleted.length > 0) {
       await appendAuditEvent(
         "twitch.eventsub.sync",

@@ -114,7 +114,7 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
 
         <div className="item">
           <span className="label">Alert types</span>
-          <div className="subtle">Follow, subscription, cheer, and channel-point alerts all render through the same internal overlay path.</div>
+          <div className="subtle">Follow, subscription, cheer and channel-point events of the broadcast channel are recorded and listed; they are not drawn on air yet.</div>
           <div className="form-grid" style={{ marginTop: 12 }}>
             <label className="toggle-row">
               <input checked={alertsEnabled} onChange={(event) => setAlertsEnabled(event.target.checked)} type="checkbox" />
@@ -138,7 +138,9 @@ export function EngagementSettingsForm({ engagement }: { engagement: EngagementS
             fall back to the deployment environment when left on their default.
           </p>
           <p className="subtle">
-            Bits and channel point alerts also require one Twitch reconnect after M32 so the broadcaster token includes the new scopes.
+            Sub, cheer and channel-point alerts need the broadcast channel&apos;s own grant: with one account the bot&apos;s, in a
+            split setup the channel owner connection (Admin → Settings → Twitch accounts). An owner connected before 2.1 must
+            reconnect once.
           </p>
         </div>
 

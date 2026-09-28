@@ -292,6 +292,13 @@ const STATE_FAMILIES: IncidentFamily[] = [
     why: "EventSub is configured incompletely, which holds until the configuration is completed."
   },
   {
+    fingerprint: "twitch.eventsub.waiting-for-channel-owner",
+    keyed: false,
+    kind: "state",
+    area: "twitch",
+    why: "Sub, cheer or channel-points alerts are withheld until the broadcast channel's own account grants them, which holds until the channel owner connects or reconnects."
+  },
+  {
     fingerprint: "alerts.delivery",
     keyed: false,
     kind: "state",

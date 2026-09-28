@@ -66,7 +66,10 @@ describe("Twitch accounts settings API", () => {
     mockRequireApiRoles.mockResolvedValue(null);
     mockAppendAuditEvent.mockResolvedValue(undefined);
     mockUpdateManagedConfigRecord.mockResolvedValue(undefined);
-    mockReadAppState.mockResolvedValue({ managedConfig: { ...storedConfig } });
+    mockReadAppState.mockResolvedValue({
+      managedConfig: { ...storedConfig },
+      twitch: { status: "connected", broadcasterLogin: "3jakec", broadcasterId: "144919385" }
+    });
   });
 
   it("stores both accounts, trimmed, and names both in the audit trail", async () => {
@@ -112,5 +115,33 @@ describe("Twitch accounts settings API", () => {
     const response = await PUT(putRequest({ broadcastChannelLogin: "jimpanse247" }));
     expect(response.status).toBe(403);
     expect(mockUpdateManagedConfigRecord).not.toHaveBeenCalled();
+  });
+});
+
+describe("the audit line names what is in effect", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireApiRoles.mockResolvedValue(null);
+    mockAppendAuditEvent.mockResolvedValue(undefined);
+    mockUpdateManagedConfigRecord.mockResolvedValue(undefined);
+    mockReadAppState.mockResolvedValue({
+      managedConfig: { ...storedConfig },
+      twitch: { status: "connected", broadcasterLogin: "3jakec", broadcasterId: "144919385" }
+    });
+  });
+
+  // M69 review: an empty field falls back to the env value, and the audit must not claim otherwise.
+  it("reports the env fallback when the field is cleared", async () => {
+    process.env.TWITCH_BROADCAST_CHANNEL_LOGIN = "jimpanse247";
+    try {
+      const response = await PUT(putRequest({ broadcastChannelLogin: "" }));
+      expect(response.status).toBe(200);
+      expect(mockAppendAuditEvent).toHaveBeenCalledWith(
+        "settings.twitch-accounts.updated",
+        expect.stringContaining("broadcast channel jimpanse247 (from TWITCH_BROADCAST_CHANNEL_LOGIN)")
+      );
+    } finally {
+      delete process.env.TWITCH_BROADCAST_CHANNEL_LOGIN;
+    }
   });
 });
