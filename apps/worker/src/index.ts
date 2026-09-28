@@ -310,7 +310,12 @@ import {
   resolveFormatCandidates,
   type ResolvedPlayableMedia
 } from "./playable-input.js";
-import { decideQueuePrefetchBudget, planQueuePrefetch, raceResolveAgainstDeath } from "./queue-prefetch.js";
+import {
+  decideQueuePrefetchBudget,
+  planQueuePrefetch,
+  raceResolveAgainstDeath,
+  takeUncountedProbeOutcome
+} from "./queue-prefetch.js";
 import { LoopWakeLatch } from "./loop-wake.js";
 import { ProgrammeGapTracker } from "./playout-gap.js";
 import {
@@ -861,6 +866,8 @@ type QueueProbeCacheEntry = {
   resolvedAudioInput: string;
   formatId: string;
   candidateId: string;
+  // Whether the quarantine counter has already seen this result. See takeUncountedProbeOutcome.
+  outcomeCounted: boolean;
   error: string;
   // The asset this entry was resolved for, so the boundary can verify the prefetched input belongs
   // to the asset it is about to start instead of trusting the map key. See playout-boundary.ts.
@@ -4729,6 +4736,7 @@ function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: A
         resolvedAudioInput: prepared.media.audioInput,
         formatId: prepared.media.formatId,
         candidateId: prepared.media.candidateId,
+        outcomeCounted: false,
         error: "",
         assetId: asset.id
       });
@@ -4743,6 +4751,7 @@ function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: A
         resolvedAudioInput: "",
         formatId: "",
         candidateId: "",
+        outcomeCounted: false,
         error: message,
         assetId: asset.id
       });
@@ -4798,14 +4807,19 @@ async function getPlayableQueuedAssets(
     if (action === "use-cache") {
       prefetchedAsset = prefetchedAsset ?? asset;
       prefetchStatus = "ready";
-      probeOutcomes.push({ asset, outcome: "ok", error: "" });
+      // Counted once: here only when a background resolve finished after its cycle moved on.
+      if (takeUncountedProbeOutcome(cached)) {
+        probeOutcomes.push({ asset, outcome: "ok", error: "" });
+      }
       playableQueue.push(asset);
       continue;
     }
 
     if (action === "skip-failed") {
       if (cached) {
-        probeOutcomes.push({ asset, outcome: "failed", error: cached.error });
+        if (takeUncountedProbeOutcome(cached)) {
+          probeOutcomes.push({ asset, outcome: "failed", error: cached.error });
+        }
         if (!prefetchError) {
           prefetchStatus = "failed";
           prefetchError = cached.error;
@@ -4840,6 +4854,7 @@ async function getPlayableQueuedAssets(
         // Cheap (local/direct) resolves return effectively instantly — await normally.
         const prepared = await resolveQueueAssetIntoProbeCache(asset);
         prefetchedAsset = prefetchedAsset ?? prepared.asset;
+        takeUncountedProbeOutcome(queueProbeCache.get(asset.id));
         probeOutcomes.push({ asset: prepared.asset, outcome: "ok", error: "" });
         prefetchStatus = "ready";
         playableQueue.push(prepared.asset);
@@ -4863,6 +4878,7 @@ async function getPlayableQueuedAssets(
       }
       if (outcome.kind === "resolved") {
         prefetchedAsset = prefetchedAsset ?? outcome.value.asset;
+        takeUncountedProbeOutcome(queueProbeCache.get(asset.id));
         probeOutcomes.push({ asset: outcome.value.asset, outcome: "ok", error: "" });
         prefetchStatus = "ready";
         playableQueue.push(outcome.value.asset);
@@ -4871,6 +4887,7 @@ async function getPlayableQueuedAssets(
       throw outcome.error;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown queue prefetch error.";
+      takeUncountedProbeOutcome(queueProbeCache.get(asset.id));
       probeOutcomes.push({ asset, outcome: "failed", error: message });
       if (!prefetchError) {
         prefetchStatus = "failed";

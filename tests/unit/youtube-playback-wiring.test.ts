@@ -65,3 +65,17 @@ describe("the running programme keeps its input", () => {
     expect(workerSource.indexOf("decideBoundaryPlaybackInput(boundaryProbe", gate)).toBeGreaterThan(gate);
   });
 });
+
+describe("quarantine counting", () => {
+  it("counts a cached result only if nothing counted it yet", () => {
+    const body = functionBody("getPlayableQueuedAssets");
+    const useCache = body.slice(body.indexOf('if (action === "use-cache")'), body.indexOf('if (action === "skip-failed")'));
+    expect(useCache).toMatch(/if \(takeUncountedProbeOutcome\(cached\)\) \{\s*probeOutcomes\.push/);
+    const skipFailed = body.slice(body.indexOf('if (action === "skip-failed")'), body.indexOf('if (action === "defer")'));
+    expect(skipFailed).toMatch(/if \(takeUncountedProbeOutcome\(cached\)\) \{\s*probeOutcomes\.push/);
+    // Every outcome pushed for a resolve that ran in this cycle marks its entry as counted.
+    const pushes = body.match(/probeOutcomes\.push\(/g) ?? [];
+    const takes = body.match(/takeUncountedProbeOutcome\(/g) ?? [];
+    expect(takes.length).toBe(pushes.length);
+  });
+});
