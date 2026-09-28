@@ -46,10 +46,18 @@ export function isBroadcastChannelSplit(args: { configuredLogin: string; identit
 
 export const TWITCH_METADATA_WAITING_MESSAGE = "Waiting for broadcast channel connection.";
 
-// Exactly the writes the broadcaster slot exists for — title/category and schedule. Asking for
-// more would turn a narrowly scoped metadata connection into a second fully privileged account
-// for no benefit; the identity connection keeps every other scope.
-export const TWITCH_BROADCASTER_SLOT_SCOPES = ["channel:manage:broadcast", "channel:manage:schedule"];
+// What the channel owner connection is for: the writes Twitch only accepts from the channel itself
+// (title/category, schedule) and, since 2.1, the read scopes Twitch requires from the broadcaster
+// before it delivers sub, cheer and channel-points events for that channel -- a moderator cannot
+// subscribe to those. Read-only additions: nothing here can post, ban or change the channel beyond
+// its metadata. Chat and moderation stay with the bot account.
+export const TWITCH_BROADCASTER_SLOT_SCOPES = [
+  "channel:manage:broadcast",
+  "channel:manage:schedule",
+  "bits:read",
+  "channel:read:subscriptions",
+  "channel:read:redemptions"
+];
 
 /**
  * Everything the identity connection is asked to grant.

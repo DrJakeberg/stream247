@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { consumeOAuthState, describeOAuthStateFailure } from "@/lib/server/oauth-state";
 import { readAppState } from "@/lib/server/state";
-import { exchangeTwitchCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
+import { TwitchAccountRejectedError, exchangeTwitchCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
 import { requireApiRoles } from "@/lib/server/auth";
 
 // Every failure recorded below is a connect attempt that produced nothing: a rejected state
@@ -46,8 +46,12 @@ export async function GET(request: NextRequest) {
   try {
     await exchangeTwitchCode(code);
   } catch (caught) {
-    const message = caught instanceof Error ? caught.message : "Unknown Twitch callback failure.";
-    await recordTwitchError(message);
+    // A refused account is already in the audit trail as twitch.bot.rejected, which is what the
+    // Twitch accounts panel shows; recording it again as a generic error would only duplicate it.
+    if (!(caught instanceof TwitchAccountRejectedError)) {
+      const message = caught instanceof Error ? caught.message : "Unknown Twitch callback failure.";
+      await recordTwitchError(message);
+    }
   }
 
   return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));

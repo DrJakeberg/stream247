@@ -157,13 +157,17 @@ beforeEach(() => {
 });
 
 describe("the broadcaster-slot start route", () => {
-  it("requests only the two metadata scopes and its own callback", async () => {
+  it("requests the channel-owner scopes and its own callback", async () => {
     const response = await startBroadcasterConnect();
 
     expect(response.status).toBe(307);
     const authorizeUrl = new URL(response.headers.get("location") ?? "");
     expect(authorizeUrl.origin).toBe("https://id.twitch.tv");
-    expect(authorizeUrl.searchParams.get("scope")).toBe("channel:manage:broadcast channel:manage:schedule");
+    // 2.1: the metadata scopes plus the three alert read scopes; and Twitch must show which account signs in.
+    expect(authorizeUrl.searchParams.get("scope")).toBe(
+      "channel:manage:broadcast channel:manage:schedule bits:read channel:read:subscriptions channel:read:redemptions"
+    );
+    expect(authorizeUrl.searchParams.get("force_verify")).toBe("true");
     expect(authorizeUrl.searchParams.get("redirect_uri")).toContain("/api/integrations/twitch/callback-broadcaster");
   });
 

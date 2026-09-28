@@ -118,8 +118,17 @@ describe("the metadata sync gate", () => {
 describe("the broadcaster connect verdict", () => {
   const channel = { configuredLogin: "jimpanse247", identityLogin: "3jakec" };
 
-  it("requests only the two metadata scopes for the slot", () => {
-    expect(TWITCH_BROADCASTER_SLOT_SCOPES).toEqual(["channel:manage:broadcast", "channel:manage:schedule"]);
+  // 2.1: plus the three read scopes Twitch requires from the broadcaster for sub, cheer and
+  // channel-points events. Still nothing that posts, bans or moderates -- that stays with the bot.
+  it("requests the metadata scopes and the alert read scopes for the slot, nothing that moderates", () => {
+    expect(TWITCH_BROADCASTER_SLOT_SCOPES).toEqual([
+      "channel:manage:broadcast",
+      "channel:manage:schedule",
+      "bits:read",
+      "channel:read:subscriptions",
+      "channel:read:redemptions"
+    ]);
+    expect(TWITCH_BROADCASTER_SLOT_SCOPES.some((scope) => scope.startsWith("moderator:") || scope.startsWith("chat:"))).toBe(false);
   });
 
   it("accepts the broadcast channel owner, ignoring case", () => {
