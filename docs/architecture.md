@@ -149,6 +149,11 @@ Current source connectors:
 
 Assets are normalized into a PostgreSQL-backed catalog and then selected by the playout runtime.
 
+Ingest lists items; it does not decide how they play. Playback URLs are resolved by the playout
+process (the `playout` container), just before an item airs and in the queue prefetch. A YouTube item
+is resolved through ordered format candidates (`apps/worker/src/playable-input.ts`) and may play as a
+video+audio pair, which playout opens as two ffmpeg inputs.
+
 Twitch VOD assets keep their original Twitch URL as the source path, but the worker prepares a verified local cache file before using the asset for playout. Cache metadata is stored on the asset record, and the internal `.stream247-cache` tree is excluded from local-library discovery so cached archive files do not become duplicate programming assets.
 
 ## Scheduling

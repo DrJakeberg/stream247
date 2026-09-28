@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Fixed
+
+- YouTube items play again, and keep playing. Two faults added up to "every YouTube video breaks off
+  after about three seconds" (measured on the DUT 2026-09-28):
+  - playback resolved YouTube with `yt-dlp --format best`, one file with picture and sound, which
+    YouTube no longer offers for these uploads: 0 of 11 items resolved. The resolver now walks an
+    ordered list of format candidates — split H.264+AAC tracks, any split tracks, a combined file,
+    split tracks at any height — and moves to the next when yt-dlp reports a format as unavailable
+    (11 of 11 resolve as `299+140`). A split programme is opened by playout as two ffmpeg inputs. A
+    candidate that resolves but cannot be opened (403, dead URL) is skipped for that item for
+    30 minutes, so the next attempt tries another format. Other sites keep `--format best`.
+  - every 15-second playout cycle resolved the programme already on air again, and a failed resolve
+    switched it to the global fallback: seven of nine YouTube runs that morning lasted exactly 18 s.
+    The programme on air now keeps its input until something actually restarts it.
+- The playback quarantine keeps its memory. Every whole-state write (chat game start/stop, blueprint
+  import, …) rewrote the asset rows without the probe counters and so released every quarantined item
+  back onto the air; and each cached probe result was counted again by every cycle it lived, so one
+  failed resolve during a network outage could add four failures and quarantine an item for good.
+  Counters now survive state writes, and each probe result counts exactly once.
+
+### Added
+
+- `STREAM247_YOUTUBE_PLAYBACK_FORMATS` overrides the YouTube format candidates: yt-dlp selectors
+  separated by `|`, tried in order. Unset keeps the built-in list.
+- `playout.process.start` logs the audio track, format id and candidate of a split programme;
+  `playout.input.format_fallback` names the candidates that were passed over.
+
 ### Changed
 
 - The soak monitor carries a short outage instead of dying on it. Every night at 23:31 UTC the DUT loses
