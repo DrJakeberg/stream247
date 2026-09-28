@@ -77,6 +77,10 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M65 Measured Layout Specs | Reliability | Now | Complete | Layout asserted by measurement on every workspace | Live, Program and Admin get specs in the style of `studio-layout.spec.ts`: no horizontal overflow, sticky/aside rules where they apply, control budgets | tests, scripts | low | remove specs |
 | M66 Live Bridge Rehearsal | Ops | Next | In progress | The live bridge has run under supervision before 2.0 names it | Live-bridge takeover and release observed on the DT stack with the operator present; findings recorded | DUT, docs | medium | none — observation only |
 | M67 Release 2.0.0 | Release | Now | Done 2026-09-09 | Major because the stack drops a service and the UI drops controls | 2.0.0 tagged after M60–M66 are complete and the soak is clean | release, docs | medium | pinned v2.0.0 |
+| M68 YouTube Playback Formats | Reliability | Now | Planned | YouTube assets play again and keep playing | Playback resolves YouTube through an ordered list of format candidates (H.264+AAC split tracks, any split tracks, combined file) and moves to the next when one fails; an asset that is already on air is never re-resolved and never taken off air by a failed re-resolve; quarantine counters survive state writes; the eleven assets of source_jjwuu0f3 that failed with `--format best` on 2026-09-28 play on the DUT | `apps/worker`, `packages/db`, tests, docs | medium | repin v2.0.0 |
+| M69 Twitch Channel And Bot Accounts | UX + Data | Now | Planned | The broadcast channel and the bot/moderator account are two named things in data, worker and GUI | Settings show the broadcast channel (e.g. jimpanse247: stream key, title, category, schedule) and the bot/moderator account (e.g. 3JakeC: chat, moderation) separately and let the operator set both; an existing v2.0.0 install keeps its bot connection; features that need the channel owner say so visibly | `packages/db`, `apps/web`, `apps/worker`, tests | medium | additive migration, old columns kept |
+| M70 Twitch Account Docs | Docs | Now | Planned | Nobody mistakes the bot for the channel again | `docs/twitch-setup.md`, `docs/getting-started.md`, `docs/operations.md` and `docs/deployment.md` name both roles, what each needs, and check "is the channel live" against the channel | docs | low | — |
+| M71 Release 2.1.0 | Release | Now | Planned | Ship M68-M70 | rc on the DUT, verified, 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
 
@@ -3658,3 +3662,27 @@ showing at least one boundary above 10 s with a single-digit discontinuity count
     innerhalb einer Serie, die Serie selbst kann springen — Uhrzeiten also messen, nicht fortschreiben.
   - Keine weitere Auslieferung ohne Anlass. Offen bleiben M66 / Task #37 (Live-Brücke, gehört dem Nutzer),
     die elf verrotteten Beiträge in `source_jjwuu0f3` und der Netzweg selbst (Zwangstrennung am Router).
+
+## M68 YouTube Playback Formats
+
+Measured on the DUT 2026-09-28 (v2.0.0, yt-dlp 2026.08.19 with deno and node, no PO token provider):
+
+- The playback resolver asks `yt-dlp --format best --get-url`. `best` needs one file that carries picture
+  AND sound; YouTube no longer offers one for these videos ("YouTube is forcing SABR streaming for this
+  client"). Over all eleven assets of `source_jjwuu0f3`: `best` resolves **0 of 11**, `18` 3 of 11,
+  `bv*[vcodec^=avc1]+ba[acodec^=mp4a]` **11 of 11** (all `299+140`), `bv*+ba/b` 11 of 11
+  (8x `299+251`, 3x `399+251`).
+- The split tracks are fast enough to stream: a sequential read of `299` ran at ~957 KB/s against the
+  ~486 KB/s it needs; 10 MB ranges came in 0.3-0.6 s each; the whole 124 MB track downloaded in under 20 s.
+- Why the viewer saw ~3 s: every playout cycle (15 s) re-resolves the asset that is already on air, and a
+  failed re-resolve raises `playout.asset-preparation.failed` and switches to the global fallback. Seven of
+  nine YouTube runs that morning lasted exactly 18 s (15 s cycle + ~1.5 s yt-dlp error + ~1.7 s stop).
+- Why quarantine released them: `persistState` deletes and re-inserts every asset row without the
+  `playback_probe_*` columns, so any app-state write zeroes the counters; only prefetch outcomes count,
+  once per cycle instead of once per probe.
+
+Plan (three judges, same winner): keep the on-air input (never re-resolve the running asset), resolve
+YouTube to a video+audio pair through ordered format candidates with a fallback to the next candidate,
+feed the pair as two ffmpeg inputs, persist the probe columns, count each probe once. Fallback plan if
+the DUT smoke shows 403 or <1x reads: play YouTube from the existing VOD cache instead.
+
