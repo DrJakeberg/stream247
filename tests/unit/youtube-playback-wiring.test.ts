@@ -53,3 +53,15 @@ describe("YouTube playback wiring", () => {
     expect(functionBody("resolveAssetPlaybackInput")).toContain("getPlayFailedCandidateIds(asset.id)");
   });
 });
+
+describe("the running programme keeps its input", () => {
+  it("gates the cycle's resolve block on shouldKeepRunningInput", () => {
+    const gate = workerSource.indexOf("if (selection.asset && !keepRunningInput) {");
+    expect(gate).toBeGreaterThan(-1);
+    const guard = workerSource.lastIndexOf("shouldKeepRunningInput({", gate);
+    expect(guard).toBeGreaterThan(-1);
+    expect(workerSource.slice(guard, gate)).toContain('restartRequested: state.playout.restartRequestedAt !== ""');
+    // The boundary decision (and so every resolve of the cycle) sits behind the gate.
+    expect(workerSource.indexOf("decideBoundaryPlaybackInput(boundaryProbe", gate)).toBeGreaterThan(gate);
+  });
+});

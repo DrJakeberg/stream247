@@ -298,7 +298,8 @@ import {
   decideBoundaryPlaybackInput,
   isBroadcastCoverageDown,
   isImmediateInputOpenFailure,
-  shouldBridgeToFallbackBeforeResolve
+  shouldBridgeToFallbackBeforeResolve,
+  shouldKeepRunningInput
 } from "./playout-boundary.js";
 import {
   PLAY_FAILURE_SKIP_MS,
@@ -6638,7 +6639,19 @@ async function runPlayoutCycle(): Promise<void> {
   }
 
   let resolvedSelection: ResolvedPlayableMedia | null = null;
-  if (selection.asset) {
+  // The programme already on air keeps its input (playout-boundary.ts: shouldKeepRunningInput). A
+  // re-resolve here could only fail it off air, never improve it.
+  const keepRunningInput =
+    selection.asset !== null &&
+    shouldKeepRunningInput({
+      processRunning: isPlayoutProcessRunning(),
+      targetMatches: isMatchingRunningTarget({
+        selection,
+        destinationIds: playoutTargets.map((entry) => entry.destination.id)
+      }),
+      restartRequested: state.playout.restartRequestedAt !== ""
+    });
+  if (selection.asset && !keepRunningInput) {
     const failedAsset = selection.asset;
     try {
       // Reuse the input already resolved by the off-boundary queue prefetch

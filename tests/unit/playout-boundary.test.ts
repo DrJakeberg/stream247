@@ -3,7 +3,8 @@ import {
   decideBoundaryPlaybackInput,
   isBroadcastCoverageDown,
   isImmediateInputOpenFailure,
-  shouldBridgeToFallbackBeforeResolve
+  shouldBridgeToFallbackBeforeResolve,
+  shouldKeepRunningInput
 } from "../../apps/worker/src/playout-boundary";
 
 describe("playout boundary input selection", () => {
@@ -277,5 +278,20 @@ describe("boundary reuse of a video+audio pair", () => {
   it("drops the audio track together with the video track when the probe is not used", () => {
     expect(decideBoundaryPlaybackInput(pairProbe, "asset_other")).toEqual({ source: "resolve", input: "", audioInput: "" });
     expect(decideBoundaryPlaybackInput({ ...pairProbe, status: "failed" }, pairProbe.assetId).audioInput).toBe("");
+  });
+});
+
+// M68 (2.1): the cycle re-resolved the asset on air every 15 s and a failed re-resolve switched it
+// to the global fallback -- seven of nine YouTube runs on 2026-09-28 lasted exactly 18 s.
+describe("keeping the running programme's input", () => {
+  it.each([
+    // processRunning, targetMatches, restartRequested -> keep
+    [true, true, false, true],
+    [false, true, false, false],
+    [true, false, false, false],
+    [true, true, true, false],
+    [false, false, true, false]
+  ])("running=%s matches=%s restart=%s -> keep=%s", (processRunning, targetMatches, restartRequested, keep) => {
+    expect(shouldKeepRunningInput({ processRunning, targetMatches, restartRequested })).toBe(keep);
   });
 });
