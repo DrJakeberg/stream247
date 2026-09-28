@@ -9,15 +9,11 @@ import type { TwitchAccountsTexts, TwitchCapabilityLine } from "@/lib/twitch-acc
 // video and viewers watch) and the bot account (chat and moderation). Every sentence comes from
 // getTwitchAccountsTexts, which is where the wording is tested.
 
-type SaveField = "broadcastChannelLogin" | "botLogin";
-
-function LoginForm(props: {
-  field: SaveField;
-  label: string;
-  info: string;
-  defaultValue: string;
-  placeholder: string;
-  submitLabel: string;
+// One form for both logins: they are one decision (which account is which), and a single save keeps
+// the settings page at one save per panel (tests/e2e/control-density.spec.ts).
+function AccountsForm(props: {
+  saved: { broadcastChannelLogin: string; botLogin: string };
+  botPlaceholder: string;
   disabled: boolean;
 }) {
   const [error, setError] = useState("");
@@ -32,12 +28,15 @@ function LoginForm(props: {
         event.preventDefault();
         setError("");
         setMessage("");
-        const value = String(new FormData(event.currentTarget).get(props.field) || "");
+        const formData = new FormData(event.currentTarget);
         startTransition(async () => {
           const response = await fetch("/api/settings/twitch-accounts", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ [props.field]: value })
+            body: JSON.stringify({
+              broadcastChannelLogin: String(formData.get("broadcastChannelLogin") || ""),
+              botLogin: String(formData.get("botLogin") || "")
+            })
           });
           const payload = (await response.json().catch(() => ({}))) as { message?: string };
           if (!response.ok) {
@@ -49,17 +48,26 @@ function LoginForm(props: {
         });
       }}
     >
-      {/* The field comes first inside its label, the button after the label: a button inside an
-          implicit label before the field would take over the field's accessible name. */}
-      <label>
-        <span className="label label-with-info">
-          {props.label}
-          <InfoTip text={props.info} />
-        </span>
-        <input defaultValue={props.defaultValue} disabled={props.disabled} name={props.field} placeholder={props.placeholder} />
-      </label>
+      {/* Fields inside their labels, the button after the labels: a button inside an implicit label
+          before the field would take over the field's accessible name. */}
+      <div className="form-grid">
+        <label>
+          <span className="label label-with-info">
+            Broadcast channel login
+            <InfoTip text="The Twitch login of the channel viewers watch; its stream key receives the video. Chat joins this room; the watch link, live status, emote-only, title, category, schedule and viewer alerts all target it. Naming it is enough — its own account only has to connect for title, category, schedule and sub, cheer and channel-points alerts. Empty uses TWITCH_BROADCAST_CHANNEL_LOGIN when the server sets it, otherwise the bot account's own channel." />
+          </span>
+          <input defaultValue={props.saved.broadcastChannelLogin} disabled={props.disabled} name="broadcastChannelLogin" placeholder="e.g. yourchannel" />
+        </label>
+        <label>
+          <span className="label label-with-info">
+            Bot account login
+            <InfoTip text="The account Stream247 signs in as for chat and moderation. When set, connecting the bot account accepts only this Twitch login, and the panel warns if another account is connected. The bot account also signs in to Stream247 as owner. Empty uses TWITCH_BOT_LOGIN when the server sets it, otherwise any account is accepted." />
+          </span>
+          <input defaultValue={props.saved.botLogin} disabled={props.disabled} name="botLogin" placeholder={props.botPlaceholder} />
+        </label>
+      </div>
       <button className="button" disabled={props.disabled || isPending} type="submit">
-        {isPending ? "Saving…" : props.submitLabel}
+        {isPending ? "Saving…" : "Save Twitch accounts"}
       </button>
       {error ? <p className="danger">{error}</p> : null}
       {message ? <p className="subtle">{message}</p> : null}
@@ -137,19 +145,15 @@ export function TwitchAccountsPanel(props: {
   return (
     <div className="stack-form" id="twitch-accounts">
       <p className={texts.modeLine.tone === "warn" ? "warning" : "subtle"}>{texts.modeLine.text}</p>
+      <AccountsForm
+        botPlaceholder={props.botLogin ? `Connected now: ${props.botLogin}` : "e.g. yourbot"}
+        disabled={!props.canEdit}
+        saved={props.saved}
+      />
       <div className="grid two">
         <section className="item stack-form" aria-label="Broadcast channel">
           <strong>{texts.channel.title}</strong>
           <div className="subtle">{texts.channel.subtitle}</div>
-          <LoginForm
-            defaultValue={props.saved.broadcastChannelLogin}
-            disabled={!props.canEdit}
-            field="broadcastChannelLogin"
-            info="The Twitch login of the channel viewers watch. Chat joins this room; the watch link, live status, emote-only, title, category, schedule and viewer alerts all target it. Naming it is enough — its own account only has to connect for title, category, schedule and sub, cheer and channel-points alerts. Empty uses TWITCH_BROADCAST_CHANNEL_LOGIN when the server sets it, otherwise the bot account's own channel."
-            label="Broadcast channel login"
-            placeholder="e.g. yourchannel"
-            submitLabel="Save broadcast channel"
-          />
           <div className="subtle">{texts.channel.sourceText}</div>
           <div>
             <strong>{texts.channel.liveText}</strong>
@@ -161,7 +165,7 @@ export function TwitchAccountsPanel(props: {
               <div>{owner.statusText}</div>
               {owner.lastRejection ? <div className="warning">{owner.lastRejection}</div> : null}
               {owner.action === "connect" && props.ownerConnectHref ? (
-                <a className="button" href={props.ownerConnectHref}>
+                <a className="button button-secondary" href={props.ownerConnectHref}>
                   Connect as {props.channelLogin}
                 </a>
               ) : null}
@@ -175,21 +179,12 @@ export function TwitchAccountsPanel(props: {
         <section className="item stack-form" aria-label="Bot account">
           <strong>{texts.bot.title}</strong>
           <div className="subtle">{texts.bot.subtitle}</div>
-          <LoginForm
-            defaultValue={props.saved.botLogin}
-            disabled={!props.canEdit}
-            field="botLogin"
-            info="When set, connecting the bot account accepts only this Twitch login, and the panel warns if another account is connected. The bot account also signs in to Stream247 as owner. Empty uses TWITCH_BOT_LOGIN when the server sets it, otherwise any account is accepted."
-            label="Bot account login"
-            placeholder={props.botLogin ? `Connected now: ${props.botLogin}` : "e.g. yourbot"}
-            submitLabel="Save bot account"
-          />
           <div className="subtle">{texts.bot.sourceText}</div>
           <div>{texts.bot.statusText}</div>
           {texts.bot.warning ? <div className="warning">{texts.bot.warning}</div> : null}
           {texts.bot.lastRejection ? <div className="warning">{texts.bot.lastRejection}</div> : null}
           {props.botConnectHref ? (
-            <a className="button" href={props.botConnectHref}>
+            <a className="button button-secondary" href={props.botConnectHref}>
               {props.botConnected ? "Reconnect bot account" : "Connect bot account"}
             </a>
           ) : (

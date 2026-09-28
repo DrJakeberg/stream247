@@ -51,7 +51,7 @@ i
 RATE LIMIT PER MINUTE
 i
 ALERT TYPES
-Follow, subscription, cheer, and channel-point alerts all render through the same internal overlay path.
+Follow, subscription, cheer and channel-point events of the broadcast channel are recorded and listed; they are not drawn on air yet.
 Enable follow and subscription alerts
 i
 Enable bits / cheer alerts
@@ -59,7 +59,7 @@ i
 Enable channel point redemption alerts
 i
 These switches are still gated by the chat and alert feature switches in the admin settings, which fall back to the deployment environment when left on their default.
-Bits and channel point alerts also require one Twitch reconnect after M32 so the broadcaster token includes the new scopes.
+Sub, cheer and channel-point alerts need the broadcast channel's own grant: with one account the bot's, in a split setup the channel owner connection (Admin → Settings → Twitch accounts). An owner connected before 2.1 must reconnect once.
 CHATTER-PARTICIPATION GAME
 The game shares the Twitch IRC runtime with the chat rail. Keep the chat feature switch on and chat enabled when you want the mode selector to stay live.
 Enable chatter-participation game

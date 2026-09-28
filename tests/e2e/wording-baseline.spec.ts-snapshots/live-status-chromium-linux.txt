@@ -37,7 +37,9 @@ TWITCH UPTIME
 <runtime>
 VIEWERS
 <runtime>
-CHANNEL
+BROADCAST CHANNEL
+<runtime>
+BOT ACCOUNT
 <runtime>
 UPDATES
 <runtime>
@@ -52,7 +54,7 @@ Ready
 Owner: owner@example.com
 TWITCH
 Connected
-Broadcaster stream247dev
+Bot account stream247dev
 Last metadata sync: no title · no category
 MODERATION PRESENCE
 Fallback
@@ -76,7 +78,7 @@ TEAM ACCESS
 LAUNCH
 Readiness
 This checklist is the fastest way to understand whether the channel is configured well enough for reliable 24/7 operation.
-9 of 11 readiness steps are ready.
+9 of 12 readiness steps are ready.
 Owner account
 Ready
 Owner owner@example.com is configured.
@@ -90,12 +92,16 @@ APP_SECRET and DATABASE_URL are configured.
 Open setup
 Twitch app credentials
 Needs action
-Save Twitch client credentials in setup or settings to enable broadcaster connect and team SSO.
+Save Twitch client credentials in setup or settings to enable the account connections and team sign-in.
 Open Admin · Settings
-Twitch broadcaster connection
+Twitch bot account
 Ready
-Connected as stream247dev.
-Open Live · Status
+Connected as stream247dev — the account Stream247 chats and moderates as.
+Open Admin
+Twitch broadcast channel
+Optional
+Not set — Stream247 assumes the bot account's own channel (stream247dev). Set it if viewers watch another channel.
+Open Admin
 Live destination
 Ready
 1 active output(s) are ready. Lead destination: Primary Twitch Output.
