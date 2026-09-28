@@ -164,6 +164,7 @@ import {
   markChatViewerRequestsPlayed,
   updateAssetPlaybackProbeRecords,
   type AssetPlaybackProbeUpdateRecord,
+  resolveTwitchAccountsForState
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
@@ -8184,7 +8185,7 @@ async function reconcileTwitch(): Promise<void> {
         scope: "twitch",
         severity: "info",
         title: "Twitch metadata sync is waiting for the broadcast channel connection",
-        message: `${TWITCH_METADATA_WAITING_MESSAGE} Title and category for ${metadataSyncGate.broadcastChannelLogin} stay untouched until the broadcaster account is connected.`,
+        message: `${TWITCH_METADATA_WAITING_MESSAGE} Title, category and schedule of the broadcast channel ${metadataSyncGate.broadcastChannelLogin} stay untouched until ${metadataSyncGate.broadcastChannelLogin} itself connects as channel owner (Admin → Settings → Twitch accounts). Chat and moderation keep running through the bot account ${state.twitch.broadcasterLogin}.`,
         fingerprint: "twitch.metadata.waiting-for-broadcaster"
       });
     } else {
@@ -8322,10 +8323,15 @@ async function reconcileTwitch(): Promise<void> {
       }
       lastChatSettingsWrite = { emoteOnly: desiredEmoteOnly, atMs: Date.now() };
       // The one line that says what Stream247 did to the channel's chat mode, and why.
+      // Both accounts by name and id: on 2026-09-28 a bare "broadcasterId" here was read as the bot's
+      // id, and the live check went to the bot's channel instead of the broadcast channel.
       logRuntimeEvent("twitch.chat_settings.written", {
         emoteOnly: desiredEmoteOnly,
         reason: chatSettingsDecision.reason,
-        broadcasterId: chatSettingsBroadcasterId
+        channelLogin: broadcastChannelLogin,
+        channelId: chatSettingsBroadcasterId,
+        botLogin: state.twitch.broadcasterLogin,
+        botId: state.twitch.broadcasterId
       });
     }
 
@@ -8554,11 +8560,33 @@ async function reconcileTwitchEventSub(): Promise<void> {
   const state = await readAppState();
   const clientId = getTwitchClientId(state);
   const clientSecret = getTwitchClientSecret(state);
+  // Alerts are about the BROADCAST CHANNEL; follow is read with the bot as moderator. Until 2.1 all of
+  // it was subscribed on the bot's own id (twitch-eventsub.ts: EventSubTarget).
+  const accounts = resolveTwitchAccountsForState(state, process.env);
+  let eventSubChannelId = accounts.channel.userId;
+  if (accounts.mode === "split" && state.twitch.accessToken) {
+    try {
+      eventSubChannelId = await twitchUserIdResolver.resolve({
+        login: accounts.channel.login,
+        accessToken: state.twitch.accessToken,
+        clientId
+      });
+    } catch {
+      eventSubChannelId = "";
+    }
+  }
+  const eventSubTarget = {
+    channelId: eventSubChannelId,
+    botId: accounts.bot.id,
+    channelOwnerCovers: accounts.mode !== "split" || accounts.owner.status === "connected"
+  };
   const syncKey = [
     state.engagement.alertsEnabled ? "alerts-on" : "alerts-off",
     resolveAlertsRuntimeEnabled(state.managedConfig, process.env) ? "runtime-on" : "runtime-off",
     state.twitch.status,
-    state.twitch.broadcasterId,
+    eventSubTarget.channelId,
+    eventSubTarget.botId,
+    eventSubTarget.channelOwnerCovers ? "owner-covers" : "owner-missing",
     clientId,
     resolveAppBaseUrl(state.managedConfig),
     resolveTwitchEventSubSecret(state.managedConfig, process.env) ? "secret-set" : "secret-missing"
@@ -8576,7 +8604,8 @@ async function reconcileTwitchEventSub(): Promise<void> {
       state,
       env: process.env,
       clientId,
-      clientSecret
+      clientSecret,
+      target: eventSubTarget
     });
 
     if (result.status === "skipped") {

@@ -125,6 +125,9 @@ function signedEventSubRequest(body: string, secret = "eventsub-secret", headers
   });
 }
 
+// The pre-2.1 shape: one account is both channel and bot, and it covers every alert type itself.
+const SINGLE_ACCOUNT_TARGET = { channelId: "broadcaster-1", botId: "broadcaster-1", channelOwnerCovers: true };
+
 describe("engagement layer helpers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -392,6 +395,7 @@ describe("engagement layer helpers", () => {
       },
       clientId: "client-id",
       clientSecret: "client-secret",
+      target: SINGLE_ACCOUNT_TARGET,
       fetchImpl: fetchMock as unknown as typeof fetch
     });
 
@@ -547,6 +551,7 @@ describe("engagement layer helpers", () => {
       },
       clientId: "client-id",
       clientSecret: "client-secret",
+      target: SINGLE_ACCOUNT_TARGET,
       fetchImpl: fetchMock as unknown as typeof fetch
     });
 
@@ -652,6 +657,7 @@ describe("engagement layer helpers", () => {
       },
       clientId: "client-id",
       clientSecret: "client-secret",
+      target: SINGLE_ACCOUNT_TARGET,
       fetchImpl: fetchMock as unknown as typeof fetch
     });
 
@@ -715,6 +721,7 @@ describe("engagement layer helpers", () => {
       },
       clientId: "client-id",
       clientSecret: "client-secret",
+      target: SINGLE_ACCOUNT_TARGET,
       fetchImpl: fetchMock as unknown as typeof fetch
     });
 
@@ -736,11 +743,114 @@ describe("engagement layer helpers", () => {
       },
       clientId: "client-id",
       clientSecret: "client-secret",
+      target: { channelId: "", botId: "", channelOwnerCovers: true },
       fetchImpl: fetchMock as unknown as typeof fetch
     });
 
     expect(result).toMatchObject({ status: "skipped", reason: "twitch-not-connected" });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// M69 (2.1): in a split setup the alerts are about the BROADCAST CHANNEL, read with the bot as
+// moderator. Until 2.1 every subscription used the connected (bot) account's own id.
+describe("EventSub in a split setup: channel jimpanse247, bot 3JakeC", () => {
+  const splitTarget = { channelId: "id-jimpanse247", botId: "id-3jakec", channelOwnerCovers: false };
+  const callback = "https://stream247.example/api/overlay/events";
+
+  function listResponse(data: unknown[]) {
+    return new Response(JSON.stringify({ data }), { status: 200, headers: { "content-type": "application/json" } });
+  }
+
+  function stubEventSub(existing: unknown[]) {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const target = String(url);
+      if (target.startsWith("https://id.twitch.tv/oauth2/token")) {
+        return new Response(JSON.stringify({ access_token: "app-token" }), { status: 200 });
+      }
+      if (target.startsWith("https://api.twitch.tv/helix/eventsub/subscriptions") && (!init?.method || init.method === "GET")) {
+        return listResponse(existing);
+      }
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 202 });
+    });
+    return fetchMock;
+  }
+
+  async function sync(fetchMock: ReturnType<typeof stubEventSub>, target = splitTarget) {
+    return syncTwitchEventSubSubscriptions({
+      state: baseEventSubState(),
+      env: { APP_URL: "https://stream247.example", STREAM_ALERTS_ENABLED: "1", TWITCH_EVENTSUB_SECRET: "eventsub-secret" },
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      target,
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+  }
+
+  function created(fetchMock: ReturnType<typeof stubEventSub>) {
+    return fetchMock.mock.calls
+      .filter(([url, init]) => String(url) === "https://api.twitch.tv/helix/eventsub/subscriptions" && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)) as { type: string; condition: Record<string, string> });
+  }
+
+  it("subscribes follow on the channel with the bot as moderator, and waits for the owner for the rest", async () => {
+    const fetchMock = stubEventSub([]);
+    const result = await sync(fetchMock);
+
+    expect(created(fetchMock)).toEqual([
+      expect.objectContaining({
+        type: "channel.follow",
+        condition: { broadcaster_user_id: "id-jimpanse247", moderator_user_id: "id-3jakec" }
+      })
+    ]);
+    expect(result.waitingForChannelOwner).toEqual([
+      "channel.subscribe",
+      "channel.cheer",
+      "channel.channel_points_custom_reward_redemption.add"
+    ]);
+  });
+
+  it("subscribes sub, cheer and channel points on the channel once the owner covers them", async () => {
+    const fetchMock = stubEventSub([]);
+    await sync(fetchMock, { ...splitTarget, channelOwnerCovers: true });
+    const types = created(fetchMock).map((body) => body.type);
+    expect(types).toContain("channel.subscribe");
+    expect(created(fetchMock).every((body) => body.condition.broadcaster_user_id === "id-jimpanse247")).toBe(true);
+  });
+
+  // The 2.0 subscriptions on the bot's own channel: ours (our callback), but about the wrong channel.
+  it("deletes our old subscriptions on the bot's channel and leaves other callbacks alone", async () => {
+    const fetchMock = stubEventSub([
+      {
+        id: "old-follow",
+        type: "channel.follow",
+        version: "2",
+        status: "enabled",
+        condition: { broadcaster_user_id: "id-3jakec", moderator_user_id: "id-3jakec" },
+        transport: { method: "webhook", callback }
+      },
+      {
+        id: "someone-elses",
+        type: "channel.follow",
+        version: "2",
+        status: "enabled",
+        condition: { broadcaster_user_id: "id-3jakec", moderator_user_id: "id-3jakec" },
+        transport: { method: "webhook", callback: "https://elsewhere.example/hook" }
+      }
+    ]);
+    const result = await sync(fetchMock);
+
+    expect(result.deleted).toEqual(["old-follow"]);
+    expect(created(fetchMock).map((body) => body.condition.broadcaster_user_id)).toEqual(["id-jimpanse247"]);
+  });
+
+  it("skips registration until the broadcast channel's id is resolved", async () => {
+    const fetchMock = stubEventSub([]);
+    const result = await sync(fetchMock, { ...splitTarget, channelId: "" });
+    expect(result).toMatchObject({ status: "skipped", reason: "broadcast-channel-unresolved" });
   });
 });
 

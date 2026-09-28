@@ -6,6 +6,7 @@ import path from "node:path";
 import { Pool, type PoolClient } from "pg";
 import { resolveAppSecret } from "./app-secret.js";
 import { AUDIT_EVENT_PROTECTED_PATTERN, selectRetainedAuditEvents } from "@stream247/core";
+import { resolveTwitchAccounts, type TwitchAccountsSummary } from "@stream247/core";
 
 export {
   DEV_FALLBACK_APP_SECRET,
@@ -100,6 +101,12 @@ export type TeamAccessGrant = {
   createdBy: string;
 };
 
+// The BOT ACCOUNT connection (2.1 naming; table twitch_connection). The account Stream247 connects as
+// for chat and moderation -- 3JakeC on the reference install. `broadcasterId`/`broadcasterLogin` are
+// legacy names from the single-account era: they hold the BOT's id and login, not the broadcast
+// channel's. The live-status and sync-bookkeeping fields below describe the BROADCAST CHANNEL (the
+// worker checks and writes that channel), they only live on this row. Read roles through
+// resolveTwitchAccountsForState, never from these names.
 export type TwitchConnection = {
   status: "not-connected" | "connected" | "error";
   broadcasterId: string;
@@ -120,8 +127,10 @@ export type TwitchConnection = {
   error: string;
 };
 
-// The second OAuth slot of the broadcast-channel split: the broadcaster account itself, connected
-// only for channel metadata (title, category, schedule). It stays "not-connected" for setups
+// The CHANNEL OWNER connection (2.1 naming; table twitch_broadcaster_connection): the broadcast
+// channel's own account -- jimpanse247 on the reference install -- connected only for what Twitch
+// accepts from the channel itself (title, category, schedule, and since 2.1 the sub/cheer/
+// channel-points alert grants). It stays "not-connected" for setups
 // where the identity connection already owns the broadcast channel. Deliberately minimal — no
 // sync bookkeeping fields, those stay on the identity connection which drives the sync loop.
 export type TwitchBroadcasterConnection = {
@@ -8765,3 +8774,29 @@ export async function markChatViewerRequestsPlayed(queuedAssetIds: string[]): Pr
     [queuedAssetIds]
   );
 }
+
+/**
+ * The two Twitch accounts of this install, read from state the same way everywhere (2.1, M69): which
+ * login is the broadcast channel, which is the bot, whether the channel owner is connected, and which
+ * connection each feature runs through. `channelUserId` is the broadcast channel's resolved id when
+ * the caller has it (the worker resolves it by login).
+ */
+export function resolveTwitchAccountsForState(
+  state: Pick<AppState, "managedConfig" | "twitch" | "twitchBroadcaster">,
+  env: Record<string, string | undefined>,
+  channelUserId = ""
+): TwitchAccountsSummary {
+  return resolveTwitchAccounts({
+    channelSetting: { managed: state.managedConfig.twitchBroadcastChannelLogin ?? "", env: env.TWITCH_BROADCAST_CHANNEL_LOGIN ?? "" },
+    expectedBotSetting: { managed: state.managedConfig.twitchBotLogin ?? "", env: env.TWITCH_BOT_LOGIN ?? "" },
+    bot: { status: state.twitch.status, login: state.twitch.broadcasterLogin, id: state.twitch.broadcasterId },
+    owner: {
+      status: state.twitchBroadcaster.status,
+      login: state.twitchBroadcaster.broadcasterLogin,
+      hasToken: state.twitchBroadcaster.accessToken !== "",
+      error: state.twitchBroadcaster.error
+    },
+    channelUserId
+  });
+}
+
