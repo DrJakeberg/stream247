@@ -90,7 +90,9 @@
 
 ### Twitch sync unhealthy
 
-- confirm broadcaster connection
+- confirm the bot account is connected and the broadcast channel is set (Admin → Settings → Twitch
+  accounts); `twitch.metadata.waiting-for-broadcaster` is expected in a split setup until the channel
+  owner connects — chat and moderation keep running through the bot meanwhile
 - check managed credentials or `.env` fallback
 - review Twitch incidents in `/live?tab=status`
 
@@ -141,6 +143,20 @@ pair. To see what happened to one item:
   replaces the candidate list without a release.
 - An item that keeps failing leaves automatic selection after three failed prefetch probes and raises
   `playout.source-unplayable.<sourceId>`; its asset page can clear the failures once it is fixed.
+
+### Is the broadcast channel live?
+
+Check the **broadcast channel**, never the bot account's channel — the bot's channel is empty by design,
+and its "offline" says nothing about the stream. Admin → Settings → Twitch accounts shows the broadcast
+channel's live state; from the DUT:
+
+```bash
+docker exec stream247-playout-1 yt-dlp --simulate --print "%(is_live)s" https://www.twitch.tv/<broadcast channel>
+```
+
+Before touching the uplink because "the channel is offline", repeat that check against the broadcast
+channel. The worker's `twitch.chat_settings.written` line names both accounts (`channelLogin`/`channelId`,
+`botLogin`/`botId`); a refused bot connect is in the audit trail as `twitch.bot.rejected`.
 
 ### Media disk filling up
 

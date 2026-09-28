@@ -1,6 +1,7 @@
 import {
   TWITCH_BROADCASTER_SLOT_SCOPES,
   TWITCH_IDENTITY_SCOPES,
+  evaluateBotConnectLogin,
   evaluateBroadcasterConnectLogin,
   twitchFailureDowngradesStatus,
   type TwitchConnectionFailureKind
@@ -102,6 +103,12 @@ export async function getTwitchAuthorizeUrl(kind: OAuthFlowKind = "broadcaster-c
     scope,
     state: await issueOAuthState(kind)
   });
+  // Both account connections make Twitch show WHICH account is signing in (with "Not you?") instead
+  // of silently authorising whoever the browser session belongs to. The operator is usually signed
+  // in as one of the two accounts while connecting the other; that is how the wrong one got stored.
+  if (kind !== "team-login") {
+    params.set("force_verify", "true");
+  }
 
   return `https://id.twitch.tv/oauth2/authorize?${params.toString()}`;
 }
@@ -184,6 +191,22 @@ export async function exchangeTwitchCode(code: string) {
     errorLabel: "Twitch connect"
   });
 
+  // The bot account slot (the legacy column names say "broadcaster"). Refuse the wrong account before
+  // anything is stored: another login than the configured bot, or the broadcast channel itself while
+  // a split is active (packages/core/src/twitch-accounts.ts).
+  const twitchConfig = getManagedTwitchConfig(state);
+  const verdict = evaluateBotConnectLogin({
+    expectedBotLogin: twitchConfig.botLogin,
+    broadcastChannelLogin: twitchConfig.broadcastChannelLogin,
+    currentBotLogin: state.twitch.status === "connected" ? state.twitch.broadcasterLogin : "",
+    authenticatedLogin: twitchUser.login
+  });
+  if (!verdict.ok) {
+    await revokeTwitchToken(clientId, tokenData.access_token);
+    await appendAuditEvent("twitch.bot.rejected", verdict.message);
+    throw new TwitchAccountRejectedError(verdict.message);
+  }
+
   const broadcasterId = twitchUser.id;
   const broadcasterLogin = twitchUser.login;
 
@@ -207,7 +230,23 @@ export async function exchangeTwitchCode(code: string) {
     error: ""
   });
 
-  await appendAuditEvent("twitch.connected", `Connected Twitch broadcaster ${broadcasterId}.`);
+  await appendAuditEvent("twitch.connected", `Connected the Twitch bot account ${broadcasterLogin} (${broadcasterId}).`);
+}
+
+/** A connect attempt refused because Twitch authorised the wrong account; already audited. */
+export class TwitchAccountRejectedError extends Error {}
+
+// Best effort: a token for an account we refused should not stay granted to this app. A failure
+// here changes nothing that matters -- the token was never stored.
+async function revokeTwitchToken(clientId: string, token: string): Promise<void> {
+  try {
+    await fetch("https://id.twitch.tv/oauth2/revoke", {
+      method: "POST",
+      body: new URLSearchParams({ client_id: clientId, token })
+    });
+  } catch {
+    // ignored on purpose
+  }
 }
 
 /**

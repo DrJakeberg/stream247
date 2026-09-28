@@ -53,6 +53,7 @@ describe("managed settings API", () => {
         twitchClientId: "",
         twitchClientSecret: "stored-secret",
         twitchDefaultCategoryId: "",
+        twitchBotLogin: "",
         twitchBroadcastChannelLogin: "",
         twitchEventsubSecret: "stored-eventsub-secret",
         discordWebhookUrl: "",
@@ -100,6 +101,20 @@ describe("managed settings API", () => {
     expect(response.status).toBe(200);
     expect(mockUpdateManagedConfigRecord).toHaveBeenCalledWith(
       expect.objectContaining({ twitchEventsubSecret: "next-eventsub-secret" })
+    );
+  });
+
+  // 2.1: the channel moved to the Twitch accounts panel. A credentials save that does not send the
+  // field must keep it -- blanking it would silently collapse a split setup to the bot's own channel.
+  it("keeps the stored broadcast channel when the request does not carry the field", async () => {
+    mockReadAppState.mockResolvedValue({
+      managedConfig: { ...(await mockReadAppState()).managedConfig, twitchBroadcastChannelLogin: "jimpanse247" }
+    });
+    const response = await PUT(putRequest({ twitchClientId: "client" }));
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateManagedConfigRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ twitchBroadcastChannelLogin: "jimpanse247", twitchClientId: "client" })
     );
   });
 

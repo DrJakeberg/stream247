@@ -46,7 +46,11 @@ export async function PUT(request: NextRequest) {
     twitchClientId: trim(body.twitchClientId),
     twitchClientSecret: trim(body.twitchClientSecret) || state.managedConfig.twitchClientSecret,
     twitchDefaultCategoryId: trim(body.twitchDefaultCategoryId),
-    twitchBroadcastChannelLogin: broadcastChannelLogin,
+    // Only when the request carries the field. Since 2.1 the broadcast channel is edited in the Twitch
+    // accounts panel, and a credentials save that does not send it must not blank the channel --
+    // that would silently turn a split setup into "the bot's own channel".
+    twitchBroadcastChannelLogin:
+      "twitchBroadcastChannelLogin" in body ? broadcastChannelLogin : state.managedConfig.twitchBroadcastChannelLogin,
     // A secret like the client secret and the SMTP password: an empty field keeps the stored
     // value. The webhook signature check and the worker's subscription sync both resolve it
     // managed-first with TWITCH_EVENTSUB_SECRET as fallback.

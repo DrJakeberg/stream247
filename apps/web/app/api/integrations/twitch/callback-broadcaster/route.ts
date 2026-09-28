@@ -5,6 +5,9 @@ import { readAppState } from "@/lib/server/state";
 import { exchangeTwitchBroadcasterCode, getAbsoluteAppUrl, recordTwitchBroadcasterError } from "@/lib/server/twitch";
 import { requireApiRoles } from "@/lib/server/auth";
 
+// Back to the Twitch accounts panel, where the result of this connect is shown (2.1).
+const TWITCH_ACCOUNTS_HREF = `${buildWorkspaceHref("admin", "settings")}#twitch-accounts`;
+
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const error = request.nextUrl.searchParams.get("error");
@@ -26,17 +29,17 @@ export async function GET(request: NextRequest) {
   const stateVerdict = await consumeOAuthState("broadcast-channel-connect", presentedState);
   if (!stateVerdict.ok) {
     await recordTwitchBroadcasterError(describeOAuthStateFailure(stateVerdict.reason));
-    return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));
+    return NextResponse.redirect(getAbsoluteAppUrl(appState, TWITCH_ACCOUNTS_HREF));
   }
 
   if (error) {
     await recordTwitchBroadcasterError(`Twitch broadcaster authorization failed: ${error}.`);
-    return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));
+    return NextResponse.redirect(getAbsoluteAppUrl(appState, TWITCH_ACCOUNTS_HREF));
   }
 
   if (!code) {
     await recordTwitchBroadcasterError("Twitch broadcaster callback did not include an authorization code.");
-    return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));
+    return NextResponse.redirect(getAbsoluteAppUrl(appState, TWITCH_ACCOUNTS_HREF));
   }
 
   try {
@@ -48,5 +51,5 @@ export async function GET(request: NextRequest) {
     await recordTwitchBroadcasterError(message);
   }
 
-  return NextResponse.redirect(getAbsoluteAppUrl(appState, buildWorkspaceHref("live", "status")));
+  return NextResponse.redirect(getAbsoluteAppUrl(appState, TWITCH_ACCOUNTS_HREF));
 }

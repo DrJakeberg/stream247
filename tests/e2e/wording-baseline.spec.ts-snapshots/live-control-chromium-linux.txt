@@ -37,7 +37,9 @@ TWITCH UPTIME
 <runtime>
 VIEWERS
 <runtime>
-CHANNEL
+BROADCAST CHANNEL
+<runtime>
+BOT ACCOUNT
 <runtime>
 UPDATES
 <runtime>

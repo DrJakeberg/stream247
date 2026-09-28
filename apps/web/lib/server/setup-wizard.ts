@@ -67,10 +67,10 @@ export function deriveSetupWizardSteps(
     },
     {
       id: "twitch-connect",
-      title: "Connect Twitch",
+      title: "Twitch accounts",
       summary: hasTwitchConnection
-        ? `Connected as ${state.twitch.broadcasterLogin || "the Twitch account"}.`
-        : "Sign the channel's Twitch account into this workspace.",
+        ? `Bot account ${state.twitch.broadcasterLogin || "connected"}; broadcast channel set under Twitch accounts.`
+        : "Name the broadcast channel and connect the bot account Stream247 chats and moderates as.",
       complete: hasTwitchConnection
     },
     {

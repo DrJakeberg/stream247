@@ -49,7 +49,9 @@ const SURFACES: Surface[] = [
   // 27: two of the three "Open setup" links removed as dead ends came back with real targets — the
   // M52 wizard gave APP_URL and the app secret actual steps to open. A link that goes somewhere is
   // not clutter, so the budget moves with it.
-  { name: "live-status", path: "/live?tab=status", maxControls: 27, primaryActions: 1 },
+  // 28: 2.1 (M69) splits the go-live checklist's Twitch entry into one per account — the bot account and
+  // the broadcast channel are two things to check, and each entry links to where it is set.
+  { name: "live-status", path: "/live?tab=status", maxControls: 28, primaryActions: 1 },
   { name: "program-schedule", path: "/program?tab=schedule&day=1", maxControls: 14, primaryActions: 0 },
   // The overlay editor, where editing is the point — so this one is folded rather than trimmed. Was
   // 79; twenty-four of those were three buttons on each of eight layers, held open permanently, and
@@ -96,7 +98,12 @@ const SURFACES: Surface[] = [
   // the same way: the replay cache, the watchdog thresholds and the feed tuning are three more
   // folded groups in the operations panel — twenty-six controls that would have tripled this
   // page, all behind summaries, so the budget does not move.
-  { name: "admin-settings", path: "/admin?tab=settings", maxControls: 31, primaryActions: 1 },
+  // 33 and two primaries: 2.1 (M69) adds the Twitch accounts panel — the two logins that say which
+  // account is the broadcast channel and which the bot, and one save. The channel login moved there
+  // from Managed credentials, so the page gains two fields and a button, not three fields. It is a
+  // separate panel with its own save (the rule above: two tasks, not two answers to one); its
+  // connect links are secondary so they do not compete with either save.
+  { name: "admin-settings", path: "/admin?tab=settings", maxControls: 33, primaryActions: 2 },
   { name: "login", path: "/login", maxControls: 3, primaryActions: 1, authenticated: false },
   { name: "live-moderation", path: "/live?tab=moderation", maxControls: 20, primaryActions: 1 },
   { name: "program-pools", path: "/program?tab=pools", maxControls: 17, primaryActions: 1 },

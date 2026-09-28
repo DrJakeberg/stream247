@@ -40,9 +40,12 @@ const PAUSED_WHILE_DISCONNECTED =
  */
 export function describeTwitchConnection(twitch: TwitchConnectionSummaryInput): TwitchConnectionSummary {
   if (twitch.status === "connected") {
+    // The connection this card describes is the BOT account (table twitch_connection; the field
+    // names are legacy). 2.0 labelled it "Broadcaster", which sent an operator to the bot's channel
+    // to check whether the broadcast channel was live (2026-09-28).
     return {
       label: "Connected",
-      detail: `Broadcaster ${twitch.broadcasterLogin || twitch.broadcasterId}`,
+      detail: `Bot account ${twitch.broadcasterLogin || twitch.broadcasterId}`,
       consequence: ""
     };
   }

@@ -27,15 +27,15 @@ export function getBroadcastChannelConnectionNotice(
 
   if (summary.mode === "broadcaster") {
     return {
-      title: "Broadcast channel connected",
-      detail: `Title, category and schedule sync to ${summary.broadcastChannelLogin} through the broadcaster account's own connection.`
+      title: "Channel owner connected",
+      detail: `Title, category and schedule sync to the broadcast channel ${summary.broadcastChannelLogin} through its own connection.`
     };
   }
 
   return {
-    title: "Connect broadcast channel",
+    title: "Channel owner connection",
     detail:
-      `${TWITCH_METADATA_WAITING_MESSAGE} Title, category and schedule for ${summary.broadcastChannelLogin} stay untouched until the broadcaster account itself is connected with the channel:manage:broadcast and channel:manage:schedule scopes. Chat, moderation and emote-only already work through the connected account.`
+      `${TWITCH_METADATA_WAITING_MESSAGE} Title, category and schedule of the broadcast channel ${summary.broadcastChannelLogin} stay untouched until ${summary.broadcastChannelLogin} itself connects (scopes channel:manage:broadcast and channel:manage:schedule, plus the read scopes for sub, cheer and channel-points alerts). Chat, moderation and emote-only already work through the bot account.`
   };
 }
 
@@ -63,9 +63,11 @@ export function TwitchConnectPanel({
   return (
     <>
       <div className="item">
-        <strong>Connect Twitch</strong>
+        <strong>Twitch accounts</strong>
         <div className="subtle">
-          Launch the Twitch OAuth flow from the browser-based setup. For actual output the channel also needs a
+          Stream247 separates the broadcast channel (where the video goes and viewers watch) from the bot
+          account it signs in as for chat and moderation; both are set under Admin → Settings → Twitch
+          accounts. The button connects the bot account. For actual output the broadcast channel also needs its
           stream key: on the primary destination under Live → Status → Output destinations, or as
           <code> TWITCH_STREAM_KEY </code>
           (or the generic
@@ -74,7 +76,7 @@ export function TwitchConnectPanel({
           <code> STREAM_OUTPUT_KEY </code>) in the environment.
         </div>
         <a className="button" href={authorizeUrl}>
-          Connect Twitch
+          Connect bot account
         </a>
       </div>
       {broadcastNotice ? (
@@ -86,7 +88,7 @@ export function TwitchConnectPanel({
             // cookie on click. The link exists only in the waiting state, which is exactly "a
             // broadcast channel is configured and differs from the identity".
             <a className="button" href="/api/integrations/twitch/connect-broadcaster">
-              Connect broadcast channel
+              Connect channel owner ({broadcastChannel.broadcastChannelLogin})
             </a>
           ) : null}
           {broadcastChannel?.mode === "broadcaster" ? <BroadcasterDisconnectButton /> : null}
@@ -118,7 +120,7 @@ function BroadcasterDisconnectButton() {
 
             if (!response.ok) {
               const payload = (await response.json().catch(() => ({}))) as { message?: string };
-              setError(payload.message ?? "Could not disconnect the broadcast channel.");
+              setError(payload.message ?? "Could not disconnect the channel owner.");
               return;
             }
 
@@ -127,7 +129,7 @@ function BroadcasterDisconnectButton() {
         }}
         type="button"
       >
-        Disconnect broadcast channel
+        Disconnect channel owner
       </button>
       {error ? <p className="danger">{error}</p> : null}
     </div>

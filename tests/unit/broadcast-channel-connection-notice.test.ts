@@ -15,7 +15,7 @@ describe("the broadcast-channel entry in the connection panel", () => {
       broadcastChannelLogin: "jimpanse247"
     });
 
-    expect(notice?.title).toBe("Connect broadcast channel");
+    expect(notice?.title).toBe("Channel owner connection");
     // The entry must keep carrying the whole story: which account has to do the connecting and
     // with which scopes. The connect button only helps someone signed in to Twitch as that
     // account — everyone else needs to know why their click will be rejected.
@@ -31,7 +31,7 @@ describe("the broadcast-channel entry in the connection panel", () => {
       broadcastChannelLogin: "jimpanse247"
     });
 
-    expect(notice?.title).toBe("Broadcast channel connected");
+    expect(notice?.title).toBe("Channel owner connected");
     expect(notice?.detail).toContain("jimpanse247");
   });
 

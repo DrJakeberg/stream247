@@ -33,6 +33,36 @@ Team
 Settings
 Manage workspace security, credentials, releases, and blueprints.
 Settings change workspace-wide behavior: release posture, managed credentials, security defaults, and portable blueprints. Live channel actions stay in Live.
+TWITCH
+Twitch accounts
+Broadcast channel not set — Stream247 assumes the bot account's own channel (stream247dev). Set it below if viewers watch another channel.
+BROADCAST CHANNEL LOGIN
+i
+BOT ACCOUNT LOGIN
+i
+Save Twitch accounts
+Broadcast channel
+Where the video goes and where viewers watch. The stream key must belong to this channel.
+Not set — assumed to be the bot account's own channel.
+Live · 128 viewers
+Check whether the stream is live on twitch.tv/stream247dev — never on the bot account's channel.
+Bot account
+The account Stream247 signs in as for chat and moderation. It must be a moderator in stream247dev's chat.
+No bot account login set — any account may connect as bot.
+Connected as stream247dev.
+Save the Twitch client id and secret under Managed credentials to connect accounts.
+Runs through the bot account
+Off Chat rail
+Off — switched off under Studio → Engagement or by the server.
+Active Emote-only and chat moderation
+Active !here check-ins
+Off Chat games
+Off — switched off under Studio → Engagement or by the server.
+Off Follow alerts
+Off — switched off under Studio → Engagement or by the server.
+Active Live status and viewer count
+Active Sign in to Stream247 with Twitch as owner
+Content sources — Twitch archives and YouTube channels under Program → Sources — are only pulled from, never broadcast to.
 RELEASE
 Update center
 Keep production installs pinned to explicit image tags. Use the release preflight and upgrade rehearsal scripts before changing a live system.
@@ -56,8 +86,6 @@ i
 TWITCH CLIENT SECRET
 i
 DEFAULT TWITCH CATEGORY ID
-i
-BROADCAST CHANNEL LOGIN
 i
 EVENTSUB WEBHOOK SECRET
 i

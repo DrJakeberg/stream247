@@ -11,7 +11,8 @@ describe("broadcast live status helpers", () => {
     const twitch = {
       status: "live" as const,
       viewerCount: 128,
-      broadcasterLogin: "stream247",
+      channelLogin: "stream247",
+      botLogin: "",
       startedAt: "2026-04-22T09:05:00.000Z"
     };
 
@@ -28,7 +29,8 @@ describe("broadcast live status helpers", () => {
       getBroadcastLiveStatusLabel({
         status: "offline",
         viewerCount: 0,
-        broadcasterLogin: "stream247",
+        channelLogin: "stream247",
+      botLogin: "",
         startedAt: ""
       })
     ).toBe("Off air");
@@ -36,7 +38,8 @@ describe("broadcast live status helpers", () => {
       getBroadcastLiveStatusTone({
         status: "unknown",
         viewerCount: 0,
-        broadcasterLogin: "",
+        channelLogin: "",
+        botLogin: "",
         startedAt: ""
       })
     ).toBe("unknown");
@@ -45,7 +48,8 @@ describe("broadcast live status helpers", () => {
         {
           status: "offline",
           viewerCount: 0,
-          broadcasterLogin: "stream247",
+          channelLogin: "stream247",
+      botLogin: "",
           startedAt: ""
         },
         new Date("2026-04-22T10:15:00.000Z").getTime()

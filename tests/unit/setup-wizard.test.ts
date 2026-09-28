@@ -13,6 +13,7 @@ function emptyManagedConfig(overrides: Partial<ManagedConfigRecord> = {}): Manag
     twitchClientId: "",
     twitchClientSecret: "",
     twitchDefaultCategoryId: "",
+    twitchBotLogin: "",
     discordWebhookUrl: "",
     smtpHost: "",
     smtpPort: "",

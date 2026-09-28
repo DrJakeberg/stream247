@@ -1,5 +1,5 @@
 import { selectActiveDestinationGroup } from "@stream247/core";
-import { DEV_FALLBACK_APP_SECRET, resolveAppBaseUrl, resolveAppSecret } from "@stream247/db";
+import { DEV_FALLBACK_APP_SECRET, resolveAppBaseUrl, resolveAppSecret, resolveTwitchAccountsForState } from "@stream247/db";
 import { buildWorkspaceHref } from "../workspace-navigation";
 import type { AppState } from "./state";
 import { getManagedTwitchConfig } from "./state";
@@ -101,20 +101,37 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
       title: "Twitch app credentials",
       detail: hasTwitchCredentials
         ? "Twitch client id and client secret are available for OAuth and sync."
-        : "Save Twitch client credentials in setup or settings to enable broadcaster connect and team SSO.",
+        : "Save Twitch client credentials in setup or settings to enable the account connections and team sign-in.",
       status: hasTwitchCredentials ? "ready" : "action",
       href: state.initialized ? buildWorkspaceHref("admin", "settings") : "/setup?step=twitch-app"
     },
     {
       id: "twitch-connect",
-      title: "Twitch broadcaster connection",
+      title: "Twitch bot account",
       detail:
         state.twitch.status === "connected"
-          ? `Connected as ${state.twitch.broadcasterLogin || state.twitch.broadcasterId}.`
-          : "Connect the broadcaster account so metadata, schedule sync, and team access can work.",
+          ? `Connected as ${state.twitch.broadcasterLogin || state.twitch.broadcasterId} — the account Stream247 chats and moderates as.`
+          : "Connect the bot account Stream247 signs in as for chat, moderation and team sign-in.",
       status: state.twitch.status === "connected" ? "ready" : "action",
-      href: buildWorkspaceHref("live", "status")
+      href: `${buildWorkspaceHref("admin", "settings")}#twitch-accounts`
     },
+    (() => {
+      // The channel the stream key sends to and viewers watch; an unset value means the bot's own
+      // channel, which is right for a single-account setup and wrong for a split one -- hence optional.
+      const accounts = resolveTwitchAccountsForState(state, process.env);
+      return {
+        id: "broadcast-channel",
+        title: "Twitch broadcast channel",
+        detail:
+          accounts.mode === "unconfirmed"
+            ? accounts.channel.login
+              ? `Not set — Stream247 assumes the bot account's own channel (${accounts.channel.login}). Set it if viewers watch another channel.`
+              : "Not set. Name the channel your stream key sends to."
+            : `Set to ${accounts.channel.login}: the stream key sends here and viewers watch here.`,
+        status: accounts.mode === "unconfirmed" ? ("optional" as const) : ("ready" as const),
+        href: `${buildWorkspaceHref("admin", "settings")}#twitch-accounts`
+      };
+    })(),
     {
       id: "destination",
       title: "Live destination",

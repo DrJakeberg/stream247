@@ -341,7 +341,8 @@ export function getManagedTwitchConfig(state: Pick<AppState, "managedConfig">) {
       state,
       "twitchBroadcastChannelLogin",
       process.env.TWITCH_BROADCAST_CHANNEL_LOGIN || ""
-    )
+    ),
+    botLogin: getManagedConfigValue(state, "twitchBotLogin", process.env.TWITCH_BOT_LOGIN || "")
   };
 }
 
@@ -1317,10 +1318,11 @@ export function summarizeTwitchLiveStatus(state: AppState): LiveTwitchStatusSumm
     viewerCount: state.twitch.status === "connected" ? state.twitch.viewerCount : 0,
     // The broadcast channel, not the connected account: this login becomes the public watch link
     // and the live widget's label, both of which must point where the video actually goes.
-    broadcasterLogin: resolveBroadcastChannelLogin({
+    channelLogin: resolveBroadcastChannelLogin({
       configuredLogin: getManagedTwitchConfig(state).broadcastChannelLogin,
       identityLogin: state.twitch.broadcasterLogin
     }),
+    botLogin: state.twitch.status === "connected" ? state.twitch.broadcasterLogin : "",
     startedAt: state.twitch.status === "connected" ? state.twitch.startedAt || "" : ""
   };
 }
@@ -1386,7 +1388,7 @@ export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot
   return {
     generatedAt: snapshot.generatedAt,
     timeZone: snapshot.timeZone,
-    watchUrl: buildTwitchWatchUrl(snapshot.twitch.broadcasterLogin),
+    watchUrl: buildTwitchWatchUrl(snapshot.twitch.channelLogin),
     overlay: snapshot.overlay,
     engagement: snapshot.engagement,
     activeScene: snapshot.activeScene,

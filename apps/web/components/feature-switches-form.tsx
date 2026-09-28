@@ -21,7 +21,7 @@ const SWITCHES: Array<{ key: SwitchKey; label: string; hint: string; info: strin
   {
     key: "streamAlertsEnabled",
     label: "Viewer alerts on the stream",
-    hint: "EventSub notifications rendered as timed alerts: follows, subs, cheers, channel points.",
+    hint: "EventSub notifications for follows, subs, cheers and channel points, recorded and listed under Studio → Engagement (not drawn on air yet).",
     info: "Off stops follow, sub, cheer, donation and channel-point alerts from being received or drawn on the stream. It can only veto: alerts must also be turned on in the Engagement settings on the Overlays page."
   },
   {

@@ -80,6 +80,7 @@ function createState(): AppState {
       twitchClientId: "",
       twitchClientSecret: "",
       twitchDefaultCategoryId: "",
+      twitchBotLogin: "",
       discordWebhookUrl: "",
       smtpHost: "",
       smtpPort: "",

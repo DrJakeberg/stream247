@@ -57,8 +57,12 @@ export function LiveWorkspaceHeader(props: { initialSnapshot: BroadcastSnapshot 
           <strong>{getBroadcastLiveViewerCountLabel(snapshot.twitch)}</strong>
         </div>
         <div>
-          <span className="label">Channel</span>
-          <strong>{snapshot.twitch.broadcasterLogin || "Not connected"}</strong>
+          <span className="label">Broadcast channel</span>
+          <strong>{snapshot.twitch.channelLogin || "Not set"}</strong>
+        </div>
+        <div>
+          <span className="label">Bot account</span>
+          <strong>{snapshot.twitch.botLogin || "Not connected"}</strong>
         </div>
         <div>
           <span className="label">Updates</span>

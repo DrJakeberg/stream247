@@ -100,6 +100,7 @@ import {
   nextAssetProbeState,
   planAssetProbeUpdates,
   countQuarantinedBySource,
+  createTwitchTokenScopeCache
 } from "@stream247/core";
 import {
   buildSourceLiveStateWrite,
@@ -164,6 +165,7 @@ import {
   markChatViewerRequestsPlayed,
   updateAssetPlaybackProbeRecords,
   type AssetPlaybackProbeUpdateRecord,
+  resolveTwitchAccountsForState
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
@@ -912,6 +914,8 @@ let twitchLiveStatusNextSyncAt = 0;
 let twitchConnectionHealLastAttemptAt = 0;
 // Process-lifetime cache for the broadcast channel's user id; see twitch-broadcast-channel.ts.
 const twitchUserIdResolver = createTwitchUserIdResolver();
+// The channel owner token's measured grant, cached per token (packages/core/src/twitch-accounts.ts).
+const readChannelOwnerScopes = createTwitchTokenScopeCache();
 
 function isTimestampActive(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
@@ -8215,7 +8219,7 @@ async function reconcileTwitch(): Promise<void> {
         scope: "twitch",
         severity: "info",
         title: "Twitch metadata sync is waiting for the broadcast channel connection",
-        message: `${TWITCH_METADATA_WAITING_MESSAGE} Title and category for ${metadataSyncGate.broadcastChannelLogin} stay untouched until the broadcaster account is connected.`,
+        message: `${TWITCH_METADATA_WAITING_MESSAGE} Title, category and schedule of the broadcast channel ${metadataSyncGate.broadcastChannelLogin} stay untouched until ${metadataSyncGate.broadcastChannelLogin} itself connects as channel owner (Admin → Settings → Twitch accounts). Chat and moderation keep running through the bot account ${state.twitch.broadcasterLogin}.`,
         fingerprint: "twitch.metadata.waiting-for-broadcaster"
       });
     } else {
@@ -8353,10 +8357,15 @@ async function reconcileTwitch(): Promise<void> {
       }
       lastChatSettingsWrite = { emoteOnly: desiredEmoteOnly, atMs: Date.now() };
       // The one line that says what Stream247 did to the channel's chat mode, and why.
+      // Both accounts by name and id: on 2026-09-28 a bare "broadcasterId" here was read as the bot's
+      // id, and the live check went to the bot's channel instead of the broadcast channel.
       logRuntimeEvent("twitch.chat_settings.written", {
         emoteOnly: desiredEmoteOnly,
         reason: chatSettingsDecision.reason,
-        broadcasterId: chatSettingsBroadcasterId
+        channelLogin: broadcastChannelLogin,
+        channelId: chatSettingsBroadcasterId,
+        botLogin: state.twitch.broadcasterLogin,
+        botId: state.twitch.broadcasterId
       });
     }
 
@@ -8585,11 +8594,41 @@ async function reconcileTwitchEventSub(): Promise<void> {
   const state = await readAppState();
   const clientId = getTwitchClientId(state);
   const clientSecret = getTwitchClientSecret(state);
+  // Alerts are about the BROADCAST CHANNEL; follow is read with the bot as moderator. Until 2.1 all of
+  // it was subscribed on the bot's own id (twitch-eventsub.ts: EventSubTarget).
+  const accounts = resolveTwitchAccountsForState(state, process.env);
+  let eventSubChannelId = accounts.channel.userId;
+  if (accounts.mode === "split" && state.twitch.accessToken) {
+    try {
+      eventSubChannelId = await twitchUserIdResolver.resolve({
+        login: accounts.channel.login,
+        accessToken: state.twitch.accessToken,
+        clientId
+      });
+    } catch {
+      eventSubChannelId = "";
+    }
+  }
+  // What the channel owner's token really grants: an owner connected before 2.1 lacks the alert scopes,
+  // and subscribing for them anyway fails every sync with 403 (M69 review). Measured per token, cached.
+  const ownerScopes =
+    accounts.mode === "split" && accounts.owner.status === "connected"
+      ? await readChannelOwnerScopes(state.twitchBroadcaster.accessToken)
+      : null;
+  const eventSubTarget = {
+    channelId: eventSubChannelId,
+    botId: accounts.bot.id,
+    channelOwnerCovers: accounts.mode !== "split" || accounts.owner.status === "connected",
+    channelOwnerScopes: ownerScopes
+  };
   const syncKey = [
     state.engagement.alertsEnabled ? "alerts-on" : "alerts-off",
     resolveAlertsRuntimeEnabled(state.managedConfig, process.env) ? "runtime-on" : "runtime-off",
     state.twitch.status,
-    state.twitch.broadcasterId,
+    eventSubTarget.channelId,
+    eventSubTarget.botId,
+    eventSubTarget.channelOwnerCovers ? "owner-covers" : "owner-missing",
+    (ownerScopes ?? ["unmeasured"]).slice().sort().join(","),
     clientId,
     resolveAppBaseUrl(state.managedConfig),
     resolveTwitchEventSubSecret(state.managedConfig, process.env) ? "secret-set" : "secret-missing"
@@ -8607,7 +8646,8 @@ async function reconcileTwitchEventSub(): Promise<void> {
       state,
       env: process.env,
       clientId,
-      clientSecret
+      clientSecret,
+      target: eventSubTarget
     });
 
     if (result.status === "skipped") {
@@ -8628,6 +8668,25 @@ async function reconcileTwitchEventSub(): Promise<void> {
 
     await resolveIncident("twitch.eventsub.sync.failed", "Twitch EventSub synchronization succeeded.");
     await resolveIncident("twitch.eventsub.sync.skipped", "Twitch EventSub configuration is complete.");
+    // Alert types that are switched on but withheld because the broadcast channel itself has not granted
+    // them: said out loud instead of a silent "configuration complete" (M69 review).
+    const withheld = result.waitingForChannelOwner ?? [];
+    if (result.enabled && withheld.length > 0) {
+      const ownerConnected = accounts.owner.status === "connected";
+      await upsertIncident({
+        scope: "twitch",
+        severity: "info",
+        title: "Some viewer alerts wait for the channel owner",
+        message: `${withheld.join(", ")} ${withheld.length === 1 ? "is" : "are"} not subscribed for the broadcast channel ${accounts.channel.login}: ${
+          ownerConnected
+            ? `the channel owner connection lacks the scope — reconnect ${accounts.channel.login} under Admin → Settings → Twitch accounts (connections made before 2.1 lack the alert scopes)`
+            : `Twitch delivers them only once ${accounts.channel.login} itself connects under Admin → Settings → Twitch accounts`
+        }. Follow alerts run through the bot account.`,
+        fingerprint: "twitch.eventsub.waiting-for-channel-owner"
+      });
+    } else {
+      await resolveIncident("twitch.eventsub.waiting-for-channel-owner", "No viewer alert type is waiting for the channel owner.");
+    }
     if (result.created.length > 0 || result.deleted.length > 0) {
       await appendAuditEvent(
         "twitch.eventsub.sync",

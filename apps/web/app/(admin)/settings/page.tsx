@@ -27,6 +27,8 @@ import { FeedTuningForm } from "@/components/feed-tuning-form";
 import { RelayAccessForm } from "@/components/relay-access-form";
 import { ReplayCacheForm } from "@/components/replay-cache-form";
 import { SecretSettingsForm } from "@/components/secret-settings-form";
+import { TwitchAccountsPanel } from "@/components/twitch-accounts-panel";
+import { buildTwitchAccountsPanelProps } from "@/lib/server/twitch-accounts-panel";
 import { SourceLiveSoundForm } from "@/components/source-live-sound-form";
 import { TwoFactorSettingsForm } from "@/components/two-factor-settings-form";
 import { WatchdogThresholdsForm } from "@/components/watchdog-thresholds-form";
@@ -57,6 +59,8 @@ export default async function SettingsPage() {
   // for. Kept as a plain check rather than requireRoles(), which redirects: the rest of this page
   // is legitimately readable by any signed-in account and must stay that way.
   const mayRevealRelayAccess = user?.role === "owner" || user?.role === "admin";
+  // The two Twitch accounts (2.1, M69): broadcast channel and bot account, side by side.
+  const twitchAccountsPanel = await buildTwitchAccountsPanelProps(state, user?.role);
 
   return (
     <div className="stack-form">
@@ -65,6 +69,10 @@ export default async function SettingsPage() {
         eyebrow="Settings"
         title="Manage workspace security, credentials, releases, and blueprints."
       />
+
+      <Panel title="Twitch accounts" eyebrow="Twitch">
+        <TwitchAccountsPanel {...twitchAccountsPanel.props} />
+      </Panel>
 
       <div className="grid two">
         <Panel title="Update center" eyebrow="Release">
@@ -112,7 +120,6 @@ export default async function SettingsPage() {
             initialValues={{
               twitchClientId: twitchConfig.clientId,
               twitchDefaultCategoryId: twitchConfig.defaultCategoryId,
-              twitchBroadcastChannelLogin: twitchConfig.broadcastChannelLogin,
               smtpHost: alertConfig.smtpHost,
               smtpPort: alertConfig.smtpPort,
               smtpUser: alertConfig.smtpUser,

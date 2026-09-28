@@ -79,9 +79,14 @@ export type LiveWorkerHealth = {
 };
 
 export type LiveTwitchStatusSummary = {
+  // Live state and viewers of the BROADCAST CHANNEL.
   status: "live" | "offline" | "unknown";
   viewerCount: number;
-  broadcasterLogin: string;
+  // The broadcast channel's login (watch link, live label). Called broadcasterLogin until 2.1,
+  // the same name the database uses for the bot account -- which is how the two got mixed up.
+  channelLogin: string;
+  // The bot account's login, shown next to it so nobody takes one for the other.
+  botLogin: string;
   startedAt: string;
 };
 

@@ -3,6 +3,7 @@ export * from "./asset-probe-quarantine.js";
 import { isAssetProbeQuarantined } from "./asset-probe-quarantine.js";
 import { getAssetChapterAt, parseAssetChaptersJson } from "./asset-chapters.js";
 export * from "./broadcast-channel.js";
+export * from "./twitch-accounts.js";
 export * from "./chat-emotes.js";
 export * from "./chat-game.js";
 export * from "./chat-game-2048.js";

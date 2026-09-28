@@ -8,7 +8,6 @@ export function SecretSettingsForm(props: {
   initialValues: {
     twitchClientId: string;
     twitchDefaultCategoryId: string;
-    twitchBroadcastChannelLogin: string;
     smtpHost: string;
     smtpPort: string;
     smtpUser: string;
@@ -44,7 +43,6 @@ export function SecretSettingsForm(props: {
               twitchClientId: String(formData.get("twitchClientId") || ""),
               twitchClientSecret: String(formData.get("twitchClientSecret") || ""),
               twitchDefaultCategoryId: String(formData.get("twitchDefaultCategoryId") || ""),
-              twitchBroadcastChannelLogin: String(formData.get("twitchBroadcastChannelLogin") || ""),
               twitchEventsubSecret: String(formData.get("twitchEventsubSecret") || ""),
               discordWebhookUrl: String(formData.get("discordWebhookUrl") || ""),
               smtpHost: String(formData.get("smtpHost") || ""),
@@ -69,11 +67,11 @@ export function SecretSettingsForm(props: {
     >
       <div className="form-grid">
         <label>
-          <span className="label label-with-info">Twitch client id<InfoTip text="Identifies the Twitch application this workspace acts through: team sign-in with Twitch, connecting the broadcaster, and every title, category and viewer-alert call to Twitch. Without it, none of those work." /></span>
+          <span className="label label-with-info">Twitch client id<InfoTip text="Identifies the Twitch application this workspace acts through: team sign-in with Twitch, connecting the bot account and the channel owner, and every title, category and viewer-alert call to Twitch. Without it, none of those work. The broadcast channel and the bot account themselves are set under Twitch accounts above." /></span>
           <input defaultValue={props.initialValues.twitchClientId} name="twitchClientId" />
         </label>
         <label>
-          <span className="label label-with-info">Twitch client secret<InfoTip text="Proves to Twitch that requests really come from your application; it is needed alongside the client id for Twitch sign-in, the broadcaster connection and viewer-alert subscriptions. Leaving the field blank keeps the stored value." /></span>
+          <span className="label label-with-info">Twitch client secret<InfoTip text="Proves to Twitch that requests really come from your application; it is needed alongside the client id for Twitch sign-in, the account connections and viewer-alert subscriptions. Leaving the field blank keeps the stored value." /></span>
           <input
             name="twitchClientSecret"
             placeholder={props.status.hasTwitchClientSecret ? "Stored. Leave blank to keep it." : "Not configured"}
@@ -85,14 +83,6 @@ export function SecretSettingsForm(props: {
         <label>
           <span className="label label-with-info">Default Twitch category id<InfoTip text="Sets the channel's category on Twitch whenever the chapter, asset or schedule block on air does not name one that Twitch recognises. When this is empty too, the category is left as it is and a warning is raised; the title still syncs." /></span>
           <input defaultValue={props.initialValues.twitchDefaultCategoryId} name="twitchDefaultCategoryId" />
-        </label>
-        <label>
-          <span className="label label-with-info">Broadcast channel login<InfoTip text="Names the Twitch channel the audience watches when it is not the connected account's own: chat joins that room, the public watch link points there, and title and category are written to it once its broadcaster account is connected. Must be 4-25 letters, digits or underscores." /></span>
-          <input
-            defaultValue={props.initialValues.twitchBroadcastChannelLogin}
-            name="twitchBroadcastChannelLogin"
-            placeholder="Empty: same channel as the connected account"
-          />
         </label>
         <label>
           <span className="label label-with-info">EventSub webhook secret<InfoTip text="A password you invent (any long random string); it is registered with Twitch when viewer-alert subscriptions are created and then used to check that each follow, subscription, cheer or channel-point event really came from Twitch. Without it no subscriptions are created; leaving the field blank keeps the stored value." /></span>

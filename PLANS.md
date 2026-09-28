@@ -78,8 +78,8 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M66 Live Bridge Rehearsal | Ops | Next | In progress | The live bridge has run under supervision before 2.0 names it | Live-bridge takeover and release observed on the DT stack with the operator present; findings recorded | DUT, docs | medium | none — observation only |
 | M67 Release 2.0.0 | Release | Now | Done 2026-09-09 | Major because the stack drops a service and the UI drops controls | 2.0.0 tagged after M60–M66 are complete and the soak is clean | release, docs | medium | pinned v2.0.0 |
 | M68 YouTube Playback Formats | Reliability | Now | Complete | YouTube assets play again and keep playing | Playback resolves YouTube through an ordered list of format candidates (H.264+AAC split tracks, any split tracks, combined file) and moves to the next when one fails; an asset that is already on air is never re-resolved and never taken off air by a failed re-resolve; quarantine counters survive state writes; the eleven assets of source_jjwuu0f3 that failed with `--format best` on 2026-09-28 play on the DUT | `apps/worker`, `packages/db`, tests, docs | medium | repin v2.0.0 |
-| M69 Twitch Channel And Bot Accounts | UX + Data | Now | Planned | The broadcast channel and the bot/moderator account are two named things in data, worker and GUI | Settings show the broadcast channel (e.g. jimpanse247: stream key, title, category, schedule) and the bot/moderator account (e.g. 3JakeC: chat, moderation) separately and let the operator set both; an existing v2.0.0 install keeps its bot connection; features that need the channel owner say so visibly | `packages/db`, `apps/web`, `apps/worker`, tests | medium | additive migration, old columns kept |
-| M70 Twitch Account Docs | Docs | Now | Planned | Nobody mistakes the bot for the channel again | `docs/twitch-setup.md`, `docs/getting-started.md`, `docs/operations.md` and `docs/deployment.md` name both roles, what each needs, and check "is the channel live" against the channel | docs | low | — |
+| M69 Twitch Channel And Bot Accounts | UX + Data | Now | Complete | The broadcast channel and the bot/moderator account are two named things in data, worker and GUI | Settings show the broadcast channel (e.g. jimpanse247: stream key, title, category, schedule) and the bot/moderator account (e.g. 3JakeC: chat, moderation) separately and let the operator set both; an existing v2.0.0 install keeps its bot connection; features that need the channel owner say so visibly | `packages/db`, `apps/web`, `apps/worker`, tests | medium | additive migration, old columns kept |
+| M70 Twitch Account Docs | Docs | Now | Complete | Nobody mistakes the bot for the channel again | `docs/twitch-setup.md`, `docs/getting-started.md`, `docs/operations.md` and `docs/deployment.md` name both roles, what each needs, and check "is the channel live" against the channel | docs | low | — |
 | M71 Release 2.1.0 | Release | Now | Planned | Ship M68-M70 | rc on the DUT, verified, 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
@@ -3704,3 +3704,53 @@ Done on `feat/m68-youtube-formats` (merged 2026-09-28):
   1.01x for 90 s, then for the full 15 minutes of a second run without one error line.
 - `pnpm validate` green (1859 unit, 48 integration tests, build).
 
+## M69 Twitch Channel And Bot Accounts
+
+Operator request 2026-09-28: "jimpanse247 ist der Kanal. 3JakeC ist mein Account, der Bot-Account. Baue eine
+Version 2.1, die das klar trennt. In der GUI sollen der Haupt-Twitch-Account und der Bot/Mod-Account angegeben
+werden können."
+
+Reference install (DUT, measured 2026-09-28, read-only): broadcast channel `jimpanse247` stored in the managed
+config (env `TWITCH_BROADCAST_CHANNEL_LOGIN` empty); `twitch_connection` = bot `3jakec` (id 144919385, connected),
+carrying the channel's live state (`live`, 3 viewers); `twitch_broadcaster_connection` never connected;
+`twitch.chat_settings.written` targets 1473383386 = jimpanse247 (the M51 split works in the worker); audit text
+"Connected Twitch broadcaster 144919385" was the bot. The operator session itself checked twitch.tv/3jakec for
+the live status of jimpanse247 and took a running stream off air for five minutes — the ambiguity this removes.
+
+Analysis: workflow of 204 agents (5 code readers, two skeptics per claim, 3 designs, 3 judges); winner "minimal
+additive on the two existing OAuth tables", no schema change. Delivered:
+
+- `packages/core/src/twitch-accounts.ts`: one resolver for mode (split / single-account / unconfirmed), channel
+  with its source, bot, channel owner, and which connection each feature runs through; `evaluateBotConnectLogin`.
+  `resolveTwitchAccountsForState` in packages/db reads it from state the same way for worker and web.
+- Managed `twitchBotLogin` (env `TWITCH_BOT_LOGIN`); `PUT /api/settings/twitch-accounts`; the credentials route no
+  longer blanks the broadcast channel when its form does not send the field.
+- Bot connect refuses another login than the configured bot, and the broadcast channel itself while a split is
+  active: nothing stored, token revoked, audit `twitch.bot.rejected`. `force_verify` on both account flows. The
+  channel owner connection also asks for `bits:read`, `channel:read:subscriptions`, `channel:read:redemptions`.
+- EventSub targets the broadcast channel (follow with the bot as moderator; sub, cheer, channel points only when
+  the channel itself covers them); ownership by callback URL, so 2.0's subscriptions on the bot's own channel are
+  removed on the first sync. `chat_settings.written` logs channel and bot by login and id.
+- GUI: Admin → Settings → Twitch accounts (also the setup wizard step): two cards, broadcast channel and bot
+  account, each settable, with live state, owner connection, refusals and what runs through which account. Every
+  "Broadcaster <bot>" label now says bot account; the live header shows both; the checklist has an item per
+  account; OAuth callbacks return to the panel.
+
+Deliberately not in 2.1 (documented): no new table for the channel's live/sync bookkeeping (it stays on the bot
+row, documented as the channel's), tokens stay plaintext as in 2.0, alerts are not drawn on air.
+
+Adversarial review (80 agents, three skeptics per finding): 22 findings upheld (eleven distinct), three refuted;
+all fixed on the branch. The pattern was the panel saying "Active" where the worker does nothing: channel-owner
+capabilities now need the bot too and the scope in the owner's measured grant (an owner connected before 2.1 lacks
+the alert scopes; EventSub gates each type on it and raises `twitch.eventsub.waiting-for-channel-owner`), runtime
+switches show "Off", env-sourced logins are named, stale refusals age out, and the texts no longer say alerts are
+drawn on air — the renderer has no alert code at all (see memory "Tote Einstellungen"). Checked in the browser on
+the dev stack: saving a channel switches the panel to the split view, an invalid login is refused with its message.
+
+## M70 Twitch Account Docs
+
+`docs/twitch-setup.md` rewritten around the three roles with a feature → account → scopes table and the rule
+"check live status on the broadcast channel, never on the bot"; getting-started (three redirect URLs by role),
+operations (runbook "Is the broadcast channel live?"), deployment (Upgrading To 2.1), architecture and README
+follow; the env examples drop three variables no code reads and name `TWITCH_BROADCAST_CHANNEL_LOGIN` and
+`TWITCH_BOT_LOGIN`.

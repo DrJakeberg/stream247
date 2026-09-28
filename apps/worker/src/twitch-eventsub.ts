@@ -1,4 +1,5 @@
 import {
+  TWITCH_CHANNEL_OWNER_CAPABILITY_SCOPES,
   isEngagementAlertsRuntimeEnabled,
   isEngagementChannelPointsRuntimeEnabled,
   isEngagementDonationAlertsRuntimeEnabled,
@@ -14,10 +15,28 @@ type EventSubSubscriptionType =
   | "channel.cheer"
   | "channel.channel_points_custom_reward_redemption.add";
 
+// Who the subscriptions are about (2.1, M69). Until 2.1 every condition used the connected account's
+// own id, which in a split setup is the BOT (3JakeC on the reference install): alerts were subscribed
+// on the bot's empty channel while viewers followed and subscribed on the broadcast channel.
+export type EventSubTarget = {
+  // The broadcast channel's user id: every event is about this channel.
+  channelId: string;
+  // The bot account's user id: channel.follow v2 needs a moderator, and the bot is one.
+  botId: string;
+  // Whether the broadcast channel itself has granted what sub, cheer and channel-points events need:
+  // true with one account (the bot IS the channel) or a connected channel owner in a split.
+  channelOwnerCovers: boolean;
+  // The channel owner token's measured grant in a split; null when not measured or not needed. An owner
+  // connected before 2.1 lacks the alert scopes, and subscribing without them fails with 403.
+  channelOwnerScopes?: readonly string[] | null;
+};
+
 type EventSubSubscriptionDefinition = {
   type: EventSubSubscriptionType;
   version: string;
-  condition: (broadcasterId: string) => Record<string, string>;
+  condition: (target: EventSubTarget) => Record<string, string>;
+  // Twitch only delivers this type for a broadcaster who granted this scope; a moderator cannot.
+  ownerScope: string | null;
 };
 
 type TwitchEventSubSubscription = {
@@ -36,6 +55,8 @@ export type TwitchEventSubSyncResult = {
   status: "registered" | "cleaned-up" | "skipped";
   enabled: boolean;
   reason?: string;
+  // Types left out because the broadcast channel has not granted them (split without channel owner).
+  waitingForChannelOwner?: EventSubSubscriptionType[];
   created: EventSubSubscriptionType[];
   deleted: string[];
   existing: EventSubSubscriptionType[];
@@ -45,43 +66,60 @@ export const REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS: EventSubSubscriptionDefinit
   {
     type: "channel.follow",
     version: "2",
-    condition: (broadcasterId) => ({
-      broadcaster_user_id: broadcasterId,
-      moderator_user_id: broadcasterId
-    })
+    condition: (target) => ({
+      broadcaster_user_id: target.channelId,
+      moderator_user_id: target.botId
+    }),
+    ownerScope: null
   },
   {
     type: "channel.subscribe",
     version: "1",
-    condition: (broadcasterId) => ({
-      broadcaster_user_id: broadcasterId
-    })
+    condition: (target) => ({
+      broadcaster_user_id: target.channelId
+    }),
+    ownerScope: TWITCH_CHANNEL_OWNER_CAPABILITY_SCOPES.subAlerts
   },
   {
     type: "channel.cheer",
     version: "1",
-    condition: (broadcasterId) => ({
-      broadcaster_user_id: broadcasterId
-    })
+    condition: (target) => ({
+      broadcaster_user_id: target.channelId
+    }),
+    ownerScope: TWITCH_CHANNEL_OWNER_CAPABILITY_SCOPES.cheerAlerts
   },
   {
     type: "channel.channel_points_custom_reward_redemption.add",
     version: "1",
-    condition: (broadcasterId) => ({
-      broadcaster_user_id: broadcasterId
-    })
+    condition: (target) => ({
+      broadcaster_user_id: target.channelId
+    }),
+    ownerScope: TWITCH_CHANNEL_OWNER_CAPABILITY_SCOPES.redemptionAlerts
   }
 ];
+
+// Whether the broadcast channel itself grants `scope`: covered at all (one account, or a connected owner)
+// and, when the owner's grant was measured, containing the scope.
+function channelOwnerGrants(target: EventSubTarget, scope: string): boolean {
+  if (!target.channelOwnerCovers) {
+    return false;
+  }
+  return !target.channelOwnerScopes || target.channelOwnerScopes.includes(scope);
+}
 
 function resolveDesiredEventSubSubscriptions(args: {
   state: AppState;
   env: Record<string, string | undefined>;
+  target: EventSubTarget;
 }): EventSubSubscriptionDefinition[] {
   if (!isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env, args.state.managedConfig)) {
     return [];
   }
 
   return REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS.filter((definition) => {
+    if (definition.ownerScope && !channelOwnerGrants(args.target, definition.ownerScope)) {
+      return false;
+    }
     if (definition.type === "channel.cheer") {
       return isEngagementDonationAlertsRuntimeEnabled(args.state.engagement, args.env, args.state.managedConfig);
     }
@@ -217,7 +255,7 @@ export function isHealthyEventSubStatus(status: string | undefined): boolean {
 function subscriptionMatchesDefinition(args: {
   subscription: TwitchEventSubSubscription;
   definition: EventSubSubscriptionDefinition;
-  broadcasterId: string;
+  target: EventSubTarget;
   callbackUrl: string;
 }): boolean {
   if (
@@ -228,30 +266,32 @@ function subscriptionMatchesDefinition(args: {
     return false;
   }
 
-  const desiredCondition = args.definition.condition(args.broadcasterId);
+  const desiredCondition = args.definition.condition(args.target);
   return Object.entries(desiredCondition).every(([key, value]) => args.subscription.condition?.[key] === value);
 }
 
+/**
+ * Ours: one of our types on OUR callback URL, whatever channel it is about. Until 2.1 ownership also
+ * required the condition to match the current target, so a subscription for another channel -- the
+ * bot's own, after the retarget -- was nobody's and stayed registered for ever, still delivering that
+ * channel's events to our webhook. One install owns its callback, so the callback is the proof.
+ */
 function listOwnedEventSubSubscriptions(args: {
   subscriptions: TwitchEventSubSubscription[];
-  broadcasterId: string;
   callbackUrl: string;
 }): TwitchEventSubSubscription[] {
-  return args.subscriptions.filter((subscription) =>
-    REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS.some((definition) =>
-      subscriptionMatchesDefinition({
-        subscription,
-        definition,
-        broadcasterId: args.broadcasterId,
-        callbackUrl: args.callbackUrl
-      })
-    )
+  return args.subscriptions.filter(
+    (subscription) =>
+      callbackMatches(subscription, args.callbackUrl) &&
+      REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS.some(
+        (definition) => subscription.type === definition.type && subscription.version === definition.version
+      )
   );
 }
 
 async function createEventSubSubscription(args: {
   definition: EventSubSubscriptionDefinition;
-  broadcasterId: string;
+  target: EventSubTarget;
   callbackUrl: string;
   secret: string;
   accessToken: string;
@@ -268,7 +308,7 @@ async function createEventSubSubscription(args: {
     body: JSON.stringify({
       type: args.definition.type,
       version: args.definition.version,
-      condition: args.definition.condition(args.broadcasterId),
+      condition: args.definition.condition(args.target),
       transport: {
         method: "webhook",
         callback: args.callbackUrl,
@@ -311,16 +351,18 @@ export async function syncTwitchEventSubSubscriptions(args: {
   env: Record<string, string | undefined>;
   clientId: string;
   clientSecret: string;
+  // Resolved by the worker from the Twitch accounts (packages/core/src/twitch-accounts.ts).
+  target: EventSubTarget;
   fetchImpl?: FetchLike;
 }): Promise<TwitchEventSubSyncResult> {
   const fetchImpl = args.fetchImpl ?? fetch;
   const enabled = isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env, args.state.managedConfig);
-  const broadcasterId = args.state.twitch.broadcasterId.trim();
+  const target = args.target;
   const callbackUrl = resolveTwitchEventSubCallbackUrl(args.state.managedConfig, args.env);
   const secret = resolveTwitchEventSubSecret(args.state.managedConfig, args.env);
   const desiredSubscriptions = resolveDesiredEventSubSubscriptions(args);
 
-  if (args.state.twitch.status !== "connected" || !broadcasterId) {
+  if (args.state.twitch.status !== "connected" || !target.botId.trim()) {
     return emptyResult(enabled, "twitch-not-connected");
   }
 
@@ -348,7 +390,6 @@ export async function syncTwitchEventSubSubscriptions(args: {
   });
   const ownedSubscriptions = listOwnedEventSubSubscriptions({
     subscriptions,
-    broadcasterId,
     callbackUrl
   });
 
@@ -376,6 +417,12 @@ export async function syncTwitchEventSubSubscriptions(args: {
     };
   }
 
+  // Only registration needs the channel's id; the cleanup above works from ownership (our callback)
+  // alone, so switching alerts off still removes everything while the id cannot be resolved (M69 review).
+  if (!target.channelId.trim()) {
+    return emptyResult(enabled, "broadcast-channel-unresolved");
+  }
+
   const existing: EventSubSubscriptionType[] = [];
   const created: EventSubSubscriptionType[] = [];
   const deleted: string[] = [];
@@ -384,7 +431,7 @@ export async function syncTwitchEventSubSubscriptions(args: {
       subscriptionMatchesDefinition({
         subscription,
         definition,
-        broadcasterId,
+        target,
         callbackUrl
       })
     );
@@ -411,7 +458,7 @@ export async function syncTwitchEventSubSubscriptions(args: {
         subscriptionMatchesDefinition({
           subscription,
           definition,
-          broadcasterId,
+          target,
           callbackUrl
         })
     );
@@ -423,7 +470,7 @@ export async function syncTwitchEventSubSubscriptions(args: {
 
     await createEventSubSubscription({
       definition,
-      broadcasterId,
+      target,
       callbackUrl,
       secret,
       accessToken,
@@ -438,6 +485,14 @@ export async function syncTwitchEventSubSubscriptions(args: {
     enabled,
     created,
     deleted,
-    existing
+    existing,
+    // Wanted (alerts and their per-type toggles on) but withheld because the broadcast channel itself has
+    // not granted them. Surfaced by the worker as twitch.eventsub.waiting-for-channel-owner.
+    waitingForChannelOwner: resolveDesiredEventSubSubscriptions({
+      ...args,
+      target: { ...target, channelOwnerCovers: true, channelOwnerScopes: null }
+    })
+      .filter((definition) => definition.ownerScope && !channelOwnerGrants(target, definition.ownerScope))
+      .map((definition) => definition.type)
   };
 }

@@ -58,14 +58,14 @@ export default async function OverlaysPage() {
             <div className="item">
               <strong>Follow/sub alerts</strong>
               <div className="subtle">
-                {alertsRuntimeEnabled ? "Runtime enabled. EventSub notifications will render as timed alerts." : "Disabled by settings or by the alerts feature switch in the admin settings."}
+                {alertsRuntimeEnabled ? "Runtime enabled. Follow and sub events of the broadcast channel are recorded and listed here; they are not drawn on air yet. Subs need the channel owner connection (Admin → Settings → Twitch accounts)." : "Disabled by settings or by the alerts feature switch in the admin settings."}
               </div>
             </div>
             <div className="item">
               <strong>Bits / cheer alerts</strong>
               <div className="subtle">
                 {donationsRuntimeEnabled
-                  ? "Runtime enabled. Cheer EventSub notifications will render as timed alerts."
+                  ? "Runtime enabled. Cheer events are recorded and listed here once the channel owner connection grants them; they are not drawn on air yet."
                   : "Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect."}
               </div>
             </div>
@@ -73,7 +73,7 @@ export default async function OverlaysPage() {
               <strong>Channel point alerts</strong>
               <div className="subtle">
                 {channelPointsRuntimeEnabled
-                  ? "Runtime enabled. Redemption EventSub notifications will render as timed alerts when a custom reward exists."
+                  ? "Runtime enabled. Redemption events are recorded and listed here once the channel owner connection grants them and a custom reward exists; they are not drawn on air yet."
                   : "Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect."}
               </div>
             </div>

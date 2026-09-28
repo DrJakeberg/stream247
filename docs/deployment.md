@@ -81,7 +81,7 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
    from what is actually configured rather than from a stored counter.
 7. Any skipped value can be finished later: reopen `/setup` while signed in, or use `/settings`
    for the Twitch credentials.
-8. Open `Live → Status` and use `Connect Twitch` if you want Twitch metadata sync or team SSO. Only leave Twitch schedule sync enabled when the broadcaster account can create non-recurring Twitch schedule segments.
+8. Open `Admin → Settings → Twitch accounts`: set the broadcast channel (where the stream key sends video) and connect the bot account (chat, moderation, team SSO); connect the channel owner too if you want title, category and schedule sync. Only leave Twitch schedule sync enabled when the account writing the schedule can create non-recurring Twitch schedule segments. See `docs/twitch-setup.md`.
 9. Add playable media:
    - files in `data/media`
    - direct media URL sources
@@ -328,7 +328,23 @@ Rollback is the reverse repin; the schema changes in 2.0 are additive.
 
 ### Upgrading To 2.1
 
-2.1 changes no stack file and no schema; it is a repin of the three `STREAM247_*_IMAGE` tags.
+2.1 changes no stack file and no schema; it is a repin of the three `STREAM247_*_IMAGE` tags. One new
+managed setting (`twitchBotLogin`, env fallback `TWITCH_BOT_LOGIN`) lives in the existing managed
+configuration.
+
+- **Twitch accounts.** Admin → Settings has a new *Twitch accounts* panel that separates the broadcast
+  channel (where the stream key sends video and viewers watch) from the bot account (chat,
+  moderation). The broadcast channel login moved there from *Managed credentials*; its stored value is
+  kept. The existing bot connection keeps working without reconnecting. New:
+  - the bot connect refuses another account than the configured bot login, and the broadcast channel
+    itself while a split is set up (nothing stored, token revoked, audited as `twitch.bot.rejected`);
+    both connect flows make Twitch show which account is signing in;
+  - alerts target the broadcast channel: follow with the bot as moderator; sub, cheer and
+    channel-points only once the channel owner is connected, whose connection now also asks for their
+    read scopes — **a channel owner connected before 2.1 must reconnect once** to grant them (the panel
+    and the info incident `twitch.eventsub.waiting-for-channel-owner` say so). Stream247's old
+    subscriptions on the bot account's own channel are removed on the first sync;
+  - labels that called the bot "broadcaster" say "bot account"; the live header shows both accounts.
 
 - **YouTube playback.** A YouTube item is resolved through ordered format candidates (split
   H.264+AAC, any split tracks, a combined file, split tracks at any height) instead of
@@ -445,7 +461,7 @@ Chapters for assets whose listing ingest cannot deliver them (YouTube playlist/c
 
 Output settings are available in `/output` with built-in profiles for 720p30, 1080p30, 480p30, and 360p30 plus a custom mode. The saved stream profile is stored in PostgreSQL and applies when the playout worker starts its next FFmpeg process. Each destination can either inherit that stream profile or pin one of the fixed named presets. Destinations that resolve to the same effective rendition share one persistent uplink process; mixed renditions spawn parallel uplink processes from the shared relay/program feed. Deployment-level `STREAM_OUTPUT_WIDTH`, `STREAM_OUTPUT_HEIGHT`, and `STREAM_OUTPUT_FPS` override the saved stream profile for standby slate generation, scene-renderer capture size, and inherited uplink output normalization. `SCENE_RENDER_WIDTH` and `SCENE_RENDER_HEIGHT` still have precedence for scene capture if you need a temporary render-specific override. Set `STREAM_SCALE_ENABLED=0` only as a rollback if the scale/pad/fps filter causes unexpected encoder load. Avoid pinning a destination above the stream profile unless you explicitly want to pay the CPU cost of upscaling the shared feed.
 
-In-stream engagement is configured from Studio → Engagement (legacy `/overlays` redirects there) and is disabled by default. Both the database setting and the deployment flag must be enabled before anything renders in the on-air overlay: set `STREAM_CHAT_OVERLAY_ENABLED=1` for Twitch IRC chat and the chatter-participation game, and set `STREAM_ALERTS_ENABLED=1` for follow / sub / cheer / channel-point alerts. EventSub webhooks post to `/api/overlay/events`; production deployments should set `TWITCH_EVENTSUB_SECRET` and must expose `APP_URL` over reachable HTTPS for Twitch to deliver follow/sub notifications. The worker automatically registers `channel.follow` and `channel.subscribe` EventSub subscriptions when alerts are enabled and Twitch is connected, verifies existing subscriptions before creating duplicates, and deletes matching Stream247-owned subscriptions when alerts are disabled. Twitch channels connected before this behavior shipped may need to reconnect once to grant `moderator:read:followers` and `channel:read:subscriptions`. The IRC chat bridge authenticates with the same identity token and needs `chat:read` (and `chat:edit` to reply to moderator check-ins); a token without them is refused by Twitch with `Login unsuccessful`, and the worker then raises the `Twitch chat login refused` incident and stops retrying for five minutes instead of reconnecting every cycle. Connections made before those scopes were requested must reconnect the Twitch account once — no chat, poll or chat-game input arrives until they do. Localhost-only installs can use the admin preview and chat settings, but cannot receive Twitch EventSub webhooks from the public internet.
+In-stream engagement is configured from Studio → Engagement (legacy `/overlays` redirects there) and is disabled by default. Both the database setting and the deployment flag must be enabled: set `STREAM_CHAT_OVERLAY_ENABLED=1` for Twitch IRC chat and the chatter-participation game (drawn in the on-air overlay), and set `STREAM_ALERTS_ENABLED=1` for follow / sub / cheer / channel-point alerts (recorded and listed under Studio → Engagement; not drawn on air yet). EventSub webhooks post to `/api/overlay/events`; production deployments should set `TWITCH_EVENTSUB_SECRET` and must expose `APP_URL` over reachable HTTPS for Twitch to deliver follow/sub notifications. Since 2.1 the subscriptions are about the broadcast channel: the worker registers `channel.follow` with the bot account as moderator (scope `moderator:read:followers` on the bot) whenever alerts are enabled and the bot is connected, and `channel.subscribe`, `channel.cheer` and `channel.channel_points_custom_reward_redemption.add` only with one account, or once the channel owner connection grants `channel:read:subscriptions`, `bits:read` and `channel:read:redemptions` (owner connections made before 2.1 must reconnect). Types that are switched on but withheld raise the info incident `twitch.eventsub.waiting-for-channel-owner`. Stream247 owns every subscription on its own callback URL; it verifies them before creating duplicates and deletes the ones no longer wanted, including 2.0's on the bot account's own channel. See `docs/twitch-setup.md`. The IRC chat bridge authenticates with the same identity token and needs `chat:read` (and `chat:edit` to reply to moderator check-ins); a token without them is refused by Twitch with `Login unsuccessful`, and the worker then raises the `Twitch chat login refused` incident and stops retrying for five minutes instead of reconnecting every cycle. Connections made before those scopes were requested must reconnect the Twitch account once — no chat, poll or chat-game input arrives until they do. Localhost-only installs can use the admin preview and chat settings, but cannot receive Twitch EventSub webhooks from the public internet.
 
 CI currently builds against the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners.
 
