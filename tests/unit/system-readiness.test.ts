@@ -75,6 +75,7 @@ function createState(overrides: Partial<AppState["playout"]> = {}): AppState {
       twitchClientId: "",
       twitchClientSecret: "",
       twitchDefaultCategoryId: "",
+      twitchBotLogin: "",
       discordWebhookUrl: "",
       smtpHost: "",
       smtpPort: "",

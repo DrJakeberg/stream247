@@ -506,6 +506,9 @@ export type ManagedConfigRecord = {
   // The channel the stream key actually sends video to. Empty means "same as the connected
   // identity", which is the pre-split behaviour and the rollback path.
   twitchBroadcastChannelLogin: string;
+  // The login the bot/moderator account is expected to be (2.1). When set, a bot connect as any
+  // other account is refused. Empty means no check, the 2.0 behaviour.
+  twitchBotLogin: string;
   discordWebhookUrl: string;
   smtpHost: string;
   smtpPort: string;
@@ -1717,6 +1720,7 @@ function defaultState(): AppState {
       twitchClientSecret: "",
       twitchDefaultCategoryId: "",
       twitchBroadcastChannelLogin: "",
+      twitchBotLogin: "",
       discordWebhookUrl: "",
       smtpHost: "",
       smtpPort: "",

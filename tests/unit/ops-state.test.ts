@@ -82,6 +82,7 @@ function createState(overrides: Partial<AppState> = {}): AppState {
       twitchClientId: "",
       twitchClientSecret: "",
       twitchDefaultCategoryId: "",
+      twitchBotLogin: "",
       discordWebhookUrl: "",
       smtpHost: "",
       smtpPort: "",

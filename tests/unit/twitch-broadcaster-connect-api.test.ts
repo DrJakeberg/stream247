@@ -106,6 +106,7 @@ function baseState(overrides: { broadcastChannelLogin?: string; twitchBroadcaste
       twitchClientId: "client-id",
       twitchClientSecret: "client-secret",
       twitchDefaultCategoryId: "",
+      twitchBotLogin: "",
       twitchBroadcastChannelLogin: overrides.broadcastChannelLogin ?? "jimpanse247"
     },
     twitch: { status: "connected", broadcasterId: "id-3jakec", broadcasterLogin: "3jakec" },

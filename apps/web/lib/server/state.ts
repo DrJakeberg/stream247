@@ -341,7 +341,8 @@ export function getManagedTwitchConfig(state: Pick<AppState, "managedConfig">) {
       state,
       "twitchBroadcastChannelLogin",
       process.env.TWITCH_BROADCAST_CHANNEL_LOGIN || ""
-    )
+    ),
+    botLogin: getManagedConfigValue(state, "twitchBotLogin", process.env.TWITCH_BOT_LOGIN || "")
   };
 }
 
