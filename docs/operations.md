@@ -30,8 +30,74 @@
 - pin asset on air
 - skip current asset (the pool carries on after the skipped item; in a pool with several sources the
   next source's next item plays, as it would have at the item's end)
+- play an item now, or as an insert, without taking the channel off air
 - resume schedule control
 - acknowledge and resolve incidents
+
+### Operator controls, with and without the relay (since 2.1)
+
+With the relay (`STREAM247_RELAY_ENABLED=1`) the uplink holds the Twitch connection and the playout
+only feeds the relay, so a playout restart reconnects nothing. Without it (direct RTMP) the playout's
+own ffmpeg publishes, and a restart puts the reconnect standby slate on air for one playout cycle
+(`selectionReasonCode=scheduled_reconnect`). After the slate the playout chooses as if nothing were on
+air: a running Pin or Fallback, else a running insert from its beginning, else a queued Move next, else
+the pool's next item. Under the relay no operator action shows that slate.
+
+- **Play now** and **Play insert** queue the chosen item as an operator insert (the two differ only in
+  their audit entry, `playout.play-now.requested` / `playout.insert.requested`). The next playout cycle
+  (within about 15 s) resolves the item and then switches straight to it: `playout.process.start`
+  with `reasonCode: operator_insert`, no slate, in either mode. An item that has not been played
+  recently can take a minute or more to resolve (yt-dlp, Twitch); the item on air keeps playing
+  meanwhile. While the insert plays, the pool's next items are prepared as usual. When the insert ends
+  (its end, its duration bound, a feed watchdog) the pool continues with its next item. The interrupted
+  item is not resumed at its position — it was the pool's last started item, so the pool goes on after
+  it (resuming is M77, deferred). Play now does not move a pool's position either, so a pool item played
+  by hand can still come round as the pool's next item. Both take a queued Move next out.
+- Play now and Play insert are refused for the item already on air (with the relay, Restart plays it
+  again from its beginning), while a Pin or Fallback holds the air (it comes before an insert; Resume
+  first), for an item held out by a Skip or Remove next (Resume clears the hold), and for a Twitch
+  archive that is not downloaded yet while *While a replay is still downloading, play it from Twitch*
+  (Settings → Operations → Replay cache) is off: the playout never waits for a download, so it could
+  not start it. An archive too large to cache streams from Twitch and is accepted.
+- An insert that is cleared before it aired is logged as the runtime event `playout.insert.dropped`
+  and an audit row of the same name, with a `reason`: `preempted` (a Pin or Fallback is running),
+  `unavailable` (the item is no longer ready or is skip-held), `prepare-failed` (it could not be
+  resolved; the item on air stays on air, the error is in the entry), `start-failed`,
+  `destination-missing`. The admin adds an audit row (no runtime event) when the operator drops a
+  pending insert: `replaced` by a newer Play now, `cancelled` by Resume schedule.
+- **Move next** queues an item for the end of the item on air and plays it to its end, also when it is
+  not from the running pool's sources. A Skip starts it at once (without the relay after the slate).
+  With the relay a Restart restarts the item on air and leaves Move next queued; without the relay the
+  slate comes first and the queued item starts right after it. **Replay previous** queues the last item
+  that left the air for another one — at its end, or cut short by a Play now or a Skip — as Move next
+  (2.1 records it at every switch and natural end; before, it stayed empty). The control room shows it
+  as *Previous item*. **Remove next** holds the next item out for an hour.
+- **Pin on air** and **Temporary fallback** put the chosen item, or the global fallback, on air for
+  the override minutes (fallback: an hour): with the relay the next cycle switches to it, and pinning
+  the item on air keeps it running; without the relay the slate comes first. When the pin ends — its
+  minutes run out, or Resume with the relay — a pinned item from the running pool's sources plays on to
+  its end as the pool's item, and any other item gives way to the pool's next item.
+- **Resume schedule** clears a Pin or Fallback, a pending or running Play now / insert, a queued Move
+  next and a skip hold, and is enabled while a Pin, a Fallback or an insert is in effect. With the relay
+  the next cycle hands back to the pool: a running insert gives way to the pool's next item (if that is
+  the insert's item itself, it plays on and counts as the pool's item), a pinned pool item plays on.
+  Without the relay the slate comes first, then the pool's next item.
+- **Skip current** holds the item on air out for the override minutes and moves on to the pool's next
+  item (or a queued Move next): with the relay at once, without it after the slate. Skip does not end a
+  running Pin or Fallback: the pinned item starts again from its beginning (also after a passed chat
+  skip vote), so Resume first.
+- **Soft restart** and **Hard reload** restart the encoder. With the relay the item on air (or the
+  running pin or insert) starts again from its beginning — there is no resume. Without the relay the
+  slate shows and the playout then chooses as described above: the running Pin or insert from its
+  beginning, else a queued Move next, else the pool's next item (a pool item on air is not restarted).
+  The planned reconnect of direct mode (every few hours) does the same.
+- **Force reconnect** restarts the encoder into the reconnect window without the relay. With the relay
+  it is refused: the uplink reconnects by itself (the planned reconnect interval, the encoder-stall and
+  destination-stall watchdogs).
+- **Recover outputs now** marks staged outputs ready. Without the relay it restarts the playout so
+  they rejoin (slate, then as above). With the relay the programme is not restarted: the uplink takes
+  the outputs back on its next cycle by restarting the uplink process of each output's rendition, so the
+  outputs that share that rendition (Twitch, for one) reconnect once.
 
 ## Symptoms And Immediate Actions
 
@@ -87,7 +153,9 @@
 
 - inspect the destination panel in `/broadcast` for cooldown timers, staged outputs, and the latest failure sample
 - let the next natural transition bring staged outputs back when continuity is more important than immediate fanout recovery
-- use `Recover outputs now` only when an immediate encoder restart is acceptable
+- without the relay, use `Recover outputs now` only when an immediate encoder restart is acceptable;
+  with the relay it leaves the programme alone, but the uplink restarts the process of each recovered
+  output's rendition on its next cycle, so the outputs sharing that rendition reconnect once
 
 ### Twitch sync unhealthy
 

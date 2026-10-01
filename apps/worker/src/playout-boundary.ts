@@ -148,3 +148,176 @@ export interface RunningInputGuardInput {
 export function shouldKeepRunningInput(input: RunningInputGuardInput): boolean {
   return input.processRunning && input.targetMatches && !input.restartRequested;
 }
+
+export interface ReconnectSlateInput {
+  // STREAM247_RELAY_ENABLED: the uplink holds the destination connection, the playout only feeds the relay.
+  relayEnabled: boolean;
+  liveBridgeActive: boolean;
+  // Direct mode only: the reconnect window opened by restartRequestedAt is still running.
+  reconnectActive: boolean;
+  // restartRequestedAt is set: Restart, Hard reload, Skip (also by chat vote), the crash-loop reset, a due
+  // reconnect, and in direct mode Pin, Fallback, Resume, Force reconnect and Recover outputs.
+  restartRequested: boolean;
+}
+
+/**
+ * Put the reconnect standby slate on air for this cycle?
+ *
+ * The slate belongs to direct RTMP mode: there the playout's own ffmpeg holds the Twitch connection, a
+ * restart drops and reopens it, and the slate covers that reconnect (42adb20, where every restart was
+ * meant to show it). Under the relay the uplink owns the connection and never sees a playout restart,
+ * so the slate covers nothing and only takes the programme off air. Measured on the DUT 2026-10-01
+ * (v2.1.0-rc.1, relay on): an operator Play now put the slate on air for 18 s (reasonCode
+ * scheduled_reconnect) and the cycle after it started a different pool item from offset 0.
+ * reconnectActive is already false under the relay (4043eb6); the restart arm was not.
+ */
+export function shouldShowReconnectSlate(input: ReconnectSlateInput): boolean {
+  if (input.liveBridgeActive) {
+    return false;
+  }
+  return input.reconnectActive || (!input.relayEnabled && input.restartRequested);
+}
+
+// Planned stops that end the item for good: the cycle after them moves on to the next item instead of
+// starting the stopped one again (duration-bound.ts, the feed watchdogs). A "switch" or
+// "restart-requested" stop is different: something else, or the same item again, starts right after it.
+export const ITEM_ENDING_STOP_REASONS: ReadonlySet<string> = new Set(["duration-bound", "feed-stalled", "feed-audio-stalled"]);
+
+export interface InsertExitInput {
+  // The reason stopPlayoutProcess recorded, "" for an exit nobody asked for (natural EOF, a crash).
+  plannedReason: string;
+  insertStatus: string;
+  insertAssetId: string;
+  // The runtime's on-air asset when the process exited.
+  currentAssetId: string;
+}
+
+/**
+ * Clear the operator insert when its process exits?
+ *
+ * An active insert stays selected for as long as the runtime row names it, so an insert that ends and is
+ * not cleared starts again from 0 at the next cycle, for ever. Until M74 only an unplanned exit cleared
+ * it; an insert ended by its duration bound (remote VODs without EOF, several times a day:
+ * duration-bound.ts) or by a feed watchdog replayed. A pending insert has not aired and is not touched
+ * here.
+ */
+export function shouldClearInsertOnExit(input: InsertExitInput): boolean {
+  if (input.insertStatus !== "active" || input.currentAssetId !== input.insertAssetId) {
+    return false;
+  }
+  return input.plannedReason === "" || ITEM_ENDING_STOP_REASONS.has(input.plannedReason);
+}
+
+export interface PreviousAssetInput {
+  // The runtime's on-air asset when the cycle began, "" after an exit cleared it (or for a slate).
+  onAirAtCycleStart: string;
+  // lastSuccessfulAssetId: the asset the last cleanly ended (or long-running) process played.
+  lastEndedAssetId: string;
+  // What the cycle puts or keeps on air: "" for a slate or standby.
+  incomingAssetId: string;
+  incomingIsLive: boolean;
+  previousAssetId: string;
+}
+
+/**
+ * The asset Replay previous offers: the last one that left the air for something else.
+ *
+ * The cycle used to compare the runtime row it re-read at its end, after startOrSwitchPlayout had
+ * already written the new asset into it, so the outgoing asset never differed from the incoming one and
+ * previousAssetId stayed empty for good. The outgoing asset is what was on air when the cycle began; at a
+ * natural end the exit handler has already cleared that, and the asset it just ended is
+ * lastSuccessfulAssetId. A restart of the same asset, or a slate, leaves the previous asset as it is.
+ */
+export function decidePreviousAssetId(input: PreviousAssetInput): string {
+  const outgoing = input.onAirAtCycleStart || input.lastEndedAssetId;
+  if (outgoing === "") {
+    return input.previousAssetId;
+  }
+  if (input.incomingIsLive || (input.incomingAssetId !== "" && input.incomingAssetId !== outgoing)) {
+    return outgoing;
+  }
+  return input.previousAssetId;
+}
+
+export interface RunningAssetTargetInput {
+  // What the selection asks for: "insert" for operator_insert / scheduled_insert, otherwise "asset".
+  desiredKind: "asset" | "insert";
+  desiredAssetId: string;
+  // What the running process was started as.
+  runningKind: string;
+  runningAssetId: string;
+}
+
+/**
+ * Is the item the selection names the one already on air, so the process keeps running?
+ *
+ * Same asset and same kind, as always. In addition, an item on air as an insert that the schedule now
+ * picks as its own item runs on: Resume during a Play now of the pool's own next item (on the DUT the
+ * YouTube items belong to the same pool as the archives), or a Pin of the insert on air. Comparing the
+ * kind as well restarted that item from 0 -- the same item, cut and started again (M74 review). The other
+ * direction (an item on air as itself, then asked for as an insert) is not a hand-over; the admin
+ * refuses Play now for the item on air.
+ */
+export function runningAssetTargetMatches(input: RunningAssetTargetInput): boolean {
+  if (input.runningAssetId === "" || input.runningAssetId !== input.desiredAssetId) {
+    return false;
+  }
+  return input.runningKind === input.desiredKind || (input.desiredKind === "asset" && input.runningKind === "insert");
+}
+
+export interface PoolPositionInput {
+  selectionReasonCode: string;
+  selectedAssetId: string;
+  // The runtime row the cycle selected from: what was on air and why.
+  runtimeCurrentAssetId: string;
+  runtimeReasonCode: string;
+}
+
+/**
+ * Does this cycle's selection take the pool position (the cursor write, and the queue walk after it)?
+ *
+ * A scheduled match that starts a new item does (M73). An item that simply runs on does not -- an archive
+ * another pool started, a Move next that plays to its end. One more case does: an item on air as an
+ * operator insert that the pool now picks as its own next item (Resume of a Play now of exactly that
+ * item). The selection skips the running insert as the pool's current item, so this pick came from the
+ * pool's position, and leaving the position where it was played the item a third time after its end.
+ */
+export function selectionTakesPoolPosition(input: PoolPositionInput): boolean {
+  if (input.selectionReasonCode !== "scheduled_match" || input.selectedAssetId === "") {
+    return false;
+  }
+  return input.runtimeCurrentAssetId !== input.selectedAssetId || input.runtimeReasonCode === "operator_insert";
+}
+
+export interface InsertFields {
+  insertAssetId: string;
+  insertRequestedAt: string;
+  insertStatus: "" | "pending" | "active";
+}
+
+export interface CycleEndInsertInput {
+  selectionIsOperatorInsert: boolean;
+  selectedAssetId: string;
+  // The runtime row as the cycle-end write finds it: the admin may have changed it while the cycle ran.
+  row: InsertFields;
+  now: string;
+}
+
+/**
+ * The insert fields the cycle-end write leaves.
+ *
+ * The cycle that starts an insert marks it active -- but only if the row still names that insert. The
+ * cycle can run for a minute or more (an inline yt-dlp or Twitch resolve) and the admin writes the row
+ * meanwhile: a Resume that cancelled the insert, or a newer Play now, used to be overwritten with the
+ * old insert, active, which then played to its end (M74 review). Otherwise the row's fields stand.
+ */
+export function decideCycleEndInsert(input: CycleEndInsertInput): InsertFields {
+  if (input.selectionIsOperatorInsert && input.selectedAssetId !== "" && input.row.insertAssetId === input.selectedAssetId) {
+    return {
+      insertAssetId: input.selectedAssetId,
+      insertRequestedAt: input.row.insertRequestedAt || input.now,
+      insertStatus: "active"
+    };
+  }
+  return { ...input.row };
+}

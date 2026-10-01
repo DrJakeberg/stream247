@@ -259,10 +259,19 @@ Current operator controls include:
 - restart encoder
 - temporary fallback
 - pin specific asset on air
+- play now / insert, move next, replay previous
 - skip current asset
 - resume schedule control
 
 Those controls are persisted in the playout runtime state and picked up by the worker/playout reconciliation loop.
+Play now and Insert only queue the insert (`insertStatus: pending`); the next cycle's insert branch
+selects it and switches to it. Restart, Hard reload and Skip (also by chat vote), and without the relay
+also Pin, Fallback, Resume, Force reconnect and Recover outputs, set `restartRequestedAt`; the
+reconnect standby slate follows that flag only in direct RTMP mode, because under the relay the uplink
+owns the destination connection (`shouldShowReconnectSlate` in `apps/worker/src/playout-boundary.ts`).
+Under the relay Pin, Fallback and Resume change the item through the ordinary switch at the next cycle,
+and an item already on air keeps running (`runningAssetTargetMatches`). What each control does is
+listed in `docs/operations.md`, *Operator controls*.
 
 ## Multi-Output Delivery
 

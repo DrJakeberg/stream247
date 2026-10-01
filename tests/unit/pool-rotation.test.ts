@@ -317,13 +317,16 @@ describe("pool rotation wiring", () => {
     const queue = bodyOf(workerSource, "function getPoolPlaybackQueue(");
     expect(queue).toContain("walkPoolRotation(");
     expect(queue).toContain("afterAssetId: options.currentStartsPool ? currentAssetId : \"\"");
-    // The queue walks on from the selection only in the cycle that stores it, the cursor write's own test.
-    expect(workerSource.replace(/\s+/g, " ")).toContain(
-      'currentStartsPool: selection.reasonCode === "scheduled_match" && Boolean(selection.asset) && state.playout.currentAssetId !== selection.asset?.id'
+    // The queue walks on from the selection only in the cycle that stores it, the cursor write's own test
+    // (selectionTakesPoolPosition in playout-boundary.ts, with the M74 hand-over of a running insert).
+    const flatWorker = workerSource.replace(/\s+/g, " ");
+    expect(flatWorker).toContain(
+      "const selectionTakesPosition = selectionTakesPoolPosition({ selectionReasonCode: selection.reasonCode, selectedAssetId: selection.asset?.id ?? \"\", runtimeCurrentAssetId: state.playout.currentAssetId, runtimeReasonCode: state.playout.selectionReasonCode });"
     );
+    expect(flatWorker).toContain("currentStartsPool: selectionTakesPosition");
     const matchWrite = workerSource.indexOf("await updatePoolCursor(currentScheduleItem.poolId, selection.asset.id, {");
     expect(workerSource.slice(matchWrite - 400, matchWrite).replace(/\s+/g, " ")).toContain(
-      'selection.reasonCode === "scheduled_match" && selection.asset && state.playout.currentAssetId !== selection.asset.id'
+      "if (currentScheduleItem?.poolId && selectionTakesPosition && selection.asset) {"
     );
     // The head fallback that every Skip used to hit is gone.
     expect(workerSource).not.toContain("eligibleAssets[0]");

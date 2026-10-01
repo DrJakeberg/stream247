@@ -396,6 +396,19 @@ re-upgrade do to a pool's position.
   cursor carries on after the cursor; the pool's other sources carry on from where 2.1 last left them,
   or from their oldest item if the map was emptied, so they may repeat items the older image aired in
   between.
+- **Operator controls.** Play now and Play insert switch straight to the chosen item at the next
+  playout cycle; before 2.1 they put the reconnect slate on air for one cycle, dropped the insert
+  without a trace and started a different pool item from its beginning. With the relay no operator
+  action shows the slate any more (direct RTMP mode keeps it for restarts); Pin and Fallback switch at
+  the next cycle without a restart, Force reconnect is refused and Recover outputs leaves the programme
+  alone, because the uplink owns the connection. Play now refuses the item on air, an item under a
+  skip hold, any item while a Pin or Fallback runs, and a Twitch archive that is neither downloaded nor
+  allowed to play from Twitch; a dropped insert is logged (`playout.insert.dropped`, runtime event and
+  audit row), an insert ended by its duration bound or a feed watchdog no longer replays, Resume
+  cancels a Play now, Replay previous has an item again (shown as *Previous item*), and a Move next or
+  Replay previous item from outside the running pool plays to its end instead of being cut after one
+  cycle. After an insert the pool continues with its next item; the interrupted item is not resumed.
+  See `docs/operations.md`, *Operator controls*.
 
 ### Patch vs Minor Upgrades
 
@@ -511,7 +524,7 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 - schedule blocks support weekly CRUD, reusable show profiles, multi-day creation, overlap validation, drag/drop repositioning, resize-to-change-duration editing, weekly coverage summaries, and quick-start program templates
 - pools are first-class programming units for round-robin playout selection that alternates between a pool's sources, each in a stable date order (see `docs/architecture.md`, *Scheduling*)
 - sources can be edited in place and the asset catalog can be searched by title, source, and status
-- playout supports operator restart, temporary fallback, asset pinning, skip-current, and resume-schedule actions
+- playout supports operator restart, temporary fallback, asset pinning, play now / insert, skip-current, and resume-schedule actions (`docs/operations.md`, *Operator controls*)
 - overlay is drawn by the playout renderer, with replay labeling, current/next context, and admin-managed branding
 - optional chat, chatter-participation, and Twitch alert overlays render through the same on-air overlay when explicitly enabled
 - email and Discord alert delivery are both implemented

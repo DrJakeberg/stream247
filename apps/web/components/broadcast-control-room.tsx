@@ -155,6 +155,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
             nextAssetId={nextQueueItem?.asset?.id || snapshot.nextAsset?.id}
             nextAssetTitle={nextQueueItem?.title || snapshot.nextAsset?.title}
             overrideMode={(snapshot.playout.overrideMode as "schedule" | "asset" | "fallback") || "schedule"}
+            insertStatus={snapshot.playout.insertStatus}
             liveBridgeStatus={snapshot.liveBridge.status}
             liveBridgeLabel={snapshot.liveBridge.label}
             liveBridgeInputType={snapshot.liveBridge.inputType}

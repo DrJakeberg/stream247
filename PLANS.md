@@ -82,7 +82,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M70 Twitch Account Docs | Docs | Now | Complete | Nobody mistakes the bot for the channel again | `docs/twitch-setup.md`, `docs/getting-started.md`, `docs/operations.md` and `docs/deployment.md` name both roles, what each needs, and check "is the channel live" against the channel | docs | low | — |
 | M72 Stable Asset Order | Data | Now | Complete | A pool walks its sources in a real, stable chronological order | A source sync keeps an asset's first-seen `created_at` and a known `published_at` (fill-only) and never resets a known duration to 0; YouTube listings carry approximate publish dates (`youtubetab:approximate_date`); Twitch archives without dates order by their numeric VOD id; one shared comparator replaces the hand-copied sorts; cache writes touch only cache columns, so a long download no longer reverts other fields | worker, db, core, tests, docs | medium | revert commit; existing rows keep their values |
 | M73 Pool Source Alternation | Behavior | Now | Complete | A pool with several sources alternates between them (owner decision 2026-10-01) | A multi-source pool picks Twitch -> YouTube -> Twitch ... in `sourceIds` order, each source walking its own items oldest first and looping; per-source positions persist in `pools.source_cursors` (baseline, ALTER and migration); a single-source pool walks one source as before; a skipped, quarantined or cooled-down item no longer resets the rotation to the head, and a vanished position restarts only its own source at its oldest item; worker selection, queue, lookahead, schedule preview and week lens use one rotation function; pool form and docs say so | core, worker, db, web, tests, docs | medium | revert commit; the column stays and is ignored |
-| M74 Operator Play Now | Reliability | Now | Planned | Play now and Insert put the chosen item on air, without a standby slate | Play now / Insert switch straight to the insert at the next cycle and never set the restart flag; the legacy "restart + desired asset" override branch is gone, so no action re-picks the running or a skipped item; the reconnect standby slate appears only without the relay; a dropped insert is logged; an insert stopped by its duration bound or a feed watchdog is cleared instead of replaying; the cycle re-reads state after a duration-bound stop, so insert and Move next fire at that boundary; an insert that cannot be prepared (e.g. an uncached Twitch VOD) never takes the running item off air; Recover outputs under the relay no longer restarts the programme; Skip continues after the skipped item instead of the pool head (with M73); after the insert the pool continues with its next item (resuming the interrupted item at its position is a follow-up) | worker, web, tests, docs | medium | revert commit |
+| M74 Operator Play Now | Reliability | Now | Complete | Play now and Insert put the chosen item on air, without a standby slate | Play now / Insert switch straight to the insert at the next cycle and never set the restart flag; the legacy "restart + desired asset" override branch is gone, so no action re-picks the running or a skipped item; the reconnect standby slate appears only without the relay; a dropped insert is logged; an insert stopped by its duration bound or a feed watchdog is cleared instead of replaying; the cycle re-reads state after a duration-bound stop, so insert and Move next fire at that boundary; an insert that cannot be prepared (e.g. an uncached Twitch VOD) never takes the running item off air, and Play now refuses such an archive up front; Recover outputs under the relay no longer restarts the programme and Force reconnect is refused there (the uplink reconnects by itself), and Pin, Fallback and Resume switch there without a restart; Resume cancels a pending or running insert; Replay previous has an item, and a Move next or Replay previous item plays to its end; Skip continues after the skipped item instead of the pool head (with M73); after the insert the pool continues with its next item (resuming the interrupted item at its position is a follow-up) | worker, web, tests, docs | medium | revert commit |
 | M71 Release 2.1.0 | Release | Now | Planned | Ship M68-M70 and M72-M74 | rc on the DUT, verified (YouTube on air via Play now), 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
 | M75 Source Circuit Breaker | Reliability | Next | Planned | A broken source costs one incident, not one failed boundary per item (competitor comparison 2026-10-01; owner decision) | When probes fail on 3 distinct items of the same source with no success in between, the source is held out of the pool rotation (M73) for a cooldown that doubles up to a cap; one incident per source instead of per-item noise; after the cooldown one item is probed (half-open) and a success closes the breaker and resolves the incident; per-item quarantine and the operator's `includeInProgramming` stay untouched; a pool whose sources are all held falls back as today; the source page shows the breaker state; any persisted state ships in the baseline, the ALTER block and a migration | core, worker, db, web, tests, docs | medium | revert commit; the stored state is ignored |
 | M76 As-Run Log | Ops + Data | Next | Planned | Answer "what was on air at 19:38" from one table instead of container logs (competitor comparison 2026-10-01; owner decision) | Every playout start and end writes one row: UTC start and end, block, pool, source, asset, title, selection reason, queue kind, input kind (cache, remote, YouTube pair, live), format id, planned and aired seconds, end reason (natural end, duration bound, switch, skip, failure); bounded retention; a read-only view in the console and an API route; docs/operations.md uses it in the runbooks; the table ships in the baseline, the ALTER block and a migration | worker, db, web, tests, docs | low | revert commit; the table stays unused |
@@ -3983,3 +3983,155 @@ Follow-ups:
   older image emptied the map), so items the older image aired from them can repeat (*Upgrading To 2.1*).
 - The pool form keeps the source order alphabetical by name (the select's order); a pool cannot yet
   choose which source plays first other than by naming.
+
+## M74 Operator Play Now
+
+Production evidence (DUT, v2.1.0-rc.1, relay on, 2026-10-01 00:12:39Z): an operator Play now of a
+YouTube item while a Twitch archive ran as `scheduled_match`. The worker stopped the archive
+(`plannedReason: restart-requested`), put the reconnect standby slate on air for 18 s
+(`reasonCode: scheduled_reconnect`), dropped the insert without a log line or an audit row, and then
+started a different pool item from offset 0. Mechanism, verified by two independent code readings:
+`play_now`/`trigger_insert` set `status: recovering` and `restartRequestedAt`; a legacy branch of
+`choosePlaybackCandidate` ("restart requested and `desiredAssetId`", from 865f3ec) selected the
+desired asset as `operator_override` ahead of the insert branch, and the worker writes
+`desiredAssetId` = the asset on air at every start and cycle end, so any restart flag re-picked the
+running item; a pending insert was cleared whenever the selection was not `operator_insert`, with a
+runtime message only; the slate arm `restartRequestedAt !== ""` (42adb20) had no relay guard, unlike
+`reconnectActive`/`reconnectDue` (4043eb6); after the slate `currentAssetId` was empty, so the pool
+took its next pick (nothing seeks, nothing resumes). The review found five more defects a working Play
+now exposes: an active insert stopped by its duration bound or a feed watchdog stayed active and
+replayed from 0; after a duration-bound stop the cycle selected from the state read before the stop,
+so the insert, Move next, pool-insert and cuepoint arms (all wait for `currentAssetId === ""`) were
+skipped at that boundary; an insert that could not be prepared (an uncached Twitch archive with
+remote fallback off) took the healthy item off air through the recovery plan and was retried every
+cycle; `previousAssetId` was never written (the cycle end compared the row startOrSwitchPlayout had
+already moved on); Recover outputs and Force reconnect set the restart flag, which under the relay
+reconnects nothing (the uplink owns the destinations and never reads the flag) and, without the slate,
+would replay the running 5-11 h archive from 0.
+
+Done:
+
+- Web (`apps/web/lib/server/broadcast.ts`): Play now / Insert write only `insertAssetId`,
+  `insertRequestedAt`, `insertStatus: pending` (and clear Move next, as before) plus message and audit;
+  no restart flag, no `recovering`. They refuse a Twitch archive the playout cannot start, by the
+  playout's own rule, now in core `twitch-vod-playback.ts` (`isTwitchVodPlaybackAsset`,
+  `decideTwitchVodPlaybackSource`: cached, or too large to cache, or remote fallback on; the worker's
+  `isTwitchVodAsset` and `resolveAssetPlaybackInput` use the same functions). The admin cannot look at
+  the cache file, so it reads `cacheStatus === "ready"`, which the playout and the download job write.
+  The relay flag comes from `STREAM247_RELAY_ENABLED` (deploy-time env shared by every container, as
+  `readiness.ts` reads it). Under the relay Force reconnect is refused (no field the uplink reads exists
+  to route it to; the uplink reconnects by itself), Recover outputs marks the staged outputs ready and
+  writes nothing to the playout runtime, and Resume, Pin and Fallback write without the restart flag
+  (the override branch and the ordinary switch change the item; a Pin of the item on air keeps it
+  running). Direct mode keeps all of them as they were. Resume schedule is enabled while an insert is
+  pending or active. Play now / Insert also refuse what the worker would drop at once: the item on air
+  (as Move next does), any item while a Pin or Fallback holds the air, an item under a skip hold. A
+  pending insert that a newer Play now replaces or Resume cancels gets a `playout.insert.dropped` audit
+  row (`replaced`, `cancelled`).
+- Worker selection: the legacy branch is gone; the override branch (`overrideUntil`) stays. A queued
+  Move next starts at once on a restart only when the running item was skipped (Skip), so under the
+  relay Restart restarts the running item and leaves Move next next (without the relay the slate ends
+  the item and Move next follows it). A running item whose runtime reason is `operator_insert` is no
+  longer kept as the pool's current item once Resume cancels the insert: Resume of an in-pool insert
+  (the DUT case, a YouTube item of the TwitchYoutube pool) hands back to the pool's pick; when the pick
+  is the insert's own item it runs on (`runningAssetTargetMatches`: an item on air as an insert matches
+  a selection of the same asset; comparing the kind too restarted it from 0) and takes the pool
+  position (`selectionTakesPoolPosition`; it used to play a third time). A pin is not treated so: a
+  pinned pool item plays on as the pool's item when the pin runs out, as before. A running `manual_next`
+  item is kept like a graceful handoff, so a Move next or Replay previous item from outside the pool's
+  sources plays to its end (it was cut after one cycle for the pool's pick). While an operator insert or
+  a pin is on air, the pool's next items are warmed (`rawQueueAssets`), so the insert's end is not a
+  cold boundary.
+- Slate: `shouldShowReconnectSlate` (playout-boundary.ts) = no live bridge and (reconnect window, or
+  restart flag without the relay).
+- Dropped inserts: `recordDroppedInsert` logs `playout.insert.dropped` `{ assetId, reason,
+  selectionReasonCode, error? }` and an audit row, for every insert cleared before it aired:
+  `preempted`/`unavailable` (the clear after selection), `destination-missing`, `prepare-failed`,
+  `start-failed` (start and switch). An insert that aired and was then cut is not a drop.
+- Exit handler: `shouldClearInsertOnExit` also clears an active insert on a planned `duration-bound`,
+  `feed-stalled` or `feed-audio-stalled` stop (`ITEM_ENDING_STOP_REASONS`). The handler keeps its
+  runtime write in `pendingPlayoutExitUpdate`.
+- Re-read: the cycle notes whether a process runs and awaits `pendingPlayoutExitUpdate` before its
+  first read, so an exit just before the cycle is in the state it reads; when the process that ran at
+  that point is gone before the selection (duration bound, feed watchdog inside the feed status update,
+  or its own end), it awaits the exit's write again and re-reads, so the arms fire at that boundary and
+  a cleared insert is not started again.
+- Cycle end: `decideCycleEndInsert` marks the started insert active only while the row still names it,
+  so a Resume or a newer Play now written during a long cycle (an inline resolve) stands; the clear
+  after selection clears only the insert the cycle read.
+- Insert preparation failure with an item on air (process running, `currentAssetId` set) and the
+  insert still pending: the insert is dropped (`prepare-failed`, with the error), no incident, no
+  recovery plan, an immediate cycle; the item on air keeps its input. With nothing on air, or for an
+  insert already on air that fails to prepare for a Restart, the recovery plan runs as before.
+- Previous asset: `decidePreviousAssetId` from the asset on air at the cycle's start, else
+  `lastSuccessfulAssetId` (what a natural end just cleared); a restart or a slate keeps the old value.
+  The VOD cache release uses the same cycle-start asset as its finished asset, which the re-read would
+  otherwise have lost at a duration-bound boundary. Under the relay a Skip or a Play now therefore
+  releases the outgoing archive's cache like an ordinary end (the slate used to hide it from the
+  release), unless M62 keeps it for a pool scheduled within the retention horizon.
+- Wording: operations (*Operator controls, with and without the relay*: every control in both modes,
+  the drop reasons, that Play now neither resumes the interrupted item (M77) nor moves a pool's
+  position; *Destination cooling down or staged*), README (operator queue actions, restart, resume,
+  force reconnect / recover outputs), architecture (*Operator Controls*), deployment (*Upgrading To
+  2.1*, *Operator controls* bullet; capability notes), control room (*Previous completed asset* is now
+  *Previous item*: it also names an item a Play now or a Skip cut short).
+- Tests: `broadcast-actions` (new; what Play now, Insert, Force reconnect, Recover outputs, Resume,
+  Restart, Hard reload, Skip, Pin and Fallback write in relay and direct mode; the archive refusal with
+  cached, too-large, managed and env remote fallback, managed Off over env On; the refusals of the item
+  on air, during a Pin or Fallback and under a skip hold; the `replaced` and `cancelled` drop rows),
+  `playout-boundary` (slate, insert-clear, previous-asset, running-target, pool-position and cycle-end
+  insert tables),
+  `twitch-vod-playback` (new; the decision, the archive rule shared by admin and playout, and its use
+  in `resolveAssetPlaybackInput`), `operator-play-now-wiring` (new; the selection arms, the slate call
+  and the relay guards, crash-loop reset and restart block, the re-read order, every drop site, the
+  prepare-failure early return before the incident and the recovery plan, the previous-asset and cache
+  release inputs, the exit handler, the running Move next item, the warmed queue, the cycle-end insert),
+  `broadcast-control-room` (Resume enabled for an insert). `youtube-playback-wiring` is unchanged and
+  green; the M73 wiring in `pool-rotation` now pins the shared `selectionTakesPoolPosition` at both
+  sites.
+- `pnpm validate` green (2088 unit, 54 integration tests, build), also after the review fixes.
+
+Unchanged behaviour, traced through `choosePlaybackCandidate` (index.ts cannot be imported in a unit
+test, so the arms are pinned by source text): Restart / Hard reload under the relay select the running
+pool item through `currentPoolAsset` (a graceful handoff through `runningScheduledAsset`, a pin through
+the override branch, an insert through the insert branch) and the restart block stops and starts it
+from its beginning; without the relay the slate shows and the selection then runs with nothing on air:
+the running pin, else the running insert from its beginning, else a queued Move next, else the pool's
+next item (a pool item on air is not restarted, as before). Before M74 a direct-mode Restart during an
+insert ended the insert (the legacy arm re-picked it as an override and the insert was cleared), but no
+Play now ever reached the air then, so the replay after the slate is new only in name. Skip holds the item out of `currentPoolAsset` and the rotation, so the pool continues after it.
+Pin and Fallback write `overrideAssetId`/`overrideUntil` and win the override branch. The crash-loop
+reset and the direct-mode `reconnectDue` set the restart flag after or before the slate decision
+exactly as before.
+
+DUT check after deploy (read-only, `CHECK_BASE_URL=http://127.0.0.1:3000` where needed):
+
+- Play now of a short YouTube item while an archive runs: once the next cycle has resolved the item
+  (within one cycle if it was played recently, a minute or more for a cold yt-dlp resolve; the archive
+  stays on air meanwhile) the playout log has
+  `playout.process.exit` for the archive with `plannedReason: switch` and `playout.process.start` with
+  `reasonCode: operator_insert` and `formatCandidate: split-*`; no `scheduled_reconnect` start and no
+  slate. The item plays to its end, the next start is `scheduled_match` (the pool's next item after the
+  archive; with M73 that is the next source's next item), and `audit_events` has one
+  `playout.play-now.requested` row and no `playout.insert.dropped`.
+- After the switch the runtime row's `previous_asset_id` names the archive; Replay previous is enabled.
+- Force reconnect answers with the uplink refusal; Resume during a Play now returns to the pool.
+- Play now of an archive that is not downloaded is refused in the control room (remote fallback off).
+
+Follow-ups:
+
+- Resume the interrupted item at its position (M77, deferred by the owner).
+- Skip during an active pin: the override branch ignores the skip hold, so Skip -- and a passed chat
+  skip vote, which viewers can repeat -- restarts the pinned item (from 0 under the relay) instead of
+  skipping it. Needs an owner decision: refuse the skip, or end the pin. Documented in operations.
+- Move next is cleared by Play now; keeping it queued behind the insert would need the insert branch
+  and the manual-next arm to agree on an order.
+- An insert on air survives a Live Bridge takeover (the clear after selection skips a live selection)
+  and a direct-mode planned reconnect (`scheduled-reconnect` is not an item-ending stop), and starts
+  again from 0 afterwards. Older than M74; the `shouldClearInsertOnExit` table pins today's choice.
+- The admin reads the archive's cache state, not the file: an evicted cache that still says `ready`
+  passes the refusal, and the worker then drops the insert (`prepare-failed`, logged).
+- The Force reconnect and Recover outputs buttons do not know the relay mode; the refusal explains it,
+  hiding or relabelling them needs the relay flag in the control-room snapshot.
+- Play now does not move a pool's position (the M73 follow-up asked M74 to store it or say so): a pool
+  item played by hand can come round again as the pool's next item.

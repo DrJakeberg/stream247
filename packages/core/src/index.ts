@@ -16,6 +16,7 @@ export * from "./pool-rotation.js";
 export * from "./programming-asset-order.js";
 export * from "./relay-ingest.js";
 export * from "./source-health.js";
+export * from "./twitch-vod-playback.js";
 
 import {
   resolveAlertsRuntimeEnabled,
