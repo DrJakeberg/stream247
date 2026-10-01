@@ -3,32 +3,48 @@
 import {
   OVERLAY_SCENE_CUSTOM_LAYER_KINDS,
   OVERLAY_SCENE_CUSTOM_TEXT_FONT_MODES,
-  OVERLAY_SCENE_CUSTOM_WIDGET_DATA_KEYS,
+
   OVERLAY_SCENE_LAYERS,
   OVERLAY_PANEL_ANCHORS,
   OVERLAY_SCENE_PRESETS,
   OVERLAY_SURFACE_STYLES,
   OVERLAY_TYPOGRAPHY_PRESETS,
   OVERLAY_TITLE_SCALES,
+  MAX_NAMED_OVERLAY_SCENES,
+  OVERLAY_PANEL_IDS,
+  OVERLAY_TICKER_MAX_SECONDS,
+  OVERLAY_TICKER_MIN_SECONDS,
   buildOverlayScenePayload,
-  describeOverlaySceneFrameSupport,
+  deriveDefaultPlacements,
+  overlayTickerMessages,
+
+  resolveActiveOverlayNamedSceneId,
   resolveOverlayHeadlineForQueueKind,
+  resolveOverlayNamedSceneCustomLayers,
+  resolvePlacementPixelBox,
+  type OverlayNamedScene,
+  type OverlayPanelId,
   type OverlayQueueKind,
+  type OverlayScenePanelPlacement,
   type OverlaySceneCustomMediaFit,
   type OverlaySceneCustomTextAlign,
   type OverlaySceneCustomTextFontMode,
   type OverlaySceneCustomTextTone,
   type OverlaySceneCustomLayerKind,
-  type OverlaySceneCustomWidgetDataKey,
+
   type OverlaySceneLayerKind
 } from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { OverlaySceneCanvas } from "@/components/overlay-scene-canvas";
+import { OverlayPlacementCanvas, type PlacementTarget } from "@/components/overlay-placement-canvas";
+import { OverlayRenderPreview } from "@/components/overlay-render-preview";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { useToast } from "@/components/ui/Toast";
 import { buildOverlayPublishReviewSections, type OverlayPublishReviewSection } from "@/lib/overlay-publish-review";
+import { OVERLAY_PANEL_LABELS } from "@/lib/overlay-panel-labels";
 import { createDefaultCustomLayer } from "@/lib/overlay-studio-defaults";
 import type { OverlayScenePresetRecord, OverlaySettingsRecord } from "@/lib/server/state";
+import { describeScenePreset, describeTypographyPreset } from "@/lib/scene-preset-names";
 
 type OverlayPreviewSeed = {
   timeZone: string;
@@ -70,10 +86,47 @@ function overlaySignature(overlay: OverlaySettingsRecord): string {
     queuePreviewCount: overlay.queuePreviewCount,
     layerOrder: overlay.layerOrder,
     disabledLayers: overlay.disabledLayers,
+    // The scene list, not the projected layer array: `customLayers` is derived from these two, so
+    // signing it as well would count one edit twice and let a rounding difference in the
+    // projection read as an unsaved change.
+    scenes: overlay.scenes,
+    activeSceneId: overlay.activeSceneId,
     customLayers: overlay.customLayers,
+    panelPlacements: overlay.panelPlacements,
     emergencyBanner: overlay.emergencyBanner,
-    tickerText: overlay.tickerText
+    tickerText: overlay.tickerText,
+    tickerRotateSeconds: overlay.tickerRotateSeconds
   });
+}
+
+/**
+ * What each of the renderer's own panels is called where an operator can see it.
+ *
+ * Not the internal ids and not the layer names from the visibility list: these are the six things
+ * an operator points at on the picture, and "Now playing" is what they call the lower third.
+ */
+/** The design grid. Design pixels are frame pixels at this size, which is what makes it the grid. */
+const DESIGN_FRAME = { width: 1920, height: 1080 };
+
+/**
+ * The box in design pixels, for the caption under each panel's name.
+ *
+ * Percentages are what is stored, because they survive an output size change; pixels are what an
+ * operator recognises on the picture. This says the same thing the four number fields say, in one
+ * readable line, so a folded panel still tells you where it is.
+ *
+ * Resolved by the renderer's own resolver rather than by repeating its arithmetic here. The
+ * hand-written version this replaces had the safe-area margins, the origin and the clamps written
+ * out a second time, so a caption could disagree with the picture — and did, for any box the
+ * renderer clamps.
+ */
+function describePanelBox(placement: OverlayScenePanelPlacement): string {
+  const box = resolvePlacementPixelBox(placement, DESIGN_FRAME);
+  return (
+    `x ${String(box.left)} · y ${String(box.top)} · ` +
+    `${String(box.width)} × ${String(box.height)} · ` +
+    `${String(placement.opacityPercent)}% opacity`
+  );
 }
 
 function ScenePublishReviewDialog(props: {
@@ -138,6 +191,23 @@ export function OverlaySettingsForm(props: {
   hasUnpublishedChanges: boolean;
   basedOnUpdatedAt: string;
   preview: OverlayPreviewSeed;
+  /** Stored external video sources a source layer can link to. Name and presence only. */
+  videoSources?: Array<{ id: string; name: string; urlPresent: boolean }>;
+  /**
+   * Which corner the chat panel is set to, from the engagement settings that own it. Only used to
+   * seed the chat panel's first box from where the flow currently puts it; the scene never stores
+   * the corner itself.
+   */
+  chatPosition?: string;
+  /**
+   * The size this channel actually encodes, from the output profile.
+   *
+   * Not 1920x1080 unless the profile says so. overlayScale has a floor at 0.35 and every dimension
+   * is rounded, so at 1280x720 the safe band is 646px of 720 where at 1920x1080 it is 968 of 1080 —
+   * the picture is genuinely different, and a preview at the wrong size would put the drag handles
+   * somewhere the broadcast does not.
+   */
+  outputSize: { width: number; height: number };
 }) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -147,6 +217,15 @@ export function OverlaySettingsForm(props: {
   const [presetName, setPresetName] = useState("");
   const [presetDescription, setPresetDescription] = useState("");
   const [isPublishReviewOpen, setIsPublishReviewOpen] = useState(false);
+  // Which box on the preview the operator has hold of, as "panel:<id>" or "layer:<id>". Selecting
+  // one opens the sidebar at it, so the number fields stay available as the exact way to say what
+  // a drag can only approximate.
+  const [selectedPlacementId, setSelectedPlacementId] = useState("");
+  const [placementFoldOpen, setPlacementFoldOpen] = useState(false);
+  const [overlapNotice, setOverlapNotice] = useState("");
+  // Bumped on every drop and every arrow key, so the preview renders that change at once instead of
+  // waiting out the settle beat that exists for typing.
+  const [placementRevision, setPlacementRevision] = useState(0);
   const router = useRouter();
   const { pushToast } = useToast();
   const hasLocalChanges = overlaySignature(draft) !== overlaySignature(props.draftOverlay);
@@ -162,45 +241,140 @@ export function OverlaySettingsForm(props: {
     }));
   };
 
+  // --- Named scenes --------------------------------------------------------
+  //
+  // The scene in the picker is the scene the draft is ABOUT: editing it and putting it on air are
+  // the same act, one publish apart. Offering a separate "edit this one, keep that one live" axis
+  // would duplicate the draft/live split this form already has and give four states where the
+  // operator can only reason about two.
+  const scenes = draft.scenes.length > 0 ? draft.scenes : [];
+  const selectedScene = scenes.find((scene) => scene.id === draft.activeSceneId) ?? scenes[0];
+
+  /** Replaces the scene list and keeps the projected layer array in step with the server's. */
+  const applyScenes = (nextScenes: OverlayNamedScene[], nextActiveSceneId?: string) => {
+    setDraft((current) => {
+      const activeSceneId = resolveActiveOverlayNamedSceneId(nextScenes, nextActiveSceneId ?? current.activeSceneId);
+      return {
+        ...current,
+        scenes: nextScenes,
+        activeSceneId,
+        // The same projection the API and the store compute, so the preview draws the frame that
+        // will actually go on air rather than whatever the form last held.
+        customLayers: resolveOverlayNamedSceneCustomLayers(nextScenes, activeSceneId)
+      };
+    });
+  };
+
+  const updateSelectedScene = (updater: (scene: OverlayNamedScene) => OverlayNamedScene) => {
+    setDraft((current) => {
+      const nextScenes = current.scenes.map((scene) => (scene.id === current.activeSceneId ? updater(scene) : scene));
+      return {
+        ...current,
+        scenes: nextScenes,
+        customLayers: resolveOverlayNamedSceneCustomLayers(nextScenes, current.activeSceneId)
+      };
+    });
+  };
+
+  const addScene = () => {
+    const id = `scene-${Date.now().toString(36)}`;
+    applyScenes([...scenes, { id, name: `Scene ${String(scenes.length + 1)}`, customLayers: [], sourceId: "" }], id);
+  };
+
+  const duplicateScene = () => {
+    if (!selectedScene) {
+      return;
+    }
+    const id = `scene-${Date.now().toString(36)}`;
+    applyScenes(
+      [...scenes, { ...selectedScene, id, name: `${selectedScene.name} copy`.slice(0, 60) }],
+      id
+    );
+  };
+
+  const removeScene = () => {
+    // Never down to zero: a channel with the overlay switched on must have a scene to draw.
+    if (scenes.length <= 1 || !selectedScene) {
+      return;
+    }
+    applyScenes(scenes.filter((scene) => scene.id !== selectedScene.id), "");
+  };
+
+  // Taking hold of a panel seeds its box from where the flow already puts it, so the first save
+  // moves nothing: the operator sees the numbers for the panel's current position and changes the
+  // ones they mean to. Letting go removes the entry entirely, which puts the panel back in the flow
+  // rather than leaving it pinned to whatever it was last dragged to.
+  const togglePanelPlacement = (id: OverlayPanelId) => {
+    setDraft((current) => {
+      const next = { ...current.panelPlacements };
+      if (next[id]) {
+        delete next[id];
+        return { ...current, panelPlacements: next };
+      }
+      const seed = deriveDefaultPlacements(current.panelAnchor, props.chatPosition)[id];
+      return { ...current, panelPlacements: { ...next, [id]: { ...seed, opacityPercent: seed.opacityPercent ?? 100, allowOutsideSafeArea: seed.allowOutsideSafeArea ?? false } } };
+    });
+  };
+
+  const updatePanelPlacement = (id: OverlayPanelId, patch: Partial<OverlayScenePanelPlacement>) => {
+    setDraft((current) => {
+      const existing = current.panelPlacements[id];
+      if (!existing) {
+        return current;
+      }
+      return { ...current, panelPlacements: { ...current.panelPlacements, [id]: { ...existing, ...patch } } };
+    });
+  };
+
+  // --- Direct manipulation -------------------------------------------------
+  //
+  // Dragging a panel that is still in the flow places it, seeded from where the flow put it, and
+  // then applies the drag. Making the operator find a checkbox first is the complaint this whole
+  // stage exists to answer: "I cannot move the fields."
+  const placePanelFromCanvas = (id: OverlayPanelId, patch: Partial<OverlayScenePanelPlacement>) => {
+    setDraft((current) => {
+      const seed = current.panelPlacements[id] ?? {
+        ...deriveDefaultPlacements(current.panelAnchor, props.chatPosition)[id],
+        opacityPercent: 100,
+        allowOutsideSafeArea: false
+      };
+      return {
+        ...current,
+        panelPlacements: { ...current.panelPlacements, [id]: { ...seed, ...patch } as OverlayScenePanelPlacement }
+      };
+    });
+  };
+
   const addCustomLayer = (kind: OverlaySceneCustomLayerKind) => {
-    setDraft((current) => ({
-      ...current,
-      customLayers: [...current.customLayers, createDefaultCustomLayer(kind)]
-    }));
+    updateSelectedScene((scene) => ({ ...scene, customLayers: [...scene.customLayers, createDefaultCustomLayer(kind)] }));
   };
 
   const updateCustomLayer = (id: string, updater: (layer: OverlayDraftCustomLayer) => OverlayDraftCustomLayer) => {
-    setDraft((current) => ({
-      ...current,
-      customLayers: current.customLayers.map((layer) => (layer.id === id ? updater(layer) : layer))
+    updateSelectedScene((scene) => ({
+      ...scene,
+      customLayers: scene.customLayers.map((layer) => (layer.id === id ? updater(layer) : layer))
     }));
   };
 
   const removeCustomLayer = (id: string) => {
-    setDraft((current) => ({
-      ...current,
-      customLayers: current.customLayers.filter((layer) => layer.id !== id)
-    }));
+    updateSelectedScene((scene) => ({ ...scene, customLayers: scene.customLayers.filter((layer) => layer.id !== id) }));
   };
 
   const moveCustomLayer = (id: string, direction: -1 | 1) => {
-    setDraft((current) => {
-      const nextLayers = [...current.customLayers];
+    updateSelectedScene((scene) => {
+      const nextLayers = [...scene.customLayers];
       const index = nextLayers.findIndex((layer) => layer.id === id);
       if (index === -1) {
-        return current;
+        return scene;
       }
 
       const targetIndex = index + direction;
       if (targetIndex < 0 || targetIndex >= nextLayers.length) {
-        return current;
+        return scene;
       }
 
       [nextLayers[index], nextLayers[targetIndex]] = [nextLayers[targetIndex], nextLayers[index]];
-      return {
-        ...current,
-        customLayers: nextLayers
-      };
+      return { ...scene, customLayers: nextLayers };
     });
   };
 
@@ -366,6 +540,105 @@ export function OverlaySettingsForm(props: {
     modeSubtitle: previewSubtitle,
     timeZone: props.preview.timeZone
   });
+
+  // Split by the renderer's own rule rather than by counting separators here, so the studio and the
+  // picture never disagree about what one message is.
+  const tickerMessageCount = overlayTickerMessages(draft.tickerText).length;
+
+  /**
+   * The panels and layers the preview frame actually draws, as boxes on that frame.
+   *
+   * Only what is on the picture gets a handle. The vote and chat panels are never drawn in the
+   * studio preview — the renderer builds them from a live engagement and a live chat, neither of
+   * which the preview payload carries — so they get a box only once the operator has placed one
+   * from the sidebar, rather than a handle hovering over nothing. Embed and widget layers never
+   * get one at all: satori cannot run an iframe, so those exist only on the browser overlay.
+   */
+  const placementTargets: PlacementTarget[] = [
+    ...OVERLAY_PANEL_IDS.filter((id) => {
+      if (draft.panelPlacements[id]) {
+        return true;
+      }
+      if (id === "hero" || id === "clock") {
+        return true;
+      }
+      if (id === "next") {
+        return Boolean(previewNextTitle);
+      }
+      if (id === "banner") {
+        return Boolean(draft.emergencyBanner.trim());
+      }
+      // Same rule as the banner, for the same reason: the renderer draws the ticker only while it
+      // has something to say, so a handle over an empty band would be a handle over nothing.
+      if (id === "ticker") {
+        return Boolean(draft.tickerText.trim());
+      }
+      return false;
+    }).map((id) => ({
+      id: `panel:${id}`,
+      label: OVERLAY_PANEL_LABELS.find((panel) => panel.id === id)?.label ?? id,
+      placement:
+        draft.panelPlacements[id] ?? deriveDefaultPlacements(draft.panelAnchor, props.chatPosition)[id]
+    })),
+    ...draft.customLayers
+      .filter((layer) => layer.enabled && ["logo", "image", "text"].includes(layer.kind))
+      .map((layer) => ({
+        id: `layer:${layer.id}`,
+        label: layer.name,
+        placement: layer,
+        // A logo drawn with fit: contain is letterboxed inside its box, so a box of the wrong
+        // shape adds margin the operator cannot see here and cannot remove later. The ratio itself
+        // is taken from the resolved box at the moment the drag starts, not from the two percents:
+        // those are measured against different axes, so their quotient is not a shape.
+        lockAspect: (layer.kind === "logo" || layer.kind === "image") && layer.fit === "contain"
+      }))
+  ];
+
+  const commitPlacement = (
+    id: string,
+    percent: { xPercent: number; yPercent: number; widthPercent: number; heightPercent: number }
+  ) => {
+    // Three decimals, not two. One design pixel is 0.0563% of the safe area's width, so rounding
+    // to hundredths turns a one-pixel arrow key into a 1.07-pixel move; thousandths cost 0.018 of
+    // a pixel, which is under the rounding resolvePlacementBox does anyway.
+    const round = (value: number) => Math.round(value * 1000) / 1000;
+    const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+    const widthPercent = clamp(percent.widthPercent, 10, 100);
+    const heightPercent = clamp(percent.heightPercent, 8, 100);
+    // A drag stops at the frame's edge with its size intact, the way OBS does. The renderer's own
+    // answer for a box pushed past the edge is to clamp its width against the room x leaves, so a
+    // panel dragged too far right would get narrower rather than stop; keeping x + width at 100 or
+    // below makes that clamp a no-op, which is the only way the two can agree. Numbers typed into
+    // the fields still go through unchanged, and the preview shows what the renderer does with them.
+    const patch = {
+      xPercent: round(clamp(percent.xPercent, 0, 100 - widthPercent)),
+      yPercent: round(clamp(percent.yPercent, 0, 100 - heightPercent)),
+      widthPercent: round(widthPercent),
+      heightPercent: round(heightPercent)
+    };
+
+    if (id.startsWith("panel:")) {
+      placePanelFromCanvas(id.slice("panel:".length) as OverlayPanelId, patch);
+    } else {
+      updateCustomLayer(id.slice("layer:".length), (current) => ({ ...current, ...patch }));
+    }
+
+    setPlacementRevision((current) => current + 1);
+  };
+
+  const selectPlacement = (id: string) => {
+    setSelectedPlacementId(id);
+    if (id.startsWith("panel:")) {
+      setPlacementFoldOpen(true);
+    }
+    // The sidebar jumps to what was just clicked. Not focus — focus belongs to the box on the
+    // preview, which is the thing the arrow keys move.
+    if (typeof document !== "undefined") {
+      requestAnimationFrame(() => {
+        document.getElementById(`placement-${id.replace(":", "-")}`)?.scrollIntoView({ block: "nearest" });
+      });
+    }
+  };
 
   const saveScenePreset = () => {
     setError("");
@@ -543,7 +816,10 @@ export function OverlaySettingsForm(props: {
       <div className="scene-designer-grid">
         <div className="scene-designer-preview">
           <div className="scene-preview-toolbar">
-            <span className="label">Scene Preview</span>
+            <span className="label label-with-info">
+              Scene Preview
+              <InfoTip text="Pick which situation the preview shows. A regular asset, an insert between two assets, the standby picture when nothing is scheduled, and the reconnect picture after a source drop each use different scene elements." />
+            </span>
             <select onChange={(event) => setPreviewMode(event.target.value as OverlayQueueKind)} value={previewMode}>
               <option value="asset">Regular asset</option>
               <option value="insert">Insert / bumper</option>
@@ -551,10 +827,42 @@ export function OverlaySettingsForm(props: {
               <option value="reconnect">Reconnect</option>
             </select>
           </div>
-          <div className="scene-preview-shell">
-            <div aria-hidden="true" className="scene-preview-safe-area" />
-            <OverlaySceneCanvas payload={previewPayload} />
-          </div>
+          {/*
+            One preview, drawn by the renderer that goes on air. The studio used to draw its own
+            HTML imitation of the overlay next to this one; it used a 5% safe area where the
+            renderer uses 3.75% by 5.19%, allowed panel sizes and opacities the renderer clamps
+            away, and at 1280x720 drew every panel half again as large as the broadcast. It is gone.
+            What is shown here is the same drawing the playout puts on the picture.
+          */}
+          <figure className="scene-preview-figure">
+            <figcaption className="label">
+              As it goes on air, at {props.outputSize.width}x{props.outputSize.height}
+            </figcaption>
+            <div
+              className="scene-preview-shell scene-preview-shell-render"
+              style={{ aspectRatio: `${String(props.outputSize.width)} / ${String(props.outputSize.height)}` }}
+            >
+              <OverlayRenderPreview
+                height={props.outputSize.height}
+                immediateRevision={placementRevision}
+                payload={previewPayload}
+                width={props.outputSize.width}
+              />
+              <OverlayPlacementCanvas
+                frame={props.outputSize}
+                onCommit={commitPlacement}
+                onOverlapChange={setOverlapNotice}
+                onSelect={selectPlacement}
+                selectedId={selectedPlacementId}
+                targets={placementTargets}
+              />
+            </div>
+          </figure>
+          <p className="subtle">
+            {overlapNotice
+              ? overlapNotice
+              : "Drag a box to move it, drag a handle to resize, arrow keys to nudge by one pixel and shift for eight. Hold Alt to ignore the grid and the guides."}
+          </p>
         </div>
 
         <div className="scene-designer-sidebar">
@@ -566,58 +874,160 @@ export function OverlaySettingsForm(props: {
               onChange={(event) => setDraftField("enabled", event.target.checked)}
               type="checkbox"
             />
-            <label htmlFor="overlay-enabled">Enable overlay output</label>
+            <label htmlFor="overlay-enabled"><span className="label-with-info">Enable overlay output<InfoTip text="Master switch for the scene graphics. On, the playout paints the scene and ticker over the programme picture and the chat game can start; off, nothing is drawn over programme video and the game cannot start, though the standby and reconnect slates still show their plain text lines." /></span></label>
+          </div>
+
+          {/*
+            The scene list. Deliberately a select rather than one control per scene: a row of
+            buttons would make this page's control count grow with the number of scenes, which is
+            the pattern the control-density budget exists to keep out.
+          */}
+          <div className="form-grid">
+            <label>
+              <span className="label label-with-info">Scene<InfoTip text="The scene you edit here is also the one that goes on air when you publish. Scenes differ only in their positioned layers and linked video source; headlines, presets, colours and panel placement are shared by all of them." /></span>
+              <select
+                onChange={(event) => applyScenes(scenes, event.target.value)}
+                value={selectedScene?.id ?? ""}
+              >
+                {scenes.map((scene) => (
+                  <option key={scene.id} value={scene.id}>
+                    {scene.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span className="label label-with-info">Scene name<InfoTip text="How the scene is listed in the picker above; never shown on air. Up to 60 characters; left empty it is listed as Scene 1, Scene 2 and so on." /></span>
+              <input
+                onChange={(event) => updateSelectedScene((scene) => ({ ...scene, name: event.target.value }))}
+                value={selectedScene?.name ?? ""}
+              />
+            </label>
+            <label>
+              <span className="label label-with-info">Scene video source<InfoTip text="Fills in for any video source layer in this scene that names no feed of its own, so a duplicated scene can be pointed at another camera in one step. Layers that name their own source keep it." /></span>
+              <select
+                onChange={(event) => updateSelectedScene((scene) => ({ ...scene, sourceId: event.target.value }))}
+                value={selectedScene?.sourceId ?? ""}
+              >
+                <option value="">Not linked to a source</option>
+                {(props.videoSources ?? []).map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name}
+                    {source.urlPresent ? "" : " — no feed stored yet"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="inline-form" style={{ gridColumn: "1 / -1" }}>
+              <button
+                className="button secondary"
+                disabled={scenes.length >= MAX_NAMED_OVERLAY_SCENES}
+                onClick={addScene}
+                type="button"
+              >
+                Add scene
+              </button>
+              <button
+                className="button secondary"
+                disabled={scenes.length >= MAX_NAMED_OVERLAY_SCENES}
+                onClick={duplicateScene}
+                type="button"
+              >
+                Duplicate scene
+              </button>
+              <button className="button secondary" disabled={scenes.length <= 1} onClick={removeScene} type="button">
+                Delete scene
+              </button>
+            </div>
+            <div className="subtle" style={{ gridColumn: "1 / -1" }}>
+              The scene you pick here is the one being edited and the one that goes on air when you publish. A
+              linked video source fills in for any source layer in this scene that names none, so a duplicated
+              scene can be pointed at another camera in one step. If that source is later removed, the scene keeps
+              the name but the layer falls back to the still picture, exactly as an unlinked layer does.
+            </div>
           </div>
 
           <div className="form-grid">
             <label>
-              <span className="label">Channel name</span>
+              <span className="label label-with-info">Channel name<InfoTip text="Shown on air in the small top line of the lower third, after the replay label and brand badge. Up to 80 characters; left empty, the channel is called Stream247." /></span>
               <input onChange={(event) => setDraftField("channelName", event.target.value)} required value={draft.channelName} />
             </label>
             <label>
-              <span className="label">Headline</span>
+              <span className="label label-with-info">Headline<InfoTip text="The line under the programme title in the lower third while a regular asset or the live bridge is on air. Up to 120 characters; cleared, it goes back to Always on air." /></span>
               <input onChange={(event) => setDraftField("headline", event.target.value)} required value={draft.headline} />
             </label>
             <label>
-              <span className="label">Insert headline</span>
+              <span className="label label-with-info">Insert headline<InfoTip text="Replaces the headline in the lower third while an insert or bumper is on air, whether an operator started it or the schedule did. Up to 120 characters; cleared, it goes back to Insert on air." /></span>
               <input onChange={(event) => setDraftField("insertHeadline", event.target.value)} required value={draft.insertHeadline} />
             </label>
             <label>
-              <span className="label">Standby headline</span>
+              <span className="label label-with-info">Standby headline<InfoTip text="Replaces the headline while the channel is on air with nothing playable and is waiting for the next item. Up to 120 characters; cleared, it goes back to Please wait, restream is starting." /></span>
               <input onChange={(event) => setDraftField("standbyHeadline", event.target.value)} required value={draft.standbyHeadline} />
             </label>
             <label>
-              <span className="label">Reconnect headline</span>
+              <span className="label label-with-info">Reconnect headline<InfoTip text="Replaces the headline during a scheduled reconnect or an output reset, while the reconnect scene is on the picture. Up to 120 characters; cleared, it goes back to Scheduled reconnect in progress." /></span>
               <input onChange={(event) => setDraftField("reconnectHeadline", event.target.value)} required value={draft.reconnectHeadline} />
             </label>
             <label>
-              <span className="label">Replay label</span>
+              <span className="label label-with-info">Replay label<InfoTip text="Starts the small grey text in the lower third's top row, right after the coloured mode chip and before the brand badge and channel name; it is also the first line of the plain-text fallback. Up to 80 characters; cleared, it reads Replay stream." /></span>
               <input onChange={(event) => setDraftField("replayLabel", event.target.value)} required value={draft.replayLabel} />
             </label>
             <label>
-              <span className="label">Brand badge</span>
+              <span className="label label-with-info">Brand badge<InfoTip text="Optional text in the lower third's small top row, between the replay label and the channel name; leave it empty to show none. Up to 48 characters." /></span>
               <input onChange={(event) => setDraftField("brandBadge", event.target.value)} placeholder="e.g. Archive Channel" value={draft.brandBadge} />
             </label>
             <label>
-              <span className="label">Accent color</span>
+              <span className="label label-with-info">Accent color<InfoTip text="Colours the accent parts of every panel: the mode chip, vote pill and bars, game marks, the ticker's left bar, Solid borders and Signal side bars, and the next-card heading or any text layer set to use it (those two stay white when the colour is too dark to read on the panel). A hex value such as #0e6d5a; an empty field goes back to that default and an invalid value is drawn as cyan." /></span>
               <input onChange={(event) => setDraftField("accentColor", event.target.value)} required value={draft.accentColor} />
             </label>
             <label>
-              <span className="label">Ticker text</span>
-              <input onChange={(event) => setDraftField("tickerText", event.target.value)} placeholder="Optional lower ticker line" value={draft.tickerText} />
+              <span className="label label-with-info">Ticker text<InfoTip text="A running line in a band under the top bar, drawn only while there is text; separate several messages with a middot (·) and they are joined into one line. Up to 180 characters, and an edit reaches the screen with the next programme, not at once." /></span>
+              <input
+                onChange={(event) => setDraftField("tickerText", event.target.value)}
+                placeholder="Optional notice. Separate several with ·"
+                value={draft.tickerText}
+              />
             </label>
-          </div>
+            {/*
+              Shown whenever there is a ticker at all.
 
-          <label>
-            <span className="label">Active scene preset</span>
-            <select onChange={(event) => setDraftField("scenePreset", event.target.value as OverlaySettingsRecord["scenePreset"])} value={draft.scenePreset}>
-              {OVERLAY_SCENE_PRESETS.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              It used to appear only for several messages, because it set how long each one stood
+              still. It now sets the speed of the running line, which one notice needs exactly as
+              much as five do.
+            */}
+            {draft.tickerText.trim() ? (
+              <label>
+                <span className="label label-with-info">Ticker seconds per crossing<InfoTip text="How long the line takes to cross its band, in seconds, from 4 to 60; lower is faster. The speed is also held between 40 and 240 pixels per second on a 1080p picture, so on the default full-width band settings below about 7 or above about 44 seconds are not honoured." /></span>
+                <input
+                  max={OVERLAY_TICKER_MAX_SECONDS}
+                  min={OVERLAY_TICKER_MIN_SECONDS}
+                  onChange={(event) =>
+                    setDraftField("tickerRotateSeconds", Number(event.target.value) || draft.tickerRotateSeconds)
+                  }
+                  type="number"
+                  value={draft.tickerRotateSeconds}
+                />
+              </label>
+            ) : null}
+          </div>
+          {draft.tickerText.trim() ? (
+            <p className="subtle">
+              The ticker runs from right to left across its band, and this is how long one crossing of the band takes.
+              {tickerMessageCount > 1
+                ? ` Your ${String(tickerMessageCount)} messages are joined into one line, separated by a middot.`
+                : ""}{" "}
+              The preview shows the line at rest, because a still picture cannot show it moving, and a change
+              here reaches the screen with the next programme rather than the next second: the line is one image
+              the encoder moves, and it is made when a programme starts. On the standby slate or a live session,
+              which have no next programme, it waits until the channel moves on.
+            </p>
+          ) : null}
+
+          {/*
+            The cards below are the only way to choose this now. A select offering the same six
+            presets sat directly above them — one choice, two controls, and the select could only
+            list the names while the cards say what each one does.
+          */}
           <div className="preset-grid">
             {OVERLAY_SCENE_PRESETS.map((preset) => (
               <button
@@ -634,7 +1044,7 @@ export function OverlaySettingsForm(props: {
 
           <div className="form-grid">
             <label>
-              <span className="label">Insert scene preset</span>
+              <span className="label label-with-info">Insert scene preset<InfoTip text="Does not change the drawn overlay. It only picks the wording of the plain text lines the encoder falls back to when no scene picture is available while an insert or bumper is on air, and the scene name the control room shows." /></span>
               <select
                 onChange={(event) => setDraftField("insertScenePreset", event.target.value as OverlaySettingsRecord["insertScenePreset"])}
                 value={draft.insertScenePreset}
@@ -648,7 +1058,7 @@ export function OverlaySettingsForm(props: {
               <span className="subtle">Used for manual and automatic inserts between regular programming.</span>
             </label>
             <label>
-              <span className="label">Standby scene preset</span>
+              <span className="label label-with-info">Standby scene preset<InfoTip text="Does not change the drawn overlay. It only picks the wording of the plain text lines the encoder falls back to when no scene picture is available while the channel waits with nothing playable, and the scene name the control room shows." /></span>
               <select
                 onChange={(event) => setDraftField("standbyScenePreset", event.target.value as OverlaySettingsRecord["standbyScenePreset"])}
                 value={draft.standbyScenePreset}
@@ -662,7 +1072,7 @@ export function OverlaySettingsForm(props: {
               <span className="subtle">Used while the stream is on air but waiting for the next playable item.</span>
             </label>
             <label>
-              <span className="label">Reconnect scene preset</span>
+              <span className="label label-with-info">Reconnect scene preset<InfoTip text="Does not change the drawn overlay. It only picks the wording of the plain text lines the encoder falls back to when no scene picture is available during a reconnect or output reset, and the scene name the control room shows." /></span>
               <select
                 onChange={(event) => setDraftField("reconnectScenePreset", event.target.value as OverlaySettingsRecord["reconnectScenePreset"])}
                 value={draft.reconnectScenePreset}
@@ -679,7 +1089,7 @@ export function OverlaySettingsForm(props: {
 
           <div className="form-grid">
             <label>
-              <span className="label">Surface style</span>
+              <span className="label label-with-info">Surface style<InfoTip text="The look of every panel the scene draws: lower third, next card, clock, chat, vote, game, text and source layers (the red banner and the ticker keep their own look). Glass is a soft translucent wash, Solid is near-opaque with an accent border, Signal adds a thick accent bar on the left." /></span>
               <select onChange={(event) => setDraftField("surfaceStyle", event.target.value as OverlaySettingsRecord["surfaceStyle"])} value={draft.surfaceStyle}>
                 {OVERLAY_SURFACE_STYLES.map((style) => (
                   <option key={style.id} value={style.id}>
@@ -690,7 +1100,7 @@ export function OverlaySettingsForm(props: {
               <span className="subtle">{OVERLAY_SURFACE_STYLES.find((style) => style.id === draft.surfaceStyle)?.description}</span>
             </label>
             <label>
-              <span className="label">Panel anchor</span>
+              <span className="label label-with-info">Panel anchor<InfoTip text="Where the built-in panels sit when you have not placed them yourself: Bottom Dock spreads them to the edges (clock at the top, lower third at the bottom), Center Stage stacks them in the middle of the frame. A panel you have placed keeps its box either way." /></span>
               <select onChange={(event) => setDraftField("panelAnchor", event.target.value as OverlaySettingsRecord["panelAnchor"])} value={draft.panelAnchor}>
                 {OVERLAY_PANEL_ANCHORS.map((anchor) => (
                   <option key={anchor.id} value={anchor.id}>
@@ -701,7 +1111,7 @@ export function OverlaySettingsForm(props: {
               <span className="subtle">{OVERLAY_PANEL_ANCHORS.find((anchor) => anchor.id === draft.panelAnchor)?.description}</span>
             </label>
             <label>
-              <span className="label">Title scale</span>
+              <span className="label label-with-info">Title scale<InfoTip text="Size of the programme title in the lower third: Compact, Balanced or Cinematic, growing from 40 to 52 to 66 pixels on a 1920×1080 picture and scaled with the output size. No other text changes size." /></span>
               <select onChange={(event) => setDraftField("titleScale", event.target.value as OverlaySettingsRecord["titleScale"])} value={draft.titleScale}>
                 {OVERLAY_TITLE_SCALES.map((scale) => (
                   <option key={scale.id} value={scale.id}>
@@ -712,7 +1122,7 @@ export function OverlaySettingsForm(props: {
               <span className="subtle">{OVERLAY_TITLE_SCALES.find((scale) => scale.id === draft.titleScale)?.description}</span>
             </label>
             <label>
-              <span className="label">Typography preset</span>
+              <span className="label label-with-info">Typography preset<InfoTip text="The typeface for all overlay text: Studio Sans, Editorial Serif or Signal Mono, three families bundled with the renderer so nothing is fetched from the internet. Text layers follow it unless given a font of their own." /></span>
               <select
                 onChange={(event) => setDraftField("typographyPreset", event.target.value as OverlaySettingsRecord["typographyPreset"])}
                 value={draft.typographyPreset}
@@ -727,10 +1137,18 @@ export function OverlaySettingsForm(props: {
             </label>
           </div>
 
+          {/*
+            Eight layers, three buttons each: twenty-four of this page's seventy-nine controls were
+            here, permanently open, for a task done rarely and never in a hurry. Each layer already
+            states its position and whether it is visible, so folding the group away costs the
+            reordering buttons and no information.
+          */}
           <div className="list">
-            <div className="item">
-              <span className="label">Scene layer order</span>
-              <div className="subtle">Top to bottom render order inside the current scene preset.</div>
+            <details className="disclosure item">
+              <summary>Scene layer order</summary>
+              <div className="subtle" style={{ marginTop: 8 }}>
+                Top to bottom render order inside the current scene preset.
+              </div>
               <div className="list" style={{ marginTop: 12 }}>
                 {draft.layerOrder.map((layerKind, index) => {
                   const layer = OVERLAY_SCENE_LAYERS.find((entry) => entry.id === layerKind);
@@ -755,7 +1173,7 @@ export function OverlaySettingsForm(props: {
                   );
                 })}
               </div>
-            </div>
+            </details>
           </div>
 
           <p className="subtle">
@@ -764,14 +1182,124 @@ export function OverlaySettingsForm(props: {
 
           <div className="list">
             <div className="item">
+              {/* Controlled, so clicking a box on the preview can open the fold at the panel it
+                  belongs to. The number fields stay: a drag says "about here", the fields say
+                  exactly where, and an operator setting up a channel wants both. */}
+              <details onToggle={(event) => setPlacementFoldOpen(event.currentTarget.open)} open={placementFoldOpen}>
+                <summary>
+                  <span className="label">Panel placement</span>
+                  <span className="subtle">
+                    {" "}
+                    {Object.keys(draft.panelPlacements).length > 0
+                      ? `${String(Object.keys(draft.panelPlacements).length)} panel${Object.keys(draft.panelPlacements).length === 1 ? "" : "s"} placed`
+                      : "Every panel where the layout puts it"}
+                  </span>
+                </summary>
+                <div className="subtle" style={{ marginTop: 8 }}>
+                  The panels the overlay draws itself take the same box a positioned layer takes: x, y, width and height as
+                  percentages of the safe area, plus opacity. A panel you have not placed stays exactly where the layout puts
+                  it, so nothing on air moves until you move it. Placing one seeds its box from where it already is.
+                </div>
+                <div className="list" style={{ marginTop: 12 }}>
+                  {OVERLAY_PANEL_LABELS.map((panel) => {
+                    const placement = draft.panelPlacements[panel.id];
+                    return (
+                      <div
+                        className="item"
+                        data-selected={selectedPlacementId === `panel:${panel.id}` ? "true" : "false"}
+                        id={`placement-panel-${panel.id}`}
+                        key={panel.id}
+                      >
+                        <label className="toggle-row">
+                          <input checked={Boolean(placement)} onChange={() => togglePanelPlacement(panel.id)} type="checkbox" />
+                          <span>
+                            <strong>{panel.label}</strong>
+                            <span className="subtle"> {placement ? describePanelBox(placement) : panel.hint}</span>
+                          </span>
+                        </label>
+                        {placement ? (
+                          <div className="form-grid" style={{ marginTop: 12 }}>
+                            <label>
+                              <span className="label label-with-info">X position (%)<InfoTip text="Left edge of the box as a share of the safe area's width: 0 is the safe area's left edge, 100 its right. A box that would run past the right edge is narrowed to fit." /></span>
+                              <input
+                                max={100}
+                                min={0}
+                                onChange={(event) => updatePanelPlacement(panel.id, { xPercent: Number(event.target.value) || 0 })}
+                                type="number"
+                                value={placement.xPercent}
+                              />
+                            </label>
+                            <label>
+                              <span className="label label-with-info">Y position (%)<InfoTip text="Top edge of the box as a share of the safe area's height: 0 is the top of the safe area, 100 its bottom. A box that would run past the bottom is shortened to fit." /></span>
+                              <input
+                                max={100}
+                                min={0}
+                                onChange={(event) => updatePanelPlacement(panel.id, { yPercent: Number(event.target.value) || 0 })}
+                                type="number"
+                                value={placement.yPercent}
+                              />
+                            </label>
+                            <label>
+                              <span className="label label-with-info">Width (%)<InfoTip text="Width of the box as a share of the safe area's width, at least 10. The vote, chat and banner panels take this width; the lower third and next card shrink to it when they are wider, and no panel grows past its own size." /></span>
+                              <input
+                                max={100}
+                                min={10}
+                                onChange={(event) =>
+                                  updatePanelPlacement(panel.id, { widthPercent: Number(event.target.value) || placement.widthPercent })
+                                }
+                                type="number"
+                                value={placement.widthPercent}
+                              />
+                            </label>
+                            <label>
+                              <span className="label label-with-info">Height (%)<InfoTip text="Height of the box as a share of the safe area's height, at least 8. The chat and vote panels show as many rows as fit; other panels keep their own height and are cut off at the box where they do not fit." /></span>
+                              <input
+                                max={100}
+                                min={8}
+                                onChange={(event) =>
+                                  updatePanelPlacement(panel.id, { heightPercent: Number(event.target.value) || placement.heightPercent })
+                                }
+                                type="number"
+                                value={placement.heightPercent}
+                              />
+                            </label>
+                            <label>
+                              <span className="label label-with-info">Opacity (%)<InfoTip text="How solid the whole panel is drawn, text included: 100 is fully opaque, 5 is the faintest allowed." /></span>
+                              <input
+                                max={100}
+                                min={5}
+                                onChange={(event) =>
+                                  updatePanelPlacement(panel.id, { opacityPercent: Number(event.target.value) || placement.opacityPercent })
+                                }
+                                type="number"
+                                value={placement.opacityPercent}
+                              />
+                            </label>
+                            <label className="toggle-row">
+                              <input
+                                checked={placement.allowOutsideSafeArea}
+                                onChange={(event) => updatePanelPlacement(panel.id, { allowOutsideSafeArea: event.target.checked })}
+                                type="checkbox"
+                              />
+                              <span className="label-with-info">Allow outside safe area<InfoTip text="Measures the box against the full frame instead of the safe area, so it can sit right at the picture's edge where the margins normally keep panels away." /></span>
+                            </label>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
+            </div>
+            <div className="item">
               <span className="label">Positioned layers</span>
               <div className="subtle">
-                Add custom text, logo, image, website, or widget layers on top of the preset layout. Text layers can switch to safe local font
-                stacks, metadata widgets can read from the canonical scene payload, and browser frames remain limited by each provider&apos;s iframe
-                and CSP rules.
+                Add custom text, logo, image, video source or chat game layers on top of the preset layout. Text layers can switch to
+                safe local font stacks. Website and widget layers are gone from here: the on-air renderer cannot draw an external page,
+                and there is no separate browser overlay, so they never appeared anywhere.
               </div>
               <div className="inline-form" style={{ marginTop: 12 }}>
-                {OVERLAY_SCENE_CUSTOM_LAYER_KINDS.map((layerKind) => (
+                {OVERLAY_SCENE_CUSTOM_LAYER_KINDS.filter((layerKind) => layerKind.id !== "embed" && layerKind.id !== "widget").map((layerKind) => (
                   <button
                     className="button secondary"
                     disabled={isPending}
@@ -786,7 +1314,12 @@ export function OverlaySettingsForm(props: {
               <div className="list" style={{ marginTop: 12 }}>
                 {draft.customLayers.length > 0 ? (
                   draft.customLayers.map((layer, index) => (
-                    <div className="item" key={layer.id}>
+                    <div
+                      className="item"
+                      data-selected={selectedPlacementId === `layer:${layer.id}` ? "true" : "false"}
+                      id={`placement-layer-${layer.id}`}
+                      key={layer.id}
+                    >
                       <div className="inline-form" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div>
                           <strong>{layer.name}</strong>
@@ -809,7 +1342,7 @@ export function OverlaySettingsForm(props: {
 
                       <div className="form-grid" style={{ marginTop: 12 }}>
                         <label>
-                          <span className="label">Layer name</span>
+                          <span className="label label-with-info">Layer name<InfoTip text="How the layer is listed here and in the publish review, and for logo, image and text layers also on its drag handle in the preview; never shown on air. Up to 80 characters; left empty it is named after its kind, such as Text Layer." /></span>
                           <input onChange={(event) => updateCustomLayer(layer.id, (current) => ({ ...current, name: event.target.value }))} value={layer.name} />
                         </label>
                         <label className="toggle-row">
@@ -818,10 +1351,10 @@ export function OverlaySettingsForm(props: {
                             onChange={(event) => updateCustomLayer(layer.id, (current) => ({ ...current, enabled: event.target.checked }))}
                             type="checkbox"
                           />
-                          <span>Layer enabled</span>
+                          <span className="label-with-info">Layer enabled<InfoTip text="Draws the layer on air and in the preview. Off, the layer keeps its settings but is skipped entirely; for a chat game layer, off also means no game can start." /></span>
                         </label>
                         <label>
-                          <span className="label">Opacity (%)</span>
+                          <span className="label label-with-info">Opacity (%)<InfoTip text="How solid the whole layer is drawn, backdrop and content alike: 100 is fully opaque, 5 is the faintest allowed." /></span>
                           <input
                             max={100}
                             min={5}
@@ -846,12 +1379,12 @@ export function OverlaySettingsForm(props: {
                             }
                             type="checkbox"
                           />
-                          <span>Allow outside safe area</span>
+                          <span className="label-with-info">Allow outside safe area<InfoTip text="Measures the box against the full frame instead of the safe area, so it can sit right at the picture's edge where the margins normally keep layers away." /></span>
                         </label>
                         <label>
-                          <span className="label">X position (%)</span>
+                          <span className="label label-with-info">X position (%)<InfoTip text="Left edge of the box as a share of the safe area's width: 0 is the safe area's left edge, 100 its right. A box that would run past the right edge is narrowed to fit." /></span>
                           <input
-                            max={90}
+                            max={100}
                             min={0}
                             onChange={(event) =>
                               updateCustomLayer(layer.id, (current) => ({
@@ -864,9 +1397,9 @@ export function OverlaySettingsForm(props: {
                           />
                         </label>
                         <label>
-                          <span className="label">Y position (%)</span>
+                          <span className="label label-with-info">Y position (%)<InfoTip text="Top edge of the box as a share of the safe area's height: 0 is the top of the safe area, 100 its bottom. A box that would run past the bottom is shortened to fit." /></span>
                           <input
-                            max={90}
+                            max={100}
                             min={0}
                             onChange={(event) =>
                               updateCustomLayer(layer.id, (current) => ({
@@ -879,7 +1412,7 @@ export function OverlaySettingsForm(props: {
                           />
                         </label>
                         <label>
-                          <span className="label">Width (%)</span>
+                          <span className="label label-with-info">Width (%)<InfoTip text="Width of the box as a share of the safe area's width, at least 10. The layer is drawn to fill it." /></span>
                           <input
                             max={100}
                             min={10}
@@ -894,7 +1427,7 @@ export function OverlaySettingsForm(props: {
                           />
                         </label>
                         <label>
-                          <span className="label">Height (%)</span>
+                          <span className="label label-with-info">Height (%)<InfoTip text="Height of the box as a share of the safe area's height, at least 8. The layer is drawn to fill it." /></span>
                           <input
                             max={100}
                             min={8}
@@ -914,7 +1447,7 @@ export function OverlaySettingsForm(props: {
                       {layer.kind === "text" ? (
                         <div className="form-grid" style={{ marginTop: 12 }}>
                           <label>
-                            <span className="label">Text content</span>
+                            <span className="label label-with-info">Text content<InfoTip text="The main line of the layer, drawn in the tone and alignment chosen below. Up to 180 characters; a layer with neither this nor a secondary text is not drawn." /></span>
                             <input
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -925,7 +1458,7 @@ export function OverlaySettingsForm(props: {
                             />
                           </label>
                           <label>
-                            <span className="label">Secondary text</span>
+                            <span className="label label-with-info">Secondary text<InfoTip text="A smaller second line under the main text, in muted ink. Up to 220 characters." /></span>
                             <input
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -936,7 +1469,7 @@ export function OverlaySettingsForm(props: {
                             />
                           </label>
                           <label>
-                            <span className="label">Text tone</span>
+                            <span className="label label-with-info">Text tone<InfoTip text="Size and weight of the main line: Headline is large and bold, Body is regular reading size, Caption is small capitals with spaced letters." /></span>
                             <select
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -953,7 +1486,7 @@ export function OverlaySettingsForm(props: {
                             </select>
                           </label>
                           <label>
-                            <span className="label">Text align</span>
+                            <span className="label label-with-info">Text align<InfoTip text="Lines the text up at the left, the centre or the right of its box." /></span>
                             <select
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -979,10 +1512,10 @@ export function OverlaySettingsForm(props: {
                               }
                               type="checkbox"
                             />
-                            <span>Use accent color</span>
+                            <span className="label-with-info">Use accent color<InfoTip text="Paints the main line in the scene's accent colour instead of white, but only when that colour is readable on the panel (4.5:1 contrast or better); a dark accent such as the default #0e6d5a leaves it white. The secondary line stays muted either way." /></span>
                           </label>
                           <label>
-                            <span className="label">Text font</span>
+                            <span className="label label-with-info">Text font<InfoTip text="Which typeface this layer uses: follow the scene's typography preset, or one of the three bundled broadcast faces. A custom local stack cannot reach the on-air renderer and falls back to the scene's preset there." /></span>
                             <select
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -1005,7 +1538,7 @@ export function OverlaySettingsForm(props: {
                           </label>
                           {layer.fontMode === "custom-local" ? (
                             <label>
-                              <span className="label">Custom local font stack</span>
+                              <span className="label label-with-info">Custom local font stack<InfoTip text="Font family names separated by commas, tried in order, up to six. Only names already installed where the overlay is drawn can work, and the on-air renderer ignores this and uses the scene's preset face." /></span>
                               <input
                                 onChange={(event) =>
                                   updateCustomLayer(layer.id, (current) =>
@@ -1027,7 +1560,7 @@ export function OverlaySettingsForm(props: {
                       {layer.kind === "logo" || layer.kind === "image" ? (
                         <div className="form-grid" style={{ marginTop: 12 }}>
                           <label>
-                            <span className="label">Asset URL</span>
+                            <span className="label label-with-info">Asset URL<InfoTip text="Where the picture comes from: an http(s) address, or a path starting with / for a file served by this workspace. On air only http(s) pictures are drawn and a / path is skipped, so use a full address for anything that must reach the channel." /></span>
                             <input
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -1050,7 +1583,7 @@ export function OverlaySettingsForm(props: {
                             />
                           </label>
                           <label>
-                            <span className="label">Fit</span>
+                            <span className="label label-with-info">Fit<InfoTip text="How the picture fills its box: Contain shows the whole picture with empty margins where the shapes differ, Cover fills the box and crops what does not fit. A Contain logo keeps its shape when you resize it on the preview." /></span>
                             <select
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
@@ -1069,104 +1602,66 @@ export function OverlaySettingsForm(props: {
                       ) : null}
 
                       {layer.kind === "embed" || layer.kind === "widget" ? (
-                        <div className="form-grid" style={{ marginTop: 12 }}>
-                          {layer.kind === "widget" ? (
+                        <div className="subtle" style={{ marginTop: 12 }}>
+                          This layer is not drawn on air: the renderer cannot embed an external page and there is no browser
+                          overlay any more. It stays in the scene definition; remove it or leave it, the picture is the same.
+                        </div>
+                      ) : null}
+                      {layer.kind === "game" ? (
+                        <>
+                          <div className="form-grid" style={{ marginTop: 12 }}>
                             <label>
-                              <span className="label">Widget mode</span>
-                              <select
+                              <span className="label label-with-info">Board backdrop (%)<InfoTip text="How solid the fill behind the game board is, separate from the layer's opacity: 100 is a full panel, 0 leaves only the outlined cells over the programme picture." /></span>
+                              <input
+                                max={100}
+                                min={0}
                                 onChange={(event) =>
                                   updateCustomLayer(layer.id, (current) =>
-                                    current.kind === "widget"
-                                      ? { ...current, widgetMode: event.target.value === "metadata" ? "metadata" : "embed" }
+                                    current.kind === "game"
+                                      ? { ...current, backgroundOpacityPercent: Math.max(0, Math.min(100, Number(event.target.value) || 0)) }
                                       : current
                                   )
                                 }
-                                value={layer.widgetMode}
-                              >
-                                <option value="embed">Browser widget frame</option>
-                                <option value="metadata">Scene data card</option>
-                              </select>
-                              <span className="subtle">
-                                Metadata cards render from the canonical Scene payload. Browser widget frames still depend on provider iframe
-                                support.
-                              </span>
+                                type="number"
+                                value={layer.backgroundOpacityPercent}
+                              />
                             </label>
-                          ) : null}
-                          {layer.kind === "widget" && layer.widgetMode === "metadata" ? (
-                            <>
-                              <label>
-                                <span className="label">Scene data</span>
-                                <select
-                                  onChange={(event) =>
-                                    updateCustomLayer(layer.id, (current) =>
-                                      current.kind === "widget"
-                                        ? { ...current, widgetDataKey: event.target.value as OverlaySceneCustomWidgetDataKey }
-                                        : current
-                                    )
-                                  }
-                                  value={layer.widgetDataKey}
-                                >
-                                  {OVERLAY_SCENE_CUSTOM_WIDGET_DATA_KEYS.map((entry) => (
-                                    <option key={entry.id} value={entry.id}>
-                                      {entry.label}
-                                    </option>
-                                  ))}
-                                </select>
-                                <span className="subtle">
-                                  {OVERLAY_SCENE_CUSTOM_WIDGET_DATA_KEYS.find((entry) => entry.id === layer.widgetDataKey)?.description}
-                                </span>
-                              </label>
-                              <label>
-                                <span className="label">Widget label override</span>
-                                <input
-                                  onChange={(event) =>
-                                    updateCustomLayer(layer.id, (current) =>
-                                      current.kind === "widget" ? { ...current, title: event.target.value } : current
-                                    )
-                                  }
-                                  placeholder="Optional label override"
-                                  value={layer.title}
-                                />
-                              </label>
-                              <div className="subtle" style={{ gridColumn: "1 / -1" }}>
-                                This widget stays inside the published Scene contract and mirrors browser plus on-air scene data without a
-                                remote iframe.
-                              </div>
-                            </>
-                          ) : null}
-                          {layer.kind === "embed" || (layer.kind === "widget" && layer.widgetMode === "embed") ? (
-                            <>
+                          </div>
+                          <div className="subtle" style={{ marginTop: 12 }}>
+                            This layer places the chat game panel in the scene. Which game runs, its grid, and the
+                            emote controls are configured under Overlays → Chat game, because the same round continues
+                            across scene changes. The backdrop is the fill behind the board and goes all the way to 0 —
+                            the cells stay outlined, so the game reads over the programme picture with no panel at all.
+                            A box over the whole frame gives a board over the whole frame.
+                          </div>
+                        </>
+                      ) : null}
+                      {layer.kind === "source" ? (
+                        <div className="form-grid" style={{ marginTop: 12 }}>
                           <label>
-                            <span className="label">Embed URL</span>
-                            <input
+                            <span className="label label-with-info">Stored video source<InfoTip text="Which stored feed this layer shows: a still refreshed every few seconds, or, while an asset plays and the source is pushing live with live attach enabled, live video in this box whose audio can be mixed in at the source's gain. A feed that cannot be reached hides the layer rather than freezing it, and only the first enabled source layer in a scene is drawn." /></span>
+                            <select
                               onChange={(event) =>
                                 updateCustomLayer(layer.id, (current) =>
-                                  current.kind === "embed" || current.kind === "widget" ? { ...current, url: event.target.value } : current
+                                  current.kind === "source" ? { ...current, sourceId: event.target.value } : current
                                 )
                               }
-                              placeholder="https://example.com/embed"
-                              value={layer.url}
-                            />
-                            <span className="subtle">
-                              {describeOverlaySceneFrameSupport(layer.url).badgeLabel} · {describeOverlaySceneFrameSupport(layer.url).providerLabel}
-                            </span>
-                          </label>
-                          <label>
-                            <span className="label">Frame title</span>
-                            <input
-                              onChange={(event) =>
-                                updateCustomLayer(layer.id, (current) =>
-                                  current.kind === "embed" || current.kind === "widget" ? { ...current, title: event.target.value } : current
-                                )
-                              }
-                              value={layer.title}
-                            />
+                              value={layer.sourceId}
+                            >
+                              <option value="">Not linked yet</option>
+                              {(props.videoSources ?? []).map((source) => (
+                                <option key={source.id} value={source.id}>
+                                  {source.name}
+                                  {source.urlPresent ? "" : " — no feed stored yet"}
+                                </option>
+                              ))}
+                            </select>
                           </label>
                           <div className="subtle" style={{ gridColumn: "1 / -1" }}>
-                            {describeOverlaySceneFrameSupport(layer.url).guidance}
+                            The layer only places the picture. Feeds live in the video source list below the scene
+                            controls, their addresses stay stored encrypted, and on air the layer disappears while
+                            its feed is unreachable instead of freezing on a stale picture.
                           </div>
-                            </>
-                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -1184,11 +1679,11 @@ export function OverlaySettingsForm(props: {
               <div className="subtle">Save the current draft as a reusable scene preset, then re-apply it later without rebuilding every control by hand.</div>
               <div className="form-grid" style={{ marginTop: 12 }}>
                 <label>
-                  <span className="label">Preset name</span>
+                  <span className="label label-with-info">Preset name<InfoTip text="What the saved preset is listed under in the library below. Required; up to 80 characters." /></span>
                   <input onChange={(event) => setPresetName(event.target.value)} placeholder="e.g. Prime Time Replay" value={presetName} />
                 </label>
                 <label>
-                  <span className="label">Description</span>
+                  <span className="label label-with-info">Description<InfoTip text="A note for whoever browses the library, shown under the preset's name. Optional; up to 220 characters." /></span>
                   <input
                     onChange={(event) => setPresetDescription(event.target.value)}
                     placeholder="Optional note for operators"
@@ -1208,11 +1703,11 @@ export function OverlaySettingsForm(props: {
                       <strong>{preset.name}</strong>
                       <div className="subtle">{preset.description || "No description provided."}</div>
                       <div className="subtle">
-                        Asset {preset.overlay.scenePreset} · Insert {preset.overlay.insertScenePreset} · Standby {preset.overlay.standbyScenePreset} · Reconnect{" "}
-                        {preset.overlay.reconnectScenePreset}
+                        Asset {describeScenePreset(preset.overlay.scenePreset)} · Insert {describeScenePreset(preset.overlay.insertScenePreset)} · Standby {describeScenePreset(preset.overlay.standbyScenePreset)} · Reconnect{" "}
+                        {describeScenePreset(preset.overlay.reconnectScenePreset)}
                       </div>
                       <div className="subtle">
-                        Typography {preset.overlay.typographyPreset} · {preset.overlay.customLayers.length} positioned layer
+                        Typography {describeTypographyPreset(preset.overlay.typographyPreset)} · {preset.overlay.customLayers.length} positioned layer
                         {preset.overlay.customLayers.length === 1 ? "" : "s"}
                       </div>
                       <div className="subtle">Updated {preset.updatedAt || "unknown"}</div>
@@ -1234,7 +1729,7 @@ export function OverlaySettingsForm(props: {
           </div>
 
           <label>
-            <span className="label">Emergency banner</span>
+            <span className="label label-with-info">Emergency banner<InfoTip text="An urgent message in a red band at the top of the picture, drawn only while this has text; clear it to take it down. Up to 180 characters, and like everything here it reaches viewers when you publish." /></span>
             <input
               onChange={(event) => setDraftField("emergencyBanner", event.target.value)}
               placeholder="Optional urgent message"
@@ -1253,37 +1748,15 @@ export function OverlaySettingsForm(props: {
             </label>
             <label className="toggle-row">
               <input
-                checked={draft.showScheduleTeaser}
-                onChange={(event) => setDraftField("showScheduleTeaser", event.target.checked)}
-                type="checkbox"
-              />
-              <span>Show schedule teaser</span>
-            </label>
-            <label className="toggle-row">
-              <input
                 checked={draft.showCurrentCategory}
                 onChange={(event) => setDraftField("showCurrentCategory", event.target.checked)}
                 type="checkbox"
               />
-              <span>Show current category</span>
+              <span className="label-with-info">Show current category<InfoTip text="Adds the current programme's category to the small line under the headline in the lower third, while a regular asset or the live bridge is on air." /></span>
             </label>
             <label className="toggle-row">
               <input checked={draft.showSourceLabel} onChange={(event) => setDraftField("showSourceLabel", event.target.checked)} type="checkbox" />
-              <span>Show source label</span>
-            </label>
-            <label className="toggle-row">
-              <input checked={draft.showQueuePreview} onChange={(event) => setDraftField("showQueuePreview", event.target.checked)} type="checkbox" />
-              <span>Show queue preview</span>
-            </label>
-            <label>
-              <span className="label">Queue preview count</span>
-              <input
-                max={5}
-                min={1}
-                onChange={(event) => setDraftField("queuePreviewCount", Number(event.target.value) || 1)}
-                type="number"
-                value={draft.queuePreviewCount}
-              />
+              <span className="label-with-info">Show source label<InfoTip text="Adds the name of the source the current programme came from to the small line under the headline in the lower third, while a regular asset or the live bridge is on air." /></span>
             </label>
           </div>
         </div>
@@ -1292,32 +1765,32 @@ export function OverlaySettingsForm(props: {
       <div className="scene-status-grid">
         <div className="item">
           <span className="label">Live scene</span>
-          <strong>{props.liveOverlay.scenePreset}</strong>
+          <strong>{describeScenePreset(props.liveOverlay.scenePreset)}</strong>
           <div className="subtle">
             Asset headline {props.liveOverlay.headline} · Insert {props.liveOverlay.insertHeadline} · Standby {props.liveOverlay.standbyHeadline} ·
             Reconnect {props.liveOverlay.reconnectHeadline}
           </div>
           <div className="subtle">
-            Typography {props.liveOverlay.typographyPreset} · {props.liveOverlay.customLayers.length} positioned layer
+            Typography {describeTypographyPreset(props.liveOverlay.typographyPreset)} · {props.liveOverlay.customLayers.length} positioned layer
             {props.liveOverlay.customLayers.length === 1 ? "" : "s"}
           </div>
           <div className="subtle">
-            Asset {props.liveOverlay.scenePreset} · Insert {props.liveOverlay.insertScenePreset} · Standby {props.liveOverlay.standbyScenePreset} · Reconnect{" "}
-            {props.liveOverlay.reconnectScenePreset}
+            Asset {describeScenePreset(props.liveOverlay.scenePreset)} · Insert {describeScenePreset(props.liveOverlay.insertScenePreset)} · Standby {describeScenePreset(props.liveOverlay.standbyScenePreset)} · Reconnect{" "}
+            {describeScenePreset(props.liveOverlay.reconnectScenePreset)}
           </div>
           <div className="subtle">Published {props.liveOverlay.updatedAt || "never"}</div>
         </div>
         <div className="item">
           <span className="label">Draft scene</span>
-          <strong>{draft.scenePreset}</strong>
+          <strong>{describeScenePreset(draft.scenePreset)}</strong>
           <div className="subtle">
             Asset headline {draft.headline} · Insert {draft.insertHeadline} · Standby {draft.standbyHeadline} · Reconnect {draft.reconnectHeadline}
           </div>
           <div className="subtle">
-            Typography {draft.typographyPreset} · {draft.customLayers.length} positioned layer{draft.customLayers.length === 1 ? "" : "s"}
+            Typography {describeTypographyPreset(draft.typographyPreset)} · {draft.customLayers.length} positioned layer{draft.customLayers.length === 1 ? "" : "s"}
           </div>
           <div className="subtle">
-            Asset {draft.scenePreset} · Insert {draft.insertScenePreset} · Standby {draft.standbyScenePreset} · Reconnect {draft.reconnectScenePreset}
+            Asset {describeScenePreset(draft.scenePreset)} · Insert {describeScenePreset(draft.insertScenePreset)} · Standby {describeScenePreset(draft.standbyScenePreset)} · Reconnect {describeScenePreset(draft.reconnectScenePreset)}
           </div>
           <div className="subtle">Draft saved {props.draftOverlay.updatedAt || "not yet saved"}</div>
         </div>

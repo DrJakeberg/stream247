@@ -1,4 +1,10 @@
-import { isValidLiveBridgeInputUrl, normalizeLiveBridgeInputType } from "@stream247/core";
+import {
+  decideTwitchVodPlaybackSource,
+  isTwitchVodPlaybackAsset,
+  isValidLiveBridgeInputUrl,
+  normalizeLiveBridgeInputType,
+  resolveVodCacheTuning
+} from "@stream247/core";
 import { appendAuditEvent, readAppState, updateDestinationRecord, updatePlayoutRuntime } from "@/lib/server/state";
 
 type BroadcastAction =
@@ -20,6 +26,22 @@ type BroadcastAction =
 
 function addMinutes(minutes: number): string {
   return new Date(Date.now() + minutes * 60_000).toISOString();
+}
+
+// The relay topology is deploy-time env shared by every container (readiness.ts reads it the same way).
+// Under the relay the uplink owns the destinations and the Twitch session; the playout only feeds the
+// relay, and a playout restart there does not reconnect anything -- it only restarts the programme.
+function isRelayEnabled(): boolean {
+  return process.env.STREAM247_RELAY_ENABLED === "1";
+}
+
+// The worker's own test for a Pin, a Fallback or a skip hold that is still running (isTimestampActive).
+function isActiveUntil(value: string): boolean {
+  return value !== "" && new Date(value).getTime() > Date.now();
+}
+
+function assetTitle(assets: { id: string; title: string }[], assetId: string): string {
+  return assets.find((entry) => entry.id === assetId)?.title || assetId;
 }
 
 export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok: true; message: string }> {
@@ -67,6 +89,15 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
   }
 
   if (action.type === "force_reconnect") {
+    // The uplink reads nothing the admin could set to ask for a reconnect; it reconnects on its own
+    // (the planned reconnect interval, the encoder-stall and destination-stall watchdogs). The playout
+    // restart this action requests would reconnect nothing under the relay and only replay the running
+    // item from its beginning (M74).
+    if (isRelayEnabled()) {
+      throw new Error(
+        "The relay is on: the uplink holds the Twitch connection and reconnects by itself, so there is nothing to force. Use Restart to restart the programme."
+      );
+    }
     if (state.playout.liveBridgeStatus === "pending" || state.playout.liveBridgeStatus === "active") {
       throw new Error("Release Live Bridge before forcing a reconnect.");
     }
@@ -99,8 +130,20 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
         ...destination,
         status: "ready",
         lastValidatedAt: now,
-        notes: `${destination.role === "backup" ? "Backup" : "Primary"} destination will rejoin on the next playout cycle after the operator recovery request.`
+        notes: `${destination.role === "backup" ? "Backup" : "Primary"} destination will rejoin on the next ${isRelayEnabled() ? "uplink" : "playout"} cycle after the operator recovery request.`
       });
+    }
+
+    const auditMessage = `Operator requested immediate output recovery for ${recoveringDestinations.map((destination) => destination.name).join(", ")}.`;
+    // Under the relay the uplink picks the ready outputs up on its own next cycle. Restarting the playout
+    // there rejoined nothing and replayed the running item from its beginning (M74).
+    if (isRelayEnabled()) {
+      const message =
+        recoveringDestinations.length === 1
+          ? `${recoveringDestinations[0]!.name} will rejoin on the next uplink cycle.`
+          : `${recoveringDestinations.length} staged outputs will rejoin on the next uplink cycle.`;
+      await appendAuditEvent("broadcast.output-recovery.requested", auditMessage);
+      return { ok: true, message };
     }
 
     const message =
@@ -116,10 +159,7 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       pendingActionRequestedAt: "",
       message
     }));
-    await appendAuditEvent(
-      "broadcast.output-recovery.requested",
-      `Operator requested immediate output recovery for ${recoveringDestinations.map((destination) => destination.name).join(", ")}.`
-    );
+    await appendAuditEvent("broadcast.output-recovery.requested", auditMessage);
     return { ok: true, message };
   }
 
@@ -188,11 +228,13 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       throw new Error("No global fallback asset is configured.");
     }
 
+    // Under the relay the override branch and the normal switch put the fallback on air at the next cycle;
+    // the restart flag only restarted it from 0 when it was already on air (M74). Without the relay the
+    // slate comes first, as before.
     await updatePlayoutRuntime((playout) => ({
       ...playout,
-      status: "recovering",
+      ...(isRelayEnabled() ? {} : { status: "recovering" as const, restartRequestedAt: now }),
       desiredAssetId: fallback.id,
-      restartRequestedAt: now,
       heartbeatAt: now,
       overrideMode: "fallback",
       overrideAssetId: fallback.id,
@@ -208,11 +250,15 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
   }
 
   if (action.type === "resume") {
+    // Without the relay a restart puts the reconnect slate on air and the pool continues after it, as
+    // before. Under the relay there is no slate, and a restart would replay from its beginning whatever
+    // the schedule keeps on air; the worker switches to the pool's item by itself once the override and
+    // the insert are cleared (M74).
+    const relayEnabled = isRelayEnabled();
     await updatePlayoutRuntime((playout) => ({
       ...playout,
-      status: "recovering",
+      ...(relayEnabled ? {} : { status: "recovering" as const, restartRequestedAt: now }),
       desiredAssetId: "",
-      restartRequestedAt: now,
       heartbeatAt: now,
       overrideMode: "schedule",
       overrideAssetId: "",
@@ -229,6 +275,14 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       message: "Operator override cleared. Schedule control resumed."
     }));
     await appendAuditEvent("playout.resume.schedule", "Operator override cleared and schedule control resumed.");
+    // A Play now that had not aired yet is dropped by the operator: recorded like the worker's drops, so
+    // every insert that never aired has a playout.insert.dropped row.
+    if (state.playout.insertStatus === "pending" && state.playout.insertAssetId !== "") {
+      await appendAuditEvent(
+        "playout.insert.dropped",
+        `Insert ${assetTitle(state.assets, state.playout.insertAssetId)} was dropped before it aired (cancelled by Resume schedule).`
+      );
+    }
     return { ok: true, message: "Schedule control resumed." };
   }
 
@@ -237,11 +291,45 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
     if (!asset) {
       throw new Error("The requested insert asset is not available.");
     }
+    // As for Move next. The worker would start the item on air again from 0 as an insert.
+    if (asset.id === state.playout.currentAssetId) {
+      throw new Error("The selected asset is already on air.");
+    }
+    // The worker's selection order: a running Pin or Fallback comes before the insert, and a skip hold
+    // keeps an item out of every arm. Accepted, the insert was dropped at the next cycle ("preempted",
+    // "unavailable") after the operator had been told it was coming.
+    if (
+      isActiveUntil(state.playout.overrideUntil) &&
+      state.assets.some((entry) => entry.id === state.playout.overrideAssetId && entry.status === "ready")
+    ) {
+      throw new Error(
+        `${state.playout.overrideMode === "fallback" ? "A Fallback" : "A Pin"} is holding the air, and it comes before an insert. Resume schedule first, then play ${asset.title}.`
+      );
+    }
+    if (isActiveUntil(state.playout.skipUntil) && state.playout.skipAssetId === asset.id) {
+      throw new Error(`${asset.title} is held out by a Skip or Remove next. Resume schedule clears the hold.`);
+    }
+    // The playout's own rule (core twitch-vod-playback.ts): it never waits for a download, so an archive
+    // that is neither cached nor allowed to stream from Twitch cannot start. Refused here so the operator
+    // learns it now; the worker drops such an insert too (logged), and keeps the running item on air.
+    if (
+      isTwitchVodPlaybackAsset(asset) &&
+      decideTwitchVodPlaybackSource({
+        cacheReady: asset.cacheStatus === "ready",
+        settledTooLarge: asset.cacheStatus === "too-large",
+        allowRemoteFallback: resolveVodCacheTuning(state.managedConfig, process.env).allowRemoteFallback
+      }) === "unavailable"
+    ) {
+      throw new Error(
+        `${asset.title} is a Twitch archive that is not downloaded yet, and playing replays from Twitch while they download is off, so the playout cannot start it now. Wait until its download has finished, or turn on "While a replay is still downloading, play it from Twitch" in Settings → Operations → Replay cache.`
+      );
+    }
 
+    // No restart flag and no "recovering": the worker's insert branch picks the insert at its next cycle
+    // and switches to it, while the running item stays on air until then. The restart flag used to put
+    // the reconnect slate on air instead and let the running item win the selection (M74).
     await updatePlayoutRuntime((playout) => ({
       ...playout,
-      status: "recovering",
-      restartRequestedAt: now,
       heartbeatAt: now,
       insertAssetId: asset.id,
       insertRequestedAt: now,
@@ -256,6 +344,12 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       action.type === "play_now" ? "playout.play-now.requested" : "playout.insert.requested",
       `${action.type === "play_now" ? "Operator requested play now" : "Operator requested insert"} ${asset.title}.`
     );
+    if (state.playout.insertStatus === "pending" && state.playout.insertAssetId !== "" && state.playout.insertAssetId !== asset.id) {
+      await appendAuditEvent(
+        "playout.insert.dropped",
+        `Insert ${assetTitle(state.assets, state.playout.insertAssetId)} was dropped before it aired (replaced by ${asset.title}).`
+      );
+    }
     return { ok: true, message: `${action.type === "play_now" ? "Play now" : "Insert"} requested for ${asset.title}.` };
   }
 
@@ -352,11 +446,12 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
     throw new Error("The requested asset is not available for override.");
   }
 
+  // As for Fallback: under the relay a Pin switches at the next cycle, and a Pin of the item on air keeps
+  // it running instead of starting it again from 0, which one click on the preselected on-air item did.
   await updatePlayoutRuntime((playout) => ({
     ...playout,
-    status: "recovering",
+    ...(isRelayEnabled() ? {} : { status: "recovering" as const, restartRequestedAt: now }),
     desiredAssetId: asset.id,
-    restartRequestedAt: now,
     heartbeatAt: now,
     overrideMode: "asset",
     overrideAssetId: asset.id,

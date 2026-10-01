@@ -1,27 +1,61 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
-import { exchangeTwitchCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
+import { consumeOAuthState, describeOAuthStateFailure } from "@/lib/server/oauth-state";
+import { readAppState } from "@/lib/server/state";
+import { TwitchAccountRejectedError, exchangeTwitchCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
+import { requireApiRoles } from "@/lib/server/auth";
+
+// Every failure recorded below is a connect attempt that produced nothing: a rejected state
+// cookie, a cancelled consent, a missing code, a failed exchange. None of them says anything
+// about a connection already in place, so none of them passes "existing-connection" — which is
+// what keeps a double-clicked connect button or a stale tab from taking a working connection down.
+// Back to the Twitch accounts panel, where the result of this connect is shown (2.1).
+const TWITCH_ACCOUNTS_HREF = `${buildWorkspaceHref("admin", "settings")}#twitch-accounts`;
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const error = request.nextUrl.searchParams.get("error");
+  const presentedState = request.nextUrl.searchParams.get("state");
+
+  // Read once for URL building; the exchange below rewrites the Twitch connection but not the
+  // app base URL the redirects are built from.
+  const appState = await readAppState();
+
+  // Connecting a broadcaster rewrites the workspace's Twitch identity, and the SSO path derives the
+  // "owner" role from it. This must never be reachable by an unauthenticated caller.
+  const denied = await requireApiRoles(["owner", "admin"]);
+  if (denied) {
+    // The state cookie is single-use; drop it so a rejected attempt cannot be replayed.
+    await consumeOAuthState("broadcaster-connect", presentedState);
+    return denied;
+  }
+
+  const stateVerdict = await consumeOAuthState("broadcaster-connect", presentedState);
+  if (!stateVerdict.ok) {
+    await recordTwitchError(describeOAuthStateFailure(stateVerdict.reason));
+    return NextResponse.redirect(getAbsoluteAppUrl(appState, TWITCH_ACCOUNTS_HREF));
+  }
 
   if (error) {
     await recordTwitchError(`Twitch authorization failed: ${error}.`);
-    return NextResponse.redirect(getAbsoluteAppUrl(buildWorkspaceHref("live", "status")));
+    return NextResponse.redirect(getAbsoluteAppUrl(appState, TWITCH_ACCOUNTS_HREF));
   }
 
   if (!code) {
     await recordTwitchError("Twitch callback did not include an authorization code.");
-    return NextResponse.redirect(getAbsoluteAppUrl(buildWorkspaceHref("live", "status")));
+    return NextResponse.redirect(getAbsoluteAppUrl(appState, TWITCH_ACCOUNTS_HREF));
   }
 
   try {
     await exchangeTwitchCode(code);
   } catch (caught) {
-    const message = caught instanceof Error ? caught.message : "Unknown Twitch callback failure.";
-    await recordTwitchError(message);
+    // A refused account is already in the audit trail as twitch.bot.rejected, which is what the
+    // Twitch accounts panel shows; recording it again as a generic error would only duplicate it.
+    if (!(caught instanceof TwitchAccountRejectedError)) {
+      const message = caught instanceof Error ? caught.message : "Unknown Twitch callback failure.";
+      await recordTwitchError(message);
+    }
   }
 
-  return NextResponse.redirect(getAbsoluteAppUrl(buildWorkspaceHref("live", "status")));
+  return NextResponse.redirect(getAbsoluteAppUrl(appState, TWITCH_ACCOUNTS_HREF));
 }

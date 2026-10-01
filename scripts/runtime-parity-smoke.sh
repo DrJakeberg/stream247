@@ -20,7 +20,6 @@ SECONDARY_OUTPUT_FILE="$SECONDARY_OUTPUT_DIR/secondary.flv"
 FIXTURE_DIR="$TMP_DIR/fixtures"
 MEDIA_DIR="$TMP_DIR/media"
 POSTGRES_DIR="$TMP_DIR/postgres"
-REDIS_DIR="$TMP_DIR/redis"
 BASE_URL="http://127.0.0.1:${PORT}"
 PROGRAM_A_FILE="runtime-program-a.mp4"
 PROGRAM_B_FILE="runtime-program-b.mp4"
@@ -62,21 +61,39 @@ psql_query() {
   compose exec -T postgres psql -U stream247 -d stream247 -At -F '|' -c "$1"
 }
 
+# `curl -f` prints "curl: (22) The requested URL returned error: 400" and throws the response body away.
+# Twice in a row that was the entire CI record of a failure: no method, no path, no message from the API
+# that rejected the call. These helpers keep the body and say which request it belonged to.
+api_call() {
+  local method="$1"
+  local path="$2"
+  local payload="${3:-}"
+  local response status body
+  if [ "$method" = "GET" ]; then
+    response="$(curl -sS -b "$COOKIE_JAR" -w $'\n%{http_code}' "${BASE_URL}${path}")" || return 1
+  else
+    response="$(curl -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" -H "Content-Type: application/json" \
+      -X "$method" -d "$payload" -w $'\n%{http_code}' "${BASE_URL}${path}")" || return 1
+  fi
+  status="${response##*$'\n'}"
+  body="${response%$'\n'*}"
+  if [ "${status:-0}" -ge 400 ]; then
+    echo "API ${method} ${path} answered ${status}: ${body}" >&2
+    return 1
+  fi
+  printf '%s' "$body"
+}
+
 api_get() {
-  local path="$1"
-  curl -fsS -b "$COOKIE_JAR" "${BASE_URL}${path}"
+  api_call GET "$1"
 }
 
 api_post() {
-  local path="$1"
-  local payload="$2"
-  curl -fsS -b "$COOKIE_JAR" -c "$COOKIE_JAR" -H "Content-Type: application/json" -X POST -d "$payload" "${BASE_URL}${path}"
+  api_call POST "$1" "$2"
 }
 
 api_put() {
-  local path="$1"
-  local payload="$2"
-  curl -fsS -b "$COOKIE_JAR" -c "$COOKIE_JAR" -H "Content-Type: application/json" -X PUT -d "$payload" "${BASE_URL}${path}"
+  api_call PUT "$1" "$2"
 }
 
 dump_failure_context() {
@@ -169,14 +186,19 @@ wait_for_local_library_assets() {
     sync_runs="$(psql_query "SELECT count(*) FROM source_sync_runs WHERE source_id = 'source-local-library';" 2>/dev/null || true)"
     source_rows="$(psql_query "SELECT count(*) FROM sources WHERE id = 'source-local-library';" 2>/dev/null || true)"
     ready_assets="$(psql_query "SELECT count(*) FROM assets WHERE source_id = 'source-local-library' AND status = 'ready';" 2>/dev/null || true)"
-    if [ "${sync_runs:-0}" -ge 1 ] && [ "${source_rows:-0}" -ge 1 ] && [ "${ready_assets:-0}" -ge "$minimum_ready_assets" ]; then
+    # The count alone is not enough. The scan marks assets ready one at a time, so four ready rows can
+    # exist while the very file the next request names is still probing — and POST /api/pools rejects an
+    # audio lane asset that is not ready with a 400 the script reported only as "curl: (22)". Each
+    # fixture this run goes on to use is therefore waited for by name.
+    ready_fixtures="$(psql_query "SELECT count(*) FROM assets WHERE source_id = 'source-local-library' AND status = 'ready' AND (path LIKE '%/${PROGRAM_A_FILE}' OR path LIKE '%/${PROGRAM_B_FILE}' OR path LIKE '%/${AUDIO_BED_FILE}' OR path LIKE '%/${CUE_INSERT_FILE}');" 2>/dev/null || true)"
+    if [ "${sync_runs:-0}" -ge 1 ] && [ "${source_rows:-0}" -ge 1 ] && [ "${ready_assets:-0}" -ge "$minimum_ready_assets" ] && [ "${ready_fixtures:-0}" -ge 4 ]; then
       return 0
     fi
     sleep 2
   done
 
   dump_failure_context
-  echo "Timed out waiting for the local media library to finish scanning runtime parity fixtures." >&2
+  echo "Timed out waiting for the local media library to finish scanning runtime parity fixtures (ready overall: ${ready_assets:-0}, of the four this run uses: ${ready_fixtures:-0})." >&2
   exit 1
 }
 
@@ -271,10 +293,15 @@ wait_for_live_bridge_release() {
 
 require_command curl
 require_command docker
-require_command ffmpeg
+# ffmpeg is only used to synthesise fixtures. Fall back to the worker image when the host has
+# none, so CI does not depend on apt being able to install it.
+# shellcheck source=lib/ffmpeg-fallback.sh
+. "$(dirname "$0")/lib/ffmpeg-fallback.sh"
 require_command jq
 
-mkdir -p "$FIXTURE_DIR" "$MEDIA_DIR" "$POSTGRES_DIR" "$REDIS_DIR" "$PRIMARY_OUTPUT_DIR" "$SECONDARY_OUTPUT_DIR"
+mkdir -p "$FIXTURE_DIR" "$MEDIA_DIR" "$POSTGRES_DIR" "$PRIMARY_OUTPUT_DIR" "$SECONDARY_OUTPUT_DIR"
+
+enable_ffmpeg_fallback "$TMP_DIR"
 touch "$COOKIE_JAR"
 
 generate_video_fixture "$MEDIA_DIR/$PROGRAM_A_FILE" "0x124f7a" "330" "12"
@@ -288,12 +315,11 @@ cat >"$ENV_FILE" <<EOF
 NODE_ENV=production
 PORT=3000
 APP_URL=${BASE_URL}
-APP_SECRET=stream247-runtime-smoke
+APP_SECRET=stream247-runtime-smoke-0123456789abcdef
 POSTGRES_DB=stream247
 POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247
 DATABASE_URL=postgresql://stream247:stream247@postgres:5432/stream247
-REDIS_URL=redis://redis:6379
 STREAM247_WEB_IMAGE=stream247-web:test
 STREAM247_WORKER_IMAGE=stream247-worker:test
 STREAM247_PLAYOUT_IMAGE=stream247-worker:test
@@ -308,7 +334,10 @@ EOF
 cat >"$OVERRIDE_FILE" <<EOF
 services:
   web:
-    ports:
+    # !override replaces the base compose port list instead of appending to it. Without it the
+    # stack also tries to publish the base file's "3000:3000", so every smoke run fails with
+    # "port is already allocated" whenever anything else holds host port 3000.
+    ports: !override
       - "127.0.0.1:${PORT}:3000"
     volumes:
       - ${MEDIA_DIR}:/app/data/media
@@ -322,9 +351,6 @@ services:
   postgres:
     volumes:
       - ${POSTGRES_DIR}:/var/lib/postgresql/data
-  redis:
-    volumes:
-      - ${REDIS_DIR}:/data
   fixtures:
     image: python:3.12-alpine
     command: ["sh", "-c", "python -m http.server 8000 -d /fixtures"]
@@ -384,6 +410,15 @@ if [ -z "$SECONDARY_DESTINATION_ID" ]; then
   echo "Runtime parity smoke could not resolve the created secondary destination." >&2
   exit 1
 fi
+
+# The block below is placed at today's weekday and the current minute, because the runtime has to pick
+# it up as the block that is on air right now. The bootstrap seeds two demo blocks — Monday 06:00-10:00
+# and Friday 18:00-24:00 — and the API rejects an overlapping block with 400. So this test failed on any
+# Monday morning or Friday evening, and said only "curl: (22)". The seeded blocks are demo data, not
+# something this test measures, so the window it needs is cleared first.
+BLOCK_END_MINUTE_OF_DAY="$((START_MINUTE_OF_DAY + 20))"
+CLEARED_BLOCKS="$(psql_query "DELETE FROM schedule_blocks WHERE day_of_week = ${DAY_OF_WEEK} AND start_minute_of_day < ${BLOCK_END_MINUTE_OF_DAY} AND (start_minute_of_day + duration_minutes) > ${START_MINUTE_OF_DAY} RETURNING id;" | grep -c . || true)"
+echo "Cleared ${CLEARED_BLOCKS} seeded schedule block(s) overlapping day ${DAY_OF_WEEK} minute ${START_MINUTE_OF_DAY}-${BLOCK_END_MINUTE_OF_DAY}."
 
 api_post "/api/schedule/blocks" "$(jq -nc \
   --arg title "$BLOCK_TITLE" \

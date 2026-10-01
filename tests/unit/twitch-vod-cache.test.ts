@@ -83,8 +83,15 @@ describe("Twitch VOD cache", () => {
 
     const result = await ensureTwitchVodCache(asset, config, async (file, args) => {
       if (file === "yt-dlp") {
-        const outputPath = args[args.indexOf("--output") + 1];
-        await fs.writeFile(outputPath!, "downloaded-media");
+        const outputIndex = args.indexOf("--output");
+        // Guarded: yt-dlp is also called to probe the size, and that call has no --output at all.
+        // Unguarded, indexOf returns -1 and this writes to args[0] — which is "--no-playlist", so
+        // every run left a file by that name in the repository root. It looked like the product
+        // building a broken command line; it was this.
+        const outputPath = outputIndex === -1 ? "" : args[outputIndex + 1];
+        if (outputPath) {
+          await fs.writeFile(outputPath, "downloaded-media");
+        }
       }
       return "1.0";
     });
@@ -126,8 +133,15 @@ describe("Twitch VOD cache", () => {
 
     const result = await ensureTwitchVodCache(asset, config, async (file, args) => {
       if (file === "yt-dlp") {
-        const outputPath = args[args.indexOf("--output") + 1];
-        await fs.writeFile(outputPath!, "new-media");
+        const outputIndex = args.indexOf("--output");
+        // Guarded: yt-dlp is also called to probe the size, and that call has no --output at all.
+        // Unguarded, indexOf returns -1 and this writes to args[0] — which is "--no-playlist", so
+        // every run left a file by that name in the repository root. It looked like the product
+        // building a broken command line; it was this.
+        const outputPath = outputIndex === -1 ? "" : args[outputIndex + 1];
+        if (outputPath) {
+          await fs.writeFile(outputPath, "new-media");
+        }
       }
       return "1.0";
     });
@@ -151,8 +165,15 @@ describe("Twitch VOD cache", () => {
       expect(await fs.readdir(assetDir)).not.toContain("123456789.mp4.part-stale.mp4");
       expect(await fs.readdir(assetDir)).not.toContain("123456789.mp4.part-stale.mp4.ytdl");
       if (file === "yt-dlp") {
-        const outputPath = args[args.indexOf("--output") + 1];
-        await fs.writeFile(outputPath!, "fresh-download");
+        const outputIndex = args.indexOf("--output");
+        // Guarded: yt-dlp is also called to probe the size, and that call has no --output at all.
+        // Unguarded, indexOf returns -1 and this writes to args[0] — which is "--no-playlist", so
+        // every run left a file by that name in the repository root. It looked like the product
+        // building a broken command line; it was this.
+        const outputPath = outputIndex === -1 ? "" : args[outputIndex + 1];
+        if (outputPath) {
+          await fs.writeFile(outputPath, "fresh-download");
+        }
       }
       return "1.0";
     });
@@ -191,5 +212,46 @@ describe("Twitch VOD cache", () => {
     expect(result.status).toBe("failed");
     expect(result.cacheError).toContain("network failed");
     await expect(fs.readdir(path.dirname(result.cachePath))).resolves.toEqual([]);
+  });
+
+  // M56 part 2: the cache tuning is managed config first, env second. The cache ROOT stays
+  // env-only — where the volume is mounted is infrastructure, not operation.
+  it("lets managed replay-cache values win over env while the root stays env-driven", () => {
+    const config = getTwitchVodCacheConfig(
+      {
+        TWITCH_VOD_CACHE_ROOT: "/mnt/replay-cache",
+        TWITCH_VOD_CACHE_RETENTION_HOURS: "24",
+        TWITCH_VOD_CACHE_MAX_BYTES: String(7 * 1024 * 1024 * 1024)
+      },
+      "/app/data/media",
+      {
+        vodCacheEnabled: "0",
+        vodCacheRetentionHours: "48",
+        vodCacheMaxGb: "40",
+        vodCacheFailureCooldownSeconds: "120",
+        vodCacheLimitRate: "4M"
+      }
+    );
+
+    expect(config.enabled).toBe(false);
+    expect(config.cacheRoot).toBe("/mnt/replay-cache");
+    expect(config.retentionMs).toBe(48 * 60 * 60 * 1000);
+    expect(config.maxCacheBytes).toBe(40 * 1024 * 1024 * 1024);
+    expect(config.failureCooldownMs).toBe(120 * 1000);
+    expect(config.limitRate).toBe("4M");
+  });
+
+  // The v1.5.18 invariant survives the managed path: a download awaited inside a reconciliation
+  // cycle must never outlive the loop stall guard, however the timeout was configured. A managed
+  // 7200 s — the exact value that once caused 423 restarts from env — is clamped for the awaited
+  // path and honoured only by the detached background job.
+  it("keeps the cycle-await clamp on a managed download timeout", () => {
+    const config = getTwitchVodCacheConfig({}, "/app/data/media", {
+      vodCacheDownloadTimeoutSeconds: "7200"
+    });
+
+    expect(config.backgroundDownloadTimeoutMs).toBe(7200 * 1000);
+    expect(config.downloadTimeoutClamped).toBe(true);
+    expect(config.downloadTimeoutMs).toBe(150_000);
   });
 });

@@ -101,3 +101,18 @@ export async function raceResolveAgainstDeath<T>(
   }
   return Promise.race([tagged, death.then(() => ({ kind: "abandoned" as const }))]);
 }
+
+/**
+ * Count each probe result once. A cached entry is seen by every cycle while it lives (5 min when
+ * ready, 60 s when failed, a cycle every 15 s), and until 2.1 every sighting counted: a ready entry
+ * reset the quarantine counter to 0 some twenty times, and ONE failed resolve (a network outage at
+ * night, say) added +4 and quarantined the asset for good -- quarantined assets are never probed
+ * again. Returns true exactly once per entry, the first time it is asked; the caller counts then.
+ */
+export function takeUncountedProbeOutcome(entry: { outcomeCounted: boolean } | null | undefined): boolean {
+  if (!entry || entry.outcomeCounted) {
+    return false;
+  }
+  entry.outcomeCounted = true;
+  return true;
+}

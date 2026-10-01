@@ -1,4 +1,5 @@
 import { selectActiveDestinationGroup } from "@stream247/core";
+import { DEV_FALLBACK_APP_SECRET, resolveAppBaseUrl, resolveAppSecret, resolveTwitchAccountsForState } from "@stream247/db";
 import { buildWorkspaceHref } from "../workspace-navigation";
 import type { AppState } from "./state";
 import { getManagedTwitchConfig } from "./state";
@@ -8,13 +9,32 @@ export type GoLiveChecklistItem = {
   title: string;
   detail: string;
   status: "ready" | "action" | "optional";
-  href: string;
+  /**
+   * Where to go to fix it, when that is a page in this product.
+   *
+   * Since M52 that includes APP_URL and APP_SECRET: the setup wizard is their screen, and /setup
+   * stays reachable for a signed-in operator after the workspace is initialised. Before that they
+   * were env-only and the links here were dead ends offering themselves as answers.
+   */
+  href?: string;
 };
 
 export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
   const twitchConfig = getManagedTwitchConfig(state);
-  const hasAppUrl = Boolean((process.env.APP_URL || "").trim());
-  const hasAppSecret = Boolean((process.env.APP_SECRET || "").trim());
+  const appBaseUrl = resolveAppBaseUrl(state.managedConfig);
+  const hasAppUrl = appBaseUrl !== "";
+  const hasEnvAppUrl = Boolean((process.env.APP_URL || "").trim());
+  const hasEnvAppSecret = Boolean((process.env.APP_SECRET || "").trim());
+  // A real secret is either the env value or the one generated and persisted on first boot; only
+  // the development fallback (or production refusing to resolve at all) leaves this step open.
+  let hasAppSecret = hasEnvAppSecret;
+  if (!hasAppSecret) {
+    try {
+      hasAppSecret = resolveAppSecret() !== DEV_FALLBACK_APP_SECRET;
+    } catch {
+      hasAppSecret = false;
+    }
+  }
   const hasDatabaseUrl = Boolean((process.env.DATABASE_URL || "").trim());
   const hasTwitchCredentials = Boolean(twitchConfig.clientId && twitchConfig.clientSecret);
   const readyAssets = state.assets.filter((asset) => asset.status === "ready").length;
@@ -48,44 +68,70 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
       title: "Owner account",
       detail: state.owner ? `Owner ${state.owner.email} is configured.` : "Create the owner account to initialize the workspace.",
       status: state.owner ? "ready" : "action",
-      href: "/setup"
+      // Only before there is one: afterwards /setup redirects away and the step is done anyway.
+      href: state.owner ? undefined : "/setup"
     },
     {
       id: "base-url",
       title: "Public app URL",
-      detail: hasAppUrl ? `APP_URL is set to ${process.env.APP_URL}.` : "Set APP_URL so OAuth callbacks and overlay links use the public hostname.",
+      detail: hasEnvAppUrl
+        ? `APP_URL is set to ${appBaseUrl}.`
+        : hasAppUrl
+          ? `The public URL is set to ${appBaseUrl} in the setup wizard.`
+          : "Set the public URL in the setup wizard so OAuth callbacks and overlay links use the public hostname.",
       status: hasAppUrl ? "ready" : "action",
-      href: "/setup"
+      href: "/setup?step=instance"
     },
     {
       id: "app-secret",
       title: "App secret and persistence",
+      // DATABASE_URL stopped gating this step with M52: the compose-internal default points at the
+      // bundled Postgres, and if that database were unreachable this checklist could not render.
       detail:
-        hasAppSecret && hasDatabaseUrl
+        hasEnvAppSecret && hasDatabaseUrl
           ? "APP_SECRET and DATABASE_URL are configured."
-          : "Set APP_SECRET and DATABASE_URL before treating the install as production-ready.",
-      status: hasAppSecret && hasDatabaseUrl ? "ready" : "action",
-      href: "/setup"
+          : hasAppSecret
+            ? "The app secret was generated on first boot and persists on the data volume; the bundled Postgres needs no configuration."
+            : "Running on the development fallback secret — fine locally, refused in production.",
+      status: hasAppSecret ? "ready" : "action",
+      href: "/setup?step=done"
     },
     {
       id: "twitch-credentials",
       title: "Twitch app credentials",
       detail: hasTwitchCredentials
         ? "Twitch client id and client secret are available for OAuth and sync."
-        : "Save Twitch client credentials in setup or settings to enable broadcaster connect and team SSO.",
+        : "Save Twitch client credentials in setup or settings to enable the account connections and team sign-in.",
       status: hasTwitchCredentials ? "ready" : "action",
-      href: state.initialized ? buildWorkspaceHref("admin", "settings") : "/setup"
+      href: state.initialized ? buildWorkspaceHref("admin", "settings") : "/setup?step=twitch-app"
     },
     {
       id: "twitch-connect",
-      title: "Twitch broadcaster connection",
+      title: "Twitch bot account",
       detail:
         state.twitch.status === "connected"
-          ? `Connected as ${state.twitch.broadcasterLogin || state.twitch.broadcasterId}.`
-          : "Connect the broadcaster account so metadata, schedule sync, and team access can work.",
+          ? `Connected as ${state.twitch.broadcasterLogin || state.twitch.broadcasterId} — the account Stream247 chats and moderates as.`
+          : "Connect the bot account Stream247 signs in as for chat, moderation and team sign-in.",
       status: state.twitch.status === "connected" ? "ready" : "action",
-      href: buildWorkspaceHref("live", "status")
+      href: `${buildWorkspaceHref("admin", "settings")}#twitch-accounts`
     },
+    (() => {
+      // The channel the stream key sends to and viewers watch; an unset value means the bot's own
+      // channel, which is right for a single-account setup and wrong for a split one -- hence optional.
+      const accounts = resolveTwitchAccountsForState(state, process.env);
+      return {
+        id: "broadcast-channel",
+        title: "Twitch broadcast channel",
+        detail:
+          accounts.mode === "unconfirmed"
+            ? accounts.channel.login
+              ? `Not set — Stream247 assumes the bot account's own channel (${accounts.channel.login}). Set it if viewers watch another channel.`
+              : "Not set. Name the channel your stream key sends to."
+            : `Set to ${accounts.channel.login}: the stream key sends here and viewers watch here.`,
+        status: accounts.mode === "unconfirmed" ? ("optional" as const) : ("ready" as const),
+        href: `${buildWorkspaceHref("admin", "settings")}#twitch-accounts`
+      };
+    })(),
     {
       id: "destination",
       title: "Live destination",

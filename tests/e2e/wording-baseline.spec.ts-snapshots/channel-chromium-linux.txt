@@ -1,0 +1,17 @@
+Schedule
+What is live now, and what comes next.
+All times are shown in Europe/Berlin.
+SCHEDULE
+Upcoming lineup
+On air
+Updating every few seconds
+Europe/Berlin
+Watch the stream
+On air now
+<block>
+<time> to <time> · <category>
+Up next
+<block>
+<time> to <time> · <category>
+After that
+Nothing further is scheduled yet.

@@ -1,8 +1,11 @@
 import type { InputHTMLAttributes } from "react";
+import { InfoTip } from "./InfoTip";
 
 export type InputProps = {
   label: string;
   hint?: string;
+  /** Short explanation shown behind an (i) beside the label. */
+  info?: string;
   error?: string;
   value: string;
   onChange: (value: string) => void;
@@ -14,6 +17,7 @@ export type InputProps = {
 export function Input({
   label,
   hint,
+  info,
   error,
   value,
   onChange,
@@ -29,7 +33,10 @@ export function Input({
 
   return (
     <label className={["field-stack", fullWidth ? "field-stack-full" : "", className].filter(Boolean).join(" ")} htmlFor={fieldId}>
-      <span className="label">{label}</span>
+      <span className={info ? "label label-with-info" : "label"}>
+        {label}
+        {info ? <InfoTip text={info} /> : null}
+      </span>
       <input
         {...inputProps}
         aria-describedby={describedBy}

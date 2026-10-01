@@ -11,7 +11,8 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
-      contents: read
+      # write: the last step creates the GitHub release for the tag.
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v6
@@ -57,9 +58,28 @@ jobs:
         run: |
           set -euo pipefail
           SOURCE_SHA="${GITHUB_SHA::7}"
-          docker pull "ghcr.io/drjakeberg/stream247-web:main-${SOURCE_SHA}"
-          docker pull "ghcr.io/drjakeberg/stream247-worker:main-${SOURCE_SHA}"
-          docker pull "ghcr.io/drjakeberg/stream247-playout:main-${SOURCE_SHA}"
+
+          # These snapshots are published by the CI workflow for the same commit. Pushing main and
+          # the tag together starts both workflows at once, so the images routinely do not exist
+          # yet when this step first runs -- that is what failed the v1.5.18 release outright.
+          # Wait for CI to publish rather than giving up on the first miss.
+          wait_for_image() {
+            image="$1"
+            for attempt in $(seq 1 60); do
+              if docker pull "$image" >/dev/null 2>&1; then
+                echo "Pulled $image"
+                return 0
+              fi
+              echo "Waiting for $image (attempt $attempt/60)..."
+              sleep 30
+            done
+            echo "Timed out waiting for $image. Check that the CI run for this commit succeeded." >&2
+            return 1
+          }
+
+          wait_for_image "ghcr.io/drjakeberg/stream247-web:main-${SOURCE_SHA}"
+          wait_for_image "ghcr.io/drjakeberg/stream247-worker:main-${SOURCE_SHA}"
+          wait_for_image "ghcr.io/drjakeberg/stream247-playout:main-${SOURCE_SHA}"
           docker image tag "ghcr.io/drjakeberg/stream247-web:main-${SOURCE_SHA}" stream247-web:release-candidate
           docker image tag "ghcr.io/drjakeberg/stream247-worker:main-${SOURCE_SHA}" stream247-worker:release-candidate
           docker image tag "ghcr.io/drjakeberg/stream247-playout:main-${SOURCE_SHA}" stream247-playout:release-candidate
@@ -122,3 +142,26 @@ jobs:
             fi
             docker image push "$tag"
           done <<< "$TARGET_TAGS"
+      # Last on purpose: a release appears only for a tag whose images were smoke-tested and pushed.
+      # Until 2026-10-01 this workflow published images only, and the Releases page stopped at
+      # v1.5.17 while forty tags followed. The notes are the tag's CHANGELOG.md section; a tag
+      # without one fails here instead of publishing an empty release. Re-running the workflow
+      # updates the existing release.
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          node scripts/release-notes.mjs "$version" > release-notes.md
+          if [[ "$version" == *-* ]]; then
+            kind=(--prerelease --latest=false)
+          else
+            kind=(--prerelease=false --latest)
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "Stream247 $version" --notes-file release-notes.md "${kind[@]}"
+          else
+            gh release create "$TAG" --verify-tag --title "Stream247 $version" --notes-file release-notes.md "${kind[@]}"
+          fi

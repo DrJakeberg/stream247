@@ -213,12 +213,32 @@ validate_image_pinning() {
   esac
 }
 
+# Since 1.5.19 the web app refuses to sign sessions with a weak or absent APP_SECRET, because the
+# published development fallback let anyone forge a session cookie for any user id. Catch that here
+# rather than letting a deployment boot and fail on every request.
+validate_app_secret_strength() {
+  value="$(read_env_value "APP_SECRET" "$ENV_FILE" 2>/dev/null || true)"
+  length="${#value}"
+
+  if [ "$value" = "stream247-dev-secret" ]; then
+    echo "Invalid APP_SECRET in $ENV_FILE: this is the published development fallback and must never be used in production."
+    exit 1
+  fi
+
+  if [ "$length" -lt 32 ]; then
+    echo "Invalid APP_SECRET in $ENV_FILE: it is $length characters; production requires at least 32."
+    echo "Generate one with: openssl rand -base64 48"
+    exit 1
+  fi
+}
+
 echo "Running release preflight for Stream247 using $ENV_FILE..."
 
 for key in APP_URL APP_SECRET POSTGRES_PASSWORD DATABASE_URL; do
   require_production_setting "$key"
 done
 
+validate_app_secret_strength
 validate_proxy_settings_if_configured
 
 echo "Checking image pinning policy..."

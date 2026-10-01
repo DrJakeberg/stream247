@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { ScheduleBlock } from "@stream247/core";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 const dayOptions = [
   { value: 0, label: "Sunday" },
@@ -53,7 +54,7 @@ export function ScheduleBlockDuplicateForm({ block }: { block: ScheduleBlock }) 
       }}
     >
       <div>
-        <span className="label">Duplicate to weekdays</span>
+        <span className="label label-with-info">Duplicate to weekdays<InfoTip text="Places an exact copy of this block (same start time, length, title, category, pool, show and cue points) on each ticked weekday as a plain single block. Refused as a whole if any copy would overlap programming already on that day." /></span>
         <div className="chip-grid">
           {dayOptions
             .filter((day) => day.value !== block.dayOfWeek)

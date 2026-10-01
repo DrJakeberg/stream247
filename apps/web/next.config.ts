@@ -5,6 +5,26 @@ import { buildWorkspaceHref } from "./lib/workspace-navigation";
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
+  // No serverExternalPackages entry for satori, on purpose.
+  //
+  // The obvious instinct with a layout engine is to mark it external so Next leaves it alone. Here
+  // that would be the wrong way round: satori ships its layout engine already inlined as base64
+  // inside its own bundle, with no .node binary and no separate .wasm file to find, so webpack
+  // bundles the whole thing into a server chunk that "output: standalone" copies wholesale.
+  // Externalising it would instead make the runtime resolve satori from node_modules and leave the
+  // image depending on file tracing having copied it — a failure that only appears in production.
+  // Verified after a build: the engine's payload lands in .next/standalone/apps/web/.next/server.
+
+  // The workspace packages are consumed as TypeScript source and compile with NodeNext, which
+  // requires explicit ".js" specifiers in relative imports. Webpack has to be told that a ".js"
+  // specifier may resolve to the ".ts" file it was written for.
+  webpack(config) {
+    config.resolve.extensionAlias = {
+      ...config.resolve.extensionAlias,
+      ".js": [".ts", ".tsx", ".js"]
+    };
+    return config;
+  },
   async redirects() {
     return [
       {
@@ -32,6 +52,10 @@ const nextConfig: NextConfig = {
         destination: buildWorkspaceHref("program", "pools"),
         permanent: false
       },
+      // /assets/:id and /sources/:id are NOT redirected: they are the detail pages. Until 2026-09-06 they
+      // were sent to the library/sources tab with ?assetId=/?sourceId=, which nothing read, so every
+      // "Open asset detail" link landed back on the list. program/page.tsx forwards those old query
+      // links to the detail pages instead.
       {
         source: "/library",
         destination: buildWorkspaceHref("program", "library"),
@@ -40,16 +64,6 @@ const nextConfig: NextConfig = {
       {
         source: "/sources",
         destination: buildWorkspaceHref("program", "sources"),
-        permanent: false
-      },
-      {
-        source: "/assets/:id",
-        destination: buildWorkspaceHref("program", "library", { assetId: ":id" }),
-        permanent: false
-      },
-      {
-        source: "/sources/:id",
-        destination: buildWorkspaceHref("program", "sources", { sourceId: ":id" }),
         permanent: false
       },
       {

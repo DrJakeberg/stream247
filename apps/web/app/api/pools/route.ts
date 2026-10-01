@@ -99,6 +99,7 @@ export async function POST(request: NextRequest) {
     sourceIds,
     playbackMode: "round-robin",
     cursorAssetId: "",
+    sourceCursors: {},
     insertAssetId: validInsertAsset?.id ?? "",
     insertEveryItems: payload.insertEveryItems,
     itemsSinceInsert: 0,
@@ -159,8 +160,11 @@ export async function PUT(request: NextRequest) {
       throw new Error("Audio lane assets must be ready local-library or direct-media items.");
     }
 
+    // Settings only: the pool's position belongs to the worker, and the snapshot read above may already
+    // be behind it (see updatePoolRecord).
     await updatePoolRecord({
-      ...existing,
+      id: existing.id,
+      playbackMode: existing.playbackMode,
       name: payload.name,
       sourceIds,
       insertAssetId: validInsertAsset?.id ?? "",

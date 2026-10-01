@@ -1,0 +1,145 @@
+Stream247
+Owner · owner
+WORKSPACES
+Live covers control, status, and moderation for the current run.
+Program owns schedule, pools, library, and sources. Studio owns scene, engagement, and output. Admin keeps settings, team access, and release posture aligned.
+Live
+Live · 128
+Program
+Studio
+Admin
+Open public page
+Sign out
+FEED
+<runtime>
+<runtime>
+CURRENT
+<runtime>
+<runtime>
+NEXT
+<runtime>
+<runtime>
+DESTINATION
+<runtime>
+<runtime>
+INCIDENTS
+<runtime>
+<runtime>
+UPDATES
+<runtime>
+<runtime>
+Schedule
+Pools
+Library
+Sources
+Week
+Day
+Now + Next
+PROGRAM
+Week lens
+Shows the first video each block would play, continuing from wherever its pool's rotation currently stands, and lets you open a block to see what follows before any of it goes on air.
+<DAY>
+3 blocks
+<minutes> scheduled
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<DAY>
+3 blocks
+<minutes> scheduled
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<DAY>
+3 blocks
+<minutes> scheduled
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<DAY>
+3 blocks
+<minutes> scheduled
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<DAY>
+3 blocks
+<minutes> scheduled
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<DAY>
+3 blocks
+<minutes> scheduled
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<DAY>
+3 blocks
+<minutes> scheduled
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block
+<time> TO <time>
+<asset>
+<block> · <block> · <day>
+Repeats inside block

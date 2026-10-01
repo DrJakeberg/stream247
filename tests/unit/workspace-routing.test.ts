@@ -27,8 +27,6 @@ describe("workspace routing", () => {
         expect.objectContaining({ source: "/pools", destination: "/program?tab=pools", permanent: false }),
         expect.objectContaining({ source: "/library", destination: "/program?tab=library", permanent: false }),
         expect.objectContaining({ source: "/sources", destination: "/program?tab=sources", permanent: false }),
-        expect.objectContaining({ source: "/assets/:id", destination: "/program?tab=library&assetId=%3Aid", permanent: false }),
-        expect.objectContaining({ source: "/sources/:id", destination: "/program?tab=sources&sourceId=%3Aid", permanent: false }),
         expect.objectContaining({ source: "/overlay-studio", destination: "/studio?tab=scene", permanent: false }),
         expect.objectContaining({ source: "/overlays", destination: "/studio?tab=engagement", permanent: false }),
         expect.objectContaining({ source: "/output", destination: "/studio?tab=output", permanent: false }),
@@ -37,5 +35,19 @@ describe("workspace routing", () => {
         expect.objectContaining({ source: "/ops", destination: "/live?tab=status", permanent: false })
       ])
     );
+  });
+
+  it("leaves the detail routes alone", async () => {
+    // /assets/:id and /sources/:id used to redirect into /program?tab=library&assetId=… and
+    // ?tab=sources&sourceId=…. Neither tab ever read the id, so every "open this asset" link landed
+    // on the plain list and the detail pages were unreachable. They own their routes again; the
+    // program page forwards those two old query shapes instead (the schedule tab keeps assetId, which
+    // it reads itself for the metadata drawer).
+    const redirects = (await nextConfig.redirects?.()) ?? [];
+    const sources = redirects.map((entry) => entry.source);
+
+    expect(sources).not.toContain("/assets/:id");
+    expect(sources).not.toContain("/sources/:id");
+    expect(sources).toContain("/library");
   });
 });

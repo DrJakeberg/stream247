@@ -26,18 +26,17 @@ cleanup() {
 
 trap cleanup EXIT
 
-mkdir -p "$TMP_DIR/media" "$TMP_DIR/postgres" "$TMP_DIR/redis"
+mkdir -p "$TMP_DIR/media" "$TMP_DIR/postgres"
 
 cat >"$ENV_FILE" <<EOF
 NODE_ENV=production
 PORT=3000
 APP_URL=http://127.0.0.1:${PORT}
-APP_SECRET=stream247-compose-smoke
+APP_SECRET=stream247-compose-smoke-0123456789abcdef
 POSTGRES_DB=stream247
 POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247
 DATABASE_URL=postgresql://stream247:stream247@postgres:5432/stream247
-REDIS_URL=redis://redis:6379
 STREAM247_WEB_IMAGE=${WEB_IMAGE}
 STREAM247_WORKER_IMAGE=${WORKER_IMAGE}
 STREAM247_PLAYOUT_IMAGE=${PLAYOUT_IMAGE}
@@ -53,7 +52,10 @@ EOF
 cat >"$OVERRIDE_FILE" <<EOF
 services:
   web:
-    ports:
+    # !override replaces the base compose port list instead of appending to it. Without it the
+    # stack also tries to publish the base file's "3000:3000", so every smoke run fails with
+    # "port is already allocated" whenever anything else holds host port 3000.
+    ports: !override
       - "127.0.0.1:${PORT}:3000"
     volumes:
       - ${TMP_DIR}/media:/app/data/media
@@ -66,9 +68,6 @@ services:
   postgres:
     volumes:
       - ${TMP_DIR}/postgres:/var/lib/postgresql/data
-  redis:
-    volumes:
-      - ${TMP_DIR}/redis:/data
 EOF
 
 if [ -f "$ROOT_ENV_FILE" ]; then
@@ -86,13 +85,33 @@ for _ in $(seq 1 40); do
   sleep 2
 done
 
-RUNNING_SERVICES="$(
-  docker compose --project-name "$PROJECT_NAME" --env-file "$ENV_FILE" -f docker-compose.yml -f "$OVERRIDE_FILE" ps --services --status running
-)"
+# Asked repeatedly, not once. The wait above ends as soon as web answers its health check, and the
+# runtime containers restart on their own while a fresh install has nothing to play — so a single
+# reading can land in a restart window and report a healthy service as missing. That is what turned
+# this smoke red on CI while it passed on every developer machine. The assertion itself is
+# unchanged: all four must be running, this only stops demanding it in one particular instant.
+RUNTIME_SERVICES_UP=0
+for _ in $(seq 1 30); do
+  RUNNING_SERVICES="$(
+    docker compose --project-name "$PROJECT_NAME" --env-file "$ENV_FILE" -f docker-compose.yml -f "$OVERRIDE_FILE" ps --services --status running
+  )"
 
-printf '%s\n' "$RUNNING_SERVICES" | grep -q '^worker$'
-printf '%s\n' "$RUNNING_SERVICES" | grep -q '^relay$'
-printf '%s\n' "$RUNNING_SERVICES" | grep -q '^playout$'
-printf '%s\n' "$RUNNING_SERVICES" | grep -q '^uplink$'
+  if printf '%s\n' "$RUNNING_SERVICES" | grep -q '^worker$' &&
+    printf '%s\n' "$RUNNING_SERVICES" | grep -q '^relay$' &&
+    printf '%s\n' "$RUNNING_SERVICES" | grep -q '^playout$' &&
+    printf '%s\n' "$RUNNING_SERVICES" | grep -q '^uplink$'; then
+    RUNTIME_SERVICES_UP=1
+    break
+  fi
+
+  sleep 2
+done
+
+if [ "$RUNTIME_SERVICES_UP" -ne 1 ]; then
+  echo "Runtime services never all reported running. Last reading:" >&2
+  printf '%s\n' "$RUNNING_SERVICES" >&2
+  docker compose --project-name "$PROJECT_NAME" --env-file "$ENV_FILE" -f docker-compose.yml -f "$OVERRIDE_FILE" ps >&2
+  exit 1
+fi
 
 wget -qO- "http://127.0.0.1:${PORT}/api/system/readiness" >/dev/null

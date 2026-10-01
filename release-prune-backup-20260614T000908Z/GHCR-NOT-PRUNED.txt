@@ -1,0 +1,9 @@
+GHCR package versions were NOT enumerated or deleted.
+Reason: the active gh token lacks read:packages / delete:packages scope
+(scopes present: admin:public_key, gist, read:org, repo).
+Therefore Step 3 GHCR inventory and Step 6 GHCR deletion were intentionally SKIPPED.
+GHCR images for v1.0.x, v1.1.x, v1.5.0-v1.5.16 remain PRESENT and untouched.
+v1.5.17 images: web/worker/playout confirmed PRESENT (anonymous manifest inspect).
+To prune GHCR later: authenticate gh with delete:packages, enumerate versions per
+package (stream247-web/worker/playout), and verify no version shares a manifest/tag
+with v1.5.17 or the running digest before deleting.

@@ -12,10 +12,15 @@ import {
 } from "@stream247/core";
 import type { AppState } from "@stream247/db";
 import {
+  CHAT_LOGIN_REJECTED_COOLDOWN_MS,
   createChatRateLimiter,
   createRingBuffer,
+  describeChatConnectionPhase,
+  isChatLoginRejectedCoolingDown,
+  isTwitchLoginFailureNotice,
   parseModeratorPresenceWindowFromChatMessage,
   parseTwitchIrcMessage,
+  parseTwitchIrcNotice,
   TwitchChatBridge
 } from "../../apps/worker/src/twitch-engagement";
 import { syncTwitchEventSubSubscriptions } from "../../apps/worker/src/twitch-eventsub";
@@ -47,7 +52,9 @@ vi.mock("@/lib/server/state", () => ({
 
 vi.mock("@/lib/server/sse", async () => vi.importActual("../../apps/web/lib/server/sse"));
 
-import { GET, POST } from "../../apps/web/app/api/overlay/events/route";
+import * as overlayEventsRoute from "../../apps/web/app/api/overlay/events/route";
+
+const { POST } = overlayEventsRoute;
 
 const envKeys = ["NODE_ENV", "APP_URL", "STREAM_ALERTS_ENABLED", "STREAM_CHAT_OVERLAY_ENABLED", "TWITCH_EVENTSUB_SECRET"] as const;
 const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
@@ -118,6 +125,9 @@ function signedEventSubRequest(body: string, secret = "eventsub-secret", headers
   });
 }
 
+// The pre-2.1 shape: one account is both channel and bot, and it covers every alert type itself.
+const SINGLE_ACCOUNT_TARGET = { channelId: "broadcaster-1", botId: "broadcaster-1", channelOwnerCovers: true };
+
 describe("engagement layer helpers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -178,8 +188,12 @@ describe("engagement layer helpers", () => {
     expect(message).toEqual({
       id: "chat-1",
       actor: "Test Viewer",
+      login: "testviewer",
       message: "Hello chat",
-      isModerator: false
+      isModerator: false,
+      // No emotes tag on this line, and none in the text: the emote ranges come from the tag, so
+      // a message without one carries an empty list rather than a guess at what "Kappa" meant.
+      emotes: []
     });
   });
 
@@ -188,6 +202,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-1",
         actor: "Moderator",
+        login: "moderator",
         message: "!here 45",
         isModerator: true
       },
@@ -210,6 +225,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-2",
         actor: "Moderator",
+        login: "moderator",
         message: "!checkin 45",
         isModerator: true
       },
@@ -228,6 +244,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-3",
         actor: "Moderator",
+        login: "moderator",
         message: "here 30",
         isModerator: true
       },
@@ -246,6 +263,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-4",
         actor: "Moderator",
+        login: "moderator",
         message: "here",
         isModerator: true
       },
@@ -258,7 +276,7 @@ describe("engagement layer helpers", () => {
     expect(window?.clampReason).toBe("default");
   });
 
-  it("clamps low moderator requests and formats the reply for chat", () => {
+  it("clamps low moderator requests and formats the reply for chat", async () => {
     const write = vi.fn();
     const onModeratorPresenceCheckIn = vi.fn();
     const bridge = new TwitchChatBridge({ onModeratorPresenceCheckIn });
@@ -276,6 +294,8 @@ describe("engagement layer helpers", () => {
       "@badge-info=;badges=moderator/1;display-name=Mod;id=chat-1;mod=1 :mod!mod@mod.tmi.twitch.tv PRIVMSG #stream247 :!here 5\r\n"
     );
 
+    // The confirmation follows the persisted write (finding [11]); it lands on the next turn.
+    await new Promise((resolve) => setImmediate(resolve));
     expect(write).toHaveBeenCalledWith("PRIVMSG #stream247 :received !here 5, minimum is 10; window set to 10 min\r\n");
     expect(onModeratorPresenceCheckIn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -292,6 +312,7 @@ describe("engagement layer helpers", () => {
       chatMessage: {
         id: "chat-6",
         actor: "Moderator",
+        login: "moderator",
         message: "!here 9999",
         isModerator: true
       },
@@ -374,6 +395,7 @@ describe("engagement layer helpers", () => {
       },
       clientId: "client-id",
       clientSecret: "client-secret",
+      target: SINGLE_ACCOUNT_TARGET,
       fetchImpl: fetchMock as unknown as typeof fetch
     });
 
@@ -529,6 +551,7 @@ describe("engagement layer helpers", () => {
       },
       clientId: "client-id",
       clientSecret: "client-secret",
+      target: SINGLE_ACCOUNT_TARGET,
       fetchImpl: fetchMock as unknown as typeof fetch
     });
 
@@ -634,6 +657,7 @@ describe("engagement layer helpers", () => {
       },
       clientId: "client-id",
       clientSecret: "client-secret",
+      target: SINGLE_ACCOUNT_TARGET,
       fetchImpl: fetchMock as unknown as typeof fetch
     });
 
@@ -697,6 +721,7 @@ describe("engagement layer helpers", () => {
       },
       clientId: "client-id",
       clientSecret: "client-secret",
+      target: SINGLE_ACCOUNT_TARGET,
       fetchImpl: fetchMock as unknown as typeof fetch
     });
 
@@ -718,11 +743,151 @@ describe("engagement layer helpers", () => {
       },
       clientId: "client-id",
       clientSecret: "client-secret",
+      target: { channelId: "", botId: "", channelOwnerCovers: true },
       fetchImpl: fetchMock as unknown as typeof fetch
     });
 
     expect(result).toMatchObject({ status: "skipped", reason: "twitch-not-connected" });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// M69 (2.1): in a split setup the alerts are about the BROADCAST CHANNEL, read with the bot as
+// moderator. Until 2.1 every subscription used the connected (bot) account's own id.
+describe("EventSub in a split setup: channel jimpanse247, bot 3JakeC", () => {
+  const splitTarget = { channelId: "id-jimpanse247", botId: "id-3jakec", channelOwnerCovers: false };
+  const callback = "https://stream247.example/api/overlay/events";
+
+  function listResponse(data: unknown[]) {
+    return new Response(JSON.stringify({ data }), { status: 200, headers: { "content-type": "application/json" } });
+  }
+
+  function stubEventSub(existing: unknown[]) {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const target = String(url);
+      if (target.startsWith("https://id.twitch.tv/oauth2/token")) {
+        return new Response(JSON.stringify({ access_token: "app-token" }), { status: 200 });
+      }
+      if (target.startsWith("https://api.twitch.tv/helix/eventsub/subscriptions") && (!init?.method || init.method === "GET")) {
+        return listResponse(existing);
+      }
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 202 });
+    });
+    return fetchMock;
+  }
+
+  async function sync(fetchMock: ReturnType<typeof stubEventSub>, target = splitTarget) {
+    return syncTwitchEventSubSubscriptions({
+      state: baseEventSubState(),
+      env: { APP_URL: "https://stream247.example", STREAM_ALERTS_ENABLED: "1", TWITCH_EVENTSUB_SECRET: "eventsub-secret" },
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      target,
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+  }
+
+  function created(fetchMock: ReturnType<typeof stubEventSub>) {
+    return fetchMock.mock.calls
+      .filter(([url, init]) => String(url) === "https://api.twitch.tv/helix/eventsub/subscriptions" && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)) as { type: string; condition: Record<string, string> });
+  }
+
+  it("subscribes follow on the channel with the bot as moderator, and waits for the owner for the rest", async () => {
+    const fetchMock = stubEventSub([]);
+    const result = await sync(fetchMock);
+
+    expect(created(fetchMock)).toEqual([
+      expect.objectContaining({
+        type: "channel.follow",
+        condition: { broadcaster_user_id: "id-jimpanse247", moderator_user_id: "id-3jakec" }
+      })
+    ]);
+    expect(result.waitingForChannelOwner).toEqual([
+      "channel.subscribe",
+      "channel.cheer",
+      "channel.channel_points_custom_reward_redemption.add"
+    ]);
+  });
+
+  it("subscribes sub, cheer and channel points on the channel once the owner covers them", async () => {
+    const fetchMock = stubEventSub([]);
+    await sync(fetchMock, { ...splitTarget, channelOwnerCovers: true });
+    const types = created(fetchMock).map((body) => body.type);
+    expect(types).toContain("channel.subscribe");
+    expect(created(fetchMock).every((body) => body.condition.broadcaster_user_id === "id-jimpanse247")).toBe(true);
+  });
+
+  // The 2.0 subscriptions on the bot's own channel: ours (our callback), but about the wrong channel.
+  it("deletes our old subscriptions on the bot's channel and leaves other callbacks alone", async () => {
+    const fetchMock = stubEventSub([
+      {
+        id: "old-follow",
+        type: "channel.follow",
+        version: "2",
+        status: "enabled",
+        condition: { broadcaster_user_id: "id-3jakec", moderator_user_id: "id-3jakec" },
+        transport: { method: "webhook", callback }
+      },
+      {
+        id: "someone-elses",
+        type: "channel.follow",
+        version: "2",
+        status: "enabled",
+        condition: { broadcaster_user_id: "id-3jakec", moderator_user_id: "id-3jakec" },
+        transport: { method: "webhook", callback: "https://elsewhere.example/hook" }
+      }
+    ]);
+    const result = await sync(fetchMock);
+
+    expect(result.deleted).toEqual(["old-follow"]);
+    expect(created(fetchMock).map((body) => body.condition.broadcaster_user_id)).toEqual(["id-jimpanse247"]);
+  });
+
+  // M69 review: an owner connected before 2.1 lacks the alert scopes; subscribing anyway fails with 403.
+  it("withholds exactly the alert types whose scope the owner's grant lacks", async () => {
+    const fetchMock = stubEventSub([]);
+    const result = await sync(fetchMock, {
+      ...splitTarget,
+      channelOwnerCovers: true,
+      channelOwnerScopes: ["channel:manage:broadcast", "channel:manage:schedule", "bits:read"]
+    });
+    const types = created(fetchMock).map((body) => body.type);
+    expect(types).toContain("channel.follow");
+    expect(types).toContain("channel.cheer");
+    expect(types).not.toContain("channel.subscribe");
+    expect(result.waitingForChannelOwner).toEqual(["channel.subscribe", "channel.channel_points_custom_reward_redemption.add"]);
+  });
+
+  it("still cleans up when alerts are off and the channel's id cannot be resolved", async () => {
+    const fetchMock = stubEventSub([
+      {
+        id: "ours",
+        type: "channel.follow",
+        version: "2",
+        status: "enabled",
+        condition: { broadcaster_user_id: "id-jimpanse247", moderator_user_id: "id-3jakec" },
+        transport: { method: "webhook", callback }
+      }
+    ]);
+    const result = await syncTwitchEventSubSubscriptions({
+      state: baseEventSubState(),
+      env: { APP_URL: "https://stream247.example", STREAM_ALERTS_ENABLED: "0" },
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      target: { ...splitTarget, channelId: "" },
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+    expect(result).toMatchObject({ status: "cleaned-up", deleted: ["ours"] });
+  });
+
+  it("skips registration until the broadcast channel's id is resolved", async () => {
+    const fetchMock = stubEventSub([]);
+    const result = await sync(fetchMock, { ...splitTarget, channelId: "" });
+    expect(result).toMatchObject({ status: "skipped", reason: "broadcast-channel-unresolved" });
   });
 });
 
@@ -805,13 +970,35 @@ describe("engagement EventSub and SSE routes", () => {
   });
 
   it("returns the EventSub challenge after signature verification", async () => {
+    // Since M56 the challenge path DOES read state before verifying: the shared secret may live
+    // only in managed config, so verification cannot answer from env alone any more.
     const body = JSON.stringify({ challenge: "challenge-token" });
 
     const response = await POST(signedEventSubRequest(body, "eventsub-secret", { "twitch-eventsub-message-type": "webhook_callback_verification" }));
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("challenge-token");
-    expect(mockReadAppState).not.toHaveBeenCalled();
+  });
+
+  it("verifies signatures against the managed EventSub secret when env has none (M56)", async () => {
+    delete process.env.TWITCH_EVENTSUB_SECRET;
+    mockReadAppState.mockResolvedValue({
+      engagement: baseEngagement({ alertsEnabled: true }),
+      engagementEvents: [],
+      managedConfig: { twitchEventsubSecret: "managed-eventsub-secret" }
+    });
+    const body = JSON.stringify({ challenge: "challenge-token" });
+
+    const wrongSecret = await POST(
+      signedEventSubRequest(body, "eventsub-secret", { "twitch-eventsub-message-type": "webhook_callback_verification" })
+    );
+    expect(wrongSecret.status).toBe(403);
+
+    const managedSecret = await POST(
+      signedEventSubRequest(body, "managed-eventsub-secret", { "twitch-eventsub-message-type": "webhook_callback_verification" })
+    );
+    expect(managedSecret.status).toBe(200);
+    expect(await managedSecret.text()).toBe("challenge-token");
   });
 
   it("rejects invalid EventSub signatures in production", async () => {
@@ -869,40 +1056,133 @@ describe("engagement EventSub and SSE routes", () => {
     expect(mockAppendEngagementEventRecord).not.toHaveBeenCalled();
   });
 
-  it("streams the current engagement snapshot over SSE", async () => {
-    const engagement = {
-      settings: {
-        chatEnabled: true,
-        alertsEnabled: true,
-        donationsEnabled: true,
-        channelPointsEnabled: true,
-        chatRuntimeEnabled: true,
-        alertsRuntimeEnabled: true,
-        donationsRuntimeEnabled: true,
-        channelPointsRuntimeEnabled: true,
-        chatMode: "active",
-        chatPosition: "bottom-left",
-        alertPosition: "top-right",
-        style: "compact",
-        maxMessages: 5,
-        rateLimitPerMinute: 30,
-        updatedAt: ""
-      },
-      chatStatus: "connected",
-      recentEvents: []
-    };
-    mockGetBroadcastSnapshot.mockReturnValue({ engagement });
-    const abortController = new AbortController();
+  it("answers GET with a method error: the SSE feed left with the browser overlay", () => {
+    // The only reader of the engagement stream was the browser overlay page, and that page is gone:
+    // the on-air picture is drawn by the playout renderer, and the studio preview is the same
+    // drawing. Next answers a missing method export with 405, so the module must not export GET.
+    // POST stays: Twitch has this URL registered as its EventSub callback.
+    expect("GET" in overlayEventsRoute).toBe(false);
+    expect(typeof overlayEventsRoute.POST).toBe("function");
+  });
+});
 
-    const response = await GET(new Request("http://localhost/api/overlay/events", { signal: abortController.signal }));
-    const reader = response.body?.getReader();
-    const chunk = await reader?.read();
-    abortController.abort();
-    await reader?.cancel().catch(() => undefined);
-    const text = new TextDecoder().decode(chunk?.value);
+describe("twitch chat login handling", () => {
+  function chatBridgeState(overrides: { accessToken?: string } = {}): AppState {
+    return {
+      engagement: baseEngagement({ chatEnabled: true }),
+      moderation: createDefaultModerationConfig(),
+      managedConfig: { twitchBroadcastChannelLogin: "jimpanse247" },
+      twitch: {
+        status: "connected",
+        broadcasterLogin: "3jakec",
+        accessToken: overrides.accessToken ?? "identity-token"
+      }
+    } as unknown as AppState;
+  }
 
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
-    expect(text).toContain("event: engagement");
-    expect(text).toContain(JSON.stringify(engagement));
+  it("answers a server PING with a PONG carrying the same token", () => {
+    const write = vi.fn();
+    const bridge = new TwitchChatBridge();
+    bridge["socket"] = { write, destroyed: false } as never;
+
+    bridge["handleChunk"]("PING :tmi.twitch.tv\r\n");
+
+    expect(write).toHaveBeenCalledWith("PONG :tmi.twitch.tv\r\n");
+  });
+
+  it("reads the NOTICE Twitch sends when the login is refused", () => {
+    expect(parseTwitchIrcNotice(":tmi.twitch.tv NOTICE * :Login unsuccessful")).toEqual({
+      target: "*",
+      message: "Login unsuccessful"
+    });
+    expect(parseTwitchIrcNotice(":tmi.twitch.tv NOTICE #room :Now hosting")).toEqual({
+      target: "#room",
+      message: "Now hosting"
+    });
+    expect(parseTwitchIrcNotice(":tmi.twitch.tv 001 3jakec :Welcome, GLHF!")).toBeNull();
+  });
+
+  it("recognises every login refusal Twitch words differently", () => {
+    expect(isTwitchLoginFailureNotice("Login unsuccessful")).toBe(true);
+    expect(isTwitchLoginFailureNotice("Login authentication failed")).toBe(true);
+    expect(isTwitchLoginFailureNotice("Improperly formatted auth")).toBe(true);
+    expect(isTwitchLoginFailureNotice("Invalid NICK")).toBe(true);
+    expect(isTwitchLoginFailureNotice("Now hosting someone")).toBe(false);
+  });
+
+  it("treats a refused login as rejected rather than connected", () => {
+    const destroy = vi.fn();
+    const phases: string[] = [];
+    const bridge = new TwitchChatBridge({ onConnectionPhaseChanged: (phase) => phases.push(phase) });
+    bridge["socket"] = { write: vi.fn(), destroyed: false, destroy } as never;
+
+    bridge["handleChunk"](":tmi.twitch.tv NOTICE * :Login unsuccessful\r\n");
+
+    expect(bridge.getConnectionPhase()).toBe("login-rejected");
+    expect(phases).toContain("login-rejected");
+    expect(destroy).toHaveBeenCalled();
+  });
+
+  it("only reports connected once Twitch acknowledges the login", () => {
+    const bridge = new TwitchChatBridge();
+    bridge["socket"] = { write: vi.fn(), destroyed: false } as never;
+    expect(bridge.getConnectionPhase()).not.toBe("connected");
+
+    bridge["handleChunk"](":tmi.twitch.tv 001 3jakec :Welcome, GLHF!\r\n");
+
+    expect(bridge.getConnectionPhase()).toBe("connected");
+  });
+
+  it("holds a refused login in cooldown instead of retrying every cycle", () => {
+    expect(isChatLoginRejectedCoolingDown({ rejectedAt: 1_000, now: 1_000 + 15_000 })).toBe(true);
+    expect(
+      isChatLoginRejectedCoolingDown({ rejectedAt: 1_000, now: 1_000 + CHAT_LOGIN_REJECTED_COOLDOWN_MS + 1 })
+    ).toBe(false);
+    expect(isChatLoginRejectedCoolingDown({ rejectedAt: null, now: 5_000 })).toBe(false);
+  });
+
+  it("does not reconnect while the refused login is cooling down", async () => {
+    const bridge = new TwitchChatBridge();
+    bridge["loginRejectedAt"] = Date.now();
+    bridge["loginRejectedToken"] = "identity-token";
+
+    await bridge.sync(chatBridgeState(), { STREAM_CHAT_OVERLAY_ENABLED: "1" } as NodeJS.ProcessEnv);
+
+    expect(bridge["socket"]).toBeNull();
+    expect(bridge.getConnectionPhase()).toBe("login-rejected");
+  });
+
+  it("retries at once when the operator reconnects and the token changes", () => {
+    const bridge = new TwitchChatBridge();
+    bridge["loginRejectedAt"] = Date.now();
+    bridge["loginRejectedToken"] = "old-token";
+
+    expect(bridge["isLoginCoolingDown"]("old-token")).toBe(true);
+    expect(bridge["isLoginCoolingDown"]("fresh-token")).toBe(false);
+  });
+
+  it("clears a refusal when chat is switched off, so the incident cannot outlive it", async () => {
+    const bridge = new TwitchChatBridge();
+    bridge["loginRejectedAt"] = Date.now();
+    bridge["loginRejectedToken"] = "identity-token";
+    bridge["phase"] = "login-rejected";
+
+    // "Switched off" means every consumer: since finding [7] the rail alone no longer decides —
+    // moderator check-ins keep the connection up — so the moderation policy is off here too.
+    await bridge.sync(
+      { ...chatBridgeState(), moderation: { ...createDefaultModerationConfig(), enabled: false } },
+      {} as NodeJS.ProcessEnv
+    );
+
+    expect(bridge.getConnectionPhase()).toBe("idle");
+    expect(bridge["isLoginCoolingDown"]("identity-token")).toBe(false);
+  });
+
+  it("puts the connection state into words the operator can act on", () => {
+    expect(describeChatConnectionPhase("connected")).toBe("Chat connected");
+    expect(describeChatConnectionPhase("login-rejected")).toBe(
+      "Chat login refused by Twitch — reconnect the Twitch account to grant chat access"
+    );
+    expect(describeChatConnectionPhase("waiting")).toBe("Chat waiting before the next login attempt");
   });
 });

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 export function DestinationCreateForm() {
   const [provider, setProvider] = useState<"twitch" | "custom-rtmp">("custom-rtmp");
@@ -59,19 +60,19 @@ export function DestinationCreateForm() {
         <span className="subtle">Create another primary or backup RTMP target.</span>
       </div>
       <label>
-        <span className="label">Name</span>
+        <span className="label label-with-info">Name<InfoTip text="Shown as this output's heading in the destination list, and on the dashboard whenever this output is the lead. When two outputs share a priority, the alphabetically earlier name becomes the lead." /></span>
         <input onChange={(event) => setName(event.target.value)} placeholder="YouTube Output" value={name} />
       </label>
       <div className="grid two">
         <label>
-          <span className="label">Provider</span>
+          <span className="label label-with-info">Provider<InfoTip text="Records which kind of service this output feeds. Delivery works the same either way: the channel pushes to the RTMP URL and stream key below and does not treat a Twitch output differently." /></span>
           <select onChange={(event) => setProvider(event.target.value as typeof provider)} value={provider}>
             <option value="custom-rtmp">Custom RTMP</option>
             <option value="twitch">Twitch</option>
           </select>
         </label>
         <label>
-          <span className="label">Role</span>
+          <span className="label label-with-info">Role<InfoTip text="Primary outputs carry the channel whenever at least one of them is ready. Backup outputs stay idle and take over only while no primary output is ready." /></span>
           <select onChange={(event) => setRole(event.target.value as typeof role)} value={role}>
             <option value="primary">Primary</option>
             <option value="backup">Backup</option>
@@ -80,16 +81,16 @@ export function DestinationCreateForm() {
       </div>
       <div className="grid two">
         <label>
-          <span className="label">Priority</span>
+          <span className="label label-with-info">Priority<InfoTip text="Lower numbers go first. All ready outputs of the winning role stream at the same time, and the lowest number among them is the lead output." /></span>
           <input min={0} onChange={(event) => setPriority(event.target.value)} type="number" value={priority} />
         </label>
         <label>
-          <span className="label">RTMP URL</span>
+          <span className="label label-with-info">RTMP URL<InfoTip text="The ingest address the encoder pushes to; the stream key is appended to it to form the full target. Until both this and the key are set, the output reads 'Not set up yet' and is never used." /></span>
           <input onChange={(event) => setRtmpUrl(event.target.value)} placeholder="rtmp://..." value={rtmpUrl} />
         </label>
       </div>
       <label>
-        <span className="label">Stream key</span>
+        <span className="label label-with-info">Stream key<InfoTip text="Saved encrypted and never shown again; the list only tells you whether a key is present. An output without a key is never chosen for delivery, whatever its role or priority." /></span>
         <input
           autoComplete="new-password"
           onChange={(event) => setStreamKey(event.target.value)}
@@ -99,7 +100,7 @@ export function DestinationCreateForm() {
         />
       </label>
       <label>
-        <span className="label">Notes</span>
+        <span className="label label-with-info">Notes<InfoTip text="Free text for the operators: shown under this output in the control room and next to the live destination's status on the dashboard. It also travels with channel blueprints." /></span>
         <input onChange={(event) => setNotes(event.target.value)} placeholder="Where this output is used" value={notes} />
       </label>
       {error ? <p className="danger">{error}</p> : null}

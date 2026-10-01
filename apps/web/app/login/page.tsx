@@ -7,11 +7,13 @@ import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { getAuthenticatedUser } from "@/lib/server/auth";
 import { readAppState } from "@/lib/server/state";
 import { TwitchLoginPanel } from "@/components/twitch-login-panel";
-import { getTwitchAuthorizeUrl } from "@/lib/server/twitch";
+import { isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
 
 export default async function LoginPage() {
   const state = await readAppState();
-  const twitchAuthorizeUrl = await getTwitchAuthorizeUrl("team-login");
+  // Only a yes/no check here. The URL itself is minted by /api/auth/twitch/start, because issuing
+  // its state writes a cookie and a page render may not do that.
+  const twitchAuthorizeUrl = (await isTwitchAuthorizeConfigured()) ? "/api/auth/twitch/start" : null;
 
   if (!state.initialized) {
     redirect("/setup");

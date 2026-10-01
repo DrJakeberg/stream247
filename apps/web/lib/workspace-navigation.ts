@@ -107,3 +107,27 @@ export function resolveWorkspaceTabId(
 
   return workspace.defaultTab;
 }
+
+/**
+ * The human name of whatever a workspace href points at.
+ *
+ * The go-live checklist used to label its links by stripping a slash off the URL, so operators were
+ * told to "Open admin?tab=settings" and "Open program?tab=sources" — the address bar, printed as
+ * instructions. The names already exist here and are the ones in the navigation, so a link and the
+ * tab it leads to now read the same.
+ *
+ * Anything unrecognised falls back to "setup", which is where the pre-workspace steps point.
+ */
+export function describeWorkspaceHref(href: string): string {
+  const [path, query] = href.split("?");
+  const workspace = Object.values(WORKSPACE_CONFIG).find((entry) => entry.href === path);
+
+  if (!workspace) {
+    return "setup";
+  }
+
+  const tabId = new URLSearchParams(query || "").get("tab");
+  const tab = workspace.tabs.find((entry) => entry.id === tabId);
+
+  return tab ? `${workspace.label} · ${tab.label}` : workspace.label;
+}

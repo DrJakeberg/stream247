@@ -1,3 +1,4 @@
+import { compareProgrammingAssets } from "@stream247/core";
 import type { AssetRecord } from "@stream247/db";
 import { isTwitchVodAsset } from "./twitch-vod-cache.js";
 
@@ -67,10 +68,22 @@ function compareRecoveryCandidates(left: AssetRecord, right: AssetRecord): numbe
     return fallbackPriorityDelta;
   }
 
-  const publishedDelta = new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
-  if (publishedDelta !== 0) {
-    return publishedDelta;
+  // Within one priority a library file comes before a remote item: it plays without a remote
+  // resolution (yt-dlp, the network), and a failed preparation is exactly what is being bridged.
+  // Before 2.1 this held almost always, by accident: every sync restamped remote items with the sync
+  // time, so they sorted after the library. With M72's real, often months-old YouTube dates a YouTube
+  // item would win the generic-fallback tier on a channel without a global fallback.
+  const localDelta = Number(!isLocalLibraryAsset(left)) - Number(!isLocalLibraryAsset(right));
+  if (localDelta !== 0) {
+    return localDelta;
   }
 
-  return left.title.localeCompare(right.title);
+  // Then the item order a pool uses within one source. The ladder does not alternate between sources
+  // the way a pool does since M73: it wants the most dependable candidate, not a fair share.
+  return compareProgrammingAssets(left, right);
+}
+
+function isLocalLibraryAsset(asset: AssetRecord): boolean {
+  // Library scans store a plain file path; every remote connector stores a URL.
+  return !/^[a-z][a-z0-9+.-]*:\/\//i.test(asset.path.trim());
 }

@@ -80,3 +80,123 @@ describe("playout recovery selection", () => {
     expect(recovery.fallbackTier).toBe("generic-fallback");
   });
 });
+
+describe("more than one asset marked as the global fallback", () => {
+  // Both fallback videos on the test channel carry the flag. The selection takes the first match
+  // after sorting, so which one covers an outage is decided by fallbackPriority — not by chance,
+  // but not obviously either. Written down after an incident where the channel fell back and the
+  // fallback then exited 255: the choice mattered and nothing described it.
+  const failed = createAsset({ id: "asset_scheduled", title: "Scheduled asset" });
+
+  it("takes the higher-priority one, not whichever comes first in the list", () => {
+    const second = createAsset({ id: "asset_fallback_b", title: "Fallback B", isGlobalFallback: true, fallbackPriority: 20 });
+    const first = createAsset({ id: "asset_fallback_a", title: "Fallback A", isGlobalFallback: true, fallbackPriority: 10 });
+
+    // Deliberately passed in the wrong order: the result must come from the priority, not the array.
+    const plan = planRecoveryAfterPlaybackPreparationFailure([second, first, failed], failed);
+
+    expect(plan.asset?.id).toBe("asset_fallback_a");
+    expect(plan.fallbackTier).toBe("global-fallback");
+  });
+
+  it("breaks a tie by publication date, then by title", () => {
+    // Not hypothetical: on the test channel both fallbacks carry priority 1, so the tie-break is
+    // what actually decides which one covers an outage. Same priority and same date leaves the
+    // title, which is at least stable — the alternative is whichever row the query returned first.
+    const b = createAsset({
+      id: "asset_fallback_b",
+      title: "Fallback B",
+      isGlobalFallback: true,
+      fallbackPriority: 1,
+      createdAt: "2026-04-23T00:00:00.000Z"
+    });
+    const a = createAsset({
+      id: "asset_fallback_a",
+      title: "Fallback A",
+      isGlobalFallback: true,
+      fallbackPriority: 1,
+      createdAt: "2026-04-23T00:00:00.000Z"
+    });
+
+    expect(planRecoveryAfterPlaybackPreparationFailure([b, a, failed], failed).asset?.id).toBe("asset_fallback_a");
+    expect(planRecoveryAfterPlaybackPreparationFailure([a, b, failed], failed).asset?.id).toBe("asset_fallback_a");
+  });
+
+  it("prefers the older one when the priorities tie", () => {
+    const newer = createAsset({
+      id: "asset_fallback_new",
+      title: "A newer name that would win on title",
+      isGlobalFallback: true,
+      fallbackPriority: 1,
+      createdAt: "2026-06-01T00:00:00.000Z"
+    });
+    const older = createAsset({
+      id: "asset_fallback_old",
+      title: "Zzz older",
+      isGlobalFallback: true,
+      fallbackPriority: 1,
+      createdAt: "2026-04-23T00:00:00.000Z"
+    });
+
+    expect(planRecoveryAfterPlaybackPreparationFailure([newer, older, failed], failed).asset?.id).toBe("asset_fallback_old");
+  });
+
+  it("never returns the asset that just failed, even when it is a global fallback itself", () => {
+    // The case that matters when a fallback is the thing that broke: it must not be handed back.
+    const failedFallback = createAsset({
+      id: "asset_fallback_a",
+      title: "Fallback A",
+      isGlobalFallback: true,
+      fallbackPriority: 10
+    });
+    const other = createAsset({ id: "asset_fallback_b", title: "Fallback B", isGlobalFallback: true, fallbackPriority: 20 });
+
+    const plan = planRecoveryAfterPlaybackPreparationFailure([failedFallback, other], failedFallback);
+
+    expect(plan.asset?.id).toBe("asset_fallback_b");
+  });
+});
+
+describe("generic fallback after M72's real YouTube dates", () => {
+  // Review finding on M72: before 2.1 every sync restamped YouTube items with the sync time, so the
+  // library file (first seen long before) always won the generic tier. Since M72 a YouTube item keeps
+  // an approximate publish date months in the past and would sort first on date alone.
+  const failed = createAsset({
+    id: "asset_twitch_failed",
+    sourceId: "source-twitch",
+    title: "Uncached Twitch VOD",
+    path: "https://www.twitch.tv/videos/2887855611",
+    externalId: "2887855611"
+  });
+  const youtube = createAsset({
+    id: "asset_youtube",
+    sourceId: "source-youtube",
+    title: "A YouTube item",
+    path: "https://www.youtube.com/watch?v=cSabcTQLLoE",
+    externalId: "cSabcTQLLoE",
+    publishedAt: "2026-07-01T00:00:00.000Z",
+    createdAt: "2026-09-30T08:00:00.000Z"
+  });
+  const libraryFile = createAsset({
+    id: "asset_library",
+    sourceId: "source-local-library",
+    title: "Library file",
+    path: "/app/data/media/library/bridge.mp4",
+    createdAt: "2026-09-15T00:00:00.000Z"
+  });
+
+  it("bridges with the library file at equal priority, whatever the dates say", () => {
+    for (const assets of [[failed, youtube, libraryFile], [libraryFile, youtube, failed]]) {
+      const plan = planRecoveryAfterPlaybackPreparationFailure(assets, failed);
+      expect(plan.asset?.id).toBe("asset_library");
+      expect(plan.fallbackTier).toBe("generic-fallback");
+    }
+  });
+
+  it("still lets the operator's fallback priority pick the remote item", () => {
+    const preferredYoutube = { ...youtube, fallbackPriority: 30 };
+    expect(planRecoveryAfterPlaybackPreparationFailure([failed, libraryFile, preferredYoutube], failed).asset?.id).toBe(
+      "asset_youtube"
+    );
+  });
+});

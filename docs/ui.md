@@ -35,6 +35,11 @@ The app has four top-level workspaces and uses tabs inside each workspace.
 
 Legacy admin routes may continue to redirect, but the workspace URLs above are the canonical entry points.
 
+Outside the workspaces, `/setup` is the first-run wizard (owner account → instance basics → Twitch
+app credentials → Twitch connection → review). It stays reachable for signed-in operators after
+bootstrap; each step's completion is derived from what is actually configured, so it is resumable
+and every post-owner step is skippable.
+
 ## Navigation Rules
 
 - All internal navigation uses Next.js `Link`, never raw `<a href>` for in-app routes.
@@ -52,6 +57,9 @@ Legacy admin routes may continue to redirect, but the workspace URLs above are t
 - Nested panels do not go deeper than two levels.
 - The admin shell stays mounted across internal navigation so SSE-backed surfaces survive route changes.
 - Content width stays capped instead of stretching arbitrarily on wide displays.
+- The cap is `--workspace-max` on `.content-stack` (1440px). A workspace whose preview is the work — the scene studio — widens it with `workspace-wide` (1800px).
+- A two-column grid inside a form stacks by default. A surface whose second column is a status aside read while editing opts into `grid-aside`; from 1560px viewport width the aside sits beside the controls.
+- In the scene studio the preview column is start-aligned and sticky: it is as tall as its content and stays in view while the form scrolls.
 
 ## Component Primitives
 
@@ -73,6 +81,9 @@ Required current additions:
 - `EmptyState`
 - `Toast`
 - `Textarea`
+- `InfoTip` — the (i) beside a label, panel title or page title that explains what the thing is for; `Input`, `Select`, `Textarea`, `Panel` and `AdminPageHeader` take it as `info`
+  - Its trigger is a `span` with `role="button"` and `tabIndex`, never a `<button>`: a button is a labelable element, and inside an implicit `<label>` it would become the label's control and take the field's name.
+  - The text is a `data-tip` attribute drawn with CSS `::after` and exposed through `aria-description`; it is never an element, because anything inside a `<label>` is part of the label's text and would make label matching ambiguous.
 
 New surfaces should build from those primitives instead of bespoke styled HTML controls.
 
@@ -88,6 +99,8 @@ New surfaces should build from those primitives instead of bespoke styled HTML c
 
 - Forms are vertically stacked by default.
 - Labels stay visible; placeholder-only fields are not used as labels.
+- A field, panel or page that is not self-explanatory carries an (i) explanation through `info`. The text says what the setting does to the channel, in one or two sentences, and never repeats the label.
+- (i) tips are explanations, not controls: the control-density budget does not count them.
 - Errors render inline with the field.
 - Success and failure feedback use `Toast`.
 - Primary save actions sit at the lower right of the form action row.

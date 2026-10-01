@@ -75,9 +75,12 @@ function createState(): AppState {
     presenceWindows: [],
     overlay,
     managedConfig: {
+      appUrl: "",
+      channelTimezone: "",
       twitchClientId: "",
       twitchClientSecret: "",
       twitchDefaultCategoryId: "",
+      twitchBotLogin: "",
       discordWebhookUrl: "",
       smtpHost: "",
       smtpPort: "",
@@ -113,6 +116,7 @@ function createState(): AppState {
         sourceIds: ["source_youtube"],
         playbackMode: "round-robin",
         cursorAssetId: "asset_old",
+        sourceCursors: { source_youtube: "asset_old" },
         insertAssetId: "asset_bumper",
         insertEveryItems: 3,
         audioLaneAssetId: "asset_audio_bed",
@@ -390,6 +394,7 @@ describe("channel blueprints", () => {
     expect(normalized.importedSources[0]?.status).toBe("Imported blueprint");
     expect(normalized.importedSources[0]?.lastSyncedAt).toBe("");
     expect(normalized.importedPools[0]?.cursorAssetId).toBe("");
+    expect(normalized.importedPools[0]?.sourceCursors).toEqual({});
     expect(normalized.importedPools[0]?.itemsSinceInsert).toBe(0);
     expect(normalized.importedPools[0]?.audioLaneAssetId).toBe("asset_audio_bed");
     expect(normalized.importedPools[0]?.audioLaneVolumePercent).toBe(42);

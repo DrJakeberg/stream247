@@ -1,0 +1,46 @@
+# mediamtx configuration for the stream247 relay (M57 stage 2).
+#
+# Until stage 2 the relay ran on its image defaults and was reachable only inside the Compose
+# network. Push ingest opens it to the outside (RTMP and SRT host ports in docker-compose.yml),
+# so every publish and read is now checked against the web app: mediamtx POSTs the connection's
+# credentials to /api/relay/auth and the pure policy in @stream247/core decides. Publish to
+# src-<id> needs that source's publish key, reads and the programme rollback publish need the
+# internal relay key, everything else is refused.
+
+# Credential checks go to the web app. The excluded actions are mediamtx's own defaults: the API,
+# metrics and pprof are never exposed on a host port (see docker-compose.yml), and excluding them
+# here keeps container-internal API reads from looping through the auth endpoint.
+authMethod: http
+authHTTPAddress: http://web:3000/api/relay/auth
+authHTTPExclude:
+- action: api
+- action: metrics
+- action: pprof
+
+# The control API, container-internal only (no host port). The worker asks it whether a source is
+# currently publishing before it ever considers attaching the feed.
+api: yes
+apiAddress: :9997
+
+# RTSP is the internal read side: the worker plays pushed feeds back from
+# rtsp://relay:8554/src-<id>. TCP only — UDP across container networks loses packets silently,
+# which shows up as corrupt frames instead of errors (same reason the snapshot sampler pins TCP).
+rtsp: yes
+rtspAddress: :8554
+rtspTransports: [tcp]
+
+# The two ingest protocols, both published as host ports: RTMP for the wide end of the encoder
+# world, SRT for links that need to survive real network loss.
+rtmp: yes
+rtmpAddress: :1935
+srt: yes
+srtAddress: :8890
+
+# Not part of this deployment; every disabled server is one less listener to reason about.
+hls: no
+webrtc: no
+
+# Paths are not declared statically — which paths exist is workspace data (the stored video
+# sources), and the auth endpoint is the authority on who may use which path.
+paths:
+  all_others:

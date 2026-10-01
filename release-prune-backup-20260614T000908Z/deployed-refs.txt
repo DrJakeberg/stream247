@@ -1,0 +1,12 @@
+# DT stack.env
+STREAM247_WEB_IMAGE=ghcr.io/drjakeberg/stream247-web:v1.5.17
+STREAM247_WORKER_IMAGE=ghcr.io/drjakeberg/stream247-worker:v1.5.17
+STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.5.17
+# DUT running containers
+stream247-web-1 ghcr.io/drjakeberg/stream247-web:v1.5.17
+stream247-uplink-1 ghcr.io/drjakeberg/stream247-worker:v1.5.17
+stream247-worker-1 ghcr.io/drjakeberg/stream247-worker:v1.5.17
+stream247-playout-1 ghcr.io/drjakeberg/stream247-playout:v1.5.17
+stream247-postgres-1 postgres:16-alpine
+stream247-redis-1 redis:7-alpine
+stream247-relay-1 bluenviron/mediamtx:1.15.4

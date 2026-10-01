@@ -6,6 +6,7 @@ import type {
   EngagementOverlayPosition,
   EngagementOverlayStyle,
   OverlaySceneCustomLayer,
+  OverlayScenePanelPlacementMap,
   OverlaySceneLayerKind,
   OverlayScenePayload,
   PresenceClampReason,
@@ -65,6 +66,8 @@ export type LiveIncidentSummary = {
   scope: "worker" | "playout" | "twitch" | "source" | "system";
   fingerprint: string;
   createdAt: string;
+  /** Refreshed by every repeat of the same fingerprint, so this is "when it last happened". */
+  updatedAt: string;
   acknowledgedAt: string;
   resolvedAt: string;
 };
@@ -76,9 +79,14 @@ export type LiveWorkerHealth = {
 };
 
 export type LiveTwitchStatusSummary = {
+  // Live state and viewers of the BROADCAST CHANNEL.
   status: "live" | "offline" | "unknown";
   viewerCount: number;
-  broadcasterLogin: string;
+  // The broadcast channel's login (watch link, live label). Called broadcasterLogin until 2.1,
+  // the same name the database uses for the bot account -- which is how the two got mixed up.
+  channelLogin: string;
+  // The bot account's login, shown next to it so nobody takes one for the other.
+  botLogin: string;
   startedAt: string;
 };
 
@@ -236,6 +244,8 @@ export type LiveOverlaySummary = {
   layerOrder: OverlaySceneLayerKind[];
   disabledLayers: OverlaySceneLayerKind[];
   customLayers: OverlaySceneCustomLayer[];
+  /** Only the renderer's own panels somebody has moved; the studio seeds the rest from the flow. */
+  panelPlacements: OverlayScenePanelPlacementMap;
   emergencyBanner: string;
   tickerText: string;
   replayLabel: string;
@@ -355,15 +365,18 @@ export type BroadcastSnapshot = {
   currentScheduleItem: LiveScheduleSummary | null;
   nextScheduleItem: LiveScheduleSummary | null;
   openIncidents: LiveIncidentSummary[];
+  /** Every open incident, not only the few `openIncidents` carries, so a capped panel can say so. */
+  openIncidentCount: number;
 };
 
 export type PublicChannelSnapshot = {
   generatedAt: string;
   timeZone: string;
+  /** Where viewers watch, or empty when no usable broadcaster login is configured. */
+  watchUrl: string;
   overlay: LiveOverlaySummary;
   engagement: LiveEngagementSummary;
   activeScene: LiveSceneSummary;
-  activeScenePayload: OverlayScenePayload;
   playout: Pick<LivePlayoutSummary, "status" | "message" | "currentTitle" | "transitionState" | "overrideMode">;
   currentAsset: LiveAssetSummary | null;
   nextAsset: LiveAssetSummary | null;

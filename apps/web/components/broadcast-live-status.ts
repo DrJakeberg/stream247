@@ -1,16 +1,24 @@
 import type { BroadcastSnapshot } from "@/lib/live-broadcast";
 import type { StatusChipProps } from "@/components/ui/StatusChip";
 
+/**
+ * What the channel is doing, in words rather than in status codes.
+ *
+ * These labels sit in the navigation rail and the workspace header — the first thing an operator
+ * reads when something feels wrong. "UNKNOWN" told them nothing: the state it names is "we have not
+ * managed to ask Twitch yet", which is a temporary condition and not an error, and shouting it in
+ * capitals suggested otherwise. Kept short because the chip they live in is narrow.
+ */
 export function getBroadcastLiveStatusLabel(twitch: BroadcastSnapshot["twitch"]): string {
   if (twitch.status === "live") {
-    return twitch.viewerCount > 0 ? `LIVE ${twitch.viewerCount}` : "LIVE";
+    return twitch.viewerCount > 0 ? `Live · ${twitch.viewerCount}` : "Live";
   }
 
   if (twitch.status === "offline") {
-    return "OFFLINE";
+    return "Off air";
   }
 
-  return "UNKNOWN";
+  return "Checking";
 }
 
 export function getBroadcastLiveStatusTone(twitch: BroadcastSnapshot["twitch"]): StatusChipProps["status"] {

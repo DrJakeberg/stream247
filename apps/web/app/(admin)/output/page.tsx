@@ -1,8 +1,13 @@
 export const dynamic = "force-dynamic";
 
-import { resolveDestinationOutputSettings, resolveStreamOutputSettings } from "@stream247/core";
+import {
+  resolveDestinationOutputSettings,
+  resolveEncoderQualitySettings,
+  resolveStreamOutputSettings
+} from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
 import { DestinationOutputProfileForm } from "@/components/destination-output-profile-form";
+import { EncoderQualityForm } from "@/components/encoder-quality-form";
 import { OutputSettingsForm } from "@/components/output-settings-form";
 import { Panel } from "@/components/panel";
 import { readAppState } from "@/lib/server/state";
@@ -10,6 +15,9 @@ import { readAppState } from "@/lib/server/state";
 export default async function OutputPage() {
   const state = await readAppState();
   const effectiveOutput = resolveStreamOutputSettings({ settings: state.output, env: process.env });
+  // The env-only resolution: what an empty managed field falls back to, shown as "Follow the
+  // server (now: ...)" in the encoder group.
+  const encoderFallback = resolveEncoderQualitySettings(null, process.env);
   const envOverrideActive =
     process.env.STREAM_OUTPUT_WIDTH !== undefined ||
     process.env.STREAM_OUTPUT_HEIGHT !== undefined ||
@@ -30,6 +38,20 @@ export default async function OutputPage() {
       <div className="grid two">
         <Panel title="Output profile" eyebrow="Stream settings">
           <OutputSettingsForm output={state.output} />
+          <EncoderQualityForm
+            initialValues={{
+              ffmpegPreset: state.managedConfig.ffmpegPreset,
+              ffmpegMaxrate: state.managedConfig.ffmpegMaxrate,
+              ffmpegBufsize: state.managedConfig.ffmpegBufsize,
+              ffmpegAudioBitrate: state.managedConfig.ffmpegAudioBitrate
+            }}
+            fallback={{
+              preset: encoderFallback.preset,
+              maxrate: encoderFallback.maxrate,
+              bufsize: encoderFallback.bufsize,
+              audioBitrate: encoderFallback.audioBitrate
+            }}
+          />
         </Panel>
 
         <Panel title="Effective runtime output" eyebrow="Runtime">

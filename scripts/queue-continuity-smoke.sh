@@ -151,10 +151,15 @@ dump_failure_context() {
 }
 
 require_command docker
-require_command ffmpeg
+# ffmpeg is only used to synthesise fixtures. Fall back to the worker image when the host has
+# none, so CI does not depend on apt being able to install it.
+# shellcheck source=lib/ffmpeg-fallback.sh
+. "$(dirname "$0")/lib/ffmpeg-fallback.sh"
 require_command wget
 
-mkdir -p "$TMP_DIR/media" "$TMP_DIR/postgres" "$TMP_DIR/redis" "$TMP_DIR/output"
+mkdir -p "$TMP_DIR/media" "$TMP_DIR/postgres" "$TMP_DIR/output"
+
+enable_ffmpeg_fallback "$TMP_DIR"
 
 generate_fixture "$TMP_DIR/media/continuity-a.mp4" "0x124f7a"
 generate_fixture "$TMP_DIR/media/continuity-b.mp4" "0x7a3d12"
@@ -163,12 +168,11 @@ cat >"$ENV_FILE" <<EOF
 NODE_ENV=production
 PORT=3000
 APP_URL=http://127.0.0.1:${PORT}
-APP_SECRET=stream247-queue-smoke
+APP_SECRET=stream247-queue-smoke-0123456789abcdef
 POSTGRES_DB=stream247
 POSTGRES_USER=stream247
 POSTGRES_PASSWORD=stream247
 DATABASE_URL=postgresql://stream247:stream247@postgres:5432/stream247
-REDIS_URL=redis://redis:6379
 STREAM247_WEB_IMAGE=stream247-web:test
 STREAM247_WORKER_IMAGE=stream247-worker:test
 STREAM247_PLAYOUT_IMAGE=stream247-worker:test
@@ -183,7 +187,10 @@ EOF
 cat >"$OVERRIDE_FILE" <<EOF
 services:
   web:
-    ports:
+    # !override replaces the base compose port list instead of appending to it. Without it the
+    # stack also tries to publish the base file's "3000:3000", so every smoke run fails with
+    # "port is already allocated" whenever anything else holds host port 3000.
+    ports: !override
       - "127.0.0.1:${PORT}:3000"
     volumes:
       - ${TMP_DIR}/media:/app/data/media
@@ -197,9 +204,6 @@ services:
   postgres:
     volumes:
       - ${TMP_DIR}/postgres:/var/lib/postgresql/data
-  redis:
-    volumes:
-      - ${TMP_DIR}/redis:/data
 EOF
 
 if [ -f "$ROOT_ENV_FILE" ]; then

@@ -1,7 +1,22 @@
 .git
-node_modules
+# Same trap as the data entry below: a bare "node_modules" only matches the context root, so every
+# workspace package's node_modules was copied in from the developer's machine. pnpm fills those with
+# symlinks into a store the image does not have, and the build died on "Cannot find module
+# next/dist/bin/next" — after five days in which every local image build failed and the stack kept
+# quietly serving the last one that worked.
+**/node_modules
 .next
 coverage
-data
+# Matches at any depth. A bare "data" only excludes the context root, so a developer's
+# apps/web/data/app/state.json was copied into locally built images while CI, building from a clean
+# checkout where that gitignored directory does not exist, produced a different image. The app then
+# loads it as legacy state on first boot.
+**/data
+# Long-lived dev stack state; contains container-owned files the build context cannot read.
+.dev-stack
+# Agent worktrees carry their own .dev-stack copies (root-owned Postgres data the context walk
+# cannot even open), and nothing under .claude belongs in an image.
+.claude
+test-results
 *.log
 

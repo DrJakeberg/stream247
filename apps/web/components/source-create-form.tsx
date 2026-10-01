@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { useToast } from "@/components/ui/Toast";
 import { getSourceConnectorDefinition, sourceConnectorDefinitions, type SourceConnectorKind } from "@/lib/source-connectors";
 
@@ -67,7 +68,10 @@ export function SourceCreateForm() {
     >
       <div className="stack-form">
         <div>
-          <span className="label">Choose a source type</span>
+          <span className="label label-with-info">
+            Choose a source type
+            <InfoTip text="Which kind of place the worker imports from. YouTube and Twitch links are re-checked for the expected link shape before every sync, a direct URL must be an http(s) link ending in a media file such as .mp4, and the local library reads this server's shared media folder with no address at all." />
+          </span>
           <div className="preset-grid" style={{ marginTop: 12 }}>
             {sourceConnectorDefinitions.map((entry) => (
               <button
@@ -88,12 +92,18 @@ export function SourceCreateForm() {
       </div>
 
       <label>
-        <span className="label">Display name</span>
+        <span className="label label-with-info">
+          Display name
+          <InfoTip text="Shown on air under the current title when Show source label is on in Overlay settings, and used as this source's Library folder in Assets. For a direct media URL it also becomes the title of the single item it produces." />
+        </span>
         <input onChange={(event) => setName(event.target.value)} placeholder={connector.suggestedName} required value={name} />
       </label>
 
       <label>
-        <span className="label">Connector type</span>
+        <span className="label label-with-info">
+          Connector type
+          <InfoTip text="The same choice as the cards above, as a list. Picking another type swaps in its suggested name unless you have typed your own, and clears the address when the new type needs none." />
+        </span>
         <select onChange={(event) => chooseConnector(event.target.value as SourceConnectorKind)} value={connectorKind}>
           {sourceConnectorDefinitions.map((entry) => (
             <option key={entry.id} value={entry.id}>
@@ -112,7 +122,16 @@ export function SourceCreateForm() {
       </div>
 
       <label>
-        <span className="label">{connector.urlLabel}</span>
+        <span className="label label-with-info">
+          {connector.urlLabel}
+          <InfoTip
+            text={
+              connector.requiresUrl
+                ? "Where the worker imports from; it must fit the chosen type — twitch.tv/<channel> for a Twitch archive, twitch.tv/videos/<id> for a VOD, a YouTube playlist link with a list parameter or a channel/handle page, or an http(s) link to a media file for a direct URL. It is re-checked before every sync: an address that no longer fits skips that sync, and items already imported stay."
+                : "Nothing to enter: the local library reads the shared media folder on this server, so this source has no address."
+            }
+          />
+        </span>
         <input
           disabled={!connector.requiresUrl}
           onChange={(event) => setExternalUrl(event.target.value)}

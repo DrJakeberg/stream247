@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 
 type Props = {
   currentUser: {
@@ -122,7 +123,10 @@ export function TwoFactorSettingsForm({ currentUser }: Props) {
       {!currentUser.twoFactorEnabled ? (
         <>
           <label>
-            <span className="label">Current password</span>
+            <span className="label label-with-info">
+              Current password
+              <InfoTip text="Your sign-in password, checked before a new authenticator secret is issued. Starting or rotating setup replaces any earlier unconfirmed secret; sign-in itself does not change until you confirm a code." />
+            </span>
             <input
               name="setup-password"
               onChange={(event) => setSetupPassword(event.target.value)}
@@ -153,7 +157,10 @@ export function TwoFactorSettingsForm({ currentUser }: Props) {
           {setupSecret || currentUser.hasPendingSecret ? (
             <>
               <label>
-                <span className="label">Confirm 6-digit code</span>
+                <span className="label label-with-info">
+                  Confirm 6-digit code
+                  <InfoTip text="The code your authenticator app shows right now for the secret you added from this page. A match switches the second factor on: from then on every password sign-in to this account also asks for a fresh code." />
+                </span>
                 <input
                   inputMode="numeric"
                   name="setup-code"
@@ -172,7 +179,10 @@ export function TwoFactorSettingsForm({ currentUser }: Props) {
       ) : (
         <>
           <label>
-            <span className="label">Current password</span>
+            <span className="label label-with-info">
+              Current password
+              <InfoTip text="Your sign-in password, required together with a live code before the second factor is switched off. Once disabled, the secret is discarded; enabling again issues a new one for your app." />
+            </span>
             <input
               name="disable-password"
               onChange={(event) => setDisablePassword(event.target.value)}
@@ -181,7 +191,10 @@ export function TwoFactorSettingsForm({ currentUser }: Props) {
             />
           </label>
           <label>
-            <span className="label">Current 6-digit code</span>
+            <span className="label label-with-info">
+              Current 6-digit code
+              <InfoTip text="The code your authenticator app shows right now. Both password and code must match, so a stolen password alone cannot turn the second factor off." />
+            </span>
             <input
               inputMode="numeric"
               name="disable-code"

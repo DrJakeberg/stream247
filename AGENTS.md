@@ -54,7 +54,7 @@ Current DUT paths:
 - active deployment working directory: `/root/stream247/recovery-stack`
 - active compose file: `/root/stream247/recovery-stack/docker-compose.yml`
 - active runtime env file: `/root/stream247/recovery-stack/stack.env`
-- persistent DUT data directories: `/root/stream247/{media,postgres,redis,logs}`
+- persistent DUT data directories: `/root/stream247/{media,postgres,logs}`
 
 Rules:
 

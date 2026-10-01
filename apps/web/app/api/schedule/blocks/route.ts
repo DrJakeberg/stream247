@@ -10,6 +10,7 @@ import { getAuthenticatedUser, requireApiRoles } from "@/lib/server/auth";
 import {
   appendAuditEvent,
   createScheduleBlocks,
+  createScheduleBlocksChecked,
   deleteScheduleBlockRecord,
   readAppState,
   updateScheduleBlockRecord,
@@ -138,12 +139,11 @@ export async function POST(request: NextRequest) {
         repeatMode: "single" as const,
         repeatGroupId: ""
       }));
-      const conflicts = findScheduleConflicts([...state.scheduleBlocks, ...newBlocks]);
-      if (conflicts.length > 0) {
-        throw new Error("Duplicated blocks overlap with existing programming. Adjust the target days or schedule.");
-      }
-
-      await createScheduleBlocks(newBlocks);
+      await createScheduleBlocksChecked(newBlocks, (existing, incoming) => {
+        if (findScheduleConflicts([...existing, ...incoming]).length > 0) {
+          throw new Error("Duplicated blocks overlap with existing programming. Adjust the target days or schedule.");
+        }
+      });
       const nextState = await readAppState();
 
       await appendAuditEvent(
@@ -268,12 +268,14 @@ export async function POST(request: NextRequest) {
         cuepointAssetId: cuepointAsset?.id ?? "",
         cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds
       }));
-    const conflicts = findScheduleConflicts([...state.scheduleBlocks, ...newBlocks]);
-    if (conflicts.length > 0) {
-      throw new Error("Schedule blocks overlap. Adjust the new start time or duration.");
-    }
-
-    await createScheduleBlocks(newBlocks);
+    // Validated inside the transaction that inserts. Checking against the separately-read `state`
+    // leaves a window where a second editor commits a block this check never saw, both writes
+    // succeed, and the result is the overlapping schedule the check exists to prevent.
+    await createScheduleBlocksChecked(newBlocks, (existing, incoming) => {
+      if (findScheduleConflicts([...existing, ...incoming]).length > 0) {
+        throw new Error("Schedule blocks overlap. Adjust the new start time or duration.");
+      }
+    });
     const nextState = await readAppState();
 
     await appendAuditEvent(

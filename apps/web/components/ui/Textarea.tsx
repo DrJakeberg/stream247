@@ -1,8 +1,11 @@
 import type { TextareaHTMLAttributes } from "react";
+import { InfoTip } from "./InfoTip";
 
 export type TextareaProps = {
   label: string;
   hint?: string;
+  /** Short explanation shown behind an (i) beside the label. */
+  info?: string;
   error?: string;
   maxLength?: number;
   showCharCount?: boolean;
@@ -15,6 +18,7 @@ export type TextareaProps = {
 export function Textarea({
   label,
   hint,
+  info,
   error,
   maxLength,
   showCharCount = false,
@@ -32,7 +36,10 @@ export function Textarea({
 
   return (
     <label className={["field-stack", fullWidth ? "field-stack-full" : "", className].filter(Boolean).join(" ")} htmlFor={fieldId}>
-      <span className="label">{label}</span>
+      <span className={info ? "label label-with-info" : "label"}>
+        {label}
+        {info ? <InfoTip text={info} /> : null}
+      </span>
       <textarea
         {...textareaProps}
         aria-describedby={describedBy}

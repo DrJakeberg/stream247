@@ -1,4 +1,5 @@
 import { scryptSync, timingSafeEqual, randomBytes, createHmac } from "node:crypto";
+import { resolveAppSecret } from "@stream247/db";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
@@ -8,8 +9,19 @@ import { findUserById, readAppState, type UserRecord, type UserRole } from "./st
 const sessionCookieName = "stream247_session";
 const twoFactorChallengeMaxAgeSeconds = 60 * 5;
 
+// Sessions are stateless HMACs, so an unbounded lifetime means a leaked cookie is valid forever.
+const sessionMaxAgeSeconds = (() => {
+  const parsed = Number.parseInt(process.env.SESSION_MAX_AGE_SECONDS ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30 * 24 * 60 * 60;
+})();
+
 function getAuthSecret(): string {
-  return process.env.APP_SECRET || "stream247-dev-secret";
+  // Resolution lives in @stream247/db so sessions here and the managed-config encryption there
+  // sign and encrypt with the same secret. The guarantees are unchanged in shape: production
+  // refuses the publicly known development fallback and any weak env value. What changed with M52
+  // is that an absent env value no longer refuses to start — a strong secret is generated on first
+  // boot and persisted on the data volume, and env keeps priority as the rollback path.
+  return resolveAppSecret();
 }
 
 export function hashPassword(password: string): string {
@@ -58,6 +70,13 @@ export function parseSessionValue(value: string | undefined): string | null {
   const payload = parts.join(":");
 
   if (!signature || signValue(payload) !== signature) {
+    return null;
+  }
+
+  // The issue timestamp was always part of the signed payload but was never checked, so a session
+  // cookie stayed valid indefinitely and could not be aged out.
+  const issuedAt = Number(parts[parts.length - 1]);
+  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > sessionMaxAgeSeconds * 1000) {
     return null;
   }
 

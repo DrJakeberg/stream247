@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { useToast } from "@/components/ui/Toast";
 
 const dayOptions = [
@@ -54,7 +55,7 @@ export function ScheduleDayCloneForm() {
       }}
     >
       <label>
-        <span className="label">Clone this weekday</span>
+        <span className="label label-with-info">Clone this weekday<InfoTip text="Every block on this weekday is copied, in order, onto the weekdays you tick below. The day must hold at least one block, and the copies are plain single blocks even where the originals repeat." /></span>
         <select
           onChange={(event) => {
             const nextSourceDay = Number(event.target.value);
@@ -71,7 +72,7 @@ export function ScheduleDayCloneForm() {
         </select>
       </label>
       <div>
-        <span className="label">Onto these weekdays</span>
+        <span className="label label-with-info">Onto these weekdays<InfoTip text="Occupied weekdays are still tickable here, but if any ticked day already holds a block the whole clone is refused and nothing is written; clear that day first or untick it." /></span>
         <div className="chip-grid">
           {dayOptions
             .filter((day) => day.value !== sourceDayOfWeek)

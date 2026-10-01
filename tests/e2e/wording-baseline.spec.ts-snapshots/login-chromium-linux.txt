@@ -1,0 +1,13 @@
+LOCAL BOOTSTRAP
+Owner access
+Use the local owner account for bootstrap, recovery, or emergency access.
+OWNER EMAIL
+i
+PASSWORD
+i
+Sign in
+TWITCH SSO
+Team sign-in
+Sign in with Twitch
+Team members sign in with Twitch and are admitted only if the streamer has granted access to their Twitch login in the admin UI.
+Configure APP_URL and Twitch client credentials first, either in .env or admin settings.
