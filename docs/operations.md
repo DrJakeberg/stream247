@@ -379,7 +379,9 @@ pair. To see what happened to one item:
 - If YouTube changes again, `STREAM247_YOUTUBE_PLAYBACK_FORMATS` (yt-dlp selectors separated by `|`)
   replaces the candidate list without a release.
 - An item that keeps failing leaves automatic selection after three failed prefetch probes and raises
-  `playout.source-unplayable.<sourceId>`; its asset page can clear the failures once it is fixed.
+  `playout.source-unplayable.<sourceId>`; its asset page can clear the failures once it is fixed. A
+  probe that failed because the channel's own network was down is not one of the three (see *The
+  channel's own network was down* below).
 - When probes fail on three different items of one source, the whole source is held out instead; see
   *A source is held out of programming* below.
 
@@ -389,9 +391,10 @@ Incident `playout.source-breaker.<sourceId>`, *<source> is held out of programmi
 playout's queue (and the resolve of the item it starts) failed on three different items of that source
 with no clean probe of it in between. A Twitch archive whose download is still queued or running does
 not count: with remote fallback off it is refused until its file is there, and that says nothing about
-the source
-(the YouTube SABR change of 2026-09-28 left 0 of 11 items resolvable; per-item quarantine needed three
-failures per item, about 33 failed boundaries, before the source was out of play). What it does:
+the source. Neither does a probe that failed because the channel's own network was down (M82, *The
+channel's own network was down* below). Why the breaker exists: the YouTube SABR change of 2026-09-28
+left 0 of 11 items resolvable, and per-item quarantine needed three failures per item, about 33 failed
+boundaries, before the source was out of play. What it does:
 
 - Every pool passes the source over: a pool with several sources alternates between the others, a pool
   with only this source plays the fallback, as when nothing is playable. The generic fallback (any
@@ -427,16 +430,90 @@ What to do:
    the next three different failed items hold it again.
 3. Or leave it: the breaker retries by itself and closes on the first clean probe.
 
-The playout cannot tell a network outage from a source fault (a DNS failure reaches the probe as one
-more yt-dlp error). The rule needs three different items, which only partly guards against that. A
-two-source pool's queue holds two items of each, so an outage that ends before the queue moves on holds
-neither source. A pool with only one source has four items of it in its queue: an outage longer than
-about five minutes (a pihole DNS failure, a long WAN drop) re-probes them all, and three remote items
-failing hold a healthy source, so that pool plays the fallback until the next trial probe. If the last
-error is a name-resolution or connection error and the network is back, press **Close breaker now**;
+An outage of the channel's own network does not hold a source (M82, next section): its failed probes
+are not counted, and a trial that fails for that reason leaves a half-open breaker as it was, cooldown
+not doubled, trial still available. What can still hold a healthy source is a network-looking failure
+the playout could not attribute to the channel: the remote host down while the channel's output
+connects, or a channel with no public output to ask. If the last error on the source page is a
+name-resolution or connection error and the source answers again, press **Close breaker now**;
 otherwise the hold costs one cooldown and closes by itself on the first clean probe. Log events:
 `playout.source-breaker.opened`, `.reopened`, `.closed` (`sourceId`, `failedAssetIds`,
 `cooldownSeconds`, `error`; a close because nothing was left to hold adds `reason: "no-pool-candidate"`).
+
+### The channel's own network was down (probe outage)
+
+Log event `playout.probe.network_outage`; no incident. While the host has no way out, every remote
+probe fails (yt-dlp for YouTube and for a Twitch archive played from Twitch). Until M82 each of those
+failures counted against the item and its source: a failed probe is retried after a minute, so an
+outage of three minutes quarantined a healthy item for good, and three different items held their
+source for 30 minutes. Now such a failure is counted by neither, when both of these hold:
+
+- The error is a network one: name resolution, connecting, a timeout (including the playout's own
+  `Command timed out after ...ms`), a TLS handshake that ended in nothing, or yt-dlp's
+  `<urlopen error ...>` / `TransportError`. The image is Alpine, so the container words the first two
+  the musl way: `[Errno -3] Try again` and `Name does not resolve` for a name that could not be
+  resolved, `Network unreachable` and `Host is unreachable` for a host that could not be reached (yt-dlp
+  2026.08.19 without a network: `Unable to download API page: [Errno -3] Try again (caused by
+  TransportError(...))`). The glibc texts are recognised as well (`Temporary failure in name
+  resolution`, `Name or service not known`, `Network is unreachable`, `No route to host`), and so are
+  `getaddrinfo`, `Connection refused` and `Connection reset`. A bare `try again` is not: that is
+  YouTube's rate limit answering. Anything the remote said is not: `Requested format is not available`,
+  `Video unavailable`, private, removed, members-only, every HTTP status (403, 404, 410, 429 and 5xx
+  alike), `Unsupported URL`, `Invalid data found`.
+- The output the channel publishes to cannot be reached at that moment. The playout resolves the host
+  of each enabled output (at most two, e.g. `live.twitch.tv:1935`) and opens one TCP connection to it,
+  closed at once, 2.5 seconds at most. Only when none of them connects or answers is it an outage. It
+  asks only when a network-looking failure is about to be counted, at most once per ten seconds, so a
+  healthy channel never opens that connection. Outputs on the channel's own side (the relay, `localhost`,
+  a private address, a name without a dot) are never asked: they prove nothing about the way out.
+  "At that moment" is the moment the failure is counted, which is later than the moment its request
+  failed: a resolve whose packets just vanish ends by the playout's own timeout, 60 seconds after it
+  started (`STREAM247_PLAYABLE_INPUT_RESOLVE_TIMEOUT_SECONDS`). So an outage the check saw stands for
+  that long after the output connects again, and the `corroboration` then names both
+  (`live.twitch.tv:1935 connected, 45 s after live.twitch.tv:1935 unreachable (connect ETIMEDOUT)`).
+
+What it changes and what it does not:
+
+- `playback_probe_failures` of the item and the breaker of its source keep their values. The failure
+  is not a success either: it resets nothing and closes no breaker.
+- On air nothing changes. An item that could not be prepared is still not played, the fallback still
+  covers, and `playout.prefetch.failed` still opens for the duration.
+- A network-looking failure while an output connects counts as before: YouTube unreachable while
+  Twitch takes the stream is a fault of the YouTube source. So does everything when the channel has no
+  public output to ask.
+- The output host stands for the way out. If that host alone is down (the ingest unreachable while
+  the rest of the internet works), network-looking failures of every source go uncounted for as long
+  as it lasts; a channel with two outputs on different hosts needs both unreachable.
+- Not covered: a Twitch archive refused because its download failed during the outage. The refusal
+  says *not cached yet*, whatever made the download fail, and counts as before (such an archive is
+  normally passed over for the cache failure cooldown anyway).
+- Not covered: a blip shorter than one resolve, with packets vanishing rather than refused. The one
+  resolve it catches ends by its timeout when the output connects again, and nothing asked while the
+  way out was down, so that one failure is counted: `playback_probe_failures` 1 with a `Command timed
+  out` error on one item, no `playout.probe.network_outage` line for it. One failure reaches neither
+  threshold (an item already at two is quarantined by it), and the next clean probe, a minute or two
+  later, resets it. In the minute after an outage the reverse holds: a network-looking failure of a
+  remote host that really is down goes uncounted until the grace has run out.
+
+Reading the log, in the playout container:
+
+```
+docker compose logs --since 24h playout | grep '"playout.probe.network_outage"'
+```
+
+Each line has `assetId`, `sourceId`, `path` (`queue` for a prefetch probe, `selection` for the resolve
+of the item about to start), `reason` (`dns`, `connect`, `timeout`, `tls`, `transport`),
+`corroboration` (what the output said, e.g. `live.twitch.tv:1935 unreachable (connect ETIMEDOUT)`),
+the first 300 characters of the `error`, and `unloggedSinceLastLine`: one line per item per five
+minutes, the rest counted there. On the DUT expect `reason` `dns` or `connect` when the failure was
+quick and `timeout` when packets vanished. After a nightly blip expect a few such lines, no
+`playout.source-breaker.opened` in the same minutes, and unchanged `playback_probe_failures` on the
+items named.
+
+`playout.probe.network_outage.check_failed` (`error`, `unloggedSinceLastLine`; one line per five
+minutes) means the check itself broke, not that the output was unreachable: there was no evidence
+either way, so every failure was counted, as before M82. If an outage quarantined an item or held a
+source although M82 is deployed, look for this line first.
 
 ### Is the broadcast channel live?
 

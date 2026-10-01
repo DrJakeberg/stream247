@@ -132,6 +132,8 @@ describe("source circuit breaker", () => {
   // M75 review: the distinct-items rule is no outage guard for a pool with one source. Its queue holds
   // four items of that source, and an outage longer than the five-minute probe cache re-probes them all.
   // Pinned so the limit stays documented: it costs one cooldown and closes without the operator.
+  // Since M82 the worker keeps these outcomes away from the breaker while the channel's own way out is
+  // down (probe-network-outage.test.ts); what is pinned here is what an uncorroborated one still does.
   it("opens on an outage that fails three items of a single-source queue, and closes on the first clean trial after it", () => {
     const dns = "Unable to download API page: <urlopen error [Errno -3] Temporary failure in name resolution>";
     let records: SourceBreakerRecord[] = [];

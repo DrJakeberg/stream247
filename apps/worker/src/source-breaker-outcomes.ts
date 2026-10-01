@@ -8,6 +8,9 @@
 // distinct failed items within a minute: the breaker opened on a healthy source and held out its
 // cached archives as well (M75 review, reproduced with the core planner). "Not downloaded yet" is
 // neither a clean probe nor a failed one of the source, so it neither counts nor resets the count.
+//
+// A second kind never arrives here: the failures of the channel's own network outage (M82) are taken out
+// of the scan's list before quarantine and this filter see it (probe-network-outage.ts).
 
 import type { SourceBreakerOutcome } from "@stream247/core";
 

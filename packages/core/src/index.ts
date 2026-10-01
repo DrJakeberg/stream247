@@ -15,6 +15,7 @@ export * from "./managed-runtime.js";
 export * from "./operator-precedence.js";
 export * from "./overlay-layout.js";
 export * from "./pool-rotation.js";
+export * from "./probe-network-outage.js";
 export * from "./programming-asset-order.js";
 export * from "./relay-ingest.js";
 export * from "./source-circuit-breaker.js";

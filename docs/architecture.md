@@ -245,8 +245,32 @@ selection and is empty while a fallback is on air): without it a trial item pick
 pool with only that source, would never be judged. It leaves out one failure: a Twitch archive whose
 download is queued or running (`TwitchVodCachePendingError`, `apps/worker/src/source-breaker-outcomes.ts`),
 which is not playable yet but says nothing about its source; a single-source Twitch pool queues several
-of them while the runner downloads one at a time. No other resolve error is classified, so a network
-outage longer than the five-minute probe cache can still hold the source of a single-source pool.
+of them while the runner downloads one at a time.
+An outage of the channel's own network is kept away from both holds (M82). The list of probe outcomes
+that feeds `planAssetProbeUpdates` and the breaker is first passed through `dropNetworkOutageOutcomes`
+(`apps/worker/src/index.ts`), and so is the inline resolve's outcome. It takes out a failed outcome when
+two things hold. The error text names a failure that got no answer (`classifyProbeFailure` in
+`packages/core/src/probe-network-outage.ts`: name resolution, connecting, a timeout, a TLS handshake
+ending in nothing, yt-dlp's transport errors; a format that is not offered, a removed or private video
+and every HTTP status are `other`). And the channel's way out is down at that moment: the playout
+resolves the host of each enabled output (`publishHostTargetsOf`, at most two, local hosts left out)
+and opens one TCP connection to it (`apps/worker/src/probe-network-outage.ts`, 2.5 s at most, asked
+only when a network-looking failure is about to be counted, one verdict per ten seconds), and
+`decideNetworkOutage` says outage only when none connects or answers. The question is asked when the
+failure is counted, which is up to one resolve timeout (60 s) after its request went out, so an outage
+the check saw stands for that long after the output connects again (`carryRecentNetworkOutage`); a blip
+shorter than one resolve that nothing asked about is not seen. A check that itself breaks is no
+evidence: everything counts and `playout.probe.network_outage.check_failed` says so. The classifier
+knows both libc wordings, since the image is Alpine and musl says `Try again` and `Network unreachable`
+where glibc says `Temporary failure in name resolution` and `Network is unreachable`. The output is
+asked rather than the uplink's state in `playout_runtime` read, because that state carries no time (the
+exit reason is cleared by the next start), follows a silent drop only at the encoder-stall restart, and
+fails for reasons that are not the network; in relay mode the playout feeds the local relay, so the
+check is the only view it has of the way out. An outcome taken out is neither a failure nor a success:
+counters keep their value, a half-open breaker keeps its trial, and each one is logged
+(`playout.probe.network_outage`, one line per item per five minutes). Without corroboration a
+network-looking failure counts as any other, since a host that is down while the channel's output
+connects is a source fault.
 An open breaker lasts a cooldown of 30 minutes that doubles on every re-open up to 6 h; once it has run
 out the source is half-open, which is not stored but read from `opened_at` plus the cooldown, so no
 process has to be up at that moment. Half-open gives one trial item per walk (the first the rotation

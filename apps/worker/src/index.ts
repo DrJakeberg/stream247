@@ -114,7 +114,9 @@ import {
   nextPoolRotationAsset,
   walkPoolRotation,
   sourceBreakerGate,
+  publishHostTargetsOf,
   type PoolRotationSourceGate,
+  type PublishHostTarget,
   type SourceBreakerTransition,
   createTwitchTokenScopeCache
 } from "@stream247/core";
@@ -222,6 +224,7 @@ import {
 import { logRuntimeEvent } from "./runtime-log.js";
 import { planSourceBreakerIncidents } from "./source-breaker-incidents.js";
 import { sourceBreakerOutcomesOf, type QueueProbeOutcome } from "./source-breaker-outcomes.js";
+import { createNetworkOutageCheck, ProbeOutageLogLimiter, withoutNetworkOutageOutcomes, networkLookingFailuresOf } from "./probe-network-outage.js";
 import {
   asRunRestartIntentOf,
   asRunScheduleContextOf,
@@ -6671,6 +6674,89 @@ function logSourceBreakerTransitions(transitions: SourceBreakerTransition[]): vo
   }
 }
 
+// The outputs the channel publishes to, as the outage check's targets (M82). Refreshed by every playout
+// cycle like latestManagedConfig, so the inline resolve's record needs no state handed to it. In relay
+// mode the playout itself feeds the local relay; these are still the uplink's hosts, the way out.
+let latestPublishHostTargets: PublishHostTarget[] = [];
+// An outage the check saw stands for the length of one resolve: a resolve that dies by its own timeout
+// reports a network of up to that long ago, and the output may be back by then.
+const networkOutageCheck = createNetworkOutageCheck({ graceMs: PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS });
+const probeOutageLog = new ProbeOutageLogLimiter();
+const probeOutageCheckFailedLog = new ProbeOutageLogLimiter();
+
+// A broken check counts everything, as before M82, and must say so: its verdict reads "no outage", which
+// is also what a reachable output gives, so without this line an outage would be counted against the
+// content in silence. Through a limiter of its own: a check that breaks does so on every cycle.
+function logNetworkOutageCheckFailed(error: string): void {
+  const unlogged = probeOutageCheckFailedLog.take("check", Date.now());
+  if (unlogged === null) {
+    return;
+  }
+  logRuntimeEvent("playout.probe.network_outage.check_failed", {
+    error: error.slice(0, 300),
+    unloggedSinceLastLine: unlogged
+  });
+}
+
+function publishHostTargetsOfDestinations(destinations: StreamDestinationRecord[]): PublishHostTarget[] {
+  return publishHostTargetsOf(
+    [...destinations]
+      .filter((destination) => destination.enabled)
+      .sort((left, right) => Number(left.role === "backup") - Number(right.role === "backup") || left.priority - right.priority)
+      .map((destination) => destination.rtmpUrl || getLegacyDestinationEnvConfig(destination.id, process.env).url)
+  );
+}
+
+/**
+ * Takes the failures of the channel's own network outage out of what quarantine and the source breaker
+ * count (M82). On the DUT the host loses its way out once a night for one to four minutes; every remote
+ * resolve fails meanwhile, a failed probe is retried after a minute, and three failures quarantine an
+ * item for good while three items hold its source for 30 minutes. A failure is left out only when its
+ * error is a network one AND the output the channel publishes to cannot be reached right now; a host
+ * that is down while the channel's network is up counts as before. "Right now" includes the length of
+ * one resolve before it, when the check saw the outage then (createNetworkOutageCheck's grace). Left out
+ * is not a success: nothing is reset, a half-open breaker keeps its trial, and the item is still not
+ * played.
+ *
+ * The connection is opened only when a network-looking failure is about to be counted, so a healthy
+ * channel never pays for it. Never throws: the selection's record runs inside the resolve's own try.
+ */
+async function dropNetworkOutageOutcomes<T extends QueueProbeOutcome<AssetRecord>>(
+  probeOutcomes: T[],
+  path: "queue" | "selection"
+): Promise<T[]> {
+  if (networkLookingFailuresOf(probeOutcomes).length === 0) {
+    return probeOutcomes;
+  }
+  try {
+    const verdict = await networkOutageCheck(latestPublishHostTargets);
+    if (verdict.checkFailed) {
+      logNetworkOutageCheckFailed(verdict.evidence);
+      return probeOutcomes;
+    }
+    const { counted, uncounted } = withoutNetworkOutageOutcomes(probeOutcomes, verdict.outage);
+    for (const { probed, reason } of uncounted) {
+      const unlogged = probeOutageLog.take(probed.asset.id, Date.now());
+      if (unlogged === null) {
+        continue;
+      }
+      logRuntimeEvent("playout.probe.network_outage", {
+        assetId: probed.asset.id,
+        sourceId: probed.asset.sourceId,
+        path,
+        reason,
+        corroboration: verdict.evidence,
+        error: probed.error.slice(0, 300),
+        unloggedSinceLastLine: unlogged
+      });
+    }
+    return counted;
+  } catch (checkError) {
+    logNetworkOutageCheckFailed(checkError instanceof Error ? checkError.message : String(checkError));
+    return probeOutcomes;
+  }
+}
+
 /**
  * The breaker also hears the inline resolve of the selected item (M75), which quarantine does not count.
  * The queue never probes the selection (it lists the items after it) and is empty while a fallback is on
@@ -6681,15 +6767,22 @@ function logSourceBreakerTransitions(transitions: SourceBreakerTransition[]): vo
  * try, where a failed write would read as a failed resolve.
  */
 async function recordSelectionResolveOutcome(asset: AssetRecord, outcome: "ok" | "failed", error?: unknown): Promise<void> {
-  // The same rule as the queue's outcomes: an archive still downloading is not heard at all.
-  const outcomes = sourceBreakerOutcomesOf([
-    {
-      asset,
-      outcome,
-      error: error instanceof Error ? error.message : outcome === "failed" ? "Unknown playback preparation error." : "",
-      pendingDownload: error instanceof TwitchVodCachePendingError
-    }
-  ]);
+  // The same rules as the queue's outcomes: an archive still downloading is not heard at all, and neither
+  // is a failure of the channel's own network outage (M82), which would otherwise re-open a half-open
+  // breaker with the cooldown doubled for a trial that never reached its source.
+  const outcomes = sourceBreakerOutcomesOf(
+    await dropNetworkOutageOutcomes(
+      [
+        {
+          asset,
+          outcome,
+          error: error instanceof Error ? error.message : outcome === "failed" ? "Unknown playback preparation error." : "",
+          pendingDownload: error instanceof TwitchVodCachePendingError
+        }
+      ],
+      "selection"
+    )
+  );
   if (outcomes.length === 0) {
     return;
   }
@@ -6806,6 +6899,7 @@ async function runPlayoutCycle(): Promise<void> {
   // config it hands to the between-cycle readers (watchdog options, feed geometry, VOD cache
   // tuning). Before the first cycle those resolve env-only — exactly the pre-M56 behaviour.
   latestManagedConfig = state.managedConfig;
+  latestPublishHostTargets = publishHostTargetsOfDestinations(state.destinations);
   if (
     (state.playout.overrideUntil !== "" && !isTimestampActive(state.playout.overrideUntil)) ||
     (state.playout.skipUntil !== "" && !isTimestampActive(state.playout.skipUntil))
@@ -7416,7 +7510,7 @@ async function runPlayoutCycle(): Promise<void> {
     prefetchedAsset,
     prefetchStatus,
     prefetchError,
-    probeOutcomes,
+    probeOutcomes: scannedProbeOutcomes,
     scannedSourceIds,
     deferredExpensive
   } =
@@ -7438,6 +7532,10 @@ async function runPlayoutCycle(): Promise<void> {
     await resolveIncident("playout.audio-lane.failed", "Audio lane is not active.");
   }
 
+  // What the scan learned, minus the failures of the channel's own network outage (M82): both counters
+  // below take this one list, so an outage is counted neither per item nor per source. The queue itself
+  // is untouched -- an item that could not be prepared is still not in playableQueue.
+  const probeOutcomes = await dropNetworkOutageOutcomes(scannedProbeOutcomes, "queue");
   // The probe is the only place that learns an item cannot be played before it is due on air, so what it
   // learns is written to the asset -- per item, decided by planAssetProbeUpdates, which is a tested
   // function precisely because the first cut of this did it per cycle and lost the failures.
@@ -7472,8 +7570,9 @@ async function runPlayoutCycle(): Promise<void> {
   const quarantinedBySource = countQuarantinedBySource(state.assets, quarantineOverrides);
   // The source circuit breaker (M75) learns from the outcomes quarantine has just counted, each probe
   // once, so a cached result seen by twenty cycles is still one probe; only an archive still downloading
-  // is left out (sourceBreakerOutcomesOf). On the DUT on 2026-09-28 all 11 YouTube items failed;
-  // quarantine needed three failures per item, the breaker needs three items.
+  // is left out (sourceBreakerOutcomesOf), the outage's failures being gone from the list already. On the
+  // DUT on 2026-09-28 all 11 YouTube items failed; quarantine needed three failures per item, the breaker
+  // needs three items.
   // A failed breaker write must not cost the rest of the cycle (switching, the queue, the incidents
   // below): the cycle goes on as if no source were held, as before M75, and the next cycle retries.
   let heldSources = new Set<string>();

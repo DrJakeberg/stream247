@@ -507,6 +507,22 @@ a value still equal to its English default is shown in the channel language, any
 shown as written (`docs/operations.md`, *What Viewers Read*). An older image ignores the setting and
 restores the old texts.
 
+### Upgrading Past 2.1.0: A Network Outage Is Not A Source Fault (M82)
+
+Behaviour only: no table, no migration, no stack file change, no new setting. A probe that fails with a
+network error (name resolution, connecting, a timeout) while the channel's own way out is down is
+counted neither by per-item quarantine nor by the source breaker (M75); the log has
+`playout.probe.network_outage` instead. See `docs/operations.md`, *The channel's own network was down*.
+
+One thing the playout container does that it did not do before: when such a failure is about to be
+counted, it resolves the host of each enabled output (`live.twitch.tv:1935` for the default Twitch
+output, at most two hosts) and opens one TCP connection to it, closed at once, at most once per ten
+seconds. In relay mode only the uplink container talked to that host until now. Where egress from the
+playout container is filtered, allow it to reach the output hosts: if it cannot, every network-looking
+probe failure reads as an outage and goes uncounted, so a remote host that is really down is no longer
+quarantined or held for that kind of error. An older image counts every failed probe again; nothing is
+stored.
+
 ### Patch vs Minor Upgrades
 
 - Patch upgrades should be the default production path.
@@ -619,7 +635,7 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 - program-feed/uplink mode separates program playout restarts and asset boundaries from the external RTMP publishing worker
 - YouTube and Twitch ingestion rely on `yt-dlp`
 - schedule blocks support weekly CRUD, reusable show profiles, multi-day creation, overlap validation, drag/drop repositioning, resize-to-change-duration editing, weekly coverage summaries, and quick-start program templates
-- pools are first-class programming units for round-robin playout selection that alternates between a pool's sources, each in a stable date order (see `docs/architecture.md`, *Scheduling*); a source whose probes fail on three different items is held out of the rotation for a cooldown and retried with one item (source circuit breaker, `docs/operations.md`)
+- pools are first-class programming units for round-robin playout selection that alternates between a pool's sources, each in a stable date order (see `docs/architecture.md`, *Scheduling*); a source whose probes fail on three different items is held out of the rotation for a cooldown and retried with one item (source circuit breaker, `docs/operations.md`); probes that fail while the channel's own network is down count against neither the item nor its source
 - sources can be edited in place and the asset catalog can be searched by title, source, and status
 - playout supports operator restart, temporary fallback, asset pinning, play now / insert, skip-current, and resume-schedule actions (`docs/operations.md`, *Operator controls*)
 - every playout run is recorded in the as-run log (table `as_run_log`, 90 days), read in `Live → Status` and through `GET /api/as-run` (`docs/operations.md`, *What was on air at a given time?*)

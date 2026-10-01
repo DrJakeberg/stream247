@@ -502,6 +502,7 @@ Notes:
 - buffered local program-feed/uplink split for production Compose, with the uplink owning external output sessions and scheduled reconnects
 - pool-based round-robin playout selection that alternates between a pool's sources, each in its own stable order
 - a source circuit breaker that holds a source out of the pools after its probes fail on three different items, retries one item after a cooldown and shows the hold on the source page
+- probes that fail while the channel's own network is down count against neither the item nor its source
 - an as-run log: one row per playout run (what aired, how it was fed, why it ended), kept 90 days and read in `Live → Status` or through `GET /api/as-run`
 - standby replay slate when no playable asset is available
 - scheduled 48-hour reconnect window with controlled standby mode

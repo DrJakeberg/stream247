@@ -13,15 +13,14 @@
  * take the source back on the first clean probe. Distinct items, not three failures: one item failing
  * again and again is per-item quarantine's case and says nothing about its neighbours.
  *
- * The playout cannot tell a network-wide outage from a source fault: nothing classifies a resolve error,
- * and a DNS failure reaches the probe as one more yt-dlp message. (The one failure the worker does tell
- * apart, a Twitch archive still downloading, never reaches this module.) The distinct-items rule is only
- * a partial guard. The queue of a two-source pool holds two items of each, so an outage that ends before
- * the queue moves on opens neither breaker. A pool with one source has four items of it in its queue, and
- * an outage longer than the five-minute probe cache re-probes them all: three remote items failing open
- * the breaker of a healthy source, and the pool plays the fallback. Either way an outage costs one
- * cooldown, after which a single clean probe closes the breaker; unlike quarantine it never needs the
- * operator.
+ * This module cannot tell a network-wide outage from a source fault: a DNS failure is one more failed
+ * outcome to it, and three of them on a single-source pool's queue of four open the breaker of a healthy
+ * source (pinned in its test). The worker keeps two kinds of failure away from it: a Twitch archive still
+ * downloading (apps/worker/src/source-breaker-outcomes.ts), and since M82 a network failure while the
+ * channel's own way out is down (probe-network-outage.ts). A network-looking failure the worker could
+ * not corroborate -- a dead CDN host, a channel with no public output to ask -- still arrives here and
+ * counts; it costs one cooldown, after which a single clean probe closes the breaker. Unlike quarantine
+ * that never needs the operator.
  *
  * Pure: time comes in as an argument, so every transition is a table test.
  */
@@ -170,7 +169,8 @@ export type SourceBreakerPlan = {
  * order, so "no clean probe in between" means what it says: a failure, a success and a failure of three
  * items of one source leave one failed item, not two. The worker adds the inline resolve of the item it
  * selects, which no queue probe ever sees (recordSelectionResolveOutcome in apps/worker/src/index.ts),
- * and leaves out a Twitch archive whose download is still running (apps/worker/src/source-breaker-outcomes.ts).
+ * and leaves out a Twitch archive whose download is still running (apps/worker/src/source-breaker-outcomes.ts)
+ * and the failures of the channel's own network outage (M82, probe-network-outage.ts).
  */
 export function planSourceBreakerUpdates(
   records: readonly SourceBreakerRecord[],

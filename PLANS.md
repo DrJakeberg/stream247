@@ -91,6 +91,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M79 Chat Never Skips An Operator Insert | Behavior | Now | Complete | Viewers never take an operator's insert off air (owner decision 2026-10-01) | While a Play now / Insert is pending or on air, no chat skip vote starts or counts and a vote that passed earlier is refused, exactly like under a Pin (M78); the bot says why at most once a minute; the insert ends as before (natural end, operator Skip, Live Bridge); tested | worker, core, tests, docs | low | revert commit |
 | M80 Viewer Language | UX + i18n | Now | Complete | Everything viewers see or read follows one channel language (owner decision 2026-10-01: German and English, viewer-facing first) | A channel language setting (`de`, `en`; new installs `en`) drives every viewer-facing text: the on-air picture (up next, clock labels, polls, the skip bar, chat game texts, empty states), the standby/fallback/reconnect slates, every chat bot reply, and the public channel page; one message catalogue per language in core with a test that both catalogues have the same keys and no viewer-facing literal is left outside it; operator content (titles, scene text layers) is never translated; the admin UI stays English (its translation is a later milestone); docs say how to add a language | core, worker, web, db, tests, docs | medium | revert commit; the setting is ignored |
 | M81 Admin Interface Language | UX + i18n | Later | Deferred | The admin interface in the channel language | Owner decided 2026-10-01 to translate the viewer side first (M80); start only when the owner asks | web, tests | high | — |
+| M82 A Network Outage Is Not A Source Fault | Reliability | Now | Complete | The channel's own network outage never takes a healthy source or item out of play (gate set by the M75 review before the breaker ships to the DUT) | A failed probe or resolve whose error is a network failure (DNS, connect, timeout, unreachable) AND that is corroborated by an independent signal that the channel's network is down at that moment is counted neither by the source circuit breaker (M75) nor by the per-item quarantine; an uncorroborated network-looking error still counts (a dead host is a source fault); the decision is a pure, tested classifier plus one corroboration check; every uncounted outcome is logged; DUT check after deploy (open until then): a nightly blip opens no breaker and moves no counter of a healthy item | core, worker, tests, docs | medium | revert commit |
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
 
@@ -4328,7 +4329,10 @@ Follow-ups:
   the nightly blip (~23:58 UTC) falls in the Twitch-only overnight block; measure on the DUT how many
   remote Twitch probes a blip fails (cached archives probe locally, pending downloads no longer count) and
   either show that it cannot reach three, or add the classifier first. A held Twitch source there means
-  30 min of fallback after a 2-minute outage.
+  30 min of fallback after a 2-minute outage. **Closed by M82** (2026-10-01): the classifier was added
+  first, with a corroborating connection attempt to the channel's output, and it guards per-item
+  quarantine as well; the paragraph *Network outage* under *Done* above describes M75 alone. What M82
+  leaves to measure on the DUT is in its own section.
 - Per-item quarantine still counts a Twitch archive whose download is queued or running as a failed
   probe: with remote fallback off, an uncached archive in the queue is quarantined after three probes
   about a minute apart, long before a tens-of-minutes download ends, and stays out until the operator
@@ -4868,3 +4872,123 @@ Follow-ups:
 - The studio's *Replay label* tip still says "cleared, it reads Replay stream"; on a German channel it
   reads `Wiederholung`. Admin text, left for M81 or a wording pass.
 - M81 (admin interface language) stays deferred until the owner asks.
+
+## M82 A Network Outage Is Not A Source Fault
+
+Gate set by the M75 review (lead, 2026-10-01). Production evidence (DUT): the host loses its way out
+once a night (since 2026-09-11 at about 23:58 UTC, in the Twitch-only overnight block), the uplink is
+back after 50 to 70 seconds, and on 2026-09-12 the channel answered nothing from outside for about six
+minutes. Every remote resolve fails meanwhile. A failed probe is retried after 60 seconds, so three
+minutes were three failures of one item (quarantined for good), and three different items were an open
+breaker: 30 minutes of fallback in a single-source pool.
+
+Decision: a failed probe or resolve is counted by neither hold when its error is a network failure AND
+the channel's own way out is down at that moment. Taken out, not turned into a success.
+
+Done:
+
+- Classifier, `packages/core/src/probe-network-outage.ts` (pure, exported): `classifyProbeFailure`
+  (`network` | `other`) and `networkFailureReasonOf` (`dns`, `connect`, `timeout`, `tls`, `transport`).
+  `network` only for errors that got no answer: name resolution, connecting, timeouts (including the
+  worker's own `Command timed out after ...ms`, `process-utils.ts`), a TLS handshake ending in nothing,
+  yt-dlp's `<urlopen error ...>` / `TransportError`. What the remote said is checked first and is
+  `other`: a format not offered, private / removed / members-only, every HTTP status (4xx and 5xx), an
+  untrusted certificate, `Unsupported URL`, `Invalid data found`; so is every text it does not know.
+  Both libc wordings (review): the image is Alpine, and musl says `[Errno -3] Try again`, `Name does
+  not resolve`, `Network unreachable`, `Host is unreachable`. Measured in `stream247-worker:test` with
+  `--network none` and the worker's flags (yt-dlp 2026.08.19): `Unable to download API page: [Errno -3]
+  Try again (caused by TransportError('[Errno -3] Try again'))` for YouTube and the same for a Twitch
+  VOD, ffprobe `Connection to tcp://...:443 failed: Network unreachable`. With the glibc texts alone
+  the yt-dlp lines were `transport` by the catch-all and the ffprobe line was `other`. The resolver
+  error is matched by its number (`[Errno -2]`, `[Errno -3]`), never by a bare `try again`, which is
+  what YouTube's rate limit answers.
+- The signal chosen: one TCP connection attempt to the host the channel publishes to
+  (`publishHostTargetsOf`: the enabled outputs, at most two hosts, local ones left out;
+  `attemptPublishHost` in `apps/worker/src/probe-network-outage.ts`: node's resolver with a 1 s limit,
+  then a connect, 2.5 s in all; `decideNetworkOutage`: outage only when none connects or answers, a
+  refusal and "no such name" being answers). Asked only when a network-looking failure is about to be
+  counted, one verdict per ten seconds. Why not the uplink's state in `playout_runtime`: it carries no
+  time (`uplinkLastExitReason` is cleared by the next start, `uplinkHeartbeatAt` is written every cycle,
+  the restart count is a bare counter), it follows a silent drop only at the encoder-stall restart
+  (47 s after the first error on 2026-09-06) while a name resolution fails a probe within a second and
+  three 15-second cycles are three items, it fails for reasons that are not the network (a rejected
+  key, a stale feed, the scheduled reconnect), and without relay mode it does not exist. Why not "two
+  hosts failing in one scan": a single-source pool probes one host and a scan resolves one remote item
+  per cycle. The output is the channel's existing dependency and not a host the probes ask: YouTube
+  unreachable while Twitch takes the stream still counts against the YouTube source.
+- When the question is asked (review): at the moment a failure is counted, not at the moment its
+  request failed. A resolve whose packets vanish ends by the worker's own timeout 60 s after it started
+  (`PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS`; yt-dlp is given no socket timeout), and the uplink is back 50
+  to 70 s after a blip, so the last resolve of an outage was judged against a network that had
+  returned. An outage the check saw therefore stands for the length of one resolve after the output
+  connects again (`carryRecentNetworkOutage`, pure; `createNetworkOutageCheck({ graceMs })`), counted
+  from the last sighting, dropped when the outputs change, and not applied past a broken check.
+- A broken check is logged (review): `createNetworkOutageCheck` turns its own failure into "no outage"
+  and cannot reject, so `playout.probe.network_outage.check_failed` was unreachable and a broken check
+  would have counted an outage in silence. The verdict now carries `checkFailed`, and
+  `dropNetworkOutageOutcomes` writes the event (`error`, `unloggedSinceLastLine`, one line per five
+  minutes) and counts everything.
+- Wiring, `apps/worker/src/index.ts`: `dropNetworkOutageOutcomes` filters the scan's outcomes once,
+  before `planAssetProbeUpdates` and `applySourceBreakerOutcomes` take the same list, and the inline
+  resolve's outcome in `recordSelectionResolveOutcome`. Counters keep their value, nothing is reset, a
+  half-open breaker neither re-opens nor closes and keeps its trial. The queue and the fallback are
+  untouched. Log event `playout.probe.network_outage` (`assetId`, `sourceId`, `path`, `reason`,
+  `corroboration`, `error`, `unloggedSinceLastLine`), one line per item per five minutes.
+- Docs: operations (*The channel's own network was down* runbook, the breaker and quarantine
+  passages), architecture (*Scheduling*: the two holds), deployment (upgrade note: the playout
+  container now connects to the output host), README and the capability notes.
+- Tests, `tests/unit/probe-network-outage.test.ts` (new, 139): the classifier table (44 network strings
+  with their reason, 14 of them the musl wordings and 5 of those copied from the worker image; 33
+  `other`, among them YouTube's `try again later`), the publish hosts (path dropped, deduplicated, two
+  at most, 13 local hosts left out, UDP and non-URLs left out), the attempt-to-verdict table and both
+  verdicts, the recent-outage table (inside and outside the grace, the evidence naming both, nothing
+  carried without a sighting or a grace), the attempt with a real socket (connected, refused) and an
+  injected resolver, the cached check (both branches, one ask per ten seconds, no target, a broken
+  check flagged, the grace counted from the last sighting and not carried to other outputs or past a
+  broken check), the log limiter, the counting (three
+  items at two failures: neither quarantined nor held with an outage, both without one; counters not
+  reset and earlier failures still adding up; half-open untouched and the trial still in the gate; every
+  `other` error and every clean probe counted during an outage; the pending-download rule unchanged)
+  and the wiring in the worker's source (the one filtered list, the inline resolve, the check-failed
+  line through its own limiter, the grace set to the resolve timeout). The 12 musl rows that the first
+  cut missed fail on the glibc-only patterns. No db function changed, so no new integration test.
+- `pnpm validate` green (2570 unit, 62 integration tests, build), after the review fixes.
+
+DUT check after deploy (read-only), the morning after a nightly blip:
+
+- `docker compose logs --since 12h playout | grep '"playout.probe.network_outage"'` has lines in the
+  minutes of the blip, each with a `corroboration` naming the output host as unreachable (or, for the
+  last resolve of the blip, `connected, N s after ... unreachable`), and a `reason` of `dns`, `connect`
+  or `timeout`, not `transport`. No line at all means no remote item was probed in those minutes
+  (cached archives probe locally), or the one case in the limits below.
+- No `playout.source-breaker.opened` or `.reopened` in the same minutes, and no
+  `playout.asset.quarantined`; `SELECT * FROM source_breakers WHERE state = 'open';` is empty.
+- `playback_probe_failures` of the items named in those lines is what it was before the blip (0 for a
+  healthy item), and they are probed clean within a minute or two of the network coming back. One item
+  NOT named in any line may read 1 with a `Command timed out` error for those two minutes: the short
+  blip of the limits below, not a regression.
+- No `playout.probe.network_outage.check_failed`. Since the review this line can be written: one means
+  the check broke and the blip was counted as before M82.
+
+Limits and follow-ups:
+
+- The output host stands for the way out. An ingest that is down by itself (the rest of the internet
+  working) reads as an outage, and network-looking failures of every source go uncounted meanwhile. A
+  channel whose only outputs are local (a LAN restreamer) has nothing to ask and counts as before M82.
+- The check is awaited in the cycle: at most 2.5 s, once per ten seconds, and only when a
+  network-looking failure is about to be counted. On the inline resolve path that is 2.5 s more before
+  the fallback starts during an outage. To measure on the DUT if a blip ever shows a longer gap.
+- Not covered: a Twitch archive refused because its download failed during the outage (remote fallback
+  off). The refusal reads "not cached yet" whatever made the download fail; it counts as before. Part
+  of the older follow-up on quarantine counting refused archives (M75 follow-ups).
+- Not covered (review): a blip shorter than one resolve (60 s) in which packets vanish rather than are
+  refused. Its one resolve ends by the timeout when the output connects again, nothing asked while the
+  way out was down, so there is no sighting to carry and that one failure counts. Bounded: one
+  expensive resolve per cycle, so one counted failure per blip, which reaches neither threshold alone
+  (an item already at two failures is quarantined by it) and is reset by the next clean probe. Closing
+  it needs the output asked while a remote resolve is in flight (e.g. once it has run for ten seconds);
+  to do if the DUT shows the 1 turning into a quarantine. The grace has the reverse cost: for one
+  resolve timeout after an outage, a network-looking failure of a remote host that really is down goes
+  uncounted.
+- An uncorroborated network-looking failure is not logged as such. If the DUT shows quarantine or the
+  breaker counting one during a blip, a second log line there would say what the output answered.
