@@ -307,8 +307,8 @@ competitor idea I6. M91 before M99. Everything else is independent and may be re
 **Decided 2026-10-01 23:34 UTC:** the owner accepted every recommendation below and in 5.2 ("Alles was du empfiehlst"),
 answered Q4 with "jimpanse247 is an affiliate" (so the non-recurring Twitch segments of M88 and M93 work for the channel),
 and asked that the GronkhTV screenshots for Q3 be made by Claude. The cloud cannot reach gronkh.tv or twitch.tv
-(`page.goto: net::ERR_TUNNEL_CONNECTION_FAILED`, re-run 23:36 UTC), so the reference is taken on the owner's device; only
-M100's layout waits for it.
+(`page.goto: net::ERR_TUNNEL_CONNECTION_FAILED`, re-run 23:36 UTC), and the session on the owner's device was declined (23:42 UTC).
+The reference is still open; only M100's layout waits for it, every other milestone is unaffected.
 
 1. **Dated blocks over the weekly grid.** May a dated block take over the weekly block it overlaps, with the weekly block
    continuing around it? *Recommendation: yes; otherwise "every evening at 20:00" can never be saved on a 24/7 channel (probe
