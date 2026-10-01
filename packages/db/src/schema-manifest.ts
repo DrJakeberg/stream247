@@ -5,6 +5,7 @@
 // a write that fails on an install nobody rebuilt: the base-schema block is itself a migration
 // under one fixed id, so adding a column there alone reaches a fresh install and nothing else.
 export const DECLARED_SCHEMA: Record<string, string[]> = {
+  as_run_log: ["aired_seconds", "asset_id", "block_id", "end_reason", "ended_at", "exit_code", "format_candidate", "format_id", "id", "input_kind", "planned_seconds", "pool_id", "queue_kind", "reason_code", "source_id", "started_at", "target_kind", "title"],
   asset_collection_items: ["asset_id", "collection_id", "position"],
   asset_collections: ["color", "created_at", "description", "id", "name", "updated_at"],
   asset_retention_marks: ["asset_id", "orphan_first_seen_at"],

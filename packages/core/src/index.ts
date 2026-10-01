@@ -1,3 +1,4 @@
+export * from "./as-run.js";
 export * from "./asset-chapters.js";
 export * from "./asset-probe-quarantine.js";
 import { isAssetProbeQuarantined } from "./asset-probe-quarantine.js";

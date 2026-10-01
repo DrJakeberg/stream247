@@ -3,10 +3,12 @@
 ## Primary Surfaces
 
 - `/live?tab=control` for current broadcast state and operator actions
-- `/live?tab=status` for incidents, drift checks, destination health, and audit visibility
+- `/live?tab=status` for incidents, drift checks, destination health, audit visibility, and the as-run
+  log of the last 24 hours (*On air, last 24 hours*)
 - `/live?tab=moderation` for moderation presence and check-in history
 - `/api/health` for basic service health
 - `/api/system/readiness` for broadcast readiness and drift-relevant status
+- `/api/as-run` for what was on air in any window of the last 90 days (since M76)
 
 ## Watch First
 
@@ -101,6 +103,58 @@ the pool's next item. Under the relay no operator action shows that slate.
 
 ## Symptoms And Immediate Actions
 
+### What was on air at a given time?
+
+Since M76 every playout process run writes one row to the as-run log (table `as_run_log`): start and
+end in UTC, what aired (title as aired, asset, source, the block on the schedule, and its pool when the
+pool's rotation picked the item), why it was picked (`reasonCode`: `scheduled_match`, `global_fallback`,
+`operator_insert`, ...), how it was fed (input kind: local file, remote stream, video+audio pair, live
+input, generated slate; YouTube's `formatId` and `formatCandidate`), planned seconds (the item's known
+duration) against aired seconds, and why it ended (`natural-end`, `duration-bound`, `switch`, `skip`,
+`operator-restart`, `feed-watchdog`, `scheduled-reconnect`, `crash-loop-reset`, `destination-missing`,
+`stopped`, `failed` with the exit code, `process-gone`). Rows are kept 90 days and survive redeploys,
+which the container logs do not. Start every incident analysis here instead of in `docker logs`.
+
+- Console: `/live?tab=status`, panel *On air, last 24 hours*, newest first; times in UTC with the
+  channel's time zone beside them (the schedule's clock, so "19:38" on the schedule is that column).
+- API (owner, admin, operator, moderator, viewer): `GET /api/as-run?from=<ISO>&to=<ISO>&limit=<n>`,
+  default the last 24 hours and 200 rows, at most 1000; `truncated: true` means narrow the window.
+  `from` and `to` set to the same moment answer the question directly:
+  `/api/as-run?from=2026-10-01T19:38:00%2B02:00&to=2026-10-01T19:38:00%2B02:00`.
+- SQL on the host (read-only; timestamps are ISO text in UTC and compare as text):
+
+  ```bash
+  docker compose exec -T postgres psql -U stream247 -d stream247 -c "
+    SELECT started_at, ended_at, target_kind, title, source_id, pool_id, reason_code, input_kind,
+           format_id, planned_seconds, aired_seconds, end_reason, exit_code
+    FROM as_run_log
+    WHERE started_at <= '2026-10-01T17:38:00.000Z'
+      AND (ended_at = '' OR ended_at >= '2026-10-01T17:38:00.000Z')
+    ORDER BY started_at DESC;"
+  ```
+
+Reading the rows:
+
+- `ended_at = ''` is the run on air now. There is never more than one: a row a crash or a redeploy left
+  open is closed as `process-gone` when the playout comes back up (or at the next start), so its end is
+  the boot time and its aired seconds are an upper bound.
+- `target_kind = 'fallback'` where a programme was expected is the fallback bridge, a fallback tier or
+  the operator's Fallback; `reason_code` says which (`generic_fallback` or `global_fallback` for the
+  bridge and the tiers, `operator_override` for the Fallback button; a Pin is `operator_override` with
+  `target_kind = 'asset'`). A run of short `failed` rows with the same `exit_code` is a crash loop; the
+  matching `playout.process.exit` log line, while it still exists, has the stderr. A spawn that failed
+  (no ffmpeg binary, `EAGAIN` under process pressure) is a `failed` row with the error code
+  (`ENOENT`, `EAGAIN`) as `exit_code` and no aired time.
+- `pool_id` is set only when the pool's rotation picked the item (`reason_code = 'scheduled_match'`). A
+  fallback, an insert, a Pin or a Move next inside the block carries the block but no pool, even when
+  the item comes from one of the pool's sources.
+- `aired_seconds` of an ended row matches `ranForMs` of its `playout.process.exit` line to the second.
+- A row's `end_reason = 'switch'` after a Pin, Play now or fallback, `skip` after a Skip or a chat skip
+  vote, `operator-restart` after Restart or hard reload (and, without the relay, Recover outputs and
+  Force reconnect): the web asks the playout for all of them with one restart request, and the row
+  tells them apart. Without the relay the reconnect slate comes first: the item's row ends as above,
+  then a short `reconnect` row ends as `switch` when the next item starts.
+
 ### Playout degraded
 
 - open `/live?tab=status`
@@ -114,6 +168,8 @@ the pool's next item. Under the relay no operator action shows that slate.
 - when relay/HLS is enabled, a fresh `programFeed.updatedAt` now counts as active playout liveness for `running`, `recovering`, and `switching`; do not treat a quiet FFmpeg stderr stream by itself as an outage while `programFeed=fresh` and `uplinkStatus=running`
 - if the playout container accumulates zombie FFmpeg or yt-dlp processes, recreate it: the image runs Node under `tini`, which reaps them, so an accumulation means the container is not running the shipped entrypoint
 - if the soak monitor reports `container-restart-check-failed`, inspect `docker compose ps`, `docker inspect --format '{{.RestartCount}}'`, and recent logs for `web`, `worker`, and `playout` before restarting the soak
+- for what aired around the failure, read the as-run log first (*What was on air at a given time?*
+  above): it survives the container restart that the logs do not
 
 ### Replay cache: what the log says since M62
 
@@ -200,6 +256,9 @@ the pool's next item. Under the relay no operator action shows that slate.
 Since 2.1 a YouTube item is resolved through ordered format candidates and may play as a video+audio
 pair. To see what happened to one item:
 
+- Start in the as-run log (*What was on air at a given time?*): each run of the item is a row with
+  `input_kind` (`pair` or `remote`), `format_id`, `format_candidate`, how long it aired and its exit code,
+  even after a redeploy. The log lines below carry the detail while they still exist.
 - `playout.process.start` names `formatId` (e.g. `299+140`), `formatCandidate` and, for a pair, the
   `audioInput`; `playout.input.format_fallback` lists the candidates yt-dlp reported as unavailable;
   `playout.input.reresolve` with a `formatCandidate` means that candidate resolved but could not be
@@ -333,7 +392,10 @@ number is logged instead of read off `docker logs` by hand:
   newest segment the outgoing encoder wrote, and `audioLeadSeconds`. This is the writer's view of the
   same seam; if it is near zero while the uplink reports a large skew, the seam is the reader's doing.
 
-To judge whether the 60 s threshold is doing its job:
+The boundaries themselves (when, which item handed over to which, natural end or duration bound) are
+in the as-run log (*What was on air at a given time?*), so a storm in the uplink log can be put against
+the seam that caused it after the playout logs are gone. To judge whether the 60 s threshold is doing
+its job:
 
 ```bash
 docker logs stream247-uplink-1 2>&1 | grep -E "uplink.seam.skew|discontinuity-storm" | tail -20

@@ -3,6 +3,7 @@ import { collectUpcomingPoolIds, shouldKeepFinishedVodCache } from "./vod-cache-
 import { lastPtsSecondsFromProbeOutput, resolveFeedAvLead } from "./feed-av-lead.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { randomUUID } from "node:crypto";
 import { abortableDelay } from "./abortable-delay.js";
 import {
   canBlameUplinkForStall,
@@ -174,6 +175,9 @@ import {
   type AssetPlaybackProbeUpdateRecord,
   recordSourceBreakerOutcomes,
   closeSourceBreakerRecord,
+  recordAsRunStart,
+  recordAsRunEnd,
+  closeOpenAsRunRecords,
   resolveTwitchAccountsForState
 } from "@stream247/db";
 import {
@@ -208,6 +212,15 @@ import {
 import { logRuntimeEvent } from "./runtime-log.js";
 import { planSourceBreakerIncidents } from "./source-breaker-incidents.js";
 import { sourceBreakerOutcomesOf, type QueueProbeOutcome } from "./source-breaker-outcomes.js";
+import {
+  asRunRestartIntentOf,
+  asRunScheduleContextOf,
+  asRunTargetKindOf,
+  buildAsRunStartRecord,
+  createAsRunLog,
+  watchAsRunEnd,
+  type AsRunStopIntent
+} from "./as-run.js";
 import { AlertDeduper, deliverAlert } from "./alerts.js";
 import {
   ensureLocalAssetThumbnail,
@@ -434,6 +447,14 @@ let lastChannelMetadataWriteAtMs = 0;
 let lastChatSettingsWrite: { emoteOnly: boolean | null; atMs: number } = { emoteOnly: null, atMs: 0 };
 const CHAT_SETTINGS_REASSERT_INTERVAL_MS = 10 * 60_000;
 let plannedStopReason = "";
+// What a "restart-requested" stop is for (skip, switch, restart), set where that stop is made and taken by
+// the exit handler with plannedStopReason. Only the as-run row reads it (M76).
+let asRunStopIntent: AsRunStopIntent = "";
+// The as-run log (M76): one row per playout process run. Fire-and-forget and ordered; see as-run.ts.
+const asRunLog = createAsRunLog(
+  { start: recordAsRunStart, end: recordAsRunEnd, closeOpen: closeOpenAsRunRecords },
+  logRuntimeEvent
+);
 // The runtime write of the last playout exit. The exit handler fires it without waiting, so a cycle that
 // has just stopped the process (duration bound, feed watchdog) awaits it before it reads state again;
 // otherwise the read can still show the stopped item on air and its insert active (M74).
@@ -5515,6 +5536,7 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
     // No exit handler will run for this path, so nothing would ever clear the reason we just set.
     // Leaving it set makes the next genuine crash look like an operator-planned stop.
     plannedStopReason = "";
+    asRunStopIntent = "";
     return;
   }
 
@@ -5858,6 +5880,12 @@ async function startOrSwitchPlayout(args: {
   /** Managed config from the caller's state read; the encoder settings resolve through it. */
   managedConfig: AppState["managedConfig"] | null;
   runtimeTargets: DestinationRuntimeTarget[];
+  /**
+   * What the start's as-run row needs beyond the arguments above (M76): where it sits in the schedule
+   * (asRunScheduleContextOf decides it), its queue kind, and the override mode that tells a Fallback
+   * from a Pin.
+   */
+  asRun: { blockId: string; poolId: string; queueKind: string; overrideMode: string };
 }): Promise<void> {
   const switching = playoutProcess && !playoutProcess.killed;
   if (switching) {
@@ -6043,6 +6071,51 @@ async function startOrSwitchPlayout(args: {
     reasonCode: args.reasonCode,
     lifecycleStatus: args.lifecycleStatus
   });
+  // The as-run row of this run (M76), queued and not awaited: the switch is not held up by its history.
+  // Every start comes through here (programme, insert, fallback bridge, slate, live bridge), and the
+  // exit handler below completes exactly this row, from the same start instant ranForMs measures from.
+  const asRunStartedAtMs = playoutProcessStartedAtMs;
+  const asRunId = asRunLog.start(() =>
+    buildAsRunStartRecord({
+      id: `asrun_${randomUUID()}`,
+      startedAtMs: asRunStartedAtMs,
+      targetKind: asRunTargetKindOf({
+        hasAsset: Boolean(args.asset),
+        liveBridge: Boolean(args.liveBridge),
+        reasonCode: args.reasonCode,
+        fallbackTier: args.fallbackTier,
+        lifecycleStatus: args.lifecycleStatus,
+        overrideMode: args.asRun.overrideMode
+      }),
+      asset: args.asset,
+      title:
+        buildAssetDisplayTitle(args.asset) ||
+        args.liveBridge?.label ||
+        (args.lifecycleStatus === "reconnecting" ? "Scheduled reconnect" : "Replay standby"),
+      blockId: args.asRun.blockId,
+      poolId: args.asRun.poolId,
+      reasonCode: args.reasonCode,
+      queueKind: args.asRun.queueKind,
+      input: resolvedProgramInput,
+      audioInput: resolvedProgramAudioInput,
+      formatId: playoutFormatId,
+      formatCandidate: playoutFormatCandidateId
+    })
+  );
+  // Its end is watched from here, before the first await below, and not from the exit handler further
+  // down, which an early exit or a failed spawn never reaches (watchAsRunEnd). The target kind is this
+  // run's own, taken before anything can clear it.
+  const asRunRunTargetKind = playoutTargetKind;
+  const asRunExit = watchAsRunEnd(child, {
+    log: asRunLog,
+    id: asRunId,
+    startedAtMs: asRunStartedAtMs,
+    exitContext: (code, signal) => ({
+      plannedReason: plannedStopReason,
+      stopIntent: asRunStopIntent,
+      naturalBoundary: plannedStopReason === "" && isNaturalPlayoutBoundary({ targetKind: asRunRunTargetKind, code, signal })
+    })
+  });
 
   // Boundary gap measurement. "scheduled" tier is real programme content; every other tier is a
   // fallback/bridge covering the boundary. Observation only — nothing below feeds a decision.
@@ -6219,7 +6292,10 @@ async function startOrSwitchPlayout(args: {
     const nonFailureExit = wasPlanned || exitedCleanly;
     const lastLiveBridgeInputUrl = playoutLiveBridgeInputUrl;
     const hadLiveSourceInput = playoutLiveSourceInputActive;
-    const ranForMs = playoutProcessStartedAtMs > 0 ? Date.now() - playoutProcessStartedAtMs : null;
+    // One instant for ranForMs and the as-run row's end, which watchAsRunEnd took before this handler ran.
+    const exitedAtMs = asRunExit.exitedAtMs() || Date.now();
+    const ranForMs = playoutProcessStartedAtMs > 0 ? exitedAtMs - playoutProcessStartedAtMs : null;
+    asRunStopIntent = "";
     // Open a boundary measurement only when real programme content left the air; a fallback ending
     // is part of the gap that is already being measured, not the start of a new one.
     if (playoutIsProgramme && lastAssetId) {
@@ -6918,6 +6994,9 @@ async function runPlayoutCycle(): Promise<void> {
     state = await readAppState();
   }
 
+  // What the selection picked before the reconnect slate took its place: the item a restart request of
+  // direct mode was for, which only the as-run row reads (M76).
+  let selectedBeforeSlateAssetId = "";
   if (
     shouldShowReconnectSlate({
       relayEnabled: STREAM247_RELAY_ENABLED,
@@ -6927,6 +7006,7 @@ async function runPlayoutCycle(): Promise<void> {
     })
   ) {
     await writeStandbySlate(state, "reconnect");
+    selectedBeforeSlateAssetId = selection.asset?.id ?? "";
     selection = {
       asset: null,
       queueKind: "reconnect",
@@ -7386,6 +7466,14 @@ async function runPlayoutCycle(): Promise<void> {
   }
 
   if (restartRequested) {
+    // Restart, Skip, Pin, Play now and the fallback all reach the playout as this one stop; the as-run
+    // row says which it was (M76). The stop reason itself stays, the insert and watchdog logic read it.
+    asRunStopIntent = asRunRestartIntentOf({
+      runningAssetId: playoutAssetId,
+      skipAssetId: isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "",
+      nextAssetId: selection.asset?.id ?? "",
+      selectedBeforeSlateAssetId
+    });
     await stopPlayoutProcess("restart-requested");
     await updatePlayoutRuntime((playout) => ({
       ...playout,
@@ -7405,6 +7493,16 @@ async function runPlayoutCycle(): Promise<void> {
     requestImmediatePlayoutCycle("kept-input-process-exited");
     return;
   }
+
+  // The as-run row's place in the schedule (M76): the block on air, and its pool when the pool's rotation
+  // picked the item.
+  const asRunSchedule = asRunScheduleContextOf({
+    blockId: currentScheduleItem?.blockId ?? "",
+    blockPoolId: currentScheduleItem?.poolId ?? "",
+    poolSourceIds: state.pools.find((pool) => pool.id === currentScheduleItem?.poolId)?.sourceIds ?? [],
+    assetSourceId: selection.asset?.sourceId ?? "",
+    reasonCode: selection.reasonCode
+  });
 
   if (!playoutProcess || playoutProcess.killed || restartRequested) {
     try {
@@ -7431,7 +7529,8 @@ async function runPlayoutCycle(): Promise<void> {
         overlayEnabled: state.overlay.enabled,
         outputSettings: state.output,
         managedConfig: state.managedConfig,
-        runtimeTargets: playoutTargets
+        runtimeTargets: playoutTargets,
+        asRun: { ...asRunSchedule, queueKind: selection.queueKind, overrideMode: state.playout.overrideMode }
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout start error.";
@@ -7500,7 +7599,8 @@ async function runPlayoutCycle(): Promise<void> {
         overlayEnabled: state.overlay.enabled,
         outputSettings: state.output,
         managedConfig: state.managedConfig,
-        runtimeTargets: playoutTargets
+        runtimeTargets: playoutTargets,
+        asRun: { ...asRunSchedule, queueKind: selection.queueKind, overrideMode: state.playout.overrideMode }
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout switch error.";
@@ -9496,6 +9596,11 @@ async function waitForNextLoop(mode: RuntimeMode, delay: number): Promise<void> 
 async function runLoop(mode: RuntimeMode): Promise<void> {
   const run = mode === "worker" ? runWorkerCycle : mode === "uplink" ? runUplinkCycle : runPlayoutCycle;
   const delay = mode === "worker" ? 30_000 : 15_000;
+  // A playout that comes up has nothing on air: a row the previous process left open (a redeploy kills
+  // ffmpeg with no exit handler running) is closed as process-gone at this boot (M76). Queued, not awaited.
+  if (mode === "playout") {
+    asRunLog.boot(new Date().toISOString());
+  }
 
   for (;;) {
     const result = await runWithStallGuard(run, LOOP_STALL_TIMEOUT_MS);

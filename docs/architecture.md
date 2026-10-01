@@ -37,6 +37,7 @@ Persisted domains include:
 - stream destinations
 - incidents and audit events
 - playout runtime state
+- the as-run log (`as_run_log`, since M76; see *Live Runtime*)
 
 Legacy `data/app/state.json` is only treated as a one-time migration source when the database is empty.
 
@@ -118,6 +119,29 @@ Persisted playout runtime fields include:
 - override expiry
 - skipped asset id
 - skip expiry
+
+The runtime fields hold the present only. Since M76 every playout process run also leaves one row in
+the as-run log, table `as_run_log`: `started_at` and `ended_at` (ISO, UTC; `ended_at = ''` while on
+air), `target_kind` (asset, insert, fallback, live, standby, reconnect; `fallback` covers the fallback
+tiers, the bridge and the operator's Fallback), `asset_id`, `title` as aired, `source_id`, `pool_id`
+(the block's pool, only when the pool's rotation picked the item, `scheduled_match` from one of its
+sources), `block_id`, `reason_code` (the selection reason code), `queue_kind`, `input_kind` (local,
+remote, pair, live, slate), `format_id`, `format_candidate`, `planned_seconds`, `aired_seconds`,
+`end_reason` and `exit_code`; indexed by `started_at`. Only the playout writes it
+(`apps/worker/src/as-run.ts`): a row at every successful start in `startOrSwitchPlayout` (every path:
+programme, insert, fallback bridge, slate, live bridge) and its completion from the child's own `exit`
+event, watched from right after the spawn (`watchAsRunEnd`; the main exit handler is attached only after
+the start's awaited writes, which an early exit does not wait for), at the same instant
+`playout.process.exit` measures `ranForMs` to. A spawn that fails emits no `exit` at all; its row ends as
+`failed` with the error code and no aired time. The writes are queued on one promise chain and not
+awaited, so they cost a switch nothing; a failed write is logged as `as_run.write_failed` and never
+reaches the cycle or the exit handler. A row nobody saw end (a redeploy kills the playout without an exit
+handler running) is closed as `process-gone` at the next playout boot or the next start, so at most one
+row is ever open. The web
+reads it (`GET /api/as-run`, the *On air, last 24 hours* panel of `Live → Status`); it is not part of the
+application state, `persistState` never writes it, and rows older than 90 days
+(`AS_RUN_RETENTION_DAYS`) are deleted in the write that adds a start, the way `audit_events` is pruned in
+its append.
 
 Current playout status values:
 
@@ -341,6 +365,7 @@ Current operational domains:
 
 - incidents
 - incident history and readiness context in `Live → Status`
+- the as-run log of the last 24 hours in `Live → Status` (M76)
 - acknowledgements
 - resolution state
 - runtime drift checks

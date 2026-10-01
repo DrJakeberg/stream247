@@ -97,7 +97,10 @@ describe("the playout cycle", () => {
       'if (state.playout.crashLoopDetected && (selection.asset || selection.queueKind === "live") && !state.playout.restartRequestedAt) { await stopPlayoutProcess("crash-loop-reset");'
     );
     expect(flatCycle).toContain('const restartRequested = Boolean(state.playout.restartRequestedAt) && selection.queueKind !== "live";');
-    expect(flatCycle).toContain('if (restartRequested) { await stopPlayoutProcess("restart-requested");');
+    // M76 names what the restart was for (as-run log) right before the stop; nothing is awaited in between.
+    expect(flatCycle.slice(flatCycle.indexOf("if (restartRequested) {"))).toMatch(
+      /^if \(restartRequested\) \{ [^{}]*?asRunStopIntent = asRunRestartIntentOf\(\{ [^}]* \}\); await stopPlayoutProcess\("restart-requested"\);/
+    );
   });
 
   it("waits for a finished exit's runtime write before the cycle's first read", () => {

@@ -85,7 +85,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M74 Operator Play Now | Reliability | Now | Complete | Play now and Insert put the chosen item on air, without a standby slate | Play now / Insert switch straight to the insert at the next cycle and never set the restart flag; the legacy "restart + desired asset" override branch is gone, so no action re-picks the running or a skipped item; the reconnect standby slate appears only without the relay; a dropped insert is logged; an insert stopped by its duration bound or a feed watchdog is cleared instead of replaying; the cycle re-reads state after a duration-bound stop, so insert and Move next fire at that boundary; an insert that cannot be prepared (e.g. an uncached Twitch VOD) never takes the running item off air, and Play now refuses such an archive up front; Recover outputs under the relay no longer restarts the programme and Force reconnect is refused there (the uplink reconnects by itself), and Pin, Fallback and Resume switch there without a restart; Resume cancels a pending or running insert; Replay previous has an item, and a Move next or Replay previous item plays to its end; Skip continues after the skipped item instead of the pool head (with M73); after the insert the pool continues with its next item (resuming the interrupted item at its position is a follow-up) | worker, web, tests, docs | medium | revert commit |
 | M71 Release 2.1.0 | Release | Now | Planned | Ship M68-M70 and M72-M74 | rc on the DUT, verified (YouTube on air via Play now), 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
 | M75 Source Circuit Breaker | Reliability | Next | Complete | A broken source costs one incident, not one failed boundary per item (competitor comparison 2026-10-01; owner decision) | When probes fail on 3 distinct items of the same source with no success in between, the source is held out of the pool rotation (M73) for a cooldown that doubles up to a cap; one incident per source instead of per-item noise; after the cooldown one item is probed (half-open) and a success closes the breaker and resolves the incident; per-item quarantine and the operator's `includeInProgramming` stay untouched; a pool whose sources are all held falls back as today; the source page shows the breaker state; any persisted state ships in the baseline, the ALTER block and a migration | core, worker, db, web, tests, docs | medium | revert commit; the stored state is ignored |
-| M76 As-Run Log | Ops + Data | Next | Planned | Answer "what was on air at 19:38" from one table instead of container logs (competitor comparison 2026-10-01; owner decision) | Every playout start and end writes one row: UTC start and end, block, pool, source, asset, title, selection reason, queue kind, input kind (cache, remote, YouTube pair, live), format id, planned and aired seconds, end reason (natural end, duration bound, switch, skip, failure); bounded retention; a read-only view in the console and an API route; docs/operations.md uses it in the runbooks; the table ships in the baseline, the ALTER block and a migration | worker, db, web, tests, docs | low | revert commit; the table stays unused |
+| M76 As-Run Log | Ops + Data | Next | Complete | Answer "what was on air at 19:38" from one table instead of container logs (competitor comparison 2026-10-01; owner decision) | Every playout start and end writes one row: UTC start and end, block, pool, source, asset, title, selection reason, queue kind, input kind (cache, remote, YouTube pair, live), format id, planned and aired seconds, end reason (natural end, duration bound, switch, skip, failure); bounded retention; a read-only view in the console and an API route; docs/operations.md uses it in the runbooks; the table ships in the baseline and a migration (a new table needs no ALTER line) | worker, db, web, tests, docs | low | revert commit; the table stays unused |
 | M77 Resume Interrupted Item | Playout | Later | Deferred | Continue an interrupted item at its position instead of throwing it away (competitor comparison 2026-10-01) | Owner deferred this on 2026-10-01 until after M75 and M76: start only when the owner asks. Scope when started: persisted offset, `-ss` for cached Twitch VODs first, duration bound and chapter windows offset-aware, soaked on the DUT because it touches the seam chain | worker, db, tests | high | revert commit |
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
@@ -4311,3 +4311,152 @@ Follow-ups:
 - A block mapped to a source by name and the global fallback asset ignore the breaker.
 - The breaker's cooldowns and threshold are constants; they could become managed settings next to the
   watchdog thresholds if the DUT shows a need.
+
+## M76 As-Run Log
+
+Owner decision 2026-10-01, after a competitor comparison. Production evidence: there was no table of
+aired items. Every incident analysis on this channel began by reconstructing "what was on air at 19:38"
+from container logs (the boundary storm analysis of 2026-09-04, the 19:38 fallback-bridge relapse, the
+Play now failure of 2026-10-01), and container logs are lost on every redeploy. The only structured
+traces were the `playout.process.start` / `playout.process.exit` log lines and the `playout_runtime`
+singleton, which holds the present and nothing before it.
+
+Done:
+
+- Vocabulary and read rules (`packages/core/src/as-run.ts`, exported): `AsRunRecord`, the target kinds
+  (asset, insert, fallback, live, standby, reconnect), input kinds (local, remote, pair, live, slate), end
+  reasons (`natural-end`, `duration-bound`, `switch`, `skip`, `operator-restart`, `feed-watchdog`,
+  `scheduled-reconnect`, `crash-loop-reset`, `destination-missing`, `stopped`, `failed`, `process-gone`),
+  `AS_RUN_RETENTION_DAYS = 90` (a constant with its reason, not a setting), `resolveAsRunWindow` (ISO
+  `from`/`to`, default the last 24 h, `limit` default 200 and capped at 1000, 400 on anything unreadable;
+  a read returns the runs that OVERLAP the window, so `from = to` is "what was on air at that moment"),
+  the labels and `buildAsRunRowView` for the console.
+- Playout side (`apps/worker/src/as-run.ts`, pure): `asRunTargetKindOf` (the playout's own target kind,
+  plus `fallback` for the fallback tiers including the bridge, and for the operator's Fallback, which
+  selects as `operator_override` like a Pin and is told apart by `overrideMode` (review)),
+  `asRunInputKindOf` (from what ffmpeg was given: a path is local, a URL remote, a separate audio input
+  a pair; an audio lane replaces a pair's audio so such a start reads remote; no signed URL is stored),
+  `asRunScheduleContextOf` (the block on air at the start; its pool only when the pool's rotation picked
+  the item, `scheduled_match` from one of its sources, so a fallback bridged into a block, an insert, a
+  Pin or a Move next does not name the pool. The source alone did not say so (review): on the DUT nearly
+  every asset comes from the TwitchYoutube pool's sources, so the generic fallback is usually another
+  item of the pool's own source), `asRunEndReasonOf` (the planned stop reasons, EOF, clean exit,
+  failure), `asRunRestartIntentOf` (the web asks for Restart, Skip, chat skip, Pin, Play now and the
+  fallback with one `restart-requested` stop; the row tells skip, switch and restart apart from the
+  running item, the active skip target and the item the request selected. Without the relay the
+  reconnect slate takes the selection's place before the stop, so the intent is read from the pick the
+  slate replaced; read from the slate, every direct-mode Restart, Hard reload, Recover outputs and Force
+  reconnect was a `switch` (review). The stop reason itself is unchanged, the insert and watchdog logic
+  read it), `buildAsRunStartRecord`, `buildAsRunEnd`, `buildAsRunSpawnFailedEnd`, `watchAsRunEnd` (below),
+  and `createAsRunLog`: every write goes onto
+  one promise chain that the playout never awaits, so a slow or unreachable database adds nothing to a
+  switch and a process that dies within milliseconds cannot complete its row before the row exists; a
+  failed write (or a row that cannot be built, or a throwing logger) is logged as `as_run.write_failed`
+  and never reaches the cycle or the exit handler.
+- Worker wiring (`index.ts`): `startOrSwitchPlayout` queues the start row right after the spawn and the
+  `playout.process.start` line, before its first await, on every path (both call sites pass
+  `asRun: { blockId, poolId, queueKind, overrideMode }`), and attaches `watchAsRunEnd` to the child in the
+  same synchronous stretch: it completes exactly that row (the id is in the closure) from the child's own
+  `exit`, and a spawn that failed (`error` without a pid; Node emits no `exit` for it) as `failed` with the
+  error code and 0 aired seconds. Completed from ffmpeg's main exit handler, which is attached only after
+  the start's awaited runtime, incident and destination writes, an ffmpeg that died during them and a
+  failed spawn both stayed "On air" until the next start closed them as `process-gone` (review). The main
+  handler measures `ranForMs` to the instant the watch took, so the two still agree; the
+  `restart-requested` stop sets `asRunStopIntent` (cleared with `plannedStopReason`); the playout mode
+  closes what a previous process left open when it boots (`runLoop`).
+- Storage: table `as_run_log` (`id`, `started_at`, `ended_at` '' while on air, `target_kind`, `asset_id`,
+  `title` as aired, `source_id`, `pool_id`, `block_id`, `reason_code`, `queue_kind`, `input_kind`,
+  `format_id`, `format_candidate`, `planned_seconds`, `aired_seconds`, `end_reason`, `exit_code`) with
+  index `as_run_log_started_at_idx`, in the baseline `CREATE`, migration `20261001_003_as_run_log` (the
+  same `CREATE` and index; a new table needs no ALTER line, precedent `source_breakers`) and
+  `schema-manifest.ts` (regenerated). Not part of the application state: not hydrated, `persistState`
+  never touches it. Writers outside the serialized state write (a start must not queue behind a
+  whole-state write for its history line), each one short transaction: `recordAsRunStart` (closes rows
+  still open at the new start as `process-gone`, inserts, deletes rows that started more than 90 days
+  before it: pruned in the write that appends, the cadence of `audit_events`, so no sweep to schedule),
+  `recordAsRunEnd` (only an open row, so a late exit of a process that outlived its stop deadline cannot
+  overlap the run after it), `closeOpenAsRunRecords` (boot); `process-gone` never ends before the row's
+  own start, and its aired seconds are an upper bound. Reader `listAsRunRecords` (overlap, newest first).
+- Web: `GET /api/as-run?from=&to=&limit=` (owner, admin, operator, moderator, viewer: the roles of the
+  live status; `truncated` when a page is full), and the panel *On air, last 24 hours* (`AsRunLogPanel`)
+  at the end of `Live → Status`: a read-only table (start and end in UTC with the channel's time zone
+  beside them rather than the browser's: the schedule page (its timeline and editor) and the public
+  channel page speak the channel's zone (`getWorkspaceTimeZone`), and "what was on at 19:38" is asked in
+  it; the codebase's two browser-local times, a team grant's date and the 2FA confirmation, are account
+  dates outside the schedule (review: an earlier wording here said there were none); what
+  aired with kind, source, pool and block by name; input kind with format and candidate; why it ended with
+  the exit code of a failure; planned against aired, "so far" for the run on air). No control at all, so
+  the live-status control budget (28) does not move; a failed read renders a line instead of the table
+  (`readRecentAsRunLog` in `lib/server/state.ts`, which also keeps `Date.now()` out of the page).
+- Docs: operations (*What was on air at a given time?* with the view, the API and a SQL query, how to
+  read the rows; referenced from *Playout degraded*, *A YouTube item leaves the air after a few seconds*
+  and *Seam Skew At Boundaries*, where they send the reader to the logs; primary surfaces), architecture
+  (persistence model, *Live Runtime*, alerting), deployment (*Upgrading Past 2.1.0: As-Run Log (M76)*,
+  capability notes), README (capability list).
+- Tests: `as-run` (new; target kind with Pin against Fallback, input kind, schedule context with every
+  non-rotation pick from a pool source, end reason and restart intent with the direct-mode slate as
+  tables; the start row without any URL, no planned length for a slate or an unprobed item, the end row
+  against ranForMs, exit code and signal, no negative run; the window defaults, `from = to`, offsets, the
+  cap and seven refusals; the console row in UTC and Europe/Berlin, on air, on a UTC channel, with gone
+  names and a failure), `as-run-wiring` (new; the write queue's order with a slow start, a failed write
+  logged and the chain going on, nothing thrown for a bad row, a bad end, a throwing logger or a
+  synchronous store throw; the end watch with real child processes: a missing binary ends `failed` /
+  `ENOENT` / 0 s with no `exit` emitted, a process that exits before anything else listens is completed
+  with its exit code, a failed kill of a running process ends nothing, a throwing context never reaches
+  the exit; the worker's start after the spawn and before the first await, never awaited, both call
+  sites, the watch before the first await and before the main exit handler with `ranForMs` measured to
+  its instant, the restart intent with the pick the slate replaced and its reset, the boot close; baseline, migration, index, manifest, no `persistState` / hydrate access, the prune in the
+  append and the open-only completion), `as-run-api` (new; roles, the default window, `from = to` with an
+  offset, the cap and `truncated`, four 400s without a database read, the status tab wiring, the panel
+  without any control, `readRecentAsRunLog` returning null records when the database fails);
+  integration `db-roundtrip`: the table and index created on a database without them (dropped, migration
+  row deleted), start / end / whole-state write / the moment query / newest first / limit, `process-gone`
+  at boot and at the next start with a late exit ignored and a skewed boot time, and the 90-day prune.
+- `pnpm validate` green (2207 unit tests in 230 files, 62 integration tests, build; after the review
+  fixes 2228 unit tests in 230 files, 62 integration tests, build; one M74 source-text
+  assertion in `operator-play-now-wiring` widened for the intent line before the restart stop). Not run: the e2e baselines (the live-status design and
+  wording baselines change with the new panel and are for the lead to re-record), `pnpm test:fresh-db`
+  (it needs a `stream247-web:test` image built from this tree; the fresh-install schema is covered by
+  the integration test that compares a migrated database with `DECLARED_SCHEMA`).
+
+DUT check after deploy (read-only, `CHECK_BASE_URL=http://127.0.0.1:3000` where needed):
+
+- `SELECT COUNT(*) FROM schema_migrations WHERE id = '20261001_003_as_run_log';` returns 1, and
+  `SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'as_run_log_started_at_idx';` returns 1.
+- Rows appear for each start: after the first boundary, `SELECT started_at, ended_at, target_kind, title,
+  input_kind, format_id, end_reason FROM as_run_log ORDER BY started_at DESC LIMIT 5;` shows one row per
+  `playout.process.start` line since the deploy (`docker compose logs playout | grep -c
+  playout.process.start` against `SELECT COUNT(*) FROM as_run_log WHERE started_at >= '<deploy time>';`),
+  exactly one with `ended_at = ''`, and no `as_run.write_failed` in the playout log.
+- Ended rows match the exit lines: for the last few `playout.process.exit` lines, `aired_seconds` of the
+  row with that `asset_id` whose `ended_at` is within a second of the line's `exitedAt` is
+  `round(ranForMs / 1000)`, within 1 s, and `end_reason` fits `plannedReason` / `naturalBoundary`
+  (`natural-end` for a VOD's EOF, `duration-bound`, `switch` after a Play now).
+- The pool is named for the rotation's own picks only: a fallback bridge or a Play now inside the
+  TwitchYoutube block has `block_id` and an empty `pool_id`, the pool's `scheduled_match` rows have both.
+- A redeploy closes the open row as process gone: after the next repin, the row that was on air has
+  `end_reason = 'process-gone'` and `ended_at` = the new playout's boot (within seconds of the
+  container's start time in `docker inspect`), and the first new start opens the next row.
+- `/live?tab=status` shows *On air, last 24 hours* with the TwitchYoutube pool's items, their times in
+  UTC and Europe/Berlin; `curl -s -b <session> "$CHECK_BASE_URL/api/as-run?from=<ISO>&to=<ISO>"` returns
+  the same rows.
+
+Follow-ups:
+
+- Daily on-air percentage (competitor comparison): the share of each day covered by programme rows
+  against fallback, slate and gaps between rows, computed from this table; a status metric and a soak
+  monitor line.
+- Per-item audience (competitor comparison): join Twitch viewer counts sampled while a row was on air,
+  which needs a viewer-count sample store first.
+- The e2e fixture seeds no as-run rows, so the design baseline shows the panel's empty state only.
+  Seeding rows needs a fixed "now" for the panel first: the read window (the 24 h before `Date.now()`)
+  and an on-air row's "aired M:SS so far" follow the server clock, which `page.clock` does not reach, so
+  rows at fixed instants fall out of the window and an on-air row changes text on every run; rows seeded
+  relative to the bring-up time print different start and end times on every run. With a pinned "now"
+  (a fixture override of `readRecentAsRunLog`'s clock), fixed finished rows (natural end, failed) and an
+  on-air row would put the table under the design gate (review).
+- A run that started before the window still counts against the 200-row page; a window over a crash-loop
+  storm can be truncated (the API says `truncated`), and a "group repeated failures" view would read
+  better than hundreds of three-second rows.
+- Live bridge and slate rows carry no asset; the live input's label is the title. The live input's own
+  identity (which push source) is not recorded.

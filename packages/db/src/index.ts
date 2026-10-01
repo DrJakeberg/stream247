@@ -68,6 +68,9 @@ import {
   type SourceBreakerOutcome,
   type SourceBreakerPlan,
   type SourceBreakerRecord,
+  AS_RUN_RETENTION_DAYS,
+  type AsRunRecord,
+  type AsRunWindow,
   OVERLAY_TICKER_DEFAULT_SECONDS,
   OVERLAY_TICKER_MAX_SECONDS,
   OVERLAY_TICKER_MIN_SECONDS,
@@ -1563,9 +1566,26 @@ function getDatabaseUrl(): string {
 
 function getPool(): Pool {
   if (!globalThis.__stream247Pool) {
-    globalThis.__stream247Pool = new Pool({
+    const pool = new Pool({
       connectionString: getDatabaseUrl()
     });
+    // pg-pool emits "error" when an IDLE client loses its connection (PostgreSQL restarted, a
+    // connection reset). With no listener that is an uncaught exception, and the worker's handler
+    // exits the process -- in the playout container that takes ffmpeg and the broadcast with it. The
+    // pool drops the broken client by itself; the next query opens a new one, so logging is enough.
+    // (M76 on-air review, 2026-10-01.)
+    pool.on("error", (error) => {
+      // eslint-disable-next-line no-console
+      console.error(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          component: "db",
+          event: "db.pool.idle_client_error",
+          error: error instanceof Error ? error.message : String(error)
+        })
+      );
+    });
+    globalThis.__stream247Pool = pool;
   }
 
   return globalThis.__stream247Pool;
@@ -2776,6 +2796,34 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       last_error TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT ''
     );
+
+    -- The as-run log (M76): one row per playout process run, written by the playout alone. ended_at is
+    -- '' while the run is on air; a row a crash or a redeploy left open is closed as 'process-gone'.
+    -- Not part of the application state: nothing reads it with the state and persistState never
+    -- touches it. Rows older than AS_RUN_RETENTION_DAYS go in the write that adds a start.
+    CREATE TABLE IF NOT EXISTS as_run_log (
+      id TEXT PRIMARY KEY,
+      started_at TEXT NOT NULL,
+      ended_at TEXT NOT NULL DEFAULT '',
+      target_kind TEXT NOT NULL DEFAULT '',
+      asset_id TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      source_id TEXT NOT NULL DEFAULT '',
+      pool_id TEXT NOT NULL DEFAULT '',
+      block_id TEXT NOT NULL DEFAULT '',
+      reason_code TEXT NOT NULL DEFAULT '',
+      queue_kind TEXT NOT NULL DEFAULT '',
+      input_kind TEXT NOT NULL DEFAULT '',
+      format_id TEXT NOT NULL DEFAULT '',
+      format_candidate TEXT NOT NULL DEFAULT '',
+      planned_seconds INTEGER NOT NULL DEFAULT 0,
+      aired_seconds INTEGER NOT NULL DEFAULT 0,
+      end_reason TEXT NOT NULL DEFAULT '',
+      exit_code TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS as_run_log_started_at_idx ON as_run_log (started_at DESC);
+    -- Every start closes the open row; without this it scans the whole 90-day table to find it.
+    CREATE INDEX IF NOT EXISTS as_run_log_open_idx ON as_run_log (id) WHERE ended_at = '';
 
     CREATE TABLE IF NOT EXISTS source_sync_runs (
       id TEXT PRIMARY KEY,
@@ -4056,6 +4104,49 @@ if (!schemaMigrations.some((migration) => migration.id === sourceBreakersMigrati
   schemaMigrations.push(sourceBreakersMigration);
 }
 
+/**
+ * The as-run log (M76), for installs that already ran the baseline.
+ *
+ * A new table, so there is no ALTER line to add: this CREATE and its index, word for word the base-schema
+ * ones, are the whole upgrade. The table starts empty; the first playout start after the upgrade writes
+ * its first row.
+ */
+export const asRunLogMigration: MigrationDefinition = {
+  id: "20261001_003_as_run_log",
+  description: "Store one as-run row per playout process run: what aired, how it was fed, why it ended.",
+  apply: async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS as_run_log (
+        id TEXT PRIMARY KEY,
+        started_at TEXT NOT NULL,
+        ended_at TEXT NOT NULL DEFAULT '',
+        target_kind TEXT NOT NULL DEFAULT '',
+        asset_id TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        source_id TEXT NOT NULL DEFAULT '',
+        pool_id TEXT NOT NULL DEFAULT '',
+        block_id TEXT NOT NULL DEFAULT '',
+        reason_code TEXT NOT NULL DEFAULT '',
+        queue_kind TEXT NOT NULL DEFAULT '',
+        input_kind TEXT NOT NULL DEFAULT '',
+        format_id TEXT NOT NULL DEFAULT '',
+        format_candidate TEXT NOT NULL DEFAULT '',
+        planned_seconds INTEGER NOT NULL DEFAULT 0,
+        aired_seconds INTEGER NOT NULL DEFAULT 0,
+        end_reason TEXT NOT NULL DEFAULT '',
+        exit_code TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS as_run_log_started_at_idx ON as_run_log (started_at DESC);
+      -- Every start closes the open row; without this it scans the whole 90-day table to find it.
+      CREATE INDEX IF NOT EXISTS as_run_log_open_idx ON as_run_log (id) WHERE ended_at = '';
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === asRunLogMigration.id)) {
+  schemaMigrations.push(asRunLogMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -4765,6 +4856,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   // `source_breakers` is deliberately not written here (M75): a whole-state write carries the breakers of
   // the snapshot it was read from, and writing them back would reopen a breaker the playout closed (or
   // close one it opened) in between. Only recordSourceBreakerOutcomes and closeSourceBreakerRecord write it.
+  // `as_run_log` (M76) is not part of the state at all: only the playout writes it (recordAsRunStart,
+  // recordAsRunEnd, closeOpenAsRunRecords), and a whole-state write must never wipe the channel's history.
   await client.query("DELETE FROM sources");
   for (const source of next.sources) {
     await client.query(
@@ -9150,6 +9243,183 @@ export async function markChatViewerRequestsPlayed(queuedAssetIds: string[]): Pr
     "UPDATE chat_viewer_requests SET status = 'played' WHERE status = 'queued' AND NOT (asset_id = ANY($1::text[]))",
     [queuedAssetIds]
   );
+}
+
+// The as-run log (M76). Outside the serialized state write on purpose: the rows are no part of the
+// application state, only the playout writes them, and a start must not queue behind a whole-state write
+// for its history line. Each write is one short transaction on its own connection.
+
+type AsRunRow = {
+  id: string;
+  started_at: string;
+  ended_at: string;
+  target_kind: string;
+  asset_id: string;
+  title: string;
+  source_id: string;
+  pool_id: string;
+  block_id: string;
+  reason_code: string;
+  queue_kind: string;
+  input_kind: string;
+  format_id: string;
+  format_candidate: string;
+  planned_seconds: number | null;
+  aired_seconds: number | null;
+  end_reason: string;
+  exit_code: string;
+};
+
+function mapAsRunRow(row: AsRunRow): AsRunRecord {
+  return {
+    id: row.id,
+    startedAt: row.started_at,
+    endedAt: row.ended_at ?? "",
+    targetKind: row.target_kind as AsRunRecord["targetKind"],
+    assetId: row.asset_id ?? "",
+    title: row.title ?? "",
+    sourceId: row.source_id ?? "",
+    poolId: row.pool_id ?? "",
+    blockId: row.block_id ?? "",
+    reasonCode: row.reason_code ?? "",
+    queueKind: row.queue_kind ?? "",
+    inputKind: row.input_kind as AsRunRecord["inputKind"],
+    formatId: row.format_id ?? "",
+    formatCandidate: row.format_candidate ?? "",
+    plannedSeconds: Math.max(0, Math.floor(Number(row.planned_seconds) || 0)),
+    airedSeconds: Math.max(0, Math.floor(Number(row.aired_seconds) || 0)),
+    endReason: (row.end_reason ?? "") as AsRunRecord["endReason"],
+    exitCode: row.exit_code ?? ""
+  };
+}
+
+async function withAsRunTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  await ensureDatabase();
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    // A lock only the log sees (an operator's psql left idle in a transaction on a row) must fail the
+    // write, not hold it: the playout queues these writes and never awaits them, so a hung one would
+    // only grow that queue and hold a pool connection until the process restarts.
+    await client.query("SET LOCAL lock_timeout = '5s'");
+    await client.query("SET LOCAL statement_timeout = '15s'");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await rollbackQuietly(client);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * A run nobody saw end -- the playout container was redeployed or crashed with ffmpeg running -- is
+ * closed as 'process-gone' at the first moment known to be after it: the next playout boot, or the next
+ * start. Its aired seconds are therefore an upper bound. Never before its own start, so the table never
+ * shows two runs on air at once and never a negative run.
+ */
+async function closeOpenAsRunRows(client: PoolClient, endedAtIso: string): Promise<number> {
+  const open = await client.query<{ id: string; started_at: string }>(
+    "SELECT id, started_at FROM as_run_log WHERE ended_at = '' FOR UPDATE"
+  );
+  const endedAtMs = Date.parse(endedAtIso);
+  for (const row of open.rows) {
+    const startedAtMs = Date.parse(row.started_at);
+    const closeAtMs = Number.isFinite(startedAtMs) && startedAtMs > endedAtMs ? startedAtMs : endedAtMs;
+    await client.query(
+      "UPDATE as_run_log SET ended_at = $2, aired_seconds = $3, end_reason = 'process-gone', exit_code = '' WHERE id = $1",
+      [
+        row.id,
+        new Date(closeAtMs).toISOString(),
+        Number.isFinite(startedAtMs) ? Math.max(0, Math.round((closeAtMs - startedAtMs) / 1000)) : 0
+      ]
+    );
+  }
+  return open.rows.length;
+}
+
+/** Closes what a previous playout process left on air; called once when the playout comes up. */
+export async function closeOpenAsRunRecords(endedAtIso: string): Promise<number> {
+  return withAsRunTransaction((client) => closeOpenAsRunRows(client, endedAtIso));
+}
+
+/**
+ * One playout start: closes whatever is still open (a process that outlived its stop deadline, or one the
+ * boot sweep has not reached), inserts the new run, and deletes the runs that started more than
+ * AS_RUN_RETENTION_DAYS before it -- pruned in the write that appends, the cadence audit_events has, so
+ * there is no sweep to schedule and the table cannot outgrow its window while the channel is on air.
+ */
+export async function recordAsRunStart(record: AsRunRecord): Promise<void> {
+  const startedAtMs = Date.parse(record.startedAt);
+  const cutoffIso = new Date(startedAtMs - AS_RUN_RETENTION_DAYS * 86_400_000).toISOString();
+  await withAsRunTransaction(async (client) => {
+    await closeOpenAsRunRows(client, record.startedAt);
+    await client.query(
+      `
+        INSERT INTO as_run_log (
+          id, started_at, ended_at, target_kind, asset_id, title, source_id, pool_id, block_id, reason_code,
+          queue_kind, input_kind, format_id, format_candidate, planned_seconds, aired_seconds, end_reason, exit_code
+        )
+        VALUES ($1, $2, '', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0, '', '')
+      `,
+      [
+        record.id,
+        record.startedAt,
+        record.targetKind,
+        record.assetId,
+        redactSecrets(record.title),
+        record.sourceId,
+        record.poolId,
+        record.blockId,
+        record.reasonCode,
+        record.queueKind,
+        record.inputKind,
+        record.formatId,
+        record.formatCandidate,
+        Math.max(0, Math.round(record.plannedSeconds))
+      ]
+    );
+    await client.query("DELETE FROM as_run_log WHERE started_at < $1", [cutoffIso]);
+  });
+}
+
+/**
+ * The exit of the run `id`. Only an open row is completed: one already closed as process-gone (its
+ * process outlived the stop deadline and the next start closed it) keeps that end, so the late exit
+ * cannot make it overlap the run that followed.
+ */
+export async function recordAsRunEnd(
+  id: string,
+  end: Pick<AsRunRecord, "endedAt" | "airedSeconds" | "endReason" | "exitCode">
+): Promise<boolean> {
+  // Through the same transaction helper as the start, for its lock and statement timeouts.
+  const result = await withAsRunTransaction((client) =>
+    client.query(
+      "UPDATE as_run_log SET ended_at = $2, aired_seconds = $3, end_reason = $4, exit_code = $5 WHERE id = $1 AND ended_at = ''",
+      [id, end.endedAt, Math.max(0, Math.round(end.airedSeconds)), end.endReason, end.exitCode]
+    )
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * The runs that overlap the window, newest first: started at or before its end and ended at or after
+ * its start, or still on air. ISO strings in one format (toISOString) compare as text in time order.
+ */
+export async function listAsRunRecords(window: AsRunWindow): Promise<AsRunRecord[]> {
+  await ensureDatabase();
+  const result = await getPool().query<AsRunRow>(
+    `
+      SELECT * FROM as_run_log
+      WHERE started_at <= $2 AND (ended_at = '' OR ended_at >= $1)
+      ORDER BY started_at DESC, id DESC
+      LIMIT $3
+    `,
+    [window.fromIso, window.toIso, window.limit]
+  );
+  return result.rows.map(mapAsRunRow);
 }
 
 /**

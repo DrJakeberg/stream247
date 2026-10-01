@@ -429,6 +429,26 @@ means every source is in play, exactly as before.
   quarantine is unchanged. A later re-upgrade reads the rows as they were left: a breaker whose cooldown
   ran out in between is half-open and tries one item at the next pick.
 
+### Upgrading Past 2.1.0: As-Run Log (M76)
+
+Like M75, a repin of the three `STREAM247_*_IMAGE` tags with no stack file change. It adds one table,
+`as_run_log`, with its index `as_run_log_started_at_idx` (migration `20261001_003_as_run_log`, additive,
+applied on the first start; the same `CREATE TABLE` and `CREATE INDEX` are in the base schema for a fresh
+install), so back up PostgreSQL before the repin. The table starts empty; the first playout start after
+the upgrade writes the first row.
+
+- **What changes.** Every playout process run leaves one row: what aired, how, and why it ended. The
+  *On air, last 24 hours* panel on `/live?tab=status` and `GET /api/as-run` read it; see
+  `docs/operations.md`, *What was on air at a given time?*. The playout writes it without waiting for the
+  database, so a slow or failing write (logged as `as_run.write_failed`) never delays a switch. Rows are
+  kept 90 days; at a few hundred starts a day that is a few tens of thousands of rows, a few megabytes.
+- **After the repin.** The playout container's restart closes nothing (the table is empty); from the
+  second redeploy on, the run that was on air is closed as `process-gone` at the new playout's boot.
+- **Rollback.** An older image ignores the table and writes no rows; the rows written so far stay. The
+  row that was on air at the rollback stays open (the panel shows it as on air) until a later re-upgrade
+  closes it as `process-gone` at its first boot, with that boot as its end: a `process-gone` end is
+  only an upper bound.
+
 ### Patch vs Minor Upgrades
 
 - Patch upgrades should be the default production path.
@@ -544,6 +564,7 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 - pools are first-class programming units for round-robin playout selection that alternates between a pool's sources, each in a stable date order (see `docs/architecture.md`, *Scheduling*); a source whose probes fail on three different items is held out of the rotation for a cooldown and retried with one item (source circuit breaker, `docs/operations.md`)
 - sources can be edited in place and the asset catalog can be searched by title, source, and status
 - playout supports operator restart, temporary fallback, asset pinning, play now / insert, skip-current, and resume-schedule actions (`docs/operations.md`, *Operator controls*)
+- every playout run is recorded in the as-run log (table `as_run_log`, 90 days), read in `Live → Status` and through `GET /api/as-run` (`docs/operations.md`, *What was on air at a given time?*)
 - overlay is drawn by the playout renderer, with replay labeling, current/next context, and admin-managed branding
 - optional chat, chatter-participation, and Twitch alert overlays render through the same on-air overlay when explicitly enabled
 - email and Discord alert delivery are both implemented

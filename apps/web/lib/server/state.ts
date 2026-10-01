@@ -1,5 +1,7 @@
 import {
   DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
+  resolveAsRunWindow,
+  type AsRunRecord,
   describeSourceBreaker,
   sourceBreakerGate,
   type PoolRotationSourceGate,
@@ -51,6 +53,7 @@ import {
   appendPresenceWindowRecord,
   applyOverlayScenePresetRecordToDraft,
   closeSourceBreakerRecord,
+  listAsRunRecords,
   createPoolRecord,
   createScheduleBlocks,
   createScheduleBlocksChecked,
@@ -198,6 +201,7 @@ export {
   appendPresenceWindowRecord,
   applyOverlayScenePresetRecordToDraft,
   closeSourceBreakerRecord,
+  listAsRunRecords,
   createPoolRecord,
   createScheduleBlocks,
   createScheduleBlocksChecked,
@@ -255,6 +259,24 @@ export {
   upsertUserRecord,
   writeAppState
 };
+
+/**
+ * The as-run log of the last 24 hours for the Live status tab (M76), newest first. `records` is null when
+ * the read failed: the status tab is where an operator goes when something is wrong, and it must render
+ * without its history rather than not at all.
+ */
+export async function readRecentAsRunLog(): Promise<{ records: AsRunRecord[] | null; limit: number; nowMs: number }> {
+  const nowMs = Date.now();
+  const resolved = resolveAsRunWindow({ nowMs });
+  if (!resolved.ok) {
+    return { records: null, limit: 0, nowMs };
+  }
+  try {
+    return { records: await listAsRunRecords(resolved.window), limit: resolved.window.limit, nowMs };
+  } catch {
+    return { records: null, limit: resolved.window.limit, nowMs };
+  }
+}
 
 export function getWorkspaceTimeZone(state: Pick<AppState, "managedConfig">): string {
   // Env first, then the wizard-written managed value, then UTC — the resolver owns the order.
