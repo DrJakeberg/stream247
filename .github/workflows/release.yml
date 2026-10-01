@@ -11,7 +11,8 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
-      contents: read
+      # write: the last step creates the GitHub release for the tag.
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v6
@@ -141,3 +142,26 @@ jobs:
             fi
             docker image push "$tag"
           done <<< "$TARGET_TAGS"
+      # Last on purpose: a release appears only for a tag whose images were smoke-tested and pushed.
+      # Until 2026-10-01 this workflow published images only, and the Releases page stopped at
+      # v1.5.17 while forty tags followed. The notes are the tag's CHANGELOG.md section; a tag
+      # without one fails here instead of publishing an empty release. Re-running the workflow
+      # updates the existing release.
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          node scripts/release-notes.mjs "$version" > release-notes.md
+          if [[ "$version" == *-* ]]; then
+            kind=(--prerelease --latest=false)
+          else
+            kind=(--prerelease=false --latest)
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "Stream247 $version" --notes-file release-notes.md "${kind[@]}"
+          else
+            gh release create "$TAG" --verify-tag --title "Stream247 $version" --notes-file release-notes.md "${kind[@]}"
+          fi

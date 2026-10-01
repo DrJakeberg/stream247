@@ -434,6 +434,7 @@ Notes:
 - `./scripts/upgrade-rehearsal.sh` now uses the published `v*` images when they already exist, and otherwise falls back to the CI-published `main-<sha>` snapshot for the current commit before the release tag is created
 - the rehearsal and soak scripts are release gates now: both expect a broadcast-ready channel, not just a merely reachable stack
 - local `pnpm release:preflight` runs a full `pnpm validate`; CI and release workflows only set `RELEASE_PREFLIGHT_SKIP_VALIDATE=1` after the outer job has already completed `pnpm validate`
+- pushing a `v*` tag publishes the three images and then creates the GitHub release for that tag from its `CHANGELOG.md` section (`scripts/release-notes.mjs`); a tag with a suffix such as `-rc.1` becomes a pre-release, and a tag without a `CHANGELOG.md` section fails the last step instead of publishing an empty release
 
 ## Feature Overview
 
