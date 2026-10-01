@@ -327,8 +327,14 @@ also Pin, Fallback, Resume, Force reconnect and Recover outputs, set `restartReq
 reconnect standby slate follows that flag only in direct RTMP mode, because under the relay the uplink
 owns the destination connection (`shouldShowReconnectSlate` in `apps/worker/src/playout-boundary.ts`).
 Under the relay Pin, Fallback and Resume change the item through the ordinary switch at the next cycle,
-and an item already on air keeps running (`runningAssetTargetMatches`). What each control does is
-listed in `docs/operations.md`, *Operator controls*.
+and an item already on air keeps running (`runningAssetTargetMatches`). Operator actions end what they
+replace (M78): a Skip of the item a Pin or Fallback holds on air clears the override in the same write,
+and the override arm leaves out an item under a skip hold; which override holds the air is one rule
+(`resolveOperatorOverrideHold` in `packages/core/src/operator-precedence.ts`; none under a Live Bridge,
+whose arm comes first) that the override arm, the admin and the worker's chat all call. In the chat a
+skip vote neither starts nor counts while an override holds, and a vote that passed is applied only to
+the item still on air and not already held out (`decidePassedSkipVote`). A live selection ends an
+operator insert like any other selection (`decideInsertAfterSelection` in `playout-boundary.ts`). What each control does is listed in `docs/operations.md`, *Operator controls*.
 
 ## Multi-Output Delivery
 

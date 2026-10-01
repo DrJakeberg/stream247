@@ -176,7 +176,7 @@ export function PlayoutActionForm(props: {
           </select>
         </label>
         <label>
-          <span className="label label-with-info">Override minutes<InfoTip text="Used by Pin on air and Skip current: a pinned asset keeps the slot for this many minutes before the schedule takes back over, and a skipped asset stays out of the queue for the same span while the schedule carries on. Kept between 5 and 240 minutes." /></span>
+          <span className="label label-with-info">Override minutes<InfoTip text="Used by Pin on air and Skip current: a pinned asset keeps the slot for this many minutes before the schedule takes back over, and a skipped asset stays out of the queue for the same span while the schedule carries on. Skipping the pinned asset ends the pin. Kept between 5 and 240 minutes." /></span>
           <input min="5" name="minutes" onChange={(event) => setMinutes(event.target.value)} step="5" type="number" value={minutes} />
         </label>
       </div>

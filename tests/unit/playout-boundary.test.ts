@@ -3,6 +3,7 @@ import {
   ITEM_ENDING_STOP_REASONS,
   decideBoundaryPlaybackInput,
   decideCycleEndInsert,
+  decideInsertAfterSelection,
   decidePreviousAssetId,
   isBroadcastCoverageDown,
   isImmediateInputOpenFailure,
@@ -355,6 +356,32 @@ describe("clearing an operator insert when its process exits (M74)", () => {
     expect(shouldClearInsertOnExit({ ...active, currentAssetId: "asset_archive", plannedReason: "duration-bound" })).toBe(false);
     expect(shouldClearInsertOnExit({ ...active, currentAssetId: "asset_archive", plannedReason: "" })).toBe(false);
   });
+});
+
+describe("the operator insert after the selection (M74, Live Bridge since M78)", () => {
+  it.each([
+    // insertStatus, selectionReasonCode, live, available -> clear, dropReason
+    ["", "scheduled_match", false, true, false, ""], // no insert
+    ["pending", "operator_insert", false, true, false, ""], // the selection is the insert
+    ["active", "operator_insert", false, true, false, ""],
+    ["pending", "operator_override", false, true, true, "preempted"], // a Pin or Fallback comes first
+    ["pending", "scheduled_match", false, false, true, "unavailable"], // not ready, or skip-held
+    ["active", "operator_override", false, true, true, ""], // it aired: ended, not dropped
+    ["active", "scheduled_match", false, false, true, ""], // a Skip of the insert on air
+    // M78: the takeover ends the insert. Before, the insert on air started again from 0 after the
+    // release, and a pending Play now aired whenever the bridge was released.
+    ["pending", "live_bridge", true, true, true, "live-bridge"],
+    ["pending", "live_bridge", true, false, true, "live-bridge"],
+    ["active", "live_bridge", true, true, true, ""]
+  ] as const)(
+    "insertStatus=%j selection=%s live=%s available=%s -> clear=%s dropReason=%j",
+    (insertStatus, selectionReasonCode, selectionIsLive, insertAvailable, clear, dropReason) => {
+      expect(decideInsertAfterSelection({ insertStatus, selectionReasonCode, selectionIsLive, insertAvailable })).toEqual({
+        clear,
+        dropReason
+      });
+    }
+  );
 });
 
 describe("the asset Replay previous offers (M74)", () => {

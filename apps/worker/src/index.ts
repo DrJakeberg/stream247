@@ -58,8 +58,13 @@ import {
   createDefaultChatInteractionConfig,
   formatChatGameInfoReply,
   formatChatGameNoRoomReply,
+  decidePassedSkipVote,
+  formatChatSkipPausedReply,
+  resolveOperatorOverrideHold,
   type ChatGameCommand,
   type ChatInteractionConfig,
+  type OperatorOverrideHold,
+  type PassedSkipVoteDecision,
   TWITCH_METADATA_WAITING_MESSAGE,
   isBroadcastChannelSplit,
   resolveBroadcastChannelLogin,
@@ -325,6 +330,7 @@ import {
 import {
   decideBoundaryPlaybackInput,
   decideCycleEndInsert,
+  decideInsertAfterSelection,
   decidePreviousAssetId,
   isBroadcastCoverageDown,
   isImmediateInputOpenFailure,
@@ -538,11 +544,18 @@ const twitchChatBridge = new TwitchChatBridge({
       actor: message.actor,
       message: message.message,
       currentAssetId: latestPlayoutAssetId,
-      config: latestChatInteractionConfig
+      config: latestChatInteractionConfig,
+      operatorHold: latestOperatorHold
     });
 
     if (effect.kind === "skip-passed" || effect.kind === "request") {
       pendingChatEffects.push(effect);
+    }
+
+    // The room is told once why its !skip did nothing (M78); a silent refusal is what makes a room
+    // type the command again.
+    if (effect.kind === "skip-paused" && effect.announce) {
+      twitchChatBridge.say(formatChatSkipPausedReply(effect.hold));
     }
 
     // Every accepted skip vote goes on air within a second (see CHAT_SKIP_FLUSH_DELAY_MS). The
@@ -593,6 +606,8 @@ const twitchChatBridge = new TwitchChatBridge({
 });
 // Latest values the IRC handler needs but cannot fetch itself, refreshed by the worker cycle.
 let latestPlayoutAssetId = "";
+// The Pin or Fallback holding the air (M78): while one does, a viewer skip vote neither starts nor counts.
+let latestOperatorHold: OperatorOverrideHold = "";
 let latestChatInteractionConfig = createDefaultChatInteractionConfig();
 // Latest engagement settings, cached by the worker cycle for the chat-overlay flush. Null until
 // the first cycle: flushing before settings are known could only write a wrong gate.
@@ -5239,7 +5254,6 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     liveBridgeLabel: "",
     ...overrides
   });
-  const manualOverrideActive = isTimestampActive(state.playout.overrideUntil);
   const skippedAssetId = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
   const liveBridgeActive =
     state.playout.liveBridgeInputUrl !== "" &&
@@ -5284,11 +5298,13 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   // ahead of the insert branch below -- also the item a Skip had just held out. Under the relay that is
   // how a Play now on the DUT (2026-10-01, v2.1.0-rc.1) stopped the archive, showed the slate and dropped
   // the insert unlogged (M74). Restart and Hard reload still restart the running item: the scheduled
-  // branches below keep picking it.
-  const desiredAsset =
-    manualOverrideActive && state.playout.overrideAssetId !== ""
-      ? state.assets.find((asset) => asset.id === state.playout.overrideAssetId && asset.status === "ready")
-      : null;
+  // branches below keep picking it. Not an item under a skip hold either (M78): the arm comes before
+  // every other arm, so a Skip during a pin started the pinned item again from 0. Skip ends the override
+  // in the same write since M78; this keeps a stale override from restarting the item it raced with.
+  // The rule is core resolveOperatorOverrideHold, which the admin and the chat skip vote apply too, so
+  // what they call "a Pin holds the air" is what this arm selects.
+  const overrideHold = resolveOperatorOverrideHold({ ...state.playout, assets: state.assets, nowMs: Date.now() });
+  const desiredAsset = overrideHold !== "" ? state.assets.find((asset) => asset.id === state.playout.overrideAssetId) : null;
 
   if (desiredAsset) {
     return createSelection({
@@ -6824,18 +6840,23 @@ async function runPlayoutCycle(): Promise<void> {
   }
   let selection: SelectionResult = choosePlaybackCandidate(state);
 
-  if (state.playout.insertStatus !== "" && selection.reasonCode !== "operator_insert" && selection.queueKind !== "live") {
-    if (state.playout.insertStatus === "pending") {
-      const skippedAssetId = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
-      const insertAvailable = state.assets.some(
-        (asset) => asset.id === state.playout.insertAssetId && asset.status === "ready" && asset.id !== skippedAssetId
-      );
-      await recordDroppedInsert({
-        state,
-        // "preempted": a Pin or Fallback (the override branch) comes before the insert branch.
-        reason: insertAvailable ? "preempted" : "unavailable",
-        selectionReasonCode: selection.reasonCode
-      });
+  const skippedAtSelection = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
+  const insertAfterSelection = decideInsertAfterSelection({
+    insertStatus: state.playout.insertStatus,
+    selectionReasonCode: selection.reasonCode,
+    // A Live Bridge takeover ends the insert too (M78): left in place, the insert on air at the takeover
+    // started again from 0 after the release, and a pending one aired whenever the bridge was released.
+    selectionIsLive: selection.queueKind === "live",
+    insertAvailable: state.assets.some(
+      (asset) => asset.id === state.playout.insertAssetId && asset.status === "ready" && asset.id !== skippedAtSelection
+    )
+  });
+  if (insertAfterSelection.clear) {
+    if (insertAfterSelection.dropReason !== "") {
+      await recordDroppedInsert({ state, reason: insertAfterSelection.dropReason, selectionReasonCode: selection.reasonCode });
+    } else if (selection.queueKind === "live") {
+      // It aired, so it is not a drop; the takeover that cut it is worth a line all the same.
+      logRuntimeEvent("playout.insert.ended", { assetId: state.playout.insertAssetId, reason: "live-bridge" });
     }
     // Only the insert this cycle read: a Play now the admin wrote since then is the next cycle's to judge.
     const clearedInsertAssetId = state.playout.insertAssetId;
@@ -9222,21 +9243,51 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
   for (const effect of effects) {
     if (effect.kind === "skip-passed") {
       const now = new Date().toISOString();
+      // `as`: assigned inside the updater, which TypeScript's narrowing does not follow.
+      let decision = { kind: "stale" } as PassedSkipVoteDecision;
+      let onAirAtApply = "";
+      // What the operator skip does (lib/server/broadcast.ts) when no override holds the air: hold the
+      // asset out of selection for a while and restart playout, rather than inventing a second skip path
+      // that could drift from it. While a Pin or Fallback holds the air it does nothing (M78): the
+      // operator's Skip ends the override, a viewer vote must not. The IRC handler stops counting votes
+      // once the cycle has seen the override; this catches a vote that passed before that, judged on the
+      // row as it is now. The same judgement (decidePassedSkipVote) drops a vote for an item that has left
+      // the air or that a Skip already holds out: applied, such a vote took the skip hold off the item an
+      // operator's Skip had just ended a pin of, and the restart flag started that item again from 0.
+      await updatePlayoutRuntime((playout, current) => {
+        onAirAtApply = playout.currentAssetId;
+        decision = decidePassedSkipVote({ ...playout, votedAssetId: effect.assetId, assets: current.assets, nowMs: Date.now() });
+        return decision.kind !== "apply"
+          ? playout
+          : {
+              ...playout,
+              status: "recovering",
+              restartRequestedAt: now,
+              heartbeatAt: now,
+              skipAssetId: effect.assetId,
+              skipUntil: new Date(Date.now() + CHAT_SKIP_HOLD_MINUTES * 60_000).toISOString(),
+              message: "Skipped by chat vote."
+            };
+      });
+      chatControl.clearSkipVote();
+      if (decision.kind === "paused") {
+        const heldBy = decision.hold;
+        logRuntimeEvent("chat.skip.paused", { assetId: effect.assetId, hold: heldBy });
+        await appendAuditEvent(
+          "chat.skip.refused",
+          `Chat voted to skip the current item while the operator's ${heldBy === "fallback" ? "Fallback" : "Pin"} held the air; the item stays on air.`
+        );
+        if (chatControl.claimSkipPausedReply()) {
+          twitchChatBridge.say(formatChatSkipPausedReply(heldBy));
+        }
+        continue;
+      }
+      if (decision.kind === "stale") {
+        logRuntimeEvent("chat.skip.stale", { assetId: effect.assetId, currentAssetId: onAirAtApply });
+        continue;
+      }
       logRuntimeEvent("chat.skip.applied", { assetId: effect.assetId });
       await appendAuditEvent("chat.skip", "Chat voted to skip the current item.");
-      // Exactly what the operator skip does (lib/server/broadcast.ts): hold the asset out of
-      // selection for a while and restart playout, rather than inventing a second skip path that
-      // could drift from it.
-      await updatePlayoutRuntime((playout) => ({
-        ...playout,
-        status: "recovering",
-        restartRequestedAt: now,
-        heartbeatAt: now,
-        skipAssetId: effect.assetId,
-        skipUntil: new Date(Date.now() + CHAT_SKIP_HOLD_MINUTES * 60_000).toISOString(),
-        message: "Skipped by chat vote."
-      }));
-      chatControl.clearSkipVote();
       continue;
     }
 
@@ -9314,6 +9365,13 @@ async function reconcileChatInteraction(): Promise<void> {
   // !skip would leave the previous item's progress on air for up to a full window.
   const skipSnapshot = chatControl.getSkipVoteRecord(config);
   if (skipSnapshot && currentAssetId && skipSnapshot.assetId !== currentAssetId) {
+    chatControl.clearSkipVote();
+  }
+
+  // While the operator's Pin or Fallback holds the air no skip vote starts or counts (M78). A campaign
+  // collected before it ends here: its bar on air could no longer pass.
+  latestOperatorHold = resolveOperatorOverrideHold({ ...state.playout, assets: state.assets, nowMs: Date.now() });
+  if (latestOperatorHold !== "") {
     chatControl.clearSkipVote();
   }
 

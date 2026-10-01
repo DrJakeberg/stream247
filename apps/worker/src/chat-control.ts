@@ -18,6 +18,7 @@ import {
   parseChatCommand,
   type ChatCommand,
   type ChatInteractionConfig,
+  type OperatorOverrideHold,
   type OverlayEngagementView,
   type SkipVoteState,
   type VoteOutcome,
@@ -30,7 +31,14 @@ export type ChatControlEffect =
   | { kind: "vote-recorded"; option: number }
   | { kind: "skip-recorded"; votes: number; votesNeeded: number }
   | { kind: "skip-passed"; assetId: string }
+  // A skip vote while the operator's Pin or Fallback holds the air (M78): not counted. `announce` is true
+  // when the bot should say why -- at most once per SKIP_PAUSED_REPLY_COOLDOWN_MS.
+  | { kind: "skip-paused"; hold: Exclude<OperatorOverrideHold, "">; announce: boolean }
   | { kind: "request"; actor: string; query: string };
+
+// A room that wants an item gone types the command together, for as long as the 120 s skip window it
+// expects. One answer a minute reaches the viewers who arrive later without repeating it for every vote.
+export const SKIP_PAUSED_REPLY_COOLDOWN_MS = 60_000;
 
 export type ChatControlOptions = {
   now?: () => Date;
@@ -51,6 +59,7 @@ export class ChatControlRuntime {
   private skipState: SkipVoteState | null = null;
   private lastOutcome: VoteOutcome | null = null;
   private dirty = false;
+  private lastSkipPausedReplyAtMs = Number.NEGATIVE_INFINITY;
 
   constructor(options: ChatControlOptions = {}) {
     this.options = options;
@@ -80,6 +89,8 @@ export class ChatControlRuntime {
     message: string;
     currentAssetId: string;
     config: ChatInteractionConfig;
+    /** The Pin or Fallback that holds the air, as the worker cycle last read it (M78). */
+    operatorHold?: OperatorOverrideHold;
   }): ChatControlEffect {
     try {
       const now = this.now();
@@ -104,6 +115,13 @@ export class ChatControlRuntime {
       }
 
       if (command.kind === "skip") {
+        // Viewers never override the operator (M78): while a Pin or Fallback holds the air no campaign
+        // starts and no vote counts. Before, a passed vote ran the operator's Skip, which started the
+        // pinned item again from 0, and the room could repeat that for as long as the pin ran.
+        if (args.operatorHold) {
+          return { kind: "skip-paused", hold: args.operatorHold, announce: this.claimSkipPausedReply() };
+        }
+
         const result = applySkipVote({
           state: this.skipState,
           actor,
@@ -180,6 +198,19 @@ export class ChatControlRuntime {
       voterCount: outcome.voterCount
     });
     return outcome;
+  }
+
+  /**
+   * True at most once per SKIP_PAUSED_REPLY_COOLDOWN_MS: whether the bot should say now that skip votes
+   * are paused. Shared by the refused vote and by a passed vote the worker refuses at its next cycle.
+   */
+  claimSkipPausedReply(): boolean {
+    const nowMs = this.now().getTime();
+    if (nowMs - this.lastSkipPausedReplyAtMs < SKIP_PAUSED_REPLY_COOLDOWN_MS) {
+      return false;
+    }
+    this.lastSkipPausedReplyAtMs = nowMs;
+    return true;
   }
 
   clearSkipVote(): void {

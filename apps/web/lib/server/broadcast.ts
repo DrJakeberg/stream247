@@ -3,7 +3,9 @@ import {
   isTwitchVodPlaybackAsset,
   isValidLiveBridgeInputUrl,
   normalizeLiveBridgeInputType,
-  resolveVodCacheTuning
+  resolveOperatorOverrideHold,
+  resolveVodCacheTuning,
+  type OperatorOverrideHold
 } from "@stream247/core";
 import { appendAuditEvent, readAppState, updateDestinationRecord, updatePlayoutRuntime } from "@/lib/server/state";
 
@@ -35,9 +37,14 @@ function isRelayEnabled(): boolean {
   return process.env.STREAM247_RELAY_ENABLED === "1";
 }
 
-// The worker's own test for a Pin, a Fallback or a skip hold that is still running (isTimestampActive).
+// The worker's own test for a skip hold that is still running (isTimestampActive).
 function isActiveUntil(value: string): boolean {
   return value !== "" && new Date(value).getTime() > Date.now();
+}
+
+// The Pin or Fallback that holds the air, by the rule of the worker's override arm (M78).
+function operatorOverrideHold(state: Awaited<ReturnType<typeof readAppState>>): OperatorOverrideHold {
+  return resolveOperatorOverrideHold({ ...state.playout, assets: state.assets, nowMs: Date.now() });
 }
 
 function assetTitle(assets: { id: string; title: string }[], assetId: string): string {
@@ -239,6 +246,8 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       overrideMode: "fallback",
       overrideAssetId: fallback.id,
       overrideUntil: new Date(Date.now() + 60 * 60_000).toISOString(),
+      // The override arm leaves out an item under a skip hold (M78), so the operator's newer word lifts it.
+      ...(playout.skipAssetId === fallback.id ? { skipAssetId: "", skipUntil: "" } : {}),
       manualNextAssetId: "",
       manualNextRequestedAt: "",
       pendingAction: "",
@@ -295,15 +304,20 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
     if (asset.id === state.playout.currentAssetId) {
       throw new Error("The selected asset is already on air.");
     }
-    // The worker's selection order: a running Pin or Fallback comes before the insert, and a skip hold
-    // keeps an item out of every arm. Accepted, the insert was dropped at the next cycle ("preempted",
-    // "unavailable") after the operator had been told it was coming.
-    if (
-      isActiveUntil(state.playout.overrideUntil) &&
-      state.assets.some((entry) => entry.id === state.playout.overrideAssetId && entry.status === "ready")
-    ) {
+    // The worker's selection order: a Live Bridge first, then a running Pin or Fallback, then the insert,
+    // and a skip hold keeps an item out of every arm. Accepted, the insert was dropped at the next cycle
+    // ("preempted", "unavailable") after the operator had been told it was coming. A Live Bridge takeover
+    // ends an insert (M78): the worker would drop this one as "live-bridge", not play it after the release
+    // hours later. The bridge is asked before the Pin: a Pin left running under the bridge is not what
+    // keeps the insert off air, and naming it sent the operator to Resume schedule only to be refused
+    // again for the bridge.
+    if (state.playout.liveBridgeStatus === "pending" || state.playout.liveBridgeStatus === "active") {
+      throw new Error(`Live Bridge is on air, and it ends an insert. Release Live Bridge first, then play ${asset.title}.`);
+    }
+    const overrideHold = operatorOverrideHold(state);
+    if (overrideHold !== "") {
       throw new Error(
-        `${state.playout.overrideMode === "fallback" ? "A Fallback" : "A Pin"} is holding the air, and it comes before an insert. Resume schedule first, then play ${asset.title}.`
+        `${overrideHold === "fallback" ? "A Fallback" : "A Pin"} is holding the air, and it comes before an insert. Resume schedule first, then play ${asset.title}.`
       );
     }
     if (isActiveUntil(state.playout.skipUntil) && state.playout.skipAssetId === asset.id) {
@@ -424,19 +438,52 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       throw new Error("No current asset is running, so there is nothing to skip.");
     }
 
-    await updatePlayoutRuntime((playout) => ({
-      ...playout,
-      status: "recovering",
-      restartRequestedAt: now,
-      heartbeatAt: now,
-      skipAssetId: currentAsset.id,
-      skipUntil: addMinutes(minutes),
-      pendingAction: "",
-      pendingActionRequestedAt: "",
-      message: `Skipped ${currentAsset.title} for ${minutes} minutes.`
-    }));
-    await appendAuditEvent("playout.skip.current", `Skipped ${currentAsset.title} for ${minutes} minutes.`);
-    return { ok: true, message: "Current asset skipped." };
+    // A Skip of the item a Pin or Fallback holds on air ends that override (M78, owner decision
+    // 2026-10-01). The override arm comes before every other arm and ignored the skip hold, so the pinned
+    // item started again from 0 -- under the relay at once, without it after the slate -- and only Resume
+    // took it off air; a passed chat skip vote did the same. Only the override of the item on air: a Pin
+    // the playout has not switched to yet is not what the operator skipped. The schedule then continues
+    // as after any Skip (the pool's next pick; a pin does not move the pool's position), with the restart
+    // flag and, without the relay, the slate of M74. The chat skip vote mirrors this write but is refused
+    // while an override holds (worker drainChatEffects): viewers never end the operator's override.
+    const hold = operatorOverrideHold(state);
+    const endsOverride = hold !== "" && state.playout.overrideAssetId === currentAsset.id;
+    // What the write ended, set inside it: the row it writes can be newer than the row read above, and a
+    // Pin of another item written in between stands, so the message, the toast and the audit row are
+    // taken from the write, not from the read. `as`: TypeScript's narrowing does not follow the updater.
+    let endedOverride = "" as "" | "Pin" | "Fallback";
+
+    await updatePlayoutRuntime((playout) => {
+      endedOverride =
+        endsOverride && playout.overrideAssetId === currentAsset.id ? (playout.overrideMode === "fallback" ? "Fallback" : "Pin") : "";
+      return {
+        ...playout,
+        status: "recovering",
+        restartRequestedAt: now,
+        heartbeatAt: now,
+        ...(endedOverride !== ""
+          ? { desiredAssetId: "", overrideMode: "schedule" as const, overrideAssetId: "", overrideUntil: "" }
+          : {}),
+        skipAssetId: currentAsset.id,
+        skipUntil: addMinutes(minutes),
+        pendingAction: "",
+        pendingActionRequestedAt: "",
+        message:
+          endedOverride !== ""
+            ? `Skipped ${currentAsset.title} for ${minutes} minutes and ended the ${endedOverride}.`
+            : `Skipped ${currentAsset.title} for ${minutes} minutes.`
+      };
+    });
+    await appendAuditEvent(
+      "playout.skip.current",
+      endedOverride !== ""
+        ? `Skipped ${currentAsset.title} for ${minutes} minutes; the ${endedOverride} was ended by Skip.`
+        : `Skipped ${currentAsset.title} for ${minutes} minutes.`
+    );
+    return {
+      ok: true,
+      message: endedOverride !== "" ? `Current asset skipped and the ${endedOverride} ended.` : "Current asset skipped."
+    };
   }
 
   const assetId = String(action.type === "override" ? action.assetId : "");
@@ -456,6 +503,8 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
     overrideMode: "asset",
     overrideAssetId: asset.id,
     overrideUntil: addMinutes(minutes),
+    // As for Fallback: a Pin of an item a Skip holds out lifts the hold, or the pin would never take the air.
+    ...(playout.skipAssetId === asset.id ? { skipAssetId: "", skipUntil: "" } : {}),
     manualNextAssetId: "",
     manualNextRequestedAt: "",
     pendingAction: "",

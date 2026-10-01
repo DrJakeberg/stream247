@@ -31,7 +31,8 @@
 - switch to fallback
 - pin asset on air
 - skip current asset (the pool carries on after the skipped item; in a pool with several sources the
-  next source's next item plays, as it would have at the item's end)
+  next source's next item plays, as it would have at the item's end; skipping a pinned item ends the
+  pin, and the pool carries on from its own position, which a pin does not move)
 - play an item now, or as an insert, without taking the channel off air
 - resume schedule control
 - acknowledge and resolve incidents
@@ -56,14 +57,16 @@ the pool's next item. Under the relay no operator action shows that slate.
   it (resuming is M77, deferred). Play now does not move a pool's position either, so a pool item played
   by hand can still come round as the pool's next item. Both take a queued Move next out.
 - Play now and Play insert are refused for the item already on air (with the relay, Restart plays it
-  again from its beginning), while a Pin or Fallback holds the air (it comes before an insert; Resume
-  first), for an item held out by a Skip or Remove next (Resume clears the hold), and for a Twitch
+  again from its beginning), while a Live Bridge is pending or on air (the takeover ends an insert;
+  release it first, also when a Pin is still running under it), while a Pin or Fallback holds the air
+  (it comes before an insert; Resume first), for an item held out by a Skip or Remove next (Resume clears the hold), and for a Twitch
   archive that is not downloaded yet while *While a replay is still downloading, play it from Twitch*
   (Settings → Operations → Replay cache) is off: the playout never waits for a download, so it could
   not start it. An archive too large to cache streams from Twitch and is accepted.
 - An insert that is cleared before it aired is logged as the runtime event `playout.insert.dropped`
   and an audit row of the same name, with a `reason`: `preempted` (a Pin or Fallback is running),
-  `unavailable` (the item is no longer ready or is skip-held), `prepare-failed` (it could not be
+  `live-bridge` (a Live Bridge took the air), `unavailable` (the item is no longer ready or is
+  skip-held), `prepare-failed` (it could not be
   resolved; the item on air stays on air, the error is in the entry), `start-failed`,
   `destination-missing`. The admin adds an audit row (no runtime event) when the operator drops a
   pending insert: `replaced` by a newer Play now, `cancelled` by Resume schedule.
@@ -78,16 +81,40 @@ the pool's next item. Under the relay no operator action shows that slate.
   the override minutes (fallback: an hour): with the relay the next cycle switches to it, and pinning
   the item on air keeps it running; without the relay the slate comes first. When the pin ends — its
   minutes run out, or Resume with the relay — a pinned item from the running pool's sources plays on to
-  its end as the pool's item, and any other item gives way to the pool's next item.
+  its end as the pool's item, and any other item gives way to the pool's next item. Skip current ends
+  the pin (below). Pinning an item that a Skip holds out lifts that hold; the pin would not take the air
+  otherwise.
 - **Resume schedule** clears a Pin or Fallback, a pending or running Play now / insert, a queued Move
   next and a skip hold, and is enabled while a Pin, a Fallback or an insert is in effect. With the relay
   the next cycle hands back to the pool: a running insert gives way to the pool's next item (if that is
   the insert's item itself, it plays on and counts as the pool's item), a pinned pool item plays on.
   Without the relay the slate comes first, then the pool's next item.
 - **Skip current** holds the item on air out for the override minutes and moves on to the pool's next
-  item (or a queued Move next): with the relay at once, without it after the slate. Skip does not end a
-  running Pin or Fallback: the pinned item starts again from its beginning (also after a passed chat
-  skip vote), so Resume first.
+  item (or a queued Move next): with the relay at once, without it after the slate. When a Pin or
+  Fallback holds that item on air, Skip also ends the override (since M78; before, the pinned item
+  started again from its beginning and only Resume took it off air). The schedule then continues as
+  after any Skip: the pool goes on from its position, which a pin does not move, so after a pin of the
+  pool's running item that is the item after it, otherwise the pool's next item. The audit row
+  `playout.skip.current` says "the Pin was ended by Skip" (or the Fallback). A Pin set but not yet on
+  air is left alone: Skip skips the item before it, and the pin then takes the air.
+- **Live Bridge** takes the air at the next cycle once it is requested, ahead of every other control.
+  The takeover ends an operator insert (since M78): one on air is cut and not resumed after the
+  release (runtime event `playout.insert.ended`, `reason: live-bridge`), a pending one is dropped
+  (`playout.insert.dropped`, `live-bridge`, with its audit row). Before, the insert on air started
+  again from its beginning after the release, and a pending Play now aired whenever the bridge was
+  released. On release the schedule continues with the pool's next item; a Pin, Fallback or Move next
+  still in effect applies as usual. The planned reconnect of direct mode still restarts a running
+  insert from its beginning (unchanged; see Soft restart below).
+- **Chat skip votes** (`!skip`, Studio → Engagement, *Viewer control*) apply the same Skip, without
+  the override part: while a Pin or Fallback holds the air no skip vote starts or counts (since M78), a
+  vote that passed just before the override was seen is not applied (runtime event `chat.skip.paused`,
+  audit row `chat.skip.refused`), and the bot answers in chat at most once a minute, for example "The
+  operator has pinned this item — skip votes are paused until the pin ends." Votes count again once the
+  override ends. A passed vote is also not applied when its item has left the air by the time the
+  worker applies it (up to one worker cycle later), or when a Skip already holds that item out (runtime
+  event `chat.skip.stale`; nothing is written, so an operator's Skip in between stands). Under a Live
+  Bridge nothing is on air to skip: votes do nothing and the bot stays silent, also with a Pin still
+  running underneath. The next-item poll (`!1`, `!2`, ...) and viewer requests are not paused.
 - **Soft restart** and **Hard reload** restart the encoder. With the relay the item on air (or the
   running pin or insert) starts again from its beginning — there is no resume. Without the relay the
   slate shows and the playout then chooses as described above: the running Pin or insert from its

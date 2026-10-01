@@ -95,7 +95,8 @@ are not retroactively revoked.
     pool's next item)
   - temporary fallback override
   - pin asset on air
-  - skip current asset
+  - skip current asset, which also ends a pin or temporary fallback holding it on air; chat skip votes
+    are paused while one does (the bot says why)
   - resume schedule control, which also cancels a pending or running play now / insert
   - force reconnect and recover outputs for direct RTMP mode; with the relay force reconnect is
     refused (the uplink reconnects by itself) and recover outputs leaves the programme alone (the
@@ -317,6 +318,8 @@ Stream247 now supports a `Live Bridge` takeover path for temporary live input.
 - operators can start a live bridge from RTMP/RTMPS or HLS URLs in the broadcast workspace
 - the worker keeps the scheduled queue visible while the live input is on air
 - releasing the bridge returns the output to scheduled playback on the next safe transition
+- the takeover ends an operator play now / insert: one on air is not replayed after the release, a
+  pending one is dropped and logged, and play now is refused while the bridge is up
 - the existing Multi-Output RTMP fanout and destination health routing remain active during the bridge
 - live snapshots expose only a sanitized input summary instead of the raw bridge URL
 

@@ -449,6 +449,25 @@ the upgrade writes the first row.
   closes it as `process-gone` at its first boot, with that boot as its end: a `process-gone` end is
   only an upper bound.
 
+### Upgrading Past 2.1.0: Operator Precedence (M78)
+
+Behaviour only: no table, no migration, no stack file change. Operator actions end what they replace,
+and viewers never override the operator:
+
+- **Skip during a Pin or Fallback** ends the override (the audit row says so) and the schedule
+  continues; before, the pinned item started again from its beginning. Pinning an item a Skip holds out
+  lifts that hold.
+- **A Live Bridge takeover** ends an operator insert: one on air is not replayed after the release, a
+  pending one is dropped (`playout.insert.dropped`, `live-bridge`). Play now is refused while the bridge
+  is pending or on air.
+- **Chat skip votes** neither start nor count while a Pin or Fallback holds the air; the bot says why,
+  at most once a minute. A vote that passed is dropped when its item has left the air before the worker
+  applies it, or a Skip already holds it out (`chat.skip.stale`); before, it overwrote the skip hold and
+  restarted whatever was on air.
+- **Rollback.** An older image restores the old behaviour; nothing is stored that it would misread.
+
+See `docs/operations.md`, *Operator controls*.
+
 ### Patch vs Minor Upgrades
 
 - Patch upgrades should be the default production path.

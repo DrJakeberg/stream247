@@ -33,8 +33,11 @@ describe("selection without the restart-plus-desired-asset branch", () => {
     // The DUT 2026-10-01: this arm re-picked the running archive for a Play now and every other action
     // that set the restart flag, ahead of the insert branch.
     expect(choose).not.toContain("state.playout.desiredAssetId");
+    // M78: the arm applies core resolveOperatorOverrideHold (a running override, its item ready, not
+    // under a skip hold -- tested in operator-precedence.test.ts), the rule the admin and the chat skip
+    // vote use, so a Skip during a pin no longer starts the pinned item again from 0.
     expect(choose).toContain(
-      'const desiredAsset = manualOverrideActive && state.playout.overrideAssetId !== "" ? state.assets.find((asset) => asset.id === state.playout.overrideAssetId && asset.status === "ready") : null;'
+      'const overrideHold = resolveOperatorOverrideHold({ ...state.playout, assets: state.assets, nowMs: Date.now() }); const desiredAsset = overrideHold !== "" ? state.assets.find((asset) => asset.id === state.playout.overrideAssetId) : null;'
     );
     // Pin and Fallback still pin: the override branch comes first and Fallback writes the same fields.
     expect(choose.indexOf("if (desiredAsset)")).toBeLessThan(choose.indexOf('if (activeInsertAsset && state.playout.insertStatus !== "")'));
@@ -130,9 +133,14 @@ describe("the playout cycle", () => {
   });
 
   it("logs every insert it clears before it aired", () => {
-    const clear = flat(between(cycle, 'if (state.playout.insertStatus !== "" && selection.reasonCode !== "operator_insert"', "selection = choosePlaybackCandidate(state);"));
-    expect(clear).toContain('if (state.playout.insertStatus === "pending") {');
-    expect(clear).toContain('reason: insertAvailable ? "preempted" : "unavailable"');
+    // Since M78 the decision is decideInsertAfterSelection (playout-boundary.ts, tested there), and a
+    // live selection no longer leaves the insert in place: the takeover drops a pending one as
+    // "live-bridge" and ends an active one.
+    const clear = flat(between(cycle, "const insertAfterSelection = decideInsertAfterSelection({", "selection = choosePlaybackCandidate(state);"));
+    expect(clear).toContain('selectionIsLive: selection.queueKind === "live"');
+    expect(clear).toContain(
+      'if (insertAfterSelection.clear) { if (insertAfterSelection.dropReason !== "") { await recordDroppedInsert({ state, reason: insertAfterSelection.dropReason, selectionReasonCode: selection.reasonCode });'
+    );
     expect(clear.indexOf("recordDroppedInsert(")).toBeLessThan(clear.indexOf("await updatePlayoutRuntime("));
     // Only the insert this cycle read; a Play now written since then is left for the next cycle.
     expect(clear).toContain(

@@ -521,6 +521,15 @@ export class TwitchChatBridge {
     }
   }
 
+  /**
+   * Says one line in the joined room, for a reply the worker decides outside a command callback: a skip
+   * vote refused while the operator holds the air (M78), also when the worker cycle refuses a vote that
+   * passed. Nothing while disconnected; such a reply is stale by the time the socket is back.
+   */
+  say(message: string): void {
+    this.sendChatMessage(message);
+  }
+
   private sendChatMessage(message: string): void {
     if (!this.socket || this.socket.destroyed || !this.channel) {
       return;

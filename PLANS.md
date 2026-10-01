@@ -87,6 +87,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M75 Source Circuit Breaker | Reliability | Next | Complete | A broken source costs one incident, not one failed boundary per item (competitor comparison 2026-10-01; owner decision) | When probes fail on 3 distinct items of the same source with no success in between, the source is held out of the pool rotation (M73) for a cooldown that doubles up to a cap; one incident per source instead of per-item noise; after the cooldown one item is probed (half-open) and a success closes the breaker and resolves the incident; per-item quarantine and the operator's `includeInProgramming` stay untouched; a pool whose sources are all held falls back as today; the source page shows the breaker state; any persisted state ships in the baseline, the ALTER block and a migration | core, worker, db, web, tests, docs | medium | revert commit; the stored state is ignored |
 | M76 As-Run Log | Ops + Data | Next | Complete | Answer "what was on air at 19:38" from one table instead of container logs (competitor comparison 2026-10-01; owner decision) | Every playout start and end writes one row: UTC start and end, block, pool, source, asset, title, selection reason, queue kind, input kind (cache, remote, YouTube pair, live), format id, planned and aired seconds, end reason (natural end, duration bound, switch, skip, failure); bounded retention; a read-only view in the console and an API route; docs/operations.md uses it in the runbooks; the table ships in the baseline and a migration (a new table needs no ALTER line) | worker, db, web, tests, docs | low | revert commit; the table stays unused |
 | M77 Resume Interrupted Item | Playout | Later | Deferred | Continue an interrupted item at its position instead of throwing it away (competitor comparison 2026-10-01) | Owner deferred this on 2026-10-01 until after M75 and M76: start only when the owner asks. Scope when started: persisted offset, `-ss` for cached Twitch VODs first, duration bound and chapter windows offset-aware, soaked on the DUT because it touches the seam chain | worker, db, tests | high | revert commit |
+| M78 Operator Precedence | Behavior | Now | Complete | Operator actions end what they replace, and viewers never override the operator (owner decisions 2026-10-01: 1 answered directly, 2 and 3 chosen from the lead's recommendation) | The operator's Skip during an active Pin or Fallback ends that override instead of restarting the pinned item from 0, and the schedule continues from the pool's own position (after the pinned item only when the pin held the pool's running item; "after the pinned item" for every pinned pool item is a follow-up for the owner); a Live Bridge takeover ends an insert that is on air (and drops a pending one, logged), so the insert never replays from its start after the live; while a Pin or Fallback holds the air no chat skip vote starts or counts, and the bot says why in chat; a passed vote whose item has left the air is dropped; Skip tested in relay and direct mode | worker, web, core, tests, docs | low-medium | revert commit |
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
 
@@ -4150,11 +4151,15 @@ Follow-ups:
 - Skip during an active pin: the override branch ignores the skip hold, so Skip -- and a passed chat
   skip vote, which viewers can repeat -- restarts the pinned item (from 0 under the relay) instead of
   skipping it. Needs an owner decision: refuse the skip, or end the pin. Documented in operations.
+  Done in M78: Skip ends the pin (owner decision), and a chat skip vote is paused while a pin holds
+  the air.
 - Move next is cleared by Play now; keeping it queued behind the insert would need the insert branch
   and the manual-next arm to agree on an order.
 - An insert on air survives a Live Bridge takeover (the clear after selection skips a live selection)
   and a direct-mode planned reconnect (`scheduled-reconnect` is not an item-ending stop), and starts
   again from 0 afterwards. Older than M74; the `shouldClearInsertOnExit` table pins today's choice.
+  M78 ends the insert at the takeover (owner decision 2026-10-01); the planned reconnect is
+  unchanged.
 - The admin reads the archive's cache state, not the file: an evicted cache that still says `ready`
   passes the refusal, and the worker then drops the insert (`prepare-failed`, logged).
 - The Force reconnect and Recover outputs buttons do not know the relay mode; the refusal explains it,
@@ -4486,3 +4491,154 @@ Follow-ups:
   better than hundreds of three-second rows.
 - Live bridge and slate rows carry no asset; the live input's label is the title. The live input's own
   identity (which push source) is not recorded.
+
+## M78 Operator Precedence
+
+Three deferred findings of the M74 review (its follow-ups: Skip during an active pin; an insert that
+survives a Live Bridge takeover), decided on 2026-10-01. What each meant on v2.1.0-rc.2, by code reading:
+
+- Skip during a Pin or Fallback: `skip` wrote the skip hold and the restart flag, but the override arm of
+  `choosePlaybackCandidate` comes before every other arm and did not look at the skip hold, so it picked
+  the pinned item again and the restart block started it from 0 (under the relay at once, without it
+  after the slate). Only Resume took a pinned item off air, and a passed chat skip vote, which mirrors the
+  operator's Skip, did the same restart as often as the room repeated it.
+- Live Bridge during an insert: the clear after selection skipped a live selection and
+  `shouldClearInsertOnExit` keeps an active insert on a `switch` stop, so the insert stayed in the row
+  through the takeover. After the release the insert arm picked it again: an insert on air at the
+  takeover started again from 0, a pending Play now aired whenever the bridge was released (possibly
+  hours later), and a Play now requested during the bridge waited the same way.
+
+Decisions:
+
+1. The operator's Skip during an active Pin or Fallback ends that override (owner, 2026-10-01: "ja").
+2. A Live Bridge takeover ends an insert. The owner asked what this means; after the explanation and the
+   recommendation (an insert has no resume, M77 is deferred, so the alternative is a replay from 0 after
+   the live, or a Play now airing hours after it was asked for) the owner chose "end the insert"
+   (2026-10-01). The change is one decision function (`decideInsertAfterSelection`, its live rows) plus
+   the Play now refusal.
+3. While a Pin or Fallback holds the air no chat skip vote starts or counts, and the bot says why: from
+   the M74 review's deferred finding (a passed vote restarted the pinned item, as often as the room
+   repeated it). Asked whether a passed chat vote may end the operator's pin, the owner chose "no, the
+   pin takes precedence" (2026-10-01).
+
+Done:
+
+- Core (`packages/core/src/operator-precedence.ts`, exported): `resolveOperatorOverrideHold` -- the Pin or
+  Fallback that holds the air: running, its item ready and not under a skip hold, and no Live Bridge
+  pending or active with an input (the worker's live arm comes first; without it the bot told chat
+  during a live show that the operator had pinned "this item"). One rule, called by the playout's
+  override arm, the admin (Play now refusal, Skip) and the worker's chat. `decidePassedSkipVote` -- a
+  chat vote that passed: paused under a hold, stale when its item has left the air or a Skip already
+  holds it out, applied otherwise. `formatChatSkipPausedReply` -- the bot's line for a Pin and for a
+  Fallback.
+- Web (`apps/web/lib/server/broadcast.ts`): Skip of the item an override holds on air also writes
+  `overrideMode: schedule`, `overrideAssetId`/`overrideUntil`/`desiredAssetId` empty, in the same write as
+  the skip hold, the restart flag and `recovering` (both M74 modes unchanged: under the relay no slate,
+  the restart block starts the pool's pick; without it the slate first). Only when the row still names
+  that override's item, so a Pin of another item written in between stands; a Pin set but not on air yet
+  is not ended (the operator skipped the item before it). Message, toast and the `playout.skip.current`
+  audit row say "the Pin/Fallback was ended by Skip", taken from the write (a flag set in the updater),
+  so a Pin of another item written in between keeps the plain text. Pin and Fallback lift a skip hold on their own item
+  (the override arm would leave it out, so the pin would never take the air). Play now / Insert are refused
+  while a Live Bridge is `pending` or `active` -- asked before the override, as the worker's live arm
+  comes first -- and while the shared hold rule names a Pin or Fallback. The control room's
+  *Override minutes* tip says that skipping the pinned asset ends the pin.
+- Worker selection: the override arm selects through `resolveOperatorOverrideHold` (no inline copy),
+  so it leaves out an item under a skip hold and a stale override that raced with a Skip cannot restart
+  the item.
+- Worker cycle: `decideInsertAfterSelection` (playout-boundary.ts) replaces the inline clear after
+  selection. Any selection but the insert ends it, a live one included: a pending insert is dropped
+  through `recordDroppedInsert` (`preempted`, `unavailable`, new `live-bridge`; runtime event and audit
+  row), an active one is cleared (not a drop; a live takeover logs `playout.insert.ended`
+  `{ assetId, reason: "live-bridge" }`). The clear happens before the switch to the live input, so the
+  exit handler finds no insert; after the release the selection has none and the schedule continues.
+  `shouldClearInsertOnExit` is unchanged: the direct-mode planned reconnect (`scheduled-reconnect`)
+  still restarts a running insert from its beginning (out of scope, below).
+- Worker chat: the cycle computes the hold (`latestOperatorHold`) for the IRC handler and ends a running
+  skip campaign under it (its bar on air could no longer pass). `ChatControlRuntime.handleMessage` takes
+  `operatorHold`: a skip command under a hold returns `skip-paused` without counting; the bot says
+  `formatChatSkipPausedReply` through the new `TwitchChatBridge.say`, at most once per
+  `SKIP_PAUSED_REPLY_COOLDOWN_MS` (60 s; a room types the command together through its 120 s window).
+  `drainChatEffects` judges a vote that passed before the cycle saw the override on the row as it is
+  now (inside `updatePlayoutRuntime`): under a hold it writes nothing, logs `chat.skip.paused`, adds a
+  `chat.skip.refused` audit row and answers under the same cooldown. Through `decidePassedSkipVote`, a
+  vote whose item has left the air or that a Skip already holds out writes nothing either and logs
+  `chat.skip.stale` (review: a vote passed on the item before a Pin, applied after the operator's Skip
+  had ended the Pin, took the skip hold off the pinned item and restarted it from 0). Otherwise it
+  writes what it wrote before. The next-item poll and viewer requests are not paused.
+- Wording: operations (*Operator controls, with and without the relay*: Play now refusal during a Live
+  Bridge, the `live-bridge` drop reason, Pin lifting a skip hold, Skip ending the override and where the
+  pool continues, new *Live Bridge* and *Chat skip votes* entries), architecture (*Operator Controls*),
+  deployment (*Upgrading Past 2.1.0: Operator Precedence (M78)*), twitch-setup (the bot's chat features,
+  the paused `!skip`), README (skip current, Live Bridge), and the *Enable skip votes* tip in Studio →
+  Engagement → *Viewer control*.
+- Tests: `operator-precedence` (new; the hold table with ran-out, missing, not-ready and skip-held items
+  and a Pin or Fallback under a pending or active Live Bridge; the passed-vote table: paused, applied,
+  stale after the operator's Skip ended a Pin, after the item's end, with nothing on air, and applied
+  while another item is still held out; the bot lines), `broadcast-actions` (Skip during a Pin and a
+  Fallback in relay and direct mode: the override fields, the skip hold, the restart flag, message,
+  toast and audit; a Pin not on air yet is kept; Skip without an override as before; a newer Pin of
+  another item stands and the message, toast and audit row stay plain; Pin and Fallback lift a hold on
+  their item and keep one on another; Play now refused during a pending or active Live Bridge, naming
+  the bridge when a Pin runs under it, and accepted while it is releasing, accepted when the pinned
+  item is skip-held), `playout-boundary` (the insert-after-selection table, live rows included),
+  `chat-control` (no count and one reply during a Pin, the Fallback line, the cooldown, the cooldown
+  shared with the cycle's refusal, counting again after the override, poll and requests untouched),
+  `operator-precedence-wiring` (new; the decision before the switch with no live exception left, the
+  `playout.insert.ended` line, the takeover cycle's clear emptying the insert before the switch so the
+  cycle after the release has none, the hold handed to the IRC handler and the reply, the hold
+  refreshed and the campaign ended before the effects are drained, the vote judged inside the runtime
+  write through `decidePassedSkipVote`, the refusal's log, audit and reply, the stale vote's log and no
+  write, `say`). Two M74 source pins in `operator-play-now-wiring` changed because M78 changes that code
+  on purpose: the override arm now selects through `resolveOperatorOverrideHold`, and the clear after
+  selection is the `decideInsertAfterSelection` call. `youtube-playback-wiring` is unchanged and green.
+- `pnpm validate` green (2305 unit tests in 232 files, 62 integration tests, build). Not run: the e2e
+  baselines (changed tip texts: the control room's *Override minutes* and Studio → Engagement → *Viewer
+  control*'s *Enable skip votes*; tips show on hover only and neither is in the wording baseline, so the
+  baselines should not move, but the lead re-records if they do).
+
+DUT check after deploy (read-only apart from the operator's own clicks;
+`CHECK_BASE_URL=http://127.0.0.1:3000` where needed):
+
+- Skip during a Pin: pin a pool item from the control room, wait for its `playout.process.start` with
+  `reasonCode: operator_override`, press Skip current. The playout log has `playout.process.exit` for
+  the pinned item (`plannedReason: restart-requested` under the relay) and one `playout.process.start`
+  with `reasonCode: scheduled_match` for another item; no second start of the pinned asset. The runtime
+  row has `override_mode = 'schedule'` and an empty `override_asset_id`; `audit_events` has
+  `playout.skip.current` ending "the Pin was ended by Skip."; the pinned item's `as_run_log` row ends
+  `skip`.
+- Play now while a Live Bridge is on air is refused in the control room. If a test input is at hand
+  (M66 rehearsal): Play now a short item, start the bridge while it plays, release it. The playout log
+  has `playout.insert.ended` `{ reason: "live-bridge" }`, and after the release a `scheduled_match`
+  start, no `operator_insert` start of that item.
+- Chat (viewer control on, `!skip` enabled): while a Pin holds the air, `!skip` in jimpanse247's chat
+  gets the bot's line once (a second `!skip` within a minute gets none), the worker log has no
+  `chat.skip.passed`, no skip bar is on air. After Resume schedule, `!skip` counts again (the bar shows
+  1 of N).
+
+Follow-ups:
+
+- Owner confirmation of decision 2 (Live Bridge ends the insert), see above.
+- The direct-mode planned reconnect (`scheduled-reconnect`, every few hours) still restarts a running
+  insert from its beginning; out of scope of M78 by decision. Ending it there too is one row of
+  `ITEM_ENDING_STOP_REASONS`, but the reconnect also restarts every other item, which plays on from 0.
+- A chat skip vote still skips an operator's Play now (insert): viewers can end an operator insert,
+  which the M78 rule "viewers never override the operator" would also cover. Needs an owner decision.
+- For the owner, a deviation from the M78 spec: after Skip ends a pin of a pool item that was not the
+  pool's running item, the pool continues from its stored position (after the interrupted item), not
+  after the pinned item, and the pinned item can come round again later as the pool's pick. A pin, like
+  Play now, does not move the pool's position (M74). Doing what the spec asked means a pin of an item
+  from the current pool's sources takes the pool position when it starts (`selectionTakesPoolPosition`
+  for `operator_override`), which moves where the pool continues after every such pin -- run-out and
+  Resume too, not only Skip -- and counts the pin toward the pool's insert interval: a Pin decision,
+  not a Skip one.
+- One skip slot for chat and operator: a passed chat vote (like the operator's own Skip) replaces a
+  Remove next hold the operator put on another item. Refusing the vote while another item's hold runs
+  would block every chat skip for the 60 min of the previous chat hold; separate holds need a new
+  runtime field. Older than M78.
+- The IRC handler learns of a new Pin at the next worker cycle (up to 30 s); votes in that window count
+  and a vote that passes is refused when the cycle applies it (logged, audited, answered).
+- The bot's line is English while the skip bar on air is German; a channel language setting would cover
+  both.
+- Starting a Live Bridge does not warn that a pending Play now will be dropped; the audit row says so
+  afterwards.

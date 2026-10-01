@@ -208,6 +208,46 @@ export function shouldClearInsertOnExit(input: InsertExitInput): boolean {
   return input.plannedReason === "" || ITEM_ENDING_STOP_REASONS.has(input.plannedReason);
 }
 
+export interface InsertAfterSelectionInput {
+  insertStatus: string;
+  selectionReasonCode: string;
+  selectionIsLive: boolean;
+  // A pending insert's item is still ready and not under a skip hold.
+  insertAvailable: boolean;
+}
+
+export type InsertDropReason = "preempted" | "unavailable" | "live-bridge";
+
+export interface InsertAfterSelection {
+  clear: boolean;
+  // Why a pending insert is dropped (logged and audited); "" for an insert that aired, which is ended,
+  // not dropped, and for an insert that stays.
+  dropReason: InsertDropReason | "";
+}
+
+/**
+ * What the cycle does with the operator insert once the selection names something else.
+ *
+ * Any selection but the insert ends it: an active insert has been cut, a pending one is dropped before
+ * it aired. A Live Bridge takeover used to be the exception (M74 left the insert in place), so an insert
+ * on air at the takeover started again from 0 after the release, and a pending Play now aired whenever
+ * the bridge was released, possibly hours later. Since M78 the takeover ends an active insert and drops
+ * a pending one as "live-bridge"; after the release the schedule continues. A Pin or Fallback (the
+ * override arm, before the insert arm) drops a pending insert as "preempted".
+ */
+export function decideInsertAfterSelection(input: InsertAfterSelectionInput): InsertAfterSelection {
+  if (input.insertStatus === "" || input.selectionReasonCode === "operator_insert") {
+    return { clear: false, dropReason: "" };
+  }
+  if (input.insertStatus !== "pending") {
+    return { clear: true, dropReason: "" };
+  }
+  return {
+    clear: true,
+    dropReason: input.selectionIsLive ? "live-bridge" : input.insertAvailable ? "preempted" : "unavailable"
+  };
+}
+
 export interface PreviousAssetInput {
   // The runtime's on-air asset when the cycle began, "" after an exit cleared it (or for a slate).
   onAirAtCycleStart: string;

@@ -12,6 +12,7 @@ export * from "./chat-game-2048.js";
 export * from "./chat-game-minesweeper.js";
 export * from "./chat-interaction.js";
 export * from "./managed-runtime.js";
+export * from "./operator-precedence.js";
 export * from "./overlay-layout.js";
 export * from "./pool-rotation.js";
 export * from "./programming-asset-order.js";

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDefaultChatInteractionConfig, type ChatInteractionConfig } from "@stream247/core";
 import { ActiveChatterRoster } from "../../apps/worker/src/active-chatters.js";
-import { ChatControlRuntime } from "../../apps/worker/src/chat-control.js";
+import { ChatControlRuntime, SKIP_PAUSED_REPLY_COOLDOWN_MS } from "../../apps/worker/src/chat-control.js";
 
 function config(overrides: Partial<ChatInteractionConfig> = {}): ChatInteractionConfig {
   return { ...createDefaultChatInteractionConfig(), enabled: true, ...overrides };
@@ -286,5 +286,86 @@ describe("ChatControlRuntime bookkeeping", () => {
     });
 
     expect(effect).toEqual({ kind: "request", actor: "viewer", query: "retro night" });
+  });
+});
+
+// M78. Viewers never override the operator: while a Pin or Fallback holds the air a skip vote neither
+// starts nor counts. Before, a passed vote ran the operator's Skip, which started the pinned item again
+// from 0, as often as the room repeated it.
+describe("ChatControlRuntime skip votes while the operator holds the air", () => {
+  it("does not count a vote during a Pin, and says why once", () => {
+    const { runtime } = createRuntime();
+    const cfg = config({ skipMinimumVotes: 2 });
+
+    const first = runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "asset-1", config: cfg, operatorHold: "asset" });
+    const second = runtime.handleMessage({ actor: "b", message: "!skip", currentAssetId: "asset-1", config: cfg, operatorHold: "asset" });
+    const third = runtime.handleMessage({ actor: "c", message: "!skip", currentAssetId: "asset-1", config: cfg, operatorHold: "asset" });
+
+    expect(first).toEqual({ kind: "skip-paused", hold: "asset", announce: true });
+    // Two voters would pass a threshold of 2; none of these counted, and the bot answers once.
+    expect(second).toEqual({ kind: "skip-paused", hold: "asset", announce: false });
+    expect(third).toEqual({ kind: "skip-paused", hold: "asset", announce: false });
+    expect(runtime.getSkipVoteRecord(cfg)).toBeNull();
+    expect(runtime.getOverlayView(cfg)).toBeNull();
+  });
+
+  it("names a Fallback as the Fallback", () => {
+    const { runtime } = createRuntime();
+
+    expect(
+      runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "asset-1", config: config(), operatorHold: "fallback" })
+    ).toEqual({ kind: "skip-paused", hold: "fallback", announce: true });
+  });
+
+  it("answers again only after the cooldown", () => {
+    const { runtime, advance } = createRuntime();
+    const vote = (actor: string) =>
+      runtime.handleMessage({ actor, message: "!skip", currentAssetId: "asset-1", config: config(), operatorHold: "asset" });
+
+    expect(vote("a")).toMatchObject({ announce: true });
+    advance(SKIP_PAUSED_REPLY_COOLDOWN_MS / 1000 - 1);
+    expect(vote("b")).toMatchObject({ announce: false });
+    advance(1);
+    expect(vote("c")).toMatchObject({ announce: true });
+  });
+
+  it("shares the cooldown with a passed vote the worker refuses at its next cycle", () => {
+    const { runtime } = createRuntime();
+
+    expect(runtime.claimSkipPausedReply()).toBe(true);
+    expect(
+      runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "asset-1", config: config(), operatorHold: "asset" })
+    ).toMatchObject({ announce: false });
+  });
+
+  it("counts again once the override has ended", () => {
+    const { runtime } = createRuntime();
+    const cfg = config({ skipMinimumVotes: 2 });
+    runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "asset-1", config: cfg, operatorHold: "asset" });
+
+    // The paused vote left nothing behind: the first vote after the pin starts the campaign at one.
+    expect(runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "asset-1", config: cfg, operatorHold: "" })).toEqual({
+      kind: "skip-recorded",
+      votes: 1,
+      votesNeeded: 2
+    });
+    expect(runtime.handleMessage({ actor: "b", message: "!skip", currentAssetId: "asset-1", config: cfg })).toEqual({
+      kind: "skip-passed",
+      assetId: "asset-1"
+    });
+  });
+
+  it("leaves everything but the skip command alone", () => {
+    const { runtime } = createRuntime();
+    runtime.openVote({ id: "vote-1", candidates, config: config() });
+
+    // The next-item poll only reorders what plays after the pin.
+    expect(runtime.handleMessage({ actor: "a", message: "!1", currentAssetId: "x", config: config(), operatorHold: "asset" })).toEqual({
+      kind: "vote-recorded",
+      option: 1
+    });
+    expect(
+      runtime.handleMessage({ actor: "a", message: "!request retro", currentAssetId: "x", config: config(), operatorHold: "asset" })
+    ).toEqual({ kind: "request", actor: "a", query: "retro" });
   });
 });
