@@ -412,7 +412,7 @@ re-upgrade do to a pool's position.
   cycle. After an insert the pool continues with its next item; the interrupted item is not resumed.
   See `docs/operations.md`, *Operator controls*.
 
-### Upgrading Past 2.1.0
+### Upgrading To 2.2
 
 The release after 2.1.0 carries six changes at once (M75, M76, M78, M79, M80, M82). As one upgrade:
 
