@@ -433,6 +433,16 @@ Numbering is left to the Vorschlag thread (the next free number is M84). Priorit
 
 ## Questions for Benjamin
 
+**Decided 2026-10-01 23:13 UTC: Benjamin accepted all seven recommendations below** ("Alle Empfehlung übernehme ich"). They are owner decisions now:
+
+- Q1: re-probe quarantined items once per item per 24 h.
+- Q2: playout restarts after 5 min of DB outage.
+- Q3: a rejected refresh token sets the account to error, with an incident "reconnect Twitch".
+- Q4: blocks follow the wall clock; fix only the counts.
+- Q5: Remove next survives Skip and votes.
+- Q6: an unpreparable insert is skipped once, with an incident.
+- Q7: worker and uplink restart themselves after 5 min unhealthy; playout only when its feed stalls.
+
 1. **Should quarantined items get a slow re-probe** (one try per item per 24 h, only while the breaker is closed and no outage verdict holds)? *Recommendation: yes. Otherwise a YouTube item that heals never returns, and a failed try changes nothing.*
 2. **How long may the database be unreachable before playout gives up and restarts?** *Recommendation: 5 minutes. That covers a Postgres restart or image update, and a broken DB still ends in a visible restart.*
 3. **When Twitch rejects the refresh token, should the account show "error"** (chat, metadata and EventSub visibly off, incident "reconnect Twitch") instead of "connected" while nothing works? *Recommendation: yes.*
