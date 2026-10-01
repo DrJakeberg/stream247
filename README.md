@@ -69,7 +69,8 @@ are not retroactively revoked.
   - search, pool filters, show filters, and conflict-only views in the programming editor
 - pool management with:
   - source grouping
-  - persistent round-robin playback cursors
+  - round-robin across the selected sources: the next item from each source in turn, each source oldest
+    first and looping from its own persistent position
   - optional audio-lane beds that replace program audio during scheduled pool playback
 - playout operations with:
   - FFmpeg RTMP output foundation
@@ -483,7 +484,7 @@ Notes:
 
 - FFmpeg-based RTMP playout foundation
 - buffered local program-feed/uplink split for production Compose, with the uplink owning external output sessions and scheduled reconnects
-- pool-based round-robin playout selection
+- pool-based round-robin playout selection that alternates between a pool's sources, each in its own stable order
 - standby replay slate when no playable asset is available
 - scheduled 48-hour reconnect window with controlled standby mode
 - Live Bridge RTMP/HLS takeover with safe release back to the scheduled queue

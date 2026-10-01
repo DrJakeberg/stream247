@@ -100,7 +100,8 @@ import {
   nextAssetProbeState,
   planAssetProbeUpdates,
   countQuarantinedBySource,
-  compareProgrammingAssets,
+  nextPoolRotationAsset,
+  walkPoolRotation,
   createTwitchTokenScopeCache
 } from "@stream247/core";
 import {
@@ -137,6 +138,7 @@ import {
   type AppState,
   type AssetRecord,
   type OutputSettingsRecord,
+  type PoolRecord,
   type StreamDestinationRecord,
   readChatInteractionSettingsRecord,
   readChatOverlayMessagesRecord,
@@ -4577,36 +4579,22 @@ function getNextScheduleItem(state: AppState): ReturnType<typeof buildScheduleOc
   });
 }
 
-function getPoolEligibleAssets(state: AppState, poolId: string, skippedAssetId = ""): AssetRecord[] {
-  const pool = state.pools.find((entry) => entry.id === poolId);
-  if (!pool) {
-    return [];
+// What the worker may pick from a pool right now. Positions are taken in each source's full list
+// (packages/core/src/pool-rotation.ts), so an item this rejects is stepped over, never a reason to start
+// the pool again from its oldest item: the skip hold is exactly the item that just played.
+function isPoolAssetEligible(pool: PoolRecord, asset: AssetRecord, skippedAssetId: string): boolean {
+  if (pool.insertAssetId && pool.insertEveryItems > 0 && asset.id === pool.insertAssetId) {
+    return false;
   }
-  const excludedAssetIds = new Set<string>();
-  if (pool.insertAssetId && pool.insertEveryItems > 0) {
-    excludedAssetIds.add(pool.insertAssetId);
+  if (pool.audioLaneAssetId && asset.id === pool.audioLaneAssetId) {
+    return false;
   }
-  if (pool.audioLaneAssetId) {
-    excludedAssetIds.add(pool.audioLaneAssetId);
-  }
-
-  return state.assets
-    .filter((asset) => {
-      if (
-        asset.status !== "ready" ||
-        asset.id === skippedAssetId ||
-        asset.includeInProgramming === false ||
-        isAssetBlockedForAutomaticSelection(asset) ||
-        excludedAssetIds.has(asset.id)
-      ) {
-        return false;
-      }
-
-      return pool.sourceIds.includes(asset.sourceId);
-    })
-    // The same order the schedule preview and the materialized window show (packages/core), so the
-    // item the worker picks is the item the operator was told comes next.
-    .sort(compareProgrammingAssets);
+  return (
+    asset.status === "ready" &&
+    asset.id !== skippedAssetId &&
+    asset.includeInProgramming !== false &&
+    !isAssetBlockedForAutomaticSelection(asset)
+  );
 }
 
 function lookaheadVideoTitleFromPool(state: AppState, poolId: string): string {
@@ -4630,49 +4618,51 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
   if (!pool) {
     return null;
   }
-  const eligibleAssets = getPoolEligibleAssets(state, poolId, skippedAssetId);
 
-  if (eligibleAssets.length === 0) {
-    return null;
-  }
-
-  if (!pool.cursorAssetId) {
-    return eligibleAssets[0] ?? null;
-  }
-
-  const currentIndex = eligibleAssets.findIndex((asset) => asset.id === pool.cursorAssetId);
-  if (currentIndex === -1) {
-    return eligibleAssets[0] ?? null;
-  }
-
-  return eligibleAssets[(currentIndex + 1) % eligibleAssets.length] ?? eligibleAssets[0] ?? null;
+  // The same rotation the schedule preview and the week lens walk, so the item the worker picks is the
+  // item the operator was told comes next.
+  return (
+    nextPoolRotationAsset({
+      pool,
+      assets: state.assets,
+      isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId)
+    })?.asset ?? null
+  );
 }
 
-function getPoolPlaybackQueue(state: AppState, poolId: string, skippedAssetId: string, currentAssetId = "", limit = 4): AssetRecord[] {
+/**
+ * The pool items after the current selection, for the runtime queue and its prefetch.
+ *
+ * `currentStartsPool` says the current asset is the pool pick this cycle stores as the position (a
+ * scheduled match that this cycle starts): the queue then walks on from it. For anything else (an insert,
+ * a manual next, a live bridge, an item already running that the pool never stored) the stored position
+ * stays where it is, and so does the walk, so the queue's first item is what selectPoolAsset picks next.
+ */
+function getPoolPlaybackQueue(
+  state: AppState,
+  poolId: string,
+  skippedAssetId: string,
+  options: { currentAssetId?: string; currentStartsPool?: boolean; limit?: number } = {}
+): AssetRecord[] {
   const pool = state.pools.find((entry) => entry.id === poolId);
   if (!pool) {
     return [];
   }
-  const eligibleAssets = getPoolEligibleAssets(state, poolId, skippedAssetId);
-
-  if (eligibleAssets.length === 0) {
-    return [];
-  }
-
-  const primaryReferenceId = currentAssetId || pool.cursorAssetId;
-  let startIndex = primaryReferenceId ? eligibleAssets.findIndex((asset) => asset.id === primaryReferenceId) : -1;
-  if (startIndex === -1 && currentAssetId && pool.cursorAssetId) {
-    startIndex = eligibleAssets.findIndex((asset) => asset.id === pool.cursorAssetId);
-  }
+  const currentAssetId = options.currentAssetId ?? "";
+  const picks = walkPoolRotation({
+    pool,
+    assets: state.assets,
+    isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId),
+    steps: options.limit ?? 4,
+    afterAssetId: options.currentStartsPool ? currentAssetId : ""
+  });
   const queue: AssetRecord[] = [];
-
-  for (let offset = 1; offset <= Math.min(limit, eligibleAssets.length); offset += 1) {
-    const index = startIndex === -1 ? offset - 1 : (startIndex + offset) % eligibleAssets.length;
-    const candidate = eligibleAssets[index];
-    if (!candidate || candidate.id === currentAssetId || queue.some((asset) => asset.id === candidate.id)) {
+  for (const { asset } of picks) {
+    // A small pool comes round again within the walk; the queue names each item once.
+    if (asset.id === currentAssetId || queue.some((entry) => entry.id === asset.id)) {
       continue;
     }
-    queue.push(candidate);
+    queue.push(asset);
   }
 
   return queue;
@@ -6938,7 +6928,19 @@ async function runPlayoutCycle(): Promise<void> {
           state,
           currentScheduleItem.poolId,
           isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "",
-          selection.asset?.id ?? ""
+          {
+            currentAssetId: selection.asset?.id ?? "",
+            // Only the cycle that starts a scheduled match stores it as the position (the cursor write
+            // further down has the same test). An item that is already running and was never stored --
+            // an archive another pool on the same source started, or a manual next that runs on -- leaves
+            // the position alone, and selectPoolAsset picks from there when it ends; walking on from it
+            // would warm and announce an item that is not next. A running item that IS the stored pointer
+            // gives the same walk either way.
+            currentStartsPool:
+              selection.reasonCode === "scheduled_match" &&
+              Boolean(selection.asset) &&
+              state.playout.currentAssetId !== selection.asset?.id
+          }
         )
       : [],
     manualNextQueueAsset
@@ -7345,7 +7347,9 @@ async function runPlayoutCycle(): Promise<void> {
     selection.asset &&
     state.playout.currentAssetId !== selection.asset.id
   ) {
+    // The pointer and this source's position, merged under the state lock (see updatePoolCursor).
     await updatePoolCursor(currentScheduleItem.poolId, selection.asset.id, {
+      sourceId: selection.asset.sourceId,
       incrementItemsSinceInsert: true
     });
   }
@@ -7356,8 +7360,9 @@ async function runPlayoutCycle(): Promise<void> {
     selection.asset &&
     state.playout.currentAssetId !== selection.asset.id
   ) {
-    const pool = state.pools.find((entry) => entry.id === currentScheduleItem.poolId) ?? null;
-    await updatePoolCursor(currentScheduleItem.poolId, pool?.cursorAssetId ?? "", {
+    // An insert does not move the rotation: null keeps the stored pointer and positions as they are,
+    // rather than writing back the pointer from this cycle's snapshot.
+    await updatePoolCursor(currentScheduleItem.poolId, null, {
       resetItemsSinceInsert: true
     });
   }

@@ -28,7 +28,8 @@
 - recover staged outputs immediately instead of waiting for the next natural transition
 - switch to fallback
 - pin asset on air
-- skip current asset
+- skip current asset (the pool carries on after the skipped item; in a pool with several sources the
+  next source's next item plays, as it would have at the item's end)
 - resume schedule control
 - acknowledge and resolve incidents
 

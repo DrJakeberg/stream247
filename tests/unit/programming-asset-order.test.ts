@@ -157,14 +157,13 @@ describe("programming asset order wiring", () => {
     expect(recoverySource).not.toContain(handCopiedKey);
   });
 
-  it("sorts preview and materialized windows with the shared order", () => {
-    expect(coreSource.match(/sortProgrammingAssets\(/g)?.length).toBe(2);
-  });
-
-  it("sorts the worker's pool selection with the shared comparator", () => {
-    const start = workerSource.indexOf("function getPoolEligibleAssets(");
-    const body = workerSource.slice(start, workerSource.indexOf("\nfunction ", start + 1));
-    expect(body).toContain(".sort(compareProgrammingAssets)");
+  // Since M73 every pool walk goes through the pool rotation, which sorts each source with the shared
+  // order; pool-rotation.test.ts checks which call sites use it.
+  it("sorts every pool walk with the shared order, inside the pool rotation", () => {
+    const rotationSource = read("packages/core/src/pool-rotation.ts");
+    expect(rotationSource.match(/sortProgrammingAssets\(/g)?.length).toBe(1);
+    expect(coreSource).not.toContain("sortProgrammingAssets(");
+    expect(workerSource).not.toContain(".sort(compareProgrammingAssets)");
   });
 
   it("keeps fallback priority first in recovery and hands the tail to the shared comparator", () => {

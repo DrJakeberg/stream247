@@ -272,8 +272,9 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
                     <div className="item">
                       <strong>Video-level timeline</strong>
                       <div className="subtle">
-                        Expand any block to inspect the predicted pool sequence. The preview follows the current pool
-                        cursor and wraps through eligible videos when a block is longer than the ready library window.
+                        Expand any block to inspect the predicted pool sequence. The preview alternates between the
+                        pool&apos;s sources from where each source stands and loops each source when a block is longer
+                        than its ready items.
                       </div>
                     </div>
                     <ScheduleVideoTimeline dayLabels={dayLabels} items={schedulePreview.items.filter((item) => item.dayOfWeek === activeDay)} />

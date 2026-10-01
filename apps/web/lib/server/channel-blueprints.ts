@@ -356,7 +356,10 @@ function normalizeBlueprintPoolRecord(value: unknown, now: string): PoolRecord |
     name,
     sourceIds: normalizeStringArray(candidate.sourceIds),
     playbackMode: "round-robin",
+    // A blueprint carries no position (the export leaves it out), so an imported pool starts every source
+    // at its oldest item.
     cursorAssetId: "",
+    sourceCursors: {},
     insertAssetId: asString(candidate.insertAssetId),
     insertEveryItems:
       typeof candidate.insertEveryItems === "number" && Number.isFinite(candidate.insertEveryItems)

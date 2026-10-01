@@ -78,7 +78,8 @@ function compareRecoveryCandidates(left: AssetRecord, right: AssetRecord): numbe
     return localDelta;
   }
 
-  // Then the recovery ladder walks the same order a pool does.
+  // Then the item order a pool uses within one source. The ladder does not alternate between sources
+  // the way a pool does since M73: it wants the most dependable candidate, not a fair share.
   return compareProgrammingAssets(left, right);
 }
 

@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { isAssetProbeQuarantined } from "@stream247/core";
+import { isAssetProbeQuarantined, poolSourcePositions } from "@stream247/core";
 import { AssetChapterEditor } from "@/components/asset-chapter-editor";
 import { AssetCurationForm } from "@/components/asset-curation-form";
 import { AssetMetadataForm } from "@/components/asset-metadata-form";
@@ -213,7 +213,11 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
                 <strong>{pool.name}</strong>
                 <div className="subtle">
                   {pool.playbackMode} ·{" "}
-                  {pool.cursorAssetId === asset.id ? "This pool's rotation currently stands here" : "In this pool's rotation"}
+                  {pool.cursorAssetId === asset.id
+                    ? "Last started by this pool; its source continues after it"
+                    : poolSourcePositions(pool, state.assets)[asset.sourceId] === asset.id
+                      ? "Its source continues after this item in this pool"
+                      : "In this pool's rotation"}
                 </div>
               </div>
             ))}

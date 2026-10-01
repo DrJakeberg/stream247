@@ -61,7 +61,7 @@ export function PoolForm(props: {
         <input defaultValue={props.pool?.name ?? ""} name="name" placeholder="Morning archive" required />
       </label>
       <label>
-        <span className="label label-with-info">Included sources<InfoTip text="Ready assets from these sources that are included in programming join the rotation, oldest published first, looping and picking up where the last block left off; the insert and replacement-audio assets stay out. At least one source is required." /></span>
+        <span className="label label-with-info">Included sources<InfoTip text="Ready assets from these sources that are included in programming join the rotation. With several sources the pool takes the next item from each source in turn, in the order the pool lists them (by source name when saved here); each source plays its own items oldest first, looping and picking up where it left off. Skip moves on to the item after the skipped one. An insert asset with a cadence above 0 and the replacement-audio asset stay out. At least one source is required." /></span>
         <select defaultValue={props.pool?.sourceIds ?? []} multiple name="sourceIds" size={Math.min(8, Math.max(3, props.sources.length))}>
           {props.sources.map((source) => (
             <option key={source.id} value={source.id}>
@@ -122,7 +122,10 @@ export function PoolForm(props: {
           />
         </label>
       </div>
-      <p className="subtle">Pools currently use persistent round-robin playback across all ready assets from the selected sources.</p>
+      <p className="subtle">
+        A pool alternates between its sources, one item from each in turn, and remembers where each source stands; a
+        pool with one source plays it in order.
+      </p>
       <p className="subtle">
         Replacement audio plays instead of the programme sound whenever this pool is on air. Assets from Local media
         library or Direct media URL sources loop most reliably.

@@ -62,6 +62,7 @@ import {
   type StreamOutputProfileId,
   type OverlayTypographyPreset,
   redactSecrets,
+  parsePoolSourceCursors,
   OVERLAY_TICKER_DEFAULT_SECONDS,
   OVERLAY_TICKER_MAX_SECONDS,
   OVERLAY_TICKER_MIN_SECONDS,
@@ -347,6 +348,9 @@ export type PoolRecord = {
   sourceIds: string[];
   playbackMode: "round-robin";
   cursorAssetId: string;
+  // The last item started from each source (sourceId -> assetId), so a pool with several sources can
+  // alternate between them and each source carry on where it left off (M73, `pools.source_cursors`).
+  sourceCursors: Record<string, string>;
   insertAssetId: string;
   insertEveryItems: number;
   itemsSinceInsert: number;
@@ -2023,6 +2027,7 @@ function createInitialSeedState(): AppState {
         sourceIds: ["source-twitch", "source-youtube"],
         playbackMode: "round-robin",
         cursorAssetId: "",
+        sourceCursors: {},
         insertAssetId: "",
         insertEveryItems: 0,
         itemsSinceInsert: 0,
@@ -2674,6 +2679,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       source_ids TEXT NOT NULL DEFAULT '[]',
       playback_mode TEXT NOT NULL DEFAULT 'round-robin',
       cursor_asset_id TEXT NOT NULL DEFAULT '',
+      source_cursors TEXT NOT NULL DEFAULT '{}',
       insert_asset_id TEXT NOT NULL DEFAULT '',
       insert_every_items INTEGER NOT NULL DEFAULT 0,
       items_since_insert INTEGER NOT NULL DEFAULT 0,
@@ -3032,6 +3038,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE pools ADD COLUMN IF NOT EXISTS items_since_insert INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE pools ADD COLUMN IF NOT EXISTS audio_lane_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE pools ADD COLUMN IF NOT EXISTS audio_lane_volume_percent INTEGER NOT NULL DEFAULT 100;
+    ALTER TABLE pools ADD COLUMN IF NOT EXISTS source_cursors TEXT NOT NULL DEFAULT '{}';
     ALTER TABLE sources ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS external_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS category_name TEXT NOT NULL DEFAULT '';
@@ -3973,6 +3980,28 @@ if (!schemaMigrations.some((migration) => migration.id === assetPlaybackProbeCol
   schemaMigrations.push(assetPlaybackProbeColumnsMigration);
 }
 
+/**
+ * The per-source pool positions (M73), for installs that already ran the baseline.
+ *
+ * A pool with several sources alternates between them, and each source carries on from the last item
+ * it played; that position lives here as a JSON object, sourceId -> assetId. '{}' means no source has a
+ * position yet, which the rotation reads as "seed it from cursor_asset_id", so an existing pool keeps its
+ * place without a backfill. Additive and idempotent, matching the base-schema block word for word.
+ */
+export const poolSourceCursorsMigration: MigrationDefinition = {
+  id: "20261001_001_pool_source_cursors",
+  description: "Add the per-source positions a pool needs to alternate between its sources.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE pools ADD COLUMN IF NOT EXISTS source_cursors TEXT NOT NULL DEFAULT '{}';
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === poolSourceCursorsMigration.id)) {
+  schemaMigrations.push(poolSourceCursorsMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -4648,8 +4677,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   for (const pool of next.pools) {
     await client.query(
       `
-        INSERT INTO pools (id, name, source_ids, playback_mode, cursor_asset_id, insert_asset_id, insert_every_items, items_since_insert, audio_lane_asset_id, audio_lane_volume_percent, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        INSERT INTO pools (id, name, source_ids, playback_mode, cursor_asset_id, source_cursors, insert_asset_id, insert_every_items, items_since_insert, audio_lane_asset_id, audio_lane_volume_percent, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       `,
       [
         pool.id,
@@ -4657,6 +4686,7 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         JSON.stringify(pool.sourceIds),
         pool.playbackMode,
         pool.cursorAssetId ?? "",
+        JSON.stringify(parsePoolSourceCursors(pool.sourceCursors ?? {})),
         pool.insertAssetId ?? "",
         pool.insertEveryItems ?? 0,
         pool.itemsSinceInsert ?? 0,
@@ -5164,6 +5194,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     source_ids: string;
     playback_mode: PoolRecord["playbackMode"];
     cursor_asset_id: string;
+    source_cursors: string | null;
     insert_asset_id: string;
     insert_every_items: number;
     items_since_insert: number;
@@ -5517,6 +5548,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       sourceIds: JSON.parse(row.source_ids || "[]") as string[],
       playbackMode: row.playback_mode,
       cursorAssetId: row.cursor_asset_id || "",
+      sourceCursors: parsePoolSourceCursors(row.source_cursors ?? "{}"),
       insertAssetId: row.insert_asset_id || "",
       insertEveryItems: row.insert_every_items ?? 0,
       itemsSinceInsert: row.items_since_insert ?? 0,
@@ -8543,9 +8575,9 @@ export async function createPoolRecord(pool: PoolRecord): Promise<void> {
     await client.query(
       `
         INSERT INTO pools (
-          id, name, source_ids, playback_mode, cursor_asset_id, insert_asset_id, insert_every_items, items_since_insert, audio_lane_asset_id, audio_lane_volume_percent, updated_at
+          id, name, source_ids, playback_mode, cursor_asset_id, source_cursors, insert_asset_id, insert_every_items, items_since_insert, audio_lane_asset_id, audio_lane_volume_percent, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       `,
       [
         pool.id,
@@ -8553,6 +8585,7 @@ export async function createPoolRecord(pool: PoolRecord): Promise<void> {
         JSON.stringify(pool.sourceIds),
         pool.playbackMode,
         pool.cursorAssetId ?? "",
+        JSON.stringify(parsePoolSourceCursors(pool.sourceCursors ?? {})),
         pool.insertAssetId ?? "",
         pool.insertEveryItems ?? 0,
         pool.itemsSinceInsert ?? 0,
@@ -8564,21 +8597,53 @@ export async function createPoolRecord(pool: PoolRecord): Promise<void> {
   });
 }
 
-export async function updatePoolRecord(pool: PoolRecord): Promise<void> {
+/** What a pool edit may change: its settings, never its position in the rotation. */
+export type PoolSettingsUpdate = Pick<
+  PoolRecord,
+  | "id"
+  | "name"
+  | "sourceIds"
+  | "playbackMode"
+  | "insertAssetId"
+  | "insertEveryItems"
+  | "audioLaneAssetId"
+  | "audioLaneVolumePercent"
+  | "updatedAt"
+>;
+
+/**
+ * Saves a pool's settings and keeps its stored position.
+ *
+ * The position (cursor_asset_id, source_cursors, items_since_insert) is the worker's: it moves it on
+ * every item that starts. The pools route used to write it back from the snapshot it had read before
+ * the edit, so an edit made while an item started rolled the pool back to the item before. Only the
+ * positions of sources the edit removed are dropped.
+ */
+export async function updatePoolRecord(pool: PoolSettingsUpdate): Promise<void> {
   await withSerializedStateWrite("updatePoolRecord", async (client) => {
+    const stored = await client.query<{ source_cursors: string | null }>("SELECT source_cursors FROM pools WHERE id = $1", [
+      pool.id
+    ]);
+    const sourceCursors = parsePoolSourceCursors(stored.rows[0]?.source_cursors ?? "{}");
+    const keptSourceCursors: Record<string, string> = {};
+    for (const sourceId of pool.sourceIds) {
+      if (sourceCursors[sourceId]) {
+        keptSourceCursors[sourceId] = sourceCursors[sourceId];
+      }
+    }
+
     await client.query(
       `
         UPDATE pools
         SET name = $2,
             source_ids = $3,
             playback_mode = $4,
-            cursor_asset_id = $5,
+            source_cursors = $5,
             insert_asset_id = $6,
             insert_every_items = $7,
-            items_since_insert = $8,
-            audio_lane_asset_id = $9,
-            audio_lane_volume_percent = $10,
-            updated_at = $11
+            audio_lane_asset_id = $8,
+            audio_lane_volume_percent = $9,
+            updated_at = $10
         WHERE id = $1
       `,
       [
@@ -8586,10 +8651,9 @@ export async function updatePoolRecord(pool: PoolRecord): Promise<void> {
         pool.name,
         JSON.stringify(pool.sourceIds),
         pool.playbackMode,
-        pool.cursorAssetId ?? "",
+        JSON.stringify(keptSourceCursors),
         pool.insertAssetId ?? "",
         pool.insertEveryItems ?? 0,
-        pool.itemsSinceInsert ?? 0,
         pool.audioLaneAssetId ?? "",
         pool.audioLaneVolumePercent ?? 100,
         pool.updatedAt
@@ -8773,23 +8837,79 @@ export async function updatePlayoutRuntime(
   });
 }
 
+function parsePoolSourceIdsJson(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Records the item a pool just started: the pointer, and that item's source's position (M73).
+ *
+ * Read-modify-write under the state lock, so the per-source map merges instead of being replaced by
+ * whatever snapshot the caller holds. The previous pointer is kept as its own source's position (when
+ * that source is still in the pool), exactly as the rotation reads it: a pool that ran before the map
+ * existed has only the pointer, and an image older than 2.1 running after a rollback moves only the
+ * pointer, so the map entry for the pointer's source can be missing or stale, never newer. Without this
+ * the first pick after the upgrade, which moves on to the next source, would forget where the previous
+ * one stood.
+ * `cursorAssetId: null` leaves pointer and map alone and only touches the insert counter (an insert
+ * does not move the rotation).
+ */
 export async function updatePoolCursor(
   poolId: string,
-  cursorAssetId: string,
-  options?: { incrementItemsSinceInsert?: boolean; resetItemsSinceInsert?: boolean }
+  cursorAssetId: string | null,
+  options?: { sourceId?: string; incrementItemsSinceInsert?: boolean; resetItemsSinceInsert?: boolean }
 ): Promise<void> {
   await withSerializedStateWrite("updatePoolCursor", async (client) => {
-    const row = await client.query<{ items_since_insert: number }>("SELECT items_since_insert FROM pools WHERE id = $1", [poolId]);
-    const currentItemsSinceInsert = row.rows[0]?.items_since_insert ?? 0;
+    const row = await client.query<{
+      cursor_asset_id: string;
+      source_ids: string;
+      source_cursors: string | null;
+      items_since_insert: number;
+    }>("SELECT cursor_asset_id, source_ids, source_cursors, items_since_insert FROM pools WHERE id = $1", [poolId]);
+    const stored = row.rows[0];
+    if (!stored) {
+      return;
+    }
+    const currentItemsSinceInsert = stored.items_since_insert ?? 0;
     const nextItemsSinceInsert = options?.resetItemsSinceInsert
       ? 0
       : options?.incrementItemsSinceInsert
         ? currentItemsSinceInsert + 1
         : currentItemsSinceInsert;
 
+    if (cursorAssetId === null) {
+      await client.query("UPDATE pools SET items_since_insert = $2, updated_at = $3 WHERE id = $1", [
+        poolId,
+        nextItemsSinceInsert,
+        new Date().toISOString()
+      ]);
+      return;
+    }
+
+    const poolSourceIds = parsePoolSourceIdsJson(stored.source_ids);
+    const sourceCursors = parsePoolSourceCursors(stored.source_cursors ?? "{}");
+    const previousCursorAssetId = stored.cursor_asset_id || "";
+    if (previousCursorAssetId) {
+      const previous = await client.query<{ source_id: string }>("SELECT source_id FROM assets WHERE id = $1", [
+        previousCursorAssetId
+      ]);
+      const previousSourceId = previous.rows[0]?.source_id ?? "";
+      if (previousSourceId && poolSourceIds.includes(previousSourceId)) {
+        sourceCursors[previousSourceId] = previousCursorAssetId;
+      }
+    }
+    if (options?.sourceId && poolSourceIds.includes(options.sourceId)) {
+      sourceCursors[options.sourceId] = cursorAssetId;
+    }
+
     await client.query(
-      "UPDATE pools SET cursor_asset_id = $2, items_since_insert = $3, updated_at = $4 WHERE id = $1",
-      [poolId, cursorAssetId, nextItemsSinceInsert, new Date().toISOString()]
+      "UPDATE pools SET cursor_asset_id = $2, source_cursors = $3, items_since_insert = $4, updated_at = $5 WHERE id = $1",
+      [poolId, cursorAssetId, JSON.stringify(sourceCursors), nextItemsSinceInsert, new Date().toISOString()]
     );
   });
 }

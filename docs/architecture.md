@@ -188,15 +188,34 @@ Current schedule capabilities:
 
 The scheduler is deterministic and explainable: schedule preview items carry explicit source/reason information.
 
-A pool's assets play in one order, `compareProgrammingAssets` in `packages/core`, which the worker's
-selection, the schedule preview and the materialized fill preview share. It compares one fixed key:
-`publishedAt`, else the first-seen `createdAt`, oldest first; then the source id, so items with the same
-date stay grouped by source; then, within that source, items with a numeric VOD id first, by id; then
+A pool walks its sources in turn (M73, `packages/core/src/pool-rotation.ts`): the next item comes from
+the source after the one the last started item came from, in the pool's `sourceIds` order, skipping a
+source with nothing playable, and within that source it is the first playable item after that source's
+own position, looping. A pool with one source therefore plays that source in order. The positions are
+stored per pool: `cursor_asset_id` (the last started item) and `source_cursors` (sourceId -> the last
+item started from that source). The cursor always counts as its own source's position: a pool from
+before 2.1 has only the cursor, and an older image running after a rollback moves only the cursor, so
+the map entry for that source can be missing or stale, never newer. Positions are taken in the source's full ordered list,
+playable or not, so a skipped, quarantined, cooling-down or excluded item is stepped over; before 2.1 the
+cursor was looked up in the filtered list, and every Skip (which holds exactly the cursor item) sent the
+pool back to its oldest item. An item that vanished from the catalog restarts its source at the oldest
+item. The worker's selection and runtime queue, the overlay lookahead, the schedule preview and the
+materialized week all use this one rotation; the previews start every block from the stored position
+rather than from where the previous block's preview ended. The runtime queue walks on from the running
+item only in the cycle that starts and stores it; an item the pool never stored (one another pool on the
+same source started, or a manual next) leaves the queue on the stored position, where the next pick comes
+from. A started pool item stores the cursor and
+its source's position in one serialized write; an insert moves neither, and a pool edit keeps both
+(it drops only the positions of sources it removed).
+
+Each source's items play in one order, `compareProgrammingAssets` in `packages/core`. It compares one
+fixed key: `publishedAt`, else the first-seen `createdAt`, oldest first; then the source id, so items
+with the same date stay grouped by source; then, within that source, items with a numeric VOD id first, by id; then
 the title; then the asset id. The key is fixed because a comparator that used VOD ids only for some
 pairs and titles for others formed cycles, and the sort then depended on the database's read order.
 A Twitch channel's archives, whose listing has no date, therefore play by first-seen time, and by VOD
 id among archives first seen in the same sync. An archive that drops out of a listing and comes back is
-first seen again and plays after the newer ones. The pool cursor walks that order and loops. The
+first seen again and plays after the newer ones. Each source's position walks that order and loops. The
 fallback ladder uses the same order within one fallback priority, after putting library files ahead of
 remote items, because a library file plays without a remote resolution.
 

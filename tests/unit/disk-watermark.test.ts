@@ -258,6 +258,29 @@ describe("what eviction may never touch", () => {
     }
   });
 
+  it("protects each source's position in a pool, like the cursor", () => {
+    // M73: where each source carries on. Its asset id need not be one of the pool's current sources'
+    // assets (a cached item a sync has not listed again), so it is protected by name, as the cursor is.
+    const protectedIds = collectDiskProtectedAssetIds(
+      stateFixture({
+        pools: [
+          {
+            id: "pool-1",
+            sourceIds: ["source-pool"],
+            cursorAssetId: "pool-cursor",
+            sourceCursors: { "source-pool": "pool-source-position", "source-other": "other-source-position" },
+            insertAssetId: "",
+            audioLaneAssetId: ""
+          }
+        ]
+      })
+    );
+
+    for (const assetId of ["pool-cursor", "pool-source-position", "other-source-position"]) {
+      expect(protectedIds.has(assetId)).toBe(true);
+    }
+  });
+
   it("protects the assets of a block that names its source by name", () => {
     expect(collectDiskProtectedAssetIds(stateFixture()).has("asset-replay")).toBe(true);
   });

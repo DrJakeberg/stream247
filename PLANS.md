@@ -81,7 +81,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M69 Twitch Channel And Bot Accounts | UX + Data | Now | Complete | The broadcast channel and the bot/moderator account are two named things in data, worker and GUI | Settings show the broadcast channel (e.g. jimpanse247: stream key, title, category, schedule) and the bot/moderator account (e.g. 3JakeC: chat, moderation) separately and let the operator set both; an existing v2.0.0 install keeps its bot connection; features that need the channel owner say so visibly | `packages/db`, `apps/web`, `apps/worker`, tests | medium | additive migration, old columns kept |
 | M70 Twitch Account Docs | Docs | Now | Complete | Nobody mistakes the bot for the channel again | `docs/twitch-setup.md`, `docs/getting-started.md`, `docs/operations.md` and `docs/deployment.md` name both roles, what each needs, and check "is the channel live" against the channel | docs | low | — |
 | M72 Stable Asset Order | Data | Now | Complete | A pool walks its sources in a real, stable chronological order | A source sync keeps an asset's first-seen `created_at` and a known `published_at` (fill-only) and never resets a known duration to 0; YouTube listings carry approximate publish dates (`youtubetab:approximate_date`); Twitch archives without dates order by their numeric VOD id; one shared comparator replaces the hand-copied sorts; cache writes touch only cache columns, so a long download no longer reverts other fields | worker, db, core, tests, docs | medium | revert commit; existing rows keep their values |
-| M73 Pool Source Alternation | Behavior | Now | Planned | A pool with several sources alternates between them (owner decision 2026-10-01) | A multi-source pool picks Twitch -> YouTube -> Twitch ... in `sourceIds` order, each source walking its own items oldest first and looping; per-source positions persist in `pools.source_cursors` (baseline, ALTER and migration); a single-source pool walks one source as before; a skipped, quarantined or vanished cursor item no longer resets the rotation to the head; worker selection, queue, lookahead, schedule preview and week lens use one rotation function; pool form and docs say so | core, worker, db, web, tests, docs | medium | revert commit; the column stays and is ignored |
+| M73 Pool Source Alternation | Behavior | Now | Complete | A pool with several sources alternates between them (owner decision 2026-10-01) | A multi-source pool picks Twitch -> YouTube -> Twitch ... in `sourceIds` order, each source walking its own items oldest first and looping; per-source positions persist in `pools.source_cursors` (baseline, ALTER and migration); a single-source pool walks one source as before; a skipped, quarantined or cooled-down item no longer resets the rotation to the head, and a vanished position restarts only its own source at its oldest item; worker selection, queue, lookahead, schedule preview and week lens use one rotation function; pool form and docs say so | core, worker, db, web, tests, docs | medium | revert commit; the column stays and is ignored |
 | M74 Operator Play Now | Reliability | Now | Planned | Play now and Insert put the chosen item on air, without a standby slate | Play now / Insert switch straight to the insert at the next cycle and never set the restart flag; the legacy "restart + desired asset" override branch is gone, so no action re-picks the running or a skipped item; the reconnect standby slate appears only without the relay; a dropped insert is logged; an insert stopped by its duration bound or a feed watchdog is cleared instead of replaying; the cycle re-reads state after a duration-bound stop, so insert and Move next fire at that boundary; an insert that cannot be prepared (e.g. an uncached Twitch VOD) never takes the running item off air; Recover outputs under the relay no longer restarts the programme; Skip continues after the skipped item instead of the pool head (with M73); after the insert the pool continues with its next item (resuming the interrupted item at its position is a follow-up) | worker, web, tests, docs | medium | revert commit |
 | M71 Release 2.1.0 | Release | Now | Planned | Ship M68-M70 and M72-M74 | rc on the DUT, verified (YouTube on air via Play now), 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
 | M75 Source Circuit Breaker | Reliability | Next | Planned | A broken source costs one incident, not one failed boundary per item (competitor comparison 2026-10-01; owner decision) | When probes fail on 3 distinct items of the same source with no success in between, the source is held out of the pool rotation (M73) for a cooldown that doubles up to a cap; one incident per source instead of per-item noise; after the cooldown one item is probed (half-open) and a success closes the breaker and resolves the incident; per-item quarantine and the operator's `includeInProgramming` stay untouched; a pool whose sources are all held falls back as today; the source page shows the breaker state; any persisted state ships in the baseline, the ALTER block and a migration | core, worker, db, web, tests, docs | medium | revert commit; the stored state is ignored |
@@ -3856,3 +3856,130 @@ Follow-ups:
 - `updateAssetRecords` has no caller left; remove it with its web re-export.
 - On the DUT after the rc: after two syncs, `published_at` filled for the YouTube source and unchanged on
   the second sync; `created_at` unchanged across syncs; the next Twitch archive in a pool is the next VOD id.
+
+## M73 Pool Source Alternation
+
+Owner decision 2026-10-01: a pool with several sources alternates Twitch -> YouTube -> Twitch ..., each
+source chronological. Measured on the DUT the same day (read-only): pool "TwitchYoutube"
+(`pool_qr2cr9q9`) lists `source_e2au8vv3` (twitch-channel, 46 archives of 5-11 h) and `source_jjwuu0f3`
+(youtube-channel, 11 videos of 4-60 min), its `cursor_asset_id` on a Twitch archive; pool "Twitch"
+(`pool_wonm9bow`) has only the Twitch source. A pool was ONE list in the M72 order plus ONE pointer, so
+the sources played as blocks (a YouTube item came back after all 46 archives, 10 to 21 days of airtime),
+and `selectPoolAsset` fell back to the head whenever the pointer was not in the filtered list: on every
+operator or chat Skip (the skip hold is the pointer itself), on quarantine, a VOD-cache cooldown,
+`includeInProgramming = false`, a vanished asset or a blueprint import. There is no play history.
+
+Done:
+
+- `packages/core/src/pool-rotation.ts` (exported): `createPoolRotation`, `nextPoolRotationAsset`,
+  `walkPoolRotation`, `parsePoolSourceCursors`, `poolSourcePositions`. Each source is a lane sorted with
+  `sortProgrammingAssets`; positions are taken in the lane's full list (every existing asset of the
+  source), picks only among eligible ones. The next lane is the one after the source of
+  `cursorAssetId` (looked up among all assets, else through the `sourceCursors` entry that names it) in
+  `sourceIds` order that has something eligible; an unknown last source starts at the first such lane.
+  Within the lane: after the pointer when it belongs to that source, else after `sourceCursors[source]`,
+  stepping forward cyclically; no or a vanished anchor -> the oldest eligible item. The pointer is the
+  last started item, so it always says where its own source stands: it seeds pools from before the map,
+  and it overrides an entry that an image older than 2.1 left stale (a rollback moves only the pointer;
+  the spec's order, map first, would then replay every archive the older image aired in between). 2.1
+  writes pointer and entry together, so the two orders agree on everything 2.1 writes itself. Every pick returns the advanced state, so k steps equal k single picks with the
+  state stored in between. Pure: no clock, no randomness, input order irrelevant (sort is total).
+- Storage: `pools.source_cursors TEXT NOT NULL DEFAULT '{}'` in the baseline `CREATE TABLE`, the ALTER
+  block, migration `20261001_001_pool_source_cursors` and `schema-manifest.ts` (regenerated). `PoolRecord`
+  has `sourceCursors`; read through `parsePoolSourceCursors` (invalid JSON, non-objects and non-string or
+  empty values contribute nothing); `createPoolRecord`, the row mapper and `persistState` carry it.
+- `updatePoolCursor(poolId, assetId | null, { sourceId, ... })`: one serialized read-modify-write of
+  pointer, map and `items_since_insert`. The previous pointer becomes its source's entry when that source
+  is still in the pool (the rule the rotation reads, so the first post-upgrade write does not forget where
+  Twitch stood, and a stale entry left by a rollback is repaired on the next write); `sourceId` sets the started item's source (ignored for a source
+  not in the pool). `null` (the insert path) touches only the insert counter.
+- `updatePoolRecord` takes `PoolSettingsUpdate` and never writes `cursor_asset_id`, `items_since_insert`
+  or `source_cursors` from the caller; it keeps the stored map minus the sources the edit removed. The
+  pools PUT route passes settings only (it used to spread the pool it had read). The blueprint import
+  resets `sourceCursors` with `cursorAssetId`.
+- Worker: `isPoolAssetEligible` keeps the worker-only rules (skip hold, VOD-cache cooldown and quarantine
+  via `isAssetBlockedForAutomaticSelection`, insert asset only when `insertEveryItems > 0`, audio lane);
+  `selectPoolAsset` = `nextPoolRotationAsset`; `getPoolPlaybackQueue` = `walkPoolRotation`, walking on
+  from the selection only when this cycle starts it as a `scheduled_match` (the cursor write's own test),
+  else from the stored position. So after a manual next, an insert, or while an item runs that this pool
+  never stored (an archive pool "Twitch" started that runs into a TwitchYoutube block; both pools share
+  the Twitch source), the queue and its prefetch name the pool's real next pick instead of the items
+  after the running one. A `scheduled_match` start of a new item writes the pointer with
+  `sourceId`; the `scheduled_insert` path calls `updatePoolCursor(poolId, null, { resetItemsSinceInsert })`
+  instead of writing back the snapshot's pointer.
+- Core previews: `lookaheadVideoTitleFromPool` (k-th pick), `buildSchedulePreviewVideoSlots` and
+  `materializePoolWindow` walk the rotation; the materializer's insert-every-items simulation is
+  unchanged and an insert does not advance the rotation. The preview now excludes the insert asset only
+  when `insertEveryItems > 0`, like the worker and the pool form's help (before, a pool with the cadence at
+  0 previewed one item fewer than it played). Preview blocks still start from the stored position.
+- Retention: `classifyAssetRetention` and `collectDiskProtectedAssetIds` protect every `sourceCursors`
+  value like the pointer.
+- Wording: pool form (*Included sources* InfoTip, the note under the form), schedule page (*Video-level
+  timeline*), asset page (*Program context* marks the pool's last started item and where each source
+  stands, through `poolSourcePositions`), README, getting-started, architecture (*Scheduling*),
+  operations (*skip current asset*), deployment (*Upgrading To 2.1*: the new column and the backup in the
+  intro, *Item order* per source, Pool source alternation with the vanished-item and rollback notes;
+  capability notes).
+- Tests: `pool-rotation` (T, Y, T, Y with unequal sizes each looping; three sources; one source continues
+  after the cursor; skip, quarantine and cooldown stepped over without a head reset; a source with
+  nothing eligible passed over, also as the last source; a vanished anchor restarts its source at the
+  oldest while the alternation goes on; the seed from `cursorAssetId` with an empty map, including the
+  DUT shape of 46 same-date archives and 11 YouTube items, where the next pick after a Twitch cursor is
+  the oldest YouTube item; the pointer overrides a stale entry of its own source; the queue walks from
+  the stored position while an item the pool never stored runs on (its first item is the worker's pick);
+  `poolSourcePositions`; k steps equal k single picks; one
+  walk for all 120 input orders; defensive parsing; previews and the materialized week alternate with
+  inserts not advancing; the insert asset at cadence 0 stays in the preview; wiring of worker selection,
+  queue, eligibility and both cursor writes, and of the three core previews), `pools-api` (the PUT writes
+  no position fields), `asset-retention` and `disk-watermark` (a source position protects its asset;
+  the retention case fails without the change), `channel-blueprints` (import resets the map),
+  `programming-asset-order` (its wiring test now looks for the sort inside the rotation); integration
+  `db-roundtrip`: a pools table without the column (dropped, migration row deleted, a pool row inserted)
+  gets it with default `'{}'` and the old row reads `{}`; cursor writes merge per source and keep the
+  old pointer as its source's entry, also over a stale one, `null` changes only the counter, and a whole-state write keeps the map; a pool edit from
+  a snapshot taken before the worker advanced keeps pointer, map and counter and drops only a removed
+  source. No existing expectation in `schedule-preview` or `ops-state` had to change (their pools have
+  one source).
+- `pnpm validate` green (1964 unit, 54 integration tests, build) after the review fixes.
+
+Review (ten findings, four lenses): fixed the order of pointer and map (above; a rollback would have
+replayed days of archives), the queue walking on from an item the pool never stored, the 2.1 upgrade
+intro ("no schema") and its pool-wide *Pool order* bullet, the schedule-page and asset-page wording, the
+acceptance text of the row (a vanished position restarts its own source, as specified and documented;
+the row said it no longer resets), and a wrong follow-up (`writeAppState` has no production caller, the
+blueprint import uses `updateAppState`, so no whole-snapshot write can roll back a position today).
+Deferred: the same archive airing twice when two pools share a source (follow-up below, older than M73).
+
+DUT check after deploy (read-only):
+
+- `SELECT column_name FROM information_schema.columns WHERE table_name = 'pools' AND column_name = 'source_cursors';`
+  returns one row and `schema_migrations` has `20261001_001_pool_source_cursors`.
+- Before the first pick: `SELECT id, cursor_asset_id, source_cursors FROM pools;` shows `{}`. At the next
+  boundary of a TwitchYoutube block the item started is the oldest YouTube item of `source_jjwuu0f3`
+  (`publishedAt || createdAt`, then the M72 tiebreaks), and `source_cursors` then names both the previous
+  Twitch archive (`source_e2au8vv3`) and that YouTube item; the item after it is the Twitch archive after
+  the old cursor. Pool "Twitch" keeps playing its archives in order.
+- A Skip during a Twitch archive starts the next YouTube item, not the pool's oldest item.
+- Editing the pool (e.g. its name) leaves `cursor_asset_id`, `source_cursors` and `items_since_insert`
+  unchanged.
+
+Follow-ups:
+
+- Preview blocks start from the stored position, so two blocks of one pool on one day preview the same
+  first items; chaining the preview state from block to block would show the real sequence.
+- An item started by hand (manual next) does not move the pool's position, so the pool carries on as if
+  it had not played; M74 reworks Play now and should store the position when a pool item starts by
+  hand, or say it does not.
+- Two pools that share a source (DUT: "Twitch" and "TwitchYoutube") keep separate positions in it and
+  walk it at different rates. When an archive one pool started ends inside the other pool's block and
+  the other pool stands just before it, that pool picks the same archive again at once. Older than M73
+  (one shared list had the same alignment); excluding the item that just finished, or one channel-wide
+  position per source, is a product decision for its own milestone.
+- A vanished position cannot be continued after, because the item is gone with its order key; storing
+  the order key of the last started item per source next to its id would let the source resume after
+  it instead of at its oldest item.
+- After a rollback to an image older than 2.1 and a re-upgrade, the cursor's own source carries on after
+  the cursor, but the pool's other sources keep their 2.1 positions (or start at their oldest item if the
+  older image emptied the map), so items the older image aired from them can repeat (*Upgrading To 2.1*).
+- The pool form keeps the source order alphabetical by name (the select's order); a pool cannot yet
+  choose which source plays first other than by naming.
