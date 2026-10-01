@@ -72,7 +72,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M60 Truthful Controls | UX + Reliability | Now | Complete | Every visible setting does what it says or is gone | Scene clock/next toggles drive the on-air picture; schedule-teaser/queue-preview toggles, embed/widget fields and engagement chat mode/style/alert position leave the UI (storage kept, additive); the library upload accepts only what the worker scan ingests, or the scan ingests audio; tests prove each | `packages/core`, `apps/web`, `apps/worker`, tests, docs | medium | re-add the form fields; stored values were never read so nothing else moves |
 | M61 Boundary A/V Skew Instrumentation | Ops | Now | Complete | Measure the seam instead of theorising about storms | Every boundary logs the outgoing feed's last video/audio PTS lead and the reader's per-stream offsets; a query lists seam skew against discontinuity line count | `apps/worker`, `packages/db`, docs | low | drop the event; nothing consumes it |
 | M62 Cache Policy | Ops + Reliability | Now | Complete | Downloads that fit the content and a cache that keeps what airs next | Download time limit scales with the estimated size (floor kept); assets scheduled within the retention horizon are not released after airing; an asset with an incomplete file is not selected as ready | `apps/worker`, `packages/core`, tests, docs | medium | revert to fixed limit and release-after-play |
-| M63 Stack Alignment | Ops | Now | In progress | The deployed stack equals the repo compose | Portainer stack file no longer defines redis; `docs/deployment.md` matches; DUT verified | Portainer stack, docs | low | re-add the service block |
+| M63 Stack Alignment | Ops | Now | Complete | The deployed stack equals the repo compose | Portainer stack file no longer defines redis; `docs/deployment.md` matches; DUT verified | Portainer stack, docs | low | re-add the service block |
 | M64 Getting Started | Docs | Now | Planned | One page from zero to a green channel | `docs/getting-started.md` walks `.env.production.example` → `/setup` → `Live → Status` with the known traps in one place; README points at it; fresh-compose smoke follows it | docs, README | low | docs-only |
 | M65 Measured Layout Specs | Reliability | Now | Complete | Layout asserted by measurement on every workspace | Live, Program and Admin get specs in the style of `studio-layout.spec.ts`: no horizontal overflow, sticky/aside rules where they apply, control budgets | tests, scripts | low | remove specs |
 | M66 Live Bridge Rehearsal | Ops | Next | In progress | The live bridge has run under supervision before 2.0 names it | Live-bridge takeover and release observed on the DT stack with the operator present; findings recorded | DUT, docs | medium | none — observation only |
@@ -3507,6 +3507,11 @@ entries that the repo compose and `docs/deployment.md` dropped long ago. The red
 prepared (177 → 154 lines, nothing else touched) and goes out with the 2.0 repin in the same PUT, so
 the containers that lose a `depends_on` are recreated once, not twice. Until then the drift is
 documented here and harmless: nothing ever connected to that container.
+
+Verified 2026-10-01 (read-only): Portainer stack 148's file has 153 lines and no line mentioning redis,
+no `stream247-redis` container or volume exists on the DUT (the only redis there is `snappass-redis-1`,
+another project), and the repo compose, `docs/deployment.md` and `.env.production.example` name no redis.
+The rc.1 and rc.2 repins passed this file through unchanged. Complete.
 
 ## M65 Measured Layout Specs
 
