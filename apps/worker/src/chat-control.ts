@@ -16,6 +16,7 @@ import {
   closeVoteSession,
   openVoteSession,
   parseChatCommand,
+  viewerText,
   type ChatCommand,
   type ChatInteractionConfig,
   type OperatorHold,
@@ -279,11 +280,11 @@ export class ChatControlRuntime {
    * Built from the same projections and the same chooser the playout container uses on the
    * persisted rows, so what the worker would draw and what actually goes on air cannot drift.
    */
-  getOverlayView(config: ChatInteractionConfig): OverlayEngagementView | null {
+  getOverlayView(config: ChatInteractionConfig, locale?: string): OverlayEngagementView | null {
     const now = this.now();
-    const voteView = this.session ? buildEngagementOverlayViewFromVoteSession(this.session, now) : null;
+    const voteView = this.session ? buildEngagementOverlayViewFromVoteSession(this.session, now, locale) : null;
     const skipRecord = this.getSkipVoteRecord(config);
-    const skipView = skipRecord ? buildEngagementOverlayViewFromSkipVote(skipRecord, now) : null;
+    const skipView = skipRecord ? buildEngagementOverlayViewFromSkipVote(skipRecord, now, locale) : null;
     return chooseEngagementOverlayView(voteView, skipView);
   }
 }
@@ -309,7 +310,8 @@ export type VoteSessionOverlaySource = {
  */
 export function buildEngagementOverlayViewFromVoteSession(
   session: VoteSessionOverlaySource,
-  now: Date
+  now: Date,
+  locale?: string
 ): OverlayEngagementView | null {
   if (session.status !== "open" || session.options.length === 0) {
     return null;
@@ -322,7 +324,7 @@ export function buildEngagementOverlayViewFromVoteSession(
 
   return {
     kind: "vote-next",
-    headline: "Was läuft als Nächstes?",
+    headline: viewerText(locale, "vote.headline"),
     options: session.options.map((option) => ({
       token: option.token,
       title: option.title,
@@ -331,7 +333,7 @@ export function buildEngagementOverlayViewFromVoteSession(
     totalVotes: session.options.reduce((sum, option) => sum + option.votes, 0),
     secondsRemaining: Math.max(0, Math.round((closesAtMs - now.getTime()) / 1000)),
     threshold: 0,
-    hint: `Schreib ${session.options.map((option) => option.token).join(", ")} in den Chat`
+    hint: viewerText(locale, "vote.hint", { tokens: session.options.map((option) => option.token).join(", ") })
   };
 }
 
@@ -357,7 +359,8 @@ export type SkipVoteOverlaySource = {
  */
 export function buildEngagementOverlayViewFromSkipVote(
   record: SkipVoteOverlaySource,
-  now: Date
+  now: Date,
+  locale?: string
 ): OverlayEngagementView | null {
   if (record.votes <= 0 || record.votesNeeded <= 0) {
     return null;
@@ -371,14 +374,15 @@ export function buildEngagementOverlayViewFromSkipVote(
   const command = record.skipCommand.trim() || "skip";
   return {
     kind: "skip-vote",
-    headline: "Überspringen?",
-    options: [{ token: `!${command}`, title: "Weiter zum nächsten Video", votes: record.votes }],
+    headline: viewerText(locale, "skip.headline"),
+    options: [{ token: `!${command}`, title: viewerText(locale, "skip.option"), votes: record.votes }],
     // The layout draws each option's share of totalVotes as its bar, so handing it the threshold
     // makes the single bar read as progress toward passing.
     totalVotes: record.votesNeeded,
     secondsRemaining: Math.max(0, Math.round((expiresAtMs - now.getTime()) / 1000)),
     threshold: record.votesNeeded,
-    hint: `${String(record.votes)} von ${String(record.votesNeeded)} Stimmen`
+    // Plural by what is needed: "1 of 1 vote", "1 of 3 votes" — the form the sentence ends on.
+    hint: viewerText(locale, "skip.progress", { votes: record.votes, count: record.votesNeeded })
   };
 }
 

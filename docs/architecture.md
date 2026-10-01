@@ -367,6 +367,60 @@ Current overlay capabilities:
 
 The admin UI manages these settings; the playout renderer draws them onto the picture.
 
+## Viewer Language
+
+Everything the product itself says to viewers is written in one channel language (M80; `en` and `de`).
+Operator content is never translated, and the admin interface is English.
+
+- **The setting** is `channelLanguage` in the managed config, next to the channel time zone, and is
+  resolved the same way by `resolveChannelLanguage` (`packages/db/src/instance-config.ts`): the env
+  variable `CHANNEL_LANGUAGE` first, then the saved value, then English; an unknown value is English.
+  The web app reads it through `getViewerLocale`, the worker, playout and uplink through the managed
+  config each cycle refreshes.
+- **The catalogue** is `packages/core/src/viewer-messages/`: `en.ts` is the reference (its keys are the
+  catalogue's type), `de.ts` its German twin, `index.ts` the formatter. `viewerText(locale, key,
+  params)` fills `{placeholders}`, chooses plural forms with `Intl.PluralRules` on `count`, and prints
+  numbers without grouping; the on-air clock, upper-casing and the time zone's name are formatted for
+  the language as well. Formatters are cached, because the renderer draws many frames. A lookup never
+  throws: an unknown language or a key missing from one language is English, an unknown key is an
+  empty string.
+- **The picture** gets the language as `OverlayScenePayload.locale`, set where the time zone is set, so
+  the studio preview and the playout renderer agree. The playout container rebuilds the poll, the skip
+  bar and the game panels from database rows and passes the payload's locale there. The playout
+  refreshes that payload on every cycle while a programme or a Live Bridge is on air; the standby and
+  reconnect paths rewrite only the text slate, so a language or time zone change made during a slate
+  reaches the scene picture with the next programme.
+- **Shared words are split.** Where the admin and the viewers read the same state, the state keeps the
+  admin's English (`Replay standby`, `Live Bridge`, the local library's source name `Local Media
+  Library`, the playout message, the chat games' labels) and the viewer's text is taken from the
+  catalogue on the way out: `localizeViewerBuiltInText` maps a built-in English text to its catalogue
+  key and leaves everything else as written. The same rule makes a stored headline that still equals
+  its English default follow the channel language without a migration. It compares the text, not the
+  author — state does not record who wrote a title — so an operator's title, category or source name
+  equal to a built-in text is shown in the channel language too (`docs/operations.md`, *What Viewers
+  Read*).
+- **The public page** `/channel` builds every word in `apps/web/lib/public-channel-view.ts` from the
+  snapshot, which carries the language and the zone's name; the page sets `lang` on its own container,
+  because the root layout's `<html lang="en">` also serves the admin.
+
+### Adding a viewer language
+
+1. Copy `packages/core/src/viewer-messages/en.ts` to `<code>.ts`, type it as `ViewerMessageCatalogue`
+   (see `de.ts`) and translate every value. Keep the `{placeholders}` and the command words (`!game`,
+   `!skip`, `!here`, `stop`, the game ids); give a message plural forms (`{ one, other }`, or the forms
+   the language needs) wherever a number decides the wording.
+2. Add the code to `VIEWER_LOCALES` in `types.ts`, and the catalogue, its `Intl` tag and its name in the
+   picker to `VIEWER_MESSAGES`, `INTL_TAGS` and `VIEWER_LOCALE_LABELS` in `index.ts`. The compiler asks
+   for each of them. The settings form, the setup wizard and `PUT /api/settings/instance` read
+   `VIEWER_LOCALES` and need no change.
+3. Run `pnpm vitest run tests/unit/viewer-messages.test.ts`: the parity test fails for a key that is
+   missing or extra and for a placeholder that differs from English in any plural form.
+4. Measure the texts that share a row on the picture. `tests/unit/viewer-language-fit.test.ts` lays the
+   German poll, skip and game headers out in the renderer's fonts and fails when one needs more room
+   than its panel; extend it to the new language rather than counting characters. Then add the language
+   to the surface tests (`viewer-language-surfaces`, `viewer-language-chat`,
+   `viewer-language-public-page`), which read every viewer surface in each language.
+
 ## Alerting And Incidents
 
 Current operational domains:

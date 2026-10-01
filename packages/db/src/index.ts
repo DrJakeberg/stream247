@@ -14,7 +14,7 @@ export {
   getAppSecretFilePath,
   resolveAppSecret
 } from "./app-secret.js";
-export { isUsableTimeZone, resolveAppBaseUrl, resolveChannelTimeZone } from "./instance-config.js";
+export { isUsableTimeZone, resolveAppBaseUrl, resolveChannelLanguage, resolveChannelTimeZone } from "./instance-config.js";
 export * from "./asset-retention.js";
 import { classifyAssetRetention, selectAssetRetentionDeletions, type AssetRetentionCounters } from "./asset-retention.js";
 import {
@@ -517,10 +517,13 @@ export type OverlayScenePresetRecord = {
 };
 
 export type ManagedConfigRecord = {
-  // Instance basics, written by the setup wizard. Env variables override these two — see
+  // Instance basics, written by the setup wizard. Env variables override these three — see
   // instance-config.ts for the precedence rationale.
   appUrl: string;
   channelTimezone: string;
+  // M80: the language everything viewers see or read is written in ("en" | "de"). Empty means
+  // English; resolveChannelLanguage owns the order.
+  channelLanguage: string;
   twitchClientId: string;
   twitchClientSecret: string;
   twitchDefaultCategoryId: string;
@@ -1790,6 +1793,7 @@ function defaultState(): AppState {
     managedConfig: {
       appUrl: "",
       channelTimezone: "",
+      channelLanguage: "",
       twitchClientId: "",
       twitchClientSecret: "",
       twitchDefaultCategoryId: "",

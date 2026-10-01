@@ -111,9 +111,9 @@ the pool's next item. Under the relay no operator action shows that slate.
   Insert is pending or on air (since M79), no skip vote starts or counts, a vote that passed just before
   the worker saw the override or insert is not applied (runtime event `chat.skip.paused` with `hold`
   `asset`, `fallback` or `insert`; audit row `chat.skip.refused`), and the bot answers in chat at most
-  once a minute (one cooldown for all three), for example "The operator has pinned this item — skip
-  votes are paused until the pin ends." or "The operator is playing an insert — skip votes are paused
-  until it ends." Votes count again once the override or insert ends; an insert still ends as before
+  once a minute (one cooldown for all three), in the channel language (since M80), for example "The
+  operator has pinned this item — skip votes are paused until the pin ends." or "The operator is
+  playing an insert — skip votes are paused until it ends." Votes count again once the override or insert ends; an insert still ends as before
   (its end, the operator's Skip, Resume schedule, a Live Bridge). A pool's automatic insert and a cue
   point insert are the schedule's, not the operator's: chat can skip them as any other item. The worker
   sees a new Pin or insert, and its end, at its next cycle (up to about 30 s): votes in that window count
@@ -135,6 +135,80 @@ the pool's next item. Under the relay no operator action shows that slate.
   they rejoin (slate, then as above). With the relay the programme is not restarted: the uplink takes
   the outputs back on its next cycle by restarting the uplink process of each output's rendition, so the
   outputs that share that rendition (Twitch, for one) reconnect once.
+
+## What Viewers Read: The Channel Language (since M80)
+
+One setting, the channel language (`Admin → Settings → Channel language`, the setup wizard's instance
+step, or `CHANNEL_LANGUAGE` in the environment, which beats the saved value), decides the language of
+everything the product itself says to viewers. `en` is the default, `de` is German; any other value
+counts as English.
+
+When a change arrives:
+
+- Saved in Settings or the wizard, it needs no restart. The chat bot, the Twitch title and the public
+  page pick it up with their next refresh, and the picture with the next playout cycle while a
+  programme or a Live Bridge is on air.
+- While the standby or reconnect slate is on air with the scene picture, the picture and its poll, skip
+  and game panels keep the previous language until the next programme or Live Bridge starts. A time
+  zone change behaves the same way: the playout redraws the slate from the picture it built when the
+  last programme started. The slate's plain-text lines (overlay off, or text mode) change at once.
+- `CHANNEL_LANGUAGE` is an environment value and is read when a container starts. Changing it means
+  recreating the containers (`docker compose up -d`, or a redeploy in Portainer), like any other
+  environment change.
+
+What follows the language:
+
+- the on-air picture: the chip on the lower third (`Now Playing` / `Läuft gerade`), the next card
+  (`Next` / `Als Nächstes`, its time range, `Nothing scheduled` / `Noch nichts geplant`), the countdown,
+  the next-item poll and the skip bar, and the chat game panels
+- text mode and the standby slate (the `Now:` / `Jetzt:` and `Next:` / `Als Nächstes:` lines ffmpeg draws
+  when no scene picture is on air)
+- the standby, reconnect and Live Bridge texts the worker writes when nothing titled is on air
+- every chat bot reply (`!here`, `!game`, the skip-paused lines)
+- the Twitch title when no asset is on air
+- the public page `/channel`, including the name of the time zone (`Central European Time` /
+  `Mitteleuropäische Zeit` instead of `Europe/Berlin`)
+
+What does not:
+
+- **Your own content is never translated**: asset and block titles, categories, scene text layers, the
+  ticker, source names, and any headline you wrote in the studio. One exception follows from the
+  built-in rule below: a title, category or source name that is exactly one of the product's own
+  English texts is shown in the channel language.
+- **Command words** stay as they are in every language: `!here`, `!skip`, `!request`, `!game`, the
+  game ids, `stop`, `!1`, `!2`.
+- **The admin interface stays English**, including the texts it shares with the air: the as-run log
+  and the playout state keep `Replay standby`, `Scheduled reconnect`, `Live Bridge` and `Live input`,
+  and the sources list keeps `Local Media Library`; viewers get the channel language's words for them
+  on the picture, in the Twitch title and on the public page.
+
+The studio's built-in headlines (`Stream247`, `Replay stream`, `Always on air`, `Insert on air`,
+`Scheduled reconnect in progress`, `Please wait, restream is starting`) are stored in the database in
+English and are not migrated. A stored value that still equals its built-in English default counts as
+not customised and is shown in the channel language; anything else is shown exactly as written. So a
+German channel that never touched the headlines gets German headlines, and to keep one of the English
+defaults on a German channel, change it by a character.
+
+The same rule covers the names the product writes in English for the admin — `Replay standby`,
+`Stand by`, `Scheduled reconnect`, `Live Bridge`, `Live input` and `Local Media Library` (the local
+library's source name, which every scan writes again, so it cannot be renamed) — wherever they reach
+viewers: as a title, a category or the source label on the picture, in the Twitch title and on the
+public page. The rule compares the text, not who wrote it, because the playout and queue state do not
+record that. So an asset, a block, a category or a source that you named exactly like one of the texts
+in this section is shown in the channel language as well (`Stand by` as an asset title reads `Gleich
+geht’s weiter` on a German channel; in English, `Replay standby` reads `Stand by`). Change it by a
+character to have it shown as written.
+
+The standby state has one name per language: `Stand by` / `Gleich geht’s weiter` (chip, title, Twitch
+title, public page), with the headline `Stand by, we’ll be right back` / `Kurze Pause – gleich geht’s
+weiter`. The public page no longer prints the playout's status message, which is written for the
+operator (`Crash-loop protection is active.`); it shows `Playing now.`, `The stream is starting, back
+in a moment.` or `The channel is off air right now.` instead. The status message is unchanged on the
+admin pages.
+
+One text is written once and then kept: an ingested item without a title is stored as
+`<source> item` / `Video aus <source>` in the language set at that sync, and a later language change
+does not rename it.
 
 ## Symptoms And Immediate Actions
 

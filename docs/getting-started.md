@@ -66,6 +66,7 @@ cp .env.production.example .env
 | `TRAEFIK_HOST` (and `TRAEFIK_ACME_EMAIL` if the built-in Let's Encrypt profile is used) | the HTTPS front |
 | `TWITCH_STREAM_KEY` | if the channel should go on air immediately; otherwise entered later as the primary destination's stream key under `Live → Status → Output destinations` (`/settings` has no stream-key field) |
 | `CHANNEL_TIMEZONE` | leave unset to let the wizard manage it; the example file no longer pins a zone, because an env value always beats the wizard's field |
+| `CHANNEL_LANGUAGE` | `en` or `de`; leave unset to choose the language in the wizard or under `Admin → Settings → Channel language`. Like the time zone, an env value always beats the saved one; anything else than `de` counts as `en` |
 
 Everything else — Twitch client credentials, SMTP, Discord — can be entered in the setup wizard or
 under `/settings` later, encrypted with the app secret.
@@ -96,12 +97,35 @@ so firewall the port if you cannot open the browser right away. Over plain HTTP 
 back to `/login` without a message.
 
 Then open `https://<your-host>/setup`. The wizard runs in this order: **owner account → instance
-(public URL) → Twitch app credentials → Twitch connect → done**. Creating the owner signs you in; the
+(public URL, time zone, channel language) → Twitch app credentials → Twitch connect → done**. Creating the owner signs you in; the
 wizard's "done" means the credentials are in place, not that the channel can air — its readiness
 checklist lists what is still missing. Reopening `/setup` later requires being signed in and continues at
 the first unfinished step. Create the owner with an e-mail
 address and a password of at least 10 characters — there is no way to change either later without
 database access, so store them.
+
+### Channel language
+
+The channel language is the language your viewers are addressed in — one setting for everything they
+see or read: the on-air picture (what plays now and next, polls, the skip bar, chat games), the
+standby, reconnect and live-bridge texts, every chat bot reply, and the public page `/channel`.
+`English` is the default; `German (Deutsch)` is the second language.
+
+- Choose it in the wizard's instance step, or change it later under `Admin → Settings → Channel
+  language`. It takes effect without a restart: the chat bot, the Twitch title and the public page pick
+  it up with their next refresh, and the picture with the next playout cycle while a programme is on
+  air. During a standby or reconnect slate the picture keeps the previous language until the next
+  programme starts, as it does for a time zone change.
+- `CHANNEL_LANGUAGE=de` in `.env` pins it and beats the saved value (the form says so when it is set).
+  It is read when the containers start, so setting or changing it means recreating them
+  (`docker compose up -d`).
+- What you wrote yourself is never translated: asset and block titles, scene text layers, the ticker,
+  a headline you changed in the studio. Only texts the product itself writes follow the language —
+  including the studio's headline defaults (`Always on air`, `Insert on air`, …) for as long as you
+  have not changed them. The rule compares the text: a title, category or source name that is exactly
+  one of the product's own English texts (`Stand by`, `Live input`, …) is shown in the channel language
+  too; `docs/operations.md`, *What Viewers Read*, lists them.
+- The admin interface stays English.
 
 ## 5. Sign in and connect
 

@@ -63,7 +63,7 @@ describe("viewers never override the operator", () => {
     const handler = flat(between(workerSource, "onChatMessage(message) {", "onChatGameCommand:"));
     expect(handler).toContain("config: latestChatInteractionConfig, operatorHold: latestOperatorHold });");
     expect(handler).toContain(
-      'if (effect.kind === "skip-paused" && effect.announce) { twitchChatBridge.say(formatChatSkipPausedReply(effect.hold)); }'
+      'if (effect.kind === "skip-paused" && effect.announce) { twitchChatBridge.say(formatChatSkipPausedReply(effect.hold, viewerLanguage())); }'
     );
   });
 
@@ -90,7 +90,7 @@ describe("viewers never override the operator", () => {
     const refused = between(skip, 'if (decision.kind === "paused") {', "continue; }");
     expect(refused).toContain('logRuntimeEvent("chat.skip.paused", { assetId: effect.assetId, hold: heldBy });');
     expect(refused).toContain('await appendAuditEvent( "chat.skip.refused",');
-    expect(refused).toContain("if (chatControl.claimSkipPausedReply()) { twitchChatBridge.say(formatChatSkipPausedReply(heldBy)); }");
+    expect(refused).toContain("if (chatControl.claimSkipPausedReply()) { twitchChatBridge.say(formatChatSkipPausedReply(heldBy, viewerLanguage())); }");
     // A stale vote writes nothing: the operator's skip hold and restart flag stay as the operator wrote them.
     const stale = between(skip, 'if (decision.kind === "stale") {', "continue; }");
     expect(stale).toContain('logRuntimeEvent("chat.skip.stale", { assetId: effect.assetId, currentAssetId: onAirAtApply });');
@@ -120,7 +120,7 @@ describe("viewers never skip the operator's insert", () => {
     expect(refused).toContain(
       'heldBy === "insert" ? "Chat voted to skip the current item while the operator\'s Play now / Insert held the air; the vote was not applied."'
     );
-    expect(refused).toContain("if (chatControl.claimSkipPausedReply()) { twitchChatBridge.say(formatChatSkipPausedReply(heldBy)); }");
+    expect(refused).toContain("if (chatControl.claimSkipPausedReply()) { twitchChatBridge.say(formatChatSkipPausedReply(heldBy, viewerLanguage())); }");
   });
 
   it("never marks a pool or cue point insert as the operator's, so those stay skippable", () => {

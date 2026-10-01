@@ -1,3 +1,5 @@
+import { viewerText } from "./viewer-messages/index.js";
+
 /**
  * Which operator override holds the air right now (M78).
  *
@@ -134,12 +136,10 @@ export function decidePassedSkipVote(input: PassedSkipVoteInput): PassedSkipVote
  * vocabulary, and it says when skipping comes back: a refusal without a reason is what makes a room type
  * the command again (chat-interaction.ts).
  */
-export function formatChatSkipPausedReply(hold: Exclude<OperatorHold, "">): string {
+export function formatChatSkipPausedReply(hold: Exclude<OperatorHold, "">, locale?: string): string {
   if (hold === "insert") {
     // One line for a pending and an active insert: the pending one takes the air at the next cycle.
-    return "The operator is playing an insert — skip votes are paused until it ends.";
+    return viewerText(locale, "chat.skip.pausedInsert");
   }
-  return hold === "fallback"
-    ? "The operator has put the fallback on air — skip votes are paused until it ends."
-    : "The operator has pinned this item — skip votes are paused until the pin ends.";
+  return viewerText(locale, hold === "fallback" ? "chat.skip.pausedFallback" : "chat.skip.pausedPin");
 }

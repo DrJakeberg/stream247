@@ -20,6 +20,7 @@ export * from "./relay-ingest.js";
 export * from "./source-circuit-breaker.js";
 export * from "./source-health.js";
 export * from "./twitch-vod-playback.js";
+export * from "./viewer-messages/index.js";
 
 import {
   resolveAlertsRuntimeEnabled,
@@ -27,6 +28,13 @@ import {
   type ManagedRuntimeToggleInput
 } from "./managed-runtime.js";
 import { OVERLAY_PANEL_IDS, OVERLAY_TICKER_DEFAULT_SECONDS, type OverlayPanelId } from "./overlay-layout.js";
+import {
+  localizeViewerBuiltInText,
+  normalizeViewerLocale,
+  viewerText,
+  type ViewerLocale,
+  type ViewerMessageKey
+} from "./viewer-messages/index.js";
 
 export type ModerationConfig = {
   enabled: boolean;
@@ -782,6 +790,12 @@ export type OverlayScenePayload = {
   tickerRotateSeconds: number;
   emergencyBanner: string;
   timeZone: string;
+  /**
+   * The channel language (M80). Carried like timeZone so the studio preview and the playout
+   * renderer write the picture in the same language, and so the playout container can build the
+   * poll, skip and game panels it re-derives from database rows in that language too.
+   */
+  locale: ViewerLocale;
 };
 
 export type OverlaySceneFrameSupport = {
@@ -1352,6 +1366,31 @@ export function summarizeLiveBridgeInput(value: string): string {
   } catch {
     return "Configured live input";
   }
+}
+
+/**
+ * What the picture says while a live bridge is on air, in the channel language.
+ *
+ * The worker wrote this at three sites as four English literals each; they were one concept with
+ * three copies, so the language now lives here once. The operator's own bridge label is the title
+ * and stays verbatim; only the words the product supplies are the catalogue's. The input type is
+ * a protocol name (RTMP, HLS) in every language.
+ */
+export function buildLiveBridgeOverlayText(args: {
+  locale?: string;
+  /** The bridge's label, or whatever the caller already fell back to; empty means the product's name. */
+  title: string;
+  inputType: string;
+  nextTitle: string;
+}): { currentTitle: string; currentCategory: string; currentSourceName: string; nextTitle: string } {
+  return {
+    currentTitle: args.title || viewerText(args.locale, "liveBridge.label"),
+    currentCategory: viewerText(args.locale, "liveBridge.category"),
+    currentSourceName: viewerText(args.locale, "liveBridge.sourceLabel", {
+      inputType: (args.inputType || "rtmp").toUpperCase()
+    }),
+    nextTitle: args.nextTitle || viewerText(args.locale, "liveBridge.resumes")
+  };
 }
 
 export function normalizeOverlaySceneLayerOrder(value: unknown): OverlaySceneLayerKind[] {
@@ -1977,30 +2016,43 @@ export function resolveOverlayScenePresetForQueueKind(
   return scenePreset;
 }
 
-export function buildOverlayBrandLine(replayLabel: string, brandBadge = ""): string {
-  const parts = [normalizeOverlayVisibleText(replayLabel) || "Replay stream", normalizeOverlayVisibleText(brandBadge)].filter(Boolean);
+export function buildOverlayBrandLine(replayLabel: string, brandBadge = "", locale?: string): string {
+  const parts = [
+    localizeViewerBuiltInText(locale, normalizeOverlayVisibleText(replayLabel)) || viewerText(locale, "overlay.brand.replayLabel"),
+    normalizeOverlayVisibleText(brandBadge)
+  ].filter(Boolean);
   return parts.join(" · ");
 }
 
+/**
+ * The sentence under the title, by what is on air. An operator's own headline is drawn verbatim;
+ * an empty one, or one still equal to its built-in English default, is the catalogue's in the
+ * channel language (M80: stored defaults are "not customised", see localizeViewerBuiltInText).
+ */
 export function resolveOverlayHeadlineForQueueKind(
   headline: string,
   queueKind: OverlayQueueKind,
-  overrides?: Partial<Pick<OverlaySceneSource, "insertHeadline" | "standbyHeadline" | "reconnectHeadline">>
+  overrides?: Partial<Pick<OverlaySceneSource, "insertHeadline" | "standbyHeadline" | "reconnectHeadline">>,
+  locale?: string
 ): string {
+  const resolve = (value: string | undefined, fallbackKey: ViewerMessageKey) => {
+    const written = sanitizeTextValue(value || "", 120);
+    return written ? localizeViewerBuiltInText(locale, written) : viewerText(locale, fallbackKey);
+  };
+
   if (queueKind === "insert") {
-    return sanitizeTextValue(overrides?.insertHeadline || "Insert on air", 120) || "Insert on air";
+    return resolve(overrides?.insertHeadline, "overlay.headline.insert");
   }
 
   if (queueKind === "reconnect") {
-    return sanitizeTextValue(overrides?.reconnectHeadline || "Scheduled reconnect in progress", 120) || "Scheduled reconnect in progress";
+    return resolve(overrides?.reconnectHeadline, "overlay.headline.reconnect");
   }
 
   if (queueKind === "standby") {
-    return sanitizeTextValue(overrides?.standbyHeadline || headline || "Please wait, restream is starting", 120) ||
-      "Please wait, restream is starting";
+    return resolve(overrides?.standbyHeadline || headline, "overlay.headline.standby");
   }
 
-  return sanitizeTextValue(headline || "Always on air", 120) || "Always on air";
+  return resolve(headline, "overlay.headline.asset");
 }
 
 function normalizeOverlayVisibleText(value: unknown): string {
@@ -2067,43 +2119,61 @@ export function buildOverlayScenePayload(args: {
   queueTitles?: string[];
   modeSubtitle?: string;
   timeZone?: string;
+  /** The channel language; anything but a language this build speaks is English. */
+  locale?: string;
 }): OverlayScenePayload {
+  const locale = normalizeViewerLocale(args.locale);
   const scene = buildOverlaySceneDefinition({
     overlay: args.overlay,
     queueKind: args.queueKind
   });
-  const heroLabel =
+  const heroLabel = viewerText(
+    locale,
     args.queueKind === "insert"
-      ? "Insert On Air"
+      ? "overlay.heroLabel.insert"
       : args.queueKind === "live"
-        ? "Live Now"
+        ? "overlay.heroLabel.live"
       : args.queueKind === "reconnect"
-        ? "Reconnect Window"
+        ? "overlay.heroLabel.reconnect"
         : args.queueKind === "standby"
-          ? "Standby"
-          : "Now Playing";
+          ? "overlay.heroLabel.standby"
+          : "overlay.heroLabel.asset"
+  );
   const heroBody =
-    args.modeSubtitle ||
-    resolveOverlayHeadlineForQueueKind(args.overlay.headline, args.queueKind, {
-      insertHeadline: args.overlay.insertHeadline,
-      standbyHeadline: args.overlay.standbyHeadline,
-      reconnectHeadline: args.overlay.reconnectHeadline
-    });
-  const nextLabel =
+    localizeViewerBuiltInText(locale, args.modeSubtitle || "") ||
+    resolveOverlayHeadlineForQueueKind(
+      args.overlay.headline,
+      args.queueKind,
+      {
+        insertHeadline: args.overlay.insertHeadline,
+        standbyHeadline: args.overlay.standbyHeadline,
+        reconnectHeadline: args.overlay.reconnectHeadline
+      },
+      locale
+    );
+  const nextLabel = viewerText(
+    locale,
     args.queueKind === "insert"
-      ? "After Insert"
+      ? "overlay.nextLabel.insert"
       : args.queueKind === "reconnect"
-        ? "Returning With"
+        ? "overlay.nextLabel.reconnect"
         : args.queueKind === "live"
-          ? "After Live"
-          : "Next";
-  const currentTitle = normalizeOverlayVisibleText(args.currentTitle);
-  const currentCategory = normalizeOverlayVisibleText(args.currentCategory);
-  const currentSourceName = normalizeOverlayVisibleText(args.currentSourceName);
-  const nextTitle = normalizeOverlayVisibleText(args.nextTitle);
-  const channelName = normalizeOverlayVisibleText(args.overlay.channelName) || "Stream247";
+          ? "overlay.nextLabel.live"
+          : "overlay.nextLabel.asset"
+  );
+  // Titles pass through the built-in rule as well: the worker and the studio name a standby, a
+  // reconnect or an unnamed live bridge in English in state ("Replay standby"), because the admin and
+  // the as-run log read them there, and the viewer edge is where they become the channel language.
+  // The source name too: the local library is "Local Media Library" in the sources table whatever
+  // the channel speaks, and the meta line shows it.
+  const viewerTitle = (value: unknown) => localizeViewerBuiltInText(locale, normalizeOverlayVisibleText(value));
+  const currentTitle = viewerTitle(args.currentTitle);
+  const currentCategory = viewerTitle(args.currentCategory);
+  const currentSourceName = viewerTitle(args.currentSourceName);
+  const nextTitle = viewerTitle(args.nextTitle);
+  const channelName = viewerTitle(args.overlay.channelName) || viewerText(locale, "overlay.brand.channelName");
   const queueTitles = (args.queueTitles || [])
-    .map((title) => normalizeOverlayVisibleText(title))
+    .map((title) => viewerTitle(title))
     .filter(Boolean)
     .slice(0, args.overlay.queuePreviewCount);
   const metaLine = [
@@ -2131,14 +2201,14 @@ export function buildOverlayScenePayload(args: {
     scene,
     channelName,
     accentColor: args.overlay.accentColor,
-    brandLine: buildOverlayBrandLine(args.overlay.replayLabel, args.overlay.brandBadge),
+    brandLine: buildOverlayBrandLine(args.overlay.replayLabel, args.overlay.brandBadge, locale),
     heroLabel,
-    heroTitle: currentTitle || "Stream247",
+    heroTitle: currentTitle || viewerText(locale, "overlay.brand.channelName"),
     heroBody,
     metaLine,
     nextLabel,
-    nextTitle: nextTitle || "Schedule not available",
-    nextTimeLabel: normalizeOverlayVisibleText(args.nextTimeLabel) || "Nothing scheduled next",
+    nextTitle: nextTitle || viewerText(locale, "overlay.next.noTitle"),
+    nextTimeLabel: normalizeOverlayVisibleText(args.nextTimeLabel) || viewerText(locale, "overlay.next.noBlock"),
     queueTitleLine: queueTitles.join(" · "),
     queueTitles,
     scheduleLabel: "Scene",
@@ -2148,11 +2218,17 @@ export function buildOverlayScenePayload(args: {
     tickerText: normalizeOverlayVisibleText(args.overlay.tickerText),
     tickerRotateSeconds: args.overlay.tickerRotateSeconds,
     emergencyBanner: normalizeOverlayVisibleText(args.overlay.emergencyBanner),
-    timeZone: args.timeZone || "UTC"
+    timeZone: args.timeZone || "UTC",
+    locale
   };
 }
 
+/**
+ * The scene as lines of text, for ffmpeg's drawtext: the on-air text mode, the standby slate, and
+ * the fallback when the scene picture fails. Written in the payload's language like the picture.
+ */
 export function buildOverlayTextLinesFromScenePayload(payload: OverlayScenePayload): string[] {
+  const locale = payload.locale;
   const brandLine = normalizeOverlayVisibleText(payload.brandLine);
   const heroTitle = normalizeOverlayVisibleText(payload.heroTitle);
   const heroBody = normalizeOverlayVisibleText(payload.heroBody);
@@ -2160,18 +2236,20 @@ export function buildOverlayTextLinesFromScenePayload(payload: OverlayScenePaylo
   const nextTitle = normalizeOverlayVisibleText(payload.nextTitle);
   const queueTitleLine = normalizeOverlayVisibleText(payload.queueTitleLine);
   const tickerLine = normalizeOverlayVisibleText(payload.tickerText);
+  const line = (key: ViewerMessageKey, value: string, placeholder: "title" | "titles" = "title") =>
+    value ? viewerText(locale, key, { [placeholder]: value }) : "";
 
   if (payload.scene.resolvedPresetId === "minimal-chip") {
-    return [brandLine, heroTitle ? `Now: ${heroTitle}` : "", metaLine, tickerLine].filter(Boolean);
+    return [brandLine, line("textMode.now", heroTitle), metaLine, tickerLine].filter(Boolean);
   }
 
   if (payload.scene.resolvedPresetId === "bumper-board") {
     return [
       brandLine,
-      heroBody || "Insert on air",
-      heroTitle ? `Insert: ${heroTitle}` : "",
-      nextTitle ? `Next: ${nextTitle}` : "",
-      queueTitleLine ? `After this: ${queueTitleLine}` : "",
+      heroBody || viewerText(locale, "overlay.headline.insert"),
+      line("textMode.insert", heroTitle),
+      line("textMode.next", nextTitle),
+      line("textMode.afterThis", queueTitleLine, "titles"),
       tickerLine
     ].filter(Boolean);
   }
@@ -2179,35 +2257,35 @@ export function buildOverlayTextLinesFromScenePayload(payload: OverlayScenePaylo
   if (payload.scene.resolvedPresetId === "reconnect-board") {
     return [
       brandLine,
-      heroBody || "Scheduled reconnect in progress",
-      nextTitle ? `Resuming with: ${nextTitle}` : "",
-      queueTitleLine ? `Queue: ${queueTitleLine}` : "",
+      heroBody || viewerText(locale, "overlay.headline.reconnect"),
+      line("textMode.resumingWith", nextTitle),
+      line("textMode.queue", queueTitleLine, "titles"),
       tickerLine
     ].filter(Boolean);
   }
 
   if (payload.scene.resolvedPresetId === "split-now-next") {
-    return [brandLine, heroTitle ? `Now: ${heroTitle}` : "", nextTitle ? `Next: ${nextTitle}` : "", metaLine, tickerLine].filter(Boolean);
+    return [brandLine, line("textMode.now", heroTitle), line("textMode.next", nextTitle), metaLine, tickerLine].filter(Boolean);
   }
 
   if (payload.scene.resolvedPresetId === "standby-board") {
     return [
       brandLine,
-      heroBody || "Please wait, restream is starting",
-      heroTitle ? `Current: ${heroTitle}` : "",
-      nextTitle ? `Next: ${nextTitle}` : "",
-      queueTitleLine ? `Later: ${queueTitleLine}` : "",
+      heroBody || viewerText(locale, "overlay.headline.standby"),
+      line("textMode.current", heroTitle),
+      line("textMode.next", nextTitle),
+      line("textMode.later", queueTitleLine, "titles"),
       tickerLine
     ].filter(Boolean);
   }
 
   return [
     brandLine,
-    heroTitle ? `Now: ${heroTitle}` : "",
+    line("textMode.now", heroTitle),
     metaLine,
-    nextTitle ? `Next: ${nextTitle}` : "",
-    queueTitleLine ? `Queue: ${queueTitleLine}` : "",
-    payload.queueKind === "standby" ? heroBody || "Please wait, restream is starting" : "",
+    line("textMode.next", nextTitle),
+    line("textMode.queue", queueTitleLine, "titles"),
+    payload.queueKind === "standby" ? heroBody || viewerText(locale, "overlay.headline.standby") : "",
     tickerLine
   ].filter(Boolean);
 }
@@ -2227,6 +2305,7 @@ export function buildOverlayTextLines(args: {
   showCurrentCategory?: boolean;
   showSourceLabel?: boolean;
   showQueuePreview?: boolean;
+  locale?: string;
 }): string[] {
   return buildOverlayTextLinesFromScenePayload(
     buildOverlayScenePayload({
@@ -2276,7 +2355,8 @@ export function buildOverlayTextLines(args: {
       currentSourceName: args.sourceName,
       nextTitle: args.nextTitle,
       queueTitles: args.queueTitles,
-      modeSubtitle: args.headline
+      modeSubtitle: args.headline,
+      locale: args.locale
     })
   );
 }
@@ -2509,29 +2589,34 @@ export function resolveModeratorCheckIn(args: {
   };
 }
 
+/**
+ * What the bot answers a moderator's check-in, in the channel language. The admin's check-in API
+ * answers with the same sentence and leaves the locale out, so the admin reads English (M81).
+ */
 export function formatPresenceClampReply(args: {
   commandInput: string;
   appliedMinutes: number;
   requestedMinutes: number | null;
   clampReason: PresenceClampReason;
   config: Pick<ModerationConfig, "defaultMinutes" | "minMinutes" | "maxMinutes">;
+  locale?: string;
 }): string {
-  const commandInput = stripInvisibleCharacters(args.commandInput).trim();
-  const suffix = `window set to ${args.appliedMinutes} min`;
+  const input = stripInvisibleCharacters(args.commandInput).trim();
+  const minutes = args.appliedMinutes;
 
   if (args.clampReason === "minimum") {
-    return `received ${commandInput}, minimum is ${args.config.minMinutes}; ${suffix}`;
+    return viewerText(args.locale, "chat.presence.minimum", { input, limit: args.config.minMinutes, minutes });
   }
 
   if (args.clampReason === "maximum") {
-    return `received ${commandInput}, maximum is ${args.config.maxMinutes}; ${suffix}`;
+    return viewerText(args.locale, "chat.presence.maximum", { input, limit: args.config.maxMinutes, minutes });
   }
 
   if (args.clampReason === "default") {
-    return `received ${commandInput}, default is ${args.config.defaultMinutes}; ${suffix}`;
+    return viewerText(args.locale, "chat.presence.default", { input, limit: args.config.defaultMinutes, minutes });
   }
 
-  return `presence window set to ${args.appliedMinutes} min`;
+  return viewerText(args.locale, "chat.presence.accepted", { minutes });
 }
 
 export function describePresenceStatus(args: {

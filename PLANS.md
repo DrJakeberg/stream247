@@ -89,7 +89,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M77 Resume Interrupted Item | Playout | Later | Deferred | Continue an interrupted item at its position instead of throwing it away (competitor comparison 2026-10-01) | Owner deferred this on 2026-10-01 until after M75 and M76: start only when the owner asks. Scope when started: persisted offset, `-ss` for cached Twitch VODs first, duration bound and chapter windows offset-aware, soaked on the DUT because it touches the seam chain | worker, db, tests | high | revert commit |
 | M78 Operator Precedence | Behavior | Now | Complete | Operator actions end what they replace, and viewers never override the operator (owner decisions 2026-10-01: 1 answered directly, 2 and 3 chosen from the lead's recommendation) | The operator's Skip during an active Pin or Fallback ends that override instead of restarting the pinned item from 0, and the schedule continues from the pool's own position (after the pinned item only when the pin held the pool's running item; "after the pinned item" for every pinned pool item is a follow-up for the owner); a Live Bridge takeover ends an insert that is on air (and drops a pending one, logged), so the insert never replays from its start after the live; while a Pin or Fallback holds the air no chat skip vote starts or counts, and the bot says why in chat; a passed vote whose item has left the air is dropped; Skip tested in relay and direct mode | worker, web, core, tests, docs | low-medium | revert commit |
 | M79 Chat Never Skips An Operator Insert | Behavior | Now | Complete | Viewers never take an operator's insert off air (owner decision 2026-10-01) | While a Play now / Insert is pending or on air, no chat skip vote starts or counts and a vote that passed earlier is refused, exactly like under a Pin (M78); the bot says why at most once a minute; the insert ends as before (natural end, operator Skip, Live Bridge); tested | worker, core, tests, docs | low | revert commit |
-| M80 Viewer Language | UX + i18n | Now | Planned | Everything viewers see or read follows one channel language (owner decision 2026-10-01: German and English, viewer-facing first) | A channel language setting (`de`, `en`; new installs `en`) drives every viewer-facing text: the on-air picture (up next, clock labels, polls, the skip bar, chat game texts, empty states), the standby/fallback/reconnect slates, every chat bot reply, and the public channel page; one message catalogue per language in core with a test that both catalogues have the same keys and no viewer-facing literal is left outside it; operator content (titles, scene text layers) is never translated; the admin UI stays English (its translation is a later milestone); docs say how to add a language | core, worker, web, db, tests, docs | medium | revert commit; the setting is ignored |
+| M80 Viewer Language | UX + i18n | Now | Complete | Everything viewers see or read follows one channel language (owner decision 2026-10-01: German and English, viewer-facing first) | A channel language setting (`de`, `en`; new installs `en`) drives every viewer-facing text: the on-air picture (up next, clock labels, polls, the skip bar, chat game texts, empty states), the standby/fallback/reconnect slates, every chat bot reply, and the public channel page; one message catalogue per language in core with a test that both catalogues have the same keys and no viewer-facing literal is left outside it; operator content (titles, scene text layers) is never translated; the admin UI stays English (its translation is a later milestone); docs say how to add a language | core, worker, web, db, tests, docs | medium | revert commit; the setting is ignored |
 | M81 Admin Interface Language | UX + i18n | Later | Deferred | The admin interface in the channel language | Owner decided 2026-10-01 to translate the viewer side first (M80); start only when the owner asks | web, tests | high | — |
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
@@ -4644,7 +4644,7 @@ Follow-ups:
 - The IRC handler learns of a new Pin at the next worker cycle (up to 30 s); votes in that window count
   and a vote that passes is refused when the cycle applies it (logged, audited, answered).
 - The bot's line is English while the skip bar on air is German; a channel language setting would cover
-  both. Planned as M80 (owner decision 2026-10-01).
+  both. Planned as M80 (owner decision 2026-10-01). Done in M80.
 - Starting a Live Bridge does not warn that a pending Play now will be dropped; the audit row says so
   afterwards.
 
@@ -4711,3 +4711,160 @@ Follow-ups:
   pending or on air): votes in that window count, and a vote that passes is refused when the cycle
   applies it (logged, audited, answered), as for a Pin (M78). It learns of the insert's end the same
   way: votes in that window stay paused with the insert line.
+
+## M80 Viewer Language
+
+Owner decisions 2026-10-01: one channel language for everything viewers see or read, German and
+English; a new install speaks English; jimpanse247 is set to German after the deploy; the admin
+interface stays English (M81, deferred). Before M80 about 105 viewer texts were English literals spread
+over core, worker and web, and the poll and the skip bar were German on every channel.
+
+Done:
+
+- Setting: `channelLanguage` in the managed config next to the time zone (in the encrypted payload, no
+  schema change), resolved by `resolveChannelLanguage` (`packages/db/src/instance-config.ts`): env
+  `CHANNEL_LANGUAGE`, then the saved value, then `en`; anything that is not `de` is `en`. Web reads it
+  through `getViewerLocale`, worker, playout and uplink through the managed config each cycle refreshes
+  (`viewerLanguage()` for the chat bot's lines between cycles). `PUT /api/settings/instance` takes
+  `channelLanguage`, refuses an unknown value with 400 and keeps the fields a request leaves out. Admin
+  (English): a *Channel language* select in the wizard's instance step and a *Channel language* panel on
+  `/settings`, both with an InfoTip and a hint when the env variable pins it.
+- Catalogue: `packages/core/src/viewer-messages/` (`en.ts` reference, `de.ts`, `types.ts`, `index.ts`),
+  94 keys per language. `viewerText(locale, key, params)` fills placeholders and picks plurals with
+  `Intl.PluralRules` on `count`; numbers through a cached `Intl.NumberFormat` without grouping; the
+  clock through a cached `Intl.DateTimeFormat` (en-GB / de-DE, `h23`), the same `HH:MM` as before;
+  upper-casing with `toLocaleUpperCase`; the time zone's name through `formatViewerTimeZoneName`
+  (generic long name, then the specific one, an offset only when the zone has no name). An unknown
+  language is English, a key missing from one language falls back to English, an unknown key is an
+  empty string: nothing throws on air.
+- The picture: `OverlayScenePayload.locale`, set by the worker's payload builder, the studio preview and
+  the preview request parser. The playout container rebuilds the poll, the skip bar and the game panels
+  from database rows with the payload's locale. A payload cached before M80 (no locale) is English.
+  The playout caches the payload when a programme or a live bridge starts and on every cycle while one
+  is on air (`writeOnAirOverlay`); the standby and reconnect paths write only the text slate, so during
+  a slate the scene picture and its panels keep the previous language until the next programme starts.
+  Older than M80, and the time zone behaves the same way; the docs say so.
+- Literals replaced (inventory sections 1-9): the on-air layout (next heading and time range, countdown,
+  vote counts, clock, capitals), the payload's chips, next labels and fallbacks, text mode and the
+  standby slate, the worker's standby / next / live-bridge titles (three sites now share
+  `buildLiveBridgeOverlayText`), the untitled-asset title, the chat name fallback, the poll and the skip
+  bar, the three chat game boards, every chat bot reply, the Twitch title's no-asset fallback
+  (`resolveTwitchFallbackTitle`), and the public page. Command words stay untranslated.
+- Shared words are split: playout state and the as-run log keep `Replay standby`, `Scheduled reconnect`,
+  `Live Bridge` and `Live input`, the studio keeps the `CHAT_GAMES` labels, the admin keeps
+  `getChannelStatusLabel` and the playout message; viewers get the catalogue's text on the way out.
+- Stored English defaults (section 10): `localizeViewerBuiltInText` maps the six stored headline
+  defaults, the worker's four English state titles and the local library's source name (`Local Media
+  Library`, which every scan writes again; `Lokale Mediathek` on a German channel's meta line) to their
+  catalogue keys, so a stored value equal to its English default is rendered in the channel language and
+  anything the operator wrote is rendered verbatim. Nothing is migrated. The default playout message is
+  no longer shown on the public page. The rule compares the text, not the author: titles, categories,
+  queue titles and the source label pass through it on the picture, in the Twitch title and on the
+  public page, because playout and queue state carry the worker's titles in the same fields as the
+  operator's. An operator's own title that equals one of the thirteen built-in English texts is
+  therefore shown in the channel language too; documented in operations and getting-started and pinned
+  by a test, not narrowed (a missed call site would put `Replay standby` on a German channel).
+- Public page `/channel`: every word is built in `apps/web/lib/public-channel-view.ts` from the
+  snapshot, which now carries `locale` and `timeZoneLabel` (named on the server, so the first paint and
+  the live updates agree, and a language change reaches an open page with the next update). `lang` sits
+  on `<main>` and on the live block, not on `<html>`: the root layout also serves the English admin, and
+  Next.js has no per-route `<html>` short of several root layouts. The page's meta description is the
+  viewer heading in the channel language. The zone reads `Central European Time` /
+  `Mitteleuropäische Zeit` instead of `Europe/Berlin`. `getChannelStatusLabel` is split into
+  `getChannelStatusKind`, the admin's English label, and the viewer's label and status line.
+- English wording changed on purpose (item 5 of the spec; everything else is byte-identical, and the
+  overlay golden frames did not move): `No next block configured` and `Nothing scheduled next` are
+  `Nothing scheduled`; the standby state has one term, `Stand by` (was `Standby` on the chip and the
+  public page, `Replay standby` as the title and in the Twitch title, `Please wait, restream is starting`
+  as the headline, now `Stand by, we’ll be right back`); the studio preview's `Program resumes shortly`
+  is the broadcast's `Programming will resume shortly`; the poll and the skip bar are English on an
+  English channel (`What plays next?`, `Type !1, !2 in chat`, `Skip?`, `Move on to the next video`,
+  `2 of 3 votes`); the no-room reply says `1 layer`; on the public page the zone is named, the empty
+  next line reads `The next item will appear here as soon as it is confirmed.` (was `...as soon as the
+  runtime confirms it.`), and the line under *On air now* is `Playing now.`, `The stream is starting,
+  back in a moment.` or `The channel is off air right now.` instead of the playout's status message.
+  German: `1 von 1 Stimmen` is `1 von 1 Stimme`.
+- German: short Twitch German in the du-form with one word per thing (`Als Nächstes`, `Gleich geht’s
+  weiter`, `Stimme/Stimmen`, `Überspringen`, `Einspieler`, `Regie` for the operator). Measured
+  in the renderer's DejaVu fonts at 1920 against the room the layout gives each text: poll header with
+  countdown 435 of 472 px (English 327), skip header 283 of 472, next-card heading 431 of 480; the game
+  status lines were shortened after measuring (`Vorbei · N Punkte`, `Geschafft · N Punkte`, `N/M
+  geschafft`) so every German game header is no wider than the English one. The Minesweeper progress
+  line was `N von M offen` in the first draft: German reads that as "N still to do", the opposite of
+  `Cleared N of M`. `512 von 576 aufgedeckt` needs 589 px of 540 and `512/576 aufgedeckt` 549;
+  `512/576 geschafft` needs 531 (English 533) and ends on the word the chip shows when the board is
+  cleared.
+- Docs: getting-started (env table, wizard step, *Channel language*), operations (*What Viewers Read:
+  The Channel Language*; the skip-paused lines), architecture (*Viewer Language* with *Adding a viewer
+  language*), deployment (env lists; *Upgrading Past 2.1.0: Viewer Language (M80)*), twitch-setup, ui
+  (text rule, canonical standby term), README.
+- Tests: `viewer-messages` (key and placeholder parity over `VIEWER_LOCALES`, no untranslated German
+  entry, plurals, numbers, clock incl. midnight, capitals, zone names, fallbacks for unknown language,
+  zone and key, the stored-default rule), `viewer-language-surfaces` (payload, layout, text mode,
+  standby slate, live bridge in both languages; English pinned byte for byte),
+  `viewer-language-chat` (poll, skip bar, games, every bot reply — the three the worker writes inline
+  are pinned by wording and by their call sites), `viewer-language-public-page`
+  (header, scheduled hour, empty states, the worker's state titles, operator titles untouched, no
+  playout message, `lang` on the content), `channel-language-setting` (env, stored, default in web and
+  worker; studio preview; Twitch fallback title; the PUT route), `viewer-language-fit` (the widths
+  above), `viewer-language-literals` (no viewer sentence outside the catalogue in 16 source files; the
+  seven section-11 lines it lets through must still exist; the two files that lay out the public page
+  are parsed with the TypeScript compiler and may hold no written word in JSX text, in a string inside
+  a child expression or in a text prop, with six mutations that prove the check fails), plus cases in
+  `channel-status` (viewer and
+  admin labels apart) and `ops-state` (the public snapshot's `locale` and `timeZoneLabel`, env first).
+  German output is checked against the English catalogue's sentences (`expectNoEnglish`). Pins changed:
+  `overlay-next-time-label` (`No next block configured` → `Nothing scheduled`, deliberate),
+  `channel-status` (`getChannelUpdateNotice` takes a locale; the English texts are unchanged) and
+  `operator-precedence-wiring` (source pins that gained the `viewerLanguage()` argument).
+- No dependency added (`Intl` is built in). `pnpm validate` green (2409 unit tests in 239 files, 62
+  integration tests, build).
+
+Left as is (inventory section 11, reachable code that draws nothing today, English): the metadata
+widget fallbacks (`buildOverlaySceneMetadataWidgetContent`, tests only), the payload's
+`scheduleLabel/Title/Body/Aux` (never drawn), the EventSub alert texts (recorded, not drawn).
+
+Not run: the e2e wording and design baselines. They will move, and need a refresh on a fresh
+`DEV_STACK_STATE_DIR`: `channel-chromium-linux.txt` (lines 3 and 8: the zone's name instead of
+`Europe/Berlin`) and the channel design baseline; `admin-settings-chromium-linux.txt` and the settings
+design baseline (new *Channel language* panel); the setup wizard's instance step (new select, longer
+intro sentence); the studio scene preview where a fixture shows standby or no next block (`STAND BY`,
+`NOTHING SCHEDULED`). The control-density budget of `/admin?tab=settings` is raised from 33 to 35 in
+`tests/e2e/control-density.spec.ts` (the panel's select and its secondary save; reason written beside
+the number), counted from the components and not yet measured: run that suite on the same stack.
+
+DUT check after deploy. The channel is English until it is set: check `/channel` reads `All times are
+shown in Central European Time.` and the picture is unchanged. Then set `Admin → Settings → Channel
+language` to *German (Deutsch)* while a programme is on air and check, without a restart (the Settings
+route only: `CHANNEL_LANGUAGE=de` in `stack.env` reaches the containers when the stack is redeployed, and
+during a standby or reconnect slate the picture follows with the next programme):
+`/channel` reads `Was gerade läuft und was als Nächstes kommt.` and `Alle Uhrzeiten: Mitteleuropäische
+Zeit.` (if it reads `Central European Time` in German text, the web image's ICU lacks German: `docker
+compose exec web node -p "new Intl.DateTimeFormat('de-DE',{timeZone:'Europe/Berlin',timeZoneName:'longGeneric'}).format()"`);
+the lower third's chip is `LÄUFT GERADE` and the next card `ALS NÄCHSTES · <time>`; `!game` in
+jimpanse247's chat answers `Gerade läuft kein Spiel. ...`; `!skip` shows `Überspringen?` with `1 von N
+Stimme(n)`; the Twitch title of an asset on air is unchanged.
+
+Follow-ups:
+
+- `.env.example` and `.env.production.example` do not list `CHANNEL_LANGUAGE` (env files were out of
+  bounds for this milestone); one commented line next to `CHANNEL_TIMEZONE` in each.
+- `/api/channel/live` still carries `playout.message`, the operator's status text, in its JSON. The page
+  no longer prints it; dropping it from the public snapshot is an API change of its own.
+- `<source> item` / `Video aus <source>` is stored with the asset at ingest, in the language set at that
+  sync; a later language change does not rename existing assets.
+- The Minesweeper header overflows the default game box on `game over` and `board cleared` in English
+  already (568 and 598 px of 540); German is narrower (549 and 577) but still over. Older than M80; a
+  layout fix (wrap or shrink the status chip) is separate work.
+- A German channel cannot keep one of the six English headline defaults verbatim (equality counts as not
+  customised); changing a character does it. A per-headline "keep as written" switch would be the fix.
+- The header of `/channel` (badge, heading, zone note) is rendered once per load; after a language
+  change the live block follows with the next update, the header with the next reload.
+- A language (or time zone) change during a standby or reconnect slate reaches the scene picture only
+  with the next programme: `writeStandbySlate` does not refresh the cached payload. Refreshing it there
+  changes what the standby picture shows for every overlay setting, so it is its own piece of work.
+- The equality rule cannot tell an operator's `Stand by` from the worker's. Narrowing it needs the
+  author recorded in playout and queue state (or the queue kind passed to every viewer edge).
+- The studio's *Replay label* tip still says "cleared, it reads Replay stream"; on a German channel it
+  reads `Wiederholung`. Admin text, left for M81 or a wording pass.
+- M81 (admin interface language) stays deferred until the owner asks.

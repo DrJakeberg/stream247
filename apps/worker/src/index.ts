@@ -98,6 +98,9 @@ import {
   resolveChatSettingsWrite,
   describeTickerCrawlStaleness,
   overlayNextTimeLabel,
+  buildLiveBridgeOverlayText,
+  viewerText,
+  type ViewerLocale,
   overlayTickerLine,
   overlayOnAirChapterTitle,
   overlayScale,
@@ -134,6 +137,7 @@ import {
   readAppState,
   replaceTwitchScheduleSegments,
   resolveAppBaseUrl,
+  resolveChannelLanguage,
   resolveChannelTimeZone,
   resolveIncident,
   updateDestinationRecord,
@@ -370,7 +374,7 @@ import {
 } from "./source-sync-scope.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildFlatListingArgs, resolveListingEntryPublishedAt, type FlatListingConnectorKind } from "./source-listing.js";
-import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
+import { buildTwitchMetadataTitle, resolveTwitchFallbackTitle } from "./twitch-metadata.js";
 import { ActiveChatterRoster } from "./active-chatters.js";
 import { ChatViewerRequestPass } from "./chat-viewer-requests.js";
 import { EngagementGameTracker } from "./engagement-game.js";
@@ -556,7 +560,7 @@ const twitchChatBridge = new TwitchChatBridge({
     // The room is told once why its !skip did nothing (M78); a silent refusal is what makes a room
     // type the command again.
     if (effect.kind === "skip-paused" && effect.announce) {
-      twitchChatBridge.say(formatChatSkipPausedReply(effect.hold));
+      twitchChatBridge.say(formatChatSkipPausedReply(effect.hold, viewerLanguage()));
     }
 
     // Every accepted skip vote goes on air within a second (see CHAT_SKIP_FLUSH_DELAY_MS). The
@@ -619,6 +623,15 @@ let latestEngagementSettings: AppState["engagement"] | null = null;
 // throttled chat flush, the watchdog thresholds, the feed geometry and the VOD cache tuning.
 // Null only before the first cycle, which resolves as env-only — exactly the pre-M56 behaviour.
 let latestManagedConfig: AppState["managedConfig"] | null = null;
+
+/**
+ * The channel language for texts written between cycles — the chat bot's replies — from the
+ * managed config the last cycle refreshed. Before the first cycle that is env or English, the same
+ * env-first order every other between-cycle reader of latestManagedConfig follows.
+ */
+function viewerLanguage(): ViewerLocale {
+  return resolveChannelLanguage(latestManagedConfig ?? undefined);
+}
 // Effects the socket handler cannot apply itself; drained by the worker cycle.
 const pendingChatEffects: ChatControlEffect[] = [];
 
@@ -656,19 +669,20 @@ async function handleChatGameCommand(args: {
     // actually on air. Both are needed: settings alone would announce a game nobody can see.
     return formatChatGameInfoReply({
       running: chatGameRuntime.isActive() ? { gameId: settings.gameId } : null,
-      settings
+      settings,
+      locale: viewerLanguage()
     });
   }
 
   if (!args.isModerator) {
-    return `${args.actor}: only a moderator can start or stop a game. Type !game to see what is running.`;
+    return viewerText(viewerLanguage(), "chat.game.moderatorOnly", { actor: args.actor });
   }
 
   if (args.command.kind === "stop") {
     await updateAppState((state) => ({ ...state, overlay: { ...state.overlay, ...resolveChatGameLayerTeardown(state.overlay) } }));
     await reconcileChatGame();
     await appendAuditEvent("chat.game.stopped", `${args.actor} stopped the chat game from Twitch chat.`);
-    return "Game stopped.";
+    return viewerText(viewerLanguage(), "chat.game.stopped");
   }
 
   const gameId = args.command.gameId;
@@ -685,7 +699,7 @@ async function handleChatGameCommand(args: {
   // nobody can see. Nothing else is touched on a refusal — no rules row, no audit line, and the
   // overlay is exactly as the operator left it.
   if (!hasActiveChatGameLayer(written.overlay)) {
-    return formatChatGameNoRoomReply({ gameId, layerCount: written.overlay.customLayers.length });
+    return formatChatGameNoRoomReply({ gameId, layerCount: written.overlay.customLayers.length, locale: viewerLanguage() });
   }
   await writeChatGameSettingsRecord({ ...settings, gameId, updatedAt: new Date().toISOString() });
   // Immediately, not on the next cycle: a viewer who typed "!snake" and waits half a minute for a
@@ -693,7 +707,7 @@ async function handleChatGameCommand(args: {
   await reconcileChatGame();
   await appendAuditEvent("chat.game.started", `${args.actor} started ${gameId} from Twitch chat.`);
 
-  return formatChatGameInfoReply({ running: { gameId }, settings: { ...settings, gameId } });
+  return formatChatGameInfoReply({ running: { gameId }, settings: { ...settings, gameId }, locale: viewerLanguage() });
 }
 
 // Game-state writes are throttled to one per this window. State writes go through the global
@@ -2698,7 +2712,7 @@ async function refreshSceneGameView(): Promise<void> {
   }
 
   try {
-    currentSceneGame = buildChatGameOverlayViewFromRuntimeRecord(await readChatGameRuntimeRecord());
+    currentSceneGame = buildChatGameOverlayViewFromRuntimeRecord(await readChatGameRuntimeRecord(), currentScenePayload?.locale);
   } catch (error) {
     logRuntimeEvent("scene.game.read_failed", {
       error: error instanceof Error ? error.message : String(error)
@@ -2734,9 +2748,11 @@ async function refreshSceneEngagementView(): Promise<void> {
   }
 
   const now = new Date();
+  // In the payload's language, so the panels speak the language of the picture they sit on.
+  const locale = currentScenePayload.locale;
   currentSceneEngagement = chooseEngagementOverlayView(
-    lastVoteSessionRecord ? buildEngagementOverlayViewFromVoteSession(lastVoteSessionRecord, now) : null,
-    lastSkipVoteRecord ? buildEngagementOverlayViewFromSkipVote(lastSkipVoteRecord, now) : null
+    lastVoteSessionRecord ? buildEngagementOverlayViewFromVoteSession(lastVoteSessionRecord, now, locale) : null,
+    lastSkipVoteRecord ? buildEngagementOverlayViewFromSkipVote(lastSkipVoteRecord, now, locale) : null
   );
 }
 
@@ -3460,7 +3476,8 @@ function buildWorkerScenePayload(args: {
     nextTitle: resolvedNextTitle,
     nextTimeLabel: args.nextTimeLabel,
     queueTitles: args.queueTitles,
-    timeZone: resolveChannelTimeZone(args.state.managedConfig)
+    timeZone: resolveChannelTimeZone(args.state.managedConfig),
+    locale: resolveChannelLanguage(args.state.managedConfig)
   });
 }
 
@@ -3486,13 +3503,14 @@ async function writeStandbySlate(
     currentOccurrence: currentItem
   });
   const nextItem = upcomingItems[0] ?? null;
+  const locale = resolveChannelLanguage(state.managedConfig);
   const payload = buildWorkerScenePayload({
     state,
     queueKind,
-    currentTitle: currentItem?.title || "Stand by",
-    nextTitle: nextItem ? nextItem.title : "Programming will resume shortly",
+    currentTitle: currentItem?.title || viewerText(locale, "overlay.title.standby"),
+    nextTitle: nextItem ? nextItem.title : viewerText(locale, "overlay.next.resumesShortly"),
     nextScheduleItem: nextItem,
-    nextTimeLabel: overlayNextTimeLabel(nextItem),
+    nextTimeLabel: overlayNextTimeLabel(nextItem, locale),
     currentCategory: currentItem?.categoryName,
     currentSourceName: currentItem?.sourceName,
     queueTitles: upcomingItems.slice(0, state.overlay.queuePreviewCount).map((item) => item.title)
@@ -3556,6 +3574,7 @@ async function writeOnAirOverlay(
 ): Promise<void> {
   const currentItem = getCurrentScheduleItem(state);
   const nextItem = getNextScheduleItem(state);
+  const locale = resolveChannelLanguage(state.managedConfig);
   const queueTitles =
     overrides.queueTitles ??
     state.playout.queuedAssetIds
@@ -3578,10 +3597,10 @@ async function writeOnAirOverlay(
         buildAssetDisplayTitle(asset) ||
         state.playout.currentTitle ||
         currentItem?.title ||
-        "Stand by",
-      nextTitle: overrides.nextTitle || nextItem?.title || "Coming up next",
+        viewerText(locale, "overlay.title.standby"),
+      nextTitle: overrides.nextTitle || nextItem?.title || viewerText(locale, "overlay.next.comingUp"),
       nextScheduleItem: nextItem,
-      nextTimeLabel: overrides.nextTimeLabel || overlayNextTimeLabel(nextItem),
+      nextTimeLabel: overrides.nextTimeLabel || overlayNextTimeLabel(nextItem, locale),
       currentCategory: overrides.currentCategory || currentItem?.categoryName || asset?.categoryName,
       currentSourceName:
         overrides.currentSourceName ||
@@ -4271,7 +4290,9 @@ async function syncYoutubePlaylistSources(): Promise<void> {
           buildRemoteAsset({
             sourceId: source.id,
             assetIdSeed: id,
-            title: entry.title || `${source.name} item`,
+            // Stored with the asset, so it is written in the channel language of the sync that
+            // found it; a later language change leaves it as written, like any other title.
+            title: entry.title || viewerText(resolveChannelLanguage(state.managedConfig), "overlay.title.untitledAsset", { source: source.name }),
             path: videoUrl,
             folderPath: buildSourceFolderPath(source.connectorKind, source.name),
             externalId: entry.id,
@@ -6947,12 +6968,17 @@ async function runPlayoutCycle(): Promise<void> {
   if (state.playout.pendingAction === "refresh") {
     if (playoutProcess && !playoutProcess.killed && state.playout.liveBridgeStatus === "active") {
       if (state.overlay.enabled) {
-        await writeOnAirOverlay(state, null, "live", {
-          currentTitle: state.playout.liveBridgeLabel || state.playout.currentTitle || "Live Bridge",
-          currentCategory: "Live input",
-          currentSourceName: `Live Bridge · ${(state.playout.liveBridgeInputType || "rtmp").toUpperCase()}`,
-          nextTitle: state.playout.nextTitle || "Schedule resumes after live mode"
-        });
+        await writeOnAirOverlay(
+          state,
+          null,
+          "live",
+          buildLiveBridgeOverlayText({
+            locale: resolveChannelLanguage(state.managedConfig),
+            title: state.playout.liveBridgeLabel || state.playout.currentTitle,
+            inputType: state.playout.liveBridgeInputType,
+            nextTitle: state.playout.nextTitle
+          })
+        );
       } else {
         await writeStandbySlate(state, "live");
       }
@@ -7252,12 +7278,15 @@ async function runPlayoutCycle(): Promise<void> {
 
   if (selection.queueKind === "live") {
     if (state.overlay.enabled) {
+      const locale = resolveChannelLanguage(state.managedConfig);
       await writeOnAirOverlay(state, null, "live", {
-        currentTitle: selection.liveBridgeLabel || "Live Bridge",
-        currentCategory: "Live input",
-        currentSourceName: `Live Bridge · ${(selection.liveBridgeInputType || "rtmp").toUpperCase()}`,
-        nextTitle: getNextScheduleItem(state)?.title || "Schedule resumes after live mode",
-        nextTimeLabel: overlayNextTimeLabel(getNextScheduleItem(state))
+        ...buildLiveBridgeOverlayText({
+          locale,
+          title: selection.liveBridgeLabel,
+          inputType: selection.liveBridgeInputType,
+          nextTitle: getNextScheduleItem(state)?.title || ""
+        }),
+        nextTimeLabel: overlayNextTimeLabel(getNextScheduleItem(state), locale)
       });
     }
     await resolveIncident("playout.no-asset", "Live Bridge is on air.");
@@ -7670,12 +7699,17 @@ async function runPlayoutCycle(): Promise<void> {
       return;
     }
   } else if (selection.queueKind === "live" && state.overlay.enabled) {
-    await writeOnAirOverlay(state, null, "live", {
-      currentTitle: selection.liveBridgeLabel || "Live Bridge",
-      currentCategory: "Live input",
-      currentSourceName: `Live Bridge · ${(selection.liveBridgeInputType || "rtmp").toUpperCase()}`,
-      nextTitle: nextQueueItem?.title || "Schedule resumes after live mode"
-    });
+    await writeOnAirOverlay(
+      state,
+      null,
+      "live",
+      buildLiveBridgeOverlayText({
+        locale: resolveChannelLanguage(state.managedConfig),
+        title: selection.liveBridgeLabel,
+        inputType: selection.liveBridgeInputType,
+        nextTitle: nextQueueItem?.title || ""
+      })
+    );
   } else if (selection.asset && state.overlay.enabled) {
     await writeOnAirOverlay(
       state,
@@ -8656,9 +8690,12 @@ async function reconcileTwitch(): Promise<void> {
   // prefix and hashtags still apply; an empty chapter title falls back to the asset title.
   const metadataAsset =
     currentAsset && currentChapter?.title ? { ...currentAsset, title: currentChapter.title } : currentAsset;
-  const desiredTitle = metadataAsset
-    ? buildTwitchMetadataTitle(metadataAsset, currentScheduleItem?.title || state.playout.currentTitle)
-    : currentScheduleItem?.title || state.playout.currentTitle;
+  const fallbackTitle = resolveTwitchFallbackTitle({
+    locale: resolveChannelLanguage(state.managedConfig),
+    scheduleTitle: currentScheduleItem?.title || "",
+    playoutTitle: state.playout.currentTitle
+  });
+  const desiredTitle = metadataAsset ? buildTwitchMetadataTitle(metadataAsset, fallbackTitle) : fallbackTitle;
   let desiredCategoryId = getTwitchDefaultCategoryId(state);
   const desiredCategoryCandidate =
     currentChapter?.categoryName || currentAsset?.categoryName || currentScheduleItem?.categoryName || "";
@@ -9287,7 +9324,7 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
             : `Chat voted to skip the current item while the operator's ${heldBy === "fallback" ? "Fallback" : "Pin"} held the air; the item stays on air.`
         );
         if (chatControl.claimSkipPausedReply()) {
-          twitchChatBridge.say(formatChatSkipPausedReply(heldBy));
+          twitchChatBridge.say(formatChatSkipPausedReply(heldBy, viewerLanguage()));
         }
         continue;
       }

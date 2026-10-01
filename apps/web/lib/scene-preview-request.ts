@@ -117,7 +117,9 @@ export function normalizeScenePreviewRequest(body: unknown): ScenePreviewRequest
       tickerText: str(source.tickerText),
       tickerRotateSeconds: Number(source.tickerRotateSeconds) || undefined,
       emergencyBanner: str(source.emergencyBanner),
-      timeZone: str(source.timeZone)
+      timeZone: str(source.timeZone),
+      // The language the browser's payload was built in; anything unknown renders English.
+      locale: str(source.locale)
     }
   };
 }

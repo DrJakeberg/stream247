@@ -59,6 +59,7 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
 3. Optional but recommended:
    - `TWITCH_STREAM_KEY`
    - `CHANNEL_TIMEZONE` (otherwise the wizard manages it)
+   - `CHANNEL_LANGUAGE` (`en` or `de`; otherwise the wizard and `Admin → Settings` manage it)
    - Discord / SMTP alert settings
    - Twitch client credentials if you do not want to enter them later in setup or `/settings`
 4. Optionally pin:
@@ -110,6 +111,7 @@ wizard-managed and `APP_SECRET` is generated and persisted on the data volume wh
 - `TWITCH_STREAM_KEY`
 - `STREAM_OUTPUT_KEY`
 - `CHANNEL_TIMEZONE`
+- `CHANNEL_LANGUAGE` (since M80; a pin like the time zone — the saved setting applies when unset)
 - `APP_URL`
 - `APP_SECRET`
 - `TRAEFIK_HOST`
@@ -476,6 +478,34 @@ applied (`chat.skip.paused` with `hold: insert`, audit row `chat.skip.refused`),
 most once a minute, sharing the cooldown with the Pin and Fallback lines. Before, a passed vote cut the
 insert. A pool's automatic insert and a cue point insert stay skippable. An older image restores the old
 behaviour; nothing is stored. See `docs/operations.md`, *Operator controls*.
+
+### Upgrading Past 2.1.0: Viewer Language (M80)
+
+No table, no migration, no stack file change. The new channel language lives in the managed config
+next to the time zone and is English until someone sets it, so an upgraded channel keeps speaking
+English. To switch a channel to German, choose `German (Deutsch)` under `Admin → Settings → Channel
+language`. That route needs no restart: the chat bot, the Twitch title and the public page follow with
+their next refresh, and the picture with the next playout cycle while a programme is on air (during a
+standby or reconnect slate the picture changes when the next programme starts, as with the time zone).
+`CHANNEL_LANGUAGE=de` in the environment does the same and beats the saved value, but it is an
+environment change like any other: the running containers do not see an edited `stack.env` until they
+are recreated (`docker compose up -d`, or a redeploy in Portainer). The admin interface stays English.
+
+What changes on air without touching the setting:
+
+- The next-item poll and the skip bar were German on every channel. They now follow the channel
+  language, so a channel that relied on the German panels must be set to German after the upgrade.
+- English wording, fixed on purpose: `No next block configured` and `Nothing scheduled next` are now
+  `Nothing scheduled`; the standby state reads `Stand by` everywhere (was `Standby`, `Replay standby`
+  and `Please wait, restream is starting`, now `Stand by, we’ll be right back`); the bot's no-room
+  reply says `1 layer`. In German, `1 von 1 Stimmen` is now `1 von 1 Stimme`.
+- The public page `/channel` names the time zone (`Central European Time`) instead of printing its
+  IANA id, and shows a viewer's status line where it printed the playout's status message.
+
+Stored values are not migrated. The studio's six built-in headlines stay in the database in English;
+a value still equal to its English default is shown in the channel language, anything you wrote is
+shown as written (`docs/operations.md`, *What Viewers Read*). An older image ignores the setting and
+restores the old texts.
 
 ### Patch vs Minor Upgrades
 

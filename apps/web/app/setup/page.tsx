@@ -113,12 +113,14 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
           <Panel title="Instance basics" eyebrow={`Step ${activeIndex + 1}`}>
             <p className="subtle">
               The public URL is what OAuth callbacks, EventSub webhooks, and overlay links are built from; the timezone
-              drives the schedule grid and the on-air clock.
+              drives the schedule grid and the on-air clock; the channel language is the one viewers are addressed in.
             </p>
             <SetupInstanceForm
               envAppUrl={(process.env.APP_URL || "").trim()}
+              envLanguage={(process.env.CHANNEL_LANGUAGE || "").trim()}
               envTimezone={(process.env.CHANNEL_TIMEZONE || "").trim()}
               initialAppUrl={state.managedConfig.appUrl}
+              initialLanguage={state.managedConfig.channelLanguage ?? ""}
               initialTimezone={state.managedConfig.channelTimezone}
             />
             <SkipLink from="instance" />

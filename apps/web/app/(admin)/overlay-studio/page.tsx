@@ -6,7 +6,15 @@ import { listOverlayVideoSourceRecords } from "@stream247/db";
 import { OverlaySettingsForm } from "@/components/overlay-settings-form";
 import { Panel } from "@/components/panel";
 import { VideoSourceSettingsForm } from "@/components/video-source-settings-form";
-import { getCurrentScheduleItem, getNextScheduleItem, getWorkspaceTimeZone, listOverlayScenePresetRecords, readAppState, readOverlayStudioState } from "@/lib/server/state";
+import {
+  getCurrentScheduleItem,
+  getNextScheduleItem,
+  getViewerLocale,
+  getWorkspaceTimeZone,
+  listOverlayScenePresetRecords,
+  readAppState,
+  readOverlayStudioState
+} from "@/lib/server/state";
 import { describeScenePreset, describeTypographyPreset } from "@/lib/scene-preset-names";
 
 export default async function OverlayStudioPage() {
@@ -58,11 +66,12 @@ export default async function OverlayStudioPage() {
             videoSources={videoSources}
             preview={{
               timeZone: getWorkspaceTimeZone(state),
+              locale: getViewerLocale(state),
               currentTitle: currentItem?.title || state.playout.currentTitle || "Morning Replay",
               currentCategory: currentItem?.categoryName || "Always on air",
               currentSourceName: currentItem?.sourceName || "Archive Pool",
               nextTitle: nextItem?.title || state.playout.nextTitle || "Next replay block",
-              nextTimeLabel: overlayNextTimeLabel(nextItem),
+              nextTimeLabel: overlayNextTimeLabel(nextItem, getViewerLocale(state)),
               queueTitles:
                 previewQueueTitles.length > 0
                   ? previewQueueTitles

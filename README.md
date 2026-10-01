@@ -161,6 +161,8 @@ The one-page path from an empty host to a green channel, with the traps where th
    - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`
    - `TWITCH_STREAM_KEY` (later: the primary destination's stream key under `Live → Status`)
    - `CHANNEL_TIMEZONE` (leave unset to let the wizard manage it)
+   - `CHANNEL_LANGUAGE` (`en` or `de`, the language viewers are addressed in; leave unset to choose it in
+     the wizard or under `Admin → Settings → Channel language`)
 4. Start the stack:
    ```bash
    docker compose up -d
@@ -261,6 +263,7 @@ docker compose --profile proxy up -d
 - `SCENE_RENDERER_ENABLED`: set to `0` to keep production on the text overlay path when the scene renderer is unstable
 - `SCENE_RENDER_INTERVAL_MS`: how often the worker redraws the on-air scene frame; defaults to `2000`
 - `CHANNEL_TIMEZONE`: schedule timezone, for example `Europe/Berlin`
+- `CHANNEL_LANGUAGE`: the language of everything viewers see or read, `en` (default) or `de`; overrides the language saved in the wizard or under `Admin → Settings → Channel language`; any other value counts as `en`
 - `DISCORD_WEBHOOK_URL`: Discord alert target
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL_TO`: email alerting
 - `TRAEFIK_CERT_RESOLVER`: Traefik certificate resolver name, defaults to `letsencrypt`
@@ -271,7 +274,7 @@ docker compose --profile proxy up -d
 - RTMP stream keys
 - optional fallback OAuth application credentials
 - optional fallback SMTP / Discord credentials
-- deployment-level defaults such as `CHANNEL_TIMEZONE`
+- deployment-level defaults such as `CHANNEL_TIMEZONE` and `CHANNEL_LANGUAGE`
 
 ### What Does Not Belong In `.env`
 
@@ -548,6 +551,7 @@ Notes:
 ### Overlay And Viewer Pages
 
 - public schedule page at `/channel`
+- one channel language (English or German) for everything viewers see or read: the on-air picture, the standby and reconnect texts, polls, the skip bar, chat games, every chat bot reply and the public page; operator content is never translated and the admin interface stays English (`docs/operations.md`, *What Viewers Read*; adding a language: `docs/architecture.md`, *Viewer Language*)
 - on-air overlay drawn by the playout renderer; the studio preview is the same drawing
 - `Scene` in the Studio workspace
 - configurable replay label, channel name, headline, accent color, emergency banner, and now/next teaser toggles

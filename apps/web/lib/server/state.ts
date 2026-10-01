@@ -45,7 +45,11 @@ import {
   overlayNextTimeLabel,
   overlayOnAirChapterTitle,
   isAssetProbeQuarantined,
-  type OverlaySceneRenderTarget
+  buildLiveBridgeOverlayText,
+  formatViewerTimeZoneName,
+  viewerText,
+  type OverlaySceneRenderTarget,
+  type ViewerLocale
 } from "@stream247/core";
 import {
   appendAuditEvent,
@@ -87,6 +91,7 @@ import {
   readAppState,
   replaceAllScheduleBlocks,
   replaceTwitchScheduleSegments,
+  resolveChannelLanguage,
   resolveChannelTimeZone,
   resolveIncident,
   replaceAssetsForSourceIds,
@@ -281,6 +286,15 @@ export async function readRecentAsRunLog(): Promise<{ records: AsRunRecord[] | n
 export function getWorkspaceTimeZone(state: Pick<AppState, "managedConfig">): string {
   // Env first, then the wizard-written managed value, then UTC — the resolver owns the order.
   return resolveChannelTimeZone(state.managedConfig);
+}
+
+/**
+ * The language viewers are addressed in (M80): the studio preview and the public page write in it.
+ * Env first, then the managed value, then English — the same resolver the worker reads, so the
+ * preview and the broadcast cannot disagree about the language.
+ */
+export function getViewerLocale(state: Pick<AppState, "managedConfig">): ViewerLocale {
+  return resolveChannelLanguage(state.managedConfig);
 }
 
 /**
@@ -1159,10 +1173,19 @@ export function buildActiveScenePayload(
     .map((item) => item.title)
     .filter(Boolean);
   const queueHead = state.playout.queueItems[0] ?? null;
+  const locale = getViewerLocale(state);
+  // The preview's own stand-ins speak the channel language like the broadcast's do; an English
+  // built-in that reaches the payload from state is translated there (localizeViewerBuiltInText).
+  const liveBridge = buildLiveBridgeOverlayText({
+    locale,
+    title: queueHead?.title || state.playout.liveBridgeLabel || state.playout.currentTitle,
+    inputType: state.playout.liveBridgeInputType,
+    nextTitle: ""
+  });
   const currentSourceName =
     currentScheduleItem?.sourceName ||
     (currentAsset ? state.sources.find((source) => source.id === currentAsset.sourceId)?.name : "") ||
-    "Source to be announced";
+    viewerText(locale, "overlay.meta.sourceUnknown");
 
   // The chapter that is actually playing, exactly as the channel resolves it: a long recording with
   // chapters is named by its chapter on air, and this preview had no idea chapters existed.
@@ -1193,22 +1216,34 @@ export function buildActiveScenePayload(
           state.playout.currentTitle ||
           currentScheduleItem?.title ||
           overlay.channelName ||
-          "Stream247"
+          viewerText(locale, "overlay.brand.channelName")
         : queueKind === "live"
-          ? queueHead?.title || state.playout.liveBridgeLabel || state.playout.currentTitle || "Live Bridge"
-        : onAirChapterTitle || queueHead?.title || state.playout.currentTitle || overlay.headline || "Replay stream",
-    currentCategory: queueKind === "live" ? "Live input" : currentScheduleItem?.categoryName || currentAsset?.categoryName || "Always on air",
-    currentSourceName:
+          ? liveBridge.currentTitle
+        : onAirChapterTitle ||
+          queueHead?.title ||
+          state.playout.currentTitle ||
+          overlay.headline ||
+          viewerText(locale, "overlay.brand.replayLabel"),
+    currentCategory:
       queueKind === "live"
-        ? `Live Bridge · ${(state.playout.liveBridgeInputType || "rtmp").toUpperCase()}`
-        : currentSourceName,
-    nextTitle: nextAssetTitle || nextScheduleLookaheadTitle || state.playout.nextTitle || nextScheduleItem?.title || "Schedule not available",
+        ? liveBridge.currentCategory
+        : currentScheduleItem?.categoryName || currentAsset?.categoryName || viewerText(locale, "overlay.headline.asset"),
+    currentSourceName: queueKind === "live" ? liveBridge.currentSourceName : currentSourceName,
+    nextTitle:
+      nextAssetTitle ||
+      nextScheduleLookaheadTitle ||
+      state.playout.nextTitle ||
+      nextScheduleItem?.title ||
+      viewerText(locale, "overlay.next.noTitle"),
     // The broadcast's format, not this page's prose: the studio preview exists to show what airs.
-    nextTimeLabel: overlayNextTimeLabel(nextScheduleItem),
+    nextTimeLabel: overlayNextTimeLabel(nextScheduleItem, locale),
     queueTitles,
-    timeZone: getWorkspaceTimeZone(state)
+    timeZone: getWorkspaceTimeZone(state),
+    locale
   });
 }
+
+
 
 function summarizeQueueItems(state: AppState): LiveQueueItemSummary[] {
   return state.playout.queueItems.map((item) => ({
@@ -1441,10 +1476,15 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
 
 export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot {
   const snapshot = getBroadcastSnapshot(state);
+  const locale = getViewerLocale(state);
 
   return {
     generatedAt: snapshot.generatedAt,
     timeZone: snapshot.timeZone,
+    locale,
+    // Named here rather than in the browser: the server's and the browser's ICU can name a zone
+    // differently, and the first paint and the live updates must say the same thing.
+    timeZoneLabel: formatViewerTimeZoneName(locale, snapshot.timeZone),
     watchUrl: buildTwitchWatchUrl(snapshot.twitch.channelLogin),
     overlay: snapshot.overlay,
     engagement: snapshot.engagement,

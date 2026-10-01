@@ -5,6 +5,7 @@ import { getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
 import {
   getAssetPlaybackDiagnostics,
   getBroadcastSnapshot,
+  getPublicChannelSnapshot,
   getCurrentScheduleItem,
   getFilteredIncidents,
   getNextScheduleItem,
@@ -704,6 +705,36 @@ describe("ops state helpers", () => {
     expect(snapshot.twitch.channelLogin).toBe("owner");
     expect(snapshot.twitch.botLogin).toBe("owner");
     expect(snapshot.twitch.startedAt).toBe("2026-04-22T09:00:00.000Z");
+  });
+
+  it("carries the channel language and a viewer's name for the zone in the public snapshot (M80)", () => {
+    // The public page writes in the snapshot's language and live updates carry it, so a change in
+    // Settings reaches an open page without a reload. Env first, then the stored value, then English.
+    const originalLanguage = process.env.CHANNEL_LANGUAGE;
+    try {
+      delete process.env.CHANNEL_LANGUAGE;
+      const english = getPublicChannelSnapshot(createState());
+      expect(english.locale).toBe("en");
+      expect(english.timeZone).toBe("UTC");
+      expect(english.timeZoneLabel).toBe("Coordinated Universal Time");
+
+      const german = createState({ managedConfig: { ...createState().managedConfig, channelLanguage: "de" } });
+      expect(getPublicChannelSnapshot(german).locale).toBe("de");
+      expect(getPublicChannelSnapshot(german).timeZoneLabel).toBe("Koordinierte Weltzeit");
+
+      process.env.CHANNEL_TIMEZONE = "Europe/Berlin";
+      expect(getPublicChannelSnapshot(german).timeZoneLabel).toBe("Mitteleuropäische Zeit");
+
+      process.env.CHANNEL_LANGUAGE = "en";
+      expect(getPublicChannelSnapshot(german).locale).toBe("en");
+      expect(getPublicChannelSnapshot(german).timeZoneLabel).toBe("Central European Time");
+    } finally {
+      if (typeof originalLanguage === "string") {
+        process.env.CHANNEL_LANGUAGE = originalLanguage;
+      } else {
+        delete process.env.CHANNEL_LANGUAGE;
+      }
+    }
   });
 
   it("summarizes the active moderation presence window with clamp metadata", () => {
