@@ -68,7 +68,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M13 Library And Blueprints V2 | Parity + UX | Next | Complete | Deepen library operations and make blueprints safer to reuse across installs | Thumbnails, grouped browsing, curated sets, and selective blueprint import/remap guidance are available without overpromising media portability | `apps/web`, `apps/worker`, `packages/db`, docs | medium | keep current folder/tag curation and replace-style blueprint import path intact |
 | M14 Operator UX V2 | UX | Next | Complete | Resolve admin IA drift and make the control-room model more consistent | Broadcast, Dashboard, Scene Studio, Sources/Library, and Settings have clearer roles and more consistent naming | `apps/web`, docs, tests | medium | keep current routes and navigation labels working until the new IA is proven |
 | M15 Coverage And Release Proof V2 | Ops | Next | Complete | Prove the highest-risk parity features with broader automated coverage | Multi-output, Live Bridge, audio/cuepoint flows, and scene publish safety have direct runtime/browser proof beyond unit tests | tests, CI, scripts, docs | high | additive coverage only; do not remove current gates until replacements are green |
-| M59 Scene Studio Layout Repair And Field Explanations | UX + Reliability | Now | In progress | Make the scene studio usable on large displays and explain every operator control in place | The preview column is as tall as its content and stays in view while the form scrolls; the published-state aside sits beside the controls from 1560px; every field, panel and page header can carry an (i) explanation through one primitive, and the studio carries them; the layout is asserted by measurement, not only by screenshot | `apps/web`, tests, docs | low-medium | drop the `grid-aside`/`workspace-wide` classes and the `info` props; the primitives stay additive |
+| M59 Scene Studio Layout Repair And Field Explanations | UX + Reliability | Now | Complete | Make the scene studio usable on large displays and explain every operator control in place | The preview column is as tall as its content and stays in view while the form scrolls; the published-state aside sits beside the controls from 1560px; every field, panel and page header can carry an (i) explanation through one primitive, and the studio carries them; the layout is asserted by measurement, not only by screenshot | `apps/web`, tests, docs | low-medium | drop the `grid-aside`/`workspace-wide` classes and the `info` props; the primitives stay additive |
 | M60 Truthful Controls | UX + Reliability | Now | Complete | Every visible setting does what it says or is gone | Scene clock/next toggles drive the on-air picture; schedule-teaser/queue-preview toggles, embed/widget fields and engagement chat mode/style/alert position leave the UI (storage kept, additive); the library upload accepts only what the worker scan ingests, or the scan ingests audio; tests prove each | `packages/core`, `apps/web`, `apps/worker`, tests, docs | medium | re-add the form fields; stored values were never read so nothing else moves |
 | M61 Boundary A/V Skew Instrumentation | Ops | Now | Complete | Measure the seam instead of theorising about storms | Every boundary logs the outgoing feed's last video/audio PTS lead and the reader's per-stream offsets; a query lists seam skew against discontinuity line count | `apps/worker`, `packages/db`, docs | low | drop the event; nothing consumes it |
 | M62 Cache Policy | Ops + Reliability | Now | Complete | Downloads that fit the content and a cache that keeps what airs next | Download time limit scales with the estimated size (floor kept); assets scheduled within the retention horizon are not released after airing; an asset with an incomplete file is not selected as ready | `apps/worker`, `packages/core`, tests, docs | medium | revert to fixed limit and release-after-play |
@@ -3455,6 +3455,10 @@ remove. Both are product decisions; neither belongs in a stability release unres
 - The pixel gate's tolerance is a deliberate flakiness trade-off; lowering it is an operator decision.
 - Explanation texts run two to three sentences; a tighter house style is a wording pass, not a code change.
 
+Closed 2026-10-01: the acceptance row is met (preview column, aside from 1560px, one explanation
+primitive across the studio, layout asserted by measurement since M65). The first open point was decided
+in M60 (every setting wired or removed); the other two are operator choices, not milestone work.
+
 ## M60 Truthful Controls
 
 Point 1 of the operator's 2.0 list (2026-09-05): every visible setting does what it says, or it goes.
@@ -3817,8 +3821,16 @@ follow; the env examples drop three variables no code reads and name `TWITCH_BRO
   `scheduled_match` v2873900852 (next VOD id); `previous_asset_id` = the insert; uplink not restarted.
 - 2026-10-01 03:41:08 UTC: 24-h soak on rc.2 started (tmux `soak`, `~/logs/soak-20261001-034108.log`), first
   probe `status=ok broadcastReady=true`.
-- Open: soak result; the first TwitchYoutube daytime pick after a Twitch cursor should be the oldest
-  non-quarantined YouTube item; then 2.1.0 pins, CHANGELOG, tag and repin.
+- 2026-10-01 12:57:16 UTC, M73 on air without an operator: the Twitch archive v2873900852 ended at its
+  duration bound after 33385 s, and the TwitchYoutube pool picked `j4YdbIbEc9E` - the oldest YouTube item
+  that is not quarantined - as `scheduled_match` (`split-h264-aac`, `bridgeStarts: 0`). It ended naturally
+  after 264 s (exit 0) and at 13:01:40 the pool picked Twitch again: v2880054662, the VOD id after the
+  pool's stored Twitch position v2878140409. `source_cursors` holds both positions.
+- 2026-10-01, owner request: the Releases page stopped at v1.5.17 because `release.yml` published images
+  only. Backfilled 38 releases from their CHANGELOG sections (30 final, 8 pre-releases; v2.0.0 is
+  "Latest"; v1.5.18 skipped - its tag never published images). `release.yml` now creates the release as
+  its last step (`scripts/release-notes.mjs`, `contents: write`); v2.1.0 is the first tag to use it.
+- Open: soak result; then 2.1.0 pins, CHANGELOG, tag and repin.
 
 ## M72 Stable Asset Order
 
