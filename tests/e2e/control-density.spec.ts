@@ -109,7 +109,8 @@ const SURFACES: Surface[] = [
   // holds. It is not moved into another form either: the other saves on this page write credentials,
   // and a language change should not ride on a form that also re-submits those. Its save is a
   // secondary button, so it does not compete with the two primaries. Counted from the components
-  // (33 + select + button; the (i) is excluded by the selector), not yet measured on a dev stack.
+  // (33 + select + button; the (i) is excluded by the selector) and measured at 35 on a fresh dev stack
+  // on 2026-10-01.
   { name: "admin-settings", path: "/admin?tab=settings", maxControls: 35, primaryActions: 2 },
   { name: "login", path: "/login", maxControls: 3, primaryActions: 1, authenticated: false },
   { name: "live-moderation", path: "/live?tab=moderation", maxControls: 20, primaryActions: 1 },

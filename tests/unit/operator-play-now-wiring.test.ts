@@ -158,11 +158,21 @@ describe("the playout cycle", () => {
 
   it("keeps the running item when an operator insert cannot be prepared", () => {
     const failure = flat(between(cycle, 'const message = error instanceof Error ? error.message : "Unknown Twitch VOD cache preparation error.";', "const recoveryPlan = planRecoveryAfterPlaybackPreparationFailure("));
-    // Only an insert that has not aired: an insert on air that fails to prepare for a Restart takes the
-    // programme's recovery path, and its audit row would have said "dropped before it aired".
+    // The decision is decideInsertAfterPrepareFailure (playout-boundary.test.ts): a pending insert is
+    // dropped; an insert on air that fails to prepare for a Restart takes the programme's recovery path,
+    // and the cycle after it, with the fallback on air, ends it (combination review: nothing else did).
     expect(failure).toContain(
-      'if ( failedReasonCode === "operator_insert" && state.playout.insertStatus === "pending" && isPlayoutProcessRunning() && state.playout.currentAssetId !== "" ) {'
+      "const insertFailure = decideInsertAfterPrepareFailure({ selectionReasonCode: failedReasonCode, insertStatus: state.playout.insertStatus, insertAssetId: state.playout.insertAssetId, processRunning: isPlayoutProcessRunning(), currentAssetId: state.playout.currentAssetId });"
     );
+    expect(failure).toContain('if (insertFailure !== "recover") {');
+    // A drop keeps its record ("dropped before it aired"); an insert that aired gets its own line and row.
+    expect(failure).toContain(
+      'if (insertFailure === "drop") { await recordDroppedInsert({ state, reason: "prepare-failed", selectionReasonCode: failedReasonCode, error: message }); } else {'
+    );
+    expect(failure).toContain('logRuntimeEvent("playout.insert.ended", { assetId: failedAsset.id, reason: "prepare-failed", error: message.slice(0, 300) });');
+    expect(failure).toContain('await appendAuditEvent( "playout.insert.ended",');
+    // Both clear only the insert this cycle selected: a Play now written meanwhile stands.
+    expect(failure).toContain('...(playout.insertAssetId === failedAsset.id ? { insertAssetId: "", insertRequestedAt: "", insertStatus: "" } : {}),');
     expect(failure).toContain('reason: "prepare-failed"');
     expect(failure).toContain('requestImmediatePlayoutCycle("insert-prepare-failed"); return; }');
     // The incident and the recovery plan are for the programme, not for a dropped insert.

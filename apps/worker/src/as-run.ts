@@ -106,6 +106,19 @@ export function asRunRestartIntentOf(args: {
   return requestedAssetId !== args.runningAssetId ? "switch" : "operator-restart";
 }
 
+/**
+ * A Skip normally reaches the playout as a restart request (above). Its flag can be lost: a cycle that is
+ * already in flight ends with a write that clears restartRequestedAt, and a cycle can run for up to a
+ * minute (the queue scan awaits one remote resolve). The skip hold still takes the item out of the
+ * selection, so the next cycle moves off it as a plain switch, and the row read `switch` for an
+ * operator's Skip (Skip ending a Pin included) or an applied chat vote (combination review). The item a
+ * switch stops while an active skip hold names it was skipped; a Remove next hold names an item that is
+ * not on air.
+ */
+export function asRunSwitchIntentOf(args: { runningAssetId: string; skipAssetId: string }): AsRunStopIntent {
+  return args.runningAssetId !== "" && args.runningAssetId === args.skipAssetId ? "skip" : "";
+}
+
 /** The planned stop reasons index.ts passes to stopPlayoutProcess, and what each means for the run. */
 const PLANNED_END_REASONS: Record<string, AsRunEndReason> = {
   switch: "switch",
@@ -129,6 +142,10 @@ export function asRunEndReasonOf(args: {
   }
   if (args.plannedReason === "restart-requested") {
     return args.stopIntent || "operator-restart";
+  }
+  // A switch that takes a skipped item off air (asRunSwitchIntentOf); every other switch is a switch.
+  if (args.plannedReason === "switch" && args.stopIntent === "skip") {
+    return "skip";
   }
   // A stop reason added later without a mapping still reads as a deliberate stop, never as a failure.
   return PLANNED_END_REASONS[args.plannedReason] ?? "stopped";

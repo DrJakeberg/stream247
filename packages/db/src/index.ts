@@ -4111,8 +4111,8 @@ if (!schemaMigrations.some((migration) => migration.id === sourceBreakersMigrati
 /**
  * The as-run log (M76), for installs that already ran the baseline.
  *
- * A new table, so there is no ALTER line to add: this CREATE and its index, word for word the base-schema
- * ones, are the whole upgrade. The table starts empty; the first playout start after the upgrade writes
+ * A new table, so there is no ALTER line to add: this CREATE and its two indexes, word for word the
+ * base-schema ones, are the whole upgrade. The table starts empty; the first playout start after the upgrade writes
  * its first row.
  */
 export const asRunLogMigration: MigrationDefinition = {
@@ -6896,19 +6896,28 @@ export type SourceBreakerRecordResult = SourceBreakerPlan & {
  * not be undone by it, and the incident the playout keeps for each breaker is decided from these rows for
  * the same reason (from the snapshot it would reopen, and alert on, an incident the close just resolved).
  * A source deleted while its probe ran gets no row. Without outcomes it only reads.
+ *
+ * Outcomes that change no row only read as well (combination review). Most do: a clean probe of a source
+ * with no failures, an outcome while a cooldown runs. The playout records one before every switch that
+ * resolved inline and about four per five minutes from the queue, and each took the state-write lock,
+ * which every whole-state write of the web and the worker holds while it hydrates and persists, for a
+ * transaction that wrote nothing. The plan is made first against a plain read; only when it would change
+ * a row is the lock taken and the plan made again from the rows as they are then. A plan without updates
+ * needs no check for a deleted source: sources are planned one by one, and leaving one out adds none.
  */
 export async function recordSourceBreakerOutcomes(outcomes: SourceBreakerOutcome[], nowIso: string): Promise<SourceBreakerRecordResult> {
   const sourceIds = [...new Set(outcomes.map((outcome) => outcome.sourceId).filter(Boolean))];
   const readAll = async (client: PoolClient) =>
     (await client.query<SourceBreakerRow>("SELECT * FROM source_breakers ORDER BY source_id ASC")).rows.map(mapSourceBreakerRow);
-  if (sourceIds.length === 0) {
-    await ensureDatabase();
-    const client = await getPool().connect();
-    try {
-      return { updates: [], transitions: [], records: await readAll(client) };
-    } finally {
-      client.release();
+  await ensureDatabase();
+  const reader = await getPool().connect();
+  try {
+    const records = await readAll(reader);
+    if (sourceIds.length === 0 || planSourceBreakerUpdates(records, outcomes, nowIso).updates.length === 0) {
+      return { updates: [], transitions: [], records };
     }
+  } finally {
+    reader.release();
   }
   return withSerializedStateWrite("recordSourceBreakerOutcomes", async (client) => {
     const existing = await client.query<{ id: string }>("SELECT id FROM sources WHERE id = ANY($1::text[])", [sourceIds]);

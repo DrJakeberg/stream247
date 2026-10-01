@@ -666,7 +666,7 @@ describe("network outage wiring", () => {
     const selection = bodyOf("async function recordSelectionResolveOutcome(");
     expect(selection).toContain("const outcomes = sourceBreakerOutcomesOf( await dropNetworkOutageOutcomes( [ { asset, outcome,");
     expect(selection).toContain('pendingDownload: error instanceof TwitchVodCachePendingError } ], "selection" ) );');
-    expect(selection).toContain("if (outcomes.length === 0) { return; }");
+    expect(selection).toContain("if (outcomes.length === 0) { return null; }");
   });
 
   it("asks only when a network-looking failure is about to be counted, and never throws", () => {

@@ -117,6 +117,7 @@ import {
   publishHostTargetsOf,
   type PoolRotationSourceGate,
   type PublishHostTarget,
+  type SourceBreakerRecord,
   type SourceBreakerTransition,
   createTwitchTokenScopeCache
 } from "@stream247/core";
@@ -223,11 +224,12 @@ import {
 } from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
 import { planSourceBreakerIncidents } from "./source-breaker-incidents.js";
-import { sourceBreakerOutcomesOf, type QueueProbeOutcome } from "./source-breaker-outcomes.js";
+import { createBreakerOutcomeCarry, sourceBreakerOutcomesOf, type QueueProbeOutcome } from "./source-breaker-outcomes.js";
 import { createNetworkOutageCheck, ProbeOutageLogLimiter, withoutNetworkOutageOutcomes, networkLookingFailuresOf } from "./probe-network-outage.js";
 import {
   asRunRestartIntentOf,
   asRunScheduleContextOf,
+  asRunSwitchIntentOf,
   asRunTargetKindOf,
   buildAsRunStartRecord,
   createAsRunLog,
@@ -338,6 +340,7 @@ import {
 import {
   decideBoundaryPlaybackInput,
   decideCycleEndInsert,
+  decideInsertAfterPrepareFailure,
   decideInsertAfterSelection,
   decidePreviousAssetId,
   isBroadcastCoverageDown,
@@ -6682,6 +6685,8 @@ let latestPublishHostTargets: PublishHostTarget[] = [];
 // reports a network of up to that long ago, and the output may be back by then.
 const networkOutageCheck = createNetworkOutageCheck({ graceMs: PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS });
 const probeOutageLog = new ProbeOutageLogLimiter();
+// Breaker outcomes whose write failed, for the next write (source-breaker-outcomes.ts).
+const breakerOutcomeCarry = createBreakerOutcomeCarry();
 const probeOutageCheckFailedLog = new ProbeOutageLogLimiter();
 
 // A broken check counts everything, as before M82, and must say so: its verdict reads "no outage", which
@@ -6765,8 +6770,15 @@ async function dropNetworkOutageOutcomes<T extends QueueProbeOutcome<AssetRecord
  * the trial inline again on every cycle. In the closed state the distinct-items rule makes a selection
  * that fails cycle after cycle one failed item, not many. Never throws: it runs inside the resolve's own
  * try, where a failed write would read as a failed resolve.
+ *
+ * Returns the breakers as they stand after the write, null when nothing was recorded (an outcome that is
+ * not heard, a failed write): the cycle's snapshot is older than a breaker this outcome has just opened.
  */
-async function recordSelectionResolveOutcome(asset: AssetRecord, outcome: "ok" | "failed", error?: unknown): Promise<void> {
+async function recordSelectionResolveOutcome(
+  asset: AssetRecord,
+  outcome: "ok" | "failed",
+  error?: unknown
+): Promise<SourceBreakerRecord[] | null> {
   // The same rules as the queue's outcomes: an archive still downloading is not heard at all, and neither
   // is a failure of the channel's own network outage (M82), which would otherwise re-open a half-open
   // breaker with the cooldown doubled for a trial that never reached its source.
@@ -6784,17 +6796,21 @@ async function recordSelectionResolveOutcome(asset: AssetRecord, outcome: "ok" |
     )
   );
   if (outcomes.length === 0) {
-    return;
+    return null;
   }
   try {
     const plan = await recordSourceBreakerOutcomes(outcomes, new Date().toISOString());
     logSourceBreakerTransitions(plan.transitions);
+    return plan.records;
   } catch (writeError) {
+    // Tried once more with the scan's outcomes later in this cycle (applySourceBreakerOutcomes).
+    breakerOutcomeCarry.keep(outcomes);
     logRuntimeEvent("playout.source-breaker.write_failed", {
       sourceId: asset.sourceId,
       assetId: asset.id,
       error: writeError instanceof Error ? writeError.message : String(writeError)
     });
+    return null;
   }
 }
 
@@ -6807,6 +6823,9 @@ async function recordSelectionResolveOutcome(asset: AssetRecord, outcome: "ok" |
  * clock, an operator closes one from the source page, and a source deleted by a whole-state write leaves
  * its row behind -- none of those passes through the plan, and each must still end up in the list right.
  * A breaker that holds a source no pool could pick anyway is closed here (planSourceBreakerIncidents).
+ *
+ * Throws only when the outcomes could not be recorded; they are then kept for the next write
+ * (createBreakerOutcomeCarry), because the scan has marked them counted and produces none of them again.
  */
 async function applySourceBreakerOutcomes(args: {
   state: AppState;
@@ -6814,13 +6833,19 @@ async function applySourceBreakerOutcomes(args: {
   quarantinedBySource: Map<string, { count: number }>;
 }): Promise<Set<string>> {
   const nowIso = new Date().toISOString();
-  const plan = await recordSourceBreakerOutcomes(sourceBreakerOutcomesOf(args.probeOutcomes), nowIso);
+  const scanned = sourceBreakerOutcomesOf(args.probeOutcomes);
+  let plan: Awaited<ReturnType<typeof recordSourceBreakerOutcomes>>;
+  try {
+    plan = await recordSourceBreakerOutcomes(breakerOutcomeCarry.take(scanned), nowIso);
+  } catch (writeError) {
+    breakerOutcomeCarry.keep(scanned);
+    throw writeError;
+  }
   logSourceBreakerTransitions(plan.transitions);
 
   // The rows as they stand after this write, not the cycle's snapshot: a "close now" made since the
   // snapshot was read must not reopen (and alert on) the incident it has just resolved.
-  const held = new Set<string>();
-  for (const action of planSourceBreakerIncidents({
+  const actions = planSourceBreakerIncidents({
     records: plan.records,
     sources: args.state.sources,
     quarantinedBySource: args.quarantinedBySource,
@@ -6829,35 +6854,51 @@ async function applySourceBreakerOutcomes(args: {
     ),
     nowMs: Date.parse(nowIso),
     hasPoolCandidate: (sourceId) => sourceHasPoolCandidate(args.state, sourceId)
-  })) {
-    if (action.action === "resolve") {
-      await resolveIncident(action.fingerprint, action.message);
-      continue;
-    }
-    if (action.action === "close") {
-      const closed = await closeSourceBreakerRecord(action.sourceId, nowIso);
-      if (closed) {
-        logRuntimeEvent("playout.source-breaker.closed", {
-          sourceId: action.sourceId,
-          reason: "no-pool-candidate",
-          failedAssetIds: closed.failedAssetIds,
-          cooldownSeconds: closed.cooldownSeconds,
-          error: closed.lastError
-        });
-      }
-      if (action.incidentOpen) {
+  });
+  // Who is held is known before the first incident write, and each write stands on its own (combination
+  // review). Collected inside the loop and returned after it, one failed write -- the resolve of another,
+  // deleted source included -- threw the whole set away: the caller went on with no source held and
+  // re-opened the per-item incident of a held source, with an onset line and its acknowledgement cleared.
+  // A source whose breaker is being closed is not held, so its per-item incident comes back in this cycle.
+  const held = new Set(actions.filter((action) => action.action === "upsert").map((action) => action.sourceId));
+  for (const action of actions) {
+    try {
+      if (action.action === "resolve") {
         await resolveIncident(action.fingerprint, action.message);
+        continue;
       }
-      continue;
+      if (action.action === "close") {
+        const closed = await closeSourceBreakerRecord(action.sourceId, nowIso);
+        if (closed) {
+          logRuntimeEvent("playout.source-breaker.closed", {
+            sourceId: action.sourceId,
+            reason: "no-pool-candidate",
+            failedAssetIds: closed.failedAssetIds,
+            cooldownSeconds: closed.cooldownSeconds,
+            error: closed.lastError
+          });
+        }
+        if (action.incidentOpen) {
+          await resolveIncident(action.fingerprint, action.message);
+        }
+        continue;
+      }
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: action.title,
+        message: action.message,
+        fingerprint: `playout.source-breaker.${action.sourceId}`
+      });
+    } catch (writeError) {
+      // Every action is decided again from the stored rows by the next cycle.
+      logRuntimeEvent("playout.source-breaker.write_failed", {
+        scope: "incident",
+        sourceId: action.sourceId,
+        action: action.action,
+        error: writeError instanceof Error ? writeError.message : String(writeError)
+      });
     }
-    held.add(action.sourceId);
-    await upsertIncident({
-      scope: "playout",
-      severity: "warning",
-      title: action.title,
-      message: action.message,
-      fingerprint: `playout.source-breaker.${action.sourceId}`
-    });
   }
   return held;
 }
@@ -7193,6 +7234,8 @@ async function runPlayoutCycle(): Promise<void> {
   }
 
   let resolvedSelection: ResolvedPlayableMedia | null = null;
+  // The breakers after this cycle's failed inline resolve was recorded (M75), null when nothing was.
+  let breakersAfterFailedResolve: SourceBreakerRecord[] | null = null;
   // The programme already on air keeps its input (playout-boundary.ts: shouldKeepRunningInput). A
   // re-resolve here could only fail it off air, never improve it.
   const keepRunningInput =
@@ -7274,7 +7317,7 @@ async function runPlayoutCycle(): Promise<void> {
           try {
             prepared = await resolveAssetPlaybackInput(failedAsset);
           } catch (error) {
-            await recordSelectionResolveOutcome(failedAsset, "failed", error);
+            breakersAfterFailedResolve = await recordSelectionResolveOutcome(failedAsset, "failed", error);
             throw error;
           }
           await recordSelectionResolveOutcome(failedAsset, "ok");
@@ -7288,20 +7331,37 @@ async function runPlayoutCycle(): Promise<void> {
       // YouTube item yt-dlp cannot resolve) is the insert's failure, not the programme's: the item on air
       // stays and the insert is dropped. The recovery plan below used to take the healthy item off air
       // for a fallback and then retry the insert every cycle (M74). With nothing on air the recovery plan
-      // still runs, so the channel is not left dark. Only a pending insert: one that is already on air
-      // and fails to prepare for a Restart is the programme's failure, and was not dropped before it aired.
-      if (
-        failedReasonCode === "operator_insert" &&
-        state.playout.insertStatus === "pending" &&
-        isPlayoutProcessRunning() &&
-        state.playout.currentAssetId !== ""
-      ) {
-        await recordDroppedInsert({ state, reason: "prepare-failed", selectionReasonCode: failedReasonCode, error: message });
+      // still runs, so the channel is not left dark. An insert that is itself on air and fails to prepare
+      // for a Restart is the programme's failure and was not dropped before it aired: the recovery plan
+      // covers it. Once that fallback is on air the insert is ended here, since nothing else would end it
+      // (decideInsertAfterPrepareFailure): it was selected and resolved again on every cycle.
+      const insertFailure = decideInsertAfterPrepareFailure({
+        selectionReasonCode: failedReasonCode,
+        insertStatus: state.playout.insertStatus,
+        insertAssetId: state.playout.insertAssetId,
+        processRunning: isPlayoutProcessRunning(),
+        currentAssetId: state.playout.currentAssetId
+      });
+      if (insertFailure !== "recover") {
+        const insertTitle = buildAssetDisplayTitle(failedAsset) || failedAsset.id;
+        if (insertFailure === "drop") {
+          await recordDroppedInsert({ state, reason: "prepare-failed", selectionReasonCode: failedReasonCode, error: message });
+        } else {
+          // It aired, so it is not a drop (the audit row of a drop says "before it aired").
+          logRuntimeEvent("playout.insert.ended", { assetId: failedAsset.id, reason: "prepare-failed", error: message.slice(0, 300) });
+          await appendAuditEvent(
+            "playout.insert.ended",
+            `Insert ${insertTitle} could not be prepared again after it left the air and was ended (prepare-failed: ${message.slice(0, 300)}).`
+          );
+        }
         await updatePlayoutRuntime((playout) => ({
           ...playout,
           ...(playout.insertAssetId === failedAsset.id ? { insertAssetId: "", insertRequestedAt: "", insertStatus: "" } : {}),
           heartbeatAt: new Date().toISOString(),
-          message: `Insert ${buildAssetDisplayTitle(failedAsset) || failedAsset.id} could not be prepared and was dropped: ${message.slice(0, 200)}`
+          message:
+            insertFailure === "drop"
+              ? `Insert ${insertTitle} could not be prepared and was dropped: ${message.slice(0, 200)}`
+              : `Insert ${insertTitle} could not be prepared again and was ended: ${message.slice(0, 200)}`
         }));
         // The next cycle selects without the insert and keeps the running item's input as it is.
         requestImmediatePlayoutCycle("insert-prepare-failed");
@@ -7314,7 +7374,16 @@ async function runPlayoutCycle(): Promise<void> {
         message,
         fingerprint: isTwitchVodAsset(failedAsset) ? "playout.twitch-cache.failed" : "playout.asset-preparation.failed"
       });
-      const recoveryPlan = planRecoveryAfterPlaybackPreparationFailure(state.assets, failedAsset, poolSourceGate(state).heldSourceIds);
+      // Held as of the failed resolve, not as of the cycle's snapshot (combination review): a half-open
+      // source whose trial has just failed is a trial source in the snapshot and held in the database.
+      // From the snapshot, the generic tiers of a channel without a global fallback or a library file
+      // picked another item of that source, which failed like the trial and left the standby slate on
+      // air for the cycle where an item of another source would have played.
+      const recoveryPlan = planRecoveryAfterPlaybackPreparationFailure(
+        state.assets,
+        failedAsset,
+        sourceBreakerGate(breakersAfterFailedResolve ?? state.sourceBreakers, Date.now()).heldSourceIds
+      );
       if (recoveryPlan.asset) {
         try {
           const recovered = await resolveAssetPlaybackInput(recoveryPlan.asset);
@@ -7574,11 +7643,15 @@ async function runPlayoutCycle(): Promise<void> {
   // DUT on 2026-09-28 all 11 YouTube items failed; quarantine needed three failures per item, the breaker
   // needs three items.
   // A failed breaker write must not cost the rest of the cycle (switching, the queue, the incidents
-  // below): the cycle goes on as if no source were held, as before M75, and the next cycle retries.
+  // below). The scan's outcomes are kept for the next cycle's write, and the sources the snapshot has
+  // under a breaker stand in for the held set: with no source held, the per-item incident of a held
+  // source re-opened for that cycle, with an onset line and its acknowledgement cleared.
   let heldSources = new Set<string>();
   try {
     heldSources = await applySourceBreakerOutcomes({ state, probeOutcomes, quarantinedBySource });
   } catch (writeError) {
+    const snapshotGate = poolSourceGate(state);
+    heldSources = new Set([...snapshotGate.heldSourceIds, ...snapshotGate.trialSourceIds]);
     logRuntimeEvent("playout.source-breaker.write_failed", {
       scope: "scan",
       error: writeError instanceof Error ? writeError.message : String(writeError)
@@ -7729,6 +7802,13 @@ async function runPlayoutCycle(): Promise<void> {
       return;
     }
   } else if (!targetAlreadyRunning) {
+    // A Skip whose restart flag the end write of a cycle in flight erased arrives here as a plain switch
+    // (asRunSwitchIntentOf); the as-run row still says skip. Set for the stop startOrSwitchPlayout makes
+    // next, and cleared by that process's exit like the restart intent.
+    asRunStopIntent = asRunSwitchIntentOf({
+      runningAssetId: playoutAssetId,
+      skipAssetId: isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : ""
+    });
     try {
       await startOrSwitchPlayout({
         asset: selection.asset,

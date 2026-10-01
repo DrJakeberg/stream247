@@ -84,7 +84,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M73 Pool Source Alternation | Behavior | Now | Complete | A pool with several sources alternates between them (owner decision 2026-10-01) | A multi-source pool picks Twitch -> YouTube -> Twitch ... in `sourceIds` order, each source walking its own items oldest first and looping; per-source positions persist in `pools.source_cursors` (baseline, ALTER and migration); a single-source pool walks one source as before; a skipped, quarantined or cooled-down item no longer resets the rotation to the head, and a vanished position restarts only its own source at its oldest item; worker selection, queue, lookahead, schedule preview and week lens use one rotation function; pool form and docs say so | core, worker, db, web, tests, docs | medium | revert commit; the column stays and is ignored |
 | M74 Operator Play Now | Reliability | Now | Complete | Play now and Insert put the chosen item on air, without a standby slate | Play now / Insert switch straight to the insert at the next cycle and never set the restart flag; the legacy "restart + desired asset" override branch is gone, so no action re-picks the running or a skipped item; the reconnect standby slate appears only without the relay; a dropped insert is logged; an insert stopped by its duration bound or a feed watchdog is cleared instead of replaying; the cycle re-reads state after a duration-bound stop, so insert and Move next fire at that boundary; an insert that cannot be prepared (e.g. an uncached Twitch VOD) never takes the running item off air, and Play now refuses such an archive up front; Recover outputs under the relay no longer restarts the programme and Force reconnect is refused there (the uplink reconnects by itself), and Pin, Fallback and Resume switch there without a restart; Resume cancels a pending or running insert; Replay previous has an item, and a Move next or Replay previous item plays to its end; Skip continues after the skipped item instead of the pool head (with M73); after the insert the pool continues with its next item (resuming the interrupted item at its position is a follow-up) | worker, web, tests, docs | medium | revert commit |
 | M71 Release 2.1.0 | Release | Now | Planned | Ship M68-M70 and M72-M74 | rc on the DUT, verified (YouTube on air via Play now), 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
-| M75 Source Circuit Breaker | Reliability | Next | Complete | A broken source costs one incident, not one failed boundary per item (competitor comparison 2026-10-01; owner decision) | When probes fail on 3 distinct items of the same source with no success in between, the source is held out of the pool rotation (M73) for a cooldown that doubles up to a cap; one incident per source instead of per-item noise; after the cooldown one item is probed (half-open) and a success closes the breaker and resolves the incident; per-item quarantine and the operator's `includeInProgramming` stay untouched; a pool whose sources are all held falls back as today; the source page shows the breaker state; any persisted state ships in the baseline, the ALTER block and a migration | core, worker, db, web, tests, docs | medium | revert commit; the stored state is ignored |
+| M75 Source Circuit Breaker | Reliability | Next | Complete | A broken source costs one incident, not one failed boundary per item (competitor comparison 2026-10-01; owner decision) | When probes fail on 3 distinct items of the same source with no success in between, the source is held out of the pool rotation (M73) for a cooldown that doubles up to a cap; one incident per source instead of per-item noise; after the cooldown one item is probed (half-open) and a success closes the breaker and resolves the incident; per-item quarantine and the operator's `includeInProgramming` stay untouched; a pool whose sources are all held falls back as today; the source page shows the breaker state; any persisted state ships in the baseline and a migration (a new table needs no ALTER line) | core, worker, db, web, tests, docs | medium | revert commit; the stored state is ignored |
 | M76 As-Run Log | Ops + Data | Next | Complete | Answer "what was on air at 19:38" from one table instead of container logs (competitor comparison 2026-10-01; owner decision) | Every playout start and end writes one row: UTC start and end, block, pool, source, asset, title, selection reason, queue kind, input kind (cache, remote, YouTube pair, live), format id, planned and aired seconds, end reason (natural end, duration bound, switch, skip, failure); bounded retention; a read-only view in the console and an API route; docs/operations.md uses it in the runbooks; the table ships in the baseline and a migration (a new table needs no ALTER line) | worker, db, web, tests, docs | low | revert commit; the table stays unused |
 | M77 Resume Interrupted Item | Playout | Later | Deferred | Continue an interrupted item at its position instead of throwing it away (competitor comparison 2026-10-01) | Owner deferred this on 2026-10-01 until after M75 and M76: start only when the owner asks. Scope when started: persisted offset, `-ss` for cached Twitch VODs first, duration bound and chapter windows offset-aware, soaked on the DUT because it touches the seam chain | worker, db, tests | high | revert commit |
 | M78 Operator Precedence | Behavior | Now | Complete | Operator actions end what they replace, and viewers never override the operator (owner decisions 2026-10-01: 1 answered directly, 2 and 3 chosen from the lead's recommendation) | The operator's Skip during an active Pin or Fallback ends that override instead of restarting the pinned item from 0, and the schedule continues from the pool's own position (after the pinned item only when the pin held the pool's running item; "after the pinned item" for every pinned pool item is a follow-up for the owner); a Live Bridge takeover ends an insert that is on air (and drops a pending one, logged), so the insert never replays from its start after the live; while a Pin or Fallback holds the air no chat skip vote starts or counts, and the bot says why in chat; a passed vote whose item has left the air is dropped; Skip tested in relay and direct mode | worker, web, core, tests, docs | low-medium | revert commit |
@@ -4312,6 +4312,46 @@ Done:
   `pnpm test:fresh-db` (it needs a `stream247-web:test` image built from this tree; the fresh-install
   schema is covered by the integration test that compares a migrated database with `DECLARED_SCHEMA`).
 
+Combination review (2026-10-01; M75, M76, M78, M79, M80 and M82 read together for the first time):
+
+- A trial that fails inline is not asked again in the same cycle. The recovery after a failed inline
+  resolve was planned from the cycle's snapshot, in which a half-open source is a trial source and not
+  a held one; on a channel without a global fallback asset or a library file its generic tiers picked
+  another item of the source that had just failed its one trial, and the standby slate was on air for
+  that cycle. `recordSelectionResolveOutcome` now returns the breakers as its write left them (null
+  when nothing was recorded) and the recovery plan takes its held sources from those rows. The bridge
+  before a cold resolve still reads the snapshot: it runs before the trial is judged. Rejected from the
+  same finding: "the queue of that cycle walks the stale gate and resolves the trial a second time" --
+  no pool queue is built for a recovery selection (`global_fallback` / `generic_fallback` / `standby`
+  are not among the reason codes that build one).
+- An outcome that changes no row takes no lock. `recordSourceBreakerOutcomes` plans against a plain read
+  first and takes the state-write lock only when a row would change, planning again from the rows as
+  they are then. A clean probe of a healthy source (before every switch that resolved inline, about
+  four per five minutes from the queue) queued behind every whole-state write of the web and the
+  worker for a transaction that wrote nothing.
+- A failed breaker write loses less. The scan marks a probe counted before the breaker hears of it, so
+  "the next cycle retries" was not true: the outcomes of a failed write are now kept for one more
+  write (`createBreakerOutcomeCarry`, the inline resolve's too; once only, so an outcome the database
+  refuses cannot fail every later write). `applySourceBreakerOutcomes` knows who is held before its
+  first incident write and guards each incident write on its own (`playout.source-breaker.write_failed`
+  with `scope: "incident"`); when the record itself fails, the snapshot's breakers stand in for the
+  held set. Before, one failed write left no source held for that cycle and the per-item incident of a
+  held source re-opened, with an onset line and its acknowledgement cleared.
+- Rollback (docs only): an older image never resolves `playout.source-breaker.<sourceId>` (the family
+  is unknown to it, and unknown fingerprints are not auto-resolved), so an incident open at the
+  rollback stays open until it is resolved by hand; deployment says so.
+- Docs: the six upgrade notes in deployment are one section, *Upgrading Past 2.1.0*, with one lead
+  (no stack file change, two additive tables and one backup, the language to set and the egress to
+  allow after the repin, what a rollback leaves) and a sub-heading per milestone. The section keeps
+  that name until the release that carries the six has a version (no release milestone names one yet).
+- Tests: `playout-recovery` (the failed trial: the snapshot's gate picks the same source, the rows
+  after the write pick the other), `source-breaker-wiring` (the recovery plan's gate, the returned
+  rows, the carry as a table and at both call sites, the held set before the first write and the
+  guarded writes, the snapshot standing in), integration `db-roundtrip` (with the state-write lock held
+  by another session: a clean probe answers at once, a failure waits and is planned after it).
+- `pnpm validate` green after the combination review's fixes in M75, M76 and M79 (2609 unit tests in
+  242 files, 63 integration tests, build). Not run: the e2e suites (no UI text changed).
+
 DUT check after deploy (read-only, `CHECK_BASE_URL=http://127.0.0.1:3000` where needed):
 
 - `SELECT COUNT(*) FROM schema_migrations WHERE id = '20261001_002_source_breakers';` returns 1 and
@@ -4413,8 +4453,9 @@ Done:
 - Storage: table `as_run_log` (`id`, `started_at`, `ended_at` '' while on air, `target_kind`, `asset_id`,
   `title` as aired, `source_id`, `pool_id`, `block_id`, `reason_code`, `queue_kind`, `input_kind`,
   `format_id`, `format_candidate`, `planned_seconds`, `aired_seconds`, `end_reason`, `exit_code`) with
-  index `as_run_log_started_at_idx`, in the baseline `CREATE`, migration `20261001_003_as_run_log` (the
-  same `CREATE` and index; a new table needs no ALTER line, precedent `source_breakers`) and
+  two indexes, `as_run_log_started_at_idx` and the partial `as_run_log_open_idx` (`WHERE ended_at = ''`:
+  every start closes the open row), in the baseline `CREATE`, migration `20261001_003_as_run_log` (the
+  same `CREATE` and indexes; a new table needs no ALTER line, precedent `source_breakers`) and
   `schema-manifest.ts` (regenerated). Not part of the application state: not hydrated, `persistState`
   never touches it. Writers outside the serialized state write (a start must not queue behind a
   whole-state write for its history line), each one short transaction: `recordAsRunStart` (closes rows
@@ -4460,15 +4501,33 @@ Done:
   at boot and at the next start with a late exit ignored and a skewed boot time, and the 90-day prune.
 - `pnpm validate` green (2207 unit tests in 230 files, 62 integration tests, build; after the review
   fixes 2228 unit tests in 230 files, 62 integration tests, build; one M74 source-text
-  assertion in `operator-play-now-wiring` widened for the intent line before the restart stop). Not run: the e2e baselines (the live-status design and
-  wording baselines change with the new panel and are for the lead to re-record), `pnpm test:fresh-db`
+  assertion in `operator-play-now-wiring` widened for the intent line before the restart stop). Not run
+  by this milestone: the e2e baselines (the live-status design and wording baselines change with the new
+  panel). Re-recorded since in d122103 (`live-status-chromium-linux.txt` and the live-status desktop and
+  mobile pictures). Not run: `pnpm test:fresh-db`
   (it needs a `stream247-web:test` image built from this tree; the fresh-install schema is covered by
   the integration test that compares a migrated database with `DECLARED_SCHEMA`).
+
+Combination review (2026-10-01, with M78 and M79):
+
+- A Skip is a `skip` row also when it reaches the playout as a switch. The end write of a playout
+  cycle clears `restartRequestedAt` (older than this branch), and a cycle can run for up to a minute
+  (the queue scan awaits one remote resolve; on the DUT the queue's YouTube items are re-resolved every
+  five minutes). A Skip written meanwhile -- the operator's, the one that ends a Pin (M78), an applied
+  chat vote -- lost its flag; the skip hold still moved the programme on at the next cycle, through the
+  plain switch branch, where no intent was set, and the row read `switch`. `asRunSwitchIntentOf` (the
+  item a switch stops is the one an active skip hold names) is set right before that stop, and
+  `asRunEndReasonOf` reads `skip` for a `switch` stop with that intent. The exit line of such a Skip
+  still says `plannedReason: switch`; operations says so.
+- Docs: deployment and this section name both indexes of `as_run_log` (the upgrade note named one).
+- Tests: `as-run` (the switch intent as a table, through to the row; only a switch takes it),
+  `as-run-wiring` (set in the switch branch before anything is awaited, the stop first in the start).
 
 DUT check after deploy (read-only, `CHECK_BASE_URL=http://127.0.0.1:3000` where needed):
 
 - `SELECT COUNT(*) FROM schema_migrations WHERE id = '20261001_003_as_run_log';` returns 1, and
-  `SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'as_run_log_started_at_idx';` returns 1.
+  `SELECT COUNT(*) FROM pg_indexes WHERE indexname IN ('as_run_log_started_at_idx', 'as_run_log_open_idx');`
+  returns 2.
 - Rows appear for each start: after the first boundary, `SELECT started_at, ended_at, target_kind, title,
   input_kind, format_id, end_reason FROM as_run_log ORDER BY started_at DESC LIMIT 5;` shows one row per
   `playout.process.start` line since the deploy (`docker compose logs playout | grep -c
@@ -4506,6 +4565,11 @@ Follow-ups:
   better than hundreds of three-second rows.
 - Live bridge and slate rows carry no asset; the live input's label is the title. The live input's own
   identity (which push source) is not recorded.
+- The end write of a playout cycle clears a `restartRequestedAt` that was written while the cycle ran
+  (combination review; the same line is on main). A Skip survives it through its skip hold and a Pin or
+  Play now through their own fields, but a plain Restart or Hard reload pressed in that window is
+  swallowed. Keeping a flag newer than the one the cycle read touches the restart and reconnect logic
+  of direct mode, so it is its own piece of work, to soak before it ships.
 
 ## M78 Operator Precedence
 
@@ -4621,7 +4685,8 @@ DUT check after deploy (read-only apart from the operator's own clicks;
   with `reasonCode: scheduled_match` for another item; no second start of the pinned asset. The runtime
   row has `override_mode = 'schedule'` and an empty `override_asset_id`; `audit_events` has
   `playout.skip.current` ending "the Pin was ended by Skip."; the pinned item's `as_run_log` row ends
-  `skip`.
+  `skip`. If the Skip landed while a playout cycle was running, the exit line reads `plannedReason:
+  switch` instead; the row ends `skip` either way (combination review, M76).
 - Play now while a Live Bridge is on air is refused in the control room. If a test input is at hand
   (M66 rehearsal): Play now a short item, start the bridge while it plays, release it. The playout log
   has `playout.insert.ended` `{ reason: "live-bridge" }`, and after the release a `scheduled_match`
@@ -4634,7 +4699,8 @@ DUT check after deploy (read-only apart from the operator's own clicks;
 
 Follow-ups:
 
-- Owner confirmation of decision 2 (Live Bridge ends the insert), see above.
+- Closed: decision 2 (a Live Bridge takeover ends the insert) was taken by the owner on 2026-10-01, see
+  *Decisions* above. This entry asked for a confirmation the section already records.
 - The direct-mode planned reconnect (`scheduled-reconnect`, every few hours) still restarts a running
   insert from its beginning; out of scope of M78 by decision. Ending it there too is one row of
   `ITEM_ENDING_STOP_REASONS`, but the reconnect also restarts every other item, which plays on from 0.
@@ -4705,6 +4771,33 @@ Done:
   is types and comments, so they pass on the M78 runtime too.
 - `pnpm validate` green (2335 unit tests in 232 files, 62 integration tests, build). Not run: the e2e
   baselines (only the *Enable skip votes* tip text changed; tips show on hover only).
+
+Combination review (2026-10-01, with M74's insert handling):
+
+- The hold reads what is on air, not only the row's status. An insert on air whose Restart (or whose
+  playout container's redeploy) cannot prepare it again is covered by the recovery plan's fallback, and
+  nothing cleared the row: the "restart-requested" stop keeps an insert, the cycle-end write keeps a row
+  whose selection is not `operator_insert`, and `decideInsertAfterSelection` keeps an insert the
+  selection still names. The row stayed `active` for as long as the item did not resolve, so
+  `resolveOperatorHold` paused every vote with the insert line while the fallback played.
+  `OperatorHoldInput` now carries `currentAssetId` (it was on `PassedSkipVoteInput` only): an `active`
+  insert holds while it is the item on air or nothing is (a Restart's gap, the reconnect slate of
+  direct mode), not while another item is. `pending` is unchanged.
+- The stuck row itself (M74's code, the same on v2.1.0-rc.2): `decideInsertAfterPrepareFailure`
+  (playout-boundary.ts) replaces the inline condition in the cycle's prepare-failure catch. A pending
+  insert is dropped as before; an insert on air that fails to prepare for a Restart still takes the
+  recovery plan, as M74 decided; the cycle after it, with another item on air, ends the insert (runtime
+  event and audit row `playout.insert.ended`, `reason: prepare-failed`) and the schedule continues.
+  Before, the insert was selected and resolved inline on every cycle, up to the resolve timeout each,
+  and the fallback stayed on air until Resume. Inferred from M74 (an insert ended by its duration bound
+  or a watchdog does not replay) and M78 decision 2 (an insert has no resume, so it ends rather than
+  starts again from 0 later); if the owner wants a failed insert retried instead, this is the function.
+- Docs: operations (*Operator controls*: the ended insert, and votes counting while the fallback covers
+  it).
+- Tests: `operator-precedence` (an active insert with another item on air, with nothing on air, a
+  pending one either way; the row a Restart's failed re-prepare leaves), `playout-boundary` (the
+  prepare-failure table, and the three writes that leave the row), `operator-play-now-wiring` (the
+  catch through the decision, the drop's record kept, the ended insert's line and audit row).
 
 DUT check after deploy (viewer control on, `!skip` enabled). The chat learns of the insert, and of its
 end, only at the next worker cycle (30 s apart, after the source syncs); the Play now's `pending` phase
@@ -4845,8 +4938,34 @@ intro sentence); the studio scene preview where a fixture shows standby or no ne
 `tests/e2e/control-density.spec.ts` (the panel's select and its secondary save; reason written beside
 the number), counted from the components and not yet measured: run that suite on the same stack.
 
+Recorded since (combination review, read from the commit, not re-run): d122103 re-recorded
+`channel-chromium-linux.txt` (two lines), the channel mobile picture, `admin-settings-chromium-linux.txt`
+and both admin-settings pictures. Not in that commit, and so not confirmed either way: the channel
+desktop picture, the studio scene pictures (the predicted `STAND BY` / `NOTHING SCHEDULED` in the
+preview; the studio's wording baseline holds the stored English headline defaults, which M80 does not
+change), and the control-density budget of 35, whose comment in `tests/e2e/control-density.spec.ts`
+still says "not yet measured". There is no baseline of the setup wizard's instance step. A picture that
+did not move is not proof that nothing changed: the design gate tolerates 1 %.
+
+Lead, 2026-10-01, from the run behind d122103 (images built from 07e96e6, fresh `DEV_STACK_STATE_DIR`):
+the whole `scripts/design-baseline.sh` suite ran, 76 tests - first without `--update` (68 green, 8 red:
+live-status and admin-settings desktop/mobile pictures and wording, channel mobile picture and wording),
+then with `--update` (76 green, exactly those 8 files rewritten). The control-density suite is part of
+that run and measured `admin-settings: 35 controls, primary: [Save Twitch accounts, Save encrypted
+settings]` - the budget of 35 is measured, not only counted - and `studio-scene: 59`. The channel desktop
+picture and both studio scene pictures stayed inside the 1 % tolerance and were NOT re-recorded; whether
+the studio preview shows `STAND BY` / `NOTHING SCHEDULED` on the seeded fixture was not looked at. The
+unit suites pin those texts (`viewer-language-surfaces`); the pictures may be stale by less than 1 %.
+`test:e2e:smoke`, `test:queue-continuity`, `test:runtime-parity`, `test:fresh-db` and
+`docker/smoke-test.sh` were green on the same images.
+
 DUT check after deploy. The channel is English until it is set: check `/channel` reads `All times are
-shown in Central European Time.` and the picture is unchanged. Then set `Admin → Settings → Channel
+shown in Central European Time.`; the lower third and the next card are unchanged, but a poll or a skip
+bar that runs before the language is set reads English (`What plays next?`, `Skip?`) where it read
+German on rc.2, and a standby reads `Stand by` -- the upgrade note says so, it is not a regression. On
+jimpanse247, with skip votes and chat games on air, set the language right after the repin (or, the
+owner's call because it changes `stack.env`: `CHANNEL_LANGUAGE=de` before the repin, so the recreated
+containers start in German). Then set `Admin → Settings → Channel
 language` to *German (Deutsch)* while a programme is on air and check, without a restart (the Settings
 route only: `CHANNEL_LANGUAGE=de` in `stack.env` reaches the containers when the stack is redeployed, and
 during a standby or reconnect slate the picture follows with the next programme):
@@ -4859,8 +4978,8 @@ Stimme(n)`; the Twitch title of an asset on air is unchanged.
 
 Follow-ups:
 
-- `.env.example` and `.env.production.example` do not list `CHANNEL_LANGUAGE` (env files were out of
-  bounds for this milestone); one commented line next to `CHANNEL_TIMEZONE` in each.
+- Done in the M80 commit (07e96e6): `.env.example` (`CHANNEL_LANGUAGE=`) and `.env.production.example`
+  (`# CHANNEL_LANGUAGE=de`) list the variable, each with its comment. This entry said they did not.
 - `/api/channel/live` still carries `playout.message`, the operator's status text, in its JSON. The page
   no longer prints it; dropping it from the public snapshot is an API change of its own.
 - `<source> item` / `Video aus <source>` is stored with the asset at ingest, in the language set at that

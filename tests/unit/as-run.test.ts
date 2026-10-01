@@ -11,6 +11,7 @@ import {
   asRunEndReasonOf,
   asRunInputKindOf,
   asRunRestartIntentOf,
+  asRunSwitchIntentOf,
   asRunScheduleContextOf,
   asRunTargetKindOf,
   buildAsRunEnd,
@@ -97,6 +98,12 @@ describe("as-run end reason", () => {
     [{ plannedReason: "", stopIntent: "", naturalBoundary: false, exitedCleanly: true }, "stopped"],
     [{ plannedReason: "", stopIntent: "", naturalBoundary: false, exitedCleanly: false }, "failed"],
     [{ plannedReason: "switch", stopIntent: "", naturalBoundary: false, exitedCleanly: false }, "switch"],
+    // A Skip whose restart flag was lost reaches the playout as a switch; the row says what it was.
+    [{ plannedReason: "switch", stopIntent: "skip", naturalBoundary: false, exitedCleanly: false }, "skip"],
+    [{ plannedReason: "switch", stopIntent: "operator-restart", naturalBoundary: false, exitedCleanly: false }, "switch"],
+    // Only a switch takes the intent: an item that ends by itself under a skip hold ended by itself.
+    [{ plannedReason: "", stopIntent: "skip", naturalBoundary: true, exitedCleanly: true }, "natural-end"],
+    [{ plannedReason: "duration-bound", stopIntent: "skip", naturalBoundary: false, exitedCleanly: false }, "duration-bound"],
     [{ plannedReason: "duration-bound", stopIntent: "", naturalBoundary: false, exitedCleanly: false }, "duration-bound"],
     [{ plannedReason: "feed-stalled", stopIntent: "", naturalBoundary: false, exitedCleanly: false }, "feed-watchdog"],
     [{ plannedReason: "feed-audio-stalled", stopIntent: "", naturalBoundary: false, exitedCleanly: false }, "feed-watchdog"],
@@ -127,6 +134,22 @@ describe("as-run end reason", () => {
     ["direct-mode skip", { runningAssetId: "a1", skipAssetId: "a1", nextAssetId: "", selectedBeforeSlateAssetId: "a2" }, "skip"]
   ] as const)("tells the web's one restart request apart: %s", (_name, input, expected) => {
     expect(asRunRestartIntentOf(input)).toBe(expected);
+  });
+
+  // Combination review (M76 x M78). The end write of a cycle in flight clears restartRequestedAt, so a
+  // Skip written while that cycle runs loses its flag; the skip hold still moves the programme on, as a
+  // switch. On the DUT the queue's YouTube items are re-resolved every five minutes, each inside a cycle.
+  it.each([
+    ["the item a switch stops is the one an active skip hold names", { runningAssetId: "a1", skipAssetId: "a1" }, "skip"],
+    ["a Pin or Play now with no skip hold", { runningAssetId: "a1", skipAssetId: "" }, ""],
+    ["a Remove next hold names another item", { runningAssetId: "a1", skipAssetId: "a2" }, ""],
+    ["a slate or live input is on air", { runningAssetId: "", skipAssetId: "" }, ""]
+  ] as const)("reads a skip from the switch that carries it out: %s", (_name, input, expected) => {
+    expect(asRunSwitchIntentOf(input)).toBe(expected);
+    // Through to the row: the switch stop with that intent.
+    expect(
+      asRunEndReasonOf({ plannedReason: "switch", stopIntent: asRunSwitchIntentOf(input), naturalBoundary: false, exitedCleanly: false })
+    ).toBe(expected === "skip" ? "skip" : "switch");
   });
 });
 

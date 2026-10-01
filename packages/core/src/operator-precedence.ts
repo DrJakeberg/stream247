@@ -71,12 +71,21 @@ export function resolveOperatorOverrideHold(input: OperatorOverrideHoldInput): O
  * Pin is dropped as `preempted`, and the Pin's line is the true one), then the insert arm, which picks
  * the insert only while its item is ready and not skip-held. The operator's Skip of the insert writes
  * that skip hold, so the insert ends as before and votes count again.
+ *
+ * An `active` insert holds only while no other item is on air (combination review). The row can say
+ * `active` while the fallback plays: an insert on air whose Restart, or whose playout container's
+ * redeploy, could not prepare it again is covered by the recovery plan, and the row keeps the insert
+ * until the next cycle ends it. Reading the status alone, the bot told chat "the operator is playing an
+ * insert" over the fallback and refused every vote. Nothing on air ("") still holds: that is the gap of
+ * a Restart, or the reconnect slate of direct mode, after which the insert starts again.
  */
 export type OperatorHold = OperatorOverrideHold | "insert";
 
 export interface OperatorHoldInput extends OperatorOverrideHoldInput {
   insertAssetId: string;
   insertStatus: string;
+  // The item the runtime row has on air, "" for none.
+  currentAssetId: string;
 }
 
 export function resolveOperatorHold(input: OperatorHoldInput): OperatorHold {
@@ -90,13 +99,15 @@ export function resolveOperatorHold(input: OperatorHoldInput): OperatorHold {
   if (liveBridgeTakesAir(input) || !operatorItemSelectable(input, input.insertAssetId)) {
     return "";
   }
+  if (input.insertStatus === "active" && input.currentAssetId !== "" && input.currentAssetId !== input.insertAssetId) {
+    return "";
+  }
   return "insert";
 }
 
 export interface PassedSkipVoteInput extends OperatorHoldInput {
-  // The item the room voted on, and the item the runtime row has on air when the worker applies the vote.
+  // The item the room voted on; currentAssetId is the row's item on air when the worker applies the vote.
   votedAssetId: string;
-  currentAssetId: string;
 }
 
 export type PassedSkipVoteDecision =

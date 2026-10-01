@@ -71,6 +71,11 @@ the pool's next item. Under the relay no operator action shows that slate.
   resolved; the item on air stays on air, the error is in the entry), `start-failed`,
   `destination-missing`. The admin adds an audit row (no runtime event) when the operator drops a
   pending insert: `replaced` by a newer Play now, `cancelled` by Resume schedule.
+- An insert that is on air and cannot be prepared again (a Soft restart of it, or a redeploy of the
+  playout container, while its source does not resolve) is covered by the fallback like any failed item,
+  and the cycle after that ends it: runtime event and audit row `playout.insert.ended` with `reason:
+  prepare-failed` and the error, then the schedule continues. Before, the insert stayed selected and was
+  resolved again on every cycle, with the fallback on air until Resume schedule.
 - **Move next** queues an item for the end of the item on air and plays it to its end, also when it is
   not from the running pool's sources. A Skip starts it at once (without the relay after the slate).
   With the relay a Restart restarts the item on air and leaves Move next queued; without the relay the
@@ -114,7 +119,9 @@ the pool's next item. Under the relay no operator action shows that slate.
   once a minute (one cooldown for all three), in the channel language (since M80), for example "The
   operator has pinned this item — skip votes are paused until the pin ends." or "The operator is
   playing an insert — skip votes are paused until it ends." Votes count again once the override or insert ends; an insert still ends as before
-  (its end, the operator's Skip, Resume schedule, a Live Bridge). A pool's automatic insert and a cue
+  (its end, the operator's Skip, Resume schedule, a Live Bridge). An insert that is no longer what is
+  on air does not pause votes: while the fallback covers an insert that could not be prepared again,
+  `!skip` counts. A pool's automatic insert and a cue
   point insert are the schedule's, not the operator's: chat can skip them as any other item. The worker
   sees a new Pin or insert, and its end, at its next cycle (up to about 30 s): votes in that window count
   or stay paused, and a vote that passes is judged on the row when it is applied. A passed vote is also
@@ -262,7 +269,10 @@ Reading the rows:
   vote, `operator-restart` after Restart or hard reload (and, without the relay, Recover outputs and
   Force reconnect): the web asks the playout for all of them with one restart request, and the row
   tells them apart. Without the relay the reconnect slate comes first: the item's row ends as above,
-  then a short `reconnect` row ends as `switch` when the next item starts.
+  then a short `reconnect` row ends as `switch` when the next item starts. A Skip written while a
+  playout cycle is still running can lose its restart request to that cycle's last write; the next cycle
+  then moves off the skipped item as a plain switch (`plannedReason: switch` on its exit line), and the
+  row ends `skip` all the same.
 
 ### Playout degraded
 

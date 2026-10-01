@@ -3,6 +3,7 @@ import {
   ITEM_ENDING_STOP_REASONS,
   decideBoundaryPlaybackInput,
   decideCycleEndInsert,
+  decideInsertAfterPrepareFailure,
   decideInsertAfterSelection,
   decidePreviousAssetId,
   isBroadcastCoverageDown,
@@ -382,6 +383,57 @@ describe("the operator insert after the selection (M74, Live Bridge since M78)",
       });
     }
   );
+});
+
+describe("the operator insert that cannot be prepared (M74, an aired one since the combination review)", () => {
+  it.each([
+    // reasonCode, insertStatus, processRunning, currentAssetId -> decision (the insert is asset_insert)
+    // M74: a pending insert is dropped and the item on air stays.
+    ["operator_insert", "pending", true, "asset_on_air", "drop"],
+    // Nothing on air: the recovery plan runs, so the channel is not left dark.
+    ["operator_insert", "pending", false, "", "recover"],
+    ["operator_insert", "pending", true, "", "recover"],
+    ["operator_insert", "pending", false, "asset_on_air", "recover"],
+    // The insert on air fails to prepare for a Restart: the programme's failure, the recovery plan covers it.
+    ["operator_insert", "active", true, "asset_insert", "recover"],
+    // The cycle after: the fallback is on air and the row still says active. Selected and resolved again
+    // on every cycle before, with the fallback on air until Resume; now the insert is ended.
+    ["operator_insert", "active", true, "asset_fallback", "end"],
+    ["operator_insert", "active", false, "asset_fallback", "recover"],
+    ["operator_insert", "active", true, "", "recover"],
+    // Any other selection that fails to prepare is the programme's.
+    ["scheduled_match", "", true, "asset_on_air", "recover"],
+    ["scheduled_match", "active", true, "asset_fallback", "recover"],
+    ["operator_insert", "", true, "asset_on_air", "recover"]
+  ] as const)(
+    "selection=%s insertStatus=%j processRunning=%s onAir=%j -> %s",
+    (selectionReasonCode, insertStatus, processRunning, currentAssetId, expected) => {
+      expect(
+        decideInsertAfterPrepareFailure({ selectionReasonCode, insertStatus, insertAssetId: "asset_insert", processRunning, currentAssetId })
+      ).toBe(expected);
+    }
+  );
+
+  it("ends the row that neither the Restart's stop nor the recovery cycle's end clears", () => {
+    // The stop of a Restart keeps an insert on air (it starts again), and the recovery's fallback is not
+    // an operator_insert selection, so both writes leave the insert active: this decision is its only end.
+    expect(
+      shouldClearInsertOnExit({ plannedReason: "restart-requested", insertStatus: "active", insertAssetId: "asset_insert", currentAssetId: "asset_insert" })
+    ).toBe(false);
+    const row = { insertAssetId: "asset_insert", insertRequestedAt: "2026-10-01T12:00:00.000Z", insertStatus: "active" } as const;
+    expect(decideCycleEndInsert({ selectionIsOperatorInsert: false, selectedAssetId: "asset_fallback", row, now: "2026-10-01T12:05:00.000Z" })).toEqual(row);
+    // The next cycle selects the insert again (decideInsertAfterSelection keeps what the selection names).
+    expect(decideInsertAfterSelection({ insertStatus: "active", selectionReasonCode: "operator_insert", selectionIsLive: false, insertAvailable: true })).toEqual({ clear: false, dropReason: "" });
+    expect(
+      decideInsertAfterPrepareFailure({
+        selectionReasonCode: "operator_insert",
+        insertStatus: row.insertStatus,
+        insertAssetId: row.insertAssetId,
+        processRunning: true,
+        currentAssetId: "asset_fallback"
+      })
+    ).toBe("end");
+  });
 });
 
 describe("the asset Replay previous offers (M74)", () => {

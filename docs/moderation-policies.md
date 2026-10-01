@@ -30,6 +30,10 @@ When the feature is enabled, moderation presence is treated as a timed check-in 
 
 ## Chat Reply Examples
 
+The bot answers in the channel language (`docs/operations.md`, *What Viewers Read: The Channel
+Language*). These are the English replies; on a channel set to German the first one reads
+`Anwesenheitsfenster auf 30 Min. gesetzt`.
+
 - accepted: `presence window set to 30 min`
 - defaulted: `received !here, default is 30; window set to 30 min`
 - minimum clamp: `received !here 5, minimum is 10; window set to 10 min`

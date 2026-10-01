@@ -2263,6 +2263,53 @@ describe.sequential("database roundtrip", () => {
       expect(await breakerOf()).toMatchObject({ state: "closed", failedAssetIds: [], openedAt: "", cooldownSeconds: 0 });
     }, 60_000);
 
+    // Combination review. The playout records an outcome before every switch that resolved inline and
+    // about four per five minutes from the queue; nearly all of them change no row. Each used to queue
+    // behind the state-write lock, which a whole-state write of the web or the worker holds while it
+    // hydrates and persists the state.
+    it("takes the state-write lock only for an outcome that changes a row", async () => {
+      await seedSources();
+      const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+      const locks = (granted: boolean) =>
+        executeSql(
+          `SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 247001 AND ${granted ? "granted" : "NOT granted"};`
+        );
+      const until = async (condition: () => Promise<boolean>) => {
+        for (let attempt = 0; attempt < 50 && !(await condition()); attempt += 1) {
+          await pause(100);
+        }
+      };
+
+      // Another writer holds the lock (STATE_WRITE_LOCK_KEY) for six seconds.
+      const holder = executeSql("BEGIN; SELECT pg_advisory_xact_lock(247001); SELECT pg_sleep(6); COMMIT;");
+      await until(async () => (await locks(true)) === "1");
+      expect(await locks(true)).toBe("1");
+
+      // A clean probe of a source without failures is answered while the lock is held, with the rows.
+      const clean = await recordSourceBreakerOutcomes(
+        [{ sourceId: youtubeSourceId, assetId: "y1", outcome: "ok", error: "" }],
+        "2026-09-28T10:00:00.000Z"
+      );
+      expect(clean).toEqual({ updates: [], transitions: [], records: [] });
+      expect(await locks(true)).toBe("1");
+      expect(await locks(false)).toBe("0");
+
+      // A failure changes the row: it waits for the lock and is planned from the rows as they are then.
+      let settled = false;
+      const counted = recordSourceBreakerOutcomes([failed("y1")], "2026-09-28T10:00:30.000Z").then((result) => {
+        settled = true;
+        return result;
+      });
+      await until(async () => (await locks(false)) === "1");
+      expect(await locks(false)).toBe("1");
+      expect(settled).toBe(false);
+
+      await holder;
+      const result = await counted;
+      expect(result.updates.map((record) => record.failedAssetIds)).toEqual([["y1"]]);
+      expect(await breakerOf()).toMatchObject({ state: "closed", failedAssetIds: ["y1"] });
+    }, 60_000);
+
     it("lets an operator close an open breaker, and forgets the breaker of a deleted source", async () => {
       await seedSources();
       await recordSourceBreakerOutcomes([failed("y1"), failed("y2"), failed("y3")], "2026-09-28T10:00:00.000Z");

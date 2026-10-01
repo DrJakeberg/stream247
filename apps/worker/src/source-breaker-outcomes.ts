@@ -32,3 +32,34 @@ export function sourceBreakerOutcomesOf(probeOutcomes: readonly QueueProbeOutcom
       error: probed.error
     }));
 }
+
+/**
+ * Outcomes whose breaker write failed, kept for one more write (combination review).
+ *
+ * The scan marks a probe counted before the breaker hears of it (takeUncountedProbeOutcome), so a failed
+ * write was not retried by the next cycle, as its comment said: no later scan produces the outcome again
+ * until the probe cache expires (60 s for a failure, five minutes for a clean probe). A half-open trial
+ * judged clean and lost that way went on air with its source still "held out of programming" until its
+ * next item was probed, hours later for an archive.
+ *
+ * One more write and no further: an outcome the database refuses for what it is (its text) would
+ * otherwise fail every write after it. `take` hands out what an earlier failed write left, oldest first,
+ * then the new outcomes, and forgets the carried ones; `keep` stores the outcomes of a write that failed
+ * and had not been tried before.
+ */
+export function createBreakerOutcomeCarry(limit = 40): {
+  take: (fresh: readonly SourceBreakerOutcome[]) => SourceBreakerOutcome[];
+  keep: (untried: readonly SourceBreakerOutcome[]) => void;
+} {
+  let carried: SourceBreakerOutcome[] = [];
+  return {
+    take(fresh) {
+      const outcomes = [...carried, ...fresh];
+      carried = [];
+      return outcomes;
+    },
+    keep(untried) {
+      carried = [...carried, ...untried].slice(-limit);
+    }
+  };
+}

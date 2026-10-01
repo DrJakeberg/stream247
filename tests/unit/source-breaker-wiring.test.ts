@@ -5,7 +5,7 @@ import { closedSourceBreaker, planSourceBreakerUpdates, type SourceBreakerRecord
 import { DECLARED_SCHEMA } from "../../packages/db/src/schema-manifest";
 import { classifyIncidentFingerprint } from "../../apps/worker/src/incident-classes.js";
 import { planSourceBreakerIncidents } from "../../apps/worker/src/source-breaker-incidents.js";
-import { sourceBreakerOutcomesOf } from "../../apps/worker/src/source-breaker-outcomes.js";
+import { createBreakerOutcomeCarry, sourceBreakerOutcomesOf } from "../../apps/worker/src/source-breaker-outcomes.js";
 import { TwitchVodCachePendingError } from "../../apps/worker/src/twitch-vod-cache.js";
 
 // M75. The DUT case of 2026-09-28: the YouTube source of pool "TwitchYoutube", 0 of 11 items resolvable.
@@ -157,6 +157,71 @@ describe("which outcomes the breaker hears", () => {
 });
 
 // The worker module starts the playout on import, so its wiring is checked in its source.
+// Combination review. The scan marks a probe counted before the breaker hears of it, so an outcome whose
+// write failed was lost to the breaker, not retried as the cycle's comment said.
+describe("outcomes of a failed breaker write", () => {
+  const outcome = (assetId: string, result: "ok" | "failed" = "failed") => ({
+    sourceId: "source_youtube",
+    assetId,
+    outcome: result,
+    error: result === "failed" ? "Requested format is not available" : ""
+  });
+
+  it("hands out nothing but the new outcomes while every write succeeds", () => {
+    const carry = createBreakerOutcomeCarry();
+    expect(carry.take([outcome("y1")])).toEqual([outcome("y1")]);
+    expect(carry.take([])).toEqual([]);
+  });
+
+  it("puts the outcomes of a failed write before the next scan's, oldest first, and forgets them once handed out", () => {
+    const carry = createBreakerOutcomeCarry();
+    const first = carry.take([outcome("y1", "ok")]);
+    carry.keep(first); // the write of the half-open trial's verdict failed
+    expect(carry.take([outcome("y2")])).toEqual([outcome("y1", "ok"), outcome("y2")]);
+    expect(carry.take([outcome("y3")])).toEqual([outcome("y3")]);
+  });
+
+  it("tries an outcome once more and no further, so one the database refuses cannot fail every later write", () => {
+    const carry = createBreakerOutcomeCarry();
+    const scanOne = [outcome("y1")];
+    carry.take(scanOne);
+    carry.keep(scanOne);
+    // The second write holds y1 and the new y2 and fails too: only y2 had not been tried before.
+    const scanTwo = [outcome("y2")];
+    expect(carry.take(scanTwo)).toEqual([outcome("y1"), outcome("y2")]);
+    carry.keep(scanTwo);
+    expect(carry.take([])).toEqual([outcome("y2")]);
+    expect(carry.take([])).toEqual([]);
+  });
+
+  it("joins the inline resolve's failed write with the scan of the same cycle, and stays bounded", () => {
+    const carry = createBreakerOutcomeCarry(3);
+    carry.keep([outcome("selection", "ok")]);
+    expect(carry.take([outcome("y1")])).toEqual([outcome("selection", "ok"), outcome("y1")]);
+    carry.keep([outcome("y1"), outcome("y2"), outcome("y3"), outcome("y4")]);
+    expect(carry.take([]).map((entry) => entry.assetId)).toEqual(["y2", "y3", "y4"]);
+  });
+
+  it("closes a half-open breaker with the carried clean trial instead of leaving it for the next item", () => {
+    const openedAt = "2026-10-01T12:00:00.000Z";
+    const halfOpen: SourceBreakerRecord = {
+      sourceId: "source_youtube",
+      state: "open",
+      failedAssetIds: ["y3", "y4", "y5"],
+      openedAt,
+      cooldownSeconds: 1800,
+      lastError: "Requested format is not available",
+      updatedAt: openedAt
+    };
+    const carry = createBreakerOutcomeCarry();
+    const trial = carry.take([outcome("y1", "ok")]);
+    carry.keep(trial);
+    // The next cycle's scan finds the trial in the probe cache, already counted: it has no outcome of its own.
+    const plan = planSourceBreakerUpdates([halfOpen], carry.take([]), "2026-10-01T12:31:15.000Z");
+    expect(plan.transitions.map((transition) => transition.kind)).toEqual(["closed"]);
+  });
+});
+
 describe("source breaker wiring", () => {
   const read = (relative: string) => readFileSync(path.join(process.cwd(), relative), "utf8");
   const workerSource = read("apps/worker/src/index.ts");
@@ -188,17 +253,52 @@ describe("source breaker wiring", () => {
     expect(flatWorker).toContain(".filter((asset) => asset.id !== skippedAssetId && !heldSourceIds.has(asset.sourceId))");
     const globalFallback = flatWorker.slice(flatWorker.indexOf("const globalFallback = [...state.assets]"), flatWorker.indexOf("if (globalFallback) {"));
     expect(globalFallback).not.toContain("heldSourceIds");
-    // Both recovery plans: the bridge before a cold resolve and the recovery after a failed one.
+    // Both recovery plans: the bridge before a cold resolve, from the cycle's snapshot ...
     expect(
       flatWorker.match(/planRecoveryAfterPlaybackPreparationFailure\(state\.assets, failedAsset, poolSourceGate\(state\)\.heldSourceIds\)/g)
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+    // ... and the recovery after a failed one, from the rows as the failed resolve's record left them
+    // (combination review): the snapshot still calls a source whose trial has just failed a trial source.
+    expect(flatWorker).toContain(
+      "const recoveryPlan = planRecoveryAfterPlaybackPreparationFailure( state.assets, failedAsset, sourceBreakerGate(breakersAfterFailedResolve ?? state.sourceBreakers, Date.now()).heldSourceIds );"
+    );
+    expect(flatWorker.match(/planRecoveryAfterPlaybackPreparationFailure\(/g)).toHaveLength(2);
   });
 
   it("keeps the cycle going when the scan's breaker write fails", () => {
     // A throw from the serialized write used to leave runPlayoutCycle before switching and the queue.
+    // Combination review: the snapshot's breakers stand in for the held set then; with no source held the
+    // per-item incident of a held source re-opened for that cycle and lost its acknowledgement.
     expect(flatWorker).toContain(
-      "let heldSources = new Set<string>(); try { heldSources = await applySourceBreakerOutcomes({ state, probeOutcomes, quarantinedBySource }); } catch (writeError) { logRuntimeEvent(\"playout.source-breaker.write_failed\", { scope: \"scan\","
+      "let heldSources = new Set<string>(); try { heldSources = await applySourceBreakerOutcomes({ state, probeOutcomes, quarantinedBySource }); } catch (writeError) { const snapshotGate = poolSourceGate(state); heldSources = new Set([...snapshotGate.heldSourceIds, ...snapshotGate.trialSourceIds]); logRuntimeEvent(\"playout.source-breaker.write_failed\", { scope: \"scan\","
     );
+  });
+
+  it("keeps the outcomes of a failed breaker write for one more write, on both paths", () => {
+    // The scan has marked them counted (takeUncountedProbeOutcome) and produces none of them again.
+    const flat = (text: string) => text.replace(/\s+/g, " ");
+    expect(flatWorker).toContain("const breakerOutcomeCarry = createBreakerOutcomeCarry();");
+    const apply = flat(bodyOf(workerSource, "async function applySourceBreakerOutcomes("));
+    expect(apply).toContain(
+      "const scanned = sourceBreakerOutcomesOf(args.probeOutcomes); let plan: Awaited<ReturnType<typeof recordSourceBreakerOutcomes>>; try { plan = await recordSourceBreakerOutcomes(breakerOutcomeCarry.take(scanned), nowIso); } catch (writeError) { breakerOutcomeCarry.keep(scanned); throw writeError; }"
+    );
+    const selection = flat(bodyOf(workerSource, "async function recordSelectionResolveOutcome("));
+    expect(selection).toContain("} catch (writeError) { // Tried once more with the scan's outcomes later in this cycle (applySourceBreakerOutcomes). breakerOutcomeCarry.keep(outcomes);");
+  });
+
+  it("knows who is held before the first incident write, and lets no failed incident write cost the others", () => {
+    const flat = (text: string) => text.replace(/\s+/g, " ");
+    const apply = flat(bodyOf(workerSource, "async function applySourceBreakerOutcomes("));
+    const held = apply.indexOf('const held = new Set(actions.filter((action) => action.action === "upsert").map((action) => action.sourceId));');
+    expect(held).toBeGreaterThan(-1);
+    for (const write of ["await resolveIncident(", "await closeSourceBreakerRecord(", "await upsertIncident("]) {
+      expect(apply.indexOf(write)).toBeGreaterThan(held);
+    }
+    expect(apply).toContain("for (const action of actions) { try { if (action.action === \"resolve\") {");
+    expect(apply).toContain(
+      '} catch (writeError) { // Every action is decided again from the stored rows by the next cycle. logRuntimeEvent("playout.source-breaker.write_failed", { scope: "incident", sourceId: action.sourceId, action: action.action,'
+    );
+    expect(apply).toContain("} return held; }");
   });
 
   it("feeds the breaker the outcomes quarantine counted, before the per-item incident is decided", () => {
@@ -227,8 +327,10 @@ describe("source breaker wiring", () => {
     expect(apply).toContain("hasPoolCandidate: (sourceId) => sourceHasPoolCandidate(args.state, sourceId)");
     expect(apply).toContain('if (action.action === "close") { const closed = await closeSourceBreakerRecord(action.sourceId, nowIso);');
     expect(apply).toContain("if (action.incidentOpen) { await resolveIncident(action.fingerprint, action.message); } continue; }");
-    // A closed one is not held, so the per-item incident of the source comes back in the same cycle.
-    expect(apply.indexOf('if (action.action === "close")')).toBeLessThan(apply.indexOf("held.add(action.sourceId);"));
+    // A closed one is not held, so the per-item incident of the source comes back in the same cycle:
+    // only the sources whose incident is upserted are.
+    expect(apply).toContain('const held = new Set(actions.filter((action) => action.action === "upsert").map((action) => action.sourceId));');
+    expect(apply).not.toContain("held.add(");
   });
 
   it("tells an archive still downloading from a failure on every path that reaches the breaker", () => {
@@ -246,25 +348,31 @@ describe("source breaker wiring", () => {
     expect(scan).toContain(
       'probeOutcomes.push({ asset, outcome: "failed", error: message, pendingDownload: error instanceof TwitchVodCachePendingError });'
     );
-    expect(bodyOf(workerSource, "async function applySourceBreakerOutcomes(")).toContain(
-      "recordSourceBreakerOutcomes(sourceBreakerOutcomesOf(args.probeOutcomes), nowIso)"
-    );
+    const applyBody = flat(bodyOf(workerSource, "async function applySourceBreakerOutcomes("));
+    expect(applyBody).toContain("const scanned = sourceBreakerOutcomesOf(args.probeOutcomes);");
+    expect(applyBody).toContain("recordSourceBreakerOutcomes(breakerOutcomeCarry.take(scanned), nowIso)");
     const selection = flat(bodyOf(workerSource, "async function recordSelectionResolveOutcome("));
     expect(selection).toContain("pendingDownload: error instanceof TwitchVodCachePendingError");
-    expect(selection).toContain("if (outcomes.length === 0) { return; }");
+    expect(selection).toContain("if (outcomes.length === 0) { return null; }");
   });
 
   it("lets the breaker hear the inline resolve of the selection, the only judge of a trial picked straight away", () => {
     const inline = flatWorker.indexOf("prepared = await resolveAssetPlaybackInput(failedAsset);");
     expect(inline).toBeGreaterThan(-1);
     const around = flatWorker.slice(inline - 120, inline + 400);
-    expect(around).toContain('} catch (error) { await recordSelectionResolveOutcome(failedAsset, "failed", error); throw error; }');
+    // The failed record hands back the breakers as its write left them, for the recovery plan below it.
+    expect(around).toContain(
+      '} catch (error) { breakersAfterFailedResolve = await recordSelectionResolveOutcome(failedAsset, "failed", error); throw error; }'
+    );
     expect(around).toContain('await recordSelectionResolveOutcome(failedAsset, "ok");');
     // Only that call: a failed fallback bridge resolve is not the scheduled item's failure.
     expect(flatWorker.match(/recordSelectionResolveOutcome\(failedAsset/g)).toHaveLength(2);
     // It must never throw inside the resolve's own try, where a failed write would read as a failed resolve.
     const record = bodyOf(workerSource, "async function recordSelectionResolveOutcome(");
     expect(record).toContain("} catch (writeError) {");
+    // The rows after the write, and nothing when the write failed or the outcome was not heard.
+    expect(record).toContain("return plan.records;");
+    expect(record.match(/return null;/g)).toHaveLength(2);
   });
 
   it("stores the breaker in its own table on every path an install can take, and never from a whole-state write", () => {

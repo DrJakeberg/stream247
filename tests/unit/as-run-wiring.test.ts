@@ -266,6 +266,22 @@ describe("as-run wiring", () => {
     expect(flat(bodyOf(workerSource, "async function stopPlayoutProcess("))).toContain('plannedStopReason = ""; asRunStopIntent = ""; return;');
   });
 
+  it("reads a Skip from the plain switch too, right before the stop that switch makes", () => {
+    // Combination review: a Skip whose restart flag the end write of a cycle in flight erased moves the
+    // programme on through the switch branch, where no intent was set and the row read `switch`.
+    const cycle = flat(bodyOf(workerSource, "async function runPlayoutCycle("));
+    const switchBranch = cycle.slice(cycle.indexOf("} else if (!targetAlreadyRunning) {"));
+    expect(switchBranch).toContain(
+      'asRunStopIntent = asRunSwitchIntentOf({ runningAssetId: playoutAssetId, skipAssetId: isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "" }); try { await startOrSwitchPlayout({'
+    );
+    expect(switchBranch.indexOf("asRunStopIntent = asRunSwitchIntentOf(")).toBeLessThan(switchBranch.indexOf("await "));
+    // The stop is the first thing that start makes, with nothing awaited before it that could let another
+    // exit read the intent.
+    expect(flat(bodyOf(workerSource, "async function startOrSwitchPlayout("))).toContain(
+      'const switching = playoutProcess && !playoutProcess.killed; if (switching) { await stopPlayoutProcess("switch"); }'
+    );
+  });
+
   it("closes what the previous playout process left on air when the playout comes up", () => {
     expect(flat(bodyOf(workerSource, "async function runLoop("))).toContain(
       'if (mode === "playout") { asRunLog.boot(new Date().toISOString()); }'

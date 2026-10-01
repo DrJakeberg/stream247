@@ -248,6 +248,44 @@ export function decideInsertAfterSelection(input: InsertAfterSelectionInput): In
   };
 }
 
+export interface InsertPrepareFailureInput {
+  selectionReasonCode: string;
+  insertStatus: string;
+  insertAssetId: string;
+  // A playout ffmpeg process is alive, and the runtime's on-air asset ("" for none).
+  processRunning: boolean;
+  currentAssetId: string;
+}
+
+// "drop": a pending insert, cleared before it aired. "end": an insert that aired and is no longer the
+// item on air. "recover": not the insert's own failure, the recovery plan runs.
+export type InsertPrepareFailure = "drop" | "end" | "recover";
+
+/**
+ * What the cycle does when the operator insert it selected cannot be prepared.
+ *
+ * While something is on air, a pending insert is the insert's failure, not the programme's: it is dropped
+ * and the item on air stays (M74). An insert that is itself on air and fails to prepare for a Restart is
+ * the programme's failure, and the recovery plan covers it. With nothing on air the recovery plan runs
+ * too, so the channel is not left dark.
+ *
+ * That left one row for good (combination review): the recovery's fallback is not an operator_insert
+ * selection, so the cycle-end write keeps the insert `active`, the "restart-requested" stop does not
+ * clear it (shouldClearInsertOnExit), and decideInsertAfterSelection keeps an insert the selection still
+ * names. Every cycle after it selected the insert again and resolved it inline, up to the resolve
+ * timeout, with the fallback on air until Resume. An insert has no resume (M78): once another item is on
+ * air it is ended, and the schedule continues.
+ */
+export function decideInsertAfterPrepareFailure(input: InsertPrepareFailureInput): InsertPrepareFailure {
+  if (input.selectionReasonCode !== "operator_insert" || !input.processRunning || input.currentAssetId === "") {
+    return "recover";
+  }
+  if (input.insertStatus === "pending") {
+    return "drop";
+  }
+  return input.insertStatus === "active" && input.currentAssetId !== input.insertAssetId ? "end" : "recover";
+}
+
 export interface PreviousAssetInput {
   // The runtime's on-air asset when the cycle began, "" after an exit cleared it (or for a slate).
   onAirAtCycleStart: string;

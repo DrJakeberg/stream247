@@ -76,9 +76,9 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
    ```bash
    docker compose --profile proxy up -d
    ```
-6. Open `/setup` and follow the wizard: owner account → instance basics (public URL, timezone) →
-   Twitch app credentials → Twitch connection → review. Every step after the owner account is
-   skippable and the wizard resumes at the first unfinished step, because completion is derived
+6. Open `/setup` and follow the wizard: owner account → instance basics (public URL, timezone, channel
+   language) → Twitch app credentials → Twitch connection → review. Every step after the owner account
+   is skippable and the wizard resumes at the first unfinished step, because completion is derived
    from what is actually configured rather than from a stored counter.
 7. Any skipped value can be finished later: reopen `/setup` while signed in, or use `/settings`
    for the Twitch credentials.
@@ -412,13 +412,31 @@ re-upgrade do to a pool's position.
   cycle. After an insert the pool continues with its next item; the interrupted item is not resumed.
   See `docs/operations.md`, *Operator controls*.
 
-### Upgrading Past 2.1.0: Source Circuit Breaker (M75)
+### Upgrading Past 2.1.0
 
-The first release after 2.1.0 that carries M75 changes no stack file; it is a repin of the three
-`STREAM247_*_IMAGE` tags. It adds one table, `source_breakers` (migration
-`20261001_002_source_breakers`, additive, applied on the first start; the same `CREATE TABLE` is in the
-base schema for a fresh install), so back up PostgreSQL before the repin. The table starts empty, which
-means every source is in play, exactly as before.
+The release after 2.1.0 carries six changes at once (M75, M76, M78, M79, M80, M82). As one upgrade:
+
+- **Stack and schema.** No stack file changes; it is a repin of the three `STREAM247_*_IMAGE` tags. Two
+  tables are added: `source_breakers` (migration `20261001_002_source_breakers`) and `as_run_log` with
+  its two indexes, `as_run_log_started_at_idx` and the partial `as_run_log_open_idx` (migration
+  `20261001_003_as_run_log`). Both migrations are additive and applied on the first start, and the same
+  statements are in the base schema for a fresh install. Back up PostgreSQL once before the repin. Both
+  tables start empty.
+- **After the repin.** The next-item poll and the skip bar are English until the channel language is
+  set; a channel that relied on the German panels sets it to German (*Viewer Language* below). Where
+  egress from the playout container is filtered, allow it to reach the output hosts (*A Network Outage
+  Is Not A Source Fault* below).
+- **Rollback** is the reverse repin. An older image ignores both tables and the language setting and
+  restores the old behaviour. Two things it leaves for the operator: an open
+  `playout.source-breaker.<sourceId>` incident, which it never resolves, and the as-run row that was on
+  air, which stays open until a re-upgrade (*Source Circuit Breaker* and *As-Run Log* below).
+
+The six notes below say what each change does, and what a rollback does to it.
+
+#### Source Circuit Breaker (M75)
+
+Adds the table `source_breakers`. It starts empty, which means every source is in play, exactly as
+before.
 
 - **What changes.** When the playout's probes fail on three different items of one source with no clean
   probe of it in between (a Twitch archive still downloading does not count), every pool passes that
@@ -428,16 +446,18 @@ means every source is in play, exactly as before.
   `playout.source-unplayable` incident while it is open. The source page shows the hold and offers owners
   and admins **Close breaker now**. See `docs/operations.md`, *A source is held out of programming*.
 - **Rollback.** An older image ignores the table, so a held source is in play again at once; per-item
-  quarantine is unchanged. A later re-upgrade reads the rows as they were left: a breaker whose cooldown
-  ran out in between is half-open and tries one item at the next pick.
+  quarantine is unchanged. It does not know the breaker's incident either: a
+  `playout.source-breaker.<sourceId>` incident that is open at the rollback stays open, although the
+  source is back in the rotation, until it is resolved by hand under `Live → Status`. A later re-upgrade
+  reads the rows as they were left: a breaker whose cooldown ran out in between is half-open and tries
+  one item at the next pick, and an incident still open is resolved by itself once its breaker is
+  closed.
 
-### Upgrading Past 2.1.0: As-Run Log (M76)
+#### As-Run Log (M76)
 
-Like M75, a repin of the three `STREAM247_*_IMAGE` tags with no stack file change. It adds one table,
-`as_run_log`, with its index `as_run_log_started_at_idx` (migration `20261001_003_as_run_log`, additive,
-applied on the first start; the same `CREATE TABLE` and `CREATE INDEX` are in the base schema for a fresh
-install), so back up PostgreSQL before the repin. The table starts empty; the first playout start after
-the upgrade writes the first row.
+Adds the table `as_run_log` with two indexes: `as_run_log_started_at_idx` and the partial
+`as_run_log_open_idx` (the open row, which every start closes). The table starts empty; the first
+playout start after the upgrade writes the first row.
 
 - **What changes.** Every playout process run leaves one row: what aired, how, and why it ended. The
   *On air, last 24 hours* panel on `/live?tab=status` and `GET /api/as-run` read it; see
@@ -451,9 +471,9 @@ the upgrade writes the first row.
   closes it as `process-gone` at its first boot, with that boot as its end: a `process-gone` end is
   only an upper bound.
 
-### Upgrading Past 2.1.0: Operator Precedence (M78)
+#### Operator Precedence (M78)
 
-Behaviour only: no table, no migration, no stack file change. Operator actions end what they replace,
+Behaviour only: no table, no migration. Operator actions end what they replace,
 and viewers never override the operator:
 
 - **Skip during a Pin or Fallback** ends the override (the audit row says so) and the schedule
@@ -470,18 +490,22 @@ and viewers never override the operator:
 
 See `docs/operations.md`, *Operator controls*.
 
-### Upgrading Past 2.1.0: Chat Never Skips An Operator Insert (M79)
+#### Chat Never Skips An Operator Insert (M79)
 
-Behaviour only: no table, no migration, no stack file change. Chat skip votes neither start nor count
+Behaviour only: no table, no migration. Chat skip votes neither start nor count
 while the operator's Play now / Insert is pending or on air, a vote that passed just before is not
 applied (`chat.skip.paused` with `hold: insert`, audit row `chat.skip.refused`), and the bot says why at
 most once a minute, sharing the cooldown with the Pin and Fallback lines. Before, a passed vote cut the
-insert. A pool's automatic insert and a cue point insert stay skippable. An older image restores the old
-behaviour; nothing is stored. See `docs/operations.md`, *Operator controls*.
+insert. A pool's automatic insert and a cue point insert stay skippable. The pause follows what is on
+air: an insert that could not be prepared again after a Soft restart or a redeploy of the playout
+container, with the fallback covering it, pauses nothing, and the next cycle ends it
+(`playout.insert.ended`, `prepare-failed`, runtime event and audit row) so the schedule continues;
+before, it was resolved again on every cycle with the fallback on air until Resume schedule. An older
+image restores the old behaviour; nothing is stored. See `docs/operations.md`, *Operator controls*.
 
-### Upgrading Past 2.1.0: Viewer Language (M80)
+#### Viewer Language (M80)
 
-No table, no migration, no stack file change. The new channel language lives in the managed config
+No table, no migration. The new channel language lives in the managed config
 next to the time zone and is English until someone sets it, so an upgraded channel keeps speaking
 English. To switch a channel to German, choose `German (Deutsch)` under `Admin → Settings → Channel
 language`. That route needs no restart: the chat bot, the Twitch title and the public page follow with
@@ -507,9 +531,9 @@ a value still equal to its English default is shown in the channel language, any
 shown as written (`docs/operations.md`, *What Viewers Read*). An older image ignores the setting and
 restores the old texts.
 
-### Upgrading Past 2.1.0: A Network Outage Is Not A Source Fault (M82)
+#### A Network Outage Is Not A Source Fault (M82)
 
-Behaviour only: no table, no migration, no stack file change, no new setting. A probe that fails with a
+Behaviour only: no table, no migration, no new setting. A probe that fails with a
 network error (name resolution, connecting, a timeout) while the channel's own way out is down is
 counted neither by per-item quarantine nor by the source breaker (M75); the log has
 `playout.probe.network_outage` instead. See `docs/operations.md`, *The channel's own network was down*.

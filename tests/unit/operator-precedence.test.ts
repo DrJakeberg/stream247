@@ -112,13 +112,20 @@ describe("resolveOperatorHold", () => {
       ...input({ overrideMode: "schedule", overrideAssetId: "", overrideUntil: "" }),
       insertAssetId: "asset_other",
       insertStatus: "active",
+      currentAssetId: "asset_other",
       ...overrides
     };
   }
 
   it.each<[string, Partial<OperatorHoldInput>, string]>([
     ["an operator insert on air", {}, "insert"],
-    ["a Play now that has not aired yet", { insertStatus: "pending" }, "insert"],
+    ["a Play now that has not aired yet", { insertStatus: "pending", currentAssetId: "asset_pin" }, "insert"],
+    ["a Play now with nothing on air yet", { insertStatus: "pending", currentAssetId: "" }, "insert"],
+    // Combination review: the row still says active, but the insert could not be prepared again after a
+    // Restart (or a redeploy) and the fallback is what plays. The bot must not name an insert then.
+    ["an active insert while another item is on air (the fallback covers a failed re-prepare)", { currentAssetId: "asset_pin" }, ""],
+    // The gap of a Restart, and the reconnect slate of direct mode: the insert starts again after it.
+    ["an active insert with nothing on air (a Restart's gap, the reconnect slate)", { currentAssetId: "" }, "insert"],
     // A pool's automatic insert and a cue point insert select as scheduled_insert and leave the insert
     // fields empty: they are the schedule's content and stay skippable.
     ["no operator insert (nothing, or a pool or cue point insert on air)", { insertAssetId: "", insertStatus: "" }, ""],
@@ -153,14 +160,15 @@ describe("resolveOperatorHold", () => {
 describe("resolveOperatorHold over the rows the playout writes", () => {
   const REQUESTED = "2026-10-01T11:59:00.000Z";
   const EMPTY: InsertFields = { insertAssetId: "", insertRequestedAt: "", insertStatus: "" };
-  const hold = (row: InsertFields) =>
-    resolveOperatorHold({ ...input({ overrideMode: "schedule", overrideAssetId: "", overrideUntil: "" }), ...row });
+  // The insert's item is asset_other; `onAir` is what the runtime row has on air beside these fields.
+  const hold = (row: InsertFields, onAir = "asset_other") =>
+    resolveOperatorHold({ ...input({ overrideMode: "schedule", overrideAssetId: "", overrideUntil: "" }), ...row, currentAssetId: onAir });
 
   // How an insert on air ends by itself: its EOF or a crash, its duration bound, a feed watchdog.
   it.each(["", "duration-bound", "feed-stalled"])("holds from the Play now until the insert's exit (%j), then lets go", (plannedReason) => {
     // The admin's Play now / Insert (broadcast.ts) writes pending.
     const pending: InsertFields = { insertAssetId: "asset_other", insertRequestedAt: REQUESTED, insertStatus: "pending" };
-    expect(hold(pending)).toBe("insert");
+    expect(hold(pending, "asset_pin")).toBe("insert");
 
     // The cycle that starts it marks it active.
     const active = decideCycleEndInsert({ selectionIsOperatorInsert: true, selectedAssetId: "asset_other", row: pending, now: LATER });
@@ -173,7 +181,25 @@ describe("resolveOperatorHold over the rows the playout writes", () => {
     expect(hold(afterExit)).toBe("");
 
     // The next cycle puts the schedule's item on air and leaves the cleared fields as they are.
-    expect(hold(decideCycleEndInsert({ selectionIsOperatorInsert: false, selectedAssetId: "asset_pin", row: afterExit, now: LATER }))).toBe("");
+    expect(
+      hold(decideCycleEndInsert({ selectionIsOperatorInsert: false, selectedAssetId: "asset_pin", row: afterExit, now: LATER }), "asset_pin")
+    ).toBe("");
+  });
+
+  // Combination review (M79 x M74). A Restart stops the insert as "restart-requested", which keeps it
+  // (it is meant to start again); when it cannot be prepared again the recovery plan puts the fallback on
+  // air and the cycle-end write leaves the row's insert as it is. The hold must not outlive the insert's
+  // time on air: it paused every vote, with the insert line, over the fallback.
+  it("lets go when a Restart's re-prepare fails and the fallback takes the air, although the row still says active", () => {
+    const active: InsertFields = { insertAssetId: "asset_other", insertRequestedAt: REQUESTED, insertStatus: "active" };
+    const exit = { plannedReason: "restart-requested", insertStatus: "active", insertAssetId: "asset_other", currentAssetId: "asset_other" };
+    expect(shouldClearInsertOnExit(exit)).toBe(false);
+    // Between the stop and the next start nothing is on air and the insert is still the next start.
+    expect(hold(active, "")).toBe("insert");
+    // The recovery plan's fallback (asset_pin here) is not an operator_insert selection: the row stands.
+    const afterRecovery = decideCycleEndInsert({ selectionIsOperatorInsert: false, selectedAssetId: "asset_pin", row: active, now: LATER });
+    expect(afterRecovery).toEqual(active);
+    expect(hold(afterRecovery, "asset_pin")).toBe("");
   });
 
   it("never holds for a pool's automatic insert or a cue point insert: the cycle that starts one leaves the fields empty", () => {

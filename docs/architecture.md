@@ -279,8 +279,9 @@ clean closes the breaker and resets the cooldown, failed re-opens it. Outcomes w
 are ignored. The breakers live in their own table, `source_breakers` (one row per source that ever failed
 a probe: `state` closed/open, `failed_asset_ids`, `opened_at`, `cooldown_seconds`, `last_error`), because
 a whole-state write deletes and re-inserts every source row; they are read with the state and written
-only by the playout's serialized read-modify-write (`recordSourceBreakerOutcomes`) and the source page's
-*Close breaker now* (`closeSourceBreakerRecord`). The previews apply the breaker as it stands when they
+only by the playout's serialized read-modify-write (`recordSourceBreakerOutcomes`, which takes the
+state-write lock only when an outcome changes a row: most are clean probes of a healthy source) and the
+source page's *Close breaker now* (`closeSourceBreakerRecord`). The previews apply the breaker as it stands when they
 are drawn. The generic fallback tiers (any ready asset in the selection, the recovery and bridge plans
 after a failed preparation) pass a held source's items over too: the hold keeps them out of the queue,
 so their quarantine counters stop, and they would fail there instead. A block mapped to a source by
@@ -357,10 +358,13 @@ and the override arm leaves out an item under a skip hold; which override holds 
 (`resolveOperatorOverrideHold` in `packages/core/src/operator-precedence.ts`; none under a Live Bridge,
 whose arm comes first) that the override arm, the admin and the worker's chat all call. In the chat a
 skip vote neither starts nor counts while an override holds, or the operator's Play now / Insert is
-pending or on air (M79, `resolveOperatorHold`: the override rule, then the insert arm's conditions; pool
-and cue point inserts never set the insert fields and stay skippable), and a vote that passed is applied
-only to the item still on air and not already held out (`decidePassedSkipVote`). A live selection ends an
-operator insert like any other selection (`decideInsertAfterSelection` in `playout-boundary.ts`). What each control does is listed in `docs/operations.md`, *Operator controls*.
+pending or on air (M79, `resolveOperatorHold`: the override rule, then the insert arm's conditions, and
+for an insert that has aired, that no other item is on air; pool and cue point inserts never set the
+insert fields and stay skippable), and a vote that passed is applied only to the item still on air and
+not already held out (`decidePassedSkipVote`). A live selection ends an operator insert like any other
+selection (`decideInsertAfterSelection` in `playout-boundary.ts`), and an insert that aired and cannot be
+prepared again is ended once the fallback covers it (`decideInsertAfterPrepareFailure`). What each
+control does is listed in `docs/operations.md`, *Operator controls*.
 
 ## Multi-Output Delivery
 
