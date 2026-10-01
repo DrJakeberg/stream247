@@ -3810,8 +3810,16 @@ follow; the env examples drop three variables no code reads and name `TWITCH_BRO
   `scheduled_match` v2873900852 (next VOD id); `previous_asset_id` = the insert; uplink not restarted.
 - 2026-10-01 03:41:08 UTC: 24-h soak on rc.2 started (tmux `soak`, `~/logs/soak-20261001-034108.log`), first
   probe `status=ok broadcastReady=true`.
-- Open: soak result; the first TwitchYoutube daytime pick after a Twitch cursor should be the oldest
-  non-quarantined YouTube item; then 2.1.0 pins, CHANGELOG, tag and repin.
+- 2026-10-01 12:57:16 UTC, M73 on air without an operator: the Twitch archive v2873900852 ended at its
+  duration bound after 33385 s, and the TwitchYoutube pool picked `j4YdbIbEc9E` - the oldest YouTube item
+  that is not quarantined - as `scheduled_match` (`split-h264-aac`, `bridgeStarts: 0`). It ended naturally
+  after 264 s (exit 0) and at 13:01:40 the pool picked Twitch again: v2880054662, the VOD id after the
+  pool's stored Twitch position v2878140409. `source_cursors` holds both positions.
+- 2026-10-01, owner request: the Releases page stopped at v1.5.17 because `release.yml` published images
+  only. Backfilled 38 releases from their CHANGELOG sections (30 final, 8 pre-releases; v2.0.0 is
+  "Latest"; v1.5.18 skipped - its tag never published images). `release.yml` now creates the release as
+  its last step (`scripts/release-notes.mjs`, `contents: write`); v2.1.0 is the first tag to use it.
+- Open: soak result; then 2.1.0 pins, CHANGELOG, tag and repin.
 
 ## M72 Stable Asset Order
 
