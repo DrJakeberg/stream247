@@ -1,5 +1,8 @@
 import {
   DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
+  describeSourceBreaker,
+  sourceBreakerGate,
+  type PoolRotationSourceGate,
   DEFAULT_ENGAGEMENT_SETTINGS,
   buildEngagementGameOverlayState,
   buildOverlayScenePayload,
@@ -47,6 +50,7 @@ import {
   appendEngagementEventRecord,
   appendPresenceWindowRecord,
   applyOverlayScenePresetRecordToDraft,
+  closeSourceBreakerRecord,
   createPoolRecord,
   createScheduleBlocks,
   createScheduleBlocksChecked,
@@ -193,6 +197,7 @@ export {
   appendEngagementEventRecord,
   appendPresenceWindowRecord,
   applyOverlayScenePresetRecordToDraft,
+  closeSourceBreakerRecord,
   createPoolRecord,
   createScheduleBlocks,
   createScheduleBlocksChecked,
@@ -275,14 +280,25 @@ export function getSchedulePreview(state: AppState, dayOfWeek?: number) {
     date: dayOfWeek === undefined ? scheduleMoment.date : shiftDateToDayOfWeek(scheduleMoment.date, dayOfWeek),
     blocks: state.scheduleBlocks,
     pools: state.pools,
-    assets: state.assets
+    assets: state.assets,
+    sourceGate: getPoolSourceGate(state)
   });
 }
 
 
+/**
+ * What the source circuit breaker (M75) lets the pools take right now, for every preview that walks a
+ * pool: the worker holds an open source out of its rotation, so a preview that still showed its items
+ * would promise what will not air.
+ */
+export function getPoolSourceGate(state: AppState, nowMs = Date.now()): PoolRotationSourceGate {
+  return sourceBreakerGate(state.sourceBreakers, nowMs);
+}
+
 export function getMaterializedProgrammingWeekPreview(state: AppState) {
+  const now = new Date();
   const scheduleMoment = getCurrentScheduleMoment({
-    now: new Date(),
+    now,
     timeZone: getWorkspaceTimeZone(state)
   });
 
@@ -290,7 +306,8 @@ export function getMaterializedProgrammingWeekPreview(state: AppState) {
     startDate: scheduleMoment.date,
     blocks: state.scheduleBlocks,
     pools: state.pools,
-    assets: state.assets
+    assets: state.assets,
+    sourceGate: getPoolSourceGate(state, now.getTime())
   });
 }
 
@@ -500,6 +517,14 @@ export function getSourceHealthSnapshot(state: AppState, sourceId: string) {
     latestRun: runs[0] ?? null,
     references,
     /**
+     * The source circuit breaker (M75): since when the pools hold this source out, when they try one item
+     * again, and what the last failing probe said. Null while closed, which shows nothing extra.
+     */
+    breaker: describeSourceBreaker(
+      (state.sourceBreakers ?? []).find((record) => record.sourceId === sourceId),
+      nowMs
+    ),
+    /**
      * The sentences the sources page had no way to say on 2026-08-27: when this was last checked,
      * what it found, how long it has been finding nothing, and which scheduled blocks that reaches.
      */
@@ -624,6 +649,15 @@ export function getAssetPlaybackDiagnostics(state: AppState, assetId: string) {
 
   if (sourceSnapshot.openIncidentCount > 0) {
     details.push(`${sourceSnapshot.openIncidentCount} open source incident(s) may still affect playback quality.`);
+  }
+
+  // Like quarantine below: the item reads as ready and included, and the pools still pass it over.
+  if (sourceSnapshot.breaker) {
+    details.push(
+      sourceSnapshot.breaker.phase === "open"
+        ? `Its source is held out of the pools after failed probes on ${sourceSnapshot.breaker.failedItemCount} items; one item is tried again after ${sourceSnapshot.breaker.retryAt}.`
+        : "Its source is held out of the pools after failed probes; the next item picked from it is a trial probe."
+    );
   }
 
   // A quarantined item reads as ready everywhere else, so this is where it has to be said plainly:
@@ -757,7 +791,8 @@ function getScheduleOccurrenceLookaheadTitle(
     block: item,
     pool,
     assets: state.assets,
-    maxSlots: 1
+    maxSlots: 1,
+    sourceGate: getPoolSourceGate(state)
   });
 
   return slot?.title || "";

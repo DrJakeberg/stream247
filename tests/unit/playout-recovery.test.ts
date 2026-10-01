@@ -199,4 +199,20 @@ describe("generic fallback after M72's real YouTube dates", () => {
       "asset_youtube"
     );
   });
+
+  // M75 review: the breaker keeps a held source's items out of the queue, so they are never quarantined;
+  // without a global fallback asset the generic tiers would bridge with one and fail on it too.
+  it("passes over the items of a source the breaker holds, but not the operator's global fallback", () => {
+    const failed = createAsset({ id: "asset_y1", sourceId: "source_youtube", path: "https://www.youtube.com/watch?v=y1" });
+    const sameSource = createAsset({ id: "asset_y2", sourceId: "source_youtube", path: "https://www.youtube.com/watch?v=y2", fallbackPriority: 1 });
+    const twitch = createAsset({ id: "asset_t1", sourceId: "source_twitch", path: "https://www.twitch.tv/videos/1", externalId: "1" });
+    expect(planRecoveryAfterPlaybackPreparationFailure([failed, sameSource, twitch], failed).asset?.id).toBe("asset_y2");
+    expect(planRecoveryAfterPlaybackPreparationFailure([failed, sameSource, twitch], failed, ["source_youtube"]).asset?.id).toBe("asset_t1");
+    expect(planRecoveryAfterPlaybackPreparationFailure([failed, sameSource], failed, ["source_youtube"])).toMatchObject({
+      asset: null,
+      fallbackTier: "standby"
+    });
+    const heldGlobal = { ...sameSource, isGlobalFallback: true };
+    expect(planRecoveryAfterPlaybackPreparationFailure([failed, heldGlobal], failed, ["source_youtube"]).asset?.id).toBe("asset_y2");
+  });
 });

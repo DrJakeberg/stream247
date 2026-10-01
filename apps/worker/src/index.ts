@@ -103,6 +103,9 @@ import {
   countQuarantinedBySource,
   nextPoolRotationAsset,
   walkPoolRotation,
+  sourceBreakerGate,
+  type PoolRotationSourceGate,
+  type SourceBreakerTransition,
   createTwitchTokenScopeCache
 } from "@stream247/core";
 import {
@@ -169,6 +172,8 @@ import {
   markChatViewerRequestsPlayed,
   updateAssetPlaybackProbeRecords,
   type AssetPlaybackProbeUpdateRecord,
+  recordSourceBreakerOutcomes,
+  closeSourceBreakerRecord,
   resolveTwitchAccountsForState
 } from "@stream247/db";
 import {
@@ -201,6 +206,8 @@ import {
   type DestinationRuntimeTargetGroup
 } from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
+import { planSourceBreakerIncidents } from "./source-breaker-incidents.js";
+import { sourceBreakerOutcomesOf, type QueueProbeOutcome } from "./source-breaker-outcomes.js";
 import { AlertDeduper, deliverAlert } from "./alerts.js";
 import {
   ensureLocalAssetThumbnail,
@@ -290,7 +297,8 @@ import {
   peekTwitchVodCache,
   isInternalMediaCachePath,
   isTwitchVodAsset,
-  isTwitchVodCacheCoolingDown
+  isTwitchVodCacheCoolingDown,
+  TwitchVodCachePendingError
 } from "./twitch-vod-cache.js";
 import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
 import { measureIncidentAreaHealth, planIncidentResolutions } from "./incident-classes.js";
@@ -891,6 +899,9 @@ type QueueProbeCacheEntry = {
   // Whether the quarantine counter has already seen this result. See takeUncountedProbeOutcome.
   outcomeCounted: boolean;
   error: string;
+  // The failure was a Twitch archive still downloading (TwitchVodCachePendingError), which says nothing
+  // about its source; the source circuit breaker leaves it out (sourceBreakerOutcomesOf).
+  pendingDownload: boolean;
   // The asset this entry was resolved for, so the boundary can verify the prefetched input belongs
   // to the asset it is about to start instead of trusting the map key. See playout-boundary.ts.
   assetId: string;
@@ -2021,7 +2032,13 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
     };
   }
 
-  throw new Error(`Twitch VOD cache is ${result.status}: ${result.cacheError || "local cache file is not ready."}`);
+  const message = `Twitch VOD cache is ${result.status}: ${result.cacheError || "local cache file is not ready."}`;
+  // A download that is queued or running is "not yet", not a fault: the source circuit breaker must not
+  // hear it (M75 review). Anything else -- the cache disabled, a download that has just failed -- is.
+  if (vodCacheJobRunner.isPending(asset.id)) {
+    throw new TwitchVodCachePendingError(message);
+  }
+  throw new Error(message);
 }
 
 function isDestinationCoolingDown(destination: StreamDestinationRecord): boolean {
@@ -4616,11 +4633,29 @@ function isPoolAssetEligible(pool: PoolRecord, asset: AssetRecord, skippedAssetI
   );
 }
 
+// What the source circuit breaker (M75) lets the pools take right now: nothing from an open source, one
+// trial item from a half-open one. Read from the cycle's state at the wall clock, like every other hold.
+function poolSourceGate(state: AppState): PoolRotationSourceGate {
+  return sourceBreakerGate(state.sourceBreakers, Date.now());
+}
+
+// Whether some pool could pick an item of the source if its breaker let it: the pool rotation's own
+// eligibility, without the skip hold of a single item. A held source without one has nothing to hold
+// (see planSourceBreakerIncidents).
+function sourceHasPoolCandidate(state: AppState, sourceId: string): boolean {
+  return state.pools.some(
+    (pool) =>
+      pool.sourceIds.includes(sourceId) &&
+      state.assets.some((asset) => asset.sourceId === sourceId && isPoolAssetEligible(pool, asset, ""))
+  );
+}
+
 function lookaheadVideoTitleFromPool(state: AppState, poolId: string): string {
   const pool = state.pools.find((entry) => entry.id === poolId);
   return lookaheadPoolVideoTitle({
     pool: pool ?? null,
-    assets: state.assets
+    assets: state.assets,
+    sourceGate: poolSourceGate(state)
   });
 }
 
@@ -4644,7 +4679,8 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
     nextPoolRotationAsset({
       pool,
       assets: state.assets,
-      isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId)
+      isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId),
+      sourceGate: poolSourceGate(state)
     })?.asset ?? null
   );
 }
@@ -4672,6 +4708,7 @@ function getPoolPlaybackQueue(
     pool,
     assets: state.assets,
     isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId),
+    sourceGate: poolSourceGate(state),
     steps: options.limit ?? 4,
     afterAssetId: options.currentStartsPool ? currentAssetId : ""
   });
@@ -4774,6 +4811,7 @@ function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: A
         candidateId: prepared.media.candidateId,
         outcomeCounted: false,
         error: "",
+        pendingDownload: false,
         assetId: asset.id
       });
       return prepared;
@@ -4789,6 +4827,7 @@ function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: A
         candidateId: "",
         outcomeCounted: false,
         error: message,
+        pendingDownload: error instanceof TwitchVodCachePendingError,
         assetId: asset.id
       });
       throw error;
@@ -4806,7 +4845,7 @@ async function getPlayableQueuedAssets(
   prefetchedAsset: AssetRecord | null;
   prefetchStatus: "" | "ready" | "failed";
   prefetchError: string;
-  probeOutcomes: Array<{ asset: AssetRecord; outcome: "ok" | "failed"; error: string }>;
+  probeOutcomes: QueueProbeOutcome<AssetRecord>[];
   // Every source whose items this scan looked at, counted or not. The source-unplayable incident is
   // resolved from these: with each probe counted once, probeOutcomes alone would close it only on the
   // next fresh resolve, up to five minutes later (found by the M68 review).
@@ -4821,7 +4860,7 @@ async function getPlayableQueuedAssets(
   // success overwrites an earlier failure and the failing item's count never grows -- measured on the DUT
   // under rc.3, where the same item failed three times and stayed at zero. Every item the scan actually
   // probed is recorded with its own outcome (packages/core/src/asset-probe-quarantine.ts).
-  const probeOutcomes: Array<{ asset: AssetRecord; outcome: "ok" | "failed"; error: string }> = [];
+  const probeOutcomes: QueueProbeOutcome<AssetRecord>[] = [];
   const scannedSourceIds = new Set(queueAssets.map((asset) => asset.sourceId));
   let deferredExpensive = false;
 
@@ -4859,7 +4898,7 @@ async function getPlayableQueuedAssets(
     if (action === "skip-failed") {
       if (cached) {
         if (takeUncountedProbeOutcome(cached)) {
-          probeOutcomes.push({ asset, outcome: "failed", error: cached.error });
+          probeOutcomes.push({ asset, outcome: "failed", error: cached.error, pendingDownload: cached.pendingDownload });
         }
         if (!prefetchError) {
           prefetchStatus = "failed";
@@ -4929,7 +4968,7 @@ async function getPlayableQueuedAssets(
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown queue prefetch error.";
       takeUncountedProbeOutcome(queueProbeCache.get(asset.id));
-      probeOutcomes.push({ asset, outcome: "failed", error: message });
+      probeOutcomes.push({ asset, outcome: "failed", error: message, pendingDownload: error instanceof TwitchVodCachePendingError });
       if (!prefetchError) {
         prefetchStatus = "failed";
         prefetchError = message;
@@ -5419,9 +5458,14 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     });
   }
 
+  // Not from a source the breaker holds (M75 review). The hold keeps the source's items out of the
+  // queue, so their quarantine counters stop: in the SABR case the breaker opens after three of the 11
+  // items and the other eight are never quarantined, and this tier, on a channel without a global
+  // fallback asset, would pick them to fail inline on every cycle.
+  const heldSourceIds = new Set(poolSourceGate(state).heldSourceIds);
   const anyReadyAsset = [...state.assets]
     .filter((asset) => asset.status === "ready" && asset.includeInProgramming !== false && !isAssetBlockedForAutomaticSelection(asset))
-    .filter((asset) => asset.id !== skippedAssetId)
+    .filter((asset) => asset.id !== skippedAssetId && !heldSourceIds.has(asset.sourceId))
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 
   if (anyReadyAsset) {
@@ -6491,6 +6535,122 @@ function emitDueAssetChapterBoundaries(asset: AssetRecord | null): void {
   }
 }
 
+function logSourceBreakerTransitions(transitions: SourceBreakerTransition[]): void {
+  for (const transition of transitions) {
+    logRuntimeEvent(
+      transition.kind === "closed"
+        ? "playout.source-breaker.closed"
+        : transition.kind === "reopened"
+          ? "playout.source-breaker.reopened"
+          : "playout.source-breaker.opened",
+      {
+        sourceId: transition.sourceId,
+        failedAssetIds: transition.record.failedAssetIds,
+        cooldownSeconds: transition.record.cooldownSeconds,
+        error: transition.record.lastError
+      }
+    );
+  }
+}
+
+/**
+ * The breaker also hears the inline resolve of the selected item (M75), which quarantine does not count.
+ * The queue never probes the selection (it lists the items after it) and is empty while a fallback is on
+ * air, so a half-open source whose trial item is picked straight away -- a pool with only that source, or
+ * the pool's turn coming while the fallback plays -- would never be judged, and the cycle would resolve
+ * the trial inline again on every cycle. In the closed state the distinct-items rule makes a selection
+ * that fails cycle after cycle one failed item, not many. Never throws: it runs inside the resolve's own
+ * try, where a failed write would read as a failed resolve.
+ */
+async function recordSelectionResolveOutcome(asset: AssetRecord, outcome: "ok" | "failed", error?: unknown): Promise<void> {
+  // The same rule as the queue's outcomes: an archive still downloading is not heard at all.
+  const outcomes = sourceBreakerOutcomesOf([
+    {
+      asset,
+      outcome,
+      error: error instanceof Error ? error.message : outcome === "failed" ? "Unknown playback preparation error." : "",
+      pendingDownload: error instanceof TwitchVodCachePendingError
+    }
+  ]);
+  if (outcomes.length === 0) {
+    return;
+  }
+  try {
+    const plan = await recordSourceBreakerOutcomes(outcomes, new Date().toISOString());
+    logSourceBreakerTransitions(plan.transitions);
+  } catch (writeError) {
+    logRuntimeEvent("playout.source-breaker.write_failed", {
+      sourceId: asset.sourceId,
+      assetId: asset.id,
+      error: writeError instanceof Error ? writeError.message : String(writeError)
+    });
+  }
+}
+
+/**
+ * Records one scan's counted probe outcomes on the source circuit breakers (M75) and keeps one incident
+ * per held source, resolved when its breaker closes. Returns the sources held right now (open or
+ * half-open), so the per-item quarantine incident of the same source can stand back.
+ *
+ * Every breaker row is checked on every cycle, not only the ones that changed: a hold runs out by the
+ * clock, an operator closes one from the source page, and a source deleted by a whole-state write leaves
+ * its row behind -- none of those passes through the plan, and each must still end up in the list right.
+ * A breaker that holds a source no pool could pick anyway is closed here (planSourceBreakerIncidents).
+ */
+async function applySourceBreakerOutcomes(args: {
+  state: AppState;
+  probeOutcomes: QueueProbeOutcome<AssetRecord>[];
+  quarantinedBySource: Map<string, { count: number }>;
+}): Promise<Set<string>> {
+  const nowIso = new Date().toISOString();
+  const plan = await recordSourceBreakerOutcomes(sourceBreakerOutcomesOf(args.probeOutcomes), nowIso);
+  logSourceBreakerTransitions(plan.transitions);
+
+  // The rows as they stand after this write, not the cycle's snapshot: a "close now" made since the
+  // snapshot was read must not reopen (and alert on) the incident it has just resolved.
+  const held = new Set<string>();
+  for (const action of planSourceBreakerIncidents({
+    records: plan.records,
+    sources: args.state.sources,
+    quarantinedBySource: args.quarantinedBySource,
+    openFingerprints: new Set(
+      args.state.incidents.filter((incident) => incident.status === "open").map((incident) => incident.fingerprint)
+    ),
+    nowMs: Date.parse(nowIso),
+    hasPoolCandidate: (sourceId) => sourceHasPoolCandidate(args.state, sourceId)
+  })) {
+    if (action.action === "resolve") {
+      await resolveIncident(action.fingerprint, action.message);
+      continue;
+    }
+    if (action.action === "close") {
+      const closed = await closeSourceBreakerRecord(action.sourceId, nowIso);
+      if (closed) {
+        logRuntimeEvent("playout.source-breaker.closed", {
+          sourceId: action.sourceId,
+          reason: "no-pool-candidate",
+          failedAssetIds: closed.failedAssetIds,
+          cooldownSeconds: closed.cooldownSeconds,
+          error: closed.lastError
+        });
+      }
+      if (action.incidentOpen) {
+        await resolveIncident(action.fingerprint, action.message);
+      }
+      continue;
+    }
+    held.add(action.sourceId);
+    await upsertIncident({
+      scope: "playout",
+      severity: "warning",
+      title: action.title,
+      message: action.message,
+      fingerprint: `playout.source-breaker.${action.sourceId}`
+    });
+  }
+  return held;
+}
+
 // An operator insert cleared before it aired (M74). It used to vanish with a runtime message only: the
 // Play now on the DUT on 2026-10-01 left no log line and no audit row, so nobody could tell it had been
 // dropped, let alone why. An insert that did air and was then cut (Skip, a Pin) is not a drop.
@@ -6847,7 +7007,7 @@ async function runPlayoutCycle(): Promise<void> {
         });
         const bridgePlan =
           assetExpensive && broadcastDown
-            ? planRecoveryAfterPlaybackPreparationFailure(state.assets, failedAsset)
+            ? planRecoveryAfterPlaybackPreparationFailure(state.assets, failedAsset, poolSourceGate(state).heldSourceIds)
             : null;
         const bridgeAsset =
           bridgePlan && bridgePlan.asset && !isExpensiveQueueResolve(bridgePlan.asset) ? bridgePlan.asset : null;
@@ -6884,7 +7044,14 @@ async function runPlayoutCycle(): Promise<void> {
           resolvedSelection = bridged.media;
           requestImmediatePlayoutCycle("boundary-fallback-bridge");
         } else {
-          const prepared = await resolveAssetPlaybackInput(failedAsset);
+          let prepared: Awaited<ReturnType<typeof resolveAssetPlaybackInput>>;
+          try {
+            prepared = await resolveAssetPlaybackInput(failedAsset);
+          } catch (error) {
+            await recordSelectionResolveOutcome(failedAsset, "failed", error);
+            throw error;
+          }
+          await recordSelectionResolveOutcome(failedAsset, "ok");
           selection = { ...selection, asset: prepared.asset };
           resolvedSelection = prepared.media;
         }
@@ -6921,7 +7088,7 @@ async function runPlayoutCycle(): Promise<void> {
         message,
         fingerprint: isTwitchVodAsset(failedAsset) ? "playout.twitch-cache.failed" : "playout.asset-preparation.failed"
       });
-      const recoveryPlan = planRecoveryAfterPlaybackPreparationFailure(state.assets, failedAsset);
+      const recoveryPlan = planRecoveryAfterPlaybackPreparationFailure(state.assets, failedAsset, poolSourceGate(state).heldSourceIds);
       if (recoveryPlan.asset) {
         try {
           const recovered = await resolveAssetPlaybackInput(recoveryPlan.asset);
@@ -7168,10 +7335,33 @@ async function runPlayoutCycle(): Promise<void> {
   // items of that source were skipped, and would have closed it once none of them was probed at all.
   const quarantineOverrides = new Map(probePlan.updates.map((update) => [update.id, update] as const));
   const quarantinedBySource = countQuarantinedBySource(state.assets, quarantineOverrides);
+  // The source circuit breaker (M75) learns from the outcomes quarantine has just counted, each probe
+  // once, so a cached result seen by twenty cycles is still one probe; only an archive still downloading
+  // is left out (sourceBreakerOutcomesOf). On the DUT on 2026-09-28 all 11 YouTube items failed;
+  // quarantine needed three failures per item, the breaker needs three items.
+  // A failed breaker write must not cost the rest of the cycle (switching, the queue, the incidents
+  // below): the cycle goes on as if no source were held, as before M75, and the next cycle retries.
+  let heldSources = new Set<string>();
+  try {
+    heldSources = await applySourceBreakerOutcomes({ state, probeOutcomes, quarantinedBySource });
+  } catch (writeError) {
+    logRuntimeEvent("playout.source-breaker.write_failed", {
+      scope: "scan",
+      error: writeError instanceof Error ? writeError.message : String(writeError)
+    });
+  }
   for (const sourceId of new Set([...probePlan.probedSourceIds, ...scannedSourceIds, ...quarantinedBySource.keys()])) {
     const quarantined = quarantinedBySource.get(sourceId);
     const sourceName = state.sources.find((entry) => entry.id === sourceId)?.name || sourceId;
-    if (quarantined) {
+    // One incident per source and cause. While the breaker holds the source, its incident is the one to
+    // read and it carries the quarantine count; when the breaker closes, the count is still in the stored
+    // state and this incident comes back on the next cycle with it.
+    if (heldSources.has(sourceId)) {
+      await resolveIncident(
+        `playout.source-unplayable.${sourceId}`,
+        `The whole source is held out of programming; see playout.source-breaker.${sourceId}.`
+      );
+    } else if (quarantined) {
       await upsertIncident({
         scope: "playout",
         severity: "warning",

@@ -63,6 +63,11 @@ import {
   type OverlayTypographyPreset,
   redactSecrets,
   parsePoolSourceCursors,
+  planSourceBreakerUpdates,
+  closedSourceBreaker,
+  type SourceBreakerOutcome,
+  type SourceBreakerPlan,
+  type SourceBreakerRecord,
   OVERLAY_TICKER_DEFAULT_SECONDS,
   OVERLAY_TICKER_MAX_SECONDS,
   OVERLAY_TICKER_MIN_SECONDS,
@@ -791,6 +796,11 @@ export type AppState = {
   showProfiles: ShowProfileRecord[];
   scheduleBlocks: ScheduleBlockRecord[];
   sources: SourceRecord[];
+  /**
+   * The source circuit breakers (M75), one per source that ever failed a probe. Read with the state,
+   * never written with it: only `recordSourceBreakerOutcomes` and `closeSourceBreakerRecord` write them.
+   */
+  sourceBreakers: SourceBreakerRecord[];
   assets: AssetRecord[];
   assetCollections: AssetCollectionRecord[];
   sourceSyncRuns: SourceSyncRunRecord[];
@@ -1883,6 +1893,7 @@ function defaultState(): AppState {
     showProfiles: [],
     scheduleBlocks: [],
     sources: [],
+    sourceBreakers: [],
     assets: [],
     assetCollections: [],
     sourceSyncRuns: [],
@@ -2313,6 +2324,7 @@ function normalizeState(state: AppState): AppState {
         }))
       : [],
     sources: Array.isArray(state.sources) ? normalizeSourceRecords(dedupeById(state.sources)) : [],
+    sourceBreakers: Array.isArray(state.sourceBreakers) ? state.sourceBreakers : [],
     assets: normalizedAssets,
     assetCollections: normalizedAssetCollections,
     sourceSyncRuns: Array.isArray((state as AppState & { sourceSyncRuns?: SourceSyncRunRecord[] }).sourceSyncRuns)
@@ -2749,6 +2761,20 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     CREATE TABLE IF NOT EXISTS asset_retention_marks (
       asset_id TEXT PRIMARY KEY,
       orphan_first_seen_at TEXT NOT NULL
+    );
+
+    -- The source circuit breaker (M75): whether the pools hold a source out after its probes failed on
+    -- several different items. A table of its own for the reason asset_retention_marks has one: full-state
+    -- writes delete and re-insert every source row and would reset it. state is 'closed' or 'open';
+    -- half-open is an open row whose cooldown has run out, so nothing has to write that moment.
+    CREATE TABLE IF NOT EXISTS source_breakers (
+      source_id TEXT PRIMARY KEY,
+      state TEXT NOT NULL DEFAULT 'closed',
+      failed_asset_ids TEXT NOT NULL DEFAULT '[]',
+      opened_at TEXT NOT NULL DEFAULT '',
+      cooldown_seconds INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS source_sync_runs (
@@ -4002,6 +4028,34 @@ if (!schemaMigrations.some((migration) => migration.id === poolSourceCursorsMigr
   schemaMigrations.push(poolSourceCursorsMigration);
 }
 
+/**
+ * The source circuit breakers (M75), for installs that already ran the baseline.
+ *
+ * A new table, so there is no ALTER line to add: this CREATE, word for word the base-schema one, is the
+ * whole upgrade. An empty table means every breaker is closed, which is what an install had before.
+ */
+export const sourceBreakersMigration: MigrationDefinition = {
+  id: "20261001_002_source_breakers",
+  description: "Store the per-source circuit breaker that holds a broken source out of the pool rotation.",
+  apply: async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS source_breakers (
+        source_id TEXT PRIMARY KEY,
+        state TEXT NOT NULL DEFAULT 'closed',
+        failed_asset_ids TEXT NOT NULL DEFAULT '[]',
+        opened_at TEXT NOT NULL DEFAULT '',
+        cooldown_seconds INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT ''
+      );
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === sourceBreakersMigration.id)) {
+  schemaMigrations.push(sourceBreakersMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -4708,6 +4762,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     );
   }
 
+  // `source_breakers` is deliberately not written here (M75): a whole-state write carries the breakers of
+  // the snapshot it was read from, and writing them back would reopen a breaker the playout closed (or
+  // close one it opened) in between. Only recordSourceBreakerOutcomes and closeSourceBreakerRecord write it.
   await client.query("DELETE FROM sources");
   for (const source of next.sources) {
     await client.query(
@@ -5311,6 +5368,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     ready_assets: number;
     error_message: string;
   }>("SELECT * FROM source_sync_runs ORDER BY finished_at DESC LIMIT 250");
+  const sourceBreakersResult = await client.query<SourceBreakerRow>("SELECT * FROM source_breakers ORDER BY source_id ASC");
   const incidentsResult = await client.query<{
     id: string;
     scope: IncidentRecord["scope"];
@@ -5634,6 +5692,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       createdAt: row.created_at,
       updatedAt: row.updated_at
     })),
+    sourceBreakers: sourceBreakersResult.rows.map(mapSourceBreakerRow),
     sourceSyncRuns: sourceSyncRunsResult.rows.map((row) => ({
       id: row.id,
       sourceId: row.source_id,
@@ -6663,6 +6722,123 @@ export async function deleteSourceRecordAndAssets(sourceId: string): Promise<voi
   await withSerializedStateWrite("deleteSourceRecordAndAssets", async (client) => {
     await client.query("DELETE FROM assets WHERE source_id = $1", [sourceId]);
     await client.query("DELETE FROM sources WHERE id = $1", [sourceId]);
+    await client.query("DELETE FROM source_breakers WHERE source_id = $1", [sourceId]);
+  });
+}
+
+type SourceBreakerRow = {
+  source_id: string;
+  state: string | null;
+  failed_asset_ids: string | null;
+  opened_at: string | null;
+  cooldown_seconds: number | null;
+  last_error: string | null;
+  updated_at: string | null;
+};
+
+function parseSourceBreakerFailedAssetIds(value: string | null): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string" && id !== "") : [];
+  } catch {
+    return [];
+  }
+}
+
+function mapSourceBreakerRow(row: SourceBreakerRow): SourceBreakerRecord {
+  return {
+    sourceId: row.source_id,
+    // Anything but 'open' reads as closed: a word this code does not know must not hold a source out.
+    state: row.state === "open" ? "open" : "closed",
+    failedAssetIds: parseSourceBreakerFailedAssetIds(row.failed_asset_ids),
+    openedAt: row.opened_at ?? "",
+    cooldownSeconds: Math.max(0, Math.floor(Number(row.cooldown_seconds) || 0)),
+    lastError: row.last_error ?? "",
+    updatedAt: row.updated_at ?? ""
+  };
+}
+
+async function writeSourceBreakerRecords(client: PoolClient, records: SourceBreakerRecord[]): Promise<void> {
+  for (const record of records) {
+    await client.query(
+      `
+        INSERT INTO source_breakers (source_id, state, failed_asset_ids, opened_at, cooldown_seconds, last_error, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (source_id) DO UPDATE SET
+          state = EXCLUDED.state,
+          failed_asset_ids = EXCLUDED.failed_asset_ids,
+          opened_at = EXCLUDED.opened_at,
+          cooldown_seconds = EXCLUDED.cooldown_seconds,
+          last_error = EXCLUDED.last_error,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        record.sourceId,
+        record.state,
+        JSON.stringify(record.failedAssetIds),
+        record.openedAt,
+        Math.max(0, Math.floor(record.cooldownSeconds)),
+        redactSecrets(record.lastError),
+        record.updatedAt
+      ]
+    );
+  }
+}
+
+export type SourceBreakerRecordResult = SourceBreakerPlan & {
+  /** Every stored breaker once the outcomes are applied, read now rather than from the caller's snapshot. */
+  records: SourceBreakerRecord[];
+};
+
+/**
+ * Applies one queue scan's counted probe outcomes to the stored breakers and returns what changed, plus
+ * every breaker as it now stands.
+ *
+ * A read-modify-write of the rows as they are now, inside the serialized state write, and not of the
+ * cycle's snapshot: an operator's "close now" that lands between the playout's read and this write must
+ * not be undone by it, and the incident the playout keeps for each breaker is decided from these rows for
+ * the same reason (from the snapshot it would reopen, and alert on, an incident the close just resolved).
+ * A source deleted while its probe ran gets no row. Without outcomes it only reads.
+ */
+export async function recordSourceBreakerOutcomes(outcomes: SourceBreakerOutcome[], nowIso: string): Promise<SourceBreakerRecordResult> {
+  const sourceIds = [...new Set(outcomes.map((outcome) => outcome.sourceId).filter(Boolean))];
+  const readAll = async (client: PoolClient) =>
+    (await client.query<SourceBreakerRow>("SELECT * FROM source_breakers ORDER BY source_id ASC")).rows.map(mapSourceBreakerRow);
+  if (sourceIds.length === 0) {
+    await ensureDatabase();
+    const client = await getPool().connect();
+    try {
+      return { updates: [], transitions: [], records: await readAll(client) };
+    } finally {
+      client.release();
+    }
+  }
+  return withSerializedStateWrite("recordSourceBreakerOutcomes", async (client) => {
+    const existing = await client.query<{ id: string }>("SELECT id FROM sources WHERE id = ANY($1::text[])", [sourceIds]);
+    const liveSourceIds = new Set(existing.rows.map((row) => row.id));
+    const plan = planSourceBreakerUpdates(
+      await readAll(client),
+      outcomes.filter((outcome) => liveSourceIds.has(outcome.sourceId)),
+      nowIso
+    );
+    await writeSourceBreakerRecords(client, plan.updates);
+    return { ...plan, records: await readAll(client) };
+  });
+}
+
+/**
+ * The operator's "close now": the source is back in the rotation at once, with the base cooldown for
+ * its next opening. Returns the breaker as it was when it was open, null when there was nothing to close.
+ */
+export async function closeSourceBreakerRecord(sourceId: string, nowIso: string): Promise<SourceBreakerRecord | null> {
+  return withSerializedStateWrite("closeSourceBreakerRecord", async (client) => {
+    const stored = await client.query<SourceBreakerRow>("SELECT * FROM source_breakers WHERE source_id = $1", [sourceId]);
+    const current = stored.rows[0] ? mapSourceBreakerRow(stored.rows[0]) : null;
+    if (!current || current.state !== "open") {
+      return null;
+    }
+    await writeSourceBreakerRecords(client, [closedSourceBreaker(sourceId, nowIso)]);
+    return current;
   });
 }
 

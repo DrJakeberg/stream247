@@ -208,6 +208,39 @@ from. A started pool item stores the cursor and
 its source's position in one serialized write; an insert moves neither, and a pool edit keeps both
 (it drops only the positions of sources it removed).
 
+Two holds keep unplayable items out of the rotation. Per-item quarantine (`asset-probe-quarantine.ts`)
+counts consecutive failed prefetch probes on the asset (`playback_probe_failures`, `_error`,
+`playback_probed_at`); at three the item is passed over until a clean probe or the operator clears it.
+The source circuit breaker (M75, `packages/core/src/source-circuit-breaker.ts`) judges the source: when
+probes fail on three different items of one source with no clean probe of it in between, the source is
+open and the rotation treats its whole lane as having nothing eligible, so the pool alternates between
+its other sources (or finds nothing, and the fallback plays). The breaker learns from the outcomes
+quarantine counts, each probe once (`takeUncountedProbeOutcome`, `planAssetProbeUpdates`), and from the
+inline resolve of the selected item, which the queue never probes (it lists the items after the
+selection and is empty while a fallback is on air): without it a trial item picked straight away, in a
+pool with only that source, would never be judged. It leaves out one failure: a Twitch archive whose
+download is queued or running (`TwitchVodCachePendingError`, `apps/worker/src/source-breaker-outcomes.ts`),
+which is not playable yet but says nothing about its source; a single-source Twitch pool queues several
+of them while the runner downloads one at a time. No other resolve error is classified, so a network
+outage longer than the five-minute probe cache can still hold the source of a single-source pool.
+An open breaker lasts a cooldown of 30 minutes that doubles on every re-open up to 6 h; once it has run
+out the source is half-open, which is not stored but read from `opened_at` plus the cooldown, so no
+process has to be up at that moment. Half-open gives one trial item per walk (the first the rotation
+reaches; an item this cycle starts counts as it), and the first counted outcome of the source decides:
+clean closes the breaker and resets the cooldown, failed re-opens it. Outcomes while the cooldown runs
+are ignored. The breakers live in their own table, `source_breakers` (one row per source that ever failed
+a probe: `state` closed/open, `failed_asset_ids`, `opened_at`, `cooldown_seconds`, `last_error`), because
+a whole-state write deletes and re-inserts every source row; they are read with the state and written
+only by the playout's serialized read-modify-write (`recordSourceBreakerOutcomes`) and the source page's
+*Close breaker now* (`closeSourceBreakerRecord`). The previews apply the breaker as it stands when they
+are drawn. The generic fallback tiers (any ready asset in the selection, the recovery and bridge plans
+after a failed preparation) pass a held source's items over too: the hold keeps them out of the queue,
+so their quarantine counters stop, and they would fail there instead. A block mapped to a source by
+name and the operator's global fallback asset are not gated. A held source that no pool could pick
+anyway (every item quarantined, excluded or cooling down, or the source in no pool) is closed by the
+playout, which leaves the case to quarantine; an incident left without a row (the source deleted) is
+resolved from its fingerprint.
+
 Each source's items play in one order, `compareProgrammingAssets` in `packages/core`. It compares one
 fixed key: `publishedAt`, else the first-seen `createdAt`, oldest first; then the source id, so items
 with the same date stay grouped by source; then, within that source, items with a numeric VOD id first, by id; then

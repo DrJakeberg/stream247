@@ -84,7 +84,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M73 Pool Source Alternation | Behavior | Now | Complete | A pool with several sources alternates between them (owner decision 2026-10-01) | A multi-source pool picks Twitch -> YouTube -> Twitch ... in `sourceIds` order, each source walking its own items oldest first and looping; per-source positions persist in `pools.source_cursors` (baseline, ALTER and migration); a single-source pool walks one source as before; a skipped, quarantined or cooled-down item no longer resets the rotation to the head, and a vanished position restarts only its own source at its oldest item; worker selection, queue, lookahead, schedule preview and week lens use one rotation function; pool form and docs say so | core, worker, db, web, tests, docs | medium | revert commit; the column stays and is ignored |
 | M74 Operator Play Now | Reliability | Now | Complete | Play now and Insert put the chosen item on air, without a standby slate | Play now / Insert switch straight to the insert at the next cycle and never set the restart flag; the legacy "restart + desired asset" override branch is gone, so no action re-picks the running or a skipped item; the reconnect standby slate appears only without the relay; a dropped insert is logged; an insert stopped by its duration bound or a feed watchdog is cleared instead of replaying; the cycle re-reads state after a duration-bound stop, so insert and Move next fire at that boundary; an insert that cannot be prepared (e.g. an uncached Twitch VOD) never takes the running item off air, and Play now refuses such an archive up front; Recover outputs under the relay no longer restarts the programme and Force reconnect is refused there (the uplink reconnects by itself), and Pin, Fallback and Resume switch there without a restart; Resume cancels a pending or running insert; Replay previous has an item, and a Move next or Replay previous item plays to its end; Skip continues after the skipped item instead of the pool head (with M73); after the insert the pool continues with its next item (resuming the interrupted item at its position is a follow-up) | worker, web, tests, docs | medium | revert commit |
 | M71 Release 2.1.0 | Release | Now | Planned | Ship M68-M70 and M72-M74 | rc on the DUT, verified (YouTube on air via Play now), 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
-| M75 Source Circuit Breaker | Reliability | Next | Planned | A broken source costs one incident, not one failed boundary per item (competitor comparison 2026-10-01; owner decision) | When probes fail on 3 distinct items of the same source with no success in between, the source is held out of the pool rotation (M73) for a cooldown that doubles up to a cap; one incident per source instead of per-item noise; after the cooldown one item is probed (half-open) and a success closes the breaker and resolves the incident; per-item quarantine and the operator's `includeInProgramming` stay untouched; a pool whose sources are all held falls back as today; the source page shows the breaker state; any persisted state ships in the baseline, the ALTER block and a migration | core, worker, db, web, tests, docs | medium | revert commit; the stored state is ignored |
+| M75 Source Circuit Breaker | Reliability | Next | Complete | A broken source costs one incident, not one failed boundary per item (competitor comparison 2026-10-01; owner decision) | When probes fail on 3 distinct items of the same source with no success in between, the source is held out of the pool rotation (M73) for a cooldown that doubles up to a cap; one incident per source instead of per-item noise; after the cooldown one item is probed (half-open) and a success closes the breaker and resolves the incident; per-item quarantine and the operator's `includeInProgramming` stay untouched; a pool whose sources are all held falls back as today; the source page shows the breaker state; any persisted state ships in the baseline, the ALTER block and a migration | core, worker, db, web, tests, docs | medium | revert commit; the stored state is ignored |
 | M76 As-Run Log | Ops + Data | Next | Planned | Answer "what was on air at 19:38" from one table instead of container logs (competitor comparison 2026-10-01; owner decision) | Every playout start and end writes one row: UTC start and end, block, pool, source, asset, title, selection reason, queue kind, input kind (cache, remote, YouTube pair, live), format id, planned and aired seconds, end reason (natural end, duration bound, switch, skip, failure); bounded retention; a read-only view in the console and an API route; docs/operations.md uses it in the runbooks; the table ships in the baseline, the ALTER block and a migration | worker, db, web, tests, docs | low | revert commit; the table stays unused |
 | M77 Resume Interrupted Item | Playout | Later | Deferred | Continue an interrupted item at its position instead of throwing it away (competitor comparison 2026-10-01) | Owner deferred this on 2026-10-01 until after M75 and M76: start only when the owner asks. Scope when started: persisted offset, `-ss` for cached Twitch VODs first, duration bound and chapter windows offset-aware, soaked on the DUT because it touches the seam chain | worker, db, tests | high | revert commit |
 
@@ -4135,3 +4135,179 @@ Follow-ups:
   hiding or relabelling them needs the relay flag in the control-room snapshot.
 - Play now does not move a pool's position (the M73 follow-up asked M74 to store it or say so): a pool
   item played by hand can come round again as the pool's next item.
+
+## M75 Source Circuit Breaker
+
+Owner decision 2026-10-01, after a competitor comparison. Production evidence (DUT, 2026-09-28):
+YouTube's SABR change left 0 of the 11 items of the YouTube source (`source_jjwuu0f3`) resolvable.
+Per-item quarantine (M68 era, `asset-probe-quarantine.ts`) needs three failed probes per item, so the
+source cost about 33 failed boundaries and fallback bridges before its last item was out of play, and
+since M73 the pool "TwitchYoutube" alternates sources, so every second pick hit the broken one.
+
+Done:
+
+- `packages/core/src/source-circuit-breaker.ts` (exported, pure, time as an argument): per source
+  closed -> open -> half-open -> closed. Opens when probes fail on 3 DISTINCT items of the source with
+  no clean probe of it in between (a clean probe forgets the failures; one item failing again and again
+  stays quarantine's case). Open lasts `cooldownSeconds`: 30 min on opening from closed, doubled on
+  every re-open, capped at 6 h. Only `closed`/`open` are stored; half-open is an open record whose
+  `opened_at + cooldown` has passed, so nobody has to write that moment. While the cooldown runs every
+  outcome is ignored (a resolve that started before the opening proves nothing and must not double the
+  cooldown); in half-open the first counted outcome decides: clean closes and resets the cooldown,
+  failed re-opens with the doubled one. `planSourceBreakerUpdates` (scan order, changed records only,
+  `opened`/`reopened`/`closed` transitions), `sourceBreakerGate`, `describeSourceBreaker`,
+  `formatSourceBreakerTime`; the stored item list is capped at 20 and the error at 500 characters.
+- Network outage: the code cannot tell one from a source fault (no resolve error is classified; a DNS
+  failure reaches the probe as one more yt-dlp message). The distinct-items rule is only a partial
+  guard: a two-source pool's queue holds two items of each, so an outage that ends before the queue
+  moves on opens neither breaker, but a single-source pool's queue holds four items of one source, and
+  an outage longer than the five-minute probe cache can fail three remote ones and hold a healthy
+  source (pinned in a test, said in the runbook). Either way it costs one cooldown and closes on the
+  first clean probe, without the operator.
+- What counts: exactly the outcomes per-item quarantine counts (`takeUncountedProbeOutcome`, then
+  `planAssetProbeUpdates`), each probe once, plus the inline resolve of the selected item
+  (`recordSelectionResolveOutcome`, success and failure, around the one `resolveAssetPlaybackInput(failedAsset)`
+  call, never the fallback bridge's resolve). The addition is needed for the trial: the queue never
+  probes the selection (it lists the items after it) and is empty while a fallback is on air, so a
+  half-open source whose trial item is picked straight away (a pool with only that source, or the
+  pool's turn coming while the fallback plays) would never be judged and the cycle would resolve it
+  inline on every cycle. Quarantine still counts queue probes only. Left out (review): a Twitch archive
+  whose download is queued or running. With remote fallback off, the default, the playout refuses it
+  until the file is there and the runner downloads one archive at a time, so a single-source Twitch
+  pool's queue of four held three such archives and opened the breaker on a healthy source within about
+  three cycles, holding out its cached archives too. `resolveAssetPlaybackInput` throws
+  `TwitchVodCachePendingError` exactly when `vodCacheJobRunner.isPending`, the queue's probe cache and
+  outcomes carry `pendingDownload`, and `sourceBreakerOutcomesOf` (`source-breaker-outcomes.ts`) drops
+  those outcomes for both the scan and the inline resolve: neither a failure nor a clean probe.
+- Rotation (`pool-rotation.ts`): `createPoolRotation`, `nextPoolRotationAsset` and `walkPoolRotation`
+  take a `sourceGate` (`heldSourceIds`, `trialSourceIds`). A held source is a lane with nothing eligible
+  (positions stay in the full list, so it carries on after its position when it comes back) and the
+  alternation goes on with the other sources; a trial source gives one item per walk, the first the
+  rotation reaches, recorded in the walk state (`spentTrialSourceIds`, never stored); `start` of an item
+  of a trial source spends the trial, so the queue of the cycle that starts it holds no second item of
+  that source. Without a gate the rotation returns exactly what it returned before.
+- Worker: `poolSourceGate(state)` = `sourceBreakerGate(state.sourceBreakers, Date.now())`, passed by
+  `selectPoolAsset`, `getPoolPlaybackQueue` and the overlay lookahead; `isPoolAssetEligible` is
+  unchanged, because the half-open single pass has to live in the rotation and one gate in one place
+  serves the worker and the previews alike. `currentPoolAsset` does not ask the gate: an opening
+  breaker never takes the running item off air. A pool whose sources are all held finds nothing and the
+  fallback plays, as today. The generic fallback tiers are gated too (review): the any-ready tier of
+  `selectPlayoutAsset` and the generic tiers of `planRecoveryAfterPlaybackPreparationFailure` (recovery
+  and the bridge) skip held sources, because the hold keeps their items out of the queue, their
+  quarantine counters stop, and on a channel without a global fallback asset those tiers would pick a
+  held item to fail inline on every cycle. A block mapped to a source by name and the global fallback
+  asset are not gated. Per-item quarantine and `includeInProgramming` are untouched.
+- Storage: table `source_breakers` (`source_id` PK, `state`, `failed_asset_ids` JSON, `opened_at`,
+  `cooldown_seconds`, `last_error`, `updated_at`) in the baseline `CREATE`, migration
+  `20261001_002_source_breakers` (the same `CREATE`; a new table has no ALTER line) and
+  `schema-manifest.ts` (regenerated). A table of its own, like `asset_retention_marks`, because
+  `persistState` deletes and re-inserts every source row; `persistState` does not write it (a
+  whole-state write from an older snapshot would reopen or close a breaker). `AppState.sourceBreakers`
+  is read with the state. Writers: `recordSourceBreakerOutcomes` (one serialized read-modify-write of the
+  rows as they are now, no row for a source deleted meanwhile, returns the plan plus every row after the
+  write; a plain read without outcomes) and `closeSourceBreakerRecord`; `deleteSourceRecordAndAssets`
+  deletes the row.
+- Incident: `playout.source-breaker.<sourceId>` (registered in `incident-classes.ts`: keyed suffix,
+  state, area playout), one per held source, upserted every cycle while open or half-open (*<source> is
+  held out of programming*: the failed item count, the last error, since when, the next probe, the cap,
+  the quarantined count) and resolved in the first cycle that finds the breaker closed (or the source
+  gone), decided by `planSourceBreakerIncidents` (`apps/worker/src/source-breaker-incidents.ts`) from the
+  rows after the write, not the cycle's snapshot, so a *Close breaker now* is not undone by a stale cycle;
+  a closed breaker is resolved only while its incident is open in the snapshot (every resolve is a
+  serialized write). Double noise: while a source is held, its `playout.source-unplayable.<sourceId>`
+  incident is resolved ("see playout.source-breaker") and its quarantine count rides in the breaker
+  incident; when the breaker closes, the count is still in the stored state and the per-item incident
+  comes back on the next cycle. Log events `playout.source-breaker.opened|reopened|closed`
+  (`sourceId`, `failedAssetIds`, `cooldownSeconds`, `error`) and `.write_failed`. Two holds that never
+  ended (review): a breaker holding a source no pool could pick anyway (every item quarantined,
+  excluded or cooling down, or the source in no pool; `sourceHasPoolCandidate`, the pools' own
+  eligibility) is closed by the playout (`close` action, `closed` with `reason: "no-pool-candidate"`),
+  because half-open would wait for a trial no pick can start and hide the per-item incident with the
+  wrong action; and an open incident of the family without a breaker row (the source page's Delete
+  removes the row in the same transaction) is resolved from its fingerprint.
+- Previews: `lookaheadVideoTitleFromPool`, `buildSchedulePreviewVideoSlots`, `buildSchedulePreview`,
+  `materializePoolWindow` and `buildMaterializedProgrammingWeek` take the gate; the web passes
+  `getPoolSourceGate(state)` (schedule preview, next-block lookahead, week, schedule page, week lens).
+  They apply the breaker as it stands when drawn, to the whole week (whether a trial succeeds is not
+  knowable); a materialized block with a held source says so in its notes, and a block whose ready
+  assets are all held says that instead of "no ready programming assets" (review). The schedule page's
+  *Needs attention* panel asks without the gate: it sends the operator to the pools, which a hold does
+  not need.
+- Web: the source page shows *Held out of programming* (since, next probe, the rule, the failed item
+  count, the last error) only while the breaker holds the source, with **Close breaker now** for owner
+  and admin (`POST /api/sources/breaker`: closes the row, resolves the incident, audit row
+  `source.breaker.closed`; 409 when nothing is open); the sources list adds one line with the last
+  error; the asset page's
+  playback diagnostics add one line. A closed breaker shows nothing.
+- Docs: operations (*A source is held out of programming (source breaker)* runbook, the quarantine
+  bullet), architecture (*Scheduling*: the two holds), deployment (*Upgrading Past 2.1.0: Source Circuit
+  Breaker (M75)*, capability notes), README (capability list).
+- Tests: `source-circuit-breaker` (new; distinct items incl. repeats and a clean probe in between, base
+  cooldown and the half-open boundary, outcomes ignored while open, a clean trial closes and resets, a
+  failed trial doubles 60/120/240/360/360/360, the first trial outcome decides, per-source scan order and
+  changed-only updates, bounds, an unreadable `opened_at`, the gate, the view; rotation: unchanged
+  without a gate, an open source skipped while the other sources alternate, a half-open source gives one
+  item where its position stands, the started selection spends the trial, single picks, all sources held
+  -> null, the gated lookahead and materialized week with its note), `source-breaker-wiring` (new;
+  incident class, the incident lifecycle open -> trial -> resolved and no write once resolved, an orphan
+  row, the worker gate at selection/queue/lookahead and not at the running item, the outcome order before
+  the per-item incident, the inline resolve counting, table/migration/manifest/persistState/delete),
+  `source-breaker-api` (new; roles, close + resolve + audit, 409/404/400 writing nothing, page and list
+  wiring), `ops-state` (the source snapshot's breaker, the asset diagnostics line, the gate, nothing when
+  closed or absent); integration `db-roundtrip`: the table created on a database without it (dropped,
+  migration row deleted) with the declared columns, opening on three distinct items surviving a
+  reconnect and a whole-state write from an older snapshot, cooldown ignore / doubled re-open / close
+  through the database, operator close, and a deleted source's row gone and not re-created by a late
+  probe. Review additions: pending downloads neither count nor reset (pure filter, the typed error,
+  the wiring on all four paths); the single-source outage limit; the incident of a deleted source
+  resolved without a row; a breaker with no pool candidate closed, open or half-open, and the worker
+  executing it; the generic fallback and both recovery plans skipping held sources (not the global
+  fallback); the slot preview, the week's held-only note, `getSchedulePreview` and
+  `getMaterializedProgrammingWeekPreview` on an open row; the sources list's last error; the schedule
+  page's Needs-attention filter without the gate.
+- `pnpm validate` green after the review fixes (2138 unit, 58 integration tests, build). Not run:
+  `pnpm test:fresh-db` (it needs a `stream247-web:test` image built from this tree; the fresh-install
+  schema is covered by the integration test that compares a migrated database with `DECLARED_SCHEMA`).
+
+DUT check after deploy (read-only, `CHECK_BASE_URL=http://127.0.0.1:3000` where needed):
+
+- `SELECT COUNT(*) FROM schema_migrations WHERE id = '20261001_002_source_breakers';` returns 1 and
+  `SELECT * FROM source_breakers;` starts empty (rows appear for sources that fail a probe).
+- While YouTube resolves: no `playout.source-breaker.*` incident, the source pages show no breaker, the
+  TwitchYoutube pool keeps alternating.
+- While the Twitch pool is on air with archives still downloading (remote fallback off): no
+  `playout.source-breaker.opened` for the Twitch source, and its cached archives keep airing.
+- If YouTube breaks again: after failed probes on three different YouTube items the playout log has
+  `playout.source-breaker.opened` with `sourceId: source_jjwuu0f3`, one incident *... is held out of
+  programming*, `source_breakers.state = 'open'`, the pool plays Twitch archives back to back, and about
+  30 minutes later one YouTube item is probed (`reopened` with `cooldownSeconds: 3600`, or `closed`).
+  *Close breaker now* on the source page brings it back at the next cycle (audit `source.breaker.closed`).
+
+Follow-ups:
+
+- Network-outage awareness: classifying a resolve error (DNS failure, connection refused) as the
+  channel's network rather than the source would let the breaker ignore an outage outright; today the
+  distinct-items rule and the self-closing trial are the only guard, and it does not protect a
+  single-source pool from an outage longer than the five-minute probe cache (review; the 6-minute
+  external outage of 2026-09-12 would qualify). A cross-source signal does not help there, since a
+  single-source pool probes only its own source. **Gate before M75 ships to the DUT** (lead, 2026-10-01):
+  the nightly blip (~23:58 UTC) falls in the Twitch-only overnight block; measure on the DUT how many
+  remote Twitch probes a blip fails (cached archives probe locally, pending downloads no longer count) and
+  either show that it cannot reach three, or add the classifier first. A held Twitch source there means
+  30 min of fallback after a 2-minute outage.
+- Per-item quarantine still counts a Twitch archive whose download is queued or running as a failed
+  probe: with remote fallback off, an uncached archive in the queue is quarantined after three probes
+  about a minute apart, long before a tens-of-minutes download ends, and stays out until the operator
+  clears it. Older than M75 (M75 keeps quarantine untouched); the `pendingDownload` flag on the probe
+  outcomes is what a fix would filter on.
+- Deleting a source leaves its `playout.source-unplayable.<sourceId>` incident open (no asset of it is
+  scanned again). Older than M75; the breaker incident of a deleted source is resolved now.
+- A pool with only a broken source can still be stuck on one item that fails inline every cycle
+  (quarantine counts queue probes only and the queue never holds the selection); the breaker cannot open
+  on one item. Counting inline resolve failures for quarantine too, or a skip hold on a failed
+  selection, would end that loop. Older than M75.
+- The previews apply the breaker as it stands to the whole week; evaluating it per block start would need
+  the blocks' absolute times in the materializer.
+- A block mapped to a source by name and the global fallback asset ignore the breaker.
+- The breaker's cooldowns and threshold are constants; they could become managed settings next to the
+  watchdog thresholds if the DUT shows a need.

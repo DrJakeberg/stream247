@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getCurrentScheduleMoment } from "@stream247/core";
+import { closedSourceBreaker, getCurrentScheduleMoment } from "@stream247/core";
 import type { AppState } from "../../apps/web/lib/server/state";
 import { getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
 import {
@@ -8,7 +8,10 @@ import {
   getCurrentScheduleItem,
   getFilteredIncidents,
   getNextScheduleItem,
+  getMaterializedProgrammingWeekPreview,
   getPlayoutQueueAssets,
+  getPoolSourceGate,
+  getSchedulePreview,
   getRecentPresenceWindows,
   getRuntimeDriftReport,
   getSourceConnectorDiagnostics,
@@ -519,6 +522,69 @@ describe("ops state helpers", () => {
     const assetDiagnostics = getAssetPlaybackDiagnostics(state, "asset-1");
     expect(assetDiagnostics.status).toBe("playable");
     expect(assetDiagnostics.summary).toContain("usable");
+  });
+
+  it("shows the source breaker while it holds the source, and nothing once it is closed (M75)", () => {
+    const openedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const state = createState({
+      sourceBreakers: [
+        {
+          sourceId: "source-1",
+          state: "open",
+          failedAssetIds: ["asset-1", "asset-2", "asset-3"],
+          openedAt,
+          cooldownSeconds: 1800,
+          lastError: "Requested format is not available",
+          updatedAt: openedAt
+        }
+      ]
+    });
+
+    const snapshot = getSourceHealthSnapshot(state, "source-1");
+    expect(snapshot.breaker).toEqual({
+      phase: "open",
+      openedAt,
+      retryAt: new Date(Date.parse(openedAt) + 1800 * 1000).toISOString(),
+      cooldownSeconds: 1800,
+      failedItemCount: 3,
+      lastError: "Requested format is not available"
+    });
+    // The item reads as ready and included everywhere else; this is where it says why it is not picked.
+    expect(getAssetPlaybackDiagnostics(state, "asset-1").details.join(" ")).toContain("Its source is held out of the pools");
+    expect(getPoolSourceGate(state)).toEqual({ heldSourceIds: ["source-1"], trialSourceIds: [] });
+    expect(getPoolSourceGate(state, Date.parse(openedAt) + 1800 * 1000)).toEqual({ heldSourceIds: [], trialSourceIds: ["source-1"] });
+
+    const closed = createState({ sourceBreakers: [{ ...closedSourceBreaker("source-1"), failedAssetIds: ["asset-1"] }] });
+    expect(getSourceHealthSnapshot(closed, "source-1").breaker).toBeNull();
+    expect(getAssetPlaybackDiagnostics(closed, "asset-1").details.join(" ")).not.toContain("held out");
+    // A state whose sources never failed a probe has no breaker rows at all.
+    expect(getSourceHealthSnapshot(createState(), "source-1").breaker).toBeNull();
+  });
+
+  // M75 review: only getPoolSourceGate itself was tested; dropping the gate from a preview went unnoticed.
+  it("draws the schedule preview and the week without a source the breaker holds", () => {
+    const openedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const held = createState({
+      sourceBreakers: [
+        {
+          sourceId: "source-1",
+          state: "open",
+          failedAssetIds: ["asset-x", "asset-y", "asset-z"],
+          openedAt,
+          cooldownSeconds: 1800,
+          lastError: "Requested format is not available",
+          updatedAt: openedAt
+        }
+      ]
+    });
+    const free = createState();
+    expect(getSchedulePreview(free).items[0]?.videoSlots.map((slot) => slot.assetId)).toContain("asset-1");
+    expect(getSchedulePreview(held).items[0]?.videoSlots).toEqual([]);
+    const todayBlock = (state: AppState) => getMaterializedProgrammingWeekPreview(state)[0]?.blocks[0];
+    expect(todayBlock(free)?.items.map((item) => item.assetId)).toContain("asset-1");
+    expect(todayBlock(held)?.items).toEqual([]);
+    expect(todayBlock(held)?.notes.join(" ")).toContain("Every source of this pool with ready assets is held out");
+    expect(todayBlock(held)?.notes.join(" ")).not.toContain("no ready programming assets");
   });
 
   it("builds recovery actions and playout queue assets", () => {

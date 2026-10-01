@@ -2,7 +2,7 @@ export * from "./asset-chapters.js";
 export * from "./asset-probe-quarantine.js";
 import { isAssetProbeQuarantined } from "./asset-probe-quarantine.js";
 import { getAssetChapterAt, parseAssetChaptersJson } from "./asset-chapters.js";
-import { createPoolRotation, poolRotationStateOf, walkPoolRotation } from "./pool-rotation.js";
+import { createPoolRotation, poolRotationStateOf, walkPoolRotation, type PoolRotationSourceGate } from "./pool-rotation.js";
 export * from "./broadcast-channel.js";
 export * from "./twitch-accounts.js";
 export * from "./chat-emotes.js";
@@ -15,6 +15,7 @@ export * from "./overlay-layout.js";
 export * from "./pool-rotation.js";
 export * from "./programming-asset-order.js";
 export * from "./relay-ingest.js";
+export * from "./source-circuit-breaker.js";
 export * from "./source-health.js";
 export * from "./twitch-vod-playback.js";
 
@@ -2608,6 +2609,7 @@ export function buildSchedulePreview(args: {
   pools?: SchedulePreviewPoolRecord[];
   assets?: SchedulePreviewAssetRecord[];
   maxVideoSlotsPerBlock?: number;
+  sourceGate?: PoolRotationSourceGate | null;
 }): SchedulePreview {
   const items = buildScheduleOccurrences(args).map((occurrence) => {
     const pool = args.pools?.find((entry) => entry.id === occurrence.poolId) ?? null;
@@ -2629,7 +2631,8 @@ export function buildSchedulePreview(args: {
         block: occurrence,
         pool,
         assets: args.assets ?? [],
-        maxSlots: args.maxVideoSlotsPerBlock ?? 20
+        maxSlots: args.maxVideoSlotsPerBlock ?? 20,
+        sourceGate: args.sourceGate
       })
     };
   });
@@ -2683,6 +2686,8 @@ export function lookaheadVideoTitleFromPool(args: {
   pool: SchedulePreviewPoolRecord | null;
   assets: SchedulePreviewAssetRecord[];
   offset?: number;
+  /** The source circuit breaker as it stands (`sourceBreakerGate`), so the title is what the worker picks. */
+  sourceGate?: PoolRotationSourceGate | null;
 }): string {
   const pool = args.pool;
   if (!pool) {
@@ -2694,6 +2699,7 @@ export function lookaheadVideoTitleFromPool(args: {
     pool,
     assets: args.assets,
     isEligible: (asset) => isSchedulePreviewAssetEligible(pool, asset),
+    sourceGate: args.sourceGate,
     steps: offset
   });
   const asset = picks.at(-1)?.asset;
@@ -2705,6 +2711,7 @@ export function buildSchedulePreviewVideoSlots(args: {
   pool: SchedulePreviewPoolRecord | null;
   assets: SchedulePreviewAssetRecord[];
   maxSlots?: number;
+  sourceGate?: PoolRotationSourceGate | null;
 }): SchedulePreviewVideoSlot[] {
   const pool = args.pool;
   if (!pool) {
@@ -2719,7 +2726,8 @@ export function buildSchedulePreviewVideoSlots(args: {
   const rotation = createPoolRotation({
     sourceIds: pool.sourceIds,
     assets: args.assets,
-    isEligible: (asset) => isSchedulePreviewAssetEligible(pool, asset)
+    isEligible: (asset) => isSchedulePreviewAssetEligible(pool, asset),
+    sourceGate: args.sourceGate
   });
   let state = poolRotationStateOf(pool);
   let projectedSeconds = 0;
@@ -2880,6 +2888,7 @@ function materializePoolWindow(args: {
   pool: MaterializedPoolRecord | null;
   assets: MaterializedAssetRecord[];
   maxQueuePreviewItems: number;
+  sourceGate?: PoolRotationSourceGate | null;
 }): MaterializedProgrammingBlock {
   const excludedAssetIds = new Set<string>();
   if (args.pool?.insertAssetId && Math.max(args.pool?.insertEveryItems ?? 0, 0) > 0) {
@@ -2895,11 +2904,19 @@ function materializePoolWindow(args: {
     !isAssetProbeQuarantined(asset) &&
     !excludedAssetIds.has(asset.id);
   const rotation = args.pool
-    ? createPoolRotation({ sourceIds: args.pool.sourceIds, assets: args.assets, isEligible })
+    ? createPoolRotation({ sourceIds: args.pool.sourceIds, assets: args.assets, isEligible, sourceGate: args.sourceGate })
     : null;
-  const hasEligibleAssets = args.pool
+  const heldSourceIds = (args.pool?.sourceIds ?? []).filter((sourceId) => args.sourceGate?.heldSourceIds.includes(sourceId));
+  // Ready assets with the breaker ignored, so a pool whose ready assets are all held is not reported as a
+  // pool without any (M75 review): its assets are fine, the hold is the reason, and it ends by itself.
+  const hasReadyAssets = args.pool
     ? args.assets.some((asset) => args.pool?.sourceIds.includes(asset.sourceId) && isEligible(asset))
     : false;
+  const hasEligibleAssets =
+    hasReadyAssets &&
+    args.assets.some(
+      (asset) => args.pool?.sourceIds.includes(asset.sourceId) && !heldSourceIds.includes(asset.sourceId) && isEligible(asset)
+    );
   const insertAsset =
     args.pool?.insertAssetId && args.pool.insertEveryItems > 0
       ? args.assets.find(
@@ -2921,8 +2938,17 @@ function materializePoolWindow(args: {
     notes.push("No pool is linked to this block.");
   }
 
-  if (!hasEligibleAssets) {
+  if (!hasReadyAssets) {
     notes.push("The selected pool has no ready programming assets.");
+  }
+
+  // Said, because the week otherwise shows a pool that skips one of its sources with no reason given.
+  if (heldSourceIds.length > 0 && hasReadyAssets) {
+    notes.push(
+      hasEligibleAssets
+        ? `${heldSourceIds.length} source(s) of this pool are held out after failed probes; the preview shows the pool without them until the next trial probe succeeds.`
+        : "Every source of this pool with ready assets is held out after failed probes, so the fallback plays until a trial probe succeeds."
+    );
   }
 
   let itemsSinceInsert = Math.max(args.pool?.itemsSinceInsert ?? 0, 0);
@@ -3090,6 +3116,12 @@ export function buildMaterializedProgrammingWeek(args: {
   pools: MaterializedPoolRecord[];
   assets: MaterializedAssetRecord[];
   maxQueuePreviewItems?: number;
+  /**
+   * The source circuit breaker as it stands when the week is drawn (`sourceBreakerGate` at now). Applied
+   * to every block of the week: whether a trial probe will succeed is not knowable ahead of time, and the
+   * worker holds the source exactly like this until one does.
+   */
+  sourceGate?: PoolRotationSourceGate | null;
 }): MaterializedProgrammingDay[] {
   return Array.from({ length: 7 }, (_, offset) => {
     const date = addDaysToDateString(args.startDate, offset);
@@ -3102,7 +3134,8 @@ export function buildMaterializedProgrammingWeek(args: {
         block: occurrence,
         pool: args.pools.find((pool) => pool.id === occurrence.poolId) ?? null,
         assets: args.assets,
-        maxQueuePreviewItems: args.maxQueuePreviewItems ?? 4
+        maxQueuePreviewItems: args.maxQueuePreviewItems ?? 4,
+        sourceGate: args.sourceGate
       })
     );
 

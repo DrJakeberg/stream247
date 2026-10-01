@@ -146,7 +146,7 @@ describe("the playout cycle", () => {
   });
 
   it("keeps the running item when an operator insert cannot be prepared", () => {
-    const failure = flat(between(cycle, 'const message = error instanceof Error ? error.message : "Unknown Twitch VOD cache preparation error.";', "planRecoveryAfterPlaybackPreparationFailure(state.assets, failedAsset);"));
+    const failure = flat(between(cycle, 'const message = error instanceof Error ? error.message : "Unknown Twitch VOD cache preparation error.";', "const recoveryPlan = planRecoveryAfterPlaybackPreparationFailure("));
     // Only an insert that has not aired: an insert on air that fails to prepare for a Restart takes the
     // programme's recovery path, and its audit row would have said "dropped before it aired".
     expect(failure).toContain(

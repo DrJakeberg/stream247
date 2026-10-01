@@ -212,6 +212,63 @@ pair. To see what happened to one item:
   replaces the candidate list without a release.
 - An item that keeps failing leaves automatic selection after three failed prefetch probes and raises
   `playout.source-unplayable.<sourceId>`; its asset page can clear the failures once it is fixed.
+- When probes fail on three different items of one source, the whole source is held out instead; see
+  *A source is held out of programming* below.
+
+### A source is held out of programming (source breaker)
+
+Incident `playout.source-breaker.<sourceId>`, *<source> is held out of programming*. The probes of the
+playout's queue (and the resolve of the item it starts) failed on three different items of that source
+with no clean probe of it in between. A Twitch archive whose download is still queued or running does
+not count: with remote fallback off it is refused until its file is there, and that says nothing about
+the source
+(the YouTube SABR change of 2026-09-28 left 0 of 11 items resolvable; per-item quarantine needed three
+failures per item, about 33 failed boundaries, before the source was out of play). What it does:
+
+- Every pool passes the source over: a pool with several sources alternates between the others, a pool
+  with only this source plays the fallback, as when nothing is playable. The generic fallback (any
+  ready asset, and the bridge after a failed preparation) passes the source's items over too; a global
+  fallback asset is the operator's own pick and plays even if it belongs to the held source. An item
+  already on air plays to its end. The schedule preview, the week lens and the overlay's next title show
+  the pool without it; a week block whose pool has only held sources says so in its notes and is not
+  listed under *Needs attention*.
+- After the cooldown (30 minutes, doubled after every failed retry, at most 6 h) the source is
+  half-open: the next pool pick from it is one trial item, and only that one is probed. A clean probe
+  closes the breaker and the incident and resets the cooldown; a failed one holds the source again for
+  twice as long. Nothing else counts while the cooldown runs.
+- Per-item quarantine and *include in programming* are untouched. While the breaker holds a source,
+  its `playout.source-unplayable.<sourceId>` incident is resolved and its quarantine count is in the
+  breaker incident's message instead, so one broken source is one entry; it comes back once the
+  breaker closes if items are still quarantined.
+- When no pool could pick an item of the source anyway (every item quarantined, excluded or cooling
+  down, or the source in no pool), the playout closes the breaker by itself: there is nothing to hold,
+  and no trial could ever start. Its incident is resolved (*No pool could pick an item of this source
+  anyway ...*), and the source's quarantine incident comes back with the action that helps: clear the
+  quarantined items once the source is fixed. Deleting the source resolves its breaker incident too.
+- The source page (*Held out of programming*) and the sources list show since when, the next probe
+  and the last error. The asset page of an item of the source says so too.
+
+What to do:
+
+1. Read the last error on the source page. For YouTube, ask yt-dlp in the playout container
+   (*A YouTube item leaves the air after a few seconds* above); for Twitch, check the archive and the
+   VOD cache incidents.
+2. Fix the cause (a newer image with a newer yt-dlp, `STREAM247_YOUTUBE_PLAYBACK_FORMATS`, a changed
+   URL), then press **Close breaker now** on the source page (owner or admin; audit row
+   `source.breaker.closed`). The pools take the source back at the next cycle; if it is still broken,
+   the next three different failed items hold it again.
+3. Or leave it: the breaker retries by itself and closes on the first clean probe.
+
+The playout cannot tell a network outage from a source fault (a DNS failure reaches the probe as one
+more yt-dlp error). The rule needs three different items, which only partly guards against that. A
+two-source pool's queue holds two items of each, so an outage that ends before the queue moves on holds
+neither source. A pool with only one source has four items of it in its queue: an outage longer than
+about five minutes (a pihole DNS failure, a long WAN drop) re-probes them all, and three remote items
+failing hold a healthy source, so that pool plays the fallback until the next trial probe. If the last
+error is a name-resolution or connection error and the network is back, press **Close breaker now**;
+otherwise the hold costs one cooldown and closes by itself on the first clean probe. Log events:
+`playout.source-breaker.opened`, `.reopened`, `.closed` (`sourceId`, `failedAssetIds`,
+`cooldownSeconds`, `error`; a close because nothing was left to hold adds `reason: "no-pool-candidate"`).
 
 ### Is the broadcast channel live?
 

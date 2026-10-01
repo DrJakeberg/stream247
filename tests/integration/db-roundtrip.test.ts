@@ -46,6 +46,9 @@ import {
   upsertIncident,
   resolveIncident,
   appendChatViewerRequestRecord,
+  closeSourceBreakerRecord,
+  deleteSourceRecordAndAssets,
+  recordSourceBreakerOutcomes,
   listRecentChatViewerRequests,
   countQueuedChatViewerRequests,
   markChatViewerRequestsPlayed,
@@ -107,6 +110,7 @@ const chatOverlayMessagesMigrationId = "20260825_005_chat_overlay_messages";
 const overlayVideoSourcePushIngestMigrationId = "20260826_002_overlay_video_source_push_ingest";
 const managedSecretsMigrationId = "20260826_003_managed_secrets";
 const poolSourceCursorsMigrationId = "20261001_001_pool_source_cursors";
+const sourceBreakersMigrationId = "20261001_002_source_breakers";
 // The row id the internal relay key lives under, mirrored from packages/db so the non-write proofs
 // below can look at the stored ciphertext directly rather than through any reader.
 const RELAY_INTERNAL_KEY_SECRET_ID = "relay-internal-key";
@@ -2151,6 +2155,123 @@ describe.sequential("database roundtrip", () => {
         sourceCursors: { [twitchSourceId]: "t2" },
         itemsSinceInsert: 1
       });
+    }, 60_000);
+  });
+
+  // M75. The breaker of the DUT's YouTube source (2026-09-28: 0 of 11 items resolvable).
+  describe("source circuit breakers", () => {
+    const youtubeSourceId = "source_m75_youtube";
+    const twitchSourceId = "source_m75_twitch";
+    const failed = (assetId: string, sourceId = youtubeSourceId) => ({
+      sourceId,
+      assetId,
+      outcome: "failed" as const,
+      error: "Requested format is not available"
+    });
+    const breakerOf = async (sourceId = youtubeSourceId) =>
+      (await readAppState()).sourceBreakers.find((record) => record.sourceId === sourceId);
+
+    async function seedSources() {
+      await ensureDatabaseWithRetry();
+      await executeSql("DELETE FROM source_breakers;");
+      const initial = await readAppState();
+      await writeAppState({
+        ...initial,
+        sources: [youtubeSourceId, twitchSourceId].map((id) => ({
+          id,
+          name: id,
+          type: "youtube-channel",
+          connectorKind: "youtube-channel" as const,
+          enabled: true,
+          status: "Ready",
+          externalUrl: `https://example.invalid/${id}`,
+          notes: "",
+          lastSyncedAt: "2026-09-28T00:00:00.000Z"
+        }))
+      });
+    }
+
+    it("creates source_breakers on a database that predates it", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql(`
+        DROP TABLE IF EXISTS source_breakers;
+        DELETE FROM schema_migrations WHERE id = '${sourceBreakersMigrationId}';
+      `);
+
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      const columns = await executeSql(
+        "SELECT string_agg(column_name, ',' ORDER BY column_name) FROM information_schema.columns WHERE table_name = 'source_breakers';"
+      );
+      const migrationApplied = await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${sourceBreakersMigrationId}';`);
+      expect(columns.split(",")).toEqual(DECLARED_SCHEMA.source_breakers);
+      expect(migrationApplied).toBe("1");
+      expect((await readAppState()).sourceBreakers).toEqual([]);
+    }, 60_000);
+
+    it("opens on three distinct items, survives a restart and a whole-state write from an older snapshot", async () => {
+      await seedSources();
+      const before = await readAppState();
+
+      const first = await recordSourceBreakerOutcomes([failed("y1"), failed("y2")], "2026-09-28T10:00:00.000Z");
+      expect(first.transitions).toEqual([]);
+      const opened = await recordSourceBreakerOutcomes([failed("y3")], "2026-09-28T10:01:00.000Z");
+      expect(opened.transitions.map((transition) => transition.kind)).toEqual(["opened"]);
+      expect(opened.records.find((record) => record.sourceId === youtubeSourceId)?.state).toBe("open");
+
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+      // A whole-state write from a snapshot read before the breaker opened must not close it again.
+      await writeAppState(before);
+
+      expect(await breakerOf()).toEqual({
+        sourceId: youtubeSourceId,
+        state: "open",
+        failedAssetIds: ["y1", "y2", "y3"],
+        openedAt: "2026-09-28T10:01:00.000Z",
+        cooldownSeconds: 1800,
+        lastError: "Requested format is not available",
+        updatedAt: "2026-09-28T10:01:00.000Z"
+      });
+      expect(await breakerOf(twitchSourceId)).toBeUndefined();
+    }, 60_000);
+
+    it("re-opens a failed trial with the doubled cooldown and closes on a clean one", async () => {
+      await seedSources();
+      await recordSourceBreakerOutcomes([failed("y1"), failed("y2"), failed("y3")], "2026-09-28T10:00:00.000Z");
+
+      // Outcomes while the cooldown runs change nothing and write nothing.
+      const during = await recordSourceBreakerOutcomes([failed("y4")], "2026-09-28T10:10:00.000Z");
+      expect(during.updates).toEqual([]);
+
+      const reopened = await recordSourceBreakerOutcomes([failed("y4")], "2026-09-28T10:30:00.000Z");
+      expect(reopened.transitions.map((transition) => transition.kind)).toEqual(["reopened"]);
+      expect(await breakerOf()).toMatchObject({ state: "open", openedAt: "2026-09-28T10:30:00.000Z", cooldownSeconds: 3600 });
+
+      const closed = await recordSourceBreakerOutcomes(
+        [{ sourceId: youtubeSourceId, assetId: "y5", outcome: "ok", error: "" }],
+        "2026-09-28T11:30:00.000Z"
+      );
+      expect(closed.transitions.map((transition) => transition.kind)).toEqual(["closed"]);
+      expect(await breakerOf()).toMatchObject({ state: "closed", failedAssetIds: [], openedAt: "", cooldownSeconds: 0 });
+    }, 60_000);
+
+    it("lets an operator close an open breaker, and forgets the breaker of a deleted source", async () => {
+      await seedSources();
+      await recordSourceBreakerOutcomes([failed("y1"), failed("y2"), failed("y3")], "2026-09-28T10:00:00.000Z");
+
+      const closed = await closeSourceBreakerRecord(youtubeSourceId, "2026-09-28T10:05:00.000Z");
+      expect(closed).toMatchObject({ state: "open", openedAt: "2026-09-28T10:00:00.000Z" });
+      expect(await breakerOf()).toMatchObject({ state: "closed", updatedAt: "2026-09-28T10:05:00.000Z" });
+      expect(await closeSourceBreakerRecord(youtubeSourceId, "2026-09-28T10:06:00.000Z")).toBeNull();
+
+      await recordSourceBreakerOutcomes([failed("y1")], "2026-09-28T10:07:00.000Z");
+      await deleteSourceRecordAndAssets(youtubeSourceId);
+      expect(await breakerOf()).toBeUndefined();
+      // A probe that finishes after its source was deleted leaves no row behind.
+      await recordSourceBreakerOutcomes([failed("y2"), failed("y3"), failed("y4")], "2026-09-28T10:08:00.000Z");
+      expect(await breakerOf()).toBeUndefined();
     }, 60_000);
   });
 

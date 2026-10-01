@@ -410,6 +410,25 @@ re-upgrade do to a pool's position.
   cycle. After an insert the pool continues with its next item; the interrupted item is not resumed.
   See `docs/operations.md`, *Operator controls*.
 
+### Upgrading Past 2.1.0: Source Circuit Breaker (M75)
+
+The first release after 2.1.0 that carries M75 changes no stack file; it is a repin of the three
+`STREAM247_*_IMAGE` tags. It adds one table, `source_breakers` (migration
+`20261001_002_source_breakers`, additive, applied on the first start; the same `CREATE TABLE` is in the
+base schema for a fresh install), so back up PostgreSQL before the repin. The table starts empty, which
+means every source is in play, exactly as before.
+
+- **What changes.** When the playout's probes fail on three different items of one source with no clean
+  probe of it in between (a Twitch archive still downloading does not count), every pool passes that
+  source over for 30 minutes (doubling on every failed
+  retry, at most 6 h) and then tries one item of it; a clean probe brings it back. One incident per held
+  source, `playout.source-breaker.<sourceId>`, which stands in for that source's
+  `playout.source-unplayable` incident while it is open. The source page shows the hold and offers owners
+  and admins **Close breaker now**. See `docs/operations.md`, *A source is held out of programming*.
+- **Rollback.** An older image ignores the table, so a held source is in play again at once; per-item
+  quarantine is unchanged. A later re-upgrade reads the rows as they were left: a breaker whose cooldown
+  ran out in between is half-open and tries one item at the next pick.
+
 ### Patch vs Minor Upgrades
 
 - Patch upgrades should be the default production path.
@@ -522,7 +541,7 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 - program-feed/uplink mode separates program playout restarts and asset boundaries from the external RTMP publishing worker
 - YouTube and Twitch ingestion rely on `yt-dlp`
 - schedule blocks support weekly CRUD, reusable show profiles, multi-day creation, overlap validation, drag/drop repositioning, resize-to-change-duration editing, weekly coverage summaries, and quick-start program templates
-- pools are first-class programming units for round-robin playout selection that alternates between a pool's sources, each in a stable date order (see `docs/architecture.md`, *Scheduling*)
+- pools are first-class programming units for round-robin playout selection that alternates between a pool's sources, each in a stable date order (see `docs/architecture.md`, *Scheduling*); a source whose probes fail on three different items is held out of the rotation for a cooldown and retried with one item (source circuit breaker, `docs/operations.md`)
 - sources can be edited in place and the asset catalog can be searched by title, source, and status
 - playout supports operator restart, temporary fallback, asset pinning, play now / insert, skip-current, and resume-schedule actions (`docs/operations.md`, *Operator controls*)
 - overlay is drawn by the playout renderer, with replay labeling, current/next context, and admin-managed branding
