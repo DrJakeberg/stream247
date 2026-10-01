@@ -48,8 +48,20 @@ failure. Twitch says "redirect mismatch"; nothing in Stream247 can fix that for 
 
 The stack boots without a `.env`: the app secret is generated on first boot and persisted at
 `data/media/.stream247-app-secret` (owner-only file), the bundled PostgreSQL configures itself, and
-the wizard asks for the public URL. Verified on a fresh checkout: `docker compose up -d` with no
-`.env` comes up healthy and `/` redirects to `/setup`.
+the wizard asks for the public URL. `docker compose up -d` with no `.env` comes up healthy and `/`
+redirects to `/setup`. That is not a one-time observation: `pnpm test:fresh-compose` starts exactly
+that stack in CI and before every release, and fails if the redirect, the secret file or its
+owner-only mode is missing.
+
+Two things to know on that path:
+
+- Compose prints `The "TRAEFIK_HOST" variable is not set. Defaulting to a blank string.` (and the
+  same for `TRAEFIK_ACME_EMAIL`) on every command. Without a Traefik in front — the `proxy` profile,
+  or your own one reading the container labels — nothing reads either value and the warning is
+  harmless; with the profile, see section 4.
+- The compose file needs Docker Compose 2.24 or newer (`docker compose version`), with or without a
+  `.env`: older releases cannot read a file that marks its `.env` as optional and stop before
+  starting anything.
 
 Set values yourself when you want them pinned — for a restore, a rollback, or because the public URL
 must be right before Twitch OAuth is configured:
@@ -91,14 +103,23 @@ docker compose --profile proxy up -d
 
 (without the built-in Traefik: `docker compose up -d`, and put your own HTTPS in front of port 3000).
 
-Create the owner immediately: until it exists, anyone who can reach the host can claim the workspace,
-so firewall the port if you cannot open the browser right away. Over plain HTTP a sign-in only holds on
+The `proxy` profile is the built-in Traefik with Let's Encrypt. It takes its hostname and its ACME
+address from `TRAEFIK_HOST` and `TRAEFIK_ACME_EMAIL` in `.env`, so it is the one form that does not
+work with nothing configured: with both unset Compose substitutes empty strings, the router rule is
+built from an empty host name and Traefik has no host to answer for. Set the two first, or start
+without the profile.
+
+Create the owner immediately: until it exists, anyone who can reach the host can claim the workspace.
+Port 3000 is published on every interface in both forms — the proxy is added in front of it, it does
+not replace it — so firewall it if you cannot open the browser right away. Over plain HTTP a sign-in only holds on
 `localhost`; from any other machine use HTTPS, or the session cookie is dropped and every sign-in bounces
 back to `/login` without a message.
 
-Then open `https://<your-host>/setup`. The wizard runs in this order: **owner account → instance
-(public URL, time zone, channel language) → Twitch app credentials → Twitch connect → done**. Creating the owner signs you in; the
-wizard's "done" means the credentials are in place, not that the channel can air — its readiness
+Then open `https://<your-host>/setup` (`/` leads there as long as no owner exists). The wizard runs
+in this order, under these names: **Owner account → Instance basics (public URL, time zone, channel
+language) → Twitch app credentials → Twitch accounts → Review**. Creating the owner signs you in; every
+later step can be skipped and stays open. **Review** marked "Done" means the credentials are in place,
+not that the channel can air — its readiness
 checklist lists what is still missing. Reopening `/setup` later requires being signed in and continues at
 the first unfinished step. Create the owner with an e-mail
 address and a password of at least 10 characters — there is no way to change either later without
@@ -175,7 +196,7 @@ every control there carries an (i) that says what it does.
 - `Live → Status`: readiness, destinations, incidents with their age.
 - `/api/health` answers when the web app is up. `/api/system/readiness` always answers 200 — read
   `broadcastReady` from the body; `/api/ready` returns 503 only when the database or the initialization is
-  missing.
+  missing, which includes a fresh install until its owner exists.
 - Incidents close themselves once their area has been healthy for a while; a count that rises and
   does not fall again is the signal.
 

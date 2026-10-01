@@ -73,7 +73,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M61 Boundary A/V Skew Instrumentation | Ops | Now | Complete | Measure the seam instead of theorising about storms | Every boundary logs the outgoing feed's last video/audio PTS lead and the reader's per-stream offsets; a query lists seam skew against discontinuity line count | `apps/worker`, `packages/db`, docs | low | drop the event; nothing consumes it |
 | M62 Cache Policy | Ops + Reliability | Now | Complete | Downloads that fit the content and a cache that keeps what airs next | Download time limit scales with the estimated size (floor kept); assets scheduled within the retention horizon are not released after airing; an asset with an incomplete file is not selected as ready | `apps/worker`, `packages/core`, tests, docs | medium | revert to fixed limit and release-after-play |
 | M63 Stack Alignment | Ops | Now | Complete | The deployed stack equals the repo compose | Portainer stack file no longer defines redis; `docs/deployment.md` matches; DUT verified | Portainer stack, docs | low | re-add the service block |
-| M64 Getting Started | Docs | Now | Planned | One page from zero to a green channel | `docs/getting-started.md` walks `.env.production.example` → `/setup` → `Live → Status` with the known traps in one place; README points at it; fresh-compose smoke follows it | docs, README | low | docs-only |
+| M64 Getting Started | Docs | Now | Complete | One page from zero to a green channel | `docs/getting-started.md` walks `.env.production.example` → `/setup` → `Live → Status` with the known traps in one place; README points at it; fresh-compose smoke follows it | docs, README | low | docs-only |
 | M65 Measured Layout Specs | Reliability | Now | Complete | Layout asserted by measurement on every workspace | Live, Program and Admin get specs in the style of `studio-layout.spec.ts`: no horizontal overflow, sticky/aside rules where they apply, control budgets | tests, scripts | low | remove specs |
 | M66 Live Bridge Rehearsal | Ops | Next | In progress | The live bridge has run under supervision before 2.0 names it | Live-bridge takeover and release observed on the DT stack with the operator present; findings recorded | DUT, docs | medium | none — observation only |
 | M67 Release 2.0.0 | Release | Now | Done 2026-09-09 | Major because the stack drops a service and the UI drops controls | 2.0.0 tagged after M60–M66 are complete and the soak is clean | release, docs | medium | pinned v2.0.0 |
@@ -5119,3 +5119,104 @@ Limits and follow-ups:
   uncounted.
 - An uncorroborated network-looking failure is not logged as such. If the DUT shows quarantine or the
   breaker counting one during a blip, a second log line there would say what the output answered.
+
+## M64 Getting Started
+
+Acceptance had three parts. Two were met before this milestone was picked up: `docs/getting-started.md`
+exists (sections 0 to 9) and the README's Quick Start points at it. The third was not: "fresh-compose
+smoke follows it". The smoke wrote a full env file on every run, so the guide's central claim, that the
+stack boots without a `.env`, was checked by hand once (M52) and by nothing since.
+
+What the guide covers: the services and what the host needs (0), the two Twitch accounts by role (1),
+the Twitch application and its three redirect URLs (2), the optional `.env` with the variables worth
+pinning and the three traps around it (3), the start command, the owner, the wizard order and the
+channel language (4), connecting the accounts (5), media (6), pools and schedule (7), how to know it is
+running (8), upgrades and rollback (9).
+
+Done:
+
+- `scripts/fresh-compose-bootstrap-smoke.sh` makes two passes. The env pass is the old one, plus: `/`
+  redirects to `/setup`, `/setup` answers 200 without a session, and no secret file is generated when
+  `APP_SECRET` is set. The guide pass is new: no env file, only the image tags and the port handed in.
+  Each pass runs in its own stand-in checkout as the compose project directory, so the compose file's
+  own `./data/...` paths and its `.env` resolve there and never in the real checkout, and both are
+  cleared of the caller's shell: every variable the compose file interpolates (the names are read
+  from the compose file) and every exported `COMPOSE_*`. The guide pass asserts: `/api/health` 200,
+  the four runtime services running, `/` redirects to `/setup`, `/setup` 200, the secret exists at
+  `data/media/.stream247-app-secret` with mode 600 and a full length (read by nobody, mode and size
+  only), `/api/system/readiness` 200 with `broadcastReady` false, `/api/ready` 503. One `ok` line per
+  assertion, `FAIL` with `ps` and the web log otherwise. Invocation is unchanged (`pnpm
+  test:fresh-compose`, the three `STREAM247_FRESH_COMPOSE_*_IMAGE` variables of the release workflow).
+- `tests/unit/getting-started-guide.test.ts`, without Docker: every variable in the section-3 table is
+  in `.env.production.example`; the profile, the `pnpm` scripts and the pages the guide names exist;
+  every `env_file` in the compose file is optional, the compose PostgreSQL defaults and the code's
+  default connection string describe the same database, and the guide's secret path is the code's
+  default path through the `./data/media` mount of all four services; the smoke's two Compose calls
+  both carry the stand-in project directory and the clearing, and no line names the checkout's
+  `.env`; the wizard steps are listed under the wizard's own titles and in its order; the README
+  links the guide.
+
+Wrong or missing in the guide, fixed:
+
+- Section 4 listed the wizard steps as "Twitch connect → done". Those are the step ids; the wizard
+  shows "Twitch accounts" and "Review". Now under the wizard's names, and pinned by the unit test.
+- Section 4 gave `docker compose --profile proxy up -d` as the start command directly after section 3
+  said nothing needs configuring. The proxy profile is the one form that needs `.env`: with
+  `TRAEFIK_HOST` unset the router rule has an empty host name (`docker compose --profile proxy config`).
+  Said.
+- Section 4 said "firewall the port" without saying which. Port 3000 is published on every interface
+  with and without the proxy profile. Said.
+- Section 3: "Verified on a fresh checkout" was a one-time observation; it now names the smoke that
+  keeps it true. Added: the two "variable is not set" warnings Compose prints without a `.env`
+  (harmless without a Traefik in front), and that the compose file needs Docker Compose 2.24 or newer.
+- Section 8: `/api/ready` is 503 on a fresh install until the owner exists. Was implied, now said.
+
+Everything else in sections 3, 4 and 8 was checked against the code and stands.
+
+Found in the smoke on the way, fixed:
+
+- The env pass did not override `uplink`'s media volume. Every run made Docker create `data/media`
+  inside the checkout, and that stack's uplink did not share the feed directory with its playout.
+  The per-service volume list is gone; the stand-in project directory does that for every service.
+- Every run left its PostgreSQL directory behind in `/tmp`: the container chowns it, and the script's
+  `rm -rf` as the invoking user failed quietly. The files are now removed from inside a container.
+- The env pass copied its env file over the checkout's `.env` and moved a backup back afterwards. Two
+  ways to lose a developer's file: the cleanup removed `.env` whenever no backup existed, which is
+  also the state of an exit before the backup is taken; and with `.env` as a symlink, `cp` wrote the
+  smoke's env file through the link into its target and `mv` left a regular file where the link was
+  (review finding, reproduced on a stand-in checkout). The swap, the backup and the restore are
+  deleted; the checkout's `.env` is not touched. No incident.
+- Neither pass was sealed against the caller's shell (review finding). An exported
+  `POSTGRES_PASSWORD` that differs from the default turned the smoke red for a true guide, a matching
+  one would have hidden a broken compose default, and `COMPOSE_PROFILES=proxy` put traefik into the
+  stack. CI and the release workflow export none of these, so neither gate was affected.
+
+Validation (2026-10-01, images `stream247-web:test` / `stream247-worker:test` of this branch):
+
+- `pnpm exec vitest run tests/unit/getting-started-guide.test.ts`: 6 passed. Three mutations of the
+  guide (a variable the example lacks, an unknown profile, the old step names) each fail one test.
+- `pnpm test:fresh-compose`: exit 0, 14 `ok` lines. Wall clock 9.3 s before, 19.4 s after. A copy with
+  the wrong secret path fails at that assertion with exit 1 and leaves no container, network or
+  temp directory.
+- The same script from a stand-in checkout whose `.env` is a symlink to a mode-600 file full of wrong
+  values (`POSTGRES_PASSWORD`, `DATABASE_URL`, a short `APP_SECRET`, an image that does not exist):
+  exit 0, 14 `ok` lines, the link is still a link, its target has the same hash and mode, no `data/`
+  appeared next to it. With `STREAM247_FRESH_COMPOSE_PORT=notaport` (the run that used to destroy the
+  link): exit 1 at Compose's validation, link and target unchanged.
+- The same script with a wrong `POSTGRES_*`, `TRAEFIK_*`, two image variables pointing at a registry
+  that does not exist, `COMPOSE_PROFILES=proxy`, `COMPOSE_FILE` and `COMPOSE_ENV_FILES` exported:
+  exit 0, 14 `ok` lines, 20.0 s; the container list sampled once a second shows the handed images in
+  both passes and no traefik. A copy without the clearing and only `POSTGRES_PASSWORD=wrongpw`
+  exported: exit 1 after 72.6 s at the env pass's runtime services, nothing left behind.
+- `pnpm validate`: exit 0 (2615 unit, 63 integration tests, build).
+
+Limits:
+
+- Measured on a rootless daemon. On CI's rootful daemon the secret file is root's; the assertion uses
+  `stat` only for that reason, but the first CI run is the proof.
+- The Compose 2.24 floor is from Compose's release notes (`env_file` with `required`), not from a run
+  against an older Compose.
+- The proxy profile is not started by the smoke (ports 80 and 443, ACME). What the guide says about it
+  is from `docker compose --profile proxy config`.
+- The smoke stops at the wizard's door. Creating the owner and walking the steps is the e2e suite's.
+- Sections 1, 2, 5, 6, 7 and 9 of the guide were not re-verified in this milestone.
