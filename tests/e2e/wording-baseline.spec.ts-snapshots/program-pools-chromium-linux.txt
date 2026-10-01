@@ -59,7 +59,7 @@ Use program audio
 <asset>
 REPLACEMENT AUDIO LEVEL (%)
 i
-Pools currently use persistent round-robin playback across all ready assets from the selected sources.
+A pool alternates between its sources, one item from each in turn, and remembers where each source stands; a pool with one source plays it in order.
 Replacement audio plays instead of the programme sound whenever this pool is on air. Assets from Local media library or Direct media URL sources loop most reliably.
 Add pool
 PROGRAM
