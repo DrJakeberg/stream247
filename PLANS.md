@@ -3779,8 +3779,25 @@ follow; the env examples drop three variables no code reads and name `TWITCH_BRO
   soak window.
 - 2026-09-28 13:02:55 UTC: 24-h soak started (tmux `soak`, `~/logs/soak-20260928-130255.log`), first probe
   `status=ok broadcastReady=true`, uplink baseline 3931.
-- Open: soak result; on-air YouTube pair (`playout.process.start` with `formatCandidate: split-*`); then
-  2.1.0 pins, CHANGELOG, tag and repin.
+- rc.1 soak 2026-09-28 13:03 -> 09-29 13:03 UTC: passed, `outages=1 outageSecondsMax=219` (the nightly blip,
+  00:00:38-00:05:22, uplink restarted 3 times and healed), 1430 ok samples, every playout exit planned. Not on
+  air in 2.5 days: a single YouTube item - the pool order was alphabetical (created_at rewritten per sync) and
+  the cursor faced 42 Twitch archives (M72, M73). A Play now on 2026-10-01 00:12 UTC showed an 18 s standby
+  slate and a dropped insert (M74). After the soak, 2026-09-29 23:06 UTC: `system.volume.low` (9.3 % free),
+  the watermark freed space within 2 min. The soak's critical-incident check is skipped without a session.
+- 2026-10-01 03:35 UTC: v2.1.0-rc.2 (0cf66a6) live via `repin.sh` after a `pg_dump` to
+  `~/backups/stream247-pre-rc2-*.dump`. Migration `20261001_001_pool_source_cursors` applied, column present
+  (`text`, default `'{}'`). First rc.2 sync kept `created_at` (03:35:04, the last rc.1 sync) and filled
+  `published_at` on 11/11 YouTube items (relative-age buckets, e.g. 2020-10-01). The Twitch pool continued
+  with the next VOD id (v2871975889 -> v2872944203) and stored its per-source position.
+- 2026-10-01 03:36:17 UTC, Play now of `j4YdbIbEc9E` (255 s), set like the rc.2 action: 9 s later
+  `plannedReason: switch` -> `operator_insert` with `formatId 299+140`, `formatCandidate split-h264-aac`, separate
+  audio input, no `scheduled_reconnect`, no `playout.insert.dropped`; natural end after 264 s (exit 0), then
+  `scheduled_match` v2873900852 (next VOD id); `previous_asset_id` = the insert; uplink not restarted.
+- 2026-10-01 03:41:08 UTC: 24-h soak on rc.2 started (tmux `soak`, `~/logs/soak-20261001-034108.log`), first
+  probe `status=ok broadcastReady=true`.
+- Open: soak result; the first TwitchYoutube daytime pick after a Twitch cursor should be the oldest
+  non-quarantined YouTube item; then 2.1.0 pins, CHANGELOG, tag and repin.
 
 ## M72 Stable Asset Order
 
