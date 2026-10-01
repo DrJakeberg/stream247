@@ -68,11 +68,11 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M13 Library And Blueprints V2 | Parity + UX | Next | Complete | Deepen library operations and make blueprints safer to reuse across installs | Thumbnails, grouped browsing, curated sets, and selective blueprint import/remap guidance are available without overpromising media portability | `apps/web`, `apps/worker`, `packages/db`, docs | medium | keep current folder/tag curation and replace-style blueprint import path intact |
 | M14 Operator UX V2 | UX | Next | Complete | Resolve admin IA drift and make the control-room model more consistent | Broadcast, Dashboard, Scene Studio, Sources/Library, and Settings have clearer roles and more consistent naming | `apps/web`, docs, tests | medium | keep current routes and navigation labels working until the new IA is proven |
 | M15 Coverage And Release Proof V2 | Ops | Next | Complete | Prove the highest-risk parity features with broader automated coverage | Multi-output, Live Bridge, audio/cuepoint flows, and scene publish safety have direct runtime/browser proof beyond unit tests | tests, CI, scripts, docs | high | additive coverage only; do not remove current gates until replacements are green |
-| M59 Scene Studio Layout Repair And Field Explanations | UX + Reliability | Now | In progress | Make the scene studio usable on large displays and explain every operator control in place | The preview column is as tall as its content and stays in view while the form scrolls; the published-state aside sits beside the controls from 1560px; every field, panel and page header can carry an (i) explanation through one primitive, and the studio carries them; the layout is asserted by measurement, not only by screenshot | `apps/web`, tests, docs | low-medium | drop the `grid-aside`/`workspace-wide` classes and the `info` props; the primitives stay additive |
+| M59 Scene Studio Layout Repair And Field Explanations | UX + Reliability | Now | Complete | Make the scene studio usable on large displays and explain every operator control in place | The preview column is as tall as its content and stays in view while the form scrolls; the published-state aside sits beside the controls from 1560px; every field, panel and page header can carry an (i) explanation through one primitive, and the studio carries them; the layout is asserted by measurement, not only by screenshot | `apps/web`, tests, docs | low-medium | drop the `grid-aside`/`workspace-wide` classes and the `info` props; the primitives stay additive |
 | M60 Truthful Controls | UX + Reliability | Now | Complete | Every visible setting does what it says or is gone | Scene clock/next toggles drive the on-air picture; schedule-teaser/queue-preview toggles, embed/widget fields and engagement chat mode/style/alert position leave the UI (storage kept, additive); the library upload accepts only what the worker scan ingests, or the scan ingests audio; tests prove each | `packages/core`, `apps/web`, `apps/worker`, tests, docs | medium | re-add the form fields; stored values were never read so nothing else moves |
 | M61 Boundary A/V Skew Instrumentation | Ops | Now | Complete | Measure the seam instead of theorising about storms | Every boundary logs the outgoing feed's last video/audio PTS lead and the reader's per-stream offsets; a query lists seam skew against discontinuity line count | `apps/worker`, `packages/db`, docs | low | drop the event; nothing consumes it |
 | M62 Cache Policy | Ops + Reliability | Now | Complete | Downloads that fit the content and a cache that keeps what airs next | Download time limit scales with the estimated size (floor kept); assets scheduled within the retention horizon are not released after airing; an asset with an incomplete file is not selected as ready | `apps/worker`, `packages/core`, tests, docs | medium | revert to fixed limit and release-after-play |
-| M63 Stack Alignment | Ops | Now | In progress | The deployed stack equals the repo compose | Portainer stack file no longer defines redis; `docs/deployment.md` matches; DUT verified | Portainer stack, docs | low | re-add the service block |
+| M63 Stack Alignment | Ops | Now | Complete | The deployed stack equals the repo compose | Portainer stack file no longer defines redis; `docs/deployment.md` matches; DUT verified | Portainer stack, docs | low | re-add the service block |
 | M64 Getting Started | Docs | Now | Planned | One page from zero to a green channel | `docs/getting-started.md` walks `.env.production.example` → `/setup` → `Live → Status` with the known traps in one place; README points at it; fresh-compose smoke follows it | docs, README | low | docs-only |
 | M65 Measured Layout Specs | Reliability | Now | Complete | Layout asserted by measurement on every workspace | Live, Program and Admin get specs in the style of `studio-layout.spec.ts`: no horizontal overflow, sticky/aside rules where they apply, control budgets | tests, scripts | low | remove specs |
 | M66 Live Bridge Rehearsal | Ops | Next | In progress | The live bridge has run under supervision before 2.0 names it | Live-bridge takeover and release observed on the DT stack with the operator present; findings recorded | DUT, docs | medium | none — observation only |
@@ -3439,6 +3439,10 @@ remove. Both are product decisions; neither belongs in a stability release unres
 - The pixel gate's tolerance is a deliberate flakiness trade-off; lowering it is an operator decision.
 - Explanation texts run two to three sentences; a tighter house style is a wording pass, not a code change.
 
+Closed 2026-10-01: the acceptance row is met (preview column, aside from 1560px, one explanation
+primitive across the studio, layout asserted by measurement since M65). The first open point was decided
+in M60 (every setting wired or removed); the other two are operator choices, not milestone work.
+
 ## M60 Truthful Controls
 
 Point 1 of the operator's 2.0 list (2026-09-05): every visible setting does what it says, or it goes.
@@ -3507,6 +3511,11 @@ entries that the repo compose and `docs/deployment.md` dropped long ago. The red
 prepared (177 → 154 lines, nothing else touched) and goes out with the 2.0 repin in the same PUT, so
 the containers that lose a `depends_on` are recreated once, not twice. Until then the drift is
 documented here and harmless: nothing ever connected to that container.
+
+Verified 2026-10-01 (read-only): Portainer stack 148's file has 153 lines and no line mentioning redis,
+no `stream247-redis` container or volume exists on the DUT (the only redis there is `snappass-redis-1`,
+another project), and the repo compose, `docs/deployment.md` and `.env.production.example` name no redis.
+The rc.1 and rc.2 repins passed this file through unchanged. Complete.
 
 ## M65 Measured Layout Specs
 
@@ -3779,8 +3788,25 @@ follow; the env examples drop three variables no code reads and name `TWITCH_BRO
   soak window.
 - 2026-09-28 13:02:55 UTC: 24-h soak started (tmux `soak`, `~/logs/soak-20260928-130255.log`), first probe
   `status=ok broadcastReady=true`, uplink baseline 3931.
-- Open: soak result; on-air YouTube pair (`playout.process.start` with `formatCandidate: split-*`); then
-  2.1.0 pins, CHANGELOG, tag and repin.
+- rc.1 soak 2026-09-28 13:03 -> 09-29 13:03 UTC: passed, `outages=1 outageSecondsMax=219` (the nightly blip,
+  00:00:38-00:05:22, uplink restarted 3 times and healed), 1430 ok samples, every playout exit planned. Not on
+  air in 2.5 days: a single YouTube item - the pool order was alphabetical (created_at rewritten per sync) and
+  the cursor faced 42 Twitch archives (M72, M73). A Play now on 2026-10-01 00:12 UTC showed an 18 s standby
+  slate and a dropped insert (M74). After the soak, 2026-09-29 23:06 UTC: `system.volume.low` (9.3 % free),
+  the watermark freed space within 2 min. The soak's critical-incident check is skipped without a session.
+- 2026-10-01 03:35 UTC: v2.1.0-rc.2 (0cf66a6) live via `repin.sh` after a `pg_dump` to
+  `~/backups/stream247-pre-rc2-*.dump`. Migration `20261001_001_pool_source_cursors` applied, column present
+  (`text`, default `'{}'`). First rc.2 sync kept `created_at` (03:35:04, the last rc.1 sync) and filled
+  `published_at` on 11/11 YouTube items (relative-age buckets, e.g. 2020-10-01). The Twitch pool continued
+  with the next VOD id (v2871975889 -> v2872944203) and stored its per-source position.
+- 2026-10-01 03:36:17 UTC, Play now of `j4YdbIbEc9E` (255 s), set like the rc.2 action: 9 s later
+  `plannedReason: switch` -> `operator_insert` with `formatId 299+140`, `formatCandidate split-h264-aac`, separate
+  audio input, no `scheduled_reconnect`, no `playout.insert.dropped`; natural end after 264 s (exit 0), then
+  `scheduled_match` v2873900852 (next VOD id); `previous_asset_id` = the insert; uplink not restarted.
+- 2026-10-01 03:41:08 UTC: 24-h soak on rc.2 started (tmux `soak`, `~/logs/soak-20261001-034108.log`), first
+  probe `status=ok broadcastReady=true`.
+- Open: soak result; the first TwitchYoutube daytime pick after a Twitch cursor should be the oldest
+  non-quarantined YouTube item; then 2.1.0 pins, CHANGELOG, tag and repin.
 
 ## M72 Stable Asset Order
 
