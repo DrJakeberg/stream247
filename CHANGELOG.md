@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.1.0-rc.2 - 2026-10-01
+
+### Fixed
+
+- A pool with several sources plays all of them. The TwitchYoutube pool on the DUT aired no YouTube item
+  for days after rc.1 went live: every source sync rewrote each item's `created_at` to "now" and no
+  remote item carried a publish date, so the "oldest first" pool order was really alphabetical within
+  source blocks, and the pool's single pointer faced 42 Twitch archives of 5–11 h after it had passed
+  the YouTube block. Now:
+  - a sync keeps an item's first-seen `created_at`, fills `published_at` only once and never resets a
+    known duration to 0; YouTube listings carry approximate publish dates
+    (`youtubetab:approximate_date`); Twitch archives without dates follow their VOD id; one shared
+    comparator replaces the three hand-copied pool sorts;
+  - a pool with several sources alternates between them — one item from each source in turn, in the
+    listed source order — and each source walks its own items oldest first and loops. Positions per
+    source persist in `pools.source_cursors` (additive column, migration
+    `20261001_001_pool_source_cursors`). Schedule preview, week lens and "up next" use the same rotation;
+  - Skip, quarantine and cache cooldown no longer reset a rotation to its first item; a pool edit or a
+    blueprint import no longer rolls a pointer back;
+  - finished VOD downloads write only their cache columns instead of a stale copy of the whole item.
+- Play now and Insert reach the air. Measured on the DUT 2026-10-01 00:12 UTC: Play now put the reconnect
+  standby slate on air for 18 s, dropped the insert without a log line and started a different pool item
+  from the beginning. The request no longer restarts the playout: the next cycle switches straight to
+  the insert while the running item stays on air until then. Also:
+  - the reconnect standby slate appears only without the relay;
+  - an insert stopped by its duration bound or a feed watchdog ends instead of replaying from the start;
+  - Move next and inserts fire at a duration-bound boundary instead of one item later;
+  - an insert that cannot be prepared (an archive still downloading) is refused up front or dropped
+    with a log line and an audit row, and never takes the running item off air;
+  - Replay previous offers the previous item again;
+  - under the relay, Recover outputs, Force reconnect (now refused: the uplink reconnects by itself),
+    Pin, Fallback and Resume no longer restart the programme.
+  Play now does not resume the interrupted item at its position; that is planned (M77).
+
+### Changed
+
+- Upgrading from rc.1 adds one column: back up PostgreSQL before the repin (see `docs/deployment.md`).
+  The first pick of a multi-source pool after the upgrade is the source after the one that played last.
+
 ## 2.1.0-rc.1 - 2026-09-28
 
 ### Fixed
