@@ -69,7 +69,8 @@ are not retroactively revoked.
   - search, pool filters, show filters, and conflict-only views in the programming editor
 - pool management with:
   - source grouping
-  - persistent round-robin playback cursors
+  - round-robin across the selected sources: the next item from each source in turn, each source oldest
+    first and looping from its own persistent position
   - optional audio-lane beds that replace program audio during scheduled pool playback
 - playout operations with:
   - FFmpeg RTMP output foundation
@@ -81,15 +82,24 @@ are not retroactively revoked.
   - Live Bridge takeover from RTMP/RTMPS or HLS inputs with controlled release back to scheduled playback
   - deterministic queue state with current, next, previous, and transition-target visibility
   - queue-aware next-asset prefetch
-  - operator queue actions for play now, move next, remove next, and replay previous
+  - operator queue actions for play now, move next, remove next, and replay previous; play now and
+    insert switch straight to the chosen item once the next playout cycle has resolved it, keep the
+    item on air until then, and never show the reconnect slate (after the insert the pool continues
+    with its next item; the interrupted item is not resumed); a move next or replay previous item plays
+    to its end
   - graceful schedule handoff so running scheduled items can finish before the next block takes over
   - safe-boundary cuepoint inserts inside schedule blocks using either pool insert assets or block-specific insert assets
   - fallback asset selection
-  - manual restart
+  - manual restart (with the relay the item on air starts again from its beginning; without it the
+    reconnect slate shows, then a running pin or insert starts again, else a queued move next, else the
+    pool's next item)
   - temporary fallback override
   - pin asset on air
   - skip current asset
-  - resume schedule control
+  - resume schedule control, which also cancels a pending or running play now / insert
+  - force reconnect and recover outputs for direct RTMP mode; with the relay force reconnect is
+    refused (the uplink reconnects by itself) and recover outputs leaves the programme alone (the
+    uplink restarts the recovered output's rendition, so the outputs sharing it reconnect once)
 - Twitch automation with:
   - title sync from active asset metadata or schedule override
   - category sync from active asset metadata or schedule override
@@ -483,7 +493,7 @@ Notes:
 
 - FFmpeg-based RTMP playout foundation
 - buffered local program-feed/uplink split for production Compose, with the uplink owning external output sessions and scheduled reconnects
-- pool-based round-robin playout selection
+- pool-based round-robin playout selection that alternates between a pool's sources, each in its own stable order
 - standby replay slate when no playable asset is available
 - scheduled 48-hour reconnect window with controlled standby mode
 - Live Bridge RTMP/HLS takeover with safe release back to the scheduled queue

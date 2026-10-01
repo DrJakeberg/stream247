@@ -28,6 +28,7 @@ import type { Writable } from "node:stream";
 import {
   DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
   addDaysToDateString,
+  decideTwitchVodPlaybackSource,
   buildOverlayScenePayload,
   type OverlayChatView,
   type OverlayEngagementView,
@@ -100,6 +101,8 @@ import {
   nextAssetProbeState,
   planAssetProbeUpdates,
   countQuarantinedBySource,
+  nextPoolRotationAsset,
+  walkPoolRotation,
   createTwitchTokenScopeCache
 } from "@stream247/core";
 import {
@@ -125,8 +128,8 @@ import {
   resolveIncident,
   updateDestinationRecord,
   updateEngagementGameRuntimeRecord,
+  updateAssetCacheRecords,
   updateAssetChapterProbeRecords,
-  updateAssetRecords,
   updatePlayoutRuntime,
   updatePoolCursor,
   updateTwitchBroadcasterConnectionRecord,
@@ -136,6 +139,7 @@ import {
   type AppState,
   type AssetRecord,
   type OutputSettingsRecord,
+  type PoolRecord,
   type StreamDestinationRecord,
   readChatInteractionSettingsRecord,
   readChatOverlayMessagesRecord,
@@ -299,10 +303,16 @@ import {
 } from "./program-feed-maintenance.js";
 import {
   decideBoundaryPlaybackInput,
+  decideCycleEndInsert,
+  decidePreviousAssetId,
   isBroadcastCoverageDown,
   isImmediateInputOpenFailure,
+  runningAssetTargetMatches,
+  selectionTakesPoolPosition,
   shouldBridgeToFallbackBeforeResolve,
-  shouldKeepRunningInput
+  shouldClearInsertOnExit,
+  shouldKeepRunningInput,
+  shouldShowReconnectSlate
 } from "./playout-boundary.js";
 import {
   PLAY_FAILURE_SKIP_MS,
@@ -331,6 +341,7 @@ import {
   type SourceSyncOutcome
 } from "./source-sync-scope.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
+import { buildFlatListingArgs, resolveListingEntryPublishedAt, type FlatListingConnectorKind } from "./source-listing.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 import { ActiveChatterRoster } from "./active-chatters.js";
 import { ChatViewerRequestPass } from "./chat-viewer-requests.js";
@@ -415,6 +426,10 @@ let lastChannelMetadataWriteAtMs = 0;
 let lastChatSettingsWrite: { emoteOnly: boolean | null; atMs: number } = { emoteOnly: null, atMs: 0 };
 const CHAT_SETTINGS_REASSERT_INTERVAL_MS = 10 * 60_000;
 let plannedStopReason = "";
+// The runtime write of the last playout exit. The exit handler fires it without waiting, so a cycle that
+// has just stopped the process (duration bound, feed watchdog) awaits it before it reads state again;
+// otherwise the read can still show the stopped item on air and its insert active (M74).
+let pendingPlayoutExitUpdate: Promise<void> = Promise.resolve();
 let uplinkProcesses: UplinkProcessRuntime[] = [];
 let uplinkReconnectUntil = "";
 const uplinkDestinationStallStartedAt: Map<string, number> = new Map();
@@ -980,9 +995,12 @@ function isAssetBlockedForAutomaticSelection(asset: AssetRecord): boolean {
 const vodCacheJobRunner = new VodCacheJobRunner({
   ensureCache: (asset, config, execText, options) => ensureTwitchVodCache(asset, config, execText, options),
   async onResult(asset, result) {
-    await updateAssetRecords([
+    // Cache columns only. `asset` is the snapshot taken when the download was requested, possibly hours
+    // ago; writing the whole record back reverted every field a sync or an operator had changed since
+    // (created_at, published_at, title, category, include-in-programming, chapters).
+    await updateAssetCacheRecords([
       {
-        ...asset,
+        id: asset.id,
         cachePath: result.cachePath,
         cacheStatus: result.status,
         cacheUpdatedAt: result.cacheUpdatedAt,
@@ -1961,9 +1979,28 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
     vodCacheJobRunner.request(asset, cacheConfig);
   }
 
-  await updateAssetRecords([updatedAsset]);
+  // Cache columns only, for the same reason as the job runner's onResult: `asset` came from the cycle's
+  // state read, and the rest of the record is not this function's to write.
+  await updateAssetCacheRecords([
+    {
+      id: updatedAsset.id,
+      cachePath: updatedAsset.cachePath ?? "",
+      cacheStatus: updatedAsset.cacheStatus ?? "",
+      cacheUpdatedAt: updatedAsset.cacheUpdatedAt ?? "",
+      cacheError: updatedAsset.cacheError ?? "",
+      updatedAt: updatedAsset.updatedAt
+    }
+  ]);
 
-  if (result.status === "ready") {
+  // The same decision the admin's Play now and Insert make before they queue an archive (core
+  // twitch-vod-playback.ts), so the operator is refused up front exactly when this would throw.
+  const playbackSource = decideTwitchVodPlaybackSource({
+    cacheReady: result.status === "ready",
+    settledTooLarge,
+    allowRemoteFallback: cacheConfig.allowRemoteFallback
+  });
+
+  if (playbackSource === "cache") {
     await resolveIncident("playout.twitch-cache.failed", "Twitch VOD cache is ready.");
     await resolveIncident("playout.asset-preparation.failed", "Asset playback input resolved successfully.");
     return {
@@ -1975,7 +2012,7 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
   // Streaming from Twitch is the configured outcome for an oversized VOD, so it does not depend on
   // the remote-fallback switch: that switch governs what happens while a cacheable VOD is still
   // downloading, which is a different question.
-  if (settledTooLarge || cacheConfig.allowRemoteFallback) {
+  if (playbackSource === "remote") {
     const media = await resolvePlayableMedia(asset.path);
     await resolveIncident("playout.asset-preparation.failed", "Asset playback input resolved successfully.");
     return {
@@ -3887,6 +3924,8 @@ type YtDlpPlaylistEntry = {
   title?: string;
   duration?: number;
   timestamp?: number;
+  // YYYYMMDD; for YouTube tabs only with `youtubetab:approximate_date` (see source-listing.ts).
+  upload_date?: string;
   url?: string;
   webpage_url?: string;
   original_url?: string;
@@ -3996,15 +4035,12 @@ function buildSourceFolderPath(connectorKind: AppState["sources"][number]["conne
   return [connectorKind, safeName || "source"].filter(Boolean).join("/");
 }
 
-async function loadFlatCollection(url: string): Promise<YtDlpPlaylistResponse> {
+async function loadFlatCollection(url: string, connectorKind: FlatListingConnectorKind): Promise<YtDlpPlaylistResponse> {
   const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
-  const output = await execFileText(ytDlpBinary, [
-    "--flat-playlist",
-    "--dump-single-json",
-    "--playlist-end",
-    process.env.SOURCE_SYNC_LIMIT || "200",
-    url
-  ]);
+  const output = await execFileText(
+    ytDlpBinary,
+    buildFlatListingArgs({ url, connectorKind, playlistEnd: process.env.SOURCE_SYNC_LIMIT || "200" })
+  );
   return JSON.parse(output) as YtDlpPlaylistResponse;
 }
 
@@ -4162,7 +4198,10 @@ async function syncYoutubePlaylistSources(): Promise<void> {
     }
 
     try {
-      const payload = await loadFlatCollection(externalUrl);
+      const payload = await loadFlatCollection(
+        externalUrl,
+        source.connectorKind === "youtube-playlist" ? "youtube-playlist" : "youtube-channel"
+      );
       const entries = payload.entries ?? [];
       let sourceAssetCount = 0;
 
@@ -4182,7 +4221,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
             folderPath: buildSourceFolderPath(source.connectorKind, source.name),
             externalId: entry.id,
             durationSeconds: entry.duration,
-            publishedAt: fromUnixTimestamp(entry.timestamp),
+            publishedAt: resolveListingEntryPublishedAt(entry),
             now
           })
         );
@@ -4359,7 +4398,7 @@ async function syncTwitchVodSources(): Promise<void> {
           errorMessage: ""
         }));
       } else {
-        const payload = await loadFlatCollection(getTwitchArchiveUrl(externalUrl));
+        const payload = await loadFlatCollection(getTwitchArchiveUrl(externalUrl), "twitch-channel");
         let sourceAssetCount = 0;
         for (const entry of payload.entries ?? []) {
           const id = entry.id ?? "";
@@ -4377,7 +4416,7 @@ async function syncTwitchVodSources(): Promise<void> {
               folderPath: buildSourceFolderPath(source.connectorKind, source.name),
               externalId: normalizedId,
               durationSeconds: entry.duration,
-              publishedAt: fromUnixTimestamp(entry.timestamp),
+              publishedAt: resolveListingEntryPublishedAt(entry),
               now
             })
           );
@@ -4559,42 +4598,22 @@ function getNextScheduleItem(state: AppState): ReturnType<typeof buildScheduleOc
   });
 }
 
-function getPoolEligibleAssets(state: AppState, poolId: string, skippedAssetId = ""): AssetRecord[] {
-  const pool = state.pools.find((entry) => entry.id === poolId);
-  if (!pool) {
-    return [];
+// What the worker may pick from a pool right now. Positions are taken in each source's full list
+// (packages/core/src/pool-rotation.ts), so an item this rejects is stepped over, never a reason to start
+// the pool again from its oldest item: the skip hold is exactly the item that just played.
+function isPoolAssetEligible(pool: PoolRecord, asset: AssetRecord, skippedAssetId: string): boolean {
+  if (pool.insertAssetId && pool.insertEveryItems > 0 && asset.id === pool.insertAssetId) {
+    return false;
   }
-  const excludedAssetIds = new Set<string>();
-  if (pool.insertAssetId && pool.insertEveryItems > 0) {
-    excludedAssetIds.add(pool.insertAssetId);
+  if (pool.audioLaneAssetId && asset.id === pool.audioLaneAssetId) {
+    return false;
   }
-  if (pool.audioLaneAssetId) {
-    excludedAssetIds.add(pool.audioLaneAssetId);
-  }
-
-  return state.assets
-    .filter((asset) => {
-      if (
-        asset.status !== "ready" ||
-        asset.id === skippedAssetId ||
-        asset.includeInProgramming === false ||
-        isAssetBlockedForAutomaticSelection(asset) ||
-        excludedAssetIds.has(asset.id)
-      ) {
-        return false;
-      }
-
-      return pool.sourceIds.includes(asset.sourceId);
-    })
-    .sort((left, right) => {
-      const publishedDelta =
-        new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
-      if (publishedDelta !== 0) {
-        return publishedDelta;
-      }
-
-      return left.title.localeCompare(right.title);
-    });
+  return (
+    asset.status === "ready" &&
+    asset.id !== skippedAssetId &&
+    asset.includeInProgramming !== false &&
+    !isAssetBlockedForAutomaticSelection(asset)
+  );
 }
 
 function lookaheadVideoTitleFromPool(state: AppState, poolId: string): string {
@@ -4618,49 +4637,51 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
   if (!pool) {
     return null;
   }
-  const eligibleAssets = getPoolEligibleAssets(state, poolId, skippedAssetId);
 
-  if (eligibleAssets.length === 0) {
-    return null;
-  }
-
-  if (!pool.cursorAssetId) {
-    return eligibleAssets[0] ?? null;
-  }
-
-  const currentIndex = eligibleAssets.findIndex((asset) => asset.id === pool.cursorAssetId);
-  if (currentIndex === -1) {
-    return eligibleAssets[0] ?? null;
-  }
-
-  return eligibleAssets[(currentIndex + 1) % eligibleAssets.length] ?? eligibleAssets[0] ?? null;
+  // The same rotation the schedule preview and the week lens walk, so the item the worker picks is the
+  // item the operator was told comes next.
+  return (
+    nextPoolRotationAsset({
+      pool,
+      assets: state.assets,
+      isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId)
+    })?.asset ?? null
+  );
 }
 
-function getPoolPlaybackQueue(state: AppState, poolId: string, skippedAssetId: string, currentAssetId = "", limit = 4): AssetRecord[] {
+/**
+ * The pool items after the current selection, for the runtime queue and its prefetch.
+ *
+ * `currentStartsPool` says the current asset is the pool pick this cycle stores as the position (a
+ * scheduled match that this cycle starts): the queue then walks on from it. For anything else (an insert,
+ * a manual next, a live bridge, an item already running that the pool never stored) the stored position
+ * stays where it is, and so does the walk, so the queue's first item is what selectPoolAsset picks next.
+ */
+function getPoolPlaybackQueue(
+  state: AppState,
+  poolId: string,
+  skippedAssetId: string,
+  options: { currentAssetId?: string; currentStartsPool?: boolean; limit?: number } = {}
+): AssetRecord[] {
   const pool = state.pools.find((entry) => entry.id === poolId);
   if (!pool) {
     return [];
   }
-  const eligibleAssets = getPoolEligibleAssets(state, poolId, skippedAssetId);
-
-  if (eligibleAssets.length === 0) {
-    return [];
-  }
-
-  const primaryReferenceId = currentAssetId || pool.cursorAssetId;
-  let startIndex = primaryReferenceId ? eligibleAssets.findIndex((asset) => asset.id === primaryReferenceId) : -1;
-  if (startIndex === -1 && currentAssetId && pool.cursorAssetId) {
-    startIndex = eligibleAssets.findIndex((asset) => asset.id === pool.cursorAssetId);
-  }
+  const currentAssetId = options.currentAssetId ?? "";
+  const picks = walkPoolRotation({
+    pool,
+    assets: state.assets,
+    isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId),
+    steps: options.limit ?? 4,
+    afterAssetId: options.currentStartsPool ? currentAssetId : ""
+  });
   const queue: AssetRecord[] = [];
-
-  for (let offset = 1; offset <= Math.min(limit, eligibleAssets.length); offset += 1) {
-    const index = startIndex === -1 ? offset - 1 : (startIndex + offset) % eligibleAssets.length;
-    const candidate = eligibleAssets[index];
-    if (!candidate || candidate.id === currentAssetId || queue.some((asset) => asset.id === candidate.id)) {
+  for (const { asset } of picks) {
+    // A small pool comes round again within the walk; the queue names each item once.
+    if (asset.id === currentAssetId || queue.some((entry) => entry.id === asset.id)) {
       continue;
     }
-    queue.push(candidate);
+    queue.push(asset);
   }
 
   return queue;
@@ -5197,12 +5218,17 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
             asset.id !== skippedAssetId
         ) ?? null
       : null;
+  // Only a Pin or Fallback that is still running selects as an operator override. There used to be a
+  // second arm, "restart requested and a desired asset": the worker writes desiredAssetId = the asset on
+  // air at every start and cycle end, so ANY action that set the restart flag re-picked the running item
+  // ahead of the insert branch below -- also the item a Skip had just held out. Under the relay that is
+  // how a Play now on the DUT (2026-10-01, v2.1.0-rc.1) stopped the archive, showed the slate and dropped
+  // the insert unlogged (M74). Restart and Hard reload still restart the running item: the scheduled
+  // branches below keep picking it.
   const desiredAsset =
     manualOverrideActive && state.playout.overrideAssetId !== ""
       ? state.assets.find((asset) => asset.id === state.playout.overrideAssetId && asset.status === "ready")
-      : state.playout.restartRequestedAt !== "" && state.playout.desiredAssetId !== ""
-        ? state.assets.find((asset) => asset.id === state.playout.desiredAssetId && asset.status === "ready")
-        : null;
+      : null;
 
   if (desiredAsset) {
     return createSelection({
@@ -5232,9 +5258,13 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     });
   }
 
+  // A queued next item takes over at a boundary, or at once when the running item was skipped. A plain
+  // Restart restarts the running item and leaves the queued one next, as Restart is documented to.
   if (
     manualNextAsset &&
-    (state.playout.currentAssetId === "" || state.playout.restartRequestedAt !== "" || state.playout.status === "standby")
+    (state.playout.currentAssetId === "" ||
+      (state.playout.restartRequestedAt !== "" && state.playout.currentAssetId === skippedAssetId) ||
+      state.playout.status === "standby")
   ) {
     return createSelection({
       asset: manualNextAsset,
@@ -5248,10 +5278,16 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   const currentScheduleItem = getCurrentScheduleItem(state);
   const currentPool = currentScheduleItem?.poolId ? state.pools.find((pool) => pool.id === currentScheduleItem.poolId) ?? null : null;
   const processRunning = Boolean(playoutProcess && !playoutProcess.killed);
+  // A Move next (or Replay previous) item plays to its end like a scheduled item. Its manual_next start
+  // clears the queued id, so from the next cycle on nothing else holds it: an item from outside the
+  // running pool's sources was cut after one cycle for the pool's next pick. Replay previous, which has
+  // an item since M74 (an insert that gave way to the pool, for one), reaches that case every time.
   const runningScheduledAsset =
     processRunning &&
     state.playout.currentAssetId !== "" &&
-    (state.playout.selectionReasonCode === "scheduled_match" || state.playout.selectionReasonCode === "graceful_handoff")
+    (state.playout.selectionReasonCode === "scheduled_match" ||
+      state.playout.selectionReasonCode === "graceful_handoff" ||
+      state.playout.selectionReasonCode === "manual_next")
       ? state.assets.find(
           (asset) => asset.id === state.playout.currentAssetId && asset.status === "ready" && asset.id !== skippedAssetId
         ) ?? null
@@ -5302,8 +5338,16 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     });
   }
 
+  // An item a Play now or Insert put on air runs on only while the insert holds it (the insert branch
+  // above). Once Resume cancels it, the pool takes back over with its own pick instead of keeping the
+  // operator's item because it happens to come from one of the pool's sources (M74); when that pick is
+  // the insert's item itself, it runs on (runningAssetTargetMatches). Before M74 the reconnect slate that
+  // every Resume put on air hid this: the item was already off air when the pool chose. A pin is not
+  // treated so: a pinned pool item whose pin runs out (or, with the relay, is resumed) plays on to its
+  // end as the pool's item, as it did before M74.
+  const runningOperatorItem = state.playout.selectionReasonCode === "operator_insert";
   const currentPoolAsset =
-    processRunning && currentScheduleItem?.poolId && state.playout.currentAssetId
+    processRunning && !runningOperatorItem && currentScheduleItem?.poolId && state.playout.currentAssetId
       ? state.assets.find(
           (asset) =>
             asset.id === state.playout.currentAssetId &&
@@ -5566,7 +5610,12 @@ function isMatchingRunningSelection(selection: SelectionResult): boolean {
     if (!desiredAsset) {
       return false;
     }
-    return playoutTargetKind === desiredKind && playoutAssetId === desiredAsset.id;
+    return runningAssetTargetMatches({
+      desiredKind,
+      desiredAssetId: desiredAsset.id,
+      runningKind: playoutTargetKind,
+      runningAssetId: playoutAssetId
+    });
   }
 
   if (desiredKind === "live") {
@@ -6238,18 +6287,16 @@ async function startOrSwitchPlayout(args: {
         desiredAssetId: nonFailureExit ? "" : playout.desiredAssetId,
         lastError: nonFailureExit ? playout.lastError : failureMessage,
         transitionState: "idle",
-        insertAssetId:
-          !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
-            ? ""
-            : playout.insertAssetId,
-        insertRequestedAt:
-          !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
-            ? ""
-            : playout.insertRequestedAt,
-        insertStatus:
-          !wasPlanned && playout.insertStatus === "active" && playout.currentAssetId === playout.insertAssetId
-            ? ""
-            : playout.insertStatus,
+        // A natural end, a crash, and since M74 a duration-bound or feed-watchdog stop end the insert;
+        // left active it would start again from 0 at the next cycle (playout-boundary.ts).
+        ...(shouldClearInsertOnExit({
+          plannedReason,
+          insertStatus: playout.insertStatus,
+          insertAssetId: playout.insertAssetId,
+          currentAssetId: playout.currentAssetId
+        })
+          ? { insertAssetId: "", insertRequestedAt: "", insertStatus: "" }
+          : {}),
         liveBridgeStatus:
           lastTargetKind === "live" && !wasPlanned && !exitedCleanly
             ? "error"
@@ -6272,6 +6319,10 @@ async function startOrSwitchPlayout(args: {
               : `Playout process ${exitReason}.`
       };
     });
+    pendingPlayoutExitUpdate = runtimeUpdate.then(
+      () => undefined,
+      () => undefined
+    );
     void runtimeUpdate
       .then(() => {
         if (isProgramFeedMode()) {
@@ -6440,7 +6491,38 @@ function emitDueAssetChapterBoundaries(asset: AssetRecord | null): void {
   }
 }
 
+// An operator insert cleared before it aired (M74). It used to vanish with a runtime message only: the
+// Play now on the DUT on 2026-10-01 left no log line and no audit row, so nobody could tell it had been
+// dropped, let alone why. An insert that did air and was then cut (Skip, a Pin) is not a drop.
+async function recordDroppedInsert(args: {
+  state: AppState;
+  reason: string;
+  selectionReasonCode: string;
+  error?: string;
+}): Promise<void> {
+  const assetId = args.state.playout.insertAssetId;
+  const title = buildAssetDisplayTitle(args.state.assets.find((asset) => asset.id === assetId) ?? null) || assetId;
+  const error = (args.error ?? "").slice(0, 300);
+  logRuntimeEvent("playout.insert.dropped", {
+    assetId,
+    reason: args.reason,
+    selectionReasonCode: args.selectionReasonCode,
+    ...(error ? { error } : {})
+  });
+  await appendAuditEvent(
+    "playout.insert.dropped",
+    `Insert ${title} was dropped before it aired (${args.reason}${error ? `: ${error}` : ""}).`
+  );
+}
+
 async function runPlayoutCycle(): Promise<void> {
+  // Taken before the first read: a process that exits after this is caught by the re-read before the
+  // selection; one that has already exited has its runtime write awaited here, so the read below does
+  // not still show it on air with its insert active (the exit handler nulls the process at once but
+  // writes the row asynchronously). A natural end just before the cycle otherwise started the finished
+  // insert again from 0 (M74 review).
+  const processRunningAtCycleStart = isPlayoutProcessRunning();
+  await pendingPlayoutExitUpdate;
   let state = await readAppState();
   // The playout and uplink modes run as their own processes, so each cycle refreshes the managed
   // config it hands to the between-cycle readers (watchdog options, feed geometry, VOD cache
@@ -6460,6 +6542,11 @@ async function runPlayoutCycle(): Promise<void> {
     }));
     state = await readAppState();
   }
+
+  // What was on air when this cycle began, before anything below stops it: the outgoing asset for
+  // Replay previous and for the VOD cache release. Re-reads further down can no longer show it.
+  const onAirAtCycleStart = state.playout.currentAssetId;
+  const lastEndedAssetId = state.playout.lastSuccessfulAssetId;
 
   // Before anything looks at the running process: an asset that has played past its known
   // duration plus margin is over, whatever ffmpeg thinks. Stopping here, ahead of the selection
@@ -6489,17 +6576,46 @@ async function runPlayoutCycle(): Promise<void> {
     await ensureProgramFeedDirectory();
     await updateProgramFeedRuntimeStatus();
   }
+  // The duration bound above or a feed watchdog (inside the feed status update) may have stopped the
+  // process, or it ended by itself since the top of the cycle. The state read at the top still shows the
+  // stopped item on air, so the insert, manual next, pool insert and cuepoint arms -- all of which wait
+  // for currentAssetId === "" -- were skipped at every duration-bound boundary (Move next waited one more
+  // item), and an insert the exit just cleared was started again. Wait for the exit's runtime write, then
+  // read what it left (M74).
+  if (processRunningAtCycleStart && !isPlayoutProcessRunning()) {
+    await pendingPlayoutExitUpdate;
+    state = await readAppState();
+  }
   let selection: SelectionResult = choosePlaybackCandidate(state);
 
   if (state.playout.insertStatus !== "" && selection.reasonCode !== "operator_insert" && selection.queueKind !== "live") {
-    await updatePlayoutRuntime((playout) => ({
-      ...playout,
-      insertAssetId: "",
-      insertRequestedAt: "",
-      insertStatus: "",
-      heartbeatAt: new Date().toISOString(),
-      message: "The pending insert is no longer available. Returning to scheduled playout."
-    }));
+    if (state.playout.insertStatus === "pending") {
+      const skippedAssetId = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
+      const insertAvailable = state.assets.some(
+        (asset) => asset.id === state.playout.insertAssetId && asset.status === "ready" && asset.id !== skippedAssetId
+      );
+      await recordDroppedInsert({
+        state,
+        // "preempted": a Pin or Fallback (the override branch) comes before the insert branch.
+        reason: insertAvailable ? "preempted" : "unavailable",
+        selectionReasonCode: selection.reasonCode
+      });
+    }
+    // Only the insert this cycle read: a Play now the admin wrote since then is the next cycle's to judge.
+    const clearedInsertAssetId = state.playout.insertAssetId;
+    const clearedInsertRequestedAt = state.playout.insertRequestedAt;
+    await updatePlayoutRuntime((playout) =>
+      playout.insertAssetId === clearedInsertAssetId && playout.insertRequestedAt === clearedInsertRequestedAt
+        ? {
+            ...playout,
+            insertAssetId: "",
+            insertRequestedAt: "",
+            insertStatus: "",
+            heartbeatAt: new Date().toISOString(),
+            message: "The pending insert is no longer available. Returning to scheduled playout."
+          }
+        : playout
+    );
     state = await readAppState();
     selection = choosePlaybackCandidate(state);
   }
@@ -6527,6 +6643,9 @@ async function runPlayoutCycle(): Promise<void> {
   }
 
   if (!destination || playoutTargets.length === 0 || !outputTarget.output) {
+    if (state.playout.insertStatus === "pending") {
+      await recordDroppedInsert({ state, reason: "destination-missing", selectionReasonCode: selection.reasonCode });
+    }
     await stopPlayoutProcess("destination-missing");
     await upsertIncident({
       scope: "playout",
@@ -6639,7 +6758,14 @@ async function runPlayoutCycle(): Promise<void> {
     state = await readAppState();
   }
 
-  if (!liveBridgeActive && (reconnectActive || state.playout.restartRequestedAt !== "")) {
+  if (
+    shouldShowReconnectSlate({
+      relayEnabled: STREAM247_RELAY_ENABLED,
+      liveBridgeActive,
+      reconnectActive,
+      restartRequested: state.playout.restartRequestedAt !== ""
+    })
+  ) {
     await writeStandbySlate(state, "reconnect");
     selection = {
       asset: null,
@@ -6695,6 +6821,7 @@ async function runPlayoutCycle(): Promise<void> {
     });
   if (selection.asset && !keepRunningInput) {
     const failedAsset = selection.asset;
+    const failedReasonCode = selection.reasonCode;
     try {
       // Reuse the input already resolved by the off-boundary queue prefetch
       // (getPlayableQueuedAssets warms queueProbeCache during prior cycles while the
@@ -6764,6 +6891,29 @@ async function runPlayoutCycle(): Promise<void> {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Twitch VOD cache preparation error.";
+      // An operator insert that cannot be prepared (an uncached Twitch VOD with remote fallback off, a
+      // YouTube item yt-dlp cannot resolve) is the insert's failure, not the programme's: the item on air
+      // stays and the insert is dropped. The recovery plan below used to take the healthy item off air
+      // for a fallback and then retry the insert every cycle (M74). With nothing on air the recovery plan
+      // still runs, so the channel is not left dark. Only a pending insert: one that is already on air
+      // and fails to prepare for a Restart is the programme's failure, and was not dropped before it aired.
+      if (
+        failedReasonCode === "operator_insert" &&
+        state.playout.insertStatus === "pending" &&
+        isPlayoutProcessRunning() &&
+        state.playout.currentAssetId !== ""
+      ) {
+        await recordDroppedInsert({ state, reason: "prepare-failed", selectionReasonCode: failedReasonCode, error: message });
+        await updatePlayoutRuntime((playout) => ({
+          ...playout,
+          ...(playout.insertAssetId === failedAsset.id ? { insertAssetId: "", insertRequestedAt: "", insertStatus: "" } : {}),
+          heartbeatAt: new Date().toISOString(),
+          message: `Insert ${buildAssetDisplayTitle(failedAsset) || failedAsset.id} could not be prepared and was dropped: ${message.slice(0, 200)}`
+        }));
+        // The next cycle selects without the insert and keeps the running item's input as it is.
+        requestImmediatePlayoutCycle("insert-prepare-failed");
+        return;
+      }
       await upsertIncident({
         scope: "playout",
         severity: "warning",
@@ -6914,6 +7064,21 @@ async function runPlayoutCycle(): Promise<void> {
             asset.id !== (isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "")
         ) ?? null
       : null;
+  // Only the cycle that starts a scheduled match stores it as the position (the cursor write further down
+  // uses the same value). An item that is already running and was never stored -- an archive another pool
+  // on the same source started, or a manual next that runs on -- leaves the position alone, and
+  // selectPoolAsset picks from there when it ends; walking on from it would warm and announce an item
+  // that is not next. A running item that IS the stored pointer gives the same walk either way.
+  const selectionTakesPosition = selectionTakesPoolPosition({
+    selectionReasonCode: selection.reasonCode,
+    selectedAssetId: selection.asset?.id ?? "",
+    runtimeCurrentAssetId: state.playout.currentAssetId,
+    runtimeReasonCode: state.playout.selectionReasonCode
+  });
+  // While a Play now / Insert or a Pin is on air the pool's next items are warmed too (from the stored
+  // position, which the operator item does not move): without it the probe of the pool's next item
+  // expired during an insert longer than five minutes, and the insert's end became a cold boundary --
+  // the local fallback bridged onto air, or a resolve with nothing on air (M74 review).
   const rawQueueAssets = prioritizeManualNextAsset(
     currentScheduleItem?.poolId &&
     (selection.queueKind === "live" ||
@@ -6921,12 +7086,17 @@ async function runPlayoutCycle(): Promise<void> {
         (selection.reasonCode === "scheduled_match" ||
           selection.reasonCode === "scheduled_insert" ||
           selection.reasonCode === "graceful_handoff" ||
-          selection.reasonCode === "manual_next")))
+          selection.reasonCode === "manual_next" ||
+          selection.reasonCode === "operator_insert" ||
+          selection.reasonCode === "operator_override")))
       ? getPoolPlaybackQueue(
           state,
           currentScheduleItem.poolId,
           isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "",
-          selection.asset?.id ?? ""
+          {
+            currentAssetId: selection.asset?.id ?? "",
+            currentStartsPool: selectionTakesPosition
+          }
         )
       : [],
     manualNextQueueAsset
@@ -7082,6 +7252,9 @@ async function runPlayoutCycle(): Promise<void> {
         message,
         fingerprint: "playout.start.failed"
       });
+      if (state.playout.insertStatus === "pending") {
+        await recordDroppedInsert({ state, reason: "start-failed", selectionReasonCode: selection.reasonCode, error: message });
+      }
       await updatePlayoutRuntime((playout) => ({
         ...playout,
         status: "degraded",
@@ -7148,6 +7321,9 @@ async function runPlayoutCycle(): Promise<void> {
         message,
         fingerprint: "playout.switch.failed"
       });
+      if (state.playout.insertStatus === "pending") {
+        await recordDroppedInsert({ state, reason: "start-failed", selectionReasonCode: selection.reasonCode, error: message });
+      }
       await updatePlayoutRuntime((playout) => ({
         ...playout,
         status: "degraded",
@@ -7213,6 +7389,18 @@ async function runPlayoutCycle(): Promise<void> {
         ? new Date().toISOString()
         : "";
 
+  const previousAssetId = decidePreviousAssetId({
+    onAirAtCycleStart,
+    lastEndedAssetId,
+    incomingAssetId: selection.asset?.id ?? "",
+    incomingIsLive: selection.queueKind === "live",
+    previousAssetId: state.playout.previousAssetId
+  });
+  const previousAssetTitle =
+    previousAssetId === state.playout.previousAssetId
+      ? ""
+      : buildAssetDisplayTitle(state.assets.find((asset) => asset.id === previousAssetId) ?? null) || previousAssetId;
+
   await updatePlayoutRuntime((playout) => ({
     ...playout,
     status:
@@ -7238,32 +7426,22 @@ async function runPlayoutCycle(): Promise<void> {
     queueVersion: incrementQueueVersion(playout.queueVersion, playout.queueItems, queueItems),
     currentAssetId: selection.asset?.id ?? "",
     currentTitle: activeQueueItem?.title || selection.liveBridgeLabel || buildAssetDisplayTitle(selection.asset) || "Replay standby",
-    previousAssetId:
-      (selection.asset && playout.currentAssetId !== "" && playout.currentAssetId !== selection.asset.id) ||
-      (selection.queueKind === "live" && playout.currentAssetId !== "")
-        ? playout.currentAssetId
-        : playout.previousAssetId,
-    previousTitle:
-      (selection.asset && playout.currentAssetId !== "" && playout.currentAssetId !== selection.asset.id) ||
-      (selection.queueKind === "live" && playout.currentAssetId !== "")
-        ? playout.currentTitle
-        : playout.previousTitle,
+    // Decided from what was on air when the cycle began: `playout` here is re-read after
+    // startOrSwitchPlayout wrote the new asset, so comparing it never found a change (M74).
+    ...(previousAssetId !== state.playout.previousAssetId ? { previousAssetId, previousTitle: previousAssetTitle } : {}),
     desiredAssetId: selection.asset?.id ?? "",
     nextAssetId: nextQueueItem?.assetId ?? prefetchedAsset?.id ?? "",
     nextTitle: nextQueueItem?.title ?? buildAssetDisplayTitle(prefetchedAsset),
     queuedAssetIds: playableQueue.map((asset) => asset.id),
     queueItems,
-    insertAssetId: selection.reasonCode === "operator_insert" && selection.asset ? selection.asset.id : playout.insertAssetId,
-    insertRequestedAt:
-      selection.reasonCode === "operator_insert" && selection.asset
-        ? playout.insertRequestedAt || new Date().toISOString()
-        : playout.insertRequestedAt,
-    insertStatus:
-      selection.reasonCode === "operator_insert"
-        ? "active"
-        : selection.lifecycleStatus === "standby" || selection.lifecycleStatus === "reconnecting"
-          ? playout.insertStatus
-          : playout.insertStatus,
+    // The insert this cycle started becomes active only if the row still names it: a Resume or a newer
+    // Play now written while this cycle ran stands (playout-boundary.ts).
+    ...decideCycleEndInsert({
+      selectionIsOperatorInsert: selection.reasonCode === "operator_insert",
+      selectedAssetId: selection.asset?.id ?? "",
+      row: { insertAssetId: playout.insertAssetId, insertRequestedAt: playout.insertRequestedAt, insertStatus: playout.insertStatus },
+      now: new Date().toISOString()
+    }),
     prefetchedAssetId: prefetchedAsset?.id ?? "",
     prefetchedTitle: buildAssetDisplayTitle(prefetchedAsset),
     prefetchedAt: computedPrefetchedAt,
@@ -7319,21 +7497,16 @@ async function runPlayoutCycle(): Promise<void> {
   // been fetched ahead of their slot and never played, including a 19.1GB download seconds after
   // the 52 minutes it took to fetch.
   const finishedAssetId =
-    selection.asset && state.playout.currentAssetId && state.playout.currentAssetId !== selection.asset.id
-      ? state.playout.currentAssetId
-      : "";
+    selection.asset && onAirAtCycleStart && onAirAtCycleStart !== selection.asset.id ? onAirAtCycleStart : "";
   await releaseWatchedVodCache(selection.asset?.id ?? "", finishedAssetId, state);
   await sweepProgramFeedSegments();
 
   emitDueAssetChapterBoundaries(selection.asset);
 
-  if (
-    currentScheduleItem?.poolId &&
-    selection.reasonCode === "scheduled_match" &&
-    selection.asset &&
-    state.playout.currentAssetId !== selection.asset.id
-  ) {
+  if (currentScheduleItem?.poolId && selectionTakesPosition && selection.asset) {
+    // The pointer and this source's position, merged under the state lock (see updatePoolCursor).
     await updatePoolCursor(currentScheduleItem.poolId, selection.asset.id, {
+      sourceId: selection.asset.sourceId,
       incrementItemsSinceInsert: true
     });
   }
@@ -7344,8 +7517,9 @@ async function runPlayoutCycle(): Promise<void> {
     selection.asset &&
     state.playout.currentAssetId !== selection.asset.id
   ) {
-    const pool = state.pools.find((entry) => entry.id === currentScheduleItem.poolId) ?? null;
-    await updatePoolCursor(currentScheduleItem.poolId, pool?.cursorAssetId ?? "", {
+    // An insert does not move the rotation: null keeps the stored pointer and positions as they are,
+    // rather than writing back the pointer from this cycle's snapshot.
+    await updatePoolCursor(currentScheduleItem.poolId, null, {
       resetItemsSinceInsert: true
     });
   }

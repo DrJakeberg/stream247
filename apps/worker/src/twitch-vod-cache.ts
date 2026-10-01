@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import { resolveVodDownloadTimeoutMs } from "./vod-download-timeout.js";
 import path from "node:path";
-import { normalizeVodCacheLimitRate, resolveVodCacheTuning, type ManagedVodCacheInput } from "@stream247/core";
+import { isTwitchVodPlaybackAsset, normalizeVodCacheLimitRate, resolveVodCacheTuning, type ManagedVodCacheInput } from "@stream247/core";
 import type { AssetRecord } from "@stream247/db";
 import { clampToCycleAwaitCeiling } from "./cycle-budget.js";
 import { DEFAULT_LOCK_STALE_MS, acquireFileLock, type FileLock } from "./file-lock.js";
@@ -170,17 +170,10 @@ export function isInternalMediaCachePath(filePath: string, mediaRoot: string): b
   return relativePath === INTERNAL_MEDIA_CACHE_DIRNAME || relativePath.startsWith(`${INTERNAL_MEDIA_CACHE_DIRNAME}/`);
 }
 
+// The rule lives in core since M74, so the admin's Play now refuses exactly the archives this treats as
+// Twitch VODs.
 export function isTwitchVodAsset(asset: Pick<AssetRecord, "path" | "externalId" | "cachePath">): boolean {
-  if (asset.cachePath) {
-    return true;
-  }
-
-  try {
-    const url = new URL(asset.path);
-    return /(^|\.)twitch\.tv$/i.test(url.hostname) && /^\/videos\/\d+/i.test(url.pathname);
-  } catch {
-    return false;
-  }
+  return isTwitchVodPlaybackAsset(asset);
 }
 
 export function isTwitchVodCacheCoolingDown(

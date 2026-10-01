@@ -8,8 +8,8 @@
  *
  *   (a) orphaned — the asset's source id matches no existing source;
  *   (b) unreferenced — no reference path in the schema names the asset. The paths, exhaustively:
- *       pools (cursor_asset_id, insert_asset_id, audio_lane_asset_id, and source_ids still
- *       listing the vanished source), schedule_blocks (cuepoint_asset_id; source_name resolves
+ *       pools (cursor_asset_id, every source_cursors position, insert_asset_id, audio_lane_asset_id,
+ *       and source_ids still listing the vanished source), schedule_blocks (cuepoint_asset_id; source_name resolves
  *       through an existing source, so it can only ever name non-orphans), curated sets
  *       (asset_collection_items), the playout runtime (current/previous/desired/next/prefetched/
  *       transition-target/manual-next/last-successful/override/insert/skip/cuepoint-last asset
@@ -36,6 +36,7 @@ export type AssetRetentionSnapshot = {
   pools: ReadonlyArray<{
     sourceIds: readonly string[];
     cursorAssetId: string;
+    sourceCursors?: Readonly<Record<string, string>>;
     insertAssetId: string;
     audioLaneAssetId: string;
   }>;
@@ -120,7 +121,12 @@ export function classifyAssetRetention(
 ): AssetRetentionClassification {
   const sourceIds = toSet(snapshot.sources.map((source) => source.id));
   const poolRuntimeIds = toSet(
-    snapshot.pools.flatMap((pool) => [pool.cursorAssetId, pool.insertAssetId, pool.audioLaneAssetId])
+    snapshot.pools.flatMap((pool) => [
+      pool.cursorAssetId,
+      ...Object.values(pool.sourceCursors ?? {}),
+      pool.insertAssetId,
+      pool.audioLaneAssetId
+    ])
   );
   const poolSourceIds = toSet(snapshot.pools.flatMap((pool) => [...pool.sourceIds]));
   const scheduleIds = toSet(snapshot.scheduleBlocks.map((block) => block.cuepointAssetId ?? ""));

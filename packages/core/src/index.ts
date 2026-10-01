@@ -2,6 +2,7 @@ export * from "./asset-chapters.js";
 export * from "./asset-probe-quarantine.js";
 import { isAssetProbeQuarantined } from "./asset-probe-quarantine.js";
 import { getAssetChapterAt, parseAssetChaptersJson } from "./asset-chapters.js";
+import { createPoolRotation, poolRotationStateOf, walkPoolRotation } from "./pool-rotation.js";
 export * from "./broadcast-channel.js";
 export * from "./twitch-accounts.js";
 export * from "./chat-emotes.js";
@@ -11,8 +12,11 @@ export * from "./chat-game-minesweeper.js";
 export * from "./chat-interaction.js";
 export * from "./managed-runtime.js";
 export * from "./overlay-layout.js";
+export * from "./pool-rotation.js";
+export * from "./programming-asset-order.js";
 export * from "./relay-ingest.js";
 export * from "./source-health.js";
+export * from "./twitch-vod-playback.js";
 
 import {
   resolveAlertsRuntimeEnabled,
@@ -886,7 +890,9 @@ export type SchedulePreviewPoolRecord = {
   id: string;
   sourceIds: string[];
   cursorAssetId?: string;
+  sourceCursors?: Record<string, string>;
   insertAssetId?: string;
+  insertEveryItems?: number;
   audioLaneAssetId?: string;
 };
 
@@ -898,6 +904,8 @@ export type SchedulePreviewAssetRecord = {
   titlePrefix?: string;
   status: string;
   includeInProgramming: boolean;
+  // Orders a source's Twitch archives, which have no date; see programming-asset-order.ts.
+  externalId?: string;
   durationSeconds?: number;
   publishedAt?: string;
   createdAt: string;
@@ -2652,46 +2660,22 @@ function getSchedulePreviewAssetDurationSeconds(asset: SchedulePreviewAssetRecor
   };
 }
 
-function sortSchedulePreviewAssets<T extends Pick<SchedulePreviewAssetRecord, "publishedAt" | "createdAt" | "title">>(
-  assets: T[]
-): T[] {
-  return assets.slice().sort((left, right) => {
-    const publishedDelta =
-      new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
-    if (publishedDelta !== 0) {
-      return publishedDelta;
-    }
-
-    return left.title.localeCompare(right.title);
-  });
-}
-
-function getSchedulePreviewEligibleAssets(
-  pool: SchedulePreviewPoolRecord | null,
-  assets: SchedulePreviewAssetRecord[]
-): SchedulePreviewAssetRecord[] {
-  if (!pool) {
-    return [];
+// What the preview may pick, the worker's own rules minus what only the worker knows (the skip hold and
+// the VOD-cache cooldown). The insert asset leaves the rotation only while it is actually inserted
+// (`insertEveryItems > 0`), as in the worker and the pool form's own help text; until M73 the preview
+// dropped it whenever it was set, so a pool with the cadence at 0 showed one item fewer than it played.
+function isSchedulePreviewAssetEligible(pool: SchedulePreviewPoolRecord, asset: SchedulePreviewAssetRecord): boolean {
+  if (pool.insertAssetId && Math.max(pool.insertEveryItems ?? 0, 0) > 0 && asset.id === pool.insertAssetId) {
+    return false;
   }
-
-  const excludedAssetIds = new Set<string>();
-  if (pool.insertAssetId) {
-    excludedAssetIds.add(pool.insertAssetId);
+  if (pool.audioLaneAssetId && asset.id === pool.audioLaneAssetId) {
+    return false;
   }
-  if (pool.audioLaneAssetId) {
-    excludedAssetIds.add(pool.audioLaneAssetId);
-  }
-
-  return sortSchedulePreviewAssets(
-    assets.filter(
-      (asset) =>
-        asset.status === "ready" &&
-        asset.includeInProgramming !== false &&
-        // An item whose source will not serve it is passed over rather than chosen and bridged again.
-        !isAssetProbeQuarantined(asset) &&
-        pool.sourceIds.includes(asset.sourceId) &&
-        !excludedAssetIds.has(asset.id)
-    )
+  return (
+    asset.status === "ready" &&
+    asset.includeInProgramming !== false &&
+    // An item whose source will not serve it is passed over rather than chosen and bridged again.
+    !isAssetProbeQuarantined(asset)
   );
 }
 
@@ -2700,14 +2684,19 @@ export function lookaheadVideoTitleFromPool(args: {
   assets: SchedulePreviewAssetRecord[];
   offset?: number;
 }): string {
-  const eligibleAssets = getSchedulePreviewEligibleAssets(args.pool, args.assets);
-  if (eligibleAssets.length === 0) {
+  const pool = args.pool;
+  if (!pool) {
     return "";
   }
 
-  const cursorIndex = args.pool?.cursorAssetId ? eligibleAssets.findIndex((asset) => asset.id === args.pool?.cursorAssetId) : -1;
   const offset = Math.max(1, Math.floor(args.offset ?? 1));
-  const asset = eligibleAssets[(cursorIndex + offset + eligibleAssets.length) % eligibleAssets.length] ?? eligibleAssets[0];
+  const picks = walkPoolRotation({
+    pool,
+    assets: args.assets,
+    isEligible: (asset) => isSchedulePreviewAssetEligible(pool, asset),
+    steps: offset
+  });
+  const asset = picks.at(-1)?.asset;
   return asset ? buildSchedulePreviewAssetTitle(asset) : "";
 }
 
@@ -2717,28 +2706,33 @@ export function buildSchedulePreviewVideoSlots(args: {
   assets: SchedulePreviewAssetRecord[];
   maxSlots?: number;
 }): SchedulePreviewVideoSlot[] {
-  if (!args.pool) {
-    return [];
-  }
-
-  const eligibleAssets = getSchedulePreviewEligibleAssets(args.pool, args.assets);
-  if (eligibleAssets.length === 0) {
+  const pool = args.pool;
+  if (!pool) {
     return [];
   }
 
   const blockSeconds = Math.max(args.block.durationMinutes, 1) * 60;
   const maxSlots = Math.max(1, Math.min(20, Math.floor(args.maxSlots ?? 20)));
-  let cursorIndex = args.pool.cursorAssetId ? eligibleAssets.findIndex((asset) => asset.id === args.pool?.cursorAssetId) : -1;
+  // Every block starts from the pool's stored position, not from where the previous block's preview
+  // ended: the same simplification as before M73, and the reason two blocks of one pool on one day
+  // preview the same first item.
+  const rotation = createPoolRotation({
+    sourceIds: pool.sourceIds,
+    assets: args.assets,
+    isEligible: (asset) => isSchedulePreviewAssetEligible(pool, asset)
+  });
+  let state = poolRotationStateOf(pool);
   let projectedSeconds = 0;
   const slots: SchedulePreviewVideoSlot[] = [];
 
   for (let safety = 0; safety < maxSlots && projectedSeconds < blockSeconds; safety += 1) {
-    const asset = eligibleAssets[(cursorIndex + 1 + eligibleAssets.length) % eligibleAssets.length] ?? eligibleAssets[0];
-    if (!asset) {
+    const pick = rotation.next(state);
+    if (!pick) {
       break;
     }
 
-    cursorIndex = eligibleAssets.findIndex((entry) => entry.id === asset.id);
+    state = pick.state;
+    const asset = pick.asset;
     const { durationSeconds, estimated } = getSchedulePreviewAssetDurationSeconds(asset);
     const visibleDurationSeconds = Math.max(1, Math.min(durationSeconds, blockSeconds - projectedSeconds));
 
@@ -2761,6 +2755,7 @@ type MaterializedPoolRecord = {
   name: string;
   sourceIds: string[];
   cursorAssetId: string;
+  sourceCursors?: Record<string, string>;
   insertAssetId: string;
   insertEveryItems: number;
   itemsSinceInsert: number;
@@ -2775,6 +2770,7 @@ type MaterializedAssetRecord = {
   title: string;
   status: string;
   includeInProgramming: boolean;
+  externalId?: string;
   durationSeconds?: number;
   publishedAt?: string;
   createdAt: string;
@@ -2879,18 +2875,6 @@ function getMaterializedAssetDurationSeconds(asset: MaterializedAssetRecord): { 
   };
 }
 
-function sortPoolAssets<T extends Pick<MaterializedAssetRecord, "publishedAt" | "createdAt" | "title">>(assets: T[]): T[] {
-  return assets.slice().sort((left, right) => {
-    const publishedDelta =
-      new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
-    if (publishedDelta !== 0) {
-      return publishedDelta;
-    }
-
-    return left.title.localeCompare(right.title);
-  });
-}
-
 function materializePoolWindow(args: {
   block: ScheduleOccurrence;
   pool: MaterializedPoolRecord | null;
@@ -2905,25 +2889,22 @@ function materializePoolWindow(args: {
     excludedAssetIds.add(args.pool.audioLaneAssetId);
   }
   const poolName = args.pool?.name || args.block.sourceName || "Unassigned pool";
-  const eligibleAssets = args.pool
-    ? sortPoolAssets(
-        args.assets.filter(
-          (asset) =>
-            asset.status === "ready" &&
-            asset.includeInProgramming !== false &&
-            !isAssetProbeQuarantined(asset) &&
-            args.pool?.sourceIds.includes(asset.sourceId) &&
-            !excludedAssetIds.has(asset.id)
-        )
-      )
-    : [];
+  const isEligible = (asset: MaterializedAssetRecord) =>
+    asset.status === "ready" &&
+    asset.includeInProgramming !== false &&
+    !isAssetProbeQuarantined(asset) &&
+    !excludedAssetIds.has(asset.id);
+  const rotation = args.pool
+    ? createPoolRotation({ sourceIds: args.pool.sourceIds, assets: args.assets, isEligible })
+    : null;
+  const hasEligibleAssets = args.pool
+    ? args.assets.some((asset) => args.pool?.sourceIds.includes(asset.sourceId) && isEligible(asset))
+    : false;
   const insertAsset =
     args.pool?.insertAssetId && args.pool.insertEveryItems > 0
-      ? eligibleAssets.find((asset) => asset.id === args.pool?.insertAssetId) ??
-        args.assets.find(
+      ? args.assets.find(
           (asset) => asset.id === args.pool?.insertAssetId && asset.status === "ready" && asset.includeInProgramming !== false
-        ) ??
-        null
+        ) ?? null
       : null;
   const cuepointOffsetsSeconds = normalizeCuepointOffsetsSeconds(args.block.cuepointOffsetsSeconds ?? [], args.block.durationMinutes);
   const cuepointAsset =
@@ -2940,12 +2921,13 @@ function materializePoolWindow(args: {
     notes.push("No pool is linked to this block.");
   }
 
-  if (eligibleAssets.length === 0) {
+  if (!hasEligibleAssets) {
     notes.push("The selected pool has no ready programming assets.");
   }
 
   let itemsSinceInsert = Math.max(args.pool?.itemsSinceInsert ?? 0, 0);
-  let currentIndex = args.pool?.cursorAssetId ? eligibleAssets.findIndex((asset) => asset.id === args.pool?.cursorAssetId) : -1;
+  // Like the slot preview, every block starts from the pool's stored position; an insert does not move it.
+  let rotationState = poolRotationStateOf(args.pool ?? {});
   const blockSeconds = Math.max(args.block.durationMinutes, 15) * 60;
   const items: MaterializedProgrammingItem[] = [];
   const queuePreview: string[] = [];
@@ -2959,7 +2941,7 @@ function materializePoolWindow(args: {
   const firedCuepointOffsets = new Set<number>();
 
   for (let safety = 0; safety < maxMaterializedItemsPerBlock && projectedSeconds < blockSeconds; safety += 1) {
-    if (eligibleAssets.length === 0) {
+    if (!rotation || !hasEligibleAssets) {
       break;
     }
 
@@ -2972,19 +2954,15 @@ function materializePoolWindow(args: {
       (Boolean(insertAsset) &&
         Math.max(args.pool?.insertEveryItems ?? 0, 0) > 0 &&
         itemsSinceInsert >= Math.max(args.pool?.insertEveryItems ?? 0, 0));
-    const nextAsset =
-      dueCuepointOffset !== null
-        ? cuepointAsset
-        : shouldInsert
-          ? insertAsset
-        : eligibleAssets[(currentIndex + 1 + eligibleAssets.length) % eligibleAssets.length] ?? eligibleAssets[0];
+    const pick = shouldInsert ? null : rotation.next(rotationState);
+    const nextAsset = dueCuepointOffset !== null ? cuepointAsset : shouldInsert ? insertAsset : pick?.asset ?? null;
 
     if (!nextAsset) {
       break;
     }
 
-    if (!shouldInsert) {
-      currentIndex = eligibleAssets.findIndex((asset) => asset.id === nextAsset.id);
+    if (pick) {
+      rotationState = pick.state;
     }
 
     const { durationSeconds, estimated } = getMaterializedAssetDurationSeconds(nextAsset);

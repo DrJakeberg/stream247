@@ -17,6 +17,8 @@ export function PlayoutActionForm(props: {
   nextAssetId?: string;
   nextAssetTitle?: string;
   overrideMode: "schedule" | "asset" | "fallback";
+  // "pending" or "active" while a Play now / Insert waits for or holds the air; Resume cancels it.
+  insertStatus?: string;
   liveBridgeStatus?: "idle" | "pending" | "active" | "releasing" | "error";
   liveBridgeLabel?: string;
   liveBridgeInputType?: "" | "rtmp" | "hls";
@@ -147,7 +149,7 @@ export function PlayoutActionForm(props: {
         </button>
         <button
           className="button button-secondary"
-          disabled={isPending || props.overrideMode === "schedule"}
+          disabled={isPending || (props.overrideMode === "schedule" && props.insertStatus !== "pending" && props.insertStatus !== "active")}
           onClick={() => startTransition(() => void runAction({ type: "resume" }))}
           type="button"
         >
@@ -324,7 +326,8 @@ export function PlayoutActionForm(props: {
       </div>
 
       {props.nextAssetTitle ? <p className="subtle">Next queued asset: {props.nextAssetTitle}</p> : null}
-      {props.previousAssetTitle ? <p className="subtle">Previous completed asset: {props.previousAssetTitle}</p> : null}
+      {/* The last item that left the air for another one -- also one a Play now or a Skip cut short. */}
+      {props.previousAssetTitle ? <p className="subtle">Previous item: {props.previousAssetTitle}</p> : null}
       {props.liveBridgeStatus && props.liveBridgeStatus !== "idle" ? (
         <p className="subtle">
           Live Bridge {props.liveBridgeStatus}

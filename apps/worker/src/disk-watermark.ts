@@ -100,6 +100,7 @@ export type DiskProtectionState = {
     id: string;
     sourceIds: readonly string[];
     cursorAssetId: string;
+    sourceCursors?: Readonly<Record<string, string>>;
     insertAssetId: string;
     audioLaneAssetId: string;
   }>;
@@ -157,6 +158,10 @@ export function collectDiskProtectedAssetIds(state: DiskProtectionState): Set<st
       const pool = state.pools.find((entry) => entry.id === block.poolId);
       if (pool) {
         add(pool.cursorAssetId);
+        // Each source's position (M73) is where that source carries on; like the pointer, it must survive.
+        for (const assetId of Object.values(pool.sourceCursors ?? {})) {
+          add(assetId);
+        }
         add(pool.insertAssetId);
         add(pool.audioLaneAssetId);
         for (const sourceId of pool.sourceIds) {

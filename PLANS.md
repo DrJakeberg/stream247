@@ -80,7 +80,13 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M68 YouTube Playback Formats | Reliability | Now | Complete | YouTube assets play again and keep playing | Playback resolves YouTube through an ordered list of format candidates (H.264+AAC split tracks, any split tracks, combined file) and moves to the next when one fails; an asset that is already on air is never re-resolved and never taken off air by a failed re-resolve; quarantine counters survive state writes; the eleven assets of source_jjwuu0f3 that failed with `--format best` on 2026-09-28 play on the DUT | `apps/worker`, `packages/db`, tests, docs | medium | repin v2.0.0 |
 | M69 Twitch Channel And Bot Accounts | UX + Data | Now | Complete | The broadcast channel and the bot/moderator account are two named things in data, worker and GUI | Settings show the broadcast channel (e.g. jimpanse247: stream key, title, category, schedule) and the bot/moderator account (e.g. 3JakeC: chat, moderation) separately and let the operator set both; an existing v2.0.0 install keeps its bot connection; features that need the channel owner say so visibly | `packages/db`, `apps/web`, `apps/worker`, tests | medium | additive migration, old columns kept |
 | M70 Twitch Account Docs | Docs | Now | Complete | Nobody mistakes the bot for the channel again | `docs/twitch-setup.md`, `docs/getting-started.md`, `docs/operations.md` and `docs/deployment.md` name both roles, what each needs, and check "is the channel live" against the channel | docs | low | — |
-| M71 Release 2.1.0 | Release | Now | Planned | Ship M68-M70 | rc on the DUT, verified, 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
+| M72 Stable Asset Order | Data | Now | Complete | A pool walks its sources in a real, stable chronological order | A source sync keeps an asset's first-seen `created_at` and a known `published_at` (fill-only) and never resets a known duration to 0; YouTube listings carry approximate publish dates (`youtubetab:approximate_date`); Twitch archives without dates order by their numeric VOD id; one shared comparator replaces the hand-copied sorts; cache writes touch only cache columns, so a long download no longer reverts other fields | worker, db, core, tests, docs | medium | revert commit; existing rows keep their values |
+| M73 Pool Source Alternation | Behavior | Now | Complete | A pool with several sources alternates between them (owner decision 2026-10-01) | A multi-source pool picks Twitch -> YouTube -> Twitch ... in `sourceIds` order, each source walking its own items oldest first and looping; per-source positions persist in `pools.source_cursors` (baseline, ALTER and migration); a single-source pool walks one source as before; a skipped, quarantined or cooled-down item no longer resets the rotation to the head, and a vanished position restarts only its own source at its oldest item; worker selection, queue, lookahead, schedule preview and week lens use one rotation function; pool form and docs say so | core, worker, db, web, tests, docs | medium | revert commit; the column stays and is ignored |
+| M74 Operator Play Now | Reliability | Now | Complete | Play now and Insert put the chosen item on air, without a standby slate | Play now / Insert switch straight to the insert at the next cycle and never set the restart flag; the legacy "restart + desired asset" override branch is gone, so no action re-picks the running or a skipped item; the reconnect standby slate appears only without the relay; a dropped insert is logged; an insert stopped by its duration bound or a feed watchdog is cleared instead of replaying; the cycle re-reads state after a duration-bound stop, so insert and Move next fire at that boundary; an insert that cannot be prepared (e.g. an uncached Twitch VOD) never takes the running item off air, and Play now refuses such an archive up front; Recover outputs under the relay no longer restarts the programme and Force reconnect is refused there (the uplink reconnects by itself), and Pin, Fallback and Resume switch there without a restart; Resume cancels a pending or running insert; Replay previous has an item, and a Move next or Replay previous item plays to its end; Skip continues after the skipped item instead of the pool head (with M73); after the insert the pool continues with its next item (resuming the interrupted item at its position is a follow-up) | worker, web, tests, docs | medium | revert commit |
+| M71 Release 2.1.0 | Release | Now | Planned | Ship M68-M70 and M72-M74 | rc on the DUT, verified (YouTube on air via Play now), 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
+| M75 Source Circuit Breaker | Reliability | Next | Planned | A broken source costs one incident, not one failed boundary per item (competitor comparison 2026-10-01; owner decision) | When probes fail on 3 distinct items of the same source with no success in between, the source is held out of the pool rotation (M73) for a cooldown that doubles up to a cap; one incident per source instead of per-item noise; after the cooldown one item is probed (half-open) and a success closes the breaker and resolves the incident; per-item quarantine and the operator's `includeInProgramming` stay untouched; a pool whose sources are all held falls back as today; the source page shows the breaker state; any persisted state ships in the baseline, the ALTER block and a migration | core, worker, db, web, tests, docs | medium | revert commit; the stored state is ignored |
+| M76 As-Run Log | Ops + Data | Next | Planned | Answer "what was on air at 19:38" from one table instead of container logs (competitor comparison 2026-10-01; owner decision) | Every playout start and end writes one row: UTC start and end, block, pool, source, asset, title, selection reason, queue kind, input kind (cache, remote, YouTube pair, live), format id, planned and aired seconds, end reason (natural end, duration bound, switch, skip, failure); bounded retention; a read-only view in the console and an API route; docs/operations.md uses it in the runbooks; the table ships in the baseline, the ALTER block and a migration | worker, db, web, tests, docs | low | revert commit; the table stays unused |
+| M77 Resume Interrupted Item | Playout | Later | Deferred | Continue an interrupted item at its position instead of throwing it away (competitor comparison 2026-10-01) | Owner deferred this on 2026-10-01 until after M75 and M76: start only when the owner asks. Scope when started: persisted offset, `-ss` for cached Twitch VODs first, duration bound and chapter windows offset-aware, soaked on the DUT because it touches the seam chain | worker, db, tests | high | revert commit |
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
 
@@ -3775,3 +3781,357 @@ follow; the env examples drop three variables no code reads and name `TWITCH_BRO
   `status=ok broadcastReady=true`, uplink baseline 3931.
 - Open: soak result; on-air YouTube pair (`playout.process.start` with `formatCandidate: split-*`); then
   2.1.0 pins, CHANGELOG, tag and repin.
+
+## M72 Stable Asset Order
+
+Measured on the DUT 2026-10-01 (v2.1.0-rc.1, read-only): every remote asset had `published_at = ''`, and
+`created_at` was rewritten to "now" by every source sync (all 46 Twitch archives shared one value, all 11
+YouTube items another). Pools sorted by `publishedAt || createdAt`, then title, so a pool really played each
+source block alphabetically, and two equal titles fell to the database's read order. The listings explain
+the missing dates: a flat YouTube channel/playlist tab reports a date only with
+`--extractor-args youtubetab:approximate_date` (e.g. `20260701`; coarse, "N months ago", recomputed on every
+sync); a flat Twitch archive entry has none, but Twitch VOD ids are one global increasing sequence. A third
+writer reverted fields too: both VOD cache writes in the worker wrote a whole asset snapshot back, taken
+before a download that can run for hours.
+
+Done:
+
+- `replaceAssetsForSourceIds` reads `created_at`, `published_at` and `duration_seconds` of the existing rows
+  and carries them through `chooseStoredAssetSyncFields`: first-seen `createdAt` wins, `publishedAt` is
+  fill-only (the approximate YouTube date drifts daily; a stable order needs the first observed value), a
+  listing's duration wins only when it is > 0. Title and category behaviour is unchanged.
+- `updateAssetCacheRecords` writes only `cache_path`, `cache_status`, `cache_updated_at`, `cache_error` and
+  `updated_at`; the job runner's `onResult` and `resolveAssetPlaybackInput` use it. The worker no longer
+  calls `updateAssetRecords` at all; the only other references are the unused re-export in
+  `apps/web/lib/server/state.ts` and a comment in `scripts/seed-playout-runtime.mjs`.
+- `apps/worker/src/source-listing.ts`: `buildFlatListingArgs` adds `youtubetab:approximate_date` for
+  `youtube-channel` and `youtube-playlist` only (Twitch archive args unchanged); `resolveListingEntryPublishedAt`
+  takes `timestamp`, else `upload_date` as UTC midnight (an impossible day such as 20260231 is no date).
+  With `approximate_date` yt-dlp sets `timestamp` itself (`_parse_time_text`, rounded to the unit of the
+  relative text), so the `upload_date` branch is only a fallback for entries that carry just the day.
+- `compareProgrammingAssets` (`packages/core/src/programming-asset-order.ts`) compares one fixed key:
+  `publishedAt || createdAt` oldest first (unparsable last instead of NaN); source id; within that source
+  items with a numeric VOD id (leading `v` stripped) first, by id as digit strings, so 2581000000 follows
+  999999999 and 20-digit ids still order; title; asset id. Review caught the first draft, which compared
+  VOD ids only for same-source pairs and titles for the rest: with equal dates that cycles, and the six
+  input orders of three assets gave three different sorts. Equal dates across sources are real (one
+  Twitch sync pass stamps every channel with the same `now`; the 46 DUT archives share one `created_at`)
+  and the input order is `ORDER BY updated_at DESC`, reshuffled by every sync and cache peek. It replaces
+  the schedule-preview and materialized-window sorts in core and the inline sort of
+  `getPoolEligibleAssets`; the recovery ladder keeps `fallbackPriority` first and uses it for the tail.
+- Recovery ladder: within one fallback priority a library file (a plain path) comes before a remote item.
+  Before 2.1 that held by accident, because every sync restamped YouTube items with the sync time; with
+  real YouTube dates months in the past an uncached Twitch VOD would otherwise be bridged by a YouTube
+  item that needs yt-dlp first on a channel without a global fallback.
+- Tests: `asset-sync-fields-retention`, `source-listing` (args, date fallback, call-site wiring),
+  `programming-asset-order` (order, ids, cross-source, tiebreaks, one result for every input permutation
+  of two same-date Twitch channels with crossing titles and of a source mixing numeric and missing ids,
+  both failing on the first draft, preview slots, every sort site), `playout-recovery` (library file
+  before an older-dated YouTube item at equal priority, operator priority still wins),
+  `vod-cache-write-wiring`; integration: a re-sync with a fresh `createdAt`, empty `publishedAt` and
+  duration 0 keeps 2026-09-01, the publish date and 3600 s (fails without the carry-over); the cache writer
+  changes nothing but the cache columns and `updated_at`. No existing expectation had to change.
+- Docs: architecture (what a sync keeps, how coarse the YouTube dates are, the order key, the recovery
+  tier), getting-started, deployment (*Upgrading To 2.1*: the order and so the next item change once;
+  rows already stored keep their last 2.0 sync time as first-seen date; a returning Twitch archive is
+  first seen again).
+- `pnpm validate` green (1939 unit, 50 integration tests, build).
+
+Follow-ups:
+
+- Operator edits of title and category are still overwritten by every sync (the listing's values win in
+  `replaceAssetsForSourceIds`).
+- YouTube approximate dates are YouTube's relative-age buckets ("3 months ago", "1 year ago") counted back
+  from the sync time; fill-only freezes the bucket of the first post-deploy sync, so all 11 existing DUT
+  YouTube items sit in a few shared month or year buckets and order by title inside each. Keeping the
+  earliest observed value instead would refine the buckets over time (each observation is an upper bound
+  on the real date, so the value only ever moves earlier as an item crosses into an older bucket); the
+  listing position (newest first) would be a better tiebreak inside a bucket.
+- Twitch archives order by first-seen time, by VOD id only among archives first seen together: an archive
+  that drops out of one listing and returns, or older archives that appear when `SOURCE_SYNC_LIMIT` is
+  raised, are first seen again and play after the newer ones. Once M73 walks each source on its own, one
+  source's numeric-id items can order by VOD id before the date (transitive inside a single source).
+- The source detail page sorts its asset list by `publishedAt || updatedAt`, and `updatedAt` is rewritten
+  on every sync.
+- `updateAssetRecords` has no caller left; remove it with its web re-export.
+- On the DUT after the rc: after two syncs, `published_at` filled for the YouTube source and unchanged on
+  the second sync; `created_at` unchanged across syncs; the next Twitch archive in a pool is the next VOD id.
+
+## M73 Pool Source Alternation
+
+Owner decision 2026-10-01: a pool with several sources alternates Twitch -> YouTube -> Twitch ..., each
+source chronological. Measured on the DUT the same day (read-only): pool "TwitchYoutube"
+(`pool_qr2cr9q9`) lists `source_e2au8vv3` (twitch-channel, 46 archives of 5-11 h) and `source_jjwuu0f3`
+(youtube-channel, 11 videos of 4-60 min), its `cursor_asset_id` on a Twitch archive; pool "Twitch"
+(`pool_wonm9bow`) has only the Twitch source. A pool was ONE list in the M72 order plus ONE pointer, so
+the sources played as blocks (a YouTube item came back after all 46 archives, 10 to 21 days of airtime),
+and `selectPoolAsset` fell back to the head whenever the pointer was not in the filtered list: on every
+operator or chat Skip (the skip hold is the pointer itself), on quarantine, a VOD-cache cooldown,
+`includeInProgramming = false`, a vanished asset or a blueprint import. There is no play history.
+
+Done:
+
+- `packages/core/src/pool-rotation.ts` (exported): `createPoolRotation`, `nextPoolRotationAsset`,
+  `walkPoolRotation`, `parsePoolSourceCursors`, `poolSourcePositions`. Each source is a lane sorted with
+  `sortProgrammingAssets`; positions are taken in the lane's full list (every existing asset of the
+  source), picks only among eligible ones. The next lane is the one after the source of
+  `cursorAssetId` (looked up among all assets, else through the `sourceCursors` entry that names it) in
+  `sourceIds` order that has something eligible; an unknown last source starts at the first such lane.
+  Within the lane: after the pointer when it belongs to that source, else after `sourceCursors[source]`,
+  stepping forward cyclically; no or a vanished anchor -> the oldest eligible item. The pointer is the
+  last started item, so it always says where its own source stands: it seeds pools from before the map,
+  and it overrides an entry that an image older than 2.1 left stale (a rollback moves only the pointer;
+  the spec's order, map first, would then replay every archive the older image aired in between). 2.1
+  writes pointer and entry together, so the two orders agree on everything 2.1 writes itself. Every pick returns the advanced state, so k steps equal k single picks with the
+  state stored in between. Pure: no clock, no randomness, input order irrelevant (sort is total).
+- Storage: `pools.source_cursors TEXT NOT NULL DEFAULT '{}'` in the baseline `CREATE TABLE`, the ALTER
+  block, migration `20261001_001_pool_source_cursors` and `schema-manifest.ts` (regenerated). `PoolRecord`
+  has `sourceCursors`; read through `parsePoolSourceCursors` (invalid JSON, non-objects and non-string or
+  empty values contribute nothing); `createPoolRecord`, the row mapper and `persistState` carry it.
+- `updatePoolCursor(poolId, assetId | null, { sourceId, ... })`: one serialized read-modify-write of
+  pointer, map and `items_since_insert`. The previous pointer becomes its source's entry when that source
+  is still in the pool (the rule the rotation reads, so the first post-upgrade write does not forget where
+  Twitch stood, and a stale entry left by a rollback is repaired on the next write); `sourceId` sets the started item's source (ignored for a source
+  not in the pool). `null` (the insert path) touches only the insert counter.
+- `updatePoolRecord` takes `PoolSettingsUpdate` and never writes `cursor_asset_id`, `items_since_insert`
+  or `source_cursors` from the caller; it keeps the stored map minus the sources the edit removed. The
+  pools PUT route passes settings only (it used to spread the pool it had read). The blueprint import
+  resets `sourceCursors` with `cursorAssetId`.
+- Worker: `isPoolAssetEligible` keeps the worker-only rules (skip hold, VOD-cache cooldown and quarantine
+  via `isAssetBlockedForAutomaticSelection`, insert asset only when `insertEveryItems > 0`, audio lane);
+  `selectPoolAsset` = `nextPoolRotationAsset`; `getPoolPlaybackQueue` = `walkPoolRotation`, walking on
+  from the selection only when this cycle starts it as a `scheduled_match` (the cursor write's own test),
+  else from the stored position. So after a manual next, an insert, or while an item runs that this pool
+  never stored (an archive pool "Twitch" started that runs into a TwitchYoutube block; both pools share
+  the Twitch source), the queue and its prefetch name the pool's real next pick instead of the items
+  after the running one. A `scheduled_match` start of a new item writes the pointer with
+  `sourceId`; the `scheduled_insert` path calls `updatePoolCursor(poolId, null, { resetItemsSinceInsert })`
+  instead of writing back the snapshot's pointer.
+- Core previews: `lookaheadVideoTitleFromPool` (k-th pick), `buildSchedulePreviewVideoSlots` and
+  `materializePoolWindow` walk the rotation; the materializer's insert-every-items simulation is
+  unchanged and an insert does not advance the rotation. The preview now excludes the insert asset only
+  when `insertEveryItems > 0`, like the worker and the pool form's help (before, a pool with the cadence at
+  0 previewed one item fewer than it played). Preview blocks still start from the stored position.
+- Retention: `classifyAssetRetention` and `collectDiskProtectedAssetIds` protect every `sourceCursors`
+  value like the pointer.
+- Wording: pool form (*Included sources* InfoTip, the note under the form), schedule page (*Video-level
+  timeline*), asset page (*Program context* marks the pool's last started item and where each source
+  stands, through `poolSourcePositions`), README, getting-started, architecture (*Scheduling*),
+  operations (*skip current asset*), deployment (*Upgrading To 2.1*: the new column and the backup in the
+  intro, *Item order* per source, Pool source alternation with the vanished-item and rollback notes;
+  capability notes).
+- Tests: `pool-rotation` (T, Y, T, Y with unequal sizes each looping; three sources; one source continues
+  after the cursor; skip, quarantine and cooldown stepped over without a head reset; a source with
+  nothing eligible passed over, also as the last source; a vanished anchor restarts its source at the
+  oldest while the alternation goes on; the seed from `cursorAssetId` with an empty map, including the
+  DUT shape of 46 same-date archives and 11 YouTube items, where the next pick after a Twitch cursor is
+  the oldest YouTube item; the pointer overrides a stale entry of its own source; the queue walks from
+  the stored position while an item the pool never stored runs on (its first item is the worker's pick);
+  `poolSourcePositions`; k steps equal k single picks; one
+  walk for all 120 input orders; defensive parsing; previews and the materialized week alternate with
+  inserts not advancing; the insert asset at cadence 0 stays in the preview; wiring of worker selection,
+  queue, eligibility and both cursor writes, and of the three core previews), `pools-api` (the PUT writes
+  no position fields), `asset-retention` and `disk-watermark` (a source position protects its asset;
+  the retention case fails without the change), `channel-blueprints` (import resets the map),
+  `programming-asset-order` (its wiring test now looks for the sort inside the rotation); integration
+  `db-roundtrip`: a pools table without the column (dropped, migration row deleted, a pool row inserted)
+  gets it with default `'{}'` and the old row reads `{}`; cursor writes merge per source and keep the
+  old pointer as its source's entry, also over a stale one, `null` changes only the counter, and a whole-state write keeps the map; a pool edit from
+  a snapshot taken before the worker advanced keeps pointer, map and counter and drops only a removed
+  source. No existing expectation in `schedule-preview` or `ops-state` had to change (their pools have
+  one source).
+- `pnpm validate` green (1964 unit, 54 integration tests, build) after the review fixes.
+
+Review (ten findings, four lenses): fixed the order of pointer and map (above; a rollback would have
+replayed days of archives), the queue walking on from an item the pool never stored, the 2.1 upgrade
+intro ("no schema") and its pool-wide *Pool order* bullet, the schedule-page and asset-page wording, the
+acceptance text of the row (a vanished position restarts its own source, as specified and documented;
+the row said it no longer resets), and a wrong follow-up (`writeAppState` has no production caller, the
+blueprint import uses `updateAppState`, so no whole-snapshot write can roll back a position today).
+Deferred: the same archive airing twice when two pools share a source (follow-up below, older than M73).
+
+DUT check after deploy (read-only):
+
+- `SELECT column_name FROM information_schema.columns WHERE table_name = 'pools' AND column_name = 'source_cursors';`
+  returns one row and `schema_migrations` has `20261001_001_pool_source_cursors`.
+- Before the first pick: `SELECT id, cursor_asset_id, source_cursors FROM pools;` shows `{}`. At the next
+  boundary of a TwitchYoutube block the item started is the oldest YouTube item of `source_jjwuu0f3`
+  (`publishedAt || createdAt`, then the M72 tiebreaks), and `source_cursors` then names both the previous
+  Twitch archive (`source_e2au8vv3`) and that YouTube item; the item after it is the Twitch archive after
+  the old cursor. Pool "Twitch" keeps playing its archives in order.
+- A Skip during a Twitch archive starts the next YouTube item, not the pool's oldest item.
+- Editing the pool (e.g. its name) leaves `cursor_asset_id`, `source_cursors` and `items_since_insert`
+  unchanged.
+
+Follow-ups:
+
+- Preview blocks start from the stored position, so two blocks of one pool on one day preview the same
+  first items; chaining the preview state from block to block would show the real sequence.
+- An item started by hand (manual next) does not move the pool's position, so the pool carries on as if
+  it had not played; M74 reworks Play now and should store the position when a pool item starts by
+  hand, or say it does not.
+- Two pools that share a source (DUT: "Twitch" and "TwitchYoutube") keep separate positions in it and
+  walk it at different rates. When an archive one pool started ends inside the other pool's block and
+  the other pool stands just before it, that pool picks the same archive again at once. Older than M73
+  (one shared list had the same alignment); excluding the item that just finished, or one channel-wide
+  position per source, is a product decision for its own milestone.
+- A vanished position cannot be continued after, because the item is gone with its order key; storing
+  the order key of the last started item per source next to its id would let the source resume after
+  it instead of at its oldest item.
+- After a rollback to an image older than 2.1 and a re-upgrade, the cursor's own source carries on after
+  the cursor, but the pool's other sources keep their 2.1 positions (or start at their oldest item if the
+  older image emptied the map), so items the older image aired from them can repeat (*Upgrading To 2.1*).
+- The pool form keeps the source order alphabetical by name (the select's order); a pool cannot yet
+  choose which source plays first other than by naming.
+
+## M74 Operator Play Now
+
+Production evidence (DUT, v2.1.0-rc.1, relay on, 2026-10-01 00:12:39Z): an operator Play now of a
+YouTube item while a Twitch archive ran as `scheduled_match`. The worker stopped the archive
+(`plannedReason: restart-requested`), put the reconnect standby slate on air for 18 s
+(`reasonCode: scheduled_reconnect`), dropped the insert without a log line or an audit row, and then
+started a different pool item from offset 0. Mechanism, verified by two independent code readings:
+`play_now`/`trigger_insert` set `status: recovering` and `restartRequestedAt`; a legacy branch of
+`choosePlaybackCandidate` ("restart requested and `desiredAssetId`", from 865f3ec) selected the
+desired asset as `operator_override` ahead of the insert branch, and the worker writes
+`desiredAssetId` = the asset on air at every start and cycle end, so any restart flag re-picked the
+running item; a pending insert was cleared whenever the selection was not `operator_insert`, with a
+runtime message only; the slate arm `restartRequestedAt !== ""` (42adb20) had no relay guard, unlike
+`reconnectActive`/`reconnectDue` (4043eb6); after the slate `currentAssetId` was empty, so the pool
+took its next pick (nothing seeks, nothing resumes). The review found five more defects a working Play
+now exposes: an active insert stopped by its duration bound or a feed watchdog stayed active and
+replayed from 0; after a duration-bound stop the cycle selected from the state read before the stop,
+so the insert, Move next, pool-insert and cuepoint arms (all wait for `currentAssetId === ""`) were
+skipped at that boundary; an insert that could not be prepared (an uncached Twitch archive with
+remote fallback off) took the healthy item off air through the recovery plan and was retried every
+cycle; `previousAssetId` was never written (the cycle end compared the row startOrSwitchPlayout had
+already moved on); Recover outputs and Force reconnect set the restart flag, which under the relay
+reconnects nothing (the uplink owns the destinations and never reads the flag) and, without the slate,
+would replay the running 5-11 h archive from 0.
+
+Done:
+
+- Web (`apps/web/lib/server/broadcast.ts`): Play now / Insert write only `insertAssetId`,
+  `insertRequestedAt`, `insertStatus: pending` (and clear Move next, as before) plus message and audit;
+  no restart flag, no `recovering`. They refuse a Twitch archive the playout cannot start, by the
+  playout's own rule, now in core `twitch-vod-playback.ts` (`isTwitchVodPlaybackAsset`,
+  `decideTwitchVodPlaybackSource`: cached, or too large to cache, or remote fallback on; the worker's
+  `isTwitchVodAsset` and `resolveAssetPlaybackInput` use the same functions). The admin cannot look at
+  the cache file, so it reads `cacheStatus === "ready"`, which the playout and the download job write.
+  The relay flag comes from `STREAM247_RELAY_ENABLED` (deploy-time env shared by every container, as
+  `readiness.ts` reads it). Under the relay Force reconnect is refused (no field the uplink reads exists
+  to route it to; the uplink reconnects by itself), Recover outputs marks the staged outputs ready and
+  writes nothing to the playout runtime, and Resume, Pin and Fallback write without the restart flag
+  (the override branch and the ordinary switch change the item; a Pin of the item on air keeps it
+  running). Direct mode keeps all of them as they were. Resume schedule is enabled while an insert is
+  pending or active. Play now / Insert also refuse what the worker would drop at once: the item on air
+  (as Move next does), any item while a Pin or Fallback holds the air, an item under a skip hold. A
+  pending insert that a newer Play now replaces or Resume cancels gets a `playout.insert.dropped` audit
+  row (`replaced`, `cancelled`).
+- Worker selection: the legacy branch is gone; the override branch (`overrideUntil`) stays. A queued
+  Move next starts at once on a restart only when the running item was skipped (Skip), so under the
+  relay Restart restarts the running item and leaves Move next next (without the relay the slate ends
+  the item and Move next follows it). A running item whose runtime reason is `operator_insert` is no
+  longer kept as the pool's current item once Resume cancels the insert: Resume of an in-pool insert
+  (the DUT case, a YouTube item of the TwitchYoutube pool) hands back to the pool's pick; when the pick
+  is the insert's own item it runs on (`runningAssetTargetMatches`: an item on air as an insert matches
+  a selection of the same asset; comparing the kind too restarted it from 0) and takes the pool
+  position (`selectionTakesPoolPosition`; it used to play a third time). A pin is not treated so: a
+  pinned pool item plays on as the pool's item when the pin runs out, as before. A running `manual_next`
+  item is kept like a graceful handoff, so a Move next or Replay previous item from outside the pool's
+  sources plays to its end (it was cut after one cycle for the pool's pick). While an operator insert or
+  a pin is on air, the pool's next items are warmed (`rawQueueAssets`), so the insert's end is not a
+  cold boundary.
+- Slate: `shouldShowReconnectSlate` (playout-boundary.ts) = no live bridge and (reconnect window, or
+  restart flag without the relay).
+- Dropped inserts: `recordDroppedInsert` logs `playout.insert.dropped` `{ assetId, reason,
+  selectionReasonCode, error? }` and an audit row, for every insert cleared before it aired:
+  `preempted`/`unavailable` (the clear after selection), `destination-missing`, `prepare-failed`,
+  `start-failed` (start and switch). An insert that aired and was then cut is not a drop.
+- Exit handler: `shouldClearInsertOnExit` also clears an active insert on a planned `duration-bound`,
+  `feed-stalled` or `feed-audio-stalled` stop (`ITEM_ENDING_STOP_REASONS`). The handler keeps its
+  runtime write in `pendingPlayoutExitUpdate`.
+- Re-read: the cycle notes whether a process runs and awaits `pendingPlayoutExitUpdate` before its
+  first read, so an exit just before the cycle is in the state it reads; when the process that ran at
+  that point is gone before the selection (duration bound, feed watchdog inside the feed status update,
+  or its own end), it awaits the exit's write again and re-reads, so the arms fire at that boundary and
+  a cleared insert is not started again.
+- Cycle end: `decideCycleEndInsert` marks the started insert active only while the row still names it,
+  so a Resume or a newer Play now written during a long cycle (an inline resolve) stands; the clear
+  after selection clears only the insert the cycle read.
+- Insert preparation failure with an item on air (process running, `currentAssetId` set) and the
+  insert still pending: the insert is dropped (`prepare-failed`, with the error), no incident, no
+  recovery plan, an immediate cycle; the item on air keeps its input. With nothing on air, or for an
+  insert already on air that fails to prepare for a Restart, the recovery plan runs as before.
+- Previous asset: `decidePreviousAssetId` from the asset on air at the cycle's start, else
+  `lastSuccessfulAssetId` (what a natural end just cleared); a restart or a slate keeps the old value.
+  The VOD cache release uses the same cycle-start asset as its finished asset, which the re-read would
+  otherwise have lost at a duration-bound boundary. Under the relay a Skip or a Play now therefore
+  releases the outgoing archive's cache like an ordinary end (the slate used to hide it from the
+  release), unless M62 keeps it for a pool scheduled within the retention horizon.
+- Wording: operations (*Operator controls, with and without the relay*: every control in both modes,
+  the drop reasons, that Play now neither resumes the interrupted item (M77) nor moves a pool's
+  position; *Destination cooling down or staged*), README (operator queue actions, restart, resume,
+  force reconnect / recover outputs), architecture (*Operator Controls*), deployment (*Upgrading To
+  2.1*, *Operator controls* bullet; capability notes), control room (*Previous completed asset* is now
+  *Previous item*: it also names an item a Play now or a Skip cut short).
+- Tests: `broadcast-actions` (new; what Play now, Insert, Force reconnect, Recover outputs, Resume,
+  Restart, Hard reload, Skip, Pin and Fallback write in relay and direct mode; the archive refusal with
+  cached, too-large, managed and env remote fallback, managed Off over env On; the refusals of the item
+  on air, during a Pin or Fallback and under a skip hold; the `replaced` and `cancelled` drop rows),
+  `playout-boundary` (slate, insert-clear, previous-asset, running-target, pool-position and cycle-end
+  insert tables),
+  `twitch-vod-playback` (new; the decision, the archive rule shared by admin and playout, and its use
+  in `resolveAssetPlaybackInput`), `operator-play-now-wiring` (new; the selection arms, the slate call
+  and the relay guards, crash-loop reset and restart block, the re-read order, every drop site, the
+  prepare-failure early return before the incident and the recovery plan, the previous-asset and cache
+  release inputs, the exit handler, the running Move next item, the warmed queue, the cycle-end insert),
+  `broadcast-control-room` (Resume enabled for an insert). `youtube-playback-wiring` is unchanged and
+  green; the M73 wiring in `pool-rotation` now pins the shared `selectionTakesPoolPosition` at both
+  sites.
+- `pnpm validate` green (2088 unit, 54 integration tests, build), also after the review fixes.
+
+Unchanged behaviour, traced through `choosePlaybackCandidate` (index.ts cannot be imported in a unit
+test, so the arms are pinned by source text): Restart / Hard reload under the relay select the running
+pool item through `currentPoolAsset` (a graceful handoff through `runningScheduledAsset`, a pin through
+the override branch, an insert through the insert branch) and the restart block stops and starts it
+from its beginning; without the relay the slate shows and the selection then runs with nothing on air:
+the running pin, else the running insert from its beginning, else a queued Move next, else the pool's
+next item (a pool item on air is not restarted, as before). Before M74 a direct-mode Restart during an
+insert ended the insert (the legacy arm re-picked it as an override and the insert was cleared), but no
+Play now ever reached the air then, so the replay after the slate is new only in name. Skip holds the item out of `currentPoolAsset` and the rotation, so the pool continues after it.
+Pin and Fallback write `overrideAssetId`/`overrideUntil` and win the override branch. The crash-loop
+reset and the direct-mode `reconnectDue` set the restart flag after or before the slate decision
+exactly as before.
+
+DUT check after deploy (read-only, `CHECK_BASE_URL=http://127.0.0.1:3000` where needed):
+
+- Play now of a short YouTube item while an archive runs: once the next cycle has resolved the item
+  (within one cycle if it was played recently, a minute or more for a cold yt-dlp resolve; the archive
+  stays on air meanwhile) the playout log has
+  `playout.process.exit` for the archive with `plannedReason: switch` and `playout.process.start` with
+  `reasonCode: operator_insert` and `formatCandidate: split-*`; no `scheduled_reconnect` start and no
+  slate. The item plays to its end, the next start is `scheduled_match` (the pool's next item after the
+  archive; with M73 that is the next source's next item), and `audit_events` has one
+  `playout.play-now.requested` row and no `playout.insert.dropped`.
+- After the switch the runtime row's `previous_asset_id` names the archive; Replay previous is enabled.
+- Force reconnect answers with the uplink refusal; Resume during a Play now returns to the pool.
+- Play now of an archive that is not downloaded is refused in the control room (remote fallback off).
+
+Follow-ups:
+
+- Resume the interrupted item at its position (M77, deferred by the owner).
+- Skip during an active pin: the override branch ignores the skip hold, so Skip -- and a passed chat
+  skip vote, which viewers can repeat -- restarts the pinned item (from 0 under the relay) instead of
+  skipping it. Needs an owner decision: refuse the skip, or end the pin. Documented in operations.
+- Move next is cleared by Play now; keeping it queued behind the insert would need the insert branch
+  and the manual-next arm to agree on an order.
+- An insert on air survives a Live Bridge takeover (the clear after selection skips a live selection)
+  and a direct-mode planned reconnect (`scheduled-reconnect` is not an item-ending stop), and starts
+  again from 0 afterwards. Older than M74; the `shouldClearInsertOnExit` table pins today's choice.
+- The admin reads the archive's cache state, not the file: an evicted cache that still says `ready`
+  passes the refusal, and the worker then drops the insert (`prepare-failed`, logged).
+- The Force reconnect and Recover outputs buttons do not know the relay mode; the refusal explains it,
+  hiding or relabelling them needs the relay flag in the control-room snapshot.
+- Play now does not move a pool's position (the M73 follow-up asked M74 to store it or say so): a pool
+  item played by hand can come round again as the pool's next item.

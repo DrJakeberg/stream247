@@ -100,6 +100,14 @@ describe("classifyAssetRetention", () => {
       }
     },
     {
+      // M73: a source's position in a pool names the item that source carries on after.
+      name: "pool source position",
+      counter: "referencedByPoolRuntime",
+      mutate: (s, id) => {
+        s.pools = [{ sourceIds: [], cursorAssetId: "", sourceCursors: { "source-a": "other", "source-b": id }, insertAssetId: "", audioLaneAssetId: "" }];
+      }
+    },
+    {
       name: "pool insert asset",
       counter: "referencedByPoolRuntime",
       mutate: (s, id) => {

@@ -328,9 +328,12 @@ Rollback is the reverse repin; the schema changes in 2.0 are additive.
 
 ### Upgrading To 2.1
 
-2.1 changes no stack file and no schema; it is a repin of the three `STREAM247_*_IMAGE` tags. One new
-managed setting (`twitchBotLogin`, env fallback `TWITCH_BOT_LOGIN`) lives in the existing managed
-configuration.
+2.1 changes no stack file; it is a repin of the three `STREAM247_*_IMAGE` tags. It adds one column,
+`pools.source_cursors` (migration `20261001_001_pool_source_cursors`, additive, applied on the first
+start), so back up PostgreSQL before the repin. One new managed setting (`twitchBotLogin`, env fallback
+`TWITCH_BOT_LOGIN`) lives in the existing managed configuration. Rollback is the reverse repin: an older
+image ignores the new column; see *Pool source alternation* below for what a rollback and a later
+re-upgrade do to a pool's position.
 
 - **Twitch accounts.** Admin → Settings has a new *Twitch accounts* panel that separates the broadcast
   channel (where the stream key sends video and viewers watch) from the bot account (chat,
@@ -360,6 +363,52 @@ configuration.
   now survive whole-state writes (before 2.1 any of them reset every counter) and count each probe
   result once. Expect items that were silently rotating back onto the air to stay out after the
   upgrade; the asset page's **Clear probe failures and retry** puts one back by hand.
+- **Item order.** Each source of a pool plays its own items oldest first by publish date, else by the
+  date Stream247 first saw the item; a Twitch channel's archives first seen in the same sync follow
+  their VOD id, and then the title and the asset id decide. Which source plays next is the *Pool source
+  alternation* below. Before 2.1 every source sync stamped its items with the sync time and no listing
+  carried a date, so a pool really played each source alphabetically. A sync now keeps an item's first-seen date, a publish date once known and a
+  known duration. YouTube channel and playlist listings ask yt-dlp for approximate publish dates
+  (`youtubetab:approximate_date`): YouTube's relative age ("3 months ago") counted back from the sync
+  time, so older items fall into shared month or year buckets and order by title inside one; the first
+  value seen is kept. Items already in the catalog keep the time of their last 2.0 sync as their
+  first-seen date, and a Twitch archive that drops out of a listing and comes back is first seen again
+  and plays after the newer ones. Expect the order, and so the next item, to change once after the
+  upgrade. A finished VOD download now writes only its cache columns instead of reverting the item's
+  title, category, dates and include flag to what they were when it started. When a Twitch VOD cannot
+  be prepared and there is no global fallback, the bridge is still a library file before a remote item
+  of the same fallback priority, whatever their dates.
+- **Pool source alternation.** A pool with several sources now alternates between them: the next item
+  comes from the next source in the order the pool lists them, and each source plays its own items
+  oldest first, looping from its own position (stored in the new `pools.source_cursors` column, added
+  by migration `20261001_001_pool_source_cursors`). A TwitchYoutube-style pool that played one long
+  source block after the other switches to Twitch, YouTube, Twitch, ... on its first pick after the
+  upgrade: its stored cursor is a Twitch archive, so the first pick is the oldest YouTube item, and
+  Twitch then carries on after that archive. A pool with one source plays as before. Skip, a
+  quarantined or cooling-down item and an excluded item no longer send the pool back to its oldest
+  item; it carries on after them. Editing a pool keeps where it stands (an edit used to write back the
+  position it had read, which could undo an item the worker had just started). The schedule preview
+  and the week lens show the alternation, and an insert asset whose cadence is 0 appears there as the
+  ordinary item it plays as. An item that has left the catalog (a Twitch archive that dropped out of a
+  listing) cannot be continued after: its source restarts at its oldest item, while the alternation
+  goes on. **Rollback and re-upgrade:** an image older than 2.1 moves only the pool's cursor and leaves
+  `source_cursors` as it was (or empties it on a whole-state write). Back on 2.1, the source of the
+  cursor carries on after the cursor; the pool's other sources carry on from where 2.1 last left them,
+  or from their oldest item if the map was emptied, so they may repeat items the older image aired in
+  between.
+- **Operator controls.** Play now and Play insert switch straight to the chosen item at the next
+  playout cycle; before 2.1 they put the reconnect slate on air for one cycle, dropped the insert
+  without a trace and started a different pool item from its beginning. With the relay no operator
+  action shows the slate any more (direct RTMP mode keeps it for restarts); Pin and Fallback switch at
+  the next cycle without a restart, Force reconnect is refused and Recover outputs leaves the programme
+  alone, because the uplink owns the connection. Play now refuses the item on air, an item under a
+  skip hold, any item while a Pin or Fallback runs, and a Twitch archive that is neither downloaded nor
+  allowed to play from Twitch; a dropped insert is logged (`playout.insert.dropped`, runtime event and
+  audit row), an insert ended by its duration bound or a feed watchdog no longer replays, Resume
+  cancels a Play now, Replay previous has an item again (shown as *Previous item*), and a Move next or
+  Replay previous item from outside the running pool plays to its end instead of being cut after one
+  cycle. After an insert the pool continues with its next item; the interrupted item is not resumed.
+  See `docs/operations.md`, *Operator controls*.
 
 ### Patch vs Minor Upgrades
 
@@ -473,9 +522,9 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 - program-feed/uplink mode separates program playout restarts and asset boundaries from the external RTMP publishing worker
 - YouTube and Twitch ingestion rely on `yt-dlp`
 - schedule blocks support weekly CRUD, reusable show profiles, multi-day creation, overlap validation, drag/drop repositioning, resize-to-change-duration editing, weekly coverage summaries, and quick-start program templates
-- pools are first-class programming units for round-robin playout selection
+- pools are first-class programming units for round-robin playout selection that alternates between a pool's sources, each in a stable date order (see `docs/architecture.md`, *Scheduling*)
 - sources can be edited in place and the asset catalog can be searched by title, source, and status
-- playout supports operator restart, temporary fallback, asset pinning, skip-current, and resume-schedule actions
+- playout supports operator restart, temporary fallback, asset pinning, play now / insert, skip-current, and resume-schedule actions (`docs/operations.md`, *Operator controls*)
 - overlay is drawn by the playout renderer, with replay labeling, current/next context, and admin-managed branding
 - optional chat, chatter-participation, and Twitch alert overlays render through the same on-air overlay when explicitly enabled
 - email and Discord alert delivery are both implemented
