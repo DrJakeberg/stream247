@@ -130,7 +130,136 @@ _(in progress)_
 
 ## 3. Usability
 
-_(in progress)_
+### Method
+
+- **No Docker and no live UI.** I started no stack and clicked nothing. The live walk on a fresh install is section 3b below. Everything below comes from images, docs and code at `ab42e11`.
+- **Screenshots.** I read all 28 design baselines in `tests/e2e/design-baseline.spec.ts-snapshots/` (14 surfaces × desktop 1440px / mobile 390px) as images. I cropped the tall mobile ones to measure positions.
+- **What the screenshots show.** Fixture state per `tests/e2e/design-baseline.spec.ts`: frozen clock Wed 2026-04-08 14:30Z, a seeded gapless week (pools Abendprogramm / Nachtschleife / Archive Pool, 2 ready assets) and the worker stopped. Runtime regions are masked magenta, including the scene preview, so I took the on-air picture from code: `packages/core/src/overlay-layout.ts` and `packages/core/src/viewer-messages/en.ts`.
+- **The pixel baselines are partly stale.** `program-schedule-desktop` still shows the old Week-lens sentence ("…from the current pool cursor"). Code and `tests/e2e/wording-baseline.spec.ts-snapshots/program-schedule-chromium-linux.txt:40` have the new one. The 1 % pixel tolerance absorbed the change, so for current wording I used the wording baselines.
+- **Docs.** `docs/ui.md`, `docs/getting-started.md`, `docs/operations.md`.
+- **Code.** `apps/web` (pages, components, lib), `packages/core` (viewer catalogue, chat parsing, schedule projection), `apps/worker` (chat replies, incidents).
+- **Deferred, not planned here.** M66, M57 soak, M77 and M81 (admin language). Every admin-copy finding below is about English wording only.
+
+### Findings — Streamer (S = hours, M = 1–3 days, L = more)
+
+| # | Role | Page/route | Problem | Evidence | Proposal | Effort |
+|---|---|---|---|---|---|---|
+| S1 | Streamer (b) | `/program?tab=schedule` Week | **The Week view does not show what will actually play.** All 21 blocks show "Abendprogramm — Folge 12", Mon–Sun. Every block's preview restarts from the pool's *current* position. The code says so itself, while the panel text promises "Shows the first video each block would play". A streamer checking Thursday sees today's episode. | `program-schedule-desktop/-mobile`; `packages/core/src/index.ts:2811-2813` (comment: "Every block starts from the pool's stored position… two blocks of one pool… preview the same first item"); `apps/web/components/program-week-lens.tsx:35-42` | Carry the rotation forward block by block in date order, using the same `walkPoolRotation` the worker uses. Mark items after the first day "estimated". | M |
+| S2 | Streamer (b) | Week | **A block that crosses midnight is shown on both days.** Sat 23:00–01:00 appears on Sat *and* at the top of Sun (labelled "Saturday"), so Sat and Sun both read "1500m scheduled", more than a day has. Minutes are not a planning unit either. | `program-schedule-desktop` (SAT/SUN cards); `program-week-lens.tsx:29` (`{totalScheduledMinutes}m scheduled`) | Show the overnight block once, on its start day, with a "→ 01:00 Sun" tail. Say "24 h covered" / "2 h gap at 03:00" instead of minutes. | S |
+| S3 | Streamer (b) | Week | **"Repeats inside block" is on every block, in an alarm colour, without a reason.** It means the pool holds less video than the block length. There is no number and no fix. | `program-schedule-desktop`; `packages/core/src/index.ts:3164-3171` | Say why and what to do: "Pool has 1 h 45 of video for a 6 h block — plays ~3×. Add videos to *Abendprogramm*." Link to the pool. | S |
+| S4 | Streamer (b) | Week → Day | **The Week view is read-only and has no path to editing.** A block opens only its predicted items, which link to an asset. "Add schedule block", templates and "Clone a day" live in the *Day* tab, and the empty state says "Open day lens". "Lens" is an internal word. | `program-week-lens.tsx:45-56,120-122`; `apps/web/app/(admin)/schedule/page.tsx:158-162,204-215` | Put "Edit block" on each block (→ Day editor with the block selected). Add "+ Add block" per day. Rename the tabs to "Week / Day editor / Now & next". | S |
+| S5 | Streamer (b) | Day | **The Day editor is buried under internal jargon.** "Materialized fill preview", "Unique library: Xm · Projected: Ym", "Live queue context", "Video-level timeline" are internal terms. The editor itself comes after six panels. | `schedule/page.tsx:217-236,259,277,289` | Put the editor first. Fold fill numbers into the block row (see S3). Drop "materialized". | M |
+| S6 | Streamer (a) | `/setup` → done | **Setup stops before the programme.** The wizard ends at Twitch. Media → pool → schedule → destination are left to the "readiness checklist" as "ordinary workspace tasks". A new streamer must find out that pools sit between sources and schedule. | `apps/web/app/setup/page.tsx:204-208`; `docs/getting-started.md` §7 | Add a skippable wizard step, "First programme": choose a source, auto-create a pool, apply a 24/7 template. | M |
+| S7 | Streamer (a) | `/live?tab=status` Readiness | **The checklist counts records, not whether the channel can air.** "Program pools: Ready — 3 pool(s)" while *Archive Pool* has 0 assets. "Weekly schedule: Ready — 20 blocks" says nothing about gaps or blocks that cannot play. | `live-status-desktop`, `program-pools-desktop` ("0 total assets · 0 ready"); `apps/web/lib/server/onboarding.ts:158-172` | Pools: "action" when a pool used by a block has 0 ready assets. Schedule: check for week gaps and unresolved blocks; `emptyWeekBlocks` already exists in `schedule/page.tsx`. | S |
+| S8 | Streamer (a) | Live → Status vs Studio → Output | **Stream key and destinations are configured in a *status* tab.** The "Output destinations" form (RTMP URL, stream key) sits in Live → Status. Studio → Output shows the same destinations again for profiles only, and the docs have to point people there. | `live-status-desktop` ("Output destinations" form); `apps/web/app/(admin)/dashboard/page.tsx:172,208`; `studio-output-desktop`; `docs/getting-started.md` §3 table | Move the form to Studio → Output, next to the renditions. Status keeps a read-only line with a link. | M |
+| S9 | Streamer (a) | `/studio?tab=engagement` | **The UI shows internal milestone ids.** "missing the post-M32 Twitch reconnect", "Broadcasters connected before M32 must reconnect". Users cannot know what M32 is. | `studio-engagement-desktop`; `apps/web/app/(admin)/overlays/page.tsx:69,77,102`; `apps/web/components/engagement-settings-form.tsx:142` ("before 2.1") | Say "Reconnect the channel owner under Admin → Settings → Twitch accounts", with a link. Add a test that fails on `M\d\d` in rendered copy. | S |
+| S10 | Streamer (a) | `/program?tab=pools` | **Pool form jargon.** "programming units", "round-robin", "INSERT EVERY N SCHEDULED ITEMS" defaulting to 0, "REPLACEMENT AUDIO". There is no warning on a pool with 0 ready assets. | `program-pools-desktop`; `apps/web/components/pool-form.tsx` | Add a lead sentence: "A pool is a playlist the schedule draws from." Badge empty pools "Nothing to play". Hide inserts/audio under "Extras". | S |
+| S11 | Streamer (a) | `/program?tab=library` | **The first asset sits ~2 400 px down on desktop and ~4 000 px on mobile.** Before it come upload, eight filter fields, the curated-set editor and bulk edit. The asset cards show internal states ("No global fallback flag"). | `program-library-desktop/-mobile` | Show the list first, filters in one row, curated sets and bulk as a drawer that opens on selection. | M |
+| S12 | Streamer (c) | `/live?tab=control` | **Incidents name the problem but not the action.** The cards show "CRITICAL · playout · title" plus a message. Crash-loop says "Manual intervention is required" but not which button. The incident record has no field for an action. | `apps/web/components/broadcast-control-room.tsx:335-355`; `apps/worker/src/index.ts:7483-7488`; `packages/db/src/index.ts:399-412`; `docs/operations.md:321-325` | Store a "What to do" line plus a target (button / settings anchor / `operations.md` anchor) per fingerprint family, next to `apps/worker/src/incident-classes.ts`. Show it on the card. | M |
+| S13 | Streamer (c) | All admin pages (status rail) | **No single "is the channel OK?" answer.** Six chips, raw values ("idle", severity in lowercase). The worker heartbeat is only the *Updates* subtitle, as an ISO timestamp. None of the chips are links. | `admin-status-rail.tsx:18-58`; all `*-desktop` (rail) | Lead with one verdict chip: On air / Degraded / Off air / Worker down, with age. Make each chip a link to its panel. | S |
+| S14 | Streamer (c) | Live → Control | **A dead worker is a lowercase word at the bottom of the page.** "missing — No worker heartbeat" appears while "Open problems" says "No open incidents". The worker cannot raise its own death. | `live-control-desktop` (last panel); `broadcast-control-room.tsx:366-376` | Add a web-side "worker heartbeat stale > N s" alert to Open problems and the rail verdict. Test: stale heartbeat → alert visible. | S |
+| S15 | Streamer (c) | Live → Control "Current and next" | **The first card a tired operator reads is raw engine state.** "Transition idle · queue reason … · version 0", "Prefetch idle · last probe never", "Transition target none · ready not ready". | `live-control-desktop`; `broadcast-control-room.tsx:111-121` | One plain line: "Next: Folge 13 at 22:00 — ready ✓ / not loaded yet". Move engine fields behind "Details". | S |
+| S16 | Streamer (c) | Live → Control "If something is stuck" | **Actions that interrupt the stream have no confirmation and no consequence text.** Soft restart, Force reconnect and Hard reload fire on one tap, on mobile as well. The hint only says to try them "in the order they appear". | `apps/web/components/playout-action-form.tsx:68-128` (no `confirm`; other forms do, e.g. `pool-delete-form.tsx:17`) | Add one line per button saying whether viewers see a cut. Ask for confirmation on actions that interrupt the stream. | S |
+| S17 | Streamer (c) | Live, mobile 390px | **On a phone, "Current and next" starts at ≈2 900 px of 6 339.** The global rail, the Live hero rail and the Control hero rail repeat FEED/CURRENT/NEXT/DESTINATION three times. Status mobile is 9 321 px tall. The docs call mobile a non-goal, but the baseline spec calls 390px "the width an operator actually has when something breaks". | `live-control-mobile`, `live-status-mobile`; `docs/ui.md:13,157-159` vs `tests/e2e/design-baseline.spec.ts:169` | On narrow screens: one rail, no hero stats, Current/next + Open problems + 3 safe actions first. | M |
+| S18 | Streamer (a) | `/login` | **The Twitch SSO hint is cut off with "…" mid-instruction** ("or…"). Nothing says the owner password cannot be reset, although the getting-started guide warns about it. | `login-mobile`, `login-desktop`; `apps/web/components/twitch-login-panel.tsx:6-19` | Do not clamp instructions. Link to `docs/twitch-setup.md`. | S |
+| S19 | Streamer (a) | `/studio?tab=scene` | **The overlay is off by default and the Scene page doesn't make that visible.** "Enable overlay output" is an unchecked box among 40+ fields. The status shows "Draft is based on live scene updated at unknown", "Published never". | `studio-scene-desktop/-mobile`; Live → Status "Overlay output: Overlay is currently disabled" | Show an on/off banner at the top of Scene with a preview of what viewers see now. Replace "unknown"/"never" with "Not published yet". | S |
+
+### Findings — Viewer
+
+| # | Role | Page/route | Problem | Evidence | Proposal | Effort |
+|---|---|---|---|---|---|---|
+| V1 | Viewer | `/channel` | **"After that" says the programme ends now, although the week is full.** It shows "Nothing further is scheduled yet." because it reads the playout *queue* (usually empty), not the schedule. Only now and next are shown, and there is no day or week guide. | `channel-desktop/-mobile`; `apps/web/lib/public-channel-view.ts:81-88`; `en.ts:142` | Fill "After that" with the next 3–5 schedule blocks (rest of today and tomorrow). Add an optional "This week" list. | M |
+| V2 | Viewer | `/channel` | **The page never shows which episode is playing.** It names the *block* ("Abendprogramm"); the on-air lower third shows the video ("Folge 12"). | `public-channel-view.ts:71-73` (schedule item title wins); `apps/web/components/schedule-block-form.tsx:138` (overlay puts video title first) | Title = video, subtitle = block · time · category, matching the picture. | S |
+| V3 | Viewer | `/channel` | **All times are in the channel's zone only.** A viewer in New York must convert "20:00 to 00:00" Central European Time in their head. | `channel-*`; `public-channel-view.ts:44,62`; `apps/web/components/live-channel-page.tsx:22` | Convert on the client with `Intl` to the browser zone ("20:00 CET · 14:00 your time"). The server stays canonical. | S |
+| V4 | Viewer | On-air picture (Next card) | **The next block's time is drawn without a zone or relative time.** Example: "Next 20:00-00:00". Twitch audiences are international. | `packages/core/src/overlay-layout.ts:415-422`; `en.ts:30` | Add "in 25 min" (zone-free) next to or instead of the range, from the viewer catalogue (en+de). | S |
+| V5 | Viewer | Chat | **No `!help` / `!commands`.** The only self-describing command is `!game`, and it covers games only. Votes (`!1…`), `!skip`, `!request <title>` and the moderators' `here 30` cannot be discovered in chat. | `packages/core/src/chat-game.ts:81-94`; `packages/core/src/chat-interaction.ts:72-104`; no `!help`/`!commands` in `apps/worker/src`, `packages/core/src` (grep) | Add a `!commands` reply listing only the *enabled* commands with their configured names, in the channel language, with a per-viewer cooldown. | S |
+| V6 | Viewer | Chat `!request` | **A request gets no answer in chat.** No match, cooldown, queue full and accepted are all only logged. `!request` with no title is silently ignored. The viewer cannot tell typo, cooldown and success apart, or which titles exist. | `apps/worker/src/index.ts:9536-9546`; `chat-interaction.ts:101,330`; no `chat.request.*` keys in `packages/core/src/viewer-messages/en.ts` | Reply once per request: "@x queued: Folge 13 (2 ahead)" / "no title matches 'folge 99'" / "try again in 7 min". Point to `/channel` for titles. | S |
+| V7 | Viewer | Chat | **There is no `!now` / `!next` / `!schedule`.** Viewers in chat cannot ask what is playing or when the next show starts. The answer exists (`/channel`), but the bot never points to it. | Grep as V5; `public-channel-view.ts` | `!now` replies "Now: Folge 12 · next: Nachtschleife in 25 min · full schedule: <APP_URL>/channel". | S |
+
+### Proposed milestones (topic 3)
+
+**Title:** Schedule shows what will actually air
+- **Type / Priority:** UX / P1
+- **Goal:** A streamer can plan a week from the Week view alone. The view shows the projected video per block across the week, fill in hours with the reason and a fix, overnight blocks once, a today marker with dates, and "Edit block" / "+ Add block" on the Week view.
+- **Acceptance:**
+  - New `tests/unit/program-week-projection.test.ts` cases: "two consecutive blocks of one pool preview different first items", "a block across midnight counts once, on its start day", and "fill label names the pool and its runtime".
+  - `grep -rnE "Repeats inside block|m scheduled" apps/web packages/core/src` returns 0.
+  - Wording + design baselines for `program-schedule` re-recorded with `scripts/design-baseline.sh --update`.
+  - `pnpm validate` passes.
+- **Touched areas:** `packages/core/src/index.ts` (`buildSchedulePreviewVideoSlots`, `buildMaterializedProgrammingWeek`), `apps/web/components/program-week-lens.tsx`, `apps/web/app/(admin)/schedule/page.tsx`, tests, `docs/ui.md`.
+- **Risk:** The preview drifts from the worker's real picks if the projection does not reuse `walkPoolRotation`. Many lines of baseline churn.
+- **Rollback:** Revert the commit. The change is preview only; no data or worker changes.
+
+**Title:** 3 a.m. answer: verdict, action, confirm
+- **Type / Priority:** UX / P1
+- **Goal:** At 3 a.m., in under 30 s on a phone, an operator knows whether the channel is up and what to press:
+  - a single verdict chip in the rail that links to its panel;
+  - a "What to do" line and target per incident family;
+  - a stale-worker alert raised by the web app;
+  - a plain current/next line;
+  - confirmation for actions that interrupt the stream;
+  - a compact mobile Live control.
+- **Acceptance:**
+  - `tests/unit/incident-classes.test.ts` extended: "every incident family has an operator action".
+  - New unit test "stale worker heartbeat yields an open-problem entry".
+  - `tests/e2e/admin-smoke.spec.ts` new case: "Live control on 390px shows Current and next above the fold" (bounding box < 1 400 px).
+  - `grep -rn "ready not ready" apps/web` returns 0.
+  - Baselines `live-*` re-recorded.
+  - `pnpm validate` passes.
+- **Touched areas:** `apps/worker/src/incident-classes.ts` (or a shared core map keyed by fingerprint, so no DB migration), `apps/web/components/{admin-status-rail,broadcast-control-room,playout-action-form}.tsx`, `apps/web/app/globals.css`, `docs/operations.md`, `docs/ui.md` (narrow the "mobile non-goal").
+- **Risk:**
+  - Action texts drift from the real buttons. Mitigation: action targets are ids checked by a test.
+  - The control-density e2e budget.
+  - Baseline churn on 6 surfaces.
+- **Rollback:** Revert. The mapping is additive, with no schema change.
+
+**Title:** Viewers can see the lineup and get chat help
+- **Type / Priority:** Feature (viewer) / P2
+- **Goal:** `/channel` shows the playing video, the next 3–5 *schedule* blocks and local-time conversion. On air, the next card adds "in N min". The bot answers `!commands`, `!now` and every `!request` outcome, in the channel language, with cooldowns.
+- **Acceptance:**
+  - `tests/unit/viewer-language-public-page.test.ts`: "after that lists upcoming schedule blocks when the queue is empty" and "on-air title is the video title".
+  - `tests/unit/chat-interaction.test.ts`: "!commands lists only enabled commands".
+  - New `tests/unit/chat-request-replies.test.ts`: one reply per outcome (en + de).
+  - The catalogue parity test and `tests/unit/viewer-language-literals.test.ts` stay green.
+  - Wording/design baseline `channel` re-recorded.
+  - `pnpm validate` passes.
+- **Touched areas:** `apps/web/lib/public-channel-view.ts`, `apps/web/components/live-channel-page.tsx`, `packages/core/src/{chat-interaction.ts,viewer-messages/*,overlay-layout.ts}`, `apps/worker/src/index.ts` (drainChatEffects), `docs/operations.md` *What Viewers Read*, `docs/twitch-setup.md`.
+- **Risk:**
+  - Bot chat volume and Twitch rate limits. Mitigation: per-viewer and global cooldowns, each reply switchable off.
+  - The `/channel` public read now exposes more schedule (titles only).
+- **Rollback:** Feature switches off; revert.
+
+**Title:** First programme without a manual
+- **Type / Priority:** UX / P2
+- **Goal:**
+  - `/setup` gets a skippable step, "First programme" (source → auto pool → 24/7 template).
+  - Readiness checks semantics: pools used by blocks have ready assets, and the week has no gaps or unplayable blocks.
+  - Destinations move to Studio → Output.
+  - Milestone ids and jargon (lens, materialized, round-robin, cursor) are removed from admin copy (English only, not M81).
+- **Acceptance:**
+  - `tests/unit/onboarding*.test.ts`: "pool referenced by a block with 0 ready assets is action" and "week with a gap is action".
+  - New `tests/unit/admin-copy-no-milestone-ids.test.ts` scans rendered JSX text for `\bM\d{2}\b`.
+  - `tests/e2e/admin-smoke.spec.ts`: "fresh owner can complete First programme and readiness shows schedule ready".
+  - Wording baselines re-recorded.
+  - `pnpm validate` passes.
+- **Touched areas:** `apps/web/app/setup/page.tsx`, `apps/web/lib/server/onboarding.ts`, `apps/web/app/(admin)/{overlays,dashboard}/page.tsx`, `apps/web/components/{pool-form,destination-settings-form,engagement-settings-form}.tsx`, `docs/getting-started.md`, `docs/ui.md` (Canonical Terms).
+- **Risk:**
+  - Moving the destination form breaks docs links and operator habit. Mitigation: a status link to the new place.
+  - The wording pass touches most baselines.
+- **Rollback:** Revert. The wizard step is skippable and writes only ordinary pool and block records.
+
+### Questions raised (topic 3)
+
+1. **Which time should `/channel` lead with: the viewer's local time or the channel zone?**
+   Recommendation: local time first, channel zone second, both shown. It is computed in the browser only, so nothing server-side changes.
+2. **May the bot post more in chat (`!commands`, `!now`, request replies)?**
+   Recommendation: yes. Each one gets a switch under Engagement, plus a per-viewer cooldown (60 s) and a global one (10 s). Silence after a request reads as "broken".
+3. **May `docs/ui.md` stop calling mobile a non-goal, for Live only?**
+   Recommendation: yes, a narrow "on-call" layout for Live → Control/Status (verdict, current/next, problems, safe actions). Program and Studio stay desktop-first.
+
+### 3b. Live UI walk
+
+_(in progress, from the fresh-install stack of topic 5)_
 
 ## 4. Self-healing
 
