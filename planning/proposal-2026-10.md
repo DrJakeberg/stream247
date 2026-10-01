@@ -146,5 +146,210 @@ _(in progress)_
 
 ## 7. One plan
 
-_(in progress)_
+Scope: every plan/agent file on `claude/proposal-2026-10-te1vlg` (= `m75-source-breaker` `ab42e11` + `planning/research-brief.md`)
+and on `origin/main` (`1533c7b`). The repo is a shallow clone (`git rev-parse --is-shallow-repository` -> `true`, graft root
+`d304c8e`), so history older than 2026-09-05 is not visible locally; facts older than that come from `PLANS.md` text.
+Reference checker used below: a throwaway shell script (not committed) that extracts every backticked repo-relative path and
+tests it against the repo root and the file's own directory; the proposed milestone "Reference Check" makes it permanent.
+
+### Inventory
+
+| File | Lines | Purpose | Current? (evidence) | Contradictions / stale refs | Fate |
+|---|---|---|---|---|---|
+| `AGENTS.md` | 102 | agent rules, DUT workflow | partly: rules L5-37 hold; DUT section L39-102 predates Portainer/`repin.sh` | dead ref L3; DUT section vs HANDOFF (see below); L32/L36 "continue until no incomplete milestone" vs owner gates | **rewrite** (draft below) |
+| `IMPLEMENT.md` | 69 | runbook | duplicate of AGENTS (hard blockers L61-69 = AGENTS L11-19; done list L39-53 ~ AGENTS L21-28) | dead ref L11; L3 "PLANS.md is the source of truth" | **merge into AGENTS, delete** |
+| `PLANS.md` | 5223 (main: 4171) | milestones + 900 lines of progress notes | head L1-50 is April 2026 ("Current State", "Target State" against "Upstream") | 145 dead path refs (all historical, e.g. L917, L1246 `docs/full-product-reset-audit.md`, L4478 `lib/server/state.ts` = `apps/web/lib/server/state.ts`); two different "Phase 5" headings L1327, L2452; M66 "In progress" L78 and M57 "In progress" L1346 although owner-gated | **shrink + archive** |
+| `HANDOFF.md` (main only) | 118 | transient release handoff for 2.1.0/2.2.0 | yes, dated 2026-10-01 (L1) | self-expiring: "Delete this file when the two releases below are out" (L3-4); deleted on this branch (`git diff --name-status origin/main HEAD` -> `D HANDOFF.md`) | **delete after v2.2.0**; rules L13-28, L96-118 move to AGENTS |
+| `planning/next-session-prompt.md` | 121 | German prompt for a follow-up session | no: "Produktion läuft auf **v1.5.22**" (L13); local path `/home/benjamin/code/stream247` (L7) | L114 "Nach jeder abgeschlossenen Aufgabe committen und pushen" conflicts with the cloud push rule; L102-110 traps (SSH cert ~8 h, CI concurrency, snapshot portability, compose `!override`) still useful | **delete**; move L102-110 traps to AGENTS/docs |
+| `planning/audit-2026-09-02.md` | 968 | reconstructed code audit (51 findings, 12 confirmed) | no: status "Stand 13:00 UTC, v1.5.38" (L3); B1 "IN ARBEIT" (L10) | 39 findings "unverifiziert" (L3/L5) never triaged in PLANS | **archive** (`planning/archive/`), one PLANS follow-up line "39 unverified findings untriaged" |
+| `planning/archive/product-reset-{audit,docs-plan,kill-list}.md` | 139/184/162 | April 2026 reset artifacts | historical; added at graft `d304c8e` | point to `docs/product-reset-*.md` deleted by M49 (PLANS.md:3286); `product-reset-audit.md:122` cites `/root/stream247/recovery-stack` "per AGENTS.md" | **keep as archive**, excluded from ref check |
+| `planning/research-brief.md` | 96 | this proposal's brief | branch only | - | keep until proposal is decided, then archive |
+| `README.md` / `CONTRIBUTING.md` | 670 / 22 | human docs | no agent instructions (`grep -n 'PLANS\|AGENTS\|planning/' README.md` -> empty) | `CONTRIBUTING.md:12` "all repository-facing content in English" vs `planning/*.md` in German | keep |
+| `.claude/launch.json` | 14 | `pnpm run dev` on :3000 for the preview tool | yes | none | keep |
+| `.github/pull_request_template.md` | 18 | PR checklist | partly: lists lint/typecheck/unit/integration/build, not `pnpm validate` or baselines | - | keep (optional: add baselines line) |
+| `CLAUDE.md` | - | - | does not exist (`wc` -> No such file) | - | do not create; AGENTS.md is the single file |
+| `release-prune-backup-20260614T000908Z/` | 127 lines, 9 files, 40K | 2026-06-14 snapshot before a tag/release prune: tag lists, tag->sha, two release JSONs, DT `stack.env` image refs (v1.5.17), note that GHCR was not pruned | no: superseded, all 39 releases were backfilled (HANDOFF-main.md:43) | referenced nowhere outside itself (`grep -rn release-prune-backup` -> only its own `git-status.txt:5`); its own `git-status.txt:3-5` shows it and `planning/` were untracked when written, i.e. committed by accident; no secret values (only scope names in `GHCR-NOT-PRUNED.txt:3`) | **delete** |
+
+### Verified stale or contradicting items
+
+1. **Dead mandatory reading.** `AGENTS.md:3` and `IMPLEMENT.md:11` require `docs/full-product-reset-audit.md`. M42 moved it to
+   `docs/archive/` (PLANS.md:2869, 2876) and M49 deleted `docs/archive/*` (PLANS.md:3286, 3295). Checker over
+   AGENTS/IMPLEMENT/PLANS/README/CONTRIBUTING/docs/*: 149 dead refs; outside PLANS.md only four:
+   `AGENTS.md:3`, `IMPLEMENT.md:11`, `docs/architecture.md:331` (`packages/core/chat-game.ts` -> really
+   `packages/core/src/chat-game.ts`), `docs/architecture.md:42` (`data/app/state.json`, a runtime path, false positive).
+2. **PLANS.md size vs reading rule.** `AGENTS.md:3-4` makes every session read PLANS.md; it is 5223 lines on the branch
+   (`wc -l`), 4171 on main. 899 lines are "Progress Notes" (L1553-2451); M59+ sections are L3370-5223 (1853 lines);
+   largest sections M75 219 lines (L4183), M80 183 (L4821), M76 173 (L4402).
+3. **AGENTS.md DUT section vs HANDOFF-main.md**, line by line:
+
+| Topic | AGENTS.md | HANDOFF-main.md / docs | Reality |
+|---|---|---|---|
+| who runs DUT work | L41-43 "Always use the DUT host over SSH" (agent does it) | L15-17 no way from outside the LAN; "Ask the owner ... never guess a result" | owner runs |
+| deployment path | L54-57 `/root/stream247/recovery-stack`, `stack.env` | L22 repin via `ssh dt '~/repin.sh <tag> --dry-run'`; `docs/deployment.md:8,22,189-191` Portainer on DT is the control plane | Portainer stack on DT; container names `stream247-*-1` (HANDOFF L23, L25) imply compose project `stream247`, not a `recovery-stack` dir (inference) |
+| soak start | L93-95 run `soak-monitor.sh` from a discovered DUT repo path | L24 `ssh dut 'cd ~ && ~/scripts/start-soak.sh 24; tmux ls'` | wrapper in owner's home, not in repo (`ls scripts` has no `start-soak.sh`) |
+| soak log | L66 "write soak output to a log file" (unspecified) | L21 `~/logs/soak-20261001-034108.log`, pass = `soak-monitor-complete` (L55) | `~/logs/soak-*.log` |
+| image pins | L61 "use the images already pinned in stack.env" | L22 repin with `repin.sh`, dry run first | repin is an owner step |
+| DB backup | absent | L23 `pg_dump` before a schema change | owner step |
+| done definition | L97-102 agent started the soak, readiness green | L55-56 owner reports result; "a pass with an outage is never called clean" | owner hands over result |
+| discovery | L73-89 `find /root -maxdepth 5 ...`, `cd /root/stream247/recovery-stack && docker compose ps` | not used anywhere since M50 (PLANS.md:3613, 3781, 3803 all use `repin.sh`) | obsolete |
+| reading list | L3 AGENTS+PLANS+IMPLEMENT+dead audit | L115 "Read `AGENTS.md` and `PLANS.md` first" | AGENTS+PLANS |
+
+4. **Workflow rules that would start owner-gated work.** `AGENTS.md:32,36` "automatically continue with the next incomplete
+   milestone"; PLANS.md:78 (M66 "In progress") and PLANS.md:1346 (M57 "In progress") are incomplete, yet HANDOFF-main.md:98-101
+   says never start them (and M77/M81) without the owner. `AGENTS.md:35` "Push the current branch after each ... commit" has no
+   main/force restriction.
+5. **next-session-prompt.md** describes v1.5.22 (L13) and a local checkout (L7); current release line is 2.1/2.2.
+6. **PLANS.md head is April 2026**: "Current State"/"Target State" (L9-49) still frame the product against "Upstream" and
+   name `apps/worker/src/index.ts` size as the risk; two "Phase 5" sections (L1327 German, L2452 English).
+
+### PLANS.md structure (branch)
+
+- 6 milestone tables (header rows at L53, L101, L113, L923, L1338, L2470), **96 milestone rows**, no duplicate IDs
+  (`grep -oE '^\| M[0-9.]+' PLANS.md | sort -u | wc -l` -> 96). Main table L53-96: 42 rows, but M16-M58 live only in the five
+  phase tables.
+- Status over all rows: 82 Complete, 7 Done, 1 "Done 2026-09-09" (M67), 2 In progress (M66 L78, M57 L1346),
+  2 Planned (M71 L86, M83 L95), 2 Deferred (M77 L89, M81 L93).
+- Phases: "Phase 2 Post-M9" L444, "Phase 3" L97, "Phase 4" L912, "Phase 5 Broadcast-Kanal" L1327, "Phase 5 Product Reset" L2452
+  (ordering in the file is not chronological). Generic blocks: Validation Commands L507, Rollback Notes L1533,
+  Strict Done Definition L1544 (= AGENTS.md:21-28).
+- A short current plan needs only: M71/M83 (until shipped), M66 and M57-soak (owner-gated), M77/M81 (deferred, owner
+  start), the follow-ups listed in HANDOFF-main.md:105-111 plus the "Follow-ups:" blocks at PLANS.md:4006, 4161, 4370, 4550,
+  4701, 4814, 4980, 5101, the per-milestone DUT checks for 2.2.0 (PLANS.md:3993-5085), and one index row per shipped release.
+
+### Branches (`git ls-remote --heads origin`, each fetched, `merge-base --is-ancestor` vs `origin/main` `1533c7b`)
+
+| Branch | Head | In main? | Ahead/behind | What it is | Proposed |
+|---|---|---|---|---|---|
+| `claude/project-thread-o8lia9` | `f122c12` | no | 3/1 | **the head of PR #4** (`gh api repos/DrJakeberg/stream247/pulls` -> `4 open head=claude/project-thread-o8lia9`): `5e828d9`+`76b8b58` (retire Program screenshot spec, e2e gate test) + merge of main `743b6ec`; +16 lines in PLANS.md | merge or close after v2.2.0 (it touches PLANS.md; see rule on soaked code) |
+| `claude/retire-program-screenshot-spec` | `76b8b58` | no | 2/4 | pre-merge copy of PR #4's commits (ancestor of `f122c12`); not itself a PR head | delete with PR #4 |
+| `claude/proposal-2026-10-te1vlg` | `bd78404` | no | 13/1 | this session: m75 + research brief | proposal only |
+| `m75-source-breaker` | `ab42e11` | no | 12/1 | PR #3 (draft), 2.2.0 | release train |
+| `claude/release-2.1-2.2-xm0ud7` | `1533c7b` | yes | 0/0 | = main (handoff commit) | delete |
+| `rc2-pool-order-play-now` | `05549ee` | yes | 0/9 | M74 branch, merged | delete |
+| `review/v1.5.19-baseline` | `17cf16d` | no (merge commit) | 200*/1 | base of PR #2 (closed, merged 2026-10-01); tree == `743b6ec` (`git diff --quiet` -> equal), i.e. main minus HANDOFF; *ahead count inflated by shallow graft | delete |
+
+Remote branch deletion is an owner action (cloud sessions do not push deletes).
+
+### Target layout and migration order
+
+Target: `AGENTS.md` (single rule file, <= 120 lines) - `PLANS.md` (current + next, < 300 lines) -
+`planning/archive/plans-m0-m83.md` (verbatim old PLANS.md via `git mv`, so `git log --follow` keeps history) -
+`planning/archive/` (reset artifacts, audit-2026-09-02) - `HANDOFF.md` only while a release is in flight, deleted by the
+release commit that ends it. Removed: `IMPLEMENT.md`, `planning/next-session-prompt.md`, `release-prune-backup-*/`.
+
+New PLANS.md skeleton: 1 purpose line + pointer to AGENTS.md; table "Open" (open/planned milestones); table "Owner-gated
+and deferred" with gate column (M66, M57 soak part, M77, M81); "Known follow-ups" (not milestones); "Shipped" index (one
+row per release: version, date, milestones, archive anchor); new milestone sections appended below and moved to the
+archive when their release ships.
+
+Order (nothing before v2.2.0 is tagged; main, PLANS.md and CHANGELOG.md are frozen for the train):
+1. v2.1.0 tag -> merge PR #3 -> v2.2.0-rc.1 -> soak -> v2.2.0 tag (HANDOFF steps 2-5). PR #4 is decided by the owner
+   before or after, never merged between rc and tag.
+2. Release commit of v2.2.0 (or the first commit after it) deletes `HANDOFF.md` (its L3-4).
+3. Milestone A (docs only, one commit): `git mv PLANS.md planning/archive/plans-m0-m83.md`; new PLANS.md; new AGENTS.md;
+   `git rm IMPLEMENT.md planning/next-session-prompt.md -r release-prune-backup-20260614T000908Z`;
+   `git mv planning/audit-2026-09-02.md planning/archive/`; fix `docs/architecture.md:331`.
+4. Milestone B (one commit): reference checker + unit test inside `pnpm validate`.
+5. Owner deletes the four stale remote branches.
+
+### Draft AGENTS.md
+
+```markdown
+# Agent Rules
+
+Single source of rules for every session (human-run, local or cloud). `PLANS.md` holds what to build;
+history is in `planning/archive/`. If a rule here and a plan disagree, this file wins; flag the conflict.
+
+## Start of a session
+- Read this file and `PLANS.md` (both short). Read an archive file only when a milestone points to it.
+- Pick exactly one milestone from `PLANS.md` "Open". Restate its acceptance before changing code.
+- Never start a milestone listed under "Owner-gated and deferred" unless the owner says so in this session.
+  Today: M66 Live Bridge rehearsal, the soak part of M57, M77, M81.
+
+## Communication with the owner
+- Reply in German, short, result first, then the evidence (command + decisive output or path:line).
+- Never guess a result you could not measure; say what was not verified and why.
+- A soak with any outage or failure is "passed with failure", never "clean". Report `outages`,
+  `outageSecondsMax` and the uplink restart delta with every soak result.
+
+## Scope and quality
+- Keep the diff scoped to the milestone; extend working code before rewriting; additive schema first.
+- Changed behaviour needs tests, or a written justification in the summary.
+- Docs stay in sync with behaviour in the same commit.
+- No new dependency without a one-line reason in the summary.
+- UI text changes need the design and wording baselines re-recorded on a fresh stack
+  (`scripts/design-baseline.sh`). A session without docker relies on CI for that and must say so.
+- Repository content is English (`CONTRIBUTING.md`); conversation with the owner is German.
+
+## Commits, branches, pushes
+- One commit per completed milestone. `pnpm validate` must pass before every commit.
+- Targeted checks when the area needs them: `pnpm test:fresh-db`, `pnpm test:fresh-compose`,
+  the docker image builds + `./docker/smoke-test.sh`, `pnpm release:preflight`.
+- Push feature branches freely. Pushing to `main` from a cloud session: one fast-forward attempt only;
+  if it fails, give the owner the exact command. Never `--force`, never push or merge via the GitHub API.
+- Merging any PR into `main` between a release candidate and its tag changes the soaked code:
+  flag it to the owner first, do not merge.
+- After a push, wait for CI (`gh run watch --exit-status`) instead of assuming the outcome.
+- At milestone end: append a dated progress note to the milestone section in `PLANS.md`; summary with
+  changed files, risks, follow-ups.
+
+## Releases
+- No release (tag, GitHub release, repin) before the owner has handed over the soak result.
+- The release commit changes `package.json`, the image defaults in `docker-compose.yml`,
+  `.env.production.example`, `docs/deployment.md` and the `CHANGELOG.md` section; then CI, then the tag.
+- A release in flight may have a `HANDOFF.md`; the commit that finishes the release deletes it.
+- After a release, move the shipped milestone sections from `PLANS.md` to `planning/archive/`.
+
+## Production host (DUT) and Portainer host (DT)
+- Both are on the owner's LAN behind a short-lived SSH certificate (~8 h). Cloud sessions cannot reach
+  them. `Permission denied (publickey)` from a local session usually means the certificate expired;
+  only the owner renews it.
+- The deployed stack is the Portainer stack on DT (`docs/deployment.md`). Only the owner runs, or
+  explicitly hands to a local session:
+  - soak result: `ssh dut 'grep -E "outage|complete" ~/logs/soak-<stamp>.log'`
+  - repin: `ssh dt '~/repin.sh <tag> --dry-run'`, then without `--dry-run`
+  - PostgreSQL backup before any schema change:
+    `ssh dut 'umask 077; docker exec stream247-postgres-1 pg_dump -U stream247 -d stream247 -Fc > ~/backups/stream247-pre-<tag>.dump'`
+  - soak start: `ssh dut 'cd ~ && ~/scripts/start-soak.sh 24; tmux ls'`
+    (wraps `scripts/soak-monitor.sh --hours 24`; pass = `soak-monitor-complete` in the log)
+  - per-milestone DUT checks listed in the milestone section of `PLANS.md`
+- Never run a 24-hour soak anywhere except the DUT. Never change DUT secrets or production values.
+- Use `CHECK_BASE_URL=http://127.0.0.1:3000` when `APP_URL` is not reachable from the DUT itself.
+
+## Twitch
+- Broadcast channel: `jimpanse247`. Bot / moderator account: `3JakeC`.
+- Check live status only on the broadcast channel, never on the bot:
+  `ssh dut 'docker exec stream247-playout-1 yt-dlp --simulate --print "%(is_live)s" https://www.twitch.tv/jimpanse247'`
+
+## Never
+- Print or commit a secret, token or stream key.
+- Change the relay pin `bluenviron/mediamtx:1.15.4`.
+- Deduplicate identical lines when resolving merge conflicts in `PLANS.md` or `CHANGELOG.md`.
+
+## Known traps
+- CI serialises per ref (`concurrency: ci-${{ github.ref }}`); cancel stale runs instead of waiting.
+- Visual snapshots are not portable: create and check baselines only via `scripts/design-baseline.sh`.
+- Compose merges lists: `ports`, `env_file`, `volumes` need `!override`.
+
+## Hard blockers (the only reasons to stop early)
+- missing secret or credential; missing external service or permission (includes DUT/DT access)
+- destructive migration without a clear safe path; unresolved legal or licensing issue
+- a product decision that cannot be inferred from existing behaviour or conventions -> ask the owner
+- the next open milestone is owner-gated
+```
+(81 lines; replaces AGENTS.md L39-102 and all of IMPLEMENT.md; traps from next-session-prompt.md:102-110.)
+
+### Proposed milestones (topic 7)
+
+| Milestone | Type | Priority | Goal | Acceptance | Touched Areas | Risk | Rollback |
+|---|---|---|---|---|---|---|---|
+| One Plan | Docs + Ops | Next (after v2.2.0 tag) | One short plan, one rule file, history archived | `wc -l < PLANS.md` < 300; `wc -l < AGENTS.md` <= 120; `test ! -e IMPLEMENT.md && test ! -e HANDOFF.md && test ! -e planning/next-session-prompt.md && ! ls -d release-prune-backup-*`; `git log --follow --oneline planning/archive/plans-m0-m83.md \| wc -l` > 1; every open/deferred row of the old table (M57, M66, M77, M81) appears in the new PLANS.md; `grep -c recovery-stack AGENTS.md` = 0; `pnpm validate` passes | `AGENTS.md`, `PLANS.md`, `IMPLEMENT.md`, `planning/**`, `release-prune-backup-*`, `docs/architecture.md` | low (docs only; risk is losing an open follow-up -> checked by the row comparison) | revert the commit |
+| Reference Check | Ops + Tests | Next (after One Plan) | A doc or rule never points at a file that does not exist | `scripts/check-doc-refs.mjs` extracts backticked repo-relative paths from `AGENTS.md`, `PLANS.md`, `README.md`, `CONTRIBUTING.md`, `docs/*.md` (not `planning/archive/**`) and fails on a missing path; `tests/unit/doc-refs.test.ts` runs it, so `pnpm validate` and CI fail on a dead ref; a mutation (add a backticked `docs/nope.md` to AGENTS.md) makes the test fail; zero dead refs on the tree | `scripts/`, `tests/unit/`, docs fixes | low (false positives for runtime paths such as `data/app/state.json` -> explicit allowlist in the script) | revert the commit |
+
+### Questions raised (topic 7)
+
+1. **Archive cut:** archive the whole current PLANS.md as one file `planning/archive/plans-m0-m83.md` (recommended: one
+   `git mv`, history intact, no section-level editing) or split per release line (1.x / 2.0 / 2.1 / 2.2)?
+2. **PR #4 (`claude/project-thread-o8lia9`)**: merge after v2.2.0 is tagged and before Milestone "One Plan" (recommended:
+   it adds 16 lines to PLANS.md and would otherwise conflict with the archive move), or close it?
 
