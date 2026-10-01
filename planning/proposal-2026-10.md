@@ -263,7 +263,125 @@ _(in progress, from the fresh-install stack of topic 5)_
 
 ## 4. Self-healing
 
-_(in progress)_
+Method: code reading of this branch (2.2.0 candidate, M75 + M82 included). Every claim cites `path:line`, checked
+with `grep -n` / `sed -n`; `I` = `apps/worker/src/index.ts` (9,978 lines), `IC` = `apps/worker/src/incident-classes.ts`,
+`DB` = `packages/db/src/index.ts`. Nothing was run against a stack. Untracked `tests/unit/zz-probe-*.test.ts` files in the repo are not from this topic. Findings marked **Suspicion** come from code reading
+only: no test or command output proves them yet. Deferred and not planned here: M66, the M57 soak, M77, M81.
+
+### 4.0 Key findings (read first)
+
+1. **The channel heals most playout and uplink faults on its own.** Feed stall, silent feed, duration bound, four uplink
+   watchdogs, the 48-h reconnect, destination cooldown, the fallback tiers, the M75 breaker and the M82 outage filter all
+   act without a person, and each raises an event incident that the incident sweep (I:9689) closes after 10 quiet minutes.
+2. **Two faults outside playout can take everything down.** By code reading:
+   - a rejected Twitch refresh token aborts every worker cycle (4.2 row 1);
+   - a Postgres blip makes the playout and uplink processes exit, which kills ffmpeg (4.2 row 2).
+   Neither has a test. Both are **Suspicions** until a test shows them.
+3. **Restarts and backoff.** Compose restarts a process only when it exits (`restart: unless-stopped`), never when it is
+   unhealthy, so a healthcheck failure alone changes nothing. The stall guard (exit after 300 s) is the only
+   self-restart path. Restarts of the uplink watchdogs and the crash-loop reset have no growing backoff: they repeat at
+   the loop cadence (15 s) for as long as the cause lasts. They are observable (incidents with recurrence-aware closing,
+   IC:551-573) but not bounded in count.
+4. **Incidents that never close.** State incidents whose "open" flag lives in memory (disk, system volume) and
+   `secrets.key-mismatch` stay open after a restart. These are the remaining stale incidents after the incident sweep.
+5. **Swallowed operator restart.** The PLANS.md follow-up is real. Three writes clear `restartRequestedAt`
+   unconditionally: I:6226 (start), I:7710 (after the restart stop) and I:7980 (cycle end).
+6. **Already good:** the source breaker's half-open trial means a broken source needs nobody (30 min → 6 h cap); the
+   operator can still close it early (`apps/web/app/api/sources/breaker/route.ts:28-34`). Twitch status heal and chat
+   reconnect are rate-limited (10 min, 6 min, 5 min).
+
+### 4.1 Recovers by itself
+
+| Fault | Detection | Automatic action | Bound / backoff | Incident / alert | Tested by |
+|---|---|---|---|---|---|
+| Hung cycle (worker, playout, uplink) | `runWithStallGuard` I:9889, ceiling `cycle-budget.ts:17` (300 s, min 60 s) | `process.exit(1)` I:9910 → Compose `restart: unless-stopped` (`docker-compose.yml:80,119,144`) | one exit per 300 s hang; Docker's own restart delay | `<mode>.loop.stalled` I:9905 (event, swept IC:429-468) | `worker-loop-stall-guard.test.ts`, `cycle-budget.test.ts` |
+| Cycle throws | `result.status === "failed"` I:9913 | log, then the next cycle after 30 s (worker) or 15 s (others) I:9881 | none; it retries every cycle | `<mode>.loop.crashed` I:9925 + `sendAlert` I:9927 (deduplicated I:8556-8559) | `incident-auto-resolution.test.ts` (sweep only) |
+| Unhandled rejection / uncaught exception | I:9943 / I:9952 | rejection: logged only; exception: exit → Docker restart I:9957 | Docker restart | log only | none found |
+| Idle PG client dropped | `pool.on("error")` DB:1580 | logged; the pool reconnects on the next query | — | log only | none found |
+| PG deadlock / serialization failure | `isRetryableStateWriteError` DB:1389-1396 (40P01, 40001) | retry DB:4357-4387 | 3 tries, 75 ms × n | — | none found |
+| FFmpeg exits (playout) | exit handler I:6429-6510 | immediate retry I:6504-6510; drops the dead URL and the failed format candidate I:6407-6427 | crash loop = 3 exits within 10 min I:849-850 → one cycle held, then auto reset when an asset exists I:7468-7479 | `playout.ffmpeg.exit` I:6533 (resolved on start I:6256 or by the sweep) | `ffmpeg-runtime.test.ts`, `playout-boundary.test.ts` |
+| Feed not advancing (ffmpeg alive) | `shouldRestartStalledPlayout` `playout-feed-health.ts:39-60` | stop playout I:1787 → next cycle restarts | 45 s stale / 90 s grace (`packages/core/src/managed-runtime.ts:629-630`) | `playout.feed-stall` I:1784 | `playout-feed-health.test.ts` |
+| Video without audio | `isFeedAudioStalled` `feed-audio-health.ts:70` | stop playout I:1736 | 90 s silence / 60 s grace (`managed-runtime.ts:627-628`) | `playout.feed-audio` I:1732 | `feed-audio-health.test.ts` |
+| Remote VOD past its end | duration bound I:1858 | planned stop | known duration + 15 s (`managed-runtime.ts:633`) | — | `duration-bound.test.ts` |
+| Uplink never encodes / timestamp storm / out_time frozen / every destination in error | I:8424-8444, I:8448-8462, I:8466-8484, I:8487-8519; gated by `canBlameUplinkForStall` I:8408-8411 | `stopUplinkProcess`, restarted in the same cycle I:8527-8537 | 300 s / storm window / 45 s + 60 s grace / `STREAM247_UPLINK_DESTINATION_STALL_RESTART_SECONDS` I:864; **no backoff between restarts** | `uplink.no-progress.*` I:8442, `uplink.discontinuity-storm.*` I:8459, `uplink.encoder-stall.*` I:8481, `uplink.destination-stall.*` I:8516 | `uplink-progress.test.ts`, `uplink-destination-stall.test.ts`, `uplink-seam.test.ts` |
+| Uplink process exits | exit handler I:8250-8286 | the next uplink cycle restarts it (15 s) | cadence only | `uplink.process.exit` I:8272 | `uplink-progress.test.ts` |
+| Twitch's 48-h cut | scheduled reconnect: direct I:7158-7181, relay I:8360-8391 | planned stop and standby window, then reconnect | 48 h default (`ffmpeg-runtime.ts:70`) | — | `ffmpeg-runtime.test.ts`, `operator-play-now-wiring.test.ts` (source pins) |
+| Output rejected / failing | `markDestinationFailure` I:2110-2156 | hold, prefer the next output, rejoin I:2103 | 60 s cooldown (`packages/core/src/index.ts:3655`), 15 s write dedup I:2122-2128 | `playout.destination.<id>.failed` I:2155 (state; resolved on recovery I:5788, I:6608) | `destination-failure-cooldown.test.ts` |
+| Nothing playable / prep failure | I:7211-7218; recovery plan `playout-recovery.ts:19`, I:7279, I:7382 | global fallback → generic fallback → standby slate | 60 s resolve timeout I:498, I:1953 | `playout.no-asset` I:7217 (resolved I:7465) | `playout-recovery.test.ts` |
+| Item fails its probe 3× | `ASSET_PROBE_QUARANTINE_THRESHOLD` `packages/core/src/asset-probe-quarantine.ts:22`, I:1057 | item held out of selection | never released automatically (see 4.2) | `playout.source-unplayable.<src>` I:7677 | `asset-probe-quarantine.test.ts` |
+| Source fails on 3 distinct items (M75) | `nextSourceBreakerRecord` `source-circuit-breaker.ts:106-150` | source held; a half-open trial closes it | 30 min, doubled up to 6 h (`source-circuit-breaker.ts:31-38`) | `playout.source-breaker.<id>` I:6891; closed I:6867-6882 | `source-circuit-breaker.test.ts`, `source-breaker-wiring.test.ts` |
+| Own network outage (M82) | classifier `packages/core/src/probe-network-outage.ts:90-106` + publish-host check I:6686, I:6729-6760 | failures counted by neither the breaker nor quarantine | one verdict per 10 s, 2.5 s check (`apps/worker/src/probe-network-outage.ts:92-95`) | log `playout.probe.network_outage` only | `probe-network-outage.test.ts` |
+| Twitch access token near expiry / 401 | I:8844-8849, I:8906-8911; 401 path I:9128-9158 | refresh, then one retry | 5 min ahead of expiry; one retry | `twitch.refresh.failed` I:9147 (resolved I:3692, I:3732) | no direct test of the refresh found |
+| Twitch record stuck on "error" with a good token | `decideTwitchConnectionHeal` `twitch-connection-heal.ts:37` | validate the token, then set error → connected I:8792-8830 | 10 min (`twitch-connection-heal.ts:23`) | audit `twitch.connected` | `twitch-connection-heal.test.ts` |
+| Chat socket silently dead / login refused | `twitch-engagement.ts:466-506` / `:36` | reconnect / retry the login | 6 min idle (`:25`) / 5 min cooldown | `twitch.chat.login-rejected` I:606 (resolved I:614) | `engagement.test.ts` |
+| Media disk filling | `enforceDiskWatermark` I:1378 | eviction ladder (frames, VOD cache, feed segments, thumbnails) I:1443 | one stage per cycle | `disk.watermark.evicted` I:1463 / `.exhausted` I:1437 | `disk-watermark.test.ts`, `program-feed-maintenance.test.ts` |
+| Stale event incidents | `resolveFinishedIncidents` I:9689-9728 | closed when the area is healthy | 10 min stable, recurrence cap 6 h, backlog 7 d (IC:551-573) | audit note on close | `incident-auto-resolution.test.ts`, `incident-classes.test.ts` |
+| As-run row left open by a killed playout | `asRunLog.boot` I:9885 | closed as process-gone | at boot | — | `as-run.test.ts` |
+| Schema missing a column | DB:4275-4299 | resolved at the next good boot | — | `schema.drift` | `schema-drift-check.test.ts` |
+
+### 4.2 Needs a human
+
+| Fault | Detection | Where it stops | Incident / alert | What the operator must do |
+|---|---|---|---|---|
+| **Suspicion:** Twitch refresh token revoked or invalid (password change, app de-authorised) | `requestTwitchTokenRefresh` throws on non-2xx I:3652 | The proactive refresh I:8847-8848 (and the slot's I:8909-8910) has no try/catch. `reconcileTwitch` I:9749 throws, so every worker cycle aborts. The heartbeat I:9776, the incident sweep I:9779, live status, EventSub and the chat bridge are all skipped every 30 s. Status stays "connected" because the refresh never writes "error" (I:3662-3693), so this repeats forever. | `worker.loop.crashed` + alert only; `twitch.refresh.failed` is written only on the 401 path I:9147 | Reconnect the Twitch account. Meanwhile the worker healthcheck fails (I:9795) and no event incident closes. |
+| **Suspicion:** Postgres restarts or blips while playout/uplink run | `readAppState` fails → `result.status === "failed"` | The failed branch awaits `upsertIncident` and `sendAlert` I:9920-9927 without a catch (the stalled branch has one, I:9899-9910). The DB write throws, so `runLoop` rejects, then `process.exit(1)` I:9971-9976. The container restarts and **ffmpeg dies with it**: one DB blip takes the channel off air. | none (the DB is down) | Nothing; Docker restarts it, but the broadcast drops. |
+| DB bootstrap or migration fails once | `ensureDatabase` DB:5935-5960 | The rejected promise is cached in `__stream247DbReady` and only a test reset clears it (DB:6025). Worker processes exit and restart (row above). **Web** keeps failing every request while `/api/health` returns 200 by design (`apps/web/app/api/health/route.ts:14-19`), so Compose never restarts it. | none | Fix the DB or the migration (restore a backup), then `docker compose restart web`. |
+| Item quarantined | `packages/core/src/asset-probe-quarantine.ts:17-22` ("never probed again") | Source sync keeps the counter (DB:6341). Only the asset API clears it (`apps/web/app/api/assets/[id]/route.ts:139`). | `playout.source-unplayable.<src>` I:7677 (state) | Fix or replace the item, then clear quarantine on the asset. |
+| State incidents left open after a worker restart | In-memory flags `diskWatermarkIncidentRaised` I:1243 and `systemVolumeIncidentOpen` I:1478 start false | Resolution runs only when the flag is set (I:1404-1409; `system-volume.ts:57-58` returns "none"). The sweep never closes state incidents (IC:748). A disk incident open before a restart stays open forever. | stays open | Resolve by hand (`apps/web/app/api/incidents/route.ts:58`). |
+| Wrong `APP_SECRET` | DB:1670-1695 | No code ever resolves `secrets.key-mismatch` (only the upsert at DB:1693) | critical, never closed | Restore the secret, restart, then resolve the incident by hand. |
+| Restart / Hard reload pressed while a cycle runs | web writes `restartRequestedAt` (`apps/web/lib/server/broadcast.ts:77-90`) | The cycle-end write clears it: I:7980 inside I:7933, also I:7710 (after the restart stop) and I:6226 (start). This is the PLANS.md follow-up at `PLANS.md:4569-4573`. | none | Press it again. |
+| Crash loop with nothing playable | I:7482-7499 | Playout holds "degraded" | `playout.crash-loop` I:7488 says "Manual intervention is required", which overstates it: with any asset the loop auto-resets every cycle (I:7468-7479) and nothing backs off. | Add playable media or a fallback. |
+| Media disk full with nothing evictable / system volume low | I:1425-1437 / I:1480-1520 | Eviction is exhausted; the system volume is observed only | `disk.watermark.exhausted`, `system.volume.low` + alert | Free space. |
+| Bad stream key / Twitch refuses the output | I:2110-2156 | Retried every 60 s forever | `playout.destination.<id>.failed` | Fix the key. |
+| Chat scope missing; broadcaster slot not connected | I:606; I:8929 | Waits | state incidents | Reconnect the account with the right scope. |
+| Process alive but unhealthy | healthchecks `docker-compose.yml:91-96,131-136,156-161` | Plain Compose restarts on exit, never on unhealthy. The relay has no healthcheck (`:100-116`). | the healthcheck log | Restart the container. |
+
+### 4.3 Gaps where automatic recovery would be safe
+
+Constraints taken from PLANS.md: the operator always wins (M78 Skip ends Pin/Fallback, `PLANS.md:90`; viewers never take
+an insert off, M79 `PLANS.md:91`; `packages/core/src/operator-precedence.ts`). None of the actions below writes Pin,
+Fallback, Insert, `includeInProgramming` or a breaker the operator closed, and none restarts ffmpeg unless it is already gone.
+
+1. **Isolate the Twitch refresh from the worker cycle.**
+   - What: on a refresh failure inside `reconcileTwitch`, write `twitch.refresh.failed` and return from that step only. On a 400 `invalid_grant`, set the identity status to "error" (state incident "reconnect required").
+   - Trigger: the refresh throws.
+   - Bound: the 10-min heal interval (`twitch-connection-heal.ts:23`) limits re-checks. Only an operator reconnect or a valid token flips the status back.
+   - Why safe: it moves no on-air state, and the heal path already exists.
+   - Risk: a valid but unrefreshable access token can flip between error and connected every 10 min until it expires (≤ 4 h). Fix: heal skips tokens whose `tokenExpiresAt` has passed.
+2. **Let a DB blip pass without a restart.**
+   - What: guard the failed-branch writes I:9919-9927 the way the stalled branch is guarded. Exit only after N consecutive failed cycles (proposed: 20 = 5 min playout, 10 = 5 min worker). Clear `__stream247DbReady` on rejection so bootstrap retries.
+   - Bound: N cycles at fixed cadence.
+   - Observable: a `worker.loop.db_unreachable` log line plus the stale heartbeat.
+   - Why safe: ffmpeg keeps playing its resolved input; the existing exit still fires for a long outage.
+   - Risk: a hidden half-dead process. The bounded exit covers it.
+3. **Rehydrate state-incident flags at boot.**
+   - What: seed `diskWatermarkIncidentRaised` / `systemVolumeIncidentOpen` from the open incidents in state on the first cycle. Resolve `secrets.key-mismatch` at a boot where every stored secret decrypts.
+   - Bound: once per boot.
+   - Why safe: the code that knows the condition re-measures it before closing.
+   - Risk: low.
+4. **Keep a restart flag newer than the one the cycle read.**
+   - What: capture `restartRequestedAt` at cycle start (I:6938). At I:7980, I:7710 and I:6226, clear only if the row still holds that value.
+   - Bound: one extra restart per press.
+   - Why safe: it carries out the operator's own action.
+   - Risk: direct-mode reconnect reuses the field as its window start (I:7165-7166, I:7178), so this needs its own soak (PLANS.md says so).
+5. **Back off the crash loop and the uplink restarts.** Hold 15 s → 30 s → … ≤ 5 min after each crash-loop trigger (I:7468), and stop telling the operator "manual intervention".
+   - Risk: medium (dark time grows). Listed, not milestoned.
+6. **Re-probe quarantined items (needs an owner decision, Q1).** One trial probe per item per 24 h, at most one per source per cycle. Only when the source breaker is closed and no outage verdict holds. Success clears it; failure keeps it. The operator can still clear it by hand.
+
+### 4.4 Proposed milestones (topic 4)
+
+| Milestone | Type | Priority | Status | Goal | Acceptance | Touched Areas | Risk | Rollback |
+|---|---|---|---|---|---|---|---|---|
+| Worker Cycle Survives A Twitch Refresh Failure | Reliability | Now | Planned | A dead refresh token costs one incident, not the whole worker cycle | A pure step-runner (or try/catch at I:8847 and I:8909) keeps the heartbeat and the incident sweep running when the refresh throws; `invalid_grant` sets status error with a state incident; heal skips expired tokens; new `tests/unit/twitch-refresh-isolation.test.ts` (refresh throws → heartbeat written, `twitch.refresh.failed` open, no `worker.loop.crashed`); `pnpm validate` | worker, core, tests, docs (operations runbook) | low | revert commit |
+| A Database Blip Does Not Take The Channel Off Air | Reliability | Now | Planned | A Postgres restart leaves ffmpeg and the uplink running | Failed-branch writes are guarded; exit only after N consecutive failed cycles; `ensureDatabase` retries after a rejection; new `tests/unit/loop-db-outage.test.ts` (pure counter: below N no exit, at N exit) + a source pin on the guard; DUT check: `docker compose restart postgres` during air → `docker compose ps` shows the same playout/uplink container start time | worker, db, tests, docs | medium | revert commit |
+| State Incidents Close After A Restart | Ops | Next | Planned | No state incident outlives its condition because a process restarted | Disk-watermark and system-volume flags are seeded from open incidents on the first cycle; `secrets.key-mismatch` resolves at a clean decrypt; `tests/unit/disk-watermark.test.ts` + `system-volume.test.ts` extended (open incident + healthy volume → resolve) | worker, db, tests | low | revert commit |
+| A Restart Pressed During A Cycle Is Kept | Behavior | Next | Planned | Restart and Hard reload are never swallowed (PLANS.md:4569 follow-up) | The cycle clears only the flag value it read (I:6226, I:7710, I:7980); `tests/unit/playout-boundary.test.ts` gets a pure `decideCycleEndRestartFlag` table (same → clear, newer → keep, reconnect window → keep); direct- and relay-mode soak before release | worker, tests, docs | medium | revert commit |
+
+### 4.5 Questions raised (topic 4)
+
+1. **Should quarantined items get a slow re-probe** (one per item per 24 h, breaker closed, no outage)? The code says the operator clears them by design (`asset-probe-quarantine.ts:17-20`). *Recommendation: yes. A healed YouTube item otherwise never returns, and a failure changes nothing.*
+2. **When a refresh token is rejected, should the identity connection show "error"** (chat, metadata and EventSub visibly off) instead of staying "connected" and retrying every cycle? *Recommendation: yes, with a state incident "reconnect Twitch".*
+3. **How long should a DB outage last before the playout gives up and restarts?** *Recommendation: 5 minutes. That is long enough for a Postgres restart or upgrade, and short enough that a broken DB still ends in a visible restart.*
 
 ## 5. Installation
 
