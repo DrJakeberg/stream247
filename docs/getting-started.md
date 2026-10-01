@@ -137,10 +137,11 @@ is abandoned and the replay plays from Twitch directly for that airing; see `doc
 
 ## 7. Programme
 
-`Program → Pools` groups assets for round-robin selection; `Program → Schedule` places weekly blocks
-that draw from a pool. A block on every weekday, including one across midnight, is the shape that
-exercises everything. `Studio → Scene` is the on-air picture; every control there carries an (i)
-that says what it does.
+`Program → Pools` groups assets for round-robin selection, oldest first (publish date, else the date
+Stream247 first saw the item; a Twitch channel's archives first seen together by VOD id);
+`Program → Schedule` places weekly blocks that draw from a pool. A block on every weekday, including
+one across midnight, is the shape that exercises everything. `Studio → Scene` is the on-air picture;
+every control there carries an (i) that says what it does.
 
 ## 8. Know it is running
 

@@ -29,10 +29,12 @@ import {
   readRelayInternalKeyIfPresent,
   upsertOverlayVideoSourceRecord,
   readOverlayStudioState,
+  replaceAssetsForSourceIds,
   resetDatabaseConnectionsForTests,
   resetOverlayDraftRecord,
   saveOverlayDraftRecord,
   saveOverlayScenePresetRecord,
+  updateAssetCacheRecords,
   updateAssetCurationRecords,
   updateAssetPlaybackProbeRecords,
   updateDestinationRecord,
@@ -1871,6 +1873,126 @@ describe.sequential("database roundtrip", () => {
       expect(asset?.playbackProbeFailures).toBe(3);
       expect(asset?.playbackProbeError).toBe(error);
       expect(asset?.playbackProbedAt).toBe("2026-09-28T08:11:42.642Z");
+    });
+  });
+
+  describe("source sync and cache writes keep the asset order key", () => {
+    // M72 (2.1). On the DUT (2026-10-01) every remote asset had published_at = '' and each source sync
+    // rewrote created_at to "now", so the pool order key was one value per source and pools played
+    // alphabetically. A VOD cache write also wrote back a snapshot taken before an hours-long download.
+    const sourceId = "source_m72";
+    const assetId = "asset_source_m72_2887855611";
+    const baseAsset = {
+      id: assetId,
+      sourceId,
+      title: "Archive stream",
+      path: "https://www.twitch.tv/videos/2887855611",
+      folderPath: "twitch-channel/m72",
+      tags: [],
+      status: "ready" as const,
+      includeInProgramming: true,
+      externalId: "2887855611",
+      categoryName: "Just Chatting",
+      durationSeconds: 3600,
+      publishedAt: "2026-07-01T00:00:00.000Z",
+      fallbackPriority: 100,
+      isGlobalFallback: false,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z"
+    };
+
+    async function seed() {
+      await ensureDatabaseWithRetry();
+      const initial = await readAppState();
+      await writeAppState({
+        ...initial,
+        sources: [
+          {
+            id: sourceId,
+            name: "M72 Twitch",
+            type: "Twitch channel",
+            connectorKind: "twitch-channel",
+            enabled: true,
+            status: "Ready",
+            externalUrl: "https://www.twitch.tv/example",
+            notes: "",
+            lastSyncedAt: "2026-09-01T00:00:00.000Z"
+          }
+        ],
+        assets: [baseAsset]
+      });
+    }
+
+    it("keeps first-seen created_at, a known published_at and a known duration through a re-sync", async () => {
+      await seed();
+      const syncNow = "2026-10-01T12:00:00.000Z";
+      await replaceAssetsForSourceIds(
+        [sourceId],
+        [
+          { ...baseAsset, title: "Archive stream (renamed)", publishedAt: "", durationSeconds: 0, createdAt: syncNow, updatedAt: syncNow },
+          {
+            ...baseAsset,
+            id: "asset_source_m72_2890000000",
+            externalId: "2890000000",
+            path: "https://www.twitch.tv/videos/2890000000",
+            publishedAt: undefined,
+            durationSeconds: 1800,
+            createdAt: syncNow,
+            updatedAt: syncNow
+          }
+        ]
+      );
+
+      const after = await readAppState();
+      const kept = after.assets.find((entry) => entry.id === assetId);
+      expect(kept).toMatchObject({
+        createdAt: "2026-09-01T00:00:00.000Z",
+        publishedAt: "2026-07-01T00:00:00.000Z",
+        durationSeconds: 3600,
+        updatedAt: syncNow,
+        // Title behaviour is unchanged by M72: the listing's title still wins.
+        title: "Archive stream (renamed)"
+      });
+      const added = after.assets.find((entry) => entry.id === "asset_source_m72_2890000000");
+      expect(added).toMatchObject({ createdAt: syncNow, publishedAt: "", durationSeconds: 1800 });
+    });
+
+    it("writes only cache columns from a VOD cache result", async () => {
+      await seed();
+      const before = (await readAppState()).assets.find((entry) => entry.id === assetId);
+      expect(before).toBeDefined();
+
+      await updateAssetCacheRecords([
+        {
+          id: assetId,
+          cachePath: "/media/.stream247-cache/twitch/2887855611.mp4",
+          cacheStatus: "ready",
+          cacheUpdatedAt: "2026-10-01T13:00:00.000Z",
+          cacheError: "",
+          updatedAt: "2026-10-01T13:00:00.000Z"
+        },
+        // A row a sync removed while the download ran: nothing to update, nothing raised.
+        { id: "asset_gone", cachePath: "", cacheStatus: "failed", cacheUpdatedAt: "2026-10-01T13:00:00.000Z", cacheError: "gone" }
+      ]);
+
+      const after = (await readAppState()).assets.find((entry) => entry.id === assetId);
+      expect(after).toMatchObject({
+        cachePath: "/media/.stream247-cache/twitch/2887855611.mp4",
+        cacheStatus: "ready",
+        cacheUpdatedAt: "2026-10-01T13:00:00.000Z",
+        cacheError: "",
+        updatedAt: "2026-10-01T13:00:00.000Z"
+      });
+      // Every other column, title, category, dates, include flag and chapters included, is as it was.
+      const withoutCacheColumns = (record: typeof after) => ({
+        ...record,
+        cachePath: undefined,
+        cacheStatus: undefined,
+        cacheUpdatedAt: undefined,
+        cacheError: undefined,
+        updatedAt: undefined
+      });
+      expect(withoutCacheColumns(after)).toEqual(withoutCacheColumns(before));
     });
   });
 

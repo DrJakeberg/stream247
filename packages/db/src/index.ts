@@ -1481,6 +1481,37 @@ export function chooseStoredAssetChaptersJson(
   return existing !== "[]" ? existing : normalizeAssetChaptersJson(incomingChaptersJson ?? "[]");
 }
 
+/**
+ * Decide which sync-owned fields of an asset survive a re-ingest.
+ *
+ * Measured on the DUT 2026-10-01: each source sync stamped `created_at` with "now" (all 46 Twitch
+ * archives shared one value, all 11 YouTube items another) and no listing delivered a publish date,
+ * so the pool order key `publishedAt || createdAt` said nothing and pools played alphabetically.
+ *
+ * - `createdAt` is "first seen": the stored value always wins, only a new row takes the sync's now.
+ * - `publishedAt` is fill-only. YouTube flat listings give an approximate date ("3 months ago")
+ *   recomputed on every sync, so it drifts daily; a stable order needs the first observed value.
+ * - `durationSeconds` takes the listing's value when it has one; a listing that reports none (0 or
+ *   missing) does not erase a duration that was already known.
+ */
+export function chooseStoredAssetSyncFields(
+  existing: { createdAt?: string; publishedAt?: string; durationSeconds?: number } | undefined,
+  incoming: { createdAt: string; publishedAt?: string; durationSeconds?: number }
+): { createdAt: string; publishedAt: string; durationSeconds: number } {
+  const incomingDuration = Number(incoming.durationSeconds ?? 0);
+  const existingDuration = Number(existing?.durationSeconds ?? 0);
+  return {
+    createdAt: existing?.createdAt || incoming.createdAt,
+    publishedAt: existing?.publishedAt || incoming.publishedAt || "",
+    durationSeconds:
+      Number.isFinite(incomingDuration) && incomingDuration > 0
+        ? incomingDuration
+        : Number.isFinite(existingDuration) && existingDuration > 0
+          ? existingDuration
+          : 0
+  };
+}
+
 function normalizeAssetCollectionColor(value: unknown): string {
   const candidate = String(value ?? "")
     .trim()
@@ -6028,8 +6059,11 @@ export async function replaceAssetsForSourceIds(
       playback_probe_failures: number;
       playback_probe_error: string;
       playback_probed_at: string;
+      created_at: string;
+      published_at: string;
+      duration_seconds: number;
     }>(
-      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, fallback_priority, is_global_fallback, playback_probe_failures, playback_probe_error, playback_probed_at FROM assets WHERE source_id = ANY($1::text[])",
+      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, fallback_priority, is_global_fallback, playback_probe_failures, playback_probe_error, playback_probed_at, created_at, published_at, duration_seconds FROM assets WHERE source_id = ANY($1::text[])",
       [sourceIds]
     );
 
@@ -6063,6 +6097,12 @@ export async function replaceAssetsForSourceIds(
         existingById.get(asset.id) ??
         (asset.externalId ? existingByExternal.get(`${asset.sourceId}:${asset.externalId}`) : undefined) ??
         existingByPath.get(`${asset.sourceId}:${asset.path}`);
+      const syncFields = chooseStoredAssetSyncFields(
+        existing
+          ? { createdAt: existing.created_at, publishedAt: existing.published_at, durationSeconds: existing.duration_seconds }
+          : undefined,
+        asset
+      );
 
       await client.query(
         `
@@ -6099,11 +6139,12 @@ export async function replaceAssetsForSourceIds(
           existing?.include_in_programming ?? asset.includeInProgramming,
           asset.externalId ?? "",
           normalizeAssetCategoryName(asset.categoryName ?? ""),
-          asset.durationSeconds ?? 0,
-          asset.publishedAt ?? "",
+          syncFields.durationSeconds,
+          syncFields.publishedAt,
           existing?.fallback_priority ?? asset.fallbackPriority,
           existing?.is_global_fallback ?? asset.isGlobalFallback,
-          asset.createdAt,
+          // First seen, not last synced: see chooseStoredAssetSyncFields. The pool order reads this.
+          syncFields.createdAt,
           asset.updatedAt,
           // This function deletes a source's assets and writes them again, so anything not carried over
           // from the existing row is reset. A YouTube source syncs about twice a minute; without these
@@ -6181,6 +6222,46 @@ export async function updateAssetRecords(assets: AssetRecord[]): Promise<void> {
           asset.isGlobalFallback,
           asset.createdAt,
           asset.updatedAt
+        ]
+      );
+    }
+  });
+}
+
+export type AssetCacheUpdateRecord = {
+  id: string;
+  cachePath: string;
+  cacheStatus: NonNullable<AssetRecord["cacheStatus"]>;
+  cacheUpdatedAt: string;
+  cacheError: string;
+  updatedAt?: string;
+};
+
+/**
+ * Records the outcome of a VOD cache lookup or download, and nothing else.
+ *
+ * The worker used updateAssetRecords for this, with an asset snapshot taken when the download was
+ * requested. A Twitch archive download runs for minutes to hours, and in that time the source syncs
+ * many times and the operator may edit the asset; writing the whole snapshot back then
+ * reverted created_at, published_at, title, category, include-in-programming and chapters to what
+ * they were before the download. The cache columns are the only ones the download learns anything
+ * about, so they are the only ones this writes. A vanished asset matches no row and is skipped.
+ */
+export async function updateAssetCacheRecords(updates: AssetCacheUpdateRecord[]): Promise<void> {
+  if (updates.length === 0) {
+    return;
+  }
+  await withSerializedStateWrite("updateAssetCacheRecords", async (client) => {
+    for (const update of updates) {
+      await client.query(
+        "UPDATE assets SET cache_path = $2, cache_status = $3, cache_updated_at = $4, cache_error = $5, updated_at = $6 WHERE id = $1",
+        [
+          update.id,
+          update.cachePath,
+          update.cacheStatus,
+          update.cacheUpdatedAt,
+          update.cacheError,
+          update.updatedAt || new Date().toISOString()
         ]
       );
     }

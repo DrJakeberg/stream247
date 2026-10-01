@@ -360,6 +360,21 @@ configuration.
   now survive whole-state writes (before 2.1 any of them reset every counter) and count each probe
   result once. Expect items that were silently rotating back onto the air to stay out after the
   upgrade; the asset page's **Clear probe failures and retry** puts one back by hand.
+- **Pool order.** A pool plays oldest first by publish date, else by the date Stream247 first saw the
+  item; items with the same date stay grouped by source, a Twitch channel's archives first seen in the
+  same sync follow their VOD id, and then the title and the asset id decide. Before 2.1 every source
+  sync stamped its items with the sync time and no listing carried a date, so a pool really played each
+  source alphabetically. A sync now keeps an item's first-seen date, a publish date once known and a
+  known duration. YouTube channel and playlist listings ask yt-dlp for approximate publish dates
+  (`youtubetab:approximate_date`): YouTube's relative age ("3 months ago") counted back from the sync
+  time, so older items fall into shared month or year buckets and order by title inside one; the first
+  value seen is kept. Items already in the catalog keep the time of their last 2.0 sync as their
+  first-seen date, and a Twitch archive that drops out of a listing and comes back is first seen again
+  and plays after the newer ones. Expect the order, and so the next item, to change once after the
+  upgrade. A finished VOD download now writes only its cache columns instead of reverting the item's
+  title, category, dates and include flag to what they were when it started. When a Twitch VOD cannot
+  be prepared and there is no global fallback, the bridge is still a library file before a remote item
+  of the same fallback priority, whatever their dates.
 
 ### Patch vs Minor Upgrades
 
@@ -473,7 +488,7 @@ CI currently builds against the public ECR mirror for `node:22-alpine` to avoid 
 - program-feed/uplink mode separates program playout restarts and asset boundaries from the external RTMP publishing worker
 - YouTube and Twitch ingestion rely on `yt-dlp`
 - schedule blocks support weekly CRUD, reusable show profiles, multi-day creation, overlap validation, drag/drop repositioning, resize-to-change-duration editing, weekly coverage summaries, and quick-start program templates
-- pools are first-class programming units for round-robin playout selection
+- pools are first-class programming units for round-robin playout selection in a stable date order (see `docs/architecture.md`, *Scheduling*)
 - sources can be edited in place and the asset catalog can be searched by title, source, and status
 - playout supports operator restart, temporary fallback, asset pinning, skip-current, and resume-schedule actions
 - overlay is drawn by the playout renderer, with replay labeling, current/next context, and admin-managed branding

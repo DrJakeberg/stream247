@@ -80,7 +80,13 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M68 YouTube Playback Formats | Reliability | Now | Complete | YouTube assets play again and keep playing | Playback resolves YouTube through an ordered list of format candidates (H.264+AAC split tracks, any split tracks, combined file) and moves to the next when one fails; an asset that is already on air is never re-resolved and never taken off air by a failed re-resolve; quarantine counters survive state writes; the eleven assets of source_jjwuu0f3 that failed with `--format best` on 2026-09-28 play on the DUT | `apps/worker`, `packages/db`, tests, docs | medium | repin v2.0.0 |
 | M69 Twitch Channel And Bot Accounts | UX + Data | Now | Complete | The broadcast channel and the bot/moderator account are two named things in data, worker and GUI | Settings show the broadcast channel (e.g. jimpanse247: stream key, title, category, schedule) and the bot/moderator account (e.g. 3JakeC: chat, moderation) separately and let the operator set both; an existing v2.0.0 install keeps its bot connection; features that need the channel owner say so visibly | `packages/db`, `apps/web`, `apps/worker`, tests | medium | additive migration, old columns kept |
 | M70 Twitch Account Docs | Docs | Now | Complete | Nobody mistakes the bot for the channel again | `docs/twitch-setup.md`, `docs/getting-started.md`, `docs/operations.md` and `docs/deployment.md` name both roles, what each needs, and check "is the channel live" against the channel | docs | low | — |
-| M71 Release 2.1.0 | Release | Now | Planned | Ship M68-M70 | rc on the DUT, verified, 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
+| M72 Stable Asset Order | Data | Now | Complete | A pool walks its sources in a real, stable chronological order | A source sync keeps an asset's first-seen `created_at` and a known `published_at` (fill-only) and never resets a known duration to 0; YouTube listings carry approximate publish dates (`youtubetab:approximate_date`); Twitch archives without dates order by their numeric VOD id; one shared comparator replaces the hand-copied sorts; cache writes touch only cache columns, so a long download no longer reverts other fields | worker, db, core, tests, docs | medium | revert commit; existing rows keep their values |
+| M73 Pool Source Alternation | Behavior | Now | Planned | A pool with several sources alternates between them (owner decision 2026-10-01) | A multi-source pool picks Twitch -> YouTube -> Twitch ... in `sourceIds` order, each source walking its own items oldest first and looping; per-source positions persist in `pools.source_cursors` (baseline, ALTER and migration); a single-source pool walks one source as before; a skipped, quarantined or vanished cursor item no longer resets the rotation to the head; worker selection, queue, lookahead, schedule preview and week lens use one rotation function; pool form and docs say so | core, worker, db, web, tests, docs | medium | revert commit; the column stays and is ignored |
+| M74 Operator Play Now | Reliability | Now | Planned | Play now and Insert put the chosen item on air, without a standby slate | Play now / Insert switch straight to the insert at the next cycle and never set the restart flag; the legacy "restart + desired asset" override branch is gone, so no action re-picks the running or a skipped item; the reconnect standby slate appears only without the relay; a dropped insert is logged; an insert stopped by its duration bound or a feed watchdog is cleared instead of replaying; the cycle re-reads state after a duration-bound stop, so insert and Move next fire at that boundary; an insert that cannot be prepared (e.g. an uncached Twitch VOD) never takes the running item off air; Recover outputs under the relay no longer restarts the programme; Skip continues after the skipped item instead of the pool head (with M73); after the insert the pool continues with its next item (resuming the interrupted item at its position is a follow-up) | worker, web, tests, docs | medium | revert commit |
+| M71 Release 2.1.0 | Release | Now | Planned | Ship M68-M70 and M72-M74 | rc on the DUT, verified (YouTube on air via Play now), 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
+| M75 Source Circuit Breaker | Reliability | Next | Planned | A broken source costs one incident, not one failed boundary per item (competitor comparison 2026-10-01; owner decision) | When probes fail on 3 distinct items of the same source with no success in between, the source is held out of the pool rotation (M73) for a cooldown that doubles up to a cap; one incident per source instead of per-item noise; after the cooldown one item is probed (half-open) and a success closes the breaker and resolves the incident; per-item quarantine and the operator's `includeInProgramming` stay untouched; a pool whose sources are all held falls back as today; the source page shows the breaker state; any persisted state ships in the baseline, the ALTER block and a migration | core, worker, db, web, tests, docs | medium | revert commit; the stored state is ignored |
+| M76 As-Run Log | Ops + Data | Next | Planned | Answer "what was on air at 19:38" from one table instead of container logs (competitor comparison 2026-10-01; owner decision) | Every playout start and end writes one row: UTC start and end, block, pool, source, asset, title, selection reason, queue kind, input kind (cache, remote, YouTube pair, live), format id, planned and aired seconds, end reason (natural end, duration bound, switch, skip, failure); bounded retention; a read-only view in the console and an API route; docs/operations.md uses it in the runbooks; the table ships in the baseline, the ALTER block and a migration | worker, db, web, tests, docs | low | revert commit; the table stays unused |
+| M77 Resume Interrupted Item | Playout | Later | Deferred | Continue an interrupted item at its position instead of throwing it away (competitor comparison 2026-10-01) | Owner deferred this on 2026-10-01 until after M75 and M76: start only when the owner asks. Scope when started: persisted offset, `-ss` for cached Twitch VODs first, duration bound and chapter windows offset-aware, soaked on the DUT because it touches the seam chain | worker, db, tests | high | revert commit |
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
 
@@ -3775,3 +3781,78 @@ follow; the env examples drop three variables no code reads and name `TWITCH_BRO
   `status=ok broadcastReady=true`, uplink baseline 3931.
 - Open: soak result; on-air YouTube pair (`playout.process.start` with `formatCandidate: split-*`); then
   2.1.0 pins, CHANGELOG, tag and repin.
+
+## M72 Stable Asset Order
+
+Measured on the DUT 2026-10-01 (v2.1.0-rc.1, read-only): every remote asset had `published_at = ''`, and
+`created_at` was rewritten to "now" by every source sync (all 46 Twitch archives shared one value, all 11
+YouTube items another). Pools sorted by `publishedAt || createdAt`, then title, so a pool really played each
+source block alphabetically, and two equal titles fell to the database's read order. The listings explain
+the missing dates: a flat YouTube channel/playlist tab reports a date only with
+`--extractor-args youtubetab:approximate_date` (e.g. `20260701`; coarse, "N months ago", recomputed on every
+sync); a flat Twitch archive entry has none, but Twitch VOD ids are one global increasing sequence. A third
+writer reverted fields too: both VOD cache writes in the worker wrote a whole asset snapshot back, taken
+before a download that can run for hours.
+
+Done:
+
+- `replaceAssetsForSourceIds` reads `created_at`, `published_at` and `duration_seconds` of the existing rows
+  and carries them through `chooseStoredAssetSyncFields`: first-seen `createdAt` wins, `publishedAt` is
+  fill-only (the approximate YouTube date drifts daily; a stable order needs the first observed value), a
+  listing's duration wins only when it is > 0. Title and category behaviour is unchanged.
+- `updateAssetCacheRecords` writes only `cache_path`, `cache_status`, `cache_updated_at`, `cache_error` and
+  `updated_at`; the job runner's `onResult` and `resolveAssetPlaybackInput` use it. The worker no longer
+  calls `updateAssetRecords` at all; the only other references are the unused re-export in
+  `apps/web/lib/server/state.ts` and a comment in `scripts/seed-playout-runtime.mjs`.
+- `apps/worker/src/source-listing.ts`: `buildFlatListingArgs` adds `youtubetab:approximate_date` for
+  `youtube-channel` and `youtube-playlist` only (Twitch archive args unchanged); `resolveListingEntryPublishedAt`
+  takes `timestamp`, else `upload_date` as UTC midnight (an impossible day such as 20260231 is no date).
+  With `approximate_date` yt-dlp sets `timestamp` itself (`_parse_time_text`, rounded to the unit of the
+  relative text), so the `upload_date` branch is only a fallback for entries that carry just the day.
+- `compareProgrammingAssets` (`packages/core/src/programming-asset-order.ts`) compares one fixed key:
+  `publishedAt || createdAt` oldest first (unparsable last instead of NaN); source id; within that source
+  items with a numeric VOD id (leading `v` stripped) first, by id as digit strings, so 2581000000 follows
+  999999999 and 20-digit ids still order; title; asset id. Review caught the first draft, which compared
+  VOD ids only for same-source pairs and titles for the rest: with equal dates that cycles, and the six
+  input orders of three assets gave three different sorts. Equal dates across sources are real (one
+  Twitch sync pass stamps every channel with the same `now`; the 46 DUT archives share one `created_at`)
+  and the input order is `ORDER BY updated_at DESC`, reshuffled by every sync and cache peek. It replaces
+  the schedule-preview and materialized-window sorts in core and the inline sort of
+  `getPoolEligibleAssets`; the recovery ladder keeps `fallbackPriority` first and uses it for the tail.
+- Recovery ladder: within one fallback priority a library file (a plain path) comes before a remote item.
+  Before 2.1 that held by accident, because every sync restamped YouTube items with the sync time; with
+  real YouTube dates months in the past an uncached Twitch VOD would otherwise be bridged by a YouTube
+  item that needs yt-dlp first on a channel without a global fallback.
+- Tests: `asset-sync-fields-retention`, `source-listing` (args, date fallback, call-site wiring),
+  `programming-asset-order` (order, ids, cross-source, tiebreaks, one result for every input permutation
+  of two same-date Twitch channels with crossing titles and of a source mixing numeric and missing ids,
+  both failing on the first draft, preview slots, every sort site), `playout-recovery` (library file
+  before an older-dated YouTube item at equal priority, operator priority still wins),
+  `vod-cache-write-wiring`; integration: a re-sync with a fresh `createdAt`, empty `publishedAt` and
+  duration 0 keeps 2026-09-01, the publish date and 3600 s (fails without the carry-over); the cache writer
+  changes nothing but the cache columns and `updated_at`. No existing expectation had to change.
+- Docs: architecture (what a sync keeps, how coarse the YouTube dates are, the order key, the recovery
+  tier), getting-started, deployment (*Upgrading To 2.1*: the order and so the next item change once;
+  rows already stored keep their last 2.0 sync time as first-seen date; a returning Twitch archive is
+  first seen again).
+- `pnpm validate` green (1939 unit, 50 integration tests, build).
+
+Follow-ups:
+
+- Operator edits of title and category are still overwritten by every sync (the listing's values win in
+  `replaceAssetsForSourceIds`).
+- YouTube approximate dates are YouTube's relative-age buckets ("3 months ago", "1 year ago") counted back
+  from the sync time; fill-only freezes the bucket of the first post-deploy sync, so all 11 existing DUT
+  YouTube items sit in a few shared month or year buckets and order by title inside each. Keeping the
+  earliest observed value instead would refine the buckets over time (each observation is an upper bound
+  on the real date, so the value only ever moves earlier as an item crosses into an older bucket); the
+  listing position (newest first) would be a better tiebreak inside a bucket.
+- Twitch archives order by first-seen time, by VOD id only among archives first seen together: an archive
+  that drops out of one listing and returns, or older archives that appear when `SOURCE_SYNC_LIMIT` is
+  raised, are first seen again and play after the newer ones. Once M73 walks each source on its own, one
+  source's numeric-id items can order by VOD id before the date (transitive inside a single source).
+- The source detail page sorts its asset list by `publishedAt || updatedAt`, and `updatedAt` is rewritten
+  on every sync.
+- `updateAssetRecords` has no caller left; remove it with its web re-export.
+- On the DUT after the rc: after two syncs, `published_at` filled for the YouTube source and unchanged on
+  the second sync; `created_at` unchanged across syncs; the next Twitch archive in a pool is the next VOD id.

@@ -149,6 +149,17 @@ Current source connectors:
 
 Assets are normalized into a PostgreSQL-backed catalog and then selected by the playout runtime.
 
+A source sync writes a source's assets again from its listing, but keeps what the listing cannot know
+better: the first-seen `created_at`, a `published_at` once one was observed (fill-only, because
+YouTube's approximate dates move with every sync), a known duration when the listing reports none, the
+cache columns, and the operator's curation (folder, tags, title prefix, hashtags, notes, chapters,
+include flag, fallback settings). The listing's title and category still replace the stored ones on
+every sync. YouTube channel and playlist listings ask yt-dlp for `youtubetab:approximate_date`: yt-dlp
+counts YouTube's relative age ("5 hours ago", "3 months ago") back from the sync time and rounds to its
+unit, so a recent upload gets a time to the hour or minute, while older items that share a label share one day and order by
+title within it; the first value seen is the one kept. Twitch channel archive listings carry no date. A
+finished VOD download writes only the asset's cache columns.
+
 Ingest lists items; it does not decide how they play. Playback URLs are resolved by the playout
 process (the `playout` container), just before an item airs and in the queue prefetch. A YouTube item
 is resolved through ordered format candidates (`apps/worker/src/playable-input.ts`) and may play as a
@@ -176,6 +187,18 @@ Current schedule capabilities:
 - resize-to-change-duration editing
 
 The scheduler is deterministic and explainable: schedule preview items carry explicit source/reason information.
+
+A pool's assets play in one order, `compareProgrammingAssets` in `packages/core`, which the worker's
+selection, the schedule preview and the materialized fill preview share. It compares one fixed key:
+`publishedAt`, else the first-seen `createdAt`, oldest first; then the source id, so items with the same
+date stay grouped by source; then, within that source, items with a numeric VOD id first, by id; then
+the title; then the asset id. The key is fixed because a comparator that used VOD ids only for some
+pairs and titles for others formed cycles, and the sort then depended on the database's read order.
+A Twitch channel's archives, whose listing has no date, therefore play by first-seen time, and by VOD
+id among archives first seen in the same sync. An archive that drops out of a listing and comes back is
+first seen again and plays after the newer ones. The pool cursor walks that order and loops. The
+fallback ladder uses the same order within one fallback priority, after putting library files ahead of
+remote items, because a library file plays without a remote resolution.
 
 ## Twitch Integration
 

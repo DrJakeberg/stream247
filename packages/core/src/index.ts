@@ -2,6 +2,7 @@ export * from "./asset-chapters.js";
 export * from "./asset-probe-quarantine.js";
 import { isAssetProbeQuarantined } from "./asset-probe-quarantine.js";
 import { getAssetChapterAt, parseAssetChaptersJson } from "./asset-chapters.js";
+import { sortProgrammingAssets } from "./programming-asset-order.js";
 export * from "./broadcast-channel.js";
 export * from "./twitch-accounts.js";
 export * from "./chat-emotes.js";
@@ -11,6 +12,7 @@ export * from "./chat-game-minesweeper.js";
 export * from "./chat-interaction.js";
 export * from "./managed-runtime.js";
 export * from "./overlay-layout.js";
+export * from "./programming-asset-order.js";
 export * from "./relay-ingest.js";
 export * from "./source-health.js";
 
@@ -898,6 +900,8 @@ export type SchedulePreviewAssetRecord = {
   titlePrefix?: string;
   status: string;
   includeInProgramming: boolean;
+  // Orders a source's Twitch archives, which have no date; see programming-asset-order.ts.
+  externalId?: string;
   durationSeconds?: number;
   publishedAt?: string;
   createdAt: string;
@@ -2652,20 +2656,6 @@ function getSchedulePreviewAssetDurationSeconds(asset: SchedulePreviewAssetRecor
   };
 }
 
-function sortSchedulePreviewAssets<T extends Pick<SchedulePreviewAssetRecord, "publishedAt" | "createdAt" | "title">>(
-  assets: T[]
-): T[] {
-  return assets.slice().sort((left, right) => {
-    const publishedDelta =
-      new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
-    if (publishedDelta !== 0) {
-      return publishedDelta;
-    }
-
-    return left.title.localeCompare(right.title);
-  });
-}
-
 function getSchedulePreviewEligibleAssets(
   pool: SchedulePreviewPoolRecord | null,
   assets: SchedulePreviewAssetRecord[]
@@ -2682,7 +2672,7 @@ function getSchedulePreviewEligibleAssets(
     excludedAssetIds.add(pool.audioLaneAssetId);
   }
 
-  return sortSchedulePreviewAssets(
+  return sortProgrammingAssets(
     assets.filter(
       (asset) =>
         asset.status === "ready" &&
@@ -2775,6 +2765,7 @@ type MaterializedAssetRecord = {
   title: string;
   status: string;
   includeInProgramming: boolean;
+  externalId?: string;
   durationSeconds?: number;
   publishedAt?: string;
   createdAt: string;
@@ -2879,18 +2870,6 @@ function getMaterializedAssetDurationSeconds(asset: MaterializedAssetRecord): { 
   };
 }
 
-function sortPoolAssets<T extends Pick<MaterializedAssetRecord, "publishedAt" | "createdAt" | "title">>(assets: T[]): T[] {
-  return assets.slice().sort((left, right) => {
-    const publishedDelta =
-      new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
-    if (publishedDelta !== 0) {
-      return publishedDelta;
-    }
-
-    return left.title.localeCompare(right.title);
-  });
-}
-
 function materializePoolWindow(args: {
   block: ScheduleOccurrence;
   pool: MaterializedPoolRecord | null;
@@ -2906,7 +2885,7 @@ function materializePoolWindow(args: {
   }
   const poolName = args.pool?.name || args.block.sourceName || "Unassigned pool";
   const eligibleAssets = args.pool
-    ? sortPoolAssets(
+    ? sortProgrammingAssets(
         args.assets.filter(
           (asset) =>
             asset.status === "ready" &&

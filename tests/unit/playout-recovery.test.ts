@@ -156,3 +156,47 @@ describe("more than one asset marked as the global fallback", () => {
     expect(plan.asset?.id).toBe("asset_fallback_b");
   });
 });
+
+describe("generic fallback after M72's real YouTube dates", () => {
+  // Review finding on M72: before 2.1 every sync restamped YouTube items with the sync time, so the
+  // library file (first seen long before) always won the generic tier. Since M72 a YouTube item keeps
+  // an approximate publish date months in the past and would sort first on date alone.
+  const failed = createAsset({
+    id: "asset_twitch_failed",
+    sourceId: "source-twitch",
+    title: "Uncached Twitch VOD",
+    path: "https://www.twitch.tv/videos/2887855611",
+    externalId: "2887855611"
+  });
+  const youtube = createAsset({
+    id: "asset_youtube",
+    sourceId: "source-youtube",
+    title: "A YouTube item",
+    path: "https://www.youtube.com/watch?v=cSabcTQLLoE",
+    externalId: "cSabcTQLLoE",
+    publishedAt: "2026-07-01T00:00:00.000Z",
+    createdAt: "2026-09-30T08:00:00.000Z"
+  });
+  const libraryFile = createAsset({
+    id: "asset_library",
+    sourceId: "source-local-library",
+    title: "Library file",
+    path: "/app/data/media/library/bridge.mp4",
+    createdAt: "2026-09-15T00:00:00.000Z"
+  });
+
+  it("bridges with the library file at equal priority, whatever the dates say", () => {
+    for (const assets of [[failed, youtube, libraryFile], [libraryFile, youtube, failed]]) {
+      const plan = planRecoveryAfterPlaybackPreparationFailure(assets, failed);
+      expect(plan.asset?.id).toBe("asset_library");
+      expect(plan.fallbackTier).toBe("generic-fallback");
+    }
+  });
+
+  it("still lets the operator's fallback priority pick the remote item", () => {
+    const preferredYoutube = { ...youtube, fallbackPriority: 30 };
+    expect(planRecoveryAfterPlaybackPreparationFailure([failed, libraryFile, preferredYoutube], failed).asset?.id).toBe(
+      "asset_youtube"
+    );
+  });
+});

@@ -100,6 +100,7 @@ import {
   nextAssetProbeState,
   planAssetProbeUpdates,
   countQuarantinedBySource,
+  compareProgrammingAssets,
   createTwitchTokenScopeCache
 } from "@stream247/core";
 import {
@@ -125,8 +126,8 @@ import {
   resolveIncident,
   updateDestinationRecord,
   updateEngagementGameRuntimeRecord,
+  updateAssetCacheRecords,
   updateAssetChapterProbeRecords,
-  updateAssetRecords,
   updatePlayoutRuntime,
   updatePoolCursor,
   updateTwitchBroadcasterConnectionRecord,
@@ -331,6 +332,7 @@ import {
   type SourceSyncOutcome
 } from "./source-sync-scope.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
+import { buildFlatListingArgs, resolveListingEntryPublishedAt, type FlatListingConnectorKind } from "./source-listing.js";
 import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
 import { ActiveChatterRoster } from "./active-chatters.js";
 import { ChatViewerRequestPass } from "./chat-viewer-requests.js";
@@ -980,9 +982,12 @@ function isAssetBlockedForAutomaticSelection(asset: AssetRecord): boolean {
 const vodCacheJobRunner = new VodCacheJobRunner({
   ensureCache: (asset, config, execText, options) => ensureTwitchVodCache(asset, config, execText, options),
   async onResult(asset, result) {
-    await updateAssetRecords([
+    // Cache columns only. `asset` is the snapshot taken when the download was requested, possibly hours
+    // ago; writing the whole record back reverted every field a sync or an operator had changed since
+    // (created_at, published_at, title, category, include-in-programming, chapters).
+    await updateAssetCacheRecords([
       {
-        ...asset,
+        id: asset.id,
         cachePath: result.cachePath,
         cacheStatus: result.status,
         cacheUpdatedAt: result.cacheUpdatedAt,
@@ -1961,7 +1966,18 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
     vodCacheJobRunner.request(asset, cacheConfig);
   }
 
-  await updateAssetRecords([updatedAsset]);
+  // Cache columns only, for the same reason as the job runner's onResult: `asset` came from the cycle's
+  // state read, and the rest of the record is not this function's to write.
+  await updateAssetCacheRecords([
+    {
+      id: updatedAsset.id,
+      cachePath: updatedAsset.cachePath ?? "",
+      cacheStatus: updatedAsset.cacheStatus ?? "",
+      cacheUpdatedAt: updatedAsset.cacheUpdatedAt ?? "",
+      cacheError: updatedAsset.cacheError ?? "",
+      updatedAt: updatedAsset.updatedAt
+    }
+  ]);
 
   if (result.status === "ready") {
     await resolveIncident("playout.twitch-cache.failed", "Twitch VOD cache is ready.");
@@ -3887,6 +3903,8 @@ type YtDlpPlaylistEntry = {
   title?: string;
   duration?: number;
   timestamp?: number;
+  // YYYYMMDD; for YouTube tabs only with `youtubetab:approximate_date` (see source-listing.ts).
+  upload_date?: string;
   url?: string;
   webpage_url?: string;
   original_url?: string;
@@ -3996,15 +4014,12 @@ function buildSourceFolderPath(connectorKind: AppState["sources"][number]["conne
   return [connectorKind, safeName || "source"].filter(Boolean).join("/");
 }
 
-async function loadFlatCollection(url: string): Promise<YtDlpPlaylistResponse> {
+async function loadFlatCollection(url: string, connectorKind: FlatListingConnectorKind): Promise<YtDlpPlaylistResponse> {
   const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
-  const output = await execFileText(ytDlpBinary, [
-    "--flat-playlist",
-    "--dump-single-json",
-    "--playlist-end",
-    process.env.SOURCE_SYNC_LIMIT || "200",
-    url
-  ]);
+  const output = await execFileText(
+    ytDlpBinary,
+    buildFlatListingArgs({ url, connectorKind, playlistEnd: process.env.SOURCE_SYNC_LIMIT || "200" })
+  );
   return JSON.parse(output) as YtDlpPlaylistResponse;
 }
 
@@ -4162,7 +4177,10 @@ async function syncYoutubePlaylistSources(): Promise<void> {
     }
 
     try {
-      const payload = await loadFlatCollection(externalUrl);
+      const payload = await loadFlatCollection(
+        externalUrl,
+        source.connectorKind === "youtube-playlist" ? "youtube-playlist" : "youtube-channel"
+      );
       const entries = payload.entries ?? [];
       let sourceAssetCount = 0;
 
@@ -4182,7 +4200,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
             folderPath: buildSourceFolderPath(source.connectorKind, source.name),
             externalId: entry.id,
             durationSeconds: entry.duration,
-            publishedAt: fromUnixTimestamp(entry.timestamp),
+            publishedAt: resolveListingEntryPublishedAt(entry),
             now
           })
         );
@@ -4359,7 +4377,7 @@ async function syncTwitchVodSources(): Promise<void> {
           errorMessage: ""
         }));
       } else {
-        const payload = await loadFlatCollection(getTwitchArchiveUrl(externalUrl));
+        const payload = await loadFlatCollection(getTwitchArchiveUrl(externalUrl), "twitch-channel");
         let sourceAssetCount = 0;
         for (const entry of payload.entries ?? []) {
           const id = entry.id ?? "";
@@ -4377,7 +4395,7 @@ async function syncTwitchVodSources(): Promise<void> {
               folderPath: buildSourceFolderPath(source.connectorKind, source.name),
               externalId: normalizedId,
               durationSeconds: entry.duration,
-              publishedAt: fromUnixTimestamp(entry.timestamp),
+              publishedAt: resolveListingEntryPublishedAt(entry),
               now
             })
           );
@@ -4586,15 +4604,9 @@ function getPoolEligibleAssets(state: AppState, poolId: string, skippedAssetId =
 
       return pool.sourceIds.includes(asset.sourceId);
     })
-    .sort((left, right) => {
-      const publishedDelta =
-        new Date(left.publishedAt || left.createdAt).getTime() - new Date(right.publishedAt || right.createdAt).getTime();
-      if (publishedDelta !== 0) {
-        return publishedDelta;
-      }
-
-      return left.title.localeCompare(right.title);
-    });
+    // The same order the schedule preview and the materialized window show (packages/core), so the
+    // item the worker picks is the item the operator was told comes next.
+    .sort(compareProgrammingAssets);
 }
 
 function lookaheadVideoTitleFromPool(state: AppState, poolId: string): string {
