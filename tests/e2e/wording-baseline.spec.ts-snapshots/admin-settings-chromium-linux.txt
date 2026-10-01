@@ -63,6 +63,13 @@ Off — switched off under Studio → Engagement or by the server.
 Active Live status and viewer count
 Active Sign in to Stream247 with Twitch as owner
 Content sources — Twitch archives and YouTube channels under Program → Sources — are only pulled from, never broadcast to.
+VIEWERS
+Channel language
+CHANNEL LANGUAGE
+i
+English
+German (Deutsch)
+Save channel language
 RELEASE
 Update center
 Keep production installs pinned to explicit image tags. Use the release preflight and upgrade rehearsal scripts before changing a live system.
