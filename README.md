@@ -96,7 +96,8 @@ are not retroactively revoked.
   - temporary fallback override
   - pin asset on air
   - skip current asset, which also ends a pin or temporary fallback holding it on air; chat skip votes
-    are paused while one does (the bot says why)
+    are paused while one does, and while an operator play now / insert is pending or on air (the bot
+    says why)
   - resume schedule control, which also cancels a pending or running play now / insert
   - force reconnect and recover outputs for direct RTMP mode; with the relay force reconnect is
     refused (the uplink reconnects by itself) and recover outputs leaves the programme alone (the

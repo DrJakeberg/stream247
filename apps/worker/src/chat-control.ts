@@ -18,7 +18,7 @@ import {
   parseChatCommand,
   type ChatCommand,
   type ChatInteractionConfig,
-  type OperatorOverrideHold,
+  type OperatorHold,
   type OverlayEngagementView,
   type SkipVoteState,
   type VoteOutcome,
@@ -31,9 +31,10 @@ export type ChatControlEffect =
   | { kind: "vote-recorded"; option: number }
   | { kind: "skip-recorded"; votes: number; votesNeeded: number }
   | { kind: "skip-passed"; assetId: string }
-  // A skip vote while the operator's Pin or Fallback holds the air (M78): not counted. `announce` is true
-  // when the bot should say why -- at most once per SKIP_PAUSED_REPLY_COOLDOWN_MS.
-  | { kind: "skip-paused"; hold: Exclude<OperatorOverrideHold, "">; announce: boolean }
+  // A skip vote while the operator's Pin or Fallback (M78) or Play now / Insert (M79) holds the air: not
+  // counted. `announce` is true when the bot should say why -- at most once per
+  // SKIP_PAUSED_REPLY_COOLDOWN_MS.
+  | { kind: "skip-paused"; hold: Exclude<OperatorHold, "">; announce: boolean }
   | { kind: "request"; actor: string; query: string };
 
 // A room that wants an item gone types the command together, for as long as the 120 s skip window it
@@ -89,8 +90,8 @@ export class ChatControlRuntime {
     message: string;
     currentAssetId: string;
     config: ChatInteractionConfig;
-    /** The Pin or Fallback that holds the air, as the worker cycle last read it (M78). */
-    operatorHold?: OperatorOverrideHold;
+    /** The Pin, Fallback (M78) or operator insert (M79) holding the air, as the worker cycle last read it. */
+    operatorHold?: OperatorHold;
   }): ChatControlEffect {
     try {
       const now = this.now();
@@ -117,7 +118,8 @@ export class ChatControlRuntime {
       if (command.kind === "skip") {
         // Viewers never override the operator (M78): while a Pin or Fallback holds the air no campaign
         // starts and no vote counts. Before, a passed vote ran the operator's Skip, which started the
-        // pinned item again from 0, and the room could repeat that for as long as the pin ran.
+        // pinned item again from 0, and the room could repeat that for as long as the pin ran. The same
+        // for the operator's Play now / Insert (M79), which a passed vote cut.
         if (args.operatorHold) {
           return { kind: "skip-paused", hold: args.operatorHold, announce: this.claimSkipPausedReply() };
         }

@@ -69,7 +69,8 @@ describe("viewers never override the operator", () => {
 
   it("refreshes the hold every cycle, ends a running campaign under it, before the effects are applied", () => {
     const reconcile = flat(functionBody("reconcileChatInteraction"));
-    const hold = reconcile.indexOf("latestOperatorHold = resolveOperatorOverrideHold({");
+    // resolveOperatorHold since M79: the Pin or Fallback of M78, or else the operator's insert.
+    const hold = reconcile.indexOf("latestOperatorHold = resolveOperatorHold({");
     expect(hold).toBeGreaterThan(reconcile.indexOf("const state = await readAppState();"));
     expect(hold).toBeLessThan(reconcile.indexOf("await drainChatEffects(state, config);"));
     expect(reconcile).toContain("assets: state.assets, nowMs: Date.now() }); if (latestOperatorHold !== \"\") { chatControl.clearSkipVote(); }");
@@ -100,5 +101,37 @@ describe("viewers never override the operator", () => {
 
   it("speaks through the bridge's own socket write", () => {
     expect(flat(bridgeSource)).toContain("say(message: string): void { this.sendChatMessage(message); }");
+  });
+});
+
+// M79. Owner decision 2026-10-01: a chat skip vote may not skip a Play now / Insert. The rule is core
+// resolveOperatorHold (operator-precedence.test.ts); the runtime's pause and reply are chat-control's.
+describe("viewers never skip the operator's insert", () => {
+  it("hands the IRC handler and the passed-vote judgement the insert rule, not the override rule alone", () => {
+    expect(flat(workerSource)).toContain("let latestOperatorHold: OperatorHold = \"\";");
+    const reconcile = flat(functionBody("reconcileChatInteraction"));
+    expect(reconcile).toContain("latestOperatorHold = resolveOperatorHold({ ...state.playout, assets: state.assets, nowMs: Date.now() });");
+    expect(reconcile).not.toContain("resolveOperatorOverrideHold");
+  });
+
+  it("names the insert in the refusal's audit row, and answers with the same cooldown", () => {
+    const drain = flat(functionBody("drainChatEffects"));
+    const refused = between(drain, 'if (decision.kind === "paused") {', "continue; }");
+    expect(refused).toContain(
+      'heldBy === "insert" ? "Chat voted to skip the current item while the operator\'s Play now / Insert held the air; the vote was not applied."'
+    );
+    expect(refused).toContain("if (chatControl.claimSkipPausedReply()) { twitchChatBridge.say(formatChatSkipPausedReply(heldBy)); }");
+  });
+
+  it("never marks a pool or cue point insert as the operator's, so those stay skippable", () => {
+    // The insert fields the hold reads: pending is written by the admin's Play now / Insert only, active by
+    // the cycle end only for an operator_insert selection (decideCycleEndInsert, playout-boundary.test.ts).
+    expect(workerSource).not.toContain('insertStatus: "pending"');
+    expect(workerSource).not.toContain('insertStatus: "active"');
+    expect(flat(functionBody("runPlayoutCycle"))).toContain('selectionIsOperatorInsert: selection.reasonCode === "operator_insert",');
+    // The pool-interval and cue point arms select as scheduled_insert, the insert arm alone as operator_insert.
+    const choose = flat(functionBody("choosePlaybackCandidate"));
+    expect(choose.split('reasonCode: "operator_insert" as const').length - 1).toBe(1);
+    expect(choose.split('reasonCode: "scheduled_insert" as const').length - 1).toBe(2);
   });
 });

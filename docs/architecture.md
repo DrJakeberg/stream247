@@ -332,8 +332,10 @@ replace (M78): a Skip of the item a Pin or Fallback holds on air clears the over
 and the override arm leaves out an item under a skip hold; which override holds the air is one rule
 (`resolveOperatorOverrideHold` in `packages/core/src/operator-precedence.ts`; none under a Live Bridge,
 whose arm comes first) that the override arm, the admin and the worker's chat all call. In the chat a
-skip vote neither starts nor counts while an override holds, and a vote that passed is applied only to
-the item still on air and not already held out (`decidePassedSkipVote`). A live selection ends an
+skip vote neither starts nor counts while an override holds, or the operator's Play now / Insert is
+pending or on air (M79, `resolveOperatorHold`: the override rule, then the insert arm's conditions; pool
+and cue point inserts never set the insert fields and stay skippable), and a vote that passed is applied
+only to the item still on air and not already held out (`decidePassedSkipVote`). A live selection ends an
 operator insert like any other selection (`decideInsertAfterSelection` in `playout-boundary.ts`). What each control does is listed in `docs/operations.md`, *Operator controls*.
 
 ## Multi-Output Delivery

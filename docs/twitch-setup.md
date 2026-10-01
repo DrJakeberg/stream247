@@ -41,8 +41,9 @@ this rule.
 
 The bot account must be a **moderator** in the broadcast channel's chat (`/mod <bot>` there).
 Alerts are recorded and listed under Studio → Engagement; they are not drawn on air yet.
-While the operator's Pin or Fallback holds the air, `!skip` votes are paused and the bot says so in chat,
-at most once a minute (`docs/operations.md`, *Operator controls*).
+While the operator's Pin or Fallback holds the air, or the operator's Play now / Insert is pending or on
+air, `!skip` votes are paused and the bot says so in chat, at most once a minute (`docs/operations.md`,
+*Operator controls*). A pool's automatic insert and a cue point insert stay skippable.
 
 ## Required Redirect URLs
 

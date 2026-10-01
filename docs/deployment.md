@@ -468,6 +468,15 @@ and viewers never override the operator:
 
 See `docs/operations.md`, *Operator controls*.
 
+### Upgrading Past 2.1.0: Chat Never Skips An Operator Insert (M79)
+
+Behaviour only: no table, no migration, no stack file change. Chat skip votes neither start nor count
+while the operator's Play now / Insert is pending or on air, a vote that passed just before is not
+applied (`chat.skip.paused` with `hold: insert`, audit row `chat.skip.refused`), and the bot says why at
+most once a minute, sharing the cooldown with the Pin and Fallback lines. Before, a passed vote cut the
+insert. A pool's automatic insert and a cue point insert stay skippable. An older image restores the old
+behaviour; nothing is stored. See `docs/operations.md`, *Operator controls*.
+
 ### Patch vs Minor Upgrades
 
 - Patch upgrades should be the default production path.

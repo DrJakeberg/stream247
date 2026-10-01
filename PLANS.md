@@ -88,6 +88,9 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M76 As-Run Log | Ops + Data | Next | Complete | Answer "what was on air at 19:38" from one table instead of container logs (competitor comparison 2026-10-01; owner decision) | Every playout start and end writes one row: UTC start and end, block, pool, source, asset, title, selection reason, queue kind, input kind (cache, remote, YouTube pair, live), format id, planned and aired seconds, end reason (natural end, duration bound, switch, skip, failure); bounded retention; a read-only view in the console and an API route; docs/operations.md uses it in the runbooks; the table ships in the baseline and a migration (a new table needs no ALTER line) | worker, db, web, tests, docs | low | revert commit; the table stays unused |
 | M77 Resume Interrupted Item | Playout | Later | Deferred | Continue an interrupted item at its position instead of throwing it away (competitor comparison 2026-10-01) | Owner deferred this on 2026-10-01 until after M75 and M76: start only when the owner asks. Scope when started: persisted offset, `-ss` for cached Twitch VODs first, duration bound and chapter windows offset-aware, soaked on the DUT because it touches the seam chain | worker, db, tests | high | revert commit |
 | M78 Operator Precedence | Behavior | Now | Complete | Operator actions end what they replace, and viewers never override the operator (owner decisions 2026-10-01: 1 answered directly, 2 and 3 chosen from the lead's recommendation) | The operator's Skip during an active Pin or Fallback ends that override instead of restarting the pinned item from 0, and the schedule continues from the pool's own position (after the pinned item only when the pin held the pool's running item; "after the pinned item" for every pinned pool item is a follow-up for the owner); a Live Bridge takeover ends an insert that is on air (and drops a pending one, logged), so the insert never replays from its start after the live; while a Pin or Fallback holds the air no chat skip vote starts or counts, and the bot says why in chat; a passed vote whose item has left the air is dropped; Skip tested in relay and direct mode | worker, web, core, tests, docs | low-medium | revert commit |
+| M79 Chat Never Skips An Operator Insert | Behavior | Now | Complete | Viewers never take an operator's insert off air (owner decision 2026-10-01) | While a Play now / Insert is pending or on air, no chat skip vote starts or counts and a vote that passed earlier is refused, exactly like under a Pin (M78); the bot says why at most once a minute; the insert ends as before (natural end, operator Skip, Live Bridge); tested | worker, core, tests, docs | low | revert commit |
+| M80 Viewer Language | UX + i18n | Now | Planned | Everything viewers see or read follows one channel language (owner decision 2026-10-01: German and English, viewer-facing first) | A channel language setting (`de`, `en`; new installs `en`) drives every viewer-facing text: the on-air picture (up next, clock labels, polls, the skip bar, chat game texts, empty states), the standby/fallback/reconnect slates, every chat bot reply, and the public channel page; one message catalogue per language in core with a test that both catalogues have the same keys and no viewer-facing literal is left outside it; operator content (titles, scene text layers) is never translated; the admin UI stays English (its translation is a later milestone); docs say how to add a language | core, worker, web, db, tests, docs | medium | revert commit; the setting is ignored |
+| M81 Admin Interface Language | UX + i18n | Later | Deferred | The admin interface in the channel language | Owner decided 2026-10-01 to translate the viewer side first (M80); start only when the owner asks | web, tests | high | — |
 
 ## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
 
@@ -4611,10 +4614,11 @@ DUT check after deploy (read-only apart from the operator's own clicks;
   (M66 rehearsal): Play now a short item, start the bridge while it plays, release it. The playout log
   has `playout.insert.ended` `{ reason: "live-bridge" }`, and after the release a `scheduled_match`
   start, no `operator_insert` start of that item.
-- Chat (viewer control on, `!skip` enabled): while a Pin holds the air, `!skip` in jimpanse247's chat
+- Chat (viewer control on, `!skip` enabled): while a Pin holds the air, from about 45 s after it starts
+  (the chat sees it at the next worker cycle; see the follow-up below), `!skip` in jimpanse247's chat
   gets the bot's line once (a second `!skip` within a minute gets none), the worker log has no
-  `chat.skip.passed`, no skip bar is on air. After Resume schedule, `!skip` counts again (the bar shows
-  1 of N).
+  `chat.skip.passed`, no skip bar is on air. About 45 s after Resume schedule, `!skip` counts again (the
+  bar shows 1 of N).
 
 Follow-ups:
 
@@ -4624,6 +4628,7 @@ Follow-ups:
   `ITEM_ENDING_STOP_REASONS`, but the reconnect also restarts every other item, which plays on from 0.
 - A chat skip vote still skips an operator's Play now (insert): viewers can end an operator insert,
   which the M78 rule "viewers never override the operator" would also cover. Needs an owner decision.
+  Decided 2026-10-01 (no): M79.
 - For the owner, a deviation from the M78 spec: after Skip ends a pin of a pool item that was not the
   pool's running item, the pool continues from its stored position (after the interrupted item), not
   after the pinned item, and the pinned item can come round again later as the pool's pick. A pin, like
@@ -4639,6 +4644,70 @@ Follow-ups:
 - The IRC handler learns of a new Pin at the next worker cycle (up to 30 s); votes in that window count
   and a vote that passes is refused when the cycle applies it (logged, audited, answered).
 - The bot's line is English while the skip bar on air is German; a channel language setting would cover
-  both.
+  both. Planned as M80 (owner decision 2026-10-01).
 - Starting a Live Bridge does not warn that a pending Play now will be dropped; the audit row says so
   afterwards.
+
+## M79 Chat Never Skips An Operator Insert
+
+Owner decision 2026-10-01, asked "Can a chat vote skip a Play now insert?": no. On v2.1.0-rc.2 (and after
+M78) it could: a passed vote ran the operator's Skip on the insert, whose skip hold took it out of the
+insert arm, so the insert was cut.
+
+What counts as the operator's insert, by code reading: the runtime insert fields. `insertStatus` is
+written `pending` only by the admin's Play now / Insert (`apps/web/lib/server/broadcast.ts`) and `active`
+only by the cycle end for an `operator_insert` selection (`decideCycleEndInsert`). A pool's automatic
+insert (`insertTrigger: pool-interval`) and a cue point insert (`cuepoint`) select as `scheduled_insert`
+and never touch those fields: they are the schedule's content and stay skippable, as before.
+
+Done:
+
+- Core (`operator-precedence.ts`): `resolveOperatorHold` -- the Pin or Fallback of
+  `resolveOperatorOverrideHold` first (the override arm comes first; a pending insert under it is dropped
+  as `preempted`), else `insert` while the insert is `pending` or `active`, its item ready and not
+  skip-held, and no Live Bridge pending or active with an input (the worker's insert arm and its order).
+  Only the chat asks it; the override arm, the Play now refusal and the admin's Skip keep the override
+  rule. `decidePassedSkipVote` pauses under it; `formatChatSkipPausedReply("insert")` is "The operator is
+  playing an insert — skip votes are paused until it ends." (one line for pending and active).
+- Worker: the cycle computes `latestOperatorHold` through `resolveOperatorHold` and ends a running
+  campaign under it; the IRC handler's `skip-paused` effect carries `insert`; the refusal of a vote that
+  passed before the cycle saw the insert logs `chat.skip.paused` `{ hold: "insert" }` and audits
+  `chat.skip.refused` "...the operator's Play now / Insert held the air; the vote was not applied." The
+  reply shares the M78 cooldown (`SKIP_PAUSED_REPLY_COOLDOWN_MS`). The insert ends as before (its end,
+  the operator's Skip, Resume, a Live Bridge), and votes count again at the next worker cycle.
+- Wording: operations (*Play now* entry, *Chat skip votes*), twitch-setup, architecture, deployment
+  (*Upgrading Past 2.1.0: Chat Never Skips An Operator Insert (M79)*), README, and the *Enable skip
+  votes* tip in Studio → Engagement → *Viewer control*. The bot line is English like M78's; M80 moves
+  every bot reply into the channel language.
+- Tests: `operator-precedence` (the `resolveOperatorHold` table: active and pending insert, no insert,
+  not ready, skip-held, under a Live Bridge, under a Pin or Fallback, Pin run out; the override rule
+  never names an insert; passed votes paused during a pending and an active insert, stale after the
+  operator's Skip ended the insert; the insert line; and the rule over the rows the playout's own writes
+  leave -- `decideCycleEndInsert`, `shouldClearInsertOnExit` -- which pins that the hold ends with the
+  insert's exit and that a pool or cue point insert never holds) and `operator-precedence-wiring` (the
+  hold through `resolveOperatorHold`, the refusal's audit text, no worker write of `pending`/`active`,
+  `selectionIsOperatorInsert` from `operator_insert`, one `operator_insert` arm and two
+  `scheduled_insert` arms) carry M79. The `chat-control` cases (no count, no bar and one reply under an
+  `insert` hold, the cooldown shared with the Pin line, counting from one once no hold is handed in)
+  are regression guards only: the runtime pauses for any hold the same way since M78 and its M79 diff
+  is types and comments, so they pass on the M78 runtime too.
+- `pnpm validate` green (2335 unit tests in 232 files, 62 integration tests, build). Not run: the e2e
+  baselines (only the *Enable skip votes* tip text changed; tips show on hover only).
+
+DUT check after deploy (viewer control on, `!skip` enabled). The chat learns of the insert, and of its
+end, only at the next worker cycle (30 s apart, after the source syncs); the Play now's `pending` phase
+lasts about one playout cycle plus the resolve, so the chat usually sees the insert first as `active`.
+Play now a pool item at least three minutes long and wait about 45 s after it comes on air. From then on
+`!skip` in jimpanse247's chat gets the insert line once a minute, no skip bar goes on air, the worker
+log has no `chat.skip.passed` or `chat.skip.applied`, and there is no `chat.skip` audit row. Before
+that, `!skip` may still count and show the bar; a vote that passes there logs `chat.skip.passed` and,
+when the cycle applies it, `chat.skip.paused` `{ hold: "insert" }` with the audit row
+`chat.skip.refused` and the insert line, and the insert plays on. About 45 s after the insert ends, `!skip` counts again (the bar shows 1 of N).
+During a pool's automatic insert `!skip` counts as before.
+
+Follow-ups:
+
+- The IRC handler learns of the insert at the next worker cycle (up to 30 s plus the cycle after it goes
+  pending or on air): votes in that window count, and a vote that passes is refused when the cycle
+  applies it (logged, audited, answered), as for a Pin (M78). It learns of the insert's end the same
+  way: votes in that window stay paused with the insert line.

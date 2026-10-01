@@ -369,3 +369,63 @@ describe("ChatControlRuntime skip votes while the operator holds the air", () =>
     ).toEqual({ kind: "request", actor: "a", query: "retro" });
   });
 });
+
+// M79. Owner decision 2026-10-01: a chat vote may not skip the operator's Play now / Insert, pending or on
+// air. Which hold the worker hands the runtime is core resolveOperatorHold's (operator-precedence.test.ts,
+// including that the hold ends with the insert and never names a pool or cue point insert); the runtime
+// pauses for any hold the same way, so these guard that the insert hold gets the M78 treatment: no count,
+// no bar, one reply per shared cooldown, nothing left behind once the worker hands it no hold.
+describe("ChatControlRuntime skip votes while the operator's insert holds the air", () => {
+  it("does not count a vote during an insert, and says why once", () => {
+    const { runtime } = createRuntime();
+    const cfg = config({ skipMinimumVotes: 2 });
+
+    const first = runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "insert-1", config: cfg, operatorHold: "insert" });
+    const second = runtime.handleMessage({ actor: "b", message: "!skip", currentAssetId: "insert-1", config: cfg, operatorHold: "insert" });
+
+    expect(first).toEqual({ kind: "skip-paused", hold: "insert", announce: true });
+    // Two voters would pass a threshold of 2; neither counted, no bar goes on air.
+    expect(second).toEqual({ kind: "skip-paused", hold: "insert", announce: false });
+    expect(runtime.getSkipVoteRecord(cfg)).toBeNull();
+    expect(runtime.getOverlayView(cfg)).toBeNull();
+  });
+
+  it("answers once per cooldown, shared with the Pin's line", () => {
+    const { runtime, advance } = createRuntime();
+    const vote = (actor: string, operatorHold: "asset" | "insert") =>
+      runtime.handleMessage({ actor, message: "!skip", currentAssetId: "asset-1", config: config(), operatorHold });
+
+    // A Pin ended by a Play now within the minute: the room heard one line, it does not get a second.
+    expect(vote("a", "asset")).toMatchObject({ announce: true });
+    expect(vote("b", "insert")).toEqual({ kind: "skip-paused", hold: "insert", announce: false });
+    advance(SKIP_PAUSED_REPLY_COOLDOWN_MS / 1000);
+    expect(vote("c", "insert")).toEqual({ kind: "skip-paused", hold: "insert", announce: true });
+  });
+
+  it("counts again, from one, once the worker hands it no hold after the insert", () => {
+    const { runtime } = createRuntime();
+    const cfg = config({ skipMinimumVotes: 2 });
+    runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "insert-1", config: cfg, operatorHold: "insert" });
+
+    // The paused vote left nothing behind: the first vote on the item after the insert starts at one.
+    expect(runtime.handleMessage({ actor: "a", message: "!skip", currentAssetId: "asset-2", config: cfg, operatorHold: "" })).toEqual({
+      kind: "skip-recorded",
+      votes: 1,
+      votesNeeded: 2
+    });
+    expect(runtime.handleMessage({ actor: "b", message: "!skip", currentAssetId: "asset-2", config: cfg, operatorHold: "" })).toEqual({
+      kind: "skip-passed",
+      assetId: "asset-2"
+    });
+  });
+
+  it("counts as before when the worker hands it no hold for a pool or cue point insert", () => {
+    const { runtime } = createRuntime();
+    const cfg = config({ skipMinimumVotes: 2 });
+    const vote = (actor: string) =>
+      runtime.handleMessage({ actor, message: "!skip", currentAssetId: "pool-insert", config: cfg, operatorHold: "" });
+
+    expect(vote("a")).toEqual({ kind: "skip-recorded", votes: 1, votesNeeded: 2 });
+    expect(vote("b")).toEqual({ kind: "skip-passed", assetId: "pool-insert" });
+  });
+});

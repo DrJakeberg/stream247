@@ -55,7 +55,8 @@ the pool's next item. Under the relay no operator action shows that slate.
   (its end, its duration bound, a feed watchdog) the pool continues with its next item. The interrupted
   item is not resumed at its position — it was the pool's last started item, so the pool goes on after
   it (resuming is M77, deferred). Play now does not move a pool's position either, so a pool item played
-  by hand can still come round as the pool's next item. Both take a queued Move next out.
+  by hand can still come round as the pool's next item. Both take a queued Move next out. Chat cannot
+  skip it: skip votes are paused while it is pending or on air (*Chat skip votes* below, since M79).
 - Play now and Play insert are refused for the item already on air (with the relay, Restart plays it
   again from its beginning), while a Live Bridge is pending or on air (the takeover ends an insert;
   release it first, also when a Pin is still running under it), while a Pin or Fallback holds the air
@@ -106,12 +107,19 @@ the pool's next item. Under the relay no operator action shows that slate.
   still in effect applies as usual. The planned reconnect of direct mode still restarts a running
   insert from its beginning (unchanged; see Soft restart below).
 - **Chat skip votes** (`!skip`, Studio → Engagement, *Viewer control*) apply the same Skip, without
-  the override part: while a Pin or Fallback holds the air no skip vote starts or counts (since M78), a
-  vote that passed just before the override was seen is not applied (runtime event `chat.skip.paused`,
-  audit row `chat.skip.refused`), and the bot answers in chat at most once a minute, for example "The
-  operator has pinned this item — skip votes are paused until the pin ends." Votes count again once the
-  override ends. A passed vote is also not applied when its item has left the air by the time the
-  worker applies it (up to one worker cycle later), or when a Skip already holds that item out (runtime
+  the override part: while a Pin or Fallback holds the air (since M78), or the operator's Play now /
+  Insert is pending or on air (since M79), no skip vote starts or counts, a vote that passed just before
+  the worker saw the override or insert is not applied (runtime event `chat.skip.paused` with `hold`
+  `asset`, `fallback` or `insert`; audit row `chat.skip.refused`), and the bot answers in chat at most
+  once a minute (one cooldown for all three), for example "The operator has pinned this item — skip
+  votes are paused until the pin ends." or "The operator is playing an insert — skip votes are paused
+  until it ends." Votes count again once the override or insert ends; an insert still ends as before
+  (its end, the operator's Skip, Resume schedule, a Live Bridge). A pool's automatic insert and a cue
+  point insert are the schedule's, not the operator's: chat can skip them as any other item. The worker
+  sees a new Pin or insert, and its end, at its next cycle (up to about 30 s): votes in that window count
+  or stay paused, and a vote that passes is judged on the row when it is applied. A passed vote is also
+  not applied when its item has left the air by the time the worker applies it (up to one worker cycle
+  later), or when a Skip already holds that item out (runtime
   event `chat.skip.stale`; nothing is written, so an operator's Skip in between stands). Under a Live
   Bridge nothing is on air to skip: votes do nothing and the bot stays silent, also with a Pin still
   running underneath. The next-item poll (`!1`, `!2`, ...) and viewer requests are not paused.

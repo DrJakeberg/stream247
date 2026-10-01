@@ -5,10 +5,10 @@
  * Fallback while it runs, its item is ready, and that item is not under a skip hold -- before M78 the arm
  * ignored the hold, so a Skip during a pin started the pinned item again from 0. The admin applies the
  * rule before it accepts a Play now (an insert the arm would preempt) and when Skip ends the override;
- * the worker's chat applies it before a viewer skip vote counts, because viewers never override the
- * operator. A Live Bridge comes before the override arm, so a pin left running under it does not hold
- * the air: without that condition the bot told chat during a live show that the operator had pinned
- * "this item".
+ * the worker's chat applies it (through resolveOperatorHold, which adds the operator's insert: M79) before
+ * a viewer skip vote counts, because viewers never override the operator. A Live Bridge comes before the
+ * override arm, so a pin left running under it does not hold the air: without that condition the bot
+ * told chat during a live show that the operator had pinned "this item".
  */
 export type OperatorOverrideHold = "" | "asset" | "fallback";
 
@@ -29,24 +29,69 @@ function isActiveAt(value: string, nowMs: number): boolean {
   return value !== "" && new Date(value).getTime() > nowMs;
 }
 
+// The worker's liveBridgeActive: its live arm returns before the override and insert arms are reached.
+function liveBridgeTakesAir(input: OperatorOverrideHoldInput): boolean {
+  return input.liveBridgeInputUrl !== "" && (input.liveBridgeStatus === "pending" || input.liveBridgeStatus === "active");
+}
+
+// What the override and insert arms both ask of the operator's item: ready, and not held out by a Skip.
+function operatorItemSelectable(input: OperatorOverrideHoldInput, assetId: string): boolean {
+  if (isActiveAt(input.skipUntil, input.nowMs) && input.skipAssetId === assetId) {
+    return false;
+  }
+  return input.assets.some((asset) => asset.id === assetId && asset.status === "ready");
+}
+
 export function resolveOperatorOverrideHold(input: OperatorOverrideHoldInput): OperatorOverrideHold {
   if (input.overrideAssetId === "" || !isActiveAt(input.overrideUntil, input.nowMs)) {
     return "";
   }
-  // The worker's liveBridgeActive: its live arm returns before the override arm is reached.
-  if (input.liveBridgeInputUrl !== "" && (input.liveBridgeStatus === "pending" || input.liveBridgeStatus === "active")) {
-    return "";
-  }
-  if (isActiveAt(input.skipUntil, input.nowMs) && input.skipAssetId === input.overrideAssetId) {
-    return "";
-  }
-  if (!input.assets.some((asset) => asset.id === input.overrideAssetId && asset.status === "ready")) {
+  if (liveBridgeTakesAir(input) || !operatorItemSelectable(input, input.overrideAssetId)) {
     return "";
   }
   return input.overrideMode === "fallback" ? "fallback" : "asset";
 }
 
-export interface PassedSkipVoteInput extends OperatorOverrideHoldInput {
+/**
+ * What holds the air against a chat skip vote (M79): the Pin or Fallback above, or else the operator's
+ * Play now / Insert, pending or on air. Owner decision 2026-10-01: a chat vote may not skip an operator
+ * insert either. Before, a passed vote ran the operator's Skip on it, and the insert was cut.
+ *
+ * Only the chat asks this. The override arm, the Play now refusal and the admin's Skip keep
+ * resolveOperatorOverrideHold: an insert is not an override, and the arm would select its item as one.
+ *
+ * The insert fields name only the operator's insert: Play now and Insert write `pending` (admin), the
+ * cycle that starts it writes `active` (decideCycleEndInsert, only for an `operator_insert` selection).
+ * A pool's automatic insert and a cue point insert select as `scheduled_insert` and never touch them,
+ * so they stay skippable as before -- they are the schedule's content, not the operator's.
+ *
+ * In the worker's selection order: the live arm first, the override arm next (a pending insert under a
+ * Pin is dropped as `preempted`, and the Pin's line is the true one), then the insert arm, which picks
+ * the insert only while its item is ready and not skip-held. The operator's Skip of the insert writes
+ * that skip hold, so the insert ends as before and votes count again.
+ */
+export type OperatorHold = OperatorOverrideHold | "insert";
+
+export interface OperatorHoldInput extends OperatorOverrideHoldInput {
+  insertAssetId: string;
+  insertStatus: string;
+}
+
+export function resolveOperatorHold(input: OperatorHoldInput): OperatorHold {
+  const overrideHold = resolveOperatorOverrideHold(input);
+  if (overrideHold !== "") {
+    return overrideHold;
+  }
+  if (input.insertAssetId === "" || (input.insertStatus !== "pending" && input.insertStatus !== "active")) {
+    return "";
+  }
+  if (liveBridgeTakesAir(input) || !operatorItemSelectable(input, input.insertAssetId)) {
+    return "";
+  }
+  return "insert";
+}
+
+export interface PassedSkipVoteInput extends OperatorHoldInput {
   // The item the room voted on, and the item the runtime row has on air when the worker applies the vote.
   votedAssetId: string;
   currentAssetId: string;
@@ -54,22 +99,24 @@ export interface PassedSkipVoteInput extends OperatorOverrideHoldInput {
 
 export type PassedSkipVoteDecision =
   | { kind: "apply" }
-  | { kind: "paused"; hold: Exclude<OperatorOverrideHold, ""> }
+  | { kind: "paused"; hold: Exclude<OperatorHold, ""> }
   | { kind: "stale" };
 
 /**
  * What the worker does with a chat skip vote that passed, judged on the runtime row as it is when the
  * vote is applied (up to a worker cycle after it passed).
  *
- * Under a Pin or Fallback it is paused: viewers never end the operator's override. A vote for an item
- * that is no longer on air, or that a Skip already holds out, is stale and writes nothing. Applied, it
- * replaced the skip hold and set the restart flag: after the operator's Skip had ended a pin, a vote the
- * room had passed on the item before it took the skip hold off the pinned item, and the pool's running
- * item rule restarted that item from 0. The same write restarted whatever came on air after the voted
- * item's natural end.
+ * Under a Pin or Fallback it is paused: viewers never end the operator's override; under the operator's
+ * Play now / Insert too (M79): a vote the room passed before the cycle saw the insert is not applied
+ * either, so it neither cuts the insert nor restarts playout while the insert is about to start. A vote
+ * for an item that is no longer on air, or that a Skip already holds out, is stale and writes nothing.
+ * Applied, it replaced the skip hold and set the restart flag: after the operator's Skip had ended a pin,
+ * a vote the room had passed on the item before it took the skip hold off the pinned item, and the pool's
+ * running item rule restarted that item from 0. The same write restarted whatever came on air after the
+ * voted item's natural end.
  */
 export function decidePassedSkipVote(input: PassedSkipVoteInput): PassedSkipVoteDecision {
-  const hold = resolveOperatorOverrideHold(input);
+  const hold = resolveOperatorHold(input);
   if (hold !== "") {
     return { kind: "paused", hold };
   }
@@ -87,7 +134,11 @@ export function decidePassedSkipVote(input: PassedSkipVoteInput): PassedSkipVote
  * vocabulary, and it says when skipping comes back: a refusal without a reason is what makes a room type
  * the command again (chat-interaction.ts).
  */
-export function formatChatSkipPausedReply(hold: Exclude<OperatorOverrideHold, "">): string {
+export function formatChatSkipPausedReply(hold: Exclude<OperatorHold, "">): string {
+  if (hold === "insert") {
+    // One line for a pending and an active insert: the pending one takes the air at the next cycle.
+    return "The operator is playing an insert — skip votes are paused until it ends.";
+  }
   return hold === "fallback"
     ? "The operator has put the fallback on air — skip votes are paused until it ends."
     : "The operator has pinned this item — skip votes are paused until the pin ends.";
