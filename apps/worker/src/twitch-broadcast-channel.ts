@@ -8,6 +8,8 @@
 // an answer that cannot change. A rename changes the login, which is a different cache key, so a
 // stale entry cannot be served for a renamed channel.
 
+import { fetchWithTimeout } from "./http-timeout.js";
+
 type FetchLike = typeof fetch;
 
 export type TwitchUserIdResolver = {
@@ -29,13 +31,16 @@ export function createTwitchUserIdResolver(): TwitchUserIdResolver {
         return cached;
       }
 
-      const fetchImpl = args.fetchImpl ?? fetch;
-      const response = await fetchImpl(`https://api.twitch.tv/helix/users?login=${encodeURIComponent(login)}`, {
-        headers: {
-          Authorization: `Bearer ${args.accessToken}`,
-          "Client-Id": args.clientId
-        }
-      });
+      const response = await fetchWithTimeout(
+        `https://api.twitch.tv/helix/users?login=${encodeURIComponent(login)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${args.accessToken}`,
+            "Client-Id": args.clientId
+          }
+        },
+        { fetchImpl: args.fetchImpl }
+      );
 
       if (!response.ok) {
         throw new Error(`Twitch user lookup for ${login} failed with status ${response.status}.`);

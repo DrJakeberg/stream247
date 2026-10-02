@@ -7,6 +7,8 @@ import {
 } from "@stream247/core";
 import { resolveAppBaseUrl, type AppState, type ManagedConfigRecord } from "@stream247/db";
 
+import { fetchWithTimeout } from "./http-timeout.js";
+
 type FetchLike = typeof fetch;
 
 type EventSubSubscriptionType =
@@ -355,7 +357,11 @@ export async function syncTwitchEventSubSubscriptions(args: {
   target: EventSubTarget;
   fetchImpl?: FetchLike;
 }): Promise<TwitchEventSubSyncResult> {
-  const fetchImpl = args.fetchImpl ?? fetch;
+  // Every request of the sync carries a deadline (M87): a Twitch that never answers is one failed
+  // sync, not a cycle held until the stall guard.
+  const baseFetch = args.fetchImpl ?? fetch;
+  const fetchImpl = ((url: string, init?: RequestInit) =>
+    fetchWithTimeout(String(url), init, { fetchImpl: baseFetch })) as FetchLike;
   const enabled = isEngagementAlertsRuntimeEnabled(args.state.engagement, args.env, args.state.managedConfig);
   const target = args.target;
   const callbackUrl = resolveTwitchEventSubCallbackUrl(args.state.managedConfig, args.env);

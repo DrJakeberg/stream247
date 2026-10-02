@@ -6,6 +6,8 @@
 // This module reports per channel and lets the caller decide once per key per interval. The I/O
 // is injected so the behaviour is testable without a network.
 
+import { fetchWithTimeout } from "./http-timeout.js";
+
 export type AlertChannelReport = { outcome: "sent" } | { outcome: "unconfigured" } | { outcome: "failed"; detail: string };
 
 export type AlertDeliveryReport = {
@@ -33,12 +35,15 @@ export async function deliverAlert(args: {
 }): Promise<AlertDeliveryReport> {
   const discord: Promise<AlertChannelReport> = !args.discordWebhookUrl
     ? Promise.resolve({ outcome: "unconfigured" })
-    : args
-        .fetchImpl(args.discordWebhookUrl, {
+    : fetchWithTimeout(
+        args.discordWebhookUrl,
+        {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content: `Stream247: ${args.message}` })
-        })
+        },
+        { fetchImpl: args.fetchImpl }
+      )
         .then((response): AlertChannelReport => (response.ok ? { outcome: "sent" } : { outcome: "failed", detail: `HTTP ${response.status}` }))
         .catch((error): AlertChannelReport => ({ outcome: "failed", detail: describeError(error) }));
 

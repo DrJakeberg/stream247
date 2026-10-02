@@ -310,6 +310,14 @@ import {
 } from "./scene-renderer.js";
 import { execFileText, runWithStallGuard } from "./process-utils.js";
 import { DATABASE_OUTAGE_EXIT_AFTER_MS, DatabaseOutageBudget } from "./database-outage.js";
+import { CycleStepIncidentTracker, runIsolatedCycleSteps, type CycleStep } from "./cycle-steps.js";
+import { fetchWithTimeout } from "./http-timeout.js";
+import {
+  TWITCH_REFRESH_REFUSED_ERROR,
+  TWITCH_TOKEN_REFRESH_WINDOW_MS,
+  TwitchTokenRefreshError,
+  requestTwitchTokenRefresh
+} from "./twitch-token-refresh.js";
 import {
   createFeedAudioState,
   getFeedAudioOptions,
@@ -503,6 +511,10 @@ const PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS = (() => {
   const configured = Number.isFinite(parsed) && parsed > 0 ? parsed * 1000 : 60_000;
   return clampToCycleAwaitCeiling(configured, process.env).effectiveMs;
 })();
+// Timeout for one yt-dlp listing or metadata call of a source sync (M87, R3 H6). These ran without
+// one, so a source host that stopped answering held the worker cycle until the stall guard exited the
+// process. Two minutes covers a 200-entry flat listing; the clamp keeps it under the stall guard.
+const SOURCE_SYNC_YTDLP_TIMEOUT_MS = clampToCycleAwaitCeiling(120_000, process.env).effectiveMs;
 // One roster of who is talking, shared by the engagement game and the skip vote, so the count the
 // overlays page prints is the count a skip needs a share of. See active-chatters.ts.
 const activeChatters = new ActiveChatterRoster();
@@ -3651,37 +3663,6 @@ async function writeOnAirOverlay(
   await fs.writeFile(onAirOverlayPath, `${lines.join("\n")}\n`, "utf8");
 }
 
-/**
- * The refresh-grant HTTP exchange, shared by the identity and the broadcaster-slot refresh. What
- * differs between the two — which record holds the refresh token and where the result is stored —
- * stays in the callers; copying the exchange instead would let the two flows drift apart on
- * exactly the error handling that 401 recovery depends on.
- */
-async function requestTwitchTokenRefresh(args: {
-  clientId: string;
-  clientSecret: string;
-  refreshToken: string;
-  errorLabel: string;
-}): Promise<{ access_token: string; refresh_token?: string; expires_in?: number }> {
-  const body = new URLSearchParams({
-    grant_type: "refresh_token",
-    refresh_token: args.refreshToken,
-    client_id: args.clientId,
-    client_secret: args.clientSecret
-  });
-
-  const response = await fetch("https://id.twitch.tv/oauth2/token", {
-    method: "POST",
-    body
-  });
-
-  if (!response.ok) {
-    throw new Error(`${args.errorLabel} failed with status ${response.status}.`);
-  }
-
-  return (await response.json()) as { access_token: string; refresh_token?: string; expires_in?: number };
-}
-
 // Renamed from refreshBroadcasterAccessToken: it always refreshed the *identity* connection
 // (state.twitch), and since M51 "broadcaster" means the second slot — the old name pointed at
 // the wrong one of the two.
@@ -3769,7 +3750,7 @@ async function resolveTwitchCategory(args: {
     return null;
   }
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.twitch.tv/helix/search/categories?query=${encodeURIComponent(normalizedName)}&first=10`,
     {
       headers: {
@@ -4145,7 +4126,8 @@ async function loadFlatCollection(url: string, connectorKind: FlatListingConnect
   const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
   const output = await execFileText(
     ytDlpBinary,
-    buildFlatListingArgs({ url, connectorKind, playlistEnd: process.env.SOURCE_SYNC_LIMIT || "200" })
+    buildFlatListingArgs({ url, connectorKind, playlistEnd: process.env.SOURCE_SYNC_LIMIT || "200" }),
+    { timeoutMs: SOURCE_SYNC_YTDLP_TIMEOUT_MS, killProcessGroup: true }
   );
   return JSON.parse(output) as YtDlpPlaylistResponse;
 }
@@ -4470,7 +4452,10 @@ async function syncTwitchVodSources(): Promise<void> {
 
     try {
       if (source.connectorKind === "twitch-vod") {
-        const output = await execFileText(ytDlpBinary, ["--dump-single-json", "--no-playlist", externalUrl]);
+        const output = await execFileText(ytDlpBinary, ["--dump-single-json", "--no-playlist", externalUrl], {
+          timeoutMs: SOURCE_SYNC_YTDLP_TIMEOUT_MS,
+          killProcessGroup: true
+        });
         const payload = JSON.parse(output) as YtDlpVideoResponse;
         const assetPath = payload.webpage_url || payload.original_url || externalUrl;
         const assetIdSeed = payload.id || externalUrl;
@@ -8723,7 +8708,7 @@ async function syncTwitchSchedule(args: {
         )}&id=${encodeURIComponent(existingSegment.segmentId)}`
       : `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(args.broadcasterId)}`;
 
-    const response = await fetch(endpoint, {
+    const response = await fetchWithTimeout(endpoint, {
       method: existingSegment ? "PATCH" : "POST",
       headers: {
         Authorization: `Bearer ${args.accessToken}`,
@@ -8766,7 +8751,7 @@ async function syncTwitchSchedule(args: {
       continue;
     }
 
-    await fetch(
+    await fetchWithTimeout(
       `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
         args.broadcasterId
       )}&id=${encodeURIComponent(staleSegment.segmentId)}`,
@@ -8819,6 +8804,7 @@ async function healTwitchConnection(): Promise<void> {
   const decision = decideTwitchConnectionHeal({
     status: state.twitch.status,
     accessToken: state.twitch.accessToken,
+    error: state.twitch.error,
     lastAttemptAt: twitchConnectionHealLastAttemptAt,
     now: Date.now()
   });
@@ -8856,6 +8842,67 @@ async function healTwitchConnection(): Promise<void> {
   logRuntimeEvent("twitch.connection.heal.restored", { login: verdict.login, userId: verdict.userId });
 }
 
+/**
+ * A failed proactive refresh of the identity token. Always the `twitch.refresh.failed` incident; a
+ * refresh token Twitch refused also sets the connection to error (owner Q3), which is what the
+ * status chip and the gates on chat, moderation and schedule sync read.
+ */
+async function recordIdentityRefreshFailure(error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : "Unknown Twitch refresh failure.";
+  logRuntimeEvent("twitch.refresh.failed", { account: "identity", error: message });
+  await upsertIncident({
+    scope: "twitch",
+    severity: "critical",
+    title: "Twitch token refresh failed",
+    message,
+    fingerprint: "twitch.refresh.failed"
+  });
+  await markIdentityRefreshRefused(error);
+}
+
+/**
+ * Only a refused refresh token, never a Twitch that is down or slow: that says nothing about the
+ * token, and an error status for it would switch chat, moderation and the schedule sync off over a
+ * network blip. The record keeps its token, account and sync history; the operator reconnects.
+ */
+async function markIdentityRefreshRefused(error: unknown): Promise<void> {
+  if (!(error instanceof TwitchTokenRefreshError) || !error.refused) {
+    return;
+  }
+
+  const state = await readAppState();
+  await updateTwitchConnectionRecord({
+    ...state.twitch,
+    status: "error",
+    error: TWITCH_REFRESH_REFUSED_ERROR
+  });
+  await upsertIncident({
+    scope: "twitch",
+    severity: "critical",
+    title: "Reconnect Twitch",
+    message: `Twitch refused the stored refresh token of ${state.twitch.broadcasterLogin || "the bot account"}, so the connection cannot be renewed. Reconnect it under Admin → Settings → Twitch accounts; until then title, category, schedule sync and chat are paused.`,
+    fingerprint: "twitch.reconnect.required"
+  });
+  logRuntimeEvent("twitch.refresh.refused", { account: "identity", status: error.status });
+}
+
+/**
+ * The reconnect entry holds while the connection is in error; a connected record means the operator
+ * reconnected (the heal leaves a refused record alone), so both the entry and the refresh failure
+ * that led to it are over.
+ */
+async function closeTwitchReconnectIncident(state: AppState): Promise<void> {
+  const open = state.incidents.some(
+    (incident) => incident.fingerprint === "twitch.reconnect.required" && incident.status === "open"
+  );
+  if (!open) {
+    return;
+  }
+
+  await resolveIncident("twitch.reconnect.required", "Twitch was reconnected.");
+  await resolveIncident("twitch.refresh.failed", "Twitch was reconnected.");
+}
+
 async function reconcileTwitch(): Promise<void> {
   const state = await readAppState();
   if (state.twitch.status !== "connected" || !state.twitch.accessToken || !state.twitch.broadcasterId) {
@@ -8870,9 +8917,17 @@ async function reconcileTwitch(): Promise<void> {
   const expiresAt = state.twitch.tokenExpiresAt ? new Date(state.twitch.tokenExpiresAt).getTime() : 0;
   let twitchAccessToken = state.twitch.accessToken;
   const twitchClientId = getTwitchClientId(state);
-  if (expiresAt > 0 && expiresAt - Date.now() < 5 * 60_000) {
-    twitchAccessToken = await refreshIdentityAccessToken();
+  if (expiresAt > 0 && expiresAt - Date.now() < TWITCH_TOKEN_REFRESH_WINDOW_MS) {
+    // A refresh that fails ends this step, not the cycle (M87): the token is expiring or gone, so
+    // nothing below could use it, but the heartbeat, the sweep, live status and chat still run.
+    try {
+      twitchAccessToken = await refreshIdentityAccessToken();
+    } catch (error) {
+      await recordIdentityRefreshFailure(error);
+      return;
+    }
   }
+  await closeTwitchReconnectIncident(state);
 
   const currentScheduleItem = getCurrentScheduleItem(state);
   const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
@@ -8932,8 +8987,26 @@ async function reconcileTwitch(): Promise<void> {
     const slotExpiresAt = state.twitchBroadcaster.tokenExpiresAt
       ? new Date(state.twitchBroadcaster.tokenExpiresAt).getTime()
       : 0;
-    if (slotExpiresAt > 0 && slotExpiresAt - Date.now() < 5 * 60_000) {
-      broadcasterSlotAccessToken = await refreshBroadcasterSlotAccessToken();
+    if (slotExpiresAt > 0 && slotExpiresAt - Date.now() < TWITCH_TOKEN_REFRESH_WINDOW_MS) {
+      try {
+        broadcasterSlotAccessToken = await refreshBroadcasterSlotAccessToken();
+      } catch (error) {
+        // The slot's status stays as it is (see refreshBroadcasterSlotAccessToken); the incident
+        // names the failure and the next cycle retries.
+        const message = error instanceof Error ? error.message : "Unknown Twitch broadcaster refresh failure.";
+        await upsertIncident({
+          scope: "twitch",
+          severity: "critical",
+          title: "Twitch token refresh failed",
+          message:
+            error instanceof TwitchTokenRefreshError && error.refused
+              ? `${message} Reconnect the broadcast channel account ${state.twitchBroadcaster.broadcasterLogin || getTwitchBroadcastChannelLogin(state)} under Admin → Settings → Twitch accounts.`
+              : message,
+          fingerprint: "twitch.refresh.failed"
+        });
+        logRuntimeEvent("twitch.refresh.failed", { account: "broadcaster", error: message });
+        return;
+      }
     }
   }
 
@@ -9014,7 +9087,7 @@ async function reconcileTwitch(): Promise<void> {
           channelBody.game_id = desiredCategoryId;
         }
 
-        const channelResponse = await fetch(
+        const channelResponse = await fetchWithTimeout(
           `https://api.twitch.tv/helix/channels?broadcaster_id=${encodeURIComponent(metadataBroadcasterId)}`,
           {
             method: "PATCH",
@@ -9067,7 +9140,7 @@ async function reconcileTwitch(): Promise<void> {
       reassertIntervalMs: CHAT_SETTINGS_REASSERT_INTERVAL_MS
     });
     if (chatSettingsDecision.write) {
-      const chatResponse = await fetch(
+      const chatResponse = await fetchWithTimeout(
         `https://api.twitch.tv/helix/chat/settings?broadcaster_id=${encodeURIComponent(
           chatSettingsBroadcasterId
         )}&moderator_id=${encodeURIComponent(state.twitch.broadcasterId)}`,
@@ -9172,6 +9245,7 @@ async function reconcileTwitch(): Promise<void> {
           message: refreshMessage,
           fingerprint: "twitch.refresh.failed"
         });
+        await markIdentityRefreshRefused(refreshError);
         await upsertIncident({
           scope: "twitch",
           severity: "warning",
@@ -9223,6 +9297,7 @@ async function reconcileTwitch(): Promise<void> {
           message: refreshMessage,
           fingerprint: "twitch.refresh.failed"
         });
+        await markIdentityRefreshRefused(refreshError);
         await upsertIncident({
           scope: "twitch",
           severity: "warning",
@@ -9754,52 +9829,104 @@ async function resolveFinishedIncidents(state: AppState): Promise<void> {
   }
 }
 
-async function runWorkerCycle(): Promise<void> {
-  // Disk self-protection runs before the syncs so a failing external integration — Twitch down, a
-  // source erroring — can never stand between a filling disk and the one mechanism that frees it.
-  await enforceDiskWatermark();
-  // The observation-only sibling: OS/database volume pressure cannot be evicted away, only
-  // reported, and the report must not wait behind a wedged sync either.
-  await observeSystemVolume();
-  await sweepAssetRetention();
-  await syncDestinations();
-  await syncLocalMediaLibrary();
-  await syncDirectMediaSources();
-  await syncYoutubePlaylistSources();
-  await syncTwitchVodSources();
-  // After the syncs, so assets discovered this cycle can already receive their chapters.
-  await backfillAssetChapters();
-  // Ahead of the reconcile, because everything below is gated on the connected status and a
-  // record wrongly stuck on error would otherwise keep gating it away forever.
-  await healTwitchConnection();
-  await reconcileTwitch();
-  await reconcileTwitchLiveStatus();
-  await reconcileTwitchEventSub();
-  const chatCycleState = await readAppState();
-  latestEngagementSettings = chatCycleState.engagement;
-  latestManagedConfig = chatCycleState.managedConfig;
-  await observeChannelTimeZone(chatCycleState);
-  const chatInteractionForBridge = await readChatInteractionSettingsRecord();
-  await twitchChatBridge.sync(chatCycleState, process.env, {
-    chatInteractionEnabled: chatInteractionForBridge.enabled,
-    // Not the settings row: it has no enabled column, its gameId defaults to "snake" and is never
-    // empty, so `Boolean(gameId)` was constant true and held a connection open on installs with
-    // every chat consumer switched off. The scene is where the operator's decision actually lives.
-    chatGameEnabled: hasChatGameBridgeConsumer(chatCycleState.overlay)
-  });
-  // The cycle flush is what carries settings changes (position, count, the enable gate) to the
-  // row when no chat is arriving to trigger the throttled one; identical content writes nothing.
-  await flushChatOverlayMessages().catch((error: unknown) => {
-    logRuntimeEvent("chat.overlay.flush_failed", {
-      error: error instanceof Error ? error.message : String(error)
+const workerCycleStepIncidents = new CycleStepIncidentTracker();
+
+/**
+ * The integration steps of one worker cycle, in the order they always ran. Each one fails on its own
+ * (M87): a Twitch refresh Twitch refuses, a source host that is down or a sync that throws costs that
+ * step, reported as `worker.step.failed` and the incident `worker.step.failed.<step>`, and the next
+ * step runs.
+ */
+function buildWorkerCycleSteps(): CycleStep[] {
+  return [
+    // Disk self-protection runs before the syncs so a failing external integration — Twitch down, a
+    // source erroring — can never stand between a filling disk and the one mechanism that frees it.
+    { name: "disk-watermark", run: enforceDiskWatermark },
+    // The observation-only sibling: OS/database volume pressure cannot be evicted away, only
+    // reported, and the report must not wait behind a wedged sync either.
+    { name: "system-volume", run: observeSystemVolume },
+    { name: "asset-retention", run: sweepAssetRetention },
+    { name: "destinations", run: syncDestinations },
+    { name: "local-library", run: syncLocalMediaLibrary },
+    { name: "direct-sources", run: syncDirectMediaSources },
+    { name: "youtube-sources", run: syncYoutubePlaylistSources },
+    { name: "twitch-sources", run: syncTwitchVodSources },
+    // After the syncs, so assets discovered this cycle can already receive their chapters.
+    { name: "chapters", run: backfillAssetChapters },
+    // Ahead of the reconcile, because everything below is gated on the connected status and a
+    // record wrongly stuck on error would otherwise keep gating it away forever.
+    { name: "twitch-heal", run: healTwitchConnection },
+    { name: "twitch-sync", run: reconcileTwitch },
+    { name: "twitch-live-status", run: reconcileTwitchLiveStatus },
+    { name: "twitch-eventsub", run: reconcileTwitchEventSub },
+    {
+      name: "chat",
+      run: async () => {
+        const chatCycleState = await readAppState();
+        latestEngagementSettings = chatCycleState.engagement;
+        latestManagedConfig = chatCycleState.managedConfig;
+        await observeChannelTimeZone(chatCycleState);
+        const chatInteractionForBridge = await readChatInteractionSettingsRecord();
+        await twitchChatBridge.sync(chatCycleState, process.env, {
+          chatInteractionEnabled: chatInteractionForBridge.enabled,
+          // Not the settings row: it has no enabled column, its gameId defaults to "snake" and is never
+          // empty, so `Boolean(gameId)` was constant true and held a connection open on installs with
+          // every chat consumer switched off. The scene is where the operator's decision actually lives.
+          chatGameEnabled: hasChatGameBridgeConsumer(chatCycleState.overlay)
+        });
+        // The cycle flush is what carries settings changes (position, count, the enable gate) to the
+        // row when no chat is arriving to trigger the throttled one; identical content writes nothing.
+        await flushChatOverlayMessages().catch((error: unknown) => {
+          logRuntimeEvent("chat.overlay.flush_failed", {
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
+      }
+    },
+    { name: "engagement-game", run: reconcileEngagementGame },
+    { name: "chat-interaction", run: reconcileChatInteraction },
+    { name: "chat-game", run: reconcileChatGame }
+  ];
+}
+
+async function recordWorkerCycleStepFailure(step: string, error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  logRuntimeEvent("worker.step.failed", { step, error: message });
+  workerCycleStepIncidents.markFailed(step);
+  try {
+    await upsertIncident({
+      scope: "worker",
+      severity: "warning",
+      title: `Worker step ${step} failed`,
+      message: `${message} The rest of the worker cycle kept running; the next run of this step that succeeds closes this entry.`,
+      fingerprint: `worker.step.failed.${step}`
     });
+  } catch {
+    // The failure cannot be recorded either, so the database is what is gone. The cycle ends here as
+    // it did before M87, and runLoop's failed-cycle path counts it towards the M86 outage budget;
+    // carrying on would only add one connection timeout per remaining step.
+    throw error;
+  }
+}
+
+async function closeWorkerCycleStepIncident(step: string): Promise<void> {
+  if (!workerCycleStepIncidents.needsResolve(step)) {
+    return;
+  }
+
+  await resolveIncident(`worker.step.failed.${step}`, `Worker step ${step} succeeded again.`);
+  workerCycleStepIncidents.markResolved(step);
+}
+
+async function runWorkerCycle(): Promise<void> {
+  await runIsolatedCycleSteps(buildWorkerCycleSteps(), {
+    onFailure: recordWorkerCycleStepFailure,
+    onSuccess: closeWorkerCycleStepIncident
   });
-  await reconcileEngagementGame();
-  await reconcileChatInteraction();
-  await reconcileChatGame();
   // A runtime heartbeat, not an audit entry. This fires every 30 seconds; writing it to the audit
   // trail filled that 100-row ring with routine noise and evicted every security-relevant entry
-  // within about fifteen minutes.
+  // within about fifteen minutes. Outside the isolated steps: it fails only when the database does,
+  // and then the cycle fails as a whole (M86).
   await updatePlayoutRuntime((playout) => ({ ...playout, workerHeartbeatAt: new Date().toISOString() }));
   // Last, and reading state again: the heartbeat above is this cycle's own proof that the worker
   // loop is alive, and the syncs before it may have raised or closed incidents of their own.
