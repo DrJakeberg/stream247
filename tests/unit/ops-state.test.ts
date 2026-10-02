@@ -931,6 +931,32 @@ describe("ops state helpers", () => {
     ]);
   });
 
+  it("does not offer next week's run of a weekly block as what follows it", () => {
+    vi.useFakeTimers();
+    // A Tuesday, 07:30 in the state's zone; the only block airs Tuesdays at 08:00.
+    vi.setSystemTime(new Date("2026-04-07T07:30:00.000Z"));
+    const state = createState({
+      scheduleBlocks: [
+        {
+          id: "block-weekly",
+          title: "Weekly Show",
+          categoryName: "Just Chatting",
+          dayOfWeek: 2,
+          startMinuteOfDay: 8 * 60,
+          durationMinutes: 60,
+          showId: "show-1",
+          poolId: "pool-1",
+          sourceName: "YouTube Playlist"
+        }
+      ]
+    });
+
+    const snapshot = getPublicChannelSnapshot(state);
+    expect(snapshot.nextScheduleItem?.title).toBe("Weekly Show");
+    // Shown as "08:00 Weekly Show" without a day, next week's run read as the same show twice.
+    expect(snapshot.laterScheduleItems).toEqual([]);
+  });
+
   it("returns no current block during a mid-day gap and keeps the next teaser on the first future block", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-07T09:30:00.000Z"));
