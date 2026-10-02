@@ -3021,6 +3021,22 @@ pnpm validate
 - No wholesale rewrite of every form. Adoption is incremental across M44–M46.
 - No new primitives beyond the four listed.
 
+**Retired 2026-10-01: `tests/e2e/program-screenshot.spec.ts`**
+
+The Program screenshot this milestone added is gone, along with its reference image. No gate ever ran
+it: CI runs only `admin-smoke.spec.ts` and `scripts/design-baseline.sh`. Nobody refreshed its April
+reference after M44, and when someone finally ran it on 2026-10-01 it failed (1080x2077 expected,
+1080x1434 received). The cause was later UI work, not unstable data: per-row editors were folded away,
+the audio-lane wording changed, and the (i) tips and the pool alternation note were added. The
+acceptance line above ("Screenshot baseline captures the Program workspace's clean state") is now met
+by the `program-schedule`, `program-pools`, `program-library` and `program-sources` surfaces in
+`tests/e2e/design-baseline.spec.ts`, at desktop and mobile. Wording and control count for the same
+pages are checked by `wording-baseline.spec.ts` and `control-density.spec.ts`. The old spec's crop
+(`.content-stack > .stack-form` at 1440x1600) is a strict subset of the `program-pools` desktop
+baseline: same path, same viewport, and nothing masked in that region. The baseline also runs on the
+seeded dev stack, with a frozen clock and a pinned renderer. Read the validation command above as
+`./scripts/design-baseline.sh`.
+
 ---
 
 ## M45 Planning UX V2
