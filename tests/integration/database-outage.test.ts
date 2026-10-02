@@ -151,7 +151,7 @@ describe.sequential("database outage (M86)", () => {
       "-d",
       "stream247",
       "-c",
-      "BEGIN; LOCK TABLE schema_migrations IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(7); COMMIT;"
+      "BEGIN; LOCK TABLE schema_migrations IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(12); COMMIT;"
     ]);
     for (let attempt = 0; attempt < 40; attempt += 1) {
       const held = await psql(

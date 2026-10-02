@@ -224,7 +224,10 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   minutes (owner Q2), logged as `worker.loop.database_outage_exit`. A completed cycle, or a failed one
   whose incident write succeeds, ends the streak. Decision: a failure while the database answers never
   counts towards the exit, so a cycle that keeps failing for another reason keeps looping as before
-  M86 instead of taking ffmpeg down every five minutes. The pool has `connectionTimeoutMillis` 15 s.
+  M86 instead of taking ffmpeg down every five minutes. The pool has `connectionTimeoutMillis` 15 s; it
+  bounds connecting and waiting for a free pooled client, not a query already running (a paused database
+  still ends in the 300 s stall guard). A pool wait that times out while the database is up but busy
+  counts as unreachable; before M86 the same wait ran into the stall guard.
 - **H3, the bootstrap.** `ensureDatabase` clears a rejected `__stream247DbReady`, so the next call boots
   again (every caller of the failed attempt still sees its error). The bootstrap transaction sets
   `lock_timeout` 5 s after it holds the advisory lock (the lock that serialises the boots stays
@@ -236,7 +239,7 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   helper; a bootstrap behind a held `ACCESS EXCLUSIVE` lock on `schema_migrations` logs a `55P03` retry
   and succeeds; R3's S1 run: the built worker in `worker`, `playout` and `uplink` mode, Postgres stopped
   for 45 s, all three still running with `worker.loop.database_unreachable` in their logs, and each
-  writes a heartbeat again after the restart. All five fail on the code before M86. The S1 test needs
+  writes a heartbeat again after the restart. The two source-pin tests and all three integration tests fail on the code before M86. The S1 test needs
   `apps/worker/dist` (built by `pnpm typecheck`, which runs before `pnpm test` in CI and in `validate`).
 - Not changed: web needed no code of its own (`apps/web/lib/server` reads through `ensureDatabase`).
   During the outage the playout cycle cannot pick the next item, so ffmpeg's current input is what keeps

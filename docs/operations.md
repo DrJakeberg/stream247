@@ -329,8 +329,13 @@ Reading the rows:
   playout container that ends the programme until the database is back
 - a cycle that fails while the database answers is recorded as the incident `<mode>.loop.crashed` and
   never counts towards that exit, as before
-- connecting to the database gives up after 15 s, so a database that accepts connections but does not
-  answer fails a cycle instead of holding it until the 300 s stall guard
+- opening a database connection, or waiting for a free one in the process's pool, gives up after 15 s,
+  so a cycle that needs a new connection fails instead of waiting until the 300 s stall guard. A query
+  already running on an open connection is not bounded by this: a database that hangs mid-query (a
+  paused container) still ends in the stall guard's exit. A pool wait that times out while the database
+  is up but busy counts towards the five minutes like an outage
+- the containers' healthchecks read the database, so they report unhealthy during the outage; Compose
+  restarts a container only when it exits, never because it is unhealthy
 - web: a start while PostgreSQL is down or still starting is retried on the next request; no web
   restart is needed. The schema bootstrap waits at most 5 s for any table lock (an older release still
   writing during an upgrade) and retries a lost deadlock or lock wait, four attempts in all

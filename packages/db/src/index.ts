@@ -1598,7 +1598,8 @@ function getPool(): Pool {
       // Without a bound, a connect to a Postgres that accepts TCP but never answers (paused, a
       // half-open connection) waits for ever, and a worker cycle burns its whole 300 s stall budget
       // before anyone notices. With it the connect fails fast and the cycle fails like any other
-      // database outage (M86). Also bounds a wait for a free pooled client.
+      // database outage (M86). It also bounds a wait for a free pooled client; it does not bound a
+      // query already running on an open connection.
       connectionTimeoutMillis: DB_CONNECTION_TIMEOUT_MS
     });
     // pg-pool emits "error" when an IDLE client loses its connection (PostgreSQL restarted, a
