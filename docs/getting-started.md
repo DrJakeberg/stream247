@@ -77,7 +77,7 @@ cp .env.production.example .env
 | `POSTGRES_PASSWORD` and the same password inside `DATABASE_URL` | database access |
 | `TRAEFIK_HOST` (and `TRAEFIK_ACME_EMAIL` if the built-in Let's Encrypt profile is used) | the HTTPS front |
 | `TWITCH_STREAM_KEY` | if the channel should go on air immediately; otherwise entered later as the primary destination's stream key under `Live → Status → Output destinations` (`/settings` has no stream-key field) |
-| `CHANNEL_TIMEZONE` | leave unset to let the wizard manage it; the example file no longer pins a zone, because an env value always beats the wizard's field |
+| `CHANNEL_TIMEZONE` | leave unset to let the wizard manage it; the example file no longer pins a zone, because a valid env value always beats the wizard's field (an invalid one is skipped and raises the incident `config.channel-timezone.invalid`) |
 | `CHANNEL_LANGUAGE` | `en` or `de`; leave unset to choose the language in the wizard or under `Admin → Settings → Channel language`. Like the time zone, an env value always beats the saved one; anything else than `de` counts as `en` |
 
 Everything else — Twitch client credentials, SMTP, Discord — can be entered in the setup wizard or
