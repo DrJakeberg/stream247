@@ -17,8 +17,10 @@ import {
   describePresenceStatus,
   findCurrentScheduleOccurrence,
   findNextScheduleOccurrenceAcrossDays,
+  listUpcomingScheduleOccurrencesAcrossDays,
   getDestinationFailureSecondsRemaining as getDestinationFailureHoldSecondsRemaining,
   getScheduleElapsedSeconds,
+  getScheduleOccurrenceRunKey,
   getCurrentScheduleMoment,
   isCurrentScheduleTime,
   normalizeOverlayPanelAnchor,
@@ -438,6 +440,31 @@ export function getNextScheduleItem(state: AppState) {
     date: scheduleMoment.date,
     currentTime: scheduleMoment.time
   });
+}
+
+/**
+ * What the schedule airs after "up next", for the public page's "after that" line when the playout
+ * queue is empty (standby, a restart, a fresh install). Without it a channel programmed around the
+ * clock told its viewers that nothing further was scheduled.
+ */
+export function getLaterScheduleItems(state: AppState, nextKey: string | null, limit = 3) {
+  const scheduleMoment = getCurrentScheduleMoment({
+    now: new Date(),
+    timeZone: getWorkspaceTimeZone(state)
+  });
+  const upcoming = listUpcomingScheduleOccurrencesAcrossDays({
+    blocks: state.scheduleBlocks,
+    date: scheduleMoment.date,
+    currentTime: scheduleMoment.time,
+    limit: limit + 1,
+    // Six days, not seven: the line shows times without a day, and a weekly block reached again a week
+    // later read as the same show listed twice.
+    lookaheadDays: 6
+  });
+  // After the item "up next" names, read from its key: the two lists use their own clock readings, and
+  // when a block starts between them the first entry here is no longer that item.
+  const nextIndex = nextKey ? upcoming.findIndex((occurrence) => occurrence.key === nextKey) : -1;
+  return upcoming.slice(nextIndex >= 0 ? nextIndex + 1 : 1).slice(0, limit);
 }
 
 export function getRecentAuditEvents(state: AppState, limit = 20): AuditEvent[] {
@@ -1371,10 +1398,12 @@ function summarizeCuepoints(
   const progress =
     currentScheduleItem && offsetsSeconds.length > 0 && active
       ? getCuepointProgress({
-          occurrenceKey: currentScheduleItem.key,
+          occurrenceKey: getScheduleOccurrenceRunKey(currentScheduleItem),
           cuepointOffsetsSeconds: offsetsSeconds,
           firedCuepointKeys:
-            state.playout.cuepointWindowKey === currentScheduleItem.key ? state.playout.cuepointFiredKeys : [],
+            state.playout.cuepointWindowKey === getScheduleOccurrenceRunKey(currentScheduleItem)
+              ? state.playout.cuepointFiredKeys
+              : [],
           elapsedSeconds: getScheduleElapsedSeconds({
             startMinuteOfDay: currentScheduleItem.startMinuteOfDay,
             currentTime: scheduleMoment.time
@@ -1501,7 +1530,10 @@ export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot
     queuedAssets: snapshot.queuedAssets,
     queueItems: snapshot.queueItems,
     currentScheduleItem: snapshot.currentScheduleItem,
-    nextScheduleItem: snapshot.nextScheduleItem
+    nextScheduleItem: snapshot.nextScheduleItem,
+    laterScheduleItems: getLaterScheduleItems(state, snapshot.nextScheduleItem?.key ?? null)
+      .map((item) => summarizeScheduleItem(item))
+      .filter((item): item is LiveScheduleSummary => Boolean(item))
   };
 }
 

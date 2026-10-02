@@ -60,10 +60,18 @@ describe("template application against an existing week", () => {
   });
 
   it("catches an overlap that only exists because a block crosses midnight", () => {
-    // A block running 23:00-01:00 wraps into the next day, where an early block already sits.
-    const wrapping = block({ id: "wrapping", startMinuteOfDay: 23 * 60, durationMinutes: 120 });
-    const early = block({ id: "early", startMinuteOfDay: 0, durationMinutes: 60 });
+    // A Monday block running 23:00-01:00 wraps into Tuesday, where an early block already sits. (Before M88
+    // both blocks sat on Monday here, which pinned the old model that folded 00:00-01:00 onto the same weekday.)
+    const wrapping = block({ id: "wrapping", dayOfWeek: 1, startMinuteOfDay: 23 * 60, durationMinutes: 120 });
+    const early = block({ id: "early", dayOfWeek: 2, startMinuteOfDay: 0, durationMinutes: 60 });
 
     expect(findScheduleConflicts([wrapping, early])).toEqual(expect.arrayContaining(["wrapping", "early"]));
+  });
+
+  it("does not report the same weekday's early block, which is 22 hours before the wrapping one", () => {
+    const wrapping = block({ id: "wrapping", dayOfWeek: 1, startMinuteOfDay: 23 * 60, durationMinutes: 120 });
+    const sameDayEarly = block({ id: "same-day-early", dayOfWeek: 1, startMinuteOfDay: 0, durationMinutes: 60 });
+
+    expect(findScheduleConflicts([wrapping, sameDayEarly])).toEqual([]);
   });
 });

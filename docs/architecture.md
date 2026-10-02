@@ -429,7 +429,9 @@ Operator content is never translated, and the admin interface is English.
   Read*).
 - **The public page** `/channel` builds every word in `apps/web/lib/public-channel-view.ts` from the
   snapshot, which carries the language and the zone's name; the page sets `lang` on its own container,
-  because the root layout's `<html lang="en">` also serves the admin.
+  because the root layout's `<html lang="en">` also serves the admin. *After that* lists the playout
+  queue, or, while the queue is empty, the next three scheduled blocks after *Up next* with their start
+  times (`laterScheduleItems`, across midnight).
 
 ### Adding a viewer language
 

@@ -399,6 +399,26 @@ Reading the rows:
 - review Twitch incidents in `/live?tab=status`; "Reconnect Twitch" means the stored refresh token was
   refused (see *Twitch asks for a reconnect* above)
 
+### A block that runs past midnight (since M88)
+
+A block such as Monday 23:00 for two hours is one block everywhere, although the schedule lists its
+after-midnight part on Tuesday:
+
+- cuepoints count from the block's start and fire once per run; one that aired before 00:00 does not air
+  again after it (before M88 every such cuepoint aired a second time)
+- the Twitch schedule gets one segment per run, at the block's real start. Before M88 the sync also
+  posted a segment a day late (Monday 23:00 again on Tuesday 23:00); the first sync after the upgrade
+  deletes those. Each segment is recorded as soon as Twitch accepts it, so a sync that fails half-way does
+  not create the same segments again on the next run
+- the overlap check compares the after-midnight part with the next weekday: a Tuesday 00:00 block
+  collides with Monday 23:00-01:00, a Monday 00:00 block does not. A saved schedule that hid such an
+  overlap still loads and plays; the schedule editor marks both blocks. A save is refused only for an
+  overlap the saved block takes part in, so other blocks stay editable, and an edit of one of the two
+  goes through once it ends the overlap. On air the later start wins at 00:00, as before
+- the week lens counts scheduled and projected minutes on the day they fall on (60 + 60, not 120 + 120)
+- a replay of the block's pool stays cached while the block is on air after midnight, also with a cache
+  retention shorter than a day
+
 ### Channel timezone is not valid (since M85)
 
 - the incident `config.channel-timezone.invalid` (warning, system) means `CHANNEL_TIMEZONE` in the

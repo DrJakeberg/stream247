@@ -2,6 +2,7 @@ import {
   getCuepointProgress,
   getCurrentScheduleMoment,
   getScheduleElapsedSeconds,
+  getScheduleOccurrenceRunKey,
   isCurrentScheduleTime,
   normalizeCuepointOffsetsSeconds
 } from "@stream247/core";
@@ -16,6 +17,8 @@ type CurrentScheduleItemLike = {
   startMinuteOfDay: number;
   durationMinutes: number;
   poolId?: string;
+  date?: string;
+  carriesOverFromPreviousDay?: boolean;
 };
 
 export type CuepointInsertPlan = {
@@ -85,10 +88,12 @@ export function getCuepointInsertPlan(args: {
     return null;
   }
 
-  const firedCuepointKeys =
-    args.state.playout.cuepointWindowKey === currentScheduleItem.key ? args.state.playout.cuepointFiredKeys : [];
+  // Keyed by the run, not the day's occurrence: after 00:00 a block crossing midnight is the next day's
+  // carry-over with a new key, and the cuepoints it fired before midnight must stay fired.
+  const runKey = getScheduleOccurrenceRunKey(currentScheduleItem);
+  const firedCuepointKeys = args.state.playout.cuepointWindowKey === runKey ? args.state.playout.cuepointFiredKeys : [];
   const progress = getCuepointProgress({
-    occurrenceKey: currentScheduleItem.key,
+    occurrenceKey: runKey,
     cuepointOffsetsSeconds,
     firedCuepointKeys,
     elapsedSeconds: getScheduleElapsedSeconds({

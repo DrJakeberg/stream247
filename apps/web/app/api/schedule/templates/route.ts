@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findScheduleConflicts } from "@stream247/core";
+import { findScheduleConflicts, findScheduleConflictsInvolving } from "@stream247/core";
 import { getAuthenticatedUser, requireApiRoles } from "@/lib/server/auth";
 import { appendAuditEvent, createScheduleBlocks, readAppState, replaceAllScheduleBlocks } from "@/lib/server/state";
 
@@ -172,9 +172,12 @@ export async function POST(request: NextRequest) {
     // laid over an existing week produced overlapping blocks, and the schedule editor refuses to
     // save while conflicts exist — so applying a template was enough to lock the editor, with no
     // way back except deleting blocks by hand.
-    const conflicts = findScheduleConflicts(
-      replaceExisting ? generatedBlocks : [...state.scheduleBlocks, ...generatedBlocks]
-    );
+    const conflicts = replaceExisting
+      ? findScheduleConflicts(generatedBlocks)
+      : findScheduleConflictsInvolving(
+          [...state.scheduleBlocks, ...generatedBlocks],
+          generatedBlocks.map((block) => block.id)
+        );
     if (conflicts.length > 0) {
       throw new Error(
         replaceExisting

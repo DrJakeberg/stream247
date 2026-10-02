@@ -898,6 +898,65 @@ describe("ops state helpers", () => {
     expect(snapshot.nextScheduleItem?.title).toBe("Morning Show");
   });
 
+  it("gives the public page what the schedule airs after up next, across midnight", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-07T07:30:00.000Z"));
+    const showBlock = (id: string, title: string, dayOfWeek: number, startMinuteOfDay: number) => ({
+      id,
+      title,
+      categoryName: "Just Chatting",
+      dayOfWeek,
+      startMinuteOfDay,
+      durationMinutes: 60,
+      showId: "show-1",
+      poolId: "pool-1",
+      sourceName: "YouTube Playlist"
+    });
+    const state = createState({
+      scheduleBlocks: [
+        showBlock("block-1", "Morning Show", 2, 8 * 60),
+        showBlock("block-2", "Noon Show", 2, 12 * 60),
+        // Wednesday: the line goes on into the next day instead of stopping at midnight.
+        showBlock("block-3", "Wednesday Show", 3, 8 * 60),
+        showBlock("block-4", "Wednesday Noon", 3, 12 * 60)
+      ]
+    });
+
+    const snapshot = getPublicChannelSnapshot(state);
+    expect(snapshot.nextScheduleItem?.title).toBe("Morning Show");
+    expect(snapshot.laterScheduleItems.map((item) => [item.title, item.startTime])).toEqual([
+      ["Noon Show", "12:00"],
+      ["Wednesday Show", "08:00"],
+      ["Wednesday Noon", "12:00"]
+    ]);
+  });
+
+  it("does not offer next week's run of a weekly block as what follows it", () => {
+    vi.useFakeTimers();
+    // A Tuesday, 07:30 in the state's zone; the only block airs Tuesdays at 08:00.
+    vi.setSystemTime(new Date("2026-04-07T07:30:00.000Z"));
+    const state = createState({
+      scheduleBlocks: [
+        {
+          id: "block-weekly",
+          title: "Weekly Show",
+          categoryName: "Just Chatting",
+          dayOfWeek: 2,
+          startMinuteOfDay: 8 * 60,
+          durationMinutes: 60,
+          showId: "show-1",
+          poolId: "pool-1",
+          sourceName: "YouTube Playlist"
+        }
+      ]
+    });
+
+    const snapshot = getPublicChannelSnapshot(state);
+    expect(snapshot.nextScheduleItem?.title).toBe("Weekly Show");
+    // Shown as "08:00 Weekly Show" without a day, next week's run read as the same show twice.
+    expect(snapshot.laterScheduleItems).toEqual([]);
+  });
+
   it("returns no current block during a mid-day gap and keeps the next teaser on the first future block", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-07T09:30:00.000Z"));

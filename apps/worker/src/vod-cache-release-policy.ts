@@ -29,7 +29,9 @@ export function collectUpcomingPoolIds(args: {
       if (!occurrence.poolId) {
         continue;
       }
-      const start = dayOffset * 1440 + occurrence.startMinuteOfDay;
+      // The effective start: a carry-over from last night starts before 00:00 (negative), so the block on air
+      // after midnight is seen as on air, not as a start 23 hours away.
+      const start = dayOffset * 1440 + occurrence.effectiveStartMinuteOfDay;
       const end = start + Math.max(1, occurrence.durationMinutes ?? 1);
       // Starts inside the horizon, or is on air right now and has not ended.
       if ((start >= nowMinute && start <= horizonEnd) || (start <= nowMinute && end > nowMinute)) {
