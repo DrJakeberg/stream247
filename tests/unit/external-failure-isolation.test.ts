@@ -7,6 +7,7 @@ import { EXTERNAL_REQUEST_TIMEOUT_MS, fetchWithTimeout } from "../../apps/worker
 import {
   TWITCH_REFRESH_REFUSED_ERROR,
   TwitchTokenRefreshError,
+  isIdentityRefreshRefusal,
   isRefusedRefreshResponse,
   requestTwitchTokenRefresh
 } from "../../apps/worker/src/twitch-token-refresh.js";
@@ -31,7 +32,7 @@ describe("worker cycle steps (H1)", () => {
       {
         name: "twitch-sync",
         run: async () => {
-          throw new TwitchTokenRefreshError("Twitch token refresh failed with status 400.", 400, true);
+          throw new TwitchTokenRefreshError("Twitch token refresh failed with status 400.", 400, true, "identity");
         }
       },
       { name: "twitch-live-status", run: async () => void ran.push("twitch-live-status") },
@@ -119,12 +120,22 @@ describe("Twitch refresh failures (H1, owner Q3)", () => {
       clientSecret: "secret",
       refreshToken: "dead",
       errorLabel: "Twitch token refresh",
+      account: "identity",
       fetchImpl: async () => new Response('{"error":"invalid_grant"}', { status: 400 })
     });
     const error = await refresh.catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(TwitchTokenRefreshError);
     expect((error as TwitchTokenRefreshError).refused).toBe(true);
     expect((error as TwitchTokenRefreshError).status).toBe(400);
+    expect((error as TwitchTokenRefreshError).account).toBe("identity");
+  });
+
+  it("puts only the bot account into error, never for the broadcast channel account's refusal", () => {
+    expect(isIdentityRefreshRefusal(new TwitchTokenRefreshError("x", 400, true, "identity"))).toBe(true);
+    // Split mode: a 401 retry refreshes both; the bot's refresh worked, the channel owner's was refused.
+    expect(isIdentityRefreshRefusal(new TwitchTokenRefreshError("x", 400, true, "broadcaster"))).toBe(false);
+    expect(isIdentityRefreshRefusal(new TwitchTokenRefreshError("x", 503, false, "identity"))).toBe(false);
+    expect(isIdentityRefreshRefusal(new Error("Twitch token refresh failed with status 400."))).toBe(false);
   });
 
   it("throws a transient TwitchTokenRefreshError on HTTP 503", async () => {
@@ -133,6 +144,7 @@ describe("Twitch refresh failures (H1, owner Q3)", () => {
       clientSecret: "secret",
       refreshToken: "fine",
       errorLabel: "Twitch token refresh",
+      account: "identity",
       fetchImpl: async () => new Response("down", { status: 503 })
     }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(TwitchTokenRefreshError);
@@ -147,6 +159,7 @@ describe("Twitch refresh failures (H1, owner Q3)", () => {
         clientSecret: "secret",
         refreshToken: "fine",
         errorLabel: "Twitch token refresh",
+      account: "identity",
         fetchImpl: neverAnsweringFetch(),
         timeoutMs: 200
       })
@@ -225,6 +238,8 @@ describe("timeouts on external calls (H6)", () => {
       const source = readFileSync(path.join(process.cwd(), "apps/worker/src", file), "utf8");
       expect(source, file).toContain("fetchWithTimeout(");
     }
+    // The channel owner's scope check reads id.twitch.tv through core's validate helper.
+    expect(workerSource).toMatch(/readChannelOwnerScopes\([^;]*fetchWithTimeout/);
     const heal = readFileSync(path.join(process.cwd(), "apps/worker/src/twitch-connection-heal.ts"), "utf8");
     expect(heal).toContain("signal: AbortSignal.timeout(EXTERNAL_REQUEST_TIMEOUT_MS)");
   });

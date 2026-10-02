@@ -28,7 +28,9 @@ export class TwitchTokenRefreshError extends Error {
     message: string,
     readonly status: number,
     /** Twitch answered that the refresh token itself is no good: only a reconnect helps. */
-    readonly refused: boolean
+    readonly refused: boolean,
+    /** Whose refresh token it was: the bot account (`identity`) or the broadcast channel's own. */
+    readonly account: TwitchRefreshAccount
   ) {
     super(message);
     this.name = "TwitchTokenRefreshError";
@@ -51,7 +53,18 @@ export function isRefusedRefreshResponse(status: number, body: string): boolean 
   return /invalid_grant|invalid refresh token/i.test(body);
 }
 
+/**
+ * Whether a refresh failure means the bot account (the identity) must be reconnected. The 401 retries
+ * refresh both accounts in one try; a refused broadcast channel account must not put the bot account,
+ * whose own refresh worked, into error.
+ */
+export function isIdentityRefreshRefusal(error: unknown): error is TwitchTokenRefreshError {
+  return error instanceof TwitchTokenRefreshError && error.refused && error.account === "identity";
+}
+
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+
+export type TwitchRefreshAccount = "identity" | "broadcaster";
 
 /**
  * The refresh-grant HTTP exchange, shared by the identity and the broadcaster-slot refresh. What
@@ -64,6 +77,7 @@ export async function requestTwitchTokenRefresh(args: {
   clientSecret: string;
   refreshToken: string;
   errorLabel: string;
+  account: TwitchRefreshAccount;
   fetchImpl?: FetchLike;
   timeoutMs?: number;
 }): Promise<{ access_token: string; refresh_token?: string; expires_in?: number }> {
@@ -88,7 +102,8 @@ export async function requestTwitchTokenRefresh(args: {
         ? `${args.errorLabel} failed with status ${response.status}: Twitch refused the refresh token.`
         : `${args.errorLabel} failed with status ${response.status}.`,
       response.status,
-      refused
+      refused,
+      args.account
     );
   }
 

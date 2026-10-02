@@ -316,6 +316,7 @@ import {
   TWITCH_REFRESH_REFUSED_ERROR,
   TWITCH_TOKEN_REFRESH_WINDOW_MS,
   TwitchTokenRefreshError,
+  isIdentityRefreshRefusal,
   requestTwitchTokenRefresh
 } from "./twitch-token-refresh.js";
 import {
@@ -3679,7 +3680,8 @@ async function refreshIdentityAccessToken(): Promise<string> {
     clientId,
     clientSecret,
     refreshToken: state.twitch.refreshToken,
-    errorLabel: "Twitch token refresh"
+    errorLabel: "Twitch token refresh",
+    account: "identity"
   });
   const refreshedAt = new Date().toISOString();
   const tokenExpiresAt = payload.expires_in
@@ -3720,7 +3722,8 @@ async function refreshBroadcasterSlotAccessToken(): Promise<string> {
     clientId,
     clientSecret,
     refreshToken: state.twitchBroadcaster.refreshToken,
-    errorLabel: "Twitch broadcaster token refresh"
+    errorLabel: "Twitch broadcaster token refresh",
+    account: "broadcaster"
   });
   const refreshedAt = new Date().toISOString();
 
@@ -8866,7 +8869,7 @@ async function recordIdentityRefreshFailure(error: unknown): Promise<void> {
  * network blip. The record keeps its token, account and sync history; the operator reconnects.
  */
 async function markIdentityRefreshRefused(error: unknown): Promise<void> {
-  if (!(error instanceof TwitchTokenRefreshError) || !error.refused) {
+  if (!isIdentityRefreshRefusal(error)) {
     return;
   }
 
@@ -8880,7 +8883,7 @@ async function markIdentityRefreshRefused(error: unknown): Promise<void> {
     scope: "twitch",
     severity: "critical",
     title: "Reconnect Twitch",
-    message: `Twitch refused the stored refresh token of ${state.twitch.broadcasterLogin || "the bot account"}, so the connection cannot be renewed. Reconnect it under Admin → Settings → Twitch accounts; until then title, category, schedule sync and chat are paused.`,
+    message: `Twitch refused the stored refresh token of ${state.twitch.broadcasterLogin || "the bot account"}, so the connection cannot be renewed. Reconnect it under Admin → Settings → Twitch accounts; until then title, category and schedule sync are paused, and chat cannot sign in once the access token has run out.`,
     fingerprint: "twitch.reconnect.required"
   });
   logRuntimeEvent("twitch.refresh.refused", { account: "identity", status: error.status });
@@ -9420,7 +9423,7 @@ async function reconcileTwitchEventSub(): Promise<void> {
   // and subscribing for them anyway fails every sync with 403 (M69 review). Measured per token, cached.
   const ownerScopes =
     accounts.mode === "split" && accounts.owner.status === "connected"
-      ? await readChannelOwnerScopes(state.twitchBroadcaster.accessToken)
+      ? await readChannelOwnerScopes(state.twitchBroadcaster.accessToken, (url, init) => fetchWithTimeout(url, init))
       : null;
   const eventSubTarget = {
     channelId: eventSubChannelId,
