@@ -11,7 +11,7 @@ import path from "node:path";
  * tests/e2e/program-screenshot.spec.ts was such a spec. Its April reference image outlived five months
  * of Program changes; by the time anyone ran it, it described a page that no longer existed, and its
  * coverage had long since moved into the design baseline. It was retired on 2026-10-01 (see M44 in
- * PLANS.md).
+ * planning/archive/plans-m0-m83.md).
  *
  * A new spec therefore belongs in one of the two lists. If it does not belong there, it does not
  * belong in tests/e2e either.

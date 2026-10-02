@@ -1,102 +1,120 @@
 # Agent Rules
 
-- Read `AGENTS.md`, `PLANS.md`, `IMPLEMENT.md`, and `docs/full-product-reset-audit.md` before any non-trivial change.
-- All non-trivial work must begin with plan review and milestone selection from `PLANS.md`.
-- Changed behavior requires tests or a written justification in the summary.
-- Docs must stay in sync with behavior.
-- No new dependency may be added without a short reason in the summary.
-- Do not stop after a partial implementation if the next safe step is obvious.
-- Stop only for a hard blocker, or when `PLANS.md` has no incomplete milestone remaining.
+The only rule file for every session, local or cloud. `PLANS.md` says what to build; history up to 2.2.0
+is in `planning/archive/`. If a brief, a plan or another file disagrees with this file, this file wins
+unless the owner says otherwise in the brief; name the conflict in the report.
 
-## Hard Blocker
+## Start of a session
 
-A hard blocker is only one of the following:
+- Read this file and `PLANS.md`, both in full. Read an archive file only where a milestone points to it.
+- Work on exactly the milestone your brief names (or, without a brief, one row of "Open" in `PLANS.md`).
+  Restate its acceptance before changing code.
+- A session implements its own milestone and stops there. It never continues with the next open
+  milestone, however obvious the next step looks; the owner starts the next one.
+- Never start a milestone under "Owner-gated and deferred" in `PLANS.md`: M66 (Live Bridge rehearsal) and
+  the soak part of M57 never without the owner; M77 and M81 only on the owner's word.
 
-- missing secret or credential not available in repo
-- missing external service or permission
-- destructive migration with unclear safe path
-- unresolved legal or licensing issue
-- ambiguous product decision that cannot be inferred from upstream behavior or existing repo conventions
+## Communication with the owner
 
-## Definition Of Done
+- Reports are in German, short, result first, then the evidence: the command and the decisive line of
+  its output, or `path:line`. At the end: what is done, what is open, what you need from the owner.
+- Never guess a result you could not measure; say what was not checked and why. Product decisions
+  belong to the owner: ask, with your recommendation for each question.
+- Repository content (code, docs, `PLANS.md`, commit messages) is in English (`CONTRIBUTING.md`).
 
-- code complete
-- tests updated
-- `pnpm validate` passes
-- any needed smoke checks are run
-- docs updated
-- summary written with changed files, risks, and follow-up items
+## Scope and quality
 
-## Workflow
+- Keep the diff to the milestone. Extend working code before rewriting it; additive schema changes first.
+- Changed behaviour needs tests, or a written justification in the report.
+- No test is deleted or weakened to get green. If a test contradicts the code, find out which is right.
+- Docs stay in sync with behaviour, in the same commit.
+- No new dependency without a one-line reason in the report.
+- UI text changes need the design and wording baselines re-recorded on a fresh stack through
+  `scripts/design-baseline.sh` (snapshots are not portable). Without Docker, say so; CI checks them.
+- What you notice outside the milestone goes into the report as a list, not into the diff.
 
-- After completing a milestone, automatically continue with the next incomplete milestone when one exists in `PLANS.md`.
-- Do not pause merely to summarize progress.
-- Commit exactly one commit per completed milestone.
-- Push the current branch after each successful milestone commit.
-- Stop when `PLANS.md` has no incomplete milestone remaining, or when a hard blocker occurs.
-- Release operations and DUT validation are not new milestone work unless `PLANS.md` says so explicitly.
+## Validation
 
-## DUT Workflow
+- `pnpm validate` (lint, CSS token lint, typecheck, unit and integration tests, build) before every
+  commit. Quote its decisive output line in the report.
+- The integration tests need Docker (they start `postgres:16-alpine`). In a cloud container start the
+  daemon first (`dockerd`) if `docker info` fails; without Docker run lint, typecheck, unit tests and
+  build one by one and say that CI covers the rest.
+- Three tests fail only in cloud containers and pass in CI: the process-group test in
+  `tests/unit/process-utils.test.ts` and the two ICU "GMT" zone-name tests in
+  `tests/unit/ops-state.test.ts` and `tests/unit/viewer-messages.test.ts`. Locally the bar is no
+  failure beyond these three; the pull request's CI run decides.
+- Targeted checks where needed: `pnpm test:fresh-db`, `pnpm test:fresh-compose`, `docker/smoke-test.sh`.
 
-For DUT validation, never run the 24-hour soak locally.
+## Commits, branches, merges
 
-Always use the DUT host over SSH.
+- Work on a feature branch. One commit per milestone, plus merge commits.
+- Never force-push. Never push, merge or tag `main` unless the brief says so explicitly.
+- A milestone is done when its acceptance is shown with command and output, a fresh reviewer without
+  prior context (a subagent) has checked the diff against the acceptance, and the pull request's CI is
+  green. Merge only on the owner's word (a brief that says "merge" is that word), with a merge commit
+  titled `Merge: …`.
+- Checks that only the DUT can run do not hold the merge: add them to "DUT checks for the next release
+  candidate" in `PLANS.md`.
+- On a conflict, merge `main` into your branch (no rebase of a pushed branch). Never resolve a conflict
+  in `PLANS.md` or `CHANGELOG.md` by deduplicating identical lines, and never drop another thread's
+  entries.
+- Commit and push work in progress before waiting on anything; a cloud container can be lost.
+- At milestone end set its row in `PLANS.md` to Complete and add a section under "Milestone notes" when
+  the row is not enough (decisions, measurements, follow-ups).
 
-Important:
+## GitHub from a cloud session
 
-- DUT deployment path and DUT repo path may differ.
-- Deployment path contains the active `docker-compose.yml` and `stack.env`.
-- Repo path contains `scripts/`, `docs/`, and tracked source files.
-- Never assume the compose working directory contains the release scripts.
+- `gh pr view` and `gh pr checks` fail there (GraphQL, HTTP 403). Use the REST API:
+  `gh api repos/DrJakeberg/stream247/pulls/<nr>` and `gh api repos/DrJakeberg/stream247/commits/<sha>/check-runs`.
+  Never ask the owner to check such things locally.
+- Tag pushes from the cloud are refused: give the owner the exact tag command.
 
-Current DUT paths:
+## Releases
 
-- active deployment working directory: `/root/stream247/recovery-stack`
-- active compose file: `/root/stream247/recovery-stack/docker-compose.yml`
-- active runtime env file: `/root/stream247/recovery-stack/stack.env`
-- persistent DUT data directories: `/root/stream247/{media,postgres,logs}`
+- No release before the owner hands over the soak result. A soak with any outage or failure is
+  "passed with failure", never "clean"; report outages, the longest outage and the uplink restarts.
+- The release commit is exactly one `release: vX.Y.Z` commit. It changes `package.json`, the image
+  defaults in `docker-compose.yml`, `.env.production.example`, `docs/deployment.md` and the
+  `CHANGELOG.md` section.
+- Tags go only on a `main` commit whose push CI run is green. The release workflow retags that commit's
+  `main-<sha>` images and creates the GitHub release.
+- When a release ships, its milestone rows move to "Shipped" and its sections to `planning/archive/`.
 
-Rules:
+## Production host (DUT) and Portainer host (DT)
 
-- use the images already pinned in the active DUT `stack.env`
-- do not overwrite DUT secrets or production values unless explicitly asked
-- if `APP_URL` is externally routed and not locally reachable from the DUT host, use:
-  `CHECK_BASE_URL=http://127.0.0.1:3000`
-- start the soak in `tmux` on the DUT so it survives disconnects
-- write soak output to a log file on the DUT
-- after starting the soak, report:
-  - tmux session name
-  - log file path
-  - exact command used
-  - commands to reattach and inspect progress
+- Both are on the owner's home network behind a short-lived SSH certificate. No cloud session reaches
+  them. The owner runs every command there: give the exact command and wait for the output.
+- The deployed stack is the Portainer stack on DT (`docs/deployment.md`). The owner's commands:
+  - soak result: `ssh dut 'grep -E "outage|complete" ~/logs/soak-<stamp>.log'`; passed means
+    `soak-monitor-complete` in the log
+  - repin: `ssh dt '~/repin.sh <tag> --dry-run'`, then without `--dry-run`
+  - PostgreSQL backup before a schema change:
+    `ssh dut 'umask 077; docker exec stream247-postgres-1 pg_dump -U stream247 -d stream247 -Fc > ~/backups/stream247-pre-<tag>.dump'`
+  - soak start: `ssh dut 'cd ~ && ~/scripts/start-soak.sh 24; tmux ls'` (wraps `scripts/soak-monitor.sh`)
+  - live check: `ssh dut 'docker exec stream247-playout-1 yt-dlp --simulate --print "%(is_live)s" https://www.twitch.tv/jimpanse247'`
+- A 24-hour soak runs only on the DUT. Never change DUT secrets or production values.
 
-Required DUT discovery order:
+## Never
 
-1. confirm the active deployment path exists
-2. discover the DUT repo path that contains:
-   - `scripts/upgrade-rehearsal.sh`
-   - `scripts/soak-monitor.sh`
-3. run scripts from the DUT repo path
-4. target the active deployment path explicitly
+- Print or commit a secret, token or stream key.
+- Change the relay pin `bluenviron/mediamtx:1.15.4`.
+- Mix up the Twitch accounts: the broadcast channel is `jimpanse247`, the bot is `3JakeC`. Check live
+  status only on the broadcast channel.
+- Copy from other products: take ideas, never their texts, names, interfaces or code.
 
-Standard DUT checks:
+## Known traps
 
-- inspect active deployment:
-  - `cd /root/stream247/recovery-stack && docker compose ps`
-  - `cd /root/stream247/recovery-stack && docker compose logs --tail=200 web worker playout`
-  - `cd /root/stream247/recovery-stack && grep -E '^(STREAM247_WEB_IMAGE|STREAM247_WORKER_IMAGE|STREAM247_PLAYOUT_IMAGE|APP_URL|TRAEFIK_HOST)=' stack.env`
-- discover DUT repo path:
-  - `find /root -maxdepth 5 -type f \( -name upgrade-rehearsal.sh -o -name soak-monitor.sh \) 2>/dev/null`
+- CI runs one at a time per ref (`concurrency` in `.github/workflows/ci.yml`); a new push queues.
+- Compose merges lists: `ports`, `env_file` and `volumes` need `!override` in an override file.
 
-Rehearsal and soak:
+## Hard blockers (the only reasons to stop before the milestone is done)
 
-- run `upgrade-rehearsal.sh` from the DUT repo path
-- run `soak-monitor.sh` from the DUT repo path
-- both must target the active deployment under `/root/stream247/recovery-stack`
+- A secret or credential that is not in the repository.
+- A missing external service or permission.
+- A destructive migration without a clear safe path.
+- An unresolved legal or licensing question.
+- A product decision that neither the brief, the plan nor existing behaviour answers: ask the owner.
+- The next step needs the owner (DUT, home network, a tag push).
 
-Done means:
-
-- soak is started successfully on DUT in `tmux`
-- log file is being written
-- latest readiness output is green
-- operator gets exact follow-up commands
+Name the blocker in one sentence and stop; do not replace, rebuild or guess what is missing.
