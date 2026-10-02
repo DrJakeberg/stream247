@@ -505,8 +505,9 @@ recommendation of Q1-Q7 is decided as written:
 2. Ended dated items stay listed (greyed, re-usable) until deleted by hand.
 3. A dated playlist continues each evening where it stopped (pool cursor, M73).
 4. GronkhTV: answered with two screenshots; evaluated in 1.6, row B rewritten accordingly.
-5. Twitch: keep the non-recurring sync; no recurring-segment variant now. Whether jimpanse247 is an
-   affiliate is still not stated.
+5. Twitch: keep the non-recurring sync; no recurring-segment variant now. jimpanse247 is an affiliate
+   (owner's answer of 2026-10-01, recorded in `planning/proposal-2026-10.md:337` on
+   `claude/vorschlag-2026-10-6a60z9`), so non-recurring segments work for the channel.
 6. DST comes after dated items, as its own milestone; row C follows R3's decided Q4 (wall clock, counts
    fixed).
 7. Order: D (midnight fixes) → A (dated items, with B1) → B (public programme) → I4 (7-day coverage
