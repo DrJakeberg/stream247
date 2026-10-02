@@ -14,4 +14,4 @@ Up next
 <block>
 <time> to <time> · <category>
 After that
-Nothing further is scheduled yet.
+<time> <block> → <time> <block> → <time> <block>
