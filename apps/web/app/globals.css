@@ -1152,12 +1152,28 @@ button.collection-chip {
 
 .program-week-block-summary {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   padding: 14px;
   cursor: pointer;
   list-style: none;
+}
+
+/*
+ * In a 240px day card the fill pill ("Repeats inside block") squeezed into three lines and ran past
+ * the card's clipped edge. The text takes the room it needs and the pill, kept on one line, moves under
+ * it when the card is too narrow for both.
+ */
+.program-week-block-summary > div {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.program-week-block-summary > .programming-status-pill {
+  flex: none;
+  white-space: nowrap;
 }
 
 .program-week-block-summary::-webkit-details-marker {
