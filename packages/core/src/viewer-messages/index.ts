@@ -112,8 +112,8 @@ function zoneNameFrom(format: Intl.DateTimeFormat, now: Date): string {
  *
  * The generic name first, because it does not flip twice a year the way "Summer Time" does and a
  * schedule spans the change. Where the language has no generic name Intl prints an offset
- * ("GMT+00:00" for UTC), so the specific name is tried next ("Coordinated Universal Time"); an
- * offset is kept only when neither has a name. A zone Intl rejects is shown as it was configured,
+ * ("GMT+00:00" for UTC) or, from ICU 77 on, a bare "GMT", so the specific name is tried next
+ * ("Coordinated Universal Time"); an offset is kept only when neither has a name. A zone Intl rejects is shown as it was configured,
  * never an exception on the public page.
  */
 export function formatViewerTimeZoneName(locale: unknown, timeZone: string, now: Date = new Date()): string {
@@ -135,7 +135,7 @@ export function formatViewerTimeZoneName(locale: unknown, timeZone: string, now:
     timeZoneNameCache.set(cacheKey, formats);
   }
   const names = formats.map((format) => zoneNameFrom(format, now)).filter(Boolean);
-  return names.find((name) => !/^(GMT|UTC)[+\-−]/.test(name)) ?? names[0] ?? zone;
+  return names.find((name) => !/^(GMT|UTC)([+\-−]|$)/.test(name)) ?? names[0] ?? zone;
 }
 
 /** Upper-casing by the language's own rules, for the panel headings drawn in capitals. */
