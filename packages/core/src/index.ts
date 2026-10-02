@@ -3507,10 +3507,6 @@ export function buildScheduleOccurrences(args: {
 }
 
 /**
- * Minute range an occurrence covers, relative to its `date`. The end may exceed 1440 for a block
- * that runs into the following day, and the start may be negative for a carry-over.
- */
-/**
  * One key for the whole run of an occurrence: the key it has on the date it starts. A block crossing midnight
  * is two occurrences (the evening and the next day's carry-over) with two keys; state that belongs to the run
  * (the cuepoints already fired) is kept under this key, so it survives 00:00. Equal to `key` for an
@@ -3530,6 +3526,10 @@ export function getScheduleOccurrenceRunKey(occurrence: {
   return `${addDaysToDateString(occurrence.date, -1)}:${occurrence.blockId}:${occurrence.startMinuteOfDay}:${occurrence.durationMinutes}`;
 }
 
+/**
+ * Minute range an occurrence covers, relative to its `date`. The end may exceed 1440 for a block
+ * that runs into the following day, and the start may be negative for a carry-over.
+ */
 export function getScheduleOccurrenceMinuteRange(occurrence: ScheduleOccurrence): { start: number; end: number } {
   const start = occurrence.effectiveStartMinuteOfDay;
   return { start, end: start + occurrence.durationMinutes };

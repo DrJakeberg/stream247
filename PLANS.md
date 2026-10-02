@@ -315,12 +315,15 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
 - **C3/B2, overlap.** Blocks are compared on a circular 7-day minute line. Decision: a save is refused
   only for an overlap the saved blocks take part in (`findScheduleConflictsInvolving`, used by create,
   duplicate, edit and a template laid over the week), so an overlap that was already saved and is now
-  revealed is marked in the editor without locking every other edit. `tests/unit/schedule-template-conflicts.test.ts`:
+  revealed is marked in the editor without locking every other edit. An edit of one of the two blocks (even a
+  title change) is refused until it ends the overlap. `tests/unit/schedule-template-conflicts.test.ts`:
   the midnight fixture moved from weekday 1 + 1 to 1 + 2 and still asserts the conflict; a new case
   asserts the same-weekday early block is no conflict (strengthened, not weakened).
 - **B3, cache keep-rule.** `collectUpcomingPoolIds` uses `effectiveStartMinuteOfDay`.
 - **C6, day totals.** Projected minutes are cut at the day's edges like scheduled minutes (R1 counted
   scheduled minutes once; projected still counted the block's full projection on both days).
+  A block that ends before 00:00 but whose projection overflows past it counts the overflow on no day
+  (it has no carry-over); before M88 its whole projection counted on its own day.
 - **Tests.** `tests/unit/schedule-midnight.test.ts`; 10 of its cases and both midnight cases of the
   template test fail on the code before M88 (the Twitch plan is new, so its cases have no "before").
 - Not checked: Twitch's answer to a duplicate segment (unreachable from the cloud). Not changed: the
