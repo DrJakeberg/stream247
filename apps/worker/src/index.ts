@@ -7416,7 +7416,8 @@ async function runPlayoutCycle(): Promise<void> {
         }
         await updatePlayoutRuntime((playout) => ({
           ...playout,
-          ...(playout.insertAssetId === failedAsset.id ? { insertAssetId: "", insertRequestedAt: "", insertStatus: "" } : {}),
+          // Only the request this cycle read: the same item asked for again meanwhile stands (M89).
+          ...(playout.insertAssetId === failedAsset.id ? decideFailedCycleInsert({ consumed: state.playout, row: playout }) : {}),
           heartbeatAt: new Date().toISOString(),
           message:
             insertFailure === "drop"

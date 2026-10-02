@@ -350,7 +350,8 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   write in `startOrSwitchPlayout` and the cycle end; the reconnect window of direct mode keeps the row's
   value under the same conditions as before), `decideCycleEndPendingAction` (the Refresh and queue-rebuild
   handlers, the start write, the cycle end) and `decideFailedCycleInsert` (the failed start, the failed
-  switch and the missing destination drop only the insert the cycle read). The cycle records what it read
+  switch, the missing destination and an insert that failed to prepare drop only the insert the cycle
+  read; review finding). The cycle records what it read
   where it decides (`consumedPendingAction` before the handlers, `consumedRequests` and `consumedInsert`
   next to `restartRequested`). With no write in between the outcome is the old one; the difference is a
   newer request, which the next cycle now carries out. That covers Restart, Hard reload, Recover outputs,
@@ -372,7 +373,8 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   pins on every worker write (no `restartRequestedAt: ""` or `pendingAction: ""` is left in `index.ts`).
   `tests/integration/db-roundtrip.test.ts`: the migration on a database without the columns, and R3's
   restart-flag-swallowed run on real Postgres (the press is read by the next cycle, then cleared once).
-  Two source pins (`pool-rotation`, `operator-play-now-wiring`) now also name the Remove next hold. 35 of
+  Three source pins (`pool-rotation`, `operator-play-now-wiring`) now also name the Remove next hold or
+  the request-time check of a failed insert. 35 of
   the 37 unit cases fail on the code before M89.
 - Not changed: the web's own actions still overwrite each other (Restart clears a pending Refresh, as
   before); Resume is still enabled only while a Pin, Fallback or insert is in effect, also when a hold is

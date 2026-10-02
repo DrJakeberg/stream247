@@ -173,6 +173,10 @@ describe("the playout cycle's writes use the decisions", () => {
     expect(flat.match(/\.\.\.decideFailedCycleInsert\(\{ consumed: consumedInsert, row: playout \}\),/g)?.length).toBe(2);
     expect(flat).toContain("...decideFailedCycleInsert({ consumed: state.playout, row: playout }),");
     expect(flat).not.toMatch(/queueItems: \[\], insertAssetId: "",/);
+    // The prepare failure of an insert, as well.
+    expect(flat).toContain(
+      "...(playout.insertAssetId === failedAsset.id ? decideFailedCycleInsert({ consumed: state.playout, row: playout }) : {}),"
+    );
   });
 
   it("leaves the Remove next hold alone when a chat vote is applied", () => {
