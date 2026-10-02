@@ -3830,6 +3830,12 @@ follow; the env examples drop three variables no code reads and name `TWITCH_BRO
   `.env.production.example` pins, `docs/deployment.md`, CHANGELOG `2.1.0`), tagged `v2.1.0` after its push
   CI run; the release workflow retags the `main-<sha>` images and creates the GitHub release. The repin
   of the DUT is the owner's.
+- 2026-10-02 10:17 UTC: tag `v2.1.0` on `799ff8b` (pushed by the owner: a tag push from the cloud session
+  is refused with HTTP 403). Release workflow green; GitHub release "Stream247 2.1.0" published
+  (`draft: false`, `prerelease: false`, Latest), notes from the CHANGELOG section.
+- 2026-10-02 10:23 UTC: `pg_dump` to `~/backups/stream247-pre-v2.1.0.dump`, then `repin.sh v2.1.0` (dry run
+  first: the three app pins `v2.1.0-rc.2` -> `v2.1.0`, 62 env vars, `prune=False`; then `PUT ok: stack
+  148`). `jimpanse247` live (`is_live` True). M71 complete.
 
 ## M72 Stable Asset Order
 
@@ -5090,6 +5096,28 @@ Done:
   line through its own limiter, the grace set to the resolve timeout). The 12 musl rows that the first
   cut missed fail on the glibc-only patterns. No db function changed, so no new integration test.
 - `pnpm validate` green (2570 unit, 62 integration tests, build), after the review fixes.
+
+Measured on the DUT before M82 was deployed (v2.1.0-rc.2, night 2026-10-01/02, read-only; owner's
+`probewatch` and `sigwatch` sessions, 16 h each):
+
+- The blip: the rc.2 soak saw it from outside as `outage-tolerated ... fetch-failed(consecutive=3) ...
+  error: 522` at 00:03:52 and `outage-recovered duration=220s` at 00:05:12 UTC, so about 00:01:32 to
+  00:05:12; the uplink's unplanned restart count went 3936 -> 3937 at about that time (1214 samples at 3936,
+  215 after; inferred from the sample count, the soak log does not time the restart).
+- `outage-signal-20261001-163935.log` (516 lines; a DNS lookup and a TCP connect to `live.twitch.tv:1935`
+  from the playout container every 20 s): `dns=ok connect=ok` on every line from 23:45:15 to 00:19:45
+  UTC, eleven of them inside the blip. Not one DNS error, not one `connect=timeout`.
+- `probe-watch-20261001-130244.log` (1919 lines, every 30 s): the counters of all three sources stay
+  unchanged through the blip (`source_jjwuu0f3 failing=7 recent_failing=0 max_failures=3`, the other two
+  0), and `last_probe` of source_jjwuu0f3 stays at 2026-10-01T12:58:08Z: no remote item was probed in
+  those minutes (the overnight block plays cached Twitch archives).
+- Reading: this night's blip did not take away the channel's way out to the output host; what failed was
+  the way in (the external route answered 522). M82's corroboration would have answered "no outage", so a
+  network-looking probe failure in those minutes would have counted as before M82 - none happened. The
+  measurement contradicts the premise that the output host becomes unreachable during the blip, at least
+  for this night, and does not exercise M82 either way. M82 counts as before whenever it is not
+  corroborated, so it cannot make this worse. Owner decision 2026-10-02: record this and tag
+  `v2.2.0-rc.1` anyway; the DUT check below stays open for a night under rc.1.
 
 DUT check after deploy (read-only), the morning after a nightly blip:
 
