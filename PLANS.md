@@ -83,7 +83,7 @@ Stream247 becomes an original, self-hosted 24/7 broadcast automation platform wi
 | M72 Stable Asset Order | Data | Now | Complete | A pool walks its sources in a real, stable chronological order | A source sync keeps an asset's first-seen `created_at` and a known `published_at` (fill-only) and never resets a known duration to 0; YouTube listings carry approximate publish dates (`youtubetab:approximate_date`); Twitch archives without dates order by their numeric VOD id; one shared comparator replaces the hand-copied sorts; cache writes touch only cache columns, so a long download no longer reverts other fields | worker, db, core, tests, docs | medium | revert commit; existing rows keep their values |
 | M73 Pool Source Alternation | Behavior | Now | Complete | A pool with several sources alternates between them (owner decision 2026-10-01) | A multi-source pool picks Twitch -> YouTube -> Twitch ... in `sourceIds` order, each source walking its own items oldest first and looping; per-source positions persist in `pools.source_cursors` (baseline, ALTER and migration); a single-source pool walks one source as before; a skipped, quarantined or cooled-down item no longer resets the rotation to the head, and a vanished position restarts only its own source at its oldest item; worker selection, queue, lookahead, schedule preview and week lens use one rotation function; pool form and docs say so | core, worker, db, web, tests, docs | medium | revert commit; the column stays and is ignored |
 | M74 Operator Play Now | Reliability | Now | Complete | Play now and Insert put the chosen item on air, without a standby slate | Play now / Insert switch straight to the insert at the next cycle and never set the restart flag; the legacy "restart + desired asset" override branch is gone, so no action re-picks the running or a skipped item; the reconnect standby slate appears only without the relay; a dropped insert is logged; an insert stopped by its duration bound or a feed watchdog is cleared instead of replaying; the cycle re-reads state after a duration-bound stop, so insert and Move next fire at that boundary; an insert that cannot be prepared (e.g. an uncached Twitch VOD) never takes the running item off air, and Play now refuses such an archive up front; Recover outputs under the relay no longer restarts the programme and Force reconnect is refused there (the uplink reconnects by itself), and Pin, Fallback and Resume switch there without a restart; Resume cancels a pending or running insert; Replay previous has an item, and a Move next or Replay previous item plays to its end; Skip continues after the skipped item instead of the pool head (with M73); after the insert the pool continues with its next item (resuming the interrupted item at its position is a follow-up) | worker, web, tests, docs | medium | revert commit |
-| M71 Release 2.1.0 | Release | Now | Planned | Ship M68-M70 and M72-M74 | rc on the DUT, verified (YouTube on air via Play now), 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
+| M71 Release 2.1.0 | Release | Now | Complete | Ship M68-M70 and M72-M74 | rc on the DUT, verified (YouTube on air via Play now), 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
 | M75 Source Circuit Breaker | Reliability | Next | Complete | A broken source costs one incident, not one failed boundary per item (competitor comparison 2026-10-01; owner decision) | When probes fail on 3 distinct items of the same source with no success in between, the source is held out of the pool rotation (M73) for a cooldown that doubles up to a cap; one incident per source instead of per-item noise; after the cooldown one item is probed (half-open) and a success closes the breaker and resolves the incident; per-item quarantine and the operator's `includeInProgramming` stay untouched; a pool whose sources are all held falls back as today; the source page shows the breaker state; any persisted state ships in the baseline and a migration (a new table needs no ALTER line) | core, worker, db, web, tests, docs | medium | revert commit; the stored state is ignored |
 | M76 As-Run Log | Ops + Data | Next | Complete | Answer "what was on air at 19:38" from one table instead of container logs (competitor comparison 2026-10-01; owner decision) | Every playout start and end writes one row: UTC start and end, block, pool, source, asset, title, selection reason, queue kind, input kind (cache, remote, YouTube pair, live), format id, planned and aired seconds, end reason (natural end, duration bound, switch, skip, failure); bounded retention; a read-only view in the console and an API route; docs/operations.md uses it in the runbooks; the table ships in the baseline and a migration (a new table needs no ALTER line) | worker, db, web, tests, docs | low | revert commit; the table stays unused |
 | M77 Resume Interrupted Item | Playout | Later | Deferred | Continue an interrupted item at its position instead of throwing it away (competitor comparison 2026-10-01) | Owner deferred this on 2026-10-01 until after M75 and M76: start only when the owner asks. Scope when started: persisted offset, `-ss` for cached Twitch VODs first, duration bound and chapter windows offset-aware, soaked on the DUT because it touches the seam chain | worker, db, tests | high | revert commit |
@@ -3820,7 +3820,22 @@ follow; the env examples drop three variables no code reads and name `TWITCH_BRO
   only. Backfilled 38 releases from their CHANGELOG sections (30 final, 8 pre-releases; v2.0.0 is
   "Latest"; v1.5.18 skipped - its tag never published images). `release.yml` now creates the release as
   its last step (`scripts/release-notes.mjs`, `contents: write`); v2.1.0 is the first tag to use it.
-- Open: soak result; then 2.1.0 pins, CHANGELOG, tag and repin.
+- rc.2 soak 2026-10-01 03:41 -> 10-02 03:41 UTC: passed with one outage, `soak-monitor-complete outages=1
+  outageSecondsMax=220 outageSecondsTotal=220`, 1429 samples `status=ok`. The outage is the nightly network
+  blip: `outage-tolerated elapsed=160s/300s fetch-failed(consecutive=3)` at 00:03:52 (readiness fetch answered
+  522), `outage-recovered duration=220s` at 00:05:12. Uplink unplanned restarts 3936 -> 3937 (one in 24 h;
+  1214 samples at the baseline, 215 after). The soak cannot see the application during the 220 s: no
+  readiness fetch came through.
+- 2026-10-02: `release: v2.1.0` (version, the four compose image defaults, the three
+  `.env.production.example` pins, `docs/deployment.md`, CHANGELOG `2.1.0`), tagged `v2.1.0` after its push
+  CI run; the release workflow retags the `main-<sha>` images and creates the GitHub release. The repin
+  of the DUT is the owner's.
+- 2026-10-02 10:17 UTC: tag `v2.1.0` on `799ff8b` (pushed by the owner: a tag push from the cloud session
+  is refused with HTTP 403). Release workflow green; GitHub release "Stream247 2.1.0" published
+  (`draft: false`, `prerelease: false`, Latest), notes from the CHANGELOG section.
+- 2026-10-02 10:23 UTC: `pg_dump` to `~/backups/stream247-pre-v2.1.0.dump`, then `repin.sh v2.1.0` (dry run
+  first: the three app pins `v2.1.0-rc.2` -> `v2.1.0`, 62 env vars, `prune=False`; then `PUT ok: stack
+  148`). `jimpanse247` live (`is_live` True). M71 complete.
 
 ## M72 Stable Asset Order
 
@@ -5081,6 +5096,28 @@ Done:
   line through its own limiter, the grace set to the resolve timeout). The 12 musl rows that the first
   cut missed fail on the glibc-only patterns. No db function changed, so no new integration test.
 - `pnpm validate` green (2570 unit, 62 integration tests, build), after the review fixes.
+
+Measured on the DUT before M82 was deployed (v2.1.0-rc.2, night 2026-10-01/02, read-only; owner's
+`probewatch` and `sigwatch` sessions, 16 h each):
+
+- The blip: the rc.2 soak saw it from outside as `outage-tolerated ... fetch-failed(consecutive=3) ...
+  error: 522` at 00:03:52 and `outage-recovered duration=220s` at 00:05:12 UTC, so about 00:01:32 to
+  00:05:12; the uplink's unplanned restart count went 3936 -> 3937 at about that time (1214 samples at 3936,
+  215 after; inferred from the sample count, the soak log does not time the restart).
+- `outage-signal-20261001-163935.log` (516 lines; a DNS lookup and a TCP connect to `live.twitch.tv:1935`
+  from the playout container every 20 s): `dns=ok connect=ok` on every line from 23:45:15 to 00:19:45
+  UTC, eleven of them inside the blip. Not one DNS error, not one `connect=timeout`.
+- `probe-watch-20261001-130244.log` (1919 lines, every 30 s): the counters of all three sources stay
+  unchanged through the blip (`source_jjwuu0f3 failing=7 recent_failing=0 max_failures=3`, the other two
+  0), and `last_probe` of source_jjwuu0f3 stays at 2026-10-01T12:58:08Z: no remote item was probed in
+  those minutes (the overnight block plays cached Twitch archives).
+- Reading: this night's blip did not take away the channel's way out to the output host; what failed was
+  the way in (the external route answered 522). M82's corroboration would have answered "no outage", so a
+  network-looking probe failure in those minutes would have counted as before M82 - none happened. The
+  measurement contradicts the premise that the output host becomes unreachable during the blip, at least
+  for this night, and does not exercise M82 either way. M82 counts as before whenever it is not
+  corroborated, so it cannot make this worse. Owner decision 2026-10-02: record this and tag
+  `v2.2.0-rc.1` anyway; the DUT check below stays open for a night under rc.1.
 
 DUT check after deploy (read-only), the morning after a nightly blip:
 
