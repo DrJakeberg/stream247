@@ -73,6 +73,7 @@ const persistentProgramFeedRuntimeMigrationId = "20260419_001_persistent_program
 const workerHeartbeatRuntimeMigrationId = "20260901_001_worker_heartbeat_runtime";
 const redactStoredSecretsMigrationId = "20260902_001_redact_stored_secrets";
 const namedOverlayScenesMigrationId = "20260902_003_named_overlay_scenes";
+const redactStoredSecretsAgainMigrationId = "20261002_001_redact_stored_secrets_again";
 const persistentProgramFeedRuntimeColumns = [
   "uplink_status",
   "uplink_input_mode",
@@ -2632,6 +2633,63 @@ describe.sequential("database roundtrip", () => {
       expect(scrubbed, `migrations before=[${before}] after=[${after}] stored=<${scrubbed}>`).toBe("Error opening rtmp://live.twitch.tv/app/<redacted>");
       const migrationApplied = await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${redactStoredSecretsMigrationId}';`);
       expect(migrationApplied).toBe("1");
+    }, 60_000);
+
+    it("redacts a stream key in the audit trail at the sink, and the M85 migration scrubs one stored before", async () => {
+      // Synthetic key, never a real one.
+      const syntheticKey = "live_987654321_zyxwvutsrqponmlkjihg";
+      await appendAuditEvent("test.m85.sink", `Publish to rtmp://live.twitch.tv/app/${syntheticKey} failed`);
+      expect(await executeSql("SELECT message FROM audit_events WHERE type = 'test.m85.sink';")).toBe(
+        "Publish to rtmp://live.twitch.tv/app/<redacted> failed"
+      );
+
+      // A row the old sink stored verbatim, on an install where the first scrub is already recorded.
+      await executeSql(`
+        INSERT INTO audit_events (id, type, message, created_at)
+        VALUES ('audit_m85_seeded', 'test.m85.seeded', 'Publish to rtmp://live.twitch.tv/app/${syntheticKey} failed', '${new Date().toISOString()}');
+        DELETE FROM schema_migrations WHERE id = '${redactStoredSecretsAgainMigrationId}';
+      `);
+      expect(await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${redactStoredSecretsMigrationId}';`)).toBe("1");
+
+      // ensureDatabase applies migrations once per process; the reset is what lets it look again.
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      expect(await executeSql("SELECT message FROM audit_events WHERE id = 'audit_m85_seeded';")).toBe(
+        "Publish to rtmp://live.twitch.tv/app/<redacted> failed"
+      );
+      expect(await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${redactStoredSecretsAgainMigrationId}';`)).toBe("1");
+      expect(await executeSql(`SELECT COUNT(*) FROM audit_events WHERE message LIKE '%${syntheticKey}%';`)).toBe("0");
+      const state = await readAppState();
+      expect(JSON.stringify(state.auditEvents)).not.toContain(syntheticKey);
+    }, 60_000);
+
+    it("boots an older database whose overlay row holds malformed custom_layers_json", async () => {
+      // M85 / M5: the named-scenes cast used to throw on text that is not JSON, and the whole boot
+      // rolled back on every start. Back to the pre-scenes shape, with one corrupted row.
+      await executeSql(`
+        ALTER TABLE overlay_settings DROP COLUMN IF EXISTS scenes_json;
+        ALTER TABLE overlay_settings DROP COLUMN IF EXISTS active_scene_id;
+        ALTER TABLE overlay_drafts DROP COLUMN IF EXISTS scenes_json;
+        ALTER TABLE overlay_drafts DROP COLUMN IF EXISTS active_scene_id;
+        UPDATE overlay_settings SET custom_layers_json = '[{"id": "broken' WHERE singleton_id = 1;
+        DELETE FROM schema_migrations WHERE id = '${namedOverlayScenesMigrationId}';
+      `);
+
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      expect(await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${namedOverlayScenesMigrationId}';`)).toBe("1");
+      expect(
+        await executeSql("SELECT scenes_json::json -> 0 -> 'customLayers' FROM overlay_settings WHERE singleton_id = 1;")
+      ).toBe("[]");
+      expect(await executeSql("SELECT active_scene_id FROM overlay_settings WHERE singleton_id = 1;")).toBe("scene-main");
+
+      // And the state still reads: the reader tolerates the row the migration left as it was.
+      const studio = await readOverlayStudioState();
+      expect(studio.liveOverlay.activeSceneId).toBe("scene-main");
+      expect(studio.liveOverlay.customLayers).toEqual([]);
+      await expect(readAppState()).resolves.toBeTruthy();
     }, 60_000);
 
     it("turns the one overlay of an existing installation into the first named scene, picture unchanged", async () => {

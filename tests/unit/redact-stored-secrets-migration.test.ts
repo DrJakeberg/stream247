@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redactStoredSecretsMigration } from "@stream247/db";
+import { redactStoredSecretsAgainMigration, redactStoredSecretsMigration } from "@stream247/db";
 
 /**
  * The migration that scrubs what the sinks let through before they redacted. Driven with a fake
@@ -62,5 +62,20 @@ describe("20260902_001_redact_stored_secrets", () => {
     });
     await redactStoredSecretsMigration.apply(client as never);
     expect(client.updates).toEqual([]);
+  });
+});
+
+describe("20261002_001_redact_stored_secrets_again (M85)", () => {
+  it("runs the same scrub under a new id, so installs that recorded the first pass are scrubbed again", async () => {
+    expect(redactStoredSecretsAgainMigration.id).toBe("20261002_001_redact_stored_secrets_again");
+    expect(redactStoredSecretsAgainMigration.id).not.toBe(redactStoredSecretsMigration.id);
+    const client = fakeClient({
+      incidents: [],
+      audit_events: [{ id: "aud_1", message: "publish to rtmp://live.twitch.tv/app/live_987654321_zyxwvutsrqponmlkjihg failed" }]
+    });
+    await redactStoredSecretsAgainMigration.apply(client as never);
+    expect(client.updates).toEqual([
+      { sql: "UPDATE audit_events SET message = $2 WHERE id = $1", params: ["aud_1", "publish to rtmp://live.twitch.tv/app/<redacted> failed"] }
+    ]);
   });
 });

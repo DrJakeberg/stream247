@@ -14,7 +14,13 @@ export {
   getAppSecretFilePath,
   resolveAppSecret
 } from "./app-secret.js";
-export { isUsableTimeZone, resolveAppBaseUrl, resolveChannelLanguage, resolveChannelTimeZone } from "./instance-config.js";
+export {
+  findChannelTimeZoneProblem,
+  isUsableTimeZone,
+  resolveAppBaseUrl,
+  resolveChannelLanguage,
+  resolveChannelTimeZone
+} from "./instance-config.js";
 export * from "./asset-retention.js";
 import { classifyAssetRetention, selectAssetRetentionDeletions, type AssetRetentionCounters } from "./asset-retention.js";
 import {
@@ -1077,7 +1083,8 @@ function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: Ov
         queuePreviewCount: row.queue_preview_count,
         layerOrder: JSON.parse(row.layer_order_json || "[]") as OverlaySceneLayerKind[],
         disabledLayers: JSON.parse(row.disabled_layers_json || "[]") as OverlaySceneLayerKind[],
-        customLayers: JSON.parse(row.custom_layers_json || "[]") as OverlaySceneCustomLayer[],
+        // Guarded like the named-scenes migration's cast (M85): one unreadable row must not fail every state read.
+        customLayers: parseStoredCustomLayers(row.custom_layers_json),
         scenes: JSON.parse(row.scenes_json || "[]") as OverlayNamedScene[],
         activeSceneId: row.active_scene_id || "",
         // "{}" for every row written before the column existed: no panel placed, everything in the
@@ -1089,6 +1096,15 @@ function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: Ov
         updatedAt: row.updated_at
       })
     : fallback;
+}
+
+function parseStoredCustomLayers(text: string): OverlaySceneCustomLayer[] {
+  try {
+    const parsed: unknown = JSON.parse(text || "[]");
+    return Array.isArray(parsed) ? (parsed as OverlaySceneCustomLayer[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 function mapOutputRowToRecord(row: OutputSettingsRow | undefined, fallback: OutputSettingsRecord): OutputSettingsRecord {
@@ -3888,48 +3904,54 @@ if (!schemaMigrations.some((migration) => migration.id === workerHeartbeatRuntim
   schemaMigrations.push(workerHeartbeatRuntimeMigration);
 }
 
+/**
+ * Rewrites every stored text that can quote a publish URL through redactSecrets. Idempotent: rows
+ * that redactSecrets leaves unchanged are not touched, so re-running is free. Shared by the two
+ * redaction migrations below.
+ */
+async function redactStoredSecrets(client: PoolClient): Promise<void> {
+  const incidents = await client.query<{ id: string; title: string; message: string }>("SELECT id, title, message FROM incidents");
+  for (const row of incidents.rows) {
+    const title = redactSecrets(row.title);
+    const message = redactSecrets(row.message);
+    if (title !== row.title || message !== row.message) {
+      await client.query("UPDATE incidents SET title = $2, message = $3 WHERE id = $1", [row.id, title, message]);
+    }
+  }
+  const audit = await client.query<{ id: string; message: string }>("SELECT id, message FROM audit_events");
+  for (const row of audit.rows) {
+    const message = redactSecrets(row.message);
+    if (message !== row.message) {
+      await client.query("UPDATE audit_events SET message = $2 WHERE id = $1", [row.id, message]);
+    }
+  }
+  // The same ffmpeg line that reached the incident also reached the destination's last failure
+  // and the playout runtime's last error / stderr sample, and three dashboard views render them.
+  const destinations = await client.query<{ id: string; last_error: string }>("SELECT id, last_error FROM stream_destinations");
+  for (const row of destinations.rows) {
+    const lastError = redactSecrets(row.last_error);
+    if (lastError !== row.last_error) {
+      await client.query("UPDATE stream_destinations SET last_error = $2 WHERE id = $1", [row.id, lastError]);
+    }
+  }
+  const runtime = await client.query<{ singleton_id: number; last_error: string; last_stderr_sample: string; live_bridge_last_error: string }>(
+    "SELECT singleton_id, last_error, last_stderr_sample, live_bridge_last_error FROM playout_runtime"
+  );
+  for (const row of runtime.rows) {
+    const next = [redactSecrets(row.last_error), redactSecrets(row.last_stderr_sample), redactSecrets(row.live_bridge_last_error)];
+    if (next[0] !== row.last_error || next[1] !== row.last_stderr_sample || next[2] !== row.live_bridge_last_error) {
+      await client.query(
+        "UPDATE playout_runtime SET last_error = $2, last_stderr_sample = $3, live_bridge_last_error = $4 WHERE singleton_id = $1",
+        [row.singleton_id, ...next]
+      );
+    }
+  }
+}
+
 export const redactStoredSecretsMigration: MigrationDefinition = {
   id: "20260902_001_redact_stored_secrets",
   description: "Scrub credential-shaped text out of incidents and the audit trail that was written before the sinks redacted.",
-  apply: async (client) => {
-    // Idempotent: rows that redactSecrets leaves unchanged are not touched, so re-running is free.
-    const incidents = await client.query<{ id: string; title: string; message: string }>("SELECT id, title, message FROM incidents");
-    for (const row of incidents.rows) {
-      const title = redactSecrets(row.title);
-      const message = redactSecrets(row.message);
-      if (title !== row.title || message !== row.message) {
-        await client.query("UPDATE incidents SET title = $2, message = $3 WHERE id = $1", [row.id, title, message]);
-      }
-    }
-    const audit = await client.query<{ id: string; message: string }>("SELECT id, message FROM audit_events");
-    for (const row of audit.rows) {
-      const message = redactSecrets(row.message);
-      if (message !== row.message) {
-        await client.query("UPDATE audit_events SET message = $2 WHERE id = $1", [row.id, message]);
-      }
-    }
-    // The same ffmpeg line that reached the incident also reached the destination's last failure
-    // and the playout runtime's last error / stderr sample, and three dashboard views render them.
-    const destinations = await client.query<{ id: string; last_error: string }>("SELECT id, last_error FROM stream_destinations");
-    for (const row of destinations.rows) {
-      const lastError = redactSecrets(row.last_error);
-      if (lastError !== row.last_error) {
-        await client.query("UPDATE stream_destinations SET last_error = $2 WHERE id = $1", [row.id, lastError]);
-      }
-    }
-    const runtime = await client.query<{ singleton_id: number; last_error: string; last_stderr_sample: string; live_bridge_last_error: string }>(
-      "SELECT singleton_id, last_error, last_stderr_sample, live_bridge_last_error FROM playout_runtime"
-    );
-    for (const row of runtime.rows) {
-      const next = [redactSecrets(row.last_error), redactSecrets(row.last_stderr_sample), redactSecrets(row.live_bridge_last_error)];
-      if (next[0] !== row.last_error || next[1] !== row.last_stderr_sample || next[2] !== row.live_bridge_last_error) {
-        await client.query(
-          "UPDATE playout_runtime SET last_error = $2, last_stderr_sample = $3, live_bridge_last_error = $4 WHERE singleton_id = $1",
-          [row.singleton_id, ...next]
-        );
-      }
-    }
-  }
+  apply: redactStoredSecrets
 };
 if (!schemaMigrations.some((migration) => migration.id === redactStoredSecretsMigration.id)) {
   schemaMigrations.push(redactStoredSecretsMigration);
@@ -3960,8 +3982,10 @@ export const namedOverlayScenesMigration: MigrationDefinition = {
               json_build_object(
                 'id', 'scene-main',
                 'name', 'Main scene',
-                -- NULLIF because an older row may hold '' rather than '[]', and ''::json throws.
-                'customLayers', COALESCE(NULLIF(custom_layers_json, ''), '[]')::json,
+                -- Guarded (M85): a row holding '' or any other text that is not JSON (hand-edited,
+                -- corrupted) made the cast throw, and the whole boot rolled back on every start.
+                -- Such a row gets an empty layer list; the column itself is left as it was.
+                'customLayers', CASE WHEN pg_input_is_valid(custom_layers_json, 'json') THEN custom_layers_json::json ELSE '[]'::json END,
                 'sourceId', ''
               )
             )::text,
@@ -4149,6 +4173,24 @@ export const asRunLogMigration: MigrationDefinition = {
 
 if (!schemaMigrations.some((migration) => migration.id === asRunLogMigration.id)) {
   schemaMigrations.push(asRunLogMigration);
+}
+
+/**
+ * The same scrub again, under a new id (M85).
+ *
+ * appendAuditEvent did not redact until M85, and the first pass above is recorded on every install
+ * that booted 1.5.43 or later, so a stream key quoted into the audit trail since then stayed there
+ * and on the dashboard. The sink redacts now; this clears what it let through before. One-way on
+ * purpose: the removed text is a secret.
+ */
+export const redactStoredSecretsAgainMigration: MigrationDefinition = {
+  id: "20261002_001_redact_stored_secrets_again",
+  description: "Scrub credential-shaped text that the audit trail stored verbatim until the audit sink redacted.",
+  apply: redactStoredSecrets
+};
+
+if (!schemaMigrations.some((migration) => migration.id === redactStoredSecretsAgainMigration.id)) {
+  schemaMigrations.push(redactStoredSecretsAgainMigration);
 }
 
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
@@ -5052,7 +5094,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     // One statement rather than a query per row. This rewrite runs inside the global serialized
     // write lock on every state mutation, so a row-at-a-time loop made the retention bound a
     // direct cost on every write; batching keeps raising the bound from showing up there.
-    const values = retainedAuditEvents.flatMap((event) => [event.id, event.type, event.message, event.createdAt]);
+    // Redacted here too: a whole-state write can carry an entry that never passed appendAuditEvent.
+    const values = retainedAuditEvents.flatMap((event) => [event.id, event.type, redactSecrets(event.message), event.createdAt]);
     const tuples = retainedAuditEvents
       .map((_, index) => `($${index * 4 + 1}, $${index * 4 + 2}, $${index * 4 + 3}, $${index * 4 + 4})`)
       .join(", ");
@@ -6055,12 +6098,15 @@ export async function updateAppState(updater: (state: AppState) => AppState | Pr
 }
 
 export async function appendAuditEvent(type: string, message: string): Promise<void> {
+  // The sink redacts, as upsertIncident does (M85): worker entries embed error text, and an ffmpeg
+  // error quotes the publish URL with the stream key in it.
+  const redactedMessage = redactSecrets(message);
   await withSerializedStateWrite("appendAuditEvent", async (client) => {
     const createdAt = new Date().toISOString();
     await client.query("INSERT INTO audit_events (id, type, message, created_at) VALUES ($1, $2, $3, $4)", [
       createId("audit"),
       type,
-      message,
+      redactedMessage,
       createdAt
     ]);
     // Outside the general window AND outside the protected one. The pattern is the same string

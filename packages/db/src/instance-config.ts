@@ -26,12 +26,53 @@ export function resolveAppBaseUrl(
   return configured.replace(/\/+$/, "");
 }
 
-/** The channel's IANA timezone: env override, then the wizard-written value, then UTC. */
+/**
+ * The channel's IANA timezone: env override, then the wizard-written value, then UTC.
+ *
+ * A value Intl does not accept is skipped rather than returned (M85). The wizard validates what it
+ * writes, but the env value never passed through it, and a typo such as `Europe/Berln` used to throw
+ * in every schedule read -- inside every playout cycle and on every schedule-showing page. The
+ * worker raises a state incident for the skipped value (`findChannelTimeZoneProblem`), so the
+ * fallback is visible and not silent.
+ */
 export function resolveChannelTimeZone(
   managedConfig: Partial<Pick<ManagedConfigRecord, "channelTimezone">> | undefined,
   env: EnvLike = process.env
 ): string {
-  return (env.CHANNEL_TIMEZONE || "").trim() || (managedConfig?.channelTimezone || "").trim() || "UTC";
+  const fromEnv = (env.CHANNEL_TIMEZONE || "").trim();
+  if (fromEnv && isUsableTimeZone(fromEnv)) {
+    return fromEnv;
+  }
+  const managed = (managedConfig?.channelTimezone || "").trim();
+  if (managed && isUsableTimeZone(managed)) {
+    return managed;
+  }
+  return "UTC";
+}
+
+/**
+ * Why `resolveChannelTimeZone` had to skip a configured value, or null when nothing was skipped.
+ * The message names the bad value, where it came from, and the zone the channel runs on instead.
+ */
+export function findChannelTimeZoneProblem(
+  managedConfig: Partial<Pick<ManagedConfigRecord, "channelTimezone">> | undefined,
+  env: EnvLike = process.env
+): string | null {
+  const fromEnv = (env.CHANNEL_TIMEZONE || "").trim();
+  const managed = (managedConfig?.channelTimezone || "").trim();
+  const rejected: string[] = [];
+  if (fromEnv && !isUsableTimeZone(fromEnv)) {
+    rejected.push(`CHANNEL_TIMEZONE="${fromEnv}" in the environment`);
+  }
+  // A bad managed value only matters when no usable env value overrides it.
+  if (!(fromEnv && isUsableTimeZone(fromEnv)) && managed && !isUsableTimeZone(managed)) {
+    rejected.push(`the saved channel timezone "${managed}"`);
+  }
+  if (rejected.length === 0) {
+    return null;
+  }
+  const used = resolveChannelTimeZone(managedConfig, env);
+  return `${rejected.join(" and ")} ${rejected.length > 1 ? "are not valid timezones" : "is not a valid timezone"}, so the schedule runs on ${used}. Use an IANA zone name such as Europe/Berlin.`;
 }
 
 /**
@@ -47,6 +88,8 @@ export function resolveChannelLanguage(
   return normalizeViewerLocale((env.CHANNEL_LANGUAGE || "").trim() || (managedConfig?.channelLanguage || "").trim());
 }
 
+const usableTimeZoneCache = new Map<string, boolean>();
+
 /**
  * Whether Intl accepts the value as a timezone. The wizard validates before persisting, because a
  * bad timezone would otherwise throw much later, deep inside schedule materialisation.
@@ -56,10 +99,22 @@ export function isUsableTimeZone(value: string): boolean {
     return false;
   }
 
+  // Cached, because resolveChannelTimeZone asks on every schedule read and the answer for a given
+  // string never changes within one process. Bounded: only configured values reach it.
+  const known = usableTimeZoneCache.get(value);
+  if (known !== undefined) {
+    return known;
+  }
+  let usable: boolean;
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: value });
-    return true;
+    usable = true;
   } catch {
-    return false;
+    usable = false;
   }
+  if (usableTimeZoneCache.size >= 64) {
+    usableTimeZoneCache.clear();
+  }
+  usableTimeZoneCache.set(value, usable);
+  return usable;
 }
