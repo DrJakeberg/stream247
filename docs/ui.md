@@ -11,6 +11,9 @@ The admin UI exists for Stream247's internal 24/7 stream product.
 - The overlay is internal output for Stream247's own broadcast.
 - The admin UI is a single-page operator surface, not a public product shell.
 - Workspace navigation is optimized for desktop operator use, not for touch-first mobile operation.
+  The exception is the on-call check on a phone (M90): `Live → Control` and `Live → Status` must
+  answer "what is wrong and what do I press" at 390 px. On `Live → Control` the "Open problems" panel
+  is the first panel, above y = 1 400 px at 390 px wide (`tests/e2e/workspace-layout.spec.ts`).
 
 ## Workspace Model
 
@@ -156,7 +159,8 @@ Use these terms consistently in UI copy, docs, and review comments.
 
 ## Non-goals
 
-- No mobile-first redesign.
+- No mobile-first redesign. Mobile is a non-goal everywhere except the on-call check of
+  `Live → Control` and `Live → Status` (see *Product Framing*).
 - No public overlay product.
 - No second design system alongside the shipped UI primitives.
 - No speculative route split beyond the current four-workspace model.

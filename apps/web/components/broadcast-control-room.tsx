@@ -5,6 +5,7 @@ import { AdminPageHeader } from "@/components/admin-page-header";
 import { getBroadcastLiveStatusLabel, getBroadcastLiveStatusTone } from "@/components/broadcast-live-status";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import type { BroadcastSnapshot } from "@/lib/live-broadcast";
+import { OpenProblemsPanel } from "@/components/open-problems-panel";
 import { PlayoutActionForm } from "@/components/playout-action-form";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
@@ -15,9 +16,19 @@ import {
   DESTINATION_STATUS_LABELS,
   describeStreamKey
 } from "@/lib/destination-wording";
-import { describeIncidentAge, describeOpenIncidentOverflow } from "@/lib/incident-age";
 import { describePlayoutReason } from "@/lib/playout-reason";
 import { describeScenePreset } from "@/lib/scene-preset-names";
+
+/** The next item's preparation in words: "ready" is what an operator wants to know at a glance. */
+function describeNextItemReadiness(prefetchStatus: string): string {
+  if (prefetchStatus === "ready") {
+    return "Checked and ready to play.";
+  }
+  if (prefetchStatus === "failed") {
+    return "The check of this item failed; playout will try the one after it.";
+  }
+  return "Not checked yet.";
+}
 
 type AssetOption = {
   id: string;
@@ -43,6 +54,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
   return (
     <div className="stack-form">
       <AdminPageHeader
+        className="live-control-header"
         compact
         description="Use Live control for on-air actions. Current item, next queue, destination health, and scene state update continuously without reloading the page."
         eyebrow="Live"
@@ -96,6 +108,18 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
       </AdminPageHeader>
 
       <section className="grid two">
+        {/*
+          First on purpose (M90, U7/U9): the answer to "what is wrong and what do I press" leads the
+          page, on a phone above everything else but the header. A dead worker or playout cannot
+          report itself, so those two come from the heartbeats and go first.
+        */}
+        <OpenProblemsPanel
+          heartbeatProblems={snapshot.heartbeatProblems}
+          nowMs={incidentNowMs}
+          openIncidentCount={snapshot.openIncidentCount}
+          openIncidents={snapshot.openIncidents}
+        />
+
         <article className="panel">
           <span className="label">On Air</span>
           <h3>Current and next</h3>
@@ -107,25 +131,39 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                   ? `${snapshot.currentScheduleItem.startTime} to ${snapshot.currentScheduleItem.endTime} · ${snapshot.currentScheduleItem.categoryName}`
                   : currentQueueItem?.subtitle || snapshot.playout.message}
               </div>
-              <div className="subtle">
-                Transition {snapshot.playout.transitionState} · queue reason {describePlayoutReason(snapshot.playout.selectionReasonCode) || "none"} · version{" "}
-                {snapshot.playout.queueVersion}
-              </div>
+              {describePlayoutReason(snapshot.playout.selectionReasonCode) ? (
+                <div className="subtle">Why this item: {describePlayoutReason(snapshot.playout.selectionReasonCode)}</div>
+              ) : null}
             </div>
             <div className="item">
               <strong>{nextQueueItem?.title || snapshot.nextAsset?.title || snapshot.nextScheduleItem?.title || "No next item yet"}</strong>
-              <div className="subtle">
-                Prefetch {snapshot.playout.prefetchStatus || "idle"} · last probe {snapshot.playout.prefetchedAt || "never"}
-              </div>
-              <div className="subtle">
-                Transition target {snapshot.playout.transitionTargetKind || "none"} · ready {snapshot.playout.transitionReadyAt || "not ready"}
-              </div>
-              {snapshot.playout.manualNextAssetId ? (
-                <div className="subtle">Manual next request is active for asset {snapshot.playout.manualNextAssetId}.</div>
-              ) : null}
+              <div className="subtle">{describeNextItemReadiness(snapshot.playout.prefetchStatus)}</div>
+              {snapshot.playout.manualNextAssetId ? <div className="subtle">Queued next by an operator (Move next).</div> : null}
               {nextQueueItem?.subtitle ? <div className="subtle">{nextQueueItem.subtitle}</div> : null}
               {snapshot.playout.prefetchError ? <div className="danger">{snapshot.playout.prefetchError}</div> : null}
             </div>
+            {/*
+              The engine's own words ("Transition idle · queue reason none · version 0", "ready not
+              ready") answered nobody's question in the first line of the page (M90, U10). They stay
+              one click away for whoever is debugging the engine.
+            */}
+            <details className="disclosure">
+              <summary>Details</summary>
+              <div className="subtle" style={{ marginTop: 8 }}>
+                Transition state: {snapshot.playout.transitionState} · queue version {snapshot.playout.queueVersion}
+              </div>
+              <div className="subtle">
+                Next item check: {snapshot.playout.prefetchStatus || "not run"}
+                {snapshot.playout.prefetchedAt ? ` at ${snapshot.playout.prefetchedAt}` : ""}
+              </div>
+              <div className="subtle">
+                Transition target: {snapshot.playout.transitionTargetKind || "none"}
+                {snapshot.playout.transitionReadyAt ? ` · prepared at ${snapshot.playout.transitionReadyAt}` : " · not prepared yet"}
+              </div>
+              {snapshot.playout.manualNextAssetId ? (
+                <div className="subtle">Move next holds asset {snapshot.playout.manualNextAssetId}.</div>
+              ) : null}
+            </details>
             <div className="item">
               <strong>Queue preview</strong>
               <div className="subtle">
@@ -162,6 +200,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
             liveBridgeInputSummary={snapshot.liveBridge.inputSummary}
             liveBridgeLastError={snapshot.liveBridge.lastError}
             recoveringDestinationCount={stagedDestinationCount}
+            relayEnabled={snapshot.relayEnabled}
             coolingDestinationCount={coolingDestinationCount}
           />
         </article>
@@ -325,42 +364,6 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
                 </Link>
               </div>
             </div>
-          </div>
-        </article>
-
-        <article className="panel">
-          <span className="label">Incidents</span>
-          <h3>Open problems</h3>
-          <div className="list">
-            {snapshot.openIncidents.length > 0 ? (
-              snapshot.openIncidents.map((incident) => (
-                <div className="item" key={incident.id}>
-                  <strong>
-                    {incident.severity.toUpperCase()} · {incident.scope} · {incident.title}
-                  </strong>
-                  <div className="subtle">
-                    {describeIncidentAge({
-                      createdAt: incident.createdAt,
-                      updatedAt: incident.updatedAt,
-                      nowMs: incidentNowMs
-                    })}
-                  </div>
-                  <div className="subtle">{incident.message}</div>
-                </div>
-              ))
-            ) : (
-              <div className="item">
-                <strong>No open incidents</strong>
-                <div className="subtle">The live system currently reports no unresolved incidents.</div>
-              </div>
-            )}
-            {describeOpenIncidentOverflow(snapshot.openIncidents.length, snapshot.openIncidentCount) ? (
-              <div className="item">
-                <div className="subtle">
-                  {describeOpenIncidentOverflow(snapshot.openIncidents.length, snapshot.openIncidentCount)}
-                </div>
-              </div>
-            ) : null}
           </div>
         </article>
 

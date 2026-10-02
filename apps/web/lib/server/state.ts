@@ -30,6 +30,11 @@ import {
   normalizeOverlayTitleScale,
   normalizeCuepointOffsetsSeconds,
   describeSourceHealth,
+  describeHeartbeatRestartAction,
+  describeIncidentOperatorAction,
+  isProgramFeedHeartbeatMode,
+  judgePlayoutHeartbeat,
+  judgeWorkerHeartbeat,
   selectActiveDestinationGroup,
   isLikelyTwitchChannelUrl,
   isLikelyTwitchVodUrl,
@@ -166,6 +171,7 @@ import type {
   LiveBridgeSummary,
   LiveScheduleSummary,
   LiveTwitchStatusSummary,
+  LiveHeartbeatProblem,
   PublicChannelSnapshot
 } from "@/lib/live-broadcast";
 
@@ -1019,6 +1025,7 @@ function summarizeOpenIncidents(state: AppState, limit = 5): LiveIncidentSummary
       status: incident.status,
       scope: incident.scope,
       fingerprint: incident.fingerprint,
+      action: describeIncidentOperatorAction(incident.fingerprint),
       createdAt: incident.createdAt,
       updatedAt: incident.updatedAt,
       acknowledgedAt: incident.acknowledgedAt,
@@ -1435,6 +1442,7 @@ function summarizeCuepoints(
 
 export function summarizeTwitchLiveStatus(state: AppState): LiveTwitchStatusSummary {
   return {
+    connected: state.twitch.status === "connected",
     status: state.twitch.status === "connected" ? state.twitch.liveStatus : "unknown",
     viewerCount: state.twitch.status === "connected" ? state.twitch.viewerCount : 0,
     // The broadcast channel, not the connected account: this login becomes the public watch link
@@ -1477,6 +1485,8 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
     generatedAt: new Date().toISOString(),
     timeZone: getWorkspaceTimeZone(state),
     workerHealth: getWorkerHealth(state),
+    heartbeatProblems: getHeartbeatProblems(state),
+    relayEnabled: process.env.STREAM247_RELAY_ENABLED === "1",
     twitch: summarizeTwitchLiveStatus(state),
     playout: summarizePlayout(state.playout),
     liveBridge: summarizeLiveBridge(state.playout),
@@ -1567,12 +1577,11 @@ export function getSourceReferences(state: AppState, sourceId: string) {
   };
 }
 
-export function getWorkerHealth(state: AppState) {
-  const WORKER_HEARTBEAT_STALE_MS = 240_000;
+export function getWorkerHealth(state: AppState, nowMs = Date.now()) {
   const lastRunAt = state.playout.workerHeartbeatAt || "";
-  const ageMs = lastRunAt ? Date.now() - new Date(lastRunAt).getTime() : Number.POSITIVE_INFINITY;
+  const verdict = judgeWorkerHeartbeat(lastRunAt, nowMs).verdict;
 
-  if (!lastRunAt) {
+  if (verdict === "missing") {
     return {
       status: "missing" as const,
       summary: "No worker heartbeat has been recorded yet.",
@@ -1580,7 +1589,7 @@ export function getWorkerHealth(state: AppState) {
     };
   }
 
-  if (ageMs > WORKER_HEARTBEAT_STALE_MS) {
+  if (verdict === "stale") {
     return {
       status: "stale" as const,
       summary: "Worker heartbeat is stale. Reconciliation may be stuck.",
@@ -1595,13 +1604,76 @@ export function getWorkerHealth(state: AppState) {
   };
 }
 
+/**
+ * The playout heartbeat as readiness and the worker's healthcheck judge it (M90, audit U3): the same
+ * window and, in HLS mode, the same program-feed evidence.
+ */
+export function getPlayoutHeartbeatHealth(state: AppState, nowMs = Date.now()) {
+  return judgePlayoutHeartbeat({ programFeedMode: isProgramFeedHeartbeatMode(process.env), playout: state.playout }, nowMs);
+}
+
+/**
+ * A runtime process that has stopped reporting, or never reported (M90, U7).
+ *
+ * The worker cannot write an incident about its own death, and playout cannot either, so these are
+ * computed here, from the heartbeats, every time the page is drawn. They go first in "Open problems"
+ * because nothing else on the page is true while they hold.
+ */
+export function getHeartbeatProblems(state: AppState, nowMs = Date.now()): LiveHeartbeatProblem[] {
+  const problems: LiveHeartbeatProblem[] = [];
+  const worker = judgeWorkerHeartbeat(state.playout.workerHeartbeatAt, nowMs);
+  const playout = getPlayoutHeartbeatHealth(state, nowMs);
+
+  if (worker.verdict !== "fresh") {
+    problems.push({
+      id: "heartbeat-worker",
+      service: "worker",
+      verdict: worker.verdict,
+      lastAt: worker.at,
+      title: worker.verdict === "missing" ? "The worker has never reported" : "The worker has stopped reporting",
+      message:
+        "Sources, the schedule sync, Twitch and incident checks are not running while the worker is down.",
+      action: describeHeartbeatRestartAction("worker")
+    });
+  }
+
+  if (playout.verdict !== "fresh") {
+    problems.push({
+      id: "heartbeat-playout",
+      service: "playout",
+      verdict: playout.verdict,
+      lastAt: playout.at,
+      title: playout.verdict === "missing" ? "Playout has never reported" : "Playout has stopped reporting",
+      message: "Nothing reaches the channel while playout is down, and the buttons on this page have no effect.",
+      action: describeHeartbeatRestartAction("playout")
+    });
+  }
+
+  return problems;
+}
+
+/**
+ * The "System readiness" sentence on Live → Status (M90, U8): shown when no incident is open, and
+ * also under open incidents while the worker or playout is silent. It used to call the worker and
+ * playout active whether or not either had ever run.
+ */
+export function describeRuntimeReadinessSentence(state: AppState, openIncidentCount = 0, nowMs = Date.now()): string {
+  const problems = getHeartbeatProblems(state, nowMs);
+  const lead = openIncidentCount === 0 ? "No open incidents" : "Besides the incidents above";
+  if (problems.length === 0) {
+    return `${lead}. The worker and playout both reported within the last few minutes.`;
+  }
+
+  return `${lead}, ${problems.map((problem) => problem.title.charAt(0).toLowerCase() + problem.title.slice(1)).join(" and ")}: see Open problems on Live → Control.`;
+}
+
 export function getRuntimeDriftReport(state: AppState) {
   const currentScheduleItem = getCurrentScheduleItem(state);
   const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
   const currentSource = currentAsset ? state.sources.find((source) => source.id === currentAsset.sourceId) ?? null : null;
   const activeDestination = summarizeDestination(state);
   const workerHealth = getWorkerHealth(state);
-  const playoutHeartbeatAgeMs = state.playout.heartbeatAt ? Date.now() - new Date(state.playout.heartbeatAt).getTime() : Number.POSITIVE_INFINITY;
+  const playoutHeartbeatStale = getPlayoutHeartbeatHealth(state).verdict !== "fresh";
 
   const items = [
     {
@@ -1616,7 +1688,7 @@ export function getRuntimeDriftReport(state: AppState) {
       label: "Playout heartbeat",
       severity:
         state.playout.status === "running" || state.playout.status === "recovering" || state.playout.status === "switching"
-          ? playoutHeartbeatAgeMs > 45_000
+          ? playoutHeartbeatStale
             ? ("warning" as const)
             : ("ok" as const)
           : state.playout.status === "failed" || state.playout.status === "degraded"
@@ -1625,7 +1697,7 @@ export function getRuntimeDriftReport(state: AppState) {
       summary:
         state.playout.status === "failed" || state.playout.status === "degraded"
           ? `Playout is ${state.playout.status}.`
-          : playoutHeartbeatAgeMs > 45_000 &&
+          : playoutHeartbeatStale &&
               (state.playout.status === "running" || state.playout.status === "recovering" || state.playout.status === "switching")
             ? "Playout heartbeat is stale."
             : "Playout heartbeat is in sync.",

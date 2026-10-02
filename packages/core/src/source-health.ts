@@ -98,6 +98,20 @@ export function describeElapsed(elapsedMs: number): string {
   return `${days} days ago`;
 }
 
+/**
+ * A moment as an absolute UTC time: "at 2026-10-01 22:58 UTC". For text that is stored, where a
+ * relative phrase freezes: an incident message written as "2 minutes ago" still said so an hour
+ * later, under a card age that said otherwise (M90, U10).
+ */
+export function describeUtcMoment(iso: string): string {
+  const at = iso ? new Date(iso) : null;
+  if (!at || !Number.isFinite(at.getTime())) {
+    return "";
+  }
+
+  return `at ${at.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
 function elapsedSince(iso: string, nowMs: number): number {
   const at = iso ? new Date(iso).getTime() : Number.NaN;
   return Number.isFinite(at) && Number.isFinite(nowMs) ? nowMs - at : Number.NaN;
@@ -128,6 +142,11 @@ export type SourceHealthInput = {
   /** Scheduled blocks fed by those pools. */
   blockNames: readonly string[];
   nowMs: number;
+  /**
+   * "relative" (default) for text drawn on a page ("12 minutes ago"); "absolute" for text that is
+   * stored, such as an incident message, which must not carry a relative time (M90, U10).
+   */
+  clock?: "relative" | "absolute";
 };
 
 export type SourceHealthReport = {
@@ -157,14 +176,19 @@ function describePreservation(storedAssetCount: number): string {
     : "Nothing is stored for it either.";
 }
 
+/** "12 minutes ago" or "at 2026-10-01 22:58 UTC", by the input's clock; "" when unknown. */
+function describeMoment(input: SourceHealthInput, iso: string): string {
+  return input.clock === "absolute" ? describeUtcMoment(iso) : describeElapsed(elapsedSince(iso, input.nowMs));
+}
+
 function describeLastCheck(input: SourceHealthInput, barrenRuns: number): string {
   const newest = input.runs[0];
   if (!newest) {
-    const elapsed = describeElapsed(elapsedSince(input.lastSyncedAt, input.nowMs));
+    const elapsed = describeMoment(input, input.lastSyncedAt);
     return elapsed === "" ? "Never checked yet." : `Last checked ${elapsed}.`;
   }
 
-  const checkedAt = describeElapsed(elapsedSince(newest.finishedAt || newest.startedAt, input.nowMs));
+  const checkedAt = describeMoment(input, newest.finishedAt || newest.startedAt);
 
   if (barrenRuns === 0) {
     const found = newest.discoveredAssets;
@@ -182,7 +206,7 @@ function describeLastCheck(input: SourceHealthInput, barrenRuns: number): string
   }
 
   const oldestBarren = input.runs[barrenRuns - 1];
-  const since = describeElapsed(elapsedSince(oldestBarren?.startedAt ?? "", input.nowMs));
+  const since = describeMoment(input, oldestBarren?.startedAt ?? "");
   const sinceClause = since === "" ? "" : `, the first of them ${since}`;
 
   return failed

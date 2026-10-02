@@ -120,7 +120,8 @@ import {
   type PublishHostTarget,
   type SourceBreakerRecord,
   type SourceBreakerTransition,
-  createTwitchTokenScopeCache
+  createTwitchTokenScopeCache,
+  describeIncidentOperatorAction
 } from "@stream247/core";
 import {
   buildSourceLiveStateWrite,
@@ -226,6 +227,7 @@ import {
   type DestinationRuntimeTargetGroup
 } from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
+import { decideHealthcheck } from "./healthcheck.js";
 import { planSourceBreakerIncidents } from "./source-breaker-incidents.js";
 import { createBreakerOutcomeCarry, sourceBreakerOutcomesOf, type QueueProbeOutcome } from "./source-breaker-outcomes.js";
 import { createNetworkOutageCheck, ProbeOutageLogLimiter, withoutNetworkOutageOutcomes, networkLookingFailuresOf } from "./probe-network-outage.js";
@@ -498,12 +500,8 @@ let pendingPlayoutExitUpdate: Promise<void> = Promise.resolve();
 let uplinkProcesses: UplinkProcessRuntime[] = [];
 let uplinkReconnectUntil = "";
 const uplinkDestinationStallStartedAt: Map<string, number> = new Map();
-// Worker reconciliation can legitimately run for a little over two minutes when
-// source sync and Twitch reconciliation happen in one cycle, so keep the stale
-// window above the steady-state cadence to avoid false healthcheck failures.
-const WORKER_HEARTBEAT_STALE_MS = 240_000;
+// The heartbeat windows live in @stream247/core (heartbeat.ts), shared with the web (M90).
 type WorkerScheduleOccurrence = ReturnType<typeof buildScheduleOccurrences>[number];
-const PLAYOUT_HEARTBEAT_STALE_MS = 60_000;
 // Hard ceiling on a single reconciliation cycle. If a cycle neither resolves
 // nor rejects within this window it is treated as a hung loop (e.g. an
 // unbounded yt-dlp/fetch network stall) and the process exits so the
@@ -4195,7 +4193,9 @@ async function reconcileSourceDroughtIncident(args: {
     storedAssetCount: args.storedAssetCount,
     poolNames: pools.map((pool) => pool.name),
     blockNames: [...new Set(blocks.map((block) => block.title))],
-    nowMs: Date.now()
+    nowMs: Date.now(),
+    // Stored text: an absolute time, never "2 minutes ago" frozen at write time (M90, U10).
+    clock: "absolute"
   });
 
   // This upsert overwrites whatever the per-source catch wrote a moment ago, so the newest run's
@@ -7545,7 +7545,9 @@ async function runPlayoutCycle(): Promise<void> {
       scope: "playout",
       severity: "critical",
       title: "Playout crash-loop protection is active",
-      message: "FFmpeg exited repeatedly. Manual intervention is required before automatic restarts resume.",
+      // What to do, not only that something must be done (M90): the action itself comes from the
+      // catalogue in @stream247/core, so the card and this message cannot disagree.
+      message: `FFmpeg exited repeatedly, so automatic restarts are paused until a playable item is selected. ${describeIncidentOperatorAction("playout.crash-loop")}`,
       fingerprint: "playout.crash-loop"
     });
     await updatePlayoutRuntime((playout) => ({
@@ -9991,60 +9993,10 @@ type RuntimeMode = "worker" | "playout" | "uplink";
 
 async function runHealthcheck(mode: RuntimeMode): Promise<void> {
   const state = await readAppState();
-  const now = Date.now();
-
-  if (mode === "worker") {
-    const lastWorkerCycle = state.playout.workerHeartbeatAt;
-    if (!lastWorkerCycle) {
-      throw new Error("No worker heartbeat has been recorded yet.");
-    }
-
-    if (now - new Date(lastWorkerCycle).getTime() > WORKER_HEARTBEAT_STALE_MS) {
-      throw new Error("Worker heartbeat is stale.");
-    }
-
-    return;
-  }
-
-  if (mode === "uplink") {
-    if (!STREAM247_RELAY_ENABLED) {
-      return;
-    }
-
-    // The uplink cycle already wrote this on every path it can exit through, so the `uplink.cycle`
-    // audit entry it used to append alongside was never the only evidence -- just the noisier copy.
-    const lastUplinkCycle = state.playout.uplinkHeartbeatAt;
-    if (!lastUplinkCycle) {
-      throw new Error("No uplink heartbeat has been recorded yet.");
-    }
-
-    if (now - new Date(lastUplinkCycle).getTime() > PLAYOUT_HEARTBEAT_STALE_MS) {
-      throw new Error("Uplink heartbeat is stale.");
-    }
-
-    if (state.playout.uplinkStatus === "failed") {
-      throw new Error(`Uplink failed: ${state.playout.uplinkLastExitReason || "unknown error"}`);
-    }
-
-    if (state.playout.programFeedStatus === "failed") {
-      throw new Error("Program feed is failed.");
-    }
-
-    return;
-  }
-
-  if (state.playout.status === "failed") {
-    throw new Error("Playout runtime is failed.");
-  }
-
-  if (state.playout.crashLoopDetected) {
-    throw new Error("Playout crash-loop protection is active.");
-  }
-
-  if (state.playout.status !== "idle" && state.playout.heartbeatAt) {
-    if (now - new Date(state.playout.heartbeatAt).getTime() > PLAYOUT_HEARTBEAT_STALE_MS) {
-      throw new Error("Playout heartbeat is stale.");
-    }
+  // The windows and the HLS feed evidence are the web's too: apps/worker/src/healthcheck.ts (M90).
+  const failure = decideHealthcheck(mode, state.playout, Date.now(), process.env);
+  if (failure) {
+    throw new Error(failure);
   }
 }
 

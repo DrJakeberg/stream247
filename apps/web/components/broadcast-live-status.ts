@@ -8,8 +8,17 @@ import type { StatusChipProps } from "@/components/ui/StatusChip";
  * reads when something feels wrong. "UNKNOWN" told them nothing: the state it names is "we have not
  * managed to ask Twitch yet", which is a temporary condition and not an error, and shouting it in
  * capitals suggested otherwise. Kept short because the chip they live in is narrow.
+ *
+ * "Checking" is only true while a connected account has not been asked yet. Without a connected
+ * Twitch account nobody will ever ask, and the chip read "Checking" for a whole session (M90, U12).
  */
+export const NOT_CONNECTED_TO_TWITCH_LABEL = "Not connected to Twitch";
+
 export function getBroadcastLiveStatusLabel(twitch: BroadcastSnapshot["twitch"]): string {
+  if (twitch.connected === false) {
+    return NOT_CONNECTED_TO_TWITCH_LABEL;
+  }
+
   if (twitch.status === "live") {
     return twitch.viewerCount > 0 ? `Live · ${twitch.viewerCount}` : "Live";
   }

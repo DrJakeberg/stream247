@@ -11,6 +11,8 @@ export * from "./chat-game.js";
 export * from "./chat-game-2048.js";
 export * from "./chat-game-minesweeper.js";
 export * from "./chat-interaction.js";
+export * from "./heartbeat.js";
+export * from "./incident-actions.js";
 export * from "./managed-runtime.js";
 export * from "./operator-precedence.js";
 export * from "./overlay-layout.js";

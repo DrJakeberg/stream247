@@ -42,11 +42,15 @@ export function AdminStatusRail(props: { initialSnapshot: BroadcastSnapshot }) {
         <span className="label">Incidents</span>
         {/* Every open incident, not the five the snapshot carries: a chip that stops counting at
             five is a chip that reads "5" while forty are open. */}
-        <strong>{snapshot.openIncidentCount}</strong>
+        {/* A silent worker or playout counts too (M90): it is the first of the open problems, and
+            "0 · No unresolved incidents" above a dead worker was the rail contradicting the page. */}
+        <strong>{snapshot.openIncidentCount + snapshot.heartbeatProblems.length}</strong>
         <span className="subtle">
-          {snapshot.openIncidents[0]
-            ? `${snapshot.openIncidents[0].severity} · ${snapshot.openIncidents[0].title}`
-            : "No unresolved incidents"}
+          {snapshot.heartbeatProblems[0]
+            ? `critical · ${snapshot.heartbeatProblems[0].title}`
+            : snapshot.openIncidents[0]
+              ? `${snapshot.openIncidents[0].severity} · ${snapshot.openIncidents[0].title}`
+              : "No unresolved incidents"}
         </span>
       </div>
       <div className="admin-status-chip">

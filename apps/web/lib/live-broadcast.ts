@@ -66,6 +66,8 @@ export type LiveIncidentSummary = {
   status: "open" | "resolved";
   scope: "worker" | "playout" | "twitch" | "source" | "system";
   fingerprint: string;
+  /** What to press or run, from the catalogue in @stream247/core (M90); "" when it has none. */
+  action: string;
   createdAt: string;
   /** Refreshed by every repeat of the same fingerprint, so this is "when it last happened". */
   updatedAt: string;
@@ -79,7 +81,22 @@ export type LiveWorkerHealth = {
   lastRunAt: string;
 };
 
+/** A runtime process that stopped reporting or never did (M90, U7). Computed, never stored. */
+export type LiveHeartbeatProblem = {
+  id: "heartbeat-worker" | "heartbeat-playout";
+  service: "worker" | "playout";
+  verdict: "stale" | "missing";
+  /** The last heartbeat, "" when there never was one. The age is worded where it is drawn. */
+  lastAt: string;
+  title: string;
+  message: string;
+  action: string;
+};
+
 export type LiveTwitchStatusSummary = {
+  // False when no Twitch account is connected (never connected, or the token was refused), so the
+  // live status cannot be asked at all (M90, U12).
+  connected: boolean;
   // Live state and viewers of the BROADCAST CHANNEL.
   status: "live" | "offline" | "unknown";
   viewerCount: number;
@@ -344,6 +361,10 @@ export type BroadcastSnapshot = {
   generatedAt: string;
   timeZone: string;
   workerHealth: LiveWorkerHealth;
+  /** First in "Open problems": a stale or missing worker or playout heartbeat (M90). */
+  heartbeatProblems: LiveHeartbeatProblem[];
+  /** STREAM247_RELAY_ENABLED: with the relay the uplink holds the Twitch connection. */
+  relayEnabled: boolean;
   twitch: LiveTwitchStatusSummary;
   playout: LivePlayoutSummary;
   liveBridge: LiveBridgeSummary;

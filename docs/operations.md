@@ -22,6 +22,31 @@
 - active SSE connections reported as `sseConnections` in `/api/system/readiness`
 - container restart deltas in the soak monitor log
 
+### Open problems: what is wrong and what to press (since M90)
+
+- `Live → Control` opens with **Open problems**, on a phone too (above y = 1 400 px at 390 px wide).
+- A stale or missing worker or playout heartbeat is its first entry: the worker and playout cannot
+  report their own death, so the web computes these two from the heartbeats every time the page is
+  drawn. Each says how long ago the process was last heard from and the command to restart it
+  (`docker compose restart worker` / `playout`; on Portainer, restart that container). A heartbeat is
+  stale after 240 s (worker) or 60 s (playout; in HLS mode a fresh program feed also counts). The same
+  windows and the same function (`packages/core/src/heartbeat.ts`) decide the Live page, `/api/system/readiness`
+  and the containers' healthchecks, so the three never disagree.
+- Every critical incident ends with *What to do*: one action from the catalogue in
+  `packages/core/src/incident-actions.ts`, looked up by fingerprint when the card is drawn.
+- *Current and next* says in plain words whether the next item is checked and ready; the engine's
+  fields (transition state, queue version, next-item check, transition target) are under *Details*.
+- Incident messages carry absolute UTC times, never "2 minutes ago": the card's own age line is the
+  live one.
+- `Live → Status` says under *System readiness* whether the worker and playout reported within the
+  last few minutes instead of a fixed sentence, with no open incident and, while either is silent,
+  under the open incidents too.
+- The playout container's healthcheck uses the same verdict, so in HLS relay mode a fresh program feed
+  keeps it healthy even when the playout loop's own heartbeat is older than 60 s; a hung loop is still
+  ended by the loop stall ceiling (`STREAM247_LOOP_STALL_TIMEOUT_SECONDS`).
+- The sidebar and Live chips read *Not connected to Twitch* while no Twitch account is connected (the
+  live status cannot be asked), and *Checking* only while a connected account has not been asked yet.
+
 ## Common Operator Actions
 
 - restart encoder
@@ -149,7 +174,11 @@ the pool's next item. Under the relay no operator action shows that slate.
   pressed while a start fails: the failure drops only the insert it tried to start.
 - **Force reconnect** restarts the encoder into the reconnect window without the relay. With the relay
   it is refused: the uplink reconnects by itself (the planned reconnect interval, the encoder-stall and
-  destination-stall watchdogs).
+  destination-stall watchdogs). Since M90 the button is greyed out with the relay on.
+- **Soft restart**, **Force reconnect** and **Hard reload** cut the picture and ask first (since M90):
+  the question says what happens and what viewers see (with the relay a short cut while the Twitch
+  connection stays up; without it the stream drops for a moment). Cancel sends nothing. Refresh scenes,
+  Rebuild queue and Recover outputs stay one tap.
 - **Recover outputs now** marks staged outputs ready. Without the relay it restarts the playout so
   they rejoin (slate, then as above). With the relay the programme is not restarted: the uplink takes
   the outputs back on its next cycle by restarting the uplink process of each output's rendition, so the

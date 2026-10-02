@@ -1,10 +1,15 @@
-import { selectActiveDestinationGroup } from "@stream247/core";
+import {
+  PLAYOUT_HEARTBEAT_STALE_MS,
+  isProgramFeedHeartbeatMode,
+  judgeHeartbeat,
+  judgePlayoutHeartbeat,
+  judgeWorkerHeartbeat,
+  selectActiveDestinationGroup
+} from "@stream247/core";
 import { getDatabaseHealth } from "@stream247/db";
 import { getActiveSseConnectionCount } from "./sse";
 import { readAppState } from "./state";
 
-const WORKER_HEARTBEAT_STALE_MS = 240_000;
-const RUNTIME_HEARTBEAT_STALE_MS = 60_000;
 const MIN_PLAYOUT_TRANSIENT_GRACE_SECONDS = 20;
 
 function readPositiveNumber(value: string | undefined, fallback: number): number {
@@ -24,13 +29,8 @@ export async function getSystemReadiness() {
   try {
     const state = await readAppState();
     const persistence = await getDatabaseHealth();
-    const playoutHeartbeatAt = state.playout.heartbeatAt ? new Date(state.playout.heartbeatAt).getTime() : 0;
-    const workerHeartbeat = state.playout.workerHeartbeatAt;
-    const workerHeartbeatAt = workerHeartbeat ? new Date(workerHeartbeat).getTime() : 0;
     const relayEnabled = process.env.STREAM247_RELAY_ENABLED === "1";
-    const hlsProgramFeedEnabled = relayEnabled && process.env.STREAM247_UPLINK_INPUT_MODE !== "rtmp";
-    const uplinkHeartbeatAt = state.playout.uplinkHeartbeatAt ? new Date(state.playout.uplinkHeartbeatAt).getTime() : 0;
-    const programFeedUpdatedAt = state.playout.programFeedUpdatedAt ? new Date(state.playout.programFeedUpdatedAt).getTime() : 0;
+    const hlsProgramFeedEnabled = isProgramFeedHeartbeatMode(process.env);
     const now = Date.now();
     const routing = selectActiveDestinationGroup(
       state.destinations.map((destination) => ({
@@ -56,12 +56,14 @@ export async function getSystemReadiness() {
         ? "ok"
         : "degraded"
       : "not-ready";
-    const workerStatus =
-      workerHeartbeatAt > 0 ? (now - workerHeartbeatAt < WORKER_HEARTBEAT_STALE_MS ? "ok" : "degraded") : "not-ready";
+    // One verdict for every page that judges a heartbeat (M90, audit U3/U30): @stream247/core/heartbeat.
+    const workerVerdict = judgeWorkerHeartbeat(state.playout.workerHeartbeatAt, now).verdict;
+    const workerStatus = workerVerdict === "fresh" ? "ok" : workerVerdict === "stale" ? "degraded" : "not-ready";
     const uplinkStatus =
       !relayEnabled
         ? "ok"
-        : state.playout.uplinkStatus === "running" && uplinkHeartbeatAt > 0 && now - uplinkHeartbeatAt < RUNTIME_HEARTBEAT_STALE_MS
+        : state.playout.uplinkStatus === "running" &&
+            judgeHeartbeat(state.playout.uplinkHeartbeatAt, now, PLAYOUT_HEARTBEAT_STALE_MS).verdict === "fresh"
         ? "ok"
         : state.playout.uplinkStatus === "scheduled-reconnect"
           ? "degraded"
@@ -72,29 +74,20 @@ export async function getSystemReadiness() {
         : state.playout.programFeedStatus === "stale"
           ? "degraded"
           : "not-ready";
-    const playoutStatusUsesProgramFeedHeartbeat =
-      hlsProgramFeedEnabled &&
-      programFeedStatus === "ok" &&
-      state.playout.uplinkStatus === "running" &&
-      programFeedUpdatedAt > 0 &&
-      (state.playout.status === "running" || state.playout.status === "recovering" || state.playout.status === "switching");
-    const effectivePlayoutHeartbeat =
-      playoutStatusUsesProgramFeedHeartbeat && programFeedUpdatedAt > playoutHeartbeatAt
-        ? programFeedUpdatedAt
-        : playoutHeartbeatAt;
+    const playoutHeartbeat = judgePlayoutHeartbeat({ programFeedMode: hlsProgramFeedEnabled, playout: state.playout }, now);
     const playoutTransientGraceSeconds = getPlayoutTransientGraceSeconds();
     const playoutTransientGraceMs = playoutTransientGraceSeconds * 1000;
     const playoutTransient =
       hlsProgramFeedEnabled &&
       state.playout.status === "failed" &&
-      effectivePlayoutHeartbeat > 0 &&
-      now - effectivePlayoutHeartbeat <= playoutTransientGraceMs &&
+      playoutHeartbeat.verdict !== "missing" &&
+      playoutHeartbeat.ageMs <= playoutTransientGraceMs &&
       !state.playout.crashLoopDetected &&
       uplinkStatus === "ok" &&
       programFeedStatus === "ok" &&
       destinationStatus === "ok";
     let playoutStatus: "ok" | "degraded" | "not-ready" = "not-ready";
-    if (effectivePlayoutHeartbeat > 0 && now - effectivePlayoutHeartbeat < 60_000) {
+    if (playoutHeartbeat.verdict === "fresh") {
       playoutStatus =
         state.playout.status === "failed"
           ? playoutTransient
@@ -136,7 +129,7 @@ export async function getSystemReadiness() {
       hasTwitchConnection: state.twitch.status === "connected",
       sseConnections: getActiveSseConnectionCount(),
       timestamps: {
-        workerHeartbeatAt: workerHeartbeat,
+        workerHeartbeatAt: state.playout.workerHeartbeatAt,
         playoutHeartbeatAt: state.playout.heartbeatAt,
         lastMetadataSyncAt: state.twitch.lastMetadataSyncAt,
         lastScheduleSyncAt: state.twitch.lastScheduleSyncAt

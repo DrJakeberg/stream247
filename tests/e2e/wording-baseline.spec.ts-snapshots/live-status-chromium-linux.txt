@@ -184,7 +184,7 @@ Current schedule: <block> · Next: <block>
 Queue: <asset> → <asset>
 Use Live control for skip, fallback, restart, override, replay, and Live Bridge actions. This status view stays read-only.
 System readiness
-Database persistence, background worker reconciliation, and playout heartbeat are now active.
+No open incidents, the worker has never reported and playout has stopped reporting: see Open problems on Live → Control.
 Active moderation presence
 No moderation presence is active.
 Live destination

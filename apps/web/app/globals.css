@@ -202,6 +202,23 @@ main {
 .nav-link-status-chip {
   font-size: 0.78rem;
   padding: 6px 10px;
+  max-width: 100%;
+}
+
+/* "Not connected to Twitch" (M90, U12) is wider than the sidebar's room beside "Live": the chip moves
+   under the title instead of squeezing it to "L.", and wraps its own text where even a line is too
+   narrow. The short labels ("Live · 12", "Off air") still sit beside the title. */
+.nav-link {
+  flex-wrap: wrap;
+}
+
+.nav-link .nav-link-title {
+  flex: 1 0 auto;
+}
+
+.nav-link-meta {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .nav-link-dot {
@@ -1387,6 +1404,17 @@ button.collection-chip {
   overflow-wrap: anywhere;
 }
 
+/* Open problems is read to the end (M90): the "What to do" line carries a command, and a clamp that
+   cut it after two lines removed exactly the part an operator needs. */
+.open-problems .item > strong {
+  white-space: normal;
+}
+
+.open-problems .item .subtle {
+  display: block;
+  overflow: visible;
+}
+
 .line-clamp-3 {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -1800,6 +1828,51 @@ button.collection-chip {
 
   .nav-link {
     min-height: 84px;
+  }
+}
+
+/*
+ * The on-call check on a phone (M90, U9; docs/ui.md). Measured at 390 px, "Open problems" sat at
+ * y = 5 723 of a 6 256 px Live page: the sidebar's explanation card, three rails saying FEED /
+ * CURRENT / NEXT / DESTINATION and two headlines came first. On the Live workspace, below 640 px:
+ * the sidebar keeps the brand and the four workspaces in two columns, the shared rail and the Live
+ * header's rail give way to the control room's own (one rail), and the two headers drop their
+ * explanations and shrink their titles. Everything else on the phone is as before (mobile is a
+ * non-goal elsewhere).
+ */
+@media (max-width: 640px) {
+  .shell:has(.live-workspace-header) .sidebar {
+    gap: 12px;
+  }
+
+  .shell:has(.live-workspace-header) .sidebar-card {
+    display: none;
+  }
+
+  .shell:has(.live-workspace-header) .nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .shell:has(.live-workspace-header) .nav-link {
+    min-height: 0;
+  }
+
+  .content-stack:has(.live-control-header) > .admin-status-rail,
+  .live-workspace-header > .status-rail,
+  .live-workspace-header > p,
+  .live-control-header > p {
+    display: none;
+  }
+
+  .live-workspace-header,
+  .live-control-header {
+    padding: 18px;
+  }
+
+  .live-workspace-header h2,
+  .live-control-header h2 {
+    font-size: 1.25rem;
   }
 }
 
