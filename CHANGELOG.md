@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.1.0 - 2026-10-02
+
+The release the two candidates were for. YouTube plays again (format candidates, a programme on air is
+never re-resolved), the two Twitch accounts are named by their role, a pool with several sources
+alternates between them in a stable chronological order, and Play now and Insert reach the air without
+a standby slate. Upgrading from 2.0 adds one column (`pools.source_cursors`); back up PostgreSQL before
+the repin. The rollback is the reverse repin; an older image ignores the column.
+
+Measured before tagging: 24 h on the device under test, 2026-10-01 03:41 to 2026-10-02 03:41 UTC,
+1429 readiness samples `status=ok`; passed with one outage: the nightly network blip, about 00:01:32 to
+00:05:12 UTC (220 s of the 300 s tolerance, readiness fetch answered 522), healed without an operator;
+one unplanned uplink restart in 24 h (3936 -> 3937). On air on rc.2: a YouTube video+audio pair
+through Play now (`299+140`, candidate `split-h264-aac`, 264 s to its natural end, no slate); the Twitch
+archives in VOD-id order; and at 12:57 UTC the TwitchYoutube pool alternating by itself - a Twitch archive
+ended at its duration bound, the pool picked the oldest playable YouTube item with no fallback bridge,
+and 264 s later it picked Twitch again at the position that source had kept.
+
 ## 2.1.0-rc.2 - 2026-10-01
 
 ### Fixed
