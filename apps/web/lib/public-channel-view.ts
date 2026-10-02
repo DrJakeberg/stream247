@@ -79,12 +79,18 @@ export function buildPublicChannelView(snapshot: PublicChannelSnapshot, connecte
     nextDetail: snapshot.nextScheduleItem ? scheduleLine(snapshot.nextScheduleItem) : viewerText(locale, "channel.noNextBody"),
     // "Queue preview" is what the operators call it. This is the audience's page.
     afterHeading: viewerText(locale, "channel.afterThat"),
+    // The queue when the playout has one; otherwise what the schedule airs after "up next", each with
+    // its start, so an idle queue no longer reads as an empty programme.
     afterText:
       snapshot.queueItems.length > 0
         ? snapshot.queueItems
             .slice(0, 4)
             .map((item) => viewerWords(item.title))
             .join(" → ")
-        : viewerText(locale, "channel.nothingFurther")
+        : (snapshot.laterScheduleItems ?? []).length > 0
+          ? (snapshot.laterScheduleItems ?? [])
+              .map((item) => `${item.startTime} ${viewerWords(item.title || item.categoryName)}`)
+              .join(" → ")
+          : viewerText(locale, "channel.nothingFurther")
   };
 }

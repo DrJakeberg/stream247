@@ -17,6 +17,7 @@ import {
   describePresenceStatus,
   findCurrentScheduleOccurrence,
   findNextScheduleOccurrenceAcrossDays,
+  listUpcomingScheduleOccurrencesAcrossDays,
   getDestinationFailureSecondsRemaining as getDestinationFailureHoldSecondsRemaining,
   getScheduleElapsedSeconds,
   getCurrentScheduleMoment,
@@ -438,6 +439,24 @@ export function getNextScheduleItem(state: AppState) {
     date: scheduleMoment.date,
     currentTime: scheduleMoment.time
   });
+}
+
+/**
+ * What the schedule airs after "up next", for the public page's "after that" line when the playout
+ * queue is empty (standby, a restart, a fresh install). Without it a channel programmed around the
+ * clock told its viewers that nothing further was scheduled.
+ */
+export function getLaterScheduleItems(state: AppState, limit = 3) {
+  const scheduleMoment = getCurrentScheduleMoment({
+    now: new Date(),
+    timeZone: getWorkspaceTimeZone(state)
+  });
+  return listUpcomingScheduleOccurrencesAcrossDays({
+    blocks: state.scheduleBlocks,
+    date: scheduleMoment.date,
+    currentTime: scheduleMoment.time,
+    limit: limit + 1
+  }).slice(1);
 }
 
 export function getRecentAuditEvents(state: AppState, limit = 20): AuditEvent[] {
@@ -1501,7 +1520,10 @@ export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot
     queuedAssets: snapshot.queuedAssets,
     queueItems: snapshot.queueItems,
     currentScheduleItem: snapshot.currentScheduleItem,
-    nextScheduleItem: snapshot.nextScheduleItem
+    nextScheduleItem: snapshot.nextScheduleItem,
+    laterScheduleItems: getLaterScheduleItems(state)
+      .map((item) => summarizeScheduleItem(item))
+      .filter((item): item is LiveScheduleSummary => Boolean(item))
   };
 }
 
