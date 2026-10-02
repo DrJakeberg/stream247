@@ -1,0 +1,5299 @@
+# Stream247 Execution Plan
+
+## Problem Statement
+
+Stream247 already ships a capable self-hosted Twitch-first 24/7 automation stack, but it still trails the public behavior of Upstream in the highest-value product areas: true on-air scene rendering, continuous queue control, richer library and scheduling workflows, multi-output delivery, and lower-friction operator UX. The repo also carries architecture concentration risk in the worker, database, and server-state layers, plus limited automated coverage for live runtime behavior.
+
+This plan closes those gaps while preserving Stream247's existing self-hosted architecture, naming, and conventions. The product target is the best self-hosted alternative to Upstream for 24/7 cloud-style channel automation, without copying Upstream branding, UI, or text.
+
+## Current State
+
+- Monorepo with `apps/web`, `apps/worker`, `packages/core`, and `packages/db`
+- Delivery is Docker / Docker Compose / GHCR with CI, release, upgrade rehearsal, soak monitor, and smoke scripts
+- Runtime already supports:
+  - local/direct/YouTube/Twitch sources
+  - local library uploads
+  - pools, weekly schedule blocks, show profiles, templates, duplication, and day cloning
+  - SSE-driven broadcast control room and live public overlay/channel surfaces
+  - overlay draft/publish, scene presets, layer order/visibility, positioned layers, and built-in typography presets
+  - manual override, fallback, skip, reconnect, insert, and backup RTMP failover
+  - pool-scoped replace-mode audio lanes and safe-boundary cuepoint inserts
+  - incidents, drift, alerts, readiness, and encrypted managed secrets
+- Main constraints from the repo:
+  - use explicit SQL and `pg`, not an ORM rewrite
+  - prefer extending the current monorepo modules over replacing working subsystems
+  - validation canon is `pnpm validate`
+  - important targeted checks already exist:
+    - `pnpm test:fresh-db`
+    - `pnpm test:fresh-compose`
+    - Docker image builds
+    - `./docker/smoke-test.sh`
+    - `pnpm release:preflight`
+    - `./scripts/upgrade-rehearsal.sh`
+    - `./scripts/soak-monitor.sh`
+- Main current technical risks:
+  - `apps/worker/src/index.ts` is still very large and mixes ingest, queueing, FFmpeg supervision, alerts, and Twitch sync
+  - `packages/db/src/index.ts` remains a large persistence surface
+  - automated coverage is still thin for runtime continuity and admin workflows
+
+## Target State
+
+Stream247 becomes an original, self-hosted 24/7 broadcast automation platform with:
+
+- `Scene Studio` as the unified scene system for browser overlays and on-air rendering
+- `On-Air Controls` for current/next/queue/transition-safe operator workflow
+- `Programming Workspace` with materialized fill visibility, repeat behavior, inserts, and faster weekly authoring
+- `Library` with uploads, bulk curation, richer metadata, and reusable channel assets
+- `Multi-Output` delivery for one channel to multiple RTMP targets
+- `Live Bridge` for controlled live ingress takeover and return to scheduled playback
+- stronger runtime continuity, release safety, and automated regression coverage
+
+## Milestones
+
+| Milestone | Type | Priority | Status | Goal | Acceptance | Touched Areas | Risk | Rollback |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| M0 Planning And Execution Guardrails | Ops | Now | Complete | Create canonical agent, plan, runbook, gap, and roadmap docs | Files exist, are internally consistent, and `pnpm validate` passes | repo root docs, `docs/` | low | revert docs-only commit |
+| M1 Scene Studio Contract | Parity + Architecture | Now | Complete | Unify browser overlay, draft/live scene state, and on-air render contract under one scene model | Scene payload is canonical for browser and playout surfaces, no behavior regression | `packages/core`, `packages/db`, `apps/web`, `apps/worker` | medium | retain current text-overlay compatibility path |
+| M2 On-Air Scene Renderer V1 | Parity + UX | Now | Complete | Render branded scene layers on air from the published scene, not only via FFmpeg text lines | On-air visuals match Scene Studio and publish without taking the stream offline | `apps/worker`, `apps/web`, Docker worker image | medium-high | feature-flag or compatibility fallback to current text overlay |
+| M3 Queue Engine And Transition Controller | Architecture + Ops | Now | Complete | Promote queue/transition handling to a deterministic persistent engine with fewer hard restarts | Queue continuity across short assets, bad next assets skipped before cutover, inserts/reconnect/standby are first-class | `apps/worker`, `packages/db`, `apps/web/lib/server` | high | keep current playout strategy as fallback mode until continuity checks pass |
+| M4 Programming Workspace V2 | Parity + UX | Next | Complete | Materialized fill view, repeat behavior, queue-aware preview, and faster schedule editing | Operators can author a full week with low friction and clear underfill/overflow signals | `apps/web`, `packages/core`, `packages/db` | medium | revert UI/API changes, preserve existing block CRUD |
+| M5 Library And Channel Blueprints | Parity + UX | Next | Complete | Expand library operations and add reusable full-channel export/import | Assets are easier to manage, and channel setups can be replicated safely | `apps/web`, `packages/db`, `apps/worker` | medium | additive schema only, import/export stays opt-in |
+| M6 Multi-Output V1 | Parity + Ops | Next | Complete | Extend from primary/backup to multiple RTMP outputs per channel | Multiple outputs can run from one channel with health-aware routing | `packages/db`, `apps/worker`, `apps/web` | high | preserve current primary/backup mode as default |
+| M7 Live Bridge | Parity + Architecture | Later | Complete | Add controlled live ingress takeover and return to queue | Live source can replace scheduled playback and return safely | `apps/worker`, `apps/web`, Docker/runtime | high | keep feature disabled by default |
+| M8 Audio Lanes, Cuepoints, Advanced Inserts | Parity + Architecture | Later | Complete | Add separate audio/video lanes, timed inserts, and richer transition logic | Secondary audio and timed inserts work without destabilizing the queue engine | `apps/worker`, `packages/core`, `packages/db`, `apps/web` | very high | preserve default program-audio and existing insert flows as the safe fallback |
+| M9 Security And Release Hardening | Ops | Now | Complete | Add browser E2E, continuity smoke, stronger soak gates, and 2FA | Admin/UI/runtime regressions are caught before release and local auth is stronger | tests, CI, `apps/web`, docs | medium | additive checks, 2FA optional at first |
+| M10 Truth And Safety Fixes | Reliability + Ops | Now | Complete | Remove stale-write admin races, fix update-center version resolution, and bring docs back in sync with the actual product state | Asset curation and source admin flows only update intended fields, update center resolves the repo version safely in container and local layouts, regression tests exist for each bug class, and docs stop implying full parity | `apps/web/app/api/assets/*`, `apps/web/app/api/sources/*`, `apps/web/app/api/library/uploads/route.ts`, `apps/web/lib/server/update-center.ts`, `packages/db`, tests, docs | medium | revert to previous route handlers if needed; DB changes remain additive targeted writers |
+| M11 Scene Studio V2 | Parity + UX | Next | Complete | Deepen Scene Studio beyond presets and fixed layer types | Richer positioned image/logo/embed/widget/text layers, safer font handling, and conservative public parity claims | `packages/core`, `packages/db`, `apps/web`, `apps/worker` | high | preserve current Scene Studio v1 payload and text/image fallback path |
+| M12 Continuity And Recovery V2 | Architecture + Ops | Next | Complete | Strengthen output recovery and reduce restart-heavy normal transitions | Continuity and multi-output recovery improve measurably without regressing queue or live-bridge visibility | `apps/worker`, `packages/db`, `apps/web/lib/server`, tests | very high | keep current queue engine and output routing available as the safe fallback |
+| M13 Library And Blueprints V2 | Parity + UX | Next | Complete | Deepen library operations and make blueprints safer to reuse across installs | Thumbnails, grouped browsing, curated sets, and selective blueprint import/remap guidance are available without overpromising media portability | `apps/web`, `apps/worker`, `packages/db`, docs | medium | keep current folder/tag curation and replace-style blueprint import path intact |
+| M14 Operator UX V2 | UX | Next | Complete | Resolve admin IA drift and make the control-room model more consistent | Broadcast, Dashboard, Scene Studio, Sources/Library, and Settings have clearer roles and more consistent naming | `apps/web`, docs, tests | medium | keep current routes and navigation labels working until the new IA is proven |
+| M15 Coverage And Release Proof V2 | Ops | Next | Complete | Prove the highest-risk parity features with broader automated coverage | Multi-output, Live Bridge, audio/cuepoint flows, and scene publish safety have direct runtime/browser proof beyond unit tests | tests, CI, scripts, docs | high | additive coverage only; do not remove current gates until replacements are green |
+| M59 Scene Studio Layout Repair And Field Explanations | UX + Reliability | Now | Complete | Make the scene studio usable on large displays and explain every operator control in place | The preview column is as tall as its content and stays in view while the form scrolls; the published-state aside sits beside the controls from 1560px; every field, panel and page header can carry an (i) explanation through one primitive, and the studio carries them; the layout is asserted by measurement, not only by screenshot | `apps/web`, tests, docs | low-medium | drop the `grid-aside`/`workspace-wide` classes and the `info` props; the primitives stay additive |
+| M60 Truthful Controls | UX + Reliability | Now | Complete | Every visible setting does what it says or is gone | Scene clock/next toggles drive the on-air picture; schedule-teaser/queue-preview toggles, embed/widget fields and engagement chat mode/style/alert position leave the UI (storage kept, additive); the library upload accepts only what the worker scan ingests, or the scan ingests audio; tests prove each | `packages/core`, `apps/web`, `apps/worker`, tests, docs | medium | re-add the form fields; stored values were never read so nothing else moves |
+| M61 Boundary A/V Skew Instrumentation | Ops | Now | Complete | Measure the seam instead of theorising about storms | Every boundary logs the outgoing feed's last video/audio PTS lead and the reader's per-stream offsets; a query lists seam skew against discontinuity line count | `apps/worker`, `packages/db`, docs | low | drop the event; nothing consumes it |
+| M62 Cache Policy | Ops + Reliability | Now | Complete | Downloads that fit the content and a cache that keeps what airs next | Download time limit scales with the estimated size (floor kept); assets scheduled within the retention horizon are not released after airing; an asset with an incomplete file is not selected as ready | `apps/worker`, `packages/core`, tests, docs | medium | revert to fixed limit and release-after-play |
+| M63 Stack Alignment | Ops | Now | Complete | The deployed stack equals the repo compose | Portainer stack file no longer defines redis; `docs/deployment.md` matches; DUT verified | Portainer stack, docs | low | re-add the service block |
+| M64 Getting Started | Docs | Now | Complete | One page from zero to a green channel | `docs/getting-started.md` walks `.env.production.example` → `/setup` → `Live → Status` with the known traps in one place; README points at it; fresh-compose smoke follows it | docs, README | low | docs-only |
+| M65 Measured Layout Specs | Reliability | Now | Complete | Layout asserted by measurement on every workspace | Live, Program and Admin get specs in the style of `studio-layout.spec.ts`: no horizontal overflow, sticky/aside rules where they apply, control budgets | tests, scripts | low | remove specs |
+| M66 Live Bridge Rehearsal | Ops | Next | In progress | The live bridge has run under supervision before 2.0 names it | Live-bridge takeover and release observed on the DT stack with the operator present; findings recorded | DUT, docs | medium | none — observation only |
+| M67 Release 2.0.0 | Release | Now | Done 2026-09-09 | Major because the stack drops a service and the UI drops controls | 2.0.0 tagged after M60–M66 are complete and the soak is clean | release, docs | medium | pinned v2.0.0 |
+| M68 YouTube Playback Formats | Reliability | Now | Complete | YouTube assets play again and keep playing | Playback resolves YouTube through an ordered list of format candidates (H.264+AAC split tracks, any split tracks, combined file) and moves to the next when one fails; an asset that is already on air is never re-resolved and never taken off air by a failed re-resolve; quarantine counters survive state writes; the eleven assets of source_jjwuu0f3 that failed with `--format best` on 2026-09-28 play on the DUT | `apps/worker`, `packages/db`, tests, docs | medium | repin v2.0.0 |
+| M69 Twitch Channel And Bot Accounts | UX + Data | Now | Complete | The broadcast channel and the bot/moderator account are two named things in data, worker and GUI | Settings show the broadcast channel (e.g. jimpanse247: stream key, title, category, schedule) and the bot/moderator account (e.g. 3JakeC: chat, moderation) separately and let the operator set both; an existing v2.0.0 install keeps its bot connection; features that need the channel owner say so visibly | `packages/db`, `apps/web`, `apps/worker`, tests | medium | additive migration, old columns kept |
+| M70 Twitch Account Docs | Docs | Now | Complete | Nobody mistakes the bot for the channel again | `docs/twitch-setup.md`, `docs/getting-started.md`, `docs/operations.md` and `docs/deployment.md` name both roles, what each needs, and check "is the channel live" against the channel | docs | low | — |
+| M72 Stable Asset Order | Data | Now | Complete | A pool walks its sources in a real, stable chronological order | A source sync keeps an asset's first-seen `created_at` and a known `published_at` (fill-only) and never resets a known duration to 0; YouTube listings carry approximate publish dates (`youtubetab:approximate_date`); Twitch archives without dates order by their numeric VOD id; one shared comparator replaces the hand-copied sorts; cache writes touch only cache columns, so a long download no longer reverts other fields | worker, db, core, tests, docs | medium | revert commit; existing rows keep their values |
+| M73 Pool Source Alternation | Behavior | Now | Complete | A pool with several sources alternates between them (owner decision 2026-10-01) | A multi-source pool picks Twitch -> YouTube -> Twitch ... in `sourceIds` order, each source walking its own items oldest first and looping; per-source positions persist in `pools.source_cursors` (baseline, ALTER and migration); a single-source pool walks one source as before; a skipped, quarantined or cooled-down item no longer resets the rotation to the head, and a vanished position restarts only its own source at its oldest item; worker selection, queue, lookahead, schedule preview and week lens use one rotation function; pool form and docs say so | core, worker, db, web, tests, docs | medium | revert commit; the column stays and is ignored |
+| M74 Operator Play Now | Reliability | Now | Complete | Play now and Insert put the chosen item on air, without a standby slate | Play now / Insert switch straight to the insert at the next cycle and never set the restart flag; the legacy "restart + desired asset" override branch is gone, so no action re-picks the running or a skipped item; the reconnect standby slate appears only without the relay; a dropped insert is logged; an insert stopped by its duration bound or a feed watchdog is cleared instead of replaying; the cycle re-reads state after a duration-bound stop, so insert and Move next fire at that boundary; an insert that cannot be prepared (e.g. an uncached Twitch VOD) never takes the running item off air, and Play now refuses such an archive up front; Recover outputs under the relay no longer restarts the programme and Force reconnect is refused there (the uplink reconnects by itself), and Pin, Fallback and Resume switch there without a restart; Resume cancels a pending or running insert; Replay previous has an item, and a Move next or Replay previous item plays to its end; Skip continues after the skipped item instead of the pool head (with M73); after the insert the pool continues with its next item (resuming the interrupted item at its position is a follow-up) | worker, web, tests, docs | medium | revert commit |
+| M71 Release 2.1.0 | Release | Now | Complete | Ship M68-M70 and M72-M74 | rc on the DUT, verified (YouTube on air via Play now), 24-h soak, then 2.1.0 tagged and repinned | release, docs | medium | repin v2.0.0 |
+| M75 Source Circuit Breaker | Reliability | Next | Complete | A broken source costs one incident, not one failed boundary per item (competitor comparison 2026-10-01; owner decision) | When probes fail on 3 distinct items of the same source with no success in between, the source is held out of the pool rotation (M73) for a cooldown that doubles up to a cap; one incident per source instead of per-item noise; after the cooldown one item is probed (half-open) and a success closes the breaker and resolves the incident; per-item quarantine and the operator's `includeInProgramming` stay untouched; a pool whose sources are all held falls back as today; the source page shows the breaker state; any persisted state ships in the baseline and a migration (a new table needs no ALTER line) | core, worker, db, web, tests, docs | medium | revert commit; the stored state is ignored |
+| M76 As-Run Log | Ops + Data | Next | Complete | Answer "what was on air at 19:38" from one table instead of container logs (competitor comparison 2026-10-01; owner decision) | Every playout start and end writes one row: UTC start and end, block, pool, source, asset, title, selection reason, queue kind, input kind (cache, remote, YouTube pair, live), format id, planned and aired seconds, end reason (natural end, duration bound, switch, skip, failure); bounded retention; a read-only view in the console and an API route; docs/operations.md uses it in the runbooks; the table ships in the baseline and a migration (a new table needs no ALTER line) | worker, db, web, tests, docs | low | revert commit; the table stays unused |
+| M77 Resume Interrupted Item | Playout | Later | Deferred | Continue an interrupted item at its position instead of throwing it away (competitor comparison 2026-10-01) | Owner deferred this on 2026-10-01 until after M75 and M76: start only when the owner asks. Scope when started: persisted offset, `-ss` for cached Twitch VODs first, duration bound and chapter windows offset-aware, soaked on the DUT because it touches the seam chain | worker, db, tests | high | revert commit |
+| M78 Operator Precedence | Behavior | Now | Complete | Operator actions end what they replace, and viewers never override the operator (owner decisions 2026-10-01: 1 answered directly, 2 and 3 chosen from the lead's recommendation) | The operator's Skip during an active Pin or Fallback ends that override instead of restarting the pinned item from 0, and the schedule continues from the pool's own position (after the pinned item only when the pin held the pool's running item; "after the pinned item" for every pinned pool item is a follow-up for the owner); a Live Bridge takeover ends an insert that is on air (and drops a pending one, logged), so the insert never replays from its start after the live; while a Pin or Fallback holds the air no chat skip vote starts or counts, and the bot says why in chat; a passed vote whose item has left the air is dropped; Skip tested in relay and direct mode | worker, web, core, tests, docs | low-medium | revert commit |
+| M79 Chat Never Skips An Operator Insert | Behavior | Now | Complete | Viewers never take an operator's insert off air (owner decision 2026-10-01) | While a Play now / Insert is pending or on air, no chat skip vote starts or counts and a vote that passed earlier is refused, exactly like under a Pin (M78); the bot says why at most once a minute; the insert ends as before (natural end, operator Skip, Live Bridge); tested | worker, core, tests, docs | low | revert commit |
+| M80 Viewer Language | UX + i18n | Now | Complete | Everything viewers see or read follows one channel language (owner decision 2026-10-01: German and English, viewer-facing first) | A channel language setting (`de`, `en`; new installs `en`) drives every viewer-facing text: the on-air picture (up next, clock labels, polls, the skip bar, chat game texts, empty states), the standby/fallback/reconnect slates, every chat bot reply, and the public channel page; one message catalogue per language in core with a test that both catalogues have the same keys and no viewer-facing literal is left outside it; operator content (titles, scene text layers) is never translated; the admin UI stays English (its translation is a later milestone); docs say how to add a language | core, worker, web, db, tests, docs | medium | revert commit; the setting is ignored |
+| M81 Admin Interface Language | UX + i18n | Later | Deferred | The admin interface in the channel language | Owner decided 2026-10-01 to translate the viewer side first (M80); start only when the owner asks | web, tests | high | — |
+| M82 A Network Outage Is Not A Source Fault | Reliability | Now | Complete | The channel's own network outage never takes a healthy source or item out of play (gate set by the M75 review before the breaker ships to the DUT) | A failed probe or resolve whose error is a network failure (DNS, connect, timeout, unreachable) AND that is corroborated by an independent signal that the channel's network is down at that moment is counted neither by the source circuit breaker (M75) nor by the per-item quarantine; an uncorroborated network-looking error still counts (a dead host is a source fault); the decision is a pure, tested classifier plus one corroboration check; every uncounted outcome is logged; DUT check after deploy (open until then): a nightly blip opens no breaker and moves no counter of a healthy item | core, worker, tests, docs | medium | revert commit |
+| M83 Release 2.2.0 | Release | Now | Planned | Ship M64, M75, M76, M78, M79, M80 and M82 (owner decision 2026-10-01: the version is 2.2.0, not 2.1.1 - two new tables, a new setting and a visible default change are more than a patch) | After v2.1.0 is tagged: this branch merged, `v2.2.0-rc.1` on the DUT with a PostgreSQL backup first, the channel language set to German, the DUT checks of each milestone section run, the two measurements of the nightly outage read (M82), a 24-h soak, then 2.2.0 tagged with its GitHub release and repinned; `docs/deployment.md` names the upgrade section *Upgrading To 2.2* (earlier sections of this file still say *Upgrading Past 2.1.0*) | release, docs | medium | repin v2.1.0 |
+| M84 One Plan And A Reference Check | Docs + Ops | Now | Planned | One short plan, one rule file, history archived, and no doc can point at a missing file | `wc -l < PLANS.md` < 300; `wc -l < AGENTS.md` ≤ 120; `test ! -e IMPLEMENT.md && test ! -e planning/next-session-prompt.md && ! ls -d release-prune-backup-*`; `git log --follow --oneline planning/archive/plans-m0-m83.md \| wc -l` > 1; the new PLANS.md lists M57, M66, M77, M81 under "Owner-gated and deferred"; `grep -c "recovery-stack\|full-product-reset-audit\|automatically continue" AGENTS.md` = 0; each of the 12 items of 3.3 is found by a keyword grep on AGENTS.md (`jimpanse247`, `mediamtx:1.15.4`, `passed with failure`, `its own milestone`, `M66`, `M77`, `force`, `pnpm validate`, `deleted or weakened`, `German`, `texts, names`, `Hard blockers`), each ≥ 1; new `tests/unit/doc-refs.test.ts` fails on a backticked repo path in `AGENTS.md`, `PLANS.md`, `README.md`, `CONTRIBUTING.md` or `docs/*.md` that does not exist (mutation: adding `` `docs/nope.md` `` to AGENTS.md turns it red) and is green on the tree (fixes `docs/architecture.md:331`) | `AGENTS.md`, `PLANS.md`, `IMPLEMENT.md`, `planning/**`, `release-prune-backup-*`, `docs/architecture.md`, `.github/pull_request_template.md`, `tests/unit/` | low; losing an open follow-up is the risk, checked by comparing the old open rows and follow-up blocks with the new plan | revert the commit |
+| M85 Safe Configuration And Secrets | Reliability + Security | Now | Planned | A stream key never stays in the audit log, and a zone typo never breaks the schedule | M4: `appendAuditEvent` redacts like `upsertIncident`; a new migration id redacts existing `audit_events` rows; integration test: a synthetic `rtmp://…/live_…` key written through `appendAuditEvent` and one seeded before the migration both read back as `<redacted>`. C4: `resolveChannelTimeZone({}, {CHANNEL_TIMEZONE:"Europe/Berln"})` returns the managed zone or `UTC` and a state incident is raised; unit test. M5: the `custom_layers_json` cast is guarded; integration test boots a DB with one malformed row | `packages/db`, `apps/worker`, tests, `docs/operations.md` | low; the redaction migration is one-way (it removes secrets on purpose) | revert the commit; redacted rows stay redacted |
+| M86 A Database Blip Does Not Take The Channel Off Air | Reliability | Now | Planned | A Postgres restart or short outage leaves ffmpeg and the uplink running; web recovers by itself | H2: the failed-cycle branch is guarded; a process exits only after 5 min of consecutive failed cycles (owner Q2); pool `connectionTimeoutMillis` set. Unit test of a pure counter (below 5 min no exit, at 5 min exit). H3: a rejected `__stream247DbReady` is cleared; retry on `40P01`/`55P03`; migrations run with `SET LOCAL lock_timeout`; integration test: `ensureDatabase` fails with Postgres down, succeeds after Postgres starts, no reset helper called. R3's S1 probe (appendix of `planning/research/robustness.md`) becomes an integration test: Postgres stopped for 45 s, the worker process in all three modes is still running afterwards. DUT check (owner): `docker compose stop postgres; sleep 45; docker compose start postgres` during air, playout and uplink `StartedAt` unchanged | `apps/worker`, `packages/db`, `apps/web/lib/server`, tests, `docs/operations.md` | medium: a half-dead process for at most 5 min | revert the commit |
+| M87 An External Failure Costs One Step, Not The Cycle | Reliability | Now | Planned | A refused Twitch token or a hanging call never stops heartbeat, sweep, live status or chat | H1: each integration step of the worker cycle is isolated; a refresh throw writes `twitch.refresh.failed`; HTTP 400 `invalid_grant` sets the identity status `error` with a state incident "reconnect Twitch" (owner Q3). H6: yt-dlp calls get `timeoutMs`, the six worker `fetch` calls `AbortSignal.timeout`. Tests: refresh throws → heartbeat written, sweep ran, no `worker.loop.crashed`; `invalid_grant` → status `error`; a fetch stub that never answers is aborted within its timeout. R3's S2 probe becomes an integration test: with the token endpoint stubbed to HTTP 400, `healthcheck worker` exits 0 after two cycles | `apps/worker`, `packages/core`, tests, `docs/operations.md` | low | revert the commit |
+| M88 Schedule Maths Across Midnight | Bug | Now | Planned | A block past midnight behaves like one block everywhere | C1: fired cuepoints keyed by block and start date; test: Sat 23:00+120 with cuepoints at 900 s and 2700 s, at 00:05 `getCuepointInsertPlan` returns null. C2/B1: no carry-over segments in the Twitch plan, extracted as pure `planTwitchScheduleSegments`, each created segment recorded before the next request; test: Monday 23:00+120 over 7 days gives 1 segment, no `:carry` key. C3/B2: overlap on a 7-day minute line; test: Mon 23:00+120 vs Mon 00:00+30 → `[]`, vs Tue 00:00+30 → both ids (the probe in 1.1 shows today's opposite); `tests/unit/schedule-template-conflicts.test.ts:62-68` pins today's wrong model (both blocks on weekday 1); its fixture moves to weekday 1 + 2, it still asserts the conflict and gains the false-positive case, so it is strengthened, not weakened (the owner is told in the report). B3: keep-rule uses the effective start; test with horizon 60 at Tue 00:30 returns the pool. C6: day totals count only the part inside the day; test: 120 + 120 = 240 over two days becomes 60 + 60. Owner decision 2026-10-02 11:35 UTC: R1's three corrections reach main only with M88 and stay on `claude/r1-scheduling-competitors-v5o5zi` until then; M88 takes them over from that branch at `97f4037`: the bare "GMT" zone name (`d789981`), the week lens counting a midnight block once with its fill pill inside the card (`7891a85`, covers C6), `/channel` "After that" from the schedule (`a41d327`, `51e69ee`, covers V1, which then leaves M100) and their re-recorded baselines (`81f0eb6`); their tests pass unchanged in M88 | `packages/core`, `apps/worker`, tests, `docs/operations.md` | low; hidden overlaps in saved schedules show up in the editor, saved schedules stay loadable (test) | revert the commit |
+| M89 Operator Actions Are Never Lost | Behavior | Now | Planned | Restart, Hard reload, Recover outputs, Refresh and Remove next do what the operator pressed | H4: pure `decideCycleEndRestartFlag` (same value → clear, newer → keep, reconnect window → keep) and the same for `pendingAction` and `insertAssetId`; table test. W2: a separate Remove-next hold that Skip and passed votes do not overwrite (owner Q5); test: B on air, C removed, passed vote on B → next is D. R3's W2 and W4 probes become tests. DUT check (owner): a Restart pressed during a cycle restarts, in direct and relay mode, as `PLANS.md:4569-4573` asks | `apps/worker`, `apps/web`, `packages/db` (additive column), tests, `docs/operations.md` | medium: direct-mode reconnect reuses the field | revert the commit; the additive column stays unused |
+| M90 The 3 A.M. Answer | UX + Reliability | Next | Planned | A tired operator sees what is wrong and what to press, first | U7: a stale or missing worker or playout heartbeat is the first "Open problems" entry with its age in words and the restart command; unit test. U8: the status sentence follows the heartbeats; `grep -rn "are now active" apps/web` → no output. U10: incident messages store no relative time (test on the writer); engine fields behind "Details" (`grep -rn "ready not ready" apps/web` → no output). U11: all three interrupting actions of "If something is stuck" confirm, Soft restart, Force reconnect and Hard reload (`apps/web/components/playout-action-form.tsx:97,105,128`; in direct mode Force reconnect drops the uplink); component test per button. Every critical incident fingerprint maps to one operator action in a catalogue (`IncidentRecord` has no such field today, `packages/db/src/index.ts:399-412`); a unit test collects all `fingerprint:` literals in `apps/worker/src` and fails on a critical one without an action; the crash-loop text no longer says only "Manual intervention is required" (`apps/worker/src/index.ts:7486`). U12: render test: without a connected bot account the Live chip reads "Not connected to Twitch", never "Checking". audit U3/U30: one heartbeat constant and one effective-heartbeat function used by state, readiness and worker; test that a 50 s old heartbeat gives the same verdict everywhere. U9 (default R2 Q4 in 5.2): Playwright at 390 px, "Open problems" above y = 1 400 | `apps/web`, `apps/worker`, `packages/core`, tests, baselines, `docs/ui.md` | low | revert the commit |
+| M91 Honest First Run | UX + Data | Next | Planned | A fresh install starts empty, readiness counts only what can air, and plain HTTP is explained | I1 (decided 5.1 Q5): an empty DB bootstraps with no pool, no schedule block and no URL-less source (unit test on `createInitialSeedState`); existing installs keep their rows (integration test); readiness: a pool is ready only when a block uses it and it has a ready asset, the schedule only when the coming week has no unplayable block (`tests/unit/onboarding*.test.ts`). I2 (decided 5.1 Q6): over `http:` on a host other than `localhost`/`127.0.0.1`, `/setup` and `/login` show the two ways out; render test. I6: component test: the URL field is prefilled with the request origin and the zone field with the browser zone. I7: render test of the password warning under the field plus, per decided 5.1 Q8, a change-password form under Admin → Settings → Security that requires the current password (API test: wrong current password refused, right one changes it) and a one-line container command for a reset documented in `docs/operations.md` (integration test: the reset entry point run against a test database sets a new password and sign-in with it succeeds); no e-mail reset. I8: render test: the login hint has no line clamp and, without Twitch app credentials, contains "Twitch app credentials" and the link to `/setup` step 3 | `packages/db` seed, `apps/web`, tests, baselines, `docs/getting-started.md` | low: only `isDatabaseEmpty` installs change | revert the commit |
+| M92 Getting Started A Stranger Can Follow | Docs + Ops | Next | Planned | The guide leads a stranger from an empty host to air without a gap | I4: `docs/getting-started.md` gets "Get the files" (clone a release tag, or download `docker-compose.yml` and `docker/mediamtx.yml`), the link `https://dev.twitch.tv/console/apps` (also in wizard step 3) and a numbered stream-key step; `grep -c "dev.twitch.tv/console" docs/getting-started.md` ≥ 1. I3: unit test that the four compose image defaults equal the newest non-rc `## X.Y.Z` heading in `CHANGELOG.md`, so a release commit that forgets them fails. I5: the same one-or-two-accounts sentence in wizard and guide (decided 5.1 Q9). `pnpm test:fresh-compose` green | `docs/`, `apps/web/app/setup`, `tests/unit/`, `README.md` | low | revert the commit |
+| M93 Dated And One-Off Schedule Blocks | Feature | Next | Planned | "The next 10 days at 20:00 this playlist" and "once on 10 Oct" can be saved on a 24/7 grid, and air, previews, `/channel` and Twitch agree | R1 row A (decided 5.1 Q1, Q2): `valid_from`/`valid_until` in baseline, ALTER, migration, manifest, mapper, writers and blueprints; filter in `buildScheduleOccurrences`; dated layer ranks first in `findCurrentScheduleOccurrence`; `applyScheduleLayers` with `airWindows`; conflicts per layer; ended rows listed as ended; form field *Runs*; "Single day" renamed to "One weekday, every week". Tests: a 10-day run has day 10 and not day 11; a once-block airs once; a carry-over past `valid_until` still ends; weekly 18-22 + dated 20-21 gives three windows with one key; a cuepoint is not re-fired; the 24/7 grid + dated 20:00 block saves (today `["grid","special"]`); schema-manifest and DB round-trip tests | `packages/core`, `packages/db`, `apps/web`, `apps/worker`, tests, baselines, `docs/` | medium: touches the one function every schedule consumer uses; additive columns | revert the commit; old images ignore the columns |
+| M94 Inserts From Remote Sources Air | Bug | Next | Planned | A YouTube or Twitch insert airs, or is skipped once with an incident, never retried forever | W1: the due insert is warmed in the queue scan; a failed or bridged insert counts as consumed and raises an incident naming it (owner Q6); both insert checks apply quarantine and breaker. W5: one shared "cuepoint asset of a block" helper used by worker and preview; test: `insertEveryItems: 0` with a pool insert asset gives the same cuepoint count in both. W6: an item that failed to open is retried once; `failed` treated like an empty current item in the Move next and insert checks. R3's W1 probe becomes a test | `apps/worker`, `packages/core`, tests | low–medium: crash-loop interplay | revert the commit |
+| M95 Self-Healing Fills The Gaps | Reliability | Next | Planned | No stale incident, no orphan encoder, no permanently lost item | H5: disk and system-volume flags re-armed from open incidents on the first cycle; `secrets.key-mismatch` resolved at a boot where every secret decrypts; tests. W7: the playout exit handler returns when the exiting child is not current (static test as R3's); the uplink handler checked for the same pattern. H9: one re-probe per quarantined item per 24 h, one per source per cycle, only with the breaker closed and no outage verdict (owner Q1); test. U18: `scripts/soak-monitor.sh` counts uplink and relay restarts; shell test or `bash -n` plus a fixture run | `apps/worker`, `scripts/`, tests, `docs/operations.md` | low | revert the commit |
+| M96 Local File Durations | Data | Next | Planned | Local-library assets carry their real length, so planning numbers are right | U4: `ffprobe` duration at scan time, bounded timeout, cached by size + mtime; unit test on a generated 2-minute file → `durationSeconds` within 1 s of 120; an unchanged file is not probed again (spy); Day lens shows "Unique library: 6m" for three such files | `apps/worker`, `packages/db`, tests | medium: a large first scan is slower, so probing is incremental | revert the commit; stored durations are harmless to old images |
+| M97 Week View Tells The Truth | UX | Next | Planned | The week view shows what will play, with dates, overnight blocks once, and why a block repeats | U5: each pool's rotation carried across blocks in time order through the worker's rotation function (shared, not copied); dates on day headers; hours, not minutes; an overnight block shown once with "→ 01:00 Sun"; repeat reason with numbers. U6: confirmation before "Replace existing schedule blocks"; "Edit block" and "Add block" on the week view. Tests in `program-week-projection`: three items, two blocks, the second block starts with item 2, not item 1; a 24 h block reads "24 h"; a block with 6 min of video in 24 h carries the reason "plays ≈ 240 times"; an overnight block appears on one day only. e2e: "Replace existing schedule blocks" opens a confirmation and Cancel leaves the blocks unchanged | `packages/core`, `apps/web`, tests, baselines | medium: preview must not drift from the worker, so one shared function | revert the commit |
+| M98 The Production Path Has A Smoke | Test | Next | Planned | CI exercises playout → HLS → uplink with the relay on | U15: a CI job starts the stack with the relay on and asserts that `program.m3u8` MEDIA-SEQUENCE grows and the uplink output grows over 60 s; the job fails when the uplink is stopped (mutation run) | `.github/workflows/ci.yml`, `scripts/`, `docker-compose*.yml` | low (CI only) | revert the commit |
+| M99 Wizard To First Programme | UX | Later | Planned | `/setup` ends with a stream key and a playing week | U1 (decided 5.1 Q9): skippable step "Where the stream goes" with the Twitch preset, the key stored encrypted and masked; the destination form moves to Studio → Output, the old anchor redirects. U2: skippable step "First programme" creates a pool from chosen media and applies the "Always-on single pool" template. R2 U3: render test: an empty library says how to add media, a filtered-empty library says the filters hide everything. e2e: a fresh owner completes both steps and readiness shows destination, pools and schedule ready | `apps/web`, tests, baselines, `docs/getting-started.md` | medium: moves a form operators know | revert the commit |
+| M100 Public Programme For Viewers | Feature | Later | Planned | Viewers see what comes next and the coming week, in their own time | V1 ("After that" from the schedule) comes with M88 through R1's commits `a41d327` and `51e69ee` and is not built again here. V2: "Scheduled now" when playout is down. R1 row B: a 7-day list on `/channel` per day, dated items marked; `/channel.ics` validated by a parser test; times per default R2 Q7 in 5.2 (viewer's zone first; unit test with a browser zone other than the channel zone). Layout per 2.5a: a *Now* card with progress bar and remaining time (unit test on the remaining-time and progress values for a fixed clock), a *Next* list of the next 24 h at item level from the shared week projection, consecutive items of one block grouped with "N more" (test: 3 blocks × 5 items give 3 groups with "4 more" each), crossing midnight without a break (test); Playwright at 390 px: the *Now* card is above the fold. R2 V7: the on-air Next card adds "in N min" to its bare time range (`packages/core/src/viewer-messages/en.ts:29`) through the catalogue, en + de, unit test for a fixed clock. Catalogue parity en/de green | `apps/web`, `packages/core`, tests, baselines, `docs/` | low | revert the commit |
+| M101 Schedule Across DST, Wall Clock Kept | Bug | Later | Planned | Twice a year the counts are right while blocks keep their wall-clock times (owner Q4) | C5: cuepoint elapsed time from real instants (test: block from 01:00, at 03:30 local on 2027-03-28 reports 5 400 s, not 9 000 s); a non-existent local time maps forward (02:30 on 2026-03-29 → `01:30Z`, not `00:30Z`); the Twitch segment end follows real minutes; `docs/operations.md` states the wall-clock rule (skipped in March, twice in October) | `packages/core`, `apps/worker`, tests, docs | low | revert the commit |
+| M102 Standby Shows Standby | Bug | Later | Planned | The standby or reconnect slate never shows the previous item's title | W8: `writeStandbySlate` sets the standby scene payload; unit test on the payload; a design-baseline check of the standby frame | `apps/worker`, tests, baselines | medium: changes the on-air picture | revert the commit |
+| M103 Backoff And Health Restarts | Reliability | Later | Planned | Repeated restarts slow down; a hung worker or uplink restarts itself | H7: growing backoff up to 5 min for the crash-loop reset and the uplink watchdog; the crash-loop incident no longer says "Manual intervention is required" when playable media exists (unit test on the message). H8 (owner Q7): worker and uplink exit after 5 min of failing their own healthcheck; playout only while its feed does not advance. Tests: backoff sequence; a playing playout with an advancing feed never exits | `apps/worker`, `docker-compose.yml`, tests, docs | medium: dark time grows with backoff; a wrong rule could restart a playing channel | revert the commit |
+| M104 Wording Pass And Chat Answers | UX | Later | Planned | Admin text names no milestone ids; viewers can ask the bot | U13: render test fails on `\bM\d{2}\b` in admin text. U14: the admin preview and (i) show the localized standby text. S19 (lead from the stopped planning branch, re-checked): overlay output is one checkbox among many (`apps/web/components/overlay-settings-form.tsx:890`) and the Scene tab shows "unknown" / "never" before a first publish; Scene gets an on/off banner at the top and "Not published yet"; render test. V5/V6 (decided 5.1 Q7): `!commands` (only enabled commands), `!now`, `!next` with the `/channel` link, one reply per `!request` (queued with position, no match, cooldown, queue full), each with its own switch, 60 s per viewer and 10 s global cooldown, en + de; unit tests per reply | `apps/web`, `apps/worker`, `packages/core`, tests, baselines | medium: chat volume and Twitch rate limits | revert the commit |
+
+M84-M104 were approved by the owner on 2026-10-02 (all 21, as written). Their source is `planning/proposal-2026-10.md`: references in these rows such as "decided 5.1 Q5", "2.5a", "3.3" and finding ids (S1, C3, I1, U7, …) point into that file and the research files under `planning/research/`. Order: M84 first, then the table order with M88 before M93, M93 before M100 and M91 before M99; one milestone per thread, the next starts after the previous one is merged.
+
+## Phase 3 — Product Depth, Metadata, Overlay, And Redesign
+
+This phase addresses the concrete product-quality problems identified in the 2026-04-20 audit: wrong labels visible to stream viewers, missing metadata editing, pool-level schedule blindness, hardcoded output settings, missing engagement features, and the need for a modern UI. The surviving reset references are `docs/full-product-reset-audit.md`, `docs/full-product-reset-plan.md`, and `docs/ui-redesign-spec.md`.
+
+| Milestone | Type | Priority | Status | Goal | Acceptance | Touched Areas | Risk | Rollback |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| M21 Overlay Text Correctness | Reliability + UX | Now | Complete | Fix pool names and empty brackets visible in the live stream, add title prefix and hashtags schema | Overlay never shows raw pool names or `[]` brackets to viewers, `nextTitle` resolves to an actual video title, `desiredTitle` for Twitch uses `titlePrefix + title + hashtags`, new asset schema fields exist | `apps/worker`, `packages/core`, `packages/db`, `apps/web/app/overlay`, tests, docs | low–medium | schema changes are additive; fallback remains neutral as "Coming up next" if lookahead fails |
+| M22 Metadata V2 And Per-Video Edit | UX + Data | Now | Complete | Add per-video metadata edit form in library; wire title prefix, hashtags, and category override to Twitch sync and overlay display | Operators can edit title, title_prefix, category, hashtags per video from the library UI; saved values appear in the overlay and Twitch title; PATCH route uses targeted writers | `apps/web`, `packages/db`, tests | low | additive schema only; PATCH route falls back to existing values if new fields are absent |
+| M23 Schedule Video-Level Visibility | UX + Data | Next | Complete | Expand schedule preview to include per-block video-level lookahead titles; add video-level timeline expansion on the schedule page | Schedule preview API returns `videoSlots` per block; schedule page shows expandable video title timeline; broadcast snapshot `nextTitle` uses pool lookahead instead of block title | `apps/web`, `packages/core`, tests | medium | API change is additive; UI expansion falls back to block title if pool has no eligible assets |
+| M24 Output Profiles And Stream Settings | Architecture + UX | Next | Complete | Add first-class resolution/FPS settings, output profiles, and tie overlay viewport to output dimensions | Admin output settings page with profile selector (720p30, 1080p30, 480p30, 360p30, custom); `STREAM_OUTPUT_WIDTH/HEIGHT/FPS` env vars drive standby slate, renderer viewport, and FFmpeg scale filter; 360p overlay scales legibly | `apps/worker`, `apps/web`, `packages/db`, `docker-compose.yml`, `.env*.example`, tests, docs | medium | all new env vars have safe defaults matching current hardcoded values; scale filter is opt-in; full safe-area clamping is not yet implemented |
+| M25 In-Stream Engagement Layer | Parity + UX | Later | Complete | Add chat overlay and follow/sub alerts composited into the live stream output | Twitch IRC chat appears as scrollable overlay in the stream; follow/sub EventSub alerts show as timed animations in the stream; engagement admin section controls position, style, and rate; works at 360p | `apps/worker`, `apps/web`, `packages/db`, overlay page, tests, docs | high | engagement layer is additive and disabled by default; EventSub auto-registration was completed in the M28 audit follow-up |
+| M26 UI Redesign V1 | UX | Later | Complete | Modernize the admin UI with consistent navigation, form ergonomics, stacked field layouts, and long-title safety across all surfaces | Navigation matches redesign IA (`Control Room`, `Programming`, `Stream Studio`, `Workspace`); no layout breakage from long titles; all multi-field forms use stacked layout; existing routes preserved; browser smoke confirms redesigned surfaces | `apps/web`, tests, docs | medium | keep current route structure intact; redesign is UI layer only |
+| M27 Container Reliability And Ops | Ops | Later | Complete | Audit and harden container health, SSE connection tracking, and long-run memory behavior | SSE connections in `web` are tracked and cleaned up on disconnect; soak monitor reports container restart counts; long-run playout memory baseline is documented; health check intervals are tuned | `apps/web`, `apps/worker`, `docker-compose.yml`, scripts, tests, docs | low–medium | additive health and monitoring changes only; no playout pipeline changes |
+
+## Stabilization Pass — Post-M15 Review
+
+| Milestone | Type | Priority | Status | Goal | Acceptance | Touched Areas | Risk | Rollback |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| M16.1 Schedule Gap Fixes | Reliability | Now | Complete | Correct current/next schedule handling across web snapshots and worker standby paths | Schedule gaps return no current block, next picks the first future block by wall-clock time, standby slate preview shows the actual upcoming block, and regression tests cover before-first, mid-gap, and after-last behavior | `packages/core`, `apps/web`, `apps/worker`, tests | medium | revert schedule-selection helper changes if snapshot regressions appear |
+| M16.2 Streaming Upload Hardening | Reliability | Now | Complete | Replace buffered upload writes with streamed local-disk ingest | Large-media and concurrent uploads do not require buffering the full file in memory, and regression coverage proves the streaming path | `apps/web`, tests | medium | revert to prior upload handler if streamed writes regress local ingest |
+| M16.3 Release Preflight Hardening | Ops | Now | Complete | Reject placeholder production configs before release | Release preflight fails on blank/example values, regression tests cover the gate, and docs describe the stricter checks accurately | scripts, tests, docs | low | revert preflight validation tightening if it blocks valid pinned configs |
+| M16.4 Final Stabilization Fixes | Reliability + Ops | Now | Complete | Resolve the remaining overnight-schedule and release-preflight review regressions | Overnight current blocks keep the correct next/upcoming teasers, quoted-empty env values fail preflight, proxy example values fail preflight when present, and regression coverage proves both behaviors | `packages/core`, `apps/web`, `apps/worker`, scripts, tests, docs | medium | revert helper/preflight tightening if an undiscovered deployment edge case appears |
+| M17.1 Scene Studio V2 Follow-Up Fixes | Reliability + Docs | Now | Complete | Resolve the post-M17 Scene Studio review regressions without widening feature scope | Metadata widgets keep canonical label fallback when no override is set, dedicated YouTube/Twitch embed endpoints remain allowed while normal page URLs stay blocked, agent workflow stops when no incomplete milestone remains, and gap-analysis docs no longer contradict shipped milestone status | `packages/core`, `apps/web`, tests, docs | low-medium | revert the follow-up helper and docs tightening if a new embed or workflow edge case appears |
+| M17.2 Scene Studio V2 Final Follow-Up Fixes | Reliability | Now | Complete | Close the remaining fresh-widget and protocol-relative Scene Studio review regressions | Fresh widget layers switch into metadata-card mode without carrying a default label override, protocol-relative remote URLs follow the same provider boundary rules as absolute remote URLs, and regression coverage proves both behaviors | `packages/core`, `apps/web`, tests, docs | low | revert the follow-up helper tightening if a new frame-source edge case appears |
+| M18 Release Workflow Preflight Alignment | Ops | Now | Complete | Align CI and release workflows with the hardened release-preflight gate | CI and tagged release workflows validate a staged non-placeholder production env instead of copying untouched example values, regression coverage proves the staged env passes preflight, and release docs remain accurate | `.github/workflows`, `scripts`, tests, `PLANS.md` | low | revert workflow/helper changes if the staged env path proves runner-specific |
+| M18.1 Release Preflight Compose Env Alignment | Ops | Now | Complete | Align compose config validation with `RELEASE_PREFLIGHT_ENV_FILE` in CI and other staged checks | `pnpm release:preflight` succeeds with a staged env file even when the repo root lacks `.env`, compose validation uses the selected env safely, placeholder checks stay strict, and regression coverage proves both staged and placeholder paths | `scripts`, tests, `PLANS.md` | low | revert the temporary compose-env mirroring if it causes an undiscovered local edge case |
+| M19 Release Readiness Hardening | Ops | Now | Complete | Close the remaining release-readiness gaps across tagged publishing, rehearsal/soak gates, image pinning, and production restarts | Tagged release artifacts are smoke-validated before push, rehearsal and soak gates require actual broadcast readiness, quoted `:latest` image refs fail preflight, production Compose services restart automatically, and regression coverage proves the tightened release path | `.github/workflows`, `docker-compose.yml`, `scripts`, tests, docs, `PLANS.md` | medium | revert workflow/runbook tightening if a documented deployment edge case appears and keep the stricter checks disabled only with an explicit follow-up |
+| M19.1 Release Artifact Parity And Proxy Restart Hardening | Ops | Now | Complete | Ensure tagged release publishing pushes the already-tested artifacts and that the proxy deployment path restarts cleanly | Tagged releases retag and push the smoke-tested local candidate images instead of rebuilding, Traefik has restart coverage in the proxy profile, release docs describe only the tested guarantees, and regression coverage proves the tightened workflow shape | `.github/workflows`, `docker-compose.yml`, tests, docs, `PLANS.md` | medium | revert the release retag/push flow and proxy restart note only if runner-local publishing proves incompatible with GHCR |
+| M19.2 Release Rehearsal Pre-Tag Artifact Alignment | Ops | Now | Complete | Align pre-tag rehearsal with a real artifact source that exists before version tags are created | `upgrade-rehearsal.sh` uses published `main-<sha>` snapshot artifacts when the target release tag is not available yet, tagged releases promote those same tested `main-<sha>` images instead of rebuilding, and docs plus regression coverage describe the pre-tag flow accurately | `scripts`, `.github/workflows`, tests, docs, `PLANS.md` | medium | revert to the previous tag-only rehearsal path only if pre-release `main-<sha>` publication disappears and document the release limitation explicitly |
+| M19.3 Main Artifact Publication Parity | Ops | Now | Complete | Prove that successful `main` publishes expose the full rehearsal artifact set, including playout, under the exact `main-<sha>` tags that pre-tag rehearsal consumes | `main` CI publishes and then verifies registry-visible `web`, `worker`, and `playout` `main-<sha>` images, regression coverage proves that contract, and release guidance remains aligned with the same snapshot naming model | `.github/workflows`, tests, `PLANS.md` | low-medium | revert the post-push registry visibility check only if GHCR proves incompatible with deterministic snapshot verification and document the limitation explicitly |
+| M19.4 DUT Long-Run Playout Stability | Reliability + Ops | Now | Complete | Resolve the DUT long-run process leak and make soak failures more actionable | Worker-family images run under an init process to reap Chromium scene-renderer children, Chromium capture avoids crashpad/zygote helpers, worker/playout healthchecks tolerate CPU-heavy playout windows, soak failures include playout restart diagnostics, and regression coverage proves the contracts | `docker/worker.Dockerfile`, `docker-compose.yml`, `apps/worker`, `apps/web`, `scripts`, tests, docs, `PLANS.md` | medium | revert the image entrypoint and healthcheck timeout changes if the init process is incompatible with GHCR runtime images, then disable scene rendering while investigating |
+| M20.1 Twitch VOD Cache Prefetch | Reliability + Ops | Now | Complete | Make Twitch archive playback local/cache-backed before playout uses a VOD | Twitch VOD assets keep original URLs while queue/current prefetch stores verified local media, local-library scans ignore internal cache files, failed cache prep sends playout to standby instead of unstable remote VOD playback, and regression coverage proves cache metadata and path behavior | `apps/worker`, `packages/db`, tests, docs, `PLANS.md` | high | disable Twitch cache via env and fall back to previous remote-resolution behavior |
+| M20.2 Persistent Relay Uplink | Reliability + Ops | Now | Complete | Decouple program playout from the Twitch RTMP session | Production Compose includes a pinned local relay and an uplink worker mode, playout publishes to the relay, uplink owns real destinations and scheduled 48h reconnects, program input failures fall back to standby without closing Twitch, and runtime/smoke coverage proves the separation | `docker-compose.yml`, `apps/worker`, `packages/db`, scripts, tests, docs, `PLANS.md` | very high | turn relay mode off and use the previous direct playout-to-destination path |
+| M20.3 Persistent Program Feed | Reliability + Ops | Now | Complete | Keep the external Twitch RTMP session alive across normal asset boundaries | Playout publishes a rolling local HLS program feed by default, uplink reads that buffered feed instead of a disappearing RTMP relay input, RTMP relay input remains an explicit rollback, readiness/soak report uplink and feed health, and regression coverage proves the new contracts | `apps/worker`, `apps/web`, `packages/db`, `docker-compose.yml`, scripts, tests, docs, `PLANS.md` | very high | set `STREAM247_UPLINK_INPUT_MODE=rtmp` to restore the MediaMTX relay input or `STREAM247_RELAY_ENABLED=0` to restore direct output |
+| M20.4 Persistent Program Feed Upgrade Migration | Reliability + Ops | Now | Complete | Make existing databases receive the M20.3 runtime columns during upgrade | Existing databases with the baseline migration already recorded add the uplink/program-feed `playout_runtime` columns before workers write runtime state, and integration coverage proves the upgrade path | `packages/db`, tests, docs, `PLANS.md` | medium | revert the dedicated migration only if a replacement migration preserves the same additive columns |
+| M20.5 Program Feed Handoff Stability | Reliability + Ops | Now | Complete | Reduce local input and HLS handoff noise without hiding real Twitch/uplink failures | HLS program-feed writes use handoff-tolerant flags, uplink demuxing tolerates local feed discontinuities, clean asset/insert exits are natural boundaries instead of incidents, readiness/soak tolerate short local playout transients only while uplink/feed/destination remain healthy, and regression coverage proves the contracts | `apps/worker`, `apps/web`, scripts, tests, docs, `PLANS.md` | high | restore the previous HLS args or set `STREAM247_UPLINK_INPUT_MODE=rtmp` if the hardened local HLS feed path regresses |
+
+## M17 Scene Studio V2
+
+The historical `M11 Scene Studio V2` implementation completed on 2026-04-06. `M17` is the follow-on pass that deepens the same product area without reopening or rewriting the completed `M11` record. The scope remains bounded and does not claim full upstream parity.
+
+Status: complete 2026-04-08
+
+**Scope**
+
+- add metadata-driven `Scene Studio` widgets for current, next, or queue-facing broadcast data from the existing canonical snapshot contract
+- deepen typography controls and conservative custom-font handling without weakening the current publish-safe path
+- clarify browser-safe embed and widget behavior where CSP, iframe, or third-party provider limits prevent broader compatibility
+- deepen scene authoring only where it fits the current original `Scene Studio` model and existing on-air contract
+
+**Acceptance Criteria**
+
+- at least one additional metadata-driven scene widget path exists beyond the current static positioned layers
+- any new font or typography behavior has an explicit safe loading and fallback policy for browser and on-air use
+- embed and widget behavior is explicit about supported and unsupported provider cases in code, tests, and docs
+- published-scene browser and on-air consumers still share one canonical scene contract
+- docs remain conservative and avoid implying full public-feature parity with Upstream
+
+**Touched Areas**
+
+- `packages/core`
+- `packages/db`
+- `apps/web`
+- `apps/worker`
+- browser and unit/integration tests
+- `README.md` and scene-related docs
+
+**Validation Commands**
+
+```bash
+pnpm validate
+pnpm test:fresh-db
+pnpm test:fresh-compose
+pnpm test:e2e:smoke
+docker build -f docker/web.Dockerfile -t stream247-web:test .
+docker build -f docker/worker.Dockerfile -t stream247-worker:test .
+```
+
+Use additional targeted widget/font/browser tests if the implementation adds them.
+
+**Done Criteria**
+
+- code complete for the scoped `Scene Studio` work only
+- regression coverage added for each new widget, font, or embed behavior
+- docs updated anywhere supported provider scope, font behavior, or parity wording changes
+- `pnpm validate` and milestone-relevant smoke/browser checks pass
+- summary records supported scope, known provider limits, and any deliberate follow-up gaps
+
+## M18 Release Workflow Preflight Alignment
+
+Status: complete 2026-04-08
+
+**Scope**
+
+- align CI and tagged release workflows with the already-hardened release-preflight contract
+- stop feeding untouched `.env.production.example` values directly into `pnpm release:preflight`
+- add a small reusable helper that prepares a valid staged env file for automation-only preflight runs
+- keep operator-facing production docs conservative and unchanged unless the shipped behavior really differs
+
+**Acceptance Criteria**
+
+- CI and release workflows no longer rely on `cp .env.production.example .env` before `pnpm release:preflight`
+- a staged env file derived from `.env.production.example` is populated with explicit non-placeholder required values for workflow preflight use
+- regression coverage proves the staged env helper output passes `pnpm release:preflight` with `RELEASE_PREFLIGHT_SKIP_VALIDATE=1`
+- local operator guidance still requires replacing real production placeholders manually before live deployment
+
+**Touched Areas**
+
+- `.github/workflows`
+- `scripts`
+- release-preflight regression tests
+- `PLANS.md`
+
+**Validation Commands**
+
+```bash
+pnpm exec vitest run tests/unit/release-preflight.test.ts
+RELEASE_PREFLIGHT_ENV_FILE="$(./scripts/prepare-release-preflight-env.sh)" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
+pnpm validate
+```
+
+**Done Criteria**
+
+- workflow code complete for the scoped release-preflight alignment only
+- regression coverage added for the staged env helper path
+- docs remain accurate and do not imply placeholder configs should pass release preflight
+- `pnpm validate` and milestone-targeted release-preflight checks pass
+
+## M18.1 Release Preflight Compose Env Alignment
+
+Status: complete 2026-04-08
+
+**Scope**
+
+- make `scripts/release-preflight.sh` handle `RELEASE_PREFLIGHT_ENV_FILE` consistently during `docker compose config`
+- avoid CI-only failures when the selected env file is valid but the repo root `.env` is absent
+- preserve the stricter placeholder and blank-value checks already shipped in `release-preflight.sh`
+- keep the fix local to release-preflight and its regression coverage
+
+**Acceptance Criteria**
+
+- `pnpm release:preflight` can validate a staged env file via `RELEASE_PREFLIGHT_ENV_FILE` even if the repo root `.env` does not exist
+- `docker compose config` runs against the selected env values instead of failing on missing root `.env`
+- strict rejection of placeholder, quoted-empty, and example production values remains intact
+- CI and release workflows can continue using the staged temporary env path added in `M18`
+
+**Touched Areas**
+
+- `scripts/release-preflight.sh`
+- release-preflight regression tests
+- `PLANS.md`
+
+**Validation Commands**
+
+```bash
+pnpm exec vitest run tests/unit/release-preflight.test.ts
+backup_env="$(mktemp "${TMPDIR:-/tmp}/stream247-root-env-backup.XXXXXX")"; mv .env "$backup_env"; tmp_env="$(./scripts/prepare-release-preflight-env.sh)"; cleanup(){ rm -f "$tmp_env"; if [ -f "$backup_env" ]; then mv "$backup_env" .env; fi; }; trap cleanup EXIT; RELEASE_PREFLIGHT_ENV_FILE="$tmp_env" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
+pnpm validate
+```
+
+**Done Criteria**
+
+- release-preflight compose validation is self-contained for staged env-file runs
+- regression coverage proves the missing-root-`.env` case and placeholder rejection case
+- no production checks are weakened
+- `pnpm validate` and milestone-targeted preflight checks pass
+
+## M19 Release Readiness Hardening
+
+Status: complete 2026-04-08
+
+**Scope**
+
+- gate tagged GHCR publishing behind local smoke validation of the exact release-candidate images
+- require `broadcastReady=true` in release rehearsal and soak gates instead of treating field presence as success
+- normalize quoted image refs before rejecting mutable `:latest` tags in release preflight
+- add restart policies for the production Compose services used in the documented 24/7 deployment path
+- keep release docs aligned with the stricter gates and always-on deployment posture
+
+**Acceptance Criteria**
+
+- `.github/workflows/release.yml` smoke-validates local release-candidate images before any final tagged push step
+- `scripts/upgrade-rehearsal.sh` fails until `/api/system/readiness` reports `broadcastReady=true`
+- `scripts/soak-monitor.sh` fails on non-ready broadcast state or non-ready destinations instead of logging them only
+- `scripts/release-preflight.sh` rejects quoted and unquoted `:latest` image refs equally
+- `docker-compose.yml` includes restart policies for `web`, `worker`, `playout`, `postgres`, and `redis`
+
+**Touched Areas**
+
+- `.github/workflows/release.yml`
+- `docker-compose.yml`
+- `scripts/release-preflight.sh`
+- `scripts/upgrade-rehearsal.sh`
+- `scripts/soak-monitor.sh`
+- release-readiness regression tests
+- release and deployment docs
+- `PLANS.md`
+
+**Validation Commands**
+
+```bash
+pnpm exec vitest run tests/unit/release-preflight.test.ts tests/unit/release-readiness.test.ts
+tmp_env="$(./scripts/prepare-release-preflight-env.sh)"; trap 'rm -f "$tmp_env"' EXIT; RELEASE_PREFLIGHT_ENV_FILE="$tmp_env" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight
+docker build -f docker/web.Dockerfile -t stream247-web:release-candidate .
+docker build -f docker/worker.Dockerfile -t stream247-worker:release-candidate .
+docker build -f docker/worker.Dockerfile -t stream247-playout:release-candidate .
+chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:release-candidate
+STREAM247_FRESH_COMPOSE_WEB_IMAGE=stream247-web:release-candidate STREAM247_FRESH_COMPOSE_WORKER_IMAGE=stream247-worker:release-candidate STREAM247_FRESH_COMPOSE_PLAYOUT_IMAGE=stream247-playout:release-candidate pnpm test:fresh-compose
+pnpm validate
+```
+
+**Done Criteria**
+
+- tagged release publishing is gated by local candidate-image smoke validation
+- rehearsal/soak scripts fail on non-broadcast-ready states
+- mutable quoted image refs no longer bypass release preflight
+- production Compose services restart automatically after daemon or host restarts
+- docs stay accurate about the stricter release path and restart behavior
+
+## M19.1 Release Artifact Parity And Proxy Restart Hardening
+
+Status: complete 2026-04-08
+
+**Scope**
+
+- push the exact smoke-tested local release-candidate images for tagged releases instead of rebuilding them after validation
+- add restart coverage for `traefik` so the documented proxy deployment path matches the Compose recovery guarantees
+- keep release docs precise about what the workflow actually proves and publishes
+
+**Acceptance Criteria**
+
+- `.github/workflows/release.yml` no longer rebuilds release-tag artifacts after the candidate smoke gates pass
+- the tagged publish path retags and pushes the already-tested local candidate images, or otherwise proves artifact identity before publish
+- `docker-compose.yml` includes restart coverage for `traefik` alongside the existing always-on production services
+- `README.md` and `docs/deployment.md` describe the published release artifacts and proxy restart guarantees accurately without overclaiming
+
+**Touched Areas**
+
+- `.github/workflows/release.yml`
+- `docker-compose.yml`
+- release-readiness regression tests
+- release docs
+- `PLANS.md`
+
+**Validation Commands**
+
+```bash
+pnpm exec vitest run tests/unit/release-preflight.test.ts tests/unit/release-readiness.test.ts
+docker build -f docker/web.Dockerfile -t stream247-web:release-candidate .
+docker build -f docker/worker.Dockerfile -t stream247-worker:release-candidate .
+docker build -f docker/worker.Dockerfile -t stream247-playout:release-candidate .
+chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:release-candidate
+STREAM247_FRESH_COMPOSE_WEB_IMAGE=stream247-web:release-candidate STREAM247_FRESH_COMPOSE_WORKER_IMAGE=stream247-worker:release-candidate STREAM247_FRESH_COMPOSE_PLAYOUT_IMAGE=stream247-playout:release-candidate pnpm test:fresh-compose
+docker image tag stream247-web:release-candidate stream247-web:release-parity-check && test "$(docker image inspect stream247-web:release-candidate --format '{{.Id}}')" = "$(docker image inspect stream247-web:release-parity-check --format '{{.Id}}')" && docker image rm stream247-web:release-parity-check
+docker image tag stream247-worker:release-candidate stream247-worker:release-parity-check && test "$(docker image inspect stream247-worker:release-candidate --format '{{.Id}}')" = "$(docker image inspect stream247-worker:release-parity-check --format '{{.Id}}')" && docker image rm stream247-worker:release-parity-check
+docker image tag stream247-playout:release-candidate stream247-playout:release-parity-check && test "$(docker image inspect stream247-playout:release-candidate --format '{{.Id}}')" = "$(docker image inspect stream247-playout:release-parity-check --format '{{.Id}}')" && docker image rm stream247-playout:release-parity-check
+pnpm validate
+```
+
+**Done Criteria**
+
+- tagged release publishing is artifact-identical to the smoke-tested candidate images
+- proxy-profile Traefik ingress now matches the documented restart guarantees
+- release docs stay conservative about tested artifact identity and automatic recovery scope
+- `pnpm validate` and milestone-targeted release checks pass
+
+## M19.2 Release Rehearsal Pre-Tag Artifact Alignment
+
+Status: complete 2026-04-09
+
+**Scope**
+
+- make `scripts/upgrade-rehearsal.sh` resolve a pre-release artifact source that exists before `v*` tags are created
+- keep tagged publishing aligned with the same artifact identity model instead of rebuilding different artifacts later
+- document the pre-tag rehearsal path conservatively so the release runbook stays internally consistent
+
+**Acceptance Criteria**
+
+- `scripts/upgrade-rehearsal.sh <target-version>` no longer requires `ghcr.io/...:vX.Y.Z` to exist before the release tag is created
+- unreleased targets rehearse against CI-published `main-<sha>` snapshot images for the current commit unless an explicit override is supplied
+- published release tags still rehearse against the real `v*` images when those tags already exist
+- `.github/workflows/release.yml` smoke-tests and promotes the same `main-<sha>` snapshot images instead of rebuilding from source after the rehearsal model has switched
+- release docs explain the `main-<sha>` pre-tag snapshot path without overstating release safety
+
+**Touched Areas**
+
+- `scripts/upgrade-rehearsal.sh`
+- `.github/workflows/release.yml`
+- release-readiness regression tests
+- release docs
+- `PLANS.md`
+
+**Validation Commands**
+
+```bash
+pnpm exec vitest run tests/unit/release-readiness.test.ts
+pnpm validate
+pnpm release:preflight
+./scripts/upgrade-rehearsal.sh 1.1.0
+```
+
+**Done Criteria**
+
+- pre-tag rehearsal uses a real pre-release artifact source that already exists before tagging
+- tagged publishing promotes the same rehearsed artifact lineage instead of rebuilding different digests
+- docs stay internally consistent about pre-tag rehearsal and release publication
+- `pnpm validate`, release preflight, and the milestone-targeted rehearsal checks pass
+
+## M19.3 Main Artifact Publication Parity
+
+Status: complete 2026-04-09
+
+**Scope**
+
+- ensure the normal `main` publication path proves all three pre-release snapshot artifacts are registry-visible after publish
+- keep the `main-<sha>` naming contract aligned with `scripts/upgrade-rehearsal.sh` for `web`, `worker`, and `playout`
+- add regression coverage so the `playout` snapshot path cannot silently drift from the rehearsal lookup contract
+
+**Acceptance Criteria**
+
+- `.github/workflows/ci.yml` publishes `web`, `worker`, and `playout` under `main-<short-sha>` on successful `main` pushes
+- the `main` CI run now fails if any of those just-pushed `main-<short-sha>` tags are not registry-resolvable after publish
+- `tests/unit/release-readiness.test.ts` proves the `main` workflow publishes and verifies the full rehearsal artifact set
+- release guidance remains accurate without claiming more than the workflow now proves
+
+**Touched Areas**
+
+- `.github/workflows/ci.yml`
+- release-readiness regression tests
+- `PLANS.md`
+
+**Validation Commands**
+
+```bash
+pnpm exec vitest run tests/unit/release-readiness.test.ts
+pnpm validate
+```
+
+Use GitHub Actions logs or direct `docker manifest inspect` checks as additional evidence when investigating a specific `main-<sha>` publication mismatch.
+
+**Done Criteria**
+
+- successful `main` publishes now prove the full `main-<sha>` rehearsal artifact set is registry-visible
+- workflow naming stays aligned with `upgrade-rehearsal.sh`
+- regression coverage protects the `web`/`worker`/`playout` snapshot contract
+- `pnpm validate` and milestone-targeted release-readiness tests pass
+
+## Phase 2 — Post-M9 Audit Follow-Up
+
+The first milestone set shipped meaningful parity progress, but a fresh audit found three categories of follow-up work:
+
+- truth and safety fixes that correct review-found stale-write races and deployment-specific bugs
+- parity gaps where the code is real but still partial, especially Scene Studio depth, runtime continuity, and recovery behavior
+- docs that need to stay conservative and aligned with what the code and automated coverage actually prove
+
+Phase 2 starts with `M10 Truth And Safety Fixes` and then continues into deeper parity, UX, and release-proof milestones.
+
+## Parity Work
+
+- `Now` M1 Scene Studio Contract
+- `Now` M2 On-Air Scene Renderer V1
+- `Now` M3 Queue Engine And Transition Controller
+- `Complete` M4 Programming Workspace V2
+- `Complete` M5 Library And Channel Blueprints
+- `Complete` M6 Multi-Output V1
+- `Complete` M7 Live Bridge
+- `Complete` M8 Audio Lanes, Cuepoints, Advanced Inserts
+- `Now` M10 Truth And Safety Fixes
+- `Complete` M11 Scene Studio V2
+- `Complete` M17 Scene Studio V2
+- `Complete` M13 Library And Blueprints V2
+- `Not Planned` visual cloning of Upstream UI or branding
+
+## Architecture Work
+
+- `Now` split runtime concerns inside `apps/worker/src/index.ts` into queue, transition, ingest, destination, Twitch sync, and scene modules without a rewrite-first approach
+- `Now` move scene rendering behind an explicit scene payload and published-scene render contract
+- `Now` keep DB changes additive and continue using targeted writers instead of broad state rewrites
+- `Next` move from baseline-style migration growth to clear sequential SQL migrations
+- `Next` make queue persistence and scene renderer caches explicit and observable
+- `Later` add richer mixed audio routing, crossfades, and deeper live-ingest controls beyond the first shipped M7/M8 contracts
+- `Complete` improve continuity and recovery semantics after the first queue/multi-output/live-bridge milestones land
+- `Not Planned` ORM migration or abandoning Docker/Compose delivery
+
+## UX Work
+
+- `Now` keep `Broadcast` as the control-room anchor and evolve it into original `On-Air Controls`
+- `Now` rename/position overlay work as `Scene Studio` in docs and future UI copy
+- `Complete` upgrade schedule editing into a denser `Programming Workspace` with materialized fill, repeats, queue-aware preview, and insert rules
+- `Complete` expand `Library` with folders, tags, bulk curation, and safer reusable catalog organization
+- `Complete` add `Channel Blueprints` as the original import/export system for full stream setups
+- `Complete` resolve IA drift between `Broadcast`, `Dashboard`, `Scene Studio`, `Library`, and `Settings`
+- `Complete` deepen Scene Studio beyond fixed preset composition while keeping original naming and UI
+- `Complete` deepen Library and `Channel Blueprints` with thumbnails, grouped browsing, curated sets, and selective import warnings
+- `Later` add tablet-friendly layout refinements and richer operator shortcuts
+- `Not Planned` copying Upstream labels like “Stream Designer” or “Live Studio”
+
+## Ops Work
+
+- `Now` keep `pnpm validate` as the mandatory baseline after every milestone
+- `Now` add milestone-specific smoke coverage when runtime, DB, or delivery code changes
+- `Now` append dated progress notes to this file after each completed milestone
+- `Next` add Playwright smoke coverage for setup, sources, scheduling, overlay publish, and broadcast controls
+- `Next` add queue continuity and scene publish safety checks to CI
+- `Next` expand structured runtime logging and incident fingerprints
+- `Now` fix stale-write admin paths and deployment-specific safety bugs surfaced by review/audit
+- `Next` expand runtime/browser proof for Multi-Output, Live Bridge, and cuepoint/audio flows
+- `Later` broaden soak and upgrade rehearsal coverage for major runtime milestones
+- `Not Planned` unattended production auto-upgrades by default
+
+## Validation Commands
+
+Default for every milestone:
+
+```bash
+pnpm validate
+```
+
+Add targeted checks when the touched area requires them:
+
+```bash
+pnpm test:fresh-db
+pnpm test:fresh-compose
+docker build -f docker/web.Dockerfile -t stream247-web:test .
+docker build -f docker/worker.Dockerfile -t stream247-worker:test .
+./docker/smoke-test.sh stream247-web:test
+pnpm release:preflight
+./scripts/upgrade-rehearsal.sh <target-version>
+./scripts/soak-monitor.sh --hours 24
+```
+
+Use the targeted checks only when the milestone changes runtime, persistence, delivery, or release behavior.
+
+## M21 Overlay Text Correctness
+
+Status: complete
+
+**Scope**
+
+- Fix `nextTitle` in `buildWorkerScenePayload` to resolve one step forward from the next schedule block's pool cursor instead of using the schedule block title or the "Scheduling next item" literal
+- Fix `currentTitle` to include `title_prefix` when set on the current asset
+- Fix `desiredTitle` in the Twitch metadata sync to use `[titlePrefix + " " + title]` and append hashtags from the new `hashtags_json` field
+- Fix empty `[]` bracket containers in the overlay page renderer by guarding every badge/label component with a non-empty content check
+- Fix the text-based overlay fallback to never emit lines that are prefix-only (e.g. `"Next: "` with no value, `"Queue: []"`)
+- Add additive schema migrations: `title_prefix TEXT NOT NULL DEFAULT ''` and `hashtags_json TEXT NOT NULL DEFAULT '[]'` and `platform_notes TEXT NOT NULL DEFAULT ''` to the `assets` table
+- Add a `lookaheadVideoTitleFromPool` helper in `packages/core` or `apps/worker`
+
+**Acceptance Criteria**
+
+- Overlay text never shows a raw pool name or a raw JSON array `[]` to viewers
+- `nextTitle` in the broadcast snapshot and overlay payload resolves to the first predicted video title in the next schedule block's pool (or the pool cursor lookahead for the current block if within it), never to the block title
+- Twitch `desiredTitle` is `[prefix] title [#hashtag1 #hashtag2]` when prefix and hashtags are set, truncated to 140 characters
+- All badge, chip, and label containers in the overlay page conditionally render only when their content is non-empty
+- New `title_prefix`, `hashtags_json`, and `platform_notes` columns exist in the `assets` table after migration
+- A unit test proves that `buildOverlayTextLinesFromScenePayload` with empty `queueTitles`, empty `categoryName`, and empty `sourceName` produces no line containing `"[]"`
+
+**Touched Areas**
+
+- `apps/worker/src/index.ts`
+- `packages/core/src/index.ts`
+- `packages/db/src/index.ts` (schema migration)
+- `apps/web/app/overlay/page.tsx` (overlay page component guards)
+- tests: unit tests for overlay text lines, lookahead helper, and Twitch title construction
+- docs: update the active audit and product docs to reflect the fix
+
+**Dependencies**
+
+- None. This is the first milestone in Phase 3 and has no predecessors.
+
+**Risks**
+
+- The pool lookahead may return a stale cursor prediction if the pool cursor was recently advanced; this is acceptable as an estimate (label text, not authoritative playout state)
+- If the assets list in `AppState` is not loaded when building the overlay, the lookahead falls back to the block title gracefully
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm test:fresh-db
+pnpm exec vitest run tests/unit/overlay-scenes.test.ts
+pnpm --filter worker build
+pnpm --filter db build
+```
+
+---
+
+## M22 Metadata V2 And Per-Video Edit
+
+Status: complete
+
+**Scope**
+
+- Extend `PATCH /api/assets/[id]` to accept `title`, `titlePrefix`, `categoryName`, `hashtagsJson`, `platformNotes`, `includeInProgramming`, `fallbackPriority` using targeted SQL writers
+- Add a per-video metadata edit panel to the assets/library page with stacked form fields: title, title prefix, category, hashtags (tag input), operator notes, include in programming toggle, fallback priority
+- Ensure the edit panel never uses inline compressed layout — all fields are stacked
+- Verify that saving the panel does not overwrite unrelated fields (targeted writer safety from M10)
+
+**Acceptance Criteria**
+
+- Operators can open a per-video edit panel from the library and save title, titlePrefix, categoryName, hashtagsJson, platformNotes
+- The `PATCH /api/assets/[id]` route uses targeted UPDATE SET for only the fields included in the request body
+- Long video titles do not break the edit panel layout
+- After saving, the Twitch metadata sync picks up the updated prefix and hashtags on the next sync cycle
+- Browser smoke includes opening the asset edit panel and saving a title prefix
+
+**Touched Areas**
+
+- `apps/web/app/api/assets/[id]/route.ts`
+- `apps/web/app/(admin)/assets/` page and components
+- tests: unit tests for targeted asset update, browser smoke update
+- docs: update the active product docs for the library workflow
+
+**Dependencies**
+
+- M21 must be complete (provides `title_prefix`, `hashtags_json` schema fields)
+
+**Risks**
+
+- The existing asset curation UI may have state management that needs reworking to support the new panel; scope carefully to avoid rewriting the full page
+- Stale-write safety: ensure the PATCH handler does not accept a full asset object and write every field — only accept a subset
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm test:fresh-db
+pnpm test:e2e:smoke
+pnpm --filter web typecheck
+```
+
+---
+
+## M23 Schedule Video-Level Visibility
+
+Status: complete
+
+**Scope**
+
+- Extend the schedule preview API (`/api/schedule/preview`) to include a `videoSlots` array per block: asset id, predicted title, estimated duration, predicted start offset within the block
+- The lookahead is computed from the pool cursor, wrapping as needed to fill the block duration; use the same `lookaheadVideoTitleFromPool` helper from M21
+- Add a timeline expansion toggle to the schedule page: when expanded, each block row shows a horizontal timeline with video slot segments (proportional width, title truncated with tooltip)
+- Update the broadcast snapshot's `nextTitle` to use the pool cursor lookahead result (aligns with M21 fix, this milestone adds the schedule page UI)
+- Long video titles in the timeline use truncate + tooltip, never overflow the block container
+
+**Acceptance Criteria**
+
+- The schedule preview API returns `videoSlots` for blocks backed by a pool with eligible assets
+- The schedule page can expand any block to show a video-level timeline
+- Video titles in the timeline are truncated at the segment boundary with full title shown in a tooltip
+- Empty pools or pools with no eligible assets show a "No videos in pool" message in the timeline
+- The broadcast page "Next" card shows a video title, not a block title
+
+**Touched Areas**
+
+- `apps/web/app/api/schedule/preview/route.ts`
+- `apps/web/app/(admin)/schedule/` page and components
+- `packages/core/src/index.ts` (lookahead helper reuse)
+- tests: unit tests for the extended preview API, schedule timeline component
+
+**Dependencies**
+
+- M21 (lookahead helper), M22 (per-video titles available in library)
+
+**Risks**
+
+- Pool cursor is a live value; the predicted video sequence may differ from actual playback if the cursor advances between preview generation and playout
+- Very large pools with many assets may produce slow lookahead computation; bound the lookahead to a maximum of 20 slots
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm test:fresh-db
+pnpm exec vitest run tests/unit/schedule-preview.test.ts
+pnpm --filter web typecheck
+```
+
+---
+
+## M24 Output Profiles And Stream Settings
+
+Status: complete
+
+**Scope**
+
+- Add `STREAM_OUTPUT_WIDTH`, `STREAM_OUTPUT_HEIGHT`, and `STREAM_OUTPUT_FPS` env vars with safe defaults matching the current hardcoded values (1280, 720, 30)
+- Replace the hardcoded `1280x720:r=30` standby slate with values derived from these vars
+- Update `getSceneRendererViewport` to read `STREAM_OUTPUT_WIDTH/HEIGHT` in addition to `SCENE_RENDER_WIDTH/HEIGHT` (with `SCENE_RENDER_*` taking precedence for explicit overrides)
+- Add a `-vf scale=${width}:${height}` filter to the main video playout FFmpeg commands so input videos at any resolution are normalized to the output resolution (with letterbox padding for mismatched aspect ratios)
+- Add named output profiles (720p30, 1080p30, 480p30, 360p30) as a channel-level setting stored in the database
+- Add an Output settings admin page with a profile selector and custom mode fields
+- Add CSS scaling variables to the overlay page so text and badges scale proportionally when `STREAM_OUTPUT_HEIGHT` is less than 720
+- Update `stack.env.example` and deployment docs with the new env vars
+
+**Acceptance Criteria**
+
+- Setting `STREAM_OUTPUT_WIDTH=1920 STREAM_OUTPUT_HEIGHT=1080` produces a 1080p standby slate and a 1080p scene renderer viewport
+- Setting `STREAM_OUTPUT_HEIGHT=360` results in a legible overlay (no text smaller than ~10px effective size)
+- Input videos at 360p are scaled to the configured output resolution with letterbox padding
+- The Output admin page shows a profile dropdown; selecting a profile stores it and the worker applies it on next start
+- `pnpm release:preflight` still passes with the new env vars defaulted
+- No regression in `pnpm test:fresh-compose` or queue continuity smoke
+
+**Touched Areas**
+
+- `apps/worker/src/on-air-scene.ts`
+- `apps/worker/src/index.ts` (FFmpeg commands)
+- `apps/web/app/(admin)/` (new Output settings page)
+- `apps/web/app/overlay/page.tsx` (CSS scaling variables)
+- `packages/db/src/index.ts` (output profile channel setting)
+- `stack.env.example`, `docs/deployment.md`
+- tests: unit tests for viewport resolution, FFmpeg command builder, profile storage
+
+**Dependencies**
+
+- M21 (overlay viewport alignment needed before safe area fix)
+
+**Risks**
+
+- The scale filter adds a small CPU overhead per frame; on low-spec hosts this may increase latency; provide a `STREAM_SCALE_ENABLED=1` opt-in flag
+- Aspect ratio padding changes the visual appearance of content that was previously passed through at native resolution; document this clearly
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm test:fresh-db
+pnpm test:fresh-compose
+pnpm test:queue-continuity
+pnpm exec vitest run tests/unit/on-air-scene.test.ts
+pnpm --filter worker build
+```
+
+---
+
+## M25 In-Stream Engagement Layer
+
+Status: complete
+
+**Scope**
+
+- Add a Twitch IRC chat connection in the worker (reuse existing Twitch auth) that pushes incoming messages to a short in-memory ring buffer
+- Add `/api/overlay/events` SSE endpoint that streams chat messages and alert events to the overlay page
+- Add a chat overlay component to the overlay page that renders incoming messages, with quiet/active/flood display modes
+- Add Twitch EventSub webhook handling for `channel.follow` and `channel.subscribe` events; automatic registration is covered by M28
+- Add an alert animation component to the overlay page for follow and sub alerts
+- Add an `Overlays` admin section with controls for chat overlay and alert settings (position, style, rate, enable/disable)
+- Engagement features are disabled by default (`STREAM_CHAT_OVERLAY_ENABLED=0`, `STREAM_ALERTS_ENABLED=0`)
+
+**Acceptance Criteria**
+
+- Chat messages from Twitch IRC appear in the composited stream overlay within 3 seconds of being sent
+- Follow alerts show a timed animation in the stream on Twitch EventSub `channel.follow` events
+- Sub alerts show a timed animation in the stream on Twitch EventSub `channel.subscribe` events
+- Chat and alerts work at 360p output (no text clipping or layout breakage)
+- All engagement features are disabled by default and require explicit opt-in
+- The Overlays admin section shows current state (connected/disconnected, recent events)
+- Disabling chat overlay or alerts takes effect within one Chromium capture cycle (max `SCENE_RENDER_INTERVAL_MS`)
+
+**Touched Areas**
+
+- `apps/worker/src/index.ts` (IRC chat)
+- `apps/web/app/api/overlay/events/route.ts` (SSE endpoint and EventSub webhook receiver)
+- `apps/web/app/(admin)/overlays/` (new admin section)
+- `apps/web/app/overlay/page.tsx` (chat and alert components)
+- `packages/db/src/index.ts` (engagement settings)
+- `stack.env.example`, `docs/deployment.md`, `docs/twitch-setup.md`
+- tests: unit tests for IRC message buffer, EventSub handler, SSE event routing; browser smoke for overlay events
+
+**Dependencies**
+
+- M21 (overlay pipeline must be clean before adding engagement layer)
+- M24 (360p scaling must be in place before engagement layer rendering is tested at low resolution)
+
+**Risks**
+
+- EventSub requires a publicly reachable HTTPS `APP_URL`; document that localhost installs cannot receive EventSub webhooks
+- IRC and EventSub connections add two new persistent outgoing connections from the worker; monitor for connection leak
+- Rate-limiting chat messages is critical to prevent overlay spam during busy streams; implement the flood protection mode before shipping
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm test:fresh-db
+pnpm test:fresh-compose
+pnpm test:e2e:smoke
+pnpm --filter worker build
+pnpm --filter web typecheck
+```
+
+---
+
+## M26 UI Redesign V1
+
+Status: complete
+
+**Scope**
+
+- Implement the updated navigation structure from `docs/ui-redesign-spec.md`: `Control Room`, `Programming`, `Stream Studio`, `Workspace` top-level groups
+- Add `Overlays` page under `Stream Studio` (built in M25)
+- Add `Output` page under `Stream Studio` (built in M24)
+- Apply consistent long-title safety across all admin surfaces: `truncate` for single-line labels, `line-clamp-2` for card content, stacked layout for all multi-field forms
+- Modernize card, table, and form styles: cleaner spacing, consistent color usage, better contrast
+- Fix all known layout breakage sites: overlay designer layer names, schedule block editor, source list long names
+- Preserve all existing routes (no breaking URL changes)
+- Update browser smoke to cover redesigned navigation paths
+
+**Acceptance Criteria**
+
+- Navigation matches the redesign IA groupings
+- No layout overflow, breakage, or clipping with video titles of 80–140 characters
+- All multi-field forms use stacked layout (label above input, full width)
+- Existing browser smoke passes on all redesigned pages
+- `pnpm validate` and Docker image builds pass
+
+**Touched Areas**
+
+- `apps/web/app/(admin)/` (navigation layout, all page components)
+- `apps/web/components/` (shared card, form, badge components)
+- tests: browser smoke update
+- docs: update `docs/ui-redesign-spec.md` and active product docs with completed redesign notes
+
+**Dependencies**
+
+- M22, M23, M24, M25 should be complete or nearly complete to avoid redesign churn
+
+**Risks**
+
+- Scope creep: define "V1" strictly as layout/navigation/typography/safety, not a full component library rewrite
+- Test coverage: the browser smoke must cover enough pages to catch regressions early
+
+**Validation**
+
+```bash
+pnpm validate
+docker build -f docker/web.Dockerfile -t stream247-web:test .
+pnpm test:e2e:smoke
+pnpm --filter web typecheck
+```
+
+---
+
+## M27 Container Reliability And Ops
+
+Status: complete
+
+**Scope**
+
+- Audit SSE connection handling in `apps/web`: ensure every SSE response sets appropriate `Connection: close` behavior on client disconnect and that the Node.js process does not accumulate unclosed file descriptors under connection churn
+- Add SSE connection count to the `/api/system/readiness` response so operators can see how many active overlay/broadcast connections exist
+- Extend the soak monitor to report per-container restart counts and flag unexpected restarts as soak failures
+- Document the long-run Chromium memory growth baseline from existing DUT soak runs
+- Tune worker and playout health check intervals based on DUT soak observations
+
+**Acceptance Criteria**
+
+- SSE connections are explicitly cleaned up on `res.on('close', ...)` in all SSE route handlers
+- `/api/system/readiness` includes `sseConnections: number` in its response
+- `scripts/soak-monitor.sh` reports container restart counts and fails if `web`, `worker`, or `playout` restarted more than once during the soak window
+- Long-run Chromium memory profile is documented in `docs/operations.md`
+
+**Touched Areas**
+
+- `apps/web/app/api/broadcast/stream/route.ts` and other SSE routes
+- `apps/web/lib/server/` (SSE connection tracking)
+- `scripts/soak-monitor.sh`
+- `docs/operations.md`
+- tests: SSE cleanup unit test
+
+**Dependencies**
+
+- None (can run alongside any product milestone)
+
+**Risks**
+
+- Low risk — all changes are additive monitoring and cleanup; no playout pipeline changes
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm --filter web typecheck
+pnpm exec vitest run tests/unit/
+./scripts/soak-monitor.sh --hours 1    # abbreviated local check
+```
+
+---
+
+## M28 Phase 3 Audit Stabilization
+
+Status: complete
+
+**Scope**
+
+- Add automatic Twitch EventSub webhook registration for `channel.follow` and `channel.subscribe` when alert runtime is enabled, Twitch is connected, `APP_URL` is public HTTPS, and `TWITCH_EVENTSUB_SECRET` plus Twitch client credentials are configured
+- Verify existing EventSub subscriptions before creating new ones, and delete only Stream247-owned follow/sub webhook subscriptions when alerts are disabled
+- Replace the final viewer-facing "Scheduling next item" fallback with "Coming up next"
+- Align Phase 3 docs with the shipped M21-M27 state and caveats found in the acceptance audit
+
+**Caveats**
+
+- Twitch accounts connected before M28 may need to reconnect once so the app receives `moderator:read:followers` and `channel:read:subscriptions`; no manual Twitch CLI subscription step is required after that
+- Safe-area clamping shipped later in M31; M24 still only covered output profiles, viewport alignment, and scaling at the time it landed
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/engagement.test.ts
+pnpm exec vitest run tests/unit/overlay-scenes.test.ts
+pnpm validate
+```
+
+---
+
+## Phase 4 — Cleanup, Component System, And Remaining Features
+
+Phase 4 addresses the gaps identified in the 2026-04-21 product reset audit. Milestones are ordered by risk and dependency: critical behavior fixes first, navigation second, component system third, docs cleanup fourth, then feature additions.
+
+Reference documents:
+- `docs/full-product-reset-audit.md` — what exists and what is broken
+- `docs/full-product-reset-plan.md` — target product state
+- `docs/legacy-removal-list.md` — remove/keep/replace decisions
+- `docs/ui-redesign-spec.md` — component and navigation implementation spec
+- `docs/docs-reset-plan.md` — doc cleanup plan
+
+| Milestone | Type | Priority | Status | Goal |
+| --- | --- | --- | --- | --- |
+| M29 | Feature fix | Now | Complete | React component primitives + `!here` chat command dispatch |
+| M30 | UX | Now | Complete | Navigation cleanup shipped: split Library and Pools, moved Sources to Workspace, removed sidebar descriptions |
+| M31 | Feature fix | Now | Complete | Overlay safe-area clamping and CSS variable wiring |
+| M32 | Feature | Next | Complete | Donation and bits alerts shipped: Twitch EventSub `channel.cheer` + channel-point redemptions |
+| M33 | Feature | Later | Complete | Multi-quality simultaneous RTMP output |
+| M34 | Docs | Now | Complete | Delete legacy docs, merge redundant docs, final doc set |
+| M35 | Feature | Next | Complete | Twitch LIVE badge with viewer count in Broadcast page |
+
+---
+
+## M29 React Component Primitives And Chat Command Dispatch
+
+Status: complete 2026-04-21
+
+**Goal**
+
+Create the typed React component primitive layer (`Button`, `Card`, `Badge`, `Input`, `Select`, `PageHeader`, `StatusChip`) that makes the existing CSS system safe to use. Simultaneously fix the broken `!here` moderation command by implementing the IRC chat command parser in `TwitchChatBridge`.
+
+These are bundled because both are "the thing that was promised but doesn't actually work" fixes.
+
+**Scope**
+
+- Create `apps/web/components/ui/Badge.tsx` — never renders when content is empty, whitespace, or `"[]"`; all variants map to existing CSS classes
+- Create `apps/web/components/ui/Button.tsx` — primary/secondary/danger/ghost variants; loading state; maps to existing CSS classes
+- Create `apps/web/components/ui/Card.tsx` — padding variants, optional header/footer
+- Create `apps/web/components/ui/Input.tsx` — stacked label layout, hint/error, optional char count
+- Create `apps/web/components/ui/Select.tsx` — stacked label layout, native `<select>`
+- Create `apps/web/components/ui/PageHeader.tsx` — title, subtitle, optional actions slot
+- Create `apps/web/components/ui/StatusChip.tsx` — status variants (ok/degraded/not-ready/unknown/live/offline)
+- Update `apps/web/components/overlay-scene-canvas.tsx` to use `Badge` primitive
+- Add a command parser to `apps/worker/src/twitch-engagement.ts` that scans incoming IRC messages for command patterns
+- Wire the `!here [minutes]` command to update the moderation presence window in the DB
+- The IRC bridge does not need to send chat replies for M29 — update the DB state only
+
+**Touched areas**
+
+- `apps/web/components/ui/` (new directory, 7 new files)
+- `apps/web/components/overlay-scene-canvas.tsx`
+- `apps/worker/src/twitch-engagement.ts`
+- `apps/worker/src/index.ts` (wire command handler registration)
+- `packages/db/src/index.ts` (verify updatePresenceWindow or equivalent exists)
+
+**Acceptance criteria**
+
+- All 7 primitives exist in `apps/web/components/ui/`
+- `Badge` never renders when children is empty/whitespace/`"[]"`
+- `Input` and `Select` always use stacked label layout
+- `overlay-scene-canvas.tsx` uses `Badge` primitive
+- An operator sending `!here 30` in Twitch chat updates the moderation presence window in the DB
+- `/api/moderation/presence` reflects the updated window after the command fires
+- Existing emote-only automation triggers correctly after a presence update via chat command
+- `pnpm validate` passes
+- Existing browser smoke tests pass
+- Unit test for the command parser (valid command, invalid command, wrong prefix, missing minutes)
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/
+pnpm validate
+```
+
+**Risks**
+
+- Low for component primitives. The CSS classes already exist. Components are wrappers.
+- Low for chat command dispatch. IRC connection exists. DB logic exists. This is wiring.
+- Risk of regression: existing badge rendering in `overlay-scene-canvas.tsx` must not change behavior — the `Badge` primitive enforces the same guard that `visibleOverlayText` currently provides.
+
+---
+
+## M30 Navigation Cleanup
+
+Status: complete 2026-04-21
+
+**Goal**
+
+Implement the target navigation structure from `docs/ui-redesign-spec.md`: split the Library nav item, move Sources to Workspace, add Pools as a standalone Programming item, remove the Operations nav item (merge incidents into Dashboard), remove sidebar section description paragraphs.
+
+**Scope**
+
+- Remove the `description` field from all nav section objects in `apps/web/components/admin-navigation.tsx`
+- Add `title` attribute to all nav link elements for tooltip on truncation
+- Implement the new 4-section, 11-link navigation structure
+- Create `/library` route serving asset and upload management (currently at `/sources`)
+- Create `/pools` route serving pool management (currently nested inside the sources page)
+- Narrow `/sources` to ingest pipeline management only (YouTube, Twitch, direct URL, upload sources)
+- Add 301 redirect from `/ops` to `/dashboard`
+- Move incidents display from the Operations page to Dashboard page
+- Update `apps/web/(admin)/dashboard/page.tsx` to include an incidents section
+
+**Touched areas**
+
+- `apps/web/components/admin-navigation.tsx`
+- `apps/web/app/(admin)/layout.tsx`
+- `apps/web/app/(admin)/dashboard/page.tsx` (add incidents)
+- `apps/web/app/(admin)/ops/page.tsx` (replace content with redirect)
+- `apps/web/app/(admin)/library/` (new route, move asset/upload content from `/sources`)
+- `apps/web/app/(admin)/pools/` (new route, move pool content from `/sources`)
+- `apps/web/app/(admin)/sources/` (narrow to ingest pipeline content only)
+
+**Acceptance criteria**
+
+- Sidebar has no description paragraphs under section headers
+- All nav items have `title` attribute
+- Navigation matches the 11-link spec: Broadcast, Dashboard (Live); Schedule, Pools, Library (Programming); Scene Studio, Overlays, Output (Stream Studio); Sources, Team, Settings (Workspace)
+- `/ops` redirects to `/dashboard`
+- Incidents are visible on the Dashboard page
+- `/pools` shows pool management and works correctly
+- `/library` shows asset and upload management and works correctly
+- `/sources` shows ingest pipeline management only
+- No broken links or navigation dead-ends
+- `pnpm validate` passes
+- Browser smoke test covers all 12 navigation items
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/browser/
+pnpm validate
+```
+
+**Risks**
+
+- Medium. Route changes require updating all internal links that reference `/sources` for assets. Audit all `href="/sources"` references before creating the new routes.
+- Redirect from `/ops` must not break any existing bookmark or external link. Use 301.
+- Pool management page may need to be extracted from the sources page component — check component coupling before splitting.
+
+**Progress Notes**
+
+- Completed 2026-04-21. The sidebar now uses the 4-section, 11-link IA from `docs/ui-redesign-spec.md`, `/library` and `/pools` are standalone admin routes, `/sources` is narrowed to ingest pipelines, Dashboard owns incident history, and `/ops` permanently redirects to `/dashboard`.
+
+---
+
+## M31 Overlay Safe-Area Clamping
+
+Status: complete 2026-04-21
+
+**Goal**
+
+Implement the safe-area CSS variables that were planned in M24 but deferred. Wire up `--overlay-output-width` and `--overlay-output-height` in `globals.css`. Ensure all positioned overlay layers and engagement widgets respect safe-area boundaries by default.
+
+**Scope**
+
+- Add `--safe-area-top/right/bottom/left` CSS custom properties to `:root` in `apps/web/app/globals.css`, computed from `--overlay-height` and `--overlay-width`
+- Verify `--overlay-output-width` and `--overlay-output-height` (set in `live-overlay.tsx`) are consumed in the CSS
+- Audit all positioned overlay components and add safe-area-aware container defaults
+- Verify all overlay text components use `calc(Xpx * var(--overlay-scale))` for font sizes — fix any that do not
+- Enforce minimum font size floor: `max(12px, calc(14px * var(--overlay-scale)))`
+- Engagement layer (chat overlay, alerts) positions must respect safe-area containers
+
+**Touched areas**
+
+- `apps/web/app/globals.css`
+- `apps/web/components/live-overlay.tsx`
+- `apps/web/components/overlay-scene-canvas.tsx`
+- `apps/web/components/engagement-overlay.tsx`
+- `apps/web/app/overlay/page.tsx`
+
+**Acceptance criteria**
+
+- Safe-area CSS variables exist in `:root` and are computed correctly for all output profiles
+- `--overlay-output-width` and `--overlay-output-height` are consumed by the CSS (not just set)
+- No positioned overlay layer renders outside the safe area by default on any output profile (720p, 480p, 360p, 1080p)
+- At 360p output, all overlay text is legible (minimum 12px rendered)
+- Chat overlay and alert components render within the safe area
+- `pnpm validate` passes
+- Visual review at 360p, 720p, and 1080p output profiles
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/overlay-scenes.test.ts
+pnpm validate
+```
+
+**Risks**
+
+- Medium. CSS changes to the overlay can cause visual regressions in the in-stream output. Test all output profiles.
+- Engagement layer position options (bottom-left, bottom-right, top-left, top-right) must still work after safe-area containers are applied.
+
+**Progress Notes**
+
+- Completed 2026-04-21. `globals.css` now computes safe-area variables from the active output width and height, consumes `--overlay-output-width` and `--overlay-output-height` in the public overlay layout, and enforces a 12px minimum text floor through `calc(... * var(--overlay-scale))` font sizing.
+- Positioned custom Scene Studio layers now clamp into the safe-area coordinate space by default, and engagement chat/alert positions use the same safe-area insets instead of raw card padding.
+
+---
+
+## M32 Donation And Bits Alerts
+
+Status: complete
+
+**Goal**
+
+Implement Twitch EventSub `channel.cheer` and `channel.channel_points_custom_reward_redemption.add` alerts. Add a "donations/bits" section to the Overlays admin page.
+
+**Scope**
+
+- Add `channel.cheer` and `channel.channel_points_custom_reward_redemption.add` to `REQUIRED_TWITCH_EVENTSUB_SUBSCRIPTIONS` in `apps/worker/src/twitch-eventsub.ts`
+- Add webhook handling for these event types in `apps/web/app/api/overlay/events/route.ts`
+- Add alert rendering in `apps/web/components/engagement-overlay.tsx` for cheer and channel-point events
+- Add controls in `apps/web/app/(admin)/overlays/page.tsx` for cheer and channel-point alerts (enable/disable, shared position/style)
+- Store alert preferences per-type in `engagement_settings` (add `donations_enabled` and `channel_points_enabled` columns)
+- Additive schema migration
+
+**Progress notes**
+
+- Completed on 2026-04-21.
+- Added per-type `donations_enabled` and `channel_points_enabled` settings with additive migration coverage.
+- EventSub sync now registers and safely cleans up cheer/channel-point subscriptions without creating duplicates.
+- Broadcasters connected before M32 must reconnect once so `bits:read` and `channel:read:redemptions` are granted.
+
+**Touched areas**
+
+- `apps/worker/src/twitch-eventsub.ts`
+- `apps/web/app/api/overlay/events/route.ts`
+- `apps/web/components/engagement-overlay.tsx`
+- `apps/web/(admin)/overlays/page.tsx`
+- `packages/db/src/index.ts` (additive migration for `donations_enabled`, `channel_points_enabled`)
+
+**Acceptance criteria**
+
+- Cheer events received from Twitch EventSub display as alerts in the in-stream overlay
+- Channel-point redemption events display as alerts
+- Overlays admin page has controls for donation/channel-point alerts
+- Existing follow/sub alerts continue to work
+- `pnpm validate` passes
+- `pnpm test:fresh-compose` passes (behavioral parity)
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/engagement.test.ts
+pnpm test:fresh-compose
+pnpm validate
+```
+
+**Risks**
+
+- Medium. New EventSub subscription types require new broadcaster OAuth scopes. Document the reconnect requirement clearly.
+- `channel.channel_points_custom_reward_redemption.add` requires a custom reward to be configured on the Twitch channel. Test with a real Twitch broadcaster account.
+
+---
+
+## M33 Multi-Quality Simultaneous Output
+
+Status: complete 2026-04-21
+
+**Goal**
+
+Support sending the stream to multiple destinations at different output profiles simultaneously (e.g., 720p to Twitch + 360p to YouTube).
+
+**Scope**
+
+- Add per-destination output profile assignment in destination settings
+- When multiple destinations have different output profiles, spawn a separate scale+encode process per destination (or use a transcoding relay layer)
+- Update the admin Output page to show per-destination profile configuration
+- Update the multi-output pipeline in `apps/worker/src/multi-output.ts`
+
+**Note:** This is the most architecturally complex Phase 4 milestone. The correct approach depends on whether parallel FFmpeg encode processes or a MediaMTX relay fanout is used. Scope this milestone carefully before starting implementation.
+
+**Design note**
+
+- Keep the existing relay/program-feed fanout as the shared source of truth.
+- Each destination resolves to either the inherited stream profile or a fixed named destination profile.
+- Destinations that resolve to the same effective rendition share one uplink FFmpeg process and one tee muxer output.
+- Mixed effective renditions spawn parallel uplink FFmpeg processes from the shared relay/program feed.
+- The single-rendition path remains the default when every active destination inherits the same output settings.
+- Pinning a destination above the stream profile upscales the shared feed and increases CPU cost; prefer inherit or lower fixed presets unless there is a clear reason.
+
+**Touched areas**
+
+- `apps/worker/src/multi-output.ts`
+- `apps/worker/src/ffmpeg-runtime.ts`
+- `apps/worker/src/index.ts`
+- `packages/db/src/index.ts` (per-destination output profile storage)
+- `apps/web/(admin)/output/page.tsx`
+
+**Acceptance criteria**
+
+- Two active destinations can run at different output profiles simultaneously
+- Stream quality to each destination matches its configured profile
+- Admin UI shows per-destination profile selection
+- Primary/backup routing continues to work with per-destination profiles
+- `pnpm test:fresh-compose` passes
+
+**Validation**
+
+```bash
+pnpm test:fresh-compose
+pnpm validate
+```
+
+**Risks**
+
+- High. Architectural change to the playout pipeline. Plan carefully before implementing.
+- CPU/resource impact of multiple simultaneous encode processes must be documented.
+- Rollback: keep single-profile path as the default; per-destination profiles are additive.
+
+**Progress Notes**
+
+- Completed 2026-04-21. Destinations now persist `outputProfileId`, the admin Output page exposes per-destination rendition selection, and the worker groups active destinations by effective output settings so mixed renditions can run in parallel from the shared relay/program feed.
+- The default path is still single-rendition `inherit`, and fixed profiles below the stream profile are the intended production use. Pinning a destination above the stream profile works but upscales the shared feed and increases encoder CPU cost.
+
+---
+
+## M34 Documentation Cleanup
+
+Status: complete 2026-04-21
+
+**Goal**
+
+Execute the doc reset defined in `docs/docs-reset-plan.md`. Delete legacy docs, merge redundant docs, produce the minimal final doc set.
+
+**Scope**
+
+- Delete: `docs/stream247-upstream-gyre-gap-analysis.md`, `docs/redesign-and-product-plan.md`, `docs/video-planning-and-metadata-model.md`, `docs/in-stream-overlay-and-output-strategy.md`, `docs/upstream-gap-analysis.md`, `docs/upstream-roadmap.md`
+- Merge `docs/backup-and-restore.md` content into `docs/operations.md`, then delete `docs/backup-and-restore.md`
+- Merge `docs/upgrading.md` content into `docs/deployment.md`, then delete `docs/upgrading.md`
+- Merge `docs/versioning.md` content into `docs/deployment.md`, then delete `docs/versioning.md`
+- Audit `README.md` and remove any language suggesting `/overlay` can be used as an OBS overlay URL
+- Audit remaining docs for references to deleted files and update or remove those references
+- Update `docs/upstream-gap-analysis.md` replacement language in any files that reference it, pointing to `docs/full-product-reset-audit.md` instead
+
+**Touched areas**
+
+- `docs/` (11 files deleted or merged)
+- `README.md`
+
+**Acceptance criteria**
+
+- `docs/` contains the final doc set from `docs/docs-reset-plan.md`
+- No doc references another doc that no longer exists
+- `README.md` does not suggest `/overlay` is an OBS overlay URL
+- `pnpm validate` passes (no code changes, but validate confirms nothing broke)
+
+**Validation**
+
+```bash
+pnpm validate
+```
+
+**Risks**
+
+- Low. Pure documentation changes. The only risk is breaking a link that another doc depends on.
+
+**Progress Notes**
+
+- Completed 2026-04-21. The final `/docs` set now keeps the active operator references plus the Phase 4 reset artifacts, with legacy planning and competitive-analysis files removed from the shipped documentation surface.
+- `docs/operations.md` now owns backup/restore guidance, `docs/deployment.md` now owns release-channel and upgrade guidance, and `README.md` no longer presents `/overlay` as an external OBS/browser-source surface.
+
+---
+
+## M35 Twitch Live Status Widget
+
+Status: complete 2026-04-21
+
+**Goal**
+
+Show a prominent "LIVE" badge with viewer count in the Broadcast page when the connected Twitch broadcaster is currently live. Show "OFFLINE" when not live.
+
+**Scope**
+
+- Add a Twitch API poll in the worker: `GET /helix/streams?user_id=${broadcasterId}` every 60 seconds
+- Store the result (`live | offline | unknown`) in broadcast state (app state or broadcast snapshot)
+- Expose it through the broadcast state SSE snapshot
+- Add a `StatusChip` component (using the M29 primitive) to `apps/web/components/broadcast-control-room.tsx` showing live status and viewer count
+- Use the existing Twitch app access token for the poll — no new auth flow
+
+**Touched areas**
+
+- `apps/worker/src/index.ts` (add poll loop) or extract to `apps/worker/src/twitch-sync.ts`
+- `packages/db/src/index.ts` (add `twitchLiveStatus` and `twitchViewerCount` to broadcast snapshot)
+- `apps/web/components/broadcast-control-room.tsx`
+
+**Acceptance criteria**
+
+- Broadcast page shows "LIVE [viewer count]" when the Twitch channel is live
+- Broadcast page shows "OFFLINE" when the Twitch channel is not live
+- State reflects actual Twitch status within 2 minutes of a go-live or go-offline event
+- Shows "unknown" when Twitch is not connected — never an error state
+- `pnpm validate` passes
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/
+pnpm validate
+```
+
+**Risks**
+
+- Low. Read-only Twitch API call. Uses existing app token pattern.
+- Rate limit: `GET /helix/streams` allows 800 requests per minute per app token. A 60-second poll is well within limits.
+- Must not affect broadcast reliability if the Twitch API is slow or unavailable — poll must be non-blocking and fail silently.
+
+**Progress Notes**
+
+- Completed 2026-04-21. The worker now polls Twitch `helix/streams` with the existing client-credentials app-token flow every 60 seconds and persists a lightweight `live | offline | unknown` snapshot plus viewer count on the Twitch connection state.
+- Broadcast SSE snapshots now expose that live-state summary, and the Broadcast header renders a `StatusChip` showing `LIVE <count>`, `OFFLINE`, or `UNKNOWN` without adding a new auth flow or operator-only error mode.
+
+---
+
+## Phase 5 — Broadcast-Kanal, Wizard, Kapitel, Chat-Spiele, Selbstschutz
+
+Phase 5 captures the product vision confirmed on 2026-08-25. Ordering follows dependency: the
+broadcast-channel split first, because chat, metadata, chapters and games all land on the wrong
+channel until it exists.
+
+Context that motivates M51: the stream key sends video to **jimpanse247**, but the connected OAuth
+account is **3jakec** (a moderator there). Verified in code: the chat bridge joins the connected
+account's own channel, metadata sync PATCHes the connected account's channel, and the public watch
+link points at it. Everything Twitch-facing therefore talks to the wrong room today.
+
+| Milestone | Type | Priority | Status | Goal |
+| --- | --- | --- | --- | --- |
+| M51 | Architecture fix | Now | Done | Separate the broadcast channel from the connected identity; chat and moderation work via the mod account now, metadata via a broadcaster connection later. Verified live 2026-08-25: chat bridge rejoined #jimpanse247 within one cycle of the setting change |
+| M52 | UX | Now | Done | First-run wizard covering everything that lives in `.env` today |
+| M53 | Feature | Next | Done | Chapters per video: category and stream title per chapter, auto-ingested from VOD metadata, synced at chapter boundaries |
+| M54 | Feature | Next | Done | Chat game framework with Snake as the first game (emote-per-direction, moves only on input); Minesweeper (chat digs by coordinates like "b3") and 2048 (snake's emote map on a fixed 4x4 board) follow on the same framework |
+| M55 | Ops | Later | Done | Global disk watermark self-protection with staged cache eviction |
+| M56 | UX | Now | Done | Every operational decision configurable in the GUI, `.env` demoted to fallback. Part 1 done: encoder quality, disk watermark, engagement/schedule-sync feature switches, EventSub secret. Part 2 done: replay (VOD) cache family, watchdog/stall thresholds, reconnect + program-feed tuning — clamped resolvers in core, three folded admin groups with partial routes; SMTP/alert family confirmed already GUI-complete. Deliberately env-only: cache root, relay topology, loop stall guard. Part 3 done: the unused redis service is out of compose, the stack scripts, the env examples and the docs |
+| M57 | Feature | Now | In progress | Embedded video sources as scene layers. Stage 1 done: source layer kind (placement + reference), encrypted feed store, snapshot sampler at managed cadence rendering through the native overlay — plus logo/image/text layers on air. Stage 2 in progress: ingest foundation + attach decision (A+B) and the live attach itself (C+D) done — push ingest via relay with HTTP auth, publish keys, derived internal read URLs, presence poll, and the third ffmpeg input wired as a PiP under the scene with audio mixed at the configured gain, breaker armed on a failed attach; Etappe E done — the audited owner/admin reveal of the relay rollback lines (the emergency path relay auth had made unusable), the live source gain field with the known-duration caveat, and the last attach decision shown per pushed source (migration `20260826_004`); open: a mandatory DT soak gate before any deploy, plus per-layer cadence |
+| M58 | Ops | Now | Done | Make the incident list truthful: classify every fingerprint family as a lasting state or a finished event, close event incidents once their area is provably healthy, and stop the per-asset fingerprint explosion |
+
+## M51 Broadcast Channel Split
+
+Introduce a broadcast-channel concept (`jimpanse247`) distinct from the connected identity
+(`3jakec`). Decision 2026-08-25: both connections must be possible — the identity connection for
+chat and moderation, an optional broadcaster connection for channel metadata. The broadcaster
+account is not accessible today but will be again; until it is connected, metadata sync must
+visibly wait instead of silently patching the identity's channel.
+
+- Add a broadcast-channel setting (login), editable in the workspace; default empty means "same as
+  connected identity" for setups without the split
+- Chat bridge joins the broadcast channel with the identity token; emote-only and chat settings go
+  through Helix with `broadcaster_id=<channel>&moderator_id=<identity>`, which a moderator token is
+  allowed to do
+- Title/category/schedule sync runs only through a broadcaster-scoped connection (second OAuth slot,
+  minimal scopes `channel:manage:broadcast` + schedule); absent that connection the sync reports
+  "waiting for broadcast channel connection" as a visible state, not an error
+- Live status, viewer counts and every public link (watch link, overlay hints) use the broadcast
+  channel
+- Acceptance: with only 3jakec connected, chat interaction and `!here` work in `#jimpanse247`, and
+  no Helix write ever targets 3jakec's channel; connecting jimpanse247 later flips metadata sync on
+  without a restart
+- Rollback: broadcast-channel setting empty restores the previous single-account behaviour
+
+**Progress Notes**
+
+- 2026-08-25: The split is in place. `twitchBroadcastChannelLogin` lives in the managed config
+  (validated as a Twitch login, empty = identity = rollback), the chat bridge joins the broadcast
+  channel while authenticating as the identity, emote-only goes through Helix chat-settings with
+  `broadcaster_id=<channel>&moderator_id=<identity>` (channel id resolved by login, cached), and
+  live status, viewer count and the watch link follow the broadcast channel via login-based
+  streams lookup. Title/category/schedule writes are gated: with a split and no matching
+  broadcaster connection they skip every Helix write and report "waiting for broadcast channel
+  connection" as an info incident, on the dashboard, and in the connection panel. The second OAuth
+  slot exists as `twitch_broadcaster_connection` (additive table) plus a dashboard entry naming
+  the required account and scopes; once a matching connection exists the sync writes with its
+  token, so connecting later flips metadata on without a restart.
+- 2026-08-25 (later): the broadcaster-slot OAuth flow is built, separate from the identity flow
+  end to end so the existing callback can never store into the wrong slot: its own start route
+  (`/api/integrations/twitch/connect-broadcaster`, only the two metadata scopes), its own
+  namespaced single-use state cookie, and its own callback that — before storing anything —
+  verifies the authorised Twitch login matches the configured broadcast channel
+  (case-insensitive) and rejects mismatches (most likely the identity signing in again) with a
+  message naming both accounts. The waiting entry in the connection panel is now the actual
+  connect link, a connected slot gets a disconnect button, and the worker refreshes the slot
+  token ahead of expiry and on 401 exactly like the identity's. Exercised through unit tests
+  with mocked Twitch endpoints (the wrong-account guard is mutation-tested); a live end-to-end
+  run still waits on the broadcaster account becoming accessible again.
+
+## M52 Setup Wizard
+
+A guided first-run that replaces manual `.env` editing for everything except what Compose itself
+provides. Decision 2026-08-25: all of it — the theoretical target is a stack that starts with no
+hand-written env file; source/schedule/destination remain ordinary workspace tasks after setup.
+
+- `APP_SECRET` is generated on first boot and persisted (data volume / managed config), never typed
+- `DATABASE_URL` stays an internal Compose default pointing at the bundled Postgres
+- Wizard steps: instance basics (`APP_URL`, timezone) → Twitch app credentials (already encrypted
+  managed config) → identity connection → optional broadcaster connection (M51) → done; each step
+  skippable and resumable, with the go-live checklist reflecting wizard completion
+- Acceptance: a fresh `docker compose up` with no `.env` beyond compose defaults reaches a working,
+  connected workspace entirely through the browser
+- Rollback: env variables keep overriding wizard-written values, so existing installs are untouched
+
+## M53 Chapters Per Video
+
+Per-asset chapters, each carrying its own category and stream title. Decision 2026-08-25: multiple
+categories per source with chapter switches inside a VOD, and both category and title settable per
+chapter.
+
+- Schema: chapter list per asset `[{offsetSeconds, categoryName, title}]`, additive column
+- Ingest fills chapters from VOD metadata where the source provides it (yt-dlp chapter data for
+  Twitch/YouTube); single-chapter fallback is today's per-video category
+- Library UI: chapter editor per video (add/remove/edit offset, category, title)
+- Playout emits chapter-boundary events; the Twitch metadata sync (via M51 broadcaster connection)
+  applies category and title at each boundary, throttled to Twitch's tolerance
+- Acceptance: a VOD with three chapters changes category and title on the broadcast channel at the
+  right offsets; a video without chapter data behaves exactly as today
+- Rollback: empty chapter lists disable the whole path
+
+## M54 Chat Game Framework And Snake
+
+An extensible framework for chat-driven games rendered into the on-air overlay, with Snake first.
+Decision 2026-08-25: every emote maps to a direction (configurable mapping, one emote = one
+direction), and the snake does not move on its own — it moves only when chat inputs arrive. More
+games follow on the same framework.
+
+- Framework: a game is an engagement module with chat-input intake, a tick/state model, an overlay
+  layer for rendering (native renderer runs at one frame per second, which suits input-driven
+  games), and per-game settings in the studio
+- Snake: configurable emote→direction map, grid size, and reset behaviour; moves exactly one cell
+  per accepted chat input; scoreboard line optional
+- Games are enabled per scene like other layers, and the moderation presence model applies (games
+  can run in emote-only, since emotes are the input)
+- Acceptance: an operator enables Snake, maps four emotes, and chat in the broadcast channel steers
+  it on air; disabling the layer removes all game state cleanly
+- Rollback: game layers off = no game code in the render path
+
+## M55 Global Disk Self-Protection
+
+Extend the existing per-cache guardrails (VOD cache min-free-bytes, feed segment sweep) into one
+disk watermark monitor. When free space crosses a threshold: staged eviction — unused VOD cache
+first, then orphaned feed segments beyond the live window, then oldest thumbnails — with an
+incident naming what was freed and why. Never touches media the schedule still references.
+
+## M56 Operational Settings In The GUI
+
+Product vision: a GUI in which everything is configurable, `.env` unimportant. Every family moves
+on the managed-config pattern the Twitch credentials established: an encrypted managed value that
+wins when set, the env variable as fallback, one shared resolver in `packages/core` so web and
+worker can never drift. An empty managed value must never change what an existing env-driven
+install does — including the historical `=== "1"` semantics of the engagement runtime gates.
+
+Part 1 (done): encoder quality (speed preset, video bitrate ceiling, buffer size, audio bitrate)
+folded into the studio output tab; disk watermark (enabled, trigger, recover — pair validated
+before saving, rejected whole like the worker does) and the chat/alerts/schedule-sync feature
+switches folded into admin settings; the EventSub webhook secret in the managed credentials form
+with keep-on-empty secret semantics. The dead `packages/config` (`getConfig`: REDIS_URL,
+MOD_PRESENCE_*) is deleted.
+
+Part 2 (done): the replay (Twitch VOD) cache family, the watchdog/stall thresholds and the
+reconnect/program-feed tuning, as three folded groups in the admin settings operations panel,
+each with its own partial update route. These families configure guards, so every managed number
+is bounded: the API refuses out-of-range values with the reason, the shared resolver clamps a
+corrupted store, the feed-stall floor is pinned above the longest configurable segment, and a
+managed download timeout still passes the cycle-budget clamp. The SMTP/alert family was checked
+and is already fully GUI-capable (managed credentials form + `getManagedAlertConfig` /
+`getSmtpConfig`, both managed-first) — nothing was duplicated.
+
+Deliberately env-only, documented as such: `TWITCH_VOD_CACHE_ROOT` and
+`STREAM247_PROGRAM_FEED_DIR` (mount points are infrastructure), the relay topology
+(`STREAM247_RELAY_ENABLED`, relay URLs, `STREAM247_UPLINK_INPUT_MODE` — deploy wiring, and a GUI
+value contradicting the running compose file would be a lie with a save button), and
+`STREAM247_LOOP_STALL_TIMEOUT_SECONDS` (the process's own self-protection; the GUI must not be
+able to lower the guard that catches a wedged worker).
+
+Closed the last open part: the redis service compose provisioned although no code read it is
+gone from both compose files, the five stack-generating scripts, both env examples and the docs.
+
+- Acceptance: an operator changes the encoder preset in the studio, the next encoder start uses
+  it; clearing the field returns the install to its env-driven behaviour bit for bit
+- Acceptance (part 2): a watchdog threshold saved in the GUI is in effect on the next cycle
+  without a container restart; a value outside the safe bounds never persists
+- Rollback: clear the managed fields (empty = follow env) — no schema migration was involved
+
+## M57 Embedded Video Sources As Scene Layers
+
+Architecture decision (stage 1, settled): the playout ffmpeg keeps exactly two video inputs —
+programme feed and the overlay PNG pipe. An embedded camera/feed reaches the frame as an overlay
+panel at snapshot cadence: a short-lived capture process grabs one frame per interval, the native
+renderer inlines it as an image, and the encode can never stall on a third live input. No relay
+change, no additional ffmpeg input in stage 1.
+
+- The `source` custom layer carries placement plus a reference into `overlay_video_sources`; the
+  feed URL is encrypted at rest (app-secret key, destination stream-key custody: one writer, one
+  reader — the playout sampler), and only presence is ever listed
+- Away-behaviour (owner default): the layer is hidden on air, no frozen last picture; the studio
+  shows the outage as status. The visibility decision is one predicate in the layout so a later
+  "last picture + offline mark" stays a local change
+- Runtime gate `sourceLayerEnabled` defaults off; capture cadence is managed with env fallback
+  (default 5s); the sampler runs on the renderer loop, detached, timeout pinned under the cycle
+  stall budget; its directory is the cheapest disk-watermark stage
+- Stage 2 (in progress): the relay joins the loop. Etappen A+B are done — push ingest (RTMP +
+  SRT host ports, both owner-approved), relay HTTP auth against the web app, per-source publish
+  keys, the self-generating internal relay key, derived (never stored) internal read URLs, and
+  the per-cycle attach decision with presence poll and circuit breaker, logged but never acted
+  on. Etappen C-E stay open: the actual ffmpeg attach/detach path (which also arms the breaker),
+  the audio gain wiring (the resolver exists), and whatever operator surface the attach needs
+  beyond the feature switch
+
+## M58 Truthful Incident List
+
+The incident list is the surface an operator opens during an outage. Measured on the running
+channel on 2026-08-27 it held 50+ open entries, 40+ of them `critical`, the oldest from 5 July, and
+every single one described something that had finished long ago.
+
+- Classify every fingerprint family once, in one registry, as a **state** (a condition that holds
+  until it stops holding; the raising code already knows when that is) or an **event** (something
+  that happened and is over the moment it is written). A new reporting site must land in the
+  registry or the test suite refuses it
+- Close event incidents from outside, on proof that their area has been healthy and quiet for a
+  fixed window, using only measurements the runtime already writes
+- Collapse the per-asset ffmpeg-exit fingerprint into one family and clear the rows the old shape
+  left behind
+
+## Rollback Notes
+
+- Docs-only milestones roll back by reverting the doc commit.
+- Schema changes must be additive first, with a clear downgrade note before any destructive migration is considered.
+- Scene rendering work must preserve the current text-overlay path until the new renderer is proven stable.
+- Queue/transition milestones must preserve a safe compatibility path until continuity tests are green.
+- Multi-output milestones must keep current primary/backup delivery usable as the default fallback mode.
+- Phase 3 schema changes (M21: `title_prefix`, `hashtags_json`, `platform_notes`) are additive only; rollback by reverting migration and worker/web code while leaving the DB columns in place.
+- Output profile feature (M24) is fully opt-in; `STREAM_OUTPUT_*` env vars default to current hardcoded values so no behavioral change without explicit configuration.
+- Engagement layer (M25) is disabled by default; rollback by setting `STREAM_CHAT_OVERLAY_ENABLED=0` and `STREAM_ALERTS_ENABLED=0`.
+
+## Strict Done Definition
+
+- code complete
+- tests updated
+- `pnpm validate` passes
+- any needed smoke checks are run
+- docs updated
+- summary written with changed files, risks, and follow-up items
+
+## Progress Notes
+
+### 2026-08-27 — M58: The Incident List Says What Is Broken Now
+
+- **What was measured.** 50+ open incidents, 40+ `critical`, oldest 5 July. Verified in code: of
+  the ~45 fingerprint families the worker raises, only some called `resolveIncident` at all, and the
+  ones that never did were exactly the ones describing finished events — `playout.feed-audio`,
+  `playout.feed-stall`, `playout.ffmpeg.exit.*`, `playout.ffmpeg.stderr`, `playout.start.failed`,
+  `playout.switch.failed`, `uplink.ffmpeg.stderr`, `uplink.process.exit`, the four keyed
+  `uplink.*-stall` / `no-progress` / `discontinuity-storm` families, and both loop watchdogs. The
+  survey also corrected the starting assumption: the state families (disk watermarks, system volume,
+  every `twitch.*`, every `source.*`, `playout.no-asset`, `playout.output.missing`, the per-
+  destination cooldown) all already resolve themselves. The bug was never "resolution is missing",
+  it was "one of the two kinds of incident has no possible resolver at its reporting site".
+- **The registry.** `apps/worker/src/incident-classes.ts` holds every family with its kind, its
+  area and a written reason. Keyed families are allowed only where the key names a bounded,
+  configured thing — a destination, an output profile, a stored source. `tests/unit/incident-classes.test.ts`
+  reads every `fingerprint:` expression out of the worker source, including the literal prefix of a
+  template, and fails on anything unclassified: a new reporting site cannot avoid the decision.
+  Chosen over a branded-type wrapper because the repo already scans source in a dozen tests and
+  rewriting ~48 call sites for the same guarantee is diff, not safety. The first version of that
+  scanner had a hole exactly where it mattered: it took `raw.split("${")[0]` as the family prefix
+  and dropped empty results, so a template *beginning* with an interpolation vanished — and both
+  loop watchdogs are written `` `${mode}.loop.stalled` ``. The guard skipped the two families whose
+  incidents are the loudest thing in the list. A leading slot is now expanded when its values are an
+  enumerable union we know (`RuntimeMode`), and otherwise emitted as an unresolvable marker that no
+  registry entry can match, so the check goes red instead of quiet. Three tests cover it, including
+  one that feeds the scanner an invented `` `${somethingNew}.foo.bar` `` and proves it comes back
+  unclassified.
+- **The health proof, and the two versions of it that were wrong.** An adversarial review took the
+  first version apart with two demonstrations against the real module, both correct:
+  - `programFeedStatus` is written *only* by the playout and uplink processes (`updateProgramFeedRuntimeStatus`).
+    The worker, which runs the sweep, never recomputes it. Stop both processes and the last "fresh"
+    stands in the database forever — so a check on that word alone declared playout permanently
+    healthy and closed `playout.loop.crashed` and `playout.start.failed` *because* playout had died.
+    The direct-output branch had always checked heartbeat freshness; the asymmetry was the bug. Feed
+    mode now needs all three: the word, the playlist mtime (`programFeedUpdatedAt`, which keeps
+    ageing when nobody recomputes it) inside the same allowance `readProgramFeedRuntimeStatus` uses,
+    and a live playout heartbeat.
+  - a running uplink proved nothing. In hls mode `canBlameUplinkForStall` disarms every stall
+    watchdog while the feed is not fresh, so nothing restarts the process, `uplinkStartedAt` ages
+    past any window, and the cycle tail still writes status `running` with a fresh heartbeat. That
+    is verbatim the outage our own comment documents — 65 minutes running without encoding a frame
+    while the channel was dark — and the first version would have closed `uplink.no-progress.*` and
+    `uplink.process.exit` in the middle of it. The claim in that docstring, that every uplink event
+    restarts the process, is false on exactly this path. Uplink health now asks
+    `canBlameUplinkForStall` first (no armed watchdogs, no conclusion), then requires destinations
+    out of error and uptime longer than the *resolved* watchdog windows rather than a fixed ten
+    minutes — those are managed and can be raised to hours, and uptime is only evidence because a
+    watchdog would have fired.
+  - `getRunningUplinkStartedAt` took the oldest running process, so with several output profiles one
+    permanently crash-looping profile read as "up for 45 minutes" on its sibling's number. It now
+    takes the youngest, via `pickUplinkGroupStartedAt` in `uplink-progress.ts`. Everything that asks
+    "has the uplink been stable" — the sweep and the scheduled reconnect — means all of it.
+  - the worker area is the honest exception and the docstring now says so: the pass runs immediately
+    after the `worker.cycle` line it reads, so "the worker is alive" is close to a tautology. It is
+    kept for the case it does catch (a stale snapshot, or an audit write that is failing), not as
+    independent evidence. A relay that is switched off still counts as healthy: no uplink process
+    runs, so nothing there can be failing.
+- **Quiet has to outlast the fault's own cycle.** Ten minutes of silence says nothing about a fault
+  on a fifteen-minute cycle: it would be closed in every gap and reported again in every burst, and
+  the list would read green for ten minutes out of every fifteen while the channel kept falling
+  over. `upsertIncident` preserves `created_at` across a reopen, so first-to-last report is exactly
+  how long the family has been recurring, and the quiet demanded is `max(base, min(span, 6h))`. The
+  cap is where the requirement stops adding safety — an area measurably healthy and silent for six
+  hours is not mid-incident — and it is what keeps the July backlog closeable. A genuine one-off has
+  a span of zero and is unaffected.
+- **Ten minutes, fixed.** Longer than any recovery the runtime performs on its own — the longest
+  default watchdog window is the uplink's 300s "never encoded a frame" restart — so a channel that
+  restarts every few minutes cannot clear its own list between restarts and look calm while it
+  flaps. Short enough that an operator who fixed something watches the list clear. Deliberately not
+  a managed setting: this is the honesty threshold of a reporting surface, not plant tuning, and a
+  field would invite setting it to thirty seconds and getting the lying list back. A test asserts
+  both constants and that neither reached `managed-runtime.ts`.
+- **Noise that is not evidence.** `playout.ffmpeg.stderr` and `uplink.ffmpeg.stderr` are raised by
+  `line.toLowerCase().includes("error")`, and a healthy encode prints "Error while decoding stream"
+  over a single corrupt packet. Letting one gate an area would have frozen the whole list on a
+  channel that is fine, which is the same failure in a new costume. They are marked `noisy`: still
+  closed themselves, still made to wait out their own repeats, but they do not speak for their area.
+- **The fingerprint explosion.** `playout.ffmpeg.exit.<assetId>` gave every asset that ever failed
+  its own permanently open critical row. The `upsertIncident` dedupe was working the whole time —
+  it upserts on fingerprint and refreshes `updated_at` — the fingerprint was simply too granular for
+  it to help. Collapsed to `playout.ffmpeg.exit`; the asset id and input summary were already in the
+  message and stay there.
+- **No migration, on purpose.** `20260827_001` was verified free (the 2026-08-26 sequence runs _001
+  through _004 and nothing later is registered) and deliberately left unused. The cleanup condition
+  the milestone needs is "the area is healthy now", and a SQL migration cannot see that: it runs at
+  schema time, on a container that has just started, where the persisted runtime says whatever it
+  said before the restart. It would either close the backlog blindly or, on exactly the install
+  worth cleaning, close nothing. The sweep therefore lives in the worker cycle, where the health
+  proof is real. The retired `playout.ffmpeg.exit.<assetId>` shape is recognised by
+  `RETIRED_INCIDENT_FINGERPRINTS` and closed once it is past a seven-day grace and playout is
+  healthy — the grace is not about those rows being finished (no running code can raise them) but
+  about a rollback to the previous image, which would write that shape again.
+- **Unclassified fingerprints are left open.** A string the registry does not own is more likely a
+  state incident from another build than a finished event, and guessing wrong hides a real problem.
+- **Resolving overwrites.** `resolveIncident` sets `message` to whatever it is handed, so the
+  automatic note prefixes the original text rather than replacing it. Otherwise the sweep would
+  delete the exit code, the stderr tail and the asset from forty entries at the exact moment they
+  become history — the only thing a post-mortem would have wanted from them.
+- **Surfaces.** Both incident panels now carry the age of each open entry — last reported first,
+  because that is what separates the channel's current problem from July's — and say how many
+  further open incidents a capped panel is not showing. The admin status chip counted the capped
+  list, so it read "5" while forty were open; it now counts them all. Text only, so the
+  control-density budgets (`live-status` 27/1, `admin-settings` 31/1) are untouched. The e2e fixture
+  seeds no incidents, so the empty-state branch still renders and no wording or design baseline
+  moves. The clock for the ages lives outside the render — a server helper for the dashboard, the
+  snapshot's own `generatedAt` for the control room — because eslint's `react-hooks/purity` rejects
+  `Date.now()` there, and the snapshot timestamp also makes the server and hydrated renders agree.
+
+### 2026-08-27 — M57 Stage 2, Etappe E: The Operator Surfaces
+
+- **The regression this stage exists for.** Making the relay check credentials turned the two
+  documented emergency rollback paths (`STREAM247_RELAY_ENABLED=1` publishing to `live/program`,
+  `STREAM247_UPLINK_INPUT_MODE=rtmp` reading it back) into paths nobody could walk: they need the
+  internal relay key inside `STREAM247_RELAY_OUTPUT_URL` / `_INPUT_URL`, that key generates itself
+  into `managed_secrets` and is deliberately never printed, and the runbooks therefore said to
+  treat the rollback as unavailable. A real operational regression in a failure path, fixed here.
+- **Relay access** (new folded group, Settings → Operations). `deriveRelayProgramRollbackUrl` and
+  `buildRelayRollbackEnvLines` live in `packages/core/src/relay-ingest.ts` — pure, fail-closed on
+  an empty key (a URL with an empty password authenticates against nothing and would read as a
+  working line), percent-encoded because the value is pasted into an environment file. The reveal
+  is `POST /api/settings/relay-access`: `requireApiRoles(["owner","admin"])` before anything reads
+  the key; POST rather than GET so it is an action rather than a prefetchable, linkable,
+  access-logged URL that returns a secret; the settings page ships the button and nothing else, so
+  the value is absent from the server-rendered HTML and therefore from the wording baseline; one
+  `relay.internal_key.revealed` audit line per reveal naming the actor and never the value, written
+  before the answer leaves; `RELAY_ACCESS_REVEAL_RATE_LIMIT` (10 per 15 min, keyed on the account,
+  not the peer — the role check already gates the peer, what is left is a stolen session harvesting
+  the key); `cache-control: no-store` on every answer; and one identical 503 for every "no key to
+  give you", carrying neither the key nor the driver error.
+- **The reveal must not be a write.** `readRelayInternalKey` is self-generating: on an install with
+  no key it mints one, and on an install whose `APP_SECRET` has rotated it blindly overwrites the
+  stored row and returns the NEW value. Wiring the button to it made clicking "show" a key rotation —
+  every already-running container keeps the old value in its process cache, so every relay read and
+  publish would start failing as "wrong password" until each one restarted, during the exact incident
+  the button exists for. It also made the 503 branch unreachable outside tests. Fixed with
+  `readRelayInternalKeyIfPresent` in `packages/db`: one SELECT, no INSERT, no UPDATE, and no
+  interaction with the process cache either, so "does not write" holds for the whole call. Missing
+  row and undecryptable row both return `""`, and the route does not distinguish them to the caller.
+  Proven in `tests/integration/db-roundtrip.test.ts` against a real database — empty table stays at
+  zero rows, and a deliberately poisoned ciphertext comes back byte-for-byte unchanged — plus a unit
+  test where the generating reader is mocked to throw, so reaching it fails loudly.
+- **Who may see the button.** `/admin?tab=settings` has no role gate of its own (the admin layout
+  only requires a session), so every signed-in account including viewer and moderator was shown a
+  control labelled as the way to obtain the relay's credentials. The key never leaked — the route
+  answers them 403 — but a surface should not advertise the existence and retrieval path of a
+  credential to people who cannot have it. The group is now rendered only for owner/admin, checked
+  inline rather than with `requireRoles` (which redirects, and the rest of the page is legitimately
+  readable by anyone signed in). The e2e fixture signs in as owner, so the group still appears there
+  and the `admin-settings` baselines move exactly as described below.
+- **Fail closed on an unnameable session.** The route reads the user a second time to name the
+  actor; if that came back null (deleted or demoted between the two reads) it used to reveal anyway,
+  audit it as "an unnamed session", and collapse every such caller into one shared rate-limit
+  bucket. It now answers 403 before touching the key.
+- **Honest about what the rate limit does.** The earlier comment claimed it protected the audit
+  trail. It does not: `appendAuditEvent` keeps only the newest 100 entries and roughly thirty other
+  routes write into the same ring unthrottled, so an actor can push their own reveal line out of it
+  with ordinary settings traffic. Fixing that means changing the audit mechanic, which is out of
+  scope; the claim is corrected rather than the mechanic patched. Also accepted and now stated: the
+  401/403 answers come from `requireApiRoles` and carry no `cache-control`, and a second privileged
+  account is a second bucket.
+- **Wording gate.** The env names appear only inside the copied `KEY=value` lines, never in prose,
+  and the fold's contents never reach `wording-baseline` (it records summaries, not fold contents)
+  nor the visual baseline (nothing is fetched until someone clicks). No test was weakened.
+- **Sound from live video sources** (new folded group). `resolveSourceLiveGainPercent` had been
+  managed since Etappe D with no field. `isValidSourceLiveGainPercent` (whole 0..200) is enforced
+  in the form and again in `/api/settings/operations` as its own key family — refused rather than
+  clamped, because the resolver clamps so a stored value cannot break playout while a typed 500 is
+  a mistake worth showing. The group carries the C+D invariant in plain words: a live source's
+  sound is mixed only into items whose duration is known in advance, so on anything else the camera
+  is embedded picture-only and the feed-audio watchdog stays meaningful.
+- **Live attach state, visible.** Chosen as a field on the existing source rather than a runtime
+  singleton row: the decision is per source, the studio already lists sources, and M57 stage 2
+  extended this same table the same way. Migration `20260826_004_overlay_video_source_live_state`
+  (next free in that day's sequence — `_001` … `_003` were verified as the whole of 2026-08-26 and
+  nothing later is registered), mirrored in the base schema block: `live_state`, `live_state_at`,
+  `live_retry_at`, all additive, all empty on existing rows, none of them a credential.
+  `describeSourceLiveState` in core turns the stored decision word into the sentence; unrecognised
+  values return "" so a surface shows nothing rather than inventing a state.
+- **Deciding to attach is not attaching.** The first cut wrote the state from the decision edge, so
+  a source whose read URL did not resolve — or whose intent was never consumed, because the cycle
+  deliberately does not restart a running process just to attach — left the studio saying "Live in
+  the programme" while nothing had been attached at all. The truth condition is now split in two:
+  `buildSourceLiveStateWrite` returns `null` for an ATTACH and only ever records skips (true the
+  moment they are decided), and `buildStartedSourceLiveStateWrite` owns the live state, fed from
+  `playoutLiveSourceInputActive` — the flag C+D introduced to mean "a live PiP input was really
+  placed in the running command". An intent that did not become an input records
+  `attach-unavailable`, not silence. Two further holes closed: an attach decided but with no
+  resolvable address records `attach-unavailable` at the point that becomes final, and a non-asset
+  selection (live bridge, standby slate) records `not-asset-playout` instead of leaving a stale
+  "live" standing for the whole stretch. `apps/worker/src/index.ts` is not importable — it starts a
+  worker — so the wiring is pinned by reading the source: the started state must be derived from
+  `playoutLiveSourceInputActive`, and the decision function must not contain `"publishing"` at all.
+- **The observation write left the broadcast path.** It had been an inline `await` inside
+  `resolveLiveSourceAttach`, which is awaited before `startOrSwitchPlayout` — under the global
+  state-write lock, with no timeout, right beside the comment warning not to await anything
+  expensive there. It is now fire-and-forget through `recordSourceLiveState`, deduped on the whole
+  write and tail-chained on one promise so submission order survives (the lock is a Postgres
+  advisory lock, not an in-process queue, so two loose writes could otherwise commit out of order).
+  Failures still log `playout.source-live.state_write_failed` and are dropped — an observation store
+  must never decide whether a camera goes on air, nor how fast it gets there.
+- Budgets unchanged: both new admin groups are folded (`<summary>` is not a counted control), and
+  studio-scene gained text only. `studio-scene` 56/1 and `admin-settings` 31/1 stand as recorded;
+  no ratchet comment was needed.
+- Still open: the mandatory DT soak gate before any deploy, and per-layer snapshot cadence.
+
+### 2026-08-27 — M57 Stage 2, Etappen C+D: The Third Input And The Audio Mix
+
+- Etappe C wires the pushed source as a live PiP input. `getFfmpegCommand` and
+  `startOrSwitchPlayout` gained an optional `liveSource`; the PiP is always the LAST ffmpeg input,
+  so the scene pipe keeps its index and the builder derives `pipInputIndex = sceneInputIndex + 1`.
+  Video graph (scene mode): `[L:v]fps=<fps>,scale=W:H:force_original_aspect_ratio=increase,crop=W:H,setpts=PTS-STARTPTS[pipv]; [base][pipv]overlay=X:Y:eof_action=pass[vpip]; [vpip][scene:v]overlay=0:0:format=auto[vout]` —
+  the PiP sits UNDER the scene PNG, `eof_action=pass` so a lost source never freezes the frame.
+  X/Y/W/H come from `resolveSourceLayerPixelBox`, exported from `overlay-layout.ts` as a thin
+  wrapper over the renderer's own `resolvePlacementBox` (parity test pins bit-identical boxes), so
+  the live window lands exactly where the snapshot panel would. The RTSP read is pinned to TCP with
+  a 4 s timeout, held strictly under the smallest duration-bound margin (5 s) as a pinned invariant.
+- Renderer skip: while a source is live-attached, the scene renderer nulls its source frame so the
+  opaque snapshot panel never renders over the live video (v1 draws no chrome around the window).
+  A process-scoped flag set before the first frame, so no panel flash on attach.
+- Attach wiring: the Etappe B decision now drives the parameter — `resolveLiveSourceAttach` logs on
+  change AND, on an attach, resolves the read URL + placement. A failed attach start (unplanned,
+  non-clean exit of a process that actually carried a PiP) opens the attach breaker, arming the
+  trigger B prepared. Attach is consumed only when a process (re)starts, so a source going live
+  mid-asset waits for the next natural boundary (`isNaturalPlayoutBoundary`).
+- Etappe D mixes audio: `[prog]volume=<v>[prog_a]; [L:a]aresample=async=1:first_pts=0,volume=<gain>[pip_a]; [prog_a][pip_a]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]`.
+  Pins: `normalize=0` (no programme level jump on source EOF), programme/lane FIRST at
+  `duration=first`, no `apad` on the PiP branch (amix drops the ended input — the only way "source
+  gone" is acoustically folgenlos). `-shortest` is set, but note it bounds the encode to the
+  PROGRAMME's own stream ([vout] follows the programme video, [aout] is duration=first); the ever-fed
+  scene PNG pipe never EOFs, so `-shortest` does NOT end a programme that never delivers EOF — the
+  watchdogs are the net there. Gain from `resolveSourceLiveGainPercent` (default 40 → 0.40).
+- BLOCKER fixed from the adversarial ffmpeg review (real ffmpeg-6.1.1 runs): PiP audio would MASK the
+  feed-audio watchdog. The playout encode IS the program-feed writer, and `enforceProgramFeedAudio`
+  counts the audio packets of the newest segment to catch a source that runs dry without EOF (the fps
+  filter keeps video flowing; audio is the honest signal). Folding live PiP audio in masks a silent
+  programme. Fix: `decideLiveSourceAudio` builds the mix ONLY when the programme asset has a known
+  finite duration (duration-bound is then the net, masking harmless); unknown duration → PiP
+  video-only, programme audio stays the sole track, watchdog honest. Proven against the REAL state
+  machine (`observeFeedAudio`/`isFeedAudioStalled`), not the mix string.
+- MINOR fixed: the `[L:a]` reference no longer trusts the relay's advisory `tracks` flag alone (a
+  lying/racing publisher would crash ffmpeg at graph init, exit 234 → breaker). The source's audio is
+  now probe-confirmed (`probeInputHasAudio`, RTSP pinned to TCP, fresh each attach — never cached, so
+  no stale-verdict TOCTOU); an unconfirmed source falls back to video-only. Programme-audio (no-lane)
+  stays a bounded, asset-id-cached probe.
+- NOTE fixed: the relay presence poll is now gated on the upcoming selection being an ASSET, so a live
+  bridge or standby slate (which can never carry a PiP) costs zero relay traffic.
+- Guardian proofs as tests (`source-live-watchdog-proof.test.ts`): feed-audio proven against the real
+  watchdog state machine (silent programme fires; mixed-in PiP audio would mask it; the duration gate
+  keeps them connected); a lying-relay source → video-only, no graph-init crash; feed-stall/uplink
+  (eof_action=pass keeps the frame flowing); duration-bound (clamp invariant); loop-stall (probes
+  clamped to the cycle-await ceiling); crash-loop (a failed attach makes the next start attach-free,
+  so a PiP alone cannot reach the threshold of 3).
+- Deliberately left for E and the soak gate: operator surfaces beyond the switch (gain UI,
+  revealing/threading the internal key for rollback), per-layer cadence, and the mandatory DT soak
+  before any deploy — attach latency, breaker behaviour under a flapping feed, the audio mix on a real
+  programme with and without its own audio track, and confirming the feed-audio watchdog still fires
+  on a silent unknown-duration source with an active PiP.
+- Affected baselines: none — every change is worker-side (ffmpeg command, filter graphs, exit
+  wiring) with no studio surface touched.
+
+### 2026-08-27 — M57 Stage 2, Etappen A+B: Push Ingest Foundation And The Attach Decision
+
+- Schema additive on `overlay_video_sources`: `ingest_kind` (default `'pull'`, so every existing
+  row keeps its meaning) and `encrypted_publish_key` — base block plus migration
+  `20260826_002_overlay_video_source_push_ingest`; new `managed_secrets` table
+  (`20260826_003_managed_secrets`) for the self-generating internal relay key (app-secret
+  first-boot semantics with `ON CONFLICT DO NOTHING` as the exclusive-create flag, value
+  encrypted like every stored credential). Numbers verified free: 2026-08-26 held only `_001`.
+- The internal read URL of a push source is derived, never stored:
+  `rtsp://reader:<internal-key>@relay:8554/src-<id>` out of `readOverlayVideoSourceUrls`, so the
+  stage-1 snapshot sampler covers pushed cameras for free. Pinned in the db roundtrip.
+- Relay auth as a pure core function (`evaluateRelayAuth`): publish on `src-<id>` only with that
+  push source's key, read anywhere and publish on `live/program` only with the internal key,
+  everything else 403 — with exactly one constant-time comparison per decision (hand-built,
+  because `node:crypto` must not enter the client-shared core barrel; the constant-read property
+  is pinned structurally via instrumented inputs). The web endpoint `/api/relay/auth` carries no
+  session (mediamtx calls it server-side), answers every refusal with the same bare 403,
+  rate-limits per reported address and audits rejected publishes only.
+- `docker/mediamtx.yml` (mounted, validated against mediamtx 1.15.4): authMethod http toward the
+  web app with the default api/metrics/pprof exclusions, RTSP read side and control API
+  container-internal, host ports only RTMP 1935/tcp + SRT 8890/udp (owner: both).
+- Studio source manager: arrival choice (fetched address vs pushed), publish key issued
+  server-side and shown exactly once, rotation button, kind switches retire the other kind's
+  secret. All inside the existing fold — studio-scene budget 56/1 untouched.
+- Etappe B: `relay-presence.ts` with the I/O-free `decideSourceLiveAttach` (every uncertain
+  input decides skip), the three-minute in-memory attach breaker (trigger arrives with C, state
+  machine tested now) and the 2s-bounded presence fetch against `relay:9997`; the playout cycle
+  logs `playout.source-live.attach_decision` on change and acts on nothing. New resolvers
+  `resolveSourceLiveEnabled` (default off) and `resolveSourceLiveGainPercent` (clamp 0..200,
+  default 40, zero means attach muted); the switch joins the feature-switches fold
+  (admin-settings budget 31/1 untouched), the gain waits for its stage.
+- Rollback note: with relay auth active the rtmp relay rollback URLs need the internal key
+  embedded; documented in deployment/operations docs as unavailable-until-surfaced rather than
+  a reason to weaken the auth config.
+- Deliberately left for C-E: any ffmpeg change (attach/detach, the third input, gain filter),
+  arming the breaker, revealing the internal key to operators, and any per-layer cadence work.
+- Affected baselines: none expected to move — every new control and sentence sits inside a
+  closed fold (closed `<details>` content is excluded from the control count and the wording
+  text alike); re-record only if a run proves otherwise.
+
+### 2026-08-26 — M56 Part 2: Replay Cache, Watchdogs And Feed Tuning Into The GUI
+
+- Three new resolver families in `packages/core/src/managed-runtime.ts` (replay cache, watchdog
+  thresholds, feed tuning), each with exported bounds (`VOD_CACHE_LIMITS`, `WATCHDOG_LIMITS`,
+  `FEED_TUNING_LIMITS`) shared by resolver, API route and form. Managed numbers clamp; the env
+  path keeps its historical semantics bit for bit. Clamp derivations live next to the bounds and
+  are pinned as tests, including the cross-family invariant that the feed-stall floor (15 s)
+  stays above the longest configurable segment (10 s).
+- Twenty-three new keys on the encrypted `ManagedConfigRecord` — no migration, JSON payload with
+  read-time defaults. Byte sizes are stored as GB because that is what the form asks for.
+- Worker: `getTwitchVodCacheConfig`, the four watchdog option readers,
+  `getPlayoutReconnectConfig` and `getProgramFeedConfig` all take managed input and delegate to
+  the core resolvers; the playout and uplink modes refresh `latestManagedConfig` at each cycle
+  start (each mode is its own process). The reconnect cadence became a per-cycle read instead of
+  module-level constants. The cycle-budget clamp is applied after managed resolution, so a
+  managed 7200 s download timeout can never outlive the loop stall guard — pinned by a test.
+- Web: three folded groups in the operations panel ("Replay cache", "Watchdog thresholds",
+  "Feed tuning"), each saving through its own partial route (`/api/settings/replay-cache`,
+  `/watchdogs`, `/feed-tuning`). Admin-settings control budget stays 31/1: all twenty-six new
+  controls sit behind summaries. The per-replay-ceiling-inside-cache pair rule is validated whole
+  against resolved values, form and API alike.
+- SMTP/alert family audited: already fully GUI-capable since the managed-credentials work
+  (`getManagedAlertConfig` web-side, `getSmtpConfig` worker-side, both managed-first with env
+  fallback; all fields present in the credentials form). Nothing duplicated.
+- Deliberate omissions, with reasons in code and PLANS: cache root and feed directory (mount
+  points), relay topology (deploy wiring), `STREAM247_LOOP_STALL_TIMEOUT_SECONDS` (the GUI must
+  not be able to lower the process's own self-protection).
+- Affected baselines (not re-recorded here): admin-settings wording baseline gains the three new
+  fold summaries and the reworded operations intro; the admin-settings design screenshot moves
+  with the added summaries. No other surface changes.
+
+### 2026-08-26 — M57 Stage 1: Embedded Video Sources As Overlay Panels
+
+- Stage 1a: `source` layer kind in core (placement + sanitised source reference, any URL a caller
+  smuggles into the layer is dropped in the normaliser), `overlay_video_sources` table (base
+  schema + migration `20260826_001_overlay_video_sources` — 006 of 2026-08-25 stayed reserved for
+  parallel M56 work, so the next day's sequence was used), destination-style encrypted upsert with
+  keep-on-empty, admin-gated write-only API route, studio placeholder tile and source manager,
+  managed switch `sourceLayerEnabled` (default off). Proof test pins that stage 1a changed nothing
+  on air.
+- Stage 1b: `buildSourcePanel` renders the capture as a data-URI image inside the game panel's
+  placement/clamping rules (extracted into one shared helper); the frame cache key carries capture
+  status and timestamp, never image bytes. Side gain: logo, image and text layers render on air
+  with the existing ink/surface vocabulary — no new colour literals; embeds stay browser-only and
+  the studio says so. Measured through the real satori/resvg path: ~76ms for a 1280x720 frame with
+  a 640x360 capture, warm (budget: well under the 1s frame interval).
+- Stage 1c: `apps/worker/src/source-snapshot.ts` — I/O-free policy (cadence resolver clamped
+  2..300s, capture timeout under the cycle stall budget, three-interval staleness grace, failure
+  threshold 3) plus a temp+rename spawner; wired into the renderer refresh loop behind an
+  in-flight guard, never the reconciliation path. Incident `playout.source-snapshot.failed` raises
+  after repeated failures and auto-resolves on the next good frame. Snapshot directory is the new
+  first (cheapest) disk-watermark stage.
+- Affected design/wording surfaces: the overlay studio page gained the video source manager and
+  new layer-editor copy — studio-scene screenshot baselines will move; on-air baselines only move
+  for scenes that already carry text/logo/image layers.
+
+### 2026-08-25 — M56 Part 1: Operational Settings Into The GUI
+
+- New `packages/core/src/managed-runtime.ts`: one resolver per family (encoder quality, disk
+  watermark, feature switches, EventSub secret), all managed-first with env fallback, plus the
+  validation helpers the settings forms and routes share. Tests pin that an empty managed value
+  reproduces the pre-M56 env behaviour exactly, `=== "1"` quirks included.
+- Eleven new keys on the encrypted `ManagedConfigRecord` — no migration, the payload is JSON and
+  the defaults merge in on read.
+- Worker: playout/live-bridge/standby/uplink ffmpeg commands, the disk watermark monitor, the
+  chat/alerts/schedule-sync gates and the EventSub subscription sync all resolve through the
+  shared resolvers; `getDiskWatermarkConfig` and `isTwitchScheduleSyncEnabled` folded into core.
+- Web: encoder quality as a folded group on the studio output tab; disk watermark and feature
+  switches as folded groups in admin settings (partial-update route so the two forms cannot blank
+  each other); EventSub secret in the managed credentials form with keep-on-empty semantics.
+- Deleted `packages/config` whole — `getConfig` had no importers.
+- Deliberately left for later M56 parts: VOD cache family, watchdog thresholds, relay topology,
+  reconnect tuning, and the unused redis service in compose.
+
+### 2026-08-28 — M59 Follow-Up: The Same Deletion Shape In Four More Places
+
+- Audit after the v1.5.33 sync wipe, looking for the same shape everywhere: a failure that
+  produces no data, and a caller that reads "no data" as "the data is gone". Four hits, one of them
+  worse than the original.
+- **A1, the serious one.** `walkMediaFiles` wrapped the entire recursive scan in
+  `catch { return []; }`. An unmounted volume, an NFS timeout, EACCES, EMFILE or one unreadable
+  subdirectory all produced an empty list, and `syncLocalMediaLibrary` handed that straight to
+  `replaceAssetsForSourceIds(["source-local-library"], [])`. Worse than the Twitch incident,
+  because the local library is where the global fallback lives (`isGlobalFallback` is derived from
+  the filename): the Twitch wipe dropped the channel onto the standby video, this one deletes the
+  standby video as well. It also cascades — an emptied `state.assets` defeats
+  `collectDiskProtectedAssetIds`, so the watermark sweep is free to evict the VOD cache and
+  thumbnails of assets the schedule still references. `scanMediaFiles` (in `local-library.ts`, with
+  an injectable readdir so the failure modes are testable) now reports whether the walk completed;
+  a partial failure counts, not just a failure at the root. The sync feeds that in as
+  `ingestFailed` and reuses `decideSourceAssetReplacement` — no second special case.
+- **The last line of defence.** `replaceAssetsForSourceIds` checked only `sourceIds.length === 0`
+  and never looked at the incoming asset list, which is why each of these bugs reached the
+  database. It now refuses to empty a populated source unless the caller passes
+  `allowEmptyReplacement`. Deliberately keyed on zero, not on a percentage: a source shrinking from
+  49 items to 1 is an ordinary playlist edit, and blocking that would pin stale rows on air with no
+  way out. Zero is the only count that is both catastrophic and never distinguishable from a
+  failure that produced no listing. A genuinely emptied source stays emptiable — the syncs that
+  built both lists from the same evidence opt in. It refuses rather than throws: reaching it means
+  a caller's scope decision was wrong, and failing the cycle would hurt the broadcast the guard
+  exists to protect, so it warns instead.
+- **A2.** `syncDirectMediaSources` skipped asset building for an invalid URL but left the source id
+  in the delete list. `planDirectMediaSync` derives the usable entries and the unusable ids in one
+  pass, so the two lists cannot drift. The Twitch invalid-URL branch had the same gap, saved only
+  by the keep-empty-result rule catching it by accident; it is now explicit.
+- **B2.** The status write knew nothing about the preservation, so a protected source and a wiped
+  one both read `Ingestion failed`. `describeSourceSyncStatus` derives status, a `assetsPreserved`
+  flag and the count still playable from the same outcome the replacement decision uses. Writing
+  its test surfaced a wart worth keeping fixed: the replacement rule holds a failed source back
+  even when it stores nothing, and the status must not round that into "assets preserved" when
+  there were none.
+- **B1.** A valid chapter probe that found nothing wrote `chaptersProbeStatus: "ok"` — absorbing,
+  with no re-probe path and no reset in the UI. A rate limit, a geo/subscriber-only variant and a
+  yt-dlp extractor regression all answer exactly that, and the consequence is on-air: wrong
+  category, wrong title. The asymmetry was the tell — `"failed"` healed through its cooldown,
+  `"ok"` never did. An empty result now gets its own, much longer interval
+  (`CHAPTER_BACKFILL_EMPTY_RECHECK_SECONDS`, default one week, `0` disables) and rechecks sort
+  behind never-probed assets and failure retries, so `CHAPTER_BACKFILL_PER_CYCLE` and the
+  cycle-await ceiling are untouched. No schema change was needed and none was made:
+  `chapters_probe_status` is already TEXT, and `"ok"` with an empty `chapters_json` is exactly and
+  only the empty-result case — a new status value would have needed a data migration to heal rows
+  that now heal by themselves on their next recheck. Assets that have chapters are still never
+  selected, so operator edits keep winning outright.
+- **C1.** `ensureLocalAssetThumbnail` deleted the existing thumbnail and let `ffmpeg -y` write
+  straight to the target, so an OOM kill or disk pressure left nothing, or a torn file readers
+  would serve. Adopted the temp+rename that `captureSourceSnapshot` already used; the disk sweep
+  now also collects `.jpg.tmp` leftovers, which can only come from a process that died between
+  render and rename.
+- **C2.** YouTube incident resolution hung off a global `hadFailure`, so one failing source kept
+  every healthy sibling's incident open — and with a permanently broken source, forever. The
+  per-source set was already being built two lines away.
+- Deliberately not done: no UI work at all (the sources health display is a parallel change; the
+  worker side keeps its data shape plain and self-describing — a status string plus a preserved
+  note — so the display needs no new contract). The extension set and the direct-media URL check
+  moved out of `index.ts` because the new modules needed them, not as a wider refactor of that
+  file. No baseline updates.
+
+### 2026-08-27 — M59 Boundary Continuity: Source Wipe, Lost Wake, Silent Stops
+
+- Started from a viewer-visible symptom — ~18s of fallback slate at two of three asset boundaries —
+  and ended at a more serious one the measurement exposed: the running programme being cut every
+  60-90 seconds. Both are fixed; the cut had priority.
+- **Root cause of the cutting.** `syncTwitchVodSources` / `syncYoutubePlaylistSources` end with
+  `replaceAssetsForSourceIds(allSourceIds, collected)` (`apps/worker/src/index.ts`), a
+  delete-then-reinsert under one transaction. The per-source `catch` records an incident and
+  contributes zero assets but leaves the source id in the delete list, so a transient yt-dlp error
+  deletes that source's whole archive. Consequences chain exactly as observed on v1.5.31: the pool
+  empties, so `choosePlaybackCandidate` finds no `preferredAsset` and falls to `global_fallback`;
+  the on-air asset's row is gone, so neither stickiness guard (`runningScheduledAsset`,
+  `currentPoolAsset`) can re-select it; `isMatchingRunningSelection` compares asset ids and
+  mismatches, so the cycle cuts the running item via `stopPlayoutProcess("switch")`; the next
+  worker sync restores the rows and playout switches back. Eight starts in eight minutes, strictly
+  alternating fallback and programme.
+- New pure `apps/worker/src/source-sync-scope.ts` decides per source whether a wholesale replace is
+  safe. The rule is deliberately asymmetric in the direction that protects the broadcast: only
+  positive evidence that a source holds its content permits deletion. A throw keeps the rows; so
+  does an unexpectedly empty listing for a source that currently has assets, because that is far
+  more often a soft failure (rate limit, empty playlist response, auth blip) than a channel that
+  genuinely lost its archive. Held-back sources emit `source.sync.assets_preserved` rather than
+  skipping silently, and the decision is per source so one failure never blocks a healthy sibling.
+- **Root cause of the ~18s gap.** `requestImmediatePlayoutCycle` read a `wakePlayoutLoop` handle
+  that `waitForNextLoop` installs only while the loop sleeps; a wake requested from inside a cycle
+  found it null and returned. Both in-cycle callers were dead code in effect — the boundary
+  fallback bridge and the deferred-prefetch follow-up. That is 15s of the ~18s (the playout loop
+  delay); the remaining ~3s is the follow-up cycle's own work, including the inline resolve that
+  returns a local Twitch cache path quickly. New `apps/worker/src/loop-wake.ts` latches a wake with
+  no waiter armed and the loop consumes it before sleeping. Edge-triggered, and burst-limited to
+  three consecutive immediate cycles so a future unconditional caller degrades to normal polling
+  instead of spinning — `cycle-budget.ts`, `getCycleAwaitCeilingMs` and the loop-stall guard are
+  untouched.
+- **Diagnosability.** `stopPlayoutProcess(reason)` consumed its reason as a boolean and discarded
+  it, and five of eight stop paths (`switch`, `destination-missing`, `scheduled-reconnect`,
+  `crash-loop-reset`, `restart-requested`) logged nothing of their own, so `planned: true` covered
+  both a deliberate kill and a clean end-of-asset. `playout.process.exit` now carries
+  `plannedReason` and `ranForMs`.
+- **Prefetch safety.** `decideBoundaryPlaybackInput` relied on call-site discipline for key
+  correctness. It now takes the selected asset id and the probe carries its own `assetId`, so a
+  probe for a different asset is ignored — a queue change between prefetch and boundary (skip vote,
+  operator insert, schedule flip) cannot redirect playout to stale content. Tests pin the dangerous
+  direction explicitly: a stale probe must yield `resolve` with an empty input, never the stale one.
+- **Measurement.** New `apps/worker/src/playout-gap.ts` emits `playout.boundary.gap` with `gapMs`
+  and `bridgeStarts` per boundary, so the improvement is measurable on the device instead of
+  believed. Observation only; nothing it produces feeds a decision.
+- Hypotheses tested and rejected, kept here so they are not re-run: the chapter backfill writing
+  `chaptersJson` / probe-status columns cannot restart playout (`isMatchingRunningSelection`
+  compares asset ids only, and the affected rows had empty probe columns); `duration-bound`,
+  `feed-stalled` and `feed-audio-stalled` all log before stopping and none appeared; the
+  delete-then-reinsert runs inside `withSerializedStateWrite` (BEGIN/COMMIT plus an advisory lock),
+  so readers never observe the empty window — the wipe is persisted, not transient.
+- Deliberately left alone: the watchdog family, the fallback chain, the cycle-budget invariant, and
+  the four remaining silent stop paths' own events (the exit event now names them, which was the
+  diagnostic gap). Not attempted: pre-start detection of a dead remote source — a deleted VOD is
+  still only discovered when `resolveAssetPlaybackInput` throws at the boundary, which the fallback
+  chain already handles; `queueProbeCache` failures still do not feed selection eligibility.
+
+### 2026-08-25 — M53 Chapters Per Video
+
+- Added the pure `packages/core/src/asset-chapters.ts` model: normalisation (sort, drop
+  negatives/duplicates/empty rows, cap), chapter-at-elapsed lookup, and boundary detection over
+  (elapsed seconds, chapter list, fired set) — the cuepoint pattern one level down, offsets within
+  the asset. An empty list is exactly the pre-chapter behaviour and stays the rollback path.
+- Schema stayed additive: `assets.chapters_json` (default `'[]'`) exists in the base schema and in
+  migration `20260825_002_asset_chapters` for existing databases. Re-ingest fills chapters only
+  while the stored list is empty (`chooseStoredAssetChaptersJson`), so operator edits survive
+  every sync; Twitch VOD ingest maps yt-dlp chapters with the chapter title doubling as the
+  category candidate, because Twitch names chapters after the game on air.
+- The playout cycle emits `playout.chapter.boundary` once per crossed offset, keyed on
+  (asset, process start) so restarts re-fire from second zero; the event fires and is recorded
+  even while the M51 metadata gate waits for the broadcaster. The overlay hero title and the
+  Twitch sync both derive the active chapter from elapsed playback (level-based), so a
+  broadcaster connected mid-video catches up on the next cycle without a restart.
+- `decideTwitchChannelMetadataWrite` is the single decision point in front of the helix/channels
+  PATCH: waiting mode never writes, unchanged state skips, and a due write within 30 seconds of
+  the previous one is deferred with the last-synced fields left untouched so the next cycle
+  retries.
+- Library UI: a chapter editor on the asset detail page (offset as seconds/mm:ss/hh:mm:ss, title,
+  category per row; add/remove/edit) through the existing PATCH `/api/assets/[id]` route, which
+  rejects offsets at or beyond a known duration.
+- Validation completed: `pnpm validate` passed; the normalisation sort, the retention rule, the
+  route's duration bound and the write throttle were each counter-verified by mutating the
+  implementation and watching the matching test fail.
+
+### 2026-08-25 — M54 Chat Game Framework And Snake
+
+- Added the pure chat-game framework in `packages/core/src/chat-game.ts`: a game is settings plus
+  `createInitialState` / `applyInput` / `renderModel` / `parseState`, with deliberately no tick —
+  the contract has no way to advance a game by time, and tests pin that a round is byte-identical
+  after hours without input.
+- Snake is the first game: a configurable emote→direction map (four distinct single-token emotes,
+  validated in the studio form and rejected with reasons at the API), a configurable grid
+  (default 16x9), exactly one cell of movement per accepted chat message applied in arrival
+  order, food/growth, and wall/self collision into a "Game over · Score N" card that the next
+  input restarts.
+- The worker consumes broadcast-channel chat before the display rate limiter (emote-only rooms
+  steer fine), persists the round with its settings in the new `chat_game_runtime` table —
+  created in both the base schema and the idempotent `20260825_003_chat_game` migration — and a
+  restarted worker adopts the persisted round instead of wiping it. Flushes are throttled to one
+  per second; the playout container re-derives the render model from one read per render
+  interval, gated on the scene actually carrying a game layer.
+- A new "game" custom layer kind places the panel per scene; the native renderer draws the cell
+  grid within the safe-area and clamping rules, with the accent-or-white heading rule and
+  measured chip ink, and no operator vocabulary in on-air text. Disabling the layer stops the
+  intake and clears all game state.
+- Validation completed: `pnpm validate` passed; counter-verified the one-cell rule (a two-cell
+  mutation fails five snake tests) and the heading contrast rule (raw accent instead of
+  `accentTextColor` fails the dark-accent cases).
+
+### 2026-08-25 — M54 More Games: Minesweeper And 2048
+
+- Two more games on the unchanged four-function contract, chosen to differ from Snake in both
+  input and feel: Minesweeper (chat types coordinates like "b3"; the seeded board commits on the
+  first dig and never under it, digs flood-reveal to the numbered frontier, a mine ends the
+  round, clearing every safe cell wins) and 2048 (the snake's emote→direction map unchanged on a
+  fixed four-by-four board; slide-and-merge with one merge per tile per move, seeded spawns,
+  round over when no move remains). Tic-tac-toe was passed over because a correct minimax engine
+  never loses — chat could at best draw, forever; hangman fits the cell-grid panel worst and
+  needs a curated embedded word list.
+- One resolver dispatches chat per game vocabulary, so a coordinate can never move the snake and
+  an emote never digs; determinism tests pin same-seed-same-inputs-same-board for both games. The
+  panel gained in-cell labels and a coordinate gutter (letters/numbers) that only coordinate
+  games request, rasterised through the same satori smoke as Snake. No schema change: the
+  settings row already stored `game_id` with snake as its default, and unknown ids normalise back
+  to snake on old rows. The studio picker offers all three games within the existing select and
+  folds away fields the selected game ignores, so the engagement control budget is untouched.
+
+### 2026-08-25 — M55 Global Disk Self-Protection
+
+- Added the pure `apps/worker/src/disk-watermark.ts` ladder: below 10% free the worker starts an
+  eviction episode, runs one stage per cycle (unused VOD cache, then orphaned feed segments, then
+  oldest thumbnails), and stops at 15% free rather than emptying everything; a misordered
+  watermark override falls back to the defaults whole.
+- Every stage composes an existing safety mechanism — the VOD cache eviction behind its
+  `canReleaseVodCache` gate and partial/lock rules, the capped boundary feed sweep, and a new
+  capped oldest-first thumbnail selection — and receives an explicit protection set covering every
+  asset the schedule blocks, pools, broadcast queue and global fallback tier reference.
+- Eviction that freed space raises a `disk.watermark.evicted` warning incident naming what went
+  and why; a full ladder still below the recovery watermark raises the critical
+  `disk.watermark.exhausted` incident that demands operator action.
+- Validation completed: `pnpm validate` passed; the recovery-watermark hysteresis test was
+  counter-verified by mutating the mid-episode comparison to the trigger and watching it fail.
+
+### 2026-08-25 — M52 Setup Wizard
+
+- `APP_SECRET` is now resolved in `@stream247/db` for web sessions and managed-config encryption alike: generated on first boot (64 chars, exclusive create so racing containers agree) and persisted mode-600 at `data/media/.stream247-app-secret`; env overrides everything, production still refuses the published dev constant and weak values, and the old silent dev-constant fallback inside `getEncryptionKey` is gone.
+- `APP_URL` and `CHANNEL_TIMEZONE` moved into managed config with env-first resolvers (`resolveAppBaseUrl`, `resolveChannelTimeZone`); every reader in web and worker goes through them, with the scene renderer base URL as the one documented env-only exception (internal address, not the public one).
+- `/setup` is a resumable wizard — owner → instance basics → Twitch app credentials → Twitch connect → review — with completion derived from actual configuration instead of a stored step counter; the go-live checklist links `APP_URL`/`APP_SECRET` to their wizard steps, and `DATABASE_URL` stopped gating the secret step because the compose-internal default points at the bundled Postgres.
+- Compose marks `.env` as optional for web/worker/playout/uplink, so a fresh `docker compose up` with no env file reaches `/setup`; env examples and docs describe env values as pins/rollback rather than requirements.
+- Validation completed: `pnpm validate` (lint, css tokens, typecheck, 778 unit + 33 integration tests, build) and the containerised e2e admin smoke via `scripts/e2e-smoke.sh` after rebuilding the test images. The first smoke run caught a real race in the updated spec — the post-bootstrap wait targeted the step rail, which renders before the session cookie lands — fixed by waiting on the owner summary that only exists after bootstrap; second run green.
+
+### 2026-04-22 — M50 Portainer/DT Rollout Flow And Stack Check
+
+- Rewrote `docs/deployment.md` so the repo → GHCR → Portainer on DT → DUT validation sequence is now the canonical deployment flow instead of an implicit assumption.
+- Added the read-only `scripts/portainer-stack-check.sh` helper to resolve the pinned image digests from `.env.production.example` and compare them to the running Portainer-managed stack through the Portainer API and Docker-proxy endpoints.
+- Validation completed: `./scripts/portainer-stack-check.sh --dry-run` and `pnpm validate` passed.
+
+### 2026-04-22 — M49 Docs Finalization
+
+- Collapsed the tracked product docs to the final six-file set: `architecture.md`, `deployment.md`, `moderation-policies.md`, `operations.md`, `twitch-setup.md`, and `ui.md`.
+- Merged the durable reset content into the permanent docs, removed the tracked reset and Phase 4 archive docs from `docs/`, and updated `README.md` to point only at the permanent doc set.
+- Moved the three user-owned local planning files out of `docs/` and into `planning/archive/` unchanged so the six-doc collapse could complete without deleting local work.
+- Validation completed: `test "$(ls docs/*.md | wc -l)" = "6"` and `pnpm validate` passed.
+
+### 2026-04-21 — M29 React Component Primitives And Chat Command Dispatch
+
+- Added the first typed `apps/web/components/ui/` primitive layer with `Badge`, `Button`, `Card`, `Input`, `Select`, `PageHeader`, and `StatusChip`, keeping the existing CSS system as the source of truth instead of introducing a new design dependency.
+- Switched `overlay-scene-canvas.tsx` to the guarded `Badge` primitive for widget/embed badges so empty or placeholder badge text is centrally suppressed.
+- Wired Twitch IRC moderator commands into the existing moderation presence model: `!here`/`here` now update presence windows from chat, are restricted to moderator/broadcaster messages, and are consumed before viewer-facing chat overlay storage.
+- Added unit coverage for the badge guard and chat-command parsing, and re-ran unit, validate, and browser smoke coverage after the worker/web changes.
+
+### 2026-04-20 — M28 Phase 3 Audit Stabilization
+
+- Added worker-side Twitch EventSub synchronization for follow/sub alert webhooks with duplicate detection and safe cleanup when alert runtime is disabled.
+- Replaced the remaining on-air fallback string with "Coming up next" and covered it with focused overlay text tests.
+- Marked M21-M27 complete after their implementation commits and documented the acceptance-audit caveats: EventSub requires the new OAuth scopes on reconnect, and safe-area clamping was still pending at that point.
+
+### 2026-04-20 — M27 Container Reliability And Ops
+
+- Added shared SSE connection tracking and included `sseConnections` in readiness output so web connection churn is observable.
+- Extended the soak monitor to report container restart counts and fail on unexpected web/worker/playout restarts.
+- Documented the current long-run memory and FD baseline in operations docs.
+
+### 2026-04-20 — M26 UI Redesign V1
+
+- Refreshed admin navigation into the Phase 3 IA groups while preserving existing routes.
+- Added long-title safety and shared layout polish across the redesigned admin shell.
+- Extended the admin smoke flow to cover Output and Overlays navigation.
+
+### 2026-04-20 — M25 In-Stream Engagement Layer
+
+- Added opt-in Twitch IRC chat ingest, engagement settings, `/api/overlay/events` SSE, and composited chat/alert overlay rendering.
+- Added EventSub webhook receiving for follow/sub alerts and an Overlays admin section for runtime controls.
+- Caveat closed by M28: webhook subscription registration is now automatic when the Twitch connection and public callback config are valid.
+
+### 2026-04-20 — M24 Output Profiles And Stream Settings
+
+- Added output profile persistence, admin controls, `STREAM_OUTPUT_WIDTH/HEIGHT/FPS`, viewport alignment, and optional FFmpeg scale/pad behavior.
+- Updated overlay scaling for lower output heights and added persistence/runtime tests.
+- Caveat at ship time: full safe-area container/clamping for arbitrary positioned layers was not yet implemented; resolved later in M31.
+
+### 2026-04-20 — M23 Schedule Video-Level Visibility
+
+- Added `videoSlots` lookahead to schedule preview and displayed expandable video timelines on the schedule page.
+- Updated broadcast snapshot next-title behavior to prefer pool lookahead titles.
+
+### 2026-04-20 — M22 Metadata V2 And Per-Video Edit
+
+- Added per-asset metadata editing for title, title prefix, category, hashtags, notes, programming inclusion, and fallback priority.
+- Extended targeted asset updates and Twitch title formatting tests to cover the new fields.
+
+### 2026-04-20 — M21 Overlay Text Correctness
+
+- Added title prefix, hashtag, and platform notes asset schema fields and preserved them through persistence.
+- Fixed overlay next-title lookahead, Twitch title formatting, and empty/`[]` label rendering.
+- Added focused overlay text and Twitch metadata tests.
+
+### 2026-04-09 — M19.3 Main Artifact Publication Parity
+
+- Tightened `.github/workflows/ci.yml` so successful `main` publishes now wait for GHCR to resolve the just-pushed `stream247-web`, `stream247-worker`, and `stream247-playout` `main-<sha>` tags before the run can complete green.
+- Added release-readiness regression coverage that proves the `main` workflow still emits all three `main-<sha>` snapshot tags and verifies those exact rehearsal tags after publish.
+- Verified the current `76a0ed0` publication shape from repo logic and GitHub Actions logs: the `main` publish path names and pushes `web`, `worker`, and `playout` under `main-76a0ed0`, and the workflow now fails if any of those refs are not registry-visible after push.
+- Validation completed: `pnpm exec vitest run tests/unit/release-readiness.test.ts`, `pnpm validate`, and direct `docker manifest inspect` checks for `ghcr.io/drjakeberg/stream247-{web,worker,playout}:main-76a0ed0` passed.
+
+### 2026-04-09 — M19.2 Release Rehearsal Pre-Tag Artifact Alignment
+
+- Reworked `scripts/upgrade-rehearsal.sh` so unreleased target versions now resolve to the CI-published `main-<sha>` snapshot for the current commit, while already-published releases continue to rehearse against their `v*` tags and operators can still force an explicit image tag when needed.
+- Reworked `release.yml` so tagged releases now pull, smoke-test, and promote the same `main-<sha>` snapshot artifacts instead of rebuilding new local candidates after the pre-tag rehearsal model has moved to commit snapshots.
+- Tightened the release-readiness regression coverage so it now proves both unreleased-target rehearsal against `main-<sha>` and published-tag rehearsal against `v*`, while also asserting that the release workflow no longer rebuilds candidate images in the tag job.
+- Validation completed: `pnpm exec vitest run tests/unit/release-readiness.test.ts`, `pnpm validate`, `pnpm release:preflight`, and `./scripts/upgrade-rehearsal.sh 1.1.0` passed.
+
+### 2026-04-08 — M19.1 Release Artifact Parity And Proxy Restart Hardening
+
+- Reworked `release.yml` so tagged publishes now retag and push the already-smoke-tested local candidate images instead of rebuilding from source after the smoke gate, which closes the remaining mutable-base and package-drift gap between rehearsal and release.
+- Added `restart: unless-stopped` for `traefik` so the documented `docker compose --profile proxy up -d` deployment path now matches the restart guarantees described in the release and deployment docs.
+- Tightened the release-readiness regression checks so they assert the workflow no longer uses `docker/build-push-action` for tagged publishing and that proxy-profile restart coverage includes `traefik`.
+- Validation completed: `pnpm exec vitest run tests/unit/release-preflight.test.ts tests/unit/release-readiness.test.ts`, candidate `docker build` checks for `web`, `worker`, and `playout`, `./docker/smoke-test.sh stream247-web:release-candidate`, candidate-image `pnpm test:fresh-compose`, local retag parity checks for `web`, `worker`, and `playout`, and `pnpm validate` passed.
+
+### 2026-04-08 — M19 Release Readiness Hardening
+
+- Reworked the tagged release workflow so local release-candidate `web`, `worker`, and `playout` images are built and smoke-validated before any final versioned GHCR push step runs.
+- Tightened `upgrade-rehearsal.sh` and `soak-monitor.sh` so both gates now require `/api/system/readiness` to report `broadcastReady=true` and a ready destination instead of treating those fields as informational only.
+- Hardened `release-preflight.sh` so quoted and unquoted mutable `:latest` image refs fail equally, and added `restart: unless-stopped` to the documented always-on production Compose services.
+- Validation completed: `pnpm exec vitest run tests/unit/release-preflight.test.ts tests/unit/release-readiness.test.ts`, `RELEASE_PREFLIGHT_ENV_FILE=<temp> RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight`, candidate `docker build` checks for `web`, `worker`, and `playout`, `./docker/smoke-test.sh stream247-web:release-candidate`, candidate-image `pnpm test:fresh-compose`, and `pnpm validate` passed.
+
+### 2026-04-05 — M0 Planning And Execution Guardrails
+
+- Completed the planning baseline by creating `AGENTS.md`, `PLANS.md`, `IMPLEMENT.md`, and the initial audit/roadmap docs that were later superseded by the Phase 4 reset set.
+- Marked these docs as the canonical execution surface for non-trivial work.
+- Superseded the older gap-analysis path so there is one authoritative roadmap direction going forward.
+- Validation completed: `pnpm validate` passed.
+
+### 2026-04-05 — M1 Scene Studio Contract
+
+- Added a canonical `Scene Studio` payload in `packages/core` so browser overlays, scene APIs, and worker/playout text consumers resolve from the same published scene contract.
+- Updated broadcast and public channel snapshots to carry the active scene payload alongside the scene summary.
+- Updated `/api/scenes` to return target-aware live and draft scene payloads, preserving the existing draft/live publish workflow.
+- Kept the existing text-overlay path as the compatibility fallback while routing it through the new payload builder.
+- Validation completed: `pnpm validate`, `pnpm test:fresh-db`, and `pnpm test:fresh-compose` passed.
+
+### 2026-04-05 — M2 On-Air Scene Renderer V1
+
+- Added an on-air scene renderer v1 in the worker that captures the published public overlay page headlessly and feeds transparent PNG frames into the FFmpeg playout path.
+- Added a chromeless public overlay capture mode so the worker can render Scene Studio output without page background chrome.
+- Preserved the existing FFmpeg text-overlay path as the compatibility fallback when Chromium capture is unavailable.
+- Added worker-side helper coverage for scene capture URLs and Chromium invocation arguments.
+- Validation completed: `pnpm validate`, `pnpm test:fresh-compose`, and `docker build -f docker/worker.Dockerfile -t stream247-worker:test .` passed.
+
+### 2026-04-05 — M3 Queue Engine And Transition Controller
+
+- Added deterministic queue helpers and persistent queue/transition state so operator queue surgery and scheduled advancement are visible in runtime state instead of being implicit worker behavior.
+- Hardened local-library rotation with stable hashed asset ids, running-process-aware selection, and a bootstrap guard that no longer reseeds the database merely because the `users` table is empty.
+- Added a dedicated `pnpm test:queue-continuity` smoke that boots a fresh compose stack, seeds a local-library pool/schedule, and proves short-asset queue advancement end to end.
+- Validation completed: `pnpm validate`, `pnpm test:fresh-db`, `pnpm test:fresh-compose`, `pnpm test:queue-continuity`, `docker build -f docker/web.Dockerfile -t stream247-web:test .`, and `docker build -f docker/worker.Dockerfile -t stream247-worker:test .` passed.
+
+### 2026-04-05 — M9 Security And Release Hardening
+
+- Added optional TOTP-based two-factor authentication for local owner accounts, including setup, confirm, disable, and the second-step login challenge.
+- Added browser smoke coverage for setup bootstrap, local 2FA login, Scene Studio publish, and broadcast action safety against a fresh Compose stack.
+- Added structured worker runtime event logging plus release workflow gates for queue continuity, browser smoke, and release preflight before tagged images publish.
+- Validation completed: `pnpm validate`, `pnpm test:fresh-db`, `pnpm test:fresh-compose`, `pnpm test:queue-continuity`, `pnpm test:e2e:smoke`, and `pnpm release:preflight` passed.
+
+### 2026-04-06 — M9 Browser Smoke Stabilization
+
+- Hardened grid panel layouts against long unbroken URLs and provisioning URIs so adjacent cards do not spill across click targets during headless browser runs.
+- Updated the admin browser smoke to assert the published channel name where the public overlay actually renders it, instead of assuming it is the main overlay heading.
+- Validation completed: `pnpm test:e2e:smoke` and `pnpm validate` passed.
+
+### 2026-04-05 — M4 Programming Workspace V2
+
+- Added explicit repeat-set metadata for schedule blocks so operators can create daily, weekday, weekend, or custom repeat behavior and safely update whole repeat sets from the editor.
+- Added materialized programming previews that simulate pool rotation, insert rules, and natural durations to flag balanced windows, repeat risk, overflow, and empty blocks.
+- Upgraded the schedule page, week overview, and timeline/editor surfaces so fill status, queue preview, and live runtime context are visible directly inside the Programming Workspace.
+- Validation completed: `pnpm validate`, `pnpm test:fresh-db`, and `pnpm test:fresh-compose` passed.
+
+### 2026-04-05 — M5 Library And Channel Blueprints
+
+- Added folder and tag metadata to catalog assets, plus bulk library curation actions for folder assignment and tag management across the asset browser and asset detail surfaces.
+- Extended the worker so local-library scans retain relative folder structure and remote sources land in stable source-scoped library folders without overwriting manual curation tags on re-ingest.
+- Added opt-in `Channel Blueprints` export/import for Scene Studio, sources, programming, moderation, and destination metadata while intentionally excluding secrets, incidents, sync history, and media binaries.
+- Validation completed: `pnpm validate`, `pnpm test:fresh-db`, and `pnpm test:fresh-compose` passed.
+
+### 2026-04-05 — M6 Multi-Output V1
+
+- Extended destination persistence with encrypted managed per-destination stream keys while preserving legacy env-key fallback for the built-in primary and backup outputs.
+- Updated the worker to fan one channel out to multiple active RTMP outputs through health-aware primary/backup routing and tee-muxer delivery, without breaking the existing primary/backup compatibility path.
+- Expanded the admin output management surfaces with destination creation, managed-key editing, delete protection for built-in outputs, and live visibility into the active output group.
+- Validation completed: `pnpm validate`, `pnpm test:fresh-db`, and `pnpm test:fresh-compose` passed.
+
+### 2026-04-05 — M7 Live Bridge
+
+- Added a `Live Bridge` contract to the playout runtime so operators can hand off from scheduled playback to RTMP/RTMPS or HLS live inputs without breaking the existing Multi-Output path.
+- Extended the worker queue/runtime so Live Bridge becomes a first-class on-air target with safe release back to the scheduled queue, preserved queue preview, and sanitized live-input visibility in the control room.
+- Added broadcast actions, control-room UI, snapshot summaries, tests, and a targeted `pnpm test:live-bridge-smoke` check for the new takeover path.
+- Validation completed: `pnpm validate`, `pnpm test:live-bridge-smoke`, `pnpm test:fresh-db`, and `pnpm test:fresh-compose` passed.
+
+### 2026-04-05 — M8 Audio Lanes, Cuepoints, Advanced Inserts
+
+- Added pool-scoped replace-mode audio lanes so scheduled playback can loop a dedicated local/direct media bed without affecting existing live, standby, reconnect, or insert paths.
+- Added schedule-block cuepoint offsets plus deterministic runtime tracking so inserts arm after the configured offset and fire on the next safe asset boundary without refiring after worker cycles.
+- Extended the broadcast snapshot, control room, blueprints, schedule editor, and programming previews so operators can see audio lane state and cuepoint progress directly in the UI.
+- Validation completed: `pnpm validate`, `pnpm test:audio-cuepoint-smoke`, `pnpm test:fresh-db`, and `pnpm test:fresh-compose` passed.
+
+### 2026-04-05 — M10 Truth And Safety Fixes
+
+- Replaced stale full-row asset curation writes with targeted asset-catalog updates so operator edits no longer risk rolling back fresh ingest metadata such as titles, paths, and status.
+- Replaced stale whole-source admin upserts with targeted source field updates across edit, bulk enable/disable, manual sync, and local-upload rescan flows so unrelated source state is preserved.
+- Fixed update-center version discovery so `/settings` resolves the real repo package version from both repo-root and containerized working-directory layouts.
+- Updated docs to stop implying full parity or a finished roadmap where the code is still partial.
+- Validation completed: `pnpm validate` and `pnpm test:fresh-db` passed.
+
+### 2026-04-06 — M11 Scene Studio V2
+
+- Extended the canonical Scene Studio contract with built-in typography presets plus positioned text, logo, image, website-embed, and widget-embed layers that stay shared across browser and on-air consumers.
+- Added additive overlay persistence for typography and positioned layers, updated blueprint/state wiring, and kept the publish/live draft workflow intact.
+- Expanded the admin studio, public overlay renderer, and browser smoke so the new typography/layer controls are operator-visible and publish-safe.
+- Updated conservative docs to stop claiming these richer layer types are still fully missing while keeping third-party embed limitations explicit.
+- Validation completed: `pnpm validate`, `pnpm test:fresh-db`, `docker build -f docker/web.Dockerfile -t stream247-web:test .`, `docker build -f docker/worker.Dockerfile -t stream247-worker:test .`, `pnpm test:fresh-compose`, and `pnpm test:e2e:smoke` passed.
+
+### 2026-04-06 — M12 Continuity And Recovery V2
+
+- Reduced restart-heavy recovery behavior by staging recovered destinations outside the active output group until the next natural transition or an explicit operator recovery request.
+- Added clearer multi-output operator visibility with per-destination recovery state, cooldown timing, retained failure attribution, and a dedicated `Recover outputs now` control.
+- Kept Live Bridge and queue visibility intact while tightening destination recovery semantics in the worker and shared broadcast snapshots.
+- Validation completed: `pnpm validate`, `pnpm test:multi-output-smoke`, `pnpm test:live-bridge-smoke`, `pnpm test:fresh-db`, `docker build -f docker/web.Dockerfile -t stream247-web:test .`, `docker build -f docker/worker.Dockerfile -t stream247-worker:test .`, `pnpm test:fresh-compose`, and `pnpm test:queue-continuity` passed.
+
+### 2026-04-06 — M13 Library And Blueprints V2
+
+- Added generated library thumbnails with deterministic metadata-card fallbacks, grouped asset browsing, and reusable curated sets with bulk membership actions across the admin catalog.
+- Extended `Channel Blueprints` to include curated sets plus selective import sections, safer asset-reference remapping, and explicit warnings when referenced media is not present locally.
+- Kept the existing replace-style import behavior available per enabled section while documenting that media files themselves never move with the blueprint.
+- Validation completed: `pnpm validate`, `pnpm test:fresh-db`, and `pnpm test:fresh-compose` passed.
+
+### 2026-04-06 — M14 Operator UX V2
+
+- Grouped the admin workspace into `Control room`, `Programming`, and `Workspace` sections so `Broadcast`, `Dashboard`, `Library`, `Scene Studio`, and `Settings` have clearer operator roles without changing their routes.
+- Updated hero copy and page framing across the primary admin surfaces so readiness, live control, media preparation, viewer-scene publishing, and workspace-wide settings are described consistently.
+- Tightened sidebar, card, and mobile/tablet ergonomics, and expanded the browser smoke to prove the new operator IA before 2FA and Scene Studio publish actions continue.
+- Validation completed: `pnpm validate`, `docker build -f docker/web.Dockerfile -t stream247-web:test .`, and `pnpm test:e2e:smoke` passed.
+
+### 2026-04-06 — M15 Coverage And Release Proof V2
+
+- Added a runtime parity smoke that boots a fresh Compose stack and proves Multi-Output fanout, replace-mode audio-lane playback, cuepoint inserts, and `Live Bridge` takeover/release with real playout outputs.
+- Expanded the admin browser smoke and Compose harness so secondary-output creation is covered before the existing local 2FA and Scene Studio publish path.
+- Added production-config release preflight gates to CI and release workflows after outer `pnpm validate`, and updated docs to state exactly which runtime/browser/release checks are now proven automatically.
+- Validation completed: `pnpm test:runtime-parity`, `pnpm test:e2e:smoke`, `pnpm validate`, `pnpm test:fresh-compose`, and `pnpm release:preflight` passed.
+
+### 2026-04-07 — M16.1 Schedule Gap Fixes
+
+- Added shared schedule-occurrence helpers that keep `current`, `next`, and upcoming schedule selection anchored to the actual wall clock instead of falling back to the first block of the day.
+- Updated web snapshots and worker standby-slate previews so programming gaps show no current block, keep the next teaser on the first future block, and stop wrapping the queue teaser back to earlier items after the final block.
+- Added regression coverage for before-first-block gaps, mid-gap periods, and after-last-block behavior across schedule helpers and broadcast snapshots.
+- Validation completed: `pnpm validate` and `pnpm test:fresh-compose` passed.
+
+### 2026-04-07 — M16.2 Streaming Upload Hardening
+
+- Replaced `arrayBuffer()`-based local-library ingest with streamed writes so large media files no longer need to be materialized fully in the web process before landing on disk.
+- Hardened duplicate-name handling with exclusive file creation and retry-on-collision semantics so concurrent uploads do not overwrite each other when they target the same folder and filename.
+- Added regression coverage that proves the upload path consumes chunked streams, never relies on `arrayBuffer()`, and preserves both files when duplicate names collide.
+- Validation completed: `pnpm exec vitest run tests/unit/sources-api-safety.test.ts` and `pnpm validate` passed.
+
+### 2026-04-07 — M16.3 Release Preflight Hardening
+
+- Tightened release preflight validation so required production settings must be present, non-blank, and no longer match copied `.env.example` or `.env.production.example` placeholder values.
+- Added an env-file override path for staged release checks, and made the Compose validation step follow that same selected env file instead of always reading the repository default `.env`.
+- Added shell-level regression coverage for blank secrets, copied example env files, and a successful pinned production config, then updated operator docs to describe the stricter gate accurately.
+- Validation completed: `pnpm exec vitest run tests/unit/release-preflight.test.ts`, `RELEASE_PREFLIGHT_ENV_FILE=<temp> RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight`, and `pnpm validate` passed.
+
+### 2026-04-08 — M16.4 Final Stabilization Fixes
+
+- Reworked schedule next/upcoming selection to stay anchored to the actual wall clock instead of occurrence index order, which preserves daytime next-teasers when the current block crosses midnight.
+- Added overnight regression coverage for helper selection plus broadcast snapshot behavior so web and worker standby consumers keep the correct upcoming block after `23:00-01:00` style schedules.
+- Tightened release preflight again so quoted-empty required values fail like blank values, and Traefik proxy settings fail when they still carry documented example defaults.
+- Validation completed: `pnpm exec vitest run tests/integration/schedule-preview.test.ts tests/unit/ops-state.test.ts tests/unit/release-preflight.test.ts`, `RELEASE_PREFLIGHT_ENV_FILE=<temp> RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight`, `pnpm test:fresh-compose`, and `pnpm validate` passed.
+
+### 2026-04-08 — M17 Scene Studio V2
+
+- Added metadata-driven Scene Studio widgets for current, next, and queue-facing broadcast data so published scenes can display canonical snapshot data without relying on third-party iframes.
+- Added conservative local font-stack overrides for positioned text layers with explicit fallback behavior; Stream247 still does not download remote fonts and only resolves font family names already present on the browser host or worker image.
+- Tightened embed and browser-widget guidance so local paths are treated as the reliable self-hosted path, generic third-party frames are marked limited, and known unsupported YouTube/Twitch page URLs render as blocked placeholders instead of pretending to be supported.
+- Validation completed: targeted `overlay-scenes` regression tests, `pnpm test:fresh-db`, `pnpm test:fresh-compose`, `pnpm test:e2e:smoke`, Docker image builds, and `pnpm validate` passed.
+
+### 2026-04-08 — M17.1 Scene Studio V2 Follow-Up Fixes
+
+- Preserved metadata-widget label fallback by keeping empty metadata titles empty during normalization, so the canonical current/next/later labels can appear whenever operators clear the manual override.
+- Refined provider detection so dedicated YouTube embed URLs and `player.twitch.tv` endpoints stay available as limited browser-frame sources, while normal YouTube and Twitch page URLs remain blocked as unsupported Scene Studio frame sources.
+- Restored an explicit terminal stop condition in `AGENTS.md` for the case where `PLANS.md` has no incomplete milestone remaining, and reconciled the gap-analysis missing-features list with the milestones already marked complete.
+- Validation completed: `pnpm exec vitest run tests/unit/overlay-scenes.test.ts` and `pnpm validate` passed.
+
+### 2026-04-08 — M17.2 Scene Studio V2 Final Follow-Up Fixes
+
+- Updated fresh widget-layer defaults so switching a new widget into Scene data card mode no longer carries a placeholder label override; canonical `Now Playing`, `Next`, and `Later` labels can appear immediately unless the operator explicitly sets an override.
+- Reclassified protocol-relative frame URLs as remote sources, so `//youtube...`, `//player.twitch.tv...`, and other protocol-relative providers now follow the same supported, limited, or unsupported boundary rules as absolute remote URLs.
+- Validation completed: `pnpm exec vitest run tests/unit/overlay-scenes.test.ts tests/unit/overlay-settings-form.test.ts` and `pnpm validate` passed.
+
+### 2026-04-08 — M18 Release Workflow Preflight Alignment
+
+- Replaced the stale CI and tagged-release workflow pattern that copied `.env.production.example` directly into release preflight, because that workflow drifted out of sync with the stricter placeholder rejection already shipped in `scripts/release-preflight.sh`.
+- Added `scripts/prepare-release-preflight-env.sh` so automation can derive a temporary non-placeholder env file from `.env.production.example` without weakening the production gate or changing operator-facing deployment guidance.
+- Added regression coverage that proves the staged workflow env helper produces a release-preflight-safe env file and that the resulting file passes `pnpm release:preflight` with `RELEASE_PREFLIGHT_SKIP_VALIDATE=1`.
+- Validation completed: `pnpm exec vitest run tests/unit/release-preflight.test.ts`, `RELEASE_PREFLIGHT_ENV_FILE="$(./scripts/prepare-release-preflight-env.sh)" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight`, and `pnpm validate` passed.
+
+### 2026-04-08 — M18.1 Release Preflight Compose Env Alignment
+
+- Updated `scripts/release-preflight.sh` so staged `RELEASE_PREFLIGHT_ENV_FILE` runs temporarily mirror the selected env file into the repo-root `.env` path only for the duration of `docker compose config`, then restore or remove that temporary file on exit.
+- This keeps Compose validation aligned with the selected staged env file even when CI has no root `.env`, without weakening placeholder, quoted-empty, or proxy-example rejection in the earlier preflight checks.
+- Added regression coverage for the missing-root-`.env` case, including a compose-validation path that now passes with the staged env file and a placeholder path that still fails before Compose validation can weaken the gate.
+- Validation completed: `pnpm exec vitest run tests/unit/release-preflight.test.ts`, `backup_env="$(mktemp "${TMPDIR:-/tmp}/stream247-root-env-backup.XXXXXX")"; mv .env "$backup_env"; tmp_env="$(./scripts/prepare-release-preflight-env.sh)"; cleanup(){ rm -f "$tmp_env"; if [ -f "$backup_env" ]; then mv "$backup_env" .env; fi; }; trap cleanup EXIT; RELEASE_PREFLIGHT_ENV_FILE="$tmp_env" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight`, and `pnpm validate` passed.
+
+### 2026-04-19 — M20.1 Twitch VOD Cache Prefetch
+
+- Added cache metadata to asset persistence so Twitch VODs keep their original URL while the worker records verified local cache path, status, timestamp, and failure details.
+- Added a Twitch VOD cache preparer that downloads archives into `MEDIA_LIBRARY_ROOT/.stream247-cache/twitch`, verifies them with `ffprobe`, excludes the internal cache from local-library scans, and lets queue/current prefetch use the local file.
+- Changed playout selection so a Twitch VOD cache failure produces a warning incident and standby slate instead of direct remote archive playback unless remote fallback is explicitly enabled.
+- Validation completed: `pnpm --filter db build`, `pnpm --filter worker build`, and `pnpm exec vitest run tests/unit/twitch-vod-cache.test.ts tests/integration/db-roundtrip.test.ts` passed.
+
+### 2026-04-19 — M20.2 Persistent Relay Uplink
+
+- Added a pinned MediaMTX relay service plus an `uplink` worker mode to production Compose so program playout publishes to the local relay while the uplink owns external primary/backup output delivery.
+- Added relay-mode runtime wiring that keeps direct playout-to-destination output as a rollback path, moves scheduled 48-hour reconnects to the uplink, and records independent uplink heartbeat/process incidents.
+- Extended release preflight, env examples, smoke coverage, and operator docs for `STREAM247_RELAY_ENABLED`, relay input/output URLs, and the pinned relay image.
+- Validation completed: `pnpm exec vitest run tests/unit/ffmpeg-runtime.test.ts tests/unit/release-preflight.test.ts tests/unit/release-readiness.test.ts`, `docker compose --env-file <temp .env.example copy> config`, `docker build -f docker/web.Dockerfile -t stream247-web:test .`, `docker build -f docker/worker.Dockerfile -t stream247-worker:test .`, `pnpm test:fresh-compose`, and `pnpm validate` passed.
+
+### 2026-04-19 — M20.3 Persistent Program Feed
+
+- Replaced the default uplink input with a buffered local HLS program feed so normal asset boundaries no longer remove the stream that the external RTMP uplink reads.
+- Kept the previous MediaMTX RTMP relay input as `STREAM247_UPLINK_INPUT_MODE=rtmp` rollback while preserving `STREAM247_RELAY_ENABLED=0` as the older direct-output rollback.
+- Added persisted uplink/program-feed runtime state, readiness output, and soak-monitor checks for unplanned uplink restarts and stale feed state.
+- Validation completed: `pnpm exec vitest run tests/unit/ffmpeg-runtime.test.ts tests/unit/release-readiness.test.ts`, `pnpm --filter db build`, `pnpm --filter worker build`, `pnpm --filter web typecheck`, `pnpm exec vitest run tests/integration/db-roundtrip.test.ts`, `pnpm validate`, and `RELEASE_PREFLIGHT_ENV_FILE=<prepared env> RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight` passed.
+
+### 2026-04-20 — M20.5 Program Feed Handoff Stability
+
+- Hardened the local HLS program-feed handoff with temporary segment files, epoch-based segment numbers, and discontinuity markers, and made the uplink demuxer tolerate corrupt/discontinuous local feed packets.
+- Classified clean asset/insert FFmpeg exits as natural playout boundaries instead of incidents, while keeping non-clean exits such as code `128` or `8` as structured per-asset failures with last stderr and sanitized input context.
+- Updated readiness and the soak monitor so short local playout failures are tolerated only when the persistent uplink is running, the program feed is fresh, the destination is ready, and crash-loop protection is not active.
+- Validation completed: `pnpm exec vitest run tests/unit/ffmpeg-runtime.test.ts tests/unit/release-readiness.test.ts`, `pnpm --filter worker build`, `pnpm --filter web typecheck`, and `pnpm validate` passed.
+
+---
+
+## Phase 5 — Product Reset & Redesign
+
+Phase 5 executes the full product reset. It has two sub-phases: Phase 5A (M36–M42) corrects surface drift and hardens the text pipeline so the redesign has a clean foundation; Phase 5B (M43–M50) ships the redesign — new information architecture, planning UX, online-studio UX, design system, engagement model, live-status visibility, and final documentation.
+
+Reference documents:
+- `docs/product-reset-audit.md` — executive verdict, requirement-by-requirement audit, square-box pipeline map, deployment reality
+- `docs/product-reset-target-state.md` — future product shape, four-workspace model, non-goals
+- `docs/product-reset-kill-list.md` — remove/keep/replace verdicts, terminology migration table
+- `docs/product-reset-ui-spec.md` — React-first design contract, canonical primitives, consistency rules
+- `docs/product-reset-docs-plan.md` — final six-doc set, merge/delete sequence
+
+**Operating rules for every Phase 5 milestone:**
+
+- The repo holds source of code. Portainer on DT is the deployment control plane. DUT is the runtime validation target. Editing the local `docker-compose.yml` alone does not change production.
+- Every milestone that changes a shipped image specifies (1) the new tag to pin in `.env.production.example`, (2) the Portainer stack update step on DT, (3) the DUT validation command(s), and (4) the rollback path.
+- Every milestone states its non-goals. If a milestone is silent on something, that thing is out of scope.
+- Route path strings are not committed ahead of M43. Milestones before M43 refer to workspaces (Live / Program / Studio / Admin), not URL paths.
+
+| Milestone | Phase | Type | Status | Goal |
+| --- | --- | --- | --- | --- |
+| M36 | 5A | Feature fix | Complete | Text-pipeline hardening — strip invisible Unicode at write, read, and render |
+| M37 | 5A | Feature fix | Complete | Navigation regression + orphaned Moderation surface |
+| M38 | 5A | Feature | Complete | Moderation presence — full chatter + operator workflow with clamp feedback |
+| M39 | 5A | Cleanup | Complete | Remove external-overlay legacy from copy + `noindex` the overlay route |
+| M40 | 5A | Cleanup | Complete | Apply terminology migration table to all surface labels |
+| M41 | 5A | UX | Complete | Consolidate playout actions on the Live surface; Dashboard becomes read-only |
+| M42 | 5A | Docs | Complete | Quarantine Phase-4 planning artifacts out of `docs/` |
+| M43 | 5B | UX | Complete | IA reset — four-workspace model in code, final route strings chosen |
+| M44 | 5B | UX | Complete | Design-system rollout — `Tabs`, `EmptyState`, `Toast`, `Textarea` primitives |
+| M45 | 5B | UX | Complete | Planning UX V2 — Program workspace with Week/Day/Now+Next lenses |
+| M46 | 5B | UX | Complete | Online Studio UX V2 — Scene/Engagement/Output tabs, publish with diff |
+| M47 | 5B | Feature | Complete | Engagement V2 — chatter-participation game with adaptive modes |
+| M48 | 5B | UX | Complete | Live-status visibility upgrade — chip in sidebar + Live header |
+| M49 | 5B | Docs | Complete | Docs finalization — collapse to the six-doc set |
+| M50 | 5B | Ops | Complete | Portainer/DT rollout flow baked into `deployment.md` + stack-check script |
+
+---
+
+## M36 Text-Pipeline Hardening (Square-Box Fix)
+
+**Goal**
+
+Eliminate the square-box tofu glyphs in overlay text, chat output, and broadcast titles by sanitizing text at every pipeline layer — form input, DB write, DB read, API response, render — not just trimming whitespace.
+
+**Scope**
+
+- Add `stripInvisibleCharacters(value: string): string` to `packages/core/src/index.ts`. Strips zero-width characters (U+200B–U+200D), BOM (U+FEFF), C0/C1 control chars (U+0000–U+001F except `\n\t`; U+007F–U+009F), bidi overrides (U+202A–U+202E, U+2066–U+2069), soft hyphen (U+00AD). Applies NFC normalization. Preserves printable non-ASCII (emoji, CJK, accents).
+- Replace `normalizeText` at `apps/web/app/api/assets/[id]/route.ts:19` (currently `.trim().slice()`) with a wrapper around `stripInvisibleCharacters` + length clamp.
+- Apply the same sanitizer at the normalize-body helpers in the shows, pools, overlay, and sources API routes.
+- Replace `visibleOverlayText` at `apps/web/components/overlay-scene-canvas.tsx:20` (currently `.trim()`) with `stripInvisibleCharacters`.
+- Wrap `buildTwitchMetadataTitle` at `apps/worker/src/twitch-metadata.ts:21` with the sanitizer on every concatenated segment (prefix, title, category token, hashtags).
+- Add regression coverage in `tests/unit/strip-invisible-characters.test.ts` covering U+200B/C/D, U+FEFF, U+0000–1F, U+007F–9F, U+202A–E, U+00AD, combining marks, emoji preservation, CJK preservation.
+- Add focused route regressions plus a fresh-DB roundtrip proving polluted text is cleaned before persistence, title generation, and overlay rendering.
+
+**Touched files**
+
+- `packages/core/src/index.ts`
+- `apps/web/app/api/assets/[id]/route.ts`
+- `apps/web/app/api/shows/route.ts`
+- `apps/web/app/api/pools/route.ts`
+- `apps/web/app/api/overlay/route.ts`
+- `apps/web/app/api/sources/route.ts`
+- `apps/web/components/overlay-scene-canvas.tsx`
+- `apps/worker/src/twitch-metadata.ts`
+- `tests/unit/strip-invisible-characters.test.ts` (new)
+
+**Acceptance**
+
+- `stripInvisibleCharacters` exists in `packages/core` and is exported.
+- All five API routes route text through it at write time.
+- Overlay render sanitizes at display time.
+- `buildTwitchMetadataTitle` produces strings with no invisible characters even when DB source contains them (legacy data safety).
+- Unit tests cover every invisible category and assert normalized NFC output.
+- Focused route regressions plus the fresh-DB roundtrip prove the full pipeline is clean end-to-end.
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/strip-invisible-characters.test.ts
+pnpm exec vitest run tests/integration/
+pnpm validate
+```
+
+**DUT validation**
+
+- Push seed asset titles containing every control-char category to DUT via `/api/assets`.
+- Capture overlay frames via existing Chromium capture path.
+- Assert no tofu glyphs in captured frames; assert title in Twitch API reflects the sanitized string.
+
+**Portainer/DT rollout**
+
+- Build web + worker images, push to `ghcr.io/drjakeberg/stream247-{web,worker}:v1.6.0-M36`.
+- Pin tag in `.env.production.example`.
+- Redeploy Portainer-managed stack on DT.
+- Run seed-title DUT validation before promoting to production.
+
+**Rollback**
+
+- Revert tag in `.env.production.example` to previous release; redeploy previous stack in Portainer.
+
+**Non-goals**
+
+- No font swap to address glyph-set gaps.
+- No on-air banner changes.
+- No historical-data backfill sweep; the render-layer sanitizer handles legacy rows on display.
+
+**Progress notes**
+
+- Completed with centralized invisible-character stripping in core, route-level write sanitization on assets/shows/pools/overlay/sources, DB normalization for overlay preset and asset metadata writes, render-time overlay cleanup, and Twitch/overlay title-path sanitization.
+- Validation completed: `pnpm exec vitest run tests/unit/strip-invisible-characters.test.ts tests/unit/twitch-metadata.test.ts tests/unit/assets-api-safety.test.ts tests/unit/sources-api-safety.test.ts tests/unit/overlay-scenes.test.ts`, `pnpm exec vitest run tests/integration/`, and `pnpm validate` passed.
+
+---
+
+## M37 Navigation Regression And Orphaned Moderation Surface
+
+**Goal**
+
+Fix the three concrete nav defects: `<a href>` in `admin-navigation.tsx:20` (drops SSE on every click), the dead `/ops` redirect, and the Moderation surface not being reachable from the sidebar.
+
+**Scope**
+
+- Convert every internal link in `apps/web/components/admin-navigation.tsx` from `<a href>` to `next/link` `<Link>`.
+- Delete `apps/web/app/(admin)/ops/page.tsx` and remove any nav entry still pointing at `/ops`.
+- Surface the Moderation page in the sidebar (temporary placement; final placement under the Live workspace happens in M43).
+- Update the nav-link CSS block in `apps/web/app/globals.css` so long labels wrap (`word-break: break-word`, two-line clamp) instead of truncating with `text-overflow: ellipsis`.
+
+**Touched files**
+
+- `apps/web/components/admin-navigation.tsx`
+- `apps/web/lib/admin-navigation.ts`
+- `apps/web/app/(admin)/ops/page.tsx` (delete)
+- `apps/web/app/globals.css`
+
+**Acceptance**
+
+- No `<a href="/…">` for internal routes anywhere in `apps/web/components/admin-navigation.tsx`.
+- `/ops` route no longer exists; any lingering link targeting it is removed.
+- Sidebar contains a visible Moderation entry.
+- Long label "Moderation Presence Window" wraps to two lines in the sidebar at default width; no ellipsis.
+- SSE event counter on `/api/broadcast/stream` does not reset when clicking between nav items.
+
+**Validation**
+
+```bash
+pnpm validate
+pnpm --filter web build
+```
+
+**DUT validation**
+
+- Open the admin app on DUT.
+- Subscribe to `/api/broadcast/stream` in a side tab; click every sidebar entry; confirm event counter is continuous.
+- Confirm Moderation is reachable from the sidebar.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M37`; pin in `.env.production.example`; redeploy Portainer stack; smoke-check SSE persistence after deploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack.
+
+**Non-goals**
+
+- No IA rename. Workspace consolidation is M43.
+- No redesign of individual pages. This milestone is a regression fix.
+
+---
+
+## M38 Moderation Presence — Full Operator + Chatter Flow
+
+**Goal**
+
+Close the feedback gap on `!here`. The parser at `apps/worker/src/twitch-engagement.ts:70` and `parseModeratorCheckIn` at `packages/core/src/index.ts:1782` already clamp requested values to the configured `min`/`max`/`default`. Today the clamp is silent — operators and chatters never know why `!here 5` produced a 10-minute window. This milestone makes the clamp visible across chat, the Live workspace, the Moderation page, and the settings form.
+
+**Scope — chatter flow**
+
+- When a moderator runs `!here` or `!here N`, the IRC bridge sends a chat reply confirming the resulting window. If the requested value was clamped, the reply explains the clamp explicitly: `"received !here 5, minimum is 10 — window set to 10 min"`. If the value was accepted as-is: `"presence window set to 30 min"`.
+- Reply text is generated by a pure helper in `packages/core` (new `formatPresenceClampReply`) so it is unit-testable without the IRC bridge.
+
+**Scope — operator UI**
+
+- Live workspace header shows a presence chip (`StatusChip`) while a window is active. Chip shows remaining minutes; clicking it opens the Moderation detail page.
+- Moderation page shows active + recent windows with three columns: *requested value*, *applied value*, *clamp reason*.
+- Moderation settings form exposes `min`, `max`, `default` with inline helper text describing the clamp rule.
+- Sidebar badge shows a dot when a window is active.
+
+**Scope — docs**
+
+- `docs/moderation-policies.md` gets a subsection stating: the exact clamp rule, the IRC reply format, the min/max/default semantics, how to change them.
+
+**Touched files**
+
+- `apps/worker/src/twitch-engagement.ts` (call new reply helper + send IRC message)
+- `packages/core/src/index.ts` (add `formatPresenceClampReply`; keep `parseModeratorCheckIn` unchanged)
+- `apps/web/components/moderation-settings-form.tsx`
+- `apps/web/app/(admin)/moderation/page.tsx`
+- `apps/web/components/admin-navigation.tsx` (sidebar dot)
+- `apps/web/app/(admin)/broadcast/page.tsx` (or wherever the Live header renders — presence chip)
+- `tests/unit/engagement.test.ts` (extend)
+- `tests/unit/format-presence-clamp-reply.test.ts` (new)
+- `docs/moderation-policies.md`
+
+**Acceptance**
+
+- `!here 5` with min=10 produces chat reply mentioning the clamp; DB window is 10 minutes.
+- `!here 30` with min=10/max=60 produces chat reply confirming 30 minutes; no clamp language.
+- `!here 9999` with max=60 produces chat reply mentioning the max-clamp; DB window is 60 minutes.
+- Moderation page shows requested vs applied values for each of the above.
+- Sidebar dot and Live header chip reflect the active window in real time.
+- Settings form explains the clamp rule inline.
+- `docs/moderation-policies.md` describes the clamp rule and the reply format.
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/engagement.test.ts tests/unit/format-presence-clamp-reply.test.ts
+pnpm validate
+```
+
+**DUT validation**
+
+- IRC test harness sends `!here`, `!here 1`, `!here 9999`, `!here 10` against the DUT bot; assert chat reply strings and DB window values.
+- Operator walkthrough on DUT: confirm chip + Moderation page + sidebar dot reflect each window.
+
+**Portainer/DT rollout**
+
+- Build web + worker; tag `v1.6.0-M38`; pin in `.env.production.example`; redeploy Portainer stack; soak `!here` harness on DUT before production promote.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack. Chat replies stop; clamp behavior reverts to silent but functionally unchanged.
+
+**Non-goals**
+
+- No new chat commands beyond `!here`.
+- No automation changes triggered by presence state.
+- No Twitch API calls to auto-set chat mode during presence (separate future milestone if pursued).
+
+---
+
+## M39 External-Overlay Legacy Removal
+
+**Goal**
+
+Remove every trace of the "external overlay / browser source / third-party stream embed" framing from copy and search indexing. Align the overlay's product-surface language with the target-state statement: *the overlay is internal output for Stream247's own 24/7 broadcast*.
+
+**Scope**
+
+- Strip "external", "browser source", "third-party", and "OBS source" phrasing from admin copy, Studio descriptions, and onboarding text.
+- Update `docs/legacy-removal-list.md` — the explicit "external stream overlay" language at `docs/legacy-removal-list.md:111` is rewritten or the file is merged and deleted per M42.
+- Add `noindex` meta to the `/overlay` route's layout and set the HTTP response header `X-Robots-Tag: noindex` on `/overlay` and `/overlay?chromeless=1`.
+- Add the explicit internal-overlay statement to `README.md` product description.
+
+**Touched files**
+
+- `apps/web/app/overlay/layout.tsx` (or equivalent)
+- `apps/web/app/overlay/page.tsx`
+- `apps/web/middleware.ts` (or response-header wiring) for `X-Robots-Tag`
+- `docs/legacy-removal-list.md` (updated or deleted)
+- `README.md`
+- Various UI copy files touched by grep for the old phrasing
+
+**Acceptance**
+
+- `curl -I http://<dut>/overlay` returns `X-Robots-Tag: noindex` in the response.
+- `curl http://<dut>/overlay` HTML contains `<meta name="robots" content="noindex">`.
+- `grep -ri "external overlay\|browser source\|third-party" apps/web docs` returns zero hits (or only the product-reset docs where the migration is explained).
+- Chromium capture still renders `/overlay?chromeless=1` correctly.
+- `README.md` contains the one-sentence internal-overlay statement.
+
+**Validation**
+
+```bash
+pnpm --filter web build
+pnpm validate
+```
+
+**DUT validation**
+
+- `curl -I` the overlay URL on DUT; assert header.
+- View-source on `/overlay`; assert meta.
+- Restart Chromium capture; confirm overlay still renders and frame pipeline is unaffected.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M39`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack. Headers revert.
+
+**Non-goals**
+
+- No URL change for `/overlay`.
+- No capture flow change.
+
+---
+
+## M40 Surface-Language Terminology Cleanup
+
+**Goal**
+
+Apply the terminology migration table from `docs/product-reset-kill-list.md` to every surface label, section header, `PageHeader` title, form label, button label, and doc copy string. Route paths do not move in this milestone — that's M43.
+
+**Scope — replace, in UI copy only**
+
+- "Broadcast" / "Dashboard" (nav labels) → "Live" — applied to sidebar labels, page titles, and copy referring to the live surface collectively.
+- "Overlays" (nav label for chat/alerts) → "Engagement" — in the sidebar and any internal references.
+- "Scene Studio" / "Overlay Studio" labels → "Scene" — as a tab name once tabs land in M44; as a label prior.
+- "Stream Studio" (section header) → "Studio".
+- "Workspace" (section header) → "Admin".
+- "Programming" (section header) → "Program".
+- "in-stream overlay" / "browser source" (already covered partially by M39) → "overlay".
+- "pool block" → "schedule block" (where the reference is to a block on the schedule).
+- "Go Live Checklist" vs "readiness" — unify on "Readiness".
+- "presence window" / "mod presence" / "!here window" — unify on "Moderation presence".
+
+**Touched files**
+
+- `apps/web/lib/admin-navigation.ts` (section labels; routes unchanged)
+- `apps/web/components/admin-navigation.tsx` (rendered labels)
+- Every `PageHeader` usage in `apps/web/app/(admin)/**/page.tsx`
+- Form label strings across the admin app
+- `docs/architecture.md`, `docs/deployment.md`, `docs/operations.md`, `docs/moderation-policies.md`, `docs/twitch-setup.md`
+
+**Acceptance**
+
+- `grep -ri "Stream Studio\|Workspace (section)\|Programming (section)" apps/web` returns zero hits.
+- Sidebar reads `Live`, `Program`, `Studio`, `Admin` as top-level labels (grouping remains; workspace consolidation is M43).
+- Docs use the new terms consistently.
+
+**Validation**
+
+```bash
+pnpm --filter web build
+pnpm validate
+```
+
+**DUT validation**
+
+- Visual walkthrough of every admin page on DUT.
+- Screenshot compare vs pre-M40 baseline; only label strings should differ.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M40`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack.
+
+**Non-goals**
+
+- No route rename. Routes move in M43.
+- No IA consolidation. Workspaces consolidate in M43.
+- No layout or content changes. Copy only.
+
+---
+
+## M41 Broadcast/Dashboard Control Consolidation
+
+**Goal**
+
+Remove the duplicate playout action forms from `/dashboard` so `/broadcast` is the single surface with live actions. `/dashboard` becomes read-only status. No route rename in this milestone — that's M43's job.
+
+**Scope**
+
+- Remove skip/override/restart/fallback/insert form components from `/dashboard`; replace with status-only rendering.
+- Keep all incident and drift content on `/dashboard` (the Operations consolidation from M34 stands).
+- Ensure `/broadcast` is the only surface with action buttons that mutate playout state.
+
+**Touched files**
+
+- `apps/web/app/(admin)/dashboard/page.tsx`
+- Any control-form component imports that become unused (delete cleanly; no re-export stubs)
+
+**Acceptance**
+
+- `/dashboard` renders no `<form>` or action button that calls a playout-mutation endpoint.
+- `/broadcast` retains all five action categories.
+- No operator workflow requires visiting `/dashboard` to act on the stream.
+
+**Validation**
+
+```bash
+pnpm --filter web build
+pnpm validate
+```
+
+**DUT validation**
+
+- Operator performs one go-live and one pause on DUT via `/broadcast`; confirm `/dashboard` shows the new state as status only.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M41`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack.
+
+**Non-goals**
+
+- No redesign of either page layout. Layout redesign lives in M43/M44.
+- No IA change.
+
+---
+
+## M42 Quarantine Phase-4 Planning Artifacts
+
+**Goal**
+
+Move the five Phase-4 planning artifacts out of `docs/` so the product doc set is not mixed with superseded plans. Files go to `docs/archive/` until M49 deletes them outright.
+
+**Scope**
+
+- Move `docs/full-product-reset-audit.md`, `docs/full-product-reset-plan.md`, `docs/legacy-removal-list.md`, `docs/docs-reset-plan.md`, `docs/ui-redesign-spec.md` to `docs/archive/`.
+- Update `README.md` doc list to reflect the new structure.
+- Update any cross-links that reference the moved files.
+
+**Touched files**
+
+- `docs/archive/` (new directory)
+- `docs/full-product-reset-audit.md` → `docs/archive/full-product-reset-audit.md`
+- `docs/full-product-reset-plan.md` → `docs/archive/full-product-reset-plan.md`
+- `docs/legacy-removal-list.md` → `docs/archive/legacy-removal-list.md`
+- `docs/docs-reset-plan.md` → `docs/archive/docs-reset-plan.md`
+- `docs/ui-redesign-spec.md` → `docs/archive/ui-redesign-spec.md`
+- `README.md`
+
+**Acceptance**
+
+- Top level of `docs/` contains only current product docs + the five product-reset files (which themselves are scheduled for M49 absorption).
+- `docs/archive/` contains the five moved files.
+- No dead cross-links.
+
+**Validation**
+
+```bash
+pnpm validate
+```
+
+**DUT validation**
+
+- None (docs-only).
+
+**Portainer/DT rollout**
+
+- None (docs-only).
+
+**Non-goals**
+
+- No content rewrite. This is a move, not an edit.
+- No new docs.
+
+---
+
+## M43 IA Reset — Workspace Model In Code
+
+**Goal**
+
+Commit the four-workspace information architecture from `docs/product-reset-target-state.md` to code. This is where final route path strings are chosen and recorded.
+
+**Scope**
+
+- Rewrite `apps/web/lib/admin-navigation.ts` as four workspace entries: Live, Program, Studio, Admin.
+- Create the workspace route shells. Final path strings (for example `/live` vs `/broadcast`, `/program` vs `/schedule`, `/studio` vs `/overlay-studio`, `/admin` vs `/settings`) are chosen during implementation and recorded in an addendum at the end of `docs/product-reset-target-state.md`.
+- Set up redirects from every old route to the new workspace + internal tab.
+- Keep old routes aliased for one soak cycle before deletion (cleanup milestone after M50, or folded into M49).
+- Apply the `Tabs` primitive from M44 as it lands — M43 can ship the shell even with interim tab styling if M44 is not yet complete.
+
+**Touched files**
+
+- `apps/web/lib/admin-navigation.ts`
+- `apps/web/app/(admin)/layout.tsx`
+- New workspace page files (paths decided at implementation)
+- Route redirects via `next.config.js` or route-level `redirect()`
+- `docs/product-reset-target-state.md` (addendum recording final paths)
+
+**Acceptance**
+
+- Four workspace entries in the sidebar; no other top-level entries.
+- Every old admin URL redirects to its new workspace + tab.
+- SSE subscription survives workspace switches.
+- Final path strings recorded in target-state addendum.
+
+**Validation**
+
+```bash
+pnpm --filter web build
+pnpm validate
+```
+
+**DUT validation**
+
+- Operator walkthrough on DUT: visit every old URL; confirm redirect to new workspace; confirm tab selection is correct.
+- SSE event counter on `/api/broadcast/stream` stays continuous through workspace switches.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M43`; pin; redeploy; soak for at least 24h with redirects live before deleting aliases.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack. Old routes still serve pre-M43 surfaces.
+
+**Non-goals**
+
+- No internal layout redesign. Layouts inside workspaces can remain pre-reset shapes until M44–M46 land.
+- No primitive changes. Primitives roll out in M44.
+- No data-model changes.
+
+---
+
+## M44 Design-System Rollout
+
+**Goal**
+
+Add the four new primitives (`Tabs`, `EmptyState`, `Toast`, `Textarea`) specified in `docs/product-reset-ui-spec.md`, then apply them incrementally starting with the Program workspace.
+
+**Scope**
+
+- Create `apps/web/components/ui/Tabs.tsx` — keyboard-accessible, URL-synced, visually distinct from sidebar.
+- Create `apps/web/components/ui/EmptyState.tsx` — title + body + optional primary action slot.
+- Create `apps/web/components/ui/Toast.tsx` — stacked top-right, auto-dismiss, accessible live region.
+- Create `apps/web/components/ui/Textarea.tsx` — same label/helper/error shape as `Input`.
+- Document each in `docs/product-reset-ui-spec.md`.
+- Apply to the Program workspace first as the reference adoption.
+- Set up Playwright screenshot baselines for the Program workspace after the design-system pass.
+
+**Touched files**
+
+- `apps/web/components/ui/Tabs.tsx` (new)
+- `apps/web/components/ui/EmptyState.tsx` (new)
+- `apps/web/components/ui/Toast.tsx` (new)
+- `apps/web/components/ui/Textarea.tsx` (new)
+- `apps/web/app/(admin)/program/**` (primitive adoption)
+- `docs/product-reset-ui-spec.md`
+- `tests/e2e/program-screenshot.spec.ts` (new)
+
+**Acceptance**
+
+- Four new primitives exist and are documented.
+- Program workspace uses all four where applicable.
+- Screenshot baseline captures the Program workspace's clean state.
+
+**Validation**
+
+```bash
+pnpm --filter web build
+pnpm exec playwright test tests/e2e/program-screenshot.spec.ts
+pnpm validate
+```
+
+**DUT validation**
+
+- Playwright screenshot compare against DUT-rendered Program workspace.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M44`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack.
+
+**Non-goals**
+
+- No wholesale rewrite of every form. Adoption is incremental across M44–M46.
+- No new primitives beyond the four listed.
+
+**Retired 2026-10-01: `tests/e2e/program-screenshot.spec.ts`**
+
+The Program screenshot this milestone added is gone, along with its reference image. No gate ever ran
+it: CI runs only `admin-smoke.spec.ts` and `scripts/design-baseline.sh`. Nobody refreshed its April
+reference after M44, and when someone finally ran it on 2026-10-01 it failed (1080x2077 expected,
+1080x1434 received). The cause was later UI work, not unstable data: per-row editors were folded away,
+the audio-lane wording changed, and the (i) tips and the pool alternation note were added. The
+acceptance line above ("Screenshot baseline captures the Program workspace's clean state") is now met
+by the `program-schedule`, `program-pools`, `program-library` and `program-sources` surfaces in
+`tests/e2e/design-baseline.spec.ts`, at desktop and mobile. Wording and control count for the same
+pages are checked by `wording-baseline.spec.ts` and `control-density.spec.ts`. The old spec's crop
+(`.content-stack > .stack-form` at 1440x1600) is a strict subset of the `program-pools` desktop
+baseline: same path, same viewport, and nothing masked in that region. The baseline also runs on the
+seeded dev stack, with a frozen clock and a pinned renderer. Read the validation command above as
+`./scripts/design-baseline.sh`.
+
+---
+
+## M45 Planning UX V2
+
+**Goal**
+
+Ship the Program workspace per `docs/product-reset-target-state.md` and `docs/product-reset-ui-spec.md`. Three lenses (Week, Day, Now+Next). Video-level default. Structured Replay toggle, hashtag chip input, category `Select`.
+
+**Scope**
+
+- Program workspace with three internal tabs (Week / Day / Now+Next), all using the `Tabs` primitive.
+- Week lens: seven-day grid; each block shows its first resolved video via `lookaheadVideoTitleFromPool` at `packages/core/src/index.ts:1943`; expandable to reveal the full video sequence.
+- Day lens: vertical timeline; every asset slot shown with runtime, category, Replay flag.
+- Now+Next lens: currently playing + next two + fallback chain; matches Live header chip.
+- Inline per-video metadata drawer: Replay boolean toggle, hashtag chip input (no JSON), category `Select` bound to show profile, notes `Textarea`.
+- Worker composes broadcast title from the Replay flag via `buildTwitchMetadataTitle` at `apps/worker/src/twitch-metadata.ts:21` — UI never handles the `"Replay: "` prefix literally.
+- Next-item resolution is real; nil resolutions render `EmptyState` with a fix link.
+
+**Touched files**
+
+- `apps/web/app/(admin)/program/week/page.tsx` (or equivalent)
+- `apps/web/app/(admin)/program/day/page.tsx`
+- `apps/web/app/(admin)/program/now-next/page.tsx`
+- `apps/web/components/schedule-block-editor.tsx`
+- `apps/web/components/asset-metadata-drawer.tsx` (new or consolidated)
+- `apps/web/components/hashtag-chip-input.tsx` (new)
+- `apps/worker/src/twitch-metadata.ts` (verify Replay composition)
+- `packages/core/src/index.ts` (verify `lookaheadVideoTitleFromPool` wiring)
+
+**Acceptance**
+
+- All three lenses exist, reachable via tabs.
+- Video-level granularity is the default view in every lens.
+- Hashtag input is chip-based; no raw JSON.
+- Replay is a toggle; broadcast title composition happens in the worker.
+- Category is a `Select` bound to the show profile.
+- "Next" resolution shows a real title end-to-end (overlay + chat + Twitch title).
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/
+pnpm --filter web build
+pnpm --filter worker build
+pnpm validate
+```
+
+**DUT validation**
+
+- Seed a schedule on DUT with multiple pools, a Replay asset, and hashtags.
+- Confirm Week lens shows correct first-resolved title per block.
+- Confirm broadcast title has `Replay: <title>` prefix and no invisible characters (validates M36 + M45 together).
+- Confirm hashtags reach Twitch title and chat without becoming JSON noise.
+
+**Portainer/DT rollout**
+
+- Build web + worker; tag `v1.6.0-M45`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack. Program workspace reverts to M44 shell.
+
+**Non-goals**
+
+- No change to pool rotation algorithm.
+- No calendar export.
+- No multi-week template features beyond what exists.
+
+---
+
+## M46 Online Studio UX V2
+
+**Goal**
+
+Ship the Studio workspace per `docs/product-reset-target-state.md` and `docs/product-reset-ui-spec.md`. Three tabs (Scene / Engagement / Output). One publish action with diff preview. Emergency banner prominent on Scene.
+
+**Scope**
+
+- Studio workspace with three tabs via `Tabs` primitive.
+- Scene tab: layer-based overlay editor; safe-area boundaries visible at 5% inset; per-layer "allow outside safe area" toggle.
+- Publish flow: "Review changes" → diff modal (added/removed/changed layers, text, positions) → confirm publishes.
+- Emergency banner toggle is top-right on the Scene tab; active state = red border on workspace header.
+- Engagement tab: chat overlay settings, follow/sub/cheer/channel-points alert settings, chatter-participation game settings (UI scaffolding only; behavior in M47).
+- Output tab: output profile `Select`, destination list, per-destination output profile override, `StatusChip` for destination health.
+- Collapse the duplicate engagement-settings surface that currently exists across `/overlays` and the chat-settings form.
+
+**Touched files**
+
+- `apps/web/app/(admin)/studio/scene/page.tsx`
+- `apps/web/app/(admin)/studio/engagement/page.tsx`
+- `apps/web/app/(admin)/studio/output/page.tsx`
+- `apps/web/components/scene-publish-dialog.tsx` (new)
+- `apps/web/components/emergency-banner-toggle.tsx`
+- `apps/web/components/engagement-settings-form.tsx`
+- `apps/web/components/destination-output-profile-form.tsx` (already exists; integrate)
+
+**Acceptance**
+
+- Studio has exactly three tabs.
+- Publish always shows a diff; no one-click publish without review.
+- Emergency banner toggle reaches the overlay in under 5s.
+- Engagement settings live in one place only.
+- Output tab shows per-destination health chips.
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/
+pnpm --filter web build
+pnpm validate
+```
+
+**DUT validation**
+
+- Publish a draft scene on DUT; confirm Chromium capture picks up the change.
+- Toggle emergency banner; measure time-to-overlay; assert under 5s.
+- Edit engagement settings; confirm overlay reflects changes.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M46`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack.
+
+**Non-goals**
+
+- No new scene primitives (text/image/logo/embed set is unchanged).
+- No new output profiles.
+- No new destination types.
+
+---
+
+## M47 Engagement + Interaction Model V2
+
+**Goal**
+
+Ship the chatter-participation game per `docs/product-reset-target-state.md`. Three adaptive modes driven by active-chatter count: solo, small-group, crowd. Single configuration surface in Studio → Engagement. Overlay rendering alongside chat and alerts.
+
+**Scope**
+
+- Add active-chatter rolling-window tracker in `apps/worker/src/twitch-engagement.ts`. Window length configurable; default 10 minutes.
+- Mode selector: ≈1 chatter → solo; 2–10 → small-group; 10+ → crowd. Hysteresis to prevent flapping.
+- Solo mode: call-and-response prompts, reactive emote challenges.
+- Small-group mode: emoji-vote prompts, lightweight prediction rounds.
+- Crowd mode: voting / prediction / trivia with on-overlay aggregation.
+- Engagement overlay renders game state alongside chat and alerts.
+- Settings UI in Studio → Engagement: enable/disable, per-mode toggles, window length.
+
+**Touched files**
+
+- `apps/worker/src/twitch-engagement.ts`
+- `apps/worker/src/engagement-game.ts` (new)
+- `apps/web/components/engagement-overlay.tsx`
+- `apps/web/components/engagement-settings-form.tsx`
+- `packages/core/src/index.ts` (active-chatter window logic, pure helpers)
+- `tests/unit/engagement-game.test.ts` (new)
+
+**Acceptance**
+
+- Mode switches correctly at boundaries with hysteresis.
+- Overlay renders each mode's widget inside safe area.
+- Settings form controls all three modes independently.
+- Game does not interfere with existing chat overlay or alerts.
+
+**Validation**
+
+```bash
+pnpm exec vitest run tests/unit/engagement-game.test.ts
+pnpm --filter web build
+pnpm --filter worker build
+pnpm validate
+```
+
+**DUT validation**
+
+- IRC harness on DUT simulates 1, 5, 15, 30 chatters over a 30-minute window.
+- Confirm mode switches occur at documented thresholds.
+- Capture overlay frames; confirm game widget renders correctly in each mode.
+
+**Portainer/DT rollout**
+
+- Build web + worker; tag `v1.6.0-M47`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack. Engagement overlay reverts to pre-M47 behavior (chat + alerts only).
+
+**Non-goals**
+
+- No custom per-stream game scripting.
+- No external game platform integration.
+- No changes to existing follow/sub/cheer/channel-points alerts.
+
+---
+
+## M48 Live-Status Visibility Upgrade
+
+**Goal**
+
+Make Twitch channel live state visible in every operator surface. Sidebar chip + Live workspace header chip. Video preview is explicitly deferred.
+
+**Scope**
+
+- Sidebar shows `StatusChip` for Twitch live status (live / offline / unknown).
+- Live workspace header shows live + uptime + viewer count.
+- Playout live status remains a separate chip (is the worker playing content right now?).
+- State flows from existing polling at `apps/worker/src/twitch-live-status.ts` through the existing SSE feed.
+- Deferred-decision rationale captured in a subsection of `docs/product-reset-target-state.md`: an embedded Twitch player is bandwidth-heavy, it flashes the operator's own viewership, and an overlay snapshot is not a substitute. Revisit only against measured operator need.
+
+**Touched files**
+
+- `apps/web/components/admin-navigation.tsx` (sidebar chip)
+- `apps/web/app/(admin)/live/page.tsx` (or whichever route lands as Live after M43)
+- `apps/worker/src/twitch-live-status.ts` (verify emit shape)
+- `docs/product-reset-target-state.md` (deferred-decision rationale)
+
+**Acceptance**
+
+- Sidebar chip updates within 30s of a Twitch live state change.
+- Live header shows live/offline + uptime + viewer count.
+- Polling source is unchanged.
+
+**Validation**
+
+```bash
+pnpm --filter web build
+pnpm validate
+```
+
+**DUT validation**
+
+- Go live on the DUT-connected Twitch channel; confirm sidebar chip flips within 30s.
+- End the stream; confirm chip flips back.
+
+**Portainer/DT rollout**
+
+- Build web image; tag `v1.6.0-M48`; pin; redeploy.
+
+**Rollback**
+
+- Revert tag; redeploy previous stack.
+
+**Non-goals**
+
+- No small video preview. Explicitly deferred.
+- No viewer analytics dashboard.
+
+---
+
+## M49 Docs Finalization
+
+**Goal**
+
+Collapse Phase-4 and Phase-5 documentation artifacts into the final six-doc set defined in `docs/product-reset-docs-plan.md`. Delete the artifacts.
+
+**Scope**
+
+- Merge the permanent parts of `docs/product-reset-target-state.md` (overlay-is-internal statement, non-goals list, four-workspace model) into `architecture.md` and `README.md`.
+- Merge the terminology migration table from `docs/product-reset-kill-list.md` into `ui.md` as a "canonical terms" section.
+- Rename `docs/product-reset-ui-spec.md` → `docs/ui.md`. Delete the old `docs/ui-redesign-spec.md` when `ui.md` lands.
+- Delete `docs/product-reset-audit.md`, `docs/product-reset-target-state.md`, `docs/product-reset-kill-list.md`, `docs/product-reset-docs-plan.md`, and everything in `docs/archive/` (the five Phase-4 artifacts moved in M42).
+- Final `docs/` listing: `architecture.md`, `deployment.md`, `moderation-policies.md`, `operations.md`, `twitch-setup.md`, `ui.md`.
+- Verification step: `ls docs/*.md` returns exactly those six files.
+
+**Touched files**
+
+- `docs/architecture.md` (content additions)
+- `docs/ui.md` (renamed from `docs/product-reset-ui-spec.md`; content additions)
+- `README.md` (final product description)
+- Deletions: `docs/product-reset-audit.md`, `docs/product-reset-target-state.md`, `docs/product-reset-kill-list.md`, `docs/product-reset-docs-plan.md`, `docs/ui-redesign-spec.md`, `docs/archive/*`
+
+**Acceptance**
+
+- `docs/` contains exactly six `.md` files, all named per the plan.
+- No load-bearing content was lost; each deleted file's content either lives in a permanent doc or was ephemeral planning.
+- `README.md` contains the internal-overlay statement.
+- No dead cross-links in the repo.
+
+**Validation**
+
+```bash
+test "$(ls docs/*.md | wc -l)" = "6"
+pnpm validate
+```
+
+**DUT validation**
+
+- None (docs-only).
+
+**Portainer/DT rollout**
+
+- None (docs-only).
+
+**Non-goals**
+
+- No new doc topics.
+- No content rewrites beyond the specific merges listed.
+
+---
+
+## M50 Portainer/DT Rollout Flow + Stack-Check Script
+
+**Goal**
+
+Bake the "repo → GHCR → Portainer on DT → DUT soak → production promote" flow into `deployment.md` as the canonical deployment rhythm. Add a script that verifies the running Portainer stack's image digests match `.env.production.example`.
+
+**Scope**
+
+- Write the full deployment flow in `deployment.md` as a step-by-step procedure operators follow for every release. Includes: build via CI on `v*` tag push, image digests in GHCR, Portainer stack update on DT, `.env.production.example` pin, DUT validation commands, production promote, rollback steps.
+- Add `scripts/portainer-stack-check.sh` that reads the running Portainer stack's image digests (via Portainer API with read-only credentials) and asserts they match the pinned tags in `.env.production.example`. Reports a pass/fail summary.
+- Script is read-only. It does not call any deploy-changing endpoint.
+
+**Touched files**
+
+- `docs/deployment.md`
+- `scripts/portainer-stack-check.sh` (new)
+
+**Acceptance**
+
+- `docs/deployment.md` contains the canonical flow with every step labeled.
+- `scripts/portainer-stack-check.sh` exists, is executable, and runs against a configured DT Portainer endpoint.
+- Script reports expected digests when the stack matches the env file; reports mismatch otherwise.
+
+**Validation**
+
+```bash
+./scripts/portainer-stack-check.sh --dry-run
+pnpm validate
+```
+
+**DUT validation**
+
+- Run `scripts/portainer-stack-check.sh` on DUT against the DUT Portainer instance; confirm it reports the expected digests.
+
+**Portainer/DT rollout**
+
+- Script is read-only; no deploy change.
+
+**Non-goals**
+
+- No Portainer API automation for deployment itself.
+- No changes to the CI pipeline.
+- No auto-promote from DUT to production.
+
+## M59 Scene Studio Layout Repair And Field Explanations
+
+Requested by the operator on 2026-09-05: the scene studio "is not displayed correctly, even on large
+screens", every control should carry an (i) with an explanation, and a 2.0 release should be prepared.
+
+### What was measured before changing anything
+
+- The committed baseline screenshot `studio-scene-desktop` shows the fault as the expected state: the
+  "Scene Preview" label at the top of its column, its select a screen lower, the rendered picture in
+  the middle, the drag help at the bottom, and blank space between them. `.scene-designer-preview` is
+  a grid without `align-content`, so its rows stretched to the height of the ~4700px form beside it.
+- The admin content column had no width cap at all, against the layout rule in `docs/ui.md`.
+- `.stack-form .grid.two` forces one column everywhere inside a form, so the studio's
+  "Published scene state" aside always sat below the whole form.
+- The pixel baseline's `maxDiffPixelRatio: 0.01` (~23,000px at 1440x1600) cannot see a 16px control
+  appear; four new (i) buttons passed it unnoticed.
+
+### Shipped
+
+- `.scene-designer-preview { align-content: start }` plus sticky positioning from 901px, so the
+  picture stays in view while the form scrolls.
+- `--workspace-max` cap on `.content-stack` (1440px), `workspace-wide` (1800px) for the studio.
+- `grid-aside` opt-in: from 1560px viewport the aside takes a 280-360px column beside the controls.
+  A viewport query, not a container query — inline-size containment on `.content-stack` let the
+  content column grow past the viewport on every admin page.
+- `InfoTip` primitive; `info` prop on `Input`, `Select`, `Textarea`, `Panel`, `AdminPageHeader`;
+  first explanations on the studio header, both panels and the preview toolbar.
+- `tests/e2e/studio-layout.spec.ts` asserts the layout by measurement and the (i) by focus.
+- Control-density budget excludes `.info-tip-button`; wording baseline masks the clock-dependent
+  block coverage minutes that took the 1.5.47 release run down.
+
+### Explanation sweep (2026-09-05, second commit of M59)
+
+Fifteen writer agents, one per label-balanced file group, each required to derive every explanation
+from the code that consumes the value (route, core, worker) and to list what it could not prove.
+Two skeptics per group (code evidence; operator intelligibility) tried to refute each text; a fixer
+applied the corrections. 254 explanations across 38 files; 33 labels left bare with a stated
+reason (section headings with their own paragraph, read-only status rows, a per-card checkbox, a
+`<summary>`); 228 objections raised and applied — among them "Off, the worker never deletes
+anything for space" (false: the switch gates only pressure eviction), "its old media disappear"
+(the sweep deletes database rows only), "the broadcaster account needs no grant" (wrong in a split
+setup). The fix stage itself was spot-checked, not re-verified in full.
+
+The first verification run after the sweep failed every authenticated test at sign-in: `InfoTip`
+rendered a `<button>`, a `<button>` is a labelable element, and most labels here are implicit —
+`<label><span class="label">…</span><input/></label>` — so the label bound the (i) instead of the
+field and "Owner email" became an unnamed textbox. The trigger is now `<span role="button"
+tabIndex={0}>`: focusable and announced as a button, not labelable, clicks stopped before the label.
+The second run then failed on `getByLabel('Password')` resolving to two fields: the hidden tooltip
+element sat inside the "Owner email" label and its text mentioned the password — a label's text is
+everything under it, hidden or not, and Playwright matches labels by text. The explanation is now a
+`data-tip` attribute drawn with CSS `::after` and exposed through `aria-description`; no tooltip
+element exists in the DOM. Both mechanisms were proven in a two-field harness before the fix went in.
+One component change for 254 sites; the four studio tips on headings were never affected.
+
+### Found on the way: settings that nothing reads
+
+The writers had to find the consumer of every value, and for these they found none — the value is
+stored and displayed back, and the picture or the worker never looks at it:
+
+- Scene: `Show clock`, `Show next item`, `Show schedule teaser`, `Show queue preview` only flip
+  `scene.layers[*].enabled`, which the on-air layout does not read (clock and next card are drawn
+  unconditionally; there is no schedule or queue panel). `Alt text`, `Widget mode`, `Scene data`,
+  `Widget label override`, `Frame title`: embed/widget layers are never drawn by the shared renderer
+  and `buildOverlaySceneMetadataWidgetContent` has no caller.
+- Engagement: `Chat mode`, `Style`, `Alert position` are persisted and never read by layout,
+  renderer or worker; alerts are logged, not drawn.
+- Library upload accepts `.mp3/.aac/.flac/.wav` that the worker's library scan does not pick up.
+
+Each of these is either a missing feature wearing a working control's clothes, or a control to
+remove. Both are product decisions; neither belongs in a stability release unresolved.
+
+### Open
+
+- Decide, per setting above: wire it or remove it.
+- The pixel gate's tolerance is a deliberate flakiness trade-off; lowering it is an operator decision.
+- Explanation texts run two to three sentences; a tighter house style is a wording pass, not a code change.
+
+Closed 2026-10-01: the acceptance row is met (preview column, aside from 1560px, one explanation
+primitive across the studio, layout asserted by measurement since M65). The first open point was decided
+in M60 (every setting wired or removed); the other two are operator choices, not milestone work.
+
+## M60 Truthful Controls
+
+Point 1 of the operator's 2.0 list (2026-09-05): every visible setting does what it says, or it goes.
+Decided per setting from what the code consumes, as found by the M59 sweep:
+
+- **Wired.** `Show clock` and `Show next item`: the studio flipped `scene.layers[*].enabled`, which the
+  on-air layout never read. `OverlayScenePayloadView` now carries `showClock` / `showNextItem`
+  (optional — a payload cached before M60 keeps drawing both), `buildNextCard` returns nothing when
+  the item is hidden, and the clock cell is left empty so the top bar keeps its shape. Tested
+  failing-first by mutation: 2 red against the old layout, 23 green with the new.
+- **Removed from the studio, storage kept.** `Show schedule teaser` (no schedule panel exists anywhere),
+  `Show queue preview` and `Queue preview count` (no queue panel in the scene renderer; the text
+  fallback lists the queue regardless, as it always did), the website-embed and widget layer kinds
+  (satori cannot draw an iframe and there is no browser overlay; the "Add … Embed" buttons are gone,
+  an existing layer of those kinds shows a note instead of fields), and the engagement `Chat mode`,
+  `Style`, `Alert position` (persisted, never read by layout, renderer or worker). The API keeps
+  accepting the fields; the control room no longer reports the queue preview.
+- **One extension list.** `LIBRARY_MEDIA_FILE_EXTENSIONS` in `@stream247/core` feeds the worker's
+  library scan, the upload route and the upload form. The upload used to accept `.avi` and four audio
+  types the scan never picked up.
+
+Not done here: drawing alerts on air, a schedule/queue panel, browser embeds — those are features,
+and this milestone removes only the pretence that they exist.
+
+## M61 Boundary A/V Skew Instrumentation
+
+Point 2 of the 2.0 list: measure the seam instead of theorising about storms. Two numbers, logged
+where they arise, both described in `docs/operations.md` (*Seam Skew At Boundaries*):
+
+- `uplink.seam.skew` — the uplink supervisor parses ffmpeg's `timestamp discontinuity … new offset=`
+  lines per stream (`vist`/`aist`, microseconds) and pairs a video and an audio line that arrive
+  within five seconds; the absolute difference is the skew that separated storms (11.84–13.45 s)
+  from quiet boundaries (1.07–6.69 s) when read by hand on 2026-09-05. One line per seam, with the
+  discontinuity count of the current window. Pure functions in `uplink-progress.ts`, tests first.
+- `playout.feed.av_lead` — at every duration-bound cut, the last audio and video packet time of the
+  newest feed segment and their difference: the writer's view of the same seam, bounded to three
+  seconds so a slow probe never holds the boundary.
+
+Nothing decides on these numbers yet. They exist so that `-dts_delta_threshold 60` (1.5.47) can be
+judged against evidence: a seam above 10 s with a single-digit discontinuity count is the proof.
+
+## M62 Cache Policy
+
+Point 3 of the 2.0 list, decided and shipped:
+
+- **A download gets at least the content's running time.** The configured limit (two hours by default)
+  stays the floor; `resolveVodDownloadTimeoutMs` raises it to the replay's own duration, capped at one
+  day. The two-hour limit had killed the download of a five-hour VOD at 7.2 GB on 2026-09-04 11:17
+  and left the partial frozen; the replay then aired from Twitch directly for the rest of the day.
+  `vod.cache.job.start` logs the effective and the configured limit and the duration.
+- **A finished replay stays if it airs again within the retention horizon.** `releaseWatchedVodCache`
+  asks `collectUpcomingPoolIds` for the pools of blocks starting within `retentionHours` (today and,
+  when the horizon crosses midnight, the following days) and keeps the file when the replay's source
+  feeds one of them, logging `vod.cache.kept`. Otherwise the release behaves as before. The size cap
+  and the disk watermark still bound the cache.
+- **Readiness was already probe-based**: `queueProbeCache` reports "ready" only after ffprobe accepts
+  the cache file, and a `.part` is not that file. Nothing to change there; the 17:04 case on 2026-09-04
+  aired from Twitch precisely because the file was not ready.
+
+The two studio explanations on the replay-cache form now describe this behaviour.
+
+## M63 Stack Alignment
+
+The deployed Portainer stack (148) still defined a `redis` service and four `depends_on: redis`
+entries that the repo compose and `docs/deployment.md` dropped long ago. The redis-free stack file is
+prepared (177 → 154 lines, nothing else touched) and goes out with the 2.0 repin in the same PUT, so
+the containers that lose a `depends_on` are recreated once, not twice. Until then the drift is
+documented here and harmless: nothing ever connected to that container.
+
+Verified 2026-10-01 (read-only): Portainer stack 148's file has 153 lines and no line mentioning redis,
+no `stream247-redis` container or volume exists on the DUT (the only redis there is `snappass-redis-1`,
+another project), and the repo compose, `docs/deployment.md` and `.env.production.example` name no redis.
+The rc.1 and rc.2 repins passed this file through unchanged. Complete.
+
+## M65 Measured Layout Specs
+
+`tests/e2e/workspace-layout.spec.ts` asserts on every operator surface, at 1440 and 1920 and on a
+2560 display: the document is never wider than the viewport, the content column ends inside it and
+never exceeds the widest cap, the status rail wraps inside the column, the workspace cap of 1440
+holds and only the scene studio widens to 1800. Registered in `scripts/design-baseline.sh`.
+
+Its first run found a real fault the pixel baseline had passed: the studio page was 1629 px wide at
+a 1440 viewport with nothing visible past the edge. Hidden `::after` tooltips, laid out with
+`visibility: hidden`, still count towards the document's scroll width; `getBoundingClientRect` over
+every element found nothing because pseudo-elements are not elements. The bubbles are `display: none`
+until hovered or focused, and capped at `min(320px, 60vw)`.
+
+## M66 Live Bridge Rehearsal
+
+The live-bridge takeover and release run on every CI pass inside `test:runtime-parity` (a full local
+stack: push ingest via the relay, `.liveBridge.status == "active"` with `selectionReasonCode ==
+"live_bridge"`, then release back to the audio lane). On this installation the path has never run on
+air — zero audit entries matching "live". The production observation needs the operator present:
+a live source pushed to the relay while the channel is on air, the takeover watched on `Live → Status`
+and in `uplink.seam.skew`, then the release. That is Task #37 and it is not started alone.
+
+## M67 Release 2.0.0
+- 2026-09-05 22:32: v2.0.0-rc.1 (7f15e04) live on the DUT via the redis-free stack file with prune; four
+  containers healthy after 60 s, `stream247-redis-1` gone, RTMP and IRC reconnected, no boundary storm.
+- 2026-09-06 05:44, first seam under rc.1: video offset -69543.734 s, audio -69537.470 s, skew 6.264 s,
+  one discontinuity line, no restart, no incident. In the quiet family (1.07-6.69 s), so it neither proves
+  nor contradicts the 60 s threshold; the storm family (11.84-13.45 s) still has no rc.1 sample.
+  `playout.feed.av_lead` reported `measured: false` — the asset played from the Twitch CDN (too large to
+  cache), so there was no local file to probe. The lead stays unmeasured exactly at the CDN boundaries.
+- 2026-09-06 06:44: 33-Bit-Überlauf, kein Beitragswechsel. Video -95443,718 s, Ton +95443,718 s, drei
+  Zeilen, kein Neustart. Das Instrument meldete daraus 95443,718 s "Naht" — die Überlaufperiode, keine
+  Ton-Bild-Differenz. Seither eigenes Ereignis `uplink.seam.wraparound`; für die Schwellenfrage zählen
+  nur echte Grenzen. Messstand: eine echte Naht unter rc.1 (6,264 s, ruhige Familie), Sturmfamilie
+  (11,84-13,45 s) weiterhin ohne rc.1-Beleg.
+- 2026-09-06 21:54:43, erste Naht, die das Instrument selbst gemessen hat (rc.2): Video-Offset
+  -37214,768 s, Ton-Offset -37206,701 s, Naht **8,067 s**, 2 Zeilen, kein Neustart, kein Vorfall.
+  Elf Sekunden später eine unpaarige Video-Zeile (-4,983 s), ebenfalls folgenlos. Der Ton-Sprung war
+  exakt -8,067 s, also genau die Naht: an einer Grenze springt das Bild um die abgelaufene Ausgabezeit,
+  der Ton nur um seinen Vorlauf.
+  Damit die bisherige Verteilung: ruhig 1,07 / 2,43 / 3,52 / 6,52 / 6,69 / 6,26 / **8,07** s — Sturm
+  11,84 / 12,25 / 13,22 / 13,45 s. Die Lücke zwischen den Familien ist von 6,69-11,84 auf 8,07-11,84
+  geschrumpft und umschliesst ffmpegs Vorgabe von 10 s weiterhin. Sieben ruhige Werte unter 10 s, vier
+  Stürme darüber, kein Gegenbeispiel. 8,07 s hätte auch mit der Vorgabe nicht gestürmt, prüft die
+  60-s-Schwelle also nicht; sie bleibt plausibel und unbewiesen, bis eine Naht über 10 s ruhig bleibt.
+- 2026-09-07 08:48:20, zweite selbst gemessene Naht (rc.2): Video-Offset +26177,951 s, Ton-Offset
+  +26184,470 s, Naht **6,519 s**, 2 Zeilen, kein Neustart, kein Vorfall. Zwölf Sekunden später wieder
+  eine unpaarige Video-Zeile (-5,983 s), folgenlos — dasselbe Muster wie an der Naht um 21:54.
+  Der Ton-Sprung war erneut exakt die Naht (-6,519 s), und der Ton-Offset liegt wieder ÜBER dem des
+  Bildes: das Vorzeichen des Vorlaufs ist über beide Nähte stabil.
+  Ruhige Familie jetzt: 1,07 / 2,43 / 3,52 / 6,26 / 6,52 / 6,52 / 6,69 / 8,07 s. Sturmfamilie
+  unverändert 11,84-13,45 s, unter rc.1/rc.2 kein einziger Sturm.
+- 2026-09-07 08:48, was an der zweiten Naht wirklich geschah: der nächste Beitrag der Warteschlange war
+  ein YouTube-Video, dessen Format yt-dlp nicht mehr liefert („Requested format is not available",
+  `asset_source_jjwuu0f3_2Z-0oUcFNCs`, Status weiter `ready`, weiter im Programm). Die Vorabprüfung fing
+  das ab, der Playout überbrückte mit dem Ausweichbeitrag (`playout.boundary.fallback_bridge`), der Kanal
+  blieb auf Sendung. Die gemessene Naht von 6,519 s stammt also aus einer Überbrückung, nicht aus einer
+  gewöhnlichen Übergabe.
+  **Offen für 2.0:** der Vorfall `playout.prefetch.failed` schloss sich um 09:09 selbst mit „Next queued
+  asset probe succeeded" — das heisst nur, dass die NÄCHSTE Prüfung gelang, nicht dass der kaputte Beitrag
+  repariert ist. Er steht weiter auf `ready` und im Programm und wird wieder überbrückt. Ein verrotteter
+  Fremd-Beitrag verschwindet damit still aus der Sendung, ohne dass jemand ihn je zu sehen bekommt.
+  `playout.feed.av_lead` meldete an dieser Grenze erneut `measured: false` (CDN-Quelle, keine lokale Datei).
+- 2026-09-07 23:03:41, **die Naht, die die Schwelle prüft**: Video-Offset -65750,201 s, Ton-Offset
+  -65735,140 s, **Naht 15,061 s**, drei Zeilen, kein Neustart, kein Vorfall. Zehn Sekunden später eine
+  unpaarige Video-Zeile (-4,999 s), folgenlos.
+  Damit erstmals eine Naht ÜBER ffmpegs Vorgabe von 10 s und über der bisherigen Sturmfamilie
+  (11,84-13,45 s), die ruhig blieb. Unter der Vorgabe hätte sie gestürmt. `dts_delta_threshold 60` ist
+  damit nicht mehr nur unwiderlegt, sondern einmal positiv belegt.
+  Einschränkung: die Ton-Zeile trug keinen Spurenkopf mehr (Blockgrenze mitten in der Zeile), die
+  Zuordnung „Ton" ist gefolgert — Bild meldete in derselben Millisekunde, und die Offset-Differenz
+  entspricht exakt dem Sprung dieser Zeile, wie an den Nähten 05:44 und 08:48 auch. Das Instrument hat
+  sie nicht gemeldet; seit diesem Fund setzt es Zeilen über Blockgrenzen zusammen.
+  Verteilung jetzt: ruhig 1,07 / 2,43 / 3,52 / 6,26 / 6,52 / 6,52 / 6,69 / 8,07 s — ruhig über der
+  Vorgabe: 15,06 s — Sturm (vor 1.5.47) 11,84 / 12,25 / 13,22 / 13,45 s.
+
+- Before tagging v2.0.0 (not the rc): bump the three `STREAM247_*_IMAGE` defaults in `docker-compose.yml` AND
+  the three pins in `.env.production.example` from `v1.5.47` to `v2.0.0` (moved from v1.5.20 to v1.5.47 on
+  2026-09-06 because the v1.5.20 images predate the wizard and the generated secret the docs describe), so a newcomer's plain `docker compose up` starts the release the docs describe.
+  The release workflow also moves `latest` onto every tag, rc included; the compose defaults do not use it.
+
+Major because an existing installation notices the change (see `docs/deployment.md`, *Upgrading To
+2.0*): the redis service leaves the deployed stack, controls leave the studio, the upload refuses
+formats it used to swallow. The project's own release rule — tag only after rehearsal and a clean
+24-hour soak — is kept by shipping a candidate first:
+
+1. `v2.0.0-rc.1` tagged on the CI-green head; `release.yml` publishes the images.
+2. Repin on the DUT with the redis-free stack file in the same PUT (`~/repin.sh v2.0.0-rc.1
+   ~/portainer-compose.noredis.yml` on dt, dry-run verified: six env lines, compose 176 → 153 lines).
+3. Verify: version, four containers healthy, `dts_delta_threshold 60`, clock/next toggles honoured
+   in the picture, no redis container.
+4. `soak-monitor.sh --hours 24` from the DUT host in `tmux` against the public URL (the web port is
+   not published on the host; `/api/health` and `/api/system/readiness` answer publicly). Without an
+   owner session cookie the soak watches health and readiness, not the incident table; the incident
+   count is read each round by hand instead.
+5. `v2.0.0` tagged and repinned after a clean soak; `## Unreleased` becomes `## 2.0.0`.
+
+Open before the final tag: the operator-present live-bridge observation (M66), and the seam metric
+showing at least one boundary above 10 s with a single-digit discontinuity count.
+
+- 2026-09-08 13:49 UTC: der Soak auf rc.6 lief die vollen 24 h durch. 1432 Proben, alle `status=ok`,
+  eine tolerierte Netzprobe (HTTP 522) um 23:32, ein unplanmässiger Uplink-Neustart aus derselben
+  Minute, kein Container-Neustart. Damit ist die Soak-Bedingung erfüllt.
+- 2026-09-09 01:07 UTC, ungeplant und trotzdem lehrreich: der Proxmox-Wirt startete für einen
+  Kernelwechsel neu (7.0.12 → 7.0.14, davor 43 Tage Laufzeit). Der Stapel kam von allein vollständig
+  gesund zurück, und die Quarantäne hielt jeden Beitrag, den sie herausgenommen hatte — die Zähler
+  überstehen einen kalten Start, nicht nur einen Dienstneustart. Um 00:23 UTC davor ein Feed-Stillstand
+  von 53 s, von der Wache aufgefangen, nach zehn Minuten selbst geschlossen.
+- 2026-09-09 02:19 UTC: **v2.0.0 getaggt** (650c191). CI grün — und damit lief zum ersten Mal
+  überhaupt eine CI über `a24510d`, für den GitHub beim Drücken keinen Lauf angelegt hatte. Release
+  grün, drei Images gebaut, Repin ohne Compose-Datei (nur die drei App-Pins; Relay unberührt auf
+  `mediamtx:1.15.4`, kein Prune), vier Container gesund nach 28 s.
+  Nachweise am laufenden Stapel: Version `2.0.0` im Bild; die drei `playback_*`-Spalten auf der
+  bestehenden Datenbank; Quarantäne unverändert 11/11 bei `source_jjwuu0f3` und 0/40 bei
+  `source_e2au8vv3`; RTMP 1935 und IRC 6697 verbunden; `status=ok`.
+  Die Beitrags-Detailseite ist am ausgelieferten Build belegt statt am Bild: `routes-manifest.json`
+  führt `/assets/[id]` und `/sources/[id]` als echte Routen und enthält keine Umleitung, die eine
+  Beitrags-ID abfängt. Das 307 auf `/login` ist die Anmeldesperre, nicht die alte Umleitung.
+- Was 2.0.0 **nicht** behauptet: der Soak mass rc.6, nicht 2.0.0. Dazwischen liegt genau `a24510d`,
+  der nur den Leser des ffmpeg-Fehlerkanals betrifft — er kann eine Naht falsch messen, den Kanal
+  aber nicht vom Sender nehmen. Der neue 24-h-Soak auf 2.0.0 läuft seit 02:26 UTC.
+- Weiter offen und bewusst so: M66 / Task #37 (Live-Brücke unter Aufsicht) wartet auf den Nutzer, und
+  der Vorfall `playout.source-unplayable.source_jjwuu0f3` steht — elf verrottete YouTube-Beiträge,
+  deren Schicksal (neu einlesen oder entfernen) dem Betreiber gehört.
+- 2026-09-12 09:07 UTC: **der 24-h-Soak auf 2.0.0 ist durch** — 1428 Proben `status=ok`, Abschlusszeile
+  `soak-monitor-complete outages=2 outageSecondsMax=299 outageSecondsTotal=359`. Bestanden MIT Ausfällen,
+  also nicht „sauber"; die Zahlen gehören in jede Aussage über diesen Soak.
+  - **Ausfall 1, die nächtliche Störung:** 2026-09-11 23:58:06 bis 00:04:07, vier schlechte Proben, alle
+    `curl (22) 522` (Cloudflare erreicht den Ursprung nicht), gemessene Dauer **299 s bei 300 s Obergrenze**.
+    Eine Sekunde Luft. Der Kanal selbst war schneller zurück als der Messpfad: Uplink-Neustart um 23:59:15,
+    die Abrufe scheiterten noch bis 00:04.
+  - **Ausfall 2:** 2026-09-12 07:35:59, eine Probe HTTP 403, nach 60 s `outage-recovered`.
+  - **Die Entscheidung des Nutzers (2026-09-11, Commit 2c905a7)** trägt diesen Soak: ein selbstheilender
+    Ausfall bis `SOAK_OUTAGE_TOLERANCE_SECONDS` (300) bricht nicht mehr ab, Crash-Schleife, durchlaufende
+    Neustartzahl und Container-Neustart dagegen sofort (`hard=` im Fail-Satz). Grund: die nächtliche
+    Netzstörung liegt in JEDEM 24-h-Fenster — ohne Fenster konnte auf dieser DUT kein 24-h-Soak bestehen,
+    unabhängig vom Code. Mit 299 von 300 s war die Obergrenze diesmal fast erschöpft; ein fünfminütiges
+    Fenster ist für diesen Anschluss die richtige Grösse, aber keine bequeme.
+  - **Die vier Soaks davor zählen nicht als bestanden:** #1 21 h 07 (Blip 23:32), #2 23 h 51 (Blip, neun
+    Minuten vor dem Ziel), #3 23 min (zweite Störung um 23:56), #4 8 h 55 mit 534 ok und null Abweichungen,
+    vom Betreiber angehalten, weil er noch nach den alten Regeln lief. Gelaufene Zeit ist kein Bestehen.
+  - **Nähte unter 2.0.0:** 10,507 s (09-09 09:40), 2,132 s und **12,506 s** (09-11 12:39:46) — je zwei
+    Unstetigkeitszeilen, kein Neustart. 12,506 s liegt MITTEN in der alten Sturmfamilie
+    (11,84 / 12,25 / 13,22 / 13,45 s, alle vor 1.5.47), die dort viermal von vier gestürmt hat. Zusammen mit
+    15,061 s (07.09.) ist `dts_delta_threshold 60` damit unter, mitten in und über der alten Sturmfamilie
+    belegt: die „zwei Familien" waren ffmpegs 10-s-Vorgabe, nicht zwei Nahtarten. Im Soak-Fenster selbst
+    genau eine gemessene Naht (die 12,506 s) und **kein** Überlauf.
+  - Der Beitragswechsel um 19:49:25 zeigte zwei Bildzeilen ohne Tonzeile. Das Rohfenster trug in 80 s nur
+    vier vollständige Meldungen, kein zerrissenes Tonfragment: ohne Ton-Zeile gibt es keine Naht zu messen,
+    der Ton lag innerhalb der Toleranz. Ein Wechsel ohne Tonzeile ist damit kein Messausfall.
+  - **Quellensynchronisierungen ohne Verlust:** die Sperrzähler liefen über das Fenster von 42 auf 44 Proben
+    bei `source_e2au8vv3` (0 übersprungen) und blieben bei 11/11 für `source_jjwuu0f3`. Kein Zähler ging
+    bei einer Synchronisierung verloren.
+  - **Die nächtliche Störung hat die Minute gewechselt.** Bis 09-10 lag sie bei 23:31-23:32 UTC, seither bei
+    23:58 (09-11 23:58:09, 09-12 23:58:18) — beide Nächte dasselbe Bild: Playout `Connection reset by peer`,
+    Uplink `Error opening rtmp://…: I/O error`, IRC nach rund zehn Sekunden neu verbunden, Encoder-Neustart
+    nach rund 50 s. Das alte 23:31-Fenster blieb beide Nächte still. Die Drift von 10-20 s je Tag gilt
+    innerhalb einer Serie, die Serie selbst kann springen — Uhrzeiten also messen, nicht fortschreiben.
+  - Keine weitere Auslieferung ohne Anlass. Offen bleiben M66 / Task #37 (Live-Brücke, gehört dem Nutzer),
+    die elf verrotteten Beiträge in `source_jjwuu0f3` und der Netzweg selbst (Zwangstrennung am Router).
+
+## M68 YouTube Playback Formats
+
+Measured on the DUT 2026-09-28 (v2.0.0, yt-dlp 2026.08.19 with deno and node, no PO token provider):
+
+- The playback resolver asks `yt-dlp --format best --get-url`. `best` needs one file that carries picture
+  AND sound; YouTube no longer offers one for these videos ("YouTube is forcing SABR streaming for this
+  client"). Over all eleven assets of `source_jjwuu0f3`: `best` resolves **0 of 11**, `18` 3 of 11,
+  `bv*[vcodec^=avc1]+ba[acodec^=mp4a]` **11 of 11** (all `299+140`), `bv*+ba/b` 11 of 11
+  (8x `299+251`, 3x `399+251`).
+- The split tracks are fast enough to stream: a sequential read of `299` ran at ~957 KB/s against the
+  ~486 KB/s it needs; 10 MB ranges came in 0.3-0.6 s each; the whole 124 MB track downloaded in under 20 s.
+- Why the viewer saw ~3 s: every playout cycle (15 s) re-resolves the asset that is already on air, and a
+  failed re-resolve raises `playout.asset-preparation.failed` and switches to the global fallback. Seven of
+  nine YouTube runs that morning lasted exactly 18 s (15 s cycle + ~1.5 s yt-dlp error + ~1.7 s stop).
+- Why quarantine released them: `persistState` deletes and re-inserts every asset row without the
+  `playback_probe_*` columns, so any app-state write zeroes the counters; only prefetch outcomes count,
+  once per cycle instead of once per probe.
+
+Plan (three judges, same winner): keep the on-air input (never re-resolve the running asset), resolve
+YouTube to a video+audio pair through ordered format candidates with a fallback to the next candidate,
+feed the pair as two ffmpeg inputs, persist the probe columns, count each probe once. Fallback plan if
+the DUT smoke shows 403 or <1x reads: play YouTube from the existing VOD cache instead.
+
+Done on `feat/m68-youtube-formats` (merged 2026-09-28):
+
+- The resolver walks the candidates in one time budget (the 2.0 budget of a single call); a candidate that
+  resolves but fails to open is skipped for that item for 30 minutes; a pair travels as a unit through the probe
+  cache, the boundary decision and the start, and ffmpeg opens its audio as input 1 (mandatory map, never next to
+  an audio lane; a live PiP attaches video-only).
+- The programme on air keeps its input (`shouldKeepRunningInput`); if its process exits mid-cycle, the cycle
+  re-runs at once instead of cold-starting the old selection.
+- `persistState` writes `playback_probe_*` (regression test fails without it: expected +0 to be 3); each probe
+  result counts once (`takeUncountedProbeOutcome`); source-unplayable resolves from every scanned source.
+- Adversarial review (29 agents, three skeptics per finding): six findings upheld and fixed, two refuted. The
+  largest: a pair must end when either track ends — `-shortest`, the scene overlay ends with the programme
+  (`shortest=1`), no pad. Checked with ffmpeg 6.1: a 4 s track ends the run at 4.0 s (without the fix: 10 s,
+  6 s of frozen picture with sound).
+- On the DUT, read-only: the pair `299+140` of an affected video read with `-re` and the 2.1 reconnect flags at
+  1.01x for 90 s, then for the full 15 minutes of a second run without one error line.
+- `pnpm validate` green (1859 unit, 48 integration tests, build).
+
+## M69 Twitch Channel And Bot Accounts
+
+Operator request 2026-09-28: "jimpanse247 ist der Kanal. 3JakeC ist mein Account, der Bot-Account. Baue eine
+Version 2.1, die das klar trennt. In der GUI sollen der Haupt-Twitch-Account und der Bot/Mod-Account angegeben
+werden können."
+
+Reference install (DUT, measured 2026-09-28, read-only): broadcast channel `jimpanse247` stored in the managed
+config (env `TWITCH_BROADCAST_CHANNEL_LOGIN` empty); `twitch_connection` = bot `3jakec` (id 144919385, connected),
+carrying the channel's live state (`live`, 3 viewers); `twitch_broadcaster_connection` never connected;
+`twitch.chat_settings.written` targets 1473383386 = jimpanse247 (the M51 split works in the worker); audit text
+"Connected Twitch broadcaster 144919385" was the bot. The operator session itself checked twitch.tv/3jakec for
+the live status of jimpanse247 and took a running stream off air for five minutes — the ambiguity this removes.
+
+Analysis: workflow of 204 agents (5 code readers, two skeptics per claim, 3 designs, 3 judges); winner "minimal
+additive on the two existing OAuth tables", no schema change. Delivered:
+
+- `packages/core/src/twitch-accounts.ts`: one resolver for mode (split / single-account / unconfirmed), channel
+  with its source, bot, channel owner, and which connection each feature runs through; `evaluateBotConnectLogin`.
+  `resolveTwitchAccountsForState` in packages/db reads it from state the same way for worker and web.
+- Managed `twitchBotLogin` (env `TWITCH_BOT_LOGIN`); `PUT /api/settings/twitch-accounts`; the credentials route no
+  longer blanks the broadcast channel when its form does not send the field.
+- Bot connect refuses another login than the configured bot, and the broadcast channel itself while a split is
+  active: nothing stored, token revoked, audit `twitch.bot.rejected`. `force_verify` on both account flows. The
+  channel owner connection also asks for `bits:read`, `channel:read:subscriptions`, `channel:read:redemptions`.
+- EventSub targets the broadcast channel (follow with the bot as moderator; sub, cheer, channel points only when
+  the channel itself covers them); ownership by callback URL, so 2.0's subscriptions on the bot's own channel are
+  removed on the first sync. `chat_settings.written` logs channel and bot by login and id.
+- GUI: Admin → Settings → Twitch accounts (also the setup wizard step): two cards, broadcast channel and bot
+  account, each settable, with live state, owner connection, refusals and what runs through which account. Every
+  "Broadcaster <bot>" label now says bot account; the live header shows both; the checklist has an item per
+  account; OAuth callbacks return to the panel.
+
+Deliberately not in 2.1 (documented): no new table for the channel's live/sync bookkeeping (it stays on the bot
+row, documented as the channel's), tokens stay plaintext as in 2.0, alerts are not drawn on air.
+
+Adversarial review (80 agents, three skeptics per finding): 22 findings upheld (eleven distinct), three refuted;
+all fixed on the branch. The pattern was the panel saying "Active" where the worker does nothing: channel-owner
+capabilities now need the bot too and the scope in the owner's measured grant (an owner connected before 2.1 lacks
+the alert scopes; EventSub gates each type on it and raises `twitch.eventsub.waiting-for-channel-owner`), runtime
+switches show "Off", env-sourced logins are named, stale refusals age out, and the texts no longer say alerts are
+drawn on air — the renderer has no alert code at all (see memory "Tote Einstellungen"). Checked in the browser on
+the dev stack: saving a channel switches the panel to the split view, an invalid login is refused with its message.
+
+## M70 Twitch Account Docs
+
+`docs/twitch-setup.md` rewritten around the three roles with a feature → account → scopes table and the rule
+"check live status on the broadcast channel, never on the bot"; getting-started (three redirect URLs by role),
+operations (runbook "Is the broadcast channel live?"), deployment (Upgrading To 2.1), architecture and README
+follow; the env examples drop three variables no code reads and name `TWITCH_BROADCAST_CHANNEL_LOGIN` and
+`TWITCH_BOT_LOGIN`.
+
+## M71 Release 2.1.0
+
+- 2026-09-28 13:00 UTC: v2.1.0-rc.1 (bfe2773) live on the DUT via `repin.sh` (three app pins only, relay
+  `mediamtx:1.15.4` asserted, 62 env vars, no prune). No schema or compose change since v2.0.0: the bot
+  login lives in the encrypted managed-config payload. All six containers healthy after 16 s; programme back
+  on a scheduled Twitch archive 3.7 s after start (`formatCandidate: best`, 1080p60); one uplink start, no
+  restart; `jimpanse247` live.
+- Roles on the DUT: `twitch.chat_settings.written` names channel `jimpanse247` (1473383386) and bot `3jakec`
+  (144919385). First EventSub sync deleted the 4 subscriptions on the bot's own channel and created
+  `channel.follow` for the broadcast channel; `twitch.eventsub.waiting-for-channel-owner` (info) opened as
+  designed, since the channel owner is not connected.
+- YouTube: `cSabcTQLLoE`, which failed under v2.0.0 at 11:59 with "Requested format is not available",
+  resolves with candidate `split-h264-aac` to `299+140` inside the rc.1 playout container, and the pair
+  decodes 40 s off-air without an error line (past the old 3 s and 18 s abort points). No asset is at the
+  quarantine threshold (3); the on-air proof waits for the next daytime block (06:00-14:00 UTC), inside the
+  soak window.
+- 2026-09-28 13:02:55 UTC: 24-h soak started (tmux `soak`, `~/logs/soak-20260928-130255.log`), first probe
+  `status=ok broadcastReady=true`, uplink baseline 3931.
+- rc.1 soak 2026-09-28 13:03 -> 09-29 13:03 UTC: passed, `outages=1 outageSecondsMax=219` (the nightly blip,
+  00:00:38-00:05:22, uplink restarted 3 times and healed), 1430 ok samples, every playout exit planned. Not on
+  air in 2.5 days: a single YouTube item - the pool order was alphabetical (created_at rewritten per sync) and
+  the cursor faced 42 Twitch archives (M72, M73). A Play now on 2026-10-01 00:12 UTC showed an 18 s standby
+  slate and a dropped insert (M74). After the soak, 2026-09-29 23:06 UTC: `system.volume.low` (9.3 % free),
+  the watermark freed space within 2 min. The soak's critical-incident check is skipped without a session.
+- 2026-10-01 03:35 UTC: v2.1.0-rc.2 (0cf66a6) live via `repin.sh` after a `pg_dump` to
+  `~/backups/stream247-pre-rc2-*.dump`. Migration `20261001_001_pool_source_cursors` applied, column present
+  (`text`, default `'{}'`). First rc.2 sync kept `created_at` (03:35:04, the last rc.1 sync) and filled
+  `published_at` on 11/11 YouTube items (relative-age buckets, e.g. 2020-10-01). The Twitch pool continued
+  with the next VOD id (v2871975889 -> v2872944203) and stored its per-source position.
+- 2026-10-01 03:36:17 UTC, Play now of `j4YdbIbEc9E` (255 s), set like the rc.2 action: 9 s later
+  `plannedReason: switch` -> `operator_insert` with `formatId 299+140`, `formatCandidate split-h264-aac`, separate
+  audio input, no `scheduled_reconnect`, no `playout.insert.dropped`; natural end after 264 s (exit 0), then
+  `scheduled_match` v2873900852 (next VOD id); `previous_asset_id` = the insert; uplink not restarted.
+- 2026-10-01 03:41:08 UTC: 24-h soak on rc.2 started (tmux `soak`, `~/logs/soak-20261001-034108.log`), first
+  probe `status=ok broadcastReady=true`.
+- 2026-10-01 12:57:16 UTC, M73 on air without an operator: the Twitch archive v2873900852 ended at its
+  duration bound after 33385 s, and the TwitchYoutube pool picked `j4YdbIbEc9E` - the oldest YouTube item
+  that is not quarantined - as `scheduled_match` (`split-h264-aac`, `bridgeStarts: 0`). It ended naturally
+  after 264 s (exit 0) and at 13:01:40 the pool picked Twitch again: v2880054662, the VOD id after the
+  pool's stored Twitch position v2878140409. `source_cursors` holds both positions.
+- 2026-10-01, owner request: the Releases page stopped at v1.5.17 because `release.yml` published images
+  only. Backfilled 38 releases from their CHANGELOG sections (30 final, 8 pre-releases; v2.0.0 is
+  "Latest"; v1.5.18 skipped - its tag never published images). `release.yml` now creates the release as
+  its last step (`scripts/release-notes.mjs`, `contents: write`); v2.1.0 is the first tag to use it.
+- rc.2 soak 2026-10-01 03:41 -> 10-02 03:41 UTC: passed with one outage, `soak-monitor-complete outages=1
+  outageSecondsMax=220 outageSecondsTotal=220`, 1429 samples `status=ok`. The outage is the nightly network
+  blip: `outage-tolerated elapsed=160s/300s fetch-failed(consecutive=3)` at 00:03:52 (readiness fetch answered
+  522), `outage-recovered duration=220s` at 00:05:12. Uplink unplanned restarts 3936 -> 3937 (one in 24 h;
+  1214 samples at the baseline, 215 after). The soak cannot see the application during the 220 s: no
+  readiness fetch came through.
+- 2026-10-02: `release: v2.1.0` (version, the four compose image defaults, the three
+  `.env.production.example` pins, `docs/deployment.md`, CHANGELOG `2.1.0`), tagged `v2.1.0` after its push
+  CI run; the release workflow retags the `main-<sha>` images and creates the GitHub release. The repin
+  of the DUT is the owner's.
+- 2026-10-02 10:17 UTC: tag `v2.1.0` on `799ff8b` (pushed by the owner: a tag push from the cloud session
+  is refused with HTTP 403). Release workflow green; GitHub release "Stream247 2.1.0" published
+  (`draft: false`, `prerelease: false`, Latest), notes from the CHANGELOG section.
+- 2026-10-02 10:23 UTC: `pg_dump` to `~/backups/stream247-pre-v2.1.0.dump`, then `repin.sh v2.1.0` (dry run
+  first: the three app pins `v2.1.0-rc.2` -> `v2.1.0`, 62 env vars, `prune=False`; then `PUT ok: stack
+  148`). `jimpanse247` live (`is_live` True). M71 complete.
+
+## M72 Stable Asset Order
+
+Measured on the DUT 2026-10-01 (v2.1.0-rc.1, read-only): every remote asset had `published_at = ''`, and
+`created_at` was rewritten to "now" by every source sync (all 46 Twitch archives shared one value, all 11
+YouTube items another). Pools sorted by `publishedAt || createdAt`, then title, so a pool really played each
+source block alphabetically, and two equal titles fell to the database's read order. The listings explain
+the missing dates: a flat YouTube channel/playlist tab reports a date only with
+`--extractor-args youtubetab:approximate_date` (e.g. `20260701`; coarse, "N months ago", recomputed on every
+sync); a flat Twitch archive entry has none, but Twitch VOD ids are one global increasing sequence. A third
+writer reverted fields too: both VOD cache writes in the worker wrote a whole asset snapshot back, taken
+before a download that can run for hours.
+
+Done:
+
+- `replaceAssetsForSourceIds` reads `created_at`, `published_at` and `duration_seconds` of the existing rows
+  and carries them through `chooseStoredAssetSyncFields`: first-seen `createdAt` wins, `publishedAt` is
+  fill-only (the approximate YouTube date drifts daily; a stable order needs the first observed value), a
+  listing's duration wins only when it is > 0. Title and category behaviour is unchanged.
+- `updateAssetCacheRecords` writes only `cache_path`, `cache_status`, `cache_updated_at`, `cache_error` and
+  `updated_at`; the job runner's `onResult` and `resolveAssetPlaybackInput` use it. The worker no longer
+  calls `updateAssetRecords` at all; the only other references are the unused re-export in
+  `apps/web/lib/server/state.ts` and a comment in `scripts/seed-playout-runtime.mjs`.
+- `apps/worker/src/source-listing.ts`: `buildFlatListingArgs` adds `youtubetab:approximate_date` for
+  `youtube-channel` and `youtube-playlist` only (Twitch archive args unchanged); `resolveListingEntryPublishedAt`
+  takes `timestamp`, else `upload_date` as UTC midnight (an impossible day such as 20260231 is no date).
+  With `approximate_date` yt-dlp sets `timestamp` itself (`_parse_time_text`, rounded to the unit of the
+  relative text), so the `upload_date` branch is only a fallback for entries that carry just the day.
+- `compareProgrammingAssets` (`packages/core/src/programming-asset-order.ts`) compares one fixed key:
+  `publishedAt || createdAt` oldest first (unparsable last instead of NaN); source id; within that source
+  items with a numeric VOD id (leading `v` stripped) first, by id as digit strings, so 2581000000 follows
+  999999999 and 20-digit ids still order; title; asset id. Review caught the first draft, which compared
+  VOD ids only for same-source pairs and titles for the rest: with equal dates that cycles, and the six
+  input orders of three assets gave three different sorts. Equal dates across sources are real (one
+  Twitch sync pass stamps every channel with the same `now`; the 46 DUT archives share one `created_at`)
+  and the input order is `ORDER BY updated_at DESC`, reshuffled by every sync and cache peek. It replaces
+  the schedule-preview and materialized-window sorts in core and the inline sort of
+  `getPoolEligibleAssets`; the recovery ladder keeps `fallbackPriority` first and uses it for the tail.
+- Recovery ladder: within one fallback priority a library file (a plain path) comes before a remote item.
+  Before 2.1 that held by accident, because every sync restamped YouTube items with the sync time; with
+  real YouTube dates months in the past an uncached Twitch VOD would otherwise be bridged by a YouTube
+  item that needs yt-dlp first on a channel without a global fallback.
+- Tests: `asset-sync-fields-retention`, `source-listing` (args, date fallback, call-site wiring),
+  `programming-asset-order` (order, ids, cross-source, tiebreaks, one result for every input permutation
+  of two same-date Twitch channels with crossing titles and of a source mixing numeric and missing ids,
+  both failing on the first draft, preview slots, every sort site), `playout-recovery` (library file
+  before an older-dated YouTube item at equal priority, operator priority still wins),
+  `vod-cache-write-wiring`; integration: a re-sync with a fresh `createdAt`, empty `publishedAt` and
+  duration 0 keeps 2026-09-01, the publish date and 3600 s (fails without the carry-over); the cache writer
+  changes nothing but the cache columns and `updated_at`. No existing expectation had to change.
+- Docs: architecture (what a sync keeps, how coarse the YouTube dates are, the order key, the recovery
+  tier), getting-started, deployment (*Upgrading To 2.1*: the order and so the next item change once;
+  rows already stored keep their last 2.0 sync time as first-seen date; a returning Twitch archive is
+  first seen again).
+- `pnpm validate` green (1939 unit, 50 integration tests, build).
+
+Follow-ups:
+
+- Operator edits of title and category are still overwritten by every sync (the listing's values win in
+  `replaceAssetsForSourceIds`).
+- YouTube approximate dates are YouTube's relative-age buckets ("3 months ago", "1 year ago") counted back
+  from the sync time; fill-only freezes the bucket of the first post-deploy sync, so all 11 existing DUT
+  YouTube items sit in a few shared month or year buckets and order by title inside each. Keeping the
+  earliest observed value instead would refine the buckets over time (each observation is an upper bound
+  on the real date, so the value only ever moves earlier as an item crosses into an older bucket); the
+  listing position (newest first) would be a better tiebreak inside a bucket.
+- Twitch archives order by first-seen time, by VOD id only among archives first seen together: an archive
+  that drops out of one listing and returns, or older archives that appear when `SOURCE_SYNC_LIMIT` is
+  raised, are first seen again and play after the newer ones. Once M73 walks each source on its own, one
+  source's numeric-id items can order by VOD id before the date (transitive inside a single source).
+- The source detail page sorts its asset list by `publishedAt || updatedAt`, and `updatedAt` is rewritten
+  on every sync.
+- `updateAssetRecords` has no caller left; remove it with its web re-export.
+- On the DUT after the rc: after two syncs, `published_at` filled for the YouTube source and unchanged on
+  the second sync; `created_at` unchanged across syncs; the next Twitch archive in a pool is the next VOD id.
+
+## M73 Pool Source Alternation
+
+Owner decision 2026-10-01: a pool with several sources alternates Twitch -> YouTube -> Twitch ..., each
+source chronological. Measured on the DUT the same day (read-only): pool "TwitchYoutube"
+(`pool_qr2cr9q9`) lists `source_e2au8vv3` (twitch-channel, 46 archives of 5-11 h) and `source_jjwuu0f3`
+(youtube-channel, 11 videos of 4-60 min), its `cursor_asset_id` on a Twitch archive; pool "Twitch"
+(`pool_wonm9bow`) has only the Twitch source. A pool was ONE list in the M72 order plus ONE pointer, so
+the sources played as blocks (a YouTube item came back after all 46 archives, 10 to 21 days of airtime),
+and `selectPoolAsset` fell back to the head whenever the pointer was not in the filtered list: on every
+operator or chat Skip (the skip hold is the pointer itself), on quarantine, a VOD-cache cooldown,
+`includeInProgramming = false`, a vanished asset or a blueprint import. There is no play history.
+
+Done:
+
+- `packages/core/src/pool-rotation.ts` (exported): `createPoolRotation`, `nextPoolRotationAsset`,
+  `walkPoolRotation`, `parsePoolSourceCursors`, `poolSourcePositions`. Each source is a lane sorted with
+  `sortProgrammingAssets`; positions are taken in the lane's full list (every existing asset of the
+  source), picks only among eligible ones. The next lane is the one after the source of
+  `cursorAssetId` (looked up among all assets, else through the `sourceCursors` entry that names it) in
+  `sourceIds` order that has something eligible; an unknown last source starts at the first such lane.
+  Within the lane: after the pointer when it belongs to that source, else after `sourceCursors[source]`,
+  stepping forward cyclically; no or a vanished anchor -> the oldest eligible item. The pointer is the
+  last started item, so it always says where its own source stands: it seeds pools from before the map,
+  and it overrides an entry that an image older than 2.1 left stale (a rollback moves only the pointer;
+  the spec's order, map first, would then replay every archive the older image aired in between). 2.1
+  writes pointer and entry together, so the two orders agree on everything 2.1 writes itself. Every pick returns the advanced state, so k steps equal k single picks with the
+  state stored in between. Pure: no clock, no randomness, input order irrelevant (sort is total).
+- Storage: `pools.source_cursors TEXT NOT NULL DEFAULT '{}'` in the baseline `CREATE TABLE`, the ALTER
+  block, migration `20261001_001_pool_source_cursors` and `schema-manifest.ts` (regenerated). `PoolRecord`
+  has `sourceCursors`; read through `parsePoolSourceCursors` (invalid JSON, non-objects and non-string or
+  empty values contribute nothing); `createPoolRecord`, the row mapper and `persistState` carry it.
+- `updatePoolCursor(poolId, assetId | null, { sourceId, ... })`: one serialized read-modify-write of
+  pointer, map and `items_since_insert`. The previous pointer becomes its source's entry when that source
+  is still in the pool (the rule the rotation reads, so the first post-upgrade write does not forget where
+  Twitch stood, and a stale entry left by a rollback is repaired on the next write); `sourceId` sets the started item's source (ignored for a source
+  not in the pool). `null` (the insert path) touches only the insert counter.
+- `updatePoolRecord` takes `PoolSettingsUpdate` and never writes `cursor_asset_id`, `items_since_insert`
+  or `source_cursors` from the caller; it keeps the stored map minus the sources the edit removed. The
+  pools PUT route passes settings only (it used to spread the pool it had read). The blueprint import
+  resets `sourceCursors` with `cursorAssetId`.
+- Worker: `isPoolAssetEligible` keeps the worker-only rules (skip hold, VOD-cache cooldown and quarantine
+  via `isAssetBlockedForAutomaticSelection`, insert asset only when `insertEveryItems > 0`, audio lane);
+  `selectPoolAsset` = `nextPoolRotationAsset`; `getPoolPlaybackQueue` = `walkPoolRotation`, walking on
+  from the selection only when this cycle starts it as a `scheduled_match` (the cursor write's own test),
+  else from the stored position. So after a manual next, an insert, or while an item runs that this pool
+  never stored (an archive pool "Twitch" started that runs into a TwitchYoutube block; both pools share
+  the Twitch source), the queue and its prefetch name the pool's real next pick instead of the items
+  after the running one. A `scheduled_match` start of a new item writes the pointer with
+  `sourceId`; the `scheduled_insert` path calls `updatePoolCursor(poolId, null, { resetItemsSinceInsert })`
+  instead of writing back the snapshot's pointer.
+- Core previews: `lookaheadVideoTitleFromPool` (k-th pick), `buildSchedulePreviewVideoSlots` and
+  `materializePoolWindow` walk the rotation; the materializer's insert-every-items simulation is
+  unchanged and an insert does not advance the rotation. The preview now excludes the insert asset only
+  when `insertEveryItems > 0`, like the worker and the pool form's help (before, a pool with the cadence at
+  0 previewed one item fewer than it played). Preview blocks still start from the stored position.
+- Retention: `classifyAssetRetention` and `collectDiskProtectedAssetIds` protect every `sourceCursors`
+  value like the pointer.
+- Wording: pool form (*Included sources* InfoTip, the note under the form), schedule page (*Video-level
+  timeline*), asset page (*Program context* marks the pool's last started item and where each source
+  stands, through `poolSourcePositions`), README, getting-started, architecture (*Scheduling*),
+  operations (*skip current asset*), deployment (*Upgrading To 2.1*: the new column and the backup in the
+  intro, *Item order* per source, Pool source alternation with the vanished-item and rollback notes;
+  capability notes).
+- Tests: `pool-rotation` (T, Y, T, Y with unequal sizes each looping; three sources; one source continues
+  after the cursor; skip, quarantine and cooldown stepped over without a head reset; a source with
+  nothing eligible passed over, also as the last source; a vanished anchor restarts its source at the
+  oldest while the alternation goes on; the seed from `cursorAssetId` with an empty map, including the
+  DUT shape of 46 same-date archives and 11 YouTube items, where the next pick after a Twitch cursor is
+  the oldest YouTube item; the pointer overrides a stale entry of its own source; the queue walks from
+  the stored position while an item the pool never stored runs on (its first item is the worker's pick);
+  `poolSourcePositions`; k steps equal k single picks; one
+  walk for all 120 input orders; defensive parsing; previews and the materialized week alternate with
+  inserts not advancing; the insert asset at cadence 0 stays in the preview; wiring of worker selection,
+  queue, eligibility and both cursor writes, and of the three core previews), `pools-api` (the PUT writes
+  no position fields), `asset-retention` and `disk-watermark` (a source position protects its asset;
+  the retention case fails without the change), `channel-blueprints` (import resets the map),
+  `programming-asset-order` (its wiring test now looks for the sort inside the rotation); integration
+  `db-roundtrip`: a pools table without the column (dropped, migration row deleted, a pool row inserted)
+  gets it with default `'{}'` and the old row reads `{}`; cursor writes merge per source and keep the
+  old pointer as its source's entry, also over a stale one, `null` changes only the counter, and a whole-state write keeps the map; a pool edit from
+  a snapshot taken before the worker advanced keeps pointer, map and counter and drops only a removed
+  source. No existing expectation in `schedule-preview` or `ops-state` had to change (their pools have
+  one source).
+- `pnpm validate` green (1964 unit, 54 integration tests, build) after the review fixes.
+
+Review (ten findings, four lenses): fixed the order of pointer and map (above; a rollback would have
+replayed days of archives), the queue walking on from an item the pool never stored, the 2.1 upgrade
+intro ("no schema") and its pool-wide *Pool order* bullet, the schedule-page and asset-page wording, the
+acceptance text of the row (a vanished position restarts its own source, as specified and documented;
+the row said it no longer resets), and a wrong follow-up (`writeAppState` has no production caller, the
+blueprint import uses `updateAppState`, so no whole-snapshot write can roll back a position today).
+Deferred: the same archive airing twice when two pools share a source (follow-up below, older than M73).
+
+DUT check after deploy (read-only):
+
+- `SELECT column_name FROM information_schema.columns WHERE table_name = 'pools' AND column_name = 'source_cursors';`
+  returns one row and `schema_migrations` has `20261001_001_pool_source_cursors`.
+- Before the first pick: `SELECT id, cursor_asset_id, source_cursors FROM pools;` shows `{}`. At the next
+  boundary of a TwitchYoutube block the item started is the oldest YouTube item of `source_jjwuu0f3`
+  (`publishedAt || createdAt`, then the M72 tiebreaks), and `source_cursors` then names both the previous
+  Twitch archive (`source_e2au8vv3`) and that YouTube item; the item after it is the Twitch archive after
+  the old cursor. Pool "Twitch" keeps playing its archives in order.
+- A Skip during a Twitch archive starts the next YouTube item, not the pool's oldest item.
+- Editing the pool (e.g. its name) leaves `cursor_asset_id`, `source_cursors` and `items_since_insert`
+  unchanged.
+
+Follow-ups:
+
+- Preview blocks start from the stored position, so two blocks of one pool on one day preview the same
+  first items; chaining the preview state from block to block would show the real sequence.
+- An item started by hand (manual next) does not move the pool's position, so the pool carries on as if
+  it had not played; M74 reworks Play now and should store the position when a pool item starts by
+  hand, or say it does not.
+- Two pools that share a source (DUT: "Twitch" and "TwitchYoutube") keep separate positions in it and
+  walk it at different rates. When an archive one pool started ends inside the other pool's block and
+  the other pool stands just before it, that pool picks the same archive again at once. Older than M73
+  (one shared list had the same alignment); excluding the item that just finished, or one channel-wide
+  position per source, is a product decision for its own milestone.
+- A vanished position cannot be continued after, because the item is gone with its order key; storing
+  the order key of the last started item per source next to its id would let the source resume after
+  it instead of at its oldest item.
+- After a rollback to an image older than 2.1 and a re-upgrade, the cursor's own source carries on after
+  the cursor, but the pool's other sources keep their 2.1 positions (or start at their oldest item if the
+  older image emptied the map), so items the older image aired from them can repeat (*Upgrading To 2.1*).
+- The pool form keeps the source order alphabetical by name (the select's order); a pool cannot yet
+  choose which source plays first other than by naming.
+
+## M74 Operator Play Now
+
+Production evidence (DUT, v2.1.0-rc.1, relay on, 2026-10-01 00:12:39Z): an operator Play now of a
+YouTube item while a Twitch archive ran as `scheduled_match`. The worker stopped the archive
+(`plannedReason: restart-requested`), put the reconnect standby slate on air for 18 s
+(`reasonCode: scheduled_reconnect`), dropped the insert without a log line or an audit row, and then
+started a different pool item from offset 0. Mechanism, verified by two independent code readings:
+`play_now`/`trigger_insert` set `status: recovering` and `restartRequestedAt`; a legacy branch of
+`choosePlaybackCandidate` ("restart requested and `desiredAssetId`", from 865f3ec) selected the
+desired asset as `operator_override` ahead of the insert branch, and the worker writes
+`desiredAssetId` = the asset on air at every start and cycle end, so any restart flag re-picked the
+running item; a pending insert was cleared whenever the selection was not `operator_insert`, with a
+runtime message only; the slate arm `restartRequestedAt !== ""` (42adb20) had no relay guard, unlike
+`reconnectActive`/`reconnectDue` (4043eb6); after the slate `currentAssetId` was empty, so the pool
+took its next pick (nothing seeks, nothing resumes). The review found five more defects a working Play
+now exposes: an active insert stopped by its duration bound or a feed watchdog stayed active and
+replayed from 0; after a duration-bound stop the cycle selected from the state read before the stop,
+so the insert, Move next, pool-insert and cuepoint arms (all wait for `currentAssetId === ""`) were
+skipped at that boundary; an insert that could not be prepared (an uncached Twitch archive with
+remote fallback off) took the healthy item off air through the recovery plan and was retried every
+cycle; `previousAssetId` was never written (the cycle end compared the row startOrSwitchPlayout had
+already moved on); Recover outputs and Force reconnect set the restart flag, which under the relay
+reconnects nothing (the uplink owns the destinations and never reads the flag) and, without the slate,
+would replay the running 5-11 h archive from 0.
+
+Done:
+
+- Web (`apps/web/lib/server/broadcast.ts`): Play now / Insert write only `insertAssetId`,
+  `insertRequestedAt`, `insertStatus: pending` (and clear Move next, as before) plus message and audit;
+  no restart flag, no `recovering`. They refuse a Twitch archive the playout cannot start, by the
+  playout's own rule, now in core `twitch-vod-playback.ts` (`isTwitchVodPlaybackAsset`,
+  `decideTwitchVodPlaybackSource`: cached, or too large to cache, or remote fallback on; the worker's
+  `isTwitchVodAsset` and `resolveAssetPlaybackInput` use the same functions). The admin cannot look at
+  the cache file, so it reads `cacheStatus === "ready"`, which the playout and the download job write.
+  The relay flag comes from `STREAM247_RELAY_ENABLED` (deploy-time env shared by every container, as
+  `readiness.ts` reads it). Under the relay Force reconnect is refused (no field the uplink reads exists
+  to route it to; the uplink reconnects by itself), Recover outputs marks the staged outputs ready and
+  writes nothing to the playout runtime, and Resume, Pin and Fallback write without the restart flag
+  (the override branch and the ordinary switch change the item; a Pin of the item on air keeps it
+  running). Direct mode keeps all of them as they were. Resume schedule is enabled while an insert is
+  pending or active. Play now / Insert also refuse what the worker would drop at once: the item on air
+  (as Move next does), any item while a Pin or Fallback holds the air, an item under a skip hold. A
+  pending insert that a newer Play now replaces or Resume cancels gets a `playout.insert.dropped` audit
+  row (`replaced`, `cancelled`).
+- Worker selection: the legacy branch is gone; the override branch (`overrideUntil`) stays. A queued
+  Move next starts at once on a restart only when the running item was skipped (Skip), so under the
+  relay Restart restarts the running item and leaves Move next next (without the relay the slate ends
+  the item and Move next follows it). A running item whose runtime reason is `operator_insert` is no
+  longer kept as the pool's current item once Resume cancels the insert: Resume of an in-pool insert
+  (the DUT case, a YouTube item of the TwitchYoutube pool) hands back to the pool's pick; when the pick
+  is the insert's own item it runs on (`runningAssetTargetMatches`: an item on air as an insert matches
+  a selection of the same asset; comparing the kind too restarted it from 0) and takes the pool
+  position (`selectionTakesPoolPosition`; it used to play a third time). A pin is not treated so: a
+  pinned pool item plays on as the pool's item when the pin runs out, as before. A running `manual_next`
+  item is kept like a graceful handoff, so a Move next or Replay previous item from outside the pool's
+  sources plays to its end (it was cut after one cycle for the pool's pick). While an operator insert or
+  a pin is on air, the pool's next items are warmed (`rawQueueAssets`), so the insert's end is not a
+  cold boundary.
+- Slate: `shouldShowReconnectSlate` (playout-boundary.ts) = no live bridge and (reconnect window, or
+  restart flag without the relay).
+- Dropped inserts: `recordDroppedInsert` logs `playout.insert.dropped` `{ assetId, reason,
+  selectionReasonCode, error? }` and an audit row, for every insert cleared before it aired:
+  `preempted`/`unavailable` (the clear after selection), `destination-missing`, `prepare-failed`,
+  `start-failed` (start and switch). An insert that aired and was then cut is not a drop.
+- Exit handler: `shouldClearInsertOnExit` also clears an active insert on a planned `duration-bound`,
+  `feed-stalled` or `feed-audio-stalled` stop (`ITEM_ENDING_STOP_REASONS`). The handler keeps its
+  runtime write in `pendingPlayoutExitUpdate`.
+- Re-read: the cycle notes whether a process runs and awaits `pendingPlayoutExitUpdate` before its
+  first read, so an exit just before the cycle is in the state it reads; when the process that ran at
+  that point is gone before the selection (duration bound, feed watchdog inside the feed status update,
+  or its own end), it awaits the exit's write again and re-reads, so the arms fire at that boundary and
+  a cleared insert is not started again.
+- Cycle end: `decideCycleEndInsert` marks the started insert active only while the row still names it,
+  so a Resume or a newer Play now written during a long cycle (an inline resolve) stands; the clear
+  after selection clears only the insert the cycle read.
+- Insert preparation failure with an item on air (process running, `currentAssetId` set) and the
+  insert still pending: the insert is dropped (`prepare-failed`, with the error), no incident, no
+  recovery plan, an immediate cycle; the item on air keeps its input. With nothing on air, or for an
+  insert already on air that fails to prepare for a Restart, the recovery plan runs as before.
+- Previous asset: `decidePreviousAssetId` from the asset on air at the cycle's start, else
+  `lastSuccessfulAssetId` (what a natural end just cleared); a restart or a slate keeps the old value.
+  The VOD cache release uses the same cycle-start asset as its finished asset, which the re-read would
+  otherwise have lost at a duration-bound boundary. Under the relay a Skip or a Play now therefore
+  releases the outgoing archive's cache like an ordinary end (the slate used to hide it from the
+  release), unless M62 keeps it for a pool scheduled within the retention horizon.
+- Wording: operations (*Operator controls, with and without the relay*: every control in both modes,
+  the drop reasons, that Play now neither resumes the interrupted item (M77) nor moves a pool's
+  position; *Destination cooling down or staged*), README (operator queue actions, restart, resume,
+  force reconnect / recover outputs), architecture (*Operator Controls*), deployment (*Upgrading To
+  2.1*, *Operator controls* bullet; capability notes), control room (*Previous completed asset* is now
+  *Previous item*: it also names an item a Play now or a Skip cut short).
+- Tests: `broadcast-actions` (new; what Play now, Insert, Force reconnect, Recover outputs, Resume,
+  Restart, Hard reload, Skip, Pin and Fallback write in relay and direct mode; the archive refusal with
+  cached, too-large, managed and env remote fallback, managed Off over env On; the refusals of the item
+  on air, during a Pin or Fallback and under a skip hold; the `replaced` and `cancelled` drop rows),
+  `playout-boundary` (slate, insert-clear, previous-asset, running-target, pool-position and cycle-end
+  insert tables),
+  `twitch-vod-playback` (new; the decision, the archive rule shared by admin and playout, and its use
+  in `resolveAssetPlaybackInput`), `operator-play-now-wiring` (new; the selection arms, the slate call
+  and the relay guards, crash-loop reset and restart block, the re-read order, every drop site, the
+  prepare-failure early return before the incident and the recovery plan, the previous-asset and cache
+  release inputs, the exit handler, the running Move next item, the warmed queue, the cycle-end insert),
+  `broadcast-control-room` (Resume enabled for an insert). `youtube-playback-wiring` is unchanged and
+  green; the M73 wiring in `pool-rotation` now pins the shared `selectionTakesPoolPosition` at both
+  sites.
+- `pnpm validate` green (2088 unit, 54 integration tests, build), also after the review fixes.
+
+Unchanged behaviour, traced through `choosePlaybackCandidate` (index.ts cannot be imported in a unit
+test, so the arms are pinned by source text): Restart / Hard reload under the relay select the running
+pool item through `currentPoolAsset` (a graceful handoff through `runningScheduledAsset`, a pin through
+the override branch, an insert through the insert branch) and the restart block stops and starts it
+from its beginning; without the relay the slate shows and the selection then runs with nothing on air:
+the running pin, else the running insert from its beginning, else a queued Move next, else the pool's
+next item (a pool item on air is not restarted, as before). Before M74 a direct-mode Restart during an
+insert ended the insert (the legacy arm re-picked it as an override and the insert was cleared), but no
+Play now ever reached the air then, so the replay after the slate is new only in name. Skip holds the item out of `currentPoolAsset` and the rotation, so the pool continues after it.
+Pin and Fallback write `overrideAssetId`/`overrideUntil` and win the override branch. The crash-loop
+reset and the direct-mode `reconnectDue` set the restart flag after or before the slate decision
+exactly as before.
+
+DUT check after deploy (read-only, `CHECK_BASE_URL=http://127.0.0.1:3000` where needed):
+
+- Play now of a short YouTube item while an archive runs: once the next cycle has resolved the item
+  (within one cycle if it was played recently, a minute or more for a cold yt-dlp resolve; the archive
+  stays on air meanwhile) the playout log has
+  `playout.process.exit` for the archive with `plannedReason: switch` and `playout.process.start` with
+  `reasonCode: operator_insert` and `formatCandidate: split-*`; no `scheduled_reconnect` start and no
+  slate. The item plays to its end, the next start is `scheduled_match` (the pool's next item after the
+  archive; with M73 that is the next source's next item), and `audit_events` has one
+  `playout.play-now.requested` row and no `playout.insert.dropped`.
+- After the switch the runtime row's `previous_asset_id` names the archive; Replay previous is enabled.
+- Force reconnect answers with the uplink refusal; Resume during a Play now returns to the pool.
+- Play now of an archive that is not downloaded is refused in the control room (remote fallback off).
+
+Follow-ups:
+
+- Resume the interrupted item at its position (M77, deferred by the owner).
+- Skip during an active pin: the override branch ignores the skip hold, so Skip -- and a passed chat
+  skip vote, which viewers can repeat -- restarts the pinned item (from 0 under the relay) instead of
+  skipping it. Needs an owner decision: refuse the skip, or end the pin. Documented in operations.
+  Done in M78: Skip ends the pin (owner decision), and a chat skip vote is paused while a pin holds
+  the air.
+- Move next is cleared by Play now; keeping it queued behind the insert would need the insert branch
+  and the manual-next arm to agree on an order.
+- An insert on air survives a Live Bridge takeover (the clear after selection skips a live selection)
+  and a direct-mode planned reconnect (`scheduled-reconnect` is not an item-ending stop), and starts
+  again from 0 afterwards. Older than M74; the `shouldClearInsertOnExit` table pins today's choice.
+  M78 ends the insert at the takeover (owner decision 2026-10-01); the planned reconnect is
+  unchanged.
+- The admin reads the archive's cache state, not the file: an evicted cache that still says `ready`
+  passes the refusal, and the worker then drops the insert (`prepare-failed`, logged).
+- The Force reconnect and Recover outputs buttons do not know the relay mode; the refusal explains it,
+  hiding or relabelling them needs the relay flag in the control-room snapshot.
+- Play now does not move a pool's position (the M73 follow-up asked M74 to store it or say so): a pool
+  item played by hand can come round again as the pool's next item.
+
+## M75 Source Circuit Breaker
+
+Owner decision 2026-10-01, after a competitor comparison. Production evidence (DUT, 2026-09-28):
+YouTube's SABR change left 0 of the 11 items of the YouTube source (`source_jjwuu0f3`) resolvable.
+Per-item quarantine (M68 era, `asset-probe-quarantine.ts`) needs three failed probes per item, so the
+source cost about 33 failed boundaries and fallback bridges before its last item was out of play, and
+since M73 the pool "TwitchYoutube" alternates sources, so every second pick hit the broken one.
+
+Done:
+
+- `packages/core/src/source-circuit-breaker.ts` (exported, pure, time as an argument): per source
+  closed -> open -> half-open -> closed. Opens when probes fail on 3 DISTINCT items of the source with
+  no clean probe of it in between (a clean probe forgets the failures; one item failing again and again
+  stays quarantine's case). Open lasts `cooldownSeconds`: 30 min on opening from closed, doubled on
+  every re-open, capped at 6 h. Only `closed`/`open` are stored; half-open is an open record whose
+  `opened_at + cooldown` has passed, so nobody has to write that moment. While the cooldown runs every
+  outcome is ignored (a resolve that started before the opening proves nothing and must not double the
+  cooldown); in half-open the first counted outcome decides: clean closes and resets the cooldown,
+  failed re-opens with the doubled one. `planSourceBreakerUpdates` (scan order, changed records only,
+  `opened`/`reopened`/`closed` transitions), `sourceBreakerGate`, `describeSourceBreaker`,
+  `formatSourceBreakerTime`; the stored item list is capped at 20 and the error at 500 characters.
+- Network outage: the code cannot tell one from a source fault (no resolve error is classified; a DNS
+  failure reaches the probe as one more yt-dlp message). The distinct-items rule is only a partial
+  guard: a two-source pool's queue holds two items of each, so an outage that ends before the queue
+  moves on opens neither breaker, but a single-source pool's queue holds four items of one source, and
+  an outage longer than the five-minute probe cache can fail three remote ones and hold a healthy
+  source (pinned in a test, said in the runbook). Either way it costs one cooldown and closes on the
+  first clean probe, without the operator.
+- What counts: exactly the outcomes per-item quarantine counts (`takeUncountedProbeOutcome`, then
+  `planAssetProbeUpdates`), each probe once, plus the inline resolve of the selected item
+  (`recordSelectionResolveOutcome`, success and failure, around the one `resolveAssetPlaybackInput(failedAsset)`
+  call, never the fallback bridge's resolve). The addition is needed for the trial: the queue never
+  probes the selection (it lists the items after it) and is empty while a fallback is on air, so a
+  half-open source whose trial item is picked straight away (a pool with only that source, or the
+  pool's turn coming while the fallback plays) would never be judged and the cycle would resolve it
+  inline on every cycle. Quarantine still counts queue probes only. Left out (review): a Twitch archive
+  whose download is queued or running. With remote fallback off, the default, the playout refuses it
+  until the file is there and the runner downloads one archive at a time, so a single-source Twitch
+  pool's queue of four held three such archives and opened the breaker on a healthy source within about
+  three cycles, holding out its cached archives too. `resolveAssetPlaybackInput` throws
+  `TwitchVodCachePendingError` exactly when `vodCacheJobRunner.isPending`, the queue's probe cache and
+  outcomes carry `pendingDownload`, and `sourceBreakerOutcomesOf` (`source-breaker-outcomes.ts`) drops
+  those outcomes for both the scan and the inline resolve: neither a failure nor a clean probe.
+- Rotation (`pool-rotation.ts`): `createPoolRotation`, `nextPoolRotationAsset` and `walkPoolRotation`
+  take a `sourceGate` (`heldSourceIds`, `trialSourceIds`). A held source is a lane with nothing eligible
+  (positions stay in the full list, so it carries on after its position when it comes back) and the
+  alternation goes on with the other sources; a trial source gives one item per walk, the first the
+  rotation reaches, recorded in the walk state (`spentTrialSourceIds`, never stored); `start` of an item
+  of a trial source spends the trial, so the queue of the cycle that starts it holds no second item of
+  that source. Without a gate the rotation returns exactly what it returned before.
+- Worker: `poolSourceGate(state)` = `sourceBreakerGate(state.sourceBreakers, Date.now())`, passed by
+  `selectPoolAsset`, `getPoolPlaybackQueue` and the overlay lookahead; `isPoolAssetEligible` is
+  unchanged, because the half-open single pass has to live in the rotation and one gate in one place
+  serves the worker and the previews alike. `currentPoolAsset` does not ask the gate: an opening
+  breaker never takes the running item off air. A pool whose sources are all held finds nothing and the
+  fallback plays, as today. The generic fallback tiers are gated too (review): the any-ready tier of
+  `selectPlayoutAsset` and the generic tiers of `planRecoveryAfterPlaybackPreparationFailure` (recovery
+  and the bridge) skip held sources, because the hold keeps their items out of the queue, their
+  quarantine counters stop, and on a channel without a global fallback asset those tiers would pick a
+  held item to fail inline on every cycle. A block mapped to a source by name and the global fallback
+  asset are not gated. Per-item quarantine and `includeInProgramming` are untouched.
+- Storage: table `source_breakers` (`source_id` PK, `state`, `failed_asset_ids` JSON, `opened_at`,
+  `cooldown_seconds`, `last_error`, `updated_at`) in the baseline `CREATE`, migration
+  `20261001_002_source_breakers` (the same `CREATE`; a new table has no ALTER line) and
+  `schema-manifest.ts` (regenerated). A table of its own, like `asset_retention_marks`, because
+  `persistState` deletes and re-inserts every source row; `persistState` does not write it (a
+  whole-state write from an older snapshot would reopen or close a breaker). `AppState.sourceBreakers`
+  is read with the state. Writers: `recordSourceBreakerOutcomes` (one serialized read-modify-write of the
+  rows as they are now, no row for a source deleted meanwhile, returns the plan plus every row after the
+  write; a plain read without outcomes) and `closeSourceBreakerRecord`; `deleteSourceRecordAndAssets`
+  deletes the row.
+- Incident: `playout.source-breaker.<sourceId>` (registered in `incident-classes.ts`: keyed suffix,
+  state, area playout), one per held source, upserted every cycle while open or half-open (*<source> is
+  held out of programming*: the failed item count, the last error, since when, the next probe, the cap,
+  the quarantined count) and resolved in the first cycle that finds the breaker closed (or the source
+  gone), decided by `planSourceBreakerIncidents` (`apps/worker/src/source-breaker-incidents.ts`) from the
+  rows after the write, not the cycle's snapshot, so a *Close breaker now* is not undone by a stale cycle;
+  a closed breaker is resolved only while its incident is open in the snapshot (every resolve is a
+  serialized write). Double noise: while a source is held, its `playout.source-unplayable.<sourceId>`
+  incident is resolved ("see playout.source-breaker") and its quarantine count rides in the breaker
+  incident; when the breaker closes, the count is still in the stored state and the per-item incident
+  comes back on the next cycle. Log events `playout.source-breaker.opened|reopened|closed`
+  (`sourceId`, `failedAssetIds`, `cooldownSeconds`, `error`) and `.write_failed`. Two holds that never
+  ended (review): a breaker holding a source no pool could pick anyway (every item quarantined,
+  excluded or cooling down, or the source in no pool; `sourceHasPoolCandidate`, the pools' own
+  eligibility) is closed by the playout (`close` action, `closed` with `reason: "no-pool-candidate"`),
+  because half-open would wait for a trial no pick can start and hide the per-item incident with the
+  wrong action; and an open incident of the family without a breaker row (the source page's Delete
+  removes the row in the same transaction) is resolved from its fingerprint.
+- Previews: `lookaheadVideoTitleFromPool`, `buildSchedulePreviewVideoSlots`, `buildSchedulePreview`,
+  `materializePoolWindow` and `buildMaterializedProgrammingWeek` take the gate; the web passes
+  `getPoolSourceGate(state)` (schedule preview, next-block lookahead, week, schedule page, week lens).
+  They apply the breaker as it stands when drawn, to the whole week (whether a trial succeeds is not
+  knowable); a materialized block with a held source says so in its notes, and a block whose ready
+  assets are all held says that instead of "no ready programming assets" (review). The schedule page's
+  *Needs attention* panel asks without the gate: it sends the operator to the pools, which a hold does
+  not need.
+- Web: the source page shows *Held out of programming* (since, next probe, the rule, the failed item
+  count, the last error) only while the breaker holds the source, with **Close breaker now** for owner
+  and admin (`POST /api/sources/breaker`: closes the row, resolves the incident, audit row
+  `source.breaker.closed`; 409 when nothing is open); the sources list adds one line with the last
+  error; the asset page's
+  playback diagnostics add one line. A closed breaker shows nothing.
+- Docs: operations (*A source is held out of programming (source breaker)* runbook, the quarantine
+  bullet), architecture (*Scheduling*: the two holds), deployment (*Upgrading Past 2.1.0: Source Circuit
+  Breaker (M75)*, capability notes), README (capability list).
+- Tests: `source-circuit-breaker` (new; distinct items incl. repeats and a clean probe in between, base
+  cooldown and the half-open boundary, outcomes ignored while open, a clean trial closes and resets, a
+  failed trial doubles 60/120/240/360/360/360, the first trial outcome decides, per-source scan order and
+  changed-only updates, bounds, an unreadable `opened_at`, the gate, the view; rotation: unchanged
+  without a gate, an open source skipped while the other sources alternate, a half-open source gives one
+  item where its position stands, the started selection spends the trial, single picks, all sources held
+  -> null, the gated lookahead and materialized week with its note), `source-breaker-wiring` (new;
+  incident class, the incident lifecycle open -> trial -> resolved and no write once resolved, an orphan
+  row, the worker gate at selection/queue/lookahead and not at the running item, the outcome order before
+  the per-item incident, the inline resolve counting, table/migration/manifest/persistState/delete),
+  `source-breaker-api` (new; roles, close + resolve + audit, 409/404/400 writing nothing, page and list
+  wiring), `ops-state` (the source snapshot's breaker, the asset diagnostics line, the gate, nothing when
+  closed or absent); integration `db-roundtrip`: the table created on a database without it (dropped,
+  migration row deleted) with the declared columns, opening on three distinct items surviving a
+  reconnect and a whole-state write from an older snapshot, cooldown ignore / doubled re-open / close
+  through the database, operator close, and a deleted source's row gone and not re-created by a late
+  probe. Review additions: pending downloads neither count nor reset (pure filter, the typed error,
+  the wiring on all four paths); the single-source outage limit; the incident of a deleted source
+  resolved without a row; a breaker with no pool candidate closed, open or half-open, and the worker
+  executing it; the generic fallback and both recovery plans skipping held sources (not the global
+  fallback); the slot preview, the week's held-only note, `getSchedulePreview` and
+  `getMaterializedProgrammingWeekPreview` on an open row; the sources list's last error; the schedule
+  page's Needs-attention filter without the gate.
+- `pnpm validate` green after the review fixes (2138 unit, 58 integration tests, build). Not run:
+  `pnpm test:fresh-db` (it needs a `stream247-web:test` image built from this tree; the fresh-install
+  schema is covered by the integration test that compares a migrated database with `DECLARED_SCHEMA`).
+
+Combination review (2026-10-01; M75, M76, M78, M79, M80 and M82 read together for the first time):
+
+- A trial that fails inline is not asked again in the same cycle. The recovery after a failed inline
+  resolve was planned from the cycle's snapshot, in which a half-open source is a trial source and not
+  a held one; on a channel without a global fallback asset or a library file its generic tiers picked
+  another item of the source that had just failed its one trial, and the standby slate was on air for
+  that cycle. `recordSelectionResolveOutcome` now returns the breakers as its write left them (null
+  when nothing was recorded) and the recovery plan takes its held sources from those rows. The bridge
+  before a cold resolve still reads the snapshot: it runs before the trial is judged. Rejected from the
+  same finding: "the queue of that cycle walks the stale gate and resolves the trial a second time" --
+  no pool queue is built for a recovery selection (`global_fallback` / `generic_fallback` / `standby`
+  are not among the reason codes that build one).
+- An outcome that changes no row takes no lock. `recordSourceBreakerOutcomes` plans against a plain read
+  first and takes the state-write lock only when a row would change, planning again from the rows as
+  they are then. A clean probe of a healthy source (before every switch that resolved inline, about
+  four per five minutes from the queue) queued behind every whole-state write of the web and the
+  worker for a transaction that wrote nothing.
+- A failed breaker write loses less. The scan marks a probe counted before the breaker hears of it, so
+  "the next cycle retries" was not true: the outcomes of a failed write are now kept for one more
+  write (`createBreakerOutcomeCarry`, the inline resolve's too; once only, so an outcome the database
+  refuses cannot fail every later write). `applySourceBreakerOutcomes` knows who is held before its
+  first incident write and guards each incident write on its own (`playout.source-breaker.write_failed`
+  with `scope: "incident"`); when the record itself fails, the snapshot's breakers stand in for the
+  held set. Before, one failed write left no source held for that cycle and the per-item incident of a
+  held source re-opened, with an onset line and its acknowledgement cleared.
+- Rollback (docs only): an older image never resolves `playout.source-breaker.<sourceId>` (the family
+  is unknown to it, and unknown fingerprints are not auto-resolved), so an incident open at the
+  rollback stays open until it is resolved by hand; deployment says so.
+- Docs: the six upgrade notes in deployment are one section, *Upgrading Past 2.1.0*, with one lead
+  (no stack file change, two additive tables and one backup, the language to set and the egress to
+  allow after the repin, what a rollback leaves) and a sub-heading per milestone. The section keeps
+  that name until the release that carries the six has a version (no release milestone names one yet).
+- Tests: `playout-recovery` (the failed trial: the snapshot's gate picks the same source, the rows
+  after the write pick the other), `source-breaker-wiring` (the recovery plan's gate, the returned
+  rows, the carry as a table and at both call sites, the held set before the first write and the
+  guarded writes, the snapshot standing in), integration `db-roundtrip` (with the state-write lock held
+  by another session: a clean probe answers at once, a failure waits and is planned after it).
+- `pnpm validate` green after the combination review's fixes in M75, M76 and M79 (2609 unit tests in
+  242 files, 63 integration tests, build). Not run: the e2e suites (no UI text changed).
+
+DUT check after deploy (read-only, `CHECK_BASE_URL=http://127.0.0.1:3000` where needed):
+
+- `SELECT COUNT(*) FROM schema_migrations WHERE id = '20261001_002_source_breakers';` returns 1 and
+  `SELECT * FROM source_breakers;` starts empty (rows appear for sources that fail a probe).
+- While YouTube resolves: no `playout.source-breaker.*` incident, the source pages show no breaker, the
+  TwitchYoutube pool keeps alternating.
+- While the Twitch pool is on air with archives still downloading (remote fallback off): no
+  `playout.source-breaker.opened` for the Twitch source, and its cached archives keep airing.
+- If YouTube breaks again: after failed probes on three different YouTube items the playout log has
+  `playout.source-breaker.opened` with `sourceId: source_jjwuu0f3`, one incident *... is held out of
+  programming*, `source_breakers.state = 'open'`, the pool plays Twitch archives back to back, and about
+  30 minutes later one YouTube item is probed (`reopened` with `cooldownSeconds: 3600`, or `closed`).
+  *Close breaker now* on the source page brings it back at the next cycle (audit `source.breaker.closed`).
+
+Follow-ups:
+
+- Network-outage awareness: classifying a resolve error (DNS failure, connection refused) as the
+  channel's network rather than the source would let the breaker ignore an outage outright; today the
+  distinct-items rule and the self-closing trial are the only guard, and it does not protect a
+  single-source pool from an outage longer than the five-minute probe cache (review; the 6-minute
+  external outage of 2026-09-12 would qualify). A cross-source signal does not help there, since a
+  single-source pool probes only its own source. **Gate before M75 ships to the DUT** (lead, 2026-10-01):
+  the nightly blip (~23:58 UTC) falls in the Twitch-only overnight block; measure on the DUT how many
+  remote Twitch probes a blip fails (cached archives probe locally, pending downloads no longer count) and
+  either show that it cannot reach three, or add the classifier first. A held Twitch source there means
+  30 min of fallback after a 2-minute outage. **Closed by M82** (2026-10-01): the classifier was added
+  first, with a corroborating connection attempt to the channel's output, and it guards per-item
+  quarantine as well; the paragraph *Network outage* under *Done* above describes M75 alone. What M82
+  leaves to measure on the DUT is in its own section.
+- Per-item quarantine still counts a Twitch archive whose download is queued or running as a failed
+  probe: with remote fallback off, an uncached archive in the queue is quarantined after three probes
+  about a minute apart, long before a tens-of-minutes download ends, and stays out until the operator
+  clears it. Older than M75 (M75 keeps quarantine untouched); the `pendingDownload` flag on the probe
+  outcomes is what a fix would filter on.
+- Deleting a source leaves its `playout.source-unplayable.<sourceId>` incident open (no asset of it is
+  scanned again). Older than M75; the breaker incident of a deleted source is resolved now.
+- A pool with only a broken source can still be stuck on one item that fails inline every cycle
+  (quarantine counts queue probes only and the queue never holds the selection); the breaker cannot open
+  on one item. Counting inline resolve failures for quarantine too, or a skip hold on a failed
+  selection, would end that loop. Older than M75.
+- The previews apply the breaker as it stands to the whole week; evaluating it per block start would need
+  the blocks' absolute times in the materializer.
+- A block mapped to a source by name and the global fallback asset ignore the breaker.
+- The breaker's cooldowns and threshold are constants; they could become managed settings next to the
+  watchdog thresholds if the DUT shows a need.
+
+## M76 As-Run Log
+
+Owner decision 2026-10-01, after a competitor comparison. Production evidence: there was no table of
+aired items. Every incident analysis on this channel began by reconstructing "what was on air at 19:38"
+from container logs (the boundary storm analysis of 2026-09-04, the 19:38 fallback-bridge relapse, the
+Play now failure of 2026-10-01), and container logs are lost on every redeploy. The only structured
+traces were the `playout.process.start` / `playout.process.exit` log lines and the `playout_runtime`
+singleton, which holds the present and nothing before it.
+
+Done:
+
+- Vocabulary and read rules (`packages/core/src/as-run.ts`, exported): `AsRunRecord`, the target kinds
+  (asset, insert, fallback, live, standby, reconnect), input kinds (local, remote, pair, live, slate), end
+  reasons (`natural-end`, `duration-bound`, `switch`, `skip`, `operator-restart`, `feed-watchdog`,
+  `scheduled-reconnect`, `crash-loop-reset`, `destination-missing`, `stopped`, `failed`, `process-gone`),
+  `AS_RUN_RETENTION_DAYS = 90` (a constant with its reason, not a setting), `resolveAsRunWindow` (ISO
+  `from`/`to`, default the last 24 h, `limit` default 200 and capped at 1000, 400 on anything unreadable;
+  a read returns the runs that OVERLAP the window, so `from = to` is "what was on air at that moment"),
+  the labels and `buildAsRunRowView` for the console.
+- Playout side (`apps/worker/src/as-run.ts`, pure): `asRunTargetKindOf` (the playout's own target kind,
+  plus `fallback` for the fallback tiers including the bridge, and for the operator's Fallback, which
+  selects as `operator_override` like a Pin and is told apart by `overrideMode` (review)),
+  `asRunInputKindOf` (from what ffmpeg was given: a path is local, a URL remote, a separate audio input
+  a pair; an audio lane replaces a pair's audio so such a start reads remote; no signed URL is stored),
+  `asRunScheduleContextOf` (the block on air at the start; its pool only when the pool's rotation picked
+  the item, `scheduled_match` from one of its sources, so a fallback bridged into a block, an insert, a
+  Pin or a Move next does not name the pool. The source alone did not say so (review): on the DUT nearly
+  every asset comes from the TwitchYoutube pool's sources, so the generic fallback is usually another
+  item of the pool's own source), `asRunEndReasonOf` (the planned stop reasons, EOF, clean exit,
+  failure), `asRunRestartIntentOf` (the web asks for Restart, Skip, chat skip, Pin, Play now and the
+  fallback with one `restart-requested` stop; the row tells skip, switch and restart apart from the
+  running item, the active skip target and the item the request selected. Without the relay the
+  reconnect slate takes the selection's place before the stop, so the intent is read from the pick the
+  slate replaced; read from the slate, every direct-mode Restart, Hard reload, Recover outputs and Force
+  reconnect was a `switch` (review). The stop reason itself is unchanged, the insert and watchdog logic
+  read it), `buildAsRunStartRecord`, `buildAsRunEnd`, `buildAsRunSpawnFailedEnd`, `watchAsRunEnd` (below),
+  and `createAsRunLog`: every write goes onto
+  one promise chain that the playout never awaits, so a slow or unreachable database adds nothing to a
+  switch and a process that dies within milliseconds cannot complete its row before the row exists; a
+  failed write (or a row that cannot be built, or a throwing logger) is logged as `as_run.write_failed`
+  and never reaches the cycle or the exit handler.
+- Worker wiring (`index.ts`): `startOrSwitchPlayout` queues the start row right after the spawn and the
+  `playout.process.start` line, before its first await, on every path (both call sites pass
+  `asRun: { blockId, poolId, queueKind, overrideMode }`), and attaches `watchAsRunEnd` to the child in the
+  same synchronous stretch: it completes exactly that row (the id is in the closure) from the child's own
+  `exit`, and a spawn that failed (`error` without a pid; Node emits no `exit` for it) as `failed` with the
+  error code and 0 aired seconds. Completed from ffmpeg's main exit handler, which is attached only after
+  the start's awaited runtime, incident and destination writes, an ffmpeg that died during them and a
+  failed spawn both stayed "On air" until the next start closed them as `process-gone` (review). The main
+  handler measures `ranForMs` to the instant the watch took, so the two still agree; the
+  `restart-requested` stop sets `asRunStopIntent` (cleared with `plannedStopReason`); the playout mode
+  closes what a previous process left open when it boots (`runLoop`).
+- Storage: table `as_run_log` (`id`, `started_at`, `ended_at` '' while on air, `target_kind`, `asset_id`,
+  `title` as aired, `source_id`, `pool_id`, `block_id`, `reason_code`, `queue_kind`, `input_kind`,
+  `format_id`, `format_candidate`, `planned_seconds`, `aired_seconds`, `end_reason`, `exit_code`) with
+  two indexes, `as_run_log_started_at_idx` and the partial `as_run_log_open_idx` (`WHERE ended_at = ''`:
+  every start closes the open row), in the baseline `CREATE`, migration `20261001_003_as_run_log` (the
+  same `CREATE` and indexes; a new table needs no ALTER line, precedent `source_breakers`) and
+  `schema-manifest.ts` (regenerated). Not part of the application state: not hydrated, `persistState`
+  never touches it. Writers outside the serialized state write (a start must not queue behind a
+  whole-state write for its history line), each one short transaction: `recordAsRunStart` (closes rows
+  still open at the new start as `process-gone`, inserts, deletes rows that started more than 90 days
+  before it: pruned in the write that appends, the cadence of `audit_events`, so no sweep to schedule),
+  `recordAsRunEnd` (only an open row, so a late exit of a process that outlived its stop deadline cannot
+  overlap the run after it), `closeOpenAsRunRecords` (boot); `process-gone` never ends before the row's
+  own start, and its aired seconds are an upper bound. Reader `listAsRunRecords` (overlap, newest first).
+- Web: `GET /api/as-run?from=&to=&limit=` (owner, admin, operator, moderator, viewer: the roles of the
+  live status; `truncated` when a page is full), and the panel *On air, last 24 hours* (`AsRunLogPanel`)
+  at the end of `Live → Status`: a read-only table (start and end in UTC with the channel's time zone
+  beside them rather than the browser's: the schedule page (its timeline and editor) and the public
+  channel page speak the channel's zone (`getWorkspaceTimeZone`), and "what was on at 19:38" is asked in
+  it; the codebase's two browser-local times, a team grant's date and the 2FA confirmation, are account
+  dates outside the schedule (review: an earlier wording here said there were none); what
+  aired with kind, source, pool and block by name; input kind with format and candidate; why it ended with
+  the exit code of a failure; planned against aired, "so far" for the run on air). No control at all, so
+  the live-status control budget (28) does not move; a failed read renders a line instead of the table
+  (`readRecentAsRunLog` in `lib/server/state.ts`, which also keeps `Date.now()` out of the page).
+- Docs: operations (*What was on air at a given time?* with the view, the API and a SQL query, how to
+  read the rows; referenced from *Playout degraded*, *A YouTube item leaves the air after a few seconds*
+  and *Seam Skew At Boundaries*, where they send the reader to the logs; primary surfaces), architecture
+  (persistence model, *Live Runtime*, alerting), deployment (*Upgrading Past 2.1.0: As-Run Log (M76)*,
+  capability notes), README (capability list).
+- Tests: `as-run` (new; target kind with Pin against Fallback, input kind, schedule context with every
+  non-rotation pick from a pool source, end reason and restart intent with the direct-mode slate as
+  tables; the start row without any URL, no planned length for a slate or an unprobed item, the end row
+  against ranForMs, exit code and signal, no negative run; the window defaults, `from = to`, offsets, the
+  cap and seven refusals; the console row in UTC and Europe/Berlin, on air, on a UTC channel, with gone
+  names and a failure), `as-run-wiring` (new; the write queue's order with a slow start, a failed write
+  logged and the chain going on, nothing thrown for a bad row, a bad end, a throwing logger or a
+  synchronous store throw; the end watch with real child processes: a missing binary ends `failed` /
+  `ENOENT` / 0 s with no `exit` emitted, a process that exits before anything else listens is completed
+  with its exit code, a failed kill of a running process ends nothing, a throwing context never reaches
+  the exit; the worker's start after the spawn and before the first await, never awaited, both call
+  sites, the watch before the first await and before the main exit handler with `ranForMs` measured to
+  its instant, the restart intent with the pick the slate replaced and its reset, the boot close; baseline, migration, index, manifest, no `persistState` / hydrate access, the prune in the
+  append and the open-only completion), `as-run-api` (new; roles, the default window, `from = to` with an
+  offset, the cap and `truncated`, four 400s without a database read, the status tab wiring, the panel
+  without any control, `readRecentAsRunLog` returning null records when the database fails);
+  integration `db-roundtrip`: the table and index created on a database without them (dropped, migration
+  row deleted), start / end / whole-state write / the moment query / newest first / limit, `process-gone`
+  at boot and at the next start with a late exit ignored and a skewed boot time, and the 90-day prune.
+- `pnpm validate` green (2207 unit tests in 230 files, 62 integration tests, build; after the review
+  fixes 2228 unit tests in 230 files, 62 integration tests, build; one M74 source-text
+  assertion in `operator-play-now-wiring` widened for the intent line before the restart stop). Not run
+  by this milestone: the e2e baselines (the live-status design and wording baselines change with the new
+  panel). Re-recorded since in d122103 (`live-status-chromium-linux.txt` and the live-status desktop and
+  mobile pictures). Not run: `pnpm test:fresh-db`
+  (it needs a `stream247-web:test` image built from this tree; the fresh-install schema is covered by
+  the integration test that compares a migrated database with `DECLARED_SCHEMA`).
+
+Combination review (2026-10-01, with M78 and M79):
+
+- A Skip is a `skip` row also when it reaches the playout as a switch. The end write of a playout
+  cycle clears `restartRequestedAt` (older than this branch), and a cycle can run for up to a minute
+  (the queue scan awaits one remote resolve; on the DUT the queue's YouTube items are re-resolved every
+  five minutes). A Skip written meanwhile -- the operator's, the one that ends a Pin (M78), an applied
+  chat vote -- lost its flag; the skip hold still moved the programme on at the next cycle, through the
+  plain switch branch, where no intent was set, and the row read `switch`. `asRunSwitchIntentOf` (the
+  item a switch stops is the one an active skip hold names) is set right before that stop, and
+  `asRunEndReasonOf` reads `skip` for a `switch` stop with that intent. The exit line of such a Skip
+  still says `plannedReason: switch`; operations says so.
+- Docs: deployment and this section name both indexes of `as_run_log` (the upgrade note named one).
+- Tests: `as-run` (the switch intent as a table, through to the row; only a switch takes it),
+  `as-run-wiring` (set in the switch branch before anything is awaited, the stop first in the start).
+
+DUT check after deploy (read-only, `CHECK_BASE_URL=http://127.0.0.1:3000` where needed):
+
+- `SELECT COUNT(*) FROM schema_migrations WHERE id = '20261001_003_as_run_log';` returns 1, and
+  `SELECT COUNT(*) FROM pg_indexes WHERE indexname IN ('as_run_log_started_at_idx', 'as_run_log_open_idx');`
+  returns 2.
+- Rows appear for each start: after the first boundary, `SELECT started_at, ended_at, target_kind, title,
+  input_kind, format_id, end_reason FROM as_run_log ORDER BY started_at DESC LIMIT 5;` shows one row per
+  `playout.process.start` line since the deploy (`docker compose logs playout | grep -c
+  playout.process.start` against `SELECT COUNT(*) FROM as_run_log WHERE started_at >= '<deploy time>';`),
+  exactly one with `ended_at = ''`, and no `as_run.write_failed` in the playout log.
+- Ended rows match the exit lines: for the last few `playout.process.exit` lines, `aired_seconds` of the
+  row with that `asset_id` whose `ended_at` is within a second of the line's `exitedAt` is
+  `round(ranForMs / 1000)`, within 1 s, and `end_reason` fits `plannedReason` / `naturalBoundary`
+  (`natural-end` for a VOD's EOF, `duration-bound`, `switch` after a Play now).
+- The pool is named for the rotation's own picks only: a fallback bridge or a Play now inside the
+  TwitchYoutube block has `block_id` and an empty `pool_id`, the pool's `scheduled_match` rows have both.
+- A redeploy closes the open row as process gone: after the next repin, the row that was on air has
+  `end_reason = 'process-gone'` and `ended_at` = the new playout's boot (within seconds of the
+  container's start time in `docker inspect`), and the first new start opens the next row.
+- `/live?tab=status` shows *On air, last 24 hours* with the TwitchYoutube pool's items, their times in
+  UTC and Europe/Berlin; `curl -s -b <session> "$CHECK_BASE_URL/api/as-run?from=<ISO>&to=<ISO>"` returns
+  the same rows.
+
+Follow-ups:
+
+- Daily on-air percentage (competitor comparison): the share of each day covered by programme rows
+  against fallback, slate and gaps between rows, computed from this table; a status metric and a soak
+  monitor line.
+- Per-item audience (competitor comparison): join Twitch viewer counts sampled while a row was on air,
+  which needs a viewer-count sample store first.
+- The e2e fixture seeds no as-run rows, so the design baseline shows the panel's empty state only.
+  Seeding rows needs a fixed "now" for the panel first: the read window (the 24 h before `Date.now()`)
+  and an on-air row's "aired M:SS so far" follow the server clock, which `page.clock` does not reach, so
+  rows at fixed instants fall out of the window and an on-air row changes text on every run; rows seeded
+  relative to the bring-up time print different start and end times on every run. With a pinned "now"
+  (a fixture override of `readRecentAsRunLog`'s clock), fixed finished rows (natural end, failed) and an
+  on-air row would put the table under the design gate (review).
+- A run that started before the window still counts against the 200-row page; a window over a crash-loop
+  storm can be truncated (the API says `truncated`), and a "group repeated failures" view would read
+  better than hundreds of three-second rows.
+- Live bridge and slate rows carry no asset; the live input's label is the title. The live input's own
+  identity (which push source) is not recorded.
+- The end write of a playout cycle clears a `restartRequestedAt` that was written while the cycle ran
+  (combination review; the same line is on main). A Skip survives it through its skip hold and a Pin or
+  Play now through their own fields, but a plain Restart or Hard reload pressed in that window is
+  swallowed. Keeping a flag newer than the one the cycle read touches the restart and reconnect logic
+  of direct mode, so it is its own piece of work, to soak before it ships.
+
+## M78 Operator Precedence
+
+Three deferred findings of the M74 review (its follow-ups: Skip during an active pin; an insert that
+survives a Live Bridge takeover), decided on 2026-10-01. What each meant on v2.1.0-rc.2, by code reading:
+
+- Skip during a Pin or Fallback: `skip` wrote the skip hold and the restart flag, but the override arm of
+  `choosePlaybackCandidate` comes before every other arm and did not look at the skip hold, so it picked
+  the pinned item again and the restart block started it from 0 (under the relay at once, without it
+  after the slate). Only Resume took a pinned item off air, and a passed chat skip vote, which mirrors the
+  operator's Skip, did the same restart as often as the room repeated it.
+- Live Bridge during an insert: the clear after selection skipped a live selection and
+  `shouldClearInsertOnExit` keeps an active insert on a `switch` stop, so the insert stayed in the row
+  through the takeover. After the release the insert arm picked it again: an insert on air at the
+  takeover started again from 0, a pending Play now aired whenever the bridge was released (possibly
+  hours later), and a Play now requested during the bridge waited the same way.
+
+Decisions:
+
+1. The operator's Skip during an active Pin or Fallback ends that override (owner, 2026-10-01: "ja").
+2. A Live Bridge takeover ends an insert. The owner asked what this means; after the explanation and the
+   recommendation (an insert has no resume, M77 is deferred, so the alternative is a replay from 0 after
+   the live, or a Play now airing hours after it was asked for) the owner chose "end the insert"
+   (2026-10-01). The change is one decision function (`decideInsertAfterSelection`, its live rows) plus
+   the Play now refusal.
+3. While a Pin or Fallback holds the air no chat skip vote starts or counts, and the bot says why: from
+   the M74 review's deferred finding (a passed vote restarted the pinned item, as often as the room
+   repeated it). Asked whether a passed chat vote may end the operator's pin, the owner chose "no, the
+   pin takes precedence" (2026-10-01).
+
+Done:
+
+- Core (`packages/core/src/operator-precedence.ts`, exported): `resolveOperatorOverrideHold` -- the Pin or
+  Fallback that holds the air: running, its item ready and not under a skip hold, and no Live Bridge
+  pending or active with an input (the worker's live arm comes first; without it the bot told chat
+  during a live show that the operator had pinned "this item"). One rule, called by the playout's
+  override arm, the admin (Play now refusal, Skip) and the worker's chat. `decidePassedSkipVote` -- a
+  chat vote that passed: paused under a hold, stale when its item has left the air or a Skip already
+  holds it out, applied otherwise. `formatChatSkipPausedReply` -- the bot's line for a Pin and for a
+  Fallback.
+- Web (`apps/web/lib/server/broadcast.ts`): Skip of the item an override holds on air also writes
+  `overrideMode: schedule`, `overrideAssetId`/`overrideUntil`/`desiredAssetId` empty, in the same write as
+  the skip hold, the restart flag and `recovering` (both M74 modes unchanged: under the relay no slate,
+  the restart block starts the pool's pick; without it the slate first). Only when the row still names
+  that override's item, so a Pin of another item written in between stands; a Pin set but not on air yet
+  is not ended (the operator skipped the item before it). Message, toast and the `playout.skip.current`
+  audit row say "the Pin/Fallback was ended by Skip", taken from the write (a flag set in the updater),
+  so a Pin of another item written in between keeps the plain text. Pin and Fallback lift a skip hold on their own item
+  (the override arm would leave it out, so the pin would never take the air). Play now / Insert are refused
+  while a Live Bridge is `pending` or `active` -- asked before the override, as the worker's live arm
+  comes first -- and while the shared hold rule names a Pin or Fallback. The control room's
+  *Override minutes* tip says that skipping the pinned asset ends the pin.
+- Worker selection: the override arm selects through `resolveOperatorOverrideHold` (no inline copy),
+  so it leaves out an item under a skip hold and a stale override that raced with a Skip cannot restart
+  the item.
+- Worker cycle: `decideInsertAfterSelection` (playout-boundary.ts) replaces the inline clear after
+  selection. Any selection but the insert ends it, a live one included: a pending insert is dropped
+  through `recordDroppedInsert` (`preempted`, `unavailable`, new `live-bridge`; runtime event and audit
+  row), an active one is cleared (not a drop; a live takeover logs `playout.insert.ended`
+  `{ assetId, reason: "live-bridge" }`). The clear happens before the switch to the live input, so the
+  exit handler finds no insert; after the release the selection has none and the schedule continues.
+  `shouldClearInsertOnExit` is unchanged: the direct-mode planned reconnect (`scheduled-reconnect`)
+  still restarts a running insert from its beginning (out of scope, below).
+- Worker chat: the cycle computes the hold (`latestOperatorHold`) for the IRC handler and ends a running
+  skip campaign under it (its bar on air could no longer pass). `ChatControlRuntime.handleMessage` takes
+  `operatorHold`: a skip command under a hold returns `skip-paused` without counting; the bot says
+  `formatChatSkipPausedReply` through the new `TwitchChatBridge.say`, at most once per
+  `SKIP_PAUSED_REPLY_COOLDOWN_MS` (60 s; a room types the command together through its 120 s window).
+  `drainChatEffects` judges a vote that passed before the cycle saw the override on the row as it is
+  now (inside `updatePlayoutRuntime`): under a hold it writes nothing, logs `chat.skip.paused`, adds a
+  `chat.skip.refused` audit row and answers under the same cooldown. Through `decidePassedSkipVote`, a
+  vote whose item has left the air or that a Skip already holds out writes nothing either and logs
+  `chat.skip.stale` (review: a vote passed on the item before a Pin, applied after the operator's Skip
+  had ended the Pin, took the skip hold off the pinned item and restarted it from 0). Otherwise it
+  writes what it wrote before. The next-item poll and viewer requests are not paused.
+- Wording: operations (*Operator controls, with and without the relay*: Play now refusal during a Live
+  Bridge, the `live-bridge` drop reason, Pin lifting a skip hold, Skip ending the override and where the
+  pool continues, new *Live Bridge* and *Chat skip votes* entries), architecture (*Operator Controls*),
+  deployment (*Upgrading Past 2.1.0: Operator Precedence (M78)*), twitch-setup (the bot's chat features,
+  the paused `!skip`), README (skip current, Live Bridge), and the *Enable skip votes* tip in Studio →
+  Engagement → *Viewer control*.
+- Tests: `operator-precedence` (new; the hold table with ran-out, missing, not-ready and skip-held items
+  and a Pin or Fallback under a pending or active Live Bridge; the passed-vote table: paused, applied,
+  stale after the operator's Skip ended a Pin, after the item's end, with nothing on air, and applied
+  while another item is still held out; the bot lines), `broadcast-actions` (Skip during a Pin and a
+  Fallback in relay and direct mode: the override fields, the skip hold, the restart flag, message,
+  toast and audit; a Pin not on air yet is kept; Skip without an override as before; a newer Pin of
+  another item stands and the message, toast and audit row stay plain; Pin and Fallback lift a hold on
+  their item and keep one on another; Play now refused during a pending or active Live Bridge, naming
+  the bridge when a Pin runs under it, and accepted while it is releasing, accepted when the pinned
+  item is skip-held), `playout-boundary` (the insert-after-selection table, live rows included),
+  `chat-control` (no count and one reply during a Pin, the Fallback line, the cooldown, the cooldown
+  shared with the cycle's refusal, counting again after the override, poll and requests untouched),
+  `operator-precedence-wiring` (new; the decision before the switch with no live exception left, the
+  `playout.insert.ended` line, the takeover cycle's clear emptying the insert before the switch so the
+  cycle after the release has none, the hold handed to the IRC handler and the reply, the hold
+  refreshed and the campaign ended before the effects are drained, the vote judged inside the runtime
+  write through `decidePassedSkipVote`, the refusal's log, audit and reply, the stale vote's log and no
+  write, `say`). Two M74 source pins in `operator-play-now-wiring` changed because M78 changes that code
+  on purpose: the override arm now selects through `resolveOperatorOverrideHold`, and the clear after
+  selection is the `decideInsertAfterSelection` call. `youtube-playback-wiring` is unchanged and green.
+- `pnpm validate` green (2305 unit tests in 232 files, 62 integration tests, build). Not run: the e2e
+  baselines (changed tip texts: the control room's *Override minutes* and Studio → Engagement → *Viewer
+  control*'s *Enable skip votes*; tips show on hover only and neither is in the wording baseline, so the
+  baselines should not move, but the lead re-records if they do).
+
+DUT check after deploy (read-only apart from the operator's own clicks;
+`CHECK_BASE_URL=http://127.0.0.1:3000` where needed):
+
+- Skip during a Pin: pin a pool item from the control room, wait for its `playout.process.start` with
+  `reasonCode: operator_override`, press Skip current. The playout log has `playout.process.exit` for
+  the pinned item (`plannedReason: restart-requested` under the relay) and one `playout.process.start`
+  with `reasonCode: scheduled_match` for another item; no second start of the pinned asset. The runtime
+  row has `override_mode = 'schedule'` and an empty `override_asset_id`; `audit_events` has
+  `playout.skip.current` ending "the Pin was ended by Skip."; the pinned item's `as_run_log` row ends
+  `skip`. If the Skip landed while a playout cycle was running, the exit line reads `plannedReason:
+  switch` instead; the row ends `skip` either way (combination review, M76).
+- Play now while a Live Bridge is on air is refused in the control room. If a test input is at hand
+  (M66 rehearsal): Play now a short item, start the bridge while it plays, release it. The playout log
+  has `playout.insert.ended` `{ reason: "live-bridge" }`, and after the release a `scheduled_match`
+  start, no `operator_insert` start of that item.
+- Chat (viewer control on, `!skip` enabled): while a Pin holds the air, from about 45 s after it starts
+  (the chat sees it at the next worker cycle; see the follow-up below), `!skip` in jimpanse247's chat
+  gets the bot's line once (a second `!skip` within a minute gets none), the worker log has no
+  `chat.skip.passed`, no skip bar is on air. About 45 s after Resume schedule, `!skip` counts again (the
+  bar shows 1 of N).
+
+Follow-ups:
+
+- Closed: decision 2 (a Live Bridge takeover ends the insert) was taken by the owner on 2026-10-01, see
+  *Decisions* above. This entry asked for a confirmation the section already records.
+- The direct-mode planned reconnect (`scheduled-reconnect`, every few hours) still restarts a running
+  insert from its beginning; out of scope of M78 by decision. Ending it there too is one row of
+  `ITEM_ENDING_STOP_REASONS`, but the reconnect also restarts every other item, which plays on from 0.
+- A chat skip vote still skips an operator's Play now (insert): viewers can end an operator insert,
+  which the M78 rule "viewers never override the operator" would also cover. Needs an owner decision.
+  Decided 2026-10-01 (no): M79.
+- For the owner, a deviation from the M78 spec: after Skip ends a pin of a pool item that was not the
+  pool's running item, the pool continues from its stored position (after the interrupted item), not
+  after the pinned item, and the pinned item can come round again later as the pool's pick. A pin, like
+  Play now, does not move the pool's position (M74). Doing what the spec asked means a pin of an item
+  from the current pool's sources takes the pool position when it starts (`selectionTakesPoolPosition`
+  for `operator_override`), which moves where the pool continues after every such pin -- run-out and
+  Resume too, not only Skip -- and counts the pin toward the pool's insert interval: a Pin decision,
+  not a Skip one.
+- One skip slot for chat and operator: a passed chat vote (like the operator's own Skip) replaces a
+  Remove next hold the operator put on another item. Refusing the vote while another item's hold runs
+  would block every chat skip for the 60 min of the previous chat hold; separate holds need a new
+  runtime field. Older than M78.
+- The IRC handler learns of a new Pin at the next worker cycle (up to 30 s); votes in that window count
+  and a vote that passes is refused when the cycle applies it (logged, audited, answered).
+- The bot's line is English while the skip bar on air is German; a channel language setting would cover
+  both. Planned as M80 (owner decision 2026-10-01). Done in M80.
+- Starting a Live Bridge does not warn that a pending Play now will be dropped; the audit row says so
+  afterwards.
+
+## M79 Chat Never Skips An Operator Insert
+
+Owner decision 2026-10-01, asked "Can a chat vote skip a Play now insert?": no. On v2.1.0-rc.2 (and after
+M78) it could: a passed vote ran the operator's Skip on the insert, whose skip hold took it out of the
+insert arm, so the insert was cut.
+
+What counts as the operator's insert, by code reading: the runtime insert fields. `insertStatus` is
+written `pending` only by the admin's Play now / Insert (`apps/web/lib/server/broadcast.ts`) and `active`
+only by the cycle end for an `operator_insert` selection (`decideCycleEndInsert`). A pool's automatic
+insert (`insertTrigger: pool-interval`) and a cue point insert (`cuepoint`) select as `scheduled_insert`
+and never touch those fields: they are the schedule's content and stay skippable, as before.
+
+Done:
+
+- Core (`operator-precedence.ts`): `resolveOperatorHold` -- the Pin or Fallback of
+  `resolveOperatorOverrideHold` first (the override arm comes first; a pending insert under it is dropped
+  as `preempted`), else `insert` while the insert is `pending` or `active`, its item ready and not
+  skip-held, and no Live Bridge pending or active with an input (the worker's insert arm and its order).
+  Only the chat asks it; the override arm, the Play now refusal and the admin's Skip keep the override
+  rule. `decidePassedSkipVote` pauses under it; `formatChatSkipPausedReply("insert")` is "The operator is
+  playing an insert — skip votes are paused until it ends." (one line for pending and active).
+- Worker: the cycle computes `latestOperatorHold` through `resolveOperatorHold` and ends a running
+  campaign under it; the IRC handler's `skip-paused` effect carries `insert`; the refusal of a vote that
+  passed before the cycle saw the insert logs `chat.skip.paused` `{ hold: "insert" }` and audits
+  `chat.skip.refused` "...the operator's Play now / Insert held the air; the vote was not applied." The
+  reply shares the M78 cooldown (`SKIP_PAUSED_REPLY_COOLDOWN_MS`). The insert ends as before (its end,
+  the operator's Skip, Resume, a Live Bridge), and votes count again at the next worker cycle.
+- Wording: operations (*Play now* entry, *Chat skip votes*), twitch-setup, architecture, deployment
+  (*Upgrading Past 2.1.0: Chat Never Skips An Operator Insert (M79)*), README, and the *Enable skip
+  votes* tip in Studio → Engagement → *Viewer control*. The bot line is English like M78's; M80 moves
+  every bot reply into the channel language.
+- Tests: `operator-precedence` (the `resolveOperatorHold` table: active and pending insert, no insert,
+  not ready, skip-held, under a Live Bridge, under a Pin or Fallback, Pin run out; the override rule
+  never names an insert; passed votes paused during a pending and an active insert, stale after the
+  operator's Skip ended the insert; the insert line; and the rule over the rows the playout's own writes
+  leave -- `decideCycleEndInsert`, `shouldClearInsertOnExit` -- which pins that the hold ends with the
+  insert's exit and that a pool or cue point insert never holds) and `operator-precedence-wiring` (the
+  hold through `resolveOperatorHold`, the refusal's audit text, no worker write of `pending`/`active`,
+  `selectionIsOperatorInsert` from `operator_insert`, one `operator_insert` arm and two
+  `scheduled_insert` arms) carry M79. The `chat-control` cases (no count, no bar and one reply under an
+  `insert` hold, the cooldown shared with the Pin line, counting from one once no hold is handed in)
+  are regression guards only: the runtime pauses for any hold the same way since M78 and its M79 diff
+  is types and comments, so they pass on the M78 runtime too.
+- `pnpm validate` green (2335 unit tests in 232 files, 62 integration tests, build). Not run: the e2e
+  baselines (only the *Enable skip votes* tip text changed; tips show on hover only).
+
+Combination review (2026-10-01, with M74's insert handling):
+
+- The hold reads what is on air, not only the row's status. An insert on air whose Restart (or whose
+  playout container's redeploy) cannot prepare it again is covered by the recovery plan's fallback, and
+  nothing cleared the row: the "restart-requested" stop keeps an insert, the cycle-end write keeps a row
+  whose selection is not `operator_insert`, and `decideInsertAfterSelection` keeps an insert the
+  selection still names. The row stayed `active` for as long as the item did not resolve, so
+  `resolveOperatorHold` paused every vote with the insert line while the fallback played.
+  `OperatorHoldInput` now carries `currentAssetId` (it was on `PassedSkipVoteInput` only): an `active`
+  insert holds while it is the item on air or nothing is (a Restart's gap, the reconnect slate of
+  direct mode), not while another item is. `pending` is unchanged.
+- The stuck row itself (M74's code, the same on v2.1.0-rc.2): `decideInsertAfterPrepareFailure`
+  (playout-boundary.ts) replaces the inline condition in the cycle's prepare-failure catch. A pending
+  insert is dropped as before; an insert on air that fails to prepare for a Restart still takes the
+  recovery plan, as M74 decided; the cycle after it, with another item on air, ends the insert (runtime
+  event and audit row `playout.insert.ended`, `reason: prepare-failed`) and the schedule continues.
+  Before, the insert was selected and resolved inline on every cycle, up to the resolve timeout each,
+  and the fallback stayed on air until Resume. Inferred from M74 (an insert ended by its duration bound
+  or a watchdog does not replay) and M78 decision 2 (an insert has no resume, so it ends rather than
+  starts again from 0 later); if the owner wants a failed insert retried instead, this is the function.
+- Docs: operations (*Operator controls*: the ended insert, and votes counting while the fallback covers
+  it).
+- Tests: `operator-precedence` (an active insert with another item on air, with nothing on air, a
+  pending one either way; the row a Restart's failed re-prepare leaves), `playout-boundary` (the
+  prepare-failure table, and the three writes that leave the row), `operator-play-now-wiring` (the
+  catch through the decision, the drop's record kept, the ended insert's line and audit row).
+
+DUT check after deploy (viewer control on, `!skip` enabled). The chat learns of the insert, and of its
+end, only at the next worker cycle (30 s apart, after the source syncs); the Play now's `pending` phase
+lasts about one playout cycle plus the resolve, so the chat usually sees the insert first as `active`.
+Play now a pool item at least three minutes long and wait about 45 s after it comes on air. From then on
+`!skip` in jimpanse247's chat gets the insert line once a minute, no skip bar goes on air, the worker
+log has no `chat.skip.passed` or `chat.skip.applied`, and there is no `chat.skip` audit row. Before
+that, `!skip` may still count and show the bar; a vote that passes there logs `chat.skip.passed` and,
+when the cycle applies it, `chat.skip.paused` `{ hold: "insert" }` with the audit row
+`chat.skip.refused` and the insert line, and the insert plays on. About 45 s after the insert ends, `!skip` counts again (the bar shows 1 of N).
+During a pool's automatic insert `!skip` counts as before.
+
+Follow-ups:
+
+- The IRC handler learns of the insert at the next worker cycle (up to 30 s plus the cycle after it goes
+  pending or on air): votes in that window count, and a vote that passes is refused when the cycle
+  applies it (logged, audited, answered), as for a Pin (M78). It learns of the insert's end the same
+  way: votes in that window stay paused with the insert line.
+
+## M80 Viewer Language
+
+Owner decisions 2026-10-01: one channel language for everything viewers see or read, German and
+English; a new install speaks English; jimpanse247 is set to German after the deploy; the admin
+interface stays English (M81, deferred). Before M80 about 105 viewer texts were English literals spread
+over core, worker and web, and the poll and the skip bar were German on every channel.
+
+Done:
+
+- Setting: `channelLanguage` in the managed config next to the time zone (in the encrypted payload, no
+  schema change), resolved by `resolveChannelLanguage` (`packages/db/src/instance-config.ts`): env
+  `CHANNEL_LANGUAGE`, then the saved value, then `en`; anything that is not `de` is `en`. Web reads it
+  through `getViewerLocale`, worker, playout and uplink through the managed config each cycle refreshes
+  (`viewerLanguage()` for the chat bot's lines between cycles). `PUT /api/settings/instance` takes
+  `channelLanguage`, refuses an unknown value with 400 and keeps the fields a request leaves out. Admin
+  (English): a *Channel language* select in the wizard's instance step and a *Channel language* panel on
+  `/settings`, both with an InfoTip and a hint when the env variable pins it.
+- Catalogue: `packages/core/src/viewer-messages/` (`en.ts` reference, `de.ts`, `types.ts`, `index.ts`),
+  94 keys per language. `viewerText(locale, key, params)` fills placeholders and picks plurals with
+  `Intl.PluralRules` on `count`; numbers through a cached `Intl.NumberFormat` without grouping; the
+  clock through a cached `Intl.DateTimeFormat` (en-GB / de-DE, `h23`), the same `HH:MM` as before;
+  upper-casing with `toLocaleUpperCase`; the time zone's name through `formatViewerTimeZoneName`
+  (generic long name, then the specific one, an offset only when the zone has no name). An unknown
+  language is English, a key missing from one language falls back to English, an unknown key is an
+  empty string: nothing throws on air.
+- The picture: `OverlayScenePayload.locale`, set by the worker's payload builder, the studio preview and
+  the preview request parser. The playout container rebuilds the poll, the skip bar and the game panels
+  from database rows with the payload's locale. A payload cached before M80 (no locale) is English.
+  The playout caches the payload when a programme or a live bridge starts and on every cycle while one
+  is on air (`writeOnAirOverlay`); the standby and reconnect paths write only the text slate, so during
+  a slate the scene picture and its panels keep the previous language until the next programme starts.
+  Older than M80, and the time zone behaves the same way; the docs say so.
+- Literals replaced (inventory sections 1-9): the on-air layout (next heading and time range, countdown,
+  vote counts, clock, capitals), the payload's chips, next labels and fallbacks, text mode and the
+  standby slate, the worker's standby / next / live-bridge titles (three sites now share
+  `buildLiveBridgeOverlayText`), the untitled-asset title, the chat name fallback, the poll and the skip
+  bar, the three chat game boards, every chat bot reply, the Twitch title's no-asset fallback
+  (`resolveTwitchFallbackTitle`), and the public page. Command words stay untranslated.
+- Shared words are split: playout state and the as-run log keep `Replay standby`, `Scheduled reconnect`,
+  `Live Bridge` and `Live input`, the studio keeps the `CHAT_GAMES` labels, the admin keeps
+  `getChannelStatusLabel` and the playout message; viewers get the catalogue's text on the way out.
+- Stored English defaults (section 10): `localizeViewerBuiltInText` maps the six stored headline
+  defaults, the worker's four English state titles and the local library's source name (`Local Media
+  Library`, which every scan writes again; `Lokale Mediathek` on a German channel's meta line) to their
+  catalogue keys, so a stored value equal to its English default is rendered in the channel language and
+  anything the operator wrote is rendered verbatim. Nothing is migrated. The default playout message is
+  no longer shown on the public page. The rule compares the text, not the author: titles, categories,
+  queue titles and the source label pass through it on the picture, in the Twitch title and on the
+  public page, because playout and queue state carry the worker's titles in the same fields as the
+  operator's. An operator's own title that equals one of the thirteen built-in English texts is
+  therefore shown in the channel language too; documented in operations and getting-started and pinned
+  by a test, not narrowed (a missed call site would put `Replay standby` on a German channel).
+- Public page `/channel`: every word is built in `apps/web/lib/public-channel-view.ts` from the
+  snapshot, which now carries `locale` and `timeZoneLabel` (named on the server, so the first paint and
+  the live updates agree, and a language change reaches an open page with the next update). `lang` sits
+  on `<main>` and on the live block, not on `<html>`: the root layout also serves the English admin, and
+  Next.js has no per-route `<html>` short of several root layouts. The page's meta description is the
+  viewer heading in the channel language. The zone reads `Central European Time` /
+  `Mitteleuropäische Zeit` instead of `Europe/Berlin`. `getChannelStatusLabel` is split into
+  `getChannelStatusKind`, the admin's English label, and the viewer's label and status line.
+- English wording changed on purpose (item 5 of the spec; everything else is byte-identical, and the
+  overlay golden frames did not move): `No next block configured` and `Nothing scheduled next` are
+  `Nothing scheduled`; the standby state has one term, `Stand by` (was `Standby` on the chip and the
+  public page, `Replay standby` as the title and in the Twitch title, `Please wait, restream is starting`
+  as the headline, now `Stand by, we’ll be right back`); the studio preview's `Program resumes shortly`
+  is the broadcast's `Programming will resume shortly`; the poll and the skip bar are English on an
+  English channel (`What plays next?`, `Type !1, !2 in chat`, `Skip?`, `Move on to the next video`,
+  `2 of 3 votes`); the no-room reply says `1 layer`; on the public page the zone is named, the empty
+  next line reads `The next item will appear here as soon as it is confirmed.` (was `...as soon as the
+  runtime confirms it.`), and the line under *On air now* is `Playing now.`, `The stream is starting,
+  back in a moment.` or `The channel is off air right now.` instead of the playout's status message.
+  German: `1 von 1 Stimmen` is `1 von 1 Stimme`.
+- German: short Twitch German in the du-form with one word per thing (`Als Nächstes`, `Gleich geht’s
+  weiter`, `Stimme/Stimmen`, `Überspringen`, `Einspieler`, `Regie` for the operator). Measured
+  in the renderer's DejaVu fonts at 1920 against the room the layout gives each text: poll header with
+  countdown 435 of 472 px (English 327), skip header 283 of 472, next-card heading 431 of 480; the game
+  status lines were shortened after measuring (`Vorbei · N Punkte`, `Geschafft · N Punkte`, `N/M
+  geschafft`) so every German game header is no wider than the English one. The Minesweeper progress
+  line was `N von M offen` in the first draft: German reads that as "N still to do", the opposite of
+  `Cleared N of M`. `512 von 576 aufgedeckt` needs 589 px of 540 and `512/576 aufgedeckt` 549;
+  `512/576 geschafft` needs 531 (English 533) and ends on the word the chip shows when the board is
+  cleared.
+- Docs: getting-started (env table, wizard step, *Channel language*), operations (*What Viewers Read:
+  The Channel Language*; the skip-paused lines), architecture (*Viewer Language* with *Adding a viewer
+  language*), deployment (env lists; *Upgrading Past 2.1.0: Viewer Language (M80)*), twitch-setup, ui
+  (text rule, canonical standby term), README.
+- Tests: `viewer-messages` (key and placeholder parity over `VIEWER_LOCALES`, no untranslated German
+  entry, plurals, numbers, clock incl. midnight, capitals, zone names, fallbacks for unknown language,
+  zone and key, the stored-default rule), `viewer-language-surfaces` (payload, layout, text mode,
+  standby slate, live bridge in both languages; English pinned byte for byte),
+  `viewer-language-chat` (poll, skip bar, games, every bot reply — the three the worker writes inline
+  are pinned by wording and by their call sites), `viewer-language-public-page`
+  (header, scheduled hour, empty states, the worker's state titles, operator titles untouched, no
+  playout message, `lang` on the content), `channel-language-setting` (env, stored, default in web and
+  worker; studio preview; Twitch fallback title; the PUT route), `viewer-language-fit` (the widths
+  above), `viewer-language-literals` (no viewer sentence outside the catalogue in 16 source files; the
+  seven section-11 lines it lets through must still exist; the two files that lay out the public page
+  are parsed with the TypeScript compiler and may hold no written word in JSX text, in a string inside
+  a child expression or in a text prop, with six mutations that prove the check fails), plus cases in
+  `channel-status` (viewer and
+  admin labels apart) and `ops-state` (the public snapshot's `locale` and `timeZoneLabel`, env first).
+  German output is checked against the English catalogue's sentences (`expectNoEnglish`). Pins changed:
+  `overlay-next-time-label` (`No next block configured` → `Nothing scheduled`, deliberate),
+  `channel-status` (`getChannelUpdateNotice` takes a locale; the English texts are unchanged) and
+  `operator-precedence-wiring` (source pins that gained the `viewerLanguage()` argument).
+- No dependency added (`Intl` is built in). `pnpm validate` green (2409 unit tests in 239 files, 62
+  integration tests, build).
+
+Left as is (inventory section 11, reachable code that draws nothing today, English): the metadata
+widget fallbacks (`buildOverlaySceneMetadataWidgetContent`, tests only), the payload's
+`scheduleLabel/Title/Body/Aux` (never drawn), the EventSub alert texts (recorded, not drawn).
+
+Not run: the e2e wording and design baselines. They will move, and need a refresh on a fresh
+`DEV_STACK_STATE_DIR`: `channel-chromium-linux.txt` (lines 3 and 8: the zone's name instead of
+`Europe/Berlin`) and the channel design baseline; `admin-settings-chromium-linux.txt` and the settings
+design baseline (new *Channel language* panel); the setup wizard's instance step (new select, longer
+intro sentence); the studio scene preview where a fixture shows standby or no next block (`STAND BY`,
+`NOTHING SCHEDULED`). The control-density budget of `/admin?tab=settings` is raised from 33 to 35 in
+`tests/e2e/control-density.spec.ts` (the panel's select and its secondary save; reason written beside
+the number), counted from the components and not yet measured: run that suite on the same stack.
+
+Recorded since (combination review, read from the commit, not re-run): d122103 re-recorded
+`channel-chromium-linux.txt` (two lines), the channel mobile picture, `admin-settings-chromium-linux.txt`
+and both admin-settings pictures. Not in that commit, and so not confirmed either way: the channel
+desktop picture, the studio scene pictures (the predicted `STAND BY` / `NOTHING SCHEDULED` in the
+preview; the studio's wording baseline holds the stored English headline defaults, which M80 does not
+change), and the control-density budget of 35, whose comment in `tests/e2e/control-density.spec.ts`
+still says "not yet measured". There is no baseline of the setup wizard's instance step. A picture that
+did not move is not proof that nothing changed: the design gate tolerates 1 %.
+
+Lead, 2026-10-01, from the run behind d122103 (images built from 07e96e6, fresh `DEV_STACK_STATE_DIR`):
+the whole `scripts/design-baseline.sh` suite ran, 76 tests - first without `--update` (68 green, 8 red:
+live-status and admin-settings desktop/mobile pictures and wording, channel mobile picture and wording),
+then with `--update` (76 green, exactly those 8 files rewritten). The control-density suite is part of
+that run and measured `admin-settings: 35 controls, primary: [Save Twitch accounts, Save encrypted
+settings]` - the budget of 35 is measured, not only counted - and `studio-scene: 59`. The channel desktop
+picture and both studio scene pictures stayed inside the 1 % tolerance and were NOT re-recorded; whether
+the studio preview shows `STAND BY` / `NOTHING SCHEDULED` on the seeded fixture was not looked at. The
+unit suites pin those texts (`viewer-language-surfaces`); the pictures may be stale by less than 1 %.
+`test:e2e:smoke`, `test:queue-continuity`, `test:runtime-parity`, `test:fresh-db` and
+`docker/smoke-test.sh` were green on the same images.
+
+DUT check after deploy. The channel is English until it is set: check `/channel` reads `All times are
+shown in Central European Time.`; the lower third and the next card are unchanged, but a poll or a skip
+bar that runs before the language is set reads English (`What plays next?`, `Skip?`) where it read
+German on rc.2, and a standby reads `Stand by` -- the upgrade note says so, it is not a regression. On
+jimpanse247, with skip votes and chat games on air, set the language right after the repin (or, the
+owner's call because it changes `stack.env`: `CHANNEL_LANGUAGE=de` before the repin, so the recreated
+containers start in German). Then set `Admin → Settings → Channel
+language` to *German (Deutsch)* while a programme is on air and check, without a restart (the Settings
+route only: `CHANNEL_LANGUAGE=de` in `stack.env` reaches the containers when the stack is redeployed, and
+during a standby or reconnect slate the picture follows with the next programme):
+`/channel` reads `Was gerade läuft und was als Nächstes kommt.` and `Alle Uhrzeiten: Mitteleuropäische
+Zeit.` (if it reads `Central European Time` in German text, the web image's ICU lacks German: `docker
+compose exec web node -p "new Intl.DateTimeFormat('de-DE',{timeZone:'Europe/Berlin',timeZoneName:'longGeneric'}).format()"`);
+the lower third's chip is `LÄUFT GERADE` and the next card `ALS NÄCHSTES · <time>`; `!game` in
+jimpanse247's chat answers `Gerade läuft kein Spiel. ...`; `!skip` shows `Überspringen?` with `1 von N
+Stimme(n)`; the Twitch title of an asset on air is unchanged.
+
+Follow-ups:
+
+- Done in the M80 commit (07e96e6): `.env.example` (`CHANNEL_LANGUAGE=`) and `.env.production.example`
+  (`# CHANNEL_LANGUAGE=de`) list the variable, each with its comment. This entry said they did not.
+- `/api/channel/live` still carries `playout.message`, the operator's status text, in its JSON. The page
+  no longer prints it; dropping it from the public snapshot is an API change of its own.
+- `<source> item` / `Video aus <source>` is stored with the asset at ingest, in the language set at that
+  sync; a later language change does not rename existing assets.
+- The Minesweeper header overflows the default game box on `game over` and `board cleared` in English
+  already (568 and 598 px of 540); German is narrower (549 and 577) but still over. Older than M80; a
+  layout fix (wrap or shrink the status chip) is separate work.
+- A German channel cannot keep one of the six English headline defaults verbatim (equality counts as not
+  customised); changing a character does it. A per-headline "keep as written" switch would be the fix.
+- The header of `/channel` (badge, heading, zone note) is rendered once per load; after a language
+  change the live block follows with the next update, the header with the next reload.
+- A language (or time zone) change during a standby or reconnect slate reaches the scene picture only
+  with the next programme: `writeStandbySlate` does not refresh the cached payload. Refreshing it there
+  changes what the standby picture shows for every overlay setting, so it is its own piece of work.
+- The equality rule cannot tell an operator's `Stand by` from the worker's. Narrowing it needs the
+  author recorded in playout and queue state (or the queue kind passed to every viewer edge).
+- The studio's *Replay label* tip still says "cleared, it reads Replay stream"; on a German channel it
+  reads `Wiederholung`. Admin text, left for M81 or a wording pass.
+- M81 (admin interface language) stays deferred until the owner asks.
+
+## M82 A Network Outage Is Not A Source Fault
+
+Gate set by the M75 review (lead, 2026-10-01). Production evidence (DUT): the host loses its way out
+once a night (since 2026-09-11 at about 23:58 UTC, in the Twitch-only overnight block), the uplink is
+back after 50 to 70 seconds, and on 2026-09-12 the channel answered nothing from outside for about six
+minutes. Every remote resolve fails meanwhile. A failed probe is retried after 60 seconds, so three
+minutes were three failures of one item (quarantined for good), and three different items were an open
+breaker: 30 minutes of fallback in a single-source pool.
+
+Decision: a failed probe or resolve is counted by neither hold when its error is a network failure AND
+the channel's own way out is down at that moment. Taken out, not turned into a success.
+
+Done:
+
+- Classifier, `packages/core/src/probe-network-outage.ts` (pure, exported): `classifyProbeFailure`
+  (`network` | `other`) and `networkFailureReasonOf` (`dns`, `connect`, `timeout`, `tls`, `transport`).
+  `network` only for errors that got no answer: name resolution, connecting, timeouts (including the
+  worker's own `Command timed out after ...ms`, `process-utils.ts`), a TLS handshake ending in nothing,
+  yt-dlp's `<urlopen error ...>` / `TransportError`. What the remote said is checked first and is
+  `other`: a format not offered, private / removed / members-only, every HTTP status (4xx and 5xx), an
+  untrusted certificate, `Unsupported URL`, `Invalid data found`; so is every text it does not know.
+  Both libc wordings (review): the image is Alpine, and musl says `[Errno -3] Try again`, `Name does
+  not resolve`, `Network unreachable`, `Host is unreachable`. Measured in `stream247-worker:test` with
+  `--network none` and the worker's flags (yt-dlp 2026.08.19): `Unable to download API page: [Errno -3]
+  Try again (caused by TransportError('[Errno -3] Try again'))` for YouTube and the same for a Twitch
+  VOD, ffprobe `Connection to tcp://...:443 failed: Network unreachable`. With the glibc texts alone
+  the yt-dlp lines were `transport` by the catch-all and the ffprobe line was `other`. The resolver
+  error is matched by its number (`[Errno -2]`, `[Errno -3]`), never by a bare `try again`, which is
+  what YouTube's rate limit answers.
+- The signal chosen: one TCP connection attempt to the host the channel publishes to
+  (`publishHostTargetsOf`: the enabled outputs, at most two hosts, local ones left out;
+  `attemptPublishHost` in `apps/worker/src/probe-network-outage.ts`: node's resolver with a 1 s limit,
+  then a connect, 2.5 s in all; `decideNetworkOutage`: outage only when none connects or answers, a
+  refusal and "no such name" being answers). Asked only when a network-looking failure is about to be
+  counted, one verdict per ten seconds. Why not the uplink's state in `playout_runtime`: it carries no
+  time (`uplinkLastExitReason` is cleared by the next start, `uplinkHeartbeatAt` is written every cycle,
+  the restart count is a bare counter), it follows a silent drop only at the encoder-stall restart
+  (47 s after the first error on 2026-09-06) while a name resolution fails a probe within a second and
+  three 15-second cycles are three items, it fails for reasons that are not the network (a rejected
+  key, a stale feed, the scheduled reconnect), and without relay mode it does not exist. Why not "two
+  hosts failing in one scan": a single-source pool probes one host and a scan resolves one remote item
+  per cycle. The output is the channel's existing dependency and not a host the probes ask: YouTube
+  unreachable while Twitch takes the stream still counts against the YouTube source.
+- When the question is asked (review): at the moment a failure is counted, not at the moment its
+  request failed. A resolve whose packets vanish ends by the worker's own timeout 60 s after it started
+  (`PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS`; yt-dlp is given no socket timeout), and the uplink is back 50
+  to 70 s after a blip, so the last resolve of an outage was judged against a network that had
+  returned. An outage the check saw therefore stands for the length of one resolve after the output
+  connects again (`carryRecentNetworkOutage`, pure; `createNetworkOutageCheck({ graceMs })`), counted
+  from the last sighting, dropped when the outputs change, and not applied past a broken check.
+- A broken check is logged (review): `createNetworkOutageCheck` turns its own failure into "no outage"
+  and cannot reject, so `playout.probe.network_outage.check_failed` was unreachable and a broken check
+  would have counted an outage in silence. The verdict now carries `checkFailed`, and
+  `dropNetworkOutageOutcomes` writes the event (`error`, `unloggedSinceLastLine`, one line per five
+  minutes) and counts everything.
+- Wiring, `apps/worker/src/index.ts`: `dropNetworkOutageOutcomes` filters the scan's outcomes once,
+  before `planAssetProbeUpdates` and `applySourceBreakerOutcomes` take the same list, and the inline
+  resolve's outcome in `recordSelectionResolveOutcome`. Counters keep their value, nothing is reset, a
+  half-open breaker neither re-opens nor closes and keeps its trial. The queue and the fallback are
+  untouched. Log event `playout.probe.network_outage` (`assetId`, `sourceId`, `path`, `reason`,
+  `corroboration`, `error`, `unloggedSinceLastLine`), one line per item per five minutes.
+- Docs: operations (*The channel's own network was down* runbook, the breaker and quarantine
+  passages), architecture (*Scheduling*: the two holds), deployment (upgrade note: the playout
+  container now connects to the output host), README and the capability notes.
+- Tests, `tests/unit/probe-network-outage.test.ts` (new, 139): the classifier table (44 network strings
+  with their reason, 14 of them the musl wordings and 5 of those copied from the worker image; 33
+  `other`, among them YouTube's `try again later`), the publish hosts (path dropped, deduplicated, two
+  at most, 13 local hosts left out, UDP and non-URLs left out), the attempt-to-verdict table and both
+  verdicts, the recent-outage table (inside and outside the grace, the evidence naming both, nothing
+  carried without a sighting or a grace), the attempt with a real socket (connected, refused) and an
+  injected resolver, the cached check (both branches, one ask per ten seconds, no target, a broken
+  check flagged, the grace counted from the last sighting and not carried to other outputs or past a
+  broken check), the log limiter, the counting (three
+  items at two failures: neither quarantined nor held with an outage, both without one; counters not
+  reset and earlier failures still adding up; half-open untouched and the trial still in the gate; every
+  `other` error and every clean probe counted during an outage; the pending-download rule unchanged)
+  and the wiring in the worker's source (the one filtered list, the inline resolve, the check-failed
+  line through its own limiter, the grace set to the resolve timeout). The 12 musl rows that the first
+  cut missed fail on the glibc-only patterns. No db function changed, so no new integration test.
+- `pnpm validate` green (2570 unit, 62 integration tests, build), after the review fixes.
+
+Measured on the DUT before M82 was deployed (v2.1.0-rc.2, night 2026-10-01/02, read-only; owner's
+`probewatch` and `sigwatch` sessions, 16 h each):
+
+- The blip: the rc.2 soak saw it from outside as `outage-tolerated ... fetch-failed(consecutive=3) ...
+  error: 522` at 00:03:52 and `outage-recovered duration=220s` at 00:05:12 UTC, so about 00:01:32 to
+  00:05:12; the uplink's unplanned restart count went 3936 -> 3937 at about that time (1214 samples at 3936,
+  215 after; inferred from the sample count, the soak log does not time the restart).
+- `outage-signal-20261001-163935.log` (516 lines; a DNS lookup and a TCP connect to `live.twitch.tv:1935`
+  from the playout container every 20 s): `dns=ok connect=ok` on every line from 23:45:15 to 00:19:45
+  UTC, eleven of them inside the blip. Not one DNS error, not one `connect=timeout`.
+- `probe-watch-20261001-130244.log` (1919 lines, every 30 s): the counters of all three sources stay
+  unchanged through the blip (`source_jjwuu0f3 failing=7 recent_failing=0 max_failures=3`, the other two
+  0), and `last_probe` of source_jjwuu0f3 stays at 2026-10-01T12:58:08Z: no remote item was probed in
+  those minutes (the overnight block plays cached Twitch archives).
+- Reading: this night's blip did not take away the channel's way out to the output host; what failed was
+  the way in (the external route answered 522). M82's corroboration would have answered "no outage", so a
+  network-looking probe failure in those minutes would have counted as before M82 - none happened. The
+  measurement contradicts the premise that the output host becomes unreachable during the blip, at least
+  for this night, and does not exercise M82 either way. M82 counts as before whenever it is not
+  corroborated, so it cannot make this worse. Owner decision 2026-10-02: record this and tag
+  `v2.2.0-rc.1` anyway; the DUT check below stays open for a night under rc.1.
+
+DUT check after deploy (read-only), the morning after a nightly blip:
+
+- `docker compose logs --since 12h playout | grep '"playout.probe.network_outage"'` has lines in the
+  minutes of the blip, each with a `corroboration` naming the output host as unreachable (or, for the
+  last resolve of the blip, `connected, N s after ... unreachable`), and a `reason` of `dns`, `connect`
+  or `timeout`, not `transport`. No line at all means no remote item was probed in those minutes
+  (cached archives probe locally), or the one case in the limits below.
+- No `playout.source-breaker.opened` or `.reopened` in the same minutes, and no
+  `playout.asset.quarantined`; `SELECT * FROM source_breakers WHERE state = 'open';` is empty.
+- `playback_probe_failures` of the items named in those lines is what it was before the blip (0 for a
+  healthy item), and they are probed clean within a minute or two of the network coming back. One item
+  NOT named in any line may read 1 with a `Command timed out` error for those two minutes: the short
+  blip of the limits below, not a regression.
+- No `playout.probe.network_outage.check_failed`. Since the review this line can be written: one means
+  the check broke and the blip was counted as before M82.
+
+Limits and follow-ups:
+
+- The output host stands for the way out. An ingest that is down by itself (the rest of the internet
+  working) reads as an outage, and network-looking failures of every source go uncounted meanwhile. A
+  channel whose only outputs are local (a LAN restreamer) has nothing to ask and counts as before M82.
+- The check is awaited in the cycle: at most 2.5 s, once per ten seconds, and only when a
+  network-looking failure is about to be counted. On the inline resolve path that is 2.5 s more before
+  the fallback starts during an outage. To measure on the DUT if a blip ever shows a longer gap.
+- Not covered: a Twitch archive refused because its download failed during the outage (remote fallback
+  off). The refusal reads "not cached yet" whatever made the download fail; it counts as before. Part
+  of the older follow-up on quarantine counting refused archives (M75 follow-ups).
+- Not covered (review): a blip shorter than one resolve (60 s) in which packets vanish rather than are
+  refused. Its one resolve ends by the timeout when the output connects again, nothing asked while the
+  way out was down, so there is no sighting to carry and that one failure counts. Bounded: one
+  expensive resolve per cycle, so one counted failure per blip, which reaches neither threshold alone
+  (an item already at two failures is quarantined by it) and is reset by the next clean probe. Closing
+  it needs the output asked while a remote resolve is in flight (e.g. once it has run for ten seconds);
+  to do if the DUT shows the 1 turning into a quarantine. The grace has the reverse cost: for one
+  resolve timeout after an outage, a network-looking failure of a remote host that really is down goes
+  uncounted.
+- An uncorroborated network-looking failure is not logged as such. If the DUT shows quarantine or the
+  breaker counting one during a blip, a second log line there would say what the output answered.
+
+## M64 Getting Started
+
+Acceptance had three parts. Two were met before this milestone was picked up: `docs/getting-started.md`
+exists (sections 0 to 9) and the README's Quick Start points at it. The third was not: "fresh-compose
+smoke follows it". The smoke wrote a full env file on every run, so the guide's central claim, that the
+stack boots without a `.env`, was checked by hand once (M52) and by nothing since.
+
+What the guide covers: the services and what the host needs (0), the two Twitch accounts by role (1),
+the Twitch application and its three redirect URLs (2), the optional `.env` with the variables worth
+pinning and the three traps around it (3), the start command, the owner, the wizard order and the
+channel language (4), connecting the accounts (5), media (6), pools and schedule (7), how to know it is
+running (8), upgrades and rollback (9).
+
+Done:
+
+- `scripts/fresh-compose-bootstrap-smoke.sh` makes two passes. The env pass is the old one, plus: `/`
+  redirects to `/setup`, `/setup` answers 200 without a session, and no secret file is generated when
+  `APP_SECRET` is set. The guide pass is new: no env file, only the image tags and the port handed in.
+  Each pass runs in its own stand-in checkout as the compose project directory, so the compose file's
+  own `./data/...` paths and its `.env` resolve there and never in the real checkout, and both are
+  cleared of the caller's shell: every variable the compose file interpolates (the names are read
+  from the compose file) and every exported `COMPOSE_*`. The guide pass asserts: `/api/health` 200,
+  the four runtime services running, `/` redirects to `/setup`, `/setup` 200, the secret exists at
+  `data/media/.stream247-app-secret` with mode 600 and a full length (read by nobody, mode and size
+  only), `/api/system/readiness` 200 with `broadcastReady` false, `/api/ready` 503. One `ok` line per
+  assertion, `FAIL` with `ps` and the web log otherwise. Invocation is unchanged (`pnpm
+  test:fresh-compose`, the three `STREAM247_FRESH_COMPOSE_*_IMAGE` variables of the release workflow).
+- `tests/unit/getting-started-guide.test.ts`, without Docker: every variable in the section-3 table is
+  in `.env.production.example`; the profile, the `pnpm` scripts and the pages the guide names exist;
+  every `env_file` in the compose file is optional, the compose PostgreSQL defaults and the code's
+  default connection string describe the same database, and the guide's secret path is the code's
+  default path through the `./data/media` mount of all four services; the smoke's two Compose calls
+  both carry the stand-in project directory and the clearing, and no line names the checkout's
+  `.env`; the wizard steps are listed under the wizard's own titles and in its order; the README
+  links the guide.
+
+Wrong or missing in the guide, fixed:
+
+- Section 4 listed the wizard steps as "Twitch connect → done". Those are the step ids; the wizard
+  shows "Twitch accounts" and "Review". Now under the wizard's names, and pinned by the unit test.
+- Section 4 gave `docker compose --profile proxy up -d` as the start command directly after section 3
+  said nothing needs configuring. The proxy profile is the one form that needs `.env`: with
+  `TRAEFIK_HOST` unset the router rule has an empty host name (`docker compose --profile proxy config`).
+  Said.
+- Section 4 said "firewall the port" without saying which. Port 3000 is published on every interface
+  with and without the proxy profile. Said.
+- Section 3: "Verified on a fresh checkout" was a one-time observation; it now names the smoke that
+  keeps it true. Added: the two "variable is not set" warnings Compose prints without a `.env`
+  (harmless without a Traefik in front), and that the compose file needs Docker Compose 2.24 or newer.
+- Section 8: `/api/ready` is 503 on a fresh install until the owner exists. Was implied, now said.
+
+Everything else in sections 3, 4 and 8 was checked against the code and stands.
+
+Found in the smoke on the way, fixed:
+
+- The env pass did not override `uplink`'s media volume. Every run made Docker create `data/media`
+  inside the checkout, and that stack's uplink did not share the feed directory with its playout.
+  The per-service volume list is gone; the stand-in project directory does that for every service.
+- Every run left its PostgreSQL directory behind in `/tmp`: the container chowns it, and the script's
+  `rm -rf` as the invoking user failed quietly. The files are now removed from inside a container.
+- The env pass copied its env file over the checkout's `.env` and moved a backup back afterwards. Two
+  ways to lose a developer's file: the cleanup removed `.env` whenever no backup existed, which is
+  also the state of an exit before the backup is taken; and with `.env` as a symlink, `cp` wrote the
+  smoke's env file through the link into its target and `mv` left a regular file where the link was
+  (review finding, reproduced on a stand-in checkout). The swap, the backup and the restore are
+  deleted; the checkout's `.env` is not touched. No incident.
+- Neither pass was sealed against the caller's shell (review finding). An exported
+  `POSTGRES_PASSWORD` that differs from the default turned the smoke red for a true guide, a matching
+  one would have hidden a broken compose default, and `COMPOSE_PROFILES=proxy` put traefik into the
+  stack. CI and the release workflow export none of these, so neither gate was affected.
+
+Validation (2026-10-01, images `stream247-web:test` / `stream247-worker:test` of this branch):
+
+- `pnpm exec vitest run tests/unit/getting-started-guide.test.ts`: 6 passed. Three mutations of the
+  guide (a variable the example lacks, an unknown profile, the old step names) each fail one test.
+- `pnpm test:fresh-compose`: exit 0, 14 `ok` lines. Wall clock 9.3 s before, 19.4 s after. A copy with
+  the wrong secret path fails at that assertion with exit 1 and leaves no container, network or
+  temp directory.
+- The same script from a stand-in checkout whose `.env` is a symlink to a mode-600 file full of wrong
+  values (`POSTGRES_PASSWORD`, `DATABASE_URL`, a short `APP_SECRET`, an image that does not exist):
+  exit 0, 14 `ok` lines, the link is still a link, its target has the same hash and mode, no `data/`
+  appeared next to it. With `STREAM247_FRESH_COMPOSE_PORT=notaport` (the run that used to destroy the
+  link): exit 1 at Compose's validation, link and target unchanged.
+- The same script with a wrong `POSTGRES_*`, `TRAEFIK_*`, two image variables pointing at a registry
+  that does not exist, `COMPOSE_PROFILES=proxy`, `COMPOSE_FILE` and `COMPOSE_ENV_FILES` exported:
+  exit 0, 14 `ok` lines, 20.0 s; the container list sampled once a second shows the handed images in
+  both passes and no traefik. A copy without the clearing and only `POSTGRES_PASSWORD=wrongpw`
+  exported: exit 1 after 72.6 s at the env pass's runtime services, nothing left behind.
+- `pnpm validate`: exit 0 (2615 unit, 63 integration tests, build).
+
+Limits:
+
+- Measured on a rootless daemon. On CI's rootful daemon the secret file is root's; the assertion uses
+  `stat` only for that reason, but the first CI run is the proof.
+- The Compose 2.24 floor is from Compose's release notes (`env_file` with `required`), not from a run
+  against an older Compose.
+- The proxy profile is not started by the smoke (ports 80 and 443, ACME). What the guide says about it
+  is from `docker compose --profile proxy config`.
+- The smoke stops at the wizard's door. Creating the owner and walking the steps is the e2e suite's.
+- Sections 1, 2, 5, 6, 7 and 9 of the guide were not re-verified in this milestone.

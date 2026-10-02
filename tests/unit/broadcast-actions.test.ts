@@ -129,7 +129,7 @@ describe.each([
     expect(written.restartRequestedAt).toBe("");
     expect(written.status).toBe("running");
     expect(written.desiredAssetId).toBe("asset_archive");
-    // Play now still takes the queued Move next out (follow-up in PLANS.md M74).
+    // Play now still takes the queued Move next out (M74 follow-up in planning/archive/plans-m0-m83.md).
     expect(written.manualNextAssetId).toBe("");
     expect(mockAppendAuditEvent).toHaveBeenCalledWith(auditType, expect.stringContaining("YouTube item"));
   });
