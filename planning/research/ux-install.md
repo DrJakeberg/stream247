@@ -154,6 +154,24 @@ Run: worker started, then killed (`pkill -f apps/worker/dist/index.js` at 23:01 
 
 ## Questions for Benjamin
 
+**Decided.** Benjamin accepted every recommendation of the merged proposal ("Alles was du empfiehlst",
+2026-10-01 23:34 UTC, confirmed 2026-10-02 10:22 UTC). The record is section 5 of
+`planning/proposal-2026-10.md` on branch `claude/vorschlag-2026-10-6a60z9`. Where the proposal is more
+precise than the recommendation below, the proposal applies.
+
+| Here | Proposal section 5 | Decision |
+|---|---|---|
+| Q1 | 5.1 Q5 | Fresh installs start empty except the local library source; existing installs keep their rows. |
+| Q2 | 5.1 Q6 | Plain HTTP on a home network: a clear message only, cookies stay `Secure`, no insecure mode. |
+| Q3 | 5.1 Q7 | The bot may answer `!commands`, `!now`, `!next` and every request, each with its own switch, 60 s per viewer and 10 s global cooldown. |
+| Q4 | 5.2 | `docs/ui.md` stops calling mobile a non-goal for Live → Control and Status only. |
+| Q5 | 5.1 Q8 | A change-password form under Admin → Settings → Security (current password required) and a documented one-line container command for a reset; no e-mail reset. |
+| Q6 | 5.1 Q9 | One account for bot and channel is allowed, two are recommended, with the same sentence in wizard and guide. |
+| Q7 | 5.2 | `/channel` shows the viewer's local time first and the channel zone second. |
+| Q8 | 5.1 Q9 | The stream key is asked for in a skippable wizard step. |
+
+The questions as originally put:
+
 1. **Q1 — Fresh installs without demo data?** Recommendation: yes. Start empty except the local
    library source; existing installs keep their rows. The demo rows are what turns a new channel red.
 2. **Q2 — Plain HTTP on a home network.** Options: (a) only a clear message, cookies stay `Secure`;
