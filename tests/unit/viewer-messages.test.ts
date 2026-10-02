@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DE_VIEWER_MESSAGES,
   EN_VIEWER_MESSAGES,
@@ -116,6 +116,36 @@ describe("formatting", () => {
     expect(formatViewerTimeZoneName("de", "UTC", summer)).toBe("Koordinierte Weltzeit");
     // No name in either form: the offset is still better than nothing.
     expect(formatViewerTimeZoneName("de", "Etc/GMT+5", summer)).toBe("GMT-05:00");
+  });
+
+  it("skips a bare GMT as the generic name, whatever the ICU version prints", () => {
+    // ICU 77 (Node 22.22) prints "GMT" as the generic name of UTC where older builds printed
+    // "GMT+00:00"; both are offsets, not names, and the specific name is the viewer's word.
+    const RealDateTimeFormat = Intl.DateTimeFormat;
+    const spy = vi.spyOn(Intl, "DateTimeFormat").mockImplementation(((
+      locale?: string | string[],
+      options?: Intl.DateTimeFormatOptions
+    ) => {
+      const real = new RealDateTimeFormat(locale, options);
+      if (options?.timeZoneName !== "longGeneric") {
+        return real;
+      }
+      return Object.assign(Object.create(real), {
+        formatToParts: (date?: Date | number) =>
+          real.formatToParts(date).map((part) => (part.type === "timeZoneName" ? { ...part, value: "GMT" } : part))
+      });
+    }) as unknown as typeof Intl.DateTimeFormat);
+    try {
+      // Zones no other test formats, so the per-zone cache holds nothing for them yet.
+      expect(formatViewerTimeZoneName("en", "Etc/UTC", new Date("2026-07-01T12:00:00.000Z"))).toBe(
+        "Coordinated Universal Time"
+      );
+      expect(formatViewerTimeZoneName("de", "Etc/UCT", new Date("2026-07-01T12:00:00.000Z"))).toBe(
+        "Koordinierte Weltzeit"
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
