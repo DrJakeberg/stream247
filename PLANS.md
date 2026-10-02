@@ -24,7 +24,7 @@ How this file works:
 | M86 A Database Blip Does Not Take The Channel Off Air | Reliability | Now | Complete | A Postgres restart or short outage leaves ffmpeg and the uplink running; web recovers by itself | H2: the failed-cycle branch is guarded; a process exits only after 5 min of consecutive failed cycles (owner Q2); pool `connectionTimeoutMillis` set. Unit test of a pure counter (below 5 min no exit, at 5 min exit). H3: a rejected `__stream247DbReady` is cleared; retry on `40P01`/`55P03`; migrations run with `SET LOCAL lock_timeout`; integration test: `ensureDatabase` fails with Postgres down, succeeds after Postgres starts, no reset helper called. R3's S1 probe (appendix of `planning/research/robustness.md`) becomes an integration test: Postgres stopped for 45 s, the worker process in all three modes is still running afterwards. DUT check (owner): `docker compose stop postgres; sleep 45; docker compose start postgres` during air, playout and uplink `StartedAt` unchanged | `apps/worker`, `packages/db`, `apps/web/lib/server`, tests, `docs/operations.md` | medium: a half-dead process for at most 5 min | revert the commit |
 | M87 An External Failure Costs One Step, Not The Cycle | Reliability | Now | Complete | A refused Twitch token or a hanging call never stops heartbeat, sweep, live status or chat | H1: each integration step of the worker cycle is isolated; a refresh throw writes `twitch.refresh.failed`; HTTP 400 `invalid_grant` sets the identity status `error` with a state incident "reconnect Twitch" (owner Q3). H6: yt-dlp calls get `timeoutMs`, the six worker `fetch` calls `AbortSignal.timeout`. Tests: refresh throws → heartbeat written, sweep ran, no `worker.loop.crashed`; `invalid_grant` → status `error`; a fetch stub that never answers is aborted within its timeout. R3's S2 probe becomes an integration test: with the token endpoint stubbed to HTTP 400, `healthcheck worker` exits 0 after two cycles | `apps/worker`, `packages/core`, tests, `docs/operations.md` | low | revert the commit |
 | M88 Schedule Maths Across Midnight | Bug | Now | Complete | A block past midnight behaves like one block everywhere | C1: fired cuepoints keyed by block and start date; test: Sat 23:00+120 with cuepoints at 900 s and 2700 s, at 00:05 `getCuepointInsertPlan` returns null. C2/B1: no carry-over segments in the Twitch plan, extracted as pure `planTwitchScheduleSegments`, each created segment recorded before the next request; test: Monday 23:00+120 over 7 days gives 1 segment, no `:carry` key. C3/B2: overlap on a 7-day minute line; test: Mon 23:00+120 vs Mon 00:00+30 → `[]`, vs Tue 00:00+30 → both ids (the probe in 1.1 shows today's opposite); `tests/unit/schedule-template-conflicts.test.ts:62-68` pins today's wrong model (both blocks on weekday 1); its fixture moves to weekday 1 + 2, it still asserts the conflict and gains the false-positive case, so it is strengthened, not weakened (the owner is told in the report). B3: keep-rule uses the effective start; test with horizon 60 at Tue 00:30 returns the pool. C6: day totals count only the part inside the day; test: 120 + 120 = 240 over two days becomes 60 + 60. Owner decision 2026-10-02 11:35 UTC: R1's three corrections reach main only with M88 and stay on `claude/r1-scheduling-competitors-v5o5zi` until then; M88 takes them over from that branch at `97f4037`: the bare "GMT" zone name (`d789981`), the week lens counting a midnight block once with its fill pill inside the card (`7891a85`, covers C6), `/channel` "After that" from the schedule (`a41d327`, `51e69ee`, covers V1, which then leaves M100) and their re-recorded baselines (`81f0eb6`); their tests pass unchanged in M88 | `packages/core`, `apps/worker`, tests, `docs/operations.md` | low; hidden overlaps in saved schedules show up in the editor, saved schedules stay loadable (test) | revert the commit |
-| M89 Operator Actions Are Never Lost | Behavior | Now | Planned | Restart, Hard reload, Recover outputs, Refresh and Remove next do what the operator pressed | H4: pure `decideCycleEndRestartFlag` (same value → clear, newer → keep, reconnect window → keep) and the same for `pendingAction` and `insertAssetId`; table test. W2: a separate Remove-next hold that Skip and passed votes do not overwrite (owner Q5); test: B on air, C removed, passed vote on B → next is D. R3's W2 and W4 probes become tests. DUT check (owner): a Restart pressed during a cycle restarts, in direct and relay mode, as the M76 combination review in `planning/archive/plans-m0-m83.md` asks | `apps/worker`, `apps/web`, `packages/db` (additive column), tests, `docs/operations.md` | medium: direct-mode reconnect reuses the field | revert the commit; the additive column stays unused |
+| M89 Operator Actions Are Never Lost | Behavior | Now | Complete | Restart, Hard reload, Recover outputs, Refresh and Remove next do what the operator pressed | H4: pure `decideCycleEndRestartFlag` (same value → clear, newer → keep, reconnect window → keep) and the same for `pendingAction` and `insertAssetId`; table test. W2: a separate Remove-next hold that Skip and passed votes do not overwrite (owner Q5); test: B on air, C removed, passed vote on B → next is D. R3's W2 and W4 probes become tests. DUT check (owner): a Restart pressed during a cycle restarts, in direct and relay mode, as the M76 combination review in `planning/archive/plans-m0-m83.md` asks | `apps/worker`, `apps/web`, `packages/db` (additive column), tests, `docs/operations.md` | medium: direct-mode reconnect reuses the field | revert the commit; the additive column stays unused |
 | M90 The 3 A.M. Answer | UX + Reliability | Next | Planned | A tired operator sees what is wrong and what to press, first | U7: a stale or missing worker or playout heartbeat is the first "Open problems" entry with its age in words and the restart command; unit test. U8: the status sentence follows the heartbeats; `grep -rn "are now active" apps/web` → no output. U10: incident messages store no relative time (test on the writer); engine fields behind "Details" (`grep -rn "ready not ready" apps/web` → no output). U11: all three interrupting actions of "If something is stuck" confirm, Soft restart, Force reconnect and Hard reload (`apps/web/components/playout-action-form.tsx:97,105,128`; in direct mode Force reconnect drops the uplink); component test per button. Every critical incident fingerprint maps to one operator action in a catalogue (`IncidentRecord` has no such field today, `packages/db/src/index.ts:399-412`); a unit test collects all `fingerprint:` literals in `apps/worker/src` and fails on a critical one without an action; the crash-loop text no longer says only "Manual intervention is required" (`apps/worker/src/index.ts:7486`). U12: render test: without a connected bot account the Live chip reads "Not connected to Twitch", never "Checking". audit U3/U30: one heartbeat constant and one effective-heartbeat function used by state, readiness and worker; test that a 50 s old heartbeat gives the same verdict everywhere. U9 (default R2 Q4 in 5.2): Playwright at 390 px, "Open problems" above y = 1 400 | `apps/web`, `apps/worker`, `packages/core`, tests, baselines, `docs/ui.md` | low | revert the commit |
 | M91 Honest First Run | UX + Data | Next | Planned | A fresh install starts empty, readiness counts only what can air, and plain HTTP is explained | I1 (decided 5.1 Q5): an empty DB bootstraps with no pool, no schedule block and no URL-less source (unit test on `createInitialSeedState`); existing installs keep their rows (integration test); readiness: a pool is ready only when a block uses it and it has a ready asset, the schedule only when the coming week has no unplayable block (`tests/unit/onboarding*.test.ts`). I2 (decided 5.1 Q6): over `http:` on a host other than `localhost`/`127.0.0.1`, `/setup` and `/login` show the two ways out; render test. I6: component test: the URL field is prefilled with the request origin and the zone field with the browser zone. I7: render test of the password warning under the field plus, per decided 5.1 Q8, a change-password form under Admin → Settings → Security that requires the current password (API test: wrong current password refused, right one changes it) and a one-line container command for a reset documented in `docs/operations.md` (integration test: the reset entry point run against a test database sets a new password and sign-in with it succeeds); no e-mail reset. I8: render test: the login hint has no line clamp and, without Twitch app credentials, contains "Twitch app credentials" and the link to `/setup` step 3 | `packages/db` seed, `apps/web`, tests, baselines, `docs/getting-started.md` | low: only `isDatabaseEmpty` installs change | revert the commit |
 | M92 Getting Started A Stranger Can Follow | Docs + Ops | Next | Planned | The guide leads a stranger from an empty host to air without a gap | I4: `docs/getting-started.md` gets "Get the files" (clone a release tag, or download `docker-compose.yml` and `docker/mediamtx.yml`), the link `https://dev.twitch.tv/console/apps` (also in wizard step 3) and a numbered stream-key step; `grep -c "dev.twitch.tv/console" docs/getting-started.md` ≥ 1. I3: unit test that the four compose image defaults equal the newest non-rc `## X.Y.Z` heading in `CHANGELOG.md`, so a release commit that forgets them fails. I5: the same one-or-two-accounts sentence in wizard and guide (decided 5.1 Q9). `pnpm test:fresh-compose` green | `docs/`, `apps/web/app/setup`, `tests/unit/`, `README.md` | low | revert the commit |
@@ -84,10 +84,6 @@ Playout and pools:
 - The previews apply the breaker as it stands to the whole week (M75).
 - A block mapped to a source by name and the global fallback asset ignore the breaker (M75).
 - The breaker's cooldowns and threshold are constants, not managed settings (M75).
-- A Restart or Hard reload pressed while a playout cycle runs is swallowed by the cycle's end write
-  (M76, combination review). Covered by M89.
-- One skip slot for chat and operator: a passed chat vote replaces the operator's Remove next hold (M78).
-  Covered by M89 (W2).
 - The IRC handler learns of a new Pin or insert only at the next worker cycle (M78, M79).
 - Starting a Live Bridge does not warn that a pending Play now will be dropped (M78).
 - M82 limits: the output host stands for the whole way out; the corroboration check costs up to 2.5 s
@@ -172,6 +168,24 @@ deployed; the release that ships them records the results.
   ssh dut 'docker stop stream247-postgres-1; sleep 45; docker start stream247-postgres-1'
   ssh dut 'sleep 60; docker inspect -f "{{.Name}} {{.State.StartedAt}}" stream247-playout-1 stream247-uplink-1'
   ssh dut 'docker logs --since 5m stream247-playout-1 2>&1 | grep -oE "worker.loop.database_[a-z_]+" | sort | uniq -c'
+  ```
+
+- M89, on the deployed candidate, once with the relay (the DUT's mode) and once in direct mode (where the
+  owner runs one, for example on DT): a Restart pressed while a playout cycle runs restarts. The cycles
+  that run longest start an item, so press *Soft restart* (Live → *If something is stuck*) within a
+  few seconds after a new item came on air, three times over the evening. Passes when each press has its
+  `playout.restart.requested` audit row and, at most one cycle (about 30 s) later, an as-run row that ended
+  `operator-restart`; before M89 a press inside a cycle had the audit row and no restart.
+
+  ```sh
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT 'press', created_at FROM audit_events WHERE type = 'playout.restart.requested'
+    AND created_at > to_char(now() - interval '6 hours', 'YYYY-MM-DD"T"HH24:MI:SS')
+  UNION ALL
+  SELECT 'restart', ended_at FROM as_run_log WHERE end_reason = 'operator-restart'
+    AND ended_at > to_char(now() - interval '6 hours', 'YYYY-MM-DD"T"HH24:MI:SS')
+  ORDER BY 2;
+  SQL
   ```
 
 - (The checks for 2.2.0 are in the archive, sections M75-M82.)
@@ -328,3 +342,41 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   template test fail on the code before M88 (the Twitch plan is new, so its cases have no "before").
 - Not checked: Twitch's answer to a duplicate segment (unreachable from the cloud). Not changed: the
   editor's *Conflicts only* tip still says "on the same weekday" (a wording change needs baselines).
+
+### M89 Operator Actions Are Never Lost
+
+- **H4, the cycle's writes.** Three pure decisions in `apps/worker/src/playout-boundary.ts`, each "clear
+  what the cycle read, keep anything newer": `decideCycleEndRestartFlag` (the restart branch, the start
+  write in `startOrSwitchPlayout` and the cycle end; the reconnect window of direct mode keeps the row's
+  value under the same conditions as before), `decideCycleEndPendingAction` (the Refresh and queue-rebuild
+  handlers, the start write, the cycle end) and `decideFailedCycleInsert` (the failed start, the failed
+  switch, the missing destination and an insert that failed to prepare drop only the insert the cycle
+  read; review finding). The cycle records what it read
+  where it decides (`consumedPendingAction` before the handlers, `consumedRequests` and `consumedInsert`
+  next to `restartRequested`). With no write in between the outcome is the old one; the difference is a
+  newer request, which the next cycle now carries out. That covers Restart, Hard reload, Recover outputs,
+  Force reconnect, Refresh, a chat vote applied during the cycle, and Move next followed by Skip (the
+  manual-next arm needs the Skip's flag).
+- **W2, the Remove next hold (owner Q5).** Two additive columns, `remove_next_asset_id` and
+  `remove_next_until` (base schema, ALTER list, migration `20261002_002_remove_next_hold`, manifest).
+  Remove next writes them instead of the skip hold, so Skip and the chat vote, which write the skip hold, no
+  longer lift it, and a skip hold already in place stays. The worker holds the item out of every arm
+  (selection, pool eligibility, queue, cuepoints, manual next) and clears an expired hold with the skip
+  hold; core `heldOutAssetIds` / `isAssetHeldOut` give the override arm, the chat's operator hold and the
+  Play now refusal the same rule. Decision: a Pin, Fallback, Move next or Replay previous of the removed
+  item is the operator's newer word and lifts the hold (as a Pin already lifts a skip hold); Resume clears
+  it. The as-run intent still reads the skip hold only (a removed item is not on air). Asset retention keeps
+  a held item.
+- **Tests.** `tests/unit/operator-actions-never-lost.test.ts`: the three tables; R3's W4 probe with the
+  decisions (Restart and Refresh survive the end write, Move next then Skip takes the manual-next arm); R3's
+  W2 probe (B on air, C removed, a passed vote on B or a Skip of B → next is D); the admin writes; source
+  pins on every worker write (no `restartRequestedAt: ""` or `pendingAction: ""` is left in `index.ts`).
+  `tests/integration/db-roundtrip.test.ts`: the migration on a database without the columns, and R3's
+  restart-flag-swallowed run on real Postgres (the press is read by the next cycle, then cleared once).
+  Three source pins (`pool-rotation`, `operator-play-now-wiring`) now also name the Remove next hold or
+  the request-time check of a failed insert. 35 of
+  the 37 unit cases fail on the code before M89.
+- Not changed: the web's own actions still overwrite each other (Restart clears a pending Refresh, as
+  before); Resume is still enabled only while a Pin, Fallback or insert is in effect, also when a hold is
+  what the operator wants cleared. Not measured: the real timing of the race on a playing channel (DUT
+  check above).

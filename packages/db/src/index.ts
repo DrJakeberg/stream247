@@ -767,6 +767,10 @@ export type PlayoutRuntimeRecord = {
   insertStatus: "" | "pending" | "active";
   skipAssetId: string;
   skipUntil: string;
+  // The Remove next hold (M89): its own field, so a Skip or a passed chat vote, which write the skip hold,
+  // no longer lift it. Held out of every arm like a skip hold until removeNextUntil.
+  removeNextAssetId: string;
+  removeNextUntil: string;
   pendingAction: "" | "refresh" | "rebuild_queue";
   pendingActionRequestedAt: string;
   uplinkStatus: "" | "idle" | "waiting-for-feed" | "running" | "scheduled-reconnect" | "failed";
@@ -2058,6 +2062,8 @@ function defaultState(): AppState {
       insertStatus: "",
       skipAssetId: "",
       skipUntil: "",
+      removeNextAssetId: "",
+      removeNextUntil: "",
       pendingAction: "",
       pendingActionRequestedAt: "",
       uplinkStatus: "",
@@ -3010,6 +3016,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       insert_status TEXT NOT NULL DEFAULT '',
       skip_asset_id TEXT NOT NULL DEFAULT '',
       skip_until TEXT NOT NULL DEFAULT '',
+      remove_next_asset_id TEXT NOT NULL DEFAULT '',
+      remove_next_until TEXT NOT NULL DEFAULT '',
       pending_action TEXT NOT NULL DEFAULT '',
       pending_action_requested_at TEXT NOT NULL DEFAULT '',
       message TEXT NOT NULL DEFAULT 'Playout engine has not started yet.',
@@ -3222,6 +3230,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS insert_status TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS skip_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS skip_until TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS remove_next_asset_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS remove_next_until TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS pending_action TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS pending_action_requested_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_status TEXT NOT NULL DEFAULT '';
@@ -4207,6 +4217,29 @@ if (!schemaMigrations.some((migration) => migration.id === redactStoredSecretsAg
   schemaMigrations.push(redactStoredSecretsAgainMigration);
 }
 
+/**
+ * The Remove next hold (M89), for installs that already ran the baseline.
+ *
+ * Remove next shared the skip hold with Skip and the chat's skip vote, so either of those lifted it and
+ * the removed item aired next. Its own two columns, word for word the base-schema lines; empty means no
+ * hold, which is what every install has after the upgrade (a Remove next pressed before it stays a skip
+ * hold until it runs out).
+ */
+export const removeNextHoldMigration: MigrationDefinition = {
+  id: "20261002_002_remove_next_hold",
+  description: "Give Remove next its own hold, which a Skip or a chat skip vote does not overwrite.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS remove_next_asset_id TEXT NOT NULL DEFAULT '';
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS remove_next_until TEXT NOT NULL DEFAULT '';
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === removeNextHoldMigration.id)) {
+  schemaMigrations.push(removeNextHoldMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -5131,9 +5164,9 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         pending_action, pending_action_requested_at, message, uplink_status, uplink_input_mode, uplink_started_at, uplink_heartbeat_at, uplink_destination_ids,
         uplink_restart_count, uplink_unplanned_restart_count, uplink_last_exit_code, uplink_last_exit_reason, uplink_last_exit_planned, uplink_reconnect_until,
         program_feed_status, program_feed_updated_at, program_feed_playlist_path, program_feed_target_seconds, program_feed_buffered_seconds,
-        worker_heartbeat_at
+        worker_heartbeat_at, remove_next_asset_id, remove_next_until
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74, $75, $76, $77, $78, $79)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74, $75, $76, $77, $78, $79, $80, $81)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         transition_state = EXCLUDED.transition_state,
@@ -5194,6 +5227,8 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         insert_status = EXCLUDED.insert_status,
         skip_asset_id = EXCLUDED.skip_asset_id,
         skip_until = EXCLUDED.skip_until,
+        remove_next_asset_id = EXCLUDED.remove_next_asset_id,
+        remove_next_until = EXCLUDED.remove_next_until,
         pending_action = EXCLUDED.pending_action,
         pending_action_requested_at = EXCLUDED.pending_action_requested_at,
         message = EXCLUDED.message,
@@ -5294,7 +5329,9 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
       playout.programFeedPlaylistPath,
       playout.programFeedTargetSeconds,
       playout.programFeedBufferedSeconds,
-      playout.workerHeartbeatAt
+      playout.workerHeartbeatAt,
+      playout.removeNextAssetId ?? "",
+      playout.removeNextUntil ?? ""
     ]
   );
 }
@@ -5607,6 +5644,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     insert_status: PlayoutRuntimeRecord["insertStatus"];
     skip_asset_id: string;
     skip_until: string;
+    remove_next_asset_id: string;
+    remove_next_until: string;
     pending_action: PlayoutRuntimeRecord["pendingAction"];
     pending_action_requested_at: string;
     uplink_status: PlayoutRuntimeRecord["uplinkStatus"];
@@ -5964,6 +6003,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           insertStatus: playoutRow.insert_status,
           skipAssetId: playoutRow.skip_asset_id,
           skipUntil: playoutRow.skip_until,
+          removeNextAssetId: playoutRow.remove_next_asset_id ?? "",
+          removeNextUntil: playoutRow.remove_next_until ?? "",
           pendingAction: (playoutRow.pending_action as PlayoutRuntimeRecord["pendingAction"]) || "",
           pendingActionRequestedAt: playoutRow.pending_action_requested_at || "",
           uplinkStatus: playoutRow.uplink_status || "",

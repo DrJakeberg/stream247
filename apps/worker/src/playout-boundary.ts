@@ -399,3 +399,66 @@ export function decideCycleEndInsert(input: CycleEndInsertInput): InsertFields {
   }
   return { ...input.row };
 }
+
+export interface CycleEndRestartFlagInput {
+  // The restart flag this cycle read when it decided whether to restart ("" when it read none).
+  consumed: string;
+  // The flag on the row as the write finds it: the admin, or the chat's skip vote, may have set a newer one.
+  row: string;
+  // The flag doubles as the start of direct mode's reconnect window (scheduled reconnect, Force reconnect,
+  // a Restart without the relay); a write inside that window leaves it as it is.
+  keepReconnectWindow: boolean;
+}
+
+/**
+ * The restart flag a playout write of the cycle leaves (M89, H4).
+ *
+ * The cycle reads the row once, decides, and can then run for a minute or more (an inline resolve, the
+ * queue probes, the start) before it writes. Its writes used to clear the flag from a constant, so a
+ * Restart, Hard reload, Recover outputs or Force reconnect pressed while the cycle ran -- or a skip vote
+ * the chat loop applied meanwhile -- was erased without a restart, while the admin had answered
+ * "requested". Now only the value the cycle read is cleared: the same value is the one it acted on, a
+ * newer one is the next cycle's, and the reconnect window keeps whatever the row holds, as before.
+ */
+export function decideCycleEndRestartFlag(input: CycleEndRestartFlagInput): string {
+  if (input.keepReconnectWindow) {
+    return input.row;
+  }
+  return input.row === input.consumed ? "" : input.row;
+}
+
+export interface PendingActionFields {
+  pendingAction: "" | "refresh" | "rebuild_queue";
+  pendingActionRequestedAt: string;
+}
+
+/**
+ * The pending action (Refresh, a queue rebuild) a playout write of the cycle leaves (M89, H4).
+ *
+ * As for the restart flag: the action the cycle read, with its request time, is the one it carried out
+ * and is cleared; one the admin wrote since (a second Refresh, the rebuild of a Move next or Remove next)
+ * stands for the next cycle.
+ */
+export function decideCycleEndPendingAction(input: { consumed: PendingActionFields; row: PendingActionFields }): PendingActionFields {
+  if (
+    input.row.pendingAction === input.consumed.pendingAction &&
+    input.row.pendingActionRequestedAt === input.consumed.pendingActionRequestedAt
+  ) {
+    return { pendingAction: "", pendingActionRequestedAt: "" };
+  }
+  return { pendingAction: input.row.pendingAction, pendingActionRequestedAt: input.row.pendingActionRequestedAt };
+}
+
+/**
+ * The insert fields a failed start or switch leaves (M89, H4).
+ *
+ * The failure ends the insert this cycle read: it could not start, and it is recorded as dropped. A Play
+ * now the admin wrote while the cycle ran is a different request (another item, or the same item asked
+ * for again) and stands for the next cycle; the failure used to clear it with the rest.
+ */
+export function decideFailedCycleInsert(input: { consumed: InsertFields; row: InsertFields }): InsertFields {
+  if (input.row.insertAssetId === input.consumed.insertAssetId && input.row.insertRequestedAt === input.consumed.insertRequestedAt) {
+    return { insertAssetId: "", insertRequestedAt: "", insertStatus: "" };
+  }
+  return { ...input.row };
+}

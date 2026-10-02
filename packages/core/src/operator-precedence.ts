@@ -20,6 +20,9 @@ export interface OperatorOverrideHoldInput {
   overrideUntil: string;
   skipAssetId: string;
   skipUntil: string;
+  // The Remove next hold (M89), its own field beside the skip hold. Optional: callers before M89 had none.
+  removeNextAssetId?: string;
+  removeNextUntil?: string;
   liveBridgeStatus: string;
   liveBridgeInputUrl: string;
   assets: ReadonlyArray<{ id: string; status: string }>;
@@ -36,12 +39,42 @@ function liveBridgeTakesAir(input: OperatorOverrideHoldInput): boolean {
   return input.liveBridgeInputUrl !== "" && (input.liveBridgeStatus === "pending" || input.liveBridgeStatus === "active");
 }
 
-// What the override and insert arms both ask of the operator's item: ready, and not held out by a Skip.
+// What the override and insert arms both ask of the operator's item: ready, and not held out by a Skip
+// or a Remove next.
 function operatorItemSelectable(input: OperatorOverrideHoldInput, assetId: string): boolean {
-  if (isActiveAt(input.skipUntil, input.nowMs) && input.skipAssetId === assetId) {
+  if (isAssetHeldOut(input, assetId, input.nowMs)) {
     return false;
   }
   return input.assets.some((asset) => asset.id === assetId && asset.status === "ready");
+}
+
+export interface AssetHoldsInput {
+  skipAssetId: string;
+  skipUntil: string;
+  removeNextAssetId?: string;
+  removeNextUntil?: string;
+}
+
+/**
+ * The items the runtime row holds out of every selection arm right now: the skip hold (Skip, a passed
+ * chat vote) and the Remove next hold (M89). Two fields on purpose: they shared one, so a Skip or a vote
+ * that moved the skip hold to the item on air lifted the operator's Remove next, and the removed item
+ * aired next (owner decision 2026-10-01, Q5: Remove next survives Skip and votes).
+ */
+export function heldOutAssetIds(input: AssetHoldsInput, nowMs: number): string[] {
+  const held: string[] = [];
+  if (input.skipAssetId !== "" && isActiveAt(input.skipUntil, nowMs)) {
+    held.push(input.skipAssetId);
+  }
+  const removeNextAssetId = input.removeNextAssetId ?? "";
+  if (removeNextAssetId !== "" && isActiveAt(input.removeNextUntil ?? "", nowMs) && !held.includes(removeNextAssetId)) {
+    held.push(removeNextAssetId);
+  }
+  return held;
+}
+
+export function isAssetHeldOut(input: AssetHoldsInput, assetId: string, nowMs: number): boolean {
+  return assetId !== "" && heldOutAssetIds(input, nowMs).includes(assetId);
 }
 
 export function resolveOperatorOverrideHold(input: OperatorOverrideHoldInput): OperatorOverrideHold {

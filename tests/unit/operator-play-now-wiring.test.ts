@@ -58,7 +58,8 @@ describe("selection without the restart-plus-desired-asset branch", () => {
     // continues after it.
     const poolAsset = between(choose, "const currentPoolAsset =", ": null;");
     expect(poolAsset).toContain("asset.id !== skippedAssetId");
-    expect(choose).toContain("currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId)");
+    // Since M89 the operator's Remove next hold is held out the same way, beside the skip hold.
+    expect(choose).toContain("currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId, removedNextAssetId)");
   });
 
   it("lets a Move next or Replay previous item play to its end, also from outside the pool's sources", () => {
@@ -171,8 +172,11 @@ describe("the playout cycle", () => {
     );
     expect(failure).toContain('logRuntimeEvent("playout.insert.ended", { assetId: failedAsset.id, reason: "prepare-failed", error: message.slice(0, 300) });');
     expect(failure).toContain('await appendAuditEvent( "playout.insert.ended",');
-    // Both clear only the insert this cycle selected: a Play now written meanwhile stands.
-    expect(failure).toContain('...(playout.insertAssetId === failedAsset.id ? { insertAssetId: "", insertRequestedAt: "", insertStatus: "" } : {}),');
+    // Both clear only the insert this cycle selected: a Play now written meanwhile stands, since M89 also a
+    // new Play now of the same item (decideFailedCycleInsert compares the request time too).
+    expect(failure).toContain(
+      "...(playout.insertAssetId === failedAsset.id ? decideFailedCycleInsert({ consumed: state.playout, row: playout }) : {}),"
+    );
     expect(failure).toContain('reason: "prepare-failed"');
     expect(failure).toContain('requestImmediatePlayoutCycle("insert-prepare-failed"); return; }');
     // The incident and the recovery plan are for the programme, not for a dropped insert.

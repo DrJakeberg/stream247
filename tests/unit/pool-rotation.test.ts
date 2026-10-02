@@ -308,14 +308,22 @@ describe("pool rotation wiring", () => {
 
   it("selects and queues pool items through the rotation, with the worker's own eligibility", () => {
     const eligibility = bodyOf(workerSource, "function isPoolAssetEligible(");
-    for (const rule of ["pool.insertEveryItems > 0", "pool.audioLaneAssetId", "asset.id !== skippedAssetId", "isAssetBlockedForAutomaticSelection(asset)"]) {
+    // The Remove next hold (M89) beside the skip hold.
+    for (const rule of [
+      "pool.insertEveryItems > 0",
+      "pool.audioLaneAssetId",
+      "asset.id !== skippedAssetId",
+      "asset.id !== removedNextAssetId",
+      "isAssetBlockedForAutomaticSelection(asset)"
+    ]) {
       expect(eligibility).toContain(rule);
     }
     const select = bodyOf(workerSource, "function selectPoolAsset(");
     expect(select).toContain("nextPoolRotationAsset(");
-    expect(select).toContain("isPoolAssetEligible(pool, asset, skippedAssetId)");
+    expect(select).toContain("isPoolAssetEligible(pool, asset, skippedAssetId, removedNextAssetId)");
     const queue = bodyOf(workerSource, "function getPoolPlaybackQueue(");
     expect(queue).toContain("walkPoolRotation(");
+    expect(queue).toContain('isPoolAssetEligible(pool, asset, skippedAssetId, options.removedNextAssetId ?? "")');
     expect(queue).toContain("afterAssetId: options.currentStartsPool ? currentAssetId : \"\"");
     // The queue walks on from the selection only in the cycle that stores it, the cursor write's own test
     // (selectionTakesPoolPosition in playout-boundary.ts, with the M74 hand-over of a running insert).

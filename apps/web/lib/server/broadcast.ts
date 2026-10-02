@@ -1,5 +1,6 @@
 import {
   decideTwitchVodPlaybackSource,
+  isAssetHeldOut,
   isTwitchVodPlaybackAsset,
   isValidLiveBridgeInputUrl,
   normalizeLiveBridgeInputType,
@@ -35,11 +36,6 @@ function addMinutes(minutes: number): string {
 // relay, and a playout restart there does not reconnect anything -- it only restarts the programme.
 function isRelayEnabled(): boolean {
   return process.env.STREAM247_RELAY_ENABLED === "1";
-}
-
-// The worker's own test for a skip hold that is still running (isTimestampActive).
-function isActiveUntil(value: string): boolean {
-  return value !== "" && new Date(value).getTime() > Date.now();
 }
 
 // The Pin or Fallback that holds the air, by the rule of the worker's override arm (M78).
@@ -246,8 +242,10 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       overrideMode: "fallback",
       overrideAssetId: fallback.id,
       overrideUntil: new Date(Date.now() + 60 * 60_000).toISOString(),
-      // The override arm leaves out an item under a skip hold (M78), so the operator's newer word lifts it.
+      // The override arm leaves out an item under a skip hold (M78), so the operator's newer word lifts it;
+      // the same for a Remove next hold (M89).
       ...(playout.skipAssetId === fallback.id ? { skipAssetId: "", skipUntil: "" } : {}),
+      ...(playout.removeNextAssetId === fallback.id ? { removeNextAssetId: "", removeNextUntil: "" } : {}),
       manualNextAssetId: "",
       manualNextRequestedAt: "",
       pendingAction: "",
@@ -279,6 +277,8 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       insertStatus: "",
       skipAssetId: "",
       skipUntil: "",
+      removeNextAssetId: "",
+      removeNextUntil: "",
       pendingAction: "",
       pendingActionRequestedAt: "",
       message: "Operator override cleared. Schedule control resumed."
@@ -320,7 +320,7 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
         `${overrideHold === "fallback" ? "A Fallback" : "A Pin"} is holding the air, and it comes before an insert. Resume schedule first, then play ${asset.title}.`
       );
     }
-    if (isActiveUntil(state.playout.skipUntil) && state.playout.skipAssetId === asset.id) {
+    if (isAssetHeldOut(state.playout, asset.id, Date.now())) {
       throw new Error(`${asset.title} is held out by a Skip or Remove next. Resume schedule clears the hold.`);
     }
     // The playout's own rule (core twitch-vod-playback.ts): it never waits for a download, so an archive
@@ -380,6 +380,8 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       ...playout,
       manualNextAssetId: asset.id,
       manualNextRequestedAt: now,
+      // Moving the item the operator removed from next back to next is the newer word (M89).
+      ...(playout.removeNextAssetId === asset.id ? { removeNextAssetId: "", removeNextUntil: "" } : {}),
       pendingAction: "rebuild_queue",
       pendingActionRequestedAt: now,
       heartbeatAt: now,
@@ -395,10 +397,13 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       throw new Error("There is no removable next queue asset.");
     }
 
+    // Its own hold (M89). It shared the skip hold until then, so a later Skip or a passed chat vote, which
+    // move the skip hold to the item on air, lifted it and the removed item aired next (owner decision
+    // 2026-10-01: Remove next survives Skip and votes). A skip hold already in place stays as well.
     await updatePlayoutRuntime((playout) => ({
       ...playout,
-      skipAssetId: nextQueueItem.assetId,
-      skipUntil: addMinutes(60),
+      removeNextAssetId: nextQueueItem.assetId,
+      removeNextUntil: addMinutes(60),
       manualNextAssetId: playout.manualNextAssetId === nextQueueItem.assetId ? "" : playout.manualNextAssetId,
       manualNextRequestedAt: playout.manualNextAssetId === nextQueueItem.assetId ? "" : playout.manualNextRequestedAt,
       pendingAction: "rebuild_queue",
@@ -422,6 +427,7 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       ...playout,
       manualNextAssetId: previousAsset.id,
       manualNextRequestedAt: now,
+      ...(playout.removeNextAssetId === previousAsset.id ? { removeNextAssetId: "", removeNextUntil: "" } : {}),
       pendingAction: "rebuild_queue",
       pendingActionRequestedAt: now,
       heartbeatAt: now,
@@ -503,8 +509,10 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
     overrideMode: "asset",
     overrideAssetId: asset.id,
     overrideUntil: addMinutes(minutes),
-    // As for Fallback: a Pin of an item a Skip holds out lifts the hold, or the pin would never take the air.
+    // As for Fallback: a Pin of an item a Skip or Remove next holds out lifts the hold, or the pin would
+    // never take the air.
     ...(playout.skipAssetId === asset.id ? { skipAssetId: "", skipUntil: "" } : {}),
+    ...(playout.removeNextAssetId === asset.id ? { removeNextAssetId: "", removeNextUntil: "" } : {}),
     manualNextAssetId: "",
     manualNextRequestedAt: "",
     pendingAction: "",
