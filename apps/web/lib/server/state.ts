@@ -20,6 +20,7 @@ import {
   listUpcomingScheduleOccurrencesAcrossDays,
   getDestinationFailureSecondsRemaining as getDestinationFailureHoldSecondsRemaining,
   getScheduleElapsedSeconds,
+  getScheduleOccurrenceRunKey,
   getCurrentScheduleMoment,
   isCurrentScheduleTime,
   normalizeOverlayPanelAnchor,
@@ -1397,10 +1398,12 @@ function summarizeCuepoints(
   const progress =
     currentScheduleItem && offsetsSeconds.length > 0 && active
       ? getCuepointProgress({
-          occurrenceKey: currentScheduleItem.key,
+          occurrenceKey: getScheduleOccurrenceRunKey(currentScheduleItem),
           cuepointOffsetsSeconds: offsetsSeconds,
           firedCuepointKeys:
-            state.playout.cuepointWindowKey === currentScheduleItem.key ? state.playout.cuepointFiredKeys : [],
+            state.playout.cuepointWindowKey === getScheduleOccurrenceRunKey(currentScheduleItem)
+              ? state.playout.cuepointFiredKeys
+              : [],
           elapsedSeconds: getScheduleElapsedSeconds({
             startMinuteOfDay: currentScheduleItem.startMinuteOfDay,
             currentTime: scheduleMoment.time

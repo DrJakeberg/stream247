@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   findScheduleConflicts,
+  findScheduleConflictsInvolving,
   getRepeatDaysForMode,
   normalizeCuepointOffsetsSeconds,
   normalizeScheduleRepeatMode,
@@ -140,7 +141,7 @@ export async function POST(request: NextRequest) {
         repeatGroupId: ""
       }));
       await createScheduleBlocksChecked(newBlocks, (existing, incoming) => {
-        if (findScheduleConflicts([...existing, ...incoming]).length > 0) {
+        if (findScheduleConflictsInvolving([...existing, ...incoming], incoming.map((block) => block.id)).length > 0) {
           throw new Error("Duplicated blocks overlap with existing programming. Adjust the target days or schedule.");
         }
       });
@@ -272,7 +273,7 @@ export async function POST(request: NextRequest) {
     // leaves a window where a second editor commits a block this check never saw, both writes
     // succeed, and the result is the overlapping schedule the check exists to prevent.
     await createScheduleBlocksChecked(newBlocks, (existing, incoming) => {
-      if (findScheduleConflicts([...existing, ...incoming]).length > 0) {
+      if (findScheduleConflictsInvolving([...existing, ...incoming], incoming.map((block) => block.id)).length > 0) {
         throw new Error("Schedule blocks overlap. Adjust the new start time or duration.");
       }
     });
@@ -387,7 +388,10 @@ export async function PUT(request: NextRequest) {
             : block
         )
       : state.scheduleBlocks.map((block) => (block.id === payload.id ? updatedBlock : block));
-    const conflicts = findScheduleConflicts(nextBlocks);
+    const changedIds = applyToRepeatSet
+      ? state.scheduleBlocks.filter((block) => block.repeatGroupId === existing.repeatGroupId).map((block) => block.id)
+      : [payload.id];
+    const conflicts = findScheduleConflictsInvolving(nextBlocks, changedIds);
     if (conflicts.length > 0) {
       throw new Error("Schedule blocks overlap. Adjust the edited start time or duration.");
     }

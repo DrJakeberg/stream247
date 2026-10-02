@@ -8579,6 +8579,28 @@ export async function replaceTwitchScheduleSegments(segments: TwitchScheduleSegm
   });
 }
 
+/**
+ * Records one synced Twitch segment by key, so a sync that fails half-way still knows the segments it
+ * created (see `replaceTwitchScheduleSegments` for the full list a completed sync writes).
+ */
+export async function upsertTwitchScheduleSegment(segment: TwitchScheduleSegmentRecord): Promise<void> {
+  await withSerializedStateWrite("upsertTwitchScheduleSegment", async (client) => {
+    await client.query(
+      `
+        INSERT INTO twitch_schedule_segments (key, segment_id, block_id, start_time, title, synced_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (key) DO UPDATE SET
+          segment_id = EXCLUDED.segment_id,
+          block_id = EXCLUDED.block_id,
+          start_time = EXCLUDED.start_time,
+          title = EXCLUDED.title,
+          synced_at = EXCLUDED.synced_at
+      `,
+      [segment.key, segment.segmentId, segment.blockId, segment.startTime, segment.title, segment.syncedAt]
+    );
+  });
+}
+
 export async function upsertUserRecord(user: UserRecord): Promise<void> {
   await withSerializedStateWrite("upsertUserRecord", async (client) => {
   // Same rule as persistState: a secret this process cannot decrypt is not ours to overwrite.

@@ -335,6 +335,7 @@ Stream247 now supports two additional programming controls for longer-form chann
 - audio lanes loop independently and replace the scheduled pool asset's native audio during normal scheduled playback
 - schedule blocks can define cuepoint offsets in seconds from block start
 - cuepoints never cut mid-file; they arm an insert and fire it on the next safe asset boundary
+- a block running past midnight fires each cuepoint once; the after-midnight part does not start them over
 - cuepoints can use either a block override insert asset or the pool's automatic insert asset
 - the broadcast control room shows both the active audio lane state and cuepoint progress
 

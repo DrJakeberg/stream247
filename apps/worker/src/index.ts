@@ -38,6 +38,7 @@ import {
   isEngagementChatRuntimeEnabled,
   formatCuepointOffsetLabel,
   buildScheduleOccurrences,
+  getScheduleOccurrenceRunKey,
   describePresenceStatus,
   findCurrentScheduleOccurrence,
   findNextScheduleOccurrence,
@@ -139,6 +140,7 @@ import {
   replaceAssetsForSourceIds,
   readAppState,
   replaceTwitchScheduleSegments,
+  upsertTwitchScheduleSegment,
   resolveAppBaseUrl,
   resolveChannelLanguage,
   resolveChannelTimeZone,
@@ -210,6 +212,7 @@ import { isDirectMediaUrl, planDirectMediaSync } from "./direct-media.js";
 import { buildLocalLibraryAssetId, buildLocalLibraryFolderPath, scanMediaFiles } from "./local-library.js";
 import { resolvePoolAudioLane, type ResolvedAudioLane } from "./audio-lanes.js";
 import { getCuepointInsertPlan } from "./cuepoints.js";
+import { planTwitchScheduleSegments } from "./twitch-schedule-plan.js";
 import {
   buildFfmpegOutputTarget,
   evaluateUplinkDestinationStall,
@@ -7917,7 +7920,7 @@ async function runPlayoutCycle(): Promise<void> {
   const transitionTargetKind = nextQueueItem?.kind ?? "";
   const transitionTargetAssetId = nextQueueItem?.assetId ?? "";
   const transitionTargetTitle = nextQueueItem?.title ?? "";
-  const cuepointWindowKey = currentScheduleItem?.key ?? "";
+  const cuepointWindowKey = currentScheduleItem ? getScheduleOccurrenceRunKey(currentScheduleItem) : "";
   const cuepointFiredKeys =
     cuepointWindowKey && state.playout.cuepointWindowKey === cuepointWindowKey ? [...state.playout.cuepointFiredKeys] : [];
   if (selection.insertTrigger === "cuepoint" && selection.cuepointKey && !cuepointFiredKeys.includes(selection.cuepointKey)) {
@@ -8641,23 +8644,14 @@ async function syncTwitchSchedule(args: {
     timeZone: args.timeZone
   }).date;
 
-  const desiredOccurrences = Array.from({ length: 7 }, (_, offset) =>
-    buildScheduleOccurrences({
-      date: addDaysToDateString(currentDate, offset),
-      blocks: args.state.scheduleBlocks
-    })
-  )
-    .flat()
-    .filter((occurrence) => {
-      const startIso = toUtcIsoForLocalDateTime({
-        date: occurrence.date,
-        minuteOfDay: occurrence.startMinuteOfDay,
-        timeZone: args.timeZone
-      });
-      return new Date(startIso).getTime() > Date.now() + 5 * 60_000;
-    });
+  const plan = planTwitchScheduleSegments({
+    blocks: args.state.scheduleBlocks,
+    currentDate,
+    timeZone: args.timeZone,
+    now: new Date()
+  });
 
-  const desiredKeys = desiredOccurrences.map((occurrence) => occurrence.key).sort();
+  const desiredKeys = plan.segments.map((occurrence) => occurrence.key).sort();
   const currentKeys = args.state.twitchScheduleSegments.map((segment) => segment.key).sort();
   const sameKeys =
     desiredKeys.length === currentKeys.length && desiredKeys.every((entry, index) => entry === currentKeys[index]);
@@ -8668,19 +8662,10 @@ async function syncTwitchSchedule(args: {
 
   const existingSegmentsByKey = new Map(args.state.twitchScheduleSegments.map((segment) => [segment.key, segment]));
   const nextSegments: AppState["twitchScheduleSegments"] = [];
-  let skippedCount = 0;
+  const skippedCount = plan.skippedCount;
 
-  for (const occurrence of desiredOccurrences) {
-    if (occurrence.durationMinutes < 30 || occurrence.durationMinutes > 1380) {
-      skippedCount += 1;
-      continue;
-    }
-
-    const startTime = toUtcIsoForLocalDateTime({
-      date: occurrence.date,
-      minuteOfDay: occurrence.startMinuteOfDay,
-      timeZone: args.timeZone
-    });
+  for (const occurrence of plan.segments) {
+    const startTime = occurrence.startTime;
 
     let category = args.categoryCache.get(occurrence.categoryName) ?? null;
     if (category === null && !args.categoryCache.has(occurrence.categoryName)) {
@@ -8739,14 +8724,18 @@ async function syncTwitchSchedule(args: {
       throw new Error("Twitch schedule sync did not return a segment id.");
     }
 
-    nextSegments.push({
+    const syncedSegment = {
       key: occurrence.key,
       segmentId: segment.id,
       blockId: occurrence.blockId,
       startTime: segment.start_time || startTime,
       title: segment.title || occurrence.title,
       syncedAt: new Date().toISOString()
-    });
+    };
+    nextSegments.push(syncedSegment);
+    // Recorded before the next request: when a later request throws, the segments Twitch already holds are
+    // known to the next sync, which updates them instead of creating them a second time.
+    await upsertTwitchScheduleSegment(syncedSegment);
   }
 
   for (const staleSegment of args.state.twitchScheduleSegments) {

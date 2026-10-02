@@ -3237,7 +3237,12 @@ export function buildMaterializedProgrammingWeek(args: {
         const range = getScheduleOccurrenceMinuteRange(occurrence);
         return total + Math.max(0, Math.min(range.end, MINUTES_PER_DAY) - Math.max(range.start, 0));
       }, 0),
-      totalProjectedMinutes: blocks.reduce((total, block) => total + block.projectedMinutes, 0),
+      // The projection starts with the block, so it is cut at the day's edges the same way.
+      totalProjectedMinutes: occurrences.reduce((total, occurrence, index) => {
+        const start = occurrence.effectiveStartMinuteOfDay;
+        const end = start + (blocks[index]?.projectedMinutes ?? 0);
+        return total + Math.max(0, Math.min(end, MINUTES_PER_DAY) - Math.max(start, 0));
+      }, 0),
       blockCount: blocks.length,
       underfilledCount: blocks.filter((block) => block.fillStatus === "underfilled").length,
       overflowCount: blocks.filter((block) => block.fillStatus === "overflow").length,
@@ -3311,6 +3316,28 @@ export function validateScheduleBlock(block: {
   return null;
 }
 
+const MINUTES_PER_WEEK = 7 * 24 * 60;
+
+function scheduleBlockWeekRange(block: ScheduleBlock): { start: number; end: number } {
+  const start = (((block.dayOfWeek % 7) + 7) % 7) * MINUTES_PER_DAY + block.startMinuteOfDay;
+  return { start, end: start + block.durationMinutes };
+}
+
+/**
+ * Whether two blocks overlap on air. Each block is placed on a 7-day minute line (`dayOfWeek * 1440 + start`),
+ * so the part of a block after midnight meets the next weekday's blocks, and Saturday night wraps into Sunday
+ * morning. Folding that part onto the block's own weekday (before M88) refused a Monday 00:00 block 23 hours
+ * away from a Monday 23:00-01:00 block, and accepted the Tuesday 00:00 block it really runs into.
+ */
+function scheduleBlocksOverlap(left: ScheduleBlock, right: ScheduleBlock): boolean {
+  const leftRange = scheduleBlockWeekRange(left);
+  const rightRange = scheduleBlockWeekRange(right);
+  // The line is circular: shift one block a week either way.
+  return [-MINUTES_PER_WEEK, 0, MINUTES_PER_WEEK].some(
+    (shift) => leftRange.start < rightRange.end + shift && rightRange.start + shift < leftRange.end
+  );
+}
+
 export function findScheduleConflicts(blocks: Array<ScheduleBlock>): string[] {
   const conflicts = new Set<string>();
 
@@ -3319,40 +3346,38 @@ export function findScheduleConflicts(blocks: Array<ScheduleBlock>): string[] {
     if (!current) {
       continue;
     }
-
-    const currentRanges =
-      current.startMinuteOfDay + current.durationMinutes <= 24 * 60
-        ? [[current.startMinuteOfDay, current.startMinuteOfDay + current.durationMinutes]]
-        : [
-            [current.startMinuteOfDay, 24 * 60],
-            [0, (current.startMinuteOfDay + current.durationMinutes) % (24 * 60)]
-          ];
-
     for (let compareIndex = index + 1; compareIndex < blocks.length; compareIndex += 1) {
       const candidate = blocks[compareIndex];
-      if (!candidate) {
+      if (candidate && scheduleBlocksOverlap(current, candidate)) {
+        conflicts.add(current.id);
+        conflicts.add(candidate.id);
+      }
+    }
+  }
+
+  return [...conflicts];
+}
+
+/**
+ * The overlaps a change brings in: pairs where at least one block is in `changedIds`. A save is refused for
+ * these only, so an overlap that was already saved (one the 7-day line of M88 newly reveals, for instance) is
+ * marked in the editor but does not block every other edit until it is resolved.
+ */
+export function findScheduleConflictsInvolving(blocks: Array<ScheduleBlock>, changedIds: Iterable<string>): string[] {
+  const changed = new Set(changedIds);
+  const conflicts = new Set<string>();
+
+  for (let index = 0; index < blocks.length; index += 1) {
+    const current = blocks[index];
+    if (!current) {
+      continue;
+    }
+    for (let compareIndex = index + 1; compareIndex < blocks.length; compareIndex += 1) {
+      const candidate = blocks[compareIndex];
+      if (!candidate || (!changed.has(current.id) && !changed.has(candidate.id))) {
         continue;
       }
-
-      if (candidate.dayOfWeek !== current.dayOfWeek) {
-        continue;
-      }
-
-      const candidateRanges =
-        candidate.startMinuteOfDay + candidate.durationMinutes <= 24 * 60
-          ? [[candidate.startMinuteOfDay, candidate.startMinuteOfDay + candidate.durationMinutes]]
-          : [
-              [candidate.startMinuteOfDay, 24 * 60],
-              [0, (candidate.startMinuteOfDay + candidate.durationMinutes) % (24 * 60)]
-            ];
-
-      const overlaps = currentRanges.some(([currentStart, currentEnd]) =>
-        candidateRanges.some(
-          ([candidateStart, candidateEnd]) => currentStart < candidateEnd && candidateStart < currentEnd
-        )
-      );
-
-      if (overlaps) {
+      if (scheduleBlocksOverlap(current, candidate)) {
         conflicts.add(current.id);
         conflicts.add(candidate.id);
       }
@@ -3485,6 +3510,26 @@ export function buildScheduleOccurrences(args: {
  * Minute range an occurrence covers, relative to its `date`. The end may exceed 1440 for a block
  * that runs into the following day, and the start may be negative for a carry-over.
  */
+/**
+ * One key for the whole run of an occurrence: the key it has on the date it starts. A block crossing midnight
+ * is two occurrences (the evening and the next day's carry-over) with two keys; state that belongs to the run
+ * (the cuepoints already fired) is kept under this key, so it survives 00:00. Equal to `key` for an
+ * occurrence that is not a carry-over.
+ */
+export function getScheduleOccurrenceRunKey(occurrence: {
+  key: string;
+  date?: string;
+  blockId: string;
+  startMinuteOfDay: number;
+  durationMinutes: number;
+  carriesOverFromPreviousDay?: boolean;
+}): string {
+  if (!occurrence.carriesOverFromPreviousDay || !occurrence.date) {
+    return occurrence.key;
+  }
+  return `${addDaysToDateString(occurrence.date, -1)}:${occurrence.blockId}:${occurrence.startMinuteOfDay}:${occurrence.durationMinutes}`;
+}
+
 export function getScheduleOccurrenceMinuteRange(occurrence: ScheduleOccurrence): { start: number; end: number } {
   const start = occurrence.effectiveStartMinuteOfDay;
   return { start, end: start + occurrence.durationMinutes };
