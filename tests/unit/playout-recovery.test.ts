@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { planSourceBreakerUpdates, sourceBreakerGate, type SourceBreakerRecord } from "@stream247/core";
 import type { AssetRecord } from "@stream247/db";
 import { planRecoveryAfterPlaybackPreparationFailure } from "../../apps/worker/src/playout-recovery";
 
@@ -198,5 +199,60 @@ describe("generic fallback after M72's real YouTube dates", () => {
     expect(planRecoveryAfterPlaybackPreparationFailure([failed, libraryFile, preferredYoutube], failed).asset?.id).toBe(
       "asset_youtube"
     );
+  });
+
+  // M75 review: the breaker keeps a held source's items out of the queue, so they are never quarantined;
+  // without a global fallback asset the generic tiers would bridge with one and fail on it too.
+  it("passes over the items of a source the breaker holds, but not the operator's global fallback", () => {
+    const failed = createAsset({ id: "asset_y1", sourceId: "source_youtube", path: "https://www.youtube.com/watch?v=y1" });
+    const sameSource = createAsset({ id: "asset_y2", sourceId: "source_youtube", path: "https://www.youtube.com/watch?v=y2", fallbackPriority: 1 });
+    const twitch = createAsset({ id: "asset_t1", sourceId: "source_twitch", path: "https://www.twitch.tv/videos/1", externalId: "1" });
+    expect(planRecoveryAfterPlaybackPreparationFailure([failed, sameSource, twitch], failed).asset?.id).toBe("asset_y2");
+    expect(planRecoveryAfterPlaybackPreparationFailure([failed, sameSource, twitch], failed, ["source_youtube"]).asset?.id).toBe("asset_t1");
+    expect(planRecoveryAfterPlaybackPreparationFailure([failed, sameSource], failed, ["source_youtube"])).toMatchObject({
+      asset: null,
+      fallbackTier: "standby"
+    });
+    const heldGlobal = { ...sameSource, isGlobalFallback: true };
+    expect(planRecoveryAfterPlaybackPreparationFailure([failed, heldGlobal], failed, ["source_youtube"]).asset?.id).toBe("asset_y2");
+  });
+
+  // Combination review (M75, the order inside one playout cycle). The trial item of a half-open source is
+  // the selection, its inline resolve fails and re-opens the breaker in the database. The cycle's snapshot
+  // still lists the source as a trial source, so a recovery planned from the snapshot asked the source
+  // that had just failed its one trial again; the worker now plans from the rows after that write.
+  it("does not ask a source again whose trial has just failed in this cycle", () => {
+    const trial = createAsset({ id: "asset_y1", sourceId: "source_youtube", path: "https://www.youtube.com/watch?v=y1" });
+    const sameSource = createAsset({ id: "asset_y2", sourceId: "source_youtube", path: "https://www.youtube.com/watch?v=y2" });
+    const twitch = createAsset({ id: "asset_t1", sourceId: "source_twitch", path: "https://www.twitch.tv/videos/1", externalId: "1" });
+    const assets = [trial, sameSource, twitch];
+    const openedAt = "2026-10-01T12:00:00.000Z";
+    const nowIso = "2026-10-01T12:31:00.000Z"; // the 30-minute cooldown has run out: half-open
+    const snapshot: SourceBreakerRecord[] = [
+      {
+        sourceId: "source_youtube",
+        state: "open",
+        failedAssetIds: ["asset_y3", "asset_y4", "asset_y5"],
+        openedAt,
+        cooldownSeconds: 1800,
+        lastError: "Requested format is not available",
+        updatedAt: openedAt
+      }
+    ];
+    const before = sourceBreakerGate(snapshot, Date.parse(nowIso));
+    expect(before).toEqual({ heldSourceIds: [], trialSourceIds: ["source_youtube"] });
+    // What the cycle did before: the snapshot's held list is empty and the non-Twitch tier picks y2.
+    expect(planRecoveryAfterPlaybackPreparationFailure(assets, trial, before.heldSourceIds).asset?.id).toBe("asset_y2");
+
+    // recordSelectionResolveOutcome: the failed trial re-opens the breaker, and returns the rows after it.
+    const plan = planSourceBreakerUpdates(
+      snapshot,
+      [{ sourceId: "source_youtube", assetId: "asset_y1", outcome: "failed", error: "Requested format is not available" }],
+      nowIso
+    );
+    expect(plan.transitions.map((transition) => transition.kind)).toEqual(["reopened"]);
+    const after = sourceBreakerGate(plan.updates, Date.parse(nowIso));
+    expect(after).toEqual({ heldSourceIds: ["source_youtube"], trialSourceIds: [] });
+    expect(planRecoveryAfterPlaybackPreparationFailure(assets, trial, after.heldSourceIds).asset?.id).toBe("asset_t1");
   });
 });

@@ -3,6 +3,7 @@ import { collectUpcomingPoolIds, shouldKeepFinishedVodCache } from "./vod-cache-
 import { lastPtsSecondsFromProbeOutput, resolveFeedAvLead } from "./feed-av-lead.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { randomUUID } from "node:crypto";
 import { abortableDelay } from "./abortable-delay.js";
 import {
   canBlameUplinkForStall,
@@ -57,8 +58,14 @@ import {
   createDefaultChatInteractionConfig,
   formatChatGameInfoReply,
   formatChatGameNoRoomReply,
+  decidePassedSkipVote,
+  formatChatSkipPausedReply,
+  resolveOperatorHold,
+  resolveOperatorOverrideHold,
   type ChatGameCommand,
   type ChatInteractionConfig,
+  type OperatorHold,
+  type PassedSkipVoteDecision,
   TWITCH_METADATA_WAITING_MESSAGE,
   isBroadcastChannelSplit,
   resolveBroadcastChannelLogin,
@@ -91,6 +98,9 @@ import {
   resolveChatSettingsWrite,
   describeTickerCrawlStaleness,
   overlayNextTimeLabel,
+  buildLiveBridgeOverlayText,
+  viewerText,
+  type ViewerLocale,
   overlayTickerLine,
   overlayOnAirChapterTitle,
   overlayScale,
@@ -103,6 +113,12 @@ import {
   countQuarantinedBySource,
   nextPoolRotationAsset,
   walkPoolRotation,
+  sourceBreakerGate,
+  publishHostTargetsOf,
+  type PoolRotationSourceGate,
+  type PublishHostTarget,
+  type SourceBreakerRecord,
+  type SourceBreakerTransition,
   createTwitchTokenScopeCache
 } from "@stream247/core";
 import {
@@ -124,6 +140,7 @@ import {
   readAppState,
   replaceTwitchScheduleSegments,
   resolveAppBaseUrl,
+  resolveChannelLanguage,
   resolveChannelTimeZone,
   resolveIncident,
   updateDestinationRecord,
@@ -169,6 +186,11 @@ import {
   markChatViewerRequestsPlayed,
   updateAssetPlaybackProbeRecords,
   type AssetPlaybackProbeUpdateRecord,
+  recordSourceBreakerOutcomes,
+  closeSourceBreakerRecord,
+  recordAsRunStart,
+  recordAsRunEnd,
+  closeOpenAsRunRecords,
   resolveTwitchAccountsForState
 } from "@stream247/db";
 import {
@@ -201,6 +223,19 @@ import {
   type DestinationRuntimeTargetGroup
 } from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
+import { planSourceBreakerIncidents } from "./source-breaker-incidents.js";
+import { createBreakerOutcomeCarry, sourceBreakerOutcomesOf, type QueueProbeOutcome } from "./source-breaker-outcomes.js";
+import { createNetworkOutageCheck, ProbeOutageLogLimiter, withoutNetworkOutageOutcomes, networkLookingFailuresOf } from "./probe-network-outage.js";
+import {
+  asRunRestartIntentOf,
+  asRunScheduleContextOf,
+  asRunSwitchIntentOf,
+  asRunTargetKindOf,
+  buildAsRunStartRecord,
+  createAsRunLog,
+  watchAsRunEnd,
+  type AsRunStopIntent
+} from "./as-run.js";
 import { AlertDeduper, deliverAlert } from "./alerts.js";
 import {
   ensureLocalAssetThumbnail,
@@ -290,7 +325,8 @@ import {
   peekTwitchVodCache,
   isInternalMediaCachePath,
   isTwitchVodAsset,
-  isTwitchVodCacheCoolingDown
+  isTwitchVodCacheCoolingDown,
+  TwitchVodCachePendingError
 } from "./twitch-vod-cache.js";
 import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
 import { measureIncidentAreaHealth, planIncidentResolutions } from "./incident-classes.js";
@@ -304,6 +340,8 @@ import {
 import {
   decideBoundaryPlaybackInput,
   decideCycleEndInsert,
+  decideInsertAfterPrepareFailure,
+  decideInsertAfterSelection,
   decidePreviousAssetId,
   isBroadcastCoverageDown,
   isImmediateInputOpenFailure,
@@ -342,7 +380,7 @@ import {
 } from "./source-sync-scope.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
 import { buildFlatListingArgs, resolveListingEntryPublishedAt, type FlatListingConnectorKind } from "./source-listing.js";
-import { buildTwitchMetadataTitle } from "./twitch-metadata.js";
+import { buildTwitchMetadataTitle, resolveTwitchFallbackTitle } from "./twitch-metadata.js";
 import { ActiveChatterRoster } from "./active-chatters.js";
 import { ChatViewerRequestPass } from "./chat-viewer-requests.js";
 import { EngagementGameTracker } from "./engagement-game.js";
@@ -426,6 +464,14 @@ let lastChannelMetadataWriteAtMs = 0;
 let lastChatSettingsWrite: { emoteOnly: boolean | null; atMs: number } = { emoteOnly: null, atMs: 0 };
 const CHAT_SETTINGS_REASSERT_INTERVAL_MS = 10 * 60_000;
 let plannedStopReason = "";
+// What a "restart-requested" stop is for (skip, switch, restart), set where that stop is made and taken by
+// the exit handler with plannedStopReason. Only the as-run row reads it (M76).
+let asRunStopIntent: AsRunStopIntent = "";
+// The as-run log (M76): one row per playout process run. Fire-and-forget and ordered; see as-run.ts.
+const asRunLog = createAsRunLog(
+  { start: recordAsRunStart, end: recordAsRunEnd, closeOpen: closeOpenAsRunRecords },
+  logRuntimeEvent
+);
 // The runtime write of the last playout exit. The exit handler fires it without waiting, so a cycle that
 // has just stopped the process (duration bound, feed watchdog) awaits it before it reads state again;
 // otherwise the read can still show the stopped item on air and its insert active (M74).
@@ -509,11 +555,18 @@ const twitchChatBridge = new TwitchChatBridge({
       actor: message.actor,
       message: message.message,
       currentAssetId: latestPlayoutAssetId,
-      config: latestChatInteractionConfig
+      config: latestChatInteractionConfig,
+      operatorHold: latestOperatorHold
     });
 
     if (effect.kind === "skip-passed" || effect.kind === "request") {
       pendingChatEffects.push(effect);
+    }
+
+    // The room is told once why its !skip did nothing (M78); a silent refusal is what makes a room
+    // type the command again.
+    if (effect.kind === "skip-paused" && effect.announce) {
+      twitchChatBridge.say(formatChatSkipPausedReply(effect.hold, viewerLanguage()));
     }
 
     // Every accepted skip vote goes on air within a second (see CHAT_SKIP_FLUSH_DELAY_MS). The
@@ -564,6 +617,9 @@ const twitchChatBridge = new TwitchChatBridge({
 });
 // Latest values the IRC handler needs but cannot fetch itself, refreshed by the worker cycle.
 let latestPlayoutAssetId = "";
+// The Pin or Fallback (M78) or the operator's Play now / Insert (M79) holding the air: while one does, a
+// viewer skip vote neither starts nor counts.
+let latestOperatorHold: OperatorHold = "";
 let latestChatInteractionConfig = createDefaultChatInteractionConfig();
 // Latest engagement settings, cached by the worker cycle for the chat-overlay flush. Null until
 // the first cycle: flushing before settings are known could only write a wrong gate.
@@ -573,6 +629,15 @@ let latestEngagementSettings: AppState["engagement"] | null = null;
 // throttled chat flush, the watchdog thresholds, the feed geometry and the VOD cache tuning.
 // Null only before the first cycle, which resolves as env-only — exactly the pre-M56 behaviour.
 let latestManagedConfig: AppState["managedConfig"] | null = null;
+
+/**
+ * The channel language for texts written between cycles — the chat bot's replies — from the
+ * managed config the last cycle refreshed. Before the first cycle that is env or English, the same
+ * env-first order every other between-cycle reader of latestManagedConfig follows.
+ */
+function viewerLanguage(): ViewerLocale {
+  return resolveChannelLanguage(latestManagedConfig ?? undefined);
+}
 // Effects the socket handler cannot apply itself; drained by the worker cycle.
 const pendingChatEffects: ChatControlEffect[] = [];
 
@@ -610,19 +675,20 @@ async function handleChatGameCommand(args: {
     // actually on air. Both are needed: settings alone would announce a game nobody can see.
     return formatChatGameInfoReply({
       running: chatGameRuntime.isActive() ? { gameId: settings.gameId } : null,
-      settings
+      settings,
+      locale: viewerLanguage()
     });
   }
 
   if (!args.isModerator) {
-    return `${args.actor}: only a moderator can start or stop a game. Type !game to see what is running.`;
+    return viewerText(viewerLanguage(), "chat.game.moderatorOnly", { actor: args.actor });
   }
 
   if (args.command.kind === "stop") {
     await updateAppState((state) => ({ ...state, overlay: { ...state.overlay, ...resolveChatGameLayerTeardown(state.overlay) } }));
     await reconcileChatGame();
     await appendAuditEvent("chat.game.stopped", `${args.actor} stopped the chat game from Twitch chat.`);
-    return "Game stopped.";
+    return viewerText(viewerLanguage(), "chat.game.stopped");
   }
 
   const gameId = args.command.gameId;
@@ -639,7 +705,7 @@ async function handleChatGameCommand(args: {
   // nobody can see. Nothing else is touched on a refusal — no rules row, no audit line, and the
   // overlay is exactly as the operator left it.
   if (!hasActiveChatGameLayer(written.overlay)) {
-    return formatChatGameNoRoomReply({ gameId, layerCount: written.overlay.customLayers.length });
+    return formatChatGameNoRoomReply({ gameId, layerCount: written.overlay.customLayers.length, locale: viewerLanguage() });
   }
   await writeChatGameSettingsRecord({ ...settings, gameId, updatedAt: new Date().toISOString() });
   // Immediately, not on the next cycle: a viewer who typed "!snake" and waits half a minute for a
@@ -647,7 +713,7 @@ async function handleChatGameCommand(args: {
   await reconcileChatGame();
   await appendAuditEvent("chat.game.started", `${args.actor} started ${gameId} from Twitch chat.`);
 
-  return formatChatGameInfoReply({ running: { gameId }, settings: { ...settings, gameId } });
+  return formatChatGameInfoReply({ running: { gameId }, settings: { ...settings, gameId }, locale: viewerLanguage() });
 }
 
 // Game-state writes are throttled to one per this window. State writes go through the global
@@ -891,6 +957,9 @@ type QueueProbeCacheEntry = {
   // Whether the quarantine counter has already seen this result. See takeUncountedProbeOutcome.
   outcomeCounted: boolean;
   error: string;
+  // The failure was a Twitch archive still downloading (TwitchVodCachePendingError), which says nothing
+  // about its source; the source circuit breaker leaves it out (sourceBreakerOutcomesOf).
+  pendingDownload: boolean;
   // The asset this entry was resolved for, so the boundary can verify the prefetched input belongs
   // to the asset it is about to start instead of trusting the map key. See playout-boundary.ts.
   assetId: string;
@@ -2021,7 +2090,13 @@ async function resolveAssetPlaybackInput(asset: AssetRecord): Promise<{ asset: A
     };
   }
 
-  throw new Error(`Twitch VOD cache is ${result.status}: ${result.cacheError || "local cache file is not ready."}`);
+  const message = `Twitch VOD cache is ${result.status}: ${result.cacheError || "local cache file is not ready."}`;
+  // A download that is queued or running is "not yet", not a fault: the source circuit breaker must not
+  // hear it (M75 review). Anything else -- the cache disabled, a download that has just failed -- is.
+  if (vodCacheJobRunner.isPending(asset.id)) {
+    throw new TwitchVodCachePendingError(message);
+  }
+  throw new Error(message);
 }
 
 function isDestinationCoolingDown(destination: StreamDestinationRecord): boolean {
@@ -2643,7 +2718,7 @@ async function refreshSceneGameView(): Promise<void> {
   }
 
   try {
-    currentSceneGame = buildChatGameOverlayViewFromRuntimeRecord(await readChatGameRuntimeRecord());
+    currentSceneGame = buildChatGameOverlayViewFromRuntimeRecord(await readChatGameRuntimeRecord(), currentScenePayload?.locale);
   } catch (error) {
     logRuntimeEvent("scene.game.read_failed", {
       error: error instanceof Error ? error.message : String(error)
@@ -2679,9 +2754,11 @@ async function refreshSceneEngagementView(): Promise<void> {
   }
 
   const now = new Date();
+  // In the payload's language, so the panels speak the language of the picture they sit on.
+  const locale = currentScenePayload.locale;
   currentSceneEngagement = chooseEngagementOverlayView(
-    lastVoteSessionRecord ? buildEngagementOverlayViewFromVoteSession(lastVoteSessionRecord, now) : null,
-    lastSkipVoteRecord ? buildEngagementOverlayViewFromSkipVote(lastSkipVoteRecord, now) : null
+    lastVoteSessionRecord ? buildEngagementOverlayViewFromVoteSession(lastVoteSessionRecord, now, locale) : null,
+    lastSkipVoteRecord ? buildEngagementOverlayViewFromSkipVote(lastSkipVoteRecord, now, locale) : null
   );
 }
 
@@ -3405,7 +3482,8 @@ function buildWorkerScenePayload(args: {
     nextTitle: resolvedNextTitle,
     nextTimeLabel: args.nextTimeLabel,
     queueTitles: args.queueTitles,
-    timeZone: resolveChannelTimeZone(args.state.managedConfig)
+    timeZone: resolveChannelTimeZone(args.state.managedConfig),
+    locale: resolveChannelLanguage(args.state.managedConfig)
   });
 }
 
@@ -3431,13 +3509,14 @@ async function writeStandbySlate(
     currentOccurrence: currentItem
   });
   const nextItem = upcomingItems[0] ?? null;
+  const locale = resolveChannelLanguage(state.managedConfig);
   const payload = buildWorkerScenePayload({
     state,
     queueKind,
-    currentTitle: currentItem?.title || "Stand by",
-    nextTitle: nextItem ? nextItem.title : "Programming will resume shortly",
+    currentTitle: currentItem?.title || viewerText(locale, "overlay.title.standby"),
+    nextTitle: nextItem ? nextItem.title : viewerText(locale, "overlay.next.resumesShortly"),
     nextScheduleItem: nextItem,
-    nextTimeLabel: overlayNextTimeLabel(nextItem),
+    nextTimeLabel: overlayNextTimeLabel(nextItem, locale),
     currentCategory: currentItem?.categoryName,
     currentSourceName: currentItem?.sourceName,
     queueTitles: upcomingItems.slice(0, state.overlay.queuePreviewCount).map((item) => item.title)
@@ -3501,6 +3580,7 @@ async function writeOnAirOverlay(
 ): Promise<void> {
   const currentItem = getCurrentScheduleItem(state);
   const nextItem = getNextScheduleItem(state);
+  const locale = resolveChannelLanguage(state.managedConfig);
   const queueTitles =
     overrides.queueTitles ??
     state.playout.queuedAssetIds
@@ -3523,10 +3603,10 @@ async function writeOnAirOverlay(
         buildAssetDisplayTitle(asset) ||
         state.playout.currentTitle ||
         currentItem?.title ||
-        "Stand by",
-      nextTitle: overrides.nextTitle || nextItem?.title || "Coming up next",
+        viewerText(locale, "overlay.title.standby"),
+      nextTitle: overrides.nextTitle || nextItem?.title || viewerText(locale, "overlay.next.comingUp"),
       nextScheduleItem: nextItem,
-      nextTimeLabel: overrides.nextTimeLabel || overlayNextTimeLabel(nextItem),
+      nextTimeLabel: overrides.nextTimeLabel || overlayNextTimeLabel(nextItem, locale),
       currentCategory: overrides.currentCategory || currentItem?.categoryName || asset?.categoryName,
       currentSourceName:
         overrides.currentSourceName ||
@@ -4216,7 +4296,9 @@ async function syncYoutubePlaylistSources(): Promise<void> {
           buildRemoteAsset({
             sourceId: source.id,
             assetIdSeed: id,
-            title: entry.title || `${source.name} item`,
+            // Stored with the asset, so it is written in the channel language of the sync that
+            // found it; a later language change leaves it as written, like any other title.
+            title: entry.title || viewerText(resolveChannelLanguage(state.managedConfig), "overlay.title.untitledAsset", { source: source.name }),
             path: videoUrl,
             folderPath: buildSourceFolderPath(source.connectorKind, source.name),
             externalId: entry.id,
@@ -4616,11 +4698,29 @@ function isPoolAssetEligible(pool: PoolRecord, asset: AssetRecord, skippedAssetI
   );
 }
 
+// What the source circuit breaker (M75) lets the pools take right now: nothing from an open source, one
+// trial item from a half-open one. Read from the cycle's state at the wall clock, like every other hold.
+function poolSourceGate(state: AppState): PoolRotationSourceGate {
+  return sourceBreakerGate(state.sourceBreakers, Date.now());
+}
+
+// Whether some pool could pick an item of the source if its breaker let it: the pool rotation's own
+// eligibility, without the skip hold of a single item. A held source without one has nothing to hold
+// (see planSourceBreakerIncidents).
+function sourceHasPoolCandidate(state: AppState, sourceId: string): boolean {
+  return state.pools.some(
+    (pool) =>
+      pool.sourceIds.includes(sourceId) &&
+      state.assets.some((asset) => asset.sourceId === sourceId && isPoolAssetEligible(pool, asset, ""))
+  );
+}
+
 function lookaheadVideoTitleFromPool(state: AppState, poolId: string): string {
   const pool = state.pools.find((entry) => entry.id === poolId);
   return lookaheadPoolVideoTitle({
     pool: pool ?? null,
-    assets: state.assets
+    assets: state.assets,
+    sourceGate: poolSourceGate(state)
   });
 }
 
@@ -4644,7 +4744,8 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
     nextPoolRotationAsset({
       pool,
       assets: state.assets,
-      isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId)
+      isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId),
+      sourceGate: poolSourceGate(state)
     })?.asset ?? null
   );
 }
@@ -4672,6 +4773,7 @@ function getPoolPlaybackQueue(
     pool,
     assets: state.assets,
     isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId),
+    sourceGate: poolSourceGate(state),
     steps: options.limit ?? 4,
     afterAssetId: options.currentStartsPool ? currentAssetId : ""
   });
@@ -4774,6 +4876,7 @@ function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: A
         candidateId: prepared.media.candidateId,
         outcomeCounted: false,
         error: "",
+        pendingDownload: false,
         assetId: asset.id
       });
       return prepared;
@@ -4789,6 +4892,7 @@ function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: A
         candidateId: "",
         outcomeCounted: false,
         error: message,
+        pendingDownload: error instanceof TwitchVodCachePendingError,
         assetId: asset.id
       });
       throw error;
@@ -4806,7 +4910,7 @@ async function getPlayableQueuedAssets(
   prefetchedAsset: AssetRecord | null;
   prefetchStatus: "" | "ready" | "failed";
   prefetchError: string;
-  probeOutcomes: Array<{ asset: AssetRecord; outcome: "ok" | "failed"; error: string }>;
+  probeOutcomes: QueueProbeOutcome<AssetRecord>[];
   // Every source whose items this scan looked at, counted or not. The source-unplayable incident is
   // resolved from these: with each probe counted once, probeOutcomes alone would close it only on the
   // next fresh resolve, up to five minutes later (found by the M68 review).
@@ -4821,7 +4925,7 @@ async function getPlayableQueuedAssets(
   // success overwrites an earlier failure and the failing item's count never grows -- measured on the DUT
   // under rc.3, where the same item failed three times and stayed at zero. Every item the scan actually
   // probed is recorded with its own outcome (packages/core/src/asset-probe-quarantine.ts).
-  const probeOutcomes: Array<{ asset: AssetRecord; outcome: "ok" | "failed"; error: string }> = [];
+  const probeOutcomes: QueueProbeOutcome<AssetRecord>[] = [];
   const scannedSourceIds = new Set(queueAssets.map((asset) => asset.sourceId));
   let deferredExpensive = false;
 
@@ -4859,7 +4963,7 @@ async function getPlayableQueuedAssets(
     if (action === "skip-failed") {
       if (cached) {
         if (takeUncountedProbeOutcome(cached)) {
-          probeOutcomes.push({ asset, outcome: "failed", error: cached.error });
+          probeOutcomes.push({ asset, outcome: "failed", error: cached.error, pendingDownload: cached.pendingDownload });
         }
         if (!prefetchError) {
           prefetchStatus = "failed";
@@ -4929,7 +5033,7 @@ async function getPlayableQueuedAssets(
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown queue prefetch error.";
       takeUncountedProbeOutcome(queueProbeCache.get(asset.id));
-      probeOutcomes.push({ asset, outcome: "failed", error: message });
+      probeOutcomes.push({ asset, outcome: "failed", error: message, pendingDownload: error instanceof TwitchVodCachePendingError });
       if (!prefetchError) {
         prefetchStatus = "failed";
         prefetchError = message;
@@ -5179,7 +5283,6 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     liveBridgeLabel: "",
     ...overrides
   });
-  const manualOverrideActive = isTimestampActive(state.playout.overrideUntil);
   const skippedAssetId = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
   const liveBridgeActive =
     state.playout.liveBridgeInputUrl !== "" &&
@@ -5224,11 +5327,14 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   // ahead of the insert branch below -- also the item a Skip had just held out. Under the relay that is
   // how a Play now on the DUT (2026-10-01, v2.1.0-rc.1) stopped the archive, showed the slate and dropped
   // the insert unlogged (M74). Restart and Hard reload still restart the running item: the scheduled
-  // branches below keep picking it.
-  const desiredAsset =
-    manualOverrideActive && state.playout.overrideAssetId !== ""
-      ? state.assets.find((asset) => asset.id === state.playout.overrideAssetId && asset.status === "ready")
-      : null;
+  // branches below keep picking it. Not an item under a skip hold either (M78): the arm comes before
+  // every other arm, so a Skip during a pin started the pinned item again from 0. Skip ends the override
+  // in the same write since M78; this keeps a stale override from restarting the item it raced with.
+  // The rule is core resolveOperatorOverrideHold, which the admin applies too and the chat skip vote
+  // reaches through resolveOperatorHold (which adds the operator's insert, M79), so what they call
+  // "a Pin holds the air" is what this arm selects.
+  const overrideHold = resolveOperatorOverrideHold({ ...state.playout, assets: state.assets, nowMs: Date.now() });
+  const desiredAsset = overrideHold !== "" ? state.assets.find((asset) => asset.id === state.playout.overrideAssetId) : null;
 
   if (desiredAsset) {
     return createSelection({
@@ -5243,6 +5349,8 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     });
   }
 
+  // The chat's skip vote pauses while this arm holds an operator insert (M79): core resolveOperatorHold
+  // repeats its conditions (after the live and override arms; ready, not skip-held), so keep them in step.
   if (activeInsertAsset && state.playout.insertStatus !== "") {
     return createSelection({
       asset: activeInsertAsset,
@@ -5419,9 +5527,14 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     });
   }
 
+  // Not from a source the breaker holds (M75 review). The hold keeps the source's items out of the
+  // queue, so their quarantine counters stop: in the SABR case the breaker opens after three of the 11
+  // items and the other eight are never quarantined, and this tier, on a channel without a global
+  // fallback asset, would pick them to fail inline on every cycle.
+  const heldSourceIds = new Set(poolSourceGate(state).heldSourceIds);
   const anyReadyAsset = [...state.assets]
     .filter((asset) => asset.status === "ready" && asset.includeInProgramming !== false && !isAssetBlockedForAutomaticSelection(asset))
-    .filter((asset) => asset.id !== skippedAssetId)
+    .filter((asset) => asset.id !== skippedAssetId && !heldSourceIds.has(asset.sourceId))
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 
   if (anyReadyAsset) {
@@ -5471,6 +5584,7 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
     // No exit handler will run for this path, so nothing would ever clear the reason we just set.
     // Leaving it set makes the next genuine crash look like an operator-planned stop.
     plannedStopReason = "";
+    asRunStopIntent = "";
     return;
   }
 
@@ -5814,6 +5928,12 @@ async function startOrSwitchPlayout(args: {
   /** Managed config from the caller's state read; the encoder settings resolve through it. */
   managedConfig: AppState["managedConfig"] | null;
   runtimeTargets: DestinationRuntimeTarget[];
+  /**
+   * What the start's as-run row needs beyond the arguments above (M76): where it sits in the schedule
+   * (asRunScheduleContextOf decides it), its queue kind, and the override mode that tells a Fallback
+   * from a Pin.
+   */
+  asRun: { blockId: string; poolId: string; queueKind: string; overrideMode: string };
 }): Promise<void> {
   const switching = playoutProcess && !playoutProcess.killed;
   if (switching) {
@@ -5999,6 +6119,51 @@ async function startOrSwitchPlayout(args: {
     reasonCode: args.reasonCode,
     lifecycleStatus: args.lifecycleStatus
   });
+  // The as-run row of this run (M76), queued and not awaited: the switch is not held up by its history.
+  // Every start comes through here (programme, insert, fallback bridge, slate, live bridge), and the
+  // exit handler below completes exactly this row, from the same start instant ranForMs measures from.
+  const asRunStartedAtMs = playoutProcessStartedAtMs;
+  const asRunId = asRunLog.start(() =>
+    buildAsRunStartRecord({
+      id: `asrun_${randomUUID()}`,
+      startedAtMs: asRunStartedAtMs,
+      targetKind: asRunTargetKindOf({
+        hasAsset: Boolean(args.asset),
+        liveBridge: Boolean(args.liveBridge),
+        reasonCode: args.reasonCode,
+        fallbackTier: args.fallbackTier,
+        lifecycleStatus: args.lifecycleStatus,
+        overrideMode: args.asRun.overrideMode
+      }),
+      asset: args.asset,
+      title:
+        buildAssetDisplayTitle(args.asset) ||
+        args.liveBridge?.label ||
+        (args.lifecycleStatus === "reconnecting" ? "Scheduled reconnect" : "Replay standby"),
+      blockId: args.asRun.blockId,
+      poolId: args.asRun.poolId,
+      reasonCode: args.reasonCode,
+      queueKind: args.asRun.queueKind,
+      input: resolvedProgramInput,
+      audioInput: resolvedProgramAudioInput,
+      formatId: playoutFormatId,
+      formatCandidate: playoutFormatCandidateId
+    })
+  );
+  // Its end is watched from here, before the first await below, and not from the exit handler further
+  // down, which an early exit or a failed spawn never reaches (watchAsRunEnd). The target kind is this
+  // run's own, taken before anything can clear it.
+  const asRunRunTargetKind = playoutTargetKind;
+  const asRunExit = watchAsRunEnd(child, {
+    log: asRunLog,
+    id: asRunId,
+    startedAtMs: asRunStartedAtMs,
+    exitContext: (code, signal) => ({
+      plannedReason: plannedStopReason,
+      stopIntent: asRunStopIntent,
+      naturalBoundary: plannedStopReason === "" && isNaturalPlayoutBoundary({ targetKind: asRunRunTargetKind, code, signal })
+    })
+  });
 
   // Boundary gap measurement. "scheduled" tier is real programme content; every other tier is a
   // fallback/bridge covering the boundary. Observation only — nothing below feeds a decision.
@@ -6175,7 +6340,10 @@ async function startOrSwitchPlayout(args: {
     const nonFailureExit = wasPlanned || exitedCleanly;
     const lastLiveBridgeInputUrl = playoutLiveBridgeInputUrl;
     const hadLiveSourceInput = playoutLiveSourceInputActive;
-    const ranForMs = playoutProcessStartedAtMs > 0 ? Date.now() - playoutProcessStartedAtMs : null;
+    // One instant for ranForMs and the as-run row's end, which watchAsRunEnd took before this handler ran.
+    const exitedAtMs = asRunExit.exitedAtMs() || Date.now();
+    const ranForMs = playoutProcessStartedAtMs > 0 ? exitedAtMs - playoutProcessStartedAtMs : null;
+    asRunStopIntent = "";
     // Open a boundary measurement only when real programme content left the air; a fallback ending
     // is part of the gap that is already being measured, not the start of a new one.
     if (playoutIsProgramme && lastAssetId) {
@@ -6491,6 +6659,250 @@ function emitDueAssetChapterBoundaries(asset: AssetRecord | null): void {
   }
 }
 
+function logSourceBreakerTransitions(transitions: SourceBreakerTransition[]): void {
+  for (const transition of transitions) {
+    logRuntimeEvent(
+      transition.kind === "closed"
+        ? "playout.source-breaker.closed"
+        : transition.kind === "reopened"
+          ? "playout.source-breaker.reopened"
+          : "playout.source-breaker.opened",
+      {
+        sourceId: transition.sourceId,
+        failedAssetIds: transition.record.failedAssetIds,
+        cooldownSeconds: transition.record.cooldownSeconds,
+        error: transition.record.lastError
+      }
+    );
+  }
+}
+
+// The outputs the channel publishes to, as the outage check's targets (M82). Refreshed by every playout
+// cycle like latestManagedConfig, so the inline resolve's record needs no state handed to it. In relay
+// mode the playout itself feeds the local relay; these are still the uplink's hosts, the way out.
+let latestPublishHostTargets: PublishHostTarget[] = [];
+// An outage the check saw stands for the length of one resolve: a resolve that dies by its own timeout
+// reports a network of up to that long ago, and the output may be back by then.
+const networkOutageCheck = createNetworkOutageCheck({ graceMs: PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS });
+const probeOutageLog = new ProbeOutageLogLimiter();
+// Breaker outcomes whose write failed, for the next write (source-breaker-outcomes.ts).
+const breakerOutcomeCarry = createBreakerOutcomeCarry();
+const probeOutageCheckFailedLog = new ProbeOutageLogLimiter();
+
+// A broken check counts everything, as before M82, and must say so: its verdict reads "no outage", which
+// is also what a reachable output gives, so without this line an outage would be counted against the
+// content in silence. Through a limiter of its own: a check that breaks does so on every cycle.
+function logNetworkOutageCheckFailed(error: string): void {
+  const unlogged = probeOutageCheckFailedLog.take("check", Date.now());
+  if (unlogged === null) {
+    return;
+  }
+  logRuntimeEvent("playout.probe.network_outage.check_failed", {
+    error: error.slice(0, 300),
+    unloggedSinceLastLine: unlogged
+  });
+}
+
+function publishHostTargetsOfDestinations(destinations: StreamDestinationRecord[]): PublishHostTarget[] {
+  return publishHostTargetsOf(
+    [...destinations]
+      .filter((destination) => destination.enabled)
+      .sort((left, right) => Number(left.role === "backup") - Number(right.role === "backup") || left.priority - right.priority)
+      .map((destination) => destination.rtmpUrl || getLegacyDestinationEnvConfig(destination.id, process.env).url)
+  );
+}
+
+/**
+ * Takes the failures of the channel's own network outage out of what quarantine and the source breaker
+ * count (M82). On the DUT the host loses its way out once a night for one to four minutes; every remote
+ * resolve fails meanwhile, a failed probe is retried after a minute, and three failures quarantine an
+ * item for good while three items hold its source for 30 minutes. A failure is left out only when its
+ * error is a network one AND the output the channel publishes to cannot be reached right now; a host
+ * that is down while the channel's network is up counts as before. "Right now" includes the length of
+ * one resolve before it, when the check saw the outage then (createNetworkOutageCheck's grace). Left out
+ * is not a success: nothing is reset, a half-open breaker keeps its trial, and the item is still not
+ * played.
+ *
+ * The connection is opened only when a network-looking failure is about to be counted, so a healthy
+ * channel never pays for it. Never throws: the selection's record runs inside the resolve's own try.
+ */
+async function dropNetworkOutageOutcomes<T extends QueueProbeOutcome<AssetRecord>>(
+  probeOutcomes: T[],
+  path: "queue" | "selection"
+): Promise<T[]> {
+  if (networkLookingFailuresOf(probeOutcomes).length === 0) {
+    return probeOutcomes;
+  }
+  try {
+    const verdict = await networkOutageCheck(latestPublishHostTargets);
+    if (verdict.checkFailed) {
+      logNetworkOutageCheckFailed(verdict.evidence);
+      return probeOutcomes;
+    }
+    const { counted, uncounted } = withoutNetworkOutageOutcomes(probeOutcomes, verdict.outage);
+    for (const { probed, reason } of uncounted) {
+      const unlogged = probeOutageLog.take(probed.asset.id, Date.now());
+      if (unlogged === null) {
+        continue;
+      }
+      logRuntimeEvent("playout.probe.network_outage", {
+        assetId: probed.asset.id,
+        sourceId: probed.asset.sourceId,
+        path,
+        reason,
+        corroboration: verdict.evidence,
+        error: probed.error.slice(0, 300),
+        unloggedSinceLastLine: unlogged
+      });
+    }
+    return counted;
+  } catch (checkError) {
+    logNetworkOutageCheckFailed(checkError instanceof Error ? checkError.message : String(checkError));
+    return probeOutcomes;
+  }
+}
+
+/**
+ * The breaker also hears the inline resolve of the selected item (M75), which quarantine does not count.
+ * The queue never probes the selection (it lists the items after it) and is empty while a fallback is on
+ * air, so a half-open source whose trial item is picked straight away -- a pool with only that source, or
+ * the pool's turn coming while the fallback plays -- would never be judged, and the cycle would resolve
+ * the trial inline again on every cycle. In the closed state the distinct-items rule makes a selection
+ * that fails cycle after cycle one failed item, not many. Never throws: it runs inside the resolve's own
+ * try, where a failed write would read as a failed resolve.
+ *
+ * Returns the breakers as they stand after the write, null when nothing was recorded (an outcome that is
+ * not heard, a failed write): the cycle's snapshot is older than a breaker this outcome has just opened.
+ */
+async function recordSelectionResolveOutcome(
+  asset: AssetRecord,
+  outcome: "ok" | "failed",
+  error?: unknown
+): Promise<SourceBreakerRecord[] | null> {
+  // The same rules as the queue's outcomes: an archive still downloading is not heard at all, and neither
+  // is a failure of the channel's own network outage (M82), which would otherwise re-open a half-open
+  // breaker with the cooldown doubled for a trial that never reached its source.
+  const outcomes = sourceBreakerOutcomesOf(
+    await dropNetworkOutageOutcomes(
+      [
+        {
+          asset,
+          outcome,
+          error: error instanceof Error ? error.message : outcome === "failed" ? "Unknown playback preparation error." : "",
+          pendingDownload: error instanceof TwitchVodCachePendingError
+        }
+      ],
+      "selection"
+    )
+  );
+  if (outcomes.length === 0) {
+    return null;
+  }
+  try {
+    const plan = await recordSourceBreakerOutcomes(outcomes, new Date().toISOString());
+    logSourceBreakerTransitions(plan.transitions);
+    return plan.records;
+  } catch (writeError) {
+    // Tried once more with the scan's outcomes later in this cycle (applySourceBreakerOutcomes).
+    breakerOutcomeCarry.keep(outcomes);
+    logRuntimeEvent("playout.source-breaker.write_failed", {
+      sourceId: asset.sourceId,
+      assetId: asset.id,
+      error: writeError instanceof Error ? writeError.message : String(writeError)
+    });
+    return null;
+  }
+}
+
+/**
+ * Records one scan's counted probe outcomes on the source circuit breakers (M75) and keeps one incident
+ * per held source, resolved when its breaker closes. Returns the sources held right now (open or
+ * half-open), so the per-item quarantine incident of the same source can stand back.
+ *
+ * Every breaker row is checked on every cycle, not only the ones that changed: a hold runs out by the
+ * clock, an operator closes one from the source page, and a source deleted by a whole-state write leaves
+ * its row behind -- none of those passes through the plan, and each must still end up in the list right.
+ * A breaker that holds a source no pool could pick anyway is closed here (planSourceBreakerIncidents).
+ *
+ * Throws only when the outcomes could not be recorded; they are then kept for the next write
+ * (createBreakerOutcomeCarry), because the scan has marked them counted and produces none of them again.
+ */
+async function applySourceBreakerOutcomes(args: {
+  state: AppState;
+  probeOutcomes: QueueProbeOutcome<AssetRecord>[];
+  quarantinedBySource: Map<string, { count: number }>;
+}): Promise<Set<string>> {
+  const nowIso = new Date().toISOString();
+  const scanned = sourceBreakerOutcomesOf(args.probeOutcomes);
+  let plan: Awaited<ReturnType<typeof recordSourceBreakerOutcomes>>;
+  try {
+    plan = await recordSourceBreakerOutcomes(breakerOutcomeCarry.take(scanned), nowIso);
+  } catch (writeError) {
+    breakerOutcomeCarry.keep(scanned);
+    throw writeError;
+  }
+  logSourceBreakerTransitions(plan.transitions);
+
+  // The rows as they stand after this write, not the cycle's snapshot: a "close now" made since the
+  // snapshot was read must not reopen (and alert on) the incident it has just resolved.
+  const actions = planSourceBreakerIncidents({
+    records: plan.records,
+    sources: args.state.sources,
+    quarantinedBySource: args.quarantinedBySource,
+    openFingerprints: new Set(
+      args.state.incidents.filter((incident) => incident.status === "open").map((incident) => incident.fingerprint)
+    ),
+    nowMs: Date.parse(nowIso),
+    hasPoolCandidate: (sourceId) => sourceHasPoolCandidate(args.state, sourceId)
+  });
+  // Who is held is known before the first incident write, and each write stands on its own (combination
+  // review). Collected inside the loop and returned after it, one failed write -- the resolve of another,
+  // deleted source included -- threw the whole set away: the caller went on with no source held and
+  // re-opened the per-item incident of a held source, with an onset line and its acknowledgement cleared.
+  // A source whose breaker is being closed is not held, so its per-item incident comes back in this cycle.
+  const held = new Set(actions.filter((action) => action.action === "upsert").map((action) => action.sourceId));
+  for (const action of actions) {
+    try {
+      if (action.action === "resolve") {
+        await resolveIncident(action.fingerprint, action.message);
+        continue;
+      }
+      if (action.action === "close") {
+        const closed = await closeSourceBreakerRecord(action.sourceId, nowIso);
+        if (closed) {
+          logRuntimeEvent("playout.source-breaker.closed", {
+            sourceId: action.sourceId,
+            reason: "no-pool-candidate",
+            failedAssetIds: closed.failedAssetIds,
+            cooldownSeconds: closed.cooldownSeconds,
+            error: closed.lastError
+          });
+        }
+        if (action.incidentOpen) {
+          await resolveIncident(action.fingerprint, action.message);
+        }
+        continue;
+      }
+      await upsertIncident({
+        scope: "playout",
+        severity: "warning",
+        title: action.title,
+        message: action.message,
+        fingerprint: `playout.source-breaker.${action.sourceId}`
+      });
+    } catch (writeError) {
+      // Every action is decided again from the stored rows by the next cycle.
+      logRuntimeEvent("playout.source-breaker.write_failed", {
+        scope: "incident",
+        sourceId: action.sourceId,
+        action: action.action,
+        error: writeError instanceof Error ? writeError.message : String(writeError)
+      });
+    }
+  }
+  return held;
+}
+
 // An operator insert cleared before it aired (M74). It used to vanish with a runtime message only: the
 // Play now on the DUT on 2026-10-01 left no log line and no audit row, so nobody could tell it had been
 // dropped, let alone why. An insert that did air and was then cut (Skip, a Pin) is not a drop.
@@ -6528,6 +6940,7 @@ async function runPlayoutCycle(): Promise<void> {
   // config it hands to the between-cycle readers (watchdog options, feed geometry, VOD cache
   // tuning). Before the first cycle those resolve env-only — exactly the pre-M56 behaviour.
   latestManagedConfig = state.managedConfig;
+  latestPublishHostTargets = publishHostTargetsOfDestinations(state.destinations);
   if (
     (state.playout.overrideUntil !== "" && !isTimestampActive(state.playout.overrideUntil)) ||
     (state.playout.skipUntil !== "" && !isTimestampActive(state.playout.skipUntil))
@@ -6588,18 +7001,23 @@ async function runPlayoutCycle(): Promise<void> {
   }
   let selection: SelectionResult = choosePlaybackCandidate(state);
 
-  if (state.playout.insertStatus !== "" && selection.reasonCode !== "operator_insert" && selection.queueKind !== "live") {
-    if (state.playout.insertStatus === "pending") {
-      const skippedAssetId = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
-      const insertAvailable = state.assets.some(
-        (asset) => asset.id === state.playout.insertAssetId && asset.status === "ready" && asset.id !== skippedAssetId
-      );
-      await recordDroppedInsert({
-        state,
-        // "preempted": a Pin or Fallback (the override branch) comes before the insert branch.
-        reason: insertAvailable ? "preempted" : "unavailable",
-        selectionReasonCode: selection.reasonCode
-      });
+  const skippedAtSelection = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
+  const insertAfterSelection = decideInsertAfterSelection({
+    insertStatus: state.playout.insertStatus,
+    selectionReasonCode: selection.reasonCode,
+    // A Live Bridge takeover ends the insert too (M78): left in place, the insert on air at the takeover
+    // started again from 0 after the release, and a pending one aired whenever the bridge was released.
+    selectionIsLive: selection.queueKind === "live",
+    insertAvailable: state.assets.some(
+      (asset) => asset.id === state.playout.insertAssetId && asset.status === "ready" && asset.id !== skippedAtSelection
+    )
+  });
+  if (insertAfterSelection.clear) {
+    if (insertAfterSelection.dropReason !== "") {
+      await recordDroppedInsert({ state, reason: insertAfterSelection.dropReason, selectionReasonCode: selection.reasonCode });
+    } else if (selection.queueKind === "live") {
+      // It aired, so it is not a drop; the takeover that cut it is worth a line all the same.
+      logRuntimeEvent("playout.insert.ended", { assetId: state.playout.insertAssetId, reason: "live-bridge" });
     }
     // Only the insert this cycle read: a Play now the admin wrote since then is the next cycle's to judge.
     const clearedInsertAssetId = state.playout.insertAssetId;
@@ -6685,12 +7103,17 @@ async function runPlayoutCycle(): Promise<void> {
   if (state.playout.pendingAction === "refresh") {
     if (playoutProcess && !playoutProcess.killed && state.playout.liveBridgeStatus === "active") {
       if (state.overlay.enabled) {
-        await writeOnAirOverlay(state, null, "live", {
-          currentTitle: state.playout.liveBridgeLabel || state.playout.currentTitle || "Live Bridge",
-          currentCategory: "Live input",
-          currentSourceName: `Live Bridge · ${(state.playout.liveBridgeInputType || "rtmp").toUpperCase()}`,
-          nextTitle: state.playout.nextTitle || "Schedule resumes after live mode"
-        });
+        await writeOnAirOverlay(
+          state,
+          null,
+          "live",
+          buildLiveBridgeOverlayText({
+            locale: resolveChannelLanguage(state.managedConfig),
+            title: state.playout.liveBridgeLabel || state.playout.currentTitle,
+            inputType: state.playout.liveBridgeInputType,
+            nextTitle: state.playout.nextTitle
+          })
+        );
       } else {
         await writeStandbySlate(state, "live");
       }
@@ -6758,6 +7181,9 @@ async function runPlayoutCycle(): Promise<void> {
     state = await readAppState();
   }
 
+  // What the selection picked before the reconnect slate took its place: the item a restart request of
+  // direct mode was for, which only the as-run row reads (M76).
+  let selectedBeforeSlateAssetId = "";
   if (
     shouldShowReconnectSlate({
       relayEnabled: STREAM247_RELAY_ENABLED,
@@ -6767,6 +7193,7 @@ async function runPlayoutCycle(): Promise<void> {
     })
   ) {
     await writeStandbySlate(state, "reconnect");
+    selectedBeforeSlateAssetId = selection.asset?.id ?? "";
     selection = {
       asset: null,
       queueKind: "reconnect",
@@ -6807,6 +7234,8 @@ async function runPlayoutCycle(): Promise<void> {
   }
 
   let resolvedSelection: ResolvedPlayableMedia | null = null;
+  // The breakers after this cycle's failed inline resolve was recorded (M75), null when nothing was.
+  let breakersAfterFailedResolve: SourceBreakerRecord[] | null = null;
   // The programme already on air keeps its input (playout-boundary.ts: shouldKeepRunningInput). A
   // re-resolve here could only fail it off air, never improve it.
   const keepRunningInput =
@@ -6847,7 +7276,7 @@ async function runPlayoutCycle(): Promise<void> {
         });
         const bridgePlan =
           assetExpensive && broadcastDown
-            ? planRecoveryAfterPlaybackPreparationFailure(state.assets, failedAsset)
+            ? planRecoveryAfterPlaybackPreparationFailure(state.assets, failedAsset, poolSourceGate(state).heldSourceIds)
             : null;
         const bridgeAsset =
           bridgePlan && bridgePlan.asset && !isExpensiveQueueResolve(bridgePlan.asset) ? bridgePlan.asset : null;
@@ -6884,7 +7313,14 @@ async function runPlayoutCycle(): Promise<void> {
           resolvedSelection = bridged.media;
           requestImmediatePlayoutCycle("boundary-fallback-bridge");
         } else {
-          const prepared = await resolveAssetPlaybackInput(failedAsset);
+          let prepared: Awaited<ReturnType<typeof resolveAssetPlaybackInput>>;
+          try {
+            prepared = await resolveAssetPlaybackInput(failedAsset);
+          } catch (error) {
+            breakersAfterFailedResolve = await recordSelectionResolveOutcome(failedAsset, "failed", error);
+            throw error;
+          }
+          await recordSelectionResolveOutcome(failedAsset, "ok");
           selection = { ...selection, asset: prepared.asset };
           resolvedSelection = prepared.media;
         }
@@ -6895,20 +7331,37 @@ async function runPlayoutCycle(): Promise<void> {
       // YouTube item yt-dlp cannot resolve) is the insert's failure, not the programme's: the item on air
       // stays and the insert is dropped. The recovery plan below used to take the healthy item off air
       // for a fallback and then retry the insert every cycle (M74). With nothing on air the recovery plan
-      // still runs, so the channel is not left dark. Only a pending insert: one that is already on air
-      // and fails to prepare for a Restart is the programme's failure, and was not dropped before it aired.
-      if (
-        failedReasonCode === "operator_insert" &&
-        state.playout.insertStatus === "pending" &&
-        isPlayoutProcessRunning() &&
-        state.playout.currentAssetId !== ""
-      ) {
-        await recordDroppedInsert({ state, reason: "prepare-failed", selectionReasonCode: failedReasonCode, error: message });
+      // still runs, so the channel is not left dark. An insert that is itself on air and fails to prepare
+      // for a Restart is the programme's failure and was not dropped before it aired: the recovery plan
+      // covers it. Once that fallback is on air the insert is ended here, since nothing else would end it
+      // (decideInsertAfterPrepareFailure): it was selected and resolved again on every cycle.
+      const insertFailure = decideInsertAfterPrepareFailure({
+        selectionReasonCode: failedReasonCode,
+        insertStatus: state.playout.insertStatus,
+        insertAssetId: state.playout.insertAssetId,
+        processRunning: isPlayoutProcessRunning(),
+        currentAssetId: state.playout.currentAssetId
+      });
+      if (insertFailure !== "recover") {
+        const insertTitle = buildAssetDisplayTitle(failedAsset) || failedAsset.id;
+        if (insertFailure === "drop") {
+          await recordDroppedInsert({ state, reason: "prepare-failed", selectionReasonCode: failedReasonCode, error: message });
+        } else {
+          // It aired, so it is not a drop (the audit row of a drop says "before it aired").
+          logRuntimeEvent("playout.insert.ended", { assetId: failedAsset.id, reason: "prepare-failed", error: message.slice(0, 300) });
+          await appendAuditEvent(
+            "playout.insert.ended",
+            `Insert ${insertTitle} could not be prepared again after it left the air and was ended (prepare-failed: ${message.slice(0, 300)}).`
+          );
+        }
         await updatePlayoutRuntime((playout) => ({
           ...playout,
           ...(playout.insertAssetId === failedAsset.id ? { insertAssetId: "", insertRequestedAt: "", insertStatus: "" } : {}),
           heartbeatAt: new Date().toISOString(),
-          message: `Insert ${buildAssetDisplayTitle(failedAsset) || failedAsset.id} could not be prepared and was dropped: ${message.slice(0, 200)}`
+          message:
+            insertFailure === "drop"
+              ? `Insert ${insertTitle} could not be prepared and was dropped: ${message.slice(0, 200)}`
+              : `Insert ${insertTitle} could not be prepared again and was ended: ${message.slice(0, 200)}`
         }));
         // The next cycle selects without the insert and keeps the running item's input as it is.
         requestImmediatePlayoutCycle("insert-prepare-failed");
@@ -6921,7 +7374,16 @@ async function runPlayoutCycle(): Promise<void> {
         message,
         fingerprint: isTwitchVodAsset(failedAsset) ? "playout.twitch-cache.failed" : "playout.asset-preparation.failed"
       });
-      const recoveryPlan = planRecoveryAfterPlaybackPreparationFailure(state.assets, failedAsset);
+      // Held as of the failed resolve, not as of the cycle's snapshot (combination review): a half-open
+      // source whose trial has just failed is a trial source in the snapshot and held in the database.
+      // From the snapshot, the generic tiers of a channel without a global fallback or a library file
+      // picked another item of that source, which failed like the trial and left the standby slate on
+      // air for the cycle where an item of another source would have played.
+      const recoveryPlan = planRecoveryAfterPlaybackPreparationFailure(
+        state.assets,
+        failedAsset,
+        sourceBreakerGate(breakersAfterFailedResolve ?? state.sourceBreakers, Date.now()).heldSourceIds
+      );
       if (recoveryPlan.asset) {
         try {
           const recovered = await resolveAssetPlaybackInput(recoveryPlan.asset);
@@ -6979,12 +7441,15 @@ async function runPlayoutCycle(): Promise<void> {
 
   if (selection.queueKind === "live") {
     if (state.overlay.enabled) {
+      const locale = resolveChannelLanguage(state.managedConfig);
       await writeOnAirOverlay(state, null, "live", {
-        currentTitle: selection.liveBridgeLabel || "Live Bridge",
-        currentCategory: "Live input",
-        currentSourceName: `Live Bridge · ${(selection.liveBridgeInputType || "rtmp").toUpperCase()}`,
-        nextTitle: getNextScheduleItem(state)?.title || "Schedule resumes after live mode",
-        nextTimeLabel: overlayNextTimeLabel(getNextScheduleItem(state))
+        ...buildLiveBridgeOverlayText({
+          locale,
+          title: selection.liveBridgeLabel,
+          inputType: selection.liveBridgeInputType,
+          nextTitle: getNextScheduleItem(state)?.title || ""
+        }),
+        nextTimeLabel: overlayNextTimeLabel(getNextScheduleItem(state), locale)
       });
     }
     await resolveIncident("playout.no-asset", "Live Bridge is on air.");
@@ -7114,7 +7579,7 @@ async function runPlayoutCycle(): Promise<void> {
     prefetchedAsset,
     prefetchStatus,
     prefetchError,
-    probeOutcomes,
+    probeOutcomes: scannedProbeOutcomes,
     scannedSourceIds,
     deferredExpensive
   } =
@@ -7136,6 +7601,10 @@ async function runPlayoutCycle(): Promise<void> {
     await resolveIncident("playout.audio-lane.failed", "Audio lane is not active.");
   }
 
+  // What the scan learned, minus the failures of the channel's own network outage (M82): both counters
+  // below take this one list, so an outage is counted neither per item nor per source. The queue itself
+  // is untouched -- an item that could not be prepared is still not in playableQueue.
+  const probeOutcomes = await dropNetworkOutageOutcomes(scannedProbeOutcomes, "queue");
   // The probe is the only place that learns an item cannot be played before it is due on air, so what it
   // learns is written to the asset -- per item, decided by planAssetProbeUpdates, which is a tested
   // function precisely because the first cut of this did it per cycle and lost the failures.
@@ -7168,10 +7637,38 @@ async function runPlayoutCycle(): Promise<void> {
   // items of that source were skipped, and would have closed it once none of them was probed at all.
   const quarantineOverrides = new Map(probePlan.updates.map((update) => [update.id, update] as const));
   const quarantinedBySource = countQuarantinedBySource(state.assets, quarantineOverrides);
+  // The source circuit breaker (M75) learns from the outcomes quarantine has just counted, each probe
+  // once, so a cached result seen by twenty cycles is still one probe; only an archive still downloading
+  // is left out (sourceBreakerOutcomesOf), the outage's failures being gone from the list already. On the
+  // DUT on 2026-09-28 all 11 YouTube items failed; quarantine needed three failures per item, the breaker
+  // needs three items.
+  // A failed breaker write must not cost the rest of the cycle (switching, the queue, the incidents
+  // below). The scan's outcomes are kept for the next cycle's write, and the sources the snapshot has
+  // under a breaker stand in for the held set: with no source held, the per-item incident of a held
+  // source re-opened for that cycle, with an onset line and its acknowledgement cleared.
+  let heldSources = new Set<string>();
+  try {
+    heldSources = await applySourceBreakerOutcomes({ state, probeOutcomes, quarantinedBySource });
+  } catch (writeError) {
+    const snapshotGate = poolSourceGate(state);
+    heldSources = new Set([...snapshotGate.heldSourceIds, ...snapshotGate.trialSourceIds]);
+    logRuntimeEvent("playout.source-breaker.write_failed", {
+      scope: "scan",
+      error: writeError instanceof Error ? writeError.message : String(writeError)
+    });
+  }
   for (const sourceId of new Set([...probePlan.probedSourceIds, ...scannedSourceIds, ...quarantinedBySource.keys()])) {
     const quarantined = quarantinedBySource.get(sourceId);
     const sourceName = state.sources.find((entry) => entry.id === sourceId)?.name || sourceId;
-    if (quarantined) {
+    // One incident per source and cause. While the breaker holds the source, its incident is the one to
+    // read and it carries the quarantine count; when the breaker closes, the count is still in the stored
+    // state and this incident comes back on the next cycle with it.
+    if (heldSources.has(sourceId)) {
+      await resolveIncident(
+        `playout.source-unplayable.${sourceId}`,
+        `The whole source is held out of programming; see playout.source-breaker.${sourceId}.`
+      );
+    } else if (quarantined) {
       await upsertIncident({
         scope: "playout",
         severity: "warning",
@@ -7196,6 +7693,14 @@ async function runPlayoutCycle(): Promise<void> {
   }
 
   if (restartRequested) {
+    // Restart, Skip, Pin, Play now and the fallback all reach the playout as this one stop; the as-run
+    // row says which it was (M76). The stop reason itself stays, the insert and watchdog logic read it.
+    asRunStopIntent = asRunRestartIntentOf({
+      runningAssetId: playoutAssetId,
+      skipAssetId: isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "",
+      nextAssetId: selection.asset?.id ?? "",
+      selectedBeforeSlateAssetId
+    });
     await stopPlayoutProcess("restart-requested");
     await updatePlayoutRuntime((playout) => ({
       ...playout,
@@ -7215,6 +7720,16 @@ async function runPlayoutCycle(): Promise<void> {
     requestImmediatePlayoutCycle("kept-input-process-exited");
     return;
   }
+
+  // The as-run row's place in the schedule (M76): the block on air, and its pool when the pool's rotation
+  // picked the item.
+  const asRunSchedule = asRunScheduleContextOf({
+    blockId: currentScheduleItem?.blockId ?? "",
+    blockPoolId: currentScheduleItem?.poolId ?? "",
+    poolSourceIds: state.pools.find((pool) => pool.id === currentScheduleItem?.poolId)?.sourceIds ?? [],
+    assetSourceId: selection.asset?.sourceId ?? "",
+    reasonCode: selection.reasonCode
+  });
 
   if (!playoutProcess || playoutProcess.killed || restartRequested) {
     try {
@@ -7241,7 +7756,8 @@ async function runPlayoutCycle(): Promise<void> {
         overlayEnabled: state.overlay.enabled,
         outputSettings: state.output,
         managedConfig: state.managedConfig,
-        runtimeTargets: playoutTargets
+        runtimeTargets: playoutTargets,
+        asRun: { ...asRunSchedule, queueKind: selection.queueKind, overrideMode: state.playout.overrideMode }
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout start error.";
@@ -7286,6 +7802,13 @@ async function runPlayoutCycle(): Promise<void> {
       return;
     }
   } else if (!targetAlreadyRunning) {
+    // A Skip whose restart flag the end write of a cycle in flight erased arrives here as a plain switch
+    // (asRunSwitchIntentOf); the as-run row still says skip. Set for the stop startOrSwitchPlayout makes
+    // next, and cleared by that process's exit like the restart intent.
+    asRunStopIntent = asRunSwitchIntentOf({
+      runningAssetId: playoutAssetId,
+      skipAssetId: isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : ""
+    });
     try {
       await startOrSwitchPlayout({
         asset: selection.asset,
@@ -7310,7 +7833,8 @@ async function runPlayoutCycle(): Promise<void> {
         overlayEnabled: state.overlay.enabled,
         outputSettings: state.output,
         managedConfig: state.managedConfig,
-        runtimeTargets: playoutTargets
+        runtimeTargets: playoutTargets,
+        asRun: { ...asRunSchedule, queueKind: selection.queueKind, overrideMode: state.playout.overrideMode }
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout switch error.";
@@ -7354,12 +7878,17 @@ async function runPlayoutCycle(): Promise<void> {
       return;
     }
   } else if (selection.queueKind === "live" && state.overlay.enabled) {
-    await writeOnAirOverlay(state, null, "live", {
-      currentTitle: selection.liveBridgeLabel || "Live Bridge",
-      currentCategory: "Live input",
-      currentSourceName: `Live Bridge · ${(selection.liveBridgeInputType || "rtmp").toUpperCase()}`,
-      nextTitle: nextQueueItem?.title || "Schedule resumes after live mode"
-    });
+    await writeOnAirOverlay(
+      state,
+      null,
+      "live",
+      buildLiveBridgeOverlayText({
+        locale: resolveChannelLanguage(state.managedConfig),
+        title: selection.liveBridgeLabel,
+        inputType: selection.liveBridgeInputType,
+        nextTitle: nextQueueItem?.title || ""
+      })
+    );
   } else if (selection.asset && state.overlay.enabled) {
     await writeOnAirOverlay(
       state,
@@ -8340,9 +8869,12 @@ async function reconcileTwitch(): Promise<void> {
   // prefix and hashtags still apply; an empty chapter title falls back to the asset title.
   const metadataAsset =
     currentAsset && currentChapter?.title ? { ...currentAsset, title: currentChapter.title } : currentAsset;
-  const desiredTitle = metadataAsset
-    ? buildTwitchMetadataTitle(metadataAsset, currentScheduleItem?.title || state.playout.currentTitle)
-    : currentScheduleItem?.title || state.playout.currentTitle;
+  const fallbackTitle = resolveTwitchFallbackTitle({
+    locale: resolveChannelLanguage(state.managedConfig),
+    scheduleTitle: currentScheduleItem?.title || "",
+    playoutTitle: state.playout.currentTitle
+  });
+  const desiredTitle = metadataAsset ? buildTwitchMetadataTitle(metadataAsset, fallbackTitle) : fallbackTitle;
   let desiredCategoryId = getTwitchDefaultCategoryId(state);
   const desiredCategoryCandidate =
     currentChapter?.categoryName || currentAsset?.categoryName || currentScheduleItem?.categoryName || "";
@@ -8932,21 +9464,55 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
   for (const effect of effects) {
     if (effect.kind === "skip-passed") {
       const now = new Date().toISOString();
+      // `as`: assigned inside the updater, which TypeScript's narrowing does not follow.
+      let decision = { kind: "stale" } as PassedSkipVoteDecision;
+      let onAirAtApply = "";
+      // What the operator skip does (lib/server/broadcast.ts) when no override holds the air: hold the
+      // asset out of selection for a while and restart playout, rather than inventing a second skip path
+      // that could drift from it. While a Pin or Fallback holds the air it does nothing (M78): the
+      // operator's Skip ends the override, a viewer vote must not. Nor while the operator's Play now /
+      // Insert is pending or on air (M79): a vote must not cut it. The IRC handler stops counting votes
+      // once the cycle has seen the override or insert; this catches a vote that passed before that,
+      // judged on the row as it is now. The same judgement (decidePassedSkipVote) drops a vote for an item that has left
+      // the air or that a Skip already holds out: applied, such a vote took the skip hold off the item an
+      // operator's Skip had just ended a pin of, and the restart flag started that item again from 0.
+      await updatePlayoutRuntime((playout, current) => {
+        onAirAtApply = playout.currentAssetId;
+        decision = decidePassedSkipVote({ ...playout, votedAssetId: effect.assetId, assets: current.assets, nowMs: Date.now() });
+        return decision.kind !== "apply"
+          ? playout
+          : {
+              ...playout,
+              status: "recovering",
+              restartRequestedAt: now,
+              heartbeatAt: now,
+              skipAssetId: effect.assetId,
+              skipUntil: new Date(Date.now() + CHAT_SKIP_HOLD_MINUTES * 60_000).toISOString(),
+              message: "Skipped by chat vote."
+            };
+      });
+      chatControl.clearSkipVote();
+      if (decision.kind === "paused") {
+        const heldBy = decision.hold;
+        logRuntimeEvent("chat.skip.paused", { assetId: effect.assetId, hold: heldBy });
+        // A pending insert has not aired yet: the voted item gives way to it, just not by the vote.
+        await appendAuditEvent(
+          "chat.skip.refused",
+          heldBy === "insert"
+            ? "Chat voted to skip the current item while the operator's Play now / Insert held the air; the vote was not applied."
+            : `Chat voted to skip the current item while the operator's ${heldBy === "fallback" ? "Fallback" : "Pin"} held the air; the item stays on air.`
+        );
+        if (chatControl.claimSkipPausedReply()) {
+          twitchChatBridge.say(formatChatSkipPausedReply(heldBy, viewerLanguage()));
+        }
+        continue;
+      }
+      if (decision.kind === "stale") {
+        logRuntimeEvent("chat.skip.stale", { assetId: effect.assetId, currentAssetId: onAirAtApply });
+        continue;
+      }
       logRuntimeEvent("chat.skip.applied", { assetId: effect.assetId });
       await appendAuditEvent("chat.skip", "Chat voted to skip the current item.");
-      // Exactly what the operator skip does (lib/server/broadcast.ts): hold the asset out of
-      // selection for a while and restart playout, rather than inventing a second skip path that
-      // could drift from it.
-      await updatePlayoutRuntime((playout) => ({
-        ...playout,
-        status: "recovering",
-        restartRequestedAt: now,
-        heartbeatAt: now,
-        skipAssetId: effect.assetId,
-        skipUntil: new Date(Date.now() + CHAT_SKIP_HOLD_MINUTES * 60_000).toISOString(),
-        message: "Skipped by chat vote."
-      }));
-      chatControl.clearSkipVote();
       continue;
     }
 
@@ -9024,6 +9590,13 @@ async function reconcileChatInteraction(): Promise<void> {
   // !skip would leave the previous item's progress on air for up to a full window.
   const skipSnapshot = chatControl.getSkipVoteRecord(config);
   if (skipSnapshot && currentAssetId && skipSnapshot.assetId !== currentAssetId) {
+    chatControl.clearSkipVote();
+  }
+
+  // While the operator's Pin or Fallback (M78) or Play now / Insert (M79) holds the air no skip vote starts
+  // or counts. A campaign collected before it ends here: its bar on air could no longer pass.
+  latestOperatorHold = resolveOperatorHold({ ...state.playout, assets: state.assets, nowMs: Date.now() });
+  if (latestOperatorHold !== "") {
     chatControl.clearSkipVote();
   }
 
@@ -9306,6 +9879,11 @@ async function waitForNextLoop(mode: RuntimeMode, delay: number): Promise<void> 
 async function runLoop(mode: RuntimeMode): Promise<void> {
   const run = mode === "worker" ? runWorkerCycle : mode === "uplink" ? runUplinkCycle : runPlayoutCycle;
   const delay = mode === "worker" ? 30_000 : 15_000;
+  // A playout that comes up has nothing on air: a row the previous process left open (a redeploy kills
+  // ffmpeg with no exit handler running) is closed as process-gone at this boot (M76). Queued, not awaited.
+  if (mode === "playout") {
+    asRunLog.boot(new Date().toISOString());
+  }
 
   for (;;) {
     const result = await runWithStallGuard(run, LOOP_STALL_TIMEOUT_MS);

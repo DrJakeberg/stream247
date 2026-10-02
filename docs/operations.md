@@ -3,10 +3,12 @@
 ## Primary Surfaces
 
 - `/live?tab=control` for current broadcast state and operator actions
-- `/live?tab=status` for incidents, drift checks, destination health, and audit visibility
+- `/live?tab=status` for incidents, drift checks, destination health, audit visibility, and the as-run
+  log of the last 24 hours (*On air, last 24 hours*)
 - `/live?tab=moderation` for moderation presence and check-in history
 - `/api/health` for basic service health
 - `/api/system/readiness` for broadcast readiness and drift-relevant status
+- `/api/as-run` for what was on air in any window of the last 90 days (since M76)
 
 ## Watch First
 
@@ -29,7 +31,8 @@
 - switch to fallback
 - pin asset on air
 - skip current asset (the pool carries on after the skipped item; in a pool with several sources the
-  next source's next item plays, as it would have at the item's end)
+  next source's next item plays, as it would have at the item's end; skipping a pinned item ends the
+  pin, and the pool carries on from its own position, which a pin does not move)
 - play an item now, or as an insert, without taking the channel off air
 - resume schedule control
 - acknowledge and resolve incidents
@@ -52,19 +55,27 @@ the pool's next item. Under the relay no operator action shows that slate.
   (its end, its duration bound, a feed watchdog) the pool continues with its next item. The interrupted
   item is not resumed at its position — it was the pool's last started item, so the pool goes on after
   it (resuming is M77, deferred). Play now does not move a pool's position either, so a pool item played
-  by hand can still come round as the pool's next item. Both take a queued Move next out.
+  by hand can still come round as the pool's next item. Both take a queued Move next out. Chat cannot
+  skip it: skip votes are paused while it is pending or on air (*Chat skip votes* below, since M79).
 - Play now and Play insert are refused for the item already on air (with the relay, Restart plays it
-  again from its beginning), while a Pin or Fallback holds the air (it comes before an insert; Resume
-  first), for an item held out by a Skip or Remove next (Resume clears the hold), and for a Twitch
+  again from its beginning), while a Live Bridge is pending or on air (the takeover ends an insert;
+  release it first, also when a Pin is still running under it), while a Pin or Fallback holds the air
+  (it comes before an insert; Resume first), for an item held out by a Skip or Remove next (Resume clears the hold), and for a Twitch
   archive that is not downloaded yet while *While a replay is still downloading, play it from Twitch*
   (Settings → Operations → Replay cache) is off: the playout never waits for a download, so it could
   not start it. An archive too large to cache streams from Twitch and is accepted.
 - An insert that is cleared before it aired is logged as the runtime event `playout.insert.dropped`
   and an audit row of the same name, with a `reason`: `preempted` (a Pin or Fallback is running),
-  `unavailable` (the item is no longer ready or is skip-held), `prepare-failed` (it could not be
+  `live-bridge` (a Live Bridge took the air), `unavailable` (the item is no longer ready or is
+  skip-held), `prepare-failed` (it could not be
   resolved; the item on air stays on air, the error is in the entry), `start-failed`,
   `destination-missing`. The admin adds an audit row (no runtime event) when the operator drops a
   pending insert: `replaced` by a newer Play now, `cancelled` by Resume schedule.
+- An insert that is on air and cannot be prepared again (a Soft restart of it, or a redeploy of the
+  playout container, while its source does not resolve) is covered by the fallback like any failed item,
+  and the cycle after that ends it: runtime event and audit row `playout.insert.ended` with `reason:
+  prepare-failed` and the error, then the schedule continues. Before, the insert stayed selected and was
+  resolved again on every cycle, with the fallback on air until Resume schedule.
 - **Move next** queues an item for the end of the item on air and plays it to its end, also when it is
   not from the running pool's sources. A Skip starts it at once (without the relay after the slate).
   With the relay a Restart restarts the item on air and leaves Move next queued; without the relay the
@@ -76,16 +87,49 @@ the pool's next item. Under the relay no operator action shows that slate.
   the override minutes (fallback: an hour): with the relay the next cycle switches to it, and pinning
   the item on air keeps it running; without the relay the slate comes first. When the pin ends — its
   minutes run out, or Resume with the relay — a pinned item from the running pool's sources plays on to
-  its end as the pool's item, and any other item gives way to the pool's next item.
+  its end as the pool's item, and any other item gives way to the pool's next item. Skip current ends
+  the pin (below). Pinning an item that a Skip holds out lifts that hold; the pin would not take the air
+  otherwise.
 - **Resume schedule** clears a Pin or Fallback, a pending or running Play now / insert, a queued Move
   next and a skip hold, and is enabled while a Pin, a Fallback or an insert is in effect. With the relay
   the next cycle hands back to the pool: a running insert gives way to the pool's next item (if that is
   the insert's item itself, it plays on and counts as the pool's item), a pinned pool item plays on.
   Without the relay the slate comes first, then the pool's next item.
 - **Skip current** holds the item on air out for the override minutes and moves on to the pool's next
-  item (or a queued Move next): with the relay at once, without it after the slate. Skip does not end a
-  running Pin or Fallback: the pinned item starts again from its beginning (also after a passed chat
-  skip vote), so Resume first.
+  item (or a queued Move next): with the relay at once, without it after the slate. When a Pin or
+  Fallback holds that item on air, Skip also ends the override (since M78; before, the pinned item
+  started again from its beginning and only Resume took it off air). The schedule then continues as
+  after any Skip: the pool goes on from its position, which a pin does not move, so after a pin of the
+  pool's running item that is the item after it, otherwise the pool's next item. The audit row
+  `playout.skip.current` says "the Pin was ended by Skip" (or the Fallback). A Pin set but not yet on
+  air is left alone: Skip skips the item before it, and the pin then takes the air.
+- **Live Bridge** takes the air at the next cycle once it is requested, ahead of every other control.
+  The takeover ends an operator insert (since M78): one on air is cut and not resumed after the
+  release (runtime event `playout.insert.ended`, `reason: live-bridge`), a pending one is dropped
+  (`playout.insert.dropped`, `live-bridge`, with its audit row). Before, the insert on air started
+  again from its beginning after the release, and a pending Play now aired whenever the bridge was
+  released. On release the schedule continues with the pool's next item; a Pin, Fallback or Move next
+  still in effect applies as usual. The planned reconnect of direct mode still restarts a running
+  insert from its beginning (unchanged; see Soft restart below).
+- **Chat skip votes** (`!skip`, Studio → Engagement, *Viewer control*) apply the same Skip, without
+  the override part: while a Pin or Fallback holds the air (since M78), or the operator's Play now /
+  Insert is pending or on air (since M79), no skip vote starts or counts, a vote that passed just before
+  the worker saw the override or insert is not applied (runtime event `chat.skip.paused` with `hold`
+  `asset`, `fallback` or `insert`; audit row `chat.skip.refused`), and the bot answers in chat at most
+  once a minute (one cooldown for all three), in the channel language (since M80), for example "The
+  operator has pinned this item — skip votes are paused until the pin ends." or "The operator is
+  playing an insert — skip votes are paused until it ends." Votes count again once the override or insert ends; an insert still ends as before
+  (its end, the operator's Skip, Resume schedule, a Live Bridge). An insert that is no longer what is
+  on air does not pause votes: while the fallback covers an insert that could not be prepared again,
+  `!skip` counts. A pool's automatic insert and a cue
+  point insert are the schedule's, not the operator's: chat can skip them as any other item. The worker
+  sees a new Pin or insert, and its end, at its next cycle (up to about 30 s): votes in that window count
+  or stay paused, and a vote that passes is judged on the row when it is applied. A passed vote is also
+  not applied when its item has left the air by the time the worker applies it (up to one worker cycle
+  later), or when a Skip already holds that item out (runtime
+  event `chat.skip.stale`; nothing is written, so an operator's Skip in between stands). Under a Live
+  Bridge nothing is on air to skip: votes do nothing and the bot stays silent, also with a Pin still
+  running underneath. The next-item poll (`!1`, `!2`, ...) and viewer requests are not paused.
 - **Soft restart** and **Hard reload** restart the encoder. With the relay the item on air (or the
   running pin or insert) starts again from its beginning — there is no resume. Without the relay the
   slate shows and the playout then chooses as described above: the running Pin or insert from its
@@ -99,7 +143,136 @@ the pool's next item. Under the relay no operator action shows that slate.
   the outputs back on its next cycle by restarting the uplink process of each output's rendition, so the
   outputs that share that rendition (Twitch, for one) reconnect once.
 
+## What Viewers Read: The Channel Language (since M80)
+
+One setting, the channel language (`Admin → Settings → Channel language`, the setup wizard's instance
+step, or `CHANNEL_LANGUAGE` in the environment, which beats the saved value), decides the language of
+everything the product itself says to viewers. `en` is the default, `de` is German; any other value
+counts as English.
+
+When a change arrives:
+
+- Saved in Settings or the wizard, it needs no restart. The chat bot, the Twitch title and the public
+  page pick it up with their next refresh, and the picture with the next playout cycle while a
+  programme or a Live Bridge is on air.
+- While the standby or reconnect slate is on air with the scene picture, the picture and its poll, skip
+  and game panels keep the previous language until the next programme or Live Bridge starts. A time
+  zone change behaves the same way: the playout redraws the slate from the picture it built when the
+  last programme started. The slate's plain-text lines (overlay off, or text mode) change at once.
+- `CHANNEL_LANGUAGE` is an environment value and is read when a container starts. Changing it means
+  recreating the containers (`docker compose up -d`, or a redeploy in Portainer), like any other
+  environment change.
+
+What follows the language:
+
+- the on-air picture: the chip on the lower third (`Now Playing` / `Läuft gerade`), the next card
+  (`Next` / `Als Nächstes`, its time range, `Nothing scheduled` / `Noch nichts geplant`), the countdown,
+  the next-item poll and the skip bar, and the chat game panels
+- text mode and the standby slate (the `Now:` / `Jetzt:` and `Next:` / `Als Nächstes:` lines ffmpeg draws
+  when no scene picture is on air)
+- the standby, reconnect and Live Bridge texts the worker writes when nothing titled is on air
+- every chat bot reply (`!here`, `!game`, the skip-paused lines)
+- the Twitch title when no asset is on air
+- the public page `/channel`, including the name of the time zone (`Central European Time` /
+  `Mitteleuropäische Zeit` instead of `Europe/Berlin`)
+
+What does not:
+
+- **Your own content is never translated**: asset and block titles, categories, scene text layers, the
+  ticker, source names, and any headline you wrote in the studio. One exception follows from the
+  built-in rule below: a title, category or source name that is exactly one of the product's own
+  English texts is shown in the channel language.
+- **Command words** stay as they are in every language: `!here`, `!skip`, `!request`, `!game`, the
+  game ids, `stop`, `!1`, `!2`.
+- **The admin interface stays English**, including the texts it shares with the air: the as-run log
+  and the playout state keep `Replay standby`, `Scheduled reconnect`, `Live Bridge` and `Live input`,
+  and the sources list keeps `Local Media Library`; viewers get the channel language's words for them
+  on the picture, in the Twitch title and on the public page.
+
+The studio's built-in headlines (`Stream247`, `Replay stream`, `Always on air`, `Insert on air`,
+`Scheduled reconnect in progress`, `Please wait, restream is starting`) are stored in the database in
+English and are not migrated. A stored value that still equals its built-in English default counts as
+not customised and is shown in the channel language; anything else is shown exactly as written. So a
+German channel that never touched the headlines gets German headlines, and to keep one of the English
+defaults on a German channel, change it by a character.
+
+The same rule covers the names the product writes in English for the admin — `Replay standby`,
+`Stand by`, `Scheduled reconnect`, `Live Bridge`, `Live input` and `Local Media Library` (the local
+library's source name, which every scan writes again, so it cannot be renamed) — wherever they reach
+viewers: as a title, a category or the source label on the picture, in the Twitch title and on the
+public page. The rule compares the text, not who wrote it, because the playout and queue state do not
+record that. So an asset, a block, a category or a source that you named exactly like one of the texts
+in this section is shown in the channel language as well (`Stand by` as an asset title reads `Gleich
+geht’s weiter` on a German channel; in English, `Replay standby` reads `Stand by`). Change it by a
+character to have it shown as written.
+
+The standby state has one name per language: `Stand by` / `Gleich geht’s weiter` (chip, title, Twitch
+title, public page), with the headline `Stand by, we’ll be right back` / `Kurze Pause – gleich geht’s
+weiter`. The public page no longer prints the playout's status message, which is written for the
+operator (`Crash-loop protection is active.`); it shows `Playing now.`, `The stream is starting, back
+in a moment.` or `The channel is off air right now.` instead. The status message is unchanged on the
+admin pages.
+
+One text is written once and then kept: an ingested item without a title is stored as
+`<source> item` / `Video aus <source>` in the language set at that sync, and a later language change
+does not rename it.
+
 ## Symptoms And Immediate Actions
+
+### What was on air at a given time?
+
+Since M76 every playout process run writes one row to the as-run log (table `as_run_log`): start and
+end in UTC, what aired (title as aired, asset, source, the block on the schedule, and its pool when the
+pool's rotation picked the item), why it was picked (`reasonCode`: `scheduled_match`, `global_fallback`,
+`operator_insert`, ...), how it was fed (input kind: local file, remote stream, video+audio pair, live
+input, generated slate; YouTube's `formatId` and `formatCandidate`), planned seconds (the item's known
+duration) against aired seconds, and why it ended (`natural-end`, `duration-bound`, `switch`, `skip`,
+`operator-restart`, `feed-watchdog`, `scheduled-reconnect`, `crash-loop-reset`, `destination-missing`,
+`stopped`, `failed` with the exit code, `process-gone`). Rows are kept 90 days and survive redeploys,
+which the container logs do not. Start every incident analysis here instead of in `docker logs`.
+
+- Console: `/live?tab=status`, panel *On air, last 24 hours*, newest first; times in UTC with the
+  channel's time zone beside them (the schedule's clock, so "19:38" on the schedule is that column).
+- API (owner, admin, operator, moderator, viewer): `GET /api/as-run?from=<ISO>&to=<ISO>&limit=<n>`,
+  default the last 24 hours and 200 rows, at most 1000; `truncated: true` means narrow the window.
+  `from` and `to` set to the same moment answer the question directly:
+  `/api/as-run?from=2026-10-01T19:38:00%2B02:00&to=2026-10-01T19:38:00%2B02:00`.
+- SQL on the host (read-only; timestamps are ISO text in UTC and compare as text):
+
+  ```bash
+  docker compose exec -T postgres psql -U stream247 -d stream247 -c "
+    SELECT started_at, ended_at, target_kind, title, source_id, pool_id, reason_code, input_kind,
+           format_id, planned_seconds, aired_seconds, end_reason, exit_code
+    FROM as_run_log
+    WHERE started_at <= '2026-10-01T17:38:00.000Z'
+      AND (ended_at = '' OR ended_at >= '2026-10-01T17:38:00.000Z')
+    ORDER BY started_at DESC;"
+  ```
+
+Reading the rows:
+
+- `ended_at = ''` is the run on air now. There is never more than one: a row a crash or a redeploy left
+  open is closed as `process-gone` when the playout comes back up (or at the next start), so its end is
+  the boot time and its aired seconds are an upper bound.
+- `target_kind = 'fallback'` where a programme was expected is the fallback bridge, a fallback tier or
+  the operator's Fallback; `reason_code` says which (`generic_fallback` or `global_fallback` for the
+  bridge and the tiers, `operator_override` for the Fallback button; a Pin is `operator_override` with
+  `target_kind = 'asset'`). A run of short `failed` rows with the same `exit_code` is a crash loop; the
+  matching `playout.process.exit` log line, while it still exists, has the stderr. A spawn that failed
+  (no ffmpeg binary, `EAGAIN` under process pressure) is a `failed` row with the error code
+  (`ENOENT`, `EAGAIN`) as `exit_code` and no aired time.
+- `pool_id` is set only when the pool's rotation picked the item (`reason_code = 'scheduled_match'`). A
+  fallback, an insert, a Pin or a Move next inside the block carries the block but no pool, even when
+  the item comes from one of the pool's sources.
+- `aired_seconds` of an ended row matches `ranForMs` of its `playout.process.exit` line to the second.
+- A row's `end_reason = 'switch'` after a Pin, Play now or fallback, `skip` after a Skip or a chat skip
+  vote, `operator-restart` after Restart or hard reload (and, without the relay, Recover outputs and
+  Force reconnect): the web asks the playout for all of them with one restart request, and the row
+  tells them apart. Without the relay the reconnect slate comes first: the item's row ends as above,
+  then a short `reconnect` row ends as `switch` when the next item starts. A Skip written while a
+  playout cycle is still running can lose its restart request to that cycle's last write; the next cycle
+  then moves off the skipped item as a plain switch (`plannedReason: switch` on its exit line), and the
+  row ends `skip` all the same.
 
 ### Playout degraded
 
@@ -114,6 +287,8 @@ the pool's next item. Under the relay no operator action shows that slate.
 - when relay/HLS is enabled, a fresh `programFeed.updatedAt` now counts as active playout liveness for `running`, `recovering`, and `switching`; do not treat a quiet FFmpeg stderr stream by itself as an outage while `programFeed=fresh` and `uplinkStatus=running`
 - if the playout container accumulates zombie FFmpeg or yt-dlp processes, recreate it: the image runs Node under `tini`, which reaps them, so an accumulation means the container is not running the shipped entrypoint
 - if the soak monitor reports `container-restart-check-failed`, inspect `docker compose ps`, `docker inspect --format '{{.RestartCount}}'`, and recent logs for `web`, `worker`, and `playout` before restarting the soak
+- for what aired around the failure, read the as-run log first (*What was on air at a given time?*
+  above): it survives the container restart that the logs do not
 
 ### Replay cache: what the log says since M62
 
@@ -200,6 +375,9 @@ the pool's next item. Under the relay no operator action shows that slate.
 Since 2.1 a YouTube item is resolved through ordered format candidates and may play as a video+audio
 pair. To see what happened to one item:
 
+- Start in the as-run log (*What was on air at a given time?*): each run of the item is a row with
+  `input_kind` (`pair` or `remote`), `format_id`, `format_candidate`, how long it aired and its exit code,
+  even after a redeploy. The log lines below carry the detail while they still exist.
 - `playout.process.start` names `formatId` (e.g. `299+140`), `formatCandidate` and, for a pair, the
   `audioInput`; `playout.input.format_fallback` lists the candidates yt-dlp reported as unavailable;
   `playout.input.reresolve` with a `formatCandidate` means that candidate resolved but could not be
@@ -211,7 +389,141 @@ pair. To see what happened to one item:
 - If YouTube changes again, `STREAM247_YOUTUBE_PLAYBACK_FORMATS` (yt-dlp selectors separated by `|`)
   replaces the candidate list without a release.
 - An item that keeps failing leaves automatic selection after three failed prefetch probes and raises
-  `playout.source-unplayable.<sourceId>`; its asset page can clear the failures once it is fixed.
+  `playout.source-unplayable.<sourceId>`; its asset page can clear the failures once it is fixed. A
+  probe that failed because the channel's own network was down is not one of the three (see *The
+  channel's own network was down* below).
+- When probes fail on three different items of one source, the whole source is held out instead; see
+  *A source is held out of programming* below.
+
+### A source is held out of programming (source breaker)
+
+Incident `playout.source-breaker.<sourceId>`, *<source> is held out of programming*. The probes of the
+playout's queue (and the resolve of the item it starts) failed on three different items of that source
+with no clean probe of it in between. A Twitch archive whose download is still queued or running does
+not count: with remote fallback off it is refused until its file is there, and that says nothing about
+the source. Neither does a probe that failed because the channel's own network was down (M82, *The
+channel's own network was down* below). Why the breaker exists: the YouTube SABR change of 2026-09-28
+left 0 of 11 items resolvable, and per-item quarantine needed three failures per item, about 33 failed
+boundaries, before the source was out of play. What it does:
+
+- Every pool passes the source over: a pool with several sources alternates between the others, a pool
+  with only this source plays the fallback, as when nothing is playable. The generic fallback (any
+  ready asset, and the bridge after a failed preparation) passes the source's items over too; a global
+  fallback asset is the operator's own pick and plays even if it belongs to the held source. An item
+  already on air plays to its end. The schedule preview, the week lens and the overlay's next title show
+  the pool without it; a week block whose pool has only held sources says so in its notes and is not
+  listed under *Needs attention*.
+- After the cooldown (30 minutes, doubled after every failed retry, at most 6 h) the source is
+  half-open: the next pool pick from it is one trial item, and only that one is probed. A clean probe
+  closes the breaker and the incident and resets the cooldown; a failed one holds the source again for
+  twice as long. Nothing else counts while the cooldown runs.
+- Per-item quarantine and *include in programming* are untouched. While the breaker holds a source,
+  its `playout.source-unplayable.<sourceId>` incident is resolved and its quarantine count is in the
+  breaker incident's message instead, so one broken source is one entry; it comes back once the
+  breaker closes if items are still quarantined.
+- When no pool could pick an item of the source anyway (every item quarantined, excluded or cooling
+  down, or the source in no pool), the playout closes the breaker by itself: there is nothing to hold,
+  and no trial could ever start. Its incident is resolved (*No pool could pick an item of this source
+  anyway ...*), and the source's quarantine incident comes back with the action that helps: clear the
+  quarantined items once the source is fixed. Deleting the source resolves its breaker incident too.
+- The source page (*Held out of programming*) and the sources list show since when, the next probe
+  and the last error. The asset page of an item of the source says so too.
+
+What to do:
+
+1. Read the last error on the source page. For YouTube, ask yt-dlp in the playout container
+   (*A YouTube item leaves the air after a few seconds* above); for Twitch, check the archive and the
+   VOD cache incidents.
+2. Fix the cause (a newer image with a newer yt-dlp, `STREAM247_YOUTUBE_PLAYBACK_FORMATS`, a changed
+   URL), then press **Close breaker now** on the source page (owner or admin; audit row
+   `source.breaker.closed`). The pools take the source back at the next cycle; if it is still broken,
+   the next three different failed items hold it again.
+3. Or leave it: the breaker retries by itself and closes on the first clean probe.
+
+An outage of the channel's own network does not hold a source (M82, next section): its failed probes
+are not counted, and a trial that fails for that reason leaves a half-open breaker as it was, cooldown
+not doubled, trial still available. What can still hold a healthy source is a network-looking failure
+the playout could not attribute to the channel: the remote host down while the channel's output
+connects, or a channel with no public output to ask. If the last error on the source page is a
+name-resolution or connection error and the source answers again, press **Close breaker now**;
+otherwise the hold costs one cooldown and closes by itself on the first clean probe. Log events:
+`playout.source-breaker.opened`, `.reopened`, `.closed` (`sourceId`, `failedAssetIds`,
+`cooldownSeconds`, `error`; a close because nothing was left to hold adds `reason: "no-pool-candidate"`).
+
+### The channel's own network was down (probe outage)
+
+Log event `playout.probe.network_outage`; no incident. While the host has no way out, every remote
+probe fails (yt-dlp for YouTube and for a Twitch archive played from Twitch). Until M82 each of those
+failures counted against the item and its source: a failed probe is retried after a minute, so an
+outage of three minutes quarantined a healthy item for good, and three different items held their
+source for 30 minutes. Now such a failure is counted by neither, when both of these hold:
+
+- The error is a network one: name resolution, connecting, a timeout (including the playout's own
+  `Command timed out after ...ms`), a TLS handshake that ended in nothing, or yt-dlp's
+  `<urlopen error ...>` / `TransportError`. The image is Alpine, so the container words the first two
+  the musl way: `[Errno -3] Try again` and `Name does not resolve` for a name that could not be
+  resolved, `Network unreachable` and `Host is unreachable` for a host that could not be reached (yt-dlp
+  2026.08.19 without a network: `Unable to download API page: [Errno -3] Try again (caused by
+  TransportError(...))`). The glibc texts are recognised as well (`Temporary failure in name
+  resolution`, `Name or service not known`, `Network is unreachable`, `No route to host`), and so are
+  `getaddrinfo`, `Connection refused` and `Connection reset`. A bare `try again` is not: that is
+  YouTube's rate limit answering. Anything the remote said is not: `Requested format is not available`,
+  `Video unavailable`, private, removed, members-only, every HTTP status (403, 404, 410, 429 and 5xx
+  alike), `Unsupported URL`, `Invalid data found`.
+- The output the channel publishes to cannot be reached at that moment. The playout resolves the host
+  of each enabled output (at most two, e.g. `live.twitch.tv:1935`) and opens one TCP connection to it,
+  closed at once, 2.5 seconds at most. Only when none of them connects or answers is it an outage. It
+  asks only when a network-looking failure is about to be counted, at most once per ten seconds, so a
+  healthy channel never opens that connection. Outputs on the channel's own side (the relay, `localhost`,
+  a private address, a name without a dot) are never asked: they prove nothing about the way out.
+  "At that moment" is the moment the failure is counted, which is later than the moment its request
+  failed: a resolve whose packets just vanish ends by the playout's own timeout, 60 seconds after it
+  started (`STREAM247_PLAYABLE_INPUT_RESOLVE_TIMEOUT_SECONDS`). So an outage the check saw stands for
+  that long after the output connects again, and the `corroboration` then names both
+  (`live.twitch.tv:1935 connected, 45 s after live.twitch.tv:1935 unreachable (connect ETIMEDOUT)`).
+
+What it changes and what it does not:
+
+- `playback_probe_failures` of the item and the breaker of its source keep their values. The failure
+  is not a success either: it resets nothing and closes no breaker.
+- On air nothing changes. An item that could not be prepared is still not played, the fallback still
+  covers, and `playout.prefetch.failed` still opens for the duration.
+- A network-looking failure while an output connects counts as before: YouTube unreachable while
+  Twitch takes the stream is a fault of the YouTube source. So does everything when the channel has no
+  public output to ask.
+- The output host stands for the way out. If that host alone is down (the ingest unreachable while
+  the rest of the internet works), network-looking failures of every source go uncounted for as long
+  as it lasts; a channel with two outputs on different hosts needs both unreachable.
+- Not covered: a Twitch archive refused because its download failed during the outage. The refusal
+  says *not cached yet*, whatever made the download fail, and counts as before (such an archive is
+  normally passed over for the cache failure cooldown anyway).
+- Not covered: a blip shorter than one resolve, with packets vanishing rather than refused. The one
+  resolve it catches ends by its timeout when the output connects again, and nothing asked while the
+  way out was down, so that one failure is counted: `playback_probe_failures` 1 with a `Command timed
+  out` error on one item, no `playout.probe.network_outage` line for it. One failure reaches neither
+  threshold (an item already at two is quarantined by it), and the next clean probe, a minute or two
+  later, resets it. In the minute after an outage the reverse holds: a network-looking failure of a
+  remote host that really is down goes uncounted until the grace has run out.
+
+Reading the log, in the playout container:
+
+```
+docker compose logs --since 24h playout | grep '"playout.probe.network_outage"'
+```
+
+Each line has `assetId`, `sourceId`, `path` (`queue` for a prefetch probe, `selection` for the resolve
+of the item about to start), `reason` (`dns`, `connect`, `timeout`, `tls`, `transport`),
+`corroboration` (what the output said, e.g. `live.twitch.tv:1935 unreachable (connect ETIMEDOUT)`),
+the first 300 characters of the `error`, and `unloggedSinceLastLine`: one line per item per five
+minutes, the rest counted there. On the DUT expect `reason` `dns` or `connect` when the failure was
+quick and `timeout` when packets vanished. After a nightly blip expect a few such lines, no
+`playout.source-breaker.opened` in the same minutes, and unchanged `playback_probe_failures` on the
+items named.
+
+`playout.probe.network_outage.check_failed` (`error`, `unloggedSinceLastLine`; one line per five
+minutes) means the check itself broke, not that the output was unreachable: there was no evidence
+either way, so every failure was counted, as before M82. If an outage quarantined an item or held a
+source although M82 is deployed, look for this line first.
 
 ### Is the broadcast channel live?
 
@@ -276,7 +588,10 @@ number is logged instead of read off `docker logs` by hand:
   newest segment the outgoing encoder wrote, and `audioLeadSeconds`. This is the writer's view of the
   same seam; if it is near zero while the uplink reports a large skew, the seam is the reader's doing.
 
-To judge whether the 60 s threshold is doing its job:
+The boundaries themselves (when, which item handed over to which, natural end or duration bound) are
+in the as-run log (*What was on air at a given time?*), so a storm in the uplink log can be put against
+the seam that caused it after the playout logs are gone. To judge whether the 60 s threshold is doing
+its job:
 
 ```bash
 docker logs stream247-uplink-1 2>&1 | grep -E "uplink.seam.skew|discontinuity-storm" | tail -20

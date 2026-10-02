@@ -1,5 +1,10 @@
 import {
   DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
+  resolveAsRunWindow,
+  type AsRunRecord,
+  describeSourceBreaker,
+  sourceBreakerGate,
+  type PoolRotationSourceGate,
   DEFAULT_ENGAGEMENT_SETTINGS,
   buildEngagementGameOverlayState,
   buildOverlayScenePayload,
@@ -40,13 +45,19 @@ import {
   overlayNextTimeLabel,
   overlayOnAirChapterTitle,
   isAssetProbeQuarantined,
-  type OverlaySceneRenderTarget
+  buildLiveBridgeOverlayText,
+  formatViewerTimeZoneName,
+  viewerText,
+  type OverlaySceneRenderTarget,
+  type ViewerLocale
 } from "@stream247/core";
 import {
   appendAuditEvent,
   appendEngagementEventRecord,
   appendPresenceWindowRecord,
   applyOverlayScenePresetRecordToDraft,
+  closeSourceBreakerRecord,
+  listAsRunRecords,
   createPoolRecord,
   createScheduleBlocks,
   createScheduleBlocksChecked,
@@ -80,6 +91,7 @@ import {
   readAppState,
   replaceAllScheduleBlocks,
   replaceTwitchScheduleSegments,
+  resolveChannelLanguage,
   resolveChannelTimeZone,
   resolveIncident,
   replaceAssetsForSourceIds,
@@ -193,6 +205,8 @@ export {
   appendEngagementEventRecord,
   appendPresenceWindowRecord,
   applyOverlayScenePresetRecordToDraft,
+  closeSourceBreakerRecord,
+  listAsRunRecords,
   createPoolRecord,
   createScheduleBlocks,
   createScheduleBlocksChecked,
@@ -251,9 +265,36 @@ export {
   writeAppState
 };
 
+/**
+ * The as-run log of the last 24 hours for the Live status tab (M76), newest first. `records` is null when
+ * the read failed: the status tab is where an operator goes when something is wrong, and it must render
+ * without its history rather than not at all.
+ */
+export async function readRecentAsRunLog(): Promise<{ records: AsRunRecord[] | null; limit: number; nowMs: number }> {
+  const nowMs = Date.now();
+  const resolved = resolveAsRunWindow({ nowMs });
+  if (!resolved.ok) {
+    return { records: null, limit: 0, nowMs };
+  }
+  try {
+    return { records: await listAsRunRecords(resolved.window), limit: resolved.window.limit, nowMs };
+  } catch {
+    return { records: null, limit: resolved.window.limit, nowMs };
+  }
+}
+
 export function getWorkspaceTimeZone(state: Pick<AppState, "managedConfig">): string {
   // Env first, then the wizard-written managed value, then UTC — the resolver owns the order.
   return resolveChannelTimeZone(state.managedConfig);
+}
+
+/**
+ * The language viewers are addressed in (M80): the studio preview and the public page write in it.
+ * Env first, then the managed value, then English — the same resolver the worker reads, so the
+ * preview and the broadcast cannot disagree about the language.
+ */
+export function getViewerLocale(state: Pick<AppState, "managedConfig">): ViewerLocale {
+  return resolveChannelLanguage(state.managedConfig);
 }
 
 /**
@@ -275,14 +316,25 @@ export function getSchedulePreview(state: AppState, dayOfWeek?: number) {
     date: dayOfWeek === undefined ? scheduleMoment.date : shiftDateToDayOfWeek(scheduleMoment.date, dayOfWeek),
     blocks: state.scheduleBlocks,
     pools: state.pools,
-    assets: state.assets
+    assets: state.assets,
+    sourceGate: getPoolSourceGate(state)
   });
 }
 
 
+/**
+ * What the source circuit breaker (M75) lets the pools take right now, for every preview that walks a
+ * pool: the worker holds an open source out of its rotation, so a preview that still showed its items
+ * would promise what will not air.
+ */
+export function getPoolSourceGate(state: AppState, nowMs = Date.now()): PoolRotationSourceGate {
+  return sourceBreakerGate(state.sourceBreakers, nowMs);
+}
+
 export function getMaterializedProgrammingWeekPreview(state: AppState) {
+  const now = new Date();
   const scheduleMoment = getCurrentScheduleMoment({
-    now: new Date(),
+    now,
     timeZone: getWorkspaceTimeZone(state)
   });
 
@@ -290,7 +342,8 @@ export function getMaterializedProgrammingWeekPreview(state: AppState) {
     startDate: scheduleMoment.date,
     blocks: state.scheduleBlocks,
     pools: state.pools,
-    assets: state.assets
+    assets: state.assets,
+    sourceGate: getPoolSourceGate(state, now.getTime())
   });
 }
 
@@ -500,6 +553,14 @@ export function getSourceHealthSnapshot(state: AppState, sourceId: string) {
     latestRun: runs[0] ?? null,
     references,
     /**
+     * The source circuit breaker (M75): since when the pools hold this source out, when they try one item
+     * again, and what the last failing probe said. Null while closed, which shows nothing extra.
+     */
+    breaker: describeSourceBreaker(
+      (state.sourceBreakers ?? []).find((record) => record.sourceId === sourceId),
+      nowMs
+    ),
+    /**
      * The sentences the sources page had no way to say on 2026-08-27: when this was last checked,
      * what it found, how long it has been finding nothing, and which scheduled blocks that reaches.
      */
@@ -624,6 +685,15 @@ export function getAssetPlaybackDiagnostics(state: AppState, assetId: string) {
 
   if (sourceSnapshot.openIncidentCount > 0) {
     details.push(`${sourceSnapshot.openIncidentCount} open source incident(s) may still affect playback quality.`);
+  }
+
+  // Like quarantine below: the item reads as ready and included, and the pools still pass it over.
+  if (sourceSnapshot.breaker) {
+    details.push(
+      sourceSnapshot.breaker.phase === "open"
+        ? `Its source is held out of the pools after failed probes on ${sourceSnapshot.breaker.failedItemCount} items; one item is tried again after ${sourceSnapshot.breaker.retryAt}.`
+        : "Its source is held out of the pools after failed probes; the next item picked from it is a trial probe."
+    );
   }
 
   // A quarantined item reads as ready everywhere else, so this is where it has to be said plainly:
@@ -757,7 +827,8 @@ function getScheduleOccurrenceLookaheadTitle(
     block: item,
     pool,
     assets: state.assets,
-    maxSlots: 1
+    maxSlots: 1,
+    sourceGate: getPoolSourceGate(state)
   });
 
   return slot?.title || "";
@@ -1102,10 +1173,19 @@ export function buildActiveScenePayload(
     .map((item) => item.title)
     .filter(Boolean);
   const queueHead = state.playout.queueItems[0] ?? null;
+  const locale = getViewerLocale(state);
+  // The preview's own stand-ins speak the channel language like the broadcast's do; an English
+  // built-in that reaches the payload from state is translated there (localizeViewerBuiltInText).
+  const liveBridge = buildLiveBridgeOverlayText({
+    locale,
+    title: queueHead?.title || state.playout.liveBridgeLabel || state.playout.currentTitle,
+    inputType: state.playout.liveBridgeInputType,
+    nextTitle: ""
+  });
   const currentSourceName =
     currentScheduleItem?.sourceName ||
     (currentAsset ? state.sources.find((source) => source.id === currentAsset.sourceId)?.name : "") ||
-    "Source to be announced";
+    viewerText(locale, "overlay.meta.sourceUnknown");
 
   // The chapter that is actually playing, exactly as the channel resolves it: a long recording with
   // chapters is named by its chapter on air, and this preview had no idea chapters existed.
@@ -1136,22 +1216,34 @@ export function buildActiveScenePayload(
           state.playout.currentTitle ||
           currentScheduleItem?.title ||
           overlay.channelName ||
-          "Stream247"
+          viewerText(locale, "overlay.brand.channelName")
         : queueKind === "live"
-          ? queueHead?.title || state.playout.liveBridgeLabel || state.playout.currentTitle || "Live Bridge"
-        : onAirChapterTitle || queueHead?.title || state.playout.currentTitle || overlay.headline || "Replay stream",
-    currentCategory: queueKind === "live" ? "Live input" : currentScheduleItem?.categoryName || currentAsset?.categoryName || "Always on air",
-    currentSourceName:
+          ? liveBridge.currentTitle
+        : onAirChapterTitle ||
+          queueHead?.title ||
+          state.playout.currentTitle ||
+          overlay.headline ||
+          viewerText(locale, "overlay.brand.replayLabel"),
+    currentCategory:
       queueKind === "live"
-        ? `Live Bridge · ${(state.playout.liveBridgeInputType || "rtmp").toUpperCase()}`
-        : currentSourceName,
-    nextTitle: nextAssetTitle || nextScheduleLookaheadTitle || state.playout.nextTitle || nextScheduleItem?.title || "Schedule not available",
+        ? liveBridge.currentCategory
+        : currentScheduleItem?.categoryName || currentAsset?.categoryName || viewerText(locale, "overlay.headline.asset"),
+    currentSourceName: queueKind === "live" ? liveBridge.currentSourceName : currentSourceName,
+    nextTitle:
+      nextAssetTitle ||
+      nextScheduleLookaheadTitle ||
+      state.playout.nextTitle ||
+      nextScheduleItem?.title ||
+      viewerText(locale, "overlay.next.noTitle"),
     // The broadcast's format, not this page's prose: the studio preview exists to show what airs.
-    nextTimeLabel: overlayNextTimeLabel(nextScheduleItem),
+    nextTimeLabel: overlayNextTimeLabel(nextScheduleItem, locale),
     queueTitles,
-    timeZone: getWorkspaceTimeZone(state)
+    timeZone: getWorkspaceTimeZone(state),
+    locale
   });
 }
+
+
 
 function summarizeQueueItems(state: AppState): LiveQueueItemSummary[] {
   return state.playout.queueItems.map((item) => ({
@@ -1384,10 +1476,15 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
 
 export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot {
   const snapshot = getBroadcastSnapshot(state);
+  const locale = getViewerLocale(state);
 
   return {
     generatedAt: snapshot.generatedAt,
     timeZone: snapshot.timeZone,
+    locale,
+    // Named here rather than in the browser: the server's and the browser's ICU can name a zone
+    // differently, and the first paint and the live updates must say the same thing.
+    timeZoneLabel: formatViewerTimeZoneName(locale, snapshot.timeZone),
     watchUrl: buildTwitchWatchUrl(snapshot.twitch.channelLogin),
     overlay: snapshot.overlay,
     engagement: snapshot.engagement,

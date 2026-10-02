@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getCurrentScheduleMoment } from "@stream247/core";
+import { closedSourceBreaker, getCurrentScheduleMoment } from "@stream247/core";
 import type { AppState } from "../../apps/web/lib/server/state";
 import { getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
 import {
   getAssetPlaybackDiagnostics,
   getBroadcastSnapshot,
+  getPublicChannelSnapshot,
   getCurrentScheduleItem,
   getFilteredIncidents,
   getNextScheduleItem,
+  getMaterializedProgrammingWeekPreview,
   getPlayoutQueueAssets,
+  getPoolSourceGate,
+  getSchedulePreview,
   getRecentPresenceWindows,
   getRuntimeDriftReport,
   getSourceConnectorDiagnostics,
@@ -521,6 +525,69 @@ describe("ops state helpers", () => {
     expect(assetDiagnostics.summary).toContain("usable");
   });
 
+  it("shows the source breaker while it holds the source, and nothing once it is closed (M75)", () => {
+    const openedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const state = createState({
+      sourceBreakers: [
+        {
+          sourceId: "source-1",
+          state: "open",
+          failedAssetIds: ["asset-1", "asset-2", "asset-3"],
+          openedAt,
+          cooldownSeconds: 1800,
+          lastError: "Requested format is not available",
+          updatedAt: openedAt
+        }
+      ]
+    });
+
+    const snapshot = getSourceHealthSnapshot(state, "source-1");
+    expect(snapshot.breaker).toEqual({
+      phase: "open",
+      openedAt,
+      retryAt: new Date(Date.parse(openedAt) + 1800 * 1000).toISOString(),
+      cooldownSeconds: 1800,
+      failedItemCount: 3,
+      lastError: "Requested format is not available"
+    });
+    // The item reads as ready and included everywhere else; this is where it says why it is not picked.
+    expect(getAssetPlaybackDiagnostics(state, "asset-1").details.join(" ")).toContain("Its source is held out of the pools");
+    expect(getPoolSourceGate(state)).toEqual({ heldSourceIds: ["source-1"], trialSourceIds: [] });
+    expect(getPoolSourceGate(state, Date.parse(openedAt) + 1800 * 1000)).toEqual({ heldSourceIds: [], trialSourceIds: ["source-1"] });
+
+    const closed = createState({ sourceBreakers: [{ ...closedSourceBreaker("source-1"), failedAssetIds: ["asset-1"] }] });
+    expect(getSourceHealthSnapshot(closed, "source-1").breaker).toBeNull();
+    expect(getAssetPlaybackDiagnostics(closed, "asset-1").details.join(" ")).not.toContain("held out");
+    // A state whose sources never failed a probe has no breaker rows at all.
+    expect(getSourceHealthSnapshot(createState(), "source-1").breaker).toBeNull();
+  });
+
+  // M75 review: only getPoolSourceGate itself was tested; dropping the gate from a preview went unnoticed.
+  it("draws the schedule preview and the week without a source the breaker holds", () => {
+    const openedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const held = createState({
+      sourceBreakers: [
+        {
+          sourceId: "source-1",
+          state: "open",
+          failedAssetIds: ["asset-x", "asset-y", "asset-z"],
+          openedAt,
+          cooldownSeconds: 1800,
+          lastError: "Requested format is not available",
+          updatedAt: openedAt
+        }
+      ]
+    });
+    const free = createState();
+    expect(getSchedulePreview(free).items[0]?.videoSlots.map((slot) => slot.assetId)).toContain("asset-1");
+    expect(getSchedulePreview(held).items[0]?.videoSlots).toEqual([]);
+    const todayBlock = (state: AppState) => getMaterializedProgrammingWeekPreview(state)[0]?.blocks[0];
+    expect(todayBlock(free)?.items.map((item) => item.assetId)).toContain("asset-1");
+    expect(todayBlock(held)?.items).toEqual([]);
+    expect(todayBlock(held)?.notes.join(" ")).toContain("Every source of this pool with ready assets is held out");
+    expect(todayBlock(held)?.notes.join(" ")).not.toContain("no ready programming assets");
+  });
+
   it("builds recovery actions and playout queue assets", () => {
     const state = createState({
       sourceSyncRuns: [
@@ -638,6 +705,36 @@ describe("ops state helpers", () => {
     expect(snapshot.twitch.channelLogin).toBe("owner");
     expect(snapshot.twitch.botLogin).toBe("owner");
     expect(snapshot.twitch.startedAt).toBe("2026-04-22T09:00:00.000Z");
+  });
+
+  it("carries the channel language and a viewer's name for the zone in the public snapshot (M80)", () => {
+    // The public page writes in the snapshot's language and live updates carry it, so a change in
+    // Settings reaches an open page without a reload. Env first, then the stored value, then English.
+    const originalLanguage = process.env.CHANNEL_LANGUAGE;
+    try {
+      delete process.env.CHANNEL_LANGUAGE;
+      const english = getPublicChannelSnapshot(createState());
+      expect(english.locale).toBe("en");
+      expect(english.timeZone).toBe("UTC");
+      expect(english.timeZoneLabel).toBe("Coordinated Universal Time");
+
+      const german = createState({ managedConfig: { ...createState().managedConfig, channelLanguage: "de" } });
+      expect(getPublicChannelSnapshot(german).locale).toBe("de");
+      expect(getPublicChannelSnapshot(german).timeZoneLabel).toBe("Koordinierte Weltzeit");
+
+      process.env.CHANNEL_TIMEZONE = "Europe/Berlin";
+      expect(getPublicChannelSnapshot(german).timeZoneLabel).toBe("Mitteleuropäische Zeit");
+
+      process.env.CHANNEL_LANGUAGE = "en";
+      expect(getPublicChannelSnapshot(german).locale).toBe("en");
+      expect(getPublicChannelSnapshot(german).timeZoneLabel).toBe("Central European Time");
+    } finally {
+      if (typeof originalLanguage === "string") {
+        process.env.CHANNEL_LANGUAGE = originalLanguage;
+      } else {
+        delete process.env.CHANNEL_LANGUAGE;
+      }
+    }
   });
 
   it("summarizes the active moderation presence window with clamp metadata", () => {

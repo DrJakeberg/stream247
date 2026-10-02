@@ -44,6 +44,7 @@ function playout(overrides: Playout = {}): Playout {
     pendingAction: "",
     pendingActionRequestedAt: "",
     liveBridgeStatus: "",
+    liveBridgeInputUrl: "",
     queueItems: [],
     message: "",
     ...overrides
@@ -190,6 +191,62 @@ describe.each([
       playout: { overrideMode: "asset", overrideAssetId: "asset_archive", overrideUntil: "2020-01-01T00:00:00.000Z" },
       assets: [youtubeItem, asset({ id: "asset_archive", title: "Archive" })]
     });
+
+    await runBroadcastAction({ type: "play_now", assetId: "asset_yt" });
+
+    expect(lastWrite().insertStatus).toBe("pending");
+  });
+
+  it("accepts while the pinned item is skip-held: the override arm leaves it out (M78)", async () => {
+    seed({
+      playout: {
+        overrideMode: "asset",
+        overrideAssetId: "asset_archive",
+        overrideUntil: "2099-01-01T00:00:00.000Z",
+        skipAssetId: "asset_archive",
+        skipUntil: "2099-01-01T00:00:00.000Z"
+      },
+      assets: [youtubeItem, asset({ id: "asset_archive", title: "Archive" })]
+    });
+
+    await runBroadcastAction({ type: "play_now", assetId: "asset_yt" });
+
+    expect(lastWrite().insertStatus).toBe("pending");
+  });
+
+  it.each(["pending", "active"])(
+    "refuses while a Live Bridge is %s: the takeover ends the insert (M78)",
+    async (liveBridgeStatus) => {
+      seed({ playout: { liveBridgeStatus } });
+
+      await expect(runBroadcastAction({ type: "play_now", assetId: "asset_yt" })).rejects.toThrow(
+        "Live Bridge is on air, and it ends an insert. Release Live Bridge first, then play YouTube item."
+      );
+      expect(mockUpdatePlayoutRuntime).not.toHaveBeenCalled();
+    }
+  );
+
+  it("names the Live Bridge, not a Pin left running under it: the live arm comes first (M78)", async () => {
+    seed({
+      playout: {
+        liveBridgeStatus: "active",
+        liveBridgeInputUrl: "rtmp://bridge.example/live",
+        overrideMode: "asset",
+        overrideAssetId: "asset_archive",
+        overrideUntil: "2099-01-01T00:00:00.000Z"
+      },
+      assets: [youtubeItem, asset({ id: "asset_archive", title: "Archive" })]
+    });
+
+    // Naming the Pin sent the operator to Resume schedule, and the next Play now was refused for the bridge.
+    await expect(runBroadcastAction({ type: "play_now", assetId: "asset_yt" })).rejects.toThrow(
+      "Live Bridge is on air, and it ends an insert. Release Live Bridge first, then play YouTube item."
+    );
+    expect(mockUpdatePlayoutRuntime).not.toHaveBeenCalled();
+  });
+
+  it("accepts while a Live Bridge is releasing: the schedule is back at the next cycle", async () => {
+    seed({ playout: { liveBridgeStatus: "releasing" } });
 
     await runBroadcastAction({ type: "play_now", assetId: "asset_yt" });
 
@@ -414,5 +471,145 @@ describe.each([
 
     expect(lastWrite()).toMatchObject({ skipAssetId: "asset_archive" });
     expect(lastWrite().restartRequestedAt).not.toBe("");
+  });
+});
+
+// M78 (owner decision 2026-10-01). Before, the override arm ignored the skip hold: a Skip during a Pin or
+// Fallback started the pinned item again from 0 (under the relay at once, without it after the slate),
+// and only Resume took it off air.
+describe.each([
+  ["relay", "1"],
+  ["direct RTMP", ""]
+])("Skip during a Pin or Fallback (%s mode)", (_mode, relayFlag) => {
+  beforeEach(() => {
+    vi.stubEnv("STREAM247_RELAY_ENABLED", relayFlag);
+  });
+
+  it.each([
+    ["Pin", "asset", "asset_archive"],
+    ["Fallback", "fallback", "asset_fallback"]
+  ])("ends the %s that holds the item on air and holds the item out", async (name, overrideMode, assetId) => {
+    seed({
+      playout: {
+        currentAssetId: assetId,
+        overrideMode,
+        overrideAssetId: assetId,
+        overrideUntil: "2099-01-01T00:00:00.000Z",
+        selectionReasonCode: "operator_override"
+      },
+      assets: [
+        youtubeItem,
+        asset({ id: "asset_archive", title: "Archive" }),
+        asset({ id: "asset_fallback", title: "Fallback loop", isGlobalFallback: true })
+      ]
+    });
+    const title = assetId === "asset_archive" ? "Archive" : "Fallback loop";
+
+    await expect(runBroadcastAction({ type: "skip", minutes: 30 })).resolves.toEqual({
+      ok: true,
+      message: `Current asset skipped and the ${name} ended.`
+    });
+
+    const written = lastWrite();
+    // Back to the schedule: the override arm has nothing to pick, the skip hold keeps the item out of
+    // the pool's pick, and the pool continues.
+    expect(written).toMatchObject({
+      desiredAssetId: "",
+      overrideMode: "schedule",
+      overrideAssetId: "",
+      overrideUntil: "",
+      skipAssetId: assetId
+    });
+    expect(written.skipUntil).not.toBe("");
+    // M74's Skip in both modes: the restart flag (with the relay no slate; without it the slate first).
+    expect(written.restartRequestedAt).not.toBe("");
+    expect(written.message).toBe(`Skipped ${title} for 30 minutes and ended the ${name}.`);
+    expect(mockAppendAuditEvent).toHaveBeenCalledWith(
+      "playout.skip.current",
+      `Skipped ${title} for 30 minutes; the ${name} was ended by Skip.`
+    );
+  });
+
+  it("leaves a Pin the playout has not switched to yet: the operator skipped the item before it", async () => {
+    seed({
+      playout: { overrideMode: "asset", overrideAssetId: "asset_yt", overrideUntil: "2099-01-01T00:00:00.000Z" },
+      assets: [youtubeItem, asset({ id: "asset_archive", title: "Archive" })]
+    });
+
+    await expect(runBroadcastAction({ type: "skip", minutes: 30 })).resolves.toEqual({ ok: true, message: "Current asset skipped." });
+
+    expect(lastWrite()).toMatchObject({ overrideMode: "asset", overrideAssetId: "asset_yt", skipAssetId: "asset_archive" });
+    expect(mockAppendAuditEvent).toHaveBeenCalledWith("playout.skip.current", "Skipped Archive for 30 minutes.");
+  });
+
+  it("without an override writes what it wrote before M78", async () => {
+    seed({ assets: [asset({ id: "asset_archive", title: "Archive" })] });
+
+    await expect(runBroadcastAction({ type: "skip", minutes: 30 })).resolves.toEqual({ ok: true, message: "Current asset skipped." });
+
+    expect(lastWrite()).toMatchObject({
+      overrideMode: "schedule",
+      overrideAssetId: "",
+      overrideUntil: "",
+      skipAssetId: "asset_archive",
+      status: "recovering",
+      message: "Skipped Archive for 30 minutes."
+    });
+    expect(lastWrite().restartRequestedAt).not.toBe("");
+    expect(mockAppendAuditEvent).toHaveBeenCalledWith("playout.skip.current", "Skipped Archive for 30 minutes.");
+  });
+
+  it("does not end a newer override of another item written since the Skip read the row", async () => {
+    seed({
+      playout: {
+        currentAssetId: "asset_archive",
+        overrideMode: "asset",
+        overrideAssetId: "asset_archive",
+        overrideUntil: "2099-01-01T00:00:00.000Z"
+      },
+      assets: [youtubeItem, asset({ id: "asset_archive", title: "Archive" })]
+    });
+    // The operator pins another item between the read and the write.
+    runtime = { ...runtime, overrideAssetId: "asset_yt" };
+
+    // The toast, the message and the audit row follow the write: the Pin of asset_yt still holds the air.
+    await expect(runBroadcastAction({ type: "skip", minutes: 30 })).resolves.toEqual({ ok: true, message: "Current asset skipped." });
+
+    expect(lastWrite()).toMatchObject({
+      overrideMode: "asset",
+      overrideAssetId: "asset_yt",
+      skipAssetId: "asset_archive",
+      message: "Skipped Archive for 30 minutes."
+    });
+    expect(mockAppendAuditEvent).toHaveBeenCalledWith("playout.skip.current", "Skipped Archive for 30 minutes.");
+  });
+
+  it.each([
+    ["Pin", { type: "override", assetId: "asset_archive", minutes: 30 } as const, "asset_archive"],
+    ["Fallback", { type: "fallback" } as const, "asset_fallback"]
+  ])("%s of an item a Skip holds out lifts the hold, or the override arm would leave it out", async (_name, action, assetId) => {
+    seed({
+      playout: { skipAssetId: assetId, skipUntil: "2099-01-01T00:00:00.000Z" },
+      assets: [
+        youtubeItem,
+        asset({ id: "asset_archive", title: "Archive" }),
+        asset({ id: "asset_fallback", title: "Fallback loop", isGlobalFallback: true })
+      ]
+    });
+
+    await runBroadcastAction(action);
+
+    expect(lastWrite()).toMatchObject({ overrideAssetId: assetId, skipAssetId: "", skipUntil: "" });
+  });
+
+  it("a Pin keeps a skip hold on another item", async () => {
+    seed({
+      playout: { skipAssetId: "asset_yt", skipUntil: "2099-01-01T00:00:00.000Z" },
+      assets: [youtubeItem, asset({ id: "asset_archive", title: "Archive" })]
+    });
+
+    await runBroadcastAction({ type: "override", assetId: "asset_archive", minutes: 30 });
+
+    expect(lastWrite()).toMatchObject({ overrideAssetId: "asset_archive", skipAssetId: "asset_yt" });
   });
 });

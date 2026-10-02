@@ -13,6 +13,17 @@
 // and unit-testable. Only the CSS subset satori implements may be used: flexbox, absolute
 // positioning, colours, gradients, borders, radii, and text properties. No filters, no transforms,
 // no external assets.
+//
+// Every word this file draws itself comes from the viewer catalogue (viewer-messages/) in the
+// payload's locale; everything else on the picture arrives already written in the payload.
+
+import {
+  EN_VIEWER_MESSAGES,
+  formatViewerClock,
+  formatViewerNumber,
+  viewerText,
+  viewerUpperCase
+} from "./viewer-messages/index.js";
 
 export type OverlayLayoutStyle = Record<string, string | number>;
 
@@ -81,22 +92,14 @@ function label(value: string, style: OverlayLayoutStyle): OverlayLayoutNode {
 }
 
 /**
- * Formats the on-air clock in the channel's own timezone.
+ * Formats the on-air clock in the channel's own timezone and language.
  *
  * Intl is used rather than manual offset arithmetic so DST transitions are handled by the runtime.
- * An invalid timezone must not take the overlay down, so it falls back to the host zone.
+ * An invalid timezone must not take the overlay down, so it falls back to the host zone. Both
+ * languages read "HH:MM" on a 24-hour dial; the formatter is cached because this runs per frame.
  */
-export function formatOverlayClock(now: Date, timeZone: string): string {
-  try {
-    return new Intl.DateTimeFormat("en-GB", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-      timeZone: timeZone || undefined
-    }).format(now);
-  } catch {
-    return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
-  }
+export function formatOverlayClock(now: Date, timeZone: string, locale?: string): string {
+  return formatViewerClock(locale, now, timeZone);
 }
 
 /**
@@ -342,6 +345,12 @@ export type OverlayScenePayloadView = {
   emergencyBanner: string;
   timeZone: string;
   /**
+   * The channel language (M80): the clock, the capitals and every word the layout writes itself.
+   * Optional because payloads cached before M80 do not carry it; absent or unknown means English,
+   * which is what every earlier frame said.
+   */
+  locale?: string;
+  /**
    * The studio's "Show clock" and "Show next item". Until M60 these only flipped a flag in the scene
    * definition that nothing on air read — the clock and the next card were drawn regardless — so an
    * operator switched a toggle and saw no change. Optional because payloads cached before M60 do not
@@ -384,8 +393,12 @@ export const OVERLAY_TICKER_CRAWL_MAX_PX_PER_SECOND = 240;
 /** The empty run between the end of the line and the start of its next pass, on the design grid. */
 export const OVERLAY_TICKER_CRAWL_GAP = 240;
 
-/** What the overlay says when the schedule has no block after this one. */
-export const OVERLAY_NO_NEXT_BLOCK = "No next block configured";
+/**
+ * What the overlay says when the schedule has no block after this one, in English. It used to tell
+ * viewers the next block was not "configured" — the operator's word, on air — and M80 gave it viewer
+ * wording.
+ */
+export const OVERLAY_NO_NEXT_BLOCK: string = EN_VIEWER_MESSAGES["overlay.next.noBlock"];
 
 /**
  * The times of the next block, written once.
@@ -399,12 +412,13 @@ export const OVERLAY_NO_NEXT_BLOCK = "No next block configured";
  * rendered as "20:00-".
  */
 export function overlayNextTimeLabel(
-  block: { startTime: string; endTime: string } | null | undefined
+  block: { startTime: string; endTime: string } | null | undefined,
+  locale?: string
 ): string {
   if (!block?.startTime || !block.endTime) {
-    return OVERLAY_NO_NEXT_BLOCK;
+    return viewerText(locale, "overlay.next.noBlock");
   }
-  return `${block.startTime}-${block.endTime}`;
+  return viewerText(locale, "overlay.next.timeRange", { start: block.startTime, end: block.endTime });
 }
 
 /**
@@ -693,7 +707,7 @@ function buildLowerThird(
       row({ alignItems: "center", gap: px(14), marginBottom: px(10) }, [
         ...(heroLabel
           ? [
-              label(heroLabel.toUpperCase(), {
+              label(viewerUpperCase(payload.locale, heroLabel), {
                 color: accentInkColor(accent),
                 backgroundColor: accent,
                 fontSize: px(18),
@@ -756,6 +770,7 @@ function buildVotePanel(
   scale: number,
   fontFamily: string,
   surfaceStyle: string,
+  locale: string | undefined,
   fit?: PanelFit
 ): OverlayLayoutNode | null {
   if (engagement.kind === "none") {
@@ -767,13 +782,13 @@ function buildVotePanel(
   const countdown = Math.max(0, Math.round(engagement.secondsRemaining));
 
   const header = row({ alignItems: "center", justifyContent: "space-between", marginBottom: px(14) }, [
-    label(clampOverlayText(engagement.headline, 40).toUpperCase(), {
+    label(viewerUpperCase(locale, clampOverlayText(engagement.headline, 40)), {
       color: accentTextColor(accent),
       fontSize: px(20),
       fontWeight: 700,
       letterSpacing: px(2)
     }),
-    label(`${countdown}s`, {
+    label(viewerText(locale, "overlay.countdown", { seconds: countdown }), {
       color: accentInkColor(accent),
       backgroundColor: accent,
       fontSize: px(20),
@@ -807,7 +822,7 @@ function buildVotePanel(
               }),
               label(clampOverlayText(option.title, 38), { color: INK_PRIMARY, fontSize: px(21) })
             ]),
-            label(`${String(option.votes)}`, { color: INK_TERTIARY, fontSize: px(19) })
+            label(formatViewerNumber(locale, option.votes), { color: INK_TERTIARY, fontSize: px(19) })
           ]),
           // Track and fill are separate nodes because satori has no ::before/::after.
           {
@@ -879,7 +894,7 @@ function buildNextCard(
   }
 
   const px = (value: number) => Math.round(value * scale);
-  const heading = joinText([payload.nextLabel || "Up next", payload.nextTimeLabel], " · ");
+  const heading = joinText([payload.nextLabel || viewerText(payload.locale, "overlay.nextLabel.fallback"), payload.nextTimeLabel], " · ");
 
   return {
     type: "div",
@@ -896,7 +911,7 @@ function buildNextCard(
         ...resolveSurface(payload.scene.surfaceStyle, accent)
       },
       children: [
-        label(heading.toUpperCase(), {
+        label(viewerUpperCase(payload.locale, heading), {
           color: accentTextColor(accent),
           fontSize: px(16),
           fontWeight: 700,
@@ -1464,7 +1479,8 @@ function buildGamePanel(
   scale: number,
   fontFamily: string,
   surfaceStyle: string,
-  frame: { width: number; height: number }
+  frame: { width: number; height: number },
+  locale: string | undefined
 ): OverlayLayoutNode {
   const px = (value: number) => Math.round(value * scale);
 
@@ -1607,7 +1623,7 @@ function buildGamePanel(
   }
 
   const header = row({ alignItems: "center", justifyContent: "space-between", marginBottom: px(10), gap: px(12) }, [
-    label(clampOverlayText(game.headline, 32).toUpperCase(), {
+    label(viewerUpperCase(locale, clampOverlayText(game.headline, 32)), {
       color: accentTextColor(accent),
       fontSize: px(18),
       fontWeight: 700,
@@ -2036,7 +2052,9 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
   const banner = text(payload.emergencyBanner);
   const votePanel = routed(
     "vote",
-    input.engagement ? buildVotePanel(input.engagement, accent, scale, fontFamily, payload.scene.surfaceStyle, fitFor("vote")) : null
+    input.engagement
+      ? buildVotePanel(input.engagement, accent, scale, fontFamily, payload.scene.surfaceStyle, payload.locale, fitFor("vote"))
+      : null
   );
   const nextCard = routed("next", buildNextCard(payload, accent, scale, fontFamily, fitFor("next")));
 
@@ -2046,10 +2064,16 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
   const gamePlacement = (payload.scene.customLayers ?? []).find((layer) => layer.kind === "game" && layer.enabled) ?? null;
   const gamePanel =
     gamePlacement && input.game
-      ? buildGamePanel(input.game, gamePlacement, accent, scale, fontFamily, payload.scene.surfaceStyle, {
-          width: options.width,
-          height: options.height
-        })
+      ? buildGamePanel(
+          input.game,
+          gamePlacement,
+          accent,
+          scale,
+          fontFamily,
+          payload.scene.surfaceStyle,
+          { width: options.width, height: options.height },
+          payload.locale
+        )
       : null;
 
   // The other positioned layers, in the operator's layer order. The source panel follows the
@@ -2093,7 +2117,7 @@ export function buildOverlaySceneLayout(input: OverlayLayoutInput, options: Over
   });
   const chatPosition = chatPanel ? requested : "";
 
-  const clock = formatOverlayClock(options.now ?? new Date(), payload.timeZone);
+  const clock = formatOverlayClock(options.now ?? new Date(), payload.timeZone, payload.locale);
   const clockChip = label(clock, {
     color: INK_PRIMARY,
     fontSize: px(26),

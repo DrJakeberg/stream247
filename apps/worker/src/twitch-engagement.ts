@@ -9,13 +9,15 @@ import {
   resolveBroadcastChannelLogin,
   resolveChatGameCommand,
   resolveModeratorCheckIn,
+  viewerText,
   type ChatEmoteOccurrence,
   type ChatGameCommand,
   type ChatMessageSegment,
+  type ViewerLocale,
   isChatBridgeRuntimeNeeded,
 } from "@stream247/core";
 import type { AppState, EngagementEventRecord } from "@stream247/db";
-import { appendEngagementEventRecord } from "@stream247/db";
+import { appendEngagementEventRecord, resolveChannelLanguage } from "@stream247/db";
 import { logRuntimeEvent } from "./runtime-log.js";
 
 // Twitch pings roughly every five minutes; silence past six means the connection is gone even if
@@ -219,7 +221,11 @@ export function createRingBuffer<T>(capacity: number) {
   };
 }
 
-export function parseTwitchIrcMessage(line: string): TwitchChatMessage | null {
+/**
+ * `locale` names the channel language, which only matters for the display name of a message that
+ * arrived with neither a display name nor a login — the on-air chat panel still needs a name.
+ */
+export function parseTwitchIrcMessage(line: string, locale?: string): TwitchChatMessage | null {
   const match = line.match(/^@(?<tags>[^ ]+) :(?<source>[^ ]+) PRIVMSG #[^ ]+ :(?<message>.*)$/);
   if (!match?.groups) {
     return null;
@@ -232,7 +238,7 @@ export function parseTwitchIrcMessage(line: string): TwitchChatMessage | null {
     })
   );
   const login = (match.groups.source.split("!")[0] || "").toLowerCase();
-  const actor = (tags["display-name"] || "").replace(/\\s/g, " ").trim() || login || "Viewer";
+  const actor = (tags["display-name"] || "").replace(/\\s/g, " ").trim() || login || viewerText(locale, "chat.viewerName");
   const raw = match.groups.message;
   const message = raw.trim();
   // Twitch numbers the emote ranges against the message as sent, so trimming has to move them by
@@ -329,6 +335,8 @@ export class TwitchChatBridge {
   private readonly messages = createRingBuffer<EngagementEventRecord & { login: string; segments: ChatMessageSegment[] }>(50);
   private limiter = createChatRateLimiter(30);
   private moderationConfig: AppState["moderation"] = createDefaultModerationConfig();
+  // The channel language for the bot's own lines, refreshed with the moderation config each sync.
+  private viewerLocale: ViewerLocale = "en";
   /** Last time the socket produced anything; 0 while never connected. */
   private lastActivityAt = 0;
   private phase: ChatConnectionPhase = "idle";
@@ -416,6 +424,7 @@ export class TwitchChatBridge {
     });
     const accessToken = state.twitch.accessToken;
     this.moderationConfig = state.moderation;
+    this.viewerLocale = resolveChannelLanguage(state.managedConfig, env);
     if (!enabled || !nick || !channel || !accessToken) {
       await this.disconnect("disabled");
       return;
@@ -521,6 +530,15 @@ export class TwitchChatBridge {
     }
   }
 
+  /**
+   * Says one line in the joined room, for a reply the worker decides outside a command callback: a skip
+   * vote refused while the operator holds the air (M78), also when the worker cycle refuses a vote that
+   * passed. Nothing while disconnected; such a reply is stale by the time the socket is back.
+   */
+  say(message: string): void {
+    this.sendChatMessage(message);
+  }
+
   private sendChatMessage(message: string): void {
     if (!this.socket || this.socket.destroyed || !this.channel) {
       return;
@@ -593,7 +611,7 @@ export class TwitchChatBridge {
         continue;
       }
 
-      const message = parseTwitchIrcMessage(line);
+      const message = parseTwitchIrcMessage(line, this.viewerLocale);
       if (!message) {
         continue;
       }
@@ -614,7 +632,8 @@ export class TwitchChatBridge {
           requestedMinutes: presenceWindow.requestedMinutes,
           appliedMinutes: presenceWindow.appliedMinutes,
           clampReason: presenceWindow.clampReason,
-          config: this.moderationConfig
+          config: this.moderationConfig,
+          locale: this.viewerLocale
         });
         void Promise.resolve(this.onModeratorPresenceCheckIn?.(presenceWindow)).then(
           () => this.sendChatMessage(reply),
@@ -623,7 +642,7 @@ export class TwitchChatBridge {
               actor: presenceWindow.actor,
               error: error instanceof Error ? error.message : String(error)
             });
-            this.sendChatMessage(`@${presenceWindow.actor} your check-in could not be saved — please try again in a moment.`);
+            this.sendChatMessage(viewerText(this.viewerLocale, "chat.presence.saveFailed", { actor: presenceWindow.actor }));
           }
         );
         continue;

@@ -20,6 +20,7 @@ import { getShowProfileCategoryOptions } from "@/lib/asset-metadata";
 import {
   getBroadcastSnapshot,
   getMaterializedProgrammingWeekPreview,
+  getPoolSourceGate,
   getSchedulePreview,
   getWorkspaceTimeZone,
   readAppState
@@ -59,6 +60,7 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
   const state = await readAppState();
   const broadcastSnapshot = getBroadcastSnapshot(state);
   const materializedWeek = getMaterializedProgrammingWeekPreview(state);
+  const sourceGate = getPoolSourceGate(state);
   const timeZone = getWorkspaceTimeZone(state);
   const conflicts = new Set(findScheduleConflicts(state.scheduleBlocks));
   const poolOptions = state.pools
@@ -93,6 +95,8 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
         }
 
         const pool = block.poolId ? state.pools.find((entry) => entry.id === block.poolId) ?? null : null;
+        // Without the breaker: this panel sends the operator to the pools, and a pool whose sources the
+        // breaker holds has nothing to fix there. The week lens says why it plays the fallback (M75 review).
         return !lookaheadVideoTitleFromPool({
           pool,
           assets: state.assets
@@ -130,7 +134,7 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
                   Shows the first video each block would play, continuing from wherever its pool&apos;s rotation
                   currently stands, and lets you open a block to see what follows before any of it goes on air.
                 </p>
-                <ProgramWeekLens assets={state.assets} days={materializedWeek} pools={state.pools} />
+                <ProgramWeekLens assets={state.assets} days={materializedWeek} pools={state.pools} sourceGate={sourceGate} />
               </Panel>
               {emptyWeekBlocks.length > 0 ? (
                 <Panel title="Needs attention" eyebrow="Program">

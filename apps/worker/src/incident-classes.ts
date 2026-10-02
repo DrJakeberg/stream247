@@ -130,6 +130,16 @@ const STATE_FAMILIES: IncidentFamily[] = [
     why: "Items from this source keep failing their probe until the source serves them again or they are removed."
   },
   {
+    // M75. Keyed by source like the entry above, and raised instead of it while the breaker holds the
+    // source: one broken source is one entry. A state, because the breaker knows when it closes -- a clean
+    // trial probe, or the operator -- and the playout resolves it in the same cycle.
+    fingerprint: "playout.source-breaker",
+    keyed: "suffix",
+    kind: "state",
+    area: "playout",
+    why: "The source is held out of the pool rotation until a trial probe after its cooldown succeeds or an operator closes the breaker."
+  },
+  {
     fingerprint: "playout.prefetch.failed",
     keyed: false,
     kind: "state",

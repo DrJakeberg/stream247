@@ -207,7 +207,7 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
           <div className="form-grid" style={{ marginTop: 12 }}>
             <label className="toggle-row">
               <input checked={skipEnabled} onChange={(event) => setSkipEnabled(event.target.checked)} type="checkbox" />
-              <span className="label-with-info">Enable skip votes<InfoTip text="Lets chat take the current item off air by voting. When enough viewers agree, playout moves on and the skipped item is kept out of the queue for an hour, the same hold an operator skip applies unless they choose another length." /></span>
+              <span className="label-with-info">Enable skip votes<InfoTip text="Lets chat take the current item off air by voting. When enough viewers agree, playout moves on and the skipped item is kept out of the queue for an hour, the same hold an operator skip applies unless they choose another length. While the operator's Pin, Fallback or Play now / Insert holds the air, skip votes are paused and the bot says why in chat. A pool's automatic insert and a cue point insert stay skippable." /></span>
             </label>
             <label>
               <span className="label label-with-info">Command<InfoTip text="The word viewers type after ! to vote for a skip, e.g. !skip; case does not matter, and the on-air skip panel shows it to them as !name. Saved in lowercase with anything but letters, digits, - and _ removed and cut to 24 characters; a name that leaves nothing usable, or is only digits, is replaced by skip." /></span>

@@ -5,6 +5,7 @@
 // a write that fails on an install nobody rebuilt: the base-schema block is itself a migration
 // under one fixed id, so adding a column there alone reaches a fresh install and nothing else.
 export const DECLARED_SCHEMA: Record<string, string[]> = {
+  as_run_log: ["aired_seconds", "asset_id", "block_id", "end_reason", "ended_at", "exit_code", "format_candidate", "format_id", "id", "input_kind", "planned_seconds", "pool_id", "queue_kind", "reason_code", "source_id", "started_at", "target_kind", "title"],
   asset_collection_items: ["asset_id", "collection_id", "position"],
   asset_collections: ["color", "created_at", "description", "id", "name", "updated_at"],
   asset_retention_marks: ["asset_id", "orphan_first_seen_at"],
@@ -35,6 +36,7 @@ export const DECLARED_SCHEMA: Record<string, string[]> = {
   schedule_blocks: ["category_name", "cuepoint_asset_id", "cuepoint_offsets_seconds", "day_of_week", "duration_minutes", "id", "pool_id", "repeat_group_id", "repeat_mode", "show_id", "source_name", "start_hour", "start_minute_of_day", "title"],
   schema_migrations: ["applied_at", "description", "id"],
   show_profiles: ["category_name", "color", "default_duration_minutes", "description", "id", "name", "updated_at"],
+  source_breakers: ["cooldown_seconds", "failed_asset_ids", "last_error", "opened_at", "source_id", "state", "updated_at"],
   source_sync_runs: ["discovered_assets", "error_message", "finished_at", "id", "ready_assets", "source_id", "started_at", "status", "summary"],
   sources: ["connector_kind", "enabled", "external_url", "id", "last_synced_at", "name", "notes", "status", "type"],
   stream_destinations: ["enabled", "encrypted_stream_key", "failure_count", "id", "last_error", "last_failure_at", "last_validated_at", "name", "notes", "output_profile_id", "priority", "provider", "role", "rtmp_url", "status", "stream_key_present"],

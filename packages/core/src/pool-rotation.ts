@@ -20,6 +20,10 @@ import { sortProgrammingAssets, type ProgrammingOrderAsset } from "./programming
 // preview, materialized week), so what the operator is shown is what the worker picks. It is pure and
 // deterministic: no clock, no randomness, and the order depends only on the comparator, never on the
 // order the database returned the rows in.
+//
+// The source circuit breaker (M75, source-circuit-breaker.ts) reaches the rotation as a gate: an open
+// source is a lane with nothing eligible, so the alternation goes on with the other sources, and a
+// half-open source gives one item per walk, its trial, before the lane closes again for the rest of it.
 
 export type PoolRotationPool = {
   sourceIds: readonly string[];
@@ -31,6 +35,21 @@ export type PoolRotationPool = {
 export type PoolRotationState = {
   cursorAssetId: string;
   sourceCursors: Record<string, string>;
+  /**
+   * Half-open sources that already gave their one trial item in this walk. Never stored: the worker
+   * stores the pointer and the map only, and the next cycle's walk starts from the breaker as it is then.
+   */
+  spentTrialSourceIds?: string[];
+};
+
+/**
+ * What the source circuit breaker lets the rotation take (`sourceBreakerGate`). Held sources give
+ * nothing; trial sources give one item per walk, the first the rotation reaches, so a source that is
+ * still broken costs one probe, not one per alternation step of the queue.
+ */
+export type PoolRotationSourceGate = {
+  heldSourceIds: readonly string[];
+  trialSourceIds: readonly string[];
 };
 
 export type PoolRotationPick<T> = {
@@ -121,7 +140,10 @@ export function createPoolRotation<T extends ProgrammingOrderAsset>(args: {
   sourceIds: readonly string[];
   assets: readonly T[];
   isEligible: (asset: T) => boolean;
+  sourceGate?: PoolRotationSourceGate | null;
 }): PoolRotation<T> {
+  const heldSourceIds = new Set(args.sourceGate?.heldSourceIds ?? []);
+  const trialSourceIds = new Set(args.sourceGate?.trialSourceIds ?? []);
   const assetById = new Map<string, T>();
   for (const asset of args.assets) {
     assetById.set(asset.id, asset);
@@ -132,7 +154,10 @@ export function createPoolRotation<T extends ProgrammingOrderAsset>(args: {
       continue;
     }
     const ordered = sortProgrammingAssets(args.assets.filter((asset) => asset.sourceId === sourceId));
-    const eligible = ordered.map((asset) => args.isEligible(asset));
+    // Positions stay in the full list, as for any other ineligible item: when the breaker closes, the
+    // source carries on after its stored position instead of at its oldest item.
+    const held = heldSourceIds.has(sourceId);
+    const eligible = ordered.map((asset) => !held && args.isEligible(asset));
     lanes.push({
       sourceId,
       ordered,
@@ -160,16 +185,29 @@ export function createPoolRotation<T extends ProgrammingOrderAsset>(args: {
     return lanes.find((lane) => state.sourceCursors[lane.sourceId] === state.cursorAssetId)?.sourceId ?? "";
   };
 
+  const isAvailable = (lane: RotationLane<T>, state: PoolRotationState): boolean =>
+    lane.hasEligible && !(state.spentTrialSourceIds ?? []).includes(lane.sourceId);
+
+  // Spending is recorded only for a trial source, so a walk without a half-open breaker returns
+  // states exactly as before M75.
+  const spendTrial = (state: PoolRotationState, sourceId: string): Pick<PoolRotationState, "spentTrialSourceIds"> => {
+    const spent = state.spentTrialSourceIds ?? [];
+    if (!trialSourceIds.has(sourceId) || spent.includes(sourceId)) {
+      return spent.length > 0 ? { spentTrialSourceIds: spent } : {};
+    }
+    return { spentTrialSourceIds: [...spent, sourceId] };
+  };
+
   const nextLane = (state: PoolRotationState): RotationLane<T> | null => {
     const lastIndex = laneIndexOf(lastSourceOf(state));
     if (lastIndex === -1) {
-      return lanes.find((lane) => lane.hasEligible) ?? null;
+      return lanes.find((lane) => isAvailable(lane, state)) ?? null;
     }
     // Step `lanes.length` ends on the last source itself: a one-source pool, or a pool whose other
     // sources have nothing to play, stays on that source.
     for (let step = 1; step <= lanes.length; step += 1) {
       const lane = lanes[(lastIndex + step) % lanes.length];
-      if (lane?.hasEligible) {
+      if (lane && isAvailable(lane, state)) {
         return lane;
       }
     }
@@ -206,16 +244,25 @@ export function createPoolRotation<T extends ProgrammingOrderAsset>(args: {
       return {
         asset,
         sourceId: lane.sourceId,
-        state: { cursorAssetId: asset.id, sourceCursors: { ...cursors, [lane.sourceId]: asset.id } }
+        state: {
+          cursorAssetId: asset.id,
+          sourceCursors: { ...cursors, [lane.sourceId]: asset.id },
+          ...spendTrial(state, lane.sourceId)
+        }
       };
     },
     start(state, assetId) {
       const cursors = effectiveCursors(state);
       const asset = assetById.get(assetId);
       if (!asset || laneIndexOf(asset.sourceId) === -1) {
-        return { cursorAssetId: assetId, sourceCursors: cursors };
+        return { cursorAssetId: assetId, sourceCursors: cursors, ...spendTrial(state, "") };
       }
-      return { cursorAssetId: asset.id, sourceCursors: { ...cursors, [asset.sourceId]: asset.id } };
+      // An item of a half-open source that starts now is that source's trial.
+      return {
+        cursorAssetId: asset.id,
+        sourceCursors: { ...cursors, [asset.sourceId]: asset.id },
+        ...spendTrial(state, asset.sourceId)
+      };
     }
   };
 }
@@ -225,25 +272,36 @@ export function nextPoolRotationAsset<T extends ProgrammingOrderAsset>(args: {
   pool: PoolRotationPool;
   assets: readonly T[];
   isEligible: (asset: T) => boolean;
+  sourceGate?: PoolRotationSourceGate | null;
 }): PoolRotationPick<T> | null {
-  return createPoolRotation({ sourceIds: args.pool.sourceIds, assets: args.assets, isEligible: args.isEligible }).next(
-    poolRotationStateOf(args.pool)
-  );
+  return createPoolRotation({
+    sourceIds: args.pool.sourceIds,
+    assets: args.assets,
+    isEligible: args.isEligible,
+    sourceGate: args.sourceGate
+  }).next(poolRotationStateOf(args.pool));
 }
 
 /**
  * The next `steps` items, each one started before the next is picked: the same sequence as `steps`
- * single picks with the state stored in between. Shorter only when nothing is eligible.
+ * single picks with the state stored in between, except that a half-open source gives one item per walk
+ * (its trial). Shorter only when nothing is eligible.
  */
 export function walkPoolRotation<T extends ProgrammingOrderAsset>(args: {
   pool: PoolRotationPool;
   assets: readonly T[];
   isEligible: (asset: T) => boolean;
+  sourceGate?: PoolRotationSourceGate | null;
   steps: number;
   /** Walk from the state once this item has started instead of from the stored state. */
   afterAssetId?: string;
 }): PoolRotationPick<T>[] {
-  const rotation = createPoolRotation({ sourceIds: args.pool.sourceIds, assets: args.assets, isEligible: args.isEligible });
+  const rotation = createPoolRotation({
+    sourceIds: args.pool.sourceIds,
+    assets: args.assets,
+    isEligible: args.isEligible,
+    sourceGate: args.sourceGate
+  });
   let state = poolRotationStateOf(args.pool);
   if (args.afterAssetId) {
     state = rotation.start(state, args.afterAssetId);

@@ -1,11 +1,11 @@
 Schedule
 What is live now, and what comes next.
-All times are shown in Europe/Berlin.
+All times are shown in Central European Time.
 SCHEDULE
 Upcoming lineup
 On air
 Updating every few seconds
-Europe/Berlin
+Central European Time
 Watch the stream
 On air now
 <block>

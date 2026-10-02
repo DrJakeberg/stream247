@@ -5,8 +5,10 @@
 // contract is that env variables keep overriding wizard-written values, so an install that manages
 // its .env by hand behaves exactly as before. (Note this is the opposite order from the Twitch
 // credential fields, where the managed value wins and env is only the fallback — those predate the
-// wizard and their contract is "settings page beats stale env".)
+// wizard and their contract is "settings page beats stale env".) The channel language (M80) was
+// born managed and follows the timezone's order, so the two instance basics behave alike.
 
+import { normalizeViewerLocale, type ViewerLocale } from "@stream247/core";
 import type { ManagedConfigRecord } from "./index.js";
 
 type EnvLike = Record<string, string | undefined>;
@@ -30,6 +32,19 @@ export function resolveChannelTimeZone(
   env: EnvLike = process.env
 ): string {
   return (env.CHANNEL_TIMEZONE || "").trim() || (managedConfig?.channelTimezone || "").trim() || "UTC";
+}
+
+/**
+ * The language viewers are addressed in (M80): env override, then the wizard-written value, then
+ * English — the timezone's order, for the same rollback reason. Anything that is not a language
+ * this build speaks is English rather than an error: the value is read inside the renderer and the
+ * chat bot, where a throw costs the picture or the bot.
+ */
+export function resolveChannelLanguage(
+  managedConfig: Partial<Pick<ManagedConfigRecord, "channelLanguage">> | undefined,
+  env: EnvLike = process.env
+): ViewerLocale {
+  return normalizeViewerLocale((env.CHANNEL_LANGUAGE || "").trim() || (managedConfig?.channelLanguage || "").trim());
 }
 
 /**

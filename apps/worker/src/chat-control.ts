@@ -16,8 +16,10 @@ import {
   closeVoteSession,
   openVoteSession,
   parseChatCommand,
+  viewerText,
   type ChatCommand,
   type ChatInteractionConfig,
+  type OperatorHold,
   type OverlayEngagementView,
   type SkipVoteState,
   type VoteOutcome,
@@ -30,7 +32,15 @@ export type ChatControlEffect =
   | { kind: "vote-recorded"; option: number }
   | { kind: "skip-recorded"; votes: number; votesNeeded: number }
   | { kind: "skip-passed"; assetId: string }
+  // A skip vote while the operator's Pin or Fallback (M78) or Play now / Insert (M79) holds the air: not
+  // counted. `announce` is true when the bot should say why -- at most once per
+  // SKIP_PAUSED_REPLY_COOLDOWN_MS.
+  | { kind: "skip-paused"; hold: Exclude<OperatorHold, "">; announce: boolean }
   | { kind: "request"; actor: string; query: string };
+
+// A room that wants an item gone types the command together, for as long as the 120 s skip window it
+// expects. One answer a minute reaches the viewers who arrive later without repeating it for every vote.
+export const SKIP_PAUSED_REPLY_COOLDOWN_MS = 60_000;
 
 export type ChatControlOptions = {
   now?: () => Date;
@@ -51,6 +61,7 @@ export class ChatControlRuntime {
   private skipState: SkipVoteState | null = null;
   private lastOutcome: VoteOutcome | null = null;
   private dirty = false;
+  private lastSkipPausedReplyAtMs = Number.NEGATIVE_INFINITY;
 
   constructor(options: ChatControlOptions = {}) {
     this.options = options;
@@ -80,6 +91,8 @@ export class ChatControlRuntime {
     message: string;
     currentAssetId: string;
     config: ChatInteractionConfig;
+    /** The Pin, Fallback (M78) or operator insert (M79) holding the air, as the worker cycle last read it. */
+    operatorHold?: OperatorHold;
   }): ChatControlEffect {
     try {
       const now = this.now();
@@ -104,6 +117,14 @@ export class ChatControlRuntime {
       }
 
       if (command.kind === "skip") {
+        // Viewers never override the operator (M78): while a Pin or Fallback holds the air no campaign
+        // starts and no vote counts. Before, a passed vote ran the operator's Skip, which started the
+        // pinned item again from 0, and the room could repeat that for as long as the pin ran. The same
+        // for the operator's Play now / Insert (M79), which a passed vote cut.
+        if (args.operatorHold) {
+          return { kind: "skip-paused", hold: args.operatorHold, announce: this.claimSkipPausedReply() };
+        }
+
         const result = applySkipVote({
           state: this.skipState,
           actor,
@@ -182,6 +203,19 @@ export class ChatControlRuntime {
     return outcome;
   }
 
+  /**
+   * True at most once per SKIP_PAUSED_REPLY_COOLDOWN_MS: whether the bot should say now that skip votes
+   * are paused. Shared by the refused vote and by a passed vote the worker refuses at its next cycle.
+   */
+  claimSkipPausedReply(): boolean {
+    const nowMs = this.now().getTime();
+    if (nowMs - this.lastSkipPausedReplyAtMs < SKIP_PAUSED_REPLY_COOLDOWN_MS) {
+      return false;
+    }
+    this.lastSkipPausedReplyAtMs = nowMs;
+    return true;
+  }
+
   clearSkipVote(): void {
     if (this.skipState) {
       this.skipState = null;
@@ -246,11 +280,11 @@ export class ChatControlRuntime {
    * Built from the same projections and the same chooser the playout container uses on the
    * persisted rows, so what the worker would draw and what actually goes on air cannot drift.
    */
-  getOverlayView(config: ChatInteractionConfig): OverlayEngagementView | null {
+  getOverlayView(config: ChatInteractionConfig, locale?: string): OverlayEngagementView | null {
     const now = this.now();
-    const voteView = this.session ? buildEngagementOverlayViewFromVoteSession(this.session, now) : null;
+    const voteView = this.session ? buildEngagementOverlayViewFromVoteSession(this.session, now, locale) : null;
     const skipRecord = this.getSkipVoteRecord(config);
-    const skipView = skipRecord ? buildEngagementOverlayViewFromSkipVote(skipRecord, now) : null;
+    const skipView = skipRecord ? buildEngagementOverlayViewFromSkipVote(skipRecord, now, locale) : null;
     return chooseEngagementOverlayView(voteView, skipView);
   }
 }
@@ -276,7 +310,8 @@ export type VoteSessionOverlaySource = {
  */
 export function buildEngagementOverlayViewFromVoteSession(
   session: VoteSessionOverlaySource,
-  now: Date
+  now: Date,
+  locale?: string
 ): OverlayEngagementView | null {
   if (session.status !== "open" || session.options.length === 0) {
     return null;
@@ -289,7 +324,7 @@ export function buildEngagementOverlayViewFromVoteSession(
 
   return {
     kind: "vote-next",
-    headline: "Was läuft als Nächstes?",
+    headline: viewerText(locale, "vote.headline"),
     options: session.options.map((option) => ({
       token: option.token,
       title: option.title,
@@ -298,7 +333,7 @@ export function buildEngagementOverlayViewFromVoteSession(
     totalVotes: session.options.reduce((sum, option) => sum + option.votes, 0),
     secondsRemaining: Math.max(0, Math.round((closesAtMs - now.getTime()) / 1000)),
     threshold: 0,
-    hint: `Schreib ${session.options.map((option) => option.token).join(", ")} in den Chat`
+    hint: viewerText(locale, "vote.hint", { tokens: session.options.map((option) => option.token).join(", ") })
   };
 }
 
@@ -324,7 +359,8 @@ export type SkipVoteOverlaySource = {
  */
 export function buildEngagementOverlayViewFromSkipVote(
   record: SkipVoteOverlaySource,
-  now: Date
+  now: Date,
+  locale?: string
 ): OverlayEngagementView | null {
   if (record.votes <= 0 || record.votesNeeded <= 0) {
     return null;
@@ -338,14 +374,15 @@ export function buildEngagementOverlayViewFromSkipVote(
   const command = record.skipCommand.trim() || "skip";
   return {
     kind: "skip-vote",
-    headline: "Überspringen?",
-    options: [{ token: `!${command}`, title: "Weiter zum nächsten Video", votes: record.votes }],
+    headline: viewerText(locale, "skip.headline"),
+    options: [{ token: `!${command}`, title: viewerText(locale, "skip.option"), votes: record.votes }],
     // The layout draws each option's share of totalVotes as its bar, so handing it the threshold
     // makes the single bar read as progress toward passing.
     totalVotes: record.votesNeeded,
     secondsRemaining: Math.max(0, Math.round((expiresAtMs - now.getTime()) / 1000)),
     threshold: record.votesNeeded,
-    hint: `${String(record.votes)} von ${String(record.votesNeeded)} Stimmen`
+    // Plural by what is needed: "1 of 1 vote", "1 of 3 votes" — the form the sentence ends on.
+    hint: viewerText(locale, "skip.progress", { votes: record.votes, count: record.votesNeeded })
   };
 }
 

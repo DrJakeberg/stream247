@@ -2,17 +2,23 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { CHANNEL_LANGUAGE_INFO, CHANNEL_LANGUAGE_OPTIONS } from "@/components/channel-language-form";
 import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
 
 export function SetupInstanceForm(props: {
   initialAppUrl: string;
   initialTimezone: string;
+  initialLanguage: string;
   /** Set when env variables override the managed values; saving still works, env just wins. */
   envAppUrl: string;
   envTimezone: string;
+  envLanguage: string;
 }) {
   const [appUrl, setAppUrl] = useState(props.initialAppUrl);
   const [timezone, setTimezone] = useState(props.initialTimezone);
+  // New installs speak English to viewers; an empty stored value is English too.
+  const [language, setLanguage] = useState(props.initialLanguage || "en");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -28,7 +34,7 @@ export function SetupInstanceForm(props: {
           const response = await fetch("/api/settings/instance", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ appUrl, channelTimezone: timezone })
+            body: JSON.stringify({ appUrl, channelTimezone: timezone, channelLanguage: language })
           });
 
           if (!response.ok) {
@@ -68,6 +74,18 @@ export function SetupInstanceForm(props: {
         onChange={setTimezone}
         placeholder="UTC"
         value={timezone}
+      />
+      <Select
+        hint={
+          props.envLanguage
+            ? `CHANNEL_LANGUAGE is set to ${props.envLanguage} in the environment and overrides whatever is saved here.`
+            : undefined
+        }
+        info={CHANNEL_LANGUAGE_INFO}
+        label="Channel language"
+        onChange={setLanguage}
+        options={CHANNEL_LANGUAGE_OPTIONS}
+        value={language}
       />
       {error ? <p className="danger">{error}</p> : null}
       <button className="button" disabled={isPending} type="submit">

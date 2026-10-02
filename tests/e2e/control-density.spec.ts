@@ -103,7 +103,15 @@ const SURFACES: Surface[] = [
   // from Managed credentials, so the page gains two fields and a button, not three fields. It is a
   // separate panel with its own save (the rule above: two tasks, not two answers to one); its
   // connect links are secondary so they do not compete with either save.
-  { name: "admin-settings", path: "/admin?tab=settings", maxControls: 33, primaryActions: 2 },
+  // 35, still two primaries (M80, 2026-10-01): the Channel language panel — one select and its own
+  // save. It is not folded: it is the setting an owner looks for right after an upgrade (the channel
+  // speaks English until it is chosen), and a fold labelled "language" hides the one thing the panel
+  // holds. It is not moved into another form either: the other saves on this page write credentials,
+  // and a language change should not ride on a form that also re-submits those. Its save is a
+  // secondary button, so it does not compete with the two primaries. Counted from the components
+  // (33 + select + button; the (i) is excluded by the selector) and measured at 35 on a fresh dev stack
+  // on 2026-10-01.
+  { name: "admin-settings", path: "/admin?tab=settings", maxControls: 35, primaryActions: 2 },
   { name: "login", path: "/login", maxControls: 3, primaryActions: 1, authenticated: false },
   { name: "live-moderation", path: "/live?tab=moderation", maxControls: 20, primaryActions: 1 },
   { name: "program-pools", path: "/program?tab=pools", maxControls: 17, primaryActions: 1 },

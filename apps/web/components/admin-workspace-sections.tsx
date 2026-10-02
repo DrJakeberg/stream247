@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { formatSourceBreakerTime } from "@stream247/core";
 import { AssetLibraryBrowser } from "@/components/asset-library-browser";
 import { LibraryUploadForm } from "@/components/library-upload-form";
 import { Panel } from "@/components/panel";
@@ -78,6 +79,15 @@ export function SourcesWorkspacePanels({ state }: { state: AppState }) {
                   <div className="subtle">{snapshot.health.headline}</div>
                   {snapshot.health.impact ? <div className="danger">{snapshot.health.impact}</div> : null}
                   {snapshot.latestRun?.errorMessage ? <div className="danger">{snapshot.latestRun.errorMessage}</div> : null}
+                  {/* The source circuit breaker (M75): one line while it holds the source, nothing otherwise. */}
+                  {snapshot.breaker ? (
+                    <div className="danger">
+                      {snapshot.breaker.phase === "open"
+                        ? `Held out of programming since ${formatSourceBreakerTime(snapshot.breaker.openedAt)}; next probe after ${formatSourceBreakerTime(snapshot.breaker.retryAt)}.`
+                        : "Held out of programming; the next item a pool picks from it is a trial probe."}
+                      {snapshot.breaker.lastError ? ` Last error: ${snapshot.breaker.lastError}` : null}
+                    </div>
+                  ) : null}
                   <div className="stats-row">
                     <span className="subtle">In {countOf(snapshot.references.pools.length, "pool")}</span>
                     <span className="subtle">{countOf(snapshot.references.scheduleBlocks.length, "scheduled block")}</span>

@@ -30,7 +30,7 @@ this rule.
 
 | Feature | Runs through | Scopes | Without it |
 |---|---|---|---|
-| Chat rail, `!here` check-ins, chat games | bot account | `chat:read`, `chat:edit` | chat features stay quiet |
+| Chat rail, `!here` check-ins, chat games, viewer votes, requests and `!skip` | bot account | `chat:read`, `chat:edit` | chat features stay quiet |
 | Emote-only and chat moderation on the broadcast channel | bot account (as moderator) | `moderator:manage:chat_settings` | the mode is not switched |
 | Follow alerts | bot account (as moderator) | `moderator:read:followers` | no follow events |
 | Live status and viewer count of the broadcast channel | bot account + Twitch app | — | shown as unknown |
@@ -41,6 +41,11 @@ this rule.
 
 The bot account must be a **moderator** in the broadcast channel's chat (`/mod <bot>` there).
 Alerts are recorded and listed under Studio → Engagement; they are not drawn on air yet.
+While the operator's Pin or Fallback holds the air, or the operator's Play now / Insert is pending or on
+air, `!skip` votes are paused and the bot says so in chat, at most once a minute (`docs/operations.md`,
+*Operator controls*). A pool's automatic insert and a cue point insert stay skippable.
+The bot answers in the channel language (`Admin → Settings → Channel language`, English or German;
+since M80). The commands themselves (`!here`, `!skip`, `!game`, `!1`) are the same in both.
 
 ## Required Redirect URLs
 
