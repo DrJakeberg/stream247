@@ -479,7 +479,12 @@ provider, media licensing), file-format pre-check (Stream247 re-encodes), keywor
   (22.22.0, ICU 77.1) prints "GMT". CI is green on the same base commit (`gh api
   repos/DrJakeberg/stream247/commits/ab42e11/check-runs` → `validate success`).
 
-## Outside this brief (noted, not changed)
+## Outside this brief (fixed on this branch on 2026-10-02 at the owner's request)
+
+Fixed in `d789981` (time-zone name), `7891a85` (week lens), `a41d327` + `51e69ee` (public page), baselines
+in `81f0eb6`. The midnight-counting finding below is the week lens fix; projected minutes still count a
+midnight block on both days (admin only, not changed).
+
 
 - The two time-zone-name unit tests depend on the ICU version of the Node build
   (`tests/unit/viewer-messages.test.ts:115`): they fail on Node 22.22.0 / ICU 77.1 here. If CI's
