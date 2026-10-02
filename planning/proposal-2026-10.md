@@ -171,6 +171,35 @@ concurrent bootstraps, failure atomicity, downgrade.
   next to "On air now" (V2); times only in the channel zone (V4); no week programme or calendar feed (R1 row B).
 - Chat: `!help`, `!commands`, `!now`, `!next`, `!schedule` do nothing; a request gets no reply (V5, V6).
 
+### 2.5a Viewer reference: GronkhTV (owner screenshots, 2026-10-02)
+
+The owner supplied two screenshots (kept outside the repo, in the project folder `research/gronkhtv/`, because they show a
+third party's site). Described by structure only; per the project rule, Stream247 takes the ideas, never texts, names or
+the interface.
+
+- **The channel's own programme panel (phone width, 657 px).** Two sections. *Now*: one card with cover image, episode
+  number and title, the category (game), the time range, a "running since / remaining mm:ss" line and a progress bar.
+  *Then*: a continuous list across midnight without day headers (entries from midday to the next morning). Consecutive
+  episodes of the same series collapse into one card that shows only the next episode, with an expander "N more episodes".
+  Each card: cover, episode title, category, start and end time.
+- **The Twitch schedule of the same channel (desktop).** A week grid: one row per day (weekday + date), columns 00:00 to
+  24:00 with the zone label (`GMT+2`), a marker at the current hour, buttons *Today* / previous / next week, a date picker and
+  the week's date range. Each entry is a bar across its time with title and "date · start-end zone"; the live entry is
+  highlighted with "live now" and the viewer count. All other days carry one generic 24/7 entry.
+
+Conclusions for Stream247:
+
+1. The Twitch grid is what the existing schedule sync (M88 fixes it, M93 adds dated items) already produces on Twitch. The
+   public page does not need to rebuild it; it needs what Twitch cannot show: the **item level**, i.e. which video runs
+   now and which come next.
+2. So `/channel` gets a *Now* card with progress and remaining time, and a *Next* list of the coming items, grouped by
+   block or pool with "N more", times in the viewer's zone (default R2 Q7). The 7-day overview stays, but as a compact
+   list per day of blocks, not a grid.
+3. The item level needs the same rotation projection as the week view (M97). M100 therefore depends on M97, and the
+   projection must be the worker's own function, or the public page promises videos that will not air.
+4. Covers: Stream247 has asset thumbnails for YouTube and Twitch items; local files have none today (a frame grab is a
+   follow-up, not part of M100).
+
 ### 2.6 Competitors (R1 part 2)
 
 Dated items, a public programme feed and schedule drafts are the gaps that matter (I1-I3); most advertised reliability
@@ -286,7 +315,7 @@ design and wording baselines. Each row is one commit, rollback = revert that com
 | M97 Week View Tells The Truth | UX | Next | Proposed | The week view shows what will play, with dates, overnight blocks once, and why a block repeats | U5: each pool's rotation carried across blocks in time order through the worker's rotation function (shared, not copied); dates on day headers; hours, not minutes; an overnight block shown once with "→ 01:00 Sun"; repeat reason with numbers. U6: confirmation before "Replace existing schedule blocks"; "Edit block" and "Add block" on the week view. Tests in `program-week-projection`: three items, two blocks, the second block starts with item 2, not item 1; a 24 h block reads "24 h"; a block with 6 min of video in 24 h carries the reason "plays ≈ 240 times"; an overnight block appears on one day only. e2e: "Replace existing schedule blocks" opens a confirmation and Cancel leaves the blocks unchanged | `packages/core`, `apps/web`, tests, baselines | medium: preview must not drift from the worker, so one shared function | revert the commit |
 | M98 The Production Path Has A Smoke | Test | Next | Proposed | CI exercises playout → HLS → uplink with the relay on | U15: a CI job starts the stack with the relay on and asserts that `program.m3u8` MEDIA-SEQUENCE grows and the uplink output grows over 60 s; the job fails when the uplink is stopped (mutation run) | `.github/workflows/ci.yml`, `scripts/`, `docker-compose*.yml` | low (CI only) | revert the commit |
 | M99 Wizard To First Programme | UX | Later | Proposed | `/setup` ends with a stream key and a playing week | U1 (needs Q9): skippable step "Where the stream goes" with the Twitch preset, the key stored encrypted and masked; the destination form moves to Studio → Output, the old anchor redirects. U2: skippable step "First programme" creates a pool from chosen media and applies the "Always-on single pool" template. R2 U3: render test: an empty library says how to add media, a filtered-empty library says the filters hide everything. e2e: a fresh owner completes both steps and readiness shows destination, pools and schedule ready | `apps/web`, tests, baselines, `docs/getting-started.md` | medium: moves a form operators know | revert the commit |
-| M100 Public Programme For Viewers | Feature | Later | Proposed | Viewers see what comes next and the coming week, in their own time | V1: "After that" filled from the schedule (next 3-5 blocks); test "after that lists upcoming schedule blocks when the queue is empty". V2: "Scheduled now" when playout is down. R1 row B: a 7-day list on `/channel` per day, dated items marked; `/channel.ics` validated by a parser test; times per default R2 Q7 in 5.2 (viewer's zone first; unit test with a browser zone other than the channel zone). Layout from the GronkhTV reference (needs Q3). Catalogue parity en/de green | `apps/web`, `packages/core`, tests, baselines, `docs/` | low | revert the commit |
+| M100 Public Programme For Viewers | Feature | Later | Proposed | Viewers see what comes next and the coming week, in their own time | V1: "After that" filled from the schedule (next 3-5 blocks); test "after that lists upcoming schedule blocks when the queue is empty". V2: "Scheduled now" when playout is down. R1 row B: a 7-day list on `/channel` per day, dated items marked; `/channel.ics` validated by a parser test; times per default R2 Q7 in 5.2 (viewer's zone first; unit test with a browser zone other than the channel zone). Layout per 2.5a: a *Now* card with progress bar and remaining time (unit test on the remaining-time and progress values for a fixed clock), a *Next* list of the next 24 h at item level from the shared week projection, consecutive items of one block grouped with "N more" (test: 3 blocks × 5 items give 3 groups with "4 more" each), crossing midnight without a break (test); Playwright at 390 px: the *Now* card is above the fold. Catalogue parity en/de green | `apps/web`, `packages/core`, tests, baselines, `docs/` | low | revert the commit |
 | M101 Schedule Across DST, Wall Clock Kept | Bug | Later | Proposed | Twice a year the counts are right while blocks keep their wall-clock times (owner Q4) | C5: cuepoint elapsed time from real instants (test: block from 01:00, at 03:30 local on 2027-03-28 reports 5 400 s, not 9 000 s); a non-existent local time maps forward (02:30 on 2026-03-29 → `01:30Z`, not `00:30Z`); the Twitch segment end follows real minutes; `docs/operations.md` states the wall-clock rule (skipped in March, twice in October) | `packages/core`, `apps/worker`, tests, docs | low | revert the commit |
 | M102 Standby Shows Standby | Bug | Later | Proposed | The standby or reconnect slate never shows the previous item's title | W8: `writeStandbySlate` sets the standby scene payload; unit test on the payload; a design-baseline check of the standby frame | `apps/worker`, tests, baselines | medium: changes the on-air picture | revert the commit |
 | M103 Backoff And Health Restarts | Reliability | Later | Proposed | Repeated restarts slow down; a hung worker or uplink restarts itself | H7: growing backoff up to 5 min for the crash-loop reset and the uplink watchdog; the crash-loop incident no longer says "Manual intervention is required" when playable media exists (unit test on the message). H8 (owner Q7): worker and uplink exit after 5 min of failing their own healthcheck; playout only while its feed does not advance. Tests: backoff sequence; a playing playout with an advancing feed never exits | `apps/worker`, `docker-compose.yml`, tests, docs | medium: dark time grows with backoff; a wrong rule could restart a playing channel | revert the commit |
@@ -297,7 +326,7 @@ M77 resume an interrupted item and M81 admin interface language (deferred until 
 that never started is not M77 (R3 W6). Also not in this stage: competitor ideas I3-I8 and I11 (2.6), extending the schema
 drift check to indexes and types (R3 M3), the 30 untriaged audit findings, the mobile on-call order beyond M90's check.
 
-**Dependencies:** M84 first. M88 before M93 (both touch occurrences). M93 before M100 (dated items on `/channel`) and before
+**Dependencies:** M84 first. M88 before M93 (both touch occurrences). M93 and M97 before M100 (dated items and the item-level projection on `/channel`) and before
 competitor idea I6. M91 before M99. Everything else is independent and may be reordered by the owner.
 
 ## 5. Questions to the owner
@@ -308,7 +337,7 @@ competitor idea I6. M91 before M99. Everything else is independent and may be re
 answered Q4 with "jimpanse247 is an affiliate" (so the non-recurring Twitch segments of M88 and M93 work for the channel),
 and asked that the GronkhTV screenshots for Q3 be made by Claude. The cloud cannot reach gronkh.tv or twitch.tv
 (`page.goto: net::ERR_TUNNEL_CONNECTION_FAILED`, re-run 23:36 UTC), and the session on the owner's device was declined (23:42 UTC).
-The reference is still open; only M100's layout waits for it, every other milestone is unaffected.
+On 2026-10-02 10:22 UTC the owner supplied the two screenshots himself and confirmed again "Alles was du empfiehlst"; the reference is in 2.5a and M100.
 
 1. **Dated blocks over the weekly grid.** May a dated block take over the weekly block it overlaps, with the weekly block
    continuing around it? *Recommendation: yes; otherwise "every evening at 20:00" can never be saved on a 24/7 channel (probe
