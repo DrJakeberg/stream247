@@ -267,6 +267,21 @@ const STATE_FAMILIES: IncidentFamily[] = [
     why: "The stored token cannot be refreshed, so the connection stays unusable until a refresh works."
   },
   {
+    fingerprint: "twitch.reconnect.required",
+    keyed: false,
+    kind: "state",
+    area: "twitch",
+    why: "Twitch refused the stored refresh token, which holds until the operator reconnects the account; the first cycle that finds the connection connected again closes it (M87)."
+  },
+  {
+    // Keyed by the fixed name of a worker cycle step (cycle-steps.ts), a bounded set.
+    fingerprint: "worker.step.failed",
+    keyed: "suffix",
+    kind: "state",
+    area: "worker",
+    why: "One integration step of the worker cycle keeps failing while the rest of the cycle runs (M87); the next run of that step that succeeds closes it."
+  },
+  {
     fingerprint: "twitch.chat.login-rejected",
     keyed: false,
     kind: "state",

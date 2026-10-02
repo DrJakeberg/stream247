@@ -1,4 +1,6 @@
 import { findMissingTwitchIdentityScopes } from "@stream247/core";
+import { EXTERNAL_REQUEST_TIMEOUT_MS } from "./http-timeout.js";
+import { isTwitchRefreshRefusedError } from "./twitch-token-refresh.js";
 
 // Bringing a connection back from the error status without a second trip through OAuth.
 //
@@ -24,7 +26,7 @@ export const TWITCH_CONNECTION_HEAL_MIN_INTERVAL_MS = 10 * 60_000;
 
 export type TwitchConnectionHealDecision =
   | { attempt: true }
-  | { attempt: false; reason: "not-in-error" | "no-token" | "checked-recently" };
+  | { attempt: false; reason: "not-in-error" | "no-token" | "refresh-refused" | "checked-recently" };
 
 /**
  * Whether this cycle should ask Twitch about the stored token.
@@ -37,6 +39,8 @@ export type TwitchConnectionHealDecision =
 export function decideTwitchConnectionHeal(args: {
   status: string;
   accessToken: string;
+  /** The record's error text; a refused refresh token is left for the operator to reconnect. */
+  error?: string;
   lastAttemptAt: number;
   now: number;
   minIntervalMs?: number;
@@ -47,6 +51,13 @@ export function decideTwitchConnectionHeal(args: {
 
   if (args.accessToken.trim() === "") {
     return { attempt: false, reason: "no-token" };
+  }
+
+  // Twitch refused the refresh token (M87). The access token can still validate for a few minutes,
+  // and healing it would flip the record back to connected, the next refresh would be refused
+  // again, and the status would flap until the token expired. Only a reconnect fixes this one.
+  if (isTwitchRefreshRefusedError(args.error ?? "")) {
+    return { attempt: false, reason: "refresh-refused" };
   }
 
   const minIntervalMs = args.minIntervalMs ?? TWITCH_CONNECTION_HEAL_MIN_INTERVAL_MS;
@@ -63,7 +74,7 @@ export type TwitchTokenVerdict =
   | { healthy: false; reason: "missing-scopes"; missingScopes: string[] }
   | { healthy: false; reason: "unreachable"; message: string };
 
-type FetchLike = (url: string, init?: { headers?: Record<string, string> }) => Promise<Response>;
+type FetchLike = (url: string, init?: { headers?: Record<string, string>; signal?: AbortSignal }) => Promise<Response>;
 
 /**
  * What Twitch says about a token we already hold.
@@ -87,7 +98,10 @@ export async function validateTwitchAccessToken(
     response = await fetchImpl("https://id.twitch.tv/oauth2/validate", {
       // Twitch's validate endpoint takes the OAuth scheme here, not Bearer; with Bearer it
       // answers 401 for a perfectly good token, which would read as a revoked grant.
-      headers: { Authorization: `OAuth ${accessToken}` }
+      headers: { Authorization: `OAuth ${accessToken}` },
+      // A Twitch that never answers is "unreachable" after this, not a cycle held until the stall
+      // guard (M87).
+      signal: AbortSignal.timeout(EXTERNAL_REQUEST_TIMEOUT_MS)
     });
   } catch (error) {
     return { healthy: false, reason: "unreachable", message: error instanceof Error ? error.message : String(error) };

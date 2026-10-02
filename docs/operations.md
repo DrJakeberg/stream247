@@ -340,6 +340,42 @@ Reading the rows:
   restart is needed. The schema bootstrap waits at most 5 s for any table lock (an older release still
   writing during an upgrade) and retries a lost deadlock or lock wait, four attempts in all
 
+### An external service fails or hangs (since M87)
+
+- the worker cycle runs its integration steps one by one (disk watermark, source syncs, the Twitch
+  heal, sync, live status and EventSub, chat, the chat games). A step that throws costs that step: the
+  log shows `worker.step.failed` with the step's name, the warning incident `worker.step.failed.<step>`
+  opens, and the next step runs. The heartbeat and the incident sweep follow the steps, so a Twitch or
+  source failure no longer turns the worker unhealthy. The next run of that step that succeeds closes
+  the incident
+- a step failure that cannot be recorded because the database is gone ends the cycle as before, and
+  the PostgreSQL outage rules above apply
+- every Twitch request of the worker gives up after 10 s ("… did not answer within 10000 ms."), so a
+  Twitch that accepts a connection and never answers is one failed step, not a cycle held until the
+  300 s stall guard restarts the process
+- each yt-dlp listing and metadata call of the YouTube and Twitch source syncs gives up after 2 min
+  (clamped to half the stall guard). The limit is per call and the syncs walk their sources one by one,
+  so with three or more sources on a host that stops answering one cycle can still reach the stall guard
+
+### Twitch asks for a reconnect (since M87)
+
+- when Twitch refuses the stored refresh token of the bot account (HTTP 400 `invalid_grant` or
+  "Invalid refresh token": the grant was revoked, the password changed, or the token is too old), the
+  worker sets the connection to error with the text "Twitch refused the stored refresh token…" and opens
+  the critical incidents `twitch.refresh.failed` and `twitch.reconnect.required` ("Reconnect Twitch").
+  Title, category, schedule sync and emote-only stay paused, and chat cannot sign in once the access
+  token has run out, until the account is reconnected under Admin → Settings → Twitch accounts; the
+  first worker cycle after the reconnect closes both incidents. While the connection is in error the
+  worker also stops polling the live status (it reads "unknown") and leaves EventSub alone, as it does
+  for any connection in error. The
+  connection heal leaves such a record alone, because the access token can still validate for a few
+  minutes and healing it would only flap the status
+- a refresh that fails for any other reason (Twitch down, a timeout, a 5xx) opens
+  `twitch.refresh.failed` and leaves the status as it is; the next cycle retries. A refused refresh
+  token of the broadcast channel's own account opens `twitch.refresh.failed` naming that account, and
+  its status stays as it is (an error status there would lock its refresh out); title, category,
+  schedule and emote-only wait for the next cycle, which tries that refresh again
+
 ### Crash-loop protection active
 
 - inspect the latest playout incidents
@@ -360,7 +396,8 @@ Reading the rows:
   accounts); `twitch.metadata.waiting-for-broadcaster` is expected in a split setup until the channel
   owner connects — chat and moderation keep running through the bot meanwhile
 - check managed credentials or `.env` fallback
-- review Twitch incidents in `/live?tab=status`
+- review Twitch incidents in `/live?tab=status`; "Reconnect Twitch" means the stored refresh token was
+  refused (see *Twitch asks for a reconnect* above)
 
 ### Channel timezone is not valid (since M85)
 
