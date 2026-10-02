@@ -3568,6 +3568,39 @@ export function findNextScheduleOccurrenceAcrossDays(args: {
   return null;
 }
 
+/**
+ * The next `limit` occurrences after `currentTime`, across days, in airing order. The first is what
+ * `findNextScheduleOccurrenceAcrossDays` answers; the rest are what follows it. Later days skip
+ * carry-overs for the same reason: an occurrence spilling past midnight was already listed on the day
+ * it starts.
+ */
+export function listUpcomingScheduleOccurrencesAcrossDays(args: {
+  blocks: ScheduleBlock[];
+  date: string;
+  currentTime: string;
+  limit: number;
+  lookaheadDays?: number;
+}): ScheduleOccurrence[] {
+  const limit = Math.max(0, Math.trunc(args.limit));
+  if (limit === 0) {
+    return [];
+  }
+
+  const upcoming = listUpcomingScheduleOccurrences({
+    occurrences: buildScheduleOccurrences({ date: args.date, blocks: args.blocks }),
+    currentTime: args.currentTime
+  });
+  const lookaheadDays = args.lookaheadDays ?? 7;
+  for (let offset = 1; offset <= lookaheadDays && upcoming.length < limit; offset += 1) {
+    const date = addDaysToDateString(args.date, offset);
+    upcoming.push(
+      ...buildScheduleOccurrences({ date, blocks: args.blocks }).filter((occurrence) => !occurrence.carriesOverFromPreviousDay)
+    );
+  }
+
+  return upcoming.slice(0, limit);
+}
+
 export function listUpcomingScheduleOccurrences(args: {
   occurrences: ScheduleOccurrence[];
   currentTime: string;

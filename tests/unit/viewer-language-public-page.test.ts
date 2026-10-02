@@ -44,6 +44,7 @@ function snapshot(locale: ViewerLocale, overrides: Partial<PublicChannelSnapshot
     queueItems: [],
     currentScheduleItem: null,
     nextScheduleItem: null,
+    laterScheduleItems: [],
     ...overrides
   };
 }
@@ -106,6 +107,28 @@ describe("the public page in English", () => {
       // it reads as before (the German case below translates it).
       afterText: "Episode 1 → Episode 2 → Scheduled reconnect"
     });
+  });
+
+  it("lists what the schedule airs after up next when the queue is empty", () => {
+    const idleQueue = (locale: ViewerLocale) =>
+      snapshot(locale, {
+        nextScheduleItem: scheduleItem("Nachtschleife", "00:00", "06:00", "Archiv"),
+        laterScheduleItems: [
+          scheduleItem("Tagesprogramm", "06:00", "20:00", "Archiv"),
+          // No title: the category stands in, as on the rest of the page.
+          scheduleItem("", "20:00", "00:00", "Abendprogramm")
+        ]
+      });
+    // Was "Nothing further is scheduled yet." on a channel programmed around the clock.
+    for (const locale of ["en", "de"] as const) {
+      expect(buildPublicChannelView(idleQueue(locale), true).afterText).toBe(
+        "06:00 Tagesprogramm → 20:00 Abendprogramm"
+      );
+    }
+    // The queue still wins when there is one.
+    expect(buildPublicChannelView({ ...idleQueue("en"), queueItems: [queueItem("Episode 1")] }, true).afterText).toBe(
+      "Episode 1"
+    );
   });
 
   it("uses the viewer's words where nothing is scheduled", () => {

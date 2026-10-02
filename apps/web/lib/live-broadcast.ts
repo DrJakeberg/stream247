@@ -389,4 +389,6 @@ export type PublicChannelSnapshot = {
   queueItems: LiveQueueItemSummary[];
   currentScheduleItem: LiveScheduleSummary | null;
   nextScheduleItem: LiveScheduleSummary | null;
+  /** Up to three scheduled occurrences after `nextScheduleItem`, for "after that" when the queue is empty. */
+  laterScheduleItems: LiveScheduleSummary[];
 };
