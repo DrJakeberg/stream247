@@ -20,7 +20,7 @@ How this file works:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | M83 Release 2.2.0 | Release | Now | Planned | Ship M64, M75, M76, M78, M79, M80 and M82 (owner decision 2026-10-01: the version is 2.2.0, not 2.1.1 - two new tables, a new setting and a visible default change are more than a patch) | After v2.1.0 is tagged: this branch merged, `v2.2.0-rc.1` on the DUT with a PostgreSQL backup first, the channel language set to German, the DUT checks of each milestone section run, the two measurements of the nightly outage read (M82), a 24-h soak, then 2.2.0 tagged with its GitHub release and repinned; `docs/deployment.md` names the upgrade section *Upgrading To 2.2* (earlier sections of this file still say *Upgrading Past 2.1.0*); details, the DUT checks of each milestone and the soak go into `planning/archive/plans-m0-m83.md` (sections M71 and M75-M82; the release thread adds the M83 section there) | release, docs | medium | repin v2.1.0 |
 | M84 One Plan And A Reference Check | Docs + Ops | Now | Complete | One short plan, one rule file, history archived, and no doc can point at a missing file | `wc -l < PLANS.md` < 300; `wc -l < AGENTS.md` ≤ 120; `test ! -e IMPLEMENT.md && test ! -e planning/next-session-prompt.md && ! ls -d release-prune-backup-*`; `git log --follow --oneline planning/archive/plans-m0-m83.md \| wc -l` > 1; the new PLANS.md lists M57, M66, M77, M81 under "Owner-gated and deferred"; `grep -c "recovery-stack\|full-product-reset-audit\|automatically continue" AGENTS.md` = 0; each of the 12 items of 3.3 is found by a keyword grep on AGENTS.md (`jimpanse247`, `mediamtx:1.15.4`, `passed with failure`, `its own milestone`, `M66`, `M77`, `force`, `pnpm validate`, `deleted or weakened`, `German`, `texts, names`, `Hard blockers`), each ≥ 1; new `tests/unit/doc-refs.test.ts` fails on a backticked repo path in `AGENTS.md`, `PLANS.md`, `README.md`, `CONTRIBUTING.md` or `docs/*.md` that does not exist (mutation: adding `` `docs/nope.md` `` to AGENTS.md turns it red) and is green on the tree (fixes `docs/architecture.md:331`) | `AGENTS.md`, `PLANS.md`, IMPLEMENT.md (deleted), `planning/**`, release-prune-backup-* (deleted), `docs/architecture.md`, `.github/pull_request_template.md`, `tests/unit/` | low; losing an open follow-up is the risk, checked by comparing the old open rows and follow-up blocks with the new plan | revert the commit |
-| M85 Safe Configuration And Secrets | Reliability + Security | Now | Planned | A stream key never stays in the audit log, and a zone typo never breaks the schedule | M4: `appendAuditEvent` redacts like `upsertIncident`; a new migration id redacts existing `audit_events` rows; integration test: a synthetic `rtmp://…/live_…` key written through `appendAuditEvent` and one seeded before the migration both read back as `<redacted>`. C4: `resolveChannelTimeZone({}, {CHANNEL_TIMEZONE:"Europe/Berln"})` returns the managed zone or `UTC` and a state incident is raised; unit test. M5: the `custom_layers_json` cast is guarded; integration test boots a DB with one malformed row | `packages/db`, `apps/worker`, tests, `docs/operations.md` | low; the redaction migration is one-way (it removes secrets on purpose) | revert the commit; redacted rows stay redacted |
+| M85 Safe Configuration And Secrets | Reliability + Security | Now | Complete | A stream key never stays in the audit log, and a zone typo never breaks the schedule | M4: `appendAuditEvent` redacts like `upsertIncident`; a new migration id redacts existing `audit_events` rows; integration test: a synthetic `rtmp://…/live_…` key written through `appendAuditEvent` and one seeded before the migration both read back as `<redacted>`. C4: `resolveChannelTimeZone({}, {CHANNEL_TIMEZONE:"Europe/Berln"})` returns the managed zone or `UTC` and a state incident is raised; unit test. M5: the `custom_layers_json` cast is guarded; integration test boots a DB with one malformed row | `packages/db`, `apps/worker`, tests, `docs/operations.md` | low; the redaction migration is one-way (it removes secrets on purpose) | revert the commit; redacted rows stay redacted |
 | M86 A Database Blip Does Not Take The Channel Off Air | Reliability | Now | Planned | A Postgres restart or short outage leaves ffmpeg and the uplink running; web recovers by itself | H2: the failed-cycle branch is guarded; a process exits only after 5 min of consecutive failed cycles (owner Q2); pool `connectionTimeoutMillis` set. Unit test of a pure counter (below 5 min no exit, at 5 min exit). H3: a rejected `__stream247DbReady` is cleared; retry on `40P01`/`55P03`; migrations run with `SET LOCAL lock_timeout`; integration test: `ensureDatabase` fails with Postgres down, succeeds after Postgres starts, no reset helper called. R3's S1 probe (appendix of `planning/research/robustness.md`) becomes an integration test: Postgres stopped for 45 s, the worker process in all three modes is still running afterwards. DUT check (owner): `docker compose stop postgres; sleep 45; docker compose start postgres` during air, playout and uplink `StartedAt` unchanged | `apps/worker`, `packages/db`, `apps/web/lib/server`, tests, `docs/operations.md` | medium: a half-dead process for at most 5 min | revert the commit |
 | M87 An External Failure Costs One Step, Not The Cycle | Reliability | Now | Planned | A refused Twitch token or a hanging call never stops heartbeat, sweep, live status or chat | H1: each integration step of the worker cycle is isolated; a refresh throw writes `twitch.refresh.failed`; HTTP 400 `invalid_grant` sets the identity status `error` with a state incident "reconnect Twitch" (owner Q3). H6: yt-dlp calls get `timeoutMs`, the six worker `fetch` calls `AbortSignal.timeout`. Tests: refresh throws → heartbeat written, sweep ran, no `worker.loop.crashed`; `invalid_grant` → status `error`; a fetch stub that never answers is aborted within its timeout. R3's S2 probe becomes an integration test: with the token endpoint stubbed to HTTP 400, `healthcheck worker` exits 0 after two cycles | `apps/worker`, `packages/core`, tests, `docs/operations.md` | low | revert the commit |
 | M88 Schedule Maths Across Midnight | Bug | Now | Planned | A block past midnight behaves like one block everywhere | C1: fired cuepoints keyed by block and start date; test: Sat 23:00+120 with cuepoints at 900 s and 2700 s, at 00:05 `getCuepointInsertPlan` returns null. C2/B1: no carry-over segments in the Twitch plan, extracted as pure `planTwitchScheduleSegments`, each created segment recorded before the next request; test: Monday 23:00+120 over 7 days gives 1 segment, no `:carry` key. C3/B2: overlap on a 7-day minute line; test: Mon 23:00+120 vs Mon 00:00+30 → `[]`, vs Tue 00:00+30 → both ids (the probe in 1.1 shows today's opposite); `tests/unit/schedule-template-conflicts.test.ts:62-68` pins today's wrong model (both blocks on weekday 1); its fixture moves to weekday 1 + 2, it still asserts the conflict and gains the false-positive case, so it is strengthened, not weakened (the owner is told in the report). B3: keep-rule uses the effective start; test with horizon 60 at Tue 00:30 returns the pool. C6: day totals count only the part inside the day; test: 120 + 120 = 240 over two days becomes 60 + 60. Owner decision 2026-10-02 11:35 UTC: R1's three corrections reach main only with M88 and stay on `claude/r1-scheduling-competitors-v5o5zi` until then; M88 takes them over from that branch at `97f4037`: the bare "GMT" zone name (`d789981`), the week lens counting a midnight block once with its fill pill inside the card (`7891a85`, covers C6), `/channel` "After that" from the schedule (`a41d327`, `51e69ee`, covers V1, which then leaves M100) and their re-recorded baselines (`81f0eb6`); their tests pass unchanged in M88 | `packages/core`, `apps/worker`, tests, `docs/operations.md` | low; hidden overlaps in saved schedules show up in the editor, saved schedules stay loadable (test) | revert the commit |
@@ -151,7 +151,19 @@ Repository and operations:
 Checks a milestone could not run in the cloud. The owner runs them on the DUT after the next candidate is
 deployed; the release that ships them records the results.
 
-- None yet. (The checks for 2.2.0 are in the archive, sections M75-M82.)
+- M85, after the repin: the scrub ran and no Twitch key is left in the audit trail or the incidents. The
+  query prints counts, never a key; it passes on `1|0|0`. And the incident `config.channel-timezone.invalid`
+  is not open on `/live?tab=status`.
+
+  ```sh
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT (SELECT COUNT(*) FROM schema_migrations WHERE id = '20261002_001_redact_stored_secrets_again'),
+         (SELECT COUNT(*) FROM audit_events WHERE message ~ 'live_[0-9]+_'),
+         (SELECT COUNT(*) FROM incidents WHERE message ~ 'live_[0-9]+_');
+  SQL
+  ```
+
+- (The checks for 2.2.0 are in the archive, sections M75-M82.)
 
 ## Shipped
 
@@ -165,3 +177,29 @@ deployed; the release that ships them records the results.
 ## Milestone notes
 
 Sections for milestones in **Open** that need more than their row, appended in milestone order.
+
+### M85 Safe Configuration And Secrets
+
+Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
+
+- **M4, stream keys in the audit trail.** `appendAuditEvent` runs the message through `redactSecrets`
+  before the insert, as `upsertIncident` does; the whole-state write (`persistState`) redacts the audit
+  rows it rewrites as well, because a state write can carry an entry that never passed the sink. The
+  scrub of `20260902_001_redact_stored_secrets` is now one function, `redactStoredSecrets`, and runs again
+  under the new id `20261002_001_redact_stored_secrets_again` (incidents, audit trail, destination and
+  runtime errors; idempotent, one-way). Integration test: a synthetic `rtmp://live.twitch.tv/app/live_…`
+  key written through `appendAuditEvent`, and one inserted by SQL before the migration on a database
+  where the first scrub is already recorded, both read back as `rtmp://live.twitch.tv/app/<redacted>`.
+- **C4, a typo in the channel timezone.** `resolveChannelTimeZone` skips a value `Intl` rejects: env,
+  then the saved zone, then `UTC`. `findChannelTimeZoneProblem` names the skipped value; the worker raises
+  the state incident `config.channel-timezone.invalid` (warning, area `system`) once per text and closes it
+  when the value is fixed (`apps/worker/src/channel-timezone.ts`, registered in `incident-classes.ts`).
+  `isUsableTimeZone` caches its answer, because the resolver now asks on every schedule read.
+- **M5, malformed `custom_layers_json`.** The named-scenes migration casts only text that
+  `pg_input_is_valid(…, 'json')` accepts and gives any other row an empty layer list; the column is left as
+  it was. The overlay reader parses the column with a fallback to `[]`, so the boot and every later state
+  read survive the row. Integration test: an older database with one such row boots, records the
+  migration, and `readAppState` succeeds. Without the guard the same test fails with
+  `invalid input syntax for type json`, and every later test in the file with it.
+- Not changed: the setup form's sentence that `CHANNEL_TIMEZONE` "overrides whatever is saved here" is not
+  true for an unusable value; a wording change needs new baselines, so it is left for a UI milestone.

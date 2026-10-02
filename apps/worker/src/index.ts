@@ -251,6 +251,7 @@ import {
   type DiskWatermarkStageResult
 } from "./disk-watermark.js";
 import { decideSystemVolumeObservation } from "./system-volume.js";
+import { planChannelTimeZoneIncident } from "./channel-timezone.js";
 import {
   captureSourceSnapshot,
   deriveSourceFrameStatus,
@@ -1528,6 +1529,30 @@ async function observeSystemVolume(): Promise<void> {
     }
   } catch (error) {
     logRuntimeEvent("system.volume.check_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+// A channel timezone Intl rejects is skipped by resolveChannelTimeZone (M85); this makes the skip
+// visible. Best-effort like the volume watch: a failed incident write must not cost the cycle.
+async function observeChannelTimeZone(state: AppState): Promise<void> {
+  try {
+    const plan = planChannelTimeZoneIncident({ managedConfig: state.managedConfig, incidents: state.incidents });
+    if (plan.action === "raise") {
+      logRuntimeEvent("config.channel_timezone.invalid", { message: plan.message });
+      await upsertIncident({
+        scope: "system",
+        severity: "warning",
+        title: "Channel timezone is not valid",
+        message: plan.message,
+        fingerprint: "config.channel-timezone.invalid"
+      });
+    } else if (plan.action === "resolve") {
+      await resolveIncident("config.channel-timezone.invalid", "The configured channel timezone is valid again.");
+    }
+  } catch (error) {
+    logRuntimeEvent("config.channel_timezone.check_failed", {
       error: error instanceof Error ? error.message : String(error)
     });
   }
@@ -9752,6 +9777,7 @@ async function runWorkerCycle(): Promise<void> {
   const chatCycleState = await readAppState();
   latestEngagementSettings = chatCycleState.engagement;
   latestManagedConfig = chatCycleState.managedConfig;
+  await observeChannelTimeZone(chatCycleState);
   const chatInteractionForBridge = await readChatInteractionSettingsRecord();
   await twitchChatBridge.sync(chatCycleState, process.env, {
     chatInteractionEnabled: chatInteractionForBridge.enabled,

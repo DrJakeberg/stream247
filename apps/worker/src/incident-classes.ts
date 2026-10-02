@@ -211,6 +211,13 @@ const STATE_FAMILIES: IncidentFamily[] = [
     why: "Free space is below the mark with nothing left to evict; it holds until space is freed."
   },
   {
+    fingerprint: "config.channel-timezone.invalid",
+    keyed: false,
+    kind: "state",
+    area: "system",
+    why: "The configured channel timezone is unusable until someone fixes it; the worker's timezone check closes it."
+  },
+  {
     fingerprint: "system.volume.low",
     keyed: false,
     kind: "state",

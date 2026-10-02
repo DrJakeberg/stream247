@@ -340,6 +340,16 @@ Reading the rows:
 - check managed credentials or `.env` fallback
 - review Twitch incidents in `/live?tab=status`
 
+### Channel timezone is not valid (since M85)
+
+- the incident `config.channel-timezone.invalid` (warning, system) means `CHANNEL_TIMEZONE` in the
+  environment, or the zone saved in the setup wizard, is not a name the runtime knows (a typo such as
+  `Europe/Berln`); the message names the value and the zone the schedule runs on instead
+- the channel stays on air: the bad value is skipped and the schedule falls back to the saved zone, then
+  to `UTC`, so every block can run hours off until the value is fixed
+- fix the value in the deployment environment (or unset it and let the wizard manage the zone) and
+  restart; the next worker cycle closes the incident
+
 ### No playable asset
 
 - verify local media exists or remote sources ingest correctly
@@ -538,6 +548,14 @@ docker exec stream247-playout-1 yt-dlp --simulate --print "%(is_live)s" https://
 Before touching the uplink because "the channel is offline", repeat that check against the broadcast
 channel. The worker's `twitch.chat_settings.written` line names both accounts (`channelLogin`/`channelId`,
 `botLogin`/`botId`); a refused bot connect is in the audit trail as `twitch.bot.rejected`.
+
+### Secrets in the audit trail and incidents
+
+Incidents and the audit trail store text through `redactSecrets`: a publish URL keeps its host and
+path but loses the stream key (`rtmp://live.twitch.tv/app/<redacted>`), and passphrases, passwords and
+tokens become `<redacted>`. Since M85 the audit trail redacts at the sink too, and the upgrade migration
+`20261002_001_redact_stored_secrets_again` scrubs entries stored verbatim before. The scrub is one-way on
+purpose; a rollback keeps the redacted rows.
 
 ### Media disk filling up
 
