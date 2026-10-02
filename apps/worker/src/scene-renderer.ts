@@ -89,8 +89,11 @@ export function sceneFrameCacheKey(request: SceneRenderRequest): string {
     // unseen: on a channel where nothing else changes -- a long VOD, no chat, no game -- the
     // renderer kept pushing the PNG it had and the on-air time stood at a stale minute. Same
     // remedy as the ticker: carry the string that is drawn, not the instant it came from, so this
-    // term changes once a minute instead of once a render.
-    formatOverlayClock(request.now ?? new Date(), request.payload.timeZone)
+    // term changes once a minute instead of once a render. In the payload's language, like the
+    // layout that draws it: both languages print the same "HH:MM" today, so this changes no key,
+    // but a clock formatted without the language would stop being "the string that is drawn" the
+    // day one of them prints it differently.
+    formatOverlayClock(request.now ?? new Date(), request.payload.timeZone, request.payload.locale)
   ]);
 }
 

@@ -21,6 +21,7 @@ import {
 import { AdminPageHeader } from "@/components/admin-page-header";
 import { Panel } from "@/components/panel";
 import { ChannelBlueprintForm } from "@/components/channel-blueprint-form";
+import { ChannelLanguageForm } from "@/components/channel-language-form";
 import { DiskWatermarkForm } from "@/components/disk-watermark-form";
 import { FeatureSwitchesForm } from "@/components/feature-switches-form";
 import { FeedTuningForm } from "@/components/feed-tuning-form";
@@ -72,6 +73,13 @@ export default async function SettingsPage() {
 
       <Panel title="Twitch accounts" eyebrow="Twitch">
         <TwitchAccountsPanel {...twitchAccountsPanel.props} />
+      </Panel>
+
+      <Panel title="Channel language" eyebrow="Viewers">
+        <ChannelLanguageForm
+          envLanguage={(process.env.CHANNEL_LANGUAGE || "").trim()}
+          initialLanguage={state.managedConfig.channelLanguage ?? ""}
+        />
       </Panel>
 
       <div className="grid two">

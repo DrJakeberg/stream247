@@ -204,3 +204,8 @@ INCIDENTS
 Incident history
 No incidents recorded
 Incident history will appear here once the worker or playout runtime emits one.
+AS-RUN LOG
+On air, last 24 hours
+i
+Nothing aired in the last 24 hours
+Every playout start writes a row here, from the first start after the upgrade on.

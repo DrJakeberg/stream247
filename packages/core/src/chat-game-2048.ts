@@ -10,6 +10,7 @@
 // and no clock exists anywhere — an untouched board stays untouched forever.
 
 import {
+  chatGameViewerName,
   nextChatGameSeed,
   type ChatGameDefinition,
   type ChatGameInput,
@@ -17,6 +18,7 @@ import {
   type ChatGameRenderModel,
   type ChatGameSettings
 } from "./chat-game.js";
+import { viewerText } from "./viewer-messages/index.js";
 
 export type Game2048State = {
   phase: "playing" | "over";
@@ -171,7 +173,7 @@ function apply2048Input(state: Game2048State, input: ChatGameInput, settings: Ch
   };
 }
 
-function render2048Model(state: Game2048State, settings: ChatGameSettings): ChatGameRenderModel {
+function render2048Model(state: Game2048State, settings: ChatGameSettings, locale?: string): ChatGameRenderModel {
   const cells: ChatGameRenderCell[] = [];
   state.tiles.forEach((value, index) => {
     if (value === 0) {
@@ -194,12 +196,12 @@ function render2048Model(state: Game2048State, settings: ChatGameSettings): Chat
     cells,
     // Viewer-facing only: this text is burned into the broadcast, so it names what the audience
     // does, never the machinery behind it.
-    headline: "Chat plays 2048",
-    statusLine: state.phase === "over" ? `Game over · Score ${String(state.score)}` : `Score ${String(state.score)}`,
+    headline: viewerText(locale, "game.headline", { game: chatGameViewerName("2048", locale) }),
+    statusLine: viewerText(locale, state.phase === "over" ? "game.status.over" : "game.status.score", { count: state.score }),
     hintLine:
       state.phase === "over"
-        ? "Send any arrow emote to start the next round"
-        : `Merge with ${map.up} ${map.down} ${map.left} ${map.right} in chat`,
+        ? viewerText(locale, "game.hint.arrowRestart")
+        : viewerText(locale, "game.hint.2048", { emotes: `${map.up} ${map.down} ${map.left} ${map.right}` }),
     phase: state.phase
   };
 }

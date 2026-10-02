@@ -94,6 +94,7 @@ New surfaces should build from those primitives instead of bespoke styled HTML c
 - Long titles wrap or clamp safely; they do not force layout growth.
 - The full unclamped value stays available via `title` where the surface needs bounded height.
 - Replay labels, hashtags, notes, scene text, source names, destination names, and queue titles all follow the same sanitation rules.
+- Admin copy is English and is written in the component. Text that viewers see or read (the on-air picture, chat bot replies, the public page `/channel`) is never written as a literal: it comes from the viewer catalogue in the channel language (`packages/core/src/viewer-messages/`; `docs/architecture.md`, *Viewer Language*), and `tests/unit/viewer-language-literals.test.ts` fails when a viewer sentence reappears outside it.
 
 ## Form Rules
 
@@ -151,6 +152,7 @@ Use these terms consistently in UI copy, docs, and review comments.
 | presence window / !here window / mod presence | `moderation presence` | One consistent term across chat replies, docs, and UI. |
 | stream profile / encoding profile | `output profile` | The rendering and delivery profile for the stream or destination. |
 | Next up / Coming up / Coming up next | `Up next` | One phrase across Live, Program, and overlay output. |
+| Standby / Replay standby / Please wait (to viewers) | `Stand by` · `Gleich geht’s weiter` | One viewer term per channel language for the standby state. The admin's state titles (`Replay standby`) stay as they are. |
 
 ## Non-goals
 

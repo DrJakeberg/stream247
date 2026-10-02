@@ -281,7 +281,7 @@ export class ChatGameRuntime {
  * only ever reads: the render model is re-derived from the state, never stored, so the two can
  * never disagree. Returns null — no panel — for an empty, torn, or stale record.
  */
-export function buildChatGameOverlayViewFromRuntimeRecord(record: ChatGameRuntimeRecord): OverlayGameView | null {
+export function buildChatGameOverlayViewFromRuntimeRecord(record: ChatGameRuntimeRecord, locale?: string): OverlayGameView | null {
   if (!record.gameId || !record.settingsKey) {
     return null;
   }
@@ -299,5 +299,7 @@ export function buildChatGameOverlayViewFromRuntimeRecord(record: ChatGameRuntim
     return null;
   }
 
-  return definition.renderModel(state, settings);
+  // The texts are written here, in the playout container, in the language of the picture the
+  // board is drawn on; the stored state carries no words.
+  return definition.renderModel(state, settings, locale);
 }

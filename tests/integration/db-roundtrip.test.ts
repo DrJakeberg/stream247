@@ -46,6 +46,13 @@ import {
   upsertIncident,
   resolveIncident,
   appendChatViewerRequestRecord,
+  closeSourceBreakerRecord,
+  closeOpenAsRunRecords,
+  deleteSourceRecordAndAssets,
+  listAsRunRecords,
+  recordAsRunEnd,
+  recordAsRunStart,
+  recordSourceBreakerOutcomes,
   listRecentChatViewerRequests,
   countQueuedChatViewerRequests,
   markChatViewerRequestsPlayed,
@@ -53,6 +60,7 @@ import {
   writeChatOverlayMessagesRecord,
   writeChatSkipVoteRecord
 } from "@stream247/db";
+import type { AsRunRecord } from "@stream247/core";
 
 const execFileAsync = promisify(execFile);
 
@@ -107,6 +115,8 @@ const chatOverlayMessagesMigrationId = "20260825_005_chat_overlay_messages";
 const overlayVideoSourcePushIngestMigrationId = "20260826_002_overlay_video_source_push_ingest";
 const managedSecretsMigrationId = "20260826_003_managed_secrets";
 const poolSourceCursorsMigrationId = "20261001_001_pool_source_cursors";
+const sourceBreakersMigrationId = "20261001_002_source_breakers";
+const asRunLogMigrationId = "20261001_003_as_run_log";
 // The row id the internal relay key lives under, mirrored from packages/db so the non-write proofs
 // below can look at the stored ciphertext directly rather than through any reader.
 const RELAY_INTERNAL_KEY_SECRET_ID = "relay-internal-key";
@@ -2151,6 +2161,291 @@ describe.sequential("database roundtrip", () => {
         sourceCursors: { [twitchSourceId]: "t2" },
         itemsSinceInsert: 1
       });
+    }, 60_000);
+  });
+
+  // M75. The breaker of the DUT's YouTube source (2026-09-28: 0 of 11 items resolvable).
+  describe("source circuit breakers", () => {
+    const youtubeSourceId = "source_m75_youtube";
+    const twitchSourceId = "source_m75_twitch";
+    const failed = (assetId: string, sourceId = youtubeSourceId) => ({
+      sourceId,
+      assetId,
+      outcome: "failed" as const,
+      error: "Requested format is not available"
+    });
+    const breakerOf = async (sourceId = youtubeSourceId) =>
+      (await readAppState()).sourceBreakers.find((record) => record.sourceId === sourceId);
+
+    async function seedSources() {
+      await ensureDatabaseWithRetry();
+      await executeSql("DELETE FROM source_breakers;");
+      const initial = await readAppState();
+      await writeAppState({
+        ...initial,
+        sources: [youtubeSourceId, twitchSourceId].map((id) => ({
+          id,
+          name: id,
+          type: "youtube-channel",
+          connectorKind: "youtube-channel" as const,
+          enabled: true,
+          status: "Ready",
+          externalUrl: `https://example.invalid/${id}`,
+          notes: "",
+          lastSyncedAt: "2026-09-28T00:00:00.000Z"
+        }))
+      });
+    }
+
+    it("creates source_breakers on a database that predates it", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql(`
+        DROP TABLE IF EXISTS source_breakers;
+        DELETE FROM schema_migrations WHERE id = '${sourceBreakersMigrationId}';
+      `);
+
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      const columns = await executeSql(
+        "SELECT string_agg(column_name, ',' ORDER BY column_name) FROM information_schema.columns WHERE table_name = 'source_breakers';"
+      );
+      const migrationApplied = await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${sourceBreakersMigrationId}';`);
+      expect(columns.split(",")).toEqual(DECLARED_SCHEMA.source_breakers);
+      expect(migrationApplied).toBe("1");
+      expect((await readAppState()).sourceBreakers).toEqual([]);
+    }, 60_000);
+
+    it("opens on three distinct items, survives a restart and a whole-state write from an older snapshot", async () => {
+      await seedSources();
+      const before = await readAppState();
+
+      const first = await recordSourceBreakerOutcomes([failed("y1"), failed("y2")], "2026-09-28T10:00:00.000Z");
+      expect(first.transitions).toEqual([]);
+      const opened = await recordSourceBreakerOutcomes([failed("y3")], "2026-09-28T10:01:00.000Z");
+      expect(opened.transitions.map((transition) => transition.kind)).toEqual(["opened"]);
+      expect(opened.records.find((record) => record.sourceId === youtubeSourceId)?.state).toBe("open");
+
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+      // A whole-state write from a snapshot read before the breaker opened must not close it again.
+      await writeAppState(before);
+
+      expect(await breakerOf()).toEqual({
+        sourceId: youtubeSourceId,
+        state: "open",
+        failedAssetIds: ["y1", "y2", "y3"],
+        openedAt: "2026-09-28T10:01:00.000Z",
+        cooldownSeconds: 1800,
+        lastError: "Requested format is not available",
+        updatedAt: "2026-09-28T10:01:00.000Z"
+      });
+      expect(await breakerOf(twitchSourceId)).toBeUndefined();
+    }, 60_000);
+
+    it("re-opens a failed trial with the doubled cooldown and closes on a clean one", async () => {
+      await seedSources();
+      await recordSourceBreakerOutcomes([failed("y1"), failed("y2"), failed("y3")], "2026-09-28T10:00:00.000Z");
+
+      // Outcomes while the cooldown runs change nothing and write nothing.
+      const during = await recordSourceBreakerOutcomes([failed("y4")], "2026-09-28T10:10:00.000Z");
+      expect(during.updates).toEqual([]);
+
+      const reopened = await recordSourceBreakerOutcomes([failed("y4")], "2026-09-28T10:30:00.000Z");
+      expect(reopened.transitions.map((transition) => transition.kind)).toEqual(["reopened"]);
+      expect(await breakerOf()).toMatchObject({ state: "open", openedAt: "2026-09-28T10:30:00.000Z", cooldownSeconds: 3600 });
+
+      const closed = await recordSourceBreakerOutcomes(
+        [{ sourceId: youtubeSourceId, assetId: "y5", outcome: "ok", error: "" }],
+        "2026-09-28T11:30:00.000Z"
+      );
+      expect(closed.transitions.map((transition) => transition.kind)).toEqual(["closed"]);
+      expect(await breakerOf()).toMatchObject({ state: "closed", failedAssetIds: [], openedAt: "", cooldownSeconds: 0 });
+    }, 60_000);
+
+    // Combination review. The playout records an outcome before every switch that resolved inline and
+    // about four per five minutes from the queue; nearly all of them change no row. Each used to queue
+    // behind the state-write lock, which a whole-state write of the web or the worker holds while it
+    // hydrates and persists the state.
+    it("takes the state-write lock only for an outcome that changes a row", async () => {
+      await seedSources();
+      const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+      const locks = (granted: boolean) =>
+        executeSql(
+          `SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 247001 AND ${granted ? "granted" : "NOT granted"};`
+        );
+      const until = async (condition: () => Promise<boolean>) => {
+        for (let attempt = 0; attempt < 50 && !(await condition()); attempt += 1) {
+          await pause(100);
+        }
+      };
+
+      // Another writer holds the lock (STATE_WRITE_LOCK_KEY) for six seconds.
+      const holder = executeSql("BEGIN; SELECT pg_advisory_xact_lock(247001); SELECT pg_sleep(6); COMMIT;");
+      await until(async () => (await locks(true)) === "1");
+      expect(await locks(true)).toBe("1");
+
+      // A clean probe of a source without failures is answered while the lock is held, with the rows.
+      const clean = await recordSourceBreakerOutcomes(
+        [{ sourceId: youtubeSourceId, assetId: "y1", outcome: "ok", error: "" }],
+        "2026-09-28T10:00:00.000Z"
+      );
+      expect(clean).toEqual({ updates: [], transitions: [], records: [] });
+      expect(await locks(true)).toBe("1");
+      expect(await locks(false)).toBe("0");
+
+      // A failure changes the row: it waits for the lock and is planned from the rows as they are then.
+      let settled = false;
+      const counted = recordSourceBreakerOutcomes([failed("y1")], "2026-09-28T10:00:30.000Z").then((result) => {
+        settled = true;
+        return result;
+      });
+      await until(async () => (await locks(false)) === "1");
+      expect(await locks(false)).toBe("1");
+      expect(settled).toBe(false);
+
+      await holder;
+      const result = await counted;
+      expect(result.updates.map((record) => record.failedAssetIds)).toEqual([["y1"]]);
+      expect(await breakerOf()).toMatchObject({ state: "closed", failedAssetIds: ["y1"] });
+    }, 60_000);
+
+    it("lets an operator close an open breaker, and forgets the breaker of a deleted source", async () => {
+      await seedSources();
+      await recordSourceBreakerOutcomes([failed("y1"), failed("y2"), failed("y3")], "2026-09-28T10:00:00.000Z");
+
+      const closed = await closeSourceBreakerRecord(youtubeSourceId, "2026-09-28T10:05:00.000Z");
+      expect(closed).toMatchObject({ state: "open", openedAt: "2026-09-28T10:00:00.000Z" });
+      expect(await breakerOf()).toMatchObject({ state: "closed", updatedAt: "2026-09-28T10:05:00.000Z" });
+      expect(await closeSourceBreakerRecord(youtubeSourceId, "2026-09-28T10:06:00.000Z")).toBeNull();
+
+      await recordSourceBreakerOutcomes([failed("y1")], "2026-09-28T10:07:00.000Z");
+      await deleteSourceRecordAndAssets(youtubeSourceId);
+      expect(await breakerOf()).toBeUndefined();
+      // A probe that finishes after its source was deleted leaves no row behind.
+      await recordSourceBreakerOutcomes([failed("y2"), failed("y3"), failed("y4")], "2026-09-28T10:08:00.000Z");
+      expect(await breakerOf()).toBeUndefined();
+    }, 60_000);
+  });
+
+  // M76. One row per playout run; the question is "what was on air at 19:38" (17:38 UTC, 2026-10-01).
+  describe("as-run log", () => {
+    const run = (id: string, startedAt: string, overrides: Partial<AsRunRecord> = {}): AsRunRecord => ({
+      id,
+      startedAt,
+      endedAt: "",
+      targetKind: "asset",
+      assetId: `asset_${id}`,
+      title: `Title ${id}`,
+      sourceId: "source_m76",
+      poolId: "pool_m76",
+      blockId: "block_m76",
+      reasonCode: "scheduled_match",
+      queueKind: "asset",
+      inputKind: "local",
+      formatId: "",
+      formatCandidate: "",
+      plannedSeconds: 2700,
+      airedSeconds: 0,
+      endReason: "",
+      exitCode: "",
+      ...overrides
+    });
+    const all = () => listAsRunRecords({ fromIso: "2000-01-01T00:00:00.000Z", toIso: "2100-01-01T00:00:00.000Z", limit: 1000 });
+
+    it("creates as_run_log and its index on a database that predates it", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql(`
+        DROP TABLE IF EXISTS as_run_log;
+        DELETE FROM schema_migrations WHERE id = '${asRunLogMigrationId}';
+      `);
+
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      const columns = await executeSql(
+        "SELECT string_agg(column_name, ',' ORDER BY column_name) FROM information_schema.columns WHERE table_name = 'as_run_log';"
+      );
+      expect(columns.split(",")).toEqual(DECLARED_SCHEMA.as_run_log);
+      expect(await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${asRunLogMigrationId}';`)).toBe("1");
+      expect(await executeSql("SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'as_run_log_started_at_idx';")).toBe("1");
+      expect(await executeSql("SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'as_run_log_open_idx';")).toBe("1");
+      expect(await all()).toEqual([]);
+    }, 60_000);
+
+    it("records a start, completes it, survives a whole-state write and answers what was on air at a moment", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql("DELETE FROM as_run_log;");
+      const before = await readAppState();
+
+      await recordAsRunStart(run("a", "2026-10-01T17:00:00.000Z", { inputKind: "pair", formatId: "299+140", formatCandidate: "pair-1080" }));
+      expect(
+        await recordAsRunEnd("a", { endedAt: "2026-10-01T17:44:58.600Z", airedSeconds: 2699, endReason: "natural-end", exitCode: "0" })
+      ).toBe(true);
+      await recordAsRunStart(run("b", "2026-10-01T17:45:01.000Z", { targetKind: "fallback", reasonCode: "global_fallback", poolId: "" }));
+      await writeAppState(before);
+
+      const atMoment = await listAsRunRecords({ fromIso: "2026-10-01T17:38:00.000Z", toIso: "2026-10-01T17:38:00.000Z", limit: 200 });
+      expect(atMoment).toEqual([
+        run("a", "2026-10-01T17:00:00.000Z", {
+          endedAt: "2026-10-01T17:44:58.600Z",
+          inputKind: "pair",
+          formatId: "299+140",
+          formatCandidate: "pair-1080",
+          airedSeconds: 2699,
+          endReason: "natural-end",
+          exitCode: "0"
+        })
+      ]);
+      // The run still on air overlaps every window from its start on; newest first.
+      const day = await listAsRunRecords({ fromIso: "2026-09-30T18:00:00.000Z", toIso: "2026-10-01T18:00:00.000Z", limit: 200 });
+      expect(day.map((record) => [record.id, record.endedAt])).toEqual([
+        ["b", ""],
+        ["a", "2026-10-01T17:44:58.600Z"]
+      ]);
+      expect((await listAsRunRecords({ fromIso: "2026-09-30T18:00:00.000Z", toIso: "2026-10-01T18:00:00.000Z", limit: 1 })).map((r) => r.id)).toEqual(["b"]);
+      expect(await listAsRunRecords({ fromIso: "2026-10-01T16:00:00.000Z", toIso: "2026-10-01T16:59:59.000Z", limit: 200 })).toEqual([]);
+    }, 60_000);
+
+    it("closes a run nobody saw end as process gone, at the boot or the next start, never two on air", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql("DELETE FROM as_run_log;");
+
+      // A redeploy kills the playout with ffmpeg running: the next boot closes the row.
+      await recordAsRunStart(run("c", "2026-10-01T17:00:00.000Z"));
+      expect(await closeOpenAsRunRecords("2026-10-01T17:10:00.400Z")).toBe(1);
+      // The exit that arrives after that changes nothing.
+      expect(
+        await recordAsRunEnd("c", { endedAt: "2026-10-01T17:12:00.000Z", airedSeconds: 720, endReason: "switch", exitCode: "SIGTERM" })
+      ).toBe(false);
+
+      // A process that outlived its stop deadline: the next start closes it, at that start.
+      await recordAsRunStart(run("d", "2026-10-01T17:20:00.000Z"));
+      await recordAsRunStart(run("e", "2026-10-01T17:30:00.000Z", { targetKind: "standby", inputKind: "slate", assetId: "" }));
+      // A boot time before a row's start (clock skew between containers) never ends a run before it began.
+      await recordAsRunStart(run("f", "2026-10-01T17:40:00.000Z"));
+      await closeOpenAsRunRecords("2026-10-01T17:39:00.000Z");
+
+      const rows = new Map((await all()).map((record) => [record.id, record] as const));
+      expect(rows.get("c")).toMatchObject({ endedAt: "2026-10-01T17:10:00.400Z", airedSeconds: 600, endReason: "process-gone", exitCode: "" });
+      expect(rows.get("d")).toMatchObject({ endedAt: "2026-10-01T17:30:00.000Z", airedSeconds: 600, endReason: "process-gone" });
+      expect(rows.get("e")).toMatchObject({ endedAt: "2026-10-01T17:40:00.000Z", endReason: "process-gone" });
+      expect(rows.get("f")).toMatchObject({ endedAt: "2026-10-01T17:40:00.000Z", airedSeconds: 0, endReason: "process-gone" });
+      expect(await executeSql("SELECT COUNT(*) FROM as_run_log WHERE ended_at = '';")).toBe("0");
+    }, 60_000);
+
+    it("deletes runs older than the retention window in the write that adds a start", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql("DELETE FROM as_run_log;");
+
+      await recordAsRunStart(run("old", "2026-07-02T17:00:00.000Z"));
+      await recordAsRunEnd("old", { endedAt: "2026-07-02T17:45:00.000Z", airedSeconds: 2700, endReason: "natural-end", exitCode: "0" });
+      await recordAsRunStart(run("kept", "2026-07-04T17:00:00.000Z"));
+      await recordAsRunEnd("kept", { endedAt: "2026-07-04T17:45:00.000Z", airedSeconds: 2700, endReason: "natural-end", exitCode: "0" });
+      // 90 days after 2026-07-03T17:00Z: "old" started before that, "kept" after.
+      await recordAsRunStart(run("now", "2026-10-01T17:00:00.000Z"));
+
+      expect((await all()).map((record) => record.id)).toEqual(["now", "kept"]);
     }, 60_000);
   });
 

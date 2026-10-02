@@ -1,5 +1,51 @@
 # Changelog
 
+## 2.2.0-rc.1 - 2026-10-02
+
+### Fixed
+
+- An outage of the channel's own network no longer takes healthy content out of play. The DUT loses its way out once a night (since 2026-09-11 at about 23:58 UTC; the uplink is back after 50 to 70 s, and that first night nothing answered from outside for about six minutes). Every remote probe fails meanwhile and a failed probe is retried after a minute, so three minutes of outage were three failures of one item, which quarantined it until an operator cleared it. A failed probe is now counted neither by per-item quarantine nor by the new source breaker when both of these hold:
+  - its error is a network one: name resolution, connecting, a timeout, a TLS handshake that ended in nothing, yt-dlp's transport errors, in the musl wording the Alpine image prints (`[Errno -3] Try again`, `Network unreachable`) as well as the glibc one. What the remote answered still counts: a format that is not offered, a removed or private video, every HTTP status;
+  - the output the channel publishes to cannot be reached at that moment: one TCP connection to the host of each enabled output (at most two), 2.5 s at most, asked only when such a failure is about to be counted and at most once per ten seconds.
+  An uncounted failure is not a success: no counter is reset, the item is still not played and the fallback covers. Each one is logged as `playout.probe.network_outage`; a check that itself breaks counts everything and says so (`playout.probe.network_outage.check_failed`). Known limit: a blip shorter than one resolve (60 s) in which packets vanish can still count one failure. Measured in the worker image with `--network none`; the DUT check after a nightly blip is open.
+- Operator actions end what they replace. On 2.1.0-rc.2, by code reading:
+  - Skip during a Pin or Fallback started the pinned item again from its beginning, and only Resume took it off air. Skip now ends the override and the schedule continues; the audit row says "the Pin was ended by Skip". Pinning an item that a Skip holds out lifts that hold.
+  - an insert survived a Live Bridge takeover: one on air started again from 0 after the release, and a pending Play now aired whenever the bridge was released. The takeover now ends the insert (`playout.insert.ended` / `playout.insert.dropped`, reason `live-bridge`), and Play now is refused while a bridge is pending or on air.
+  - a passed chat skip vote restarted a pinned item as often as the room repeated it, and cut the operator's Play now / Insert. Skip votes neither start nor count while a Pin, a Fallback or the operator's insert holds the air; the bot says why, at most once a minute; a vote that passed just before is refused (`chat.skip.paused`, audit row `chat.skip.refused`). A vote whose item has left the air, or that a Skip already holds out, is dropped (`chat.skip.stale`) instead of overwriting the operator's hold. A pool's automatic insert and a cue point insert stay skippable.
+- The next-item poll and the skip bar were German on every channel, next to an otherwise English picture. They follow the channel language now (below).
+
+- An idle database connection that drops (PostgreSQL restarted, a connection reset) no longer exits the worker, playout and uplink processes. The shared connection pool had no error listener, so the dropped client became an uncaught exception; in the playout container that exit took ffmpeg, and the broadcast, with it. Found by the on-air review of the as-run log.
+
+### Added
+
+- Source circuit breaker. On 2026-09-28 YouTube's format change left 0 of the 11 items of the DUT's YouTube source resolvable; per-item quarantine needs three failed probes per item, so the source cost about 33 failed boundaries before its last item was out of play, and since 2.1 a pool alternates between its sources, so every second pick hit the broken one. When probes fail on three different items of one source with no clean probe of it in between, every pool passes the source over for 30 minutes (doubled after every failed retry, at most 6 h) and then tries one item; a clean probe brings it back. One incident per held source (`playout.source-breaker.<sourceId>`) stands in for the per-item one; the source page shows the hold and offers owners and admins **Close breaker now**. A Twitch archive that is still downloading does not count. New table `source_breakers`.
+- As-run log. "What was on air at 19:38" had to be rebuilt from container logs, which every redeploy deletes. Every playout run now writes one row to `as_run_log`: start and end in UTC, what aired and from which source, its block and pool, why it was picked, how it was fed (file, remote stream, video+audio pair with its format id, live input, slate), planned against aired seconds and why it ended (`natural-end`, `duration-bound`, `switch`, `skip`, `operator-restart`, `feed-watchdog`, `failed` with the exit code, `process-gone`, ...). Rows are kept 90 days. Read it in `Live → Status` (*On air, last 24 hours*) or through `GET /api/as-run?from=&to=&limit=`; `from = to` answers the question for one moment. The playout never waits for the write (`as_run.write_failed` if one fails).
+- Channel language: one setting, English or German, for everything viewers see or read: the on-air picture, the standby and reconnect texts, polls, the skip bar, chat games, every chat bot reply, the Twitch title when no asset is on air, and `/channel`. Choose it in the setup wizard or under `Admin → Settings → Channel language` (no restart), or pin it with `CHANNEL_LANGUAGE` (`en` or `de`; the env value beats the saved one and is read at container start). Operator content is never translated and the admin interface stays English. The studio's stored English headline defaults follow the language until they are changed. Adding a language: `docs/architecture.md`, *Viewer Language*.
+
+### Changed
+
+- English viewer wording: `No next block configured` and `Nothing scheduled next` are `Nothing scheduled`; the standby state reads `Stand by` everywhere (headline `Stand by, we’ll be right back`); `/channel` names the time zone (`Central European Time`) instead of printing its IANA id and shows a viewer's status line instead of the playout's status message.
+- The playout container opens a TCP connection to the output host (`live.twitch.tv:1935` for the default Twitch output) when a network-looking probe failure is about to be counted; in relay mode only the uplink talked to that host until now. Where egress from the playout container is filtered, allow it: otherwise every such failure reads as an outage and goes uncounted.
+- Upgrading from 2.1.0 changes no stack file. It adds two tables, `source_breakers` and `as_run_log` (migrations `20261001_002_source_breakers` and `20261001_003_as_run_log`, additive, applied on the first start): back up PostgreSQL before the repin. A channel speaks English until its language is set, so a channel that showed the German poll and skip bar must be set to German after the upgrade (or start with `CHANNEL_LANGUAGE=de`). Rollback is the reverse repin: an older image ignores both tables and the setting; resolve an open `playout.source-breaker.*` incident by hand. See `docs/deployment.md`, *Upgrading Past 2.1.0*.
+- The fresh-install smoke follows `docs/getting-started.md`: a second, minimal pass boots the stack with no `.env`, no secret and no URL handed in and asserts health, the four runtime services, the redirect of `/` to `/setup` and the generated owner-only secret file. Both passes run in a stand-in checkout with the caller's environment cleared; the smoke no longer writes through the checkout's `.env`. The guide now says that the `proxy` profile needs `TRAEFIK_HOST` and that port 3000 is published on every interface.
+
+## 2.1.0 - 2026-10-02
+
+The release the two candidates were for. YouTube plays again (format candidates, a programme on air is
+never re-resolved), the two Twitch accounts are named by their role, a pool with several sources
+alternates between them in a stable chronological order, and Play now and Insert reach the air without
+a standby slate. Upgrading from 2.0 adds one column (`pools.source_cursors`); back up PostgreSQL before
+the repin. The rollback is the reverse repin; an older image ignores the column.
+
+Measured before tagging: 24 h on the device under test, 2026-10-01 03:41 to 2026-10-02 03:41 UTC,
+1429 readiness samples `status=ok`; passed with one outage: the nightly network blip, about 00:01:32 to
+00:05:12 UTC (220 s of the 300 s tolerance, readiness fetch answered 522), healed without an operator;
+one unplanned uplink restart in 24 h (3936 -> 3937). On air on rc.2: a YouTube video+audio pair
+through Play now (`299+140`, candidate `split-h264-aac`, 264 s to its natural end, no slate); the Twitch
+archives in VOD-id order; and at 12:57 UTC the TwitchYoutube pool alternating by itself - a Twitch archive
+ended at its duration bound, the pool picked the oldest playable YouTube item with no fallback bridge,
+and 264 s later it picked Twitch again at the position that source had kept.
+
 ## 2.1.0-rc.2 - 2026-10-01
 
 ### Fixed

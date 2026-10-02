@@ -10,6 +10,7 @@
 
 import {
   chatGameColumnLabel,
+  chatGameViewerName,
   nextChatGameSeed,
   type ChatGameCell,
   type ChatGameDefinition,
@@ -18,6 +19,7 @@ import {
   type ChatGameRenderModel,
   type ChatGameSettings
 } from "./chat-game.js";
+import { viewerText } from "./viewer-messages/index.js";
 
 export type MinesweeperGameState = {
   phase: "playing" | "over";
@@ -211,7 +213,7 @@ function applyMinesweeperInput(
   };
 }
 
-function renderMinesweeperModel(state: MinesweeperGameState, settings: ChatGameSettings): ChatGameRenderModel {
+function renderMinesweeperModel(state: MinesweeperGameState, settings: ChatGameSettings, locale?: string): ChatGameRenderModel {
   const mineKeys = new Set(state.mines.map(cellKey));
   const cells: ChatGameRenderCell[] = state.revealed.map((cell) => {
     const count = countAdjacentMines(cell, mineKeys, settings);
@@ -238,15 +240,18 @@ function renderMinesweeperModel(state: MinesweeperGameState, settings: ChatGameS
     cells,
     // Viewer-facing only: this text is burned into the broadcast, so it names what the audience
     // does, never the machinery behind it.
-    headline: "Chat plays Minesweeper",
+    headline: viewerText(locale, "game.headline", { game: chatGameViewerName("minesweeper", locale) }),
     statusLine:
       state.phase === "over"
-        ? `${state.won ? "Board cleared" : "Game over"} · Score ${String(state.score)}`
-        : `Cleared ${String(state.score)} of ${String(safeTotal)}`,
+        ? viewerText(locale, state.won ? "game.status.cleared" : "game.status.over", { count: state.score })
+        : viewerText(locale, "game.status.progress", { cleared: state.score, total: safeTotal }),
     hintLine:
       state.phase === "over"
-        ? "Send a cell like b3 to start the next round"
-        : `Dig with column and row like b3 — a to ${chatGameColumnLabel(settings.gridWidth - 1)}, 1 to ${String(settings.gridHeight)}`,
+        ? viewerText(locale, "game.hint.cellRestart")
+        : viewerText(locale, "game.hint.minesweeper", {
+            lastColumn: chatGameColumnLabel(settings.gridWidth - 1),
+            lastRow: settings.gridHeight
+          }),
     showCoordinates: true,
     phase: state.phase
   };

@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { TWITCH_METADATA_WAITING_MESSAGE, resolveTwitchMetadataSyncGate, selectActiveDestinationGroup } from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
+import { AsRunLogPanel } from "@/components/as-run-log-panel";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
 import { DestinationCreateForm } from "@/components/destination-create-form";
 import { DestinationSettingsForm } from "@/components/destination-settings-form";
@@ -20,7 +21,9 @@ import {
   getPlayoutQueueAssets,
   getPresenceStatus,
   getSchedulePreview,
-  readAppState
+  getWorkspaceTimeZone,
+  readAppState,
+  readRecentAsRunLog
 } from "@/lib/server/state";
 import { isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
 
@@ -38,6 +41,8 @@ export default async function DashboardPage() {
   const presenceStatus = getPresenceStatus(state);
   const activeWindows = getActivePresenceWindows(state);
   const incidentPanel = getOpenIncidentPanel(state);
+  // The as-run log (M76): the last 24 hours; a failed read comes back as null records, not as an error.
+  const asRunLog = await readRecentAsRunLog();
   const recentIncidents = [...state.incidents]
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, 8);
@@ -373,6 +378,18 @@ export default async function DashboardPage() {
             )}
           </div>
         </Panel>
+      </section>
+
+      <section style={{ marginTop: 24 }}>
+        <AsRunLogPanel
+          blocks={state.scheduleBlocks}
+          limit={asRunLog.limit}
+          nowMs={asRunLog.nowMs}
+          pools={state.pools}
+          records={asRunLog.records}
+          sources={state.sources}
+          timeZone={getWorkspaceTimeZone(state)}
+        />
       </section>
     </>
   );

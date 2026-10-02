@@ -1,3 +1,7 @@
+import { viewerText, type ViewerLocale } from "@stream247/core";
+
+export type ChannelStatusKind = "onAir" | "startingUp" | "offAir";
+
 /**
  * What a viewer is told the channel is doing.
  *
@@ -12,20 +16,49 @@
  * value this build does not recognise — an older worker, a newer one — should land on "Off air"
  * rather than reach the page unmapped.
  */
-export function getChannelStatusLabel(status: string): string {
+export function getChannelStatusKind(status: string): ChannelStatusKind {
   switch (status) {
     case "running":
     case "switching":
     // Degraded is an internal quality judgement — from the sofa it is still a channel that plays.
     case "degraded":
-      return "On air";
+      return "onAir";
     case "starting":
     case "recovering":
     case "reconnecting":
-      return "Starting up";
+      return "startingUp";
     default:
-      return "Off air";
+      return "offAir";
   }
+}
+
+// The admin's copy of the three answers. The control room, the status rail and the asset page use
+// the same plain words, and the admin stays English (M81) whatever language the channel speaks, so
+// these are not catalogue lookups: a German channel's operator still reads "On air" here.
+const ADMIN_CHANNEL_STATUS_LABELS: Readonly<Record<ChannelStatusKind, string>> = {
+  onAir: "On air",
+  startingUp: "Starting up",
+  offAir: "Off air"
+};
+
+/** The status in the admin interface (English). Viewers get getViewerChannelStatusLabel. */
+export function getChannelStatusLabel(status: string): string {
+  return ADMIN_CHANNEL_STATUS_LABELS[getChannelStatusKind(status)];
+}
+
+/** The same three answers on the public page, in the channel language (M80). */
+export function getViewerChannelStatusLabel(locale: ViewerLocale, status: string): string {
+  return viewerText(locale, `channel.status.${getChannelStatusKind(status)}`);
+}
+
+/**
+ * The line under "On air now" when no schedule block covers the hour. It printed the playout's
+ * status message, which the worker writes for the operator ("Crash-loop protection is active.",
+ * "FFmpeg exited repeatedly. Manual intervention is required..."), in English, on every channel.
+ * The viewer gets the state in their own words instead; the message stays on the admin pages.
+ */
+export function getViewerChannelStatusLine(locale: ViewerLocale, status: string): string {
+  return viewerText(locale, `channel.statusLine.${getChannelStatusKind(status)}`);
 }
 
 /**
@@ -36,6 +69,6 @@ export function getChannelStatusLabel(status: string): string {
  * mechanism rather than the effect. Silence when things are normal; a plain sentence when they are
  * not.
  */
-export function getChannelUpdateNotice(connected: boolean): string {
-  return connected ? "" : "Updating every few seconds";
+export function getChannelUpdateNotice(locale: ViewerLocale, connected: boolean): string {
+  return connected ? "" : viewerText(locale, "channel.updateNotice");
 }

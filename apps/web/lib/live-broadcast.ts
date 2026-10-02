@@ -10,6 +10,7 @@ import type {
   OverlaySceneLayerKind,
   OverlayScenePayload,
   PresenceClampReason,
+  ViewerLocale,
   OverlayTypographyPreset
 } from "@stream247/core";
 
@@ -372,6 +373,10 @@ export type BroadcastSnapshot = {
 export type PublicChannelSnapshot = {
   generatedAt: string;
   timeZone: string;
+  /** The channel language (M80). In the snapshot so a change reaches open pages with the next update. */
+  locale: ViewerLocale;
+  /** `timeZone` as a viewer names it, in the channel language ("Central European Time"). */
+  timeZoneLabel: string;
   /** Where viewers watch, or empty when no usable broadcaster login is configured. */
   watchUrl: string;
   overlay: LiveOverlaySummary;

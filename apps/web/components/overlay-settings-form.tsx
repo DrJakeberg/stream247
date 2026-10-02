@@ -20,6 +20,7 @@ import {
 
   resolveActiveOverlayNamedSceneId,
   resolveOverlayHeadlineForQueueKind,
+  viewerText,
   resolveOverlayNamedSceneCustomLayers,
   resolvePlacementPixelBox,
   type OverlayNamedScene,
@@ -48,6 +49,8 @@ import { describeScenePreset, describeTypographyPreset } from "@/lib/scene-prese
 
 type OverlayPreviewSeed = {
   timeZone: string;
+  /** The channel language (M80): the preview writes the picture's own words in it, like the broadcast. */
+  locale: string;
   currentTitle: string;
   currentCategory: string;
   currentSourceName: string;
@@ -510,23 +513,32 @@ export function OverlaySettingsForm(props: {
   };
 
   const previewSubtitle =
-    resolveOverlayHeadlineForQueueKind(draft.headline, previewMode, {
-      insertHeadline: draft.insertHeadline,
-      standbyHeadline: draft.standbyHeadline,
-      reconnectHeadline: draft.reconnectHeadline
-    });
+    resolveOverlayHeadlineForQueueKind(
+      draft.headline,
+      previewMode,
+      {
+        insertHeadline: draft.insertHeadline,
+        standbyHeadline: draft.standbyHeadline,
+        reconnectHeadline: draft.reconnectHeadline
+      },
+      props.preview.locale
+    );
 
+  // The stand-in titles are the ones the worker writes for these states, in the channel language;
+  // "Channel ID" is a sample insert, the operator's kind of content, and stays as written.
   const previewCurrentTitle =
     previewMode === "asset"
       ? props.preview.currentTitle
       : previewMode === "insert"
         ? "Channel ID"
         : previewMode === "reconnect"
-          ? "Scheduled reconnect"
-          : "Replay standby";
+          ? viewerText(props.preview.locale, "overlay.title.reconnect")
+          : viewerText(props.preview.locale, "overlay.title.standby");
 
   const previewNextTitle =
-    previewMode === "reconnect" ? props.preview.currentTitle : props.preview.nextTitle || "Program resumes shortly";
+    previewMode === "reconnect"
+      ? props.preview.currentTitle
+      : props.preview.nextTitle || viewerText(props.preview.locale, "overlay.next.resumesShortly");
   const previewPayload = buildOverlayScenePayload({
     overlay: draft,
     queueKind: previewMode,
@@ -538,7 +550,8 @@ export function OverlaySettingsForm(props: {
     nextTimeLabel: props.preview.nextTimeLabel,
     queueTitles: props.preview.queueTitles,
     modeSubtitle: previewSubtitle,
-    timeZone: props.preview.timeZone
+    timeZone: props.preview.timeZone,
+    locale: props.preview.locale
   });
 
   // Split by the renderer's own rule rather than by counting separators here, so the studio and the

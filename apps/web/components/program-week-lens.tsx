@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { lookaheadVideoTitleFromPool, type MaterializedProgrammingDay } from "@stream247/core";
+import { lookaheadVideoTitleFromPool, type MaterializedProgrammingDay, type PoolRotationSourceGate } from "@stream247/core";
 import type { AssetRecord, PoolRecord } from "@/lib/server/state";
 import { buildAssetDisplayTitle, isReplayTitlePrefix } from "@/lib/asset-metadata";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -11,6 +11,8 @@ export function ProgramWeekLens(props: {
   days: MaterializedProgrammingDay[];
   pools: PoolRecord[];
   assets: AssetRecord[];
+  /** The source circuit breaker as the week was drawn with (getPoolSourceGate). */
+  sourceGate?: PoolRotationSourceGate | null;
 }) {
   const poolById = new Map(props.pools.map((pool) => [pool.id, pool]));
   const assetById = new Map(props.assets.map((asset) => [asset.id, asset]));
@@ -33,7 +35,8 @@ export function ProgramWeekLens(props: {
                 const nextTitle =
                   lookaheadVideoTitleFromPool({
                     pool,
-                    assets: props.assets
+                    assets: props.assets,
+                    sourceGate: props.sourceGate
                   }) ||
                   block.items[0]?.title ||
                   "";

@@ -2,8 +2,10 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { formatSourceBreakerTime, SOURCE_BREAKER_MAX_COOLDOWN_SECONDS } from "@stream247/core";
 import { Panel } from "@/components/panel";
 import { SourceActionsForm } from "@/components/source-actions-form";
+import { SourceBreakerCloseForm } from "@/components/source-breaker-close-form";
 import { SourceSyncForm } from "@/components/source-sync-form";
 import {
   getSourceConnectorDiagnostics,
@@ -15,12 +17,14 @@ import {
   getSourceReferences,
   readAppState
 } from "@/lib/server/state";
+import { getAuthenticatedUser } from "@/lib/server/auth";
 
 const dayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export default async function SourceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const state = await readAppState();
+  const user = await getAuthenticatedUser();
   const source = state.sources.find((entry) => entry.id === id);
 
   if (!source) {
@@ -39,6 +43,9 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
   const health = getSourceHealthSnapshot(state, source.id);
   const diagnostics = getSourceConnectorDiagnostics(state, source.id);
   const recoveryActions = getSourceRecoveryActions(state, source.id);
+  const breaker = health.breaker;
+  // The same roles the route accepts: closing the breaker puts a source back on air that the playout took off.
+  const mayCloseBreaker = user?.role === "owner" || user?.role === "admin";
 
   return (
     <>
@@ -77,6 +84,39 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
           </p>
         </article>
       </section>
+
+      {/*
+        The source circuit breaker (M75). Shown only while it holds the source: a closed breaker is the
+        normal case and adds nothing to this page.
+      */}
+      {breaker ? (
+        <section style={{ marginTop: 24 }}>
+          <Panel title="Held out of programming" eyebrow="Source breaker">
+            <div className="list">
+              <div className="item">
+                <strong>
+                  {breaker.phase === "open"
+                    ? `Held since ${formatSourceBreakerTime(breaker.openedAt)}`
+                    : `Hold ran out at ${formatSourceBreakerTime(breaker.retryAt)}`}
+                </strong>
+                <div className="subtle">
+                  {breaker.phase === "open"
+                    ? `Next probe after ${formatSourceBreakerTime(breaker.retryAt)}: the pools then try one item of this source.`
+                    : "The next item a pool picks from this source is a trial probe."}{" "}
+                  A clean probe brings the source back; a failed one holds it twice as long (at most{" "}
+                  {SOURCE_BREAKER_MAX_COOLDOWN_SECONDS / 3600} h).
+                </div>
+                <div className="subtle">
+                  Probes failed on {breaker.failedItemCount} different items with no clean probe in between. Until then
+                  the pools play their other sources; a pool with only this source plays the fallback.
+                </div>
+                {breaker.lastError ? <div className="danger">Last error: {breaker.lastError}</div> : null}
+              </div>
+            </div>
+            {mayCloseBreaker ? <SourceBreakerCloseForm sourceId={source.id} /> : null}
+          </Panel>
+        </section>
+      ) : null}
 
       <section className="grid two" style={{ marginTop: 24 }}>
         <Panel title="Source actions" eyebrow="Catalog">

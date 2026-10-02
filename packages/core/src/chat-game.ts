@@ -13,10 +13,11 @@
 
 // Game modules import types and the seed helper from this file; this file imports their
 // definitions for the registry. The cycle is safe: the game modules finish evaluating before this
-// module's body runs, and the only value they take from here is a hoisted function they call at
-// play time, never during evaluation.
+// module's body runs, and the only values they take from here are hoisted functions they call at
+// play or render time, never during evaluation.
 import { GAME_2048_DEFINITION, type Game2048State } from "./chat-game-2048.js";
 import { MINESWEEPER_GAME_DEFINITION, type MinesweeperGameState } from "./chat-game-minesweeper.js";
+import { viewerText } from "./viewer-messages/index.js";
 
 export type ChatGameId = "snake" | "minesweeper" | "2048";
 
@@ -138,18 +139,43 @@ export function formatChatGameInfoReply(args: {
   /** The round on air, or null when nothing is running. */
   running: { gameId: ChatGameId } | null;
   settings: ChatGameSettings;
+  /** The channel language; the command words stay as they are in every language. */
+  locale?: string;
 }): string {
   const commands = CHAT_GAMES.map((game) => `!${game.id}`).join(" ");
   const map = args.settings.emoteMap;
+  const emotes = `${map.up} ${map.down} ${map.left} ${map.right}`;
 
   if (!args.running) {
-    return `No game is running. Start one: ${commands} — then steer with ${map.up} ${map.down} ${map.left} ${map.right}, or type a cell like b3 in Minesweeper. !game stop ends a round.`;
+    return viewerText(args.locale, "chat.game.infoIdle", { commands, emotes });
   }
 
   const running = CHAT_GAMES.find((game) => game.id === args.running?.gameId);
   const steering =
-    running?.input === "cells" ? "type a cell like b3" : `steer with ${map.up} ${map.down} ${map.left} ${map.right}`;
-  return `${running?.label ?? "A game"} is on air — ${steering}. Other games: ${commands}. !game stop ends the round.`;
+    running?.input === "cells"
+      ? viewerText(args.locale, "chat.game.steerCells")
+      : viewerText(args.locale, "chat.game.steerEmotes", { emotes });
+  return viewerText(args.locale, "chat.game.infoRunning", {
+    game: running ? chatGameViewerName(running.id, args.locale) : viewerText(args.locale, "chat.game.unknownGame"),
+    steering,
+    commands
+  });
+}
+
+/**
+ * A game's name as viewers read it. CHAT_GAMES' labels are the studio's and stay English with the
+ * admin (M81); the panel and the bot take theirs from the viewer catalogue.
+ */
+// A record, not a ternary: a fourth game without a name here fails the type check instead of going on
+// air as "Snake".
+const CHAT_GAME_VIEWER_NAME_KEYS = {
+  snake: "game.name.snake",
+  minesweeper: "game.name.minesweeper",
+  "2048": "game.name.2048"
+} as const satisfies Record<ChatGameId, string>;
+
+export function chatGameViewerName(gameId: ChatGameId, locale?: string): string {
+  return viewerText(locale, CHAT_GAME_VIEWER_NAME_KEYS[gameId]);
 }
 
 /**
@@ -159,8 +185,8 @@ export function formatChatGameInfoReply(args: {
  * and the room is not told otherwise. The count is the studio's own, so an operator reading over
  * the moderator's shoulder recognises their scene in it.
  */
-export function formatChatGameNoRoomReply(args: { gameId: ChatGameId; layerCount: number }): string {
-  return `No room for the game layer: the studio already has ${args.layerCount} layers. Remove one in the studio, then try !${args.gameId} again.`;
+export function formatChatGameNoRoomReply(args: { gameId: ChatGameId; layerCount: number; locale?: string }): string {
+  return viewerText(args.locale, "chat.game.noRoom", { count: args.layerCount, gameId: args.gameId });
 }
 
 // Bounds on the playfield. Below the minimum a round is over in a handful of inputs; above the
@@ -410,7 +436,8 @@ export type ChatGameDefinition<TState> = {
   id: ChatGameId;
   createInitialState(settings: ChatGameSettings, seed: number): TState;
   applyInput(state: TState, input: ChatGameInput, settings: ChatGameSettings): TState;
-  renderModel(state: TState, settings: ChatGameSettings): ChatGameRenderModel;
+  /** The texts are viewer-facing and written in `locale`, the channel language (English when absent). */
+  renderModel(state: TState, settings: ChatGameSettings, locale?: string): ChatGameRenderModel;
   /** Revives a persisted state, or null when it does not fit the settings. Never throws. */
   parseState(raw: unknown, settings: ChatGameSettings): TState | null;
 };
@@ -561,7 +588,7 @@ function applySnakeInput(state: SnakeGameState, input: ChatGameInput, settings: 
   };
 }
 
-function renderSnakeModel(state: SnakeGameState, settings: ChatGameSettings): ChatGameRenderModel {
+function renderSnakeModel(state: SnakeGameState, settings: ChatGameSettings, locale?: string): ChatGameRenderModel {
   const cells: ChatGameRenderCell[] = state.snake.map((cell, index) => ({
     x: cell.x,
     y: cell.y,
@@ -580,12 +607,12 @@ function renderSnakeModel(state: SnakeGameState, settings: ChatGameSettings): Ch
     cells,
     // Viewer-facing only: this text is burned into the broadcast, so it names what the audience
     // does, never the machinery behind it.
-    headline: "Chat plays Snake",
-    statusLine: state.phase === "over" ? `Game over · Score ${String(state.score)}` : `Score ${String(state.score)}`,
+    headline: viewerText(locale, "game.headline", { game: chatGameViewerName("snake", locale) }),
+    statusLine: viewerText(locale, state.phase === "over" ? "game.status.over" : "game.status.score", { count: state.score }),
     hintLine:
       state.phase === "over"
-        ? "Send any arrow emote to start the next round"
-        : `Steer with ${map.up} ${map.down} ${map.left} ${map.right} in chat`,
+        ? viewerText(locale, "game.hint.arrowRestart")
+        : viewerText(locale, "game.hint.snake", { emotes: `${map.up} ${map.down} ${map.left} ${map.right}` }),
     phase: state.phase
   };
 }

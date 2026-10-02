@@ -10,7 +10,10 @@
  * The failure count lives on the asset so the decision survives a worker restart, and it takes a few
  * failures rather than one because a probe can fail for reasons that pass on their own — a rate limit, a
  * DNS blip, a CDN reset. Three consecutive failures is not a blip; nothing seen on the DUT recovered after
- * two.
+ * two. One thing does last longer than two probes, and it is not the item's fault: an outage of the
+ * channel's own network. A failed probe is retried after a minute, so three minutes without a way out
+ * were three failures, and a quarantined item is never probed again. Since M82 the playout does not hand
+ * such a failure to this module at all (probe-network-outage.ts): it neither counts nor resets.
  *
  * Quarantine deliberately does NOT touch `includeInProgramming`. That flag is the operator's own choice
  * and overwriting it would lose what they set and lie about who decided. Quarantine is a separate, visible

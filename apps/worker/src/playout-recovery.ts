@@ -18,7 +18,12 @@ export type PlaybackPreparationRecoveryPlan =
 
 export function planRecoveryAfterPlaybackPreparationFailure(
   assets: AssetRecord[],
-  failedAsset: AssetRecord
+  failedAsset: AssetRecord,
+  // Sources the source circuit breaker holds (M75 review): the generic tiers pass their items over, as
+  // the any-ready tier of the worker's selection does, because the hold stops their quarantine counters
+  // and they would fail here like the item being bridged. The global fallback asset is the operator's
+  // own pick and is not gated.
+  heldSourceIds: readonly string[] = []
 ): PlaybackPreparationRecoveryPlan {
   const candidates = [...assets]
     .filter((asset) => asset.status === "ready" && asset.includeInProgramming !== false && asset.id !== failedAsset.id)
@@ -34,7 +39,9 @@ export function planRecoveryAfterPlaybackPreparationFailure(
     };
   }
 
-  const nonTwitchFallback = candidates.find((asset) => !isTwitchVodAsset(asset));
+  const held = new Set(heldSourceIds);
+  const genericCandidates = candidates.filter((asset) => !held.has(asset.sourceId));
+  const nonTwitchFallback = genericCandidates.find((asset) => !isTwitchVodAsset(asset));
   if (nonTwitchFallback) {
     return {
       asset: nonTwitchFallback,
@@ -44,7 +51,7 @@ export function planRecoveryAfterPlaybackPreparationFailure(
     };
   }
 
-  const anyFallback = candidates[0];
+  const anyFallback = genericCandidates[0];
   if (anyFallback) {
     return {
       asset: anyFallback,

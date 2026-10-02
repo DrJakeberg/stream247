@@ -19,14 +19,22 @@ describe("next block time label", () => {
   });
 
   it("says so plainly when there is no next block", () => {
-    expect(overlayNextTimeLabel(null)).toBe("No next block configured");
-    expect(overlayNextTimeLabel(undefined)).toBe("No next block configured");
+    // M80: was "No next block configured" — "configured" is the operator's word, and this is on air.
+    expect(overlayNextTimeLabel(null)).toBe("Nothing scheduled");
+    expect(overlayNextTimeLabel(undefined)).toBe("Nothing scheduled");
   });
 
   it("does not invent a range out of half a block", () => {
     // A schedule row with a missing end is a row to be honest about, not one to render as "20:00-".
-    expect(overlayNextTimeLabel({ startTime: "20:00", endTime: "" })).toBe("No next block configured");
-    expect(overlayNextTimeLabel({ startTime: "", endTime: "22:00" })).toBe("No next block configured");
+    expect(overlayNextTimeLabel({ startTime: "20:00", endTime: "" })).toBe("Nothing scheduled");
+    expect(overlayNextTimeLabel({ startTime: "", endTime: "22:00" })).toBe("Nothing scheduled");
+  });
+
+  it("writes both in the channel language", () => {
+    expect(overlayNextTimeLabel({ startTime: "20:00", endTime: "22:00" }, "de")).toBe("20:00–22:00");
+    expect(overlayNextTimeLabel(null, "de")).toBe("Noch nichts geplant");
+    // An unknown language is English, never an error on air.
+    expect(overlayNextTimeLabel(null, "xx")).toBe("Nothing scheduled");
   });
 });
 

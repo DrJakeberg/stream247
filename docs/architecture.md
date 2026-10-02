@@ -37,6 +37,7 @@ Persisted domains include:
 - stream destinations
 - incidents and audit events
 - playout runtime state
+- the as-run log (`as_run_log`, since M76; see *Live Runtime*)
 
 Legacy `data/app/state.json` is only treated as a one-time migration source when the database is empty.
 
@@ -118,6 +119,29 @@ Persisted playout runtime fields include:
 - override expiry
 - skipped asset id
 - skip expiry
+
+The runtime fields hold the present only. Since M76 every playout process run also leaves one row in
+the as-run log, table `as_run_log`: `started_at` and `ended_at` (ISO, UTC; `ended_at = ''` while on
+air), `target_kind` (asset, insert, fallback, live, standby, reconnect; `fallback` covers the fallback
+tiers, the bridge and the operator's Fallback), `asset_id`, `title` as aired, `source_id`, `pool_id`
+(the block's pool, only when the pool's rotation picked the item, `scheduled_match` from one of its
+sources), `block_id`, `reason_code` (the selection reason code), `queue_kind`, `input_kind` (local,
+remote, pair, live, slate), `format_id`, `format_candidate`, `planned_seconds`, `aired_seconds`,
+`end_reason` and `exit_code`; indexed by `started_at`. Only the playout writes it
+(`apps/worker/src/as-run.ts`): a row at every successful start in `startOrSwitchPlayout` (every path:
+programme, insert, fallback bridge, slate, live bridge) and its completion from the child's own `exit`
+event, watched from right after the spawn (`watchAsRunEnd`; the main exit handler is attached only after
+the start's awaited writes, which an early exit does not wait for), at the same instant
+`playout.process.exit` measures `ranForMs` to. A spawn that fails emits no `exit` at all; its row ends as
+`failed` with the error code and no aired time. The writes are queued on one promise chain and not
+awaited, so they cost a switch nothing; a failed write is logged as `as_run.write_failed` and never
+reaches the cycle or the exit handler. A row nobody saw end (a redeploy kills the playout without an exit
+handler running) is closed as `process-gone` at the next playout boot or the next start, so at most one
+row is ever open. The web
+reads it (`GET /api/as-run`, the *On air, last 24 hours* panel of `Live → Status`); it is not part of the
+application state, `persistState` never writes it, and rows older than 90 days
+(`AS_RUN_RETENTION_DAYS`) are deleted in the write that adds a start, the way `audit_events` is pruned in
+its append.
 
 Current playout status values:
 
@@ -208,6 +232,64 @@ from. A started pool item stores the cursor and
 its source's position in one serialized write; an insert moves neither, and a pool edit keeps both
 (it drops only the positions of sources it removed).
 
+Two holds keep unplayable items out of the rotation. Per-item quarantine (`asset-probe-quarantine.ts`)
+counts consecutive failed prefetch probes on the asset (`playback_probe_failures`, `_error`,
+`playback_probed_at`); at three the item is passed over until a clean probe or the operator clears it.
+The source circuit breaker (M75, `packages/core/src/source-circuit-breaker.ts`) judges the source: when
+probes fail on three different items of one source with no clean probe of it in between, the source is
+open and the rotation treats its whole lane as having nothing eligible, so the pool alternates between
+its other sources (or finds nothing, and the fallback plays). The breaker learns from the outcomes
+quarantine counts, each probe once (`takeUncountedProbeOutcome`, `planAssetProbeUpdates`), and from the
+inline resolve of the selected item, which the queue never probes (it lists the items after the
+selection and is empty while a fallback is on air): without it a trial item picked straight away, in a
+pool with only that source, would never be judged. It leaves out one failure: a Twitch archive whose
+download is queued or running (`TwitchVodCachePendingError`, `apps/worker/src/source-breaker-outcomes.ts`),
+which is not playable yet but says nothing about its source; a single-source Twitch pool queues several
+of them while the runner downloads one at a time.
+An outage of the channel's own network is kept away from both holds (M82). The list of probe outcomes
+that feeds `planAssetProbeUpdates` and the breaker is first passed through `dropNetworkOutageOutcomes`
+(`apps/worker/src/index.ts`), and so is the inline resolve's outcome. It takes out a failed outcome when
+two things hold. The error text names a failure that got no answer (`classifyProbeFailure` in
+`packages/core/src/probe-network-outage.ts`: name resolution, connecting, a timeout, a TLS handshake
+ending in nothing, yt-dlp's transport errors; a format that is not offered, a removed or private video
+and every HTTP status are `other`). And the channel's way out is down at that moment: the playout
+resolves the host of each enabled output (`publishHostTargetsOf`, at most two, local hosts left out)
+and opens one TCP connection to it (`apps/worker/src/probe-network-outage.ts`, 2.5 s at most, asked
+only when a network-looking failure is about to be counted, one verdict per ten seconds), and
+`decideNetworkOutage` says outage only when none connects or answers. The question is asked when the
+failure is counted, which is up to one resolve timeout (60 s) after its request went out, so an outage
+the check saw stands for that long after the output connects again (`carryRecentNetworkOutage`); a blip
+shorter than one resolve that nothing asked about is not seen. A check that itself breaks is no
+evidence: everything counts and `playout.probe.network_outage.check_failed` says so. The classifier
+knows both libc wordings, since the image is Alpine and musl says `Try again` and `Network unreachable`
+where glibc says `Temporary failure in name resolution` and `Network is unreachable`. The output is
+asked rather than the uplink's state in `playout_runtime` read, because that state carries no time (the
+exit reason is cleared by the next start), follows a silent drop only at the encoder-stall restart, and
+fails for reasons that are not the network; in relay mode the playout feeds the local relay, so the
+check is the only view it has of the way out. An outcome taken out is neither a failure nor a success:
+counters keep their value, a half-open breaker keeps its trial, and each one is logged
+(`playout.probe.network_outage`, one line per item per five minutes). Without corroboration a
+network-looking failure counts as any other, since a host that is down while the channel's output
+connects is a source fault.
+An open breaker lasts a cooldown of 30 minutes that doubles on every re-open up to 6 h; once it has run
+out the source is half-open, which is not stored but read from `opened_at` plus the cooldown, so no
+process has to be up at that moment. Half-open gives one trial item per walk (the first the rotation
+reaches; an item this cycle starts counts as it), and the first counted outcome of the source decides:
+clean closes the breaker and resets the cooldown, failed re-opens it. Outcomes while the cooldown runs
+are ignored. The breakers live in their own table, `source_breakers` (one row per source that ever failed
+a probe: `state` closed/open, `failed_asset_ids`, `opened_at`, `cooldown_seconds`, `last_error`), because
+a whole-state write deletes and re-inserts every source row; they are read with the state and written
+only by the playout's serialized read-modify-write (`recordSourceBreakerOutcomes`, which takes the
+state-write lock only when an outcome changes a row: most are clean probes of a healthy source) and the
+source page's *Close breaker now* (`closeSourceBreakerRecord`). The previews apply the breaker as it stands when they
+are drawn. The generic fallback tiers (any ready asset in the selection, the recovery and bridge plans
+after a failed preparation) pass a held source's items over too: the hold keeps them out of the queue,
+so their quarantine counters stop, and they would fail there instead. A block mapped to a source by
+name and the operator's global fallback asset are not gated. A held source that no pool could pick
+anyway (every item quarantined, excluded or cooling down, or the source in no pool) is closed by the
+playout, which leaves the case to quarantine; an incident left without a row (the source deleted) is
+resolved from its fingerprint.
+
 Each source's items play in one order, `compareProgrammingAssets` in `packages/core`. It compares one
 fixed key: `publishedAt`, else the first-seen `createdAt`, oldest first; then the source id, so items
 with the same date stay grouped by source; then, within that source, items with a numeric VOD id first, by id; then
@@ -270,8 +352,19 @@ also Pin, Fallback, Resume, Force reconnect and Recover outputs, set `restartReq
 reconnect standby slate follows that flag only in direct RTMP mode, because under the relay the uplink
 owns the destination connection (`shouldShowReconnectSlate` in `apps/worker/src/playout-boundary.ts`).
 Under the relay Pin, Fallback and Resume change the item through the ordinary switch at the next cycle,
-and an item already on air keeps running (`runningAssetTargetMatches`). What each control does is
-listed in `docs/operations.md`, *Operator controls*.
+and an item already on air keeps running (`runningAssetTargetMatches`). Operator actions end what they
+replace (M78): a Skip of the item a Pin or Fallback holds on air clears the override in the same write,
+and the override arm leaves out an item under a skip hold; which override holds the air is one rule
+(`resolveOperatorOverrideHold` in `packages/core/src/operator-precedence.ts`; none under a Live Bridge,
+whose arm comes first) that the override arm, the admin and the worker's chat all call. In the chat a
+skip vote neither starts nor counts while an override holds, or the operator's Play now / Insert is
+pending or on air (M79, `resolveOperatorHold`: the override rule, then the insert arm's conditions, and
+for an insert that has aired, that no other item is on air; pool and cue point inserts never set the
+insert fields and stay skippable), and a vote that passed is applied only to the item still on air and
+not already held out (`decidePassedSkipVote`). A live selection ends an operator insert like any other
+selection (`decideInsertAfterSelection` in `playout-boundary.ts`), and an insert that aired and cannot be
+prepared again is ended once the fallback covers it (`decideInsertAfterPrepareFailure`). What each
+control does is listed in `docs/operations.md`, *Operator controls*.
 
 ## Multi-Output Delivery
 
@@ -302,12 +395,67 @@ Current overlay capabilities:
 
 The admin UI manages these settings; the playout renderer draws them onto the picture.
 
+## Viewer Language
+
+Everything the product itself says to viewers is written in one channel language (M80; `en` and `de`).
+Operator content is never translated, and the admin interface is English.
+
+- **The setting** is `channelLanguage` in the managed config, next to the channel time zone, and is
+  resolved the same way by `resolveChannelLanguage` (`packages/db/src/instance-config.ts`): the env
+  variable `CHANNEL_LANGUAGE` first, then the saved value, then English; an unknown value is English.
+  The web app reads it through `getViewerLocale`, the worker, playout and uplink through the managed
+  config each cycle refreshes.
+- **The catalogue** is `packages/core/src/viewer-messages/`: `en.ts` is the reference (its keys are the
+  catalogue's type), `de.ts` its German twin, `index.ts` the formatter. `viewerText(locale, key,
+  params)` fills `{placeholders}`, chooses plural forms with `Intl.PluralRules` on `count`, and prints
+  numbers without grouping; the on-air clock, upper-casing and the time zone's name are formatted for
+  the language as well. Formatters are cached, because the renderer draws many frames. A lookup never
+  throws: an unknown language or a key missing from one language is English, an unknown key is an
+  empty string.
+- **The picture** gets the language as `OverlayScenePayload.locale`, set where the time zone is set, so
+  the studio preview and the playout renderer agree. The playout container rebuilds the poll, the skip
+  bar and the game panels from database rows and passes the payload's locale there. The playout
+  refreshes that payload on every cycle while a programme or a Live Bridge is on air; the standby and
+  reconnect paths rewrite only the text slate, so a language or time zone change made during a slate
+  reaches the scene picture with the next programme.
+- **Shared words are split.** Where the admin and the viewers read the same state, the state keeps the
+  admin's English (`Replay standby`, `Live Bridge`, the local library's source name `Local Media
+  Library`, the playout message, the chat games' labels) and the viewer's text is taken from the
+  catalogue on the way out: `localizeViewerBuiltInText` maps a built-in English text to its catalogue
+  key and leaves everything else as written. The same rule makes a stored headline that still equals
+  its English default follow the channel language without a migration. It compares the text, not the
+  author — state does not record who wrote a title — so an operator's title, category or source name
+  equal to a built-in text is shown in the channel language too (`docs/operations.md`, *What Viewers
+  Read*).
+- **The public page** `/channel` builds every word in `apps/web/lib/public-channel-view.ts` from the
+  snapshot, which carries the language and the zone's name; the page sets `lang` on its own container,
+  because the root layout's `<html lang="en">` also serves the admin.
+
+### Adding a viewer language
+
+1. Copy `packages/core/src/viewer-messages/en.ts` to `<code>.ts`, type it as `ViewerMessageCatalogue`
+   (see `de.ts`) and translate every value. Keep the `{placeholders}` and the command words (`!game`,
+   `!skip`, `!here`, `stop`, the game ids); give a message plural forms (`{ one, other }`, or the forms
+   the language needs) wherever a number decides the wording.
+2. Add the code to `VIEWER_LOCALES` in `types.ts`, and the catalogue, its `Intl` tag and its name in the
+   picker to `VIEWER_MESSAGES`, `INTL_TAGS` and `VIEWER_LOCALE_LABELS` in `index.ts`. The compiler asks
+   for each of them. The settings form, the setup wizard and `PUT /api/settings/instance` read
+   `VIEWER_LOCALES` and need no change.
+3. Run `pnpm vitest run tests/unit/viewer-messages.test.ts`: the parity test fails for a key that is
+   missing or extra and for a placeholder that differs from English in any plural form.
+4. Measure the texts that share a row on the picture. `tests/unit/viewer-language-fit.test.ts` lays the
+   German poll, skip and game headers out in the renderer's fonts and fails when one needs more room
+   than its panel; extend it to the new language rather than counting characters. Then add the language
+   to the surface tests (`viewer-language-surfaces`, `viewer-language-chat`,
+   `viewer-language-public-page`), which read every viewer surface in each language.
+
 ## Alerting And Incidents
 
 Current operational domains:
 
 - incidents
 - incident history and readiness context in `Live → Status`
+- the as-run log of the last 24 hours in `Live → Status` (M76)
 - acknowledgements
 - resolution state
 - runtime drift checks

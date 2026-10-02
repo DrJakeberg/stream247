@@ -48,8 +48,20 @@ failure. Twitch says "redirect mismatch"; nothing in Stream247 can fix that for 
 
 The stack boots without a `.env`: the app secret is generated on first boot and persisted at
 `data/media/.stream247-app-secret` (owner-only file), the bundled PostgreSQL configures itself, and
-the wizard asks for the public URL. Verified on a fresh checkout: `docker compose up -d` with no
-`.env` comes up healthy and `/` redirects to `/setup`.
+the wizard asks for the public URL. `docker compose up -d` with no `.env` comes up healthy and `/`
+redirects to `/setup`. That is not a one-time observation: `pnpm test:fresh-compose` starts exactly
+that stack in CI and before every release, and fails if the redirect, the secret file or its
+owner-only mode is missing.
+
+Two things to know on that path:
+
+- Compose prints `The "TRAEFIK_HOST" variable is not set. Defaulting to a blank string.` (and the
+  same for `TRAEFIK_ACME_EMAIL`) on every command. Without a Traefik in front — the `proxy` profile,
+  or your own one reading the container labels — nothing reads either value and the warning is
+  harmless; with the profile, see section 4.
+- The compose file needs Docker Compose 2.24 or newer (`docker compose version`), with or without a
+  `.env`: older releases cannot read a file that marks its `.env` as optional and stop before
+  starting anything.
 
 Set values yourself when you want them pinned — for a restore, a rollback, or because the public URL
 must be right before Twitch OAuth is configured:
@@ -66,6 +78,7 @@ cp .env.production.example .env
 | `TRAEFIK_HOST` (and `TRAEFIK_ACME_EMAIL` if the built-in Let's Encrypt profile is used) | the HTTPS front |
 | `TWITCH_STREAM_KEY` | if the channel should go on air immediately; otherwise entered later as the primary destination's stream key under `Live → Status → Output destinations` (`/settings` has no stream-key field) |
 | `CHANNEL_TIMEZONE` | leave unset to let the wizard manage it; the example file no longer pins a zone, because an env value always beats the wizard's field |
+| `CHANNEL_LANGUAGE` | `en` or `de`; leave unset to choose the language in the wizard or under `Admin → Settings → Channel language`. Like the time zone, an env value always beats the saved one; anything else than `de` counts as `en` |
 
 Everything else — Twitch client credentials, SMTP, Discord — can be entered in the setup wizard or
 under `/settings` later, encrypted with the app secret.
@@ -90,18 +103,50 @@ docker compose --profile proxy up -d
 
 (without the built-in Traefik: `docker compose up -d`, and put your own HTTPS in front of port 3000).
 
-Create the owner immediately: until it exists, anyone who can reach the host can claim the workspace,
-so firewall the port if you cannot open the browser right away. Over plain HTTP a sign-in only holds on
+The `proxy` profile is the built-in Traefik with Let's Encrypt. It takes its hostname and its ACME
+address from `TRAEFIK_HOST` and `TRAEFIK_ACME_EMAIL` in `.env`, so it is the one form that does not
+work with nothing configured: with both unset Compose substitutes empty strings, the router rule is
+built from an empty host name and Traefik has no host to answer for. Set the two first, or start
+without the profile.
+
+Create the owner immediately: until it exists, anyone who can reach the host can claim the workspace.
+Port 3000 is published on every interface in both forms — the proxy is added in front of it, it does
+not replace it — so firewall it if you cannot open the browser right away. Over plain HTTP a sign-in only holds on
 `localhost`; from any other machine use HTTPS, or the session cookie is dropped and every sign-in bounces
 back to `/login` without a message.
 
-Then open `https://<your-host>/setup`. The wizard runs in this order: **owner account → instance
-(public URL) → Twitch app credentials → Twitch connect → done**. Creating the owner signs you in; the
-wizard's "done" means the credentials are in place, not that the channel can air — its readiness
+Then open `https://<your-host>/setup` (`/` leads there as long as no owner exists). The wizard runs
+in this order, under these names: **Owner account → Instance basics (public URL, time zone, channel
+language) → Twitch app credentials → Twitch accounts → Review**. Creating the owner signs you in; every
+later step can be skipped and stays open. **Review** marked "Done" means the credentials are in place,
+not that the channel can air — its readiness
 checklist lists what is still missing. Reopening `/setup` later requires being signed in and continues at
 the first unfinished step. Create the owner with an e-mail
 address and a password of at least 10 characters — there is no way to change either later without
 database access, so store them.
+
+### Channel language
+
+The channel language is the language your viewers are addressed in — one setting for everything they
+see or read: the on-air picture (what plays now and next, polls, the skip bar, chat games), the
+standby, reconnect and live-bridge texts, every chat bot reply, and the public page `/channel`.
+`English` is the default; `German (Deutsch)` is the second language.
+
+- Choose it in the wizard's instance step, or change it later under `Admin → Settings → Channel
+  language`. It takes effect without a restart: the chat bot, the Twitch title and the public page pick
+  it up with their next refresh, and the picture with the next playout cycle while a programme is on
+  air. During a standby or reconnect slate the picture keeps the previous language until the next
+  programme starts, as it does for a time zone change.
+- `CHANNEL_LANGUAGE=de` in `.env` pins it and beats the saved value (the form says so when it is set).
+  It is read when the containers start, so setting or changing it means recreating them
+  (`docker compose up -d`).
+- What you wrote yourself is never translated: asset and block titles, scene text layers, the ticker,
+  a headline you changed in the studio. Only texts the product itself writes follow the language —
+  including the studio's headline defaults (`Always on air`, `Insert on air`, …) for as long as you
+  have not changed them. The rule compares the text: a title, category or source name that is exactly
+  one of the product's own English texts (`Stand by`, `Live input`, …) is shown in the channel language
+  too; `docs/operations.md`, *What Viewers Read*, lists them.
+- The admin interface stays English.
 
 ## 5. Sign in and connect
 
@@ -151,7 +196,7 @@ every control there carries an (i) that says what it does.
 - `Live → Status`: readiness, destinations, incidents with their age.
 - `/api/health` answers when the web app is up. `/api/system/readiness` always answers 200 — read
   `broadcastReady` from the body; `/api/ready` returns 503 only when the database or the initialization is
-  missing.
+  missing, which includes a fresh install until its owner exists.
 - Incidents close themselves once their area has been healthy for a while; a count that rises and
   does not fall again is the signal.
 

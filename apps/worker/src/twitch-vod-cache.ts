@@ -222,6 +222,21 @@ export async function peekTwitchVodCache(
   };
 }
 
+/**
+ * The playout's refusal of an archive whose download is queued or running (M75 review): not playable
+ * yet, and nothing wrong with it or its source. The download runner works through a backlog one job at
+ * a time, each tens of minutes, so a single-source Twitch pool queues several such archives at once;
+ * counted as failures they opened the source circuit breaker on a healthy source within about three
+ * cycles and held out its cached archives too. Typed rather than matched on the message so the breaker
+ * can leave exactly this case out.
+ */
+export class TwitchVodCachePendingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TwitchVodCachePendingError";
+  }
+}
+
 export type TwitchVodCacheMode =
   /** Awaited inside a reconciliation cycle: bounded by the clamped cycle-await timeout. */
   | "cycle"
