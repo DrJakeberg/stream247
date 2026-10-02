@@ -309,6 +309,7 @@ import {
   type SceneRenderRequest
 } from "./scene-renderer.js";
 import { execFileText, runWithStallGuard } from "./process-utils.js";
+import { DATABASE_OUTAGE_EXIT_AFTER_MS, DatabaseOutageBudget } from "./database-outage.js";
 import {
   createFeedAudioState,
   getFeedAudioOptions,
@@ -9905,6 +9906,7 @@ async function waitForNextLoop(mode: RuntimeMode, delay: number): Promise<void> 
 async function runLoop(mode: RuntimeMode): Promise<void> {
   const run = mode === "worker" ? runWorkerCycle : mode === "uplink" ? runUplinkCycle : runPlayoutCycle;
   const delay = mode === "worker" ? 30_000 : 15_000;
+  const databaseOutage = new DatabaseOutageBudget();
   // A playout that comes up has nothing on air: a row the previous process left open (a redeploy kills
   // ffmpeg with no exit handler running) is closed as process-gone at this boot (M76). Queued, not awaited.
   if (mode === "playout") {
@@ -9936,6 +9938,10 @@ async function runLoop(mode: RuntimeMode): Promise<void> {
       process.exit(1);
     }
 
+    if (result.status === "completed") {
+      databaseOutage.recordReachable();
+    }
+
     if (result.status === "failed") {
       const error = result.error;
       const message = error instanceof Error ? error.message : `Unknown ${mode} error.`;
@@ -9943,14 +9949,41 @@ async function runLoop(mode: RuntimeMode): Promise<void> {
         mode,
         error: message
       });
-      await upsertIncident({
-        scope: mode === "worker" ? "worker" : "playout",
-        severity: "critical",
-        title: `${mode} loop crashed`,
-        message,
-        fingerprint: `${mode}.loop.crashed`
-      });
-      await sendAlert(`${mode} loop crashed`, message);
+      // Guarded like the stalled branch (M86): when the cycle failed because Postgres is stopped or
+      // restarting, this write fails too, and an unguarded throw here exited the process -- and in
+      // the playout container ffmpeg with it. The process now keeps looping and gives up only after
+      // DATABASE_OUTAGE_EXIT_AFTER_MS of cycles that could not reach the database (owner Q2).
+      try {
+        await upsertIncident({
+          scope: mode === "worker" ? "worker" : "playout",
+          severity: "critical",
+          title: `${mode} loop crashed`,
+          message,
+          fingerprint: `${mode}.loop.crashed`
+        });
+        databaseOutage.recordReachable();
+      } catch (incidentError) {
+        const verdict = databaseOutage.recordUnreachable(Date.now());
+        logRuntimeEvent("worker.loop.database_unreachable", {
+          mode,
+          outageMs: verdict.outageMs,
+          exitAfterMs: DATABASE_OUTAGE_EXIT_AFTER_MS,
+          error: incidentError instanceof Error ? incidentError.message : String(incidentError)
+        });
+        if (verdict.exit) {
+          logRuntimeEvent("worker.loop.database_outage_exit", {
+            mode,
+            outageMs: verdict.outageMs
+          });
+          process.exit(1);
+        }
+      }
+      try {
+        await sendAlert(`${mode} loop crashed`, message);
+      } catch {
+        // Best-effort: an alert reads the settings from the same database; the incident path above
+        // already decided whether this process keeps running.
+      }
     }
 
     await waitForNextLoop(mode, delay);

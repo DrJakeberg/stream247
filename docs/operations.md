@@ -318,6 +318,28 @@ Reading the rows:
   is also settable in Admin → Settings → Operations ("Watchdog thresholds"); a value saved there
   wins over the env variable, and the GUI enforces the safe range (5–120 s here)
 
+### PostgreSQL stopped or restarting (since M86)
+
+- a database stop, restart or crash no longer takes the channel off air: the worker, playout and
+  uplink processes keep running, ffmpeg keeps playing the input it already has, and the next cycle
+  after PostgreSQL is back reconnects by itself. The log shows `worker.loop.crashed` followed by
+  `worker.loop.database_unreachable` (with `outageMs`) for each cycle that could not reach the database
+- after five minutes of consecutive cycles that could not reach the database, a process gives up
+  (`worker.loop.database_outage_exit`) and exits, so the restart policy brings up a fresh one; in the
+  playout container that ends the programme until the database is back
+- a cycle that fails while the database answers is recorded as the incident `<mode>.loop.crashed` and
+  never counts towards that exit, as before
+- opening a database connection, or waiting for a free one in the process's pool, gives up after 15 s,
+  so a cycle that needs a new connection fails instead of waiting until the 300 s stall guard. A query
+  already running on an open connection is not bounded by this: a database that hangs mid-query (a
+  paused container) still ends in the stall guard's exit. A pool wait that times out while the database
+  is up but busy counts towards the five minutes like an outage
+- the containers' healthchecks read the database, so they report unhealthy during the outage; Compose
+  restarts a container only when it exits, never because it is unhealthy
+- web: a start while PostgreSQL is down or still starting is retried on the next request; no web
+  restart is needed. The schema bootstrap waits at most 5 s for any table lock (an older release still
+  writing during an upgrade) and retries a lost deadlock or lock wait, four attempts in all
+
 ### Crash-loop protection active
 
 - inspect the latest playout incidents

@@ -932,6 +932,14 @@ declare global {
 const STATE_WRITE_LOCK_KEY = 247001;
 const DB_BOOTSTRAP_LOCK_KEY = 247002;
 const STATE_WRITE_MAX_RETRIES = 3;
+const DB_CONNECTION_TIMEOUT_MS = 15_000;
+// The bootstrap's DDL holds ACCESS EXCLUSIVE locks until COMMIT. During an upgrade an old process
+// can still be writing, and the two can deadlock (40P01) or the boot can wait on its row locks with
+// no bound. The boot now waits at most this long for any table lock (55P03) and retries a lost
+// deadlock or lock wait; a failed attempt rolls back completely (R3 M1/M2, M86).
+const DB_BOOTSTRAP_LOCK_TIMEOUT = "5s";
+const DB_BOOTSTRAP_MAX_ATTEMPTS = 4;
+const DB_BOOTSTRAP_RETRY_BASE_MS = 250;
 const LATEST_SCHEMA_MIGRATION_ID = "20260404_001_schema_baseline";
 const schemaMigrations: MigrationDefinition[] = [];
 
@@ -1586,7 +1594,13 @@ function getDatabaseUrl(): string {
 function getPool(): Pool {
   if (!globalThis.__stream247Pool) {
     const pool = new Pool({
-      connectionString: getDatabaseUrl()
+      connectionString: getDatabaseUrl(),
+      // Without a bound, a connect to a Postgres that accepts TCP but never answers (paused, a
+      // half-open connection) waits for ever, and a worker cycle burns its whole 300 s stall budget
+      // before anyone notices. With it the connect fails fast and the cycle fails like any other
+      // database outage (M86). It also bounds a wait for a free pooled client; it does not bound a
+      // query already running on an open connection.
+      connectionTimeoutMillis: DB_CONNECTION_TIMEOUT_MS
     });
     // pg-pool emits "error" when an IDLE client loses its connection (PostgreSQL restarted, a
     // connection reset). With no listener that is an uncaught exception, and the worker's handler
@@ -5975,29 +5989,70 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   });
 }
 
+async function bootstrapDatabaseOnce(): Promise<void> {
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    // The advisory lock serialises the boots of web, worker, playout and uplink and stays unbounded;
+    // the lock timeout below applies only to the migrations' table locks taken after it.
+    await client.query("SELECT pg_advisory_xact_lock($1)", [DB_BOOTSTRAP_LOCK_KEY]);
+    await client.query(`SET LOCAL lock_timeout = '${DB_BOOTSTRAP_LOCK_TIMEOUT}'`);
+    await applyPendingMigrations(client);
+    const empty = await isDatabaseEmpty(client);
+    if (empty) {
+      const legacy = await readLegacyState();
+      await persistState(client, legacy ?? createInitialSeedState());
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await rollbackQuietly(client);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function isRetryableBootstrapError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    ["40P01", "55P03"].includes(String((error as { code?: unknown }).code))
+  );
+}
+
+async function bootstrapDatabase(): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await bootstrapDatabaseOnce();
+      return;
+    } catch (error) {
+      if (!isRetryableBootstrapError(error) || attempt >= DB_BOOTSTRAP_MAX_ATTEMPTS) {
+        throw error;
+      }
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[stream247-db] database bootstrap retrying after PostgreSQL ${(error as { code: string }).code} (attempt ${attempt}/${DB_BOOTSTRAP_MAX_ATTEMPTS}).`
+      );
+      await sleep(DB_BOOTSTRAP_RETRY_BASE_MS * 2 ** (attempt - 1));
+    }
+  }
+}
+
 export async function ensureDatabase(): Promise<void> {
   if (!globalThis.__stream247DbReady) {
-    globalThis.__stream247DbReady = (async () => {
-      const pool = getPool();
-      const client = await pool.connect();
-
-      try {
-        await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock($1)", [DB_BOOTSTRAP_LOCK_KEY]);
-        await applyPendingMigrations(client);
-        const empty = await isDatabaseEmpty(client);
-        if (empty) {
-          const legacy = await readLegacyState();
-          await persistState(client, legacy ?? createInitialSeedState());
-        }
-        await client.query("COMMIT");
-      } catch (error) {
-        await rollbackQuietly(client);
-        throw error;
-      } finally {
-        client.release();
+    const ready = bootstrapDatabase();
+    globalThis.__stream247DbReady = ready;
+    // A failed bootstrap must not stay cached: before M86 a web process that started while Postgres
+    // was down or still starting kept this rejection for its whole life (R3 S3), and only a container
+    // restart helped. Every caller of this attempt still sees its error; the next call starts afresh.
+    ready.catch(() => {
+      if (globalThis.__stream247DbReady === ready) {
+        globalThis.__stream247DbReady = undefined;
       }
-    })();
+    });
   }
 
   await globalThis.__stream247DbReady;
