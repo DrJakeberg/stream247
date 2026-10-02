@@ -1,6 +1,6 @@
 # R1 — Scheduling and competitors
 
-Status: research for owner review. Nothing here is implemented, nothing in product code, `PLANS.md` or
+Status: research; the owner answered Q1-Q7 on 2026-10-02 (see "Owner decisions" at the end). Nothing here is implemented, nothing in product code, `PLANS.md` or
 `CHANGELOG.md` was changed. Base: branch `m75-source-breaker` at `ab42e11` (the coming 2.2.0). Every
 `path:line` refers to that commit.
 
@@ -237,8 +237,8 @@ listed in the table of contents of https://dev.twitch.tv/docs/api/reference/).
 | Row | Goal | Acceptance (short) | Effort | Risk |
 | --- | --- | --- | --- | --- |
 | A Dated And One-Off Schedule Blocks | "next 10 days at 20:00" and "once on 10 Oct" can be saved on a 24/7 grid, and air, previews, `/channel` and Twitch agree | `valid_from`/`valid_until` in baseline, ALTER, migration, manifest, mapper, writers, blueprints; filter in `buildScheduleOccurrences`; dated layer rank in `findCurrentScheduleOccurrence`; `applyScheduleLayers` with `airWindows`; conflicts per layer; expired rows stay listed as ended; form *Runs* + takeover notice; "Single day" renamed; B1 fixed via pure `planTwitchScheduleSegments`. Tests: 10-day run (day 10 present, day 11 absent), once-block, carry-over past `valid_until`, 18-22 + 20-21 gives three windows with one key, cuepoint not re-fired, no `:carry` Twitch keys, schema manifest, db round-trip, `pnpm validate` | M (2-3 days) | medium |
-| B Public Week Programme | viewers see the coming week, not only now/next | `/channel` lists 7 days per day in channel zone and language, dated items marked; `/channel.ics`; both catalogues; layout spec at 375 px. Layout waits for Q4 | S-M | low |
-| C Schedule Across DST | a block in 02:00-03:00 airs once, at the right time, on both changes | spring gap resolves forward on air and on Twitch; autumn repeat airs once (first instance), matched on UTC instants. Tests for Europe/Berlin 2027-03-28 and 2026-10-25 | M | medium (touches the matcher every consumer uses) |
+| B Public Programme | viewers see what plays now and next at the level of single videos, and the coming days | `/channel` (1.6): *on air* with title, source, start-end, time left and a progress bar; *after that* as runs of consecutive items of one source, each run collapsed to its first item plus "N more", across midnight with day labels; built from `buildSchedulePreviewVideoSlots` (`packages/core/src/index.ts:2797`) for the next 24 h; dated items marked; `/channel.ics` with one entry per block; both catalogues; layout spec at 375 px | M | low (read-only; predicted times are estimates and must say so) |
+| C Schedule Across DST | the 02:00-03:00 hour is counted right on both changes | **Adjusted to R3's decided Q4 (2026-10-01): the schedule follows the wall clock across DST; only the counts are fixed** — cuepoint timing and Twitch segment start and end (the spring start no longer goes to Twitch an hour early, B4). The "airs once, matched on UTC" variant written first is dropped. Tests for Europe/Berlin 2027-03-28 and 2026-10-25 | S-M | low-medium |
 | D Schedule Midnight Fixes | B2 and B3 | conflicts across midnight compare with the next weekday; cache keep-rule uses the effective start; the template test fixture moves to two weekdays | S | low |
 
 B1 rides with A because A rewrites the same sync function; it could also go into D if A waits.
@@ -254,6 +254,41 @@ B1 rides with A because A rewrites the same sync function; it could also go into
 - WebFetch of `https://gronkh.tv` returns only "Please enable JavaScript to continue using this
   application."
 - Per the brief I do not describe GronkhTV from memory; see Q4.
+
+
+### 1.6 GronkhTV (viewer reference): read from the owner's screenshots
+
+The owner attached two screenshots in the thread on 2026-10-02 (gronkh.tv "GTV Programmplan" panel and
+twitch.tv/gronkhtv/schedule). They are not copied into the repo (third-party UI). What they show, and
+what Stream247 can take as **ideas** (no texts, names or layout copied):
+
+- **gronkh.tv, side panel.** Two parts: what runs now, then what comes after.
+  - *Now*: cover image, episode number and title, the game, "running since 11:54 until 12:38", the time
+    left ("19:16") and a progress bar.
+  - *After*: one card per **run of consecutive episodes of the same game**, showing the first episode
+    (cover, number and title, game, "12:38 to 13:18") and a collapsed "N more episodes" toggle. The
+    runs go on past midnight into the next morning (01:58, 05:04, 09:02); the screenshot shows no day
+    headers.
+  - Granularity is the single video, with predicted start and end times. The schedule's blocks are not
+    shown at all.
+- **twitch.tv/gronkhtv/schedule.** A week view with **one coarse segment per day** (00:00-23:00 GMT+2) and
+  a generic title ("all day Let's Plays") that points viewers to a chat command for the detailed
+  programme; one day carries a different title (old streams). The live day shows the current video.
+- **Consequences for Stream247:**
+  - Row B moves from "7-day list of blocks" to **item-level now/next**: the data exists (predicted video
+    slots with start offsets, `SchedulePreviewVideoSlot`, `packages/core/src/index.ts:899-905`), the
+    public page does not use it (`apps/web/lib/public-channel-view.ts:64-88` reads blocks and the queue).
+    Predicted times are estimates (`estimatedDuration`), so the page should say "approx." for anything
+    after the current item.
+  - Grouping consecutive items of one source matches M73's source alternation poorly: an alternating
+    pool would produce runs of length 1. Group by source *and* show single items when runs are short.
+  - Covers: assets have a thumbnail route, but only for the admin (`apps/web/app/api/assets/[id]/thumbnail/route.ts`).
+    The route requires a signed-in role (`requireApiRoles([...])`,
+    `apps/web/app/api/assets/[id]/thumbnail/route.ts:10`), so a public cover needs its own cache-friendly
+    route that serves only assets on the public programme.
+  - Twitch: coarse segments with a pointer to the channel's own programme are a valid pattern. Stream247's
+    per-block sync already gives more detail; no change needed. The chat-command pointer supports the
+    `!next` / `!schedule` idea from the 2026-10-01 list (`HANDOFF.md:109-111` on `main`).
 
 ---
 
@@ -376,7 +411,7 @@ the 48-hour Twitch restart (Upstream Twitch 24/7 help URL above).
 | I5 | Generic outbound webhook for incidents and on-air start/stop, next to Discord and email | Castr webhooks + SMS (URLs in 2.1) | yes | one URL reaches any notifier a self-hoster runs; Discord-only code exists to copy | S | low (must never carry a stream key) |
 | I6 | "Starting soon" banner / countdown to the next dated special, in the scene | Upstream, LiveReacting (URLs in 2.1) | yes | overlay and schedule are local; only useful once I1 exists | S | low |
 | I7 | Periodic chat note "this is a rerun channel; live shows are on …" by the bot | StreamHouse guidance | yes | bot exists; Twitch audiences expect the transparency | S | low (rate limit; channel language) |
-| I8 | Count-based rotation rules in a pool (every N items an insert; top-of-hour sting) as plain settings | Streamloop custom order | partly | the rules fit; the AI-generated picker does not belong in a self-hosted box | M | medium (touches pool rotation M73) |
+| I8 | Top-of-hour sting (an insert at minute 0 in the channel zone) | Streamloop custom order | partly | the count-based half already exists: a pool's `insertAssetId` + `insertEveryItems` (`apps/worker/src/index.ts:5407-5408`, correction 2026-10-02); the time-based half would be new; the AI-generated picker does not belong in a self-hosted box | S-M | medium (seam chain) |
 | I9 | Wizard: summary step and a Disconnect Protection hint | Upstream (URLs in 2.1) | yes | text and UI only | S | low — hand to R2 |
 | I10 | Park a destination that keeps failing for hours, keep the others | Upstream, Livepush | partly | cooldown exists; whether parking is needed is R3's call | S | low |
 | I11 | Month view of the schedule | Gyre | partly | only worth it once dated items exist; the week lens covers a 24/7 grid | M | low |
@@ -455,3 +490,22 @@ provider, media licensing), file-format pre-check (Stream247 re-encodes), keywor
 - `/channel` "After that" reads the playout queue, so a 24/7 grid shows "Nothing further is scheduled
   yet" (`apps/web/lib/public-channel-view.ts:82-88`, channel baseline screenshot). Row B fixes it; R2 may
   list it too.
+
+## Owner decisions (2026-10-02)
+
+Benjamin answered in the thread on 2026-10-02: "Deine Empfehlungen klingen super!" — so every
+recommendation of Q1-Q7 is decided as written:
+
+1. A dated item takes over the weekly block it overlaps; the weekly block continues around it.
+2. Ended dated items stay listed (greyed, re-usable) until deleted by hand.
+3. A dated playlist continues each evening where it stopped (pool cursor, M73).
+4. GronkhTV: answered with two screenshots; evaluated in 1.6, row B rewritten accordingly.
+5. Twitch: keep the non-recurring sync; no recurring-segment variant now. Whether jimpanse247 is an
+   affiliate is still not stated.
+6. DST comes after dated items, as its own milestone; row C follows R3's decided Q4 (wall clock, counts
+   fixed).
+7. Order: D (midnight fixes) → A (dated items, with B1) → B (public programme) → I4 (7-day coverage
+   check) → C (DST); I3 (drafts) and I5 (webhook) as candidates for the stage after.
+
+He also asked for the three items under "Outside this brief" to be fixed; that work is on this branch as
+separate commits (see the thread's report).
