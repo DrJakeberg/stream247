@@ -3230,7 +3230,13 @@ export function buildMaterializedProgrammingWeek(args: {
     return {
       date,
       dayOfWeek: getDayOfWeekForDate(date),
-      totalScheduledMinutes: blocks.reduce((total, block) => total + block.durationMinutes, 0),
+      // Only the minutes that fall on this date. A block crossing midnight appears here and as the next
+      // day's carry-over; adding its whole length on both days counted 23:00-01:00 twice, so a 24/7 grid
+      // read "1500m scheduled" on the two days around such a block.
+      totalScheduledMinutes: occurrences.reduce((total, occurrence) => {
+        const range = getScheduleOccurrenceMinuteRange(occurrence);
+        return total + Math.max(0, Math.min(range.end, MINUTES_PER_DAY) - Math.max(range.start, 0));
+      }, 0),
       totalProjectedMinutes: blocks.reduce((total, block) => total + block.projectedMinutes, 0),
       blockCount: blocks.length,
       underfilledCount: blocks.filter((block) => block.fillStatus === "underfilled").length,
