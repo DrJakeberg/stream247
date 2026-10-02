@@ -61,6 +61,7 @@ import {
   writeChatSkipVoteRecord
 } from "@stream247/db";
 import type { AsRunRecord } from "@stream247/core";
+import { decideCycleEndPendingAction, decideCycleEndRestartFlag } from "../../apps/worker/src/playout-boundary";
 
 const execFileAsync = promisify(execFile);
 
@@ -2447,6 +2448,91 @@ describe.sequential("database roundtrip", () => {
       await recordAsRunStart(run("now", "2026-10-01T17:00:00.000Z"));
 
       expect((await all()).map((record) => record.id)).toEqual(["now", "kept"]);
+    }, 60_000);
+  });
+
+  describe("operator actions are never lost (M89)", () => {
+    const removeNextHoldMigrationId = "20261002_002_remove_next_hold";
+
+    it("adds the Remove next hold to a database whose playout_runtime predates it", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql(`
+        ALTER TABLE playout_runtime DROP COLUMN IF EXISTS remove_next_asset_id;
+        ALTER TABLE playout_runtime DROP COLUMN IF EXISTS remove_next_until;
+        DELETE FROM schema_migrations WHERE id = '${removeNextHoldMigrationId}';
+        UPDATE playout_runtime SET skip_asset_id = 'asset_old_hold', skip_until = '2099-01-01T00:00:00.000Z';
+      `);
+
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      const columns = await executeSql(
+        "SELECT column_name || '=' || column_default FROM information_schema.columns WHERE table_name = 'playout_runtime' AND column_name LIKE 'remove_next_%' ORDER BY column_name;"
+      );
+      expect(columns.split("\n")).toEqual(["remove_next_asset_id=''::text", "remove_next_until=''::text"]);
+      expect(await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${removeNextHoldMigrationId}';`)).toBe("1");
+      const migrated = (await readAppState()).playout;
+      // A Remove next pressed before the upgrade stays what it was, a skip hold, until it runs out.
+      expect({ skip: migrated.skipAssetId, removeNext: migrated.removeNextAssetId }).toEqual({ skip: "asset_old_hold", removeNext: "" });
+      expect(DECLARED_SCHEMA.playout_runtime).toEqual(expect.arrayContaining(["remove_next_asset_id", "remove_next_until"]));
+
+      await updatePlayoutRuntime((playout) => ({ ...playout, removeNextAssetId: "asset_c", removeNextUntil: "2099-01-01T00:00:00.000Z" }));
+      await updatePlayoutRuntime((playout) => ({ ...playout, skipAssetId: "asset_b", skipUntil: "2099-01-01T00:00:00.000Z" }));
+      const after = (await readAppState()).playout;
+      expect(after).toMatchObject({ skipAssetId: "asset_b", removeNextAssetId: "asset_c", removeNextUntil: "2099-01-01T00:00:00.000Z" });
+    }, 60_000);
+
+    // R3's W4 run (planning/research/robustness.md, restart-flag-swallowed): the real updatePlayoutRuntime
+    // on real Postgres, with the updaters the code uses. Before M89 the cycle-end write set the flag from a
+    // constant and the next cycle read "".
+    it("keeps a Restart and a Refresh pressed while a playout cycle runs for the next cycle", async () => {
+      await ensureDatabaseWithRetry();
+      await updatePlayoutRuntime((playout) => ({ ...playout, restartRequestedAt: "", pendingAction: "", pendingActionRequestedAt: "" }));
+
+      // Cycle N starts and reads the row.
+      const cycleRead = (await readAppState()).playout;
+
+      // The admin presses Restart, then Refresh, while cycle N resolves its input (broadcast.ts).
+      const pressedAt = new Date().toISOString();
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        status: "recovering",
+        restartRequestedAt: pressedAt,
+        heartbeatAt: pressedAt,
+        pendingAction: "",
+        pendingActionRequestedAt: "",
+        message: "Manual playout restart requested from the admin API."
+      }));
+      const refreshAt = new Date(Date.parse(pressedAt) + 1).toISOString();
+      await updatePlayoutRuntime((playout) => ({ ...playout, pendingAction: "refresh", pendingActionRequestedAt: refreshAt }));
+
+      // Cycle N's end write (index.ts), from what it read.
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        restartRequestedAt: decideCycleEndRestartFlag({
+          consumed: cycleRead.restartRequestedAt,
+          row: playout.restartRequestedAt,
+          keepReconnectWindow: false
+        }),
+        ...decideCycleEndPendingAction({ consumed: cycleRead, row: playout })
+      }));
+
+      const nextCycle = (await readAppState()).playout;
+      expect(nextCycle.restartRequestedAt).toBe(pressedAt);
+      expect({ action: nextCycle.pendingAction, at: nextCycle.pendingActionRequestedAt }).toEqual({ action: "refresh", at: refreshAt });
+
+      // Cycle N+1 acts on both and clears exactly them.
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        restartRequestedAt: decideCycleEndRestartFlag({
+          consumed: nextCycle.restartRequestedAt,
+          row: playout.restartRequestedAt,
+          keepReconnectWindow: false
+        }),
+        ...decideCycleEndPendingAction({ consumed: nextCycle, row: playout })
+      }));
+      const cleared = (await readAppState()).playout;
+      expect({ restart: cleared.restartRequestedAt, action: cleared.pendingAction }).toEqual({ restart: "", action: "" });
     }, 60_000);
   });
 

@@ -54,6 +54,8 @@ export type AssetRetentionSnapshot = {
     overrideAssetId: string;
     insertAssetId: string;
     skipAssetId: string;
+    // Optional: snapshots built before M89 carry no Remove next hold.
+    removeNextAssetId?: string;
     cuepointLastAssetId: string;
     queuedAssetIds: readonly string[];
     queueItems: ReadonlyArray<{ assetId: string }>;
@@ -143,6 +145,7 @@ export function classifyAssetRetention(
     snapshot.playout.overrideAssetId,
     snapshot.playout.insertAssetId,
     snapshot.playout.skipAssetId,
+    snapshot.playout.removeNextAssetId ?? "",
     snapshot.playout.cuepointLastAssetId
   ]);
   const queueIds = toSet([

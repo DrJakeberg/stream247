@@ -82,7 +82,11 @@ the pool's next item. Under the relay no operator action shows that slate.
   slate comes first and the queued item starts right after it. **Replay previous** queues the last item
   that left the air for another one — at its end, or cut short by a Play now or a Skip — as Move next
   (2.1 records it at every switch and natural end; before, it stayed empty). The control room shows it
-  as *Previous item*. **Remove next** holds the next item out for an hour.
+  as *Previous item*. **Remove next** holds the next item out for an hour, in a hold of its own (since
+  M89): a Skip of the item on air or a passed chat skip vote leaves it standing, and the item after the
+  removed one comes next. Before M89 both shared one hold, so either of them lifted it and the removed item
+  aired next. A Pin, Fallback, Move next or Replay previous of the removed item lifts the hold, Resume
+  schedule clears it, and Play now refuses the item while it holds.
 - **Pin on air** and **Temporary fallback** put the chosen item, or the global fallback, on air for
   the override minutes (fallback: an hour): with the relay the next cycle switches to it, and pinning
   the item on air keeps it running; without the relay the slate comes first. When the pin ends — its
@@ -91,7 +95,7 @@ the pool's next item. Under the relay no operator action shows that slate.
   the pin (below). Pinning an item that a Skip holds out lifts that hold; the pin would not take the air
   otherwise.
 - **Resume schedule** clears a Pin or Fallback, a pending or running Play now / insert, a queued Move
-  next and a skip hold, and is enabled while a Pin, a Fallback or an insert is in effect. With the relay
+  next, a skip hold and a Remove next hold, and is enabled while a Pin, a Fallback or an insert is in effect. With the relay
   the next cycle hands back to the pool: a running insert gives way to the pool's next item (if that is
   the insert's item itself, it plays on and counts as the pool's item), a pinned pool item plays on.
   Without the relay the slate comes first, then the pool's next item.
@@ -135,6 +139,14 @@ the pool's next item. Under the relay no operator action shows that slate.
   slate shows and the playout then chooses as described above: the running Pin or insert from its
   beginning, else a queued Move next, else the pool's next item (a pool item on air is not restarted).
   The planned reconnect of direct mode (every few hours) does the same.
+- A Soft restart, Hard reload, Force reconnect, Recover outputs or Refresh pressed while a playout cycle
+  is running is carried out by the next cycle (since M89). A cycle can take a minute (an inline resolve,
+  the queue probes, the start), and its last write used to clear the request it had never read, so nothing
+  happened although the admin had answered "requested". Each write of the cycle now clears only the
+  request the cycle read (`decideCycleEndRestartFlag`, `decideCycleEndPendingAction` in
+  `apps/worker/src/playout-boundary.ts`); a newer one stays, and without the relay the reconnect window
+  keeps its start as before. The same for a skip vote the chat applies meanwhile, and for a Play now
+  pressed while a start fails: the failure drops only the insert it tried to start.
 - **Force reconnect** restarts the encoder into the reconnect window without the relay. With the relay
   it is refused: the uplink reconnects by itself (the planned reconnect interval, the encoder-stall and
   destination-stall watchdogs).

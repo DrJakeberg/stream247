@@ -354,6 +354,9 @@ import {
 import {
   decideBoundaryPlaybackInput,
   decideCycleEndInsert,
+  decideCycleEndPendingAction,
+  decideCycleEndRestartFlag,
+  decideFailedCycleInsert,
   decideInsertAfterPrepareFailure,
   decideInsertAfterSelection,
   decidePreviousAssetId,
@@ -364,7 +367,9 @@ import {
   shouldBridgeToFallbackBeforeResolve,
   shouldClearInsertOnExit,
   shouldKeepRunningInput,
-  shouldShowReconnectSlate
+  shouldShowReconnectSlate,
+  type InsertFields,
+  type PendingActionFields
 } from "./playout-boundary.js";
 import {
   PLAY_FAILURE_SKIP_MS,
@@ -4699,8 +4704,9 @@ function getNextScheduleItem(state: AppState): ReturnType<typeof buildScheduleOc
 
 // What the worker may pick from a pool right now. Positions are taken in each source's full list
 // (packages/core/src/pool-rotation.ts), so an item this rejects is stepped over, never a reason to start
-// the pool again from its oldest item: the skip hold is exactly the item that just played.
-function isPoolAssetEligible(pool: PoolRecord, asset: AssetRecord, skippedAssetId: string): boolean {
+// the pool again from its oldest item: the skip hold is exactly the item that just played. The Remove next
+// hold (M89) is the item the operator took out of the next slot.
+function isPoolAssetEligible(pool: PoolRecord, asset: AssetRecord, skippedAssetId: string, removedNextAssetId = ""): boolean {
   if (pool.insertAssetId && pool.insertEveryItems > 0 && asset.id === pool.insertAssetId) {
     return false;
   }
@@ -4710,6 +4716,7 @@ function isPoolAssetEligible(pool: PoolRecord, asset: AssetRecord, skippedAssetI
   return (
     asset.status === "ready" &&
     asset.id !== skippedAssetId &&
+    asset.id !== removedNextAssetId &&
     asset.includeInProgramming !== false &&
     !isAssetBlockedForAutomaticSelection(asset)
   );
@@ -4749,7 +4756,7 @@ function resolveScheduleOccurrenceOverlayTitle(state: AppState, item: WorkerSche
   return item.poolId ? lookaheadVideoTitleFromPool(state, item.poolId) || item.title : item.title;
 }
 
-function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string): AssetRecord | null {
+function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string, removedNextAssetId = ""): AssetRecord | null {
   const pool = state.pools.find((entry) => entry.id === poolId);
   if (!pool) {
     return null;
@@ -4761,7 +4768,7 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
     nextPoolRotationAsset({
       pool,
       assets: state.assets,
-      isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId),
+      isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId, removedNextAssetId),
       sourceGate: poolSourceGate(state)
     })?.asset ?? null
   );
@@ -4779,7 +4786,7 @@ function getPoolPlaybackQueue(
   state: AppState,
   poolId: string,
   skippedAssetId: string,
-  options: { currentAssetId?: string; currentStartsPool?: boolean; limit?: number } = {}
+  options: { currentAssetId?: string; currentStartsPool?: boolean; limit?: number; removedNextAssetId?: string } = {}
 ): AssetRecord[] {
   const pool = state.pools.find((entry) => entry.id === poolId);
   if (!pool) {
@@ -4789,7 +4796,7 @@ function getPoolPlaybackQueue(
   const picks = walkPoolRotation({
     pool,
     assets: state.assets,
-    isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId),
+    isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId, options.removedNextAssetId ?? ""),
     sourceGate: poolSourceGate(state),
     steps: options.limit ?? 4,
     afterAssetId: options.currentStartsPool ? currentAssetId : ""
@@ -5301,6 +5308,9 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     ...overrides
   });
   const skippedAssetId = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
+  // The operator's Remove next (M89): held out of every arm like the skip hold, in a field of its own so
+  // that a later Skip or chat vote, which move the skip hold, leave it standing.
+  const removedNextAssetId = isTimestampActive(state.playout.removeNextUntil) ? state.playout.removeNextAssetId : "";
   const liveBridgeActive =
     state.playout.liveBridgeInputUrl !== "" &&
     (state.playout.liveBridgeStatus === "pending" || state.playout.liveBridgeStatus === "active");
@@ -5325,7 +5335,11 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   const activeInsertAsset =
     state.playout.insertAssetId !== ""
       ? state.assets.find(
-          (asset) => asset.id === state.playout.insertAssetId && asset.status === "ready" && asset.id !== skippedAssetId
+          (asset) =>
+            asset.id === state.playout.insertAssetId &&
+            asset.status === "ready" &&
+            asset.id !== skippedAssetId &&
+            asset.id !== removedNextAssetId
         ) ?? null
       : null;
   const manualNextAsset =
@@ -5335,7 +5349,8 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
             asset.id === state.playout.manualNextAssetId &&
             asset.status === "ready" &&
             asset.includeInProgramming !== false &&
-            asset.id !== skippedAssetId
+            asset.id !== skippedAssetId &&
+            asset.id !== removedNextAssetId
         ) ?? null
       : null;
   // Only a Pin or Fallback that is still running selects as an operator override. There used to be a
@@ -5414,7 +5429,11 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
       state.playout.selectionReasonCode === "graceful_handoff" ||
       state.playout.selectionReasonCode === "manual_next")
       ? state.assets.find(
-          (asset) => asset.id === state.playout.currentAssetId && asset.status === "ready" && asset.id !== skippedAssetId
+          (asset) =>
+            asset.id === state.playout.currentAssetId &&
+            asset.status === "ready" &&
+            asset.id !== skippedAssetId &&
+            asset.id !== removedNextAssetId
         ) ?? null
       : null;
   const autoInsertAsset =
@@ -5428,13 +5447,15 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
             asset.id === currentPool.insertAssetId &&
             asset.status === "ready" &&
             asset.includeInProgramming !== false &&
-            asset.id !== skippedAssetId
+            asset.id !== skippedAssetId &&
+            asset.id !== removedNextAssetId
         ) ?? null
       : null;
   const cuepointInsertPlan = getCuepointInsertPlan({
     state,
     currentScheduleItem,
-    skippedAssetId
+    skippedAssetId,
+    removedNextAssetId
   });
 
   if (cuepointInsertPlan && state.playout.currentAssetId === "") {
@@ -5478,6 +5499,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
             asset.id === state.playout.currentAssetId &&
             asset.status === "ready" &&
             asset.id !== skippedAssetId &&
+            asset.id !== removedNextAssetId &&
             currentPool?.sourceIds.includes(asset.sourceId)
         ) ?? null
       : null;
@@ -5493,12 +5515,12 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   }
 
   const preferredAsset = currentScheduleItem?.poolId
-      ? currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId)
+      ? currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId, removedNextAssetId)
     : state.assets.find((entry) => {
         if (entry.status !== "ready") {
           return false;
         }
-        if (entry.id === skippedAssetId) {
+        if (entry.id === skippedAssetId || entry.id === removedNextAssetId) {
           return false;
         }
         if (entry.includeInProgramming === false) {
@@ -5531,7 +5553,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
         asset.includeInProgramming !== false &&
         !isAssetBlockedForAutomaticSelection(asset)
     )
-    .filter((asset) => asset.id !== skippedAssetId)
+    .filter((asset) => asset.id !== skippedAssetId && asset.id !== removedNextAssetId)
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 
   if (globalFallback) {
@@ -5552,6 +5574,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   const anyReadyAsset = [...state.assets]
     .filter((asset) => asset.status === "ready" && asset.includeInProgramming !== false && !isAssetBlockedForAutomaticSelection(asset))
     .filter((asset) => asset.id !== skippedAssetId && !heldSourceIds.has(asset.sourceId))
+    .filter((asset) => asset.id !== removedNextAssetId)
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority)[0];
 
   if (anyReadyAsset) {
@@ -5951,6 +5974,11 @@ async function startOrSwitchPlayout(args: {
    * from a Pin.
    */
   asRun: { blockId: string; poolId: string; queueKind: string; overrideMode: string };
+  /**
+   * The restart flag and pending action the cycle read and acts on with this start (M89): the start
+   * clears those, never a newer request the admin wrote while the cycle ran (decideCycleEndRestartFlag).
+   */
+  consumed: { restartRequestedAt: string } & PendingActionFields;
 }): Promise<void> {
   const switching = playoutProcess && !playoutProcess.killed;
   if (switching) {
@@ -6240,7 +6268,11 @@ async function startOrSwitchPlayout(args: {
     currentTitle: buildAssetDisplayTitle(args.asset) || args.liveBridge?.label || "Replay standby",
     desiredAssetId: args.asset?.id ?? "",
     currentDestinationId: leadDestination.id,
-    restartRequestedAt: "",
+    restartRequestedAt: decideCycleEndRestartFlag({
+      consumed: args.consumed.restartRequestedAt,
+      row: playout.restartRequestedAt,
+      keepReconnectWindow: false
+    }),
     heartbeatAt: startedAt,
     processPid: pid,
     processStartedAt: startedAt,
@@ -6263,8 +6295,7 @@ async function startOrSwitchPlayout(args: {
     programFeedTargetSeconds: programFeedConfig?.targetSeconds ?? playout.programFeedTargetSeconds,
     programFeedBufferedSeconds: programFeedConfig?.bufferedSeconds ?? playout.programFeedBufferedSeconds,
     lastError: "",
-    pendingAction: "",
-    pendingActionRequestedAt: "",
+    ...decideCycleEndPendingAction({ consumed: args.consumed, row: playout }),
     message: args.reason
   }));
 
@@ -6960,7 +6991,8 @@ async function runPlayoutCycle(): Promise<void> {
   latestPublishHostTargets = publishHostTargetsOfDestinations(state.destinations);
   if (
     (state.playout.overrideUntil !== "" && !isTimestampActive(state.playout.overrideUntil)) ||
-    (state.playout.skipUntil !== "" && !isTimestampActive(state.playout.skipUntil))
+    (state.playout.skipUntil !== "" && !isTimestampActive(state.playout.skipUntil)) ||
+    (state.playout.removeNextUntil !== "" && !isTimestampActive(state.playout.removeNextUntil))
   ) {
     await updatePlayoutRuntime((playout, current) => ({
       ...playout,
@@ -6968,7 +7000,9 @@ async function runPlayoutCycle(): Promise<void> {
       overrideAssetId: isTimestampActive(playout.overrideUntil) ? playout.overrideAssetId : "",
       overrideUntil: isTimestampActive(playout.overrideUntil) ? playout.overrideUntil : "",
       skipAssetId: isTimestampActive(playout.skipUntil) ? playout.skipAssetId : "",
-      skipUntil: isTimestampActive(playout.skipUntil) ? playout.skipUntil : ""
+      skipUntil: isTimestampActive(playout.skipUntil) ? playout.skipUntil : "",
+      removeNextAssetId: isTimestampActive(playout.removeNextUntil) ? playout.removeNextAssetId : "",
+      removeNextUntil: isTimestampActive(playout.removeNextUntil) ? playout.removeNextUntil : ""
     }));
     state = await readAppState();
   }
@@ -7019,6 +7053,7 @@ async function runPlayoutCycle(): Promise<void> {
   let selection: SelectionResult = choosePlaybackCandidate(state);
 
   const skippedAtSelection = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
+  const removedNextAtSelection = isTimestampActive(state.playout.removeNextUntil) ? state.playout.removeNextAssetId : "";
   const insertAfterSelection = decideInsertAfterSelection({
     insertStatus: state.playout.insertStatus,
     selectionReasonCode: selection.reasonCode,
@@ -7026,7 +7061,11 @@ async function runPlayoutCycle(): Promise<void> {
     // started again from 0 after the release, and a pending one aired whenever the bridge was released.
     selectionIsLive: selection.queueKind === "live",
     insertAvailable: state.assets.some(
-      (asset) => asset.id === state.playout.insertAssetId && asset.status === "ready" && asset.id !== skippedAtSelection
+      (asset) =>
+        asset.id === state.playout.insertAssetId &&
+        asset.status === "ready" &&
+        asset.id !== skippedAtSelection &&
+        asset.id !== removedNextAtSelection
     )
   });
   if (insertAfterSelection.clear) {
@@ -7061,7 +7100,8 @@ async function runPlayoutCycle(): Promise<void> {
         asset.id === state.playout.manualNextAssetId &&
         asset.status === "ready" &&
         asset.includeInProgramming !== false &&
-        asset.id !== (isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "")
+        asset.id !== (isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "") &&
+        asset.id !== (isTimestampActive(state.playout.removeNextUntil) ? state.playout.removeNextAssetId : "")
     );
 
     if (!manualNextAsset) {
@@ -7102,9 +7142,8 @@ async function runPlayoutCycle(): Promise<void> {
       currentTitle: "",
       desiredAssetId: "",
       queueItems: [],
-      insertAssetId: "",
-      insertRequestedAt: "",
-      insertStatus: "",
+      // The insert this cycle read is dropped; a Play now written since stands (M89).
+      ...decideFailedCycleInsert({ consumed: state.playout, row: playout }),
       processPid: 0,
       processStartedAt: "",
       heartbeatAt: new Date().toISOString(),
@@ -7117,6 +7156,12 @@ async function runPlayoutCycle(): Promise<void> {
 
   await resolveIncident("playout.output.missing", "Playout destination is configured.");
 
+  // The pending action this cycle carries out. Its writes clear only this one: a Refresh or queue rebuild
+  // the admin asks for while the cycle runs is the next cycle's (M89, decideCycleEndPendingAction).
+  const consumedPendingAction: PendingActionFields = {
+    pendingAction: state.playout.pendingAction,
+    pendingActionRequestedAt: state.playout.pendingActionRequestedAt
+  };
   if (state.playout.pendingAction === "refresh") {
     if (playoutProcess && !playoutProcess.killed && state.playout.liveBridgeStatus === "active") {
       if (state.overlay.enabled) {
@@ -7147,8 +7192,7 @@ async function runPlayoutCycle(): Promise<void> {
 
     await updatePlayoutRuntime((playout) => ({
       ...playout,
-      pendingAction: "",
-      pendingActionRequestedAt: "",
+      ...decideCycleEndPendingAction({ consumed: consumedPendingAction, row: playout }),
       heartbeatAt: new Date().toISOString(),
       message: "Broadcast refresh completed."
     }));
@@ -7164,8 +7208,7 @@ async function runPlayoutCycle(): Promise<void> {
       transitionReadyAt: "",
       queuedAssetIds: [],
       queueItems: [],
-      pendingAction: "",
-      pendingActionRequestedAt: "",
+      ...decideCycleEndPendingAction({ consumed: consumedPendingAction, row: playout }),
       heartbeatAt: new Date().toISOString(),
       message: "Broadcast queue rebuild completed."
     }));
@@ -7521,6 +7564,15 @@ async function runPlayoutCycle(): Promise<void> {
   await resolveIncident("playout.crash-loop", "Playout crash-loop protection is not active.");
 
   const restartRequested = Boolean(state.playout.restartRequestedAt) && selection.queueKind !== "live";
+  // What this cycle's writes may clear (M89, H4): the restart flag it decided on above and the pending
+  // action it carried out at the top. A newer press written while the cycle runs stays for the next cycle.
+  const consumedRequests = { restartRequestedAt: state.playout.restartRequestedAt, ...consumedPendingAction };
+  // The operator insert this cycle selected from, which a failed start below drops; not a newer Play now.
+  const consumedInsert: InsertFields = {
+    insertAssetId: state.playout.insertAssetId,
+    insertRequestedAt: state.playout.insertRequestedAt,
+    insertStatus: state.playout.insertStatus
+  };
   const currentScheduleItem = getCurrentScheduleItem(state);
   const currentAudioLane = resolvePoolAudioLane({
     state,
@@ -7543,7 +7595,8 @@ async function runPlayoutCycle(): Promise<void> {
             asset.id === state.playout.manualNextAssetId &&
             asset.status === "ready" &&
             asset.includeInProgramming !== false &&
-            asset.id !== (isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "")
+            asset.id !== (isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "") &&
+            asset.id !== (isTimestampActive(state.playout.removeNextUntil) ? state.playout.removeNextAssetId : "")
         ) ?? null
       : null;
   // Only the cycle that starts a scheduled match stores it as the position (the cursor write further down
@@ -7577,7 +7630,8 @@ async function runPlayoutCycle(): Promise<void> {
           isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "",
           {
             currentAssetId: selection.asset?.id ?? "",
-            currentStartsPool: selectionTakesPosition
+            currentStartsPool: selectionTakesPosition,
+            removedNextAssetId: isTimestampActive(state.playout.removeNextUntil) ? state.playout.removeNextAssetId : ""
           }
         )
       : [],
@@ -7724,7 +7778,11 @@ async function runPlayoutCycle(): Promise<void> {
       crashLoopDetected: false,
       crashCountWindow: 0,
       lastError: "",
-      restartRequestedAt: reconnectActive || selection.reasonCode === "scheduled_reconnect" ? playout.restartRequestedAt : ""
+      restartRequestedAt: decideCycleEndRestartFlag({
+        consumed: consumedRequests.restartRequestedAt,
+        row: playout.restartRequestedAt,
+        keepReconnectWindow: reconnectActive || selection.reasonCode === "scheduled_reconnect"
+      })
     }));
     state = await readAppState();
   }
@@ -7774,7 +7832,8 @@ async function runPlayoutCycle(): Promise<void> {
         outputSettings: state.output,
         managedConfig: state.managedConfig,
         runtimeTargets: playoutTargets,
-        asRun: { ...asRunSchedule, queueKind: selection.queueKind, overrideMode: state.playout.overrideMode }
+        asRun: { ...asRunSchedule, queueKind: selection.queueKind, overrideMode: state.playout.overrideMode },
+        consumed: consumedRequests
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout start error.";
@@ -7804,9 +7863,8 @@ async function runPlayoutCycle(): Promise<void> {
         nextTitle: "",
         queuedAssetIds: [],
         queueItems: [],
-        insertAssetId: "",
-        insertRequestedAt: "",
-        insertStatus: "",
+        // The insert this cycle read is dropped above; a Play now written since stands (M89).
+        ...decideFailedCycleInsert({ consumed: consumedInsert, row: playout }),
         prefetchedAssetId: "",
         prefetchedTitle: "",
         prefetchedAt: "",
@@ -7819,9 +7877,9 @@ async function runPlayoutCycle(): Promise<void> {
       return;
     }
   } else if (!targetAlreadyRunning) {
-    // A Skip whose restart flag the end write of a cycle in flight erased arrives here as a plain switch
-    // (asRunSwitchIntentOf); the as-run row still says skip. Set for the stop startOrSwitchPlayout makes
-    // next, and cleared by that process's exit like the restart intent.
+    // A Skip that reaches here without its restart flag (until M89 the end write of a cycle in flight erased
+    // it) arrives as a plain switch (asRunSwitchIntentOf); the as-run row still says skip. Set for the stop
+    // startOrSwitchPlayout makes next, and cleared by that process's exit like the restart intent.
     asRunStopIntent = asRunSwitchIntentOf({
       runningAssetId: playoutAssetId,
       skipAssetId: isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : ""
@@ -7851,7 +7909,8 @@ async function runPlayoutCycle(): Promise<void> {
         outputSettings: state.output,
         managedConfig: state.managedConfig,
         runtimeTargets: playoutTargets,
-        asRun: { ...asRunSchedule, queueKind: selection.queueKind, overrideMode: state.playout.overrideMode }
+        asRun: { ...asRunSchedule, queueKind: selection.queueKind, overrideMode: state.playout.overrideMode },
+        consumed: consumedRequests
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown playout switch error.";
@@ -7880,9 +7939,8 @@ async function runPlayoutCycle(): Promise<void> {
         nextTitle: "",
         queuedAssetIds: [],
         queueItems: [],
-        insertAssetId: "",
-        insertRequestedAt: "",
-        insertStatus: "",
+        // The insert this cycle read is dropped above; a Play now written since stands (M89).
+        ...decideFailedCycleInsert({ consumed: consumedInsert, row: playout }),
         prefetchedAssetId: "",
         prefetchedTitle: "",
         prefetchedAt: "",
@@ -7994,7 +8052,11 @@ async function runPlayoutCycle(): Promise<void> {
     prefetchStatus,
     prefetchError,
     currentDestinationId: destination.id,
-    restartRequestedAt: selection.reasonCode === "scheduled_reconnect" ? playout.restartRequestedAt : "",
+    restartRequestedAt: decideCycleEndRestartFlag({
+      consumed: consumedRequests.restartRequestedAt,
+      row: playout.restartRequestedAt,
+      keepReconnectWindow: selection.reasonCode === "scheduled_reconnect"
+    }),
     selectionReasonCode: selection.reasonCode,
     fallbackTier: selection.fallbackTier,
     liveBridgeInputType: selection.queueKind === "live" ? selection.liveBridgeInputType : playout.liveBridgeInputType,
@@ -8027,8 +8089,7 @@ async function runPlayoutCycle(): Promise<void> {
       selection.insertTrigger === "cuepoint" && selection.cuepointKey ? new Date().toISOString() : playout.cuepointLastTriggeredAt,
     cuepointLastAssetId: selection.insertTrigger === "cuepoint" && selection.asset ? selection.asset.id : playout.cuepointLastAssetId,
     heartbeatAt: new Date().toISOString(),
-    pendingAction: "",
-    pendingActionRequestedAt: "",
+    ...decideCycleEndPendingAction({ consumed: consumedRequests, row: playout }),
     manualNextAssetId: selection.asset && playout.manualNextAssetId === selection.asset.id ? "" : playout.manualNextAssetId,
     manualNextRequestedAt:
       selection.asset && playout.manualNextAssetId === selection.asset.id ? "" : playout.manualNextRequestedAt,

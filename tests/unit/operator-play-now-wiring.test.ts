@@ -58,7 +58,8 @@ describe("selection without the restart-plus-desired-asset branch", () => {
     // continues after it.
     const poolAsset = between(choose, "const currentPoolAsset =", ": null;");
     expect(poolAsset).toContain("asset.id !== skippedAssetId");
-    expect(choose).toContain("currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId)");
+    // Since M89 the operator's Remove next hold is held out the same way, beside the skip hold.
+    expect(choose).toContain("currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId, removedNextAssetId)");
   });
 
   it("lets a Move next or Replay previous item play to its end, also from outside the pool's sources", () => {

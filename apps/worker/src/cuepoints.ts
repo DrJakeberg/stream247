@@ -38,6 +38,8 @@ export function getCuepointInsertPlan(args: {
   state: AppState;
   currentScheduleItem: CurrentScheduleItemLike | null;
   skippedAssetId: string;
+  // The operator's Remove next hold (M89), held out like the skip hold.
+  removedNextAssetId?: string;
   now?: Date;
   timeZone?: string;
 }): CuepointInsertPlan | null {
@@ -82,7 +84,8 @@ export function getCuepointInsertPlan(args: {
         entry.id === cuepointAssetId &&
         entry.status === "ready" &&
         entry.includeInProgramming !== false &&
-        entry.id !== args.skippedAssetId
+        entry.id !== args.skippedAssetId &&
+        entry.id !== (args.removedNextAssetId ?? "")
     ) ?? null;
   if (!asset) {
     return null;
