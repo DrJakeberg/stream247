@@ -52,12 +52,7 @@ const RUNTIME_STATE_SELECTORS = [
   // are static and stay visible.
   ".admin-status-rail strong",
   ".admin-status-rail .subtle",
-  ".status-rail strong",
-  // Since M97 each block of the week view names the video it starts with, carried on from now: which
-  // one, or "Aired earlier today", follows the server clock. One line each (ellipsis), so masking the
-  // text keeps the layout covered. The fill pill of the block on air ("Ends 13m late") follows it too.
-  ".program-week-block-summary > div > strong",
-  ".program-week-block-summary > .programming-status-pill"
+  ".status-rail strong"
 ];
 
 /**
@@ -135,6 +130,8 @@ type Surface = {
   authenticated: boolean;
   /** Set when the surface shows live runtime state that cannot be frozen from the browser. */
   masked?: boolean;
+  /** CSS applied only while the screenshot is taken, for regions whose *shape* follows the server clock. */
+  style?: string;
 };
 
 const SURFACES: Surface[] = [
@@ -158,7 +155,19 @@ const SURFACES: Surface[] = [
   // state and server time, and page.clock reaches neither — so the volatile regions are masked and
   // the snapshot covers layout rather than content. A net that goes red on a calendar rather than
   // on a regression is one people learn to ignore.
-  { name: "program-schedule", path: "/program?tab=schedule&day=1", authenticated: true, masked: true },
+  //
+  // Since M97 the week view starts today, with dated day headers, the blocks that already aired and a
+  // block running over from yesterday. Its cards change in number and height with the server's date
+  // and time, which a mask cannot absorb (it paints over pixels, it does not undo reflow), so the grid
+  // is left out of the picture. The caption, "Add block" and the forms below stay covered; the cards
+  // are covered by tests/unit/program-week-view.test.ts and by the layout and link specs on this page.
+  {
+    name: "program-schedule",
+    path: "/program?tab=schedule&day=1",
+    authenticated: true,
+    masked: true,
+    style: ".program-week-grid { display: none !important; }"
+  },
   { name: "program-pools", path: "/program?tab=pools", authenticated: true, masked: true },
   { name: "program-library", path: "/program?tab=library", authenticated: true, masked: true },
   { name: "program-sources", path: "/program?tab=sources", authenticated: true, masked: true },
@@ -199,6 +208,7 @@ test.describe("design baseline", () => {
           animations: "disabled",
           caret: "hide",
           mask: surface.masked ? runtimeMasks(page) : undefined,
+          style: surface.style,
           // Absorbs sub-pixel text rendering differences without hiding a real layout change.
           maxDiffPixelRatio: 0.01
         });
