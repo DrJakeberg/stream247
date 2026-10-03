@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const body = (await request.json()) as { currentPassword?: string; newPassword?: string };
+  const body = ((await request.json().catch(() => ({}))) ?? {}) as { currentPassword?: string; newPassword?: string };
   const currentPassword = body.currentPassword ?? "";
   const newPassword = body.newPassword ?? "";
 

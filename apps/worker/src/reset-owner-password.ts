@@ -33,7 +33,7 @@ async function readHiddenLine(prompt: string): Promise<string> {
           resolve(value);
           return;
         }
-        if (char === "\u0003") {
+        if (char === "\u0003" || char === "\u0004") {
           stdin.setRawMode(false);
           process.stdout.write("\n");
           process.exit(130);

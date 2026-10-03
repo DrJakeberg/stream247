@@ -110,9 +110,11 @@ const SURFACES: Surface[] = [
   // and a language change should not ride on a form that also re-submits those. Its save is a
   // secondary button, so it does not compete with the two primaries. Counted from the components
   // (33 + select + button; the (i) is excluded by the selector) and measured at 35 on a fresh dev stack
-  // on 2026-10-01.
+  // on 2026-10-01. M91's Change password form is folded behind its summary and adds nothing.
   { name: "admin-settings", path: "/admin?tab=settings", maxControls: 35, primaryActions: 2 },
-  { name: "login", path: "/login", maxControls: 3, primaryActions: 1, authenticated: false },
+  // 4, not 3 (M91, I8): without Twitch app credentials the team sign-in hint links to the setup step
+  // that saves them; the hint used to name APP_URL and .env and offer no way there.
+  { name: "login", path: "/login", maxControls: 4, primaryActions: 1, authenticated: false },
   { name: "live-moderation", path: "/live?tab=moderation", maxControls: 20, primaryActions: 1 },
   { name: "program-pools", path: "/program?tab=pools", maxControls: 17, primaryActions: 1 },
   // 35, not 31. The earlier number was recorded when the fixture seeded no assets at all, so the

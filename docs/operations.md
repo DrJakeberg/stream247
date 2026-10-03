@@ -679,7 +679,8 @@ docker compose exec worker node apps/worker/dist/reset-owner-password.js
 ```
 
 It asks for the new password twice without showing it (at least 10 characters), writes it, and records
-`auth.password.reset` in the audit trail; piped input is read as one line. Two-factor settings stay as
+`auth.password.reset` in the audit trail; piped input is read as one line (add `-T` after `exec` when
+piping). Two-factor settings stay as
 they are. Without Compose (a Portainer stack), run the same in the worker container:
 `docker exec -it <worker container> node apps/worker/dist/reset-owner-password.js`. There is no e-mail
 reset. Sessions already signed in stay valid until they expire.
