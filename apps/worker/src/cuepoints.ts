@@ -5,7 +5,8 @@ import {
   getScheduleOccurrenceAirWindowSeconds,
   getScheduleOccurrenceRunKey,
   isCurrentScheduleTime,
-  normalizeCuepointOffsetsSeconds
+  normalizeCuepointOffsetsSeconds,
+  resolveBlockCuepointAssetId
 } from "@stream247/core";
 import { resolveChannelTimeZone, type AppState, type AssetRecord } from "@stream247/db";
 
@@ -37,15 +38,20 @@ export type CuepointInsertPlan = {
   totalCount: number;
 };
 
-export function getCuepointInsertPlan(args: {
+type CuepointArgs = {
   state: AppState;
   currentScheduleItem: CurrentScheduleItemLike | null;
   skippedAssetId: string;
   // The operator's Remove next hold (M89), held out like the skip hold.
   removedNextAssetId?: string;
+  // Quarantine and the source breaker (M94, R3 W1): every other automatic pick applies them, and an
+  // insert that skipped them was picked, failed and picked again at every boundary.
+  isAssetBlocked?: (asset: AssetRecord) => boolean;
   now?: Date;
   timeZone?: string;
-}): CuepointInsertPlan | null {
+};
+
+function evaluateCuepoints(args: CuepointArgs) {
   const currentScheduleItem = args.currentScheduleItem;
   if (!currentScheduleItem?.poolId) {
     return null;
@@ -76,7 +82,8 @@ export function getCuepointInsertPlan(args: {
     return null;
   }
 
-  const cuepointAssetId = block.cuepointAssetId || pool.insertAssetId || "";
+  // Shared with the week view and the live view (M94, R3 W5).
+  const cuepointAssetId = resolveBlockCuepointAssetId(block, pool);
   if (!cuepointAssetId) {
     return null;
   }
@@ -88,7 +95,8 @@ export function getCuepointInsertPlan(args: {
         entry.status === "ready" &&
         entry.includeInProgramming !== false &&
         entry.id !== args.skippedAssetId &&
-        entry.id !== (args.removedNextAssetId ?? "")
+        entry.id !== (args.removedNextAssetId ?? "") &&
+        !(args.isAssetBlocked?.(entry) ?? false)
     ) ?? null;
   if (!asset) {
     return null;
@@ -98,20 +106,31 @@ export function getCuepointInsertPlan(args: {
   // carry-over with a new key, and the cuepoints it fired before midnight must stay fired.
   const runKey = getScheduleOccurrenceRunKey(currentScheduleItem);
   const firedCuepointKeys = args.state.playout.cuepointWindowKey === runKey ? args.state.playout.cuepointFiredKeys : [];
+  const elapsedSeconds = getScheduleElapsedSeconds({
+    startMinuteOfDay: currentScheduleItem.startMinuteOfDay,
+    currentTime: scheduleMoment.time
+  });
   const progress = getCuepointProgress({
     occurrenceKey: runKey,
     cuepointOffsetsSeconds,
     firedCuepointKeys,
-    elapsedSeconds: getScheduleElapsedSeconds({
-      startMinuteOfDay: currentScheduleItem.startMinuteOfDay,
-      currentTime: scheduleMoment.time
-    }),
+    elapsedSeconds,
     // A weekly block cut around a dated one (M93) fires only the cuepoints of the window on air now.
     airWindowsSeconds: getScheduleOccurrenceAirWindowSeconds({
       effectiveStartMinuteOfDay: currentScheduleItem.effectiveStartMinuteOfDay ?? currentScheduleItem.startMinuteOfDay,
       airWindows: currentScheduleItem.airWindows
     })
   });
+
+  return { block, pool, asset, progress, elapsedSeconds };
+}
+
+export function getCuepointInsertPlan(args: CuepointArgs): CuepointInsertPlan | null {
+  const evaluated = evaluateCuepoints(args);
+  if (!evaluated) {
+    return null;
+  }
+  const { block, pool, asset, progress } = evaluated;
 
   if (progress.dueOffsetSeconds === null || !progress.dueCuepointKey) {
     return null;
@@ -129,4 +148,24 @@ export function getCuepointInsertPlan(args: {
     firedCount: progress.firedCount,
     totalCount: progress.totalCount
   };
+}
+
+/**
+ * The cuepoint item the queue scan warms (M94, R3 W1): the one that is due and waits for the next item
+ * boundary, or the one whose next cuepoint comes within `lookaheadSeconds`. A YouTube or Twitch insert was
+ * never warmed, because the rotation leaves it out, so every boundary that was due for it found it cold.
+ */
+export function getCuepointWarmAsset(args: CuepointArgs & { lookaheadSeconds: number }): AssetRecord | null {
+  const evaluated = evaluateCuepoints(args);
+  if (!evaluated) {
+    return null;
+  }
+  const { asset, progress, elapsedSeconds } = evaluated;
+  if (progress.dueOffsetSeconds !== null) {
+    return asset;
+  }
+  if (progress.nextOffsetSeconds !== null && progress.nextOffsetSeconds - elapsedSeconds <= args.lookaheadSeconds) {
+    return asset;
+  }
+  return null;
 }

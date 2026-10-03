@@ -535,6 +535,13 @@ pair. To see what happened to one item:
   `audioInput`; `playout.input.format_fallback` lists the candidates yt-dlp reported as unavailable;
   `playout.input.reresolve` with a `formatCandidate` means that candidate resolved but could not be
   opened and is skipped for the item for 30 minutes.
+- An item that fails to open (an expired URL, a 403 on the first request) is started once more on the
+  next cycle with a fresh resolve (since M94): runtime event `playout.input.retry`. If the channel is
+  dark meanwhile, the local fallback covers the resolve and the item follows it. A second failure is
+  final and the pool moves on. The retry's failure does not count towards crash-loop protection, so
+  three different items that fail still bring it on, and one item failing twice counts once. A queued
+  Move next or a due insert waits for the retry, and takes the slot at once when the item failed
+  without a retry (before M94 they let one more item pass).
 - Ask yt-dlp directly, in the playout container (the playout process resolves playback, not the
   worker): `docker exec stream247-playout-1 yt-dlp -F <watch URL>` lists what YouTube offers right
   now; `yt-dlp --version` shows the version the image carries. yt-dlp comes from the image's Alpine
@@ -547,6 +554,26 @@ pair. To see what happened to one item:
   channel's own network was down* below).
 - When probes fail on three different items of one source, the whole source is held out instead; see
   *A source is held out of programming* below.
+
+### A scheduled insert from YouTube or Twitch (since M94)
+
+A pool's automatic insert ("insert every N items") and a block's cuepoint insert may come from a
+YouTube or Twitch source:
+
+- The insert that is due next is prepared ahead, with the pool's next items: the pool's insert once it
+  is the item after the one on air, a cuepoint's item from five minutes before its cuepoint until it
+  airs. Its probe counts towards quarantine and the source breaker like theirs.
+- An insert whose item is quarantined, cooling down (Twitch VOD) or from a source the breaker holds is
+  not picked; it airs again once that ends. The week view counts it the same way.
+- When the insert is due and still not ready (the local fallback covers the resolve) or cannot be
+  prepared, it is skipped once and counts as played: the pool's counter starts again, the cuepoint is
+  fired. The incident *Scheduled insert skipped* (`playout.insert.skipped`, a warning) names the insert
+  and why; the same text is in the audit trail as `playout.insert.skipped`. It closes by itself once
+  playout has been healthy for a while. Before M94 a remote insert never aired: it was due again at
+  every boundary, and the fallback flashed each time.
+- The cuepoint item is the block's own, else the pool's insert item, also when the pool's cadence is 0
+  (worker, week view and the live view agree since M94; before, the week view showed no cuepoint
+  inserts in that case).
 
 ### A source is held out of programming (source breaker)
 

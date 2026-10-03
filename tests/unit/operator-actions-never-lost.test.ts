@@ -190,7 +190,9 @@ describe("the playout cycle's writes use the decisions", () => {
     expect(flat).toContain(
       'const removedNextAssetId = isTimestampActive(state.playout.removeNextUntil) ? state.playout.removeNextAssetId : "";'
     );
-    expect(flat).toContain("getCuepointInsertPlan({ state, currentScheduleItem, skippedAssetId, removedNextAssetId });");
+    expect(flat).toContain(
+      "getCuepointInsertPlan({ state, currentScheduleItem, skippedAssetId, removedNextAssetId, isAssetBlocked: isInsertBlocked });"
+    );
     expect(flat).toContain(
       'removedNextAssetId: isTimestampActive(state.playout.removeNextUntil) ? state.playout.removeNextAssetId : "" }'
     );

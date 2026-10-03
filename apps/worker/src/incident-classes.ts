@@ -391,6 +391,14 @@ const EVENT_FAMILIES: IncidentFamily[] = [
     why: "One stderr line mentioning an error was printed at one moment; nothing about it stays true."
   },
   {
+    // M94 (owner Q6). Unkeyed like playout.ffmpeg.exit: the insert belongs in the message.
+    fingerprint: "playout.insert.skipped",
+    keyed: false,
+    kind: "event",
+    area: "playout",
+    why: "A scheduled insert could not be prepared when it was due and was skipped once; the schedule went on, so nothing stays true."
+  },
+  {
     fingerprint: "playout.start.failed",
     keyed: false,
     kind: "event",

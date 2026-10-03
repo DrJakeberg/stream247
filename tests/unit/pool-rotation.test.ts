@@ -348,7 +348,11 @@ describe("pool rotation wiring", () => {
     expect(insertWrite).toBeGreaterThan(-1);
     expect(workerSource.slice(insertWrite, insertWrite + 120)).toContain("resetItemsSinceInsert: true");
     expect(workerSource.slice(insertWrite, insertWrite + 120)).not.toContain("sourceId");
-    expect(workerSource.match(/await updatePoolCursor\(/g)?.length).toBe(2);
+    // The third write: a scheduled insert skipped once (M94, owner Q6) resets the counter like a started
+    // one, and leaves the rotation alone too.
+    const skipWrite = workerSource.indexOf("await updatePoolCursor(poolId, null, { resetItemsSinceInsert: true });");
+    expect(skipWrite).toBeGreaterThan(-1);
+    expect(workerSource.match(/await updatePoolCursor\(/g)?.length).toBe(3);
   });
 
   it("walks every core preview through the rotation", () => {

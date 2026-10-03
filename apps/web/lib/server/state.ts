@@ -29,6 +29,7 @@ import {
   normalizeOverlayTypographyPreset,
   normalizeOverlayTitleScale,
   normalizeCuepointOffsetsSeconds,
+  resolveBlockCuepointAssetId,
   describeSourceHealth,
   describeHeartbeatRestartAction,
   describeIncidentOperatorAction,
@@ -1390,7 +1391,7 @@ function summarizeCuepoints(
   const block = currentScheduleItem ? state.scheduleBlocks.find((entry) => entry.id === currentScheduleItem.blockId) ?? null : null;
   const pool = currentScheduleItem?.poolId ? state.pools.find((entry) => entry.id === currentScheduleItem.poolId) ?? null : null;
   const offsetsSeconds = normalizeCuepointOffsetsSeconds(block?.cuepointOffsetsSeconds ?? [], block?.durationMinutes ?? 0);
-  const cuepointAssetId = block?.cuepointAssetId || pool?.insertAssetId || "";
+  const cuepointAssetId = resolveBlockCuepointAssetId(block, pool);
   const cuepointAsset = cuepointAssetId ? state.assets.find((entry) => entry.id === cuepointAssetId) ?? null : null;
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),

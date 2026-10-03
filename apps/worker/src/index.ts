@@ -212,7 +212,15 @@ import { getChapterBackfillConfig, probeAssetChapters, selectChapterBackfillCand
 import { isDirectMediaUrl, planDirectMediaSync } from "./direct-media.js";
 import { buildLocalLibraryAssetId, buildLocalLibraryFolderPath, scanMediaFiles } from "./local-library.js";
 import { resolvePoolAudioLane, type ResolvedAudioLane } from "./audio-lanes.js";
-import { getCuepointInsertPlan } from "./cuepoints.js";
+import { getCuepointInsertPlan, getCuepointWarmAsset } from "./cuepoints.js";
+import { decideInputOpenRetry, decideInputOpenRetryAfterExit, isCurrentItemSlotFree, type InputOpenRetryState } from "./input-open-retry.js";
+import {
+  decideScheduledInsertSkip,
+  describeSkippedInsert,
+  isPoolIntervalInsertDueNext,
+  type ScheduledInsertSkipReason,
+  type ScheduledInsertTrigger
+} from "./scheduled-insert.js";
 import { planTwitchScheduleSegments } from "./twitch-schedule-plan.js";
 import {
   buildFfmpegOutputTarget,
@@ -497,6 +505,8 @@ const asRunLog = createAsRunLog(
 // has just stopped the process (duration bound, feed watchdog) awaits it before it reads state again;
 // otherwise the read can still show the stopped item on air and its insert active (M74).
 let pendingPlayoutExitUpdate: Promise<void> = Promise.resolve();
+// The item that failed to open and is started once more on the next cycle (M94, input-open-retry.ts).
+let inputOpenRetry: InputOpenRetryState | null = null;
 let uplinkProcesses: UplinkProcessRuntime[] = [];
 let uplinkReconnectUntil = "";
 const uplinkDestinationStallStartedAt: Map<string, number> = new Map();
@@ -4728,6 +4738,15 @@ function poolSourceGate(state: AppState): PoolRotationSourceGate {
   return sourceBreakerGate(state.sourceBreakers, Date.now());
 }
 
+// The insert checks (pool interval and cuepoint) and the retry of an item that failed to open apply what
+// every other automatic pick applies (M94, R3 W1): an item in quarantine, a Twitch VOD in its cache
+// cooldown, or one whose source the breaker holds open is not picked. A half-open source's item may be its
+// trial item, as a pool item may.
+function automaticItemBlockedPredicate(state: AppState): (asset: AssetRecord) => boolean {
+  const heldSourceIds = new Set(poolSourceGate(state).heldSourceIds);
+  return (asset) => isAssetBlockedForAutomaticSelection(asset) || heldSourceIds.has(asset.sourceId);
+}
+
 // Whether some pool could pick an item of the source if its breaker let it: the pool rotation's own
 // eligibility, without the skip hold of a single item. A held source without one has nothing to hold
 // (see planSourceBreakerIncidents).
@@ -4927,8 +4946,11 @@ function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: A
 }
 
 async function getPlayableQueuedAssets(
-  queueAssets: AssetRecord[],
-  options: { expensiveBudget?: number } = {}
+  poolQueueAssets: AssetRecord[],
+  // warmOnly: items probed ahead of the queue and with the queue's budget, but not part of it (M94: the
+  // due scheduled insert). Their outcomes count like the queue's; they never become the queue, the
+  // prefetched item or its status.
+  options: { expensiveBudget?: number; warmOnly?: AssetRecord[] } = {}
 ): Promise<{
   playableQueue: AssetRecord[];
   prefetchedAsset: AssetRecord | null;
@@ -4941,6 +4963,9 @@ async function getPlayableQueuedAssets(
   scannedSourceIds: Set<string>;
   deferredExpensive: boolean;
 }> {
+  const warmOnly = (options.warmOnly ?? []).filter((asset) => !poolQueueAssets.some((entry) => entry.id === asset.id));
+  const queueAssets = [...warmOnly, ...poolQueueAssets];
+  const isWarmOnly = (index: number) => index < warmOnly.length;
   const playableQueue: AssetRecord[] = [];
   let prefetchedAsset: AssetRecord | null = null;
   let prefetchStatus: "" | "ready" | "failed" = "";
@@ -4974,13 +4999,15 @@ async function getPlayableQueuedAssets(
     const action = actions[index];
 
     if (action === "use-cache") {
-      prefetchedAsset = prefetchedAsset ?? asset;
-      prefetchStatus = "ready";
       // Counted once: here only when a background resolve finished after its cycle moved on.
       if (takeUncountedProbeOutcome(cached)) {
         probeOutcomes.push({ asset, outcome: "ok", error: "" });
       }
-      playableQueue.push(asset);
+      if (!isWarmOnly(index)) {
+        prefetchedAsset = prefetchedAsset ?? asset;
+        prefetchStatus = "ready";
+        playableQueue.push(asset);
+      }
       continue;
     }
 
@@ -4989,7 +5016,7 @@ async function getPlayableQueuedAssets(
         if (takeUncountedProbeOutcome(cached)) {
           probeOutcomes.push({ asset, outcome: "failed", error: cached.error, pendingDownload: cached.pendingDownload });
         }
-        if (!prefetchError) {
+        if (!prefetchError && !isWarmOnly(index)) {
           prefetchStatus = "failed";
           prefetchError = cached.error;
         }
@@ -5022,11 +5049,13 @@ async function getPlayableQueuedAssets(
       if (!expensiveFlags[index]) {
         // Cheap (local/direct) resolves return effectively instantly — await normally.
         const prepared = await resolveQueueAssetIntoProbeCache(asset);
-        prefetchedAsset = prefetchedAsset ?? prepared.asset;
         takeUncountedProbeOutcome(queueProbeCache.get(asset.id));
         probeOutcomes.push({ asset: prepared.asset, outcome: "ok", error: "" });
-        prefetchStatus = "ready";
-        playableQueue.push(prepared.asset);
+        if (!isWarmOnly(index)) {
+          prefetchedAsset = prefetchedAsset ?? prepared.asset;
+          prefetchStatus = "ready";
+          playableQueue.push(prepared.asset);
+        }
         continue;
       }
 
@@ -5046,11 +5075,13 @@ async function getPlayableQueuedAssets(
         break;
       }
       if (outcome.kind === "resolved") {
-        prefetchedAsset = prefetchedAsset ?? outcome.value.asset;
         takeUncountedProbeOutcome(queueProbeCache.get(asset.id));
         probeOutcomes.push({ asset: outcome.value.asset, outcome: "ok", error: "" });
-        prefetchStatus = "ready";
-        playableQueue.push(outcome.value.asset);
+        if (!isWarmOnly(index)) {
+          prefetchedAsset = prefetchedAsset ?? outcome.value.asset;
+          prefetchStatus = "ready";
+          playableQueue.push(outcome.value.asset);
+        }
         continue;
       }
       throw outcome.error;
@@ -5058,7 +5089,7 @@ async function getPlayableQueuedAssets(
       const message = error instanceof Error ? error.message : "Unknown queue prefetch error.";
       takeUncountedProbeOutcome(queueProbeCache.get(asset.id));
       probeOutcomes.push({ asset, outcome: "failed", error: message, pendingDownload: error instanceof TwitchVodCachePendingError });
-      if (!prefetchError) {
+      if (!prefetchError && !isWarmOnly(index)) {
         prefetchStatus = "failed";
         prefetchError = message;
       }
@@ -5194,6 +5225,8 @@ type SelectionResult = {
   lifecycleStatus: AppState["playout"]["status"];
   reasonCode: AppState["playout"]["selectionReasonCode"];
   fallbackTier: AppState["playout"]["fallbackTier"];
+  // The once-more start of an item that failed to open (M94, input-open-retry.ts).
+  inputOpenRetry?: boolean;
 };
 
 function buildQueueHeadForSelection(args: {
@@ -5398,11 +5431,53 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     });
   }
 
+  // An item that failed to open is started once more, ahead of what would follow it (M94, R3 W6;
+  // input-open-retry.ts). Before, the pool moved on and the item was lost for this pass of the rotation.
+  const retryDecision = decideInputOpenRetry({
+    retry: inputOpenRetry,
+    runtimeStatus: state.playout.status,
+    runtimeCurrentAssetId: state.playout.currentAssetId,
+    runtimeReasonCode: state.playout.selectionReasonCode,
+    processRunning: isPlayoutProcessRunning(),
+    nowMs: Date.now()
+  });
+  const retryAsset =
+    retryDecision
+      ? state.assets.find(
+          (asset) =>
+            asset.id === retryDecision.assetId &&
+            asset.status === "ready" &&
+            asset.includeInProgramming !== false &&
+            asset.id !== skippedAssetId &&
+            asset.id !== removedNextAssetId &&
+            !automaticItemBlockedPredicate(state)(asset)
+        ) ?? null
+      : null;
+  if (retryAsset && retryDecision) {
+    return createSelection({
+      asset: retryAsset,
+      inputOpenRetry: true,
+      reason: `${retryAsset.title} failed to open and is tried once more.`,
+      lifecycleStatus: "recovering" as const,
+      reasonCode: retryDecision.reasonCode as SelectionResult["reasonCode"],
+      fallbackTier: "scheduled" as const
+    });
+  }
+
+  // An item that failed (nothing running, `failed`) still names the current item until the next start;
+  // the Move next and insert checks treat it as an empty slot (M94, R3 W6), or a queued Move next or a due
+  // insert let one more item pass first.
+  const currentSlotFree = isCurrentItemSlotFree({
+    currentAssetId: state.playout.currentAssetId,
+    status: state.playout.status,
+    processRunning: isPlayoutProcessRunning()
+  });
+
   // A queued next item takes over at a boundary, or at once when the running item was skipped. A plain
   // Restart restarts the running item and leaves the queued one next, as Restart is documented to.
   if (
     manualNextAsset &&
-    (state.playout.currentAssetId === "" ||
+    (currentSlotFree ||
       (state.playout.restartRequestedAt !== "" && state.playout.currentAssetId === skippedAssetId) ||
       state.playout.status === "standby")
   ) {
@@ -5436,9 +5511,10 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
             asset.id !== removedNextAssetId
         ) ?? null
       : null;
+  const isInsertBlocked = automaticItemBlockedPredicate(state);
   const autoInsertAsset =
     currentPool &&
-    state.playout.currentAssetId === "" &&
+    currentSlotFree &&
     currentPool.insertAssetId &&
     currentPool.insertEveryItems > 0 &&
     currentPool.itemsSinceInsert >= currentPool.insertEveryItems
@@ -5448,17 +5524,19 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
             asset.status === "ready" &&
             asset.includeInProgramming !== false &&
             asset.id !== skippedAssetId &&
-            asset.id !== removedNextAssetId
+            asset.id !== removedNextAssetId &&
+            !isInsertBlocked(asset)
         ) ?? null
       : null;
   const cuepointInsertPlan = getCuepointInsertPlan({
     state,
     currentScheduleItem,
     skippedAssetId,
-    removedNextAssetId
+    removedNextAssetId,
+    isAssetBlocked: isInsertBlocked
   });
 
-  if (cuepointInsertPlan && state.playout.currentAssetId === "") {
+  if (cuepointInsertPlan && currentSlotFree) {
     return createSelection({
       asset: cuepointInsertPlan.asset,
       queueKind: "insert",
@@ -6452,16 +6530,25 @@ async function startOrSwitchPlayout(args: {
     // dead/expired resolved URL (e.g. a stale googlevideo URL → exitCode=8 / "Error opening
     // input"). Drop its probe cache so the next attempt re-resolves a fresh URL instead of
     // reusing the dead one.
-    if (
+    const immediateOpenFailure =
       !wasPlanned &&
-      lastAssetId &&
+      lastAssetId !== "" &&
       isImmediateInputOpenFailure({
         exitCode: code ?? null,
         exitSignal: signal ?? null,
         stderrSample: lastStderrSample,
         ranForMs
-      })
-    ) {
+      });
+    // The item is started once more on the next cycle; the retry's own failure is final and is not counted
+    // towards the crash-loop guard (M94, input-open-retry.ts). A live input is not an item.
+    const openRetry = decideInputOpenRetryAfterExit({
+      previous: inputOpenRetry,
+      exitedAssetId: lastTargetKind === "live" ? "" : lastAssetId,
+      immediateOpenFailure,
+      nowMs: Date.now()
+    });
+    inputOpenRetry = openRetry.next;
+    if (immediateOpenFailure) {
       queueProbeCache.delete(lastAssetId);
       // "Try another format when the first does not work": the candidate that resolved but could
       // not be opened is skipped for this asset on the next resolve (playable-input.ts).
@@ -6478,7 +6565,12 @@ async function startOrSwitchPlayout(args: {
     const runtimeUpdate = updatePlayoutRuntime((playout) => {
       const ranPastCrashWindow =
         playout.processStartedAt !== "" && Date.now() - new Date(playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS;
-      const nextCrashCountWindow = nonFailureExit || ranPastCrashWindow ? 0 : playout.crashCountWindow + 1;
+      const nextCrashCountWindow =
+        nonFailureExit || ranPastCrashWindow
+          ? 0
+          : openRetry.countsTowardCrashLoop
+            ? playout.crashCountWindow + 1
+            : playout.crashCountWindow;
       crashLoopDetectedAfterExit = !nonFailureExit && nextCrashCountWindow >= PLAYOUT_CRASH_LOOP_THRESHOLD;
       const failureMessage = lastStderrSample ? `FFmpeg ${exitReason}. Last stderr: ${lastStderrSample}` : `FFmpeg ${exitReason}.`;
 
@@ -6975,6 +7067,111 @@ async function recordDroppedInsert(args: {
   );
 }
 
+/**
+ * The scheduled insert the queue scan warms ahead of the pool's next items (M94, R3 W1): the pool's
+ * interval insert when it is the item after the one on air, and the block's cuepoint item when a cuepoint
+ * is due or comes within the probe cache's lifetime. Not an item the insert checks would refuse.
+ */
+function planScheduledInsertWarm(args: {
+  state: AppState;
+  currentScheduleItem: ReturnType<typeof getCurrentScheduleItem> | null;
+  selection: SelectionResult;
+  selectionTakesPosition: boolean;
+}): AssetRecord[] {
+  const { state, currentScheduleItem } = args;
+  const pool = currentScheduleItem?.poolId ? state.pools.find((entry) => entry.id === currentScheduleItem.poolId) ?? null : null;
+  if (!pool) {
+    return [];
+  }
+  const skippedAssetId = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
+  const removedNextAssetId = isTimestampActive(state.playout.removeNextUntil) ? state.playout.removeNextAssetId : "";
+  const isInsertBlocked = automaticItemBlockedPredicate(state);
+  const warm: AssetRecord[] = [];
+  const cuepointAsset = getCuepointWarmAsset({
+    state,
+    currentScheduleItem,
+    skippedAssetId,
+    removedNextAssetId,
+    isAssetBlocked: isInsertBlocked,
+    lookaheadSeconds: NEXT_ASSET_PROBE_READY_TTL_MS / 1000
+  });
+  if (cuepointAsset && !(args.selection.insertTrigger === "cuepoint" && args.selection.asset?.id === cuepointAsset.id)) {
+    warm.push(cuepointAsset);
+  }
+  if (
+    isPoolIntervalInsertDueNext({
+      insertAssetId: pool.insertAssetId,
+      insertEveryItems: pool.insertEveryItems,
+      itemsSinceInsert: pool.itemsSinceInsert,
+      selectionTakesPosition: args.selectionTakesPosition,
+      selectionIsScheduledInsert: args.selection.reasonCode === "scheduled_insert"
+    })
+  ) {
+    const insertAsset = state.assets.find(
+      (asset) =>
+        asset.id === pool.insertAssetId &&
+        asset.status === "ready" &&
+        asset.includeInProgramming !== false &&
+        asset.id !== skippedAssetId &&
+        asset.id !== removedNextAssetId &&
+        !isInsertBlocked(asset)
+    );
+    if (insertAsset && !warm.some((asset) => asset.id === insertAsset.id)) {
+      warm.push(insertAsset);
+    }
+  }
+  return warm;
+}
+
+type ScheduledInsertAttempt = { asset: AssetRecord; trigger: ScheduledInsertTrigger; cuepointKey: string };
+
+/**
+ * A scheduled insert that was bridged or could not be prepared is skipped once and counts as played (M94,
+ * owner Q6): the pool's counter or the cuepoint is used up as if it had started, and an incident names it.
+ * Returns the cycle's state with the same change, so the cycle-end write (which carries the fired
+ * cuepoints from the snapshot) keeps it.
+ */
+async function skipScheduledInsert(args: {
+  state: AppState;
+  attempt: ScheduledInsertAttempt;
+  reason: ScheduledInsertSkipReason;
+  error?: string;
+}): Promise<AppState> {
+  const currentScheduleItem = getCurrentScheduleItem(args.state);
+  const runKey = currentScheduleItem ? getScheduleOccurrenceRunKey(currentScheduleItem) : "";
+  const decide = (playout: AppState["playout"]) =>
+    decideScheduledInsertSkip({ trigger: args.attempt.trigger, cuepointKey: args.attempt.cuepointKey, runKey, playout });
+  const decision = decide(args.state.playout);
+  let state = args.state;
+  if (decision.resetItemsSinceInsert && currentScheduleItem?.poolId) {
+    const poolId = currentScheduleItem.poolId;
+    await updatePoolCursor(poolId, null, { resetItemsSinceInsert: true });
+    state = { ...state, pools: state.pools.map((pool) => (pool.id === poolId ? { ...pool, itemsSinceInsert: 0 } : pool)) };
+  }
+  if (decision.cuepoint) {
+    await updatePlayoutRuntime((playout) => ({ ...playout, ...(decide(playout).cuepoint ?? {}) }));
+    state = { ...state, playout: { ...state.playout, ...decision.cuepoint } };
+  }
+  const title = buildAssetDisplayTitle(args.attempt.asset) || args.attempt.asset.id;
+  const error = (args.error ?? "").slice(0, 300);
+  const message = describeSkippedInsert({ title, trigger: args.attempt.trigger, reason: args.reason, error });
+  logRuntimeEvent("playout.insert.skipped", {
+    assetId: args.attempt.asset.id,
+    trigger: args.attempt.trigger,
+    reason: args.reason,
+    ...(error ? { error } : {})
+  });
+  await appendAuditEvent("playout.insert.skipped", message);
+  await upsertIncident({
+    scope: "playout",
+    severity: "warning",
+    title: "Scheduled insert skipped",
+    message,
+    fingerprint: "playout.insert.skipped"
+  });
+  return state;
+}
+
 async function runPlayoutCycle(): Promise<void> {
   // Taken before the first read: a process that exits after this is caught by the re-read before the
   // selection; one that has already exited has its runtime write awaited here, so the read below does
@@ -7293,6 +7490,13 @@ async function runPlayoutCycle(): Promise<void> {
     };
   }
 
+  // The retry is used up once a cycle goes on to start it: a further failure of the item is final.
+  const selectionIsOpenRetry = Boolean(selection.inputOpenRetry && selection.asset && inputOpenRetry?.assetId === selection.asset.id);
+  if (selectionIsOpenRetry && inputOpenRetry) {
+    inputOpenRetry = { ...inputOpenRetry, retried: true, reasonCode: selection.reasonCode };
+    logRuntimeEvent("playout.input.retry", { assetId: inputOpenRetry.assetId });
+  }
+
   let resolvedSelection: ResolvedPlayableMedia | null = null;
   // The breakers after this cycle's failed inline resolve was recorded (M75), null when nothing was.
   let breakersAfterFailedResolve: SourceBreakerRecord[] | null = null;
@@ -7311,6 +7515,11 @@ async function runPlayoutCycle(): Promise<void> {
   if (selection.asset && !keepRunningInput) {
     const failedAsset = selection.asset;
     const failedReasonCode = selection.reasonCode;
+    // A scheduled insert that is bridged or fails here is skipped once (M94, skipScheduledInsert).
+    const scheduledInsertAttempt: ScheduledInsertAttempt | null =
+      selection.reasonCode === "scheduled_insert" && (selection.insertTrigger === "pool-interval" || selection.insertTrigger === "cuepoint")
+        ? { asset: failedAsset, trigger: selection.insertTrigger, cuepointKey: selection.cuepointKey }
+        : null;
     try {
       // Reuse the input already resolved by the off-boundary queue prefetch
       // (getPlayableQueuedAssets warms queueProbeCache during prior cycles while the
@@ -7371,6 +7580,13 @@ async function runPlayoutCycle(): Promise<void> {
             fallbackTier: bridgePlan.fallbackTier
           };
           resolvedSelection = bridged.media;
+          if (scheduledInsertAttempt) {
+            state = await skipScheduledInsert({ state, attempt: scheduledInsertAttempt, reason: "bridged" });
+          }
+          // The retry of an item that failed to open is still owed while the bridge covers its resolve.
+          if (selectionIsOpenRetry && inputOpenRetry?.assetId === failedAsset.id) {
+            inputOpenRetry = { ...inputOpenRetry, retried: false, bridgeAssetId: bridged.asset.id };
+          }
           requestImmediatePlayoutCycle("boundary-fallback-bridge");
         } else {
           let prepared: Awaited<ReturnType<typeof resolveAssetPlaybackInput>>;
@@ -7427,6 +7643,9 @@ async function runPlayoutCycle(): Promise<void> {
         // The next cycle selects without the insert and keeps the running item's input as it is.
         requestImmediatePlayoutCycle("insert-prepare-failed");
         return;
+      }
+      if (scheduledInsertAttempt) {
+        state = await skipScheduledInsert({ state, attempt: scheduledInsertAttempt, reason: "prepare-failed", error: message });
       }
       await upsertIncident({
         scope: "playout",
@@ -7617,16 +7836,19 @@ async function runPlayoutCycle(): Promise<void> {
   // position, which the operator item does not move): without it the probe of the pool's next item
   // expired during an insert longer than five minutes, and the insert's end became a cold boundary --
   // the local fallback bridged onto air, or a resolve with nothing on air (M74 review).
-  const rawQueueAssets = prioritizeManualNextAsset(
+  const poolQueueScanned = Boolean(
     currentScheduleItem?.poolId &&
-    (selection.queueKind === "live" ||
-      (selection.asset &&
-        (selection.reasonCode === "scheduled_match" ||
-          selection.reasonCode === "scheduled_insert" ||
-          selection.reasonCode === "graceful_handoff" ||
-          selection.reasonCode === "manual_next" ||
-          selection.reasonCode === "operator_insert" ||
-          selection.reasonCode === "operator_override")))
+      (selection.queueKind === "live" ||
+        (selection.asset &&
+          (selection.reasonCode === "scheduled_match" ||
+            selection.reasonCode === "scheduled_insert" ||
+            selection.reasonCode === "graceful_handoff" ||
+            selection.reasonCode === "manual_next" ||
+            selection.reasonCode === "operator_insert" ||
+            selection.reasonCode === "operator_override")))
+  );
+  const rawQueueAssets = prioritizeManualNextAsset(
+    currentScheduleItem?.poolId && poolQueueScanned
       ? getPoolPlaybackQueue(
           state,
           currentScheduleItem.poolId,
@@ -7657,7 +7879,11 @@ async function runPlayoutCycle(): Promise<void> {
     scannedSourceIds,
     deferredExpensive
   } =
-    await getPlayableQueuedAssets(rawQueueAssets, { expensiveBudget: prefetchBudget });
+    await getPlayableQueuedAssets(rawQueueAssets, {
+      expensiveBudget: prefetchBudget,
+      // Under the same conditions as the pool's queue: never ahead of a fallback or the standby slate.
+      warmOnly: poolQueueScanned ? planScheduledInsertWarm({ state, currentScheduleItem, selection, selectionTakesPosition }) : []
+    });
   const queueItems = buildRuntimeQueueItems({
     state,
     selection,
