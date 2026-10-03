@@ -31,7 +31,7 @@ How this file works:
 | M93 Dated And One-Off Schedule Blocks | Feature | Next | Complete | "The next 10 days at 20:00 this playlist" and "once on 10 Oct" can be saved on a 24/7 grid, and air, previews, `/channel` and Twitch agree | R1 row A (decided 5.1 Q1, Q2): `valid_from`/`valid_until` in baseline, ALTER, migration, manifest, mapper, writers and blueprints; filter in `buildScheduleOccurrences`; dated layer ranks first in `findCurrentScheduleOccurrence`; `applyScheduleLayers` with `airWindows`; conflicts per layer; ended rows listed as ended; form field *Runs*; "Single day" renamed to "One weekday, every week". Tests: a 10-day run has day 10 and not day 11; a once-block airs once; a carry-over past `valid_until` still ends; weekly 18-22 + dated 20-21 gives three windows with one key; a cuepoint is not re-fired; the 24/7 grid + dated 20:00 block saves (today `["grid","special"]`); schema-manifest and DB round-trip tests | `packages/core`, `packages/db`, `apps/web`, `apps/worker`, tests, baselines, `docs/` | medium: touches the one function every schedule consumer uses; additive columns | revert the commit; old images ignore the columns |
 | M94 Inserts From Remote Sources Air | Bug | Next | Complete | A YouTube or Twitch insert airs, or is skipped once with an incident, never retried forever | W1: the due insert is warmed in the queue scan; a failed or bridged insert counts as consumed and raises an incident naming it (owner Q6); both insert checks apply quarantine and breaker. W5: one shared "cuepoint asset of a block" helper used by worker and preview; test: `insertEveryItems: 0` with a pool insert asset gives the same cuepoint count in both. W6: an item that failed to open is retried once; `failed` treated like an empty current item in the Move next and insert checks. R3's W1 probe becomes a test | `apps/worker`, `packages/core`, tests | low–medium: crash-loop interplay | revert the commit |
 | M95 Self-Healing Fills The Gaps | Reliability | Next | Complete | No stale incident, no orphan encoder, no permanently lost item | H5: disk and system-volume flags re-armed from open incidents on the first cycle; `secrets.key-mismatch` resolved at a boot where every secret decrypts; tests. W7: the playout exit handler returns when the exiting child is not current (static test as R3's); the uplink handler checked for the same pattern. H9: one re-probe per quarantined item per 24 h, one per source per cycle, only with the breaker closed and no outage verdict (owner Q1); test. U18: `scripts/soak-monitor.sh` counts uplink and relay restarts; shell test or `bash -n` plus a fixture run | `apps/worker`, `scripts/`, tests, `docs/operations.md` | low | revert the commit |
-| M96 Local File Durations | Data | Next | Planned | Local-library assets carry their real length, so planning numbers are right | U4: `ffprobe` duration at scan time, bounded timeout, cached by size + mtime; unit test on a generated 2-minute file → `durationSeconds` within 1 s of 120; an unchanged file is not probed again (spy); Day lens shows "Unique library: 6m" for three such files | `apps/worker`, `packages/db`, tests | medium: a large first scan is slower, so probing is incremental | revert the commit; stored durations are harmless to old images |
+| M96 Local File Durations | Data | Next | Complete | Local-library assets carry their real length, so planning numbers are right | U4: `ffprobe` duration at scan time, bounded timeout, cached by size + mtime; unit test on a generated 2-minute file → `durationSeconds` within 1 s of 120; an unchanged file is not probed again (spy); Day lens shows "Unique library: 6m" for three such files | `apps/worker`, `packages/db`, tests | medium: a large first scan is slower, so probing is incremental | revert the commit; stored durations are harmless to old images |
 | M97 Week View Tells The Truth | UX | Next | Planned | The week view shows what will play, with dates, overnight blocks once, and why a block repeats | U5: each pool's rotation carried across blocks in time order through the worker's rotation function (shared, not copied); dates on day headers; hours, not minutes; an overnight block shown once with "→ 01:00 Sun"; repeat reason with numbers. U6: confirmation before "Replace existing schedule blocks"; "Edit block" and "Add block" on the week view. Tests in `program-week-projection`: three items, two blocks, the second block starts with item 2, not item 1; a 24 h block reads "24 h"; a block with 6 min of video in 24 h carries the reason "plays ≈ 240 times"; an overnight block appears on one day only. e2e: "Replace existing schedule blocks" opens a confirmation and Cancel leaves the blocks unchanged | `packages/core`, `apps/web`, tests, baselines | medium: preview must not drift from the worker, so one shared function | revert the commit |
 | M98 The Production Path Has A Smoke | Test | Next | Planned | CI exercises playout → HLS → uplink with the relay on | U15: a CI job starts the stack with the relay on and asserts that `program.m3u8` MEDIA-SEQUENCE grows and the uplink output grows over 60 s; the job fails when the uplink is stopped (mutation run) | `.github/workflows/ci.yml`, `scripts/`, `docker-compose*.yml` | low (CI only) | revert the commit |
 | M99 Wizard To First Programme | UX | Later | Planned | `/setup` ends with a stream key and a playing week | U1 (decided 5.1 Q9): skippable step "Where the stream goes" with the Twitch preset, the key stored encrypted and masked; the destination form moves to Studio → Output, the old anchor redirects. U2: skippable step "First programme" creates a pool from chosen media and applies the "Always-on single pool" template. R2 U3: render test: an empty library says how to add media, a filtered-empty library says the filters hide everything. e2e: a fresh owner completes both steps and readiness shows destination, pools and schedule ready | `apps/web`, tests, baselines, `docs/getting-started.md` | medium: moves a form operators know | revert the commit |
@@ -257,6 +257,18 @@ deployed; the release that ships them records the results.
   ssh dut 'docker logs --since 25h stream247-playout-1 2>&1 | grep -oE "playout.asset.reprobe.(cleared|failed)" | sort | uniq -c'
   ssh dut 'docker logs --since 25h stream247-playout-1 2>&1 | grep "playout.source-breaker.opened"'
   ssh dut 'grep "Baseline container restarts" ~/logs/soak-<stamp>.log'
+  ```
+
+- M96, after the repin: the local library's files carry their real length. The first command, run once a
+  few worker cycles have passed, prints `0|<n>` with `<n>` the number of local files (no file left without
+  a probed version); a file ffprobe cannot read shows up in the second command with `0` and is worth a look.
+  The Day lens (`Program -> Schedule`) then shows no "30-minute estimate" note for a pool of local files.
+
+  ```sh
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT COUNT(*) FILTER (WHERE duration_probe_key = ''), COUNT(*) FROM assets WHERE source_id = 'source-local-library';
+  SELECT title, duration_seconds FROM assets WHERE source_id = 'source-local-library' ORDER BY duration_seconds, title;
+  SQL
   ```
 
 - (The checks for 2.2.0 are in the archive, sections M75-M82.)
@@ -691,3 +703,40 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
 - **Not measured.** W7 with a real hung ffmpeg (static and decision tests only); H9 against real YouTube
   and Twitch sources (DUT check above).
 
+### M96 Local File Durations
+
+- **U4.** The local-library scan asks `ffprobe -show_entries format=duration` for each file
+  (`apps/worker/src/local-durations.ts`, 10 s per call, process group killed on timeout) and stores the
+  whole seconds in `assets.duration_seconds`, like remote listings do. The file version it belongs to
+  (`size:mtimeMs`) goes into the new additive column `assets.duration_probe_key` (baseline, `ALTER`,
+  migration `20261003_002_asset_duration_probe_key`, manifest). A file whose key matches is not probed
+  again, across scans and worker restarts; the whole-state write and the source-sync write carry the key, so
+  an unrelated app-state write does not send every file back to ffprobe.
+- **Incremental.** A scan stops starting probes after 30 s and leaves the rest without a key for the next
+  scans (worker cycle every 30 s), so a large first scan fills in over a few cycles instead of holding one.
+  With a short `STREAM247_LOOP_STALL_TIMEOUT_SECONDS` the budget shrinks so budget plus one probe timeout
+  stay inside the cycle-await ceiling (`resolveLocalDurationScanBudgetMs`). A scan that could not list some
+  directory probes nothing, since its assets are not written and the probes would only repeat.
+  The runtime event `local-library.durations.probed` reports `probed`, `failed`, `deferred`.
+- **Decisions.** A file ffprobe cannot read stores its key with duration 0 (unknown, the 30-minute estimate),
+  so it costs one probe per file version, not one per scan. For a probed local file the duration belongs to
+  its version: a replaced file whose probe fails reads unknown, not the old file's length
+  (`chooseStoredAssetSyncFields`); remote listings keep the old rule (no duration never erases a known one).
+- **Side effect on air.** A local file with a known duration now has the duration bound (`apps/worker/src/duration-bound.ts`)
+  like cached Twitch VODs: it is ended at duration + margin (default 15 s) if no EOF came. Local files
+  normally end by EOF well before that; the global fallback still plays once per start, not looped. And a
+  live picture-in-picture source's sound is now mixed over local programmes, as the design in
+  `docs/deployment.md` says for programmes of known length (before: picture only over local files).
+- **Tests.** `tests/unit/local-durations.test.ts`: real ffprobe on a generated two-minute file reads
+  120 s; a spy sees three probes on the first scan, none on the second, one after a touch; budget,
+  failed probe and failed stat; the Day lens reads "Unique library: 6m" for three such files (90m before).
+  `tests/integration/local-durations-worker.test.ts`: the built worker against PostgreSQL 16 stores 120 s for
+  three generated files, its second scan probes nothing, and the Day lens from the stored state reads 6m.
+  `tests/integration/db-roundtrip.test.ts`: the migration on an old `assets` table, and the key and duration
+  through a scan write, an unrelated app-state write, a write without a key and a replaced file.
+- **Not in CI.** CI's `validate` job has no host ffmpeg (its optional install runs after `pnpm test`), so
+  the real-ffprobe tests skip there (`runIf`, as in the ticker tests) and ran locally; the stubbed tests run
+  everywhere. Moving the install before the tests is left to the owner: that apt step has hung before.
+- **Review (fresh subagent).** All items met. Fixed: a failed scan no longer probes (its results were lost
+  and repeated every cycle); the budget follows the cycle-await ceiling. Noted above: the PiP audio side
+  effect and the CI gap.

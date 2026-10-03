@@ -2539,6 +2539,91 @@ describe.sequential("database roundtrip", () => {
     }, 60_000);
   });
 
+  describe("local file durations (M96)", () => {
+    const durationProbeKeyMigrationId = "20261003_002_asset_duration_probe_key";
+    const localSourceId = "source-local-library";
+    const localAsset = (id: string, durationSeconds: number, durationProbeKey: string) => ({
+      id,
+      sourceId: localSourceId,
+      title: id,
+      path: `/app/data/media/${id}.mp4`,
+      folderPath: "",
+      tags: [],
+      status: "ready" as const,
+      includeInProgramming: true,
+      durationSeconds,
+      durationProbeKey,
+      fallbackPriority: 100,
+      isGlobalFallback: false,
+      createdAt: "2026-10-03T12:00:00.000Z",
+      updatedAt: "2026-10-03T12:00:00.000Z"
+    });
+
+    async function seedLocalSource() {
+      await ensureDatabaseWithRetry();
+      const initial = await readAppState();
+      await writeAppState({
+        ...initial,
+        sources: [
+          {
+            id: localSourceId,
+            name: "Local Media Library",
+            type: "Filesystem scan",
+            connectorKind: "local-library",
+            enabled: true,
+            status: "Ready",
+            externalUrl: "",
+            notes: "",
+            lastSyncedAt: "2026-10-03T12:00:00.000Z"
+          }
+        ],
+        assets: []
+      });
+    }
+
+    it("adds the probe-key column to a database whose assets predate it, and old rows read never probed", async () => {
+      await seedLocalSource();
+      await executeSql(`
+        ALTER TABLE assets DROP COLUMN IF EXISTS duration_probe_key;
+        DELETE FROM schema_migrations WHERE id = '${durationProbeKeyMigrationId}';
+        INSERT INTO assets (id, source_id, title, path, status, created_at, updated_at)
+        VALUES ('asset_before_m96', '${localSourceId}', 'Folge 1', '/app/data/media/folge-1.mp4', 'ready', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z');
+      `);
+
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      expect(
+        await executeSql(
+          "SELECT column_name || '=' || column_default FROM information_schema.columns WHERE table_name = 'assets' AND column_name = 'duration_probe_key';"
+        )
+      ).toBe("duration_probe_key=''::text");
+      expect(await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${durationProbeKeyMigrationId}';`)).toBe("1");
+      expect(DECLARED_SCHEMA.assets).toContain("duration_probe_key");
+      const old = (await readAppState()).assets.find((asset) => asset.id === "asset_before_m96");
+      expect({ durationSeconds: old?.durationSeconds, durationProbeKey: old?.durationProbeKey }).toEqual({ durationSeconds: 0, durationProbeKey: "" });
+    }, 60_000);
+
+    it("keeps the probed duration and its file version through a scan write and an unrelated app-state write", async () => {
+      await seedLocalSource();
+      await replaceAssetsForSourceIds([localSourceId], [localAsset("folge_1", 120, "1048576:1759500000000")]);
+      const probed = async () => (await readAppState()).assets.find((asset) => asset.id === "folge_1");
+      expect(await probed()).toMatchObject({ durationSeconds: 120, durationProbeKey: "1048576:1759500000000" });
+
+      // The shape of a chat game start/stop: the whole assets table is written again.
+      await updateAppState((current) => ({ ...current, moderation: { ...current.moderation } }));
+      expect(await probed()).toMatchObject({ durationSeconds: 120, durationProbeKey: "1048576:1759500000000" });
+
+      // A remote-style write without a key keeps the stored key and the known duration.
+      await replaceAssetsForSourceIds([localSourceId], [{ ...localAsset("folge_1", 0, ""), durationProbeKey: undefined }]);
+      expect(await probed()).toMatchObject({ durationSeconds: 120, durationProbeKey: "1048576:1759500000000" });
+
+      // A replaced file whose probe failed: unknown for the new version, not the old file's 120 s.
+      await replaceAssetsForSourceIds([localSourceId], [localAsset("folge_1", 0, "2048:1759600000000")]);
+      expect(await probed()).toMatchObject({ durationSeconds: 0, durationProbeKey: "2048:1759600000000" });
+    }, 60_000);
+  });
+
   describe("dated schedule blocks (M93)", () => {
     const scheduleBlockDatesMigrationId = "20261003_001_schedule_block_dates";
     const datedBlock = (id: string, dayOfWeek: number, validFrom: string, validUntil: string, repeatGroupId = "") => ({

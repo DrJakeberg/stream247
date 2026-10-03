@@ -182,7 +182,10 @@ every sync. YouTube channel and playlist listings ask yt-dlp for `youtubetab:app
 counts YouTube's relative age ("5 hours ago", "3 months ago") back from the sync time and rounds to its
 unit, so a recent upload gets a time to the hour or minute, while older items that share a label share one day and order by
 title within it; the first value seen is the one kept. Twitch channel archive listings carry no date. A
-finished VOD download writes only the asset's cache columns.
+finished VOD download writes only the asset's cache columns. The local media library has no listing
+that knows lengths, so its scan asks `ffprobe` for each file's duration and stores it with the file
+version it belongs to (`assets.duration_probe_key`, size and modification time); an unchanged file is
+not probed again (`apps/worker/src/local-durations.ts`).
 
 Ingest lists items; it does not decide how they play. Playback URLs are resolved by the playout
 process (the `playout` container), just before an item airs and in the queue prefetch. A YouTube item
