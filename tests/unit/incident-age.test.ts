@@ -48,7 +48,10 @@ describe("open incidents beyond the ones listed", () => {
 
 describe("the surfaces that show open incidents", () => {
   const dashboardSource = readFileSync(path.join(process.cwd(), "apps/web/app/(admin)/dashboard/page.tsx"), "utf8");
-  const controlRoomSource = readFileSync(path.join(process.cwd(), "apps/web/components/broadcast-control-room.tsx"), "utf8");
+  // The control room draws its incidents through OpenProblemsPanel since M90; both files are the panel.
+  const controlRoomSource = ["apps/web/components/broadcast-control-room.tsx", "apps/web/components/open-problems-panel.tsx"]
+    .map((file) => readFileSync(path.join(process.cwd(), file), "utf8"))
+    .join("\n");
   const serverStateSource = readFileSync(path.join(process.cwd(), "apps/web/lib/server/state.ts"), "utf8");
 
   it("tells the operator how old each open entry is", () => {

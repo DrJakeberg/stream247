@@ -1,3 +1,5 @@
+import { describeElapsed } from "@stream247/core";
+
 /**
  * How long an open incident has been standing, and what a panel is not showing.
  *
@@ -67,4 +69,18 @@ export function describeOpenIncidentOverflow(shown: number, total: number): stri
   }
 
   return `${hidden} further open incident${hidden === 1 ? " is" : "s are"} not shown here.`;
+}
+
+/**
+ * How long a runtime process has been silent (M90, U7), in words: "Last heard from 7 minutes ago."
+ * Worked out when the page is drawn, never stored, so it cannot freeze the way a stored "2 minutes
+ * ago" in an incident message did.
+ */
+export function describeHeartbeatAge(lastAt: string, nowMs: number): string {
+  const lastMs = lastAt ? new Date(lastAt).getTime() : Number.NaN;
+  if (!Number.isFinite(lastMs) || !Number.isFinite(nowMs)) {
+    return "No heartbeat has been recorded yet.";
+  }
+
+  return `Last heard from ${describeElapsed(nowMs - lastMs)}.`;
 }

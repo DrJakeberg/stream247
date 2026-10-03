@@ -4,6 +4,32 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { InfoTip } from "@/components/ui/InfoTip";
 
+/** The three actions under "If something is stuck" that cut the picture viewers see (M90, U11). */
+export type InterruptingPlayoutAction = "restart" | "force_reconnect" | "hard_reload";
+
+/**
+ * What a confirmation says before an action cuts the picture: what happens and what viewers see.
+ *
+ * With the relay on, the uplink holds the Twitch connection, so a restart is a cut in the picture
+ * but the channel stays live. In direct mode the encoder IS the connection, and restarting it or
+ * forcing a reconnect drops the stream for a moment (docs/operations.md, "Operator controls").
+ */
+export function describePlayoutActionConfirmation(type: InterruptingPlayoutAction, relayEnabled: boolean): string {
+  if (type === "restart") {
+    return relayEnabled
+      ? "Soft restart stops the encoder and starts it again. Viewers see a short cut and the item on air starts again from its beginning; the Twitch connection stays up. Restart now?"
+      : "Soft restart stops the encoder and starts it again. Viewers see the stream drop for a moment and the slate; then a running pin or insert starts again from its beginning, else a queued Move next, else the pool's next item. Restart now?";
+  }
+
+  if (type === "hard_reload") {
+    return relayEnabled
+      ? "Hard reload restarts the encoder from scratch. Viewers see a cut and the item on air starts again from its beginning; the Twitch connection stays up. Reload now?"
+      : "Hard reload restarts the encoder from scratch. Viewers see the stream drop for a moment and the slate; then a running pin or insert starts again from its beginning, else a queued Move next, else the pool's next item. Reload now?";
+  }
+
+  return "Force reconnect drops the connection to Twitch and opens it again. Viewers see the stream go offline for a moment. Reconnect now?";
+}
+
 type PlayoutAssetOption = {
   id: string;
   title: string;
@@ -26,6 +52,8 @@ export function PlayoutActionForm(props: {
   liveBridgeLastError?: string;
   recoveringDestinationCount?: number;
   coolingDestinationCount?: number;
+  /** With the relay the uplink holds the Twitch connection and the server refuses Force reconnect. */
+  relayEnabled?: boolean;
 }) {
   const [error, setError] = useState("");
   const [selectedAssetId, setSelectedAssetId] = useState(props.currentAssetId || props.assets[0]?.id || "");
@@ -53,6 +81,14 @@ export function PlayoutActionForm(props: {
     router.refresh();
   }
 
+  function runInterruptingAction(type: InterruptingPlayoutAction) {
+    // Asked before the transition starts, so a "Cancel" sends nothing at all.
+    if (!window.confirm(describePlayoutActionConfirmation(type, Boolean(props.relayEnabled)))) {
+      return;
+    }
+    startTransition(() => void runAction({ type }));
+  }
+
   return (
     <div className="stack-form" style={{ marginTop: 8 }}>
       {/*
@@ -69,7 +105,8 @@ export function PlayoutActionForm(props: {
         <summary>If something is stuck</summary>
         <p className="subtle" style={{ marginTop: 8 }}>
           Refreshing the scenes or rebuilding the queue fixes most of it, and neither interrupts what is on
-          air. The rest are stronger and worth trying in the order they appear.
+          air. The rest are stronger and worth trying in the order they appear; Soft restart, Force reconnect
+          and Hard reload cut the picture and ask first.
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
         <button
@@ -91,15 +128,16 @@ export function PlayoutActionForm(props: {
         <button
           className="button button-secondary"
           disabled={isPending}
-          onClick={() => startTransition(() => void runAction({ type: "restart" }))}
+          onClick={() => runInterruptingAction("restart")}
           type="button"
         >
           Soft restart
         </button>
         <button
           className="button button-secondary"
-          disabled={isPending}
-          onClick={() => startTransition(() => void runAction({ type: "force_reconnect" }))}
+          disabled={isPending || Boolean(props.relayEnabled)}
+          onClick={() => runInterruptingAction("force_reconnect")}
+          title={props.relayEnabled ? "The relay holds the Twitch connection and reconnects by itself." : undefined}
           type="button"
         >
           Force reconnect
@@ -122,7 +160,7 @@ export function PlayoutActionForm(props: {
         <button
           className="button button-secondary"
           disabled={isPending}
-          onClick={() => startTransition(() => void runAction({ type: "hard_reload" }))}
+          onClick={() => runInterruptingAction("hard_reload")}
           type="button"
         >
           Hard reload

@@ -1,6 +1,11 @@
 export const dynamic = "force-dynamic";
 
-import { TWITCH_METADATA_WAITING_MESSAGE, resolveTwitchMetadataSyncGate, selectActiveDestinationGroup } from "@stream247/core";
+import {
+  TWITCH_METADATA_WAITING_MESSAGE,
+  describeIncidentOperatorAction,
+  resolveTwitchMetadataSyncGate,
+  selectActiveDestinationGroup
+} from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
 import { AsRunLogPanel } from "@/components/as-run-log-panel";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
@@ -13,7 +18,9 @@ import { describeTwitchConnection } from "@/components/twitch-connection-status"
 import { getGoLiveChecklist } from "@/lib/server/onboarding";
 import { DESTINATION_ROLE_LABELS, DESTINATION_STATUS_LABELS, describeStreamKey } from "@/lib/destination-wording";
 import {
+  describeRuntimeReadinessSentence,
   getActivePresenceWindows,
+  getHeartbeatProblems,
   getCurrentScheduleItem,
   getManagedTwitchConfig,
   getNextScheduleItem,
@@ -250,6 +257,9 @@ export default async function DashboardPage() {
                   </strong>
                   <div className="subtle">{incident.ageLabel}</div>
                   <div className="subtle">{incident.message}</div>
+                  {describeIncidentOperatorAction(incident.fingerprint) ? (
+                    <div className="subtle">What to do: {describeIncidentOperatorAction(incident.fingerprint)}</div>
+                  ) : null}
                   <div className="subtle">
                     {incident.acknowledgedAt
                       ? `Acknowledged by ${incident.acknowledgedBy || "unknown"} at ${incident.acknowledgedAt}`
@@ -262,14 +272,14 @@ export default async function DashboardPage() {
                   />
                 </div>
               ))
-            ) : (
+            ) : null}
+            {incidentPanel.listed.length === 0 || getHeartbeatProblems(state).length > 0 ? (
               <div className="item">
                 <strong>System readiness</strong>
-                <div className="subtle">
-                  Database persistence, background worker reconciliation, and playout heartbeat are now active.
-                </div>
+                {/* Built from the heartbeats, not fixed text: it claimed both were active before either ran (M90, U8). */}
+                <div className="subtle">{describeRuntimeReadinessSentence(state, incidentPanel.openCount)}</div>
               </div>
-            )}
+            ) : null}
             {incidentPanel.overflow ? (
               <div className="item">
                 <div className="subtle">{incidentPanel.overflow}</div>

@@ -60,14 +60,24 @@ DESTINATION
 <runtime>
 UPDATES
 <runtime>
+INCIDENTS
+Open problems
+CRITICAL · worker · The worker has never reported
+No heartbeat has been recorded yet.
+Sources, the schedule sync, Twitch and incident checks are not running while the worker is down.
+What to do: Restart the worker container: `docker compose restart worker`. If it stops again, run `docker compose logs --tail 200 worker` to see why.
+CRITICAL · playout · Playout has stopped reporting
+Last heard from <age> ago.
+Nothing reaches the channel while playout is down, and the buttons on this page have no effect.
+What to do: Restart the playout container: `docker compose restart playout`. If it stops again, run `docker compose logs --tail 200 playout` to see why.
 ON AIR
 Current and next
 <asset>
 <time> to <time> · <category>
-Transition idle · queue reason Matched the schedule · version 0
+Why this item: Matched the schedule
 <asset>
-Prefetch idle · last probe never
-Transition target none · ready not ready
+Not checked yet.
+Details
 Queue preview
 No queue preview is currently available.
 ACTIONS
@@ -141,10 +151,6 @@ Current category yes · Source label yes
 Active scene Replay Lower Third · layers Brand Chip → Hero Card → Next Card → Schedule Teaser → Clock
 Hidden layers none
 Open overlay studio
-INCIDENTS
-Open problems
-No open incidents
-The live system currently reports no unresolved incidents.
 WORKER
 Behind the scenes
 missing

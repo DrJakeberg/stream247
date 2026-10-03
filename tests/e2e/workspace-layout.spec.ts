@@ -81,4 +81,19 @@ test.describe("workspace layout", () => {
     expect(studio.stackWidth).toBeLessThanOrEqual(1800);
     expect(studio.scrollWidth).toBeLessThanOrEqual(studio.clientWidth);
   });
+
+  // M90, U9 (planning/research/ux-install.md): measured at 390 px the panel an operator needs at
+  // night, "Open problems", sat at y = 5 723 of a 6 256 px page. docs/ui.md now makes the on-call
+  // check of Live → Control the one mobile commitment; this holds it.
+  test("on a phone, Open problems is near the top of Live control", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await signIn(page);
+    await page.goto("/live?tab=control");
+    const panel = page.getByTestId("open-problems");
+    await expect(panel).toBeVisible();
+    const top = await panel.evaluate((element) => element.getBoundingClientRect().top + window.scrollY);
+    expect(top, "Open problems below y = 1400 at 390 px").toBeLessThan(1400);
+    const m = await measure(page);
+    expect(m.scrollWidth, "Live control wider than a phone").toBeLessThanOrEqual(m.clientWidth);
+  });
 });

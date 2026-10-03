@@ -35,6 +35,7 @@ export function LiveWorkspaceHeader(props: { initialSnapshot: BroadcastSnapshot 
 
   return (
     <AdminPageHeader
+      className="live-workspace-header"
       compact
       description="Twitch channel state, viewer count, uptime, and playout health stay visible while you move between Live control, status, and moderation."
       eyebrow="Live"
