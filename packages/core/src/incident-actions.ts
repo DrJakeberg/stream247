@@ -92,7 +92,7 @@ export const INCIDENT_OPERATOR_ACTIONS: readonly IncidentOperatorAction[] = [
     fingerprint: "secrets.key-mismatch",
     keyed: false,
     action:
-      "Put back the APP_SECRET the secrets were saved with (the environment or the secret file on the data volume) and restart web and worker, or enter every secret again under Admin → Settings."
+      "Put back the APP_SECRET the secrets were saved with (the environment or the secret file on the data volume) and restart web and worker, or enter every secret again under Admin → Settings. The worker closes this entry at its next start once every stored secret decrypts."
   },
   {
     fingerprint: "schema.drift",

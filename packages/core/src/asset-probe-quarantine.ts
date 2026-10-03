@@ -12,12 +12,14 @@
  * DNS blip, a CDN reset. Three consecutive failures is not a blip; nothing seen on the DUT recovered after
  * two. One thing does last longer than two probes, and it is not the item's fault: an outage of the
  * channel's own network. A failed probe is retried after a minute, so three minutes without a way out
- * were three failures, and a quarantined item is never probed again. Since M82 the playout does not hand
+ * were three failures, and before M95 a quarantined item was never probed again (now it gets one trial a
+ * day, selectQuarantineReprobes). Since M82 the playout does not hand
  * such a failure to this module at all (probe-network-outage.ts): it neither counts nor resets.
  *
  * Quarantine deliberately does NOT touch `includeInProgramming`. That flag is the operator's own choice
  * and overwriting it would lose what they set and lie about who decided. Quarantine is a separate, visible
- * state that the operator clears once the source is fixed or the item is replaced.
+ * state that the operator clears once the source is fixed or the item is replaced, and that a clean daily
+ * trial clears by itself.
  */
 export const ASSET_PROBE_QUARANTINE_THRESHOLD = 3;
 
