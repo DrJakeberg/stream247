@@ -12,12 +12,14 @@
  * DNS blip, a CDN reset. Three consecutive failures is not a blip; nothing seen on the DUT recovered after
  * two. One thing does last longer than two probes, and it is not the item's fault: an outage of the
  * channel's own network. A failed probe is retried after a minute, so three minutes without a way out
- * were three failures, and a quarantined item is never probed again. Since M82 the playout does not hand
+ * were three failures, and before M95 a quarantined item was never probed again (now it gets one trial a
+ * day, selectQuarantineReprobes). Since M82 the playout does not hand
  * such a failure to this module at all (probe-network-outage.ts): it neither counts nor resets.
  *
  * Quarantine deliberately does NOT touch `includeInProgramming`. That flag is the operator's own choice
  * and overwriting it would lose what they set and lie about who decided. Quarantine is a separate, visible
- * state that the operator clears once the source is fixed or the item is replaced.
+ * state that the operator clears once the source is fixed or the item is replaced, and that a clean daily
+ * trial clears by itself.
  */
 export const ASSET_PROBE_QUARANTINE_THRESHOLD = 3;
 
@@ -67,6 +69,8 @@ export type AssetProbeOutcome = {
   outcome: "ok" | "failed";
   error: string;
   current: AssetProbeState;
+  /** The daily trial of an item already in quarantine (selectQuarantineReprobes). */
+  reprobe?: boolean;
 };
 
 export type AssetProbePlan = {
@@ -95,6 +99,22 @@ export function planAssetProbeUpdates(outcomes: AssetProbeOutcome[], nowIso: str
   const quarantinedBySource = new Map<string, { count: number; title: string; error: string }>();
 
   for (const probed of outcomes) {
+    if (probed.reprobe && probed.outcome === "failed") {
+      // A failed daily trial changes nothing but the time of the try (and what it said), which is what
+      // keeps the next trial a day away. The count stays, so the item reads as it did before.
+      const failures = probed.current.playbackProbeFailures ?? 0;
+      const after = { playbackProbeFailures: failures, playbackProbeError: probed.error.slice(0, 500), playbackProbedAt: nowIso };
+      updates.push({ id: probed.assetId, ...after });
+      if (isAssetProbeQuarantined(after)) {
+        const entry = quarantinedBySource.get(probed.sourceId) ?? { count: 0, title: "", error: "" };
+        quarantinedBySource.set(probed.sourceId, {
+          count: entry.count + 1,
+          title: entry.title || probed.title,
+          error: entry.error || after.playbackProbeError
+        });
+      }
+      continue;
+    }
     const after = nextAssetProbeState({
       current: probed.current,
       outcome: probed.outcome,
@@ -173,4 +193,79 @@ export function countQuarantinedBySource(
     });
   }
   return bySource;
+}
+
+/** How long a quarantined item waits between two automatic trials (owner Q1, M95). */
+export const QUARANTINE_REPROBE_INTERVAL_MS = 24 * 60 * 60_000;
+
+/**
+ * How long a network outage the playout saw holds the trials back. The outage check runs only when a
+ * failure is about to be counted, so nothing says when an outage ended; the nightly outages measured on
+ * the DUT lasted one to four minutes.
+ */
+export const QUARANTINE_REPROBE_OUTAGE_HOLD_MS = 10 * 60_000;
+
+export type QuarantineReprobeCandidate = {
+  id: string;
+  sourceId: string;
+  status?: string;
+  includeInProgramming?: boolean;
+  playbackProbeFailures?: number;
+  playbackProbedAt?: string;
+};
+
+/**
+ * Which quarantined items get their one automatic trial in this cycle (M95, H9; owner Q1).
+ *
+ * Quarantine was for good: a YouTube item that failed three probes during a bad night never came back,
+ * even once its source served it again, until someone cleared it by hand. Now each quarantined item is
+ * tried once per day, at most one item per source per cycle, so a source with many items does not turn
+ * into a burst of resolves. Nothing is tried while the source's breaker is open or half-open (the breaker
+ * already decides that source; its own trial is the one that counts) or while the channel's own network
+ * was out a moment ago (the trial would test the network, not the item).
+ *
+ * A clean trial clears the quarantine like any clean probe; a failed one only records when it was tried
+ * (planAssetProbeUpdates). The operator's choices are left alone: an item excluded from programming or
+ * not ready is not tried, and the quarantine can still be cleared by hand.
+ */
+export function selectQuarantineReprobes<T extends QuarantineReprobeCandidate>(args: {
+  assets: readonly T[];
+  nowMs: number;
+  /** Sources whose breaker is open or half-open. */
+  gatedSourceIds: ReadonlySet<string>;
+  /** Sources some pool plays from; items of other sources would never air either way. */
+  poolSourceIds: ReadonlySet<string>;
+  /** When the playout last saw its own network out, 0 for never. */
+  networkOutageSeenAtMs: number;
+  intervalMs?: number;
+}): T[] {
+  const intervalMs = args.intervalMs ?? QUARANTINE_REPROBE_INTERVAL_MS;
+  if (args.networkOutageSeenAtMs > 0 && args.nowMs - args.networkOutageSeenAtMs < QUARANTINE_REPROBE_OUTAGE_HOLD_MS) {
+    return [];
+  }
+
+  const bySource = new Map<string, { asset: T; probedAtMs: number }>();
+  for (const asset of args.assets) {
+    if (!isAssetProbeQuarantined(asset)) {
+      continue;
+    }
+    if ((asset.status ?? "ready") !== "ready" || asset.includeInProgramming === false) {
+      continue;
+    }
+    if (args.gatedSourceIds.has(asset.sourceId) || !args.poolSourceIds.has(asset.sourceId)) {
+      continue;
+    }
+    const parsed = Date.parse(asset.playbackProbedAt ?? "");
+    // No time at all (an old row): due now. A time in the future (a clock that jumped back) waits.
+    const probedAtMs = Number.isFinite(parsed) ? parsed : 0;
+    if (args.nowMs - probedAtMs < intervalMs) {
+      continue;
+    }
+    const chosen = bySource.get(asset.sourceId);
+    if (!chosen || probedAtMs < chosen.probedAtMs || (probedAtMs === chosen.probedAtMs && asset.id < chosen.asset.id)) {
+      bySource.set(asset.sourceId, { asset, probedAtMs });
+    }
+  }
+
+  return [...bySource.values()].map((entry) => entry.asset).sort((left, right) => left.id.localeCompare(right.id));
 }

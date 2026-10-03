@@ -30,7 +30,7 @@ How this file works:
 | M92 Getting Started A Stranger Can Follow | Docs + Ops | Next | Complete | The guide leads a stranger from an empty host to air without a gap | I4: `docs/getting-started.md` gets "Get the files" (clone a release tag, or download `docker-compose.yml` and `docker/mediamtx.yml`), the link `https://dev.twitch.tv/console/apps` (also in wizard step 3) and a numbered stream-key step; `grep -c "dev.twitch.tv/console" docs/getting-started.md` ≥ 1. I3: unit test that the four compose image defaults equal the newest non-rc `## X.Y.Z` heading in `CHANGELOG.md`, so a release commit that forgets them fails. I5: the same one-or-two-accounts sentence in wizard and guide (decided 5.1 Q9). `pnpm test:fresh-compose` green | `docs/`, `apps/web/app/setup`, `tests/unit/`, `README.md` | low | revert the commit |
 | M93 Dated And One-Off Schedule Blocks | Feature | Next | Complete | "The next 10 days at 20:00 this playlist" and "once on 10 Oct" can be saved on a 24/7 grid, and air, previews, `/channel` and Twitch agree | R1 row A (decided 5.1 Q1, Q2): `valid_from`/`valid_until` in baseline, ALTER, migration, manifest, mapper, writers and blueprints; filter in `buildScheduleOccurrences`; dated layer ranks first in `findCurrentScheduleOccurrence`; `applyScheduleLayers` with `airWindows`; conflicts per layer; ended rows listed as ended; form field *Runs*; "Single day" renamed to "One weekday, every week". Tests: a 10-day run has day 10 and not day 11; a once-block airs once; a carry-over past `valid_until` still ends; weekly 18-22 + dated 20-21 gives three windows with one key; a cuepoint is not re-fired; the 24/7 grid + dated 20:00 block saves (today `["grid","special"]`); schema-manifest and DB round-trip tests | `packages/core`, `packages/db`, `apps/web`, `apps/worker`, tests, baselines, `docs/` | medium: touches the one function every schedule consumer uses; additive columns | revert the commit; old images ignore the columns |
 | M94 Inserts From Remote Sources Air | Bug | Next | Complete | A YouTube or Twitch insert airs, or is skipped once with an incident, never retried forever | W1: the due insert is warmed in the queue scan; a failed or bridged insert counts as consumed and raises an incident naming it (owner Q6); both insert checks apply quarantine and breaker. W5: one shared "cuepoint asset of a block" helper used by worker and preview; test: `insertEveryItems: 0` with a pool insert asset gives the same cuepoint count in both. W6: an item that failed to open is retried once; `failed` treated like an empty current item in the Move next and insert checks. R3's W1 probe becomes a test | `apps/worker`, `packages/core`, tests | low–medium: crash-loop interplay | revert the commit |
-| M95 Self-Healing Fills The Gaps | Reliability | Next | Planned | No stale incident, no orphan encoder, no permanently lost item | H5: disk and system-volume flags re-armed from open incidents on the first cycle; `secrets.key-mismatch` resolved at a boot where every secret decrypts; tests. W7: the playout exit handler returns when the exiting child is not current (static test as R3's); the uplink handler checked for the same pattern. H9: one re-probe per quarantined item per 24 h, one per source per cycle, only with the breaker closed and no outage verdict (owner Q1); test. U18: `scripts/soak-monitor.sh` counts uplink and relay restarts; shell test or `bash -n` plus a fixture run | `apps/worker`, `scripts/`, tests, `docs/operations.md` | low | revert the commit |
+| M95 Self-Healing Fills The Gaps | Reliability | Next | Complete | No stale incident, no orphan encoder, no permanently lost item | H5: disk and system-volume flags re-armed from open incidents on the first cycle; `secrets.key-mismatch` resolved at a boot where every secret decrypts; tests. W7: the playout exit handler returns when the exiting child is not current (static test as R3's); the uplink handler checked for the same pattern. H9: one re-probe per quarantined item per 24 h, one per source per cycle, only with the breaker closed and no outage verdict (owner Q1); test. U18: `scripts/soak-monitor.sh` counts uplink and relay restarts; shell test or `bash -n` plus a fixture run | `apps/worker`, `scripts/`, tests, `docs/operations.md` | low | revert the commit |
 | M96 Local File Durations | Data | Next | Planned | Local-library assets carry their real length, so planning numbers are right | U4: `ffprobe` duration at scan time, bounded timeout, cached by size + mtime; unit test on a generated 2-minute file → `durationSeconds` within 1 s of 120; an unchanged file is not probed again (spy); Day lens shows "Unique library: 6m" for three such files | `apps/worker`, `packages/db`, tests | medium: a large first scan is slower, so probing is incremental | revert the commit; stored durations are harmless to old images |
 | M97 Week View Tells The Truth | UX | Next | Planned | The week view shows what will play, with dates, overnight blocks once, and why a block repeats | U5: each pool's rotation carried across blocks in time order through the worker's rotation function (shared, not copied); dates on day headers; hours, not minutes; an overnight block shown once with "→ 01:00 Sun"; repeat reason with numbers. U6: confirmation before "Replace existing schedule blocks"; "Edit block" and "Add block" on the week view. Tests in `program-week-projection`: three items, two blocks, the second block starts with item 2, not item 1; a 24 h block reads "24 h"; a block with 6 min of video in 24 h carries the reason "plays ≈ 240 times"; an overnight block appears on one day only. e2e: "Replace existing schedule blocks" opens a confirmation and Cancel leaves the blocks unchanged | `packages/core`, `apps/web`, tests, baselines | medium: preview must not drift from the worker, so one shared function | revert the commit |
 | M98 The Production Path Has A Smoke | Test | Next | Planned | CI exercises playout → HLS → uplink with the relay on | U15: a CI job starts the stack with the relay on and asserts that `program.m3u8` MEDIA-SEQUENCE grows and the uplink output grows over 60 s; the job fails when the uplink is stopped (mutation run) | `.github/workflows/ci.yml`, `scripts/`, `docker-compose*.yml` | low (CI only) | revert the commit |
@@ -243,6 +243,20 @@ deployed; the release that ships them records the results.
     AND created_at > to_char(now() - interval '6 hours', 'YYYY-MM-DD"T"HH24:MI:SS')
   ORDER BY 2;
   SQL
+  ```
+
+- M95, on the deployed candidate, if any item is quarantined at the repin (the first command prints more
+  than 0): each such item gets one trial within 25 hours. Passes when the second command, run 25 hours
+  after the repin, counts at least as many `playout.asset.reprobe.*` lines as the first printed items, and
+  the third prints no `playout.source-breaker.opened` line whose `failedAssetIds` lists only items that
+  were quarantined at the repin. Real YouTube and Twitch sources are not reachable from the cloud.
+  And the next soak's baseline line lists `uplink=` and `relay=` with numbers, not `unknown`.
+
+  ```sh
+  ssh dut 'docker exec stream247-postgres-1 psql -U stream247 -d stream247 -Atc "SELECT COUNT(*) FROM assets WHERE playback_probe_failures >= 3"'
+  ssh dut 'docker logs --since 25h stream247-playout-1 2>&1 | grep -oE "playout.asset.reprobe.(cleared|failed)" | sort | uniq -c'
+  ssh dut 'docker logs --since 25h stream247-playout-1 2>&1 | grep "playout.source-breaker.opened"'
+  ssh dut 'grep "Baseline container restarts" ~/logs/soak-<stamp>.log'
   ```
 
 - (The checks for 2.2.0 are in the archive, sections M75-M82.)
@@ -626,4 +640,54 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   cycle; the week view does not know the Twitch cache cooldown; the worker wiring is pinned by source
   text, the decisions are run.
 - **Not measured.** A real YouTube or Twitch insert on air (DUT check above).
+
+### M95 Self-Healing Fills The Gaps
+
+- **H5, volume incidents.** The worker's new first step `state-incident-rearm` reads the open incidents
+  once per process (`rearmStateIncidentFlags`, `apps/worker/src/state-incident-rearm.ts`) and seeds the
+  in-memory flags of the disk watermark (`disk.watermark.evicted`, `.exhausted`) and the system-volume
+  watch (`system.volume.low`). Both monitors then re-measure on the same cycle and resolve through their
+  own hysteresis; nothing is closed without a measurement. A failed read leaves the step to the next cycle.
+- **H5, key mismatch.** In the same step `resolveSecretKeyMismatchWhenSecretsDecrypt` (`packages/db`)
+  opens every stored ciphertext (managed config, managed secrets, destination stream keys, overlay video
+  source URLs and publish keys, two-factor secrets) with the current key, without raising anything, and
+  resolves `secrets.key-mismatch` only when none fails and this process saw no failure. With no open
+  incident it reads nothing. Twitch tokens are stored in plain text and are not part of it.
+- **W7.** The playout exit handler returns before it touches any state when `isStaleProcessExit` says the
+  exiting child is not current: another process is current, or the stop deadline abandoned it
+  (`abandonedPlayoutProcesses`, filled only by the deadline). A process that left the slot without being
+  abandoned (the already-signalled branch of `stopPlayoutProcess`) is still recorded, as before. The late
+  exit logs `playout.process.exit_ignored`; its as-run row is closed by `watchAsRunEnd` as before. This also
+  covers the M94 retry marker the M94 thread named. **Uplink, checked:** each uplink process has its own
+  runtime entry; its exit handler reads that entry's planned reason and removes that entry by identity, and
+  `stopUplinkProcess` has no deadline, so the pattern does not occur there; pinned by a static test.
+- **H9 (owner Q1).** `selectQuarantineReprobes` (core) picks quarantined, ready, included items of sources a
+  pool uses, 24 h after their last probe, one per source per cycle (the longest waiting), none while the
+  source's breaker is open or half-open or within 10 min of a network outage the playout saw
+  (`QUARANTINE_REPROBE_OUTAGE_HOLD_MS`; the outage check runs only when a failure is counted, so it has no
+  "outage ended" moment). The trials go through the queue scan after the pool's items, only with a process
+  on air, using the expensive-resolve budget the queue left, and never trigger an immediate cycle. A clean
+  trial clears the quarantine (`planAssetProbeUpdates`); a failed one keeps the count and only stores the
+  time and error. The source breaker hears neither (`sourceBreakerOutcomesOf`), so known-bad items cannot
+  open the breaker of a source that serves everything else. Network-outage failures are dropped as before.
+- **U18.** `scripts/soak-monitor.sh` reads restart counts for one list, `web worker playout uplink relay`, in
+  the baseline and the check. A service that does not run reads `unknown` and is skipped. The docs said a
+  restart "by more than one" fails the soak; the script fails on any increase, and the docs now say so.
+- **Tests.** `tests/unit/self-healing-gaps.test.ts` (H5 flags and step order, W7 guard decision plus the
+  static test turned around from R3's U33 probe, the uplink check, H9 selection and outcomes, the soak list);
+  `tests/unit/release-readiness.test.ts`: a fixture run fails on an uplink and on a relay restart (fails with
+  the old list), and the baseline line of the existing restart test now names all five services;
+  `tests/integration/self-healing-incidents.test.ts`: the built worker against PostgreSQL 16 closes all three
+  seeded incidents on its first cycle (fails with the step removed), and the key-mismatch incident stays open
+  while one stored secret is sealed under another key.
+- **Review (fresh subagent).** All four items met. Fixed: the stop deadline now clears the stop's planned
+  reason and as-run intent itself, since the abandoned process's late exit no longer does (left set, the
+  replacement's first crash would have read as planned); the docs name the trigger watermark as the media
+  volume's close point after a restart; the trial wiring of the queue scan is pinned. Left as is: with the
+  one expensive resolve per cycle unused by the queue, a trial takes it and that cycle waits for one remote
+  resolve (bounded by its timeout and abandoned when the playout process dies, as for the queue); a step
+  whose secret scan keeps throwing reports `worker.step.failed.state-incident-rearm` every cycle like any
+  failing step; a failed trial of a Twitch archive still downloading counts as that day's trial.
+- **Not measured.** W7 with a real hung ffmpeg (static and decision tests only); H9 against real YouTube
+  and Twitch sources (DUT check above).
 

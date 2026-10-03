@@ -236,7 +236,12 @@ its source's position in one serialized write; an insert moves neither, and a po
 
 Two holds keep unplayable items out of the rotation. Per-item quarantine (`asset-probe-quarantine.ts`)
 counts consecutive failed prefetch probes on the asset (`playback_probe_failures`, `_error`,
-`playback_probed_at`); at three the item is passed over until a clean probe or the operator clears it.
+`playback_probed_at`); at three the item is passed over until a clean probe or the operator clears it. Since M95 the playout
+gives each quarantined item one trial a day, at most one per source per cycle, only while its source's
+breaker is closed and no network outage of the channel was seen in the last ten minutes
+(`selectQuarantineReprobes`); the trial runs after the queue's own probes and with the budget they left,
+a clean one clears the quarantine, a failed one only records when it was tried, and the breaker hears
+neither.
 The source circuit breaker (M75, `packages/core/src/source-circuit-breaker.ts`) judges the source: when
 probes fail on three different items of one source with no clean probe of it in between, the source is
 open and the rotation treats its whole lane as having nothing eligible, so the pool alternates between

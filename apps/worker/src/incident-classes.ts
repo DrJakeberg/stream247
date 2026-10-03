@@ -349,7 +349,7 @@ const STATE_FAMILIES: IncidentFamily[] = [
     keyed: false,
     kind: "state",
     area: "system",
-    why: "Stored secrets fail to decrypt with the current APP_SECRET, which holds until that secret is restored or every value is re-entered."
+    why: "Stored secrets fail to decrypt with the current APP_SECRET, which holds until that secret is restored or every value is re-entered; the worker closes it at its next start once every stored secret decrypts (M95)."
   }
 ];
 

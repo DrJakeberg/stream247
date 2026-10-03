@@ -750,8 +750,30 @@ describe("release readiness scripts", () => {
     );
 
     expect(result.status).toBe(1);
-    expect(result.output).toContain("Baseline container restarts: web=0 worker=0 playout=0");
+    expect(result.output).toContain("Baseline container restarts: web=0 worker=0 playout=0 uplink=0 relay=0");
     expect(result.output).toContain("container-restart-check-failed webRestarts=2(+2)");
+  });
+
+  // M95 (U18): an uplink that crashed and came back between two samples, or a relay restart, passed a
+  // 24 h soak because only web, worker and playout were counted.
+  it("soak monitor fails on an uplink or relay container restart", () => {
+    writeRootEnv(`APP_URL=http://127.0.0.1:3000\n`);
+
+    const healthyResponse =
+      '{"status":"ok","broadcastReady":true,"services":{"worker":"ok","playout":"ok","uplink":"ok","programFeed":"ok","destination":"ok"},"playout":{"status":"running","selectionReasonCode":"scheduled_match","fallbackTier":"scheduled","crashLoopDetected":false,"crashCountWindow":0,"restartCount":1,"lastExitCode":"","currentAssetId":"asset_current"},"uplink":{"status":"running","unplannedRestartCount":0},"programFeed":{"status":"fresh"}}\n';
+
+    for (const service of ["uplink", "relay"]) {
+      const result = runShellScript(
+        soakScriptPath,
+        ["--hours", "24", "--interval-seconds", "0"],
+        [{ body: healthyResponse }, { body: healthyResponse }],
+        { docker: { restartCounts: { web: [0, 0], worker: [0, 0], playout: [0, 0], [service]: [0, 1] } } }
+      );
+
+      expect(result.status, service).toBe(1);
+      expect(result.output).toContain("Baseline container restarts: web=0 worker=0 playout=0 uplink=0 relay=0");
+      expect(result.output).toContain(`container-restart-check-failed ${service}Restarts=1(+1)`);
+    }
   });
 
   // The outage window, driven by a clock that advances 60 s per sample. The shapes are the samples that

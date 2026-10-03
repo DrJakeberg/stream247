@@ -111,6 +111,7 @@ import {
   isAssetProbeQuarantined,
   nextAssetProbeState,
   planAssetProbeUpdates,
+  selectQuarantineReprobes,
   countQuarantinedBySource,
   nextPoolRotationAsset,
   walkPoolRotation,
@@ -146,6 +147,7 @@ import {
   resolveChannelLanguage,
   resolveChannelTimeZone,
   resolveIncident,
+  resolveSecretKeyMismatchWhenSecretsDecrypt,
   updateDestinationRecord,
   updateEngagementGameRuntimeRecord,
   updateAssetCacheRecords,
@@ -264,6 +266,8 @@ import {
   type DiskWatermarkStageResult
 } from "./disk-watermark.js";
 import { decideSystemVolumeObservation } from "./system-volume.js";
+import { rearmStateIncidentFlags } from "./state-incident-rearm.js";
+import { isStaleProcessExit } from "./process-exit-guard.js";
 import { planChannelTimeZoneIncident } from "./channel-timezone.js";
 import {
   captureSourceSnapshot,
@@ -1562,6 +1566,34 @@ async function observeSystemVolume(): Promise<void> {
       error: error instanceof Error ? error.message : String(error)
     });
   }
+}
+
+/** Set once the first worker cycle has seeded the flags above from the open incident rows. */
+let stateIncidentFlagsRearmed = false;
+
+/**
+ * First cycle after a start (M95, H5): the two volume monitors above learn which of their incidents
+ * are still open, so they re-measure and close them, and `secrets.key-mismatch` is closed when
+ * every stored secret decrypts again. A failed read leaves the step to the next cycle.
+ */
+async function rearmStateIncidentsOnce(): Promise<void> {
+  if (stateIncidentFlagsRearmed) {
+    return;
+  }
+
+  const state = await readAppState();
+  const flags = rearmStateIncidentFlags(state.incidents);
+  diskWatermarkIncidentRaised = diskWatermarkIncidentRaised || flags.diskWatermarkIncidentRaised;
+  systemVolumeIncidentOpen = systemVolumeIncidentOpen || flags.systemVolumeIncidentOpen;
+  const secrets = await resolveSecretKeyMismatchWhenSecretsDecrypt();
+  stateIncidentFlagsRearmed = true;
+  logRuntimeEvent("incident.state_flags.rearmed", {
+    diskWatermark: flags.diskWatermarkIncidentRaised,
+    systemVolume: flags.systemVolumeIncidentOpen,
+    secretKeyMismatch: secrets.outcome,
+    secretsChecked: secrets.checked,
+    secretsFailed: secrets.failed
+  });
 }
 
 // A channel timezone Intl rejects is skipped by resolveChannelTimeZone (M85); this makes the skip
@@ -4738,6 +4770,19 @@ function poolSourceGate(state: AppState): PoolRotationSourceGate {
   return sourceBreakerGate(state.sourceBreakers, Date.now());
 }
 
+// The quarantined items due for their daily trial (M95, H9; owner Q1): the rules are in
+// selectQuarantineReprobes, the inputs are the breakers as the snapshot has them and the pools' sources.
+function selectQuarantineReprobesOf(state: AppState): AssetRecord[] {
+  const gate = poolSourceGate(state);
+  return selectQuarantineReprobes({
+    assets: state.assets,
+    nowMs: Date.now(),
+    gatedSourceIds: new Set([...gate.heldSourceIds, ...gate.trialSourceIds]),
+    poolSourceIds: new Set(state.pools.flatMap((pool) => pool.sourceIds)),
+    networkOutageSeenAtMs
+  });
+}
+
 // The insert checks (pool interval and cuepoint) and the retry of an item that failed to open apply what
 // every other automatic pick applies (M94, R3 W1): an item in quarantine, a Twitch VOD in its cache
 // cooldown, or one whose source the breaker holds open is not picked. A half-open source's item may be its
@@ -4950,7 +4995,10 @@ async function getPlayableQueuedAssets(
   // warmOnly: items probed ahead of the queue and with the queue's budget, but not part of it (M94: the
   // due scheduled insert). Their outcomes count like the queue's; they never become the queue, the
   // prefetched item or its status.
-  options: { expensiveBudget?: number; warmOnly?: AssetRecord[] } = {}
+  // reprobe: quarantined items due for their daily trial (M95, H9), probed after the queue and only with
+  // the budget the queue left. Their outcomes are tagged `reprobe` and always reported, a cached one
+  // included; they never become the queue either.
+  options: { expensiveBudget?: number; warmOnly?: AssetRecord[]; reprobe?: AssetRecord[] } = {}
 ): Promise<{
   playableQueue: AssetRecord[];
   prefetchedAsset: AssetRecord | null;
@@ -4964,8 +5012,14 @@ async function getPlayableQueuedAssets(
   deferredExpensive: boolean;
 }> {
   const warmOnly = (options.warmOnly ?? []).filter((asset) => !poolQueueAssets.some((entry) => entry.id === asset.id));
+  const reprobe = (options.reprobe ?? []).filter(
+    (asset) => !poolQueueAssets.some((entry) => entry.id === asset.id) && !warmOnly.some((entry) => entry.id === asset.id)
+  );
   const queueAssets = [...warmOnly, ...poolQueueAssets];
-  const isWarmOnly = (index: number) => index < warmOnly.length;
+  const reprobeStart = queueAssets.length;
+  queueAssets.push(...reprobe);
+  const isReprobe = (index: number) => index >= reprobeStart;
+  const isWarmOnly = (index: number) => index < warmOnly.length || isReprobe(index);
   const playableQueue: AssetRecord[] = [];
   let prefetchedAsset: AssetRecord | null = null;
   let prefetchStatus: "" | "ready" | "failed" = "";
@@ -4975,7 +5029,7 @@ async function getPlayableQueuedAssets(
   // under rc.3, where the same item failed three times and stayed at zero. Every item the scan actually
   // probed is recorded with its own outcome (packages/core/src/asset-probe-quarantine.ts).
   const probeOutcomes: QueueProbeOutcome<AssetRecord>[] = [];
-  const scannedSourceIds = new Set(queueAssets.map((asset) => asset.sourceId));
+  const scannedSourceIds = new Set(queueAssets.slice(0, reprobeStart).map((asset) => asset.sourceId));
   let deferredExpensive = false;
 
   // Cap awaited expensive (remote) resolves per cycle (v1.5.13), with the budget forced to 0 by
@@ -4997,6 +5051,18 @@ async function getPlayableQueuedAssets(
     const asset = queueAssets[index]!;
     const cached = cachedEntries[index];
     const action = actions[index];
+
+    // A trial with a fresh cached result is reported whether or not something counted it already: the result
+    // is the evidence it was looking for, and an unreported trial would be due again on every cycle.
+    if (isReprobe(index) && cached && (action === "use-cache" || action === "skip-failed")) {
+      takeUncountedProbeOutcome(cached);
+      probeOutcomes.push(
+        action === "use-cache"
+          ? { asset, outcome: "ok", error: "" }
+          : { asset, outcome: "failed", error: cached.error, pendingDownload: cached.pendingDownload }
+      );
+      continue;
+    }
 
     if (action === "use-cache") {
       // Counted once: here only when a background resolve finished after its cycle moved on.
@@ -5027,21 +5093,22 @@ async function getPlayableQueuedAssets(
     if (action === "defer") {
       // Expensive remote resolve beyond this cycle's budget. Leave the cache state untouched so
       // the asset is retried on a future cycle; do not block this cycle on it.
-      deferredExpensive = true;
+      // A trial that waits is not coverage waiting: it never asks for an immediate cycle.
+      deferredExpensive = deferredExpensive || !isReprobe(index);
       continue;
     }
 
     if (expensiveFlags[index] && queueResolvesInFlight.has(asset.id)) {
       // A previous cycle's abandoned resolve for this asset is still running in the background
       // and will write the probe cache itself — do not start a duplicate.
-      deferredExpensive = true;
+      deferredExpensive = deferredExpensive || !isReprobe(index);
       continue;
     }
 
     if (expensiveFlags[index] && !isPlayoutProcessRunning()) {
       // Coverage dropped after the plan was made (the process died earlier in this cycle).
       // Starting a new ~60-120s resolve now would block the restart path — defer instead.
-      deferredExpensive = true;
+      deferredExpensive = deferredExpensive || !isReprobe(index);
       continue;
     }
 
@@ -5096,12 +5163,13 @@ async function getPlayableQueuedAssets(
     }
   }
 
+  const reprobeIds = new Set(reprobe.map((asset) => asset.id));
   return {
     playableQueue,
     prefetchedAsset,
     prefetchStatus,
     prefetchError,
-    probeOutcomes,
+    probeOutcomes: probeOutcomes.map((probed) => (reprobeIds.has(probed.asset.id) ? { ...probed, reprobe: true } : probed)),
     scannedSourceIds,
     deferredExpensive
   };
@@ -5675,6 +5743,9 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   });
 }
 
+/** Processes the stop deadline gave up on; their late exit is ignored (process-exit-guard.ts). */
+const abandonedPlayoutProcesses = new WeakSet<ChildProcess>();
+
 async function stopPlayoutProcess(reason = ""): Promise<void> {
   plannedStopReason = reason;
   const currentProcess = playoutProcess;
@@ -5763,6 +5834,13 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
         reason,
         pid: currentProcess.pid ?? 0
       });
+      abandonedPlayoutProcesses.add(currentProcess);
+      // Its late exit is ignored now (M95), so the reason and intent set for this stop are cleared here,
+      // where that exit used to clear them; left set, the replacement's first crash would read as planned.
+      if (playoutProcess === currentProcess) {
+        plannedStopReason = "";
+        asRunStopIntent = "";
+      }
       finalize();
     }, PLAYOUT_STOP_DEADLINE_MS);
 
@@ -6441,6 +6519,18 @@ async function startOrSwitchPlayout(args: {
   });
 
   child.on("exit", (code, signal) => {
+    // A late exit of a process the stop deadline gave up on must not touch the state its
+    // replacement owns now: the handle, the planned-stop reason, the retry marker, the runtime row
+    // (M95, W7). Its as-run row is closed by watchAsRunEnd, which is bound to this child.
+    if (isStaleProcessExit({ current: playoutProcess, exiting: child, abandoned: abandonedPlayoutProcesses.has(child) })) {
+      logRuntimeEvent("playout.process.exit_ignored", {
+        reason: "superseded",
+        exitCode: code ?? "",
+        exitSignal: signal ?? "",
+        pid: child.pid ?? 0
+      });
+      return;
+    }
     // Keep the reason string, not just the boolean: a `planned: true` exit used to be
     // indistinguishable between "a watchdog/switch deliberately killed it" and "ffmpeg reached EOF
     // cleanly", which made three consecutive mid-asset stops on the DUT undiagnosable from the log.
@@ -6828,6 +6918,8 @@ const probeOutageLog = new ProbeOutageLogLimiter();
 // Breaker outcomes whose write failed, for the next write (source-breaker-outcomes.ts).
 const breakerOutcomeCarry = createBreakerOutcomeCarry();
 const probeOutageCheckFailedLog = new ProbeOutageLogLimiter();
+// When a check last called the channel's own network out; holds back the quarantine trials (M95).
+let networkOutageSeenAtMs = 0;
 
 // A broken check counts everything, as before M82, and must say so: its verdict reads "no outage", which
 // is also what a reachable output gives, so without this line an outage would be counted against the
@@ -6878,6 +6970,9 @@ async function dropNetworkOutageOutcomes<T extends QueueProbeOutcome<AssetRecord
     if (verdict.checkFailed) {
       logNetworkOutageCheckFailed(verdict.evidence);
       return probeOutcomes;
+    }
+    if (verdict.outage) {
+      networkOutageSeenAtMs = Date.now();
     }
     const { counted, uncounted } = withoutNetworkOutageOutcomes(probeOutcomes, verdict.outage);
     for (const { probed, reason } of uncounted) {
@@ -7896,7 +7991,9 @@ async function runPlayoutCycle(): Promise<void> {
     await getPlayableQueuedAssets(rawQueueAssets, {
       expensiveBudget: prefetchBudget,
       // Under the same conditions as the pool's queue: never ahead of a fallback or the standby slate.
-      warmOnly: poolQueueScanned ? planScheduledInsertWarm({ state, currentScheduleItem, selection, selectionTakesPosition }) : []
+      warmOnly: poolQueueScanned ? planScheduledInsertWarm({ state, currentScheduleItem, selection, selectionTakesPosition }) : [],
+      // Only with something on air: a trial never stands between a boundary and the next start.
+      reprobe: isPlayoutProcessRunning() ? selectQuarantineReprobesOf(state) : []
     });
   const queueItems = buildRuntimeQueueItems({
     state,
@@ -7933,7 +8030,8 @@ async function runPlayoutCycle(): Promise<void> {
         playbackProbeFailures: probed.asset.playbackProbeFailures,
         playbackProbeError: probed.asset.playbackProbeError,
         playbackProbedAt: probed.asset.playbackProbedAt
-      }
+      },
+      reprobe: probed.reprobe
     })),
     new Date().toISOString()
   );
@@ -7942,6 +8040,13 @@ async function runPlayoutCycle(): Promise<void> {
   }
   for (const crossed of probePlan.crossed) {
     logRuntimeEvent("playout.asset.quarantined", crossed);
+  }
+  for (const probed of probeOutcomes.filter((entry) => entry.reprobe)) {
+    logRuntimeEvent(probed.outcome === "ok" ? "playout.asset.reprobe.cleared" : "playout.asset.reprobe.failed", {
+      assetId: probed.asset.id,
+      sourceId: probed.asset.sourceId,
+      error: probed.error.slice(0, 300)
+    });
   }
   // Keyed by SOURCE, not by asset. Keying an incident by asset id is forbidden for a reason recorded on
   // playout.ffmpeg.exit: it turns one recurring fault into a list that grows with the library.
@@ -10147,6 +10252,9 @@ function buildWorkerCycleSteps(): CycleStep[] {
   return [
     // Disk self-protection runs before the syncs so a failing external integration — Twitch down, a
     // source erroring — can never stand between a filling disk and the one mechanism that frees it.
+    // First, so the monitors below already know on the first cycle which of their incidents a
+    // previous process left open (M95).
+    { name: "state-incident-rearm", run: rearmStateIncidentsOnce },
     { name: "disk-watermark", run: enforceDiskWatermark },
     // The observation-only sibling: OS/database volume pressure cannot be evicted away, only
     // reported, and the report must not wait behind a wedged sync either.

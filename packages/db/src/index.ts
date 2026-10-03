@@ -1784,6 +1784,95 @@ function decryptManagedConfig(value: string): ManagedConfigRecord | null {
   }
 }
 
+/**
+ * Whether one stored ciphertext opens with the current key, without raising anything: "empty" for
+ * no value or a value that is not a v1 ciphertext (the readers treat both as "not set"), otherwise
+ * "ok" or "failed".
+ */
+function trialDecrypt(value: string): "empty" | "ok" | "failed" {
+  const [version, ivText, authTagText, payloadText] = (value || "").split(":");
+  if (version !== "v1" || !ivText || !authTagText || !payloadText) {
+    return "empty";
+  }
+
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", getEncryptionKey(), Buffer.from(ivText, "base64url"));
+    decipher.setAuthTag(Buffer.from(authTagText, "base64url"));
+    decipher.update(Buffer.from(payloadText, "base64url"));
+    decipher.final();
+    return "ok";
+  } catch {
+    return "failed";
+  }
+}
+
+/** Every column that holds a ciphertext written by encryptManagedConfig or encryptSecretString. */
+const ENCRYPTED_COLUMNS: ReadonlyArray<{ table: string; column: string }> = [
+  { table: "managed_config", column: "encrypted_payload" },
+  { table: "managed_secrets", column: "encrypted_value" },
+  { table: "stream_destinations", column: "encrypted_stream_key" },
+  { table: "overlay_video_sources", column: "encrypted_url" },
+  { table: "overlay_video_sources", column: "encrypted_publish_key" },
+  { table: "users", column: "two_factor_secret" }
+];
+
+export type SecretKeyMismatchCheck = {
+  /** "none": no open incident, nothing read. "open": a value still fails, the incident stays. */
+  outcome: "none" | "open" | "resolved";
+  checked: number;
+  failed: number;
+};
+
+/**
+ * Closes `secrets.key-mismatch` at a boot where every stored secret decrypts (M95, H5).
+ *
+ * The incident was only ever raised, so after the operator restored the APP_SECRET (or re-entered
+ * every value) it stayed open and critical for good. This re-measures the condition instead of
+ * trusting a flag: each ciphertext in every encrypted column is opened with the current key, and
+ * only when none fails, and this process has not seen a failure either, is the incident resolved.
+ * With no open incident nothing is read.
+ */
+export async function resolveSecretKeyMismatchWhenSecretsDecrypt(): Promise<SecretKeyMismatchCheck> {
+  await ensureDatabase();
+  const client = await getPool().connect();
+  let checked = 0;
+  let failed = 0;
+  try {
+    const open = await client.query<{ id: string }>(
+      "SELECT id FROM incidents WHERE fingerprint = 'secrets.key-mismatch' AND status = 'open' LIMIT 1"
+    );
+    if (open.rows.length === 0) {
+      return { outcome: "none", checked, failed };
+    }
+
+    for (const { table, column } of ENCRYPTED_COLUMNS) {
+      const result = await client.query<{ value: string | null }>(
+        `SELECT ${column} AS value FROM ${table} WHERE COALESCE(${column}, '') <> ''`
+      );
+      for (const row of result.rows) {
+        const verdict = trialDecrypt(row.value ?? "");
+        if (verdict === "ok") {
+          checked += 1;
+        } else if (verdict === "failed") {
+          failed += 1;
+        }
+      }
+    }
+  } finally {
+    client.release();
+  }
+
+  if (failed > 0 || hasSecretDecryptionFailed()) {
+    return { outcome: "open", checked, failed };
+  }
+
+  await resolveIncident(
+    "secrets.key-mismatch",
+    `Every stored secret (${String(checked)}) decrypts with the current APP_SECRET again; closed at worker start.`
+  );
+  return { outcome: "resolved", checked, failed };
+}
+
 function defaultState(): AppState {
   return {
     initialized: false,
