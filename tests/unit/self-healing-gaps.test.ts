@@ -94,6 +94,10 @@ describe("W7: a late exit of an abandoned ffmpeg", () => {
     const deadline = worker.slice(worker.indexOf('logRuntimeEvent("playout.stop.deadline_exceeded"'), worker.indexOf("}, PLAYOUT_STOP_DEADLINE_MS);"));
     expect(deadline.indexOf("abandonedPlayoutProcesses.add(currentProcess);")).toBeGreaterThan(0);
     expect(deadline.indexOf("abandonedPlayoutProcesses.add(currentProcess);")).toBeLessThan(deadline.indexOf("finalize();"));
+    // The late exit no longer clears the stop's reason, so the deadline does (review finding).
+    const clears = deadline.indexOf('plannedStopReason = "";\n        asRunStopIntent = "";');
+    expect(clears).toBeGreaterThan(deadline.indexOf("if (playoutProcess === currentProcess) {"));
+    expect(clears).toBeLessThan(deadline.indexOf("finalize();"));
   });
 
   // Checked for the same pattern: the uplink keeps no single module-level process. Each process has its
@@ -200,6 +204,14 @@ describe("H9: quarantined items get one trial a day (owner Q1)", () => {
   it("is wired into the queue scan only with something on air", () => {
     expect(worker).toContain("reprobe: isPlayoutProcessRunning() ? selectQuarantineReprobesOf(state) : []");
     expect(worker).toContain("reprobe: probed.reprobe");
+    const scan = worker.slice(worker.indexOf("async function getPlayableQueuedAssets("), worker.indexOf("\nfunction buildAssetQueueSubtitle("));
+    // After the pool's items, so the queue takes the expensive budget first.
+    expect(scan).toContain("const reprobeStart = queueAssets.length;\n  queueAssets.push(...reprobe);");
+    // Never the queue, the prefetched item or its status: every such place asks isWarmOnly, which covers trials.
+    expect(scan).toContain("const isWarmOnly = (index: number) => index < warmOnly.length || isReprobe(index);");
+    // A waiting trial never asks for an immediate cycle.
+    expect(scan.match(/deferredExpensive = deferredExpensive \|\| !isReprobe\(index\);/g)).toHaveLength(3);
+    expect(scan).not.toMatch(/^\s*deferredExpensive = true;\n\s*continue;/m);
     const of = worker.slice(worker.indexOf("function selectQuarantineReprobesOf("), worker.indexOf("// The insert checks (pool interval and cuepoint)"));
     expect(of).toContain("new Set([...gate.heldSourceIds, ...gate.trialSourceIds])");
     expect(of).toContain("networkOutageSeenAtMs");

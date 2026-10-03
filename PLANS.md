@@ -680,6 +680,14 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   `tests/integration/self-healing-incidents.test.ts`: the built worker against PostgreSQL 16 closes all three
   seeded incidents on its first cycle (fails with the step removed), and the key-mismatch incident stays open
   while one stored secret is sealed under another key.
+- **Review (fresh subagent).** All four items met. Fixed: the stop deadline now clears the stop's planned
+  reason and as-run intent itself, since the abandoned process's late exit no longer does (left set, the
+  replacement's first crash would have read as planned); the docs name the trigger watermark as the media
+  volume's close point after a restart; the trial wiring of the queue scan is pinned. Left as is: with the
+  one expensive resolve per cycle unused by the queue, a trial takes it and that cycle waits for one remote
+  resolve (bounded by its timeout and abandoned when the playout process dies, as for the queue); a step
+  whose secret scan keeps throwing reports `worker.step.failed.state-incident-rearm` every cycle like any
+  failing step; a failed trial of a Twitch archive still downloading counts as that day's trial.
 - **Not measured.** W7 with a real hung ffmpeg (static and decision tests only); H9 against real YouTube
   and Twitch sources (DUT check above).
 

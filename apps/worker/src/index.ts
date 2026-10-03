@@ -5015,8 +5015,9 @@ async function getPlayableQueuedAssets(
   const reprobe = (options.reprobe ?? []).filter(
     (asset) => !poolQueueAssets.some((entry) => entry.id === asset.id) && !warmOnly.some((entry) => entry.id === asset.id)
   );
-  const queueAssets = [...warmOnly, ...poolQueueAssets, ...reprobe];
-  const reprobeStart = warmOnly.length + poolQueueAssets.length;
+  const queueAssets = [...warmOnly, ...poolQueueAssets];
+  const reprobeStart = queueAssets.length;
+  queueAssets.push(...reprobe);
   const isReprobe = (index: number) => index >= reprobeStart;
   const isWarmOnly = (index: number) => index < warmOnly.length || isReprobe(index);
   const playableQueue: AssetRecord[] = [];
@@ -5051,10 +5052,21 @@ async function getPlayableQueuedAssets(
     const cached = cachedEntries[index];
     const action = actions[index];
 
+    // A trial with a fresh cached result is reported whether or not something counted it already: the result
+    // is the evidence it was looking for, and an unreported trial would be due again on every cycle.
+    if (isReprobe(index) && cached && (action === "use-cache" || action === "skip-failed")) {
+      takeUncountedProbeOutcome(cached);
+      probeOutcomes.push(
+        action === "use-cache"
+          ? { asset, outcome: "ok", error: "" }
+          : { asset, outcome: "failed", error: cached.error, pendingDownload: cached.pendingDownload }
+      );
+      continue;
+    }
+
     if (action === "use-cache") {
-      // Counted once: here only when a background resolve finished after its cycle moved on. A trial is
-      // reported either way: a fresh clean probe is the evidence it was looking for.
-      if (takeUncountedProbeOutcome(cached) || isReprobe(index)) {
+      // Counted once: here only when a background resolve finished after its cycle moved on.
+      if (takeUncountedProbeOutcome(cached)) {
         probeOutcomes.push({ asset, outcome: "ok", error: "" });
       }
       if (!isWarmOnly(index)) {
@@ -5067,7 +5079,7 @@ async function getPlayableQueuedAssets(
 
     if (action === "skip-failed") {
       if (cached) {
-        if (takeUncountedProbeOutcome(cached) || isReprobe(index)) {
+        if (takeUncountedProbeOutcome(cached)) {
           probeOutcomes.push({ asset, outcome: "failed", error: cached.error, pendingDownload: cached.pendingDownload });
         }
         if (!prefetchError && !isWarmOnly(index)) {
@@ -5823,6 +5835,12 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
         pid: currentProcess.pid ?? 0
       });
       abandonedPlayoutProcesses.add(currentProcess);
+      // Its late exit is ignored now (M95), so the reason and intent set for this stop are cleared here,
+      // where that exit used to clear them; left set, the replacement's first crash would read as planned.
+      if (playoutProcess === currentProcess) {
+        plannedStopReason = "";
+        asRunStopIntent = "";
+      }
       finalize();
     }, PLAYOUT_STOP_DEADLINE_MS);
 

@@ -774,7 +774,8 @@ queue or fallback tier still references is never touched.
   the trigger or both fall back to defaults), `STREAM247_DISK_WATERMARK_ENABLED=0` to disable
 - after a worker restart (since M95) the first cycle reads which of `disk.watermark.evicted`,
   `disk.watermark.exhausted` and `system.volume.low` are still open, measures again and closes them
-  when free space is back above the recovery mark; before M95 they stayed open until resolved by
+  when free space is back (above the trigger watermark for the media volume, above the recovery mark
+  for the system volume); before M95 they stayed open until resolved by
   hand. The same first cycle closes `secrets.key-mismatch` when every stored secret decrypts with the
   current `APP_SECRET` (after it was put back, or every secret was entered again). The log line
   `incident.state_flags.rearmed` says what it found
