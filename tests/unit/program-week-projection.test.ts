@@ -186,6 +186,32 @@ describe("U5: the reason a block repeats, with numbers", () => {
   });
 });
 
+describe("U5: repeat reasons by pool shape", () => {
+  it("a one-source pool whose videos do not fill the block twice says so, not 'alternates'", () => {
+    const [monday] = buildMaterializedProgrammingWeek({
+      startDate: MONDAY,
+      blocks: [block({ id: "evening", dayOfWeek: 1, startMinuteOfDay: 20 * 60, durationMinutes: 75 })],
+      pools: [pool],
+      assets: [asset(1, 30 * 60), asset(2, 30 * 60)]
+    });
+    expect(monday?.blocks[0]?.repeatReason).toBe(
+      "1 h of video for a 1 h 15 min block: its first videos play again before it ends. Add videos to Abendprogramm."
+    );
+  });
+
+  it("a block on air with nothing to play adds no filled minutes", () => {
+    const [monday] = buildMaterializedProgrammingWeek({
+      startDate: MONDAY,
+      blocks: [block({ id: "noon", dayOfWeek: 1, startMinuteOfDay: 12 * 60, durationMinutes: 120 })],
+      pools: [pool],
+      assets: [],
+      nowMinuteOfDay: 13 * 60
+    });
+    expect(monday?.blocks[0]?.fillStatus).toBe("empty");
+    expect(monday?.totalProjectedMinutes).toBe(0);
+  });
+});
+
 describe("M93 follow-up: a weekly block cut by a dated block projects only its air time", () => {
   it("weekly 18-22 under a dated 20-21 airs 3 h, and the item after the cut starts at 21:00", () => {
     const [monday] = buildMaterializedProgrammingWeek({

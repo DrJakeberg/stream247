@@ -3389,8 +3389,10 @@ function materializePoolWindow(args: {
       repeatReason = `${formatScheduleHours(Math.max(1, Math.round(poolVideoSeconds / 60)))} of video for a ${blockLabel} block: plays ≈ ${Math.round(
         plays
       )} times. Add videos to ${poolName}.`;
-    } else {
+    } else if ((args.pool?.sourceIds.length ?? 0) > 1) {
       repeatReason = `${poolName} alternates between its sources, and one of them runs out of videos first and repeats. Add videos to that source.`;
+    } else {
+      repeatReason = `${formatScheduleHours(Math.max(1, Math.round(poolVideoSeconds / 60)))} of video for a ${blockLabel} block: its first videos play again before it ends. Add videos to ${poolName}.`;
     }
   }
   const timeLabel = airWindows
@@ -3507,12 +3509,13 @@ export function buildMaterializedProgrammingWeek(args: {
       poolStates.set(pool.id, result.endState);
     }
     const dayOffset = entry.dayIndex * MINUTES_PER_DAY;
-    // The part of a block on air now that already ran counts as filled.
-    const airedSpans = onAir
-      ? getScheduleOccurrenceAirWindows(entry.occurrence)
-          .map((window) => ({ start: window.start, end: Math.min(window.end, (now as number) - dayOffset) }))
-          .filter((span) => span.end > span.start)
-      : [];
+    // The part of a block on air now that already ran counts as filled, unless the block has nothing to play.
+    const airedSpans =
+      onAir && result.block.fillStatus !== "empty"
+        ? getScheduleOccurrenceAirWindows(entry.occurrence)
+            .map((window) => ({ start: window.start, end: Math.min(window.end, (now as number) - dayOffset) }))
+            .filter((span) => span.end > span.start)
+        : [];
     results.set(entry, {
       block: { ...result.block, aired },
       spans: [...airedSpans, ...result.spans].map((span) => ({ start: span.start + dayOffset, end: span.end + dayOffset }))

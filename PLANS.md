@@ -780,6 +780,11 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   title; the design baseline masks the first-title line (one line, ellipsis). Re-recorded with
   `scripts/design-baseline.sh --update`, web from its standalone build on the host with the dev stack's
   environment (images cannot be built in the cloud).
+- **Review (fresh subagent).** All items met, no test weakened. Fixed: a one-source pool's repeat reason
+  said "alternates between its sources"; an empty block on air counted its elapsed time as filled;
+  `docs/architecture.md` still said the previews start every block from the stored position. Left: the
+  dated block of the same pool (above); the 5 000-item cap stops a 24 h block of clips of a few seconds
+  early; the block on air starts its next item now, not when the running item ends (order is right).
 - **Not built.** The Twitch VOD cache cooldown (M94's finding) is not known to the week view; the Day lens
   still counts minutes (*1440m scheduled*) and keeps its internal words (U6's Day-lens rework is not in this
   row).
