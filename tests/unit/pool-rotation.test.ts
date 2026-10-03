@@ -329,7 +329,7 @@ describe("pool rotation wiring", () => {
     // (selectionTakesPoolPosition in playout-boundary.ts, with the M74 hand-over of a running insert).
     const flatWorker = workerSource.replace(/\s+/g, " ");
     expect(flatWorker).toContain(
-      "const selectionTakesPosition = selectionTakesPoolPosition({ selectionReasonCode: selection.reasonCode, selectedAssetId: selection.asset?.id ?? \"\", runtimeCurrentAssetId: state.playout.currentAssetId, runtimeReasonCode: state.playout.selectionReasonCode });"
+      "const selectionTakesPosition = !selectionIsOpenRetry && selectionTakesPoolPosition({ selectionReasonCode: selection.reasonCode, selectedAssetId: selection.asset?.id ?? \"\", runtimeCurrentAssetId: state.playout.currentAssetId, runtimeReasonCode: state.playout.selectionReasonCode });"
     );
     expect(flatWorker).toContain("currentStartsPool: selectionTakesPosition");
     const matchWrite = workerSource.indexOf("await updatePoolCursor(currentScheduleItem.poolId, selection.asset.id, {");
@@ -348,7 +348,11 @@ describe("pool rotation wiring", () => {
     expect(insertWrite).toBeGreaterThan(-1);
     expect(workerSource.slice(insertWrite, insertWrite + 120)).toContain("resetItemsSinceInsert: true");
     expect(workerSource.slice(insertWrite, insertWrite + 120)).not.toContain("sourceId");
-    expect(workerSource.match(/await updatePoolCursor\(/g)?.length).toBe(2);
+    // The third write: a scheduled insert skipped once (M94, owner Q6) resets the counter like a started
+    // one, and leaves the rotation alone too.
+    const skipWrite = workerSource.indexOf("await updatePoolCursor(poolId, null, { resetItemsSinceInsert: true });");
+    expect(skipWrite).toBeGreaterThan(-1);
+    expect(workerSource.match(/await updatePoolCursor\(/g)?.length).toBe(3);
   });
 
   it("walks every core preview through the rotation", () => {

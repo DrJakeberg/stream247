@@ -2940,6 +2940,19 @@ export function normalizeCuepointOffsetsSeconds(offsets: number[], maxDurationMi
     .slice(0, 24);
 }
 
+/**
+ * The item a block's cuepoints play: the block's own cuepoint asset, else the pool's insert asset, whatever
+ * the pool's insert cadence is (M94, R3 W5). The worker always fell back to the pool's insert asset; the
+ * week view did so only while `insertEveryItems > 0`, so a pool with the cadence at 0 showed no cuepoint
+ * inserts for a block that aired them. Worker, live view and preview all take it from here.
+ */
+export function resolveBlockCuepointAssetId(
+  block: { cuepointAssetId?: string } | null | undefined,
+  pool: { insertAssetId?: string } | null | undefined
+): string {
+  return block?.cuepointAssetId || pool?.insertAssetId || "";
+}
+
 export function parseCuepointOffsetsString(value: string, maxDurationMinutes = 0): number[] {
   const offsets = value
     .split(/[\s,;]+/)
@@ -3073,21 +3086,23 @@ function materializePoolWindow(args: {
     args.assets.some(
       (asset) => args.pool?.sourceIds.includes(asset.sourceId) && !heldSourceIds.includes(asset.sourceId) && isEligible(asset)
     );
+  // Like the worker's two insert checks since M94: not an item that is quarantined or whose source the
+  // breaker holds.
+  const isInsertPlayable = (asset: MaterializedAssetRecord) =>
+    asset.status === "ready" &&
+    asset.includeInProgramming !== false &&
+    !isAssetProbeQuarantined(asset) &&
+    !(args.sourceGate?.heldSourceIds ?? []).includes(asset.sourceId);
   const insertAsset =
     args.pool?.insertAssetId && args.pool.insertEveryItems > 0
-      ? args.assets.find(
-          (asset) => asset.id === args.pool?.insertAssetId && asset.status === "ready" && asset.includeInProgramming !== false
-        ) ?? null
+      ? args.assets.find((asset) => asset.id === args.pool?.insertAssetId && isInsertPlayable(asset)) ?? null
       : null;
   const cuepointOffsetsSeconds = normalizeCuepointOffsetsSeconds(args.block.cuepointOffsetsSeconds ?? [], args.block.durationMinutes);
-  const cuepointAsset =
-    args.block.cuepointAssetId && cuepointOffsetsSeconds.length > 0
-      ? args.assets.find(
-          (asset) => asset.id === args.block.cuepointAssetId && asset.status === "ready" && asset.includeInProgramming !== false
-        ) ?? null
-      : cuepointOffsetsSeconds.length > 0
-        ? insertAsset
-        : null;
+  // The worker's rule (resolveBlockCuepointAssetId).
+  const cuepointAssetId = cuepointOffsetsSeconds.length > 0 ? resolveBlockCuepointAssetId(args.block, args.pool) : "";
+  const cuepointAsset = cuepointAssetId
+    ? args.assets.find((asset) => asset.id === cuepointAssetId && isInsertPlayable(asset)) ?? null
+    : null;
   const notes: string[] = [];
 
   if (!args.pool) {

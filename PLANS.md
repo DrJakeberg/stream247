@@ -29,7 +29,7 @@ How this file works:
 | M91 Honest First Run | UX + Data | Next | Complete | A fresh install starts empty, readiness counts only what can air, and plain HTTP is explained | I1 (decided 5.1 Q5): an empty DB bootstraps with no pool, no schedule block and no URL-less source (unit test on `createInitialSeedState`); existing installs keep their rows (integration test); readiness: a pool is ready only when a block uses it and it has a ready asset, the schedule only when the coming week has no unplayable block (`tests/unit/onboarding*.test.ts`). I2 (decided 5.1 Q6): over `http:` on a host other than `localhost`/`127.0.0.1`, `/setup` and `/login` show the two ways out; render test. I6: component test: the URL field is prefilled with the request origin and the zone field with the browser zone. I7: render test of the password warning under the field plus, per decided 5.1 Q8, a change-password form under Admin → Settings → Security that requires the current password (API test: wrong current password refused, right one changes it) and a one-line container command for a reset documented in `docs/operations.md` (integration test: the reset entry point run against a test database sets a new password and sign-in with it succeeds); no e-mail reset. I8: render test: the login hint has no line clamp and, without Twitch app credentials, contains "Twitch app credentials" and the link to `/setup` step 3 | `packages/db` seed, `apps/web`, tests, baselines, `docs/getting-started.md` | low: only `isDatabaseEmpty` installs change | revert the commit |
 | M92 Getting Started A Stranger Can Follow | Docs + Ops | Next | Complete | The guide leads a stranger from an empty host to air without a gap | I4: `docs/getting-started.md` gets "Get the files" (clone a release tag, or download `docker-compose.yml` and `docker/mediamtx.yml`), the link `https://dev.twitch.tv/console/apps` (also in wizard step 3) and a numbered stream-key step; `grep -c "dev.twitch.tv/console" docs/getting-started.md` ≥ 1. I3: unit test that the four compose image defaults equal the newest non-rc `## X.Y.Z` heading in `CHANGELOG.md`, so a release commit that forgets them fails. I5: the same one-or-two-accounts sentence in wizard and guide (decided 5.1 Q9). `pnpm test:fresh-compose` green | `docs/`, `apps/web/app/setup`, `tests/unit/`, `README.md` | low | revert the commit |
 | M93 Dated And One-Off Schedule Blocks | Feature | Next | Complete | "The next 10 days at 20:00 this playlist" and "once on 10 Oct" can be saved on a 24/7 grid, and air, previews, `/channel` and Twitch agree | R1 row A (decided 5.1 Q1, Q2): `valid_from`/`valid_until` in baseline, ALTER, migration, manifest, mapper, writers and blueprints; filter in `buildScheduleOccurrences`; dated layer ranks first in `findCurrentScheduleOccurrence`; `applyScheduleLayers` with `airWindows`; conflicts per layer; ended rows listed as ended; form field *Runs*; "Single day" renamed to "One weekday, every week". Tests: a 10-day run has day 10 and not day 11; a once-block airs once; a carry-over past `valid_until` still ends; weekly 18-22 + dated 20-21 gives three windows with one key; a cuepoint is not re-fired; the 24/7 grid + dated 20:00 block saves (today `["grid","special"]`); schema-manifest and DB round-trip tests | `packages/core`, `packages/db`, `apps/web`, `apps/worker`, tests, baselines, `docs/` | medium: touches the one function every schedule consumer uses; additive columns | revert the commit; old images ignore the columns |
-| M94 Inserts From Remote Sources Air | Bug | Next | Planned | A YouTube or Twitch insert airs, or is skipped once with an incident, never retried forever | W1: the due insert is warmed in the queue scan; a failed or bridged insert counts as consumed and raises an incident naming it (owner Q6); both insert checks apply quarantine and breaker. W5: one shared "cuepoint asset of a block" helper used by worker and preview; test: `insertEveryItems: 0` with a pool insert asset gives the same cuepoint count in both. W6: an item that failed to open is retried once; `failed` treated like an empty current item in the Move next and insert checks. R3's W1 probe becomes a test | `apps/worker`, `packages/core`, tests | low–medium: crash-loop interplay | revert the commit |
+| M94 Inserts From Remote Sources Air | Bug | Next | Complete | A YouTube or Twitch insert airs, or is skipped once with an incident, never retried forever | W1: the due insert is warmed in the queue scan; a failed or bridged insert counts as consumed and raises an incident naming it (owner Q6); both insert checks apply quarantine and breaker. W5: one shared "cuepoint asset of a block" helper used by worker and preview; test: `insertEveryItems: 0` with a pool insert asset gives the same cuepoint count in both. W6: an item that failed to open is retried once; `failed` treated like an empty current item in the Move next and insert checks. R3's W1 probe becomes a test | `apps/worker`, `packages/core`, tests | low–medium: crash-loop interplay | revert the commit |
 | M95 Self-Healing Fills The Gaps | Reliability | Next | Planned | No stale incident, no orphan encoder, no permanently lost item | H5: disk and system-volume flags re-armed from open incidents on the first cycle; `secrets.key-mismatch` resolved at a boot where every secret decrypts; tests. W7: the playout exit handler returns when the exiting child is not current (static test as R3's); the uplink handler checked for the same pattern. H9: one re-probe per quarantined item per 24 h, one per source per cycle, only with the breaker closed and no outage verdict (owner Q1); test. U18: `scripts/soak-monitor.sh` counts uplink and relay restarts; shell test or `bash -n` plus a fixture run | `apps/worker`, `scripts/`, tests, `docs/operations.md` | low | revert the commit |
 | M96 Local File Durations | Data | Next | Planned | Local-library assets carry their real length, so planning numbers are right | U4: `ffprobe` duration at scan time, bounded timeout, cached by size + mtime; unit test on a generated 2-minute file → `durationSeconds` within 1 s of 120; an unchanged file is not probed again (spy); Day lens shows "Unique library: 6m" for three such files | `apps/worker`, `packages/db`, tests | medium: a large first scan is slower, so probing is incremental | revert the commit; stored durations are harmless to old images |
 | M97 Week View Tells The Truth | UX | Next | Planned | The week view shows what will play, with dates, overnight blocks once, and why a block repeats | U5: each pool's rotation carried across blocks in time order through the worker's rotation function (shared, not copied); dates on day headers; hours, not minutes; an overnight block shown once with "→ 01:00 Sun"; repeat reason with numbers. U6: confirmation before "Replace existing schedule blocks"; "Edit block" and "Add block" on the week view. Tests in `program-week-projection`: three items, two blocks, the second block starts with item 2, not item 1; a 24 h block reads "24 h"; a block with 6 min of video in 24 h carries the reason "plays ≈ 240 times"; an overnight block appears on one day only. e2e: "Replace existing schedule blocks" opens a confirmation and Cancel leaves the blocks unchanged | `packages/core`, `apps/web`, tests, baselines | medium: preview must not drift from the worker, so one shared function | revert the commit |
@@ -224,6 +224,24 @@ deployed; the release that ships them records the results.
   ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
   SELECT (SELECT COUNT(*) FROM schema_migrations WHERE id = '20261003_001_schedule_block_dates'),
          (SELECT COUNT(*) FROM schedule_blocks WHERE valid_from <> '' OR valid_until <> '');
+  SQL
+  ```
+
+- M94, on the deployed candidate, with a YouTube item as a block's cuepoint item (Program → Schedule, a
+  block of the coming evening with one cuepoint about 20 minutes in; delete it afterwards). Passes when,
+  after the block, the as-run log has a row of the cuepoint item with `queue_kind` `insert` that aired
+  longer than 10 s, or (if YouTube refused it) the audit trail has one `playout.insert.skipped` row
+  naming it and the as-run log has no second attempt of it in that block. Both were stubbed in the
+  cloud, where YouTube is not reachable.
+
+  ```sh
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT 'aired', started_at, title, aired_seconds FROM as_run_log WHERE queue_kind = 'insert'
+    AND started_at > to_char(now() - interval '6 hours', 'YYYY-MM-DD"T"HH24:MI:SS')
+  UNION ALL
+  SELECT 'skipped', created_at, message, 0 FROM audit_events WHERE type = 'playout.insert.skipped'
+    AND created_at > to_char(now() - interval '6 hours', 'YYYY-MM-DD"T"HH24:MI:SS')
+  ORDER BY 2;
   SQL
   ```
 
@@ -568,3 +586,44 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   are not in the snapshots, so nothing was re-recorded.
 - **Not built.** R1's inline takeover notice in the form (1.3 step 8) and the "for N days" helper: not in
   this row's acceptance.
+
+### M94 Inserts From Remote Sources Air
+
+- **W1, warm.** The queue scan takes the due scheduled insert ahead of the pool's next items, with their
+  expensive-resolve budget, as a warm-only item: its probe is cached and counted (quarantine, breaker), but
+  it never becomes the queue, the prefetched item or its status. Due means the pool's interval insert once
+  it is the item after the one on air (`isPoolIntervalInsertDueNext`), and a cuepoint item while a
+  cuepoint is due or comes within the probe cache's lifetime of five minutes (`getCuepointWarmAsset`).
+  Only under the conditions the pool's queue is scanned (`poolQueueScanned`).
+- **W1, skip once (owner Q6).** A scheduled insert that the boundary bridges (cold remote resolve with
+  nothing on air) or that fails to prepare is used up as if it had started: the pool's counter is reset,
+  the cuepoint is fired (`decideScheduledInsertSkip`; the cycle's snapshot carries it to the cycle-end
+  write). Incident `playout.insert.skipped` (warning, event, closed by playout health) and audit row
+  of the same name, both naming the insert. A start or switch failure of ffmpeg for a scheduled insert
+  skips it the same way (review finding), so no path leaves it due for good. The bridge itself is
+  unchanged, so the fallback covers one cycle.
+- **W1, gate.** Both insert checks, and the warm step, refuse an item that is quarantined, in its Twitch
+  cache cooldown, or from a source the breaker holds open (`automaticItemBlockedPredicate`); a half-open
+  source's item may be its trial, as in the pool. The week view applies the same rule to its insert items.
+- **W5.** `resolveBlockCuepointAssetId` in core (block's item, else the pool's insert item, any cadence)
+  is used by the worker, the week view and the live view's cuepoint summary.
+- **W6.** An immediate input-open failure owes one retry (`input-open-retry.ts`, kept in memory for ten
+  minutes): the next cycle starts the same item again ahead of Move next and the inserts, with its
+  original reason code, so the pool's position does not move. When the channel is dark and the item is
+  remote, the existing bridge covers the resolve and the retry follows it. The retry's own failure is
+  final and does not add to the crash-loop count, so the guard trips no sooner than before (three
+  different items); every later failure of the same item counts again, so a pool of one that keeps
+  failing still trips it (review finding: first cut left them uncounted for ten minutes). The retry does
+  not take the pool's position again. `failed` with nothing running frees the slot for Move next and both insert checks
+  (`isCurrentItemSlotFree`).
+- **Tests.** `tests/unit/inserts-from-remote-sources.test.ts` (R3's W1 and W6 probes as tests; W5's
+  worker-versus-week count fails on main: 0 against 2). Four source pins changed with the code and keep
+  their assertions: Move next's slot condition, the pool cursor writes (now three, the third pinned), the
+  cuepoint call with the gate, and the queue's reason codes, now read from the named condition.
+- **Review (fresh subagent).** Found the uncounted repeat failures, the start failure, a double count
+  of the position after a bridge and the bridge's error named as the insert's; all fixed with tests.
+  Left as is: an owed retry is dropped without a log line when a reconnect slate or standby takes that
+  cycle; the week view does not know the Twitch cache cooldown; the worker wiring is pinned by source
+  text, the decisions are run.
+- **Not measured.** A real YouTube or Twitch insert on air (DUT check above).
+

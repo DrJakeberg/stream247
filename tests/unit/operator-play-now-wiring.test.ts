@@ -44,8 +44,12 @@ describe("selection without the restart-plus-desired-asset branch", () => {
   });
 
   it("starts a queued Move next at once only when the running item was skipped", () => {
+    // Since M94 an item that failed (nothing running) frees the slot like an empty current item (R3 W6).
     expect(choose).toContain(
-      '(state.playout.currentAssetId === "" || (state.playout.restartRequestedAt !== "" && state.playout.currentAssetId === skippedAssetId) || state.playout.status === "standby")'
+      '(currentSlotFree || (state.playout.restartRequestedAt !== "" && state.playout.currentAssetId === skippedAssetId) || state.playout.status === "standby")'
+    );
+    expect(choose).toContain(
+      "const currentSlotFree = isCurrentItemSlotFree({ currentAssetId: state.playout.currentAssetId, status: state.playout.status, processRunning: isPlayoutProcessRunning() });"
     );
   });
 
@@ -151,7 +155,8 @@ describe("the playout cycle", () => {
       expect(cycle).toContain(`reason: ${reason}`);
     }
     // Both start paths that clear the insert after a failed start.
-    expect(cycle.match(/reason: "start-failed"/g)?.length).toBe(2);
+    // (Since M94 the same two paths also skip a scheduled insert with reason "start-failed".)
+    expect(cycle.match(/recordDroppedInsert\(\{ state, reason: "start-failed"/g)?.length).toBe(2);
     const record = flat(functionBody("recordDroppedInsert"));
     expect(record).toContain('logRuntimeEvent("playout.insert.dropped", { assetId, reason: args.reason, selectionReasonCode: args.selectionReasonCode');
     expect(record).toContain('await appendAuditEvent( "playout.insert.dropped",');
@@ -209,7 +214,9 @@ describe("the cycle's end", () => {
   });
 
   it("warms the pool's next items while an operator item is on air, without moving the position", () => {
-    const queue = between(flatCycle, "const rawQueueAssets = prioritizeManualNextAsset(", "manualNextQueueAsset );");
+    // Since M94 the condition is named (poolQueueScanned), so the due insert is warmed under the same one.
+    const queue = between(flatCycle, "const poolQueueScanned = Boolean(", "manualNextQueueAsset );");
+    expect(queue).toContain("const rawQueueAssets = prioritizeManualNextAsset( currentScheduleItem?.poolId && poolQueueScanned ? getPoolPlaybackQueue(");
     for (const reasonCode of ["scheduled_match", "scheduled_insert", "graceful_handoff", "manual_next", "operator_insert", "operator_override"]) {
       expect(queue).toContain(`selection.reasonCode === "${reasonCode}"`);
     }
