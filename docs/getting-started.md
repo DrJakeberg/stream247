@@ -13,25 +13,56 @@ Twitch sync), a **playout** (renders the programme and the on-air scene into an 
 You need: a Linux host with Docker, a public hostname with HTTPS (Twitch OAuth refuses plain HTTP
 on the public internet), and a Twitch account that will **operate** the channel.
 
-## 1. The two Twitch accounts — decide this first
+## 1. Get the files
 
-Most installations run with **two** accounts, and Stream247 names them by role everywhere:
+The stack needs two files from the repository, `docker-compose.yml` and `docker/mediamtx.yml` (the
+relay's configuration), in a directory that becomes the install: the compose file creates `data/` next
+to itself and keeps the database, the media and the generated app secret there. Take both from a
+release tag, the newest one on <https://github.com/DrJakeberg/stream247/releases> that is not marked
+*Pre-release*: a release's compose file starts exactly that release's images, while the files on `main`
+may be ahead of every published image. Either clone the tag:
+
+```bash
+git clone --depth 1 --branch vX.Y.Z https://github.com/DrJakeberg/stream247.git
+cd stream247
+```
+
+or download only what the stack reads, keeping the `docker/` folder:
+
+```bash
+mkdir -p stream247/docker && cd stream247
+TAG=vX.Y.Z
+curl -fsSL -o docker-compose.yml "https://raw.githubusercontent.com/DrJakeberg/stream247/$TAG/docker-compose.yml"
+curl -fsSL -o docker/mediamtx.yml "https://raw.githubusercontent.com/DrJakeberg/stream247/$TAG/docker/mediamtx.yml"
+curl -fsSL -o .env.production.example "https://raw.githubusercontent.com/DrJakeberg/stream247/$TAG/.env.production.example"
+```
+
+Replace `vX.Y.Z` with the release's tag. The third download is only needed if you want a `.env`
+(section 4). Every later command on this page runs in that directory.
+
+## 2. The two Twitch accounts — decide this first
+
+One Twitch account can be both the broadcast channel and the bot account, but two are recommended: a
+separate bot account keeps chat and moderation off the channel's own login.
+
+Stream247 names the two roles the same way everywhere:
 
 - the **broadcast channel** — the channel viewers watch; its stream key receives the video;
 - the **bot account** — a moderator on that channel, connected to Stream247 for chat, emote-only
   automation, follow alerts and owner sign-in.
 
 Chat and moderation work with the bot account alone. Title, category, schedule and sub, cheer and
-channel-points alerts need the broadcast channel's own account (the optional **channel owner
-connection**, section 5). Do not run the app as the broadcast channel to "make it simpler" — you would
-hand the channel's own credentials to an always-on service. When you check whether the stream is
-live, check the broadcast channel, never the bot account's channel. See `docs/twitch-setup.md`,
+channel-points alerts need the broadcast channel's own account: with two accounts through the optional
+**channel owner connection** (section 6), with one account through the bot connection itself, which then
+holds the channel's own login for chat, moderation and owner sign-in as well. When you check whether the
+stream is live, check the broadcast channel, never the bot account's channel. See `docs/twitch-setup.md`,
 *Two Accounts, Named By Their Role*.
 
-## 2. Twitch application
+## 3. Twitch application
 
-In the Twitch developer console create an application. Three redirect URLs must match your public
-base URL **exactly** (scheme, host, no trailing path differences):
+In the Twitch developer console, <https://dev.twitch.tv/console/apps>, register an application with the
+client type *Confidential*: Stream247 needs its client secret. Three redirect URLs must match your
+public base URL **exactly** (scheme, host, no trailing path differences):
 
 - `https://<your-host>/api/integrations/twitch/callback` — bot account connection
 - `https://<your-host>/api/auth/twitch/callback` — team sign-in with Twitch
@@ -44,7 +75,7 @@ Note the Client ID and Client Secret. The full list of URLs is in `docs/twitch-s
 **Trap:** `APP_URL` in `.env` and these redirect URLs disagreeing is the most common first-run
 failure. Twitch says "redirect mismatch"; nothing in Stream247 can fix that for you.
 
-## 3. Environment — optional, but decide before the first start
+## 4. Environment — optional, but decide before the first start
 
 The stack boots without a `.env`: the app secret is generated on first boot and persisted at
 `data/media/.stream247-app-secret` (owner-only file), the bundled PostgreSQL configures itself, and
@@ -58,7 +89,7 @@ Two things to know on that path:
 - Compose prints `The "TRAEFIK_HOST" variable is not set. Defaulting to a blank string.` (and the
   same for `TRAEFIK_ACME_EMAIL`) on every command. Without a Traefik in front — the `proxy` profile,
   or your own one reading the container labels — nothing reads either value and the warning is
-  harmless; with the profile, see section 4.
+  harmless; with the profile, see section 5.
 - The compose file needs Docker Compose 2.24 or newer (`docker compose version`), with or without a
   `.env`: older releases cannot read a file that marks its `.env` as optional and stop before
   starting anything.
@@ -95,7 +126,7 @@ both example files are refused in production.
 **Trap:** `pnpm release:preflight` rejects untouched example values, quoted-empty secrets and
 placeholder hosts such as `stream247.example.com`. Replace them; do not quote-empty them.
 
-## 4. Start
+## 5. Start
 
 ```bash
 docker compose --profile proxy up -d
@@ -158,7 +189,7 @@ standby, reconnect and live-bridge texts, every chat bot reply, and the public p
   too; `docs/operations.md`, *What Viewers Read*, lists them.
 - The admin interface stays English.
 
-## 5. Sign in and connect
+## 6. Sign in and connect
 
 If not still signed in, sign in as the owner. Open `Admin → Settings → Twitch accounts` (also the
 "Twitch accounts" step in `/setup`):
@@ -167,17 +198,36 @@ If not still signed in, sign in as the owner. Open `Admin → Settings → Twitc
 2. **Bot account login** — optional; when set, only that account can be connected as bot.
 3. **Connect bot account** — Twitch shows which account is signing in; switch to the bot account if
    it shows another. With a bot account login set (step 2), or once a bot is connected, Stream247 refuses
-   any other account here, the broadcast channel included.
+   any other account here, the broadcast channel included. For one account (section 2), leave the bot
+   account login empty and connect the broadcast channel here as the very first bot: that first connect
+   is accepted, and the install runs as a single account.
    The bot account is also a sign-in: anyone who can log in to Twitch as it gets the owner role here,
    so treat it like the owner password (Twitch 2FA on, never shared).
 4. **Connect as `<broadcast channel>`** — optional, for title, category, schedule and sub, cheer and
    channel-points alerts. Click it while signed in to Twitch as the broadcast channel.
 
 Readiness appears on the same page and at `/api/system/readiness`. `broadcastReady` stays `false` until
-a destination has a stream key and one asset is ready (sections 6 and 7); the Twitch connection is a
+a destination has a stream key and one asset is ready (sections 7 and 8); the Twitch connection is a
 separate `hasTwitchConnection` field.
 
-## 6. Media
+## 7. Stream key
+
+Without a stream key nothing goes on air. The key belongs to the **broadcast channel**, never to the bot
+account:
+
+1. Sign in to Twitch as the broadcast channel and open the Creator Dashboard: *Settings → Stream*.
+2. Copy the *Primary Stream key*. It is a password for your channel: never paste it into chat, a
+   screenshot or an issue.
+3. In Stream247 open `Live → Status → Output destinations`, open *Change this destination* under
+   **Primary Twitch Output**, paste the key into *Managed stream key* and save. The RTMP URL is already
+   `rtmp://live.twitch.tv/app`. The key is stored encrypted and never shown again; the list only says
+   whether one is present.
+4. Check the readiness checklist on `Live → Status`: its *Live destination* line turns ready.
+
+`TWITCH_STREAM_KEY` in `.env` (section 4) does the same from the environment; a key saved in the form
+is used ahead of it.
+
+## 8. Media
 
 Three ways in, all end up as library assets the worker scans within a few minutes:
 
@@ -190,7 +240,7 @@ Twitch VODs are downloaded to a local cache before airing. A download that outli
 is abandoned and the replay plays from Twitch directly for that airing; see `docs/operations.md`,
 *Remote VOD reaches its end without EOF*.
 
-## 7. Programme
+## 9. Programme
 
 `Program → Pools` groups sources for round-robin selection: a pool with several sources takes the next
 item from each source in turn, in the order the pool lists them, and each source plays its own items
@@ -201,7 +251,7 @@ after the skipped item;
 one across midnight, is the shape that exercises everything. `Studio → Scene` is the on-air picture;
 every control there carries an (i) that says what it does.
 
-## 8. Know it is running
+## 10. Know it is running
 
 - `Live → Status`: readiness, destinations, incidents with their age.
 - `/api/health` answers when the web app is up. `/api/system/readiness` always answers 200 — read
@@ -210,7 +260,7 @@ every control there carries an (i) that says what it does.
 - Incidents close themselves once their area has been healthy for a while; a count that rises and
   does not fall again is the signal.
 
-## 9. Upgrades and rollback
+## 11. Upgrades and rollback
 
 Production pins exact `v*` image tags. Upgrade by changing the three `STREAM247_*_IMAGE` tags and
 redeploying; roll back by putting the previous tags back. Take a PostgreSQL backup before every

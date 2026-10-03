@@ -50,7 +50,8 @@ vi.mock("../../apps/web/node_modules/react", async (importOriginal) => {
 const page = vi.hoisted(() => ({
   state: null as unknown,
   requestHeaders: new Headers(),
-  twitchBlocker: "credentials" as "credentials" | "app-url" | null
+  twitchBlocker: "credentials" as "credentials" | "app-url" | null,
+  user: null as unknown
 }));
 
 vi.mock("../../apps/web/node_modules/next/headers", () => ({
@@ -76,7 +77,7 @@ vi.mock("@/lib/server/state", async (importOriginal) => {
 });
 
 vi.mock("@/lib/server/auth", () => ({
-  getAuthenticatedUser: async () => null
+  getAuthenticatedUser: async () => page.user
 }));
 
 vi.mock("@/lib/server/twitch", () => ({
@@ -87,6 +88,11 @@ vi.mock("@/lib/server/twitch", () => ({
 
 vi.mock("@/lib/server/twitch-accounts-panel", () => ({
   buildTwitchAccountsPanelProps: async () => ({ props: {} })
+}));
+
+// The accounts panel has its own tests (twitch-account-texts); step 4 is rendered here for its intro only.
+vi.mock("@/components/twitch-accounts-panel", () => ({
+  TwitchAccountsPanel: () => null
 }));
 
 import LoginPage from "../../apps/web/app/login/page";
@@ -141,6 +147,7 @@ function mountWithEffects<P>(component: (props: P) => unknown, props: P): string
 beforeEach(() => {
   vi.stubEnv("NODE_ENV", "production");
   page.twitchBlocker = "credentials";
+  page.user = null;
 });
 
 afterEach(() => {
@@ -301,5 +308,31 @@ describe("I8: the Twitch sign-in hint is read to the end (M91)", () => {
     // Same specificity as the clamp, so it has to come after it to win.
     expect(liftRule).toBeGreaterThan(clampRule);
     expect(css.slice(liftRule).split("}")[0]).not.toContain("line-clamp");
+  });
+});
+
+// M92 (I4, I5): the two wizard steps a stranger reads next to docs/getting-started.md.
+describe("setup steps 3 and 4 say what the guide says (M92)", () => {
+  async function renderStep(step: string): Promise<string> {
+    page.state = initializedState();
+    page.user = { id: "owner", email: "owner@example.com", role: "owner" };
+    requestFrom("localhost:3000", "http");
+    return renderToStaticMarkup((await SetupPage({ searchParams: Promise.resolve({ step }) })) as never);
+  }
+
+  it("step 3 links the Twitch developer console in a new tab", async () => {
+    const html = await renderStep("twitch-app");
+    expect(html).toContain("Twitch app credentials");
+    expect(html).toMatch(
+      /<a href="https:\/\/dev\.twitch\.tv\/console\/apps" rel="noopener noreferrer" target="_blank">Twitch developer console<\/a>/
+    );
+  });
+
+  it("step 4 allows one account and recommends two, in the guide's sentence", async () => {
+    const html = await renderStep("twitch-connect");
+    expect(html).toContain(
+      "One Twitch account can be both the broadcast channel and the bot account, but two are recommended: a separate bot account keeps chat and moderation off the channel&#x27;s own login."
+    );
+    expect(html).not.toContain("which may be the same one");
   });
 });

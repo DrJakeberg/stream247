@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { getAppSecretFilePath } from "../../packages/db/src/app-secret.js";
 import { deriveSetupWizardSteps, type SetupWizardStateSlice } from "../../apps/web/lib/server/setup-wizard.js";
+import { TWITCH_ACCOUNT_COUNT_SENTENCE, TWITCH_DEVELOPER_CONSOLE_URL } from "../../apps/web/lib/twitch-account-texts.js";
 
 // docs/getting-started.md is the page a new operator follows line by line, and a page like that
 // goes stale without anything turning red: a variable is renamed in the example file, a compose
@@ -27,10 +28,10 @@ function section(number: number): string {
   return end === -1 ? rest : rest.slice(0, end);
 }
 
-/** Every `VARIABLE_NAME` in the first column of the section-3 table. */
+/** Every `VARIABLE_NAME` in the first column of the section-4 table. */
 function environmentTableVariables(): string[] {
   const names: string[] = [];
-  for (const line of section(3).split("\n")) {
+  for (const line of section(4).split("\n")) {
     if (!line.startsWith("|") || /^\|\s*-+/.test(line) || line.startsWith("| Variable")) {
       continue;
     }
@@ -107,7 +108,7 @@ describe("getting-started guide", () => {
     const containerPath = getAppSecretFilePath({});
     expect(containerPath).toBe("/app/data/media/.stream247-app-secret");
     expect((compose.match(/^\s*- \.\/data\/media:\/app\/data\/media$/gm) ?? []).length).toBe(4);
-    expect(section(3)).toContain("`data/media/.stream247-app-secret`");
+    expect(section(4)).toContain("`data/media/.stream247-app-secret`");
 
     // And the smoke that proves it looks in the same place.
     const smoke = read("scripts/fresh-compose-bootstrap-smoke.sh");
@@ -141,16 +142,107 @@ describe("getting-started guide", () => {
     const titles = deriveSetupWizardSteps(freshInstall, {}).map((step) => step.title);
     expect(titles).toHaveLength(5);
 
-    const start = section(4);
+    const start = section(5);
     let cursor = 0;
     for (const title of titles) {
       const found = start.indexOf(title, cursor);
-      expect(found, `wizard step "${title}" in section 4, after the previous step`).toBeGreaterThanOrEqual(0);
+      expect(found, `wizard step "${title}" in section 5, after the previous step`).toBeGreaterThanOrEqual(0);
       cursor = found + title.length;
     }
   });
 
   it("is linked from the README", () => {
     expect(read("README.md")).toContain("](docs/getting-started.md)");
+  });
+});
+
+// M92 "Getting started a stranger can follow" (planning/research/ux-install.md I3, I4, I5).
+describe("getting-started guide from an empty host (M92)", () => {
+  /** One paragraph per array entry, with its line breaks folded into single spaces. */
+  const paragraphs = (text: string) => text.split(/\n\s*\n/).map((paragraph) => paragraph.replace(/\s+/g, " ").trim());
+
+  it("I4: gets the files the compose file reads from a release tag, by clone or by download", () => {
+    const getFiles = section(1);
+    expect(getFiles).toMatch(/^1\. Get the files\n/);
+    expect(getFiles).toContain("git clone --depth 1 --branch vX.Y.Z https://github.com/DrJakeberg/stream247.git");
+
+    // Everything the compose file bind-mounts from the repository (not the data/ it creates itself) has
+    // to be downloaded, under the same relative path, from the same tag as the compose file.
+    const repoMounts = [...compose.matchAll(/^\s*- \.\/((?!data\/)[^:]+):/gm)].map((match) => match[1]);
+    expect(repoMounts).toEqual(["docker/mediamtx.yml"]);
+    const downloads = [...getFiles.matchAll(/curl -fsSL -o (\S+) "https:\/\/raw\.githubusercontent\.com\/DrJakeberg\/stream247\/\$TAG\/(\S+)"/g)];
+    const downloaded = new Map(downloads.map((match) => [match[2], match[1]]));
+    for (const file of ["docker-compose.yml", ...repoMounts]) {
+      expect(downloaded.get(file), `${file} downloaded to its own path`).toBe(file);
+      expect(existsSync(path.join(rootDir, file)), file).toBe(true);
+    }
+    for (const file of downloaded.keys()) {
+      expect(existsSync(path.join(rootDir, file)), `downloaded ${file} exists in the repository`).toBe(true);
+    }
+    expect(getFiles).toContain("mkdir -p stream247/docker");
+  });
+
+  it("I4: links the Twitch developer console in the guide and in setup step 3", () => {
+    expect(TWITCH_DEVELOPER_CONSOLE_URL).toBe("https://dev.twitch.tv/console/apps");
+    expect(section(3)).toContain(`<${TWITCH_DEVELOPER_CONSOLE_URL}>`);
+    expect(guide.match(/dev\.twitch\.tv\/console/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
+    const setupPage = read("apps/web/app/setup/page.tsx");
+    const stepThree = setupPage.slice(setupPage.indexOf('active === "twitch-app"'), setupPage.indexOf('active === "twitch-connect"'));
+    expect(stepThree).toContain("href={TWITCH_DEVELOPER_CONSOLE_URL}");
+  });
+
+  it("I4: has a numbered stream-key step that names where the key comes from and where it goes", () => {
+    const streamKey = section(7);
+    expect(streamKey).toMatch(/^7\. Stream key\n/);
+    const steps = [...streamKey.slice(streamKey.indexOf("\n")).matchAll(/^(\d+)\. /gm)].map((match) => Number(match[1]));
+    expect(steps).toEqual([1, 2, 3, 4]);
+    expect(streamKey).toContain("broadcast channel");
+    expect(streamKey).toContain("`Live → Status → Output destinations`");
+    expect(streamKey).toContain("*Managed stream key*");
+    // The names it gives are the ones the screens show.
+    expect(read("apps/web/app/(admin)/dashboard/page.tsx")).toContain('title="Output destinations"');
+    expect(read("apps/web/app/(admin)/dashboard/page.tsx")).toContain("<summary>Change this destination</summary>");
+    expect(read("apps/web/components/destination-settings-form.tsx")).toContain("Managed stream key<InfoTip");
+    expect(read("packages/db/src/index.ts")).toContain('name: "Primary Twitch Output"');
+    expect(read("apps/web/lib/server/onboarding.ts")).toContain('title: "Live destination"');
+    expect(streamKey).toContain("*Live destination*");
+    // And the readiness note in section 6 sends the reader to it, not to media and programme.
+    expect(section(6)).toContain("(sections 7 and 8)");
+  });
+
+  it("I5: says how many Twitch accounts are needed in the same sentence as the wizard", () => {
+    expect(paragraphs(section(2))).toContain(TWITCH_ACCOUNT_COUNT_SENTENCE);
+    expect(read("apps/web/app/setup/page.tsx")).toContain("{TWITCH_ACCOUNT_COUNT_SENTENCE}");
+    // The sentence it replaced told the reader the opposite of what the wizard allows.
+    expect(guide).not.toContain("make it simpler");
+  });
+});
+
+/** The first `## X.Y.Z` heading of a changelog; `## X.Y.Z-rc.N` and other headings do not count. */
+function newestReleaseVersion(changelog: string): string | undefined {
+  return changelog.match(/^## (\d+\.\d+\.\d+)(?= |$)/m)?.[1];
+}
+
+// I3: the compose file a stranger downloads from a release tag has to start that release. The release
+// commit sets the image defaults by hand; this turns a release commit that forgets them red.
+describe("compose image defaults follow the newest release (M92, I3)", () => {
+  it("pins web, worker, playout and uplink to the newest non-rc version in CHANGELOG.md", () => {
+    const newestRelease = newestReleaseVersion(read("CHANGELOG.md"));
+    expect(newestRelease, "a `## X.Y.Z` heading in CHANGELOG.md").toBeTruthy();
+
+    const defaults = [...compose.matchAll(/image: \$\{STREAM247_[A-Z]+_IMAGE:-ghcr\.io\/drjakeberg\/stream247-([a-z]+):v([^}]+)\}/g)].map(
+      (match) => ({ image: match[1], tag: match[2] })
+    );
+    // web, worker, playout, and the uplink running the worker image.
+    expect(defaults.map((entry) => entry.image)).toEqual(["web", "worker", "playout", "worker"]);
+    for (const entry of defaults) {
+      expect(entry.tag, `compose default of stream247-${entry.image}`).toBe(newestRelease);
+    }
+  });
+
+  it("skips release candidates when it looks for the newest release", () => {
+    const sample = "# Changelog\n\n## 2.3.0-rc.1 - 2026-11-01\n\n## 2.2.0 - 2026-10-02\n";
+    expect(newestReleaseVersion(sample)).toBe("2.2.0");
+    expect(newestReleaseVersion("# Changelog\n\n## Unreleased\n\n## 2.0.0-rc.6 - 2026-09-07\n")).toBeUndefined();
   });
 });

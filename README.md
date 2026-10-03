@@ -146,7 +146,12 @@ are not retroactively revoked.
 The one-page path from an empty host to a green channel, with the traps where they bite, is
 [`docs/getting-started.md`](docs/getting-started.md). The steps below are the short form.
 
-1. A `.env` is optional. Without one the app secret is generated and persisted under
+1. Get `docker-compose.yml` and `docker/mediamtx.yml` from the newest release tag on
+   <https://github.com/DrJakeberg/stream247/releases>, either with
+   `git clone --depth 1 --branch vX.Y.Z https://github.com/DrJakeberg/stream247.git` or by downloading the
+   two files into a directory of their own (keeping `docker/`); the guide's section 1 has the commands.
+   A release's compose file starts that release's images.
+2. A `.env` is optional. Without one the app secret is generated and persisted under
    `data/media/.stream247-app-secret`, the bundled database configures itself, and the `/setup`
    wizard asks for the public URL. To pin values yourself, copy `.env.production.example` (not
    `.env.example`, which is the development file and would switch the stack into development mode)
@@ -154,38 +159,41 @@ The one-page path from an empty host to a green channel, with the traps where th
    - `APP_URL`
    - `APP_SECRET` (32+ random characters; the example placeholder is refused)
    - `POSTGRES_PASSWORD` and the same password inside `DATABASE_URL`
-2. The database password is fixed when `data/postgres` is first created. Changing it later leaves
+3. The database password is fixed when `data/postgres` is first created. Changing it later leaves
    every service failing with "password authentication failed" and a bare error page; either keep
    the password or remove `data/postgres` before real data exists.
-3. Optional now, or later in the wizard and `/settings`:
-   - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`
+4. Optional now, or later in the wizard and `/settings`:
+   - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` (from an application registered at
+     <https://dev.twitch.tv/console/apps>)
    - `TWITCH_STREAM_KEY` (later: the primary destination's stream key under `Live → Status`)
    - `CHANNEL_TIMEZONE` (leave unset to let the wizard manage it)
    - `CHANNEL_LANGUAGE` (`en` or `de`, the language viewers are addressed in; leave unset to choose it in
      the wizard or under `Admin → Settings → Channel language`)
-4. Start the stack:
+5. Start the stack:
    ```bash
    docker compose up -d
    ```
-5. Open:
+6. Open:
    - `http://localhost:3000/setup` — from another machine use HTTPS; over plain HTTP the session cookie
      only holds on `localhost`
-6. Create the owner account; that signs you in. The wizard then walks through the public URL,
+7. Create the owner account; that signs you in. The wizard then walks through the public URL,
    Twitch app credentials and the Twitch connection, each step skippable, and ends in a readiness
    checklist that links to wherever something is still missing.
-7. `Live → Status` shows the same readiness afterwards.
-8. Optional during bootstrap:
+8. `Live → Status` shows the same readiness afterwards.
+9. Optional during bootstrap:
    - enter `TWITCH_CLIENT_ID`
    - enter `TWITCH_CLIENT_SECRET`
-9. Or add/update encrypted managed credentials later in:
+10. Or add/update encrypted managed credentials later in:
    - `/settings`
-10. Open `Admin → Settings → Twitch accounts`: set the broadcast channel and connect the bot account (and the channel owner for title, category and schedule sync). See `docs/twitch-setup.md`.
-11. Add media by either:
+11. Open `Admin → Settings → Twitch accounts`: set the broadcast channel and connect the bot account (and the channel owner for title, category and schedule sync). See `docs/twitch-setup.md`.
+12. Paste the broadcast channel's stream key (Twitch Creator Dashboard → Settings → Stream) into the
+    primary destination under `Live → Status → Output destinations`; the guide's section 7 has the steps.
+13. Add media by either:
    - placing files into `data/media`
    - adding direct media URLs
    - adding a YouTube playlist or channel source
    - adding a Twitch VOD or channel source
-12. Build pools and weekly schedule blocks and let the worker ingest assets.
+14. Build pools and weekly schedule blocks and let the worker ingest assets.
 
 For local-development builds instead of GHCR images:
 

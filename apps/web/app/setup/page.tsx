@@ -23,6 +23,7 @@ import {
 import { readAppState } from "@/lib/server/state";
 import { getAbsoluteAppUrl, getTwitchBroadcasterRedirectUri } from "@/lib/server/twitch";
 import { getAuthenticatedUser } from "@/lib/server/auth";
+import { TWITCH_ACCOUNT_COUNT_SENTENCE, TWITCH_DEVELOPER_CONSOLE_URL } from "@/lib/twitch-account-texts";
 
 const STEP_ORDER: SetupWizardStepId[] = ["owner", "instance", "twitch-app", "twitch-connect", "done"];
 
@@ -135,8 +136,11 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
         {active === "twitch-app" ? (
           <Panel title="Twitch app credentials" eyebrow={`Step ${activeIndex + 1}`}>
             <p className="subtle">
-              Register an application in the Twitch developer console with these redirect URLs, then store its
-              credentials here. They are encrypted with the app secret.
+              Register an application in the{" "}
+              <a href={TWITCH_DEVELOPER_CONSOLE_URL} rel="noopener noreferrer" target="_blank">
+                Twitch developer console
+              </a>{" "}
+              with these redirect URLs, then store its credentials here. They are encrypted with the app secret.
             </p>
             <div className="list">
               <div className="item">
@@ -173,9 +177,9 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
         {active === "twitch-connect" ? (
           <Panel title="Twitch accounts" eyebrow={`Step ${activeIndex + 1}`}>
             <p className="subtle">
-              Stream247 works with two Twitch accounts, which may be the same one: the broadcast channel, where the
-              video goes and viewers watch (its stream key goes into the output destination), and the bot account
-              Stream247 signs in as for chat and moderation. Name the broadcast channel, then connect the bot account;
+              {TWITCH_ACCOUNT_COUNT_SENTENCE} The broadcast channel is where the video goes and viewers watch (its
+              stream key goes into the output destination); the bot account is what Stream247 signs in as for chat
+              and moderation. Name the broadcast channel, then connect the bot account;
               the channel&apos;s own account can connect later for title, category and schedule. Twitch sends you to
               Admin → Settings → Twitch accounts when it is done; setup is complete by then, and its last step only
               lists what the go-live checklist still wants.

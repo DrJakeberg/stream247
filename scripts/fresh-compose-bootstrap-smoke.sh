@@ -5,7 +5,7 @@ set -euo pipefail
 #
 #   env pass    every value pinned in an env file — the stack an operator gets from a filled-in
 #               .env. This is the pass this script has always made.
-#   guide pass  the stack docs/getting-started.md section 3 promises: no .env at all, the app
+#   guide pass  the stack docs/getting-started.md section 4 promises: no .env at all, the app
 #               secret generated on first boot, the bundled PostgreSQL on the compose defaults.
 #
 # The guide pass exists because that promise was written down in M52, checked by hand once, and
