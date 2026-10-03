@@ -329,7 +329,7 @@ describe("pool rotation wiring", () => {
     // (selectionTakesPoolPosition in playout-boundary.ts, with the M74 hand-over of a running insert).
     const flatWorker = workerSource.replace(/\s+/g, " ");
     expect(flatWorker).toContain(
-      "const selectionTakesPosition = selectionTakesPoolPosition({ selectionReasonCode: selection.reasonCode, selectedAssetId: selection.asset?.id ?? \"\", runtimeCurrentAssetId: state.playout.currentAssetId, runtimeReasonCode: state.playout.selectionReasonCode });"
+      "const selectionTakesPosition = !selectionIsOpenRetry && selectionTakesPoolPosition({ selectionReasonCode: selection.reasonCode, selectedAssetId: selection.asset?.id ?? \"\", runtimeCurrentAssetId: state.playout.currentAssetId, runtimeReasonCode: state.playout.selectionReasonCode });"
     );
     expect(flatWorker).toContain("currentStartsPool: selectionTakesPosition");
     const matchWrite = workerSource.indexOf("await updatePoolCursor(currentScheduleItem.poolId, selection.asset.id, {");

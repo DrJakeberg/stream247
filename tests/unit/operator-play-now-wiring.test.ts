@@ -155,7 +155,8 @@ describe("the playout cycle", () => {
       expect(cycle).toContain(`reason: ${reason}`);
     }
     // Both start paths that clear the insert after a failed start.
-    expect(cycle.match(/reason: "start-failed"/g)?.length).toBe(2);
+    // (Since M94 the same two paths also skip a scheduled insert with reason "start-failed".)
+    expect(cycle.match(/recordDroppedInsert\(\{ state, reason: "start-failed"/g)?.length).toBe(2);
     const record = flat(functionBody("recordDroppedInsert"));
     expect(record).toContain('logRuntimeEvent("playout.insert.dropped", { assetId, reason: args.reason, selectionReasonCode: args.selectionReasonCode');
     expect(record).toContain('await appendAuditEvent( "playout.insert.dropped",');

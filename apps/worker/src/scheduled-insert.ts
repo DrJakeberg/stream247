@@ -75,7 +75,7 @@ export function decideScheduledInsertSkip(input: ScheduledInsertSkipInput): Sche
   return { resetItemsSinceInsert: false, cuepoint: { cuepointWindowKey: input.runKey, cuepointFiredKeys: fired } };
 }
 
-export type ScheduledInsertSkipReason = "bridged" | "prepare-failed";
+export type ScheduledInsertSkipReason = "bridged" | "prepare-failed" | "start-failed";
 
 /** The incident's message: names the insert and says that the schedule goes on without it. */
 export function describeSkippedInsert(input: {
@@ -88,6 +88,6 @@ export function describeSkippedInsert(input: {
   const why =
     input.reason === "bridged"
       ? "was not ready when it was due (its source needs a remote resolve that had not finished)"
-      : `could not be prepared${input.error ? ` (${input.error.slice(0, 200)})` : ""}`;
+      : `could not be ${input.reason === "start-failed" ? "started" : "prepared"}${input.error ? ` (${input.error.slice(0, 200)})` : ""}`;
   return `${kind} ${input.title} ${why}, so it was skipped once and counted as played. The schedule continues; the next insert is tried as usual.`;
 }

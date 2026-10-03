@@ -7125,6 +7125,14 @@ function planScheduledInsertWarm(args: {
 
 type ScheduledInsertAttempt = { asset: AssetRecord; trigger: ScheduledInsertTrigger; cuepointKey: string };
 
+function scheduledInsertAttemptOf(selection: SelectionResult): ScheduledInsertAttempt | null {
+  return selection.reasonCode === "scheduled_insert" &&
+    selection.asset &&
+    (selection.insertTrigger === "pool-interval" || selection.insertTrigger === "cuepoint")
+    ? { asset: selection.asset, trigger: selection.insertTrigger, cuepointKey: selection.cuepointKey }
+    : null;
+}
+
 /**
  * A scheduled insert that was bridged or could not be prepared is skipped once and counts as played (M94,
  * owner Q6): the pool's counter or the cuepoint is used up as if it had started, and an incident names it.
@@ -7516,10 +7524,9 @@ async function runPlayoutCycle(): Promise<void> {
     const failedAsset = selection.asset;
     const failedReasonCode = selection.reasonCode;
     // A scheduled insert that is bridged or fails here is skipped once (M94, skipScheduledInsert).
-    const scheduledInsertAttempt: ScheduledInsertAttempt | null =
-      selection.reasonCode === "scheduled_insert" && (selection.insertTrigger === "pool-interval" || selection.insertTrigger === "cuepoint")
-        ? { asset: failedAsset, trigger: selection.insertTrigger, cuepointKey: selection.cuepointKey }
-        : null;
+    const scheduledInsertAttempt = scheduledInsertAttemptOf(selection);
+    // Set while the local bridge is resolved: an error then is the bridge's, and the insert was bridged.
+    let bridgingInsert = false;
     try {
       // Reuse the input already resolved by the off-boundary queue prefetch
       // (getPlayableQueuedAssets warms queueProbeCache during prior cycles while the
@@ -7559,6 +7566,7 @@ async function runPlayoutCycle(): Promise<void> {
             fallbackAvailable: Boolean(bridgeAsset)
           })
         ) {
+          bridgingInsert = scheduledInsertAttempt !== null;
           const bridged = await resolveAssetPlaybackInput(bridgeAsset);
           logRuntimeEvent("playout.boundary.fallback_bridge", {
             scheduledAssetId: failedAsset.id,
@@ -7645,7 +7653,11 @@ async function runPlayoutCycle(): Promise<void> {
         return;
       }
       if (scheduledInsertAttempt) {
-        state = await skipScheduledInsert({ state, attempt: scheduledInsertAttempt, reason: "prepare-failed", error: message });
+        state = await skipScheduledInsert(
+          bridgingInsert
+            ? { state, attempt: scheduledInsertAttempt, reason: "bridged" }
+            : { state, attempt: scheduledInsertAttempt, reason: "prepare-failed", error: message }
+        );
       }
       await upsertIncident({
         scope: "playout",
@@ -7826,7 +7838,9 @@ async function runPlayoutCycle(): Promise<void> {
   // on the same source started, or a manual next that runs on -- leaves the position alone, and
   // selectPoolAsset picks from there when it ends; walking on from it would warm and announce an item
   // that is not next. A running item that IS the stored pointer gives the same walk either way.
-  const selectionTakesPosition = selectionTakesPoolPosition({
+  // The retry of an item that failed to open (M94) does not take the position again: the pool already
+  // stored it when the item first started, and after a bridge the runtime names the bridge, not the item.
+  const selectionTakesPosition = !selectionIsOpenRetry && selectionTakesPoolPosition({
     selectionReasonCode: selection.reasonCode,
     selectedAssetId: selection.asset?.id ?? "",
     runtimeCurrentAssetId: state.playout.currentAssetId,
@@ -8076,6 +8090,11 @@ async function runPlayoutCycle(): Promise<void> {
       if (state.playout.insertStatus === "pending") {
         await recordDroppedInsert({ state, reason: "start-failed", selectionReasonCode: selection.reasonCode, error: message });
       }
+      // A scheduled insert that cannot be started is skipped once too, or it would be due again for good.
+      const startedInsert = scheduledInsertAttemptOf(selection);
+      if (startedInsert) {
+        state = await skipScheduledInsert({ state, attempt: startedInsert, reason: "start-failed", error: message });
+      }
       await updatePlayoutRuntime((playout) => ({
         ...playout,
         status: "degraded",
@@ -8152,6 +8171,11 @@ async function runPlayoutCycle(): Promise<void> {
       });
       if (state.playout.insertStatus === "pending") {
         await recordDroppedInsert({ state, reason: "start-failed", selectionReasonCode: selection.reasonCode, error: message });
+      }
+      // A scheduled insert that cannot be started is skipped once too, or it would be due again for good.
+      const startedInsert = scheduledInsertAttemptOf(selection);
+      if (startedInsert) {
+        state = await skipScheduledInsert({ state, attempt: startedInsert, reason: "start-failed", error: message });
       }
       await updatePlayoutRuntime((playout) => ({
         ...playout,

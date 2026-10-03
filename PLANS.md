@@ -599,9 +599,9 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   nothing on air) or that fails to prepare is used up as if it had started: the pool's counter is reset,
   the cuepoint is fired (`decideScheduledInsertSkip`; the cycle's snapshot carries it to the cycle-end
   write). Incident `playout.insert.skipped` (warning, event, closed by playout health) and audit row
-  of the same name, both naming the insert. The bridge itself is unchanged, so the fallback covers one
-  cycle. Not covered: a start failure of ffmpeg itself (`playout.start.failed`) leaves a scheduled
-  insert due, as before; it is not a source failure.
+  of the same name, both naming the insert. A start or switch failure of ffmpeg for a scheduled insert
+  skips it the same way (review finding), so no path leaves it due for good. The bridge itself is
+  unchanged, so the fallback covers one cycle.
 - **W1, gate.** Both insert checks, and the warm step, refuse an item that is quarantined, in its Twitch
   cache cooldown, or from a source the breaker holds open (`automaticItemBlockedPredicate`); a half-open
   source's item may be its trial, as in the pool. The week view applies the same rule to its insert items.
@@ -612,11 +612,18 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   original reason code, so the pool's position does not move. When the channel is dark and the item is
   remote, the existing bridge covers the resolve and the retry follows it. The retry's own failure is
   final and does not add to the crash-loop count, so the guard trips no sooner than before (three
-  different items). `failed` with nothing running frees the slot for Move next and both insert checks
+  different items); every later failure of the same item counts again, so a pool of one that keeps
+  failing still trips it (review finding: first cut left them uncounted for ten minutes). The retry does
+  not take the pool's position again. `failed` with nothing running frees the slot for Move next and both insert checks
   (`isCurrentItemSlotFree`).
 - **Tests.** `tests/unit/inserts-from-remote-sources.test.ts` (R3's W1 and W6 probes as tests; W5's
   worker-versus-week count fails on main: 0 against 2). Four source pins changed with the code and keep
   their assertions: Move next's slot condition, the pool cursor writes (now three, the third pinned), the
   cuepoint call with the gate, and the queue's reason codes, now read from the named condition.
+- **Review (fresh subagent).** Found the uncounted repeat failures, the start failure, a double count
+  of the position after a bridge and the bridge's error named as the insert's; all fixed with tests.
+  Left as is: an owed retry is dropped without a log line when a reconnect slate or standby takes that
+  cycle; the week view does not know the Twitch cache cooldown; the worker wiring is pinned by source
+  text, the decisions are run.
 - **Not measured.** A real YouTube or Twitch insert on air (DUT check above).
 

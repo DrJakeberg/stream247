@@ -539,7 +539,8 @@ pair. To see what happened to one item:
   next cycle with a fresh resolve (since M94): runtime event `playout.input.retry`. If the channel is
   dark meanwhile, the local fallback covers the resolve and the item follows it. A second failure is
   final and the pool moves on. The retry's failure does not count towards crash-loop protection, so
-  three different items that fail still bring it on, and one item failing twice counts once. A queued
+  three different items that fail still bring it on and one item failing twice counts once; every
+  later failure of that item counts again. A queued
   Move next or a due insert waits for the retry, and takes the slot at once when the item failed
   without a retry (before M94 they let one more item pass).
 - Ask yt-dlp directly, in the playout container (the playout process resolves playback, not the
@@ -564,10 +565,11 @@ YouTube or Twitch source:
   is the item after the one on air, a cuepoint's item from five minutes before its cuepoint until it
   airs. Its probe counts towards quarantine and the source breaker like theirs.
 - An insert whose item is quarantined, cooling down (Twitch VOD) or from a source the breaker holds is
-  not picked; it airs again once that ends. The week view counts it the same way.
+  not picked; it airs again once that ends. The week view leaves out a quarantined item or a held
+  source's item the same way (it does not know the Twitch cache cooldown).
 - When the insert is due and still not ready (the local fallback covers the resolve) or cannot be
   prepared, it is skipped once and counts as played: the pool's counter starts again, the cuepoint is
-  fired. The incident *Scheduled insert skipped* (`playout.insert.skipped`, a warning) names the insert
+  fired. The same holds when ffmpeg cannot be started for it. The incident *Scheduled insert skipped* (`playout.insert.skipped`, a warning) names the insert
   and why; the same text is in the audit trail as `playout.insert.skipped`. It closes by itself once
   playout has been healthy for a while. Before M94 a remote insert never aired: it was due again at
   every boundary, and the fallback flashed each time.

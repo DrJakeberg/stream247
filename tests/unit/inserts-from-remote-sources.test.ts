@@ -263,6 +263,9 @@ describe("W1: a bridged or failed insert is skipped once and counts as played (o
     expect(bridged).toContain("skipped once and counted as played");
     const failed = describeSkippedInsert({ title: "Twitch Clip", trigger: "pool-interval", reason: "prepare-failed", error: "HTTP Error 403" });
     expect(failed).toContain("Pool insert Twitch Clip could not be prepared (HTTP Error 403)");
+    expect(describeSkippedInsert({ title: "Sting", trigger: "pool-interval", reason: "start-failed", error: "spawn ENOENT" })).toContain(
+      "Pool insert Sting could not be started (spawn ENOENT)"
+    );
   });
 
   it("is an event incident the playout area closes once it is healthy", () => {
@@ -270,14 +273,18 @@ describe("W1: a bridged or failed insert is skipped once and counts as played (o
   });
 
   it("the boundary skips a scheduled insert it bridges and one that fails to prepare", () => {
-    const boundary = between(workerSource, "const scheduledInsertAttempt: ScheduledInsertAttempt | null =", 'requestImmediatePlayoutCycle("insert-prepare-failed");');
-    expect(boundary.replace(/\s+/g, " ")).toContain(
-      'selection.reasonCode === "scheduled_insert" && (selection.insertTrigger === "pool-interval" || selection.insertTrigger === "cuepoint")'
+    const attemptOf = between(workerSource, "function scheduledInsertAttemptOf(", "\n}\n").replace(/\s+/g, " ");
+    expect(attemptOf).toContain(
+      'selection.reasonCode === "scheduled_insert" && selection.asset && (selection.insertTrigger === "pool-interval" || selection.insertTrigger === "cuepoint")'
     );
+    expect(flat).toContain("const scheduledInsertAttempt = scheduledInsertAttemptOf(selection);");
     expect(flat).toContain('state = await skipScheduledInsert({ state, attempt: scheduledInsertAttempt, reason: "bridged" });');
+    // A failure while the bridge itself is resolved is the bridge's: the insert counts as bridged.
     expect(flat).toContain(
-      'state = await skipScheduledInsert({ state, attempt: scheduledInsertAttempt, reason: "prepare-failed", error: message });'
+      'state = await skipScheduledInsert( bridgingInsert ? { state, attempt: scheduledInsertAttempt, reason: "bridged" } : { state, attempt: scheduledInsertAttempt, reason: "prepare-failed", error: message } );'
     );
+    // Start and switch failures (ffmpeg could not be started) skip it too: it is never due for good.
+    expect(flat.match(/state = await skipScheduledInsert\(\{ state, attempt: startedInsert, reason: "start-failed", error: message \}\);/g)?.length).toBe(2);
     const skip = between(workerSource, "async function skipScheduledInsert(", "\n}\n").replace(/\s+/g, " ");
     expect(skip).toContain('fingerprint: "playout.insert.skipped"');
     expect(skip).toContain('appendAuditEvent("playout.insert.skipped", message)');
@@ -348,6 +355,26 @@ describe("W6: an item that failed to open is tried once more", () => {
     expect(counted).toBe(3);
   });
 
+  it("an item the rotation picks again and that keeps failing counts every time after its retry", () => {
+    // A pool of one: A fails, the retry fails (not counted), then each pick of A fails again. Before the
+    // review fix those went uncounted for ten minutes and the guard never came on.
+    let retry: InputOpenRetryState | null = null;
+    let counted = 0;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (retry && !retry.retried) {
+        expect(decideInputOpenRetry({ ...failedRow, runtimeCurrentAssetId: "A", retry })?.assetId).toBe("A");
+        retry = { ...retry, retried: true };
+      } else if (retry) {
+        expect(decideInputOpenRetry({ ...failedRow, runtimeCurrentAssetId: "A", retry })).toBeNull();
+      }
+      const exit = decideInputOpenRetryAfterExit({ previous: retry, exitedAssetId: "A", immediateOpenFailure: true, nowMs: T });
+      counted += exit.countsTowardCrashLoop ? 1 : 0;
+      retry = exit.next;
+    }
+    // Four failed exits, three counted: the guard's threshold.
+    expect(counted).toBe(3);
+  });
+
   it("is not owed for a failure mid-item, an operator item, a running process or an old failure", () => {
     expect(decideInputOpenRetryAfterExit({ previous: null, exitedAssetId: "B", immediateOpenFailure: false, nowMs: T }).next).toBeNull();
     const owed: InputOpenRetryState = { assetId: "B", retried: false, failedAtMs: T };
@@ -386,6 +413,8 @@ describe("W6: an item that failed to open is tried once more", () => {
     expect(choose.replace(/\s+/g, " ")).toContain("!automaticItemBlockedPredicate(state)(asset)");
     expect(flat).toContain("inputOpenRetry = { ...inputOpenRetry, retried: true, reasonCode: selection.reasonCode };");
     expect(flat).toContain("inputOpenRetry = { ...inputOpenRetry, retried: false, bridgeAssetId: bridged.asset.id };");
+    // The retry does not take the pool's position again (after a bridge the runtime names the bridge).
+    expect(flat).toContain("const selectionTakesPosition = !selectionIsOpenRetry && selectionTakesPoolPosition({");
     expect(flat).toContain(
       "nonFailureExit || ranPastCrashWindow ? 0 : openRetry.countsTowardCrashLoop ? playout.crashCountWindow + 1 : playout.crashCountWindow;"
     );

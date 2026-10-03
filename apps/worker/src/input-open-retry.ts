@@ -9,7 +9,7 @@
  *
  * The crash-loop guard counts failed exits (three within ten minutes). The retry's own failure is not
  * counted, so the retry never brings the guard on sooner than before: three different items that fail
- * still trip it, the same item failing twice counts once. Resuming an item that failed mid-way is M77
+ * still trip it, the same item failing twice counts once, and every failure of it after that counts. Resuming an item that failed mid-way is M77
  * (deferred); this is only an item that never started.
  *
  * No I/O here; the worker keeps the state in memory (a restart forgets it, which costs at most the retry).
@@ -19,6 +19,8 @@ export interface InputOpenRetryState {
   assetId: string;
   // The retry was started; a further failure of the same item is final.
   retried: boolean;
+  // The retry failed too: nothing more is owed, and every further failure counts again.
+  exhausted?: boolean;
   // When the item failed to open.
   failedAtMs: number;
   // The selection that started the item, kept for the retry (the runtime row moves on to a bridge).
@@ -60,7 +62,12 @@ export function decideInputOpenRetryAfterExit(input: InputOpenRetryExitInput): I
     return { next: ownExit ? null : previous, countsTowardCrashLoop: true };
   }
   if (previous?.assetId === input.exitedAssetId && previous.retried) {
-    return { next: { ...previous, bridgeAssetId: "" }, countsTowardCrashLoop: false };
+    // Only the retry's own failure goes uncounted. An item that the rotation picks again and that keeps
+    // failing (a pool of one, say) counts every time after it, so the crash-loop guard still comes on.
+    return {
+      next: { ...previous, bridgeAssetId: "", exhausted: true },
+      countsTowardCrashLoop: previous.exhausted === true
+    };
   }
   return { next: { assetId: input.exitedAssetId, retried: false, failedAtMs: input.nowMs }, countsTowardCrashLoop: true };
 }
