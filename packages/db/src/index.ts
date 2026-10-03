@@ -432,6 +432,9 @@ export type ScheduleBlockRecord = {
   repeatGroupId?: string;
   cuepointAssetId?: string;
   cuepointOffsetsSeconds?: number[];
+  // Dated runs (M93): channel-local dates "YYYY-MM-DD", inclusive; empty = unbounded (every block before M93).
+  validFrom?: string;
+  validUntil?: string;
 };
 
 export type OverlaySettingsRecord = {
@@ -2329,6 +2332,8 @@ function normalizeState(state: AppState): AppState {
           repeatGroupId: block.repeatGroupId ?? "",
           cuepointAssetId: block.cuepointAssetId ?? "",
           cuepointOffsetsSeconds: normalizeCuepointOffsetsSeconds(block.cuepointOffsetsSeconds ?? [], block.durationMinutes),
+          validFrom: block.validFrom ?? "",
+          validUntil: block.validUntil ?? "",
           startMinuteOfDay:
             typeof (block as ScheduleBlockRecord & { startHour?: number }).startMinuteOfDay === "number"
               ? block.startMinuteOfDay
@@ -2694,7 +2699,9 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       repeat_mode TEXT NOT NULL DEFAULT 'single',
       repeat_group_id TEXT NOT NULL DEFAULT '',
       cuepoint_asset_id TEXT NOT NULL DEFAULT '',
-      cuepoint_offsets_seconds TEXT NOT NULL DEFAULT '[]'
+      cuepoint_offsets_seconds TEXT NOT NULL DEFAULT '[]',
+      valid_from TEXT NOT NULL DEFAULT '',
+      valid_until TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS pools (
@@ -3101,6 +3108,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS repeat_group_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS cuepoint_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS cuepoint_offsets_seconds TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS valid_from TEXT NOT NULL DEFAULT '';
+    ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS valid_until TEXT NOT NULL DEFAULT '';
     ALTER TABLE pools ADD COLUMN IF NOT EXISTS insert_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE pools ADD COLUMN IF NOT EXISTS insert_every_items INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE pools ADD COLUMN IF NOT EXISTS items_since_insert INTEGER NOT NULL DEFAULT 0;
@@ -4192,6 +4201,27 @@ if (!schemaMigrations.some((migration) => migration.id === removeNextHoldMigrati
   schemaMigrations.push(removeNextHoldMigration);
 }
 
+/**
+ * Dated and one-off schedule blocks (M93), for installs that already ran the baseline.
+ *
+ * Two dates bound when a block may start; empty means unbounded, so every existing row keeps airing exactly
+ * as before. Word for word the base-schema lines.
+ */
+export const scheduleBlockDatesMigration: MigrationDefinition = {
+  id: "20261003_001_schedule_block_dates",
+  description: "Give schedule blocks an optional first and last date, for dated and one-off runs.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS valid_from TEXT NOT NULL DEFAULT '';
+      ALTER TABLE schedule_blocks ADD COLUMN IF NOT EXISTS valid_until TEXT NOT NULL DEFAULT '';
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === scheduleBlockDatesMigration.id)) {
+  schemaMigrations.push(scheduleBlockDatesMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -4840,9 +4870,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
     await client.query(
       `
         INSERT INTO schedule_blocks (
-          id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id, cuepoint_asset_id, cuepoint_offsets_seconds
+          id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id, cuepoint_asset_id, cuepoint_offsets_seconds, valid_from, valid_until
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       `,
       [
         block.id,
@@ -4858,7 +4888,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         block.repeatMode ?? "single",
         block.repeatGroupId ?? "",
         block.cuepointAssetId ?? "",
-        JSON.stringify(block.cuepointOffsetsSeconds ?? [])
+        JSON.stringify(block.cuepointOffsetsSeconds ?? []),
+        block.validFrom ?? "",
+        block.validUntil ?? ""
       ]
     );
   }
@@ -5426,6 +5458,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     repeat_group_id: string;
     cuepoint_asset_id: string;
     cuepoint_offsets_seconds: string;
+    valid_from: string;
+    valid_until: string;
   }>("SELECT * FROM schedule_blocks ORDER BY day_of_week ASC, start_minute_of_day ASC, start_hour ASC");
   const sourcesResult = await client.query<{
     id: string;
@@ -5782,7 +5816,9 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       repeatMode: row.repeat_mode || "single",
       repeatGroupId: row.repeat_group_id || "",
       cuepointAssetId: row.cuepoint_asset_id || "",
-      cuepointOffsetsSeconds: JSON.parse(row.cuepoint_offsets_seconds || "[]") as number[]
+      cuepointOffsetsSeconds: JSON.parse(row.cuepoint_offsets_seconds || "[]") as number[],
+      validFrom: row.valid_from || "",
+      validUntil: row.valid_until || ""
     })),
     sources: sourcesResult.rows.map((row) => ({
       id: row.id,
@@ -8787,6 +8823,8 @@ async function readScheduleBlockRecords(client: PoolClient): Promise<ScheduleBlo
     repeat_group_id: string;
     cuepoint_asset_id: string;
     cuepoint_offsets_seconds: string;
+    valid_from: string;
+    valid_until: string;
   }>("SELECT * FROM schedule_blocks ORDER BY day_of_week ASC, start_minute_of_day ASC, start_hour ASC");
 
   return result.rows.map((row) => ({
@@ -8803,7 +8841,9 @@ async function readScheduleBlockRecords(client: PoolClient): Promise<ScheduleBlo
     repeatMode: row.repeat_mode || "single",
     repeatGroupId: row.repeat_group_id || "",
     cuepointAssetId: row.cuepoint_asset_id || "",
-    cuepointOffsetsSeconds: JSON.parse(row.cuepoint_offsets_seconds || "[]") as number[]
+    cuepointOffsetsSeconds: JSON.parse(row.cuepoint_offsets_seconds || "[]") as number[],
+    validFrom: row.valid_from || "",
+    validUntil: row.valid_until || ""
   }));
 }
 
@@ -8843,9 +8883,9 @@ async function insertScheduleBlockRows(client: PoolClient, blocks: ScheduleBlock
     await client.query(
       `
         INSERT INTO schedule_blocks (
-          id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id, cuepoint_asset_id, cuepoint_offsets_seconds
+          id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id, cuepoint_asset_id, cuepoint_offsets_seconds, valid_from, valid_until
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       `,
       [
         block.id,
@@ -8861,7 +8901,9 @@ async function insertScheduleBlockRows(client: PoolClient, blocks: ScheduleBlock
         block.repeatMode ?? "single",
         block.repeatGroupId ?? "",
         block.cuepointAssetId ?? "",
-        JSON.stringify(block.cuepointOffsetsSeconds ?? [])
+        JSON.stringify(block.cuepointOffsetsSeconds ?? []),
+        block.validFrom ?? "",
+        block.validUntil ?? ""
       ]
     );
   }
@@ -8875,9 +8917,9 @@ export async function replaceAllScheduleBlocks(blocks: ScheduleBlockRecord[]): P
       await client.query(
         `
           INSERT INTO schedule_blocks (
-            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id, cuepoint_asset_id, cuepoint_offsets_seconds
+            id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, show_id, pool_id, source_name, repeat_mode, repeat_group_id, cuepoint_asset_id, cuepoint_offsets_seconds, valid_from, valid_until
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         `,
         [
           block.id,
@@ -8893,7 +8935,9 @@ export async function replaceAllScheduleBlocks(blocks: ScheduleBlockRecord[]): P
           block.repeatMode ?? "single",
           block.repeatGroupId ?? "",
           block.cuepointAssetId ?? "",
-          JSON.stringify(block.cuepointOffsetsSeconds ?? [])
+          JSON.stringify(block.cuepointOffsetsSeconds ?? []),
+          block.validFrom ?? "",
+          block.validUntil ?? ""
         ]
       );
     }
@@ -8917,7 +8961,9 @@ export async function updateScheduleBlockRecord(block: ScheduleBlockRecord): Pro
             repeat_mode = $11,
             repeat_group_id = $12,
             cuepoint_asset_id = $13,
-            cuepoint_offsets_seconds = $14
+            cuepoint_offsets_seconds = $14,
+            valid_from = $15,
+            valid_until = $16
         WHERE id = $1
       `,
       [
@@ -8934,7 +8980,9 @@ export async function updateScheduleBlockRecord(block: ScheduleBlockRecord): Pro
         block.repeatMode ?? "single",
         block.repeatGroupId ?? "",
         block.cuepointAssetId ?? "",
-        JSON.stringify(block.cuepointOffsetsSeconds ?? [])
+        JSON.stringify(block.cuepointOffsetsSeconds ?? []),
+        block.validFrom ?? "",
+        block.validUntil ?? ""
       ]
     );
   });
@@ -8951,6 +8999,8 @@ export async function updateScheduleRepeatGroupRecords(args: {
   sourceName: string;
   cuepointAssetId?: string;
   cuepointOffsetsSeconds?: number[];
+  validFrom?: string;
+  validUntil?: string;
 }): Promise<void> {
   await withSerializedStateWrite("updateScheduleRepeatGroupRecords", async (client) => {
     await client.query(
@@ -8965,7 +9015,9 @@ export async function updateScheduleRepeatGroupRecords(args: {
             pool_id = $8,
             source_name = $9,
             cuepoint_asset_id = $10,
-            cuepoint_offsets_seconds = $11
+            cuepoint_offsets_seconds = $11,
+            valid_from = $12,
+            valid_until = $13
         WHERE repeat_group_id = $1
       `,
       [
@@ -8979,7 +9031,9 @@ export async function updateScheduleRepeatGroupRecords(args: {
         args.poolId ?? "",
         args.sourceName,
         args.cuepointAssetId ?? "",
-        JSON.stringify(args.cuepointOffsetsSeconds ?? [])
+        JSON.stringify(args.cuepointOffsetsSeconds ?? []),
+        args.validFrom ?? "",
+        args.validUntil ?? ""
       ]
     );
   });

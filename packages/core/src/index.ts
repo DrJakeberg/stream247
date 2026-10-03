@@ -868,6 +868,13 @@ export type ScheduleBlock = {
   repeatGroupId?: string;
   cuepointAssetId?: string;
   cuepointOffsetsSeconds?: number[];
+  /**
+   * Dated runs (M93): local calendar dates `YYYY-MM-DD` in the channel zone, inclusive, that bound the
+   * *start* of an occurrence. Empty or missing means unbounded, which is every block before M93. A block
+   * with either date is "dated" and sits on a layer above the weekly grid (owner decision 5.1 Q1).
+   */
+  validFrom?: string;
+  validUntil?: string;
 };
 
 export type ShowProfile = {
@@ -961,7 +968,20 @@ export type ScheduleOccurrence = {
   repeatGroupId?: string;
   cuepointAssetId?: string;
   cuepointOffsetsSeconds?: number[];
+  /** The block has a date window (M93); it takes over the undated blocks it overlaps. */
+  dated?: boolean;
+  validFrom?: string;
+  validUntil?: string;
+  /**
+   * The minute ranges (relative to `date`, like `effectiveStartMinuteOfDay`) in which this occurrence is
+   * really on air. One window covering the whole occurrence, unless a dated occurrence takes part of it
+   * over: weekly 18-22 under a dated 20-21 has 18-20 and 21-22, keeping its own key and start, so cuepoints
+   * still count from 18:00. Missing means the whole occurrence (callers that build occurrences by hand).
+   */
+  airWindows?: ScheduleAirWindow[];
 };
+
+export type ScheduleAirWindow = { start: number; end: number };
 
 export type ScheduleDaySummary = {
   dayOfWeek: number;
@@ -1011,6 +1031,11 @@ export type MaterializedProgrammingBlock = {
   queuePreview: string[];
   notes: string[];
   items: MaterializedProgrammingItem[];
+  /** M93: the block's date window, and the minutes (relative to the day) it is really on air. */
+  dated?: boolean;
+  validFrom?: string;
+  validUntil?: string;
+  airWindows?: ScheduleAirWindow[];
 };
 
 export type MaterializedProgrammingDay = {
@@ -1028,8 +1053,8 @@ export type MaterializedProgrammingDay = {
 export const SCHEDULE_REPEAT_MODE_OPTIONS: ScheduleRepeatModeDefinition[] = [
   {
     id: "single",
-    label: "Single day",
-    description: "Keep this block on one weekday only."
+    label: "One weekday, every week",
+    description: "Repeat on one weekday, every week."
   },
   {
     id: "daily",
@@ -2967,11 +2992,27 @@ export function getCuepointProgress(args: {
   cuepointOffsetsSeconds: number[];
   firedCuepointKeys: string[];
   elapsedSeconds: number;
+  /**
+   * The block's air windows in seconds from its start (`getScheduleOccurrenceAirWindowSeconds`). A dated
+   * block that takes over part of a weekly one (M93) leaves it two windows; a cuepoint is due only inside
+   * the window on air now. One that fell into the taken-over part is skipped, and one from an earlier window
+   * is not fired again when the weekly block comes back (its fired keys went with the dated block's run).
+   * Missing means one window over the whole block.
+   */
+  airWindowsSeconds?: ScheduleAirWindow[];
 }) {
-  const normalizedOffsets = normalizeCuepointOffsetsSeconds(args.cuepointOffsetsSeconds);
+  const windows = args.airWindowsSeconds;
+  const insideAnyWindow = (offset: number) => !windows || windows.some((window) => offset >= window.start && offset < window.end);
+  const currentWindow = windows?.find((window) => args.elapsedSeconds >= window.start && args.elapsedSeconds < window.end) ?? null;
+  const normalizedOffsets = normalizeCuepointOffsetsSeconds(args.cuepointOffsetsSeconds).filter(insideAnyWindow);
   const fired = new Set(args.firedCuepointKeys);
   const dueOffsetSeconds =
-    normalizedOffsets.find((offset) => offset <= args.elapsedSeconds && !fired.has(buildCuepointKey(args.occurrenceKey, offset))) ?? null;
+    normalizedOffsets.find(
+      (offset) =>
+        offset <= args.elapsedSeconds &&
+        (!windows || (currentWindow !== null && offset >= currentWindow.start)) &&
+        !fired.has(buildCuepointKey(args.occurrenceKey, offset))
+    ) ?? null;
   const nextOffsetSeconds =
     normalizedOffsets.find((offset) => offset > args.elapsedSeconds && !fired.has(buildCuepointKey(args.occurrenceKey, offset))) ?? null;
 
@@ -3221,7 +3262,11 @@ function materializePoolWindow(args: {
     cuepointCount,
     queuePreview,
     notes,
-    items
+    items,
+    dated: Boolean(args.block.dated),
+    validFrom: args.block.validFrom ?? "",
+    validUntil: args.block.validUntil ?? "",
+    airWindows: getScheduleOccurrenceAirWindows(args.block)
   };
 }
 
@@ -3260,10 +3305,16 @@ export function buildMaterializedProgrammingWeek(args: {
       // Only the minutes that fall on this date. A block crossing midnight appears here and as the next
       // day's carry-over; adding its whole length on both days counted 23:00-01:00 twice, so a 24/7 grid
       // read "1500m scheduled" on the two days around such a block.
-      totalScheduledMinutes: occurrences.reduce((total, occurrence) => {
-        const range = getScheduleOccurrenceMinuteRange(occurrence);
-        return total + Math.max(0, Math.min(range.end, MINUTES_PER_DAY) - Math.max(range.start, 0));
-      }, 0),
+      // Counted over the air windows (M93), so a dated block over a 24/7 grid adds no minutes to the day.
+      totalScheduledMinutes: occurrences.reduce(
+        (total, occurrence) =>
+          total +
+          getScheduleOccurrenceAirWindows(occurrence).reduce(
+            (sum, window) => sum + Math.max(0, Math.min(window.end, MINUTES_PER_DAY) - Math.max(window.start, 0)),
+            0
+          ),
+        0
+      ),
       // The projection starts with the block, so it is cut at the day's edges the same way.
       totalProjectedMinutes: occurrences.reduce((total, occurrence, index) => {
         const start = occurrence.effectiveStartMinuteOfDay;
@@ -3306,7 +3357,12 @@ export function validateScheduleBlock(block: {
   startMinuteOfDay: number;
   durationMinutes: number;
   cuepointOffsetsSeconds?: number[];
-}) {
+  validFrom?: string;
+  validUntil?: string;
+}, options: {
+  /** Today in the channel zone; with it, a date window lying entirely in the past is refused. */
+  today?: string;
+} = {}) {
   if (!block.sourceName.trim() && !(block.poolId ?? "").trim()) {
     return "Pool or source label is required.";
   }
@@ -3340,7 +3396,107 @@ export function validateScheduleBlock(block: {
     return "Cuepoints must be positive second offsets within the block duration.";
   }
 
+  const validFrom = block.validFrom ?? "";
+  const validUntil = block.validUntil ?? "";
+  if ((validFrom && !isScheduleDateString(validFrom)) || (validUntil && !isScheduleDateString(validUntil))) {
+    return "Dates must be calendar dates (YYYY-MM-DD).";
+  }
+
+  if (validFrom && validUntil && validUntil < validFrom) {
+    return "The last date must be on or after the first date.";
+  }
+
+  if (validUntil && options.today && validUntil < options.today) {
+    return "These dates lie entirely in the past.";
+  }
+
+  if (validFrom && validUntil && !scheduleDateWindowHasWeekday(validFrom, validUntil, block.dayOfWeek)) {
+    return "This weekday does not fall between these dates.";
+  }
+
   return null;
+}
+
+/** A local calendar date `YYYY-MM-DD` that exists (2026-02-30 does not). */
+export function isScheduleDateString(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+/** Whether a block has a date window (M93), which puts it on the layer above the weekly grid. */
+export function isScheduleBlockDated(block: { validFrom?: string; validUntil?: string }): boolean {
+  return Boolean(block.validFrom || block.validUntil);
+}
+
+/** Whether a block may start an occurrence on `date`; an undated block may on every date. */
+export function isScheduleBlockActiveOnDate(block: { validFrom?: string; validUntil?: string }, date: string): boolean {
+  return (!block.validFrom || date >= block.validFrom) && (!block.validUntil || date <= block.validUntil);
+}
+
+/** Whether a dated block's last date is before `today`: it airs no more and is listed as ended (owner Q2). */
+export function hasScheduleBlockEnded(block: { validUntil?: string }, today: string): boolean {
+  return Boolean(block.validUntil) && (block.validUntil ?? "") < today;
+}
+
+const scheduleMonthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "10 Oct" for 2026-10-10, without the runtime's locale data, so server and browser print the same. */
+export function formatScheduleDateShort(date: string): string {
+  if (!isScheduleDateString(date)) {
+    return date;
+  }
+  const [, month, day] = date.split("-").map((part) => Number(part));
+  return `${day} ${scheduleMonthLabels[(month ?? 1) - 1]}`;
+}
+
+/** How a block runs (M93), as the editor lists it: "" for every week, else "Once on 10 Oct", "1 Oct to 10 Oct", "Ended 10 Oct". */
+export function describeScheduleBlockRun(
+  block: { validFrom?: string; validUntil?: string },
+  today = ""
+): { label: string; ended: boolean } {
+  const validFrom = block.validFrom ?? "";
+  const validUntil = block.validUntil ?? "";
+  if (!validFrom && !validUntil) {
+    return { label: "", ended: false };
+  }
+  if (today && hasScheduleBlockEnded(block, today)) {
+    return { label: `Ended ${formatScheduleDateShort(validUntil)}`, ended: true };
+  }
+  if (validFrom && validFrom === validUntil) {
+    return { label: `Once on ${formatScheduleDateShort(validFrom)}`, ended: false };
+  }
+  if (validFrom && validUntil) {
+    return { label: `${formatScheduleDateShort(validFrom)} to ${formatScheduleDateShort(validUntil)}`, ended: false };
+  }
+  return validFrom
+    ? { label: `From ${formatScheduleDateShort(validFrom)}`, ended: false }
+    : { label: `Until ${formatScheduleDateShort(validUntil)}`, ended: false };
+}
+
+/** The weekday (0 = Sunday) of a calendar date `YYYY-MM-DD`. */
+export function getScheduleDateDayOfWeek(date: string): number {
+  return getDayOfWeekForDate(date);
+}
+
+/** The weekdays among `days` that occur between two dates, inclusive; all of them for a week or more. */
+export function filterWeekdaysInDateWindow(days: number[], validFrom: string, validUntil: string): number[] {
+  return days.filter((day) => scheduleDateWindowHasWeekday(validFrom, validUntil, day));
+}
+
+function scheduleDateWindowHasWeekday(validFrom: string, validUntil: string, dayOfWeek: number): boolean {
+  for (let offset = 0; offset < 7; offset += 1) {
+    const date = addDaysToDateString(validFrom, offset);
+    if (date > validUntil) {
+      return false;
+    }
+    if (getDayOfWeekForDate(date) === dayOfWeek) {
+      return true;
+    }
+  }
+  return true;
 }
 
 const MINUTES_PER_WEEK = 7 * 24 * 60;
@@ -3357,12 +3513,42 @@ function scheduleBlockWeekRange(block: ScheduleBlock): { start: number; end: num
  * away from a Monday 23:00-01:00 block, and accepted the Tuesday 00:00 block it really runs into.
  */
 function scheduleBlocksOverlap(left: ScheduleBlock, right: ScheduleBlock): boolean {
+  if (!scheduleBlocksShareLayer(left, right)) {
+    return false;
+  }
   const leftRange = scheduleBlockWeekRange(left);
   const rightRange = scheduleBlockWeekRange(right);
   // The line is circular: shift one block a week either way.
   return [-MINUTES_PER_WEEK, 0, MINUTES_PER_WEEK].some(
     (shift) => leftRange.start < rightRange.end + shift && rightRange.start + shift < leftRange.end
   );
+}
+
+/**
+ * Conflicts are per layer (M93, owner decision 5.1 Q1). A dated block over the weekly grid is not a conflict:
+ * it takes that part over and the weekly block continues around it. Two undated blocks share the weekly
+ * layer; two dated blocks share it only when the dates they air on meet (a block crossing midnight also airs
+ * on the day after its last date).
+ */
+function scheduleBlocksShareLayer(left: ScheduleBlock, right: ScheduleBlock): boolean {
+  const leftDated = isScheduleBlockDated(left);
+  if (leftDated !== isScheduleBlockDated(right)) {
+    return false;
+  }
+  if (!leftDated) {
+    return true;
+  }
+  const span = (block: ScheduleBlock) => ({
+    from: block.validFrom || "0000-01-01",
+    until: block.validUntil
+      ? block.startMinuteOfDay + block.durationMinutes > MINUTES_PER_DAY
+        ? addDaysToDateString(block.validUntil, 1)
+        : block.validUntil
+      : "9999-12-31"
+  });
+  const leftSpan = span(left);
+  const rightSpan = span(right);
+  return leftSpan.from <= rightSpan.until && rightSpan.from <= leftSpan.until;
 }
 
 export function findScheduleConflicts(blocks: Array<ScheduleBlock>): string[] {
@@ -3414,10 +3600,14 @@ export function findScheduleConflictsInvolving(blocks: Array<ScheduleBlock>, cha
   return [...conflicts];
 }
 
+/**
+ * The shape of the weekly grid per weekday. Dated blocks (M93) are not part of it: they take over a part of
+ * some dates only, and counting them here put more than 24 hours on a 24/7 day.
+ */
 export function summarizeScheduleWeek(blocks: ScheduleBlock[]): ScheduleDaySummary[] {
   return Array.from({ length: 7 }, (_, dayOfWeek) => {
     const dayBlocks = blocks
-      .filter((block) => block.dayOfWeek === dayOfWeek)
+      .filter((block) => block.dayOfWeek === dayOfWeek && !isScheduleBlockDated(block))
       .slice()
       .sort((left, right) => left.startMinuteOfDay - right.startMinuteOfDay);
 
@@ -3482,7 +3672,10 @@ function toScheduleOccurrence(args: {
     cuepointOffsetsSeconds: normalizeCuepointOffsetsSeconds(
       args.block.cuepointOffsetsSeconds ?? [],
       args.block.durationMinutes
-    )
+    ),
+    dated: isScheduleBlockDated(args.block),
+    validFrom: args.block.validFrom ?? "",
+    validUntil: args.block.validUntil ?? ""
   };
 }
 
@@ -3512,25 +3705,146 @@ export function shiftDateToDayOfWeek(date: string, dayOfWeek: number): string {
   return base.toISOString().slice(0, 10);
 }
 
+/**
+ * Every occurrence covering any part of `date`, with its air windows (M93).
+ *
+ * A dated block occurs only when the date it starts on lies in its window, so a carry-over is kept when the
+ * day before does: a 23:00-01:00 block dated until 10 Oct still runs into 11 Oct, and starts no more. The
+ * occurrences then go through `applyScheduleLayers`, so every consumer (air, previews, Twitch, `/channel`,
+ * the cache keep-rule) sees a weekly block cut around the dated ones and none fully taken over.
+ */
 export function buildScheduleOccurrences(args: {
   date: string;
   blocks: ScheduleBlock[];
 }): ScheduleOccurrence[] {
   const dayOfWeek = getDayOfWeekForDate(args.date);
   const previousDayOfWeek = (dayOfWeek + 6) % 7;
+  const previousDate = addDaysToDateString(args.date, -1);
 
   const sameDay = args.blocks
-    .filter((block) => block.dayOfWeek === dayOfWeek)
+    .filter((block) => block.dayOfWeek === dayOfWeek && isScheduleBlockActiveOnDate(block, args.date))
     .map((block) => toScheduleOccurrence({ block, date: args.date, carriesOverFromPreviousDay: false }));
 
   const carriedOver = args.blocks
     .filter(
       (block) =>
-        block.dayOfWeek === previousDayOfWeek && block.startMinuteOfDay + block.durationMinutes > MINUTES_PER_DAY
+        block.dayOfWeek === previousDayOfWeek &&
+        block.startMinuteOfDay + block.durationMinutes > MINUTES_PER_DAY &&
+        isScheduleBlockActiveOnDate(block, previousDate)
     )
     .map((block) => toScheduleOccurrence({ block, date: args.date, carriesOverFromPreviousDay: true }));
 
-  return [...carriedOver, ...sameDay].sort((a, b) => a.effectiveStartMinuteOfDay - b.effectiveStartMinuteOfDay);
+  const occurrences = [...carriedOver, ...sameDay].sort((a, b) => a.effectiveStartMinuteOfDay - b.effectiveStartMinuteOfDay);
+  return applyScheduleLayers(occurrences, listDatedScheduleRanges(args.date, args.blocks));
+}
+
+/**
+ * The minute ranges, relative to `date`, of the dated occurrences starting the day before, on the day and the
+ * day after. The neighbours count because an undated block crossing midnight meets a dated block of the next
+ * day in this day's list (weekly Mon 22:00-02:00 and a dated Tue 00:30 one).
+ */
+function listDatedScheduleRanges(date: string, blocks: ScheduleBlock[]): ScheduleAirWindow[] {
+  const ranges: ScheduleAirWindow[] = [];
+  for (const dayOffset of [-1, 0, 1]) {
+    const day = dayOffset === 0 ? date : addDaysToDateString(date, dayOffset);
+    const dayOfWeek = getDayOfWeekForDate(day);
+    for (const block of blocks) {
+      if (isScheduleBlockDated(block) && block.dayOfWeek === dayOfWeek && isScheduleBlockActiveOnDate(block, day)) {
+        const start = dayOffset * MINUTES_PER_DAY + block.startMinuteOfDay;
+        ranges.push({ start, end: start + block.durationMinutes });
+      }
+    }
+  }
+  return ranges;
+}
+
+function subtractScheduleRanges(range: ScheduleAirWindow, cuts: ScheduleAirWindow[]): ScheduleAirWindow[] {
+  let windows: ScheduleAirWindow[] = [range];
+  for (const cut of cuts) {
+    windows = windows.flatMap((window) => {
+      if (cut.end <= window.start || cut.start >= window.end) {
+        return [window];
+      }
+      return [
+        ...(cut.start > window.start ? [{ start: window.start, end: cut.start }] : []),
+        ...(cut.end < window.end ? [{ start: cut.end, end: window.end }] : [])
+      ];
+    });
+  }
+  return windows;
+}
+
+/**
+ * The dated layer over the weekly grid (M93, owner decision 5.1 Q1). Each occurrence gets its `airWindows`:
+ * a dated one its whole range, an undated one its range minus the dated ranges, so weekly 18-22 under a
+ * dated 20-21 airs 18-20 and 21-22. The weekly occurrence keeps its key and start minute (cuepoints count
+ * from its start and are remembered by its run key); an undated occurrence that is taken over completely is
+ * left out. `datedRanges` defaults to the dated occurrences in the list; `buildScheduleOccurrences` passes
+ * the neighbouring days' too. Two dated occurrences do not cut each other (a save refuses that overlap).
+ */
+export function applyScheduleLayers(
+  occurrences: ScheduleOccurrence[],
+  datedRanges: ScheduleAirWindow[] = occurrences
+    .filter((occurrence) => occurrence.dated)
+    .map((occurrence) => getScheduleOccurrenceMinuteRange(occurrence))
+): ScheduleOccurrence[] {
+  const layered: ScheduleOccurrence[] = [];
+  for (const occurrence of occurrences) {
+    const range = getScheduleOccurrenceMinuteRange(occurrence);
+    if (occurrence.dated) {
+      layered.push({ ...occurrence, airWindows: [range] });
+      continue;
+    }
+    const airWindows = subtractScheduleRanges(range, datedRanges);
+    if (airWindows.length > 0) {
+      layered.push({ ...occurrence, airWindows });
+    }
+  }
+  return layered;
+}
+
+/** The air windows of an occurrence, relative to its `date`; the whole occurrence when it has none set. */
+export function getScheduleOccurrenceAirWindows(occurrence: ScheduleOccurrence): ScheduleAirWindow[] {
+  return occurrence.airWindows && occurrence.airWindows.length > 0
+    ? occurrence.airWindows
+    : [getScheduleOccurrenceMinuteRange(occurrence)];
+}
+
+/** The air windows in seconds from the block's start, as `getCuepointProgress` reads them. */
+export function getScheduleOccurrenceAirWindowSeconds(occurrence: {
+  effectiveStartMinuteOfDay: number;
+  airWindows?: ScheduleAirWindow[];
+}): ScheduleAirWindow[] | undefined {
+  if (!occurrence.airWindows || occurrence.airWindows.length === 0) {
+    return undefined;
+  }
+  return occurrence.airWindows.map((window) => ({
+    start: (window.start - occurrence.effectiveStartMinuteOfDay) * 60,
+    end: (window.end - occurrence.effectiveStartMinuteOfDay) * 60
+  }));
+}
+
+/**
+ * One entry per air window, for everything that lists times (the next items, the viewer page, the Twitch plan). The
+ * first window keeps the occurrence's key; a later one (the weekly block coming back after a dated one) gets
+ * `<key>@<window start>`, so lists can tell the two apart. `startTime`/`endTime` are the window's;
+ * `startMinuteOfDay`, `effectiveStartMinuteOfDay` and `durationMinutes` stay the block's.
+ */
+export type ScheduleAirSegment = ScheduleOccurrence & { airStartMinute: number; airEndMinute: number };
+
+export function listScheduleAirSegments(occurrences: ScheduleOccurrence[]): ScheduleAirSegment[] {
+  return occurrences
+    .flatMap((occurrence) =>
+      getScheduleOccurrenceAirWindows(occurrence).map((window, index) => ({
+        ...occurrence,
+        key: index === 0 ? occurrence.key : `${occurrence.key}@${window.start}`,
+        startTime: formatMinuteOfDay(((window.start % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY),
+        endTime: formatMinuteOfDay(((window.end % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY),
+        airStartMinute: window.start,
+        airEndMinute: window.end
+      }))
+    )
+    .sort((left, right) => left.airStartMinute - right.airStartMinute);
 }
 
 /**
@@ -3563,8 +3877,7 @@ export function getScheduleOccurrenceMinuteRange(occurrence: ScheduleOccurrence)
 }
 
 export function isScheduleOccurrenceOnAir(occurrence: ScheduleOccurrence, minuteOfDay: number): boolean {
-  const { start, end } = getScheduleOccurrenceMinuteRange(occurrence);
-  return minuteOfDay >= start && minuteOfDay < end;
+  return getScheduleOccurrenceAirWindows(occurrence).some((window) => minuteOfDay >= window.start && minuteOfDay < window.end);
 }
 
 function parseScheduleTimeToMinuteOfDay(value: string): number {
@@ -3594,9 +3907,14 @@ export function findCurrentScheduleOccurrence(args: {
     return null;
   }
 
-  return active.reduce((latest, item) =>
-    item.effectiveStartMinuteOfDay > latest.effectiveStartMinuteOfDay ? item : latest
-  );
+  // A dated occurrence first (M93): a weekly block that starts inside a dated window (dated 20-22, weekly
+  // 21-24) must not take over at 21:00 just because it started later.
+  return active.reduce((latest, item) => {
+    if (Boolean(item.dated) !== Boolean(latest.dated)) {
+      return item.dated ? item : latest;
+    }
+    return item.effectiveStartMinuteOfDay > latest.effectiveStartMinuteOfDay ? item : latest;
+  });
 }
 
 export function findNextScheduleOccurrence(args: {
@@ -3629,9 +3947,9 @@ export function findNextScheduleOccurrenceAcrossDays(args: {
   const lookaheadDays = args.lookaheadDays ?? 7;
   for (let offset = 1; offset <= lookaheadDays; offset += 1) {
     const date = addDaysToDateString(args.date, offset);
-    const candidate = buildScheduleOccurrences({ date, blocks: args.blocks }).find(
-      (occurrence) => !occurrence.carriesOverFromPreviousDay
-    );
+    const candidate = listScheduleAirSegments(
+      buildScheduleOccurrences({ date, blocks: args.blocks }).filter((occurrence) => !occurrence.carriesOverFromPreviousDay)
+    )[0];
     if (candidate) {
       return candidate;
     }
@@ -3658,35 +3976,44 @@ export function listUpcomingScheduleOccurrencesAcrossDays(args: {
     return [];
   }
 
+  // Ordered by the minute each entry starts counted from today's 00:00: a window of today's list may start
+  // after midnight (a weekly block resuming at 01:00 after a dated one) and so after tomorrow's first entry.
   const upcoming = listUpcomingScheduleOccurrences({
     occurrences: buildScheduleOccurrences({ date: args.date, blocks: args.blocks }),
     currentTime: args.currentTime
-  });
+  }).map((segment) => ({ segment, at: segment.airStartMinute }));
   const lookaheadDays = args.lookaheadDays ?? 7;
   for (let offset = 1; offset <= lookaheadDays && upcoming.length < limit; offset += 1) {
     const date = addDaysToDateString(args.date, offset);
     upcoming.push(
-      ...buildScheduleOccurrences({ date, blocks: args.blocks }).filter((occurrence) => !occurrence.carriesOverFromPreviousDay)
+      ...listScheduleAirSegments(
+        buildScheduleOccurrences({ date, blocks: args.blocks }).filter((occurrence) => !occurrence.carriesOverFromPreviousDay)
+      ).map((segment) => ({ segment, at: offset * MINUTES_PER_DAY + segment.airStartMinute }))
     );
   }
 
-  return upcoming.slice(0, limit);
+  return upcoming
+    .sort((left, right) => left.at - right.at)
+    .slice(0, limit)
+    .map((entry) => entry.segment);
 }
 
 export function listUpcomingScheduleOccurrences(args: {
   occurrences: ScheduleOccurrence[];
   currentTime: string;
   currentOccurrence?: ScheduleOccurrence | null;
-}): ScheduleOccurrence[] {
+}): ScheduleAirSegment[] {
   if (args.occurrences.length === 0) {
     return [];
   }
 
   const currentMinuteOfDay = parseScheduleTimeToMinuteOfDay(args.currentTime);
   const currentOccurrence = args.currentOccurrence ?? findCurrentScheduleOccurrence(args);
-  // effectiveStartMinuteOfDay, so a carry-over from last night is never offered as "upcoming".
-  return args.occurrences.filter(
-    (item) => item.effectiveStartMinuteOfDay > currentMinuteOfDay && item.key !== currentOccurrence?.key
+  // By air window (M93): a weekly block coming back after a dated one is upcoming at the minute it comes
+  // back. The window start is relative to the date like effectiveStartMinuteOfDay, so a carry-over from
+  // last night is never offered as "upcoming".
+  return listScheduleAirSegments(args.occurrences).filter(
+    (item) => item.airStartMinute > currentMinuteOfDay && item.key !== currentOccurrence?.key
   );
 }
 

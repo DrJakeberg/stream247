@@ -1,11 +1,29 @@
 import Link from "next/link";
-import { lookaheadVideoTitleFromPool, type MaterializedProgrammingDay, type PoolRotationSourceGate } from "@stream247/core";
+import {
+  describeScheduleBlockRun,
+  formatMinuteOfDay,
+  lookaheadVideoTitleFromPool,
+  type MaterializedProgrammingBlock,
+  type MaterializedProgrammingDay,
+  type PoolRotationSourceGate
+} from "@stream247/core";
 import type { AssetRecord, PoolRecord } from "@/lib/server/state";
 import { buildAssetDisplayTitle, isReplayTitlePrefix } from "@/lib/asset-metadata";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 
 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// The times a block is really on air: a weekly block cut around a dated one (M93) lists its parts.
+function describeAirTimes(block: MaterializedProgrammingBlock): string {
+  const windows = block.airWindows ?? [];
+  const cut = windows.length > 1 || (windows.length === 1 && windows[0] && windows[0].end - windows[0].start !== block.durationMinutes);
+  if (!cut) {
+    return `${block.startTime} to ${block.endTime}`;
+  }
+  const clock = (minute: number) => formatMinuteOfDay(((minute % 1440) + 1440) % 1440);
+  return windows.map((window) => `${clock(window.start)} to ${clock(window.end)}`).join(" · ");
+}
 
 export function ProgramWeekLens(props: {
   days: MaterializedProgrammingDay[];
@@ -45,12 +63,11 @@ export function ProgramWeekLens(props: {
                   <details className="program-week-block" key={block.blockId}>
                     <summary className="program-week-block-summary">
                       <div>
-                        <span className="label">
-                          {block.startTime} to {block.endTime}
-                        </span>
+                        <span className="label">{describeAirTimes(block)}</span>
                         <strong>{nextTitle || "No playable video resolved"}</strong>
                         <div className="subtle">
                           {block.title} · {block.poolName} · {block.repeatLabel}
+                          {block.dated ? ` · ${describeScheduleBlockRun(block).label}` : ""}
                         </div>
                       </div>
                       <span className={`programming-status-pill programming-status-${block.fillStatus}`}>{block.fillLabel}</span>

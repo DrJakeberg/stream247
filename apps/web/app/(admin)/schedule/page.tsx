@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { findScheduleConflicts } from "@stream247/core";
+import { findScheduleConflicts, getCurrentScheduleMoment } from "@stream247/core";
 import { AssetMetadataDrawer } from "@/components/asset-metadata-drawer";
 import { Panel } from "@/components/panel";
 import { ProgramNowNextLens } from "@/components/program-now-next-lens";
@@ -63,6 +63,7 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
   const materializedWeek = getMaterializedProgrammingWeekPreview(state);
   const sourceGate = getPoolSourceGate(state);
   const timeZone = getWorkspaceTimeZone(state);
+  const today = getCurrentScheduleMoment({ now: new Date(), timeZone }).date;
   const conflicts = new Set(findScheduleConflicts(state.scheduleBlocks));
   const poolOptions = state.pools
     .map((pool) => ({ id: pool.id, name: pool.name }))
@@ -143,9 +144,10 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
                 <Panel title="Add schedule block" eyebrow="Program">
                   <p className="subtle">
                     Build the week in {timeZone}. Blocks target pools, start times are minute-accurate, durations use
-                    15-minute steps, and overlapping windows on the same weekday are rejected before save.
+                    15-minute steps, and overlapping weekly blocks are rejected before save. A block that runs between
+                    dates or once takes over the part of the weekly programme it overlaps.
                   </p>
-                  <ScheduleBlockForm assets={readyAssetOptions} pools={poolOptions} shows={shows} />
+                  <ScheduleBlockForm assets={readyAssetOptions} pools={poolOptions} shows={shows} today={today} />
                 </Panel>
                 <Panel title="Show profiles" eyebrow="Program">
                   <p className="subtle">
@@ -302,6 +304,7 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
                   selectedAssetId={selectedAssetId}
                   showProfiles={shows}
                   timeZone={timeZone}
+                  today={today}
                 />
               </Panel>
             </>

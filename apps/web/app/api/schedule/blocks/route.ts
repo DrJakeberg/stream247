@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  filterWeekdaysInDateWindow,
   findScheduleConflicts,
   findScheduleConflictsInvolving,
+  getCurrentScheduleMoment,
   getRepeatDaysForMode,
+  getScheduleDateDayOfWeek,
+  isScheduleDateString,
   normalizeCuepointOffsetsSeconds,
   normalizeScheduleRepeatMode,
   validateScheduleBlock
@@ -13,6 +17,7 @@ import {
   createScheduleBlocks,
   createScheduleBlocksChecked,
   deleteScheduleBlockRecord,
+  getWorkspaceTimeZone,
   readAppState,
   updateScheduleBlockRecord,
   updateScheduleRepeatGroupRecords
@@ -37,7 +42,11 @@ function normalizeBody(body: {
   applyToRepeatSet?: boolean;
   cuepointAssetId?: string;
   cuepointOffsetsSeconds?: number[];
+  runs?: string;
+  validFrom?: string;
+  validUntil?: string;
 }) {
+  const dates = normalizeRunDates(body);
   return {
     action: (body.action ?? "").trim(),
     id: (body.id ?? "").trim(),
@@ -63,8 +72,55 @@ function normalizeBody(body: {
     cuepointOffsetsSeconds: normalizeCuepointOffsetsSeconds(
       Array.isArray(body.cuepointOffsetsSeconds) ? body.cuepointOffsetsSeconds.map((value) => Number(value)) : [],
       Number(body.durationMinutes ?? 0)
-    )
+    ),
+    ...dates,
+    // A one-off block sits on the weekday of its date.
+    ...(dates.runs === "once" && isScheduleDateString(dates.validFrom)
+      ? { dayOfWeek: getScheduleDateDayOfWeek(dates.validFrom), dayOfWeeks: [], repeatMode: "single" as const }
+      : {})
   };
+}
+
+/**
+ * How the block runs (M93): every week (no dates), between two dates, or once (one date). Without `runs`
+ * the dates are taken as sent, so a client that moves a block (the timeline) keeps the block's own dates.
+ */
+function normalizeRunDates(body: { runs?: string; validFrom?: string; validUntil?: string }) {
+  const runs = body.runs === "weekly" || body.runs === "between" || body.runs === "once" ? body.runs : "";
+  const validFrom = (body.validFrom ?? "").trim();
+  const validUntil = (body.validUntil ?? "").trim();
+  if (runs === "weekly") {
+    return { runs, validFrom: "", validUntil: "" };
+  }
+  if (runs === "once") {
+    return { runs, validFrom, validUntil: validFrom };
+  }
+  return { runs, validFrom, validUntil };
+}
+
+function runDatesError(payload: { runs: string; validFrom: string; validUntil: string }): string | null {
+  if (payload.runs === "once" && !payload.validFrom) {
+    return "Choose the date this block runs on.";
+  }
+  if (payload.runs === "between" && (!payload.validFrom || !payload.validUntil)) {
+    return "Choose a first and a last date.";
+  }
+  return null;
+}
+
+/** Today in the channel's time zone: a date window that ended before it is refused on save. */
+function channelToday(state: Awaited<ReturnType<typeof readAppState>>): string {
+  return getCurrentScheduleMoment({ now: new Date(), timeZone: getWorkspaceTimeZone(state) }).date;
+}
+
+function describeCreatedRun(payload: { validFrom: string; validUntil: string }): string {
+  if (payload.validFrom && payload.validFrom === payload.validUntil) {
+    return ` for ${payload.validFrom}`;
+  }
+  if (payload.validFrom && payload.validUntil) {
+    return `, from ${payload.validFrom} to ${payload.validUntil}`;
+  }
+  return "";
 }
 
 function generateId(prefix: "schedule" | "repeat" = "schedule") {
@@ -108,6 +164,9 @@ export async function POST(request: NextRequest) {
       sourceName?: string;
       cuepointAssetId?: string;
       cuepointOffsetsSeconds?: number[];
+      runs?: string;
+      validFrom?: string;
+      validUntil?: string;
     }
   );
 
@@ -131,6 +190,14 @@ export async function POST(request: NextRequest) {
       const duplicateDays = [...new Set(selectedDays)].filter((day) => day !== sourceBlock.dayOfWeek);
       if (duplicateDays.length === 0) {
         throw new Error("Choose at least one different weekday for the duplicate.");
+      }
+      // A copy keeps the block's dates (M93), so it must land on a weekday those dates contain.
+      if (
+        sourceBlock.validFrom &&
+        sourceBlock.validUntil &&
+        filterWeekdaysInDateWindow(duplicateDays, sourceBlock.validFrom, sourceBlock.validUntil).length !== duplicateDays.length
+      ) {
+        throw new Error("A chosen weekday does not fall between this block's dates.");
       }
 
       const newBlocks = duplicateDays.map((dayOfWeek) => ({
@@ -191,8 +258,16 @@ export async function POST(request: NextRequest) {
         throw new Error("One of the selected target weekdays already has blocks. Clear it first or choose empty weekdays.");
       }
 
+      // A dated block is cloned only onto weekdays its dates contain (M93); elsewhere it would never air.
       const clonedBlocks = distinctTargetDays.flatMap((dayOfWeek) =>
-        sourceBlocks.map((block) => ({
+        sourceBlocks
+          .filter(
+            (block) =>
+              !block.validFrom ||
+              !block.validUntil ||
+              filterWeekdaysInDateWindow([dayOfWeek], block.validFrom, block.validUntil).length > 0
+          )
+          .map((block) => ({
           ...block,
           id: generateId("schedule"),
           dayOfWeek,
@@ -222,13 +297,15 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const validationError = validateScheduleBlock(payload);
+  // The dates are checked once the weekdays and today are known.
+  const validationError = validateScheduleBlock({ ...payload, validFrom: "", validUntil: "" }) ?? runDatesError(payload);
   if (validationError) {
     return NextResponse.json({ message: validationError }, { status: 400 });
   }
 
   try {
     const state = await readAppState();
+    const today = channelToday(state);
     const pool = state.pools.find((entry) => entry.id === payload.poolId);
     if (!pool) {
       throw new Error("Schedule blocks must target an existing pool.");
@@ -246,10 +323,25 @@ export async function POST(request: NextRequest) {
       throw new Error("Cuepoints require either a block override insert asset or a pool automatic insert asset.");
     }
 
-      const dayOfWeeks =
+      const repeatDays =
         payload.dayOfWeeks.length > 0 ? payload.dayOfWeeks : getRepeatDaysForMode(payload.repeatMode, payload.dayOfWeek);
-      if (dayOfWeeks.length === 0) {
+      if (repeatDays.length === 0) {
         throw new Error("Select at least one weekday for this programming block.");
+      }
+      // Between two dates, only the weekdays that occur between them get a copy: "daily for 3 days" is three
+      // blocks, not seven of which four never air.
+      const dayOfWeeks =
+        payload.validFrom && payload.validUntil && payload.validFrom <= payload.validUntil
+          ? filterWeekdaysInDateWindow(repeatDays, payload.validFrom, payload.validUntil)
+          : repeatDays;
+      if (dayOfWeeks.length === 0) {
+        throw new Error("None of the chosen weekdays falls between these dates.");
+      }
+      for (const dayOfWeek of dayOfWeeks) {
+        const blockError = validateScheduleBlock({ ...payload, dayOfWeek }, { today });
+        if (blockError) {
+          throw new Error(blockError);
+        }
       }
       const repeatMode =
         payload.repeatMode === "single" && dayOfWeeks.length > 1 ? ("custom" as const) : payload.repeatMode;
@@ -267,7 +359,9 @@ export async function POST(request: NextRequest) {
         repeatMode,
         repeatGroupId,
         cuepointAssetId: cuepointAsset?.id ?? "",
-        cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds
+        cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds,
+        validFrom: payload.validFrom,
+        validUntil: payload.validUntil
       }));
     // Validated inside the transaction that inserts. Checking against the separately-read `state`
     // leaves a window where a second editor commits a block this check never saw, both writes
@@ -286,7 +380,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      message: `Schedule block ${payload.title} created${dayOfWeeks.length > 1 ? ` across ${dayOfWeeks.length} days` : ""}.`,
+      message: `Schedule block ${payload.title} created${dayOfWeeks.length > 1 ? ` across ${dayOfWeeks.length} days` : ""}${describeCreatedRun(payload)}.`,
       blocks: nextState.scheduleBlocks
     });
   } catch (error) {
@@ -318,6 +412,9 @@ export async function PUT(request: NextRequest) {
       applyToRepeatSet?: boolean;
       cuepointAssetId?: string;
       cuepointOffsetsSeconds?: number[];
+      runs?: string;
+      validFrom?: string;
+      validUntil?: string;
     }
   );
 
@@ -325,7 +422,8 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ message: "Schedule block id is required." }, { status: 400 });
   }
 
-  const validationError = validateScheduleBlock(payload);
+  // The dates are checked once the weekdays and today are known.
+  const validationError = validateScheduleBlock({ ...payload, validFrom: "", validUntil: "" }) ?? runDatesError(payload);
   if (validationError) {
     return NextResponse.json({ message: validationError }, { status: 400 });
   }
@@ -335,6 +433,18 @@ export async function PUT(request: NextRequest) {
     const existing = state.scheduleBlocks.find((block) => block.id === payload.id);
     if (!existing) {
       throw new Error("Schedule block not found.");
+    }
+    const applyToRepeatSet = payload.applyToRepeatSet && Boolean(existing.repeatGroupId);
+    if (applyToRepeatSet && payload.runs === "once") {
+      throw new Error("A single date applies to one block. Turn off Apply to repeat set to run this occurrence once.");
+    }
+    // The repeat set keeps each copy's weekday, so the dates are checked against the edited copy's own day.
+    const datesError = validateScheduleBlock(
+      { ...payload, dayOfWeek: applyToRepeatSet ? existing.dayOfWeek : payload.dayOfWeek },
+      { today: channelToday(state) }
+    );
+    if (datesError) {
+      throw new Error(datesError);
     }
 
     const pool = state.pools.find((entry) => entry.id === payload.poolId);
@@ -354,7 +464,6 @@ export async function PUT(request: NextRequest) {
       throw new Error("Cuepoints require either a block override insert asset or a pool automatic insert asset.");
     }
 
-    const applyToRepeatSet = payload.applyToRepeatSet && Boolean(existing.repeatGroupId);
     const updatedBlock = {
       ...existing,
       title: payload.title,
@@ -368,7 +477,9 @@ export async function PUT(request: NextRequest) {
       repeatMode: applyToRepeatSet ? existing.repeatMode || "single" : "single",
       repeatGroupId: applyToRepeatSet ? existing.repeatGroupId || "" : "",
       cuepointAssetId: cuepointAsset?.id ?? "",
-      cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds
+      cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds,
+      validFrom: payload.validFrom,
+      validUntil: payload.validUntil
     };
     const nextBlocks = applyToRepeatSet
       ? state.scheduleBlocks.map((block) =>
@@ -383,7 +494,9 @@ export async function PUT(request: NextRequest) {
                 poolId: payload.poolId,
                 sourceName: pool.name,
                 cuepointAssetId: cuepointAsset?.id ?? "",
-                cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds
+                cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds,
+                validFrom: payload.validFrom,
+                validUntil: payload.validUntil
               }
             : block
         )
@@ -407,7 +520,9 @@ export async function PUT(request: NextRequest) {
         poolId: payload.poolId,
         sourceName: pool.name,
         cuepointAssetId: cuepointAsset?.id ?? "",
-        cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds
+        cuepointOffsetsSeconds: payload.cuepointOffsetsSeconds,
+        validFrom: payload.validFrom,
+        validUntil: payload.validUntil
       });
     } else {
       await updateScheduleBlockRecord(updatedBlock);
