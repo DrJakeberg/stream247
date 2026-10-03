@@ -243,7 +243,7 @@ export function ScheduleEditorWorkspace({
           const run = describeScheduleBlockRun(block, today);
 
           return (
-            <div className={`item${run.ended ? " schedule-block-ended" : ""}`} key={block.id}>
+            <div className={`item${run.ended ? " schedule-block-ended" : ""}`} id={`schedule-block-${block.id}`} key={block.id}>
               <div className="stats-row">
                 <strong>{block.title}</strong>
                 {run.ended ? (

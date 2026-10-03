@@ -20,7 +20,6 @@ import { getShowProfileCategoryOptions } from "@/lib/asset-metadata";
 import {
   getBroadcastSnapshot,
   getMaterializedProgrammingWeekPreview,
-  getPoolSourceGate,
   getSchedulePreview,
   getWorkspaceTimeZone,
   readAppState
@@ -32,6 +31,8 @@ type ScheduleSearchParams = {
   lens?: string | string[];
   day?: string | string[];
   assetId?: string | string[];
+  /** Set by "Add block" on the week view: the add form starts on the chosen day. */
+  add?: string | string[];
 };
 
 const scheduleLensTabs = [
@@ -61,7 +62,6 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
   const state = await readAppState();
   const broadcastSnapshot = getBroadcastSnapshot(state);
   const materializedWeek = getMaterializedProgrammingWeekPreview(state);
-  const sourceGate = getPoolSourceGate(state);
   const timeZone = getWorkspaceTimeZone(state);
   const today = getCurrentScheduleMoment({ now: new Date(), timeZone }).date;
   const conflicts = new Set(findScheduleConflicts(state.scheduleBlocks));
@@ -117,10 +117,10 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
             <>
               <Panel title="Week lens" eyebrow="Program">
                 <p className="subtle">
-                  Shows the first video each block would play, continuing from wherever its pool&apos;s rotation
-                  currently stands, and lets you open a block to see what follows before any of it goes on air.
+                  Shows what each block will play, in {timeZone}. Each pool carries on from where its previous block
+                  left off, the way the channel plays it. Open a block to see the videos that follow.
                 </p>
-                <ProgramWeekLens assets={state.assets} days={materializedWeek} pools={state.pools} sourceGate={sourceGate} />
+                <ProgramWeekLens assets={state.assets} days={materializedWeek} />
               </Panel>
               {emptyWeekBlocks.length > 0 ? (
                 <Panel title="Needs attention" eyebrow="Program">
@@ -147,7 +147,15 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
                     15-minute steps, and overlapping weekly blocks are rejected before save. A block that runs between
                     dates or once takes over the part of the weekly programme it overlaps.
                   </p>
-                  <ScheduleBlockForm assets={readyAssetOptions} pools={poolOptions} shows={shows} today={today} />
+                  <div id="add-schedule-block">
+                    <ScheduleBlockForm
+                      assets={readyAssetOptions}
+                      defaultDayOfWeek={getFirstParam(searchParams.add) ? activeDay : undefined}
+                      pools={poolOptions}
+                      shows={shows}
+                      today={today}
+                    />
+                  </div>
                 </Panel>
                 <Panel title="Show profiles" eyebrow="Program">
                   <p className="subtle">
@@ -192,7 +200,7 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
                   <p className="subtle">
                     Use templates to bootstrap a full week quickly, then fine-tune individual days in the editor below.
                   </p>
-                  <ProgrammingTemplateForm pools={poolOptions} />
+                  <ProgrammingTemplateForm existingBlockCount={state.scheduleBlocks.length} pools={poolOptions} />
                 </Panel>
                 <Panel title="Clone a schedule day" eyebrow="Program">
                   <p className="subtle">

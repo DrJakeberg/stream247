@@ -36,6 +36,13 @@ async function ensureSignedIn(page: Page) {
   await page.getByRole("button", { name: "Sign in" }).click();
 
   const oneTimeCode = page.getByLabel("One-time code");
+  // After the first test enabled 2FA the sign-in answers with the code step, which renders a moment
+  // after the click: checking visibility at once raced it and left a later test on /login. Wait for
+  // whichever of the two outcomes comes.
+  await Promise.race([
+    page.waitForURL(/\/live(?:\?tab=control|status)?$/, { timeout: 15_000 }).catch(() => undefined),
+    oneTimeCode.waitFor({ state: "visible", timeout: 15_000 }).catch(() => undefined)
+  ]);
   if (await oneTimeCode.isVisible().catch(() => false)) {
     if (!fs.existsSync(secretCachePath)) {
       throw new Error(`2FA secret cache missing at ${secretCachePath}`);
@@ -208,4 +215,62 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await expect(renderedScene.getByText(customText)).toBeVisible();
   // satori lower-cases the family it writes into the SVG: font-family="stream247 serif".
   expect((await renderedScene.locator("svg").innerHTML()).toLowerCase()).toContain("stream247 serif");
+});
+
+// Calls the app's API from inside the signed-in page. The session cookie is Secure, and Playwright's
+// own request context does not send it over plain http to 127.0.0.1; the browser does.
+async function callApi<T>(page: Page, method: "GET" | "POST", url: string, data?: unknown): Promise<{ ok: boolean; body: T }> {
+  return page.evaluate(
+    async ({ method, url, data }) => {
+      const response = await fetch(url, {
+        method,
+        headers: data === undefined ? undefined : { "Content-Type": "application/json" },
+        body: data === undefined ? undefined : JSON.stringify(data)
+      });
+      return { ok: response.ok, body: await response.json() };
+    },
+    { method, url, data }
+  ) as Promise<{ ok: boolean; body: T }>;
+}
+
+test("asks before a template replaces the schedule, and Cancel keeps the blocks (M97 U6)", async ({ page }) => {
+  await ensureSignedIn(page);
+
+  // A pool on the local library and a week of blocks from a template, through the same API the forms use.
+  const sources = (await callApi<{ sources: Array<{ id: string; connectorKind: string }> }>(page, "GET", "/api/sources")).body;
+  const library = sources.sources.find((source) => source.connectorKind === "local-library");
+  expect(library, "the fresh install's local library source").toBeTruthy();
+  const poolName = `Replace Check ${Date.now()}`;
+  expect((await callApi(page, "POST", "/api/pools", { name: poolName, sourceIds: [library?.id] })).ok).toBeTruthy();
+  const pools = (await callApi<{ pools: Array<{ id: string; name: string }> }>(page, "GET", "/api/pools")).body;
+  const poolId = pools.pools.find((pool) => pool.name === poolName)?.id ?? "";
+  expect(
+    (await callApi(page, "POST", "/api/schedule/templates", { template: "always-on-single-pool", primaryPoolId: poolId, replaceExisting: true }))
+      .ok
+  ).toBeTruthy();
+  const blockIds = async () =>
+    (await callApi<{ blocks: Array<{ id: string }> }>(page, "GET", "/api/schedule/blocks")).body.blocks.map((block) => block.id).sort();
+  const before = await blockIds();
+  expect(before.length).toBeGreaterThan(0);
+
+  await page.goto("/program?tab=schedule&lens=day");
+  const templateForm = page.locator("form", { has: page.getByRole("button", { name: "Apply template" }) });
+  await templateForm.locator('select[name="primaryPoolId"]').selectOption(poolId);
+  await templateForm.getByText("Replace existing schedule blocks before applying template").click();
+
+  let confirmation = "";
+  page.once("dialog", async (dialog) => {
+    confirmation = dialog.message();
+    await dialog.dismiss();
+  });
+  let templateRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/api/schedule/templates")) {
+      templateRequests += 1;
+    }
+  });
+  await templateForm.getByRole("button", { name: "Apply template" }).click();
+  await expect.poll(() => confirmation).toContain("Replace the whole schedule?");
+  expect(templateRequests).toBe(0);
+  expect(await blockIds()).toEqual(before);
 });

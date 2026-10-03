@@ -491,6 +491,28 @@ zone and bound when the block starts.
   refused on save. A block crossing midnight on its last date still runs into the next day
 - changing the channel zone reads every date in the new zone; nothing is converted
 
+### Week view (since M97)
+
+`Program → Schedule → Week` shows the next seven days from today, each headed with its date (*Sat 3 Oct*)
+and its scheduled time in hours (*24 h scheduled*).
+
+- each block shows the first video it will play. A pool carries on across its blocks in time order with
+  the worker's own rotation: three videos and two blocks of one pool, the second block starts with video
+  2. Before M97 every block started from the pool's stored position, so each day showed the same first
+  video
+- on today's card a block that has ended reads *Aired earlier today* and takes nothing from its pool; the
+  block on air is filled from now
+- a block past midnight is listed once, on the day it starts, as *23:00 → 01:00 Sun*; the next day still
+  counts its hours. The first day keeps a block that started the evening before (*23:00 Sat → 01:00*)
+- a weekly block cut by a dated block is filled only in its air time: the video running when the dated
+  block starts is cut there, and the next one starts when the weekly block comes back
+- *Repeats inside block* says why, with numbers: *6 min of video for a 24 h block: plays ≈ 240 times. Add
+  videos to Abendprogramm.* A pool that alternates between sources says when one source runs out first
+- *Edit block* (in an opened block) opens the day lens at that block's form; *Add block* (above the days)
+  opens *Add schedule block* on today's weekday
+- *Replace existing schedule blocks* under *Quick-start templates* asks before it deletes the week;
+  *Cancel* leaves every block as it is
+
 ### Channel timezone is not valid (since M85)
 
 - the incident `config.channel-timezone.invalid` (warning, system) means `CHANNEL_TIMEZONE` in the

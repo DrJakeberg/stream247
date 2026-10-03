@@ -192,7 +192,9 @@ describe("C3/B2: the overlap check on a 7-day line", () => {
     const blocks = [monLate, block({ id: "tue-early", dayOfWeek: 2, startMinuteOfDay: 0, durationMinutes: 30 })];
     expect(findScheduleConflicts(blocks).length).toBe(2);
     const week = buildMaterializedProgrammingWeek({ startDate: "2026-10-05", blocks, pools: [], assets: [] });
-    expect(week[1]?.blocks.map((entry) => entry.blockId)).toEqual(["mon-late", "tue-early"]);
+    // Since M97 a block past midnight is listed once, on the day it starts.
+    expect(week[0]?.blocks.map((entry) => entry.blockId)).toEqual(["mon-late"]);
+    expect(week[1]?.blocks.map((entry) => entry.blockId)).toEqual(["tue-early"]);
   });
 });
 
@@ -264,8 +266,9 @@ describe("C6: day totals count only the part inside the day", () => {
       assets: [{ id: "a1", sourceId: "source-1", title: "Episode", status: "ready", includeInProgramming: true, durationSeconds: 90 * 60 }]
     } as unknown as Parameters<typeof buildMaterializedProgrammingWeek>[0]);
     const projected = monday!.blocks[0]!.projectedMinutes;
-    expect(tuesday!.blocks[0]!.projectedMinutes).toBe(projected);
     expect(projected).toBe(180);
+    // Since M97 the block is listed on Monday only; Tuesday still counts its part of it.
+    expect(tuesday!.blocks).toEqual([]);
     // Before M88: 180 on Monday and 180 on Tuesday.
     expect(monday?.totalProjectedMinutes).toBe(60);
     expect(tuesday?.totalProjectedMinutes).toBe(120);

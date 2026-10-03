@@ -353,8 +353,15 @@ export function getMaterializedProgrammingWeekPreview(state: AppState, now: Date
     blocks: state.scheduleBlocks,
     pools: state.pools,
     assets: state.assets,
-    sourceGate: getPoolSourceGate(state, now.getTime())
+    sourceGate: getPoolSourceGate(state, now.getTime()),
+    nowMinuteOfDay: parseScheduleClockMinutes(scheduleMoment.time)
   });
+}
+
+// "HH:MM" of the schedule moment as minutes of its day.
+function parseScheduleClockMinutes(time: string): number {
+  const [hours, minutes] = time.split(":").map((value) => Number(value) || 0);
+  return (hours ?? 0) * 60 + (minutes ?? 0);
 }
 
 export function getPresenceStatus(state: AppState) {

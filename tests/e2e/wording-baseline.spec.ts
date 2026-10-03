@@ -155,6 +155,14 @@ test.describe("wording baseline", () => {
         for (const frame of root.querySelectorAll(".scene-render-preview")) {
           frame.textContent = "<rendered scene>";
         }
+        // Since M97 the week view's day cards say what will play from now on: which day leads the
+        // grid, which blocks have aired, which video each block starts with and how late one ends
+        // all follow the day and the server clock, so the cards are data here. Their wording (dates,
+        // hours, "→ 01:00 Sun", the repeat reason) is pinned by tests/unit/program-week-view.test.ts;
+        // the text around the grid ("Week lens", its caption, "Add block") stays covered.
+        for (const grid of root.querySelectorAll(".program-week-grid")) {
+          grid.textContent = "<week days>";
+        }
         return (root as HTMLElement).innerText;
       });
 

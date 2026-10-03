@@ -130,6 +130,8 @@ type Surface = {
   authenticated: boolean;
   /** Set when the surface shows live runtime state that cannot be frozen from the browser. */
   masked?: boolean;
+  /** CSS applied only while the screenshot is taken, for regions whose *shape* follows the server clock. */
+  style?: string;
 };
 
 const SURFACES: Surface[] = [
@@ -153,7 +155,19 @@ const SURFACES: Surface[] = [
   // state and server time, and page.clock reaches neither — so the volatile regions are masked and
   // the snapshot covers layout rather than content. A net that goes red on a calendar rather than
   // on a regression is one people learn to ignore.
-  { name: "program-schedule", path: "/program?tab=schedule&day=1", authenticated: true, masked: true },
+  //
+  // Since M97 the week view starts today, with dated day headers, the blocks that already aired and a
+  // block running over from yesterday. Its cards change in number and height with the server's date
+  // and time, which a mask cannot absorb (it paints over pixels, it does not undo reflow), so the grid
+  // is left out of the picture. The shell, the tabs, the caption and "Add block" stay covered; the
+  // cards are covered by tests/unit/program-week-view.test.ts and by the layout and link specs.
+  {
+    name: "program-schedule",
+    path: "/program?tab=schedule&day=1",
+    authenticated: true,
+    masked: true,
+    style: ".program-week-grid { display: none !important; }"
+  },
   { name: "program-pools", path: "/program?tab=pools", authenticated: true, masked: true },
   { name: "program-library", path: "/program?tab=library", authenticated: true, masked: true },
   { name: "program-sources", path: "/program?tab=sources", authenticated: true, masked: true },
@@ -188,6 +202,11 @@ test.describe("design baseline", () => {
 
         // Web fonts settle after first paint; without this the first run and the rest disagree.
         await page.evaluate(() => document.fonts.ready);
+        // Applied to the page, not through the screenshot's own `style` option: that one did not take
+        // the grid out of the element's box, so the size still followed the clock.
+        if (surface.style) {
+          await page.addStyleTag({ content: surface.style });
+        }
         await waitForStableHeight(target);
 
         await expect(target).toHaveScreenshot(`${surface.name}-${viewport.label}.png`, {

@@ -32,7 +32,7 @@ How this file works:
 | M94 Inserts From Remote Sources Air | Bug | Next | Complete | A YouTube or Twitch insert airs, or is skipped once with an incident, never retried forever | W1: the due insert is warmed in the queue scan; a failed or bridged insert counts as consumed and raises an incident naming it (owner Q6); both insert checks apply quarantine and breaker. W5: one shared "cuepoint asset of a block" helper used by worker and preview; test: `insertEveryItems: 0` with a pool insert asset gives the same cuepoint count in both. W6: an item that failed to open is retried once; `failed` treated like an empty current item in the Move next and insert checks. R3's W1 probe becomes a test | `apps/worker`, `packages/core`, tests | low–medium: crash-loop interplay | revert the commit |
 | M95 Self-Healing Fills The Gaps | Reliability | Next | Complete | No stale incident, no orphan encoder, no permanently lost item | H5: disk and system-volume flags re-armed from open incidents on the first cycle; `secrets.key-mismatch` resolved at a boot where every secret decrypts; tests. W7: the playout exit handler returns when the exiting child is not current (static test as R3's); the uplink handler checked for the same pattern. H9: one re-probe per quarantined item per 24 h, one per source per cycle, only with the breaker closed and no outage verdict (owner Q1); test. U18: `scripts/soak-monitor.sh` counts uplink and relay restarts; shell test or `bash -n` plus a fixture run | `apps/worker`, `scripts/`, tests, `docs/operations.md` | low | revert the commit |
 | M96 Local File Durations | Data | Next | Complete | Local-library assets carry their real length, so planning numbers are right | U4: `ffprobe` duration at scan time, bounded timeout, cached by size + mtime; unit test on a generated 2-minute file → `durationSeconds` within 1 s of 120; an unchanged file is not probed again (spy); Day lens shows "Unique library: 6m" for three such files | `apps/worker`, `packages/db`, tests | medium: a large first scan is slower, so probing is incremental | revert the commit; stored durations are harmless to old images |
-| M97 Week View Tells The Truth | UX | Next | Planned | The week view shows what will play, with dates, overnight blocks once, and why a block repeats | U5: each pool's rotation carried across blocks in time order through the worker's rotation function (shared, not copied); dates on day headers; hours, not minutes; an overnight block shown once with "→ 01:00 Sun"; repeat reason with numbers. U6: confirmation before "Replace existing schedule blocks"; "Edit block" and "Add block" on the week view. Tests in `program-week-projection`: three items, two blocks, the second block starts with item 2, not item 1; a 24 h block reads "24 h"; a block with 6 min of video in 24 h carries the reason "plays ≈ 240 times"; an overnight block appears on one day only. e2e: "Replace existing schedule blocks" opens a confirmation and Cancel leaves the blocks unchanged | `packages/core`, `apps/web`, tests, baselines | medium: preview must not drift from the worker, so one shared function | revert the commit |
+| M97 Week View Tells The Truth | UX | Next | Complete | The week view shows what will play, with dates, overnight blocks once, and why a block repeats | U5: each pool's rotation carried across blocks in time order through the worker's rotation function (shared, not copied); dates on day headers; hours, not minutes; an overnight block shown once with "→ 01:00 Sun"; repeat reason with numbers. U6: confirmation before "Replace existing schedule blocks"; "Edit block" and "Add block" on the week view. Tests in `program-week-projection`: three items, two blocks, the second block starts with item 2, not item 1; a 24 h block reads "24 h"; a block with 6 min of video in 24 h carries the reason "plays ≈ 240 times"; an overnight block appears on one day only. e2e: "Replace existing schedule blocks" opens a confirmation and Cancel leaves the blocks unchanged | `packages/core`, `apps/web`, tests, baselines | medium: preview must not drift from the worker, so one shared function | revert the commit |
 | M98 The Production Path Has A Smoke | Test | Next | Planned | CI exercises playout → HLS → uplink with the relay on | U15: a CI job starts the stack with the relay on and asserts that `program.m3u8` MEDIA-SEQUENCE grows and the uplink output grows over 60 s; the job fails when the uplink is stopped (mutation run) | `.github/workflows/ci.yml`, `scripts/`, `docker-compose*.yml` | low (CI only) | revert the commit |
 | M99 Wizard To First Programme | UX | Later | Planned | `/setup` ends with a stream key and a playing week | U1 (decided 5.1 Q9): skippable step "Where the stream goes" with the Twitch preset, the key stored encrypted and masked; the destination form moves to Studio → Output, the old anchor redirects. U2: skippable step "First programme" creates a pool from chosen media and applies the "Always-on single pool" template. R2 U3: render test: an empty library says how to add media, a filtered-empty library says the filters hide everything. e2e: a fresh owner completes both steps and readiness shows destination, pools and schedule ready | `apps/web`, tests, baselines, `docs/getting-started.md` | medium: moves a form operators know | revert the commit |
 | M100 Public Programme For Viewers | Feature | Later | Planned | Viewers see what comes next and the coming week, in their own time | V1 ("After that" from the schedule) comes with M88 through R1's commits `a41d327` and `51e69ee` and is not built again here. V2: "Scheduled now" when playout is down. R1 row B: a 7-day list on `/channel` per day, dated items marked; `/channel.ics` validated by a parser test; times per default R2 Q7 in 5.2 (viewer's zone first; unit test with a browser zone other than the channel zone). Layout per 2.5a: a *Now* card with progress bar and remaining time (unit test on the remaining-time and progress values for a fixed clock), a *Next* list of the next 24 h at item level from the shared week projection, consecutive items of one block grouped with "N more" (test: 3 blocks × 5 items give 3 groups with "4 more" each), crossing midnight without a break (test); Playwright at 390 px: the *Now* card is above the fold. R2 V7: the on-air Next card adds "in N min" to its bare time range (`packages/core/src/viewer-messages/en.ts:29`) through the catalogue, en + de, unit test for a fixed clock. Catalogue parity en/de green | `apps/web`, `packages/core`, tests, baselines, `docs/` | low | revert the commit |
@@ -65,7 +65,8 @@ Playout and pools:
 - Two pools that share a source keep separate positions and can pick the archive the other pool just
   aired; a product decision (M73).
 - Preview blocks start from the stored position, so two blocks of one pool on one day preview the same
-  first items (M73).
+  first items (M73). The week view and the Day lens's fill preview carry the rotation since M97; the Day
+  lens's video timeline (`buildSchedulePreviewVideoSlots`) still starts each block from the stored position.
 - A manual next, Play now or Pin does not move the pool's position; the item can come round again (M73,
   M74, M78).
 - A vanished position cannot be continued after; storing the order key of the last started item per
@@ -270,6 +271,11 @@ deployed; the release that ships them records the results.
   SELECT title, duration_seconds FROM assets WHERE source_id = 'source-local-library' ORDER BY duration_seconds, title;
   SQL
   ```
+
+- M97, after the repin: `Program -> Schedule -> Week` shows what airs. With a pool used by two blocks of
+  one day, note the first video of the second block in the morning; it is the one Live names when that
+  block starts. A block past midnight is listed once, as *23:00 → 01:00 Sun*, and today's blocks that have
+  ended read *Aired earlier today*.
 
 - (The checks for 2.2.0 are in the archive, sections M75-M82.)
 
@@ -740,3 +746,49 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
 - **Review (fresh subagent).** All items met. Fixed: a failed scan no longer probes (its results were lost
   and repeated every cycle); the budget follows the cycle-await ceiling. Noted above: the PiP audio side
   effect and the CI gap.
+
+### M97 Week View Tells The Truth
+
+- **U5, rotation.** `buildMaterializedProgrammingWeek` walks the week's blocks in time order and hands each
+  pool's rotation state (and its items since the last insert) from one block of the pool to the next,
+  through `createPoolRotation`, the function the worker picks with (`packages/core/src/pool-rotation.ts`).
+  A test compares five blocks' items with `walkPoolRotation` item by item. Each block is projected to its
+  end (at most 5 000 items; 48 are listed), so a 24 h block of 2-minute clips hands on the right item.
+- **Now.** `getMaterializedProgrammingWeekPreview` passes the minute of today: a block that has ended
+  reads *Aired earlier today* and takes nothing from the rotation; the block on air is projected from now.
+  Its fill label can therefore change during the block (an item that will run past the end).
+- **Display.** Day headers *Sat 3 Oct*, *24 h scheduled*; block times *20:00 → 22:00*, a block past
+  midnight once on its start day as *23:00 → 01:00 Sun* (the next day still counts its hours; the first
+  day keeps one that started the evening before, *23:00 Sat → 01:00*). *Repeats inside block* gets a reason
+  with numbers (*6 min of video for a 24 h block: plays ≈ 240 times. Add videos to <pool>.*), or names the
+  source that runs out first when a pool alternates sources.
+- **M93 follow-up taken.** A weekly block cut by a dated block is projected over its air windows: the item
+  running at the cut ends there, the next starts when the weekly block resumes; projected minutes follow.
+  Left: when the dated block uses the same pool, the weekly block's two parts take their items before the
+  dated block's (the projection goes block by block).
+- **U6.** *Edit block* in an opened block jumps to its form in the Day lens (`#schedule-block-<id>`); one
+  *Add block* above the week opens *Add schedule block* on today's weekday (`add=1` presets the day and
+  "One weekday, every week"). One button, not one per day: `control-density.spec.ts` holds the page at 14
+  controls. *Replace existing schedule blocks* asks `window.confirm` with the number of blocks; *Cancel*
+  sends nothing (component test, and an e2e in `admin-smoke.spec.ts` that checks the block ids before and
+  after).
+- **Tests changed, not weakened.** Three assertions pinned the carry-over as a second card on the next day
+  (`programming-week-minutes`, `schedule-midnight` C3/B2 and C6): they now assert the block on its start
+  day only, with the next day's minutes unchanged. `source-breaker-api` read the lens's old props; it now
+  checks that the week is built with the breaker and that the lens no longer picks titles itself.
+- **Baselines.** The day cards say what plays from now on, so their content follows the weekday and the
+  server clock: the wording baseline replaces the grid's text with `<week days>` (its wording is pinned by
+  `tests/unit/program-week-view.test.ts`), and the design baseline leaves the grid out of the
+  program-schedule picture (a style tag added before the height is measured): the number of cards per day, the aired
+  blocks and the block running over from yesterday change the grid's height with the date and time, which
+  a mask cannot absorb (first CI run: 6619 px expected, 6841 px received on mobile). Re-recorded with
+  `scripts/design-baseline.sh --update`, web from its standalone build on the host with the dev stack's
+  environment (images cannot be built in the cloud).
+- **Review (fresh subagent).** All items met, no test weakened. Fixed: a one-source pool's repeat reason
+  said "alternates between its sources"; an empty block on air counted its elapsed time as filled;
+  `docs/architecture.md` still said the previews start every block from the stored position. Left: the
+  dated block of the same pool (above); the 5 000-item cap stops a 24 h block of clips of a few seconds
+  early; the block on air starts its next item now, not when the running item ends (order is right).
+- **Not built.** The Twitch VOD cache cooldown (M94's finding) is not known to the week view; the Day lens
+  still counts minutes (*1440m scheduled*) and keeps its internal words (U6's Day-lens rework is not in this
+  row).
