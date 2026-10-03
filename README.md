@@ -163,7 +163,8 @@ The one-page path from an empty host to a green channel, with the traps where th
    every service failing with "password authentication failed" and a bare error page; either keep
    the password or remove `data/postgres` before real data exists.
 4. Optional now, or later in the wizard and `/settings`:
-   - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`
+   - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` (from an application registered at
+     <https://dev.twitch.tv/console/apps>)
    - `TWITCH_STREAM_KEY` (later: the primary destination's stream key under `Live → Status`)
    - `CHANNEL_TIMEZONE` (leave unset to let the wizard manage it)
    - `CHANNEL_LANGUAGE` (`en` or `de`, the language viewers are addressed in; leave unset to choose it in
@@ -179,7 +180,7 @@ The one-page path from an empty host to a green channel, with the traps where th
    Twitch app credentials and the Twitch connection, each step skippable, and ends in a readiness
    checklist that links to wherever something is still missing.
 8. `Live → Status` shows the same readiness afterwards.
-9. Optional during bootstrap (register the application at <https://dev.twitch.tv/console/apps>):
+9. Optional during bootstrap:
    - enter `TWITCH_CLIENT_ID`
    - enter `TWITCH_CLIENT_SECRET`
 10. Or add/update encrypted managed credentials later in:

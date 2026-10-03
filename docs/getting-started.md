@@ -53,9 +53,10 @@ Stream247 names the two roles the same way everywhere:
 
 Chat and moderation work with the bot account alone. Title, category, schedule and sub, cheer and
 channel-points alerts need the broadcast channel's own account: with two accounts through the optional
-**channel owner connection** (section 6), with one account through the bot connection itself, which
-then holds the channel's own login for chat, moderation and owner sign-in as well. When you check
-whether the stream is live, check the broadcast channel, never the bot account's channel. See `docs/twitch-setup.md`, *Two Accounts, Named By Their Role*.
+**channel owner connection** (section 6), with one account through the bot connection itself, which then
+holds the channel's own login for chat, moderation and owner sign-in as well. When you check whether the
+stream is live, check the broadcast channel, never the bot account's channel. See `docs/twitch-setup.md`,
+*Two Accounts, Named By Their Role*.
 
 ## 3. Twitch application
 
@@ -197,7 +198,9 @@ If not still signed in, sign in as the owner. Open `Admin → Settings → Twitc
 2. **Bot account login** — optional; when set, only that account can be connected as bot.
 3. **Connect bot account** — Twitch shows which account is signing in; switch to the bot account if
    it shows another. With a bot account login set (step 2), or once a bot is connected, Stream247 refuses
-   any other account here, the broadcast channel included.
+   any other account here, the broadcast channel included. For one account (section 2), leave the bot
+   account login empty and connect the broadcast channel here as the very first bot: that first connect
+   is accepted, and the install runs as a single account.
    The bot account is also a sign-in: anyone who can log in to Twitch as it gets the owner role here,
    so treat it like the owner password (Twitch 2FA on, never shared).
 4. **Connect as `<broadcast channel>`** — optional, for title, category, schedule and sub, cheer and
