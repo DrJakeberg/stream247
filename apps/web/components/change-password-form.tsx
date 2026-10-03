@@ -50,8 +50,8 @@ export function ChangePasswordForm() {
       >
         <label>
           <span className="label label-with-info">
-            Current password
-            <InfoTip text="The password you sign in with now. Forgotten it? Sign-in cannot help; the reset command in the operations guide sets a new one on the host." />
+            Old password
+            <InfoTip text="The password you sign in with now; changing it needs it. Forgotten it? Sign-in cannot help; the reset command in the operations guide sets a new one on the host." />
           </span>
           <input
             autoComplete="current-password"
