@@ -96,6 +96,28 @@ describe("U5/U6: the week view", () => {
   });
 });
 
+describe("U5: today's blocks that have ended", () => {
+  it("read 'Aired earlier today' with the same lines as the others, and open nothing", () => {
+    // 2026-10-05 is a Monday; at 13:00 the morning block has ended.
+    const days = buildMaterializedProgrammingWeek({
+      startDate: "2026-10-05",
+      blocks: [
+        block({ id: "morning", title: "Morgen", dayOfWeek: 1, startMinuteOfDay: 8 * 60, durationMinutes: 60 }),
+        block({ id: "evening", title: "Abend", dayOfWeek: 1, startMinuteOfDay: 20 * 60, durationMinutes: 60 })
+      ],
+      pools: [pool],
+      assets,
+      nowMinuteOfDay: 13 * 60
+    });
+    const html = renderToStaticMarkup(ProgramWeekLens({ days: days.slice(0, 1), assets: assets as unknown as AssetRecord[] }));
+    expect(html).toContain("Aired earlier today");
+    expect(html).toContain("08:00 → 09:00");
+    // Only the evening block opens (one Edit block); the aired one has nothing ahead.
+    expect(html.match(/>Edit block</g)?.length).toBe(1);
+    expect(html.match(/Repeats inside block/g)?.length).toBe(2);
+  });
+});
+
 describe("U6: 'Replace existing schedule blocks' asks first", () => {
   const fetchMock = vi.fn();
   const confirmMock = vi.fn();

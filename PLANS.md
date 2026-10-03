@@ -776,8 +776,10 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   (`programming-week-minutes`, `schedule-midnight` C3/B2 and C6): they now assert the block on its start
   day only, with the next day's minutes unchanged. `source-breaker-api` read the lens's old props; it now
   checks that the week is built with the breaker and that the lens no longer picks titles itself.
-- **Baselines.** Wording baseline normalises the new hour totals, header dates and the clock-dependent first
-  title; the design baseline masks the first-title line (one line, ellipsis). Re-recorded with
+- **Baselines.** The day cards say what plays from now on, so their content follows the weekday and the
+  server clock: the wording baseline replaces the grid's text with `<week days>` (its wording is pinned by
+  `tests/unit/program-week-view.test.ts`), and the design baseline masks each block's first-title line
+  (one line, ellipsis) and fill pill. Re-recorded with
   `scripts/design-baseline.sh --update`, web from its standalone build on the host with the dev stack's
   environment (images cannot be built in the cloud).
 - **Review (fresh subagent).** All items met, no test weakened. Fixed: a one-source pool's repeat reason

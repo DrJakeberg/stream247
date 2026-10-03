@@ -95,14 +95,7 @@ const VOLATILE: Array<[RegExp, string]> = [
   // "1500m scheduled" and nothing else. These are aggregates whose *position* follows the clock,
   // unlike a configured "180 minutes", which stays deliberately uncovered.
   [/\b\d+m (scheduled|projected)\b/g, "<minutes> $1"],
-  [/\b\d+h scheduled\b/g, "<hours> scheduled"],
-  // Since M97 the week view counts hours ("24 h scheduled", "2 h 30 min") and dates its day headers
-  // ("SAT 3 OCT"); both follow the day the week starts on.
-  [/\b\d+ h(?: \d+ min)? scheduled\b/g, "<hours> scheduled"],
-  [/\b\d+ min scheduled\b/g, "<hours> scheduled"],
-  [/\b\d{1,2} (?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/g, "<date>"],
-  // Each block names the video it starts with from now on, or that it has aired today: server clock.
-  [/\b(?:Aired earlier today|No playable video resolved)\b/g, "<first video>"]
+  [/\b\d+h scheduled\b/g, "<hours> scheduled"]
 ];
 
 async function signIn(page: Page) {
@@ -161,6 +154,14 @@ test.describe("wording baseline", () => {
         // in it. The caption above it is wording and stays.
         for (const frame of root.querySelectorAll(".scene-render-preview")) {
           frame.textContent = "<rendered scene>";
+        }
+        // Since M97 the week view's day cards say what will play from now on: which day leads the
+        // grid, which blocks have aired, which video each block starts with and how late one ends
+        // all follow the day and the server clock, so the cards are data here. Their wording (dates,
+        // hours, "→ 01:00 Sun", the repeat reason) is pinned by tests/unit/program-week-view.test.ts;
+        // the text around the grid ("Week lens", its caption, "Add block") stays covered.
+        for (const grid of root.querySelectorAll(".program-week-grid")) {
+          grid.textContent = "<week days>";
         }
         return (root as HTMLElement).innerText;
       });
