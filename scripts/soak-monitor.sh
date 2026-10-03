@@ -117,11 +117,17 @@ container_restart_count() {
   esac
 }
 
+# Every long-running service of docker-compose.yml, in one list for the baseline and the check (M95).
+# Without uplink and relay, an uplink that crashed and came back inside one sample passed a 24 h soak.
+# A service that does not run here (the relay with relay mode off) reads "unknown" and is skipped.
+SOAK_RESTART_SERVICES="web worker playout uplink relay"
+
 collect_container_restart_counts() {
-  printf "web=%s worker=%s playout=%s" \
-    "$(container_restart_count web)" \
-    "$(container_restart_count worker)" \
-    "$(container_restart_count playout)"
+  counts=""
+  for service in $SOAK_RESTART_SERVICES; do
+    counts="${counts}${counts:+ }${service}=$(container_restart_count "$service")"
+  done
+  printf "%s" "$counts"
 }
 
 restart_count_for_service() {
@@ -152,7 +158,7 @@ check_container_restarts() {
   current_counts="$(collect_container_restart_counts)"
   issues=""
 
-  for service in web worker playout; do
+  for service in $SOAK_RESTART_SERVICES; do
     baseline_count="$(restart_count_for_service "$service" "$BASELINE_CONTAINER_RESTART_COUNTS")"
     current_count="$(restart_count_for_service "$service" "$current_counts")"
     case "${baseline_count}:${current_count}" in

@@ -10,7 +10,8 @@
 // neither a clean probe nor a failed one of the source, so it neither counts nor resets the count.
 //
 // A second kind never arrives here: the failures of the channel's own network outage (M82) are taken out
-// of the scan's list before quarantine and this filter see it (probe-network-outage.ts).
+// of the scan's list before quarantine and this filter see it (probe-network-outage.ts). A third kind is
+// heard by quarantine only: the daily trial of an item already in quarantine (M95).
 
 import type { SourceBreakerOutcome } from "@stream247/core";
 
@@ -20,11 +21,17 @@ export type QueueProbeOutcome<TAsset extends { id: string; sourceId: string } = 
   error: string;
   /** The failure was an archive whose download is queued or running. */
   pendingDownload?: boolean;
+  /** The daily trial of a quarantined item (M95). */
+  reprobe?: boolean;
 };
 
 export function sourceBreakerOutcomesOf(probeOutcomes: readonly QueueProbeOutcome[]): SourceBreakerOutcome[] {
   return probeOutcomes
     .filter((probed) => !(probed.outcome === "failed" && probed.pendingDownload))
+    // The daily trial of a quarantined item judges that item only: its source's breaker is closed (or it
+    // would not be tried), and items already known to fail would otherwise open it on a source that serves
+    // everything else (M95).
+    .filter((probed) => !probed.reprobe)
     .map((probed) => ({
       sourceId: probed.asset.sourceId,
       assetId: probed.asset.id,
