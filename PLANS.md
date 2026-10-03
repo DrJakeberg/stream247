@@ -28,7 +28,7 @@ How this file works:
 | M90 The 3 A.M. Answer | UX + Reliability | Next | Complete | A tired operator sees what is wrong and what to press, first | U7: a stale or missing worker or playout heartbeat is the first "Open problems" entry with its age in words and the restart command; unit test. U8: the status sentence follows the heartbeats; `grep -rn "are now active" apps/web` → no output. U10: incident messages store no relative time (test on the writer); engine fields behind "Details" (`grep -rn "ready not ready" apps/web` → no output). U11: all three interrupting actions of "If something is stuck" confirm, Soft restart, Force reconnect and Hard reload (`apps/web/components/playout-action-form.tsx:97,105,128`; in direct mode Force reconnect drops the uplink); component test per button. Every critical incident fingerprint maps to one operator action in a catalogue (`IncidentRecord` has no such field today, `packages/db/src/index.ts:399-412`); a unit test collects all `fingerprint:` literals in `apps/worker/src` and fails on a critical one without an action; the crash-loop text no longer says only "Manual intervention is required" (`apps/worker/src/index.ts:7486`). U12: render test: without a connected bot account the Live chip reads "Not connected to Twitch", never "Checking". audit U3/U30: one heartbeat constant and one effective-heartbeat function used by state, readiness and worker; test that a 50 s old heartbeat gives the same verdict everywhere. U9 (default R2 Q4 in 5.2): Playwright at 390 px, "Open problems" above y = 1 400 | `apps/web`, `apps/worker`, `packages/core`, tests, baselines, `docs/ui.md` | low | revert the commit |
 | M91 Honest First Run | UX + Data | Next | Complete | A fresh install starts empty, readiness counts only what can air, and plain HTTP is explained | I1 (decided 5.1 Q5): an empty DB bootstraps with no pool, no schedule block and no URL-less source (unit test on `createInitialSeedState`); existing installs keep their rows (integration test); readiness: a pool is ready only when a block uses it and it has a ready asset, the schedule only when the coming week has no unplayable block (`tests/unit/onboarding*.test.ts`). I2 (decided 5.1 Q6): over `http:` on a host other than `localhost`/`127.0.0.1`, `/setup` and `/login` show the two ways out; render test. I6: component test: the URL field is prefilled with the request origin and the zone field with the browser zone. I7: render test of the password warning under the field plus, per decided 5.1 Q8, a change-password form under Admin → Settings → Security that requires the current password (API test: wrong current password refused, right one changes it) and a one-line container command for a reset documented in `docs/operations.md` (integration test: the reset entry point run against a test database sets a new password and sign-in with it succeeds); no e-mail reset. I8: render test: the login hint has no line clamp and, without Twitch app credentials, contains "Twitch app credentials" and the link to `/setup` step 3 | `packages/db` seed, `apps/web`, tests, baselines, `docs/getting-started.md` | low: only `isDatabaseEmpty` installs change | revert the commit |
 | M92 Getting Started A Stranger Can Follow | Docs + Ops | Next | Complete | The guide leads a stranger from an empty host to air without a gap | I4: `docs/getting-started.md` gets "Get the files" (clone a release tag, or download `docker-compose.yml` and `docker/mediamtx.yml`), the link `https://dev.twitch.tv/console/apps` (also in wizard step 3) and a numbered stream-key step; `grep -c "dev.twitch.tv/console" docs/getting-started.md` ≥ 1. I3: unit test that the four compose image defaults equal the newest non-rc `## X.Y.Z` heading in `CHANGELOG.md`, so a release commit that forgets them fails. I5: the same one-or-two-accounts sentence in wizard and guide (decided 5.1 Q9). `pnpm test:fresh-compose` green | `docs/`, `apps/web/app/setup`, `tests/unit/`, `README.md` | low | revert the commit |
-| M93 Dated And One-Off Schedule Blocks | Feature | Next | Planned | "The next 10 days at 20:00 this playlist" and "once on 10 Oct" can be saved on a 24/7 grid, and air, previews, `/channel` and Twitch agree | R1 row A (decided 5.1 Q1, Q2): `valid_from`/`valid_until` in baseline, ALTER, migration, manifest, mapper, writers and blueprints; filter in `buildScheduleOccurrences`; dated layer ranks first in `findCurrentScheduleOccurrence`; `applyScheduleLayers` with `airWindows`; conflicts per layer; ended rows listed as ended; form field *Runs*; "Single day" renamed to "One weekday, every week". Tests: a 10-day run has day 10 and not day 11; a once-block airs once; a carry-over past `valid_until` still ends; weekly 18-22 + dated 20-21 gives three windows with one key; a cuepoint is not re-fired; the 24/7 grid + dated 20:00 block saves (today `["grid","special"]`); schema-manifest and DB round-trip tests | `packages/core`, `packages/db`, `apps/web`, `apps/worker`, tests, baselines, `docs/` | medium: touches the one function every schedule consumer uses; additive columns | revert the commit; old images ignore the columns |
+| M93 Dated And One-Off Schedule Blocks | Feature | Next | Complete | "The next 10 days at 20:00 this playlist" and "once on 10 Oct" can be saved on a 24/7 grid, and air, previews, `/channel` and Twitch agree | R1 row A (decided 5.1 Q1, Q2): `valid_from`/`valid_until` in baseline, ALTER, migration, manifest, mapper, writers and blueprints; filter in `buildScheduleOccurrences`; dated layer ranks first in `findCurrentScheduleOccurrence`; `applyScheduleLayers` with `airWindows`; conflicts per layer; ended rows listed as ended; form field *Runs*; "Single day" renamed to "One weekday, every week". Tests: a 10-day run has day 10 and not day 11; a once-block airs once; a carry-over past `valid_until` still ends; weekly 18-22 + dated 20-21 gives three windows with one key; a cuepoint is not re-fired; the 24/7 grid + dated 20:00 block saves (today `["grid","special"]`); schema-manifest and DB round-trip tests | `packages/core`, `packages/db`, `apps/web`, `apps/worker`, tests, baselines, `docs/` | medium: touches the one function every schedule consumer uses; additive columns | revert the commit; old images ignore the columns |
 | M94 Inserts From Remote Sources Air | Bug | Next | Planned | A YouTube or Twitch insert airs, or is skipped once with an incident, never retried forever | W1: the due insert is warmed in the queue scan; a failed or bridged insert counts as consumed and raises an incident naming it (owner Q6); both insert checks apply quarantine and breaker. W5: one shared "cuepoint asset of a block" helper used by worker and preview; test: `insertEveryItems: 0` with a pool insert asset gives the same cuepoint count in both. W6: an item that failed to open is retried once; `failed` treated like an empty current item in the Move next and insert checks. R3's W1 probe becomes a test | `apps/worker`, `packages/core`, tests | low–medium: crash-loop interplay | revert the commit |
 | M95 Self-Healing Fills The Gaps | Reliability | Next | Planned | No stale incident, no orphan encoder, no permanently lost item | H5: disk and system-volume flags re-armed from open incidents on the first cycle; `secrets.key-mismatch` resolved at a boot where every secret decrypts; tests. W7: the playout exit handler returns when the exiting child is not current (static test as R3's); the uplink handler checked for the same pattern. H9: one re-probe per quarantined item per 24 h, one per source per cycle, only with the breaker closed and no outage verdict (owner Q1); test. U18: `scripts/soak-monitor.sh` counts uplink and relay restarts; shell test or `bash -n` plus a fixture run | `apps/worker`, `scripts/`, tests, `docs/operations.md` | low | revert the commit |
 | M96 Local File Durations | Data | Next | Planned | Local-library assets carry their real length, so planning numbers are right | U4: `ffprobe` duration at scan time, bounded timeout, cached by size + mtime; unit test on a generated 2-minute file → `durationSeconds` within 1 s of 120; an unchanged file is not probed again (spy); Day lens shows "Unique library: 6m" for three such files | `apps/worker`, `packages/db`, tests | medium: a large first scan is slower, so probing is incremental | revert the commit; stored durations are harmless to old images |
@@ -210,6 +210,21 @@ deployed; the release that ships them records the results.
   ```sh
   ssh dut 'docker exec stream247-postgres-1 psql -U stream247 -d stream247 -Atc "SELECT (SELECT COUNT(*) FROM sources), (SELECT COUNT(*) FROM pools), (SELECT COUNT(*) FROM schedule_blocks)"'
   ssh dut 'docker exec stream247-worker-1 test -f apps/worker/dist/reset-owner-password.js && echo present'
+  ```
+
+- M93, after the repin: the migration ran and every existing block stayed undated. Passes on `1|0`.
+  Then, in `Program → Schedule → Day`, add a block *Runs: Once* on a date four to six days ahead, 30 min or
+  longer, at a time a weekly block covers. Passes when, after the next worker cycle,
+  `https://www.twitch.tv/jimpanse247/schedule` shows the one-off entry on its date, the weekly entry it
+  covers cut around it (when that weekly block is on Twitch at all: blocks over 23 h are not sent), and no
+  other date changed. Delete the test block afterwards; the next
+  cycle restores the single weekly entry. Twitch's answer to these segments was not reachable from the cloud.
+
+  ```sh
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT (SELECT COUNT(*) FROM schema_migrations WHERE id = '20261003_001_schedule_block_dates'),
+         (SELECT COUNT(*) FROM schedule_blocks WHERE valid_from <> '' OR valid_until <> '');
+  SQL
   ```
 
 - (The checks for 2.2.0 are in the archive, sections M75-M82.)
@@ -507,3 +522,38 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   carries it word for word (unit test) and no longer says not to run as the broadcast channel.
 - **Not changed.** Setup steps 3 and 4 are not in the design or wording baselines, so none needed
   re-recording. No DUT check: nothing here runs differently on a host.
+
+### M93 Dated And One-Off Schedule Blocks
+
+- **Model.** `schedule_blocks.valid_from` / `valid_until` (`TEXT NOT NULL DEFAULT ''`, channel-local
+  `YYYY-MM-DD`, inclusive; empty = unbounded) in the base schema, the ALTER list, migration
+  `20261003_001_schedule_block_dates`, the manifest, both mappers, all four writers (whole state, insert,
+  replace, update), the repeat-set update and blueprints. The dates bound when an occurrence *starts*, so a
+  block crossing midnight on its last date still runs into the next day. *Once* is both dates equal; the
+  route derives the weekday from the date.
+- **Layer (5.1 Q1).** `buildScheduleOccurrences` filters by date and passes the occurrences through
+  `applyScheduleLayers`: a dated occurrence gets its whole range as `airWindows`, an undated one its range
+  minus the dated ranges of the day before, the day and the day after; one taken over completely is left
+  out. The weekly occurrence keeps its key and start, so cuepoints count from it. `isScheduleOccurrenceOnAir`
+  reads the windows and `findCurrentScheduleOccurrence` ranks dated first. Lists (`listUpcoming…`, `/channel`,
+  the standby slate, the Twitch plan) read one entry per window via `listScheduleAirSegments`; a window
+  after the first is keyed `<key>@<minute>`. Twitch gets one segment per window; under 30 min is skipped
+  as before.
+- **Cuepoints.** When the dated block comes on, the worker's window key moves to the dated run and the
+  weekly block's fired keys go with it. Instead of keeping a second key, `getCuepointProgress` takes the
+  air windows: only a cuepoint inside the window on air now is due, so one from an earlier window is not
+  fired again and one inside the dated part is skipped (the test fails on main: the 18:15 cuepoint fires
+  again at 21:05).
+- **Conflicts.** Per layer: dated over undated is no conflict; two dated blocks conflict only when their
+  date spans meet (the day after the last date counts for a block crossing midnight).
+- **Editor.** Field *Runs* (*Every week* / *Between dates* / *Once*) before Repeat behavior; *Daily*
+  between dates creates only the weekdays the dates contain (three for 1-3 Oct). Ended blocks are listed
+  faded with *Ended 10 Oct*, left off the timeline, and *Hide ended* filters them; a save whose last date
+  is before today is refused. The timeline draws dated blocks over the weekly ones, inset with a dashed
+  edge; the week lens lists a cut block's windows and the run's dates. "Single day" reads "One weekday,
+  every week".
+- **Decisions without the owner (routine).** Duplicate refuses a weekday outside the block's dates; clone
+  day copies a dated block only onto weekdays its dates contain; the weekly coverage summary counts the
+  weekly grid alone; projected minutes of a cut weekly block are not cut (M97 reworks the projection).
+- **Not built.** R1's inline takeover notice in the form (1.3 step 8) and the "for N days" helper: not in
+  this row's acceptance.

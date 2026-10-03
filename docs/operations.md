@@ -460,6 +460,29 @@ after-midnight part on Tuesday:
 - a replay of the block's pool stays cached while the block is on air after midnight, also with a cache
   retention shorter than a day
 
+### Dated and one-off blocks (since M93)
+
+`Program → Schedule → Day`, field *Runs*: *Every week* (no dates, every block before M93), *Between
+dates* (first and last date) or *Once* (one date; the weekday follows from it). Dates are in the channel
+zone and bound when the block starts.
+
+- a dated block takes over the part of a weekly block it overlaps, and the weekly block continues around
+  it: weekly 18:00-22:00 with a dated 20:00-21:00 airs 18-20, the dated block, then 21-22. So "the next
+  10 days at 20:00" can be saved on a channel filled around the clock. Two weekly blocks, or two dated
+  blocks whose dates meet, are still refused as an overlap
+- on air, `/channel`, the week lens and Twitch all read the same air windows: Twitch gets one segment per
+  window (the weekly block's second part keyed `<key>@<minute>`), a dated run only on its dates, so a
+  10-day run shows days 1-7 at once and days 8-10 as the 7-day window rolls
+- the weekly block keeps its start, so its cuepoints count from it; a cuepoint that falls into the dated
+  part is skipped, and one that aired before the dated block does not air again when the weekly block
+  comes back
+- "Daily" between two dates creates a block only on the weekdays those dates contain; a pool used by a
+  dated block continues where it stopped the evening before (owner decision 5.1 Q2)
+- a block whose last date has passed airs no more and stays listed, faded and marked *Ended 10 Oct*,
+  until it is re-dated or deleted (*Hide ended* filters it out); dates that lie entirely in the past are
+  refused on save. A block crossing midnight on its last date still runs into the next day
+- changing the channel zone reads every date in the new zone; nothing is converted
+
 ### Channel timezone is not valid (since M85)
 
 - the incident `config.channel-timezone.invalid` (warning, system) means `CHANNEL_TIMEZONE` in the

@@ -198,6 +198,8 @@ The schedule model is block-based and timezone-aware.
 Current schedule capabilities:
 
 - weekly block-based scheduling
+- dated and one-off blocks (M93): a block may run only between two dates or once on one date; it sits on a
+  layer above the weekly grid and takes over the part it overlaps, the weekly block continuing around it
 - pool-based programming
 - minute-accurate block start times
 - duration validation
