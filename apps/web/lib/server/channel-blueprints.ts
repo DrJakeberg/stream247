@@ -1,4 +1,5 @@
 import {
+  isScheduleDateString,
   normalizeAudioLaneVolumePercent,
   normalizeCuepointOffsetsSeconds,
   normalizeOverlayNamedScenes,
@@ -76,6 +77,8 @@ type BlueprintScheduleBlockRecord = Pick<
   | "repeatGroupId"
   | "cuepointAssetId"
   | "cuepointOffsetsSeconds"
+  | "validFrom"
+  | "validUntil"
 > & {
   cuepointAssetRef?: BlueprintAssetReference | null;
 };
@@ -447,7 +450,10 @@ function normalizeBlueprintScheduleBlockRecord(value: unknown): ScheduleBlockRec
       typeof candidate.durationMinutes === "number" && Number.isFinite(candidate.durationMinutes)
         ? Math.max(1, Math.round(candidate.durationMinutes))
         : 60
-    )
+    ),
+    // Dated runs (M93); a blueprint from before M93 has none, and a malformed date reads as none.
+    validFrom: isScheduleDateString(asString(candidate.validFrom)) ? asString(candidate.validFrom) : "",
+    validUntil: isScheduleDateString(asString(candidate.validUntil)) ? asString(candidate.validUntil) : ""
   };
 }
 
@@ -644,6 +650,8 @@ export function buildChannelBlueprintDocument(args: {
         repeatGroupId: block.repeatGroupId ?? "",
         cuepointAssetId: block.cuepointAssetId ?? "",
         cuepointOffsetsSeconds: [...(block.cuepointOffsetsSeconds ?? [])],
+        validFrom: block.validFrom ?? "",
+        validUntil: block.validUntil ?? "",
         cuepointAssetRef: buildBlueprintAssetReference(block.cuepointAssetId ? assetsById.get(block.cuepointAssetId) : undefined)
       }))
     },

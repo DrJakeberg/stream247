@@ -3,6 +3,8 @@
 import {
   SCHEDULE_REPEAT_MODE_OPTIONS,
   formatMinuteOfDay,
+  getScheduleDateDayOfWeek,
+  isScheduleDateString,
   getRepeatDaysForMode,
   parseCuepointOffsetsString,
   summarizeCuepointOffsets,
@@ -20,7 +22,18 @@ type Props = {
   assets: Array<{ id: string; title: string; status: string }>;
   shows: ShowProfileRecord[];
   block?: ScheduleBlock;
+  /** Today in the channel's time zone, the first date offered for a dated run. */
+  today?: string;
 };
+
+type ScheduleRuns = "weekly" | "between" | "once";
+
+function initialRuns(block?: ScheduleBlock): ScheduleRuns {
+  if (!block?.validFrom && !block?.validUntil) {
+    return "weekly";
+  }
+  return block.validFrom && block.validFrom === block.validUntil ? "once" : "between";
+}
 
 const dayOptions = [
   { value: 0, label: "Sunday" },
@@ -32,7 +45,7 @@ const dayOptions = [
   { value: 6, label: "Saturday" }
 ];
 
-export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
+export function ScheduleBlockForm({ pools, assets, shows, block, today = "" }: Props) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const [selectedDays, setSelectedDays] = useState<number[]>(block ? [block.dayOfWeek] : [1]);
@@ -45,15 +58,23 @@ export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
     summarizeCuepointOffsets(block?.cuepointOffsetsSeconds ?? [])
   );
   const [applyToRepeatSet, setApplyToRepeatSet] = useState(Boolean(block?.repeatGroupId));
+  const [runs, setRuns] = useState<ScheduleRuns>(initialRuns(block));
+  const [validFrom, setValidFrom] = useState(block?.validFrom || today);
+  const [validUntil, setValidUntil] = useState(block?.validUntil ?? "");
   const router = useRouter();
   const { pushToast } = useToast();
 
   const isEditing = Boolean(block);
-  const resolvedCreateDays = isEditing
-    ? [block?.dayOfWeek ?? 1]
-    : repeatMode === "custom"
-      ? selectedDays
-      : getRepeatDaysForMode(repeatMode, selectedDays[0] ?? 1, selectedDays);
+  const isOnce = runs === "once";
+  const onceDayOfWeek = isOnce && isScheduleDateString(validFrom) ? getScheduleDateDayOfWeek(validFrom) : null;
+  const resolvedCreateDays =
+    onceDayOfWeek !== null
+      ? [onceDayOfWeek]
+      : isEditing
+        ? [block?.dayOfWeek ?? 1]
+        : repeatMode === "custom"
+          ? selectedDays
+          : getRepeatDaysForMode(repeatMode, selectedDays[0] ?? 1, selectedDays);
 
   return (
     <form
@@ -73,8 +94,11 @@ export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
           sourceName: "",
           showId: String(formData.get("showId") || ""),
           poolId: String(formData.get("poolId") || ""),
-          dayOfWeek: Number(formData.get("dayOfWeek") || 0),
+          dayOfWeek: onceDayOfWeek ?? Number(formData.get("dayOfWeek") ?? block?.dayOfWeek ?? 0),
           dayOfWeeks: isEditing ? undefined : resolvedCreateDays,
+          runs,
+          validFrom: runs === "weekly" ? "" : validFrom,
+          validUntil: runs === "weekly" ? "" : isOnce ? validFrom : validUntil,
           startMinuteOfDay: hours * 60 + minutes,
           durationMinutes: Number(formData.get("durationMinutes") || 0),
           repeatMode,
@@ -148,7 +172,38 @@ export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
         </label>
       </div>
       <div className="form-grid">
-        {isEditing ? (
+        <label>
+          <span className="label label-with-info">
+            Runs
+            <InfoTip text="Every week keeps the block on its weekdays with no end. Between dates runs it only from the first to the last date, and Once runs it on one date. Dates are in the channel's time zone. A dated block takes over the part of the weekly programme it overlaps, which continues around it, and stays listed as ended after its last date until you delete it." />
+          </span>
+          <select onChange={(event) => setRuns(event.target.value as ScheduleRuns)} value={runs}>
+            <option value="weekly">Every week</option>
+            <option value="between">Between dates</option>
+            <option value="once">Once</option>
+          </select>
+        </label>
+        {runs === "between" ? (
+          <>
+            <label>
+              <span className="label">First date</span>
+              <input onChange={(event) => setValidFrom(event.target.value)} required type="date" value={validFrom} />
+            </label>
+            <label>
+              <span className="label">Last date</span>
+              <input min={validFrom || undefined} onChange={(event) => setValidUntil(event.target.value)} required type="date" value={validUntil} />
+            </label>
+          </>
+        ) : null}
+        {isOnce ? (
+          <label>
+            <span className="label">Date</span>
+            <input onChange={(event) => setValidFrom(event.target.value)} required type="date" value={validFrom} />
+          </label>
+        ) : null}
+      </div>
+      <div className="form-grid">
+        {isOnce ? null : isEditing ? (
           <>
             <label>
               <span className="label label-with-info">
@@ -182,7 +237,7 @@ export function ScheduleBlockForm({ pools, assets, shows, block }: Props) {
             <label>
               <span className="label label-with-info">
                 Repeat behavior
-                <InfoTip text="Creates one copy of this block for each weekday in the chosen pattern and links the copies as a repeat set, so a later edit can reach all of them at once. Single day makes one block on its own." />
+                <InfoTip text="Creates one copy of this block for each weekday in the chosen pattern and links the copies as a repeat set, so a later edit can reach all of them at once. One weekday, every week makes one block on its own. Between dates, only the weekdays that occur between them get a copy." />
               </span>
               <select
                 onChange={(event) => {

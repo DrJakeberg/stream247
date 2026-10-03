@@ -1791,6 +1791,23 @@ button.collection-chip {
   background: var(--danger-tint-soft);
 }
 
+/* A dated block (M93) is drawn over the weekly block it takes over, set in a little so the weekly card's
+   edge stays visible, with a dashed edge as its mark. */
+.schedule-block-dated {
+  left: 20px;
+  z-index: 1;
+  border-left-style: dashed;
+}
+
+.schedule-block-run {
+  font-weight: 600;
+}
+
+/* An ended dated block no longer airs; it stays listed, faded, until it is re-dated or deleted. */
+.schedule-block-ended {
+  opacity: 0.6;
+}
+
 @media (min-width: 1080px) {
   .program-lens-layout {
     grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);

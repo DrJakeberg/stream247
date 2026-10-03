@@ -408,6 +408,24 @@ describe("channel blueprints", () => {
     expect(normalized.warnings).toEqual([]);
   });
 
+  it("carries a block's dates through export and import, and reads a malformed date as none (M93)", () => {
+    const state = createState();
+    const studio = createStudio();
+    state.scheduleBlocks = [{ ...state.scheduleBlocks[0]!, validFrom: "2026-10-01", validUntil: "2026-10-10" }];
+    const blueprint = buildChannelBlueprintDocument({ state, studio, presets: [], exportedAt: "2026-10-01T12:00:00.000Z" });
+    expect(blueprint.programming.scheduleBlocks[0]).toMatchObject({ validFrom: "2026-10-01", validUntil: "2026-10-10" });
+
+    const imported = normalizeChannelBlueprintDocument({ input: blueprint as ChannelBlueprintDocument, currentState: state, studio, now: "2026-10-01T12:05:00.000Z" });
+    expect(imported.importedScheduleBlocks[0]).toMatchObject({ validFrom: "2026-10-01", validUntil: "2026-10-10" });
+
+    // A blueprint from before M93 has no dates; a hand-edited one may have a date in another format.
+    const withoutDates = JSON.parse(JSON.stringify(blueprint)) as ChannelBlueprintDocument;
+    delete (withoutDates.programming.scheduleBlocks[0] as { validFrom?: string }).validFrom;
+    withoutDates.programming.scheduleBlocks[0]!.validUntil = "10.10.2026";
+    const old = normalizeChannelBlueprintDocument({ input: withoutDates, currentState: state, studio, now: "2026-10-01T12:05:00.000Z" });
+    expect(old.importedScheduleBlocks[0]).toMatchObject({ validFrom: "", validUntil: "" });
+  });
+
   it("does not leak one primary output key state into another imported primary destination", () => {
     const state = createState();
     const studio = createStudio();

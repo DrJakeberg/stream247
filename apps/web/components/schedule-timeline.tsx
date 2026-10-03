@@ -1,6 +1,12 @@
 "use client";
 
-import { formatMinuteOfDay, type MaterializedProgrammingBlock, type ScheduleBlock } from "@stream247/core";
+import {
+  describeScheduleBlockRun,
+  formatMinuteOfDay,
+  isScheduleBlockDated,
+  type MaterializedProgrammingBlock,
+  type ScheduleBlock
+} from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import type { ShowProfileRecord } from "@/lib/server/state";
@@ -18,6 +24,7 @@ type Props = {
   timeZone: string;
   activeDay?: number;
   onActiveDayChange?: (day: number) => void;
+  today?: string;
 };
 
 export function ScheduleTimeline({
@@ -27,7 +34,8 @@ export function ScheduleTimeline({
   showProfiles,
   timeZone,
   activeDay,
-  onActiveDayChange
+  onActiveDayChange,
+  today = ""
 }: Props) {
   const [draggedId, setDraggedId] = useState("");
   const [internalActiveDay, setInternalActiveDay] = useState(1);
@@ -104,10 +112,15 @@ export function ScheduleTimeline({
     window.addEventListener("mouseup", onUp);
   }
 
+  // Ended dated blocks no longer air, so they are left off the timeline (the list still has them). Dated
+  // blocks come last, so they are drawn over the weekly block they take over (M93).
   const visibleBlocks = blocks
-    .filter((block) => block.dayOfWeek === resolvedActiveDay)
+    .filter((block) => block.dayOfWeek === resolvedActiveDay && !describeScheduleBlockRun(block, today).ended)
     .slice()
-    .sort((left, right) => left.startMinuteOfDay - right.startMinuteOfDay);
+    .sort(
+      (left, right) =>
+        Number(isScheduleBlockDated(left)) - Number(isScheduleBlockDated(right)) || left.startMinuteOfDay - right.startMinuteOfDay
+    );
 
   return (
     <div className="stack-form">
@@ -163,10 +176,11 @@ export function ScheduleTimeline({
               const height = Math.max((block.durationMinutes / minutesPerSlot) * slotHeight - 4, 24);
               const show = showProfiles.find((entry) => entry.id === block.showId);
               const materialized = materializedBlocks?.[block.id];
+              const runLabel = describeScheduleBlockRun(block, today).label;
 
               return (
                 <button
-                  className={`schedule-block-card${conflictSet.has(block.id) ? " schedule-block-conflict" : ""}${
+                  className={`schedule-block-card${isScheduleBlockDated(block) ? " schedule-block-dated" : ""}${conflictSet.has(block.id) ? " schedule-block-conflict" : ""}${
                     materialized ? ` schedule-block-${materialized.fillStatus}` : ""
                   }`}
                   draggable
@@ -196,6 +210,7 @@ export function ScheduleTimeline({
                     {formatMinuteOfDay(block.startMinuteOfDay)} · {block.durationMinutes}m
                   </span>
                   <span>{block.sourceName}</span>
+                  {runLabel ? <span className="schedule-block-run">{runLabel}</span> : null}
                   {materialized ? <span>{materialized.fillLabel}</span> : null}
                   <span
                     className="subtle"

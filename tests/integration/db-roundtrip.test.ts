@@ -8,6 +8,9 @@ import {
   createPoolRecord,
   createScheduleBlocks,
   createScheduleBlocksChecked,
+  replaceAllScheduleBlocks,
+  updateScheduleBlockRecord,
+  updateScheduleRepeatGroupRecords,
   deleteOverlayScenePresetRecord,
   ensureDatabase,
   listOverlayScenePresetRecords,
@@ -2533,6 +2536,98 @@ describe.sequential("database roundtrip", () => {
       }));
       const cleared = (await readAppState()).playout;
       expect({ restart: cleared.restartRequestedAt, action: cleared.pendingAction }).toEqual({ restart: "", action: "" });
+    }, 60_000);
+  });
+
+  describe("dated schedule blocks (M93)", () => {
+    const scheduleBlockDatesMigrationId = "20261003_001_schedule_block_dates";
+    const datedBlock = (id: string, dayOfWeek: number, validFrom: string, validUntil: string, repeatGroupId = "") => ({
+      id,
+      title: `Dated ${id}`,
+      categoryName: "Special",
+      dayOfWeek,
+      startMinuteOfDay: 20 * 60,
+      durationMinutes: 120,
+      poolId: "pool_dated",
+      sourceName: "Pool",
+      repeatMode: (repeatGroupId ? "daily" : "single") as "daily" | "single",
+      repeatGroupId,
+      cuepointAssetId: "",
+      cuepointOffsetsSeconds: [],
+      validFrom,
+      validUntil
+    });
+
+    it("adds the two date columns to a database whose schedule_blocks predates them, and old rows stay undated", async () => {
+      await ensureDatabaseWithRetry();
+      await replaceAllScheduleBlocks([]);
+      await executeSql(`
+        ALTER TABLE schedule_blocks DROP COLUMN IF EXISTS valid_from;
+        ALTER TABLE schedule_blocks DROP COLUMN IF EXISTS valid_until;
+        DELETE FROM schema_migrations WHERE id = '${scheduleBlockDatesMigrationId}';
+        INSERT INTO schedule_blocks (id, title, category_name, start_hour, start_minute_of_day, duration_minutes, day_of_week, source_name)
+        VALUES ('block_before_m93', 'Weekly', 'Replay', 18, 1080, 240, 4, 'Pool');
+      `);
+
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      const columns = await executeSql(
+        "SELECT column_name || '=' || column_default FROM information_schema.columns WHERE table_name = 'schedule_blocks' AND column_name LIKE 'valid_%' ORDER BY column_name;"
+      );
+      expect(columns.split("\n")).toEqual(["valid_from=''::text", "valid_until=''::text"]);
+      expect(await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${scheduleBlockDatesMigrationId}';`)).toBe("1");
+      expect(DECLARED_SCHEMA.schedule_blocks).toEqual(expect.arrayContaining(["valid_from", "valid_until"]));
+      const old = (await readAppState()).scheduleBlocks.find((block) => block.id === "block_before_m93");
+      expect({ validFrom: old?.validFrom, validUntil: old?.validUntil }).toEqual({ validFrom: "", validUntil: "" });
+    }, 60_000);
+
+    it("round-trips the dates through every schedule writer", async () => {
+      await ensureDatabaseWithRetry();
+      await replaceAllScheduleBlocks([datedBlock("block_once", 6, "2026-10-10", "2026-10-10")]);
+      const dates = async () =>
+        Object.fromEntries(
+          (await readAppState()).scheduleBlocks.map((block) => [block.id, `${block.validFrom}..${block.validUntil}`] as const)
+        );
+      expect(await dates()).toEqual({ block_once: "2026-10-10..2026-10-10" });
+
+      await createScheduleBlocks([
+        datedBlock("block_run_thu", 4, "2026-10-01", "2026-10-10", "repeat_run"),
+        datedBlock("block_run_fri", 5, "2026-10-01", "2026-10-10", "repeat_run")
+      ]);
+      await createScheduleBlocksChecked([datedBlock("block_checked", 0, "2026-10-04", "")], () => undefined);
+      expect(await dates()).toMatchObject({
+        block_run_thu: "2026-10-01..2026-10-10",
+        block_run_fri: "2026-10-01..2026-10-10",
+        block_checked: "2026-10-04.."
+      });
+
+      await updateScheduleRepeatGroupRecords({
+        repeatGroupId: "repeat_run",
+        title: "Run",
+        categoryName: "Special",
+        startMinuteOfDay: 20 * 60,
+        durationMinutes: 60,
+        poolId: "pool_dated",
+        sourceName: "Pool",
+        validFrom: "2026-10-02",
+        validUntil: "2026-10-12"
+      });
+      const once = (await readAppState()).scheduleBlocks.find((block) => block.id === "block_once")!;
+      await updateScheduleBlockRecord({ ...once, validFrom: "", validUntil: "" });
+      expect(await dates()).toMatchObject({
+        block_once: "..",
+        block_run_thu: "2026-10-02..2026-10-12",
+        block_run_fri: "2026-10-02..2026-10-12"
+      });
+
+      // The whole-state writer keeps them too.
+      await updateAppState((state) => ({
+        ...state,
+        scheduleBlocks: state.scheduleBlocks.map((block) => (block.id === "block_once" ? { ...block, validFrom: "2026-11-01", validUntil: "2026-11-01" } : block))
+      }));
+      expect(await dates()).toMatchObject({ block_once: "2026-11-01..2026-11-01", block_run_thu: "2026-10-02..2026-10-12" });
+      await replaceAllScheduleBlocks([]);
     }, 60_000);
   });
 

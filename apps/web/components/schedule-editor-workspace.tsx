@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { formatMinuteOfDay, type MaterializedProgrammingDay, type ScheduleBlock } from "@stream247/core";
+import {
+  describeScheduleBlockRun,
+  formatMinuteOfDay,
+  type MaterializedProgrammingDay,
+  type ScheduleBlock
+} from "@stream247/core";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { buildAssetDisplayTitle, isReplayTitlePrefix } from "@/lib/asset-metadata";
@@ -41,6 +46,8 @@ type Props = {
   liveQueueItems: Array<{ id: string; kind: string; title: string; subtitle: string }>;
   initialDay?: number;
   selectedAssetId?: string;
+  /** Today in the channel's time zone; a dated block whose last date is before it is listed as ended. */
+  today?: string;
 };
 
 export function ScheduleEditorWorkspace({
@@ -54,7 +61,8 @@ export function ScheduleEditorWorkspace({
   materializedDays,
   liveQueueItems,
   initialDay = 1,
-  selectedAssetId
+  selectedAssetId,
+  today = ""
 }: Props) {
   const router = useRouter();
   const [activeDay, setActiveDay] = useState<number>(initialDay);
@@ -62,6 +70,7 @@ export function ScheduleEditorWorkspace({
   const [poolId, setPoolId] = useState("");
   const [showId, setShowId] = useState("");
   const [conflictsOnly, setConflictsOnly] = useState(false);
+  const [hideEnded, setHideEnded] = useState(false);
   const conflictSet = new Set(conflicts);
   const normalizedQuery = query.trim().toLowerCase();
   const assetById = new Map(assetCatalog.map((asset) => [asset.id, asset]));
@@ -76,6 +85,10 @@ export function ScheduleEditorWorkspace({
     }
 
     if (conflictsOnly && !conflictSet.has(block.id)) {
+      return false;
+    }
+
+    if (hideEnded && describeScheduleBlockRun(block, today).ended) {
       return false;
     }
 
@@ -153,6 +166,10 @@ export function ScheduleEditorWorkspace({
           <input checked={conflictsOnly} onChange={(event) => setConflictsOnly(event.target.checked)} type="checkbox" />
           <span>Conflicts only<InfoTip text="Keeps only blocks that overlap another block on the same weekday, so clashes can be fixed without scrolling past everything that is fine." /></span>
         </label>
+        <label className={`chip-toggle${hideEnded ? " chip-toggle-active" : ""}`}>
+          <input checked={hideEnded} onChange={(event) => setHideEnded(event.target.checked)} type="checkbox" />
+          <span>Hide ended<InfoTip text="Hides dated blocks whose last date has passed. They no longer air; they stay in the list so you can give them new dates or copy them, until you delete them." /></span>
+        </label>
         <button
           className="button secondary"
           onClick={() => {
@@ -160,6 +177,7 @@ export function ScheduleEditorWorkspace({
             setPoolId("");
             setShowId("");
             setConflictsOnly(false);
+            setHideEnded(false);
           }}
           type="button"
         >
@@ -214,6 +232,7 @@ export function ScheduleEditorWorkspace({
         onActiveDayChange={handleActiveDayChange}
         showProfiles={showProfiles}
         timeZone={timeZone}
+        today={today}
       />
 
       <div className="list">
@@ -221,15 +240,19 @@ export function ScheduleEditorWorkspace({
           const show = showProfiles.find((entry) => entry.id === block.showId);
           const pool = pools.find((entry) => entry.id === block.poolId);
           const materialized = materializedByBlockId.get(block.id);
+          const run = describeScheduleBlockRun(block, today);
 
           return (
-            <div className="item" key={block.id}>
+            <div className={`item${run.ended ? " schedule-block-ended" : ""}`} key={block.id}>
               <div className="stats-row">
                 <strong>{block.title}</strong>
-                {materialized ? (
+                {run.ended ? (
+                  <span className="programming-status-pill programming-status-empty">{run.label}</span>
+                ) : materialized ? (
                   <span className={`programming-status-pill programming-status-${materialized.fillStatus}`}>{materialized.fillLabel}</span>
                 ) : null}
-                <span className="subtle">{materialized?.repeatLabel || "Single day"}</span>
+                <span className="subtle">{materialized?.repeatLabel || dayLabels[block.dayOfWeek]}</span>
+                {run.label && !run.ended ? <span className="subtle">{run.label}</span> : null}
               </div>
               <div className="subtle">
                 {dayLabels[block.dayOfWeek]} · {formatMinuteOfDay(block.startMinuteOfDay)} · {block.durationMinutes} minutes · {pool?.name || block.sourceName}
@@ -315,7 +338,7 @@ export function ScheduleEditorWorkspace({
                 </>
               ) : null}
               <div style={{ marginTop: 12 }}>
-                <ScheduleBlockForm assets={assets} block={block} pools={pools} shows={showProfiles} />
+                <ScheduleBlockForm assets={assets} block={block} pools={pools} shows={showProfiles} today={today} />
               </div>
               <div style={{ marginTop: 8 }}>
                 <ScheduleBlockDuplicateForm block={block} />

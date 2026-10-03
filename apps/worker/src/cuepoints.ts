@@ -2,6 +2,7 @@ import {
   getCuepointProgress,
   getCurrentScheduleMoment,
   getScheduleElapsedSeconds,
+  getScheduleOccurrenceAirWindowSeconds,
   getScheduleOccurrenceRunKey,
   isCurrentScheduleTime,
   normalizeCuepointOffsetsSeconds
@@ -19,6 +20,8 @@ type CurrentScheduleItemLike = {
   poolId?: string;
   date?: string;
   carriesOverFromPreviousDay?: boolean;
+  effectiveStartMinuteOfDay?: number;
+  airWindows?: Array<{ start: number; end: number }>;
 };
 
 export type CuepointInsertPlan = {
@@ -102,6 +105,11 @@ export function getCuepointInsertPlan(args: {
     elapsedSeconds: getScheduleElapsedSeconds({
       startMinuteOfDay: currentScheduleItem.startMinuteOfDay,
       currentTime: scheduleMoment.time
+    }),
+    // A weekly block cut around a dated one (M93) fires only the cuepoints of the window on air now.
+    airWindowsSeconds: getScheduleOccurrenceAirWindowSeconds({
+      effectiveStartMinuteOfDay: currentScheduleItem.effectiveStartMinuteOfDay ?? currentScheduleItem.startMinuteOfDay,
+      airWindows: currentScheduleItem.airWindows
     })
   });
 
