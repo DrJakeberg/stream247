@@ -1,9 +1,11 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { DEV_FALLBACK_APP_SECRET, resolveAppBaseUrl, resolveAppSecret } from "@stream247/db";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
+import { InsecureHttpNotice } from "@/components/insecure-http-notice";
 import { Panel } from "@/components/panel";
 import { SetupForm } from "@/components/setup-form";
 import { SetupInstanceForm } from "@/components/setup-instance-form";
@@ -14,6 +16,7 @@ import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { getGoLiveChecklist } from "@/lib/server/onboarding";
 import {
   deriveSetupWizardSteps,
+  resolveRequestOrigin,
   resolveActiveSetupWizardStep,
   type SetupWizardStepId
 } from "@/lib/server/setup-wizard";
@@ -58,6 +61,7 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
   const active = resolveActiveSetupWizardStep(steps, searchParams.step);
   const activeIndex = STEP_ORDER.indexOf(active);
   const twitchAccountsPanel = await buildTwitchAccountsPanelProps(state, user?.role);
+  const requestOrigin = resolveRequestOrigin(await headers());
 
   const publicBaseUrl = resolveAppBaseUrl(state.managedConfig);
   const envAppSecret = Boolean((process.env.APP_SECRET || "").trim());
@@ -72,6 +76,7 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
 
   return (
     <main className="standalone">
+      <InsecureHttpNotice requestOrigin={requestOrigin} secureCookies={process.env.NODE_ENV === "production"} />
       <section className="hero">
         <span className="badge">First-run setup</span>
         <h2>Deploy the stack, open the browser, set everything up from here.</h2>
@@ -116,6 +121,7 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
               drives the schedule grid and the on-air clock; the channel language is the one viewers are addressed in.
             </p>
             <SetupInstanceForm
+              detectedAppUrl={requestOrigin}
               envAppUrl={(process.env.APP_URL || "").trim()}
               envLanguage={(process.env.CHANNEL_LANGUAGE || "").trim()}
               envTimezone={(process.env.CHANNEL_TIMEZONE || "").trim()}

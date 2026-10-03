@@ -1415,6 +1415,12 @@ button.collection-chip {
   overflow: visible;
 }
 
+/* The sign-in page's hints are instructions too (M91): unclamped, like Open problems. */
+.login-hints .subtle {
+  display: block;
+  overflow: visible;
+}
+
 .line-clamp-3 {
   display: -webkit-box;
   -webkit-box-orient: vertical;

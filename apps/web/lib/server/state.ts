@@ -118,6 +118,7 @@ import {
   updateTwitchBroadcasterConnectionRecord,
   updateTwitchConnectionRecord,
   updateOwnerAndInitialized,
+  setOwnerPasswordHash,
   upsertAssetCollectionRecords,
   upsertSourceRecord,
   upsertSources,
@@ -270,6 +271,7 @@ export {
   upsertSources,
   upsertTeamAccessGrantRecord,
   upsertUserRecord,
+  setOwnerPasswordHash,
   writeAppState
 };
 
@@ -339,8 +341,7 @@ export function getPoolSourceGate(state: AppState, nowMs = Date.now()): PoolRota
   return sourceBreakerGate(state.sourceBreakers, nowMs);
 }
 
-export function getMaterializedProgrammingWeekPreview(state: AppState) {
-  const now = new Date();
+export function getMaterializedProgrammingWeekPreview(state: AppState, now: Date = new Date()) {
   const scheduleMoment = getCurrentScheduleMoment({
     now,
     timeZone: getWorkspaceTimeZone(state)

@@ -2772,6 +2772,31 @@ function isSchedulePreviewAssetEligible(pool: SchedulePreviewPoolRecord, asset: 
   );
 }
 
+/**
+ * Whether the pool's rotation has anything to pick right now, with the same eligibility the schedule
+ * preview uses. Readiness (M91) asks this instead of counting pools: a pool whose sources hold no ready
+ * item is a name, not something that can air.
+ */
+export function poolHasPlayableAsset(args: {
+  pool: SchedulePreviewPoolRecord | null;
+  assets: SchedulePreviewAssetRecord[];
+  sourceGate?: PoolRotationSourceGate | null;
+}): boolean {
+  const pool = args.pool;
+  if (!pool) {
+    return false;
+  }
+  return (
+    walkPoolRotation({
+      pool,
+      assets: args.assets,
+      isEligible: (asset) => isSchedulePreviewAssetEligible(pool, asset),
+      sourceGate: args.sourceGate,
+      steps: 1
+    }).length > 0
+  );
+}
+
 export function lookaheadVideoTitleFromPool(args: {
   pool: SchedulePreviewPoolRecord | null;
   assets: SchedulePreviewAssetRecord[];

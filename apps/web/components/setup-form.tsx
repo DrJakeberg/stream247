@@ -45,8 +45,13 @@ export function SetupForm() {
         <input name="email" type="email" required placeholder="owner@example.com" />
       </label>
       <label>
-        <span className="label label-with-info">Password<InfoTip text="At least 10 characters, and there is no place in the app to change it afterwards, so store it somewhere safe. A one-time code from an authenticator app can be added later under Settings." /></span>
+        <span className="label label-with-info">Password<InfoTip text="At least 10 characters. A one-time code from an authenticator app can be added later under Settings." /></span>
         <input name="password" type="password" minLength={10} required placeholder="At least 10 characters" />
+        {/* Under the field, not behind the (i) (M91, I7): the one thing to know before choosing it. */}
+        <span className="field-hint password-warning">
+          Store this password now. There is no e-mail reset: you can change it under Admin → Settings → Security while
+          you know it, and only a command on the host sets a new one once it is lost.
+        </span>
       </label>
       <p className="subtle">
         This account owns the workspace and signs in with email and password. Everything else — the public URL, Twitch

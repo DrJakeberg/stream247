@@ -1,8 +1,8 @@
-import { selectActiveDestinationGroup } from "@stream247/core";
+import { poolHasPlayableAsset, selectActiveDestinationGroup, type MaterializedProgrammingDay } from "@stream247/core";
 import { DEV_FALLBACK_APP_SECRET, resolveAppBaseUrl, resolveAppSecret, resolveTwitchAccountsForState } from "@stream247/db";
 import { buildWorkspaceHref } from "../workspace-navigation";
 import type { AppState } from "./state";
-import { getManagedTwitchConfig } from "./state";
+import { getManagedTwitchConfig, getMaterializedProgrammingWeekPreview } from "./state";
 
 export type GoLiveChecklistItem = {
   id: string;
@@ -19,7 +19,37 @@ export type GoLiveChecklistItem = {
   href?: string;
 };
 
-export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * The blocks of the coming week that resolve to no playable video: nothing materialized and nothing the
+ * pool's rotation could pick. Without the source breaker, as on the schedule page: a pool whose sources
+ * the breaker holds has nothing to fix in the pools, and the week lens says why it plays the fallback.
+ * Labelled "Fri 18:00 Prime Time" for the schedule page's "Needs attention" panel and readiness.
+ */
+export function findUnplayableWeekBlocks(state: AppState, week: MaterializedProgrammingDay[]): string[] {
+  return week.flatMap((day) =>
+    day.blocks
+      .filter((block) => {
+        if (block.items.length > 0) {
+          return false;
+        }
+        const pool = block.poolId ? state.pools.find((entry) => entry.id === block.poolId) ?? null : null;
+        return !poolHasPlayableAsset({ pool, assets: state.assets });
+      })
+      .map((block) => `${WEEKDAY_LABELS[block.dayOfWeek]} ${block.startTime} ${block.title}`)
+  );
+}
+
+/** A source that can deliver something: the local library, or an enabled source with a URL to sync. */
+function isDeliveringSource(source: AppState["sources"][number]): boolean {
+  if (source.enabled === false) {
+    return false;
+  }
+  return source.connectorKind === "local-library" || Boolean((source.externalUrl || "").trim());
+}
+
+export function getGoLiveChecklist(state: AppState, now: Date = new Date()): GoLiveChecklistItem[] {
   const twitchConfig = getManagedTwitchConfig(state);
   const appBaseUrl = resolveAppBaseUrl(state.managedConfig);
   const hasAppUrl = appBaseUrl !== "";
@@ -38,9 +68,16 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
   const hasDatabaseUrl = Boolean((process.env.DATABASE_URL || "").trim());
   const hasTwitchCredentials = Boolean(twitchConfig.clientId && twitchConfig.clientSecret);
   const readyAssets = state.assets.filter((asset) => asset.status === "ready").length;
-  const hasSources = state.sources.length > 0;
-  const hasPools = state.pools.length > 0;
-  const hasScheduleBlocks = state.scheduleBlocks.length > 0;
+  // Readiness counts what can air (M91), not rows: a placeholder source without a URL, a pool no block
+  // uses or one with nothing ready in it, and a week with a block that resolves to nothing are not done.
+  const deliveringSources = state.sources.filter(isDeliveringSource);
+  const scheduledPoolIds = new Set(state.scheduleBlocks.map((block) => block.poolId).filter(Boolean));
+  const readyPools = state.pools.filter(
+    (pool) => scheduledPoolIds.has(pool.id) && poolHasPlayableAsset({ pool, assets: state.assets })
+  );
+  const unplayableBlocks =
+    state.scheduleBlocks.length > 0 ? findUnplayableWeekBlocks(state, getMaterializedProgrammingWeekPreview(state, now)) : [];
+  const scheduleReady = state.scheduleBlocks.length > 0 && unplayableBlocks.length === 0;
   const routing = selectActiveDestinationGroup(
     state.destinations.map((destination) => ({
       id: destination.id,
@@ -144,8 +181,15 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
     {
       id: "sources",
       title: "Content sources",
-      detail: hasSources ? `${state.sources.length} source(s) configured.` : "Add at least one YouTube, Twitch, direct-media, or local source.",
-      status: hasSources ? "ready" : "action",
+      detail:
+        deliveringSources.length > 0
+          ? `${deliveringSources.length} source(s) can deliver media.${
+              state.sources.length > deliveringSources.length
+                ? ` ${state.sources.length - deliveringSources.length} more are disabled or have no URL yet.`
+                : ""
+            }`
+          : "Add at least one YouTube, Twitch, direct-media, or local source with a URL.",
+      status: deliveringSources.length > 0 ? "ready" : "action",
       href: buildWorkspaceHref("program", "sources")
     },
     {
@@ -158,17 +202,24 @@ export function getGoLiveChecklist(state: AppState): GoLiveChecklistItem[] {
     {
       id: "pools",
       title: "Program pools",
-      detail: hasPools ? `${state.pools.length} pool(s) available for scheduling.` : "Create at least one pool so schedule blocks can target a programming unit.",
-      status: hasPools ? "ready" : "action",
+      detail:
+        readyPools.length > 0
+          ? `${readyPools.length} pool(s) are scheduled and have a ready video.`
+          : state.pools.length > 0
+            ? "No pool is both used by a schedule block and holding a ready video yet."
+            : "Create a pool from your sources and use it in a schedule block.",
+      status: readyPools.length > 0 ? "ready" : "action",
       href: buildWorkspaceHref("program", "pools")
     },
     {
       id: "schedule",
       title: "Weekly schedule",
-      detail: hasScheduleBlocks
-        ? `${state.scheduleBlocks.length} schedule block(s) are configured.`
-        : "Add blocks or apply a schedule template so the worker can build a full week of programming.",
-      status: hasScheduleBlocks ? "ready" : "action",
+      detail: scheduleReady
+        ? `${state.scheduleBlocks.length} schedule block(s) are configured, and every block of the coming week has something to play.`
+        : unplayableBlocks.length > 0
+          ? `${unplayableBlocks.length} block(s) of the coming week have nothing to play: ${unplayableBlocks.slice(0, 3).join(" · ")}.`
+          : "Add blocks or apply a schedule template so the worker can build a full week of programming.",
+      status: scheduleReady ? "ready" : "action",
       href: buildWorkspaceHref("program", "schedule")
     },
     {

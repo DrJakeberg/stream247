@@ -54,7 +54,7 @@ export function deriveSetupWizardSteps(
       title: "Instance basics",
       summary: hasAppUrl
         ? `Public URL ${resolveAppBaseUrl(state.managedConfig, env)}.`
-        : "Set the public URL and the channel timezone.",
+        : "Set the public URL, the channel timezone and the channel language.",
       complete: hasAppUrl
     },
     {
@@ -99,4 +99,18 @@ export function resolveActiveSetupWizardStep(
   }
 
   return steps.find((step) => !step.complete)?.id ?? "done";
+}
+
+/**
+ * The origin this request came in under, for the instance step's URL prefill (M91, I6). Behind a proxy
+ * the forwarded host and protocol are the public ones; the operator checks the value before saving.
+ */
+export function resolveRequestOrigin(requestHeaders: { get(name: string): string | null }): string {
+  const host = (requestHeaders.get("x-forwarded-host") || requestHeaders.get("host") || "").split(",")[0]?.trim() ?? "";
+  if (!host) {
+    return "";
+  }
+  const forwardedProto = (requestHeaders.get("x-forwarded-proto") || "").split(",")[0]?.trim().toLowerCase();
+  const protocol = forwardedProto === "https" ? "https" : "http";
+  return `${protocol}://${host}`;
 }

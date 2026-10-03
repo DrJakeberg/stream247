@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { findScheduleConflicts, lookaheadVideoTitleFromPool } from "@stream247/core";
+import { findScheduleConflicts } from "@stream247/core";
 import { AssetMetadataDrawer } from "@/components/asset-metadata-drawer";
 import { Panel } from "@/components/panel";
 import { ProgramNowNextLens } from "@/components/program-now-next-lens";
@@ -25,6 +25,7 @@ import {
   getWorkspaceTimeZone,
   readAppState
 } from "@/lib/server/state";
+import { findUnplayableWeekBlocks } from "@/lib/server/onboarding";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 
 type ScheduleSearchParams = {
@@ -87,23 +88,7 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
     .filter((asset) => asset.isGlobalFallback)
     .slice()
     .sort((left, right) => left.fallbackPriority - right.fallbackPriority);
-  const emptyWeekBlocks = materializedWeek.flatMap((day) =>
-    day.blocks
-      .filter((block) => {
-        if (block.items.length > 0) {
-          return false;
-        }
-
-        const pool = block.poolId ? state.pools.find((entry) => entry.id === block.poolId) ?? null : null;
-        // Without the breaker: this panel sends the operator to the pools, and a pool whose sources the
-        // breaker holds has nothing to fix there. The week lens says why it plays the fallback (M75 review).
-        return !lookaheadVideoTitleFromPool({
-          pool,
-          assets: state.assets
-        });
-      })
-      .map((block) => `${dayLabels[block.dayOfWeek]} ${block.startTime} ${block.title}`)
-  );
+  const emptyWeekBlocks = findUnplayableWeekBlocks(state, materializedWeek);
   const closeDrawerHref = buildWorkspaceHref("program", "schedule", {
     lens,
     day: lens === "week" || lens === "day" ? String(activeDay) : undefined

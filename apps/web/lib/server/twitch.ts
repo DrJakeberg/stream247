@@ -55,6 +55,15 @@ export function getAbsoluteAppUrl(state: StateWithManagedConfig, pathname: strin
  * 500 on /login for every workspace that had Twitch configured, while every workspace without it
  * (including the test stack) returned early and looked fine.
  */
+/** Why team sign-in with Twitch is not offered yet, or null when it is (the login page's hint). */
+export async function getTwitchLoginBlocker(): Promise<"credentials" | "app-url" | null> {
+  const state = await readAppState();
+  if (!getManagedTwitchConfig(state).clientId) {
+    return "credentials";
+  }
+  return resolveAppBaseUrl(state.managedConfig) ? null : "app-url";
+}
+
 export async function isTwitchAuthorizeConfigured(): Promise<boolean> {
   const state = await readAppState();
   // A client id alone is not enough: without a public URL the redirect_uri would be the localhost

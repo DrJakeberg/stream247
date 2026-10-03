@@ -22,6 +22,7 @@ export {
   resolveChannelTimeZone
 } from "./instance-config.js";
 export * from "./asset-retention.js";
+export { MIN_OWNER_PASSWORD_LENGTH, hashPassword, verifyPassword } from "./owner-password.js";
 import { classifyAssetRetention, selectAssetRetentionDeletions, type AssetRetentionCounters } from "./asset-retention.js";
 import {
   createDefaultModerationConfig,
@@ -2087,69 +2088,20 @@ function defaultState(): AppState {
   };
 }
 
-function createInitialSeedState(): AppState {
+/**
+ * What an empty database starts with: the default state plus the local media library, which the
+ * worker manages anyway. Nothing else (M91, owner decision 2026-10-01): the demo pool, its two
+ * schedule blocks and two placeholder sources without a URL turned a new channel red within two
+ * minutes and counted as "Ready" in the checklist. Only an empty database gets this; an existing
+ * install keeps whatever rows it has.
+ */
+export function createInitialSeedState(): AppState {
   const state = defaultState();
   return {
     ...state,
-    pools: [
-      {
-        id: "pool-archive",
-        name: "Archive Pool",
-        sourceIds: ["source-twitch", "source-youtube"],
-        playbackMode: "round-robin",
-        cursorAssetId: "",
-        sourceCursors: {},
-        insertAssetId: "",
-        insertEveryItems: 0,
-        itemsSinceInsert: 0,
-        audioLaneAssetId: "",
-        audioLaneVolumePercent: 100,
-        updatedAt: ""
-      }
-    ],
-    scheduleBlocks: [
-      {
-        id: "morning-vods",
-        title: "Morning Twitch VOD Rotation",
-        categoryName: "Just Chatting",
-        dayOfWeek: 1,
-        startMinuteOfDay: 6 * 60,
-        durationMinutes: 240,
-        poolId: "pool-archive",
-        sourceName: "Twitch Archive"
-      },
-      {
-        id: "playlist-prime",
-        title: "Prime Time YouTube Playlist",
-        categoryName: "Music",
-        dayOfWeek: 5,
-        startMinuteOfDay: 18 * 60,
-        durationMinutes: 360,
-        poolId: "pool-archive",
-        sourceName: "YouTube Playlist"
-      }
-    ],
+    pools: [],
+    scheduleBlocks: [],
     sources: [
-      {
-        id: "source-youtube",
-        name: "YouTube Playlist",
-        type: "Managed ingestion",
-        connectorKind: "youtube-playlist",
-        enabled: true,
-        status: "Planned",
-        externalUrl: "",
-        notes: "Configure a playlist URL when the connector is ready."
-      },
-      {
-        id: "source-twitch",
-        name: "Twitch Archive",
-        type: "Twitch VOD sync",
-        connectorKind: "twitch-vod",
-        enabled: true,
-        status: "Planned",
-        externalUrl: "",
-        notes: "Configure a VOD URL when the connector is ready."
-      },
       {
         id: "source-local-library",
         name: "Local Media Library",
@@ -8707,6 +8659,29 @@ export async function updateOwnerAndInitialized(args: {
       `,
       [args.initialized, args.owner.email, args.owner.passwordHash, args.owner.createdAt]
     );
+  });
+}
+
+/**
+ * Sets the owner password: the `system_state` row and the local owner user, which the sign-in reads
+ * first. Returns the owner's e-mail, or null when no owner exists yet (nothing is written then).
+ * Used by the change form under Admin → Settings → Security and by the container reset command.
+ */
+export async function setOwnerPasswordHash(passwordHash: string): Promise<string | null> {
+  return withSerializedStateWrite("setOwnerPasswordHash", async (client) => {
+    const owner = await client.query<{ owner_email: string }>(
+      "SELECT owner_email FROM system_state WHERE singleton_id = 1 AND owner_email <> ''"
+    );
+    const email = owner.rows[0]?.owner_email;
+    if (!email) {
+      return null;
+    }
+    await client.query("UPDATE system_state SET owner_password_hash = $1 WHERE singleton_id = 1", [passwordHash]);
+    await client.query(
+      "UPDATE users SET password_hash = $1 WHERE email = $2 AND role = 'owner' AND auth_provider = 'local'",
+      [passwordHash, email]
+    );
+    return email;
   });
 }
 
