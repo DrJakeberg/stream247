@@ -354,6 +354,12 @@ Reading the rows:
 - `uplink.encoder_stall.restart` or `playout.feed_audio.restart` firing at almost every asset end
   means the bound is not firing for those assets — check that their `durationSeconds` metadata is
   present; assets with an unknown duration fall back to the watchdogs by design
+- local-library files get their duration from `ffprobe` at scan time (M96), once per file version
+  (size + modification time), so an unchanged file is never probed again; a scan spends at most
+  30 s probing and leaves the rest to the next scans, so a large first scan fills in over a few
+  cycles (runtime event `local-library.durations.probed` with `probed`, `failed`, `deferred`). A
+  file ffprobe cannot read stays unknown until it changes and counts as the 30-minute estimate in
+  the schedule preview
 - tuning: `PLAYOUT_DURATION_BOUND_MARGIN_SECONDS` (default 15) — seconds past the known duration
   before the deliberate end; keep it generous, because cutting duplicated last-frame is invisible
   while cutting real content is not. Since M56 part 2 this margin — like every watchdog threshold —

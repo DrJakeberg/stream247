@@ -213,6 +213,7 @@ import { incrementQueueVersion, prioritizeManualNextAsset } from "./broadcast-qu
 import { getChapterBackfillConfig, probeAssetChapters, selectChapterBackfillCandidates } from "./chapter-backfill.js";
 import { isDirectMediaUrl, planDirectMediaSync } from "./direct-media.js";
 import { buildLocalLibraryAssetId, buildLocalLibraryFolderPath, scanMediaFiles } from "./local-library.js";
+import { resolveLocalFileDurations } from "./local-durations.js";
 import { resolvePoolAudioLane, type ResolvedAudioLane } from "./audio-lanes.js";
 import { getCuepointInsertPlan, getCuepointWarmAsset } from "./cuepoints.js";
 import { decideInputOpenRetry, decideInputOpenRetryAfterExit, isCurrentItemSlotFree, type InputOpenRetryState } from "./input-open-retry.js";
@@ -2492,8 +2493,8 @@ function getFfmpegCommand(
   //
   // BOUNDED, deliberately. An unbounded apad would also blind the feed-audio watchdog for ever,
   // because that watchdog keys on audio packet presence and apad manufactures AAC frames
-  // indefinitely — and on an unknown-duration asset, which every local-library file and the global
-  // fallback are, it is the only net there is. The pad covers the overrun and then stops, so the
+  // indefinitely — and on an unknown-duration asset (a direct-media URL, or a local file not yet
+  // probed or unreadable to ffprobe) it is the only net there is. The pad covers the overrun and then stops, so the
   // silence signal comes back and the watchdog is delayed rather than removed.
   //
   // Mutually exclusive with the volume filter above, which needs the very audio lane this case is
@@ -3862,20 +3863,37 @@ async function syncLocalMediaLibrary(): Promise<void> {
   const discoveredAssets = scan.files.map((filePath) => buildAssetFromPath(filePath, now));
   const state = await readAppState();
   const existingByPath = new Map(state.assets.map((asset) => [asset.path, asset]));
-  const nextAssets: AssetRecord[] = discoveredAssets.map((asset) => {
-    const existing = existingByPath.get(asset.path);
-    return existing
+  // Real lengths (M96): probed once per file version, so planning stops counting every file as 30 min.
+  const durations = await resolveLocalFileDurations({
+    files: scan.files,
+    existingByPath: new Map(
+      state.assets.filter((asset) => asset.sourceId === LOCAL_LIBRARY_SOURCE_ID).map((asset) => [asset.path, asset] as const)
+    )
+  });
+  if (durations.probed > 0 || durations.deferred > 0) {
+    logRuntimeEvent("local-library.durations.probed", {
+      probed: durations.probed,
+      failed: durations.failed,
+      deferred: durations.deferred
+    });
+  }
+  const nextAssets: AssetRecord[] = discoveredAssets.map((discovered) => {
+    const existing = existingByPath.get(discovered.path);
+    const asset: AssetRecord = existing
         ? {
           ...existing,
-          title: asset.title,
-          folderPath: asset.folderPath,
+          title: discovered.title,
+          folderPath: discovered.folderPath,
           status: "ready",
           includeInProgramming: existing.includeInProgramming,
-          fallbackPriority: asset.fallbackPriority,
-          isGlobalFallback: asset.isGlobalFallback,
+          fallbackPriority: discovered.fallbackPriority,
+          isGlobalFallback: discovered.isGlobalFallback,
           updatedAt: now
         }
-      : asset;
+      : discovered;
+    // A file the scan did not probe this time (budget spent, stat failed) keeps what it had.
+    const duration = durations.entries.get(discovered.path);
+    return duration ? { ...asset, durationSeconds: duration.durationSeconds, durationProbeKey: duration.durationProbeKey } : asset;
   });
 
   for (const asset of nextAssets) {

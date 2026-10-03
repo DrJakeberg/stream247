@@ -279,6 +279,11 @@ export type AssetRecord = {
   externalId?: string;
   categoryName?: string;
   durationSeconds?: number;
+  /**
+   * Local-library files only (M96): the file version (`size:mtimeMs`) `durationSeconds` was probed
+   * for; empty when the file was never probed. See apps/worker/src/local-durations.ts.
+   */
+  durationProbeKey?: string;
   publishedAt?: string;
   fallbackPriority: number;
   isGlobalFallback: boolean;
@@ -1545,18 +1550,23 @@ export function chooseStoredAssetChaptersJson(
  *   recomputed on every sync, so it drifts daily; a stable order needs the first observed value.
  * - `durationSeconds` takes the listing's value when it has one; a listing that reports none (0 or
  *   missing) does not erase a duration that was already known.
+ * - Except for a probed local file (M96, `durationProbeKey` set): its duration belongs to the file
+ *   version in the key, so a replaced file whose probe failed reads unknown, not the old file's length.
  */
 export function chooseStoredAssetSyncFields(
   existing: { createdAt?: string; publishedAt?: string; durationSeconds?: number } | undefined,
-  incoming: { createdAt: string; publishedAt?: string; durationSeconds?: number }
+  incoming: { createdAt: string; publishedAt?: string; durationSeconds?: number; durationProbeKey?: string }
 ): { createdAt: string; publishedAt: string; durationSeconds: number } {
   const incomingDuration = Number(incoming.durationSeconds ?? 0);
   const existingDuration = Number(existing?.durationSeconds ?? 0);
   return {
     createdAt: existing?.createdAt || incoming.createdAt,
     publishedAt: existing?.publishedAt || incoming.publishedAt || "",
-    durationSeconds:
-      Number.isFinite(incomingDuration) && incomingDuration > 0
+    durationSeconds: incoming.durationProbeKey
+      ? Number.isFinite(incomingDuration) && incomingDuration > 0
+        ? Math.trunc(incomingDuration)
+        : 0
+      : Number.isFinite(incomingDuration) && incomingDuration > 0
         ? incomingDuration
         : Number.isFinite(existingDuration) && existingDuration > 0
           ? existingDuration
@@ -2855,6 +2865,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       external_id TEXT NOT NULL DEFAULT '',
       category_name TEXT NOT NULL DEFAULT '',
       duration_seconds INTEGER NOT NULL DEFAULT 0,
+      duration_probe_key TEXT NOT NULL DEFAULT '',
       published_at TEXT NOT NULL DEFAULT '',
       fallback_priority INTEGER NOT NULL DEFAULT 100,
       is_global_fallback BOOLEAN NOT NULL DEFAULT FALSE,
@@ -3209,6 +3220,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS external_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS category_name TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS duration_seconds INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS duration_probe_key TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS published_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS cache_path TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS cache_status TEXT NOT NULL DEFAULT '';
@@ -4311,6 +4323,27 @@ if (!schemaMigrations.some((migration) => migration.id === scheduleBlockDatesMig
   schemaMigrations.push(scheduleBlockDatesMigration);
 }
 
+/**
+ * Real lengths for local-library files (M96), for installs that already ran the baseline.
+ *
+ * The file version a probed duration belongs to, so an unchanged file is not probed again. Empty means
+ * never probed, which is every existing row after the upgrade: the next scans probe them once. Word for
+ * word the base-schema line.
+ */
+export const assetDurationProbeKeyMigration: MigrationDefinition = {
+  id: "20261003_002_asset_duration_probe_key",
+  description: "Remember which file version a local file's probed duration belongs to.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS duration_probe_key TEXT NOT NULL DEFAULT '';
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === assetDurationProbeKeyMigration.id)) {
+  schemaMigrations.push(assetDurationProbeKeyMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -5053,9 +5086,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
           id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
           title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, external_id, category_name, duration_seconds, published_at,
           fallback_priority, is_global_fallback, created_at, updated_at,
-          playback_probe_failures, playback_probe_error, playback_probed_at
+          playback_probe_failures, playback_probe_error, playback_probed_at, duration_probe_key
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
       `,
       [
         asset.id,
@@ -5091,7 +5124,9 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         // hydrated under the same write lock (updateAppState), so these are the current values.
         Math.max(0, Math.trunc(Number(asset.playbackProbeFailures ?? 0)) || 0),
         (asset.playbackProbeError ?? "").slice(0, 500),
-        asset.playbackProbedAt ?? ""
+        asset.playbackProbedAt ?? "",
+        // Same reason: without it every app-state write would send each local file back to ffprobe.
+        asset.durationProbeKey ?? ""
       ]
     );
   }
@@ -5586,6 +5621,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     external_id: string;
     category_name: string;
     duration_seconds: number;
+    duration_probe_key: string;
     published_at: string;
     fallback_priority: number;
     is_global_fallback: boolean;
@@ -5945,6 +5981,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       externalId: row.external_id || undefined,
       categoryName: row.category_name || undefined,
       durationSeconds: row.duration_seconds || undefined,
+      durationProbeKey: row.duration_probe_key || "",
       publishedAt: row.published_at || undefined,
       fallbackPriority: row.fallback_priority,
       isGlobalFallback: row.is_global_fallback,
@@ -6469,8 +6506,9 @@ export async function replaceAssetsForSourceIds(
       created_at: string;
       published_at: string;
       duration_seconds: number;
+      duration_probe_key: string;
     }>(
-      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, fallback_priority, is_global_fallback, playback_probe_failures, playback_probe_error, playback_probed_at, created_at, published_at, duration_seconds FROM assets WHERE source_id = ANY($1::text[])",
+      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, fallback_priority, is_global_fallback, playback_probe_failures, playback_probe_error, playback_probed_at, created_at, published_at, duration_seconds, duration_probe_key FROM assets WHERE source_id = ANY($1::text[])",
       [sourceIds]
     );
 
@@ -6517,9 +6555,9 @@ export async function replaceAssetsForSourceIds(
             id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
             title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, external_id, category_name, duration_seconds, published_at,
             fallback_priority, is_global_fallback, created_at, updated_at,
-            playback_probe_failures, playback_probe_error, playback_probed_at
+            playback_probe_failures, playback_probe_error, playback_probed_at, duration_probe_key
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
         `,
         [
           asset.id,
@@ -6559,7 +6597,9 @@ export async function replaceAssetsForSourceIds(
           // is exactly what the DUT showed under 2.0.0-rc.4: the counter climbed to 3 and fell back.
           existing?.playback_probe_failures ?? 0,
           existing?.playback_probe_error ?? "",
-          existing?.playback_probed_at ?? ""
+          existing?.playback_probed_at ?? "",
+          // The local-library scan sends the file version it probed; other syncs never set it.
+          asset.durationProbeKey ?? existing?.duration_probe_key ?? ""
         ]
       );
     }

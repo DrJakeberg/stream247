@@ -285,9 +285,9 @@ export function usesShortestFlag(args: {
  * ever, because that watchdog keys on audio PACKET PRESENCE and apad manufactures real AAC frames
  * indefinitely. Measured on the compiled watchdog: without padding the tail segments carry
  * audioPackets=0 and it fires at 96s; with an unbounded pad it never fires again. That is worst
- * exactly where it is the only net — durationSeconds is written only by the yt-dlp path, so every
- * local-library file and direct-media URL is permanently unknown-duration, and the global fallback
- * asset is by construction a local-library file. An unbounded pad would let the fallback sit on a
+ * exactly where it is the only net — every direct-media URL is unknown-duration, and so is a local
+ * file until the scan has probed it (M96) or when ffprobe cannot read it; the global fallback asset
+ * is by construction a local-library file. An unbounded pad would let the fallback sit on a
  * frozen frame with digital silence and nothing able to end it: the very failure feed-audio-health
  * was written to stop. The PiP mix already refuses the same trade for the same reason ("carries NO
  * apad, so a source that ends is simply dropped by amix rather than padded into endless masking
