@@ -99,6 +99,9 @@ function normalizeRunDates(body: { runs?: string; validFrom?: string; validUntil
 }
 
 function runDatesError(payload: { runs: string; validFrom: string; validUntil: string }): string | null {
+  if ((payload.validFrom && !isScheduleDateString(payload.validFrom)) || (payload.validUntil && !isScheduleDateString(payload.validUntil))) {
+    return "Dates must be calendar dates (YYYY-MM-DD).";
+  }
   if (payload.runs === "once" && !payload.validFrom) {
     return "Choose the date this block runs on.";
   }

@@ -545,7 +545,11 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   fired again and one inside the dated part is skipped (the test fails on main: the 18:15 cuepoint fires
   again at 21:05).
 - **Conflicts.** Per layer: dated over undated is no conflict; two dated blocks conflict only when their
-  date spans meet (the day after the last date counts for a block crossing midnight).
+  runs meet: for a shared span under eight days the real runs are compared (Mon 1-7 Oct and Mon 7-20 Oct
+  do not meet), otherwise the weekday line decides; the day after the last date counts for a block
+  crossing midnight.
+- **Lists.** A window that starts after midnight is listed on the date it starts (as that date's
+  carry-over window), so a dated block at 00:30 is named next ahead of the weekly block resuming at 01:00.
 - **Editor.** Field *Runs* (*Every week* / *Between dates* / *Once*) before Repeat behavior; *Daily*
   between dates creates only the weekdays the dates contain (three for 1-3 Oct). Ended blocks are listed
   faded with *Ended 10 Oct*, left off the timeline, and *Hide ended* filters them; a save whose last date
@@ -555,5 +559,12 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
 - **Decisions without the owner (routine).** Duplicate refuses a weekday outside the block's dates; clone
   day copies a dated block only onto weekdays its dates contain; the weekly coverage summary counts the
   weekly grid alone; projected minutes of a cut weekly block are not cut (M97 reworks the projection).
+- **Review (fresh subagent).** All acceptance items met; it found the list order after midnight, the
+  over-strict dated conflict and an unhelpful error for a malformed date on create, all fixed with tests.
+  Left as is: a repeat-set edit checks the dates against the edited copy's weekday only (other copies
+  outside the dates are saved and never air), and an ended block's edit is refused until it gets new
+  dates (R1 1.3: a window entirely in the past is refused).
+- **Baselines.** `scripts/design-baseline.sh` on a fresh stack: 77 passed; the day lens and the block form
+  are not in the snapshots, so nothing was re-recorded.
 - **Not built.** R1's inline takeover notice in the form (1.3 step 8) and the "for N days" helper: not in
   this row's acceptance.

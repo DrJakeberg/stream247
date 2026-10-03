@@ -10,6 +10,7 @@ import {
   findNextScheduleOccurrenceAcrossDays,
   findScheduleConflicts,
   getScheduleOccurrenceRunKey,
+  listUpcomingScheduleOccurrencesAcrossDays,
   listScheduleAirSegments,
   listUpcomingScheduleOccurrences,
   summarizeScheduleWeek,
@@ -218,6 +219,24 @@ describe("the dated layer over the weekly grid", () => {
     });
   });
 
+  it("names a dated block early the next day as next, ahead of the weekly block coming back after it", () => {
+    // Weekly Wednesday 22:00 for 4 h; once on Thursday 1 Oct 00:30 for 30 min. Wednesday 23:00.
+    const night = block({ id: "night", dayOfWeek: 3, startMinuteOfDay: 22 * 60, durationMinutes: 240 });
+    const early = block({ id: "early", dayOfWeek: 4, startMinuteOfDay: 30, durationMinutes: 30, validFrom: "2026-10-01", validUntil: "2026-10-01" });
+    const blocks = [night, early];
+    expect(findNextScheduleOccurrenceAcrossDays({ blocks, date: "2026-09-30", currentTime: "23:00" })).toMatchObject({
+      blockId: "early",
+      startTime: "00:30"
+    });
+    expect(
+      listUpcomingScheduleOccurrencesAcrossDays({ blocks, date: "2026-09-30", currentTime: "23:00", limit: 2 }).map(
+        (segment) => `${segment.startTime} ${segment.blockId}`
+      )
+    ).toEqual(["00:30 early", "01:00 night"]);
+    // A today-only list (the worker's standby slate) leaves the after-midnight part to the next date.
+    expect(listUpcomingScheduleOccurrences({ occurrences: buildScheduleOccurrences({ date: "2026-09-30", blocks }), currentTime: "23:00" })).toEqual([]);
+  });
+
   it("does not fire a cuepoint again when the weekly block comes back, and skips one inside the dated window", () => {
     const state = (playout: Partial<AppState["playout"]>): AppState =>
       ({
@@ -283,6 +302,14 @@ describe("conflicts are per layer", () => {
     const other = { ...special, id: "other", validFrom: "2026-10-08", validUntil: "2026-10-08" };
     expect(findScheduleConflicts([special, other]).sort()).toEqual(["other", "special"]);
     expect(findScheduleConflicts([special, { ...other, validFrom: "2026-10-15", validUntil: "2026-10-15" }])).toEqual([]);
+  });
+
+  it("allows two dated runs whose spans meet on a day neither airs", () => {
+    // Monday 20:00: 1-7 Oct airs on 5 Oct, 7-20 Oct on 12 and 19 Oct; the spans share 7 Oct, a Wednesday.
+    const first = block({ id: "first", dayOfWeek: 1, startMinuteOfDay: 1200, durationMinutes: 60, validFrom: "2026-10-01", validUntil: "2026-10-07" });
+    const second = { ...first, id: "second", validFrom: "2026-10-07", validUntil: "2026-10-20" };
+    expect(findScheduleConflicts([first, second])).toEqual([]);
+    expect(findScheduleConflicts([first, { ...second, validFrom: "2026-10-05" }]).sort()).toEqual(["first", "second"]);
   });
 
   it("counts the day after the last date for a dated block crossing midnight", () => {
@@ -411,6 +438,8 @@ describe("the block route saves dated and one-off blocks", () => {
   it("refuses dates in the past and a run with a missing date", async () => {
     const past = await POST(request({ repeatMode: "single", dayOfWeek: 2, runs: "between", validFrom: "2026-09-01", validUntil: "2026-09-29" }));
     expect(((await past.json()) as { message: string }).message).toBe("These dates lie entirely in the past.");
+    const malformed = await POST(request({ repeatMode: "daily", runs: "between", validFrom: "2026-13-01", validUntil: "2026-13-05" }));
+    expect(((await malformed.json()) as { message: string }).message).toBe("Dates must be calendar dates (YYYY-MM-DD).");
     const missing = await POST(request({ repeatMode: "single", dayOfWeek: 2, runs: "between", validFrom: "2026-10-01" }));
     expect(((await missing.json()) as { message: string }).message).toBe("Choose a first and a last date.");
     expect(mockCreateScheduleBlocksChecked).not.toHaveBeenCalled();

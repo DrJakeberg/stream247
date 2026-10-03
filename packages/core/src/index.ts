@@ -2489,7 +2489,7 @@ export function describeScheduleRepeatMode(mode: ScheduleRepeatMode, anchorDayOf
       return "Custom days";
     case "single":
     default:
-      return dayLabels[Math.max(0, Math.min(6, Math.trunc(anchorDayOfWeek)))] || "Single day";
+      return dayLabels[Math.max(0, Math.min(6, Math.trunc(anchorDayOfWeek)))] || "One weekday, every week";
   }
 }
 
@@ -3516,6 +3516,10 @@ function scheduleBlocksOverlap(left: ScheduleBlock, right: ScheduleBlock): boole
   if (!scheduleBlocksShareLayer(left, right)) {
     return false;
   }
+  const concrete = datedScheduleBlocksOverlapOnAir(left, right);
+  if (concrete !== null) {
+    return concrete;
+  }
   const leftRange = scheduleBlockWeekRange(left);
   const rightRange = scheduleBlockWeekRange(right);
   // The line is circular: shift one block a week either way.
@@ -3549,6 +3553,42 @@ function scheduleBlocksShareLayer(left: ScheduleBlock, right: ScheduleBlock): bo
   const leftSpan = span(left);
   const rightSpan = span(right);
   return leftSpan.from <= rightSpan.until && rightSpan.from <= leftSpan.until;
+}
+
+function scheduleDateDayNumber(date: string): number {
+  return Math.round(new Date(`${date}T00:00:00.000Z`).getTime() / 86_400_000);
+}
+
+/**
+ * For two dated blocks with both dates set whose shared span is shorter than eight days: whether any of their
+ * real runs meet. Spans that meet do not mean runs that meet (Mon 20:00 from 1-7 Oct airs on 5 Oct, from
+ * 7-20 Oct on 12 and 19 Oct). Null when the weekday line decides: a shared span of eight days or more holds
+ * every weekday of both blocks, or a block has an open date.
+ */
+function datedScheduleBlocksOverlapOnAir(left: ScheduleBlock, right: ScheduleBlock): boolean | null {
+  if (!left.validFrom || !left.validUntil || !right.validFrom || !right.validUntil) {
+    return null;
+  }
+  const from = Math.max(scheduleDateDayNumber(left.validFrom), scheduleDateDayNumber(right.validFrom)) - 1;
+  const until = Math.min(scheduleDateDayNumber(left.validUntil), scheduleDateDayNumber(right.validUntil)) + 1;
+  if (until - from >= 9) {
+    return null;
+  }
+  const runs = (block: ScheduleBlock) => {
+    const first = scheduleDateDayNumber(block.validFrom ?? "");
+    const last = scheduleDateDayNumber(block.validUntil ?? "");
+    const ranges: ScheduleAirWindow[] = [];
+    for (let day = Math.max(from, first); day <= Math.min(until, last); day += 1) {
+      // Day 0 of the epoch (1970-01-01) was a Thursday.
+      if ((((day + 4) % 7) + 7) % 7 === block.dayOfWeek) {
+        const start = day * MINUTES_PER_DAY + block.startMinuteOfDay;
+        ranges.push({ start, end: start + block.durationMinutes });
+      }
+    }
+    return ranges;
+  };
+  const rightRuns = runs(right);
+  return runs(left).some((a) => rightRuns.some((b) => a.start < b.end && b.start < a.end));
 }
 
 export function findScheduleConflicts(blocks: Array<ScheduleBlock>): string[] {
@@ -3947,9 +3987,7 @@ export function findNextScheduleOccurrenceAcrossDays(args: {
   const lookaheadDays = args.lookaheadDays ?? 7;
   for (let offset = 1; offset <= lookaheadDays; offset += 1) {
     const date = addDaysToDateString(args.date, offset);
-    const candidate = listScheduleAirSegments(
-      buildScheduleOccurrences({ date, blocks: args.blocks }).filter((occurrence) => !occurrence.carriesOverFromPreviousDay)
-    )[0];
+    const candidate = listScheduleAirSegmentsStartingOn(date, args.blocks)[0];
     if (candidate) {
       return candidate;
     }
@@ -3986,9 +4024,10 @@ export function listUpcomingScheduleOccurrencesAcrossDays(args: {
   for (let offset = 1; offset <= lookaheadDays && upcoming.length < limit; offset += 1) {
     const date = addDaysToDateString(args.date, offset);
     upcoming.push(
-      ...listScheduleAirSegments(
-        buildScheduleOccurrences({ date, blocks: args.blocks }).filter((occurrence) => !occurrence.carriesOverFromPreviousDay)
-      ).map((segment) => ({ segment, at: offset * MINUTES_PER_DAY + segment.airStartMinute }))
+      ...listScheduleAirSegmentsStartingOn(date, args.blocks).map((segment) => ({
+        segment,
+        at: offset * MINUTES_PER_DAY + segment.airStartMinute
+      }))
     );
   }
 
@@ -4012,8 +4051,21 @@ export function listUpcomingScheduleOccurrences(args: {
   // By air window (M93): a weekly block coming back after a dated one is upcoming at the minute it comes
   // back. The window start is relative to the date like effectiveStartMinuteOfDay, so a carry-over from
   // last night is never offered as "upcoming".
+  // A window that starts after midnight (a weekly block resuming at 01:00 after a dated one) is listed on
+  // the next date, where it is a carry-over window starting at 60, so a today-only list never offers it
+  // ahead of a dated block that starts on the next date before it.
   return listScheduleAirSegments(args.occurrences).filter(
-    (item) => item.airStartMinute > currentMinuteOfDay && item.key !== currentOccurrence?.key
+    (item) =>
+      item.airStartMinute > currentMinuteOfDay &&
+      item.airStartMinute < MINUTES_PER_DAY &&
+      item.key !== currentOccurrence?.key
+  );
+}
+
+/** The windows that start on `date`, from 00:00 on: what a later day adds to a list of what comes next. */
+function listScheduleAirSegmentsStartingOn(date: string, blocks: ScheduleBlock[]): ScheduleAirSegment[] {
+  return listScheduleAirSegments(buildScheduleOccurrences({ date, blocks })).filter(
+    (segment) => segment.airStartMinute >= 0 && segment.airStartMinute < MINUTES_PER_DAY
   );
 }
 
