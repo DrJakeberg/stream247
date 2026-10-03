@@ -209,3 +209,48 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   // satori lower-cases the family it writes into the SVG: font-family="stream247 serif".
   expect((await renderedScene.locator("svg").innerHTML()).toLowerCase()).toContain("stream247 serif");
 });
+
+test("asks before a template replaces the schedule, and Cancel keeps the blocks (M97 U6)", async ({ page }) => {
+  await ensureSignedIn(page);
+
+  // A pool on the local library and a week of blocks from a template, through the same API the forms use.
+  const sources = (await (await page.request.get("/api/sources")).json()) as { sources: Array<{ id: string; connectorKind: string }> };
+  const library = sources.sources.find((source) => source.connectorKind === "local-library");
+  expect(library, "the fresh install's local library source").toBeTruthy();
+  const poolName = `Replace Check ${Date.now()}`;
+  expect((await page.request.post("/api/pools", { data: { name: poolName, sourceIds: [library?.id] } })).ok()).toBeTruthy();
+  const pools = (await (await page.request.get("/api/pools")).json()) as { pools: Array<{ id: string; name: string }> };
+  const poolId = pools.pools.find((pool) => pool.name === poolName)?.id ?? "";
+  expect(
+    (
+      await page.request.post("/api/schedule/templates", {
+        data: { template: "always-on-single-pool", primaryPoolId: poolId, replaceExisting: true }
+      })
+    ).ok()
+  ).toBeTruthy();
+  const blockIds = async () =>
+    ((await (await page.request.get("/api/schedule/blocks")).json()) as { blocks: Array<{ id: string }> }).blocks.map((block) => block.id).sort();
+  const before = await blockIds();
+  expect(before.length).toBeGreaterThan(0);
+
+  await page.goto("/program?tab=schedule&lens=day");
+  const templateForm = page.locator("form", { has: page.getByRole("button", { name: "Apply template" }) });
+  await templateForm.locator('select[name="primaryPoolId"]').selectOption(poolId);
+  await templateForm.getByText("Replace existing schedule blocks before applying template").click();
+
+  let confirmation = "";
+  page.once("dialog", async (dialog) => {
+    confirmation = dialog.message();
+    await dialog.dismiss();
+  });
+  let templateRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/api/schedule/templates")) {
+      templateRequests += 1;
+    }
+  });
+  await templateForm.getByRole("button", { name: "Apply template" }).click();
+  await expect.poll(() => confirmation).toContain("Replace the whole schedule?");
+  expect(templateRequests).toBe(0);
+  expect(await blockIds()).toEqual(before);
+});

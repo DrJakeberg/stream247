@@ -1,38 +1,26 @@
 import Link from "next/link";
 import {
   describeScheduleBlockRun,
-  formatMinuteOfDay,
-  lookaheadVideoTitleFromPool,
+  formatScheduleDayHeading,
+  formatScheduleHours,
   type MaterializedProgrammingBlock,
-  type MaterializedProgrammingDay,
-  type PoolRotationSourceGate
+  type MaterializedProgrammingDay
 } from "@stream247/core";
-import type { AssetRecord, PoolRecord } from "@/lib/server/state";
+import type { AssetRecord } from "@/lib/server/state";
 import { buildAssetDisplayTitle, isReplayTitlePrefix } from "@/lib/asset-metadata";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 
-const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-// The times a block is really on air: a weekly block cut around a dated one (M93) lists its parts.
-function describeAirTimes(block: MaterializedProgrammingBlock): string {
-  const windows = block.airWindows ?? [];
-  const cut = windows.length > 1 || (windows.length === 1 && windows[0] && windows[0].end - windows[0].start !== block.durationMinutes);
-  if (!cut) {
-    return `${block.startTime} to ${block.endTime}`;
-  }
-  const clock = (minute: number) => formatMinuteOfDay(((minute % 1440) + 1440) % 1440);
-  return windows.map((window) => `${clock(window.start)} to ${clock(window.end)}`).join(" · ");
+// The day lens lists every block with its edit form; the anchor scrolls to the one to edit (U6).
+export function buildEditBlockHref(block: Pick<MaterializedProgrammingBlock, "blockId" | "dayOfWeek">): string {
+  return `${buildWorkspaceHref("program", "schedule", { lens: "day", day: String(block.dayOfWeek) })}#schedule-block-${block.blockId}`;
 }
 
-export function ProgramWeekLens(props: {
-  days: MaterializedProgrammingDay[];
-  pools: PoolRecord[];
-  assets: AssetRecord[];
-  /** The source circuit breaker as the week was drawn with (getPoolSourceGate). */
-  sourceGate?: PoolRotationSourceGate | null;
-}) {
-  const poolById = new Map(props.pools.map((pool) => [pool.id, pool]));
+export function buildAddBlockHref(dayOfWeek: number): string {
+  return `${buildWorkspaceHref("program", "schedule", { lens: "day", day: String(dayOfWeek), add: "1" })}#add-schedule-block`;
+}
+
+export function ProgramWeekLens(props: { days: MaterializedProgrammingDay[]; assets: AssetRecord[] }) {
   const assetById = new Map(props.assets.map((asset) => [asset.id, asset]));
 
   return (
@@ -41,37 +29,55 @@ export function ProgramWeekLens(props: {
         <section className="program-day-card" key={day.date}>
           <div className="stats-row">
             <div>
-              <span className="label">{dayLabels[day.dayOfWeek]}</span>
+              <span className="label">{formatScheduleDayHeading(day.date)}</span>
               <strong>{day.blockCount > 0 ? `${day.blockCount} block${day.blockCount === 1 ? "" : "s"}` : "No programming"}</strong>
             </div>
-            <span className="subtle">{day.totalScheduledMinutes}m scheduled</span>
+            <span className="subtle">{formatScheduleHours(day.totalScheduledMinutes)} scheduled</span>
           </div>
           <div className="stack-form">
             {day.blocks.length > 0 ? (
               day.blocks.map((block) => {
-                const pool = block.poolId ? poolById.get(block.poolId) ?? null : null;
-                const nextTitle =
-                  lookaheadVideoTitleFromPool({
-                    pool,
-                    assets: props.assets,
-                    sourceGate: props.sourceGate
-                  }) ||
-                  block.items[0]?.title ||
-                  "";
+                const firstTitle = block.items[0] ? buildAssetDisplayTitle(assetById.get(block.items[0].assetId) ?? null, block.items[0].title) : "";
+                const details = [
+                  block.title,
+                  block.poolName,
+                  block.durationLabel ?? formatScheduleHours(block.durationMinutes),
+                  block.repeatLabel,
+                  block.dated ? describeScheduleBlockRun(block).label : ""
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+
+                if (block.aired) {
+                  return (
+                    <div className="program-week-block schedule-block-ended" key={block.blockId}>
+                      <div className="program-week-block-summary">
+                        <div>
+                          <span className="label">{block.timeLabel}</span>
+                          <strong>Aired earlier today</strong>
+                          <div className="subtle">{details}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
 
                 return (
                   <details className="program-week-block" key={block.blockId}>
                     <summary className="program-week-block-summary">
                       <div>
-                        <span className="label">{describeAirTimes(block)}</span>
-                        <strong>{nextTitle || "No playable video resolved"}</strong>
-                        <div className="subtle">
-                          {block.title} · {block.poolName} · {block.repeatLabel}
-                          {block.dated ? ` · ${describeScheduleBlockRun(block).label}` : ""}
-                        </div>
+                        <span className="label">{block.timeLabel}</span>
+                        <strong>{firstTitle || "No playable video resolved"}</strong>
+                        <div className="subtle">{details}</div>
+                        {block.repeatReason ? <div className="subtle">{block.repeatReason}</div> : null}
                       </div>
                       <span className={`programming-status-pill programming-status-${block.fillStatus}`}>{block.fillLabel}</span>
                     </summary>
+                    <div className="program-week-block-actions">
+                      <Link className="button secondary" href={buildEditBlockHref(block)}>
+                        Edit block
+                      </Link>
+                    </div>
                     {block.items.length > 0 ? (
                       <div className="program-sequence-list">
                         {block.items.map((item) => {
@@ -133,15 +139,13 @@ export function ProgramWeekLens(props: {
               })
             ) : (
               <EmptyState
-                action={
-                  <Link className="button secondary" href={buildWorkspaceHref("program", "schedule", { lens: "day", day: String(day.dayOfWeek) })}>
-                    Open day lens
-                  </Link>
-                }
-                description="Add schedule blocks or ready assets to preview the week's resolved video sequence."
+                description="Add a schedule block or ready assets to preview what this day plays."
                 title="No programming for this day"
               />
             )}
+            <Link className="button secondary" href={buildAddBlockHref(day.dayOfWeek)}>
+              Add block
+            </Link>
           </div>
         </section>
       ))}

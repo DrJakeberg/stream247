@@ -26,8 +26,9 @@ describe("week lens scheduled minutes", () => {
     expect(saturday?.date).toBe("2026-10-03");
     expect(saturday?.totalScheduledMinutes).toBe(1440);
     expect(sunday?.date).toBe("2026-10-04");
-    // The carry-over still shows on Sunday as a block of its own.
-    expect(sunday?.blocks.map((entry) => entry.blockId)).toEqual(["sat-late", "sun-day"]);
+    // Since M97 the block past midnight is listed once, on Saturday, and Sunday still counts its hour.
+    expect(saturday?.blocks.map((entry) => entry.blockId)).toEqual(["sat-day", "sat-late"]);
+    expect(sunday?.blocks.map((entry) => entry.blockId)).toEqual(["sun-day"]);
     expect(sunday?.totalScheduledMinutes).toBe(1440);
   });
 

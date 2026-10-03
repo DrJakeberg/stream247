@@ -7,7 +7,16 @@ import { useToast } from "@/components/ui/Toast";
 
 type PoolOption = { id: string; name: string };
 
-export function ProgrammingTemplateForm(props: { pools: PoolOption[] }) {
+/**
+ * What "Replace existing schedule blocks" asks before it deletes the week (U6). Applying the template
+ * with the option ticked deletes every block first, and nothing brings them back.
+ */
+export function describeTemplateReplaceConfirmation(existingBlockCount: number): string {
+  const blocks = existingBlockCount === 1 ? "1 schedule block" : `${existingBlockCount} schedule blocks`;
+  return `Replace the whole schedule? The ${blocks} you have now are deleted before the template is applied. This cannot be undone.`;
+}
+
+export function ProgrammingTemplateForm(props: { pools: PoolOption[]; existingBlockCount?: number }) {
   const [template, setTemplate] = useState("always-on-single-pool");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -22,6 +31,10 @@ export function ProgrammingTemplateForm(props: { pools: PoolOption[] }) {
         setError("");
 
         const formData = new FormData(event.currentTarget);
+        const replaceExisting = formData.get("replaceExisting") === "on";
+        if (replaceExisting && (props.existingBlockCount ?? 0) > 0 && !window.confirm(describeTemplateReplaceConfirmation(props.existingBlockCount ?? 0))) {
+          return;
+        }
 
         startTransition(async () => {
           const response = await fetch("/api/schedule/templates", {
@@ -32,7 +45,7 @@ export function ProgrammingTemplateForm(props: { pools: PoolOption[] }) {
               primaryPoolId: String(formData.get("primaryPoolId") || ""),
               secondaryPoolId: String(formData.get("secondaryPoolId") || ""),
               tertiaryPoolId: String(formData.get("tertiaryPoolId") || ""),
-              replaceExisting: formData.get("replaceExisting") === "on"
+              replaceExisting
             })
           });
 

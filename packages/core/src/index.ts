@@ -3,7 +3,7 @@ export * from "./asset-chapters.js";
 export * from "./asset-probe-quarantine.js";
 import { isAssetProbeQuarantined } from "./asset-probe-quarantine.js";
 import { getAssetChapterAt, parseAssetChaptersJson } from "./asset-chapters.js";
-import { createPoolRotation, poolRotationStateOf, walkPoolRotation, type PoolRotationSourceGate } from "./pool-rotation.js";
+import { createPoolRotation, poolRotationStateOf, walkPoolRotation, type PoolRotationSourceGate, type PoolRotationState } from "./pool-rotation.js";
 export * from "./broadcast-channel.js";
 export * from "./twitch-accounts.js";
 export * from "./chat-emotes.js";
@@ -1036,6 +1036,16 @@ export type MaterializedProgrammingBlock = {
   validFrom?: string;
   validUntil?: string;
   airWindows?: ScheduleAirWindow[];
+  /** M97: the date the block starts on (a block past midnight is listed on that day only). */
+  date?: string;
+  /** Its air time in hours: "24 h". */
+  durationLabel?: string;
+  /** Its air times from its own day: "20:00 → 22:00", "23:00 → 01:00 Sun". */
+  timeLabel?: string;
+  /** Why it repeats, with numbers ("6 min of video for a 24 h block: plays ≈ 240 times. …"); empty when it does not. */
+  repeatReason?: string;
+  /** It ended before now on the first day of the week: it took nothing from its pool's rotation. */
+  aired?: boolean;
 };
 
 export type MaterializedProgrammingDay = {
@@ -3052,13 +3062,78 @@ function getMaterializedAssetDurationSeconds(asset: MaterializedAssetRecord): { 
   };
 }
 
+// The projection walks the whole block so the rotation hands the next block the right item (M97); only
+// the first `maxMaterializedItemsPerBlock` items are listed. A cap still bounds a pathological pool of
+// one-second clips.
+const maxProjectedItemsPerBlock = 5000;
+
+const scheduleWeekdayShortLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const scheduleMonthShortLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** A planning length in hours, as the week view reads it: "24 h", "1 h 30 min", "45 min". */
+export function formatScheduleHours(minutes: number): string {
+  const total = Math.max(0, Math.round(Number(minutes) || 0));
+  const hours = Math.floor(total / 60);
+  const rest = total % 60;
+  if (hours === 0) {
+    return `${rest} min`;
+  }
+  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+}
+
+/** A day header of the week view: "Sat 3 Oct". */
+export function formatScheduleDayHeading(date: string): string {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    return date;
+  }
+  return `${scheduleWeekdayShortLabels[parsed.getUTCDay()]} ${parsed.getUTCDate()} ${scheduleMonthShortLabels[parsed.getUTCMonth()]}`;
+}
+
+/**
+ * A range of minutes relative to a day, named from that day: "20:00 → 22:00", "00:00 → 24:00", and for a
+ * block past midnight the day it ends on, "23:00 → 01:00 Sun" (a start before the day names the day before).
+ */
+export function formatScheduleTimeRange(args: { start: number; end: number; dayOfWeek: number }): string {
+  const dayOfWeek = ((Math.trunc(args.dayOfWeek) % 7) + 7) % 7;
+  const start =
+    args.start < 0
+      ? `${formatMinuteOfDay(args.start)} ${scheduleWeekdayShortLabels[(dayOfWeek + 6) % 7]}`
+      : formatMinuteOfDay(args.start);
+  const end =
+    args.end > MINUTES_PER_DAY
+      ? `${formatMinuteOfDay(args.end)} ${scheduleWeekdayShortLabels[(dayOfWeek + 1) % 7]}`
+      : args.end === MINUTES_PER_DAY
+        ? "24:00"
+        : formatMinuteOfDay(args.end);
+  return `${start} → ${end}`;
+}
+
+/** Where a pool stands while the week is projected: its rotation and the items since its last insert. */
+type PoolProjectionState = {
+  rotation: PoolRotationState;
+  itemsSinceInsert: number;
+};
+
 function materializePoolWindow(args: {
   block: ScheduleOccurrence;
   pool: MaterializedPoolRecord | null;
   assets: MaterializedAssetRecord[];
   maxQueuePreviewItems: number;
   sourceGate?: PoolRotationSourceGate | null;
-}): MaterializedProgrammingBlock {
+  /**
+   * Where the pool's rotation stands when this block starts: where the pool's previous block of the
+   * week ended (M97). Missing means the pool's stored position, which is where the first block starts.
+   */
+  startState?: PoolProjectionState;
+  /** A minute (relative to the block's date) up to which the block has already aired; the projection fills the rest. */
+  fromMinute?: number;
+}): {
+  block: MaterializedProgrammingBlock;
+  endState: PoolProjectionState;
+  /** The minutes (relative to the block's date) the projection covers, overflow included. */
+  spans: ScheduleAirWindow[];
+} {
   const excludedAssetIds = new Set<string>();
   if (args.pool?.insertAssetId && Math.max(args.pool?.insertEveryItems ?? 0, 0) > 0) {
     excludedAssetIds.add(args.pool.insertAssetId);
@@ -3081,11 +3156,12 @@ function materializePoolWindow(args: {
   const hasReadyAssets = args.pool
     ? args.assets.some((asset) => args.pool?.sourceIds.includes(asset.sourceId) && isEligible(asset))
     : false;
-  const hasEligibleAssets =
-    hasReadyAssets &&
-    args.assets.some(
-      (asset) => args.pool?.sourceIds.includes(asset.sourceId) && !heldSourceIds.includes(asset.sourceId) && isEligible(asset)
-    );
+  const playableRegularAssets = args.pool
+    ? args.assets.filter(
+        (asset) => args.pool?.sourceIds.includes(asset.sourceId) && !heldSourceIds.includes(asset.sourceId) && isEligible(asset)
+      )
+    : [];
+  const hasEligibleAssets = hasReadyAssets && playableRegularAssets.length > 0;
   // Like the worker's two insert checks since M94: not an item that is quarantined or whose source the
   // breaker holds.
   const isInsertPlayable = (asset: MaterializedAssetRecord) =>
@@ -3097,7 +3173,30 @@ function materializePoolWindow(args: {
     args.pool?.insertAssetId && args.pool.insertEveryItems > 0
       ? args.assets.find((asset) => asset.id === args.pool?.insertAssetId && isInsertPlayable(asset)) ?? null
       : null;
-  const cuepointOffsetsSeconds = normalizeCuepointOffsetsSeconds(args.block.cuepointOffsetsSeconds ?? [], args.block.durationMinutes);
+  const blockStart = args.block.effectiveStartMinuteOfDay;
+  const airWindows = getScheduleOccurrenceAirWindows(args.block);
+  // The windows in seconds from the block's start; a block on air now is filled from now.
+  const toSeconds = (window: ScheduleAirWindow): ScheduleAirWindow => ({
+    start: (window.start - blockStart) * 60,
+    end: (window.end - blockStart) * 60
+  });
+  const fullWindowsSeconds = airWindows.map(toSeconds);
+  const fromMinute = args.fromMinute;
+  const clippedWindows =
+    fromMinute === undefined
+      ? airWindows
+      : airWindows
+          .map((window) => ({ start: Math.max(window.start, fromMinute), end: window.end }))
+          .filter((window) => window.end > window.start);
+  const windowsSeconds = (clippedWindows.length > 0 ? clippedWindows : airWindows).map(toSeconds);
+  const fullAirSeconds = fullWindowsSeconds.reduce((sum, window) => sum + (window.end - window.start), 0);
+  const airSeconds = windowsSeconds.reduce((sum, window) => sum + (window.end - window.start), 0);
+  const firstWindowStart = windowsSeconds[0]?.start ?? 0;
+  // The worker's rule: only cuepoints inside an air window fire (getCuepointProgress). One before the
+  // point the projection starts from has fired already or never will.
+  const cuepointOffsetsSeconds = normalizeCuepointOffsetsSeconds(args.block.cuepointOffsetsSeconds ?? [], args.block.durationMinutes).filter(
+    (offset) => fullWindowsSeconds.some((window) => offset >= window.start && offset < window.end)
+  );
   // The worker's rule (resolveBlockCuepointAssetId).
   const cuepointAssetId = cuepointOffsetsSeconds.length > 0 ? resolveBlockCuepointAssetId(args.block, args.pool) : "";
   const cuepointAsset = cuepointAssetId
@@ -3122,29 +3221,39 @@ function materializePoolWindow(args: {
     );
   }
 
-  let itemsSinceInsert = Math.max(args.pool?.itemsSinceInsert ?? 0, 0);
-  // Like the slot preview, every block starts from the pool's stored position; an insert does not move it.
-  let rotationState = poolRotationStateOf(args.pool ?? {});
-  const blockSeconds = Math.max(args.block.durationMinutes, 15) * 60;
+  const startState: PoolProjectionState = args.startState ?? {
+    rotation: poolRotationStateOf(args.pool ?? {}),
+    itemsSinceInsert: Math.max(args.pool?.itemsSinceInsert ?? 0, 0)
+  };
+  let itemsSinceInsert = startState.itemsSinceInsert;
+  // The block continues the pool's rotation from where the previous block of the pool left it, like the
+  // worker, which keeps one position per pool; an insert does not move it.
+  let rotationState = startState.rotation;
   const items: MaterializedProgrammingItem[] = [];
   const queuePreview: string[] = [];
   const assetUseCounts = new Map<string, number>();
-  let projectedSeconds = 0;
+  let filledSeconds = 0;
   let uniqueSeconds = 0;
   let insertCount = 0;
   let cuepointCount = 0;
   let estimatedDurationCount = 0;
   let repeatedRegularAsset = false;
-  const firedCuepointOffsets = new Set<number>();
+  let projectedItemCount = 0;
+  const firedCuepointOffsets = new Set<number>(cuepointOffsetsSeconds.filter((offset) => offset < firstWindowStart));
+  // The air windows are filled one after the other. An item still running when a dated block takes over
+  // is cut there, and the next item starts when the weekly block comes back; the last window may overflow.
+  let windowIndex = 0;
+  let cursor = firstWindowStart;
+  const windowFillEnds = windowsSeconds.map((window) => window.start);
 
-  for (let safety = 0; safety < maxMaterializedItemsPerBlock && projectedSeconds < blockSeconds; safety += 1) {
+  for (let safety = 0; safety < maxProjectedItemsPerBlock && windowIndex < windowsSeconds.length; safety += 1) {
     if (!rotation || !hasEligibleAssets) {
       break;
     }
 
     const dueCuepointOffset =
       cuepointAsset && cuepointOffsetsSeconds.length > 0
-        ? cuepointOffsetsSeconds.find((offset) => offset <= projectedSeconds && !firedCuepointOffsets.has(offset)) ?? null
+        ? cuepointOffsetsSeconds.find((offset) => offset <= cursor && !firedCuepointOffsets.has(offset)) ?? null
         : null;
     const shouldInsert =
       dueCuepointOffset !== null ||
@@ -3163,8 +3272,19 @@ function materializePoolWindow(args: {
     }
 
     const { durationSeconds, estimated } = getMaterializedAssetDurationSeconds(nextAsset);
-    const itemStartSeconds = projectedSeconds;
-    projectedSeconds += durationSeconds;
+    const window = windowsSeconds[windowIndex] as ScheduleAirWindow;
+    const lastWindow = windowIndex === windowsSeconds.length - 1;
+    const itemStartSeconds = cursor;
+    const itemEndSeconds = cursor + durationSeconds;
+    const shownEndSeconds = lastWindow ? itemEndSeconds : Math.min(itemEndSeconds, window.end);
+    filledSeconds += shownEndSeconds - itemStartSeconds;
+    windowFillEnds[windowIndex] = shownEndSeconds;
+    if (itemEndSeconds >= window.end) {
+      windowIndex += 1;
+      cursor = lastWindow ? itemEndSeconds : (windowsSeconds[windowIndex]?.start ?? itemEndSeconds);
+    } else {
+      cursor = itemEndSeconds;
+    }
     const seenCount = assetUseCounts.get(nextAsset.id) ?? 0;
     const repeated = !shouldInsert && seenCount > 0;
     if (!shouldInsert && seenCount === 0) {
@@ -3185,19 +3305,22 @@ function materializePoolWindow(args: {
     if (estimated) {
       estimatedDurationCount += 1;
     }
+    projectedItemCount += 1;
 
-    items.push({
-      kind: shouldInsert ? "insert" : "asset",
-      assetId: nextAsset.id,
-      title: nextAsset.title,
-      durationMinutes: Math.max(1, Math.ceil(durationSeconds / 60)),
-      startTime: formatMinuteOfDay(args.block.startMinuteOfDay + Math.floor(itemStartSeconds / 60)),
-      endTime: formatMinuteOfDay(args.block.startMinuteOfDay + Math.ceil(projectedSeconds / 60)),
-      overflow: projectedSeconds > blockSeconds,
-      repeated,
-      estimatedDuration: estimated,
-      insertTrigger: shouldInsert ? (dueCuepointOffset !== null ? "cuepoint" : "pool-interval") : undefined
-    });
+    if (items.length < maxMaterializedItemsPerBlock) {
+      items.push({
+        kind: shouldInsert ? "insert" : "asset",
+        assetId: nextAsset.id,
+        title: nextAsset.title,
+        durationMinutes: Math.max(1, Math.ceil(durationSeconds / 60)),
+        startTime: formatMinuteOfDay(args.block.startMinuteOfDay + Math.floor(itemStartSeconds / 60)),
+        endTime: formatMinuteOfDay(args.block.startMinuteOfDay + Math.ceil(shownEndSeconds / 60)),
+        overflow: lastWindow && itemEndSeconds > window.end,
+        repeated,
+        estimatedDuration: estimated,
+        insertTrigger: shouldInsert ? (dueCuepointOffset !== null ? "cuepoint" : "pool-interval") : undefined
+      });
+    }
 
     if (queuePreview.length < args.maxQueuePreviewItems) {
       queuePreview.push(
@@ -3235,15 +3358,17 @@ function materializePoolWindow(args: {
     notes.push(`${estimatedDurationCount} item${estimatedDurationCount === 1 ? "" : "s"} use a 30-minute estimate because natural length is missing.`);
   }
 
+  const lastWindowEnd = windowsSeconds.at(-1)?.end ?? 0;
+  const overflowSeconds = windowIndex >= windowsSeconds.length ? Math.max(0, cursor - lastWindowEnd) : 0;
   const fillStatus =
-    items.length === 0
+    projectedItemCount === 0
       ? "empty"
-      : repeatedRegularAsset || projectedSeconds < blockSeconds
+      : repeatedRegularAsset || filledSeconds < airSeconds
         ? "underfilled"
-        : projectedSeconds > blockSeconds
+        : overflowSeconds > 0
           ? "overflow"
           : "balanced";
-  const overflowMinutes = Math.max(0, Math.ceil((projectedSeconds - blockSeconds) / 60));
+  const overflowMinutes = Math.max(0, Math.ceil(overflowSeconds / 60));
   const fillLabel =
     fillStatus === "empty"
       ? "No playable material"
@@ -3252,36 +3377,70 @@ function materializePoolWindow(args: {
         : fillStatus === "overflow"
           ? `Ends ${overflowMinutes}m late`
           : "Balanced window";
+  // Why a block repeats, with the numbers an operator can act on (U5).
+  let repeatReason = "";
+  if (fillStatus === "underfilled") {
+    const poolVideoSeconds = playableRegularAssets.reduce((sum, asset) => sum + getMaterializedAssetDurationSeconds(asset).durationSeconds, 0);
+    const plays = poolVideoSeconds > 0 ? fullAirSeconds / poolVideoSeconds : 0;
+    const blockLabel = formatScheduleHours(fullAirSeconds / 60);
+    if (!repeatedRegularAsset) {
+      repeatReason = `${poolName} runs out of videos before this ${blockLabel} block ends. Add videos to ${poolName}.`;
+    } else if (plays >= 1.5) {
+      repeatReason = `${formatScheduleHours(Math.max(1, Math.round(poolVideoSeconds / 60)))} of video for a ${blockLabel} block: plays ≈ ${Math.round(
+        plays
+      )} times. Add videos to ${poolName}.`;
+    } else {
+      repeatReason = `${poolName} alternates between its sources, and one of them runs out of videos first and repeats. Add videos to that source.`;
+    }
+  }
+  const timeLabel = airWindows
+    .map((window) => formatScheduleTimeRange({ start: window.start, end: window.end, dayOfWeek: getDayOfWeekForDate(args.block.date) }))
+    .join(" · ");
+  const spans = windowsSeconds
+    .map((window, index) => ({
+      start: blockStart + window.start / 60,
+      end: blockStart + (windowFillEnds[index] ?? window.start) / 60
+    }))
+    .filter((span) => span.end > span.start);
 
   return {
-    blockId: args.block.blockId,
-    title: args.block.title,
-    categoryName: args.block.categoryName,
-    dayOfWeek: args.block.dayOfWeek,
-    startMinuteOfDay: args.block.startMinuteOfDay,
-    durationMinutes: args.block.durationMinutes,
-    startTime: args.block.startTime,
-    endTime: args.block.endTime,
-    showId: args.block.showId,
-    poolId: args.block.poolId,
-    sourceName: args.block.sourceName,
-    repeatMode: normalizeScheduleRepeatMode(args.block.repeatMode ?? "single"),
-    repeatLabel: describeScheduleRepeatMode(args.block.repeatMode ?? "single", args.block.dayOfWeek),
-    fillStatus,
-    fillLabel,
-    poolName,
-    projectedMinutes: Math.ceil(projectedSeconds / 60),
-    overflowMinutes,
-    uniqueMinutes: Math.ceil(uniqueSeconds / 60),
-    insertCount,
-    cuepointCount,
-    queuePreview,
-    notes,
-    items,
-    dated: Boolean(args.block.dated),
-    validFrom: args.block.validFrom ?? "",
-    validUntil: args.block.validUntil ?? "",
-    airWindows: getScheduleOccurrenceAirWindows(args.block)
+    block: {
+      blockId: args.block.blockId,
+      title: args.block.title,
+      categoryName: args.block.categoryName,
+      dayOfWeek: args.block.dayOfWeek,
+      startMinuteOfDay: args.block.startMinuteOfDay,
+      durationMinutes: args.block.durationMinutes,
+      startTime: args.block.startTime,
+      endTime: args.block.endTime,
+      showId: args.block.showId,
+      poolId: args.block.poolId,
+      sourceName: args.block.sourceName,
+      repeatMode: normalizeScheduleRepeatMode(args.block.repeatMode ?? "single"),
+      repeatLabel: describeScheduleRepeatMode(args.block.repeatMode ?? "single", args.block.dayOfWeek),
+      fillStatus,
+      fillLabel,
+      poolName,
+      projectedMinutes: Math.ceil(filledSeconds / 60),
+      overflowMinutes,
+      uniqueMinutes: Math.ceil(uniqueSeconds / 60),
+      insertCount,
+      cuepointCount,
+      queuePreview,
+      notes,
+      items,
+      dated: Boolean(args.block.dated),
+      validFrom: args.block.validFrom ?? "",
+      validUntil: args.block.validUntil ?? "",
+      airWindows,
+      date: args.block.date,
+      durationLabel: formatScheduleHours(fullAirSeconds / 60),
+      timeLabel,
+      repeatReason,
+      aired: false
+    },
+    endState: { rotation: rotationState, itemsSinceInsert },
+    spans
   };
 }
 
@@ -3297,29 +3456,84 @@ export function buildMaterializedProgrammingWeek(args: {
    * worker holds the source exactly like this until one does.
    */
   sourceGate?: PoolRotationSourceGate | null;
+  /**
+   * The minute of `startDate` it is now (channel zone). A block of that day that has ended is marked
+   * `aired` and takes nothing from its pool's rotation; the block on air is projected from now on.
+   * Missing means the whole first day is still ahead.
+   */
+  nowMinuteOfDay?: number;
 }): MaterializedProgrammingDay[] {
-  return Array.from({ length: 7 }, (_, offset) => {
-    const date = addDaysToDateString(args.startDate, offset);
-    const occurrences = buildScheduleOccurrences({
-      date,
-      blocks: args.blocks
+  const dates = Array.from({ length: 7 }, (_, offset) => addDaysToDateString(args.startDate, offset));
+  const occurrencesByDay = dates.map((date) => buildScheduleOccurrences({ date, blocks: args.blocks }));
+  type Entry = { dayIndex: number; occurrence: ScheduleOccurrence; absoluteStart: number; absoluteEnd: number };
+  const entries: Entry[] = [];
+  occurrencesByDay.forEach((occurrences, dayIndex) => {
+    for (const occurrence of occurrences) {
+      // A block past midnight is listed once, on the day it starts (U5). Only the first day keeps a
+      // carry-over: the day it started on is not in the week.
+      if (occurrence.carriesOverFromPreviousDay && dayIndex > 0) {
+        continue;
+      }
+      const windows = getScheduleOccurrenceAirWindows(occurrence);
+      entries.push({
+        dayIndex,
+        occurrence,
+        absoluteStart: dayIndex * MINUTES_PER_DAY + Math.min(...windows.map((window) => window.start)),
+        absoluteEnd: dayIndex * MINUTES_PER_DAY + Math.max(...windows.map((window) => window.end))
+      });
+    }
+  });
+
+  // Each pool's rotation is carried across its blocks in time order with the worker's rotation
+  // (createPoolRotation, shared, not copied): the second block of a pool starts with the item after the
+  // first block's last one, not with the pool's stored position again (U5).
+  const now = args.nowMinuteOfDay;
+  const poolStates = new Map<string, PoolProjectionState>();
+  const results = new Map<Entry, { block: MaterializedProgrammingBlock; spans: ScheduleAirWindow[] }>();
+  for (const entry of [...entries].sort((left, right) => left.absoluteStart - right.absoluteStart)) {
+    const pool = args.pools.find((candidate) => candidate.id === entry.occurrence.poolId) ?? null;
+    const aired = now !== undefined && entry.absoluteEnd <= now;
+    const onAir = now !== undefined && !aired && entry.absoluteStart < now;
+    const result = materializePoolWindow({
+      block: entry.occurrence,
+      pool,
+      assets: args.assets,
+      maxQueuePreviewItems: args.maxQueuePreviewItems ?? 4,
+      sourceGate: args.sourceGate,
+      startState: pool ? poolStates.get(pool.id) : undefined,
+      fromMinute: onAir ? (now as number) - entry.dayIndex * MINUTES_PER_DAY : undefined
     });
-    const blocks = occurrences.map((occurrence) =>
-      materializePoolWindow({
-        block: occurrence,
-        pool: args.pools.find((pool) => pool.id === occurrence.poolId) ?? null,
-        assets: args.assets,
-        maxQueuePreviewItems: args.maxQueuePreviewItems ?? 4,
-        sourceGate: args.sourceGate
-      })
-    );
+    if (pool && !aired) {
+      poolStates.set(pool.id, result.endState);
+    }
+    const dayOffset = entry.dayIndex * MINUTES_PER_DAY;
+    // The part of a block on air now that already ran counts as filled.
+    const airedSpans = onAir
+      ? getScheduleOccurrenceAirWindows(entry.occurrence)
+          .map((window) => ({ start: window.start, end: Math.min(window.end, (now as number) - dayOffset) }))
+          .filter((span) => span.end > span.start)
+      : [];
+    results.set(entry, {
+      block: { ...result.block, aired },
+      spans: [...airedSpans, ...result.spans].map((span) => ({ start: span.start + dayOffset, end: span.end + dayOffset }))
+    });
+  }
+
+  return dates.map((date, dayIndex) => {
+    const occurrences = occurrencesByDay[dayIndex] ?? [];
+    const blocks = entries
+      .filter((entry) => entry.dayIndex === dayIndex)
+      .map((entry) => results.get(entry)?.block)
+      .filter((block): block is MaterializedProgrammingBlock => Boolean(block));
+    const dayStart = dayIndex * MINUTES_PER_DAY;
+    const dayEnd = dayStart + MINUTES_PER_DAY;
 
     return {
       date,
       dayOfWeek: getDayOfWeekForDate(date),
-      // Only the minutes that fall on this date. A block crossing midnight appears here and as the next
-      // day's carry-over; adding its whole length on both days counted 23:00-01:00 twice, so a 24/7 grid
-      // read "1500m scheduled" on the two days around such a block.
+      // Only the minutes that fall on this date. A block crossing midnight adds its evening here and its
+      // morning to the next day; adding its whole length on both days counted 23:00-01:00 twice, so a
+      // 24/7 grid read "1500m scheduled" on the two days around such a block.
       // Counted over the air windows (M93), so a dated block over a 24/7 grid adds no minutes to the day.
       totalScheduledMinutes: occurrences.reduce(
         (total, occurrence) =>
@@ -3330,12 +3544,16 @@ export function buildMaterializedProgrammingWeek(args: {
           ),
         0
       ),
-      // The projection starts with the block, so it is cut at the day's edges the same way.
-      totalProjectedMinutes: occurrences.reduce((total, occurrence, index) => {
-        const start = occurrence.effectiveStartMinuteOfDay;
-        const end = start + (blocks[index]?.projectedMinutes ?? 0);
-        return total + Math.max(0, Math.min(end, MINUTES_PER_DAY) - Math.max(start, 0));
-      }, 0),
+      // The projection is cut at the day's edges the same way, so the morning of a block that started the
+      // day before counts here although the block is listed on its own day.
+      totalProjectedMinutes: Math.round(
+        [...results.values()].reduce(
+          (total, result) =>
+            total +
+            result.spans.reduce((sum, span) => sum + Math.max(0, Math.min(span.end, dayEnd) - Math.max(span.start, dayStart)), 0),
+          0
+        )
+      ),
       blockCount: blocks.length,
       underfilledCount: blocks.filter((block) => block.fillStatus === "underfilled").length,
       overflowCount: blocks.filter((block) => block.fillStatus === "overflow").length,

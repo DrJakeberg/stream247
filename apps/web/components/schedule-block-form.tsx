@@ -24,6 +24,8 @@ type Props = {
   block?: ScheduleBlock;
   /** Today in the channel's time zone, the first date offered for a dated run. */
   today?: string;
+  /** A new block on this weekday, one weekday every week ("Add block" on the week view). */
+  defaultDayOfWeek?: number;
 };
 
 type ScheduleRuns = "weekly" | "between" | "once";
@@ -45,11 +47,13 @@ const dayOptions = [
   { value: 6, label: "Saturday" }
 ];
 
-export function ScheduleBlockForm({ pools, assets, shows, block, today = "" }: Props) {
+export function ScheduleBlockForm({ pools, assets, shows, block, today = "", defaultDayOfWeek }: Props) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
-  const [selectedDays, setSelectedDays] = useState<number[]>(block ? [block.dayOfWeek] : [1]);
-  const [repeatMode, setRepeatMode] = useState<ScheduleRepeatMode>(block?.repeatMode ?? (block ? "single" : "weekdays"));
+  const [selectedDays, setSelectedDays] = useState<number[]>(block ? [block.dayOfWeek] : [defaultDayOfWeek ?? 1]);
+  const [repeatMode, setRepeatMode] = useState<ScheduleRepeatMode>(
+    block?.repeatMode ?? (block || defaultDayOfWeek !== undefined ? "single" : "weekdays")
+  );
   const [selectedShowId, setSelectedShowId] = useState(block?.showId ?? "");
   const [title, setTitle] = useState(block?.title ?? "");
   const [categoryName, setCategoryName] = useState(block?.categoryName ?? "");

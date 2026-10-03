@@ -103,7 +103,14 @@ describe("source pages show the breaker", () => {
   // M75 review: the Needs-attention panel sends the operator to the pools, which a hold does not need.
   it("draws the week lens with the breaker but leaves held pools out of Needs attention", () => {
     const page = read("apps/web/app/(admin)/schedule/page.tsx").replace(/\s+/g, " ");
-    expect(page).toContain("<ProgramWeekLens assets={state.assets} days={materializedWeek} pools={state.pools} sourceGate={sourceGate} />");
+    // Since M97 the lens draws the materialized week alone (first titles included), and the week is built
+    // with the breaker.
+    expect(page).toContain("<ProgramWeekLens assets={state.assets} days={materializedWeek} />");
+    expect(page).toContain("const materializedWeek = getMaterializedProgrammingWeekPreview(state);");
+    const state = read("apps/web/lib/server/state.ts").replace(/\s+/g, " ");
+    const preview = state.slice(state.indexOf("export function getMaterializedProgrammingWeekPreview("));
+    expect(preview.slice(0, 600)).toContain("sourceGate: getPoolSourceGate(state, now.getTime())");
+    expect(read("apps/web/components/program-week-lens.tsx")).not.toContain("lookaheadVideoTitleFromPool");
     // Since M91 the list is computed by findUnplayableWeekBlocks, which readiness shares.
     expect(page).toContain("const emptyWeekBlocks = findUnplayableWeekBlocks(state, materializedWeek);");
     const onboarding = read("apps/web/lib/server/onboarding.ts").replace(/\s+/g, " ");

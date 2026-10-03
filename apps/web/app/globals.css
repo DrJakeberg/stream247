@@ -1197,6 +1197,12 @@ button.collection-chip {
   display: none;
 }
 
+/* "Edit block" under an opened block of the week view (U6). */
+.program-week-block-actions {
+  display: flex;
+  padding: 0 14px 12px;
+}
+
 .program-sequence-list {
   display: grid;
   gap: 10px;
