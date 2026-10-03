@@ -24,6 +24,17 @@ export type TwitchCapabilityLine = { label: string; state: "active" | "waiting" 
 
 const OFF_TEXT = "Off — switched off under Studio → Engagement or by the server.";
 
+/**
+ * How many Twitch accounts an install needs, in one sentence (M92, decided 5.1 Q9). The setup wizard
+ * shows it and docs/getting-started.md section 2 carries it word for word; a unit test keeps them equal,
+ * because the two used to disagree (the wizard allowed one account, the guide told the reader not to).
+ */
+export const TWITCH_ACCOUNT_COUNT_SENTENCE =
+  "One Twitch account can be both the broadcast channel and the bot account, but two are recommended: a separate bot account keeps chat and moderation off the channel's own login.";
+
+/** Where a Twitch application is registered: setup step 3 links it, and so does the guide (M92). */
+export const TWITCH_DEVELOPER_CONSOLE_URL = "https://dev.twitch.tv/console/apps";
+
 export type TwitchAccountsTexts = {
   modeLine: { tone: "ok" | "warn"; text: string };
   channel: {
