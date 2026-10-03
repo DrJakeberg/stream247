@@ -129,6 +129,7 @@ Disabled.
 CURRENT PASSWORD
 i
 Start two-factor setup
+Change password
 SETTINGS
 Admin defaults
 Twitch OAuth

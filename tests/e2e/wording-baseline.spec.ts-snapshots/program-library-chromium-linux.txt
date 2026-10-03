@@ -53,8 +53,6 @@ SOURCE
 i
 All sources
 Local Media Library
-Twitch Archive
-YouTube Playlist
 ASSET STATUS
 i
 All statuses
