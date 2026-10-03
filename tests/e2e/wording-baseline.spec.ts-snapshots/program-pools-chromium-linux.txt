@@ -43,8 +43,6 @@ i
 INCLUDED SOURCES
 i
 Local Media Library
-Twitch Archive
-YouTube Playlist
 AUTOMATIC INSERT ASSET
 i
 No automatic insert
@@ -70,15 +68,9 @@ No automatic inserts configured
 Local Media Library
 2 total assets · 2 ready
 Change this pool
-Archive Pool
-2 source(s) · round-robin
-No automatic inserts configured
-Twitch Archive, YouTube Playlist
-0 total assets · 0 ready
-Change this pool
 <block>
-2 source(s) · round-robin
+1 source(s) · round-robin
 No automatic inserts configured
-Local Media Library, YouTube Playlist
+Local Media Library
 2 total assets · 2 ready
 Change this pool

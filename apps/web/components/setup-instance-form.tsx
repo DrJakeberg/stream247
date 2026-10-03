@@ -1,13 +1,27 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState, useSyncExternalStore, useTransition } from "react";
 import { CHANNEL_LANGUAGE_INFO, CHANNEL_LANGUAGE_OPTIONS } from "@/components/channel-language-form";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 
+/** The browser's IANA zone, or "" where the browser does not say (M91, I6). */
+export function detectBrowserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch {
+    return "";
+  }
+}
+
+// The browser's zone does not change under a mounted form, so there is nothing to subscribe to.
+const subscribeToNothing = () => () => undefined;
+
 export function SetupInstanceForm(props: {
   initialAppUrl: string;
+  /** The origin this page was requested under, offered while nothing is saved and APP_URL is unset. */
+  detectedAppUrl?: string;
   initialTimezone: string;
   initialLanguage: string;
   /** Set when env variables override the managed values; saving still works, env just wins. */
@@ -15,8 +29,16 @@ export function SetupInstanceForm(props: {
   envTimezone: string;
   envLanguage: string;
 }) {
-  const [appUrl, setAppUrl] = useState(props.initialAppUrl);
-  const [timezone, setTimezone] = useState(props.initialTimezone);
+  // Prefilled rather than empty (M91, I6): the address this wizard is open under and the browser's zone
+  // are right for most installs, and both say so in their hint until they are saved.
+  const urlDetected = !props.initialAppUrl && !props.envAppUrl && Boolean(props.detectedAppUrl);
+  const [appUrl, setAppUrl] = useState(urlDetected ? props.detectedAppUrl ?? "" : props.initialAppUrl);
+  // The browser's zone is read on the client only (the server's zone is not the viewer's); until the
+  // field is typed in, an unsaved and unpinned zone shows it.
+  const browserTimeZone = useSyncExternalStore(subscribeToNothing, detectBrowserTimeZone, () => "");
+  const [typedTimezone, setTypedTimezone] = useState<string | null>(null);
+  const zoneDetected = typedTimezone === null && !props.initialTimezone && !props.envTimezone && browserTimeZone !== "";
+  const timezone = typedTimezone ?? (zoneDetected ? browserTimeZone : props.initialTimezone);
   // New installs speak English to viewers; an empty stored value is English too.
   const [language, setLanguage] = useState(props.initialLanguage || "en");
   const [error, setError] = useState("");
@@ -53,7 +75,9 @@ export function SetupInstanceForm(props: {
         hint={
           props.envAppUrl
             ? `APP_URL is set to ${props.envAppUrl} in the environment and overrides whatever is saved here.`
-            : "The address viewers and OAuth callbacks reach this install under, e.g. https://stream.example.com."
+            : urlDetected
+              ? "Detected from the address this page is open under; check it. It must be the address viewers and OAuth callbacks reach this install under, e.g. https://stream.example.com."
+              : "The address viewers and OAuth callbacks reach this install under, e.g. https://stream.example.com."
         }
         label="Public app URL"
         onChange={setAppUrl}
@@ -68,10 +92,12 @@ export function SetupInstanceForm(props: {
         hint={
           props.envTimezone
             ? `CHANNEL_TIMEZONE is set to ${props.envTimezone} in the environment and overrides whatever is saved here.`
-            : "IANA name like Europe/Berlin. The schedule grid and every on-air clock use it. Empty means UTC."
+            : zoneDetected
+              ? "Your browser's time zone; check it. IANA name like Europe/Berlin. The schedule grid and every on-air clock use it."
+              : "IANA name like Europe/Berlin. The schedule grid and every on-air clock use it. Empty means UTC."
         }
         label="Channel timezone"
-        onChange={setTimezone}
+        onChange={setTypedTimezone}
         placeholder="UTC"
         value={timezone}
       />

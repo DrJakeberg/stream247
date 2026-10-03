@@ -104,8 +104,13 @@ describe("source pages show the breaker", () => {
   it("draws the week lens with the breaker but leaves held pools out of Needs attention", () => {
     const page = read("apps/web/app/(admin)/schedule/page.tsx").replace(/\s+/g, " ");
     expect(page).toContain("<ProgramWeekLens assets={state.assets} days={materializedWeek} pools={state.pools} sourceGate={sourceGate} />");
-    const needsAttention = page.slice(page.indexOf("const emptyWeekBlocks ="), page.indexOf("const closeDrawerHref ="));
-    expect(needsAttention).toContain("return !lookaheadVideoTitleFromPool({ pool, assets: state.assets });");
+    // Since M91 the list is computed by findUnplayableWeekBlocks, which readiness shares.
+    expect(page).toContain("const emptyWeekBlocks = findUnplayableWeekBlocks(state, materializedWeek);");
+    const onboarding = read("apps/web/lib/server/onboarding.ts").replace(/\s+/g, " ");
+    const start = onboarding.indexOf("export function findUnplayableWeekBlocks(");
+    const needsAttention = onboarding.slice(start, onboarding.indexOf("/** A source that can deliver", start));
+    expect(start).toBeGreaterThan(-1);
+    expect(needsAttention).toContain("return !poolHasPlayableAsset({ pool, assets: state.assets });");
     expect(needsAttention).not.toContain("sourceGate");
   });
 

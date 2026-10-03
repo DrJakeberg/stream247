@@ -669,6 +669,22 @@ Before touching the uplink because "the channel is offline", repeat that check a
 channel. The worker's `twitch.chat_settings.written` line names both accounts (`channelLogin`/`channelId`,
 `botLogin`/`botId`); a refused bot connect is in the audit trail as `twitch.bot.rejected`.
 
+### Owner password lost (since M91)
+
+The owner password is changed under `Admin → Settings → Security` with the current one. Once it is lost,
+reset it on the host, in the directory of the Compose file:
+
+```bash
+docker compose exec worker node apps/worker/dist/reset-owner-password.js
+```
+
+It asks for the new password twice without showing it (at least 10 characters), writes it, and records
+`auth.password.reset` in the audit trail; piped input is read as one line (add `-T` after `exec` when
+piping). Two-factor settings stay as
+they are. Without Compose (a Portainer stack), run the same in the worker container:
+`docker exec -it <worker container> node apps/worker/dist/reset-owner-password.js`. There is no e-mail
+reset. Sessions already signed in stay valid until they expire.
+
 ### Secrets in the audit trail and incidents
 
 Incidents and the audit trail store text through `redactSecrets`: a publish URL keeps its host and

@@ -62,6 +62,15 @@ export async function isTwitchAuthorizeConfigured(): Promise<boolean> {
   return Boolean(getManagedTwitchConfig(state).clientId) && Boolean(resolveAppBaseUrl(state.managedConfig));
 }
 
+/** Why team sign-in with Twitch is not offered yet, or null when it is (the login page's hint). */
+export async function getTwitchLoginBlocker(): Promise<"credentials" | "app-url" | null> {
+  const state = await readAppState();
+  if (!getManagedTwitchConfig(state).clientId) {
+    return "credentials";
+  }
+  return resolveAppBaseUrl(state.managedConfig) ? null : "app-url";
+}
+
 /**
  * Builds the authorize URL and issues the state cookie that binds it.
  *

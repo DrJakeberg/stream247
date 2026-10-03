@@ -112,8 +112,10 @@ without the profile.
 Create the owner immediately: until it exists, anyone who can reach the host can claim the workspace.
 Port 3000 is published on every interface in both forms — the proxy is added in front of it, it does
 not replace it — so firewall it if you cannot open the browser right away. Over plain HTTP a sign-in only holds on
-`localhost`; from any other machine use HTTPS, or the session cookie is dropped and every sign-in bounces
-back to `/login` without a message.
+`localhost`; from any other machine the browser drops the session cookie and every sign-in bounces back to
+`/login`. `/setup` and `/login` say so when they are opened that way, with the two ways out: HTTPS (the
+`proxy` profile, or your own HTTPS in front of port 3000), or an SSH tunnel
+(`ssh -L 3000:localhost:3000 <user>@<host>`) and `http://localhost:3000`.
 
 Then open `https://<your-host>/setup` (`/` leads there as long as no owner exists). The wizard runs
 in this order, under these names: **Owner account → Instance basics (public URL, time zone, channel
@@ -122,8 +124,16 @@ later step can be skipped and stays open. **Review** marked "Done" means the cre
 not that the channel can air — its readiness
 checklist lists what is still missing. Reopening `/setup` later requires being signed in and continues at
 the first unfinished step. Create the owner with an e-mail
-address and a password of at least 10 characters — there is no way to change either later without
-database access, so store them.
+address and a password of at least 10 characters, and store the password: the e-mail address cannot be
+changed later, the password only under `Admin → Settings → Security` (with the current one). There is no
+e-mail reset; a lost password is reset on the host with the command in `docs/operations.md`, *Owner
+password lost*. The instance step comes prefilled with the address the wizard is open under and your
+browser's time zone; check both before saving.
+
+A new install starts empty: the local media library is its only source, and there is no pool and no
+schedule block until you create them. The readiness checklist counts what can air, not what exists: a
+pool is ready once a schedule block uses it and it holds a ready video, the schedule once every block of
+the coming week has something to play.
 
 ### Channel language
 

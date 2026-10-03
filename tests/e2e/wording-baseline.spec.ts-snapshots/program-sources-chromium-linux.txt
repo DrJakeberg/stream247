@@ -80,8 +80,6 @@ Source connectors
 Review connector status, bulk sync sources, and edit each ingest pipeline without mixing in uploads, pools, or the asset browser.
 Select multiple sources to enable, disable, or queue a sync in one operator action.
 Local Media Library · enabled
-Twitch Archive · enabled
-YouTube Playlist · enabled
 No sources selected yet.
 Sync selected
 Enable selected
@@ -96,30 +94,6 @@ Enabled
 Never checked yet.
 In 2 pools
 20 scheduled blocks
-0 open incidents
-Open detail
-Change this source
-Twitch Archive
-Twitch VOD sync
-Planned
-Enabled
-0 assets
-0 ready
-Never checked yet.
-In 1 pool
-0 scheduled blocks
-0 open incidents
-Open detail
-Change this source
-YouTube Playlist
-Managed ingestion
-Planned
-Enabled
-0 assets
-0 ready
-Never checked yet.
-In 2 pools
-0 scheduled blocks
 0 open incidents
 Open detail
 Change this source

@@ -59,6 +59,8 @@ describe("cookie writes never happen during a render", () => {
 
     expect(checkBody).toContain("getManagedTwitchConfig");
     expect(checkBody).not.toContain("issueOAuthState");
+    // M91: /login asks getTwitchLoginBlocker, which sits in the same read-only stretch.
+    expect(checkBody).toContain("export async function getTwitchLoginBlocker");
   });
 
   it.each(ROUTE_FILES)("%s is where the authorize URL is actually built", (file) => {

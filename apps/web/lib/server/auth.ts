@@ -1,4 +1,4 @@
-import { scryptSync, timingSafeEqual, randomBytes, createHmac } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { resolveAppSecret } from "@stream247/db";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -24,28 +24,8 @@ function getAuthSecret(): string {
   return resolveAppSecret();
 }
 
-export function hashPassword(password: string): string {
-  const salt = randomBytes(16).toString("hex");
-  const hash = scryptSync(password, salt, 64).toString("hex");
-  return `${salt}:${hash}`;
-}
-
-export function verifyPassword(password: string, encoded: string): boolean {
-  const [salt, storedHash] = encoded.split(":");
-
-  if (!salt || !storedHash) {
-    return false;
-  }
-
-  const derivedHash = scryptSync(password, salt, 64);
-  const storedBuffer = Buffer.from(storedHash, "hex");
-
-  if (derivedHash.length !== storedBuffer.length) {
-    return false;
-  }
-
-  return timingSafeEqual(derivedHash, storedBuffer);
-}
+// Shared with the container reset command since M91; the format is defined in @stream247/db.
+export { hashPassword, verifyPassword } from "@stream247/db";
 
 function signValue(value: string): string {
   return createHmac("sha256", getAuthSecret()).update(value).digest("hex");

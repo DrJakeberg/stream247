@@ -32,6 +32,7 @@ import { TwitchAccountsPanel } from "@/components/twitch-accounts-panel";
 import { buildTwitchAccountsPanelProps } from "@/lib/server/twitch-accounts-panel";
 import { SourceLiveSoundForm } from "@/components/source-live-sound-form";
 import { TwoFactorSettingsForm } from "@/components/two-factor-settings-form";
+import { ChangePasswordForm } from "@/components/change-password-form";
 import { WatchdogThresholdsForm } from "@/components/watchdog-thresholds-form";
 import { getAuthenticatedUser } from "@/lib/server/auth";
 import { getSystemReadiness } from "@/lib/server/readiness";
@@ -281,6 +282,7 @@ export default async function SettingsPage() {
                 }
               : null}
           />
+          {user?.authProvider === "local" && user.role === "owner" ? <ChangePasswordForm /> : null}
         </Panel>
 
         <Panel title="Admin defaults" eyebrow="Settings">

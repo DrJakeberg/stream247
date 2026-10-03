@@ -108,7 +108,7 @@ Ready
 Open Live · Status
 Content sources
 Ready
-3 source(s) configured.
+1 source(s) can deliver media.
 Open Program · Sources
 Playable assets
 Ready
@@ -116,11 +116,11 @@ Ready
 Open Program · Library
 Program pools
 Ready
-3 pool(s) available for scheduling.
+1 pool(s) are scheduled and have a ready video.
 Open Program · Pools
 Weekly schedule
 Ready
-20 schedule block(s) are configured.
+20 schedule block(s) are configured, and every block of the coming week has something to play.
 Open Program · Schedule
 Replay overlay branding
 Optional

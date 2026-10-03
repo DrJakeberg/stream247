@@ -38,21 +38,22 @@ seed_dev_fixture() {
 
   # Idempotent by content, not by early exit: re-running against a seeded workspace should be a
   # no-op rather than duplicating every pool and block.
-  # Checks for the fixture's own marker rather than "any pool at all": defaultState() already ships
-  # a pool, so a count would report the fixture as present on a completely fresh workspace.
+  # Checks for the fixture's own marker rather than "any pool at all", so a pool made by hand on the
+  # dev stack does not read as the fixture.
   if curl -fsS -b "$cookie_jar" "${base_url}/api/pools" | jq -e '.pools | any(.name == "Abendprogramm")' >/dev/null 2>&1; then
     echo "Fixture already present; nothing to do."
     return 0
   fi
 
-  # A pool must reference at least one source, so the ids seeded by defaultState() are used.
+  # A pool must reference at least one source. Since M91 a fresh database has only the local library
+  # (no demo sources), so both pools draw from it.
   _fixture_post "/api/pools" "$(jq -nc '{
     name: "Abendprogramm",
     sourceIds: ["source-local-library"]
   }')" >/dev/null
   _fixture_post "/api/pools" "$(jq -nc '{
     name: "Nachtschleife",
-    sourceIds: ["source-local-library", "source-youtube"]
+    sourceIds: ["source-local-library"]
   }')" >/dev/null
 
   _fixture_post "/api/destinations" "$(jq -nc '{
@@ -75,8 +76,8 @@ seed_dev_fixture() {
 
   # The API takes a start minute and a duration, not wall-clock strings.
   local day
-  # Days 1-4 only: defaultState() already occupies Friday evening with "Prime Time YouTube
-  # Playlist", and the API rejects overlapping blocks.
+  # Days 1-4 only. Before M91 the seed occupied Friday evening with a demo block and the API rejects
+  # overlapping blocks; the days stayed as they were so the baselines keep their shape.
   for day in 1 2 3 4; do
     _fixture_post "/api/schedule/blocks" "$(jq -nc --argjson day "$day" --arg pool "$pool_id" '{
       title: "Abendprogramm",
@@ -91,7 +92,7 @@ seed_dev_fixture() {
   done
 
   # Saturday 23:00 for two hours, i.e. running into Sunday. Keeps the carry-over path represented
-  # in the fixture rather than only in unit tests. Saturday is free in the default schedule.
+  # in the fixture rather than only in unit tests.
   _fixture_post "/api/schedule/blocks" "$(jq -nc --arg pool "$pool_id" '{
     title: "Nachtschleife",
     categoryName: "Archiv",
