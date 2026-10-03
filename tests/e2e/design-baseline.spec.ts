@@ -159,8 +159,8 @@ const SURFACES: Surface[] = [
   // Since M97 the week view starts today, with dated day headers, the blocks that already aired and a
   // block running over from yesterday. Its cards change in number and height with the server's date
   // and time, which a mask cannot absorb (it paints over pixels, it does not undo reflow), so the grid
-  // is left out of the picture. The caption, "Add block" and the forms below stay covered; the cards
-  // are covered by tests/unit/program-week-view.test.ts and by the layout and link specs on this page.
+  // is left out of the picture. The shell, the tabs, the caption and "Add block" stay covered; the
+  // cards are covered by tests/unit/program-week-view.test.ts and by the layout and link specs.
   {
     name: "program-schedule",
     path: "/program?tab=schedule&day=1",
@@ -202,13 +202,17 @@ test.describe("design baseline", () => {
 
         // Web fonts settle after first paint; without this the first run and the rest disagree.
         await page.evaluate(() => document.fonts.ready);
+        // Applied to the page, not through the screenshot's own `style` option: that one did not take
+        // the grid out of the element's box, so the size still followed the clock.
+        if (surface.style) {
+          await page.addStyleTag({ content: surface.style });
+        }
         await waitForStableHeight(target);
 
         await expect(target).toHaveScreenshot(`${surface.name}-${viewport.label}.png`, {
           animations: "disabled",
           caret: "hide",
           mask: surface.masked ? runtimeMasks(page) : undefined,
-          style: surface.style,
           // Absorbs sub-pixel text rendering differences without hiding a real layout change.
           maxDiffPixelRatio: 0.01
         });

@@ -779,7 +779,7 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
 - **Baselines.** The day cards say what plays from now on, so their content follows the weekday and the
   server clock: the wording baseline replaces the grid's text with `<week days>` (its wording is pinned by
   `tests/unit/program-week-view.test.ts`), and the design baseline leaves the grid out of the
-  program-schedule picture (Playwright's screenshot `style`): the number of cards per day, the aired
+  program-schedule picture (a style tag added before the height is measured): the number of cards per day, the aired
   blocks and the block running over from yesterday change the grid's height with the date and time, which
   a mask cannot absorb (first CI run: 6619 px expected, 6841 px received on mobile). Re-recorded with
   `scripts/design-baseline.sh --update`, web from its standalone build on the host with the dev stack's
