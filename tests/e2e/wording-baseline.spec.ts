@@ -95,7 +95,14 @@ const VOLATILE: Array<[RegExp, string]> = [
   // "1500m scheduled" and nothing else. These are aggregates whose *position* follows the clock,
   // unlike a configured "180 minutes", which stays deliberately uncovered.
   [/\b\d+m (scheduled|projected)\b/g, "<minutes> $1"],
-  [/\b\d+h scheduled\b/g, "<hours> scheduled"]
+  [/\b\d+h scheduled\b/g, "<hours> scheduled"],
+  // Since M97 the week view counts hours ("24 h scheduled", "2 h 30 min") and dates its day headers
+  // ("SAT 3 OCT"); both follow the day the week starts on.
+  [/\b\d+ h(?: \d+ min)? scheduled\b/g, "<hours> scheduled"],
+  [/\b\d+ min scheduled\b/g, "<hours> scheduled"],
+  [/\b\d{1,2} (?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/g, "<date>"],
+  // Each block names the video it starts with from now on, or that it has aired today: server clock.
+  [/\b(?:Aired earlier today|No playable video resolved)\b/g, "<first video>"]
 ];
 
 async function signIn(page: Page) {

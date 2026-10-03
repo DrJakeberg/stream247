@@ -52,7 +52,11 @@ const RUNTIME_STATE_SELECTORS = [
   // are static and stay visible.
   ".admin-status-rail strong",
   ".admin-status-rail .subtle",
-  ".status-rail strong"
+  ".status-rail strong",
+  // Since M97 each block of the week view names the video it starts with, carried on from now: which
+  // one, or "Aired earlier today", follows the server clock. One line each (ellipsis), so masking the
+  // text keeps the layout covered.
+  ".program-week-block-summary > div > strong"
 ];
 
 /**

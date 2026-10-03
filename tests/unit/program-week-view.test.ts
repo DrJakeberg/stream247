@@ -87,11 +87,12 @@ describe("U5/U6: the week view", () => {
     expect(html).toContain("6 min of video for a 23 h block: plays ≈ 230 times. Add videos to Abendprogramm.");
   });
 
-  it("offers 'Edit block' per block and 'Add block' per day, into the day lens", () => {
+  it("offers 'Edit block' per block and 'Add block' for the week, into the day lens", () => {
     expect(html).toContain('href="/program?tab=schedule&amp;lens=day&amp;day=6#schedule-block-sat-late"');
     expect(html.match(/>Edit block</g)?.length).toBe(3);
+    // The week starts on Saturday here, so the add form opens on Saturday.
     expect(html).toContain('href="/program?tab=schedule&amp;lens=day&amp;day=6&amp;add=1#add-schedule-block"');
-    expect(html.match(/>Add block</g)?.length).toBe(7);
+    expect(html.match(/>Add block</g)?.length).toBe(1);
   });
 });
 

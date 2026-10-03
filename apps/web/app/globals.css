@@ -1188,6 +1188,14 @@ button.collection-chip {
   min-width: 0;
 }
 
+/* The first video's title on one line, so a card keeps its height whichever video comes up (M97). */
+.program-week-block-summary > div > strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .program-week-block-summary > .programming-status-pill {
   flex: none;
   white-space: nowrap;
@@ -1195,6 +1203,11 @@ button.collection-chip {
 
 .program-week-block-summary::-webkit-details-marker {
   display: none;
+}
+
+/* "Add block" above the week view's days (U6). */
+.program-week-toolbar {
+  display: flex;
 }
 
 /* "Edit block" under an opened block of the week view (U6). */

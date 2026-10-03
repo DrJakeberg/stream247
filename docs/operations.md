@@ -508,8 +508,8 @@ and its scheduled time in hours (*24 h scheduled*).
   block starts is cut there, and the next one starts when the weekly block comes back
 - *Repeats inside block* says why, with numbers: *6 min of video for a 24 h block: plays ≈ 240 times. Add
   videos to Abendprogramm.* A pool that alternates between sources says when one source runs out first
-- *Edit block* (in an opened block) and *Add block* (under each day) open the day lens at that block's
-  form or at *Add schedule block* for that weekday
+- *Edit block* (in an opened block) opens the day lens at that block's form; *Add block* (above the days)
+  opens *Add schedule block* on today's weekday
 - *Replace existing schedule blocks* under *Quick-start templates* asks before it deletes the week;
   *Cancel* leaves every block as it is
 
