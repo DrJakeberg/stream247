@@ -9,6 +9,7 @@ import {
   buildDurationProbeKey,
   parseFfprobeDurationSeconds,
   probeLocalFileDurationSeconds,
+  resolveLocalDurationScanBudgetMs,
   resolveLocalFileDurations,
   type LocalDurationEntry
 } from "../../apps/worker/src/local-durations";
@@ -131,6 +132,13 @@ describe("local file durations (M96)", () => {
     const second = await resolveLocalFileDurations({ files, existingByPath: first.entries, stat, probe, nowMs: () => clock, budgetMs: 1000 });
     expect(second).toMatchObject({ probed: 1, deferred: 0 });
     expect(second.entries.get("/media/4.mp4")).toEqual({ durationSeconds: 60, durationProbeKey: "4:1" });
+  });
+
+  it("keeps the scan budget and one probe timeout inside the cycle-await ceiling", () => {
+    // Default stall timeout 300 s: ceiling 150 s, the full 30 s budget.
+    expect(resolveLocalDurationScanBudgetMs({})).toBe(30_000);
+    // The allowed minimum of 60 s: ceiling 30 s, so 20 s of budget plus a 10 s last probe.
+    expect(resolveLocalDurationScanBudgetMs({ STREAM247_LOOP_STALL_TIMEOUT_SECONDS: "60" })).toBe(20_000);
   });
 
   it("skips a file whose stat fails and keeps nothing for it, so the stored values stay", async () => {

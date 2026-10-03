@@ -714,6 +714,9 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   an unrelated app-state write does not send every file back to ffprobe.
 - **Incremental.** A scan stops starting probes after 30 s and leaves the rest without a key for the next
   scans (worker cycle every 30 s), so a large first scan fills in over a few cycles instead of holding one.
+  With a short `STREAM247_LOOP_STALL_TIMEOUT_SECONDS` the budget shrinks so budget plus one probe timeout
+  stay inside the cycle-await ceiling (`resolveLocalDurationScanBudgetMs`). A scan that could not list some
+  directory probes nothing, since its assets are not written and the probes would only repeat.
   The runtime event `local-library.durations.probed` reports `probed`, `failed`, `deferred`.
 - **Decisions.** A file ffprobe cannot read stores its key with duration 0 (unknown, the 30-minute estimate),
   so it costs one probe per file version, not one per scan. For a probed local file the duration belongs to
@@ -721,7 +724,9 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   (`chooseStoredAssetSyncFields`); remote listings keep the old rule (no duration never erases a known one).
 - **Side effect on air.** A local file with a known duration now has the duration bound (`apps/worker/src/duration-bound.ts`)
   like cached Twitch VODs: it is ended at duration + margin (default 15 s) if no EOF came. Local files
-  normally end by EOF well before that; the global fallback still plays once per start, not looped.
+  normally end by EOF well before that; the global fallback still plays once per start, not looped. And a
+  live picture-in-picture source's sound is now mixed over local programmes, as the design in
+  `docs/deployment.md` says for programmes of known length (before: picture only over local files).
 - **Tests.** `tests/unit/local-durations.test.ts`: real ffprobe on a generated two-minute file reads
   120 s; a spy sees three probes on the first scan, none on the second, one after a touch; budget,
   failed probe and failed stat; the Day lens reads "Unique library: 6m" for three such files (90m before).
@@ -729,5 +734,9 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   three generated files, its second scan probes nothing, and the Day lens from the stored state reads 6m.
   `tests/integration/db-roundtrip.test.ts`: the migration on an old `assets` table, and the key and duration
   through a scan write, an unrelated app-state write, a write without a key and a replaced file.
-- **Not in CI.** CI's `validate` job has no host ffmpeg, so the real-ffprobe tests skip there
-  (`runIf`, as in the ticker tests) and ran locally; the stubbed tests run everywhere.
+- **Not in CI.** CI's `validate` job has no host ffmpeg (its optional install runs after `pnpm test`), so
+  the real-ffprobe tests skip there (`runIf`, as in the ticker tests) and ran locally; the stubbed tests run
+  everywhere. Moving the install before the tests is left to the owner: that apt step has hung before.
+- **Review (fresh subagent).** All items met. Fixed: a failed scan no longer probes (its results were lost
+  and repeated every cycle); the budget follows the cycle-await ceiling. Noted above: the PiP audio side
+  effect and the CI gap.

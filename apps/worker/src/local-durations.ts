@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { getCycleAwaitCeilingMs } from "./cycle-budget.js";
 import { execFileText } from "./process-utils.js";
 
 /**
@@ -23,6 +24,15 @@ export const LOCAL_DURATION_PROBE_TIMEOUT_MS = 10_000;
 
 /** Probing time per scan, far below the cycle's stall budget (cycle-budget.ts). */
 export const LOCAL_DURATION_SCAN_BUDGET_MS = 30_000;
+
+/**
+ * The scan budget under the cycle-await ceiling. The budget is checked before a probe starts, so the
+ * last probe can run one timeout past it; with a short stall timeout the budget shrinks to keep the
+ * whole step inside the ceiling.
+ */
+export function resolveLocalDurationScanBudgetMs(env: NodeJS.ProcessEnv): number {
+  return Math.min(LOCAL_DURATION_SCAN_BUDGET_MS, Math.max(0, getCycleAwaitCeilingMs(env) - LOCAL_DURATION_PROBE_TIMEOUT_MS));
+}
 
 export type LocalDurationStat = { size: number; mtimeMs: number };
 
@@ -88,7 +98,7 @@ export async function resolveLocalFileDurations(args: {
   const stat = args.stat ?? ((filePath: string) => fs.stat(filePath));
   const probe = args.probe ?? ((filePath: string) => probeLocalFileDurationSeconds(filePath));
   const nowMs = args.nowMs ?? Date.now;
-  const budgetMs = args.budgetMs ?? LOCAL_DURATION_SCAN_BUDGET_MS;
+  const budgetMs = args.budgetMs ?? resolveLocalDurationScanBudgetMs(process.env);
   const startedAtMs = nowMs();
   const entries = new Map<string, LocalDurationEntry>();
   let probed = 0;

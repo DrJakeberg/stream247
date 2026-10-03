@@ -356,7 +356,8 @@ Reading the rows:
   present; assets with an unknown duration fall back to the watchdogs by design
 - local-library files get their duration from `ffprobe` at scan time (M96), once per file version
   (size + modification time), so an unchanged file is never probed again; a scan spends at most
-  30 s probing and leaves the rest to the next scans, so a large first scan fills in over a few
+  30 s probing (less with a short loop stall timeout), probes nothing while a directory of the library
+  cannot be read, and leaves the rest to the next scans, so a large first scan fills in over a few
   cycles (runtime event `local-library.durations.probed` with `probed`, `failed`, `deferred`). A
   file ffprobe cannot read stays unknown until it changes and counts as the 30-minute estimate in
   the schedule preview

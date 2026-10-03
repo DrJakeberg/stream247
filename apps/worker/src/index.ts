@@ -3864,8 +3864,10 @@ async function syncLocalMediaLibrary(): Promise<void> {
   const state = await readAppState();
   const existingByPath = new Map(state.assets.map((asset) => [asset.path, asset]));
   // Real lengths (M96): probed once per file version, so planning stops counting every file as 30 min.
+  // Not on a failed scan: its assets are not written below, so the probes would be lost and repeated on
+  // every cycle until the directory reads again.
   const durations = await resolveLocalFileDurations({
-    files: scan.files,
+    files: scan.failed ? [] : scan.files,
     existingByPath: new Map(
       state.assets.filter((asset) => asset.sourceId === LOCAL_LIBRARY_SOURCE_ID).map((asset) => [asset.path, asset] as const)
     )
