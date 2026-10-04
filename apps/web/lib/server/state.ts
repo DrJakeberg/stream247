@@ -51,6 +51,7 @@ import {
   summarizeLiveBridgeInput,
   overlayAssetDisplayTitle,
   overlayNextTimeLabel,
+  getScheduleStartsInMinutes,
   overlayOnAirChapterTitle,
   isAssetProbeQuarantined,
   buildLiveBridgeOverlayText,
@@ -158,6 +159,8 @@ import {
 } from "@stream247/db";
 import { describeIncidentAge, describeOpenIncidentOverflow } from "@/lib/incident-age";
 import { buildTwitchWatchUrl } from "@/lib/watch-url";
+import { getChannelStatusKind } from "@/lib/channel-status";
+import { buildPublicProgramme, type PublicProgramme, type PublicProgrammeCurrentItem } from "@/lib/public-programme";
 import type {
   BroadcastSnapshot,
   LiveAssetSummary,
@@ -356,6 +359,44 @@ export function getMaterializedProgrammingWeekPreview(state: AppState, now: Date
     sourceGate: getPoolSourceGate(state, now.getTime()),
     nowMinuteOfDay: parseScheduleClockMinutes(scheduleMoment.time)
   });
+}
+
+/**
+ * The public programme (M100): the week projection above, with every item of a block listed rather than the
+ * first 48, so /channel can name the next 24 hours item by item, and the item the playout has on air.
+ */
+export function getPublicProgramme(state: AppState, now: Date = new Date()): PublicProgramme {
+  const timeZone = getWorkspaceTimeZone(state);
+  const scheduleMoment = getCurrentScheduleMoment({ now, timeZone });
+  const days = buildMaterializedProgrammingWeek({
+    startDate: scheduleMoment.date,
+    blocks: state.scheduleBlocks,
+    pools: state.pools,
+    assets: state.assets,
+    sourceGate: getPoolSourceGate(state, now.getTime()),
+    nowMinuteOfDay: parseScheduleClockMinutes(scheduleMoment.time),
+    maxListedItemsPerBlock: 5000
+  });
+  return buildPublicProgramme({ days, timeZone, now, current: getPublicProgrammeCurrentItem(state) });
+}
+
+/**
+ * The item on air with its start and length, when the playout runs one: an item of a pool or an insert, not
+ * a live input or the standby slate. The process starts once per item, so its start time is the item's.
+ */
+function getPublicProgrammeCurrentItem(state: AppState): PublicProgrammeCurrentItem | null {
+  const asset = state.playout.currentAssetId ? state.assets.find((entry) => entry.id === state.playout.currentAssetId) : undefined;
+  const startedAt = Date.parse(state.playout.processStartedAt || "");
+  const durationSeconds = Number(asset?.durationSeconds) || 0;
+  if (!asset || getChannelStatusKind(state.playout.status) !== "onAir" || !Number.isFinite(startedAt) || durationSeconds <= 0) {
+    return null;
+  }
+  return {
+    title: asset.title,
+    categoryName: getCurrentScheduleItem(state)?.categoryName || asset.categoryName || "",
+    startsAt: new Date(startedAt).toISOString(),
+    endsAt: new Date(startedAt + durationSeconds * 1000).toISOString()
+  };
 }
 
 // "HH:MM" of the schedule moment as minutes of its day.
@@ -1279,7 +1320,7 @@ export function buildActiveScenePayload(
       nextScheduleItem?.title ||
       viewerText(locale, "overlay.next.noTitle"),
     // The broadcast's format, not this page's prose: the studio preview exists to show what airs.
-    nextTimeLabel: overlayNextTimeLabel(nextScheduleItem, locale),
+    nextTimeLabel: overlayNextTimeLabel(nextScheduleItem, locale, getScheduleStartsInMinutes(nextScheduleItem, new Date(), getWorkspaceTimeZone(state))),
     queueTitles,
     timeZone: getWorkspaceTimeZone(state),
     locale
@@ -1552,7 +1593,8 @@ export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot
     nextScheduleItem: snapshot.nextScheduleItem,
     laterScheduleItems: getLaterScheduleItems(state, snapshot.nextScheduleItem?.key ?? null)
       .map((item) => summarizeScheduleItem(item))
-      .filter((item): item is LiveScheduleSummary => Boolean(item))
+      .filter((item): item is LiveScheduleSummary => Boolean(item)),
+    programme: getPublicProgramme(state)
   };
 }
 
