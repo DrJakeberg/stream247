@@ -414,6 +414,7 @@ import {
   type SourceSyncOutcome
 } from "./source-sync-scope.js";
 import { buildAssetDisplayTitle } from "./asset-display-title.js";
+import { buildStandbySlateSceneInput, shouldPrimeScenePayload } from "./standby-slate.js";
 import { buildFlatListingArgs, resolveListingEntryPublishedAt, type FlatListingConnectorKind } from "./source-listing.js";
 import { buildTwitchMetadataTitle, resolveTwitchFallbackTitle } from "./twitch-metadata.js";
 import { ActiveChatterRoster } from "./active-chatters.js";
@@ -923,6 +924,8 @@ const PLAYOUT_STOP_DEADLINE_MS = 20_000;
 // the overlay. The scene renderer reads it on its own cadence instead of re-reading application
 // state per frame.
 let currentScenePayload: ReturnType<typeof buildWorkerScenePayload> | null = null;
+// True while that payload is the standby or reconnect slate's (writeStandbySlate), M102.
+let currentScenePayloadIsSlate = false;
 // Live chat-driven overlay state, projected from the persisted poll and skip rows by the scene
 // renderer loop. Null when neither is running.
 let currentSceneEngagement: OverlayEngagementView | null = null;
@@ -3294,7 +3297,13 @@ async function prepareTickerCrawl(outputSettings: WorkerStreamOutputSettings): P
  * it fetched state over HTTP from the web app rather than from worker-local memory.
  */
 async function ensureScenePayload(asset: AssetRecord | null): Promise<void> {
-  if (currentScenePayload) {
+  if (
+    !shouldPrimeScenePayload({
+      hasPayload: Boolean(currentScenePayload),
+      payloadIsSlate: currentScenePayloadIsSlate,
+      startingAsset: Boolean(asset)
+    })
+  ) {
     return;
   }
 
@@ -3578,42 +3587,29 @@ function buildWorkerScenePayload(args: {
 
 async function writeStandbySlate(
   state: AppState,
-  queueKind: AppState["playout"]["queueItems"][number]["kind"] | "" = state.playout.queueItems[0]?.kind || "standby"
+  queueKind: AppState["playout"]["queueItems"][number]["kind"] | "" = state.playout.queueItems[0]?.kind || "standby",
+  options: { scene?: boolean } = {}
 ): Promise<void> {
-  const scheduleMoment = getCurrentScheduleMoment({
-    now: new Date(),
-    timeZone: resolveChannelTimeZone(state.managedConfig)
-  });
-  const occurrences = buildScheduleOccurrences({
-    date: scheduleMoment.date,
-    blocks: state.scheduleBlocks
-  });
-  const currentItem = findCurrentScheduleOccurrence({
-    occurrences,
-    currentTime: scheduleMoment.time
-  });
-  const upcomingItems = listUpcomingScheduleOccurrences({
-    occurrences,
-    currentTime: scheduleMoment.time,
-    currentOccurrence: currentItem
-  });
-  const nextItem = upcomingItems[0] ?? null;
   const locale = resolveChannelLanguage(state.managedConfig);
-  const payload = buildWorkerScenePayload({
-    state,
-    queueKind,
-    currentTitle: currentItem?.title || viewerText(locale, "overlay.title.standby"),
-    nextTitle: nextItem ? nextItem.title : viewerText(locale, "overlay.next.resumesShortly"),
-    nextScheduleItem: nextItem,
-    nextTimeLabel: overlayNextTimeLabel(
-      nextItem,
-      locale,
-      getScheduleStartsInMinutes(nextItem, new Date(), resolveChannelTimeZone(state.managedConfig))
-    ),
-    currentCategory: currentItem?.categoryName,
-    currentSourceName: currentItem?.sourceName,
-    queueTitles: upcomingItems.slice(0, state.overlay.queuePreviewCount).map((item) => item.title)
+  const slate = buildStandbySlateSceneInput({
+    now: new Date(),
+    timeZone: resolveChannelTimeZone(state.managedConfig),
+    locale,
+    scheduleBlocks: state.scheduleBlocks,
+    queuePreviewCount: state.overlay.queuePreviewCount,
+    queueKind
   });
+  const payload = buildWorkerScenePayload({ state, ...slate });
+
+  // The scene picture draws the cached payload, so the slate has to be that payload while it is on
+  // air (M102); before, it kept the lower third of the item that played last. Not when a programme is
+  // what is actually on air and this only rewrites the slate's text file (scene: false).
+  if (options.scene !== false) {
+    currentScenePayloadIsSlate = true;
+    currentScenePayload = payload;
+    await reportTickerCrawlStaleness(payload);
+  }
+
   const lines = buildOverlayTextLinesFromScenePayload(payload);
   await fs.writeFile(standbySlatePath, `${lines.join("\n")}\n`, "utf8");
 }
@@ -3713,6 +3709,7 @@ async function writeOnAirOverlay(
   // The scene renderer runs on its own cadence, decoupled from the reconciliation cycle. Caching
   // the payload here means every state change that already refreshes the overlay text also feeds
   // the rendered scene, without the renderer having to re-read application state per frame.
+  currentScenePayloadIsSlate = false;
   currentScenePayload = payload;
   await reportTickerCrawlStaleness(payload);
 
@@ -7504,14 +7501,15 @@ async function runPlayoutCycle(): Promise<void> {
           })
         );
       } else {
-        await writeStandbySlate(state, "live");
+        await writeStandbySlate(state, "live", { scene: false });
       }
     } else if (playoutProcess && !playoutProcess.killed && state.playout.currentAssetId) {
       const currentAsset = state.assets.find((asset) => asset.id === state.playout.currentAssetId) ?? null;
       if (currentAsset && state.overlay.enabled) {
         await writeOnAirOverlay(state, currentAsset, state.playout.queueItems[0]?.kind || "asset");
       } else {
-        await writeStandbySlate(state, state.playout.queueItems[0]?.kind || "standby");
+        // A programme is on air: the slate's text file is refreshed, the picture stays the programme's.
+        await writeStandbySlate(state, state.playout.queueItems[0]?.kind || "standby", { scene: false });
       }
     } else {
       await writeStandbySlate(state, state.playout.queueItems[0]?.kind || "standby");

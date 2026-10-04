@@ -426,9 +426,10 @@ Operator content is never translated, and the admin interface is English.
 - **The picture** gets the language as `OverlayScenePayload.locale`, set where the time zone is set, so
   the studio preview and the playout renderer agree. The playout container rebuilds the poll, the skip
   bar and the game panels from database rows and passes the payload's locale there. The playout
-  refreshes that payload on every cycle while a programme or a Live Bridge is on air; the standby and
-  reconnect paths rewrite only the text slate, so a language or time zone change made during a slate
-  reaches the scene picture with the next programme.
+  refreshes that payload on every cycle, whatever is on air. The standby and reconnect slate builds its
+  payload from the schedule alone (`apps/worker/src/standby-slate.ts`) and caches it for the scene
+  picture as well as writing the text slate (M102), so the slate never shows the item that played
+  before it, and a language or time zone change made during a slate reaches the picture at once.
 - **Shared words are split.** Where the admin and the viewers read the same state, the state keeps the
   admin's English (`Replay standby`, `Live Bridge`, the local library's source name `Local Media
   Library`, the playout message, the chat games' labels) and the viewer's text is taken from the

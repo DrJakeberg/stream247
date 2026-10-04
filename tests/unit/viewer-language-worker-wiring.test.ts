@@ -66,7 +66,9 @@ const LOCALE_SLOT = new Map<string, LocaleSlot>(
     buildChatGameOverlayViewFromRuntimeRecord: arg(1),
     renderModel: arg(2),
     parseTwitchIrcMessage: arg(1),
-    resolveTwitchFallbackTitle: field
+    resolveTwitchFallbackTitle: field,
+    // The standby and reconnect slate's fields (M102): the slate's title and next line.
+    buildStandbySlateSceneInput: field
   })
 );
 
