@@ -194,12 +194,10 @@ counts as English.
 When a change arrives:
 
 - Saved in Settings or the wizard, it needs no restart. The chat bot, the Twitch title and the public
-  page pick it up with their next refresh, and the picture with the next playout cycle while a
-  programme or a Live Bridge is on air.
-- While the standby or reconnect slate is on air with the scene picture, the picture and its poll, skip
-  and game panels keep the previous language until the next programme or Live Bridge starts. A time
-  zone change behaves the same way: the playout redraws the slate from the picture it built when the
-  last programme started. The slate's plain-text lines (overlay off, or text mode) change at once.
+  page pick it up with their next refresh, and the picture with the next playout cycle, whether a
+  programme, a Live Bridge or the standby or reconnect slate is on air. Since M102 the slate's scene
+  picture is rebuilt on every cycle like its plain-text lines, so a language or time zone change reaches
+  it, and its poll, skip and game panels, without waiting for the next programme.
 - `CHANNEL_LANGUAGE` is an environment value and is read when a container starts. Changing it means
   recreating the containers (`docker compose up -d`, or a redeploy in Portainer), like any other
   environment change.

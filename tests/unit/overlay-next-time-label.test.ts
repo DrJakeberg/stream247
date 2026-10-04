@@ -56,7 +56,8 @@ describe("nobody writes the label themselves any more", () => {
     "apps/web/lib/scene-preview-request.ts",
     "apps/web/lib/server/scene-preview-renderer.ts",
     "apps/web/lib/server/state.ts",
-    "apps/worker/src/index.ts"
+    "apps/worker/src/index.ts",
+    "apps/worker/src/standby-slate.ts"
   ];
 
   /** The lines within five either side of one that mentions the label. */

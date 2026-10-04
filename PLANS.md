@@ -37,7 +37,7 @@ How this file works:
 | M99 Wizard To First Programme | UX | Later | Complete | `/setup` ends with a stream key and a playing week | U1 (decided 5.1 Q9): skippable step "Where the stream goes" with the Twitch preset, the key stored encrypted and masked; the destination form moves to Studio → Output, the old anchor redirects. U2: skippable step "First programme" creates a pool from chosen media and applies the "Always-on single pool" template. R2 U3: render test: an empty library says how to add media, a filtered-empty library says the filters hide everything. e2e: a fresh owner completes both steps and readiness shows destination, pools and schedule ready | `apps/web`, tests, baselines, `docs/getting-started.md` | medium: moves a form operators know | revert the commit |
 | M100 Public Programme For Viewers | Feature | Later | Complete | Viewers see what comes next and the coming week, in their own time | V1 ("After that" from the schedule) comes with M88 through R1's commits `a41d327` and `51e69ee` and is not built again here. V2: "Scheduled now" when playout is down. R1 row B: a 7-day list on `/channel` per day, dated items marked; `/channel.ics` validated by a parser test; times per default R2 Q7 in 5.2 (viewer's zone first; unit test with a browser zone other than the channel zone). Layout per 2.5a: a *Now* card with progress bar and remaining time (unit test on the remaining-time and progress values for a fixed clock), a *Next* list of the next 24 h at item level from the shared week projection, consecutive items of one block grouped with "N more" (test: 3 blocks × 5 items give 3 groups with "4 more" each), crossing midnight without a break (test); Playwright at 390 px: the *Now* card is above the fold. R2 V7: the on-air Next card adds "in N min" to its bare time range (`packages/core/src/viewer-messages/en.ts:29`) through the catalogue, en + de, unit test for a fixed clock. Catalogue parity en/de green | `apps/web`, `packages/core`, tests, baselines, `docs/` | low | revert the commit |
 | M101 Schedule Across DST, Wall Clock Kept | Bug | Later | Complete | Twice a year the counts are right while blocks keep their wall-clock times (owner Q4) | C5: cuepoint elapsed time from real instants (test: block from 01:00, at 03:30 local on 2027-03-28 reports 5 400 s, not 9 000 s); a non-existent local time maps forward (02:30 on 2026-03-29 → `01:30Z`, not `00:30Z`); the Twitch segment end follows real minutes; `docs/operations.md` states the wall-clock rule (skipped in March, twice in October) | `packages/core`, `apps/worker`, tests, docs | low | revert the commit |
-| M102 Standby Shows Standby | Bug | Later | Planned | The standby or reconnect slate never shows the previous item's title | W8: `writeStandbySlate` sets the standby scene payload; unit test on the payload; a design-baseline check of the standby frame | `apps/worker`, tests, baselines | medium: changes the on-air picture | revert the commit |
+| M102 Standby Shows Standby | Bug | Later | Complete | The standby or reconnect slate never shows the previous item's title | W8: `writeStandbySlate` sets the standby scene payload; unit test on the payload; a design-baseline check of the standby frame | `apps/worker`, tests, baselines | medium: changes the on-air picture | revert the commit |
 | M103 Backoff And Health Restarts | Reliability | Later | Planned | Repeated restarts slow down; a hung worker or uplink restarts itself | H7: growing backoff up to 5 min for the crash-loop reset and the uplink watchdog; the crash-loop incident no longer says "Manual intervention is required" when playable media exists (unit test on the message). H8 (owner Q7): worker and uplink exit after 5 min of failing their own healthcheck; playout only while its feed does not advance. Tests: backoff sequence; a playing playout with an advancing feed never exits | `apps/worker`, `docker-compose.yml`, tests, docs | medium: dark time grows with backoff; a wrong rule could restart a playing channel | revert the commit |
 | M104 Wording Pass And Chat Answers | UX | Later | Planned | Admin text names no milestone ids; viewers can ask the bot | U13: render test fails on `\bM\d{2}\b` in admin text. U14: the admin preview and (i) show the localized standby text. S19 (lead from the stopped planning branch, re-checked): overlay output is one checkbox among many (`apps/web/components/overlay-settings-form.tsx:890`) and the Scene tab shows "unknown" / "never" before a first publish; Scene gets an on/off banner at the top and "Not published yet"; render test. V5/V6 (decided 5.1 Q7): `!commands` (only enabled commands), `!now`, `!next` with the `/channel` link, one reply per `!request` (queued with position, no match, cooldown, queue full), each with its own switch, 60 s per viewer and 10 s global cooldown, en + de; unit tests per reply | `apps/web`, `apps/worker`, `packages/core`, tests, baselines | medium: chat volume and Twitch rate limits | revert the commit |
 
@@ -122,8 +122,6 @@ Viewers and language:
 - The Minesweeper header overflows the default game box on `game over` and `board cleared` (M80).
 - A German channel cannot keep one of the six English headline defaults verbatim (M80).
 - The `/channel` header follows a language change only after a reload (M80).
-- A language or zone change during a standby or reconnect slate reaches the picture only with the next
-  programme (M80). Related to M102.
 - The equality rule cannot tell an operator's `Stand by` from the worker's (M80).
 - The studio's *Replay label* tip is English on a German channel; admin text, left for M81 (M80).
 
@@ -300,6 +298,12 @@ deployed; the release that ships them records the results.
   airs (Sunday 01:00-04:00 reads 01:00-04:00 and lasts 4 hours; a block in 02:00-03:00 starts at the first
   02:00 and lasts 2 hours). Without such a block, save a test block "Once" on that Sunday 01:00-04:00, let
   one Twitch sync run, check the Twitch dashboard's schedule, then delete the block.
+
+- M102, on the deployed candidate with the scene overlay on: the standby slate shows standby. Take every
+  source out of programming for a minute (or let the next block start without a ready item) after an item
+  with a known title aired; the picture reads `Stand by` / `Gleich geht’s weiter` with the current block's
+  title (or `Stand by`) and never the title that aired before. Put the items back; the next item's own
+  title is on the picture from its start. A Restart in direct mode shows the reconnect slate the same way.
 
 - (The checks for 2.2.0 are in the archive, sections M75-M82.)
 
@@ -989,3 +993,28 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   30-minute segment although it never airs). The week
   view and the day lens keep wall-clock lengths; the live summary's cuepoint count does not apply a dated
   block's air windows (the worker does, since M93).
+
+### M102 Standby Shows Standby
+
+- **Cause (R3 W8).** The scene renderer draws the cached payload, and only `writeOnAirOverlay` (a
+  programme or a Live Bridge) cached one; `writeStandbySlate` wrote only the text slate. In scene mode a
+  standby or reconnect kept the previous item's lower third, its title under "Now Playing".
+- **Fix.** `writeStandbySlate` builds its fields from the schedule alone (`buildStandbySlateSceneInput`,
+  `apps/worker/src/standby-slate.ts`) and caches the payload for the picture. The two refresh branches
+  that only rewrite the text file under a running programme (overlay off, or an asset missing from state)
+  pass `{ scene: false }`. A slate is drawn as standby, reconnect or live; a queue head of `asset` or
+  `insert` no longer turns it into "Now Playing" (`resolveStandbySlateQueueKind`). A programme that starts
+  over a cached slate payload builds its own before the first frame (`shouldPrimeScenePayload`; a guard,
+  since the cycle already writes the programme's payload before the start), and a slate that starts with
+  nothing cached primes with its own payload instead of `writeOnAirOverlay`, whose fallback is the playout
+  row's last title (review finding). With the overlay off the slate leaves the scene payload alone, so no
+  ticker staleness incident is raised while no scene is drawn.
+- **Side effect.** The slate's picture is rebuilt on every cycle, so the M80 follow-up "a language or zone
+  change during a standby or reconnect slate reaches the picture only with the next programme" is gone
+  (`docs/operations.md`, `docs/architecture.md`). A ticker edit during a slate now raises the ticker
+  staleness incident like it does under a programme.
+- **Baseline.** The standby frame's baseline is the texts its layout draws, in order, in
+  `tests/unit/baselines/standby-frame.txt` and `standby-frame-de.txt` (vitest file snapshots, portable
+  unlike pixels); the PNG is rasterised as a smoke. Update with `pnpm vitest run tests/unit/standby-slate.test.ts -u`.
+- **Tests.** `tests/unit/standby-slate.test.ts`: payload (preset, label, title, never the previous item),
+  priming rule, worker wiring, frame baseline.
