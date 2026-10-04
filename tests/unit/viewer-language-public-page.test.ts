@@ -2,28 +2,76 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { ViewerLocale } from "@stream247/core";
 import type { PublicChannelSnapshot } from "../../apps/web/lib/live-broadcast";
+import type { PublicProgramme } from "../../apps/web/lib/public-programme";
 import {
   buildPublicChannelDescription,
   buildPublicChannelHeader,
-  buildPublicChannelView
+  buildPublicChannelView,
+  describeProgrammeProgress,
+  formatProgrammeDayLabel,
+  formatProgrammeRemaining
 } from "../../apps/web/lib/public-channel-view";
 import { expectNoEnglish } from "./viewer-language-helpers";
 
 /**
- * The public page /channel in the channel language (M80).
+ * The public page /channel in the channel language (M80), item by item since M100.
  *
  * Every word the page and its live component show comes from buildPublicChannelHeader and
- * buildPublicChannelView, so reading those two in both languages reads the page. English is pinned
- * byte for byte against what the page said before M80, apart from the deliberate fixes: the
- * zone's name instead of its IANA id, "Stand by" for the standby state, no "runtime" in the
- * empty-next line, and a status line instead of the playout's own message.
+ * buildPublicChannelView, so reading those two in both languages reads the page. M100 replaced the
+ * three block cards (On air now, Up next, After that) with a Now card that has the item on air and its
+ * progress, the next 24 hours grouped by programme, and the coming week; the M80 rules stay pinned: the
+ * zone's name instead of its IANA id, "Stand by" for the standby state, a status line instead of the
+ * playout's own message, and operator content as written.
  */
 
 const LABELS: Record<ViewerLocale, string> = { en: "Central European Time", de: "Mitteleuropäische Zeit" };
 
+// 20:30 in Berlin (summer time, UTC+2) on Monday 2026-10-05.
+const NOW = "2026-10-05T18:30:00.000Z";
+
+const at = (hhmm: string, date = "2026-10-05") => {
+  const [hours, minutes] = hhmm.split(":").map(Number);
+  // Berlin wall clock to UTC, summer time: two hours back.
+  return new Date(Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), (hours ?? 0) - 2, minutes ?? 0)).toISOString();
+};
+
+const programme: PublicProgramme = {
+  now: { kind: "item", title: "Episode 7", categoryName: "Retro", startsAt: at("20:00"), endsAt: at("21:00") },
+  next: [
+    {
+      key: "retro",
+      title: "Retro Night",
+      categoryName: "Retro",
+      dated: false,
+      startsAt: at("21:00"),
+      endsAt: at("22:00"),
+      items: [
+        { title: "Episode 8", startsAt: at("21:00"), endsAt: at("22:00") },
+        { title: "Episode 9", startsAt: at("22:00"), endsAt: at("23:00") }
+      ],
+      itemCount: 2
+    },
+    {
+      key: "late",
+      title: "Late Show",
+      categoryName: "Just Chatting",
+      dated: true,
+      startsAt: at("23:00"),
+      endsAt: at("01:00", "2026-10-06"),
+      items: [],
+      itemCount: 0
+    }
+  ],
+  week: [
+    { key: "w1", title: "Retro Night", categoryName: "Retro", dated: false, startsAt: at("20:00"), endsAt: at("23:00") },
+    { key: "w2", title: "Late Show", categoryName: "Just Chatting", dated: true, startsAt: at("23:00"), endsAt: at("01:00", "2026-10-06") },
+    { key: "w3", title: "Retro Night", categoryName: "Retro", dated: false, startsAt: at("20:00", "2026-10-07"), endsAt: at("23:00", "2026-10-07") }
+  ]
+};
+
 function snapshot(locale: ViewerLocale, overrides: Partial<PublicChannelSnapshot> = {}): PublicChannelSnapshot {
   return {
-    generatedAt: "2026-10-01T18:00:00.000Z",
+    generatedAt: NOW,
     timeZone: "Europe/Berlin",
     locale,
     timeZoneLabel: LABELS[locale],
@@ -45,43 +93,37 @@ function snapshot(locale: ViewerLocale, overrides: Partial<PublicChannelSnapshot
     currentScheduleItem: null,
     nextScheduleItem: null,
     laterScheduleItems: [],
+    programme: { now: null, next: [], week: [] },
     ...overrides
   };
 }
 
-function scheduleItem(title: string, startTime: string, endTime: string, categoryName: string) {
-  return { id: title, key: title, title, startTime, endTime, categoryName, sourceName: "", reason: "" } as never;
-}
-
-function queueItem(title: string, kind = "asset") {
-  return { id: title, kind, title, subtitle: "", position: 0, scenePreset: "", asset: null } as never;
-}
-
-const scheduled = (locale: ViewerLocale) =>
-  snapshot(locale, {
-    currentScheduleItem: scheduleItem("Retro Night", "20:00", "22:00", "Retro"),
-    nextScheduleItem: scheduleItem("Late Show", "22:00", "23:30", "Just Chatting"),
-    queueItems: [queueItem("Episode 1"), queueItem("Episode 2"), queueItem("Scheduled reconnect", "reconnect")]
-  });
+const scheduled = (locale: ViewerLocale) => snapshot(locale, { programme });
 
 const empty = (locale: ViewerLocale) =>
   snapshot(locale, { watchUrl: "", playout: { ...snapshot(locale).playout, status: "reconnecting", currentTitle: "" } });
 
-function allTexts(view: object): string[] {
-  return Object.entries(view)
-    .filter(([key]) => key !== "lang")
-    .map(([, value]) => String(value))
-    .filter(Boolean);
+function allTexts(view: unknown): string[] {
+  if (typeof view === "string") {
+    return view ? [view] : [];
+  }
+  if (Array.isArray(view)) {
+    return view.flatMap(allTexts);
+  }
+  if (view && typeof view === "object") {
+    return Object.entries(view)
+      .filter(([key]) => key !== "lang" && key !== "key")
+      .flatMap(([, value]) => allTexts(value));
+  }
+  return [];
 }
 
 describe("the public page in English", () => {
-  it("keeps the header's words and names the zone as a viewer would", () => {
-    expect(buildPublicChannelHeader("en", "Central European Time")).toEqual({
+  it("keeps the header's words", () => {
+    expect(buildPublicChannelHeader("en")).toEqual({
       lang: "en",
       badge: "Schedule",
       heading: "What is live now, and what comes next.",
-      // Was "All times are shown in Europe/Berlin." (the IANA id).
-      timeZoneNote: "All times are shown in Central European Time.",
       lineupTitle: "Upcoming lineup",
       lineupEyebrow: "Schedule"
     });
@@ -89,80 +131,194 @@ describe("the public page in English", () => {
     expect(buildPublicChannelDescription("en")).toBe("What is live now, and what comes next.");
   });
 
-  it("shows a scheduled hour exactly as before", () => {
+  it("shows the item on air, the next 24 hours grouped by programme, and the week", () => {
     expect(buildPublicChannelView(scheduled("en"), true)).toEqual({
       lang: "en",
       statusLabel: "On air",
       updateNotice: "",
-      timeZoneLabel: "Central European Time",
+      // Was in the hero; the zone's name, never its IANA id (M80).
+      timeZoneNote: "All times are shown in Central European Time.",
       watchLabel: "Watch the stream",
-      onAirHeading: "On air now",
-      onAirTitle: "Retro Night",
-      onAirDetail: "20:00 to 22:00 · Retro",
+      now: {
+        heading: "On air now",
+        title: "Episode 7",
+        detail: "20:00 to 21:00 · Retro",
+        channelTime: "",
+        progressPercent: 50,
+        remaining: "30:00 left"
+      },
       nextHeading: "Up next",
-      nextTitle: "Late Show",
-      nextDetail: "22:00 to 23:30 · Just Chatting",
-      afterHeading: "After that",
-      // The worker's English queue title passes the built-in rule, like on the picture; in English
-      // it reads as before (the German case below translates it).
-      afterText: "Episode 1 → Episode 2 → Scheduled reconnect"
+      next: [
+        {
+          key: "retro",
+          timeRange: "21:00 to 22:00",
+          channelTime: "",
+          title: "Episode 8",
+          detail: "Retro Night · Retro",
+          dated: "",
+          moreLabel: "1 more video",
+          more: [{ key: `retro:${at("22:00")}`, time: "22:00", title: "Episode 9" }]
+        },
+        {
+          // A block with nothing to play is listed by its own times and title.
+          key: "late",
+          timeRange: "23:00 to 01:00",
+          channelTime: "",
+          title: "Late Show",
+          detail: "Just Chatting",
+          dated: "Special",
+          moreLabel: "",
+          more: []
+        }
+      ],
+      nextEmptyTitle: "No next item published yet",
+      nextEmptyBody: "The next item will appear here as soon as it is confirmed.",
+      weekHeading: "The next 7 days",
+      week: [
+        {
+          key: "2026-10-05",
+          label: "Today",
+          entries: [
+            { key: "w1", timeRange: "20:00 to 23:00", channelTime: "", title: "Retro Night", detail: "Retro", dated: "" },
+            { key: "w2", timeRange: "23:00 to 01:00", channelTime: "", title: "Late Show", detail: "Just Chatting", dated: "Special" }
+          ]
+        },
+        {
+          key: "2026-10-07",
+          label: "Wed 7 Oct",
+          entries: [{ key: "w3", timeRange: "20:00 to 23:00", channelTime: "", title: "Retro Night", detail: "Retro", dated: "" }]
+        }
+      ],
+      weekEmpty: "Nothing is scheduled for the next 7 days.",
+      calendarLabel: "Add the schedule to your calendar"
     });
-  });
-
-  it("lists what the schedule airs after up next when the queue is empty", () => {
-    const idleQueue = (locale: ViewerLocale) =>
-      snapshot(locale, {
-        nextScheduleItem: scheduleItem("Nachtschleife", "00:00", "06:00", "Archiv"),
-        laterScheduleItems: [
-          scheduleItem("Tagesprogramm", "06:00", "20:00", "Archiv"),
-          // No title: the category stands in, as on the rest of the page.
-          scheduleItem("", "20:00", "00:00", "Abendprogramm")
-        ]
-      });
-    // Was "Nothing further is scheduled yet." on a channel programmed around the clock.
-    for (const locale of ["en", "de"] as const) {
-      expect(buildPublicChannelView(idleQueue(locale), true).afterText).toBe(
-        "06:00 Tagesprogramm → 20:00 Abendprogramm"
-      );
-    }
-    // The queue still wins when there is one.
-    expect(buildPublicChannelView({ ...idleQueue("en"), queueItems: [queueItem("Episode 1")] }, true).afterText).toBe(
-      "Episode 1"
-    );
   });
 
   it("uses the viewer's words where nothing is scheduled", () => {
-    expect(buildPublicChannelView(empty("en"), false)).toMatchObject({
+    const view = buildPublicChannelView(empty("en"), false);
+    expect(view).toMatchObject({
       statusLabel: "Starting up",
       updateNotice: "Updating every few seconds",
-      // Was "Standby".
-      onAirTitle: "Stand by",
-      // Was the playout's own message, here "Crash-loop protection is active.".
-      onAirDetail: "The stream is starting, back in a moment.",
-      nextTitle: "No next item published yet",
+      next: [],
+      week: [],
+      nextEmptyTitle: "No next item published yet",
       // Was "The next queue item will appear here as soon as the runtime confirms it."
-      nextDetail: "The next item will appear here as soon as it is confirmed.",
-      afterText: "Nothing further is scheduled yet."
+      nextEmptyBody: "The next item will appear here as soon as it is confirmed."
     });
+    expect(view.now).toEqual({
+      heading: "Scheduled now",
+      // Was "Standby".
+      title: "Stand by",
+      // Was the playout's own message, here "Crash-loop protection is active.".
+      detail: "The stream is starting, back in a moment.",
+      channelTime: "",
+      progressPercent: null,
+      remaining: ""
+    });
+  });
+
+  it("V2: says what is scheduled, not what is on air, while the playout is down", () => {
+    const down = (locale: ViewerLocale) =>
+      snapshot(locale, {
+        playout: { ...snapshot(locale).playout, status: "failed" },
+        programme: { ...programme, now: { kind: "block", title: "Retro Night", categoryName: "Retro", startsAt: at("20:00"), endsAt: at("23:00") } }
+      });
+    expect(buildPublicChannelView(down("en"), true)).toMatchObject({ statusLabel: "Off air", now: { heading: "Scheduled now", title: "Retro Night" } });
+    expect(buildPublicChannelView(down("de"), true)).toMatchObject({
+      statusLabel: "Gerade nicht auf Sendung",
+      now: { heading: "Laut Programm jetzt", title: "Retro Night" }
+    });
+    // On air, the same block card is headed as before.
+    expect(buildPublicChannelView({ ...down("en"), playout: snapshot("en").playout }, true).now.heading).toBe("On air now");
   });
 
   it("translates the worker's English state title and keeps operator titles as written", () => {
     // "Replay standby" is what the worker writes into playout state for the admin; viewers get the
-    // one standby term. An asset or block title is operator content and is never touched.
-    expect(buildPublicChannelView(snapshot("en"), true).onAirTitle).toBe("Stand by");
-    const asset = { id: "a", title: "Replay standby (Director's Cut)" } as never;
-    expect(buildPublicChannelView(snapshot("en", { currentAsset: asset }), true).onAirTitle).toBe("Replay standby (Director's Cut)");
+    // one standby term. An item or block title is operator content and is never touched.
+    const titled = (title: string) => snapshot("en", { programme: { ...programme, now: { ...programme.now!, title } } });
+    expect(buildPublicChannelView(titled("Replay standby"), true).now.title).toBe("Stand by");
+    expect(buildPublicChannelView(titled("Replay standby (Director's Cut)"), true).now.title).toBe("Replay standby (Director's Cut)");
+    expect(buildPublicChannelView(snapshot("en"), true).now.title).toBe("Stand by");
+  });
+});
+
+describe("M100: the Now card's progress for a fixed clock", () => {
+  it("runs the bar and counts down what is left", () => {
+    const start = "2026-10-05T18:00:00.000Z";
+    const end = "2026-10-05T19:00:00.000Z";
+    expect(describeProgrammeProgress(start, end, Date.parse("2026-10-05T18:45:00.000Z"))).toEqual({ percent: 75, remainingSeconds: 900 });
+    expect(describeProgrammeProgress(start, end, Date.parse("2026-10-05T18:00:20.000Z"))).toEqual({ percent: 0.6, remainingSeconds: 3580 });
+    // Before its start and after its end it stays on the bar's ends.
+    expect(describeProgrammeProgress(start, end, Date.parse("2026-10-05T17:00:00.000Z"))).toEqual({ percent: 0, remainingSeconds: 3600 });
+    expect(describeProgrammeProgress(start, end, Date.parse("2026-10-05T20:00:00.000Z"))).toEqual({ percent: 100, remainingSeconds: 0 });
+    expect(describeProgrammeProgress(start, "", 0)).toBeNull();
+    expect(formatProgrammeRemaining(900)).toBe("15:00");
+    expect(formatProgrammeRemaining(59.2)).toBe("01:00");
+    expect(formatProgrammeRemaining(3725)).toBe("1:02:05");
+  });
+
+  it("reads the browser's clock once hydrated, in both languages", () => {
+    const tick = Date.parse("2026-10-05T18:45:00.000Z");
+    expect(buildPublicChannelView(scheduled("en"), true, { nowMs: tick }).now).toMatchObject({ progressPercent: 75, remaining: "15:00 left" });
+    expect(buildPublicChannelView(scheduled("de"), true, { nowMs: tick }).now).toMatchObject({ progressPercent: 75, remaining: "noch 15:00" });
+  });
+});
+
+describe("M100 (R2 Q7): the viewer's time first, the channel's second", () => {
+  it("writes every time in the browser's zone when it differs from the channel zone, and the channel time beside it", () => {
+    const view = buildPublicChannelView(scheduled("en"), true, { viewerTimeZone: "America/New_York" });
+    // 20:00 in Berlin is 14:00 in New York (both on summer time).
+    expect(view.now.detail).toBe("14:00 to 15:00 · Retro");
+    expect(view.now.channelTime).toBe("20:00 to 21:00 channel time");
+    expect(view.next[0]).toMatchObject({ timeRange: "15:00 to 16:00", channelTime: "21:00 to 22:00 channel time" });
+    expect(view.next[0]?.more[0]?.time).toBe("16:00");
+    // The zone note names both; the viewer's zone name is the browser's own (not pinned: it is ICU's).
+    expect(view.timeZoneNote).toMatch(/^Times are shown in your time zone, .+\. Channel time: Central European Time\.$/);
+    // Days are the viewer's: Late Show at 23:00 Monday in Berlin is 17:00 Monday in New York, and Wednesday's
+    // 20:00 is Wednesday's 14:00.
+    expect(view.week.map((day) => [day.label, day.entries.map((entry) => entry.timeRange)])).toEqual([
+      ["Today", ["14:00 to 17:00", "17:00 to 19:00"]],
+      ["Wed 7 Oct", ["14:00 to 17:00"]]
+    ]);
+  });
+
+  it("moves an entry to the viewer's day when the zones put it on different dates", () => {
+    const late = snapshot("en", {
+      programme: {
+        now: null,
+        next: [],
+        week: [{ key: "night", title: "Night", categoryName: "Night", dated: false, startsAt: at("01:00", "2026-10-06"), endsAt: at("02:00", "2026-10-06") }]
+      }
+    });
+    const inBerlin = buildPublicChannelView(late, true);
+    const inLosAngeles = buildPublicChannelView(late, true, { viewerTimeZone: "America/Los_Angeles" });
+    expect(inBerlin.week.map((day) => day.label)).toEqual(["Tomorrow"]);
+    // 01:00 Tuesday in Berlin is 16:00 Monday in Los Angeles: today there.
+    expect(inLosAngeles.week.map((day) => [day.label, day.entries[0]?.timeRange])).toEqual([["Today", "16:00 to 17:00"]]);
+  });
+
+  it("writes one time when the browser's zone keeps the channel's clock", () => {
+    const view = buildPublicChannelView(scheduled("en"), true, { viewerTimeZone: "Europe/Paris" });
+    expect(view.timeZoneNote).toBe("All times are shown in Central European Time.");
+    expect(view.now.channelTime).toBe("");
+    expect(view.next.every((group) => group.channelTime === "")).toBe(true);
+  });
+
+  it("labels days in the channel language without the runtime's names", () => {
+    expect(formatProgrammeDayLabel("en", "2026-10-05", "2026-10-05")).toBe("Today");
+    expect(formatProgrammeDayLabel("de", "2026-10-06", "2026-10-05")).toBe("Morgen");
+    expect(formatProgrammeDayLabel("en", "2026-10-10", "2026-10-05")).toBe("Sat 10 Oct");
+    expect(formatProgrammeDayLabel("de", "2026-10-10", "2026-10-05")).toBe("Sa, 10. Okt.");
   });
 });
 
 describe("the public page in German", () => {
-  it("writes the header in German, with the zone's German name", () => {
-    const header = buildPublicChannelHeader("de", "Mitteleuropäische Zeit");
+  it("writes the header in German", () => {
+    const header = buildPublicChannelHeader("de");
     expect(header).toEqual({
       lang: "de",
       badge: "Programm",
       heading: "Was gerade läuft und was als Nächstes kommt.",
-      timeZoneNote: "Alle Uhrzeiten: Mitteleuropäische Zeit.",
       lineupTitle: "Demnächst im Programm",
       lineupEyebrow: "Programm"
     });
@@ -170,35 +326,41 @@ describe("the public page in German", () => {
     expectNoEnglish(allTexts(header));
   });
 
-  it("writes a scheduled hour in German and leaves operator content alone", () => {
-    expect(buildPublicChannelView(scheduled("de"), true)).toEqual({
-      lang: "de",
+  it("writes the programme in German and leaves operator content alone", () => {
+    const view = buildPublicChannelView(scheduled("de"), true);
+    expect(view).toMatchObject({
       statusLabel: "Auf Sendung",
-      updateNotice: "",
-      timeZoneLabel: "Mitteleuropäische Zeit",
+      timeZoneNote: "Alle Uhrzeiten: Mitteleuropäische Zeit.",
       watchLabel: "Zum Stream",
-      onAirHeading: "Jetzt auf Sendung",
-      onAirTitle: "Retro Night",
-      onAirDetail: "20:00 bis 22:00 · Retro",
+      now: { heading: "Jetzt auf Sendung", title: "Episode 7", detail: "20:00 bis 21:00 · Retro", remaining: "noch 30:00" },
       nextHeading: "Als Nächstes",
-      nextTitle: "Late Show",
-      nextDetail: "22:00 bis 23:30 · Just Chatting",
-      afterHeading: "Danach",
-      afterText: "Episode 1 → Episode 2 → Geplanter Neustart"
+      weekHeading: "Die nächsten 7 Tage",
+      calendarLabel: "Programm in den Kalender übernehmen"
     });
+    expect(view.next.map((group) => [group.timeRange, group.title, group.moreLabel, group.dated])).toEqual([
+      ["21:00 bis 22:00", "Episode 8", "1 weiteres Video", ""],
+      ["23:00 bis 01:00", "Late Show", "", "Sondersendung"]
+    ]);
+    expect(view.week.map((day) => day.label)).toEqual(["Heute", "Mi, 7. Okt."]);
   });
 
   it("has no English sentence anywhere, in every state the page can show", () => {
     const views = [
       buildPublicChannelView(scheduled("de"), true),
       buildPublicChannelView(scheduled("de"), false),
+      buildPublicChannelView(scheduled("de"), true, { viewerTimeZone: "America/New_York" }),
       buildPublicChannelView(empty("de"), false),
       buildPublicChannelView(snapshot("de"), true),
       buildPublicChannelView(snapshot("de", { playout: { ...snapshot("de").playout, status: "failed", currentTitle: "" } }), true)
     ];
-    const texts = views.flatMap(allTexts).filter((text) => !["Retro Night", "Late Show", "Episode 1", "Episode 2"].some((title) => text.includes(title)));
+    const operatorWords = ["Episode", "Retro", "Late Show", "Just Chatting"];
+    // The viewer zone's name is the runtime's (ICU), not the catalogue's.
+    const texts = views
+      .flatMap(allTexts)
+      .filter((text) => !operatorWords.some((word) => text.includes(word)))
+      .filter((text) => !text.startsWith("Uhrzeiten in deiner Zeitzone"));
     expectNoEnglish(texts);
-    expect(views.map((view) => view.onAirDetail).slice(2)).toEqual([
+    expect(views.map((view) => view.now.detail).slice(3)).toEqual([
       "Der Stream startet, gleich geht’s weiter.",
       "Läuft gerade.",
       "Der Kanal ist gerade nicht auf Sendung."
@@ -206,10 +368,10 @@ describe("the public page in German", () => {
     expect(buildPublicChannelView(empty("de"), false)).toMatchObject({
       statusLabel: "Startet gerade",
       updateNotice: "Aktualisiert sich alle paar Sekunden",
-      onAirTitle: "Gleich geht’s weiter",
-      nextTitle: "Noch nichts angekündigt",
-      nextDetail: "Sobald feststeht, was als Nächstes läuft, steht es hier.",
-      afterText: "Danach ist noch nichts geplant."
+      now: { title: "Gleich geht’s weiter" },
+      nextEmptyTitle: "Noch nichts angekündigt",
+      nextEmptyBody: "Sobald feststeht, was als Nächstes läuft, steht es hier.",
+      weekEmpty: "Für die nächsten 7 Tage ist nichts geplant."
     });
   });
 
@@ -223,8 +385,8 @@ describe("the public page in German", () => {
 
   it("follows the snapshot's language, so a change reaches an open page with the next update", () => {
     const open = scheduled("en");
-    expect(buildPublicChannelView(open, true).onAirHeading).toBe("On air now");
-    expect(buildPublicChannelView({ ...open, locale: "de" }, true).onAirHeading).toBe("Jetzt auf Sendung");
+    expect(buildPublicChannelView(open, true).now.heading).toBe("On air now");
+    expect(buildPublicChannelView({ ...open, locale: "de" }, true).now.heading).toBe("Jetzt auf Sendung");
   });
 });
 

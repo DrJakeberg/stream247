@@ -413,12 +413,25 @@ export const OVERLAY_NO_NEXT_BLOCK: string = EN_VIEWER_MESSAGES["overlay.next.no
  */
 export function overlayNextTimeLabel(
   block: { startTime: string; endTime: string } | null | undefined,
-  locale?: string
+  locale?: string,
+  /**
+   * M100 (V7): whole minutes until the block starts (`getScheduleStartsInMinutes`). Under an hour the range
+   * gains "in N min", under a day "in N h"; missing, zero or a day and more leaves the bare range.
+   */
+  startsInMinutes?: number | null
 ): string {
   if (!block?.startTime || !block.endTime) {
     return viewerText(locale, "overlay.next.noBlock");
   }
-  return viewerText(locale, "overlay.next.timeRange", { start: block.startTime, end: block.endTime });
+  const range = { start: block.startTime, end: block.endTime };
+  const minutes = typeof startsInMinutes === "number" && Number.isFinite(startsInMinutes) ? Math.ceil(startsInMinutes) : 0;
+  if (minutes > 0 && minutes < 60) {
+    return viewerText(locale, "overlay.next.timeRangeInMinutes", { ...range, count: minutes });
+  }
+  if (minutes >= 60 && minutes < 24 * 60) {
+    return viewerText(locale, "overlay.next.timeRangeInHours", { ...range, count: Math.floor(minutes / 60) });
+  }
+  return viewerText(locale, "overlay.next.timeRange", range);
 }
 
 /**

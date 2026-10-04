@@ -50,6 +50,9 @@ const RUNTIME_STATE_SELECTORS = [
   // control snapshots that way; the others survived only because a few changed words stay under the
   // pixel tolerance on a tall page, which is luck rather than a net. The labels above the values
   // are static and stay visible.
+  // M100: the public page's Now card — the item or block on air, its times and its progress, from the
+  // server's clock against a frozen browser one.
+  ".channel-now > :not(strong)",
   ".admin-status-rail strong",
   ".admin-status-rail .subtle",
   ".status-rail strong"
@@ -136,7 +139,17 @@ type Surface = {
 
 const SURFACES: Surface[] = [
   { name: "login", path: "/login", authenticated: false },
-  { name: "channel", path: "/channel", authenticated: false },
+  // Since M100 the page lists the next 24 hours item by item and the week from now on; how many cards and
+  // days there are follows the server's date and time, like the week view below, so the two lists are
+  // left out of the picture. The Now card's text and bar follow the clock too and are masked
+  // (.channel-now in RUNTIME_STATE_SELECTORS); its box, the headings and the calendar link stay covered.
+  {
+    name: "channel",
+    path: "/channel",
+    authenticated: false,
+    masked: true,
+    style: ".channel-next-list, .channel-week-list { display: none !important; }"
+  },
   // /live?tab=status and ?tab=control were excluded for a long time: driven by a live SSE feed and
   // built to display constantly-changing runtime state, their snapshots were flaky — an early run
   // passed 28/28 and a later, otherwise identical one failed on live-status-mobile with scattered

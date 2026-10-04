@@ -19,7 +19,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function ChannelPage() {
   const state = await readChannelState();
   const snapshot = getPublicChannelSnapshot(state);
-  const header = buildPublicChannelHeader(snapshot.locale, snapshot.timeZoneLabel);
+  const header = buildPublicChannelHeader(snapshot.locale);
 
   // channel-public restyles the shared primitives for the audience; see globals.css.
   // lang sits on <main>, not <html>: the root layout also serves the admin, which stays English
@@ -34,10 +34,9 @@ export default async function ChannelPage() {
           rotation window without opening the admin interface" — written to an operator, about
           viewers, on the page viewers read. "Current block" and "rotation window" are words from
           the scheduler; "admin interface" is a place the audience has never been and cannot go.
-          What is left is the part a visitor needs. The zone is named as a viewer would name it
-          ("Central European Time"), not by its IANA id (M80).
+          The zone note moved into the live part below (M100): it names the viewer's own zone, which
+          only the browser knows.
         */}
-        <p>{header.timeZoneNote}</p>
       </section>
       <Panel title={header.lineupTitle} eyebrow={header.lineupEyebrow}>
         <LiveChannelPage initialSnapshot={snapshot} />

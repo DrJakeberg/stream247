@@ -28,6 +28,9 @@ export const EN_VIEWER_MESSAGES = {
   "overlay.nextLabel.live": "After Live",
   "overlay.nextLabel.fallback": "Up next",
   "overlay.next.timeRange": "{start}-{end}",
+  // M100 (V7): the bare range said nothing about how soon; under an hour minutes, under a day hours.
+  "overlay.next.timeRangeInMinutes": "{start}-{end} · in {count} min",
+  "overlay.next.timeRangeInHours": "{start}-{end} · in {count} h",
   // Was "No next block configured" (an operator's word on air) and, as the payload's own fallback,
   // "Nothing scheduled next" — two sentences for one state.
   "overlay.next.noBlock": "Nothing scheduled",
@@ -128,6 +131,9 @@ export const EN_VIEWER_MESSAGES = {
   // {timeZone} is the zone's name in the channel language ("Central European Time"), not the IANA
   // id the page printed before M80.
   "channel.timeZoneNote": "All times are shown in {timeZone}.",
+  // M100: the viewer's own zone first, the channel's second (owner default R2 Q7).
+  "channel.viewerTimeZoneNote": "Times are shown in your time zone, {viewerZone}. Channel time: {channelZone}.",
+  "channel.channelTime": "{range} channel time",
   "channel.lineupTitle": "Upcoming lineup",
   "channel.watch": "Watch the stream",
   "channel.onAirNow": "On air now",
@@ -138,8 +144,39 @@ export const EN_VIEWER_MESSAGES = {
   "channel.noNext": "No next item published yet",
   // Was "...as soon as the runtime confirms it." — the runtime is the operator's machinery.
   "channel.noNextBody": "The next item will appear here as soon as it is confirmed.",
-  "channel.afterThat": "After that",
-  "channel.nothingFurther": "Nothing further is scheduled yet.",
+  // M100: the item on air and the next 24 hours of items, grouped by programme.
+  "channel.scheduledNow": "Scheduled now",
+  "channel.remaining": "{time} left",
+  "channel.more": { one: "{count} more video", other: "{count} more videos" },
+  "channel.weekTitle": "The next 7 days",
+  "channel.weekEmpty": "Nothing is scheduled for the next 7 days.",
+  // A block with dates of its own (once, or between two dates) rather than every week.
+  "channel.dated": "Special",
+  "channel.today": "Today",
+  "channel.tomorrow": "Tomorrow",
+  "channel.dayLabel": "{weekday} {day} {month}",
+  "channel.weekday.0": "Sun",
+  "channel.weekday.1": "Mon",
+  "channel.weekday.2": "Tue",
+  "channel.weekday.3": "Wed",
+  "channel.weekday.4": "Thu",
+  "channel.weekday.5": "Fri",
+  "channel.weekday.6": "Sat",
+  "channel.month.1": "Jan",
+  "channel.month.2": "Feb",
+  "channel.month.3": "Mar",
+  "channel.month.4": "Apr",
+  "channel.month.5": "May",
+  "channel.month.6": "Jun",
+  "channel.month.7": "Jul",
+  "channel.month.8": "Aug",
+  "channel.month.9": "Sep",
+  "channel.month.10": "Oct",
+  "channel.month.11": "Nov",
+  "channel.month.12": "Dec",
+  "channel.calendar": "Add the schedule to your calendar",
+  // The calendar feed /channel.ics: its name in a calendar app.
+  "channel.calendarName": "{channel} schedule",
   "channel.status.onAir": "On air",
   "channel.status.startingUp": "Starting up",
   "channel.status.offAir": "Off air",

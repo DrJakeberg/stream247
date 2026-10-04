@@ -29,7 +29,8 @@ const SOURCES = [
   "apps/web/components/overlay-settings-form.tsx",
   "apps/web/app/channel/page.tsx",
   "apps/web/components/live-channel-page.tsx",
-  "apps/web/lib/public-channel-view.ts"
+  "apps/web/lib/public-channel-view.ts",
+  "apps/web/lib/public-programme-calendar.ts"
 ];
 
 const VIEWER_ONLY_LITERALS = [
@@ -197,10 +198,12 @@ describe("the public page lays out catalogue texts and writes none of its own", 
     const live = read("apps/web/components/live-channel-page.tsx");
     const page = read("apps/web/app/channel/page.tsx");
     const mutations: [string, string, string, string][] = [
-      ["apps/web/components/live-channel-page.tsx", live, "{view.afterHeading}", "After that"],
+      // M100: the three block cards became the Now card, the next 24 hours and the week.
+      ["apps/web/components/live-channel-page.tsx", live, "{view.weekHeading}", "After that"],
       ["apps/web/components/live-channel-page.tsx", live, "{view.nextHeading}", "Up next"],
-      ["apps/web/components/live-channel-page.tsx", live, "{view.onAirTitle}", '{view.onAirTitle || "Stand by"}'],
-      ["apps/web/components/live-channel-page.tsx", live, "{view.onAirDetail}", "{`${view.onAirDetail} to follow`}"],
+      ["apps/web/components/live-channel-page.tsx", live, "{view.now.title}", '{view.now.title || "Stand by"}'],
+      ["apps/web/components/live-channel-page.tsx", live, "{view.now.detail}", "{`${view.now.detail} to follow`}"],
+      ["apps/web/components/live-channel-page.tsx", live, "{group.moreLabel}", "{`${group.moreLabel} more`}"],
       ["apps/web/app/channel/page.tsx", page, "{header.badge}", "Schedule"],
       ["apps/web/app/channel/page.tsx", page, "title={header.lineupTitle}", 'title="Upcoming lineup"']
     ];

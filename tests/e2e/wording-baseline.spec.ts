@@ -163,6 +163,16 @@ test.describe("wording baseline", () => {
         for (const grid of root.querySelectorAll(".program-week-grid")) {
           grid.textContent = "<week days>";
         }
+        // Since M100 /channel lists the next 24 hours item by item and the coming week from now on, so
+        // like the week view above they follow the server clock. Their wording ("1 more video",
+        // "Today", "Special", the day labels) is pinned by tests/unit/viewer-language-public-page.test.ts;
+        // the headings around them stay covered.
+        for (const list of root.querySelectorAll(".channel-next-list")) {
+          list.textContent = "<next 24 hours>";
+        }
+        for (const list of root.querySelectorAll(".channel-week-list")) {
+          list.textContent = "<week days>";
+        }
         return (root as HTMLElement).innerText;
       });
 

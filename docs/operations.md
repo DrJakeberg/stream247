@@ -215,7 +215,7 @@ What follows the language:
 - every chat bot reply (`!here`, `!game`, the skip-paused lines)
 - the Twitch title when no asset is on air
 - the public page `/channel`, including the name of the time zone (`Central European Time` /
-  `Mitteleuropäische Zeit` instead of `Europe/Berlin`)
+  `Mitteleuropäische Zeit` instead of `Europe/Berlin`), and its calendar feed `/channel.ics`
 
 What does not:
 
@@ -512,6 +512,27 @@ and its scheduled time in hours (*24 h scheduled*).
   opens *Add schedule block* on today's weekday
 - *Replace existing schedule blocks* under *Quick-start templates* asks before it deletes the week;
   *Cancel* leaves every block as it is
+
+### The public programme on `/channel` (since M100)
+
+The public page shows, in the channel language:
+
+- *Now*: the video on air with its times, a progress bar and the time left (*12:34 left*). Without a video
+  on air (standby, a live input, the playout down) it shows the block the schedule has now; with the playout
+  down it is headed *Scheduled now* instead of *On air now*
+- *Up next*: the next 24 hours video by video, from the same projection as `Program → Schedule → Week`
+  (each pool carries on with the worker's rotation). Consecutive videos of one block are one card showing
+  the next video, with *4 more videos* to unfold; the list runs across midnight without a break. A block
+  with nothing to play is listed with its own times. The block on air continues after the video on air
+- *The next 7 days*: each day's blocks with their times; a dated block is marked *Special*
+- times in the viewer's own time zone, as the browser reports it, with the channel time beside them when
+  the zones differ (*20:00 to 22:00 channel time*); the days are the viewer's days
+- *Add the schedule to your calendar* links to `/channel.ics`, a calendar feed of the coming week (one
+  event per block, in UTC) that calendar apps can subscribe to; it is public like the page
+
+The operator's queue (*Play now*, *Insert*) is not shown in *Up next*; the projection is the schedule's.
+On air, the next card adds how soon the next block starts: `20:00-22:00 · in 25 min` under an hour,
+`· in 3 h` under a day.
 
 ### Channel timezone is not valid (since M85)
 

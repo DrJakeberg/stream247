@@ -99,6 +99,7 @@ import {
   resolveChatSettingsWrite,
   describeTickerCrawlStaleness,
   overlayNextTimeLabel,
+  getScheduleStartsInMinutes,
   buildLiveBridgeOverlayText,
   viewerText,
   type ViewerLocale,
@@ -3604,7 +3605,11 @@ async function writeStandbySlate(
     currentTitle: currentItem?.title || viewerText(locale, "overlay.title.standby"),
     nextTitle: nextItem ? nextItem.title : viewerText(locale, "overlay.next.resumesShortly"),
     nextScheduleItem: nextItem,
-    nextTimeLabel: overlayNextTimeLabel(nextItem, locale),
+    nextTimeLabel: overlayNextTimeLabel(
+      nextItem,
+      locale,
+      getScheduleStartsInMinutes(nextItem, new Date(), resolveChannelTimeZone(state.managedConfig))
+    ),
     currentCategory: currentItem?.categoryName,
     currentSourceName: currentItem?.sourceName,
     queueTitles: upcomingItems.slice(0, state.overlay.queuePreviewCount).map((item) => item.title)
@@ -3694,7 +3699,9 @@ async function writeOnAirOverlay(
         viewerText(locale, "overlay.title.standby"),
       nextTitle: overrides.nextTitle || nextItem?.title || viewerText(locale, "overlay.next.comingUp"),
       nextScheduleItem: nextItem,
-      nextTimeLabel: overrides.nextTimeLabel || overlayNextTimeLabel(nextItem, locale),
+      nextTimeLabel:
+        overrides.nextTimeLabel ||
+        overlayNextTimeLabel(nextItem, locale, getScheduleStartsInMinutes(nextItem, new Date(), resolveChannelTimeZone(state.managedConfig))),
       currentCategory: overrides.currentCategory || currentItem?.categoryName || asset?.categoryName,
       currentSourceName:
         overrides.currentSourceName ||
@@ -7856,7 +7863,11 @@ async function runPlayoutCycle(): Promise<void> {
           inputType: selection.liveBridgeInputType,
           nextTitle: getNextScheduleItem(state)?.title || ""
         }),
-        nextTimeLabel: overlayNextTimeLabel(getNextScheduleItem(state), locale)
+        nextTimeLabel: overlayNextTimeLabel(
+          getNextScheduleItem(state),
+          locale,
+          getScheduleStartsInMinutes(getNextScheduleItem(state), new Date(), resolveChannelTimeZone(state.managedConfig))
+        )
       });
     }
     await resolveIncident("playout.no-asset", "Live Bridge is on air.");

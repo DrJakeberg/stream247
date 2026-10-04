@@ -1,17 +1,18 @@
 Schedule
 What is live now, and what comes next.
-All times are shown in Central European Time.
 SCHEDULE
 Upcoming lineup
 On air
 Updating every few seconds
-Central European Time
+Times are shown in your time zone, Coordinated Universal Time. Channel time: Central European Time.
 Watch the stream
 On air now
 <block>
 <time> to <time> · <category>
+<time> to <time> channel time
+<time> left
 Up next
-<block>
-<time> to <time> · <category>
-After that
-<time> <block> → <time> <block> → <time> <block>
+<next 24 hours>
+The next 7 days
+<week days>
+Add the schedule to your calendar

@@ -13,6 +13,7 @@ import type {
   ViewerLocale,
   OverlayTypographyPreset
 } from "@stream247/core";
+import type { PublicProgramme } from "@/lib/public-programme";
 
 export type LiveAssetSummary = {
   id: string;
@@ -410,6 +411,8 @@ export type PublicChannelSnapshot = {
   queueItems: LiveQueueItemSummary[];
   currentScheduleItem: LiveScheduleSummary | null;
   nextScheduleItem: LiveScheduleSummary | null;
-  /** Up to three scheduled occurrences after `nextScheduleItem`, for "after that" when the queue is empty. */
+  /** Up to three scheduled occurrences after `nextScheduleItem` (block level; the page reads `programme` since M100). */
   laterScheduleItems: LiveScheduleSummary[];
+  /** M100: now, the next 24 hours item by item and the coming week, as instants. */
+  programme: PublicProgramme;
 };

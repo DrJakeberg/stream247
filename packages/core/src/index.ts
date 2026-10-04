@@ -1004,6 +1004,13 @@ export type MaterializedProgrammingItem = {
   repeated: boolean;
   estimatedDuration: boolean;
   insertTrigger?: "pool-interval" | "cuepoint";
+  /**
+   * M100: when it starts and ends on air, in seconds from 00:00 of the block's date (past 86 400 for an item
+   * after midnight). The end is where the item stops airing: cut at a dated block, past the block's end when
+   * it overruns.
+   */
+  startSecond?: number;
+  endSecond?: number;
 };
 
 export type MaterializedProgrammingBlock = {
@@ -3128,6 +3135,8 @@ function materializePoolWindow(args: {
   startState?: PoolProjectionState;
   /** A minute (relative to the block's date) up to which the block has already aired; the projection fills the rest. */
   fromMinute?: number;
+  /** How many items are listed; the rest is projected but not listed. */
+  maxListedItems?: number;
 }): {
   block: MaterializedProgrammingBlock;
   endState: PoolProjectionState;
@@ -3307,7 +3316,7 @@ function materializePoolWindow(args: {
     }
     projectedItemCount += 1;
 
-    if (items.length < maxMaterializedItemsPerBlock) {
+    if (items.length < (args.maxListedItems ?? maxMaterializedItemsPerBlock)) {
       items.push({
         kind: shouldInsert ? "insert" : "asset",
         assetId: nextAsset.id,
@@ -3318,7 +3327,9 @@ function materializePoolWindow(args: {
         overflow: lastWindow && itemEndSeconds > window.end,
         repeated,
         estimatedDuration: estimated,
-        insertTrigger: shouldInsert ? (dueCuepointOffset !== null ? "cuepoint" : "pool-interval") : undefined
+        insertTrigger: shouldInsert ? (dueCuepointOffset !== null ? "cuepoint" : "pool-interval") : undefined,
+        startSecond: blockStart * 60 + itemStartSeconds,
+        endSecond: blockStart * 60 + shownEndSeconds
       });
     }
 
@@ -3464,6 +3475,11 @@ export function buildMaterializedProgrammingWeek(args: {
    * Missing means the whole first day is still ahead.
    */
   nowMinuteOfDay?: number;
+  /**
+   * How many items each block lists (default 48). The public programme (M100) lists every item of the next
+   * 24 hours, so it raises this; every block is projected to its end either way.
+   */
+  maxListedItemsPerBlock?: number;
 }): MaterializedProgrammingDay[] {
   const dates = Array.from({ length: 7 }, (_, offset) => addDaysToDateString(args.startDate, offset));
   const occurrencesByDay = dates.map((date) => buildScheduleOccurrences({ date, blocks: args.blocks }));
@@ -3503,7 +3519,8 @@ export function buildMaterializedProgrammingWeek(args: {
       maxQueuePreviewItems: args.maxQueuePreviewItems ?? 4,
       sourceGate: args.sourceGate,
       startState: pool ? poolStates.get(pool.id) : undefined,
-      fromMinute: onAir ? (now as number) - entry.dayIndex * MINUTES_PER_DAY : undefined
+      fromMinute: onAir ? (now as number) - entry.dayIndex * MINUTES_PER_DAY : undefined,
+      maxListedItems: args.maxListedItemsPerBlock
     });
     if (pool && !aired) {
       poolStates.set(pool.id, result.endState);
@@ -4328,6 +4345,42 @@ function extractFormatterParts(args: { instant: Date; timeZone: string }) {
     minute: read("minute"),
     second: read("second")
   };
+}
+
+/**
+ * The instant a moment of the schedule falls on: `seconds` from 00:00 of `date` in the channel zone. Past
+ * 86 400 is a later day, below 0 the day before, so an item after midnight or a block carried over from the
+ * evening before reads right (M100).
+ */
+export function getScheduleInstant(args: { date: string; seconds: number; timeZone: string }): Date {
+  const dayOffset = Math.floor(args.seconds / 86_400);
+  const secondOfDay = args.seconds - dayOffset * 86_400;
+  const minuteOfDay = Math.floor(secondOfDay / 60);
+  const start = toUtcIsoForLocalDateTime({
+    date: addDaysToDateString(args.date, dayOffset),
+    minuteOfDay,
+    timeZone: args.timeZone
+  });
+  return new Date(Date.parse(start) + (secondOfDay - minuteOfDay * 60) * 1000);
+}
+
+/**
+ * Whole minutes from `now` until a scheduled block starts (M100, V7: "in 25 min" on the on-air Next card),
+ * or null when it has no date or has started. Reads the air window's start (`airStartMinute`) where the
+ * block comes back after a dated one.
+ */
+export function getScheduleStartsInMinutes(
+  item: { date?: string; airStartMinute?: number; effectiveStartMinuteOfDay?: number; startMinuteOfDay?: number } | null | undefined,
+  now: Date,
+  timeZone: string
+): number | null {
+  const minute = item?.airStartMinute ?? item?.effectiveStartMinuteOfDay ?? item?.startMinuteOfDay;
+  if (!item?.date || typeof minute !== "number" || !Number.isFinite(minute)) {
+    return null;
+  }
+  const startsAt = getScheduleInstant({ date: item.date, seconds: minute * 60, timeZone });
+  const minutes = Math.ceil((startsAt.getTime() - now.getTime()) / 60_000);
+  return minutes > 0 ? minutes : null;
 }
 
 export function toUtcIsoForLocalDateTime(args: {

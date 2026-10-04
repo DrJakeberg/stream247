@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { AdminPageHeader } from "@/components/admin-page-header";
-import { overlayNextTimeLabel, resolveStreamOutputSettings } from "@stream247/core";
+import { getScheduleStartsInMinutes, overlayNextTimeLabel, resolveStreamOutputSettings } from "@stream247/core";
 import { listOverlayVideoSourceRecords } from "@stream247/db";
 import { OverlaySettingsForm } from "@/components/overlay-settings-form";
 import { Panel } from "@/components/panel";
@@ -71,7 +71,11 @@ export default async function OverlayStudioPage() {
               currentCategory: currentItem?.categoryName || "Always on air",
               currentSourceName: currentItem?.sourceName || "Archive Pool",
               nextTitle: nextItem?.title || state.playout.nextTitle || "Next replay block",
-              nextTimeLabel: overlayNextTimeLabel(nextItem, getViewerLocale(state)),
+              nextTimeLabel: overlayNextTimeLabel(
+                nextItem,
+                getViewerLocale(state),
+                getScheduleStartsInMinutes(nextItem, new Date(), getWorkspaceTimeZone(state))
+              ),
               queueTitles:
                 previewQueueTitles.length > 0
                   ? previewQueueTitles

@@ -1989,14 +1989,73 @@ button.collection-chip {
 
 /* What is on air is the reason a viewer is here, so its card carries the brand edge and the
    largest title on the page. */
-.channel-public .item:first-child {
+.channel-public .channel-now {
   border-left: 4px solid var(--brand);
 }
 
-.channel-public .item:first-child > div:first-of-type {
+.channel-public .channel-now > div:first-of-type {
   font-size: 1.45rem;
   font-weight: 600;
   letter-spacing: -0.02em;
+}
+
+/* M100: how far the item on air is. A track in the line colour, run in the brand colour. */
+.channel-public .channel-progress {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--line-subtle);
+  overflow: hidden;
+}
+
+.channel-public .channel-progress-bar {
+  display: block;
+  height: 100%;
+  background: var(--brand);
+}
+
+/* The next 24 hours and the week: one heading each, then the cards or the day lists. */
+.channel-public .channel-section {
+  display: grid;
+  gap: 12px;
+}
+
+.channel-public .channel-section h3 {
+  margin: 8px 0 0;
+  font-size: 1.1rem;
+}
+
+.channel-public .channel-dated {
+  margin-left: 8px;
+}
+
+.channel-public .channel-more summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.channel-public .channel-more ul,
+.channel-public .channel-week-day ul {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A time and a title on one line; .subtle alone would put the title under its time. */
+.channel-public .channel-more li {
+  display: flex;
+  gap: 8px;
+}
+
+.channel-public .channel-week-list {
+  display: grid;
+  gap: 14px;
+}
+
+.channel-public .channel-week-day h4 {
+  margin: 0;
+  font-size: 0.95rem;
 }
 
 @media (max-width: 640px) {
