@@ -180,6 +180,12 @@ jobs:
           echo "Continuing without host ffmpeg; fixtures will be generated in the worker image."
       - run: pnpm test:queue-continuity
       - run: pnpm test:runtime-parity
+      # M98: the production path with the relay on (playout -> HLS program feed -> uplink -> RTMP), its
+      # mutation run, a broken source on a stub and a 90 s network outage of the playout. About seven
+      # minutes; bounded so a hang cannot hold the serialised runs behind it.
+      - name: Broadcast path smoke (relay on)
+        timeout-minutes: 20
+        run: pnpm test:broadcast-path
       # Installs browsers for the workspace copy of @playwright/test; dlx would fetch a second one.
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e:smoke
