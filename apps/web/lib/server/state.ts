@@ -19,8 +19,8 @@ import {
   findNextScheduleOccurrenceAcrossDays,
   listUpcomingScheduleOccurrencesAcrossDays,
   getDestinationFailureSecondsRemaining as getDestinationFailureHoldSecondsRemaining,
-  getScheduleElapsedSeconds,
   getScheduleOccurrenceRunKey,
+  getScheduleRunElapsedSeconds,
   getCurrentScheduleMoment,
   isCurrentScheduleTime,
   normalizeOverlayPanelAnchor,
@@ -1466,9 +1466,11 @@ function summarizeCuepoints(
   const offsetsSeconds = normalizeCuepointOffsetsSeconds(block?.cuepointOffsetsSeconds ?? [], block?.durationMinutes ?? 0);
   const cuepointAssetId = resolveBlockCuepointAssetId(block, pool);
   const cuepointAsset = cuepointAssetId ? state.assets.find((entry) => entry.id === cuepointAssetId) ?? null : null;
+  const scheduleNow = new Date();
+  const workspaceTimeZone = getWorkspaceTimeZone(state);
   const scheduleMoment = getCurrentScheduleMoment({
-    now: new Date(),
-    timeZone: getWorkspaceTimeZone(state)
+    now: scheduleNow,
+    timeZone: workspaceTimeZone
   });
   const active =
     Boolean(currentScheduleItem) &&
@@ -1486,9 +1488,11 @@ function summarizeCuepoints(
             state.playout.cuepointWindowKey === getScheduleOccurrenceRunKey(currentScheduleItem)
               ? state.playout.cuepointFiredKeys
               : [],
-          elapsedSeconds: getScheduleElapsedSeconds({
-            startMinuteOfDay: currentScheduleItem.startMinuteOfDay,
-            currentTime: scheduleMoment.time
+          // The worker's count (M101): real seconds since the run started.
+          elapsedSeconds: getScheduleRunElapsedSeconds({
+            occurrence: currentScheduleItem,
+            now: scheduleNow,
+            timeZone: workspaceTimeZone
           })
         })
       : {
