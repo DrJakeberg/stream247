@@ -553,7 +553,8 @@ What counts time counts real time:
   2 hours from the first 02:00 in October. `/channel` and `/channel.ics` show the same times
 - a time the clock skips (02:30 in March) is read as the moment that far past the switch: 03:30 summer
   time. A time the clock shows twice (02:30 in October) is read as its first occurrence when something
-  starts there, and its second when something ends there
+  starts there, and its second when something ends there; a block ending at 02:00 that night ends at the
+  first 02:00 (Saturday 22:00 for four hours is four hours long)
 - the week view and the day lens show wall-clock times and lengths, as the schedule is written
 
 ### Channel timezone is not valid (since M85)

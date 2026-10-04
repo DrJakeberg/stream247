@@ -977,14 +977,15 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   carry-over from the evening before included); worker (`apps/worker/src/cuepoints.ts`) and the live summary
   (`apps/web/lib/server/state.ts`) use it. With the occurrence's date and the zone, the worker's air windows of
   a block cut by a dated one are real seconds too. Without a date both fall back to the wall-clock count.
-- **Twitch.** A segment lasts from its start instant to its end instant (end read as the later occurrence):
+- **Twitch.** A segment lasts from its start instant to its end instant (`getScheduleEndInstant`: an end inside
+  the repeated hour is its second occurrence, an end at exactly 02:00 the first; review finding):
   Sunday 01:00-04:00 is 120 min in March, 240 in October; 02:00-03:00 is 0 min (skipped, counted in
   `skippedCount`) in March and 120 in October. `/channel` and `/channel.ics` read window ends the same way.
 - **Tests.** `tests/unit/schedule-dst.test.ts` (mapping, cuepoints incl. the acceptance's 5 400 s, Twitch),
   one case in `tests/unit/public-programme.test.ts`.
 - **Left.** A block starting inside the skipped hour starts airing at the switch (03:00 CEST: the wall clock is
-  past its start), while its Twitch segment starts at the forward-mapped time (02:30 → 03:30), as the
-  acceptance asks; a block that ends inside the skipped hour is posted that much too long (02:00-02:30 gets a
+  past its start), while its Twitch segment and its cuepoint count start at the forward-mapped time (02:30 →
+  03:30, so its cuepoints fire up to 30 minutes late that night), as the acceptance asks; a block that ends inside the skipped hour is posted that much too long (02:00-02:30 gets a
   30-minute segment although it never airs). The week
   view and the day lens keep wall-clock lengths; the live summary's cuepoint count does not apply a dated
   block's air windows (the worker does, since M93).

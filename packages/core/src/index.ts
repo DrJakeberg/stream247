@@ -4148,12 +4148,12 @@ export function getScheduleOccurrenceAirWindowSeconds(
   }
   const date = occurrence.date;
   if (date && timeZone) {
-    const at = (minute: number, ambiguous: "earlier" | "later") =>
-      getScheduleInstant({ date, seconds: minute * 60, timeZone, ambiguous }).getTime();
-    const runStart = at(occurrence.effectiveStartMinuteOfDay, "earlier");
+    const startAt = (minute: number) => getScheduleInstant({ date, seconds: minute * 60, timeZone }).getTime();
+    const endAt = (minute: number) => getScheduleEndInstant({ date, seconds: minute * 60, timeZone }).getTime();
+    const runStart = startAt(occurrence.effectiveStartMinuteOfDay);
     return occurrence.airWindows.map((window) => ({
-      start: Math.round((at(window.start, "earlier") - runStart) / 1000),
-      end: Math.round((at(window.end, "later") - runStart) / 1000)
+      start: Math.round((startAt(window.start) - runStart) / 1000),
+      end: Math.round((endAt(window.end) - runStart) / 1000)
     }));
   }
   return occurrence.airWindows.map((window) => ({
@@ -4416,6 +4416,22 @@ export function getScheduleInstant(args: {
 }
 
 /**
+ * The instant a block or window ending at `seconds` stops airing (M101): the last time the wall clock reaches
+ * its end. An end inside the repeated autumn hour (02:30, 03:00 on 2026-10-25 in Europe/Berlin) is its second
+ * occurrence, because the block airs again when the clock goes back; an end at exactly 02:00 is the first, as
+ * the clock never shows a minute before 02:00 again. Every other end is `getScheduleInstant`.
+ */
+export function getScheduleEndInstant(args: { date: string; seconds: number; timeZone: string }): Date {
+  const minuteBefore = { date: args.date, seconds: args.seconds - 60, timeZone: args.timeZone };
+  const earlier = getScheduleInstant({ ...minuteBefore, ambiguous: "earlier" }).getTime();
+  const later = getScheduleInstant({ ...minuteBefore, ambiguous: "later" }).getTime();
+  if (later > earlier) {
+    return new Date(later + 60_000);
+  }
+  return getScheduleInstant(args);
+}
+
+/**
  * Whole minutes from `now` until a scheduled block starts (M100, V7: "in 25 min" on the on-air Next card),
  * or null when it has no date or has started. Reads the air window's start (`airStartMinute`) where the
  * block comes back after a dated one.
@@ -4442,7 +4458,7 @@ export function getScheduleStartsInMinutes(
  *   to 01:30 CET (`00:30Z`), while the block before was still on air
  * - a time that exists twice (02:30 on the fall-back night) is its first occurrence by default (`00:30Z` on
  *   2026-10-25), because a block in the repeated hour starts airing then; `ambiguous: "later"` gives the
- *   second (`01:30Z`), which is where a block ending in that hour stops airing
+ *   second (`01:30Z`). Where a block ending in that hour stops airing is `getScheduleEndInstant`
  */
 export function toUtcIsoForLocalDateTime(args: {
   date: string;

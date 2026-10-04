@@ -1,6 +1,7 @@
 import {
   addDaysToDateString,
   buildScheduleOccurrences,
+  getScheduleEndInstant,
   getScheduleInstant,
   listScheduleAirSegments,
   type ScheduleBlock
@@ -58,14 +59,13 @@ export function planTwitchScheduleSegments(args: {
       if (new Date(startTime).getTime() <= args.now.getTime() + TWITCH_SEGMENT_START_LEAD_MS) {
         continue;
       }
-      // Real minutes, not wall-clock ones (M101, R3 C5): the window airs until the wall clock reaches its
-      // end, so on the spring-forward night 01:00-04:00 is 120 minutes and on the fall-back night 240 (an
-      // end in the repeated hour is its second occurrence). Before M101 the posted end was an hour off.
-      const endsAt = getScheduleInstant({
+      // Real minutes, not wall-clock ones (M101, R3 C5): the window airs until the wall clock last reaches its
+      // end, so on the spring-forward night 01:00-04:00 is 120 minutes and on the fall-back night 240 (an end
+      // inside the repeated hour is its second occurrence). Before M101 the posted end was an hour off.
+      const endsAt = getScheduleEndInstant({
         date: segment.date,
         seconds: segment.airEndMinute * 60,
-        timeZone: args.timeZone,
-        ambiguous: "later"
+        timeZone: args.timeZone
       });
       const durationMinutes = Math.round((endsAt.getTime() - Date.parse(startTime)) / 60_000);
       if (durationMinutes < TWITCH_SEGMENT_MIN_MINUTES || durationMinutes > TWITCH_SEGMENT_MAX_MINUTES) {

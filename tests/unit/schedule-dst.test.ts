@@ -3,6 +3,7 @@ import {
   buildScheduleOccurrences,
   findCurrentScheduleOccurrence,
   getCurrentScheduleMoment,
+  getScheduleEndInstant,
   getScheduleInstant,
   getScheduleOccurrenceAirWindowSeconds,
   getScheduleRunElapsedSeconds,
@@ -213,6 +214,29 @@ describe("the Twitch segment end follows real minutes", () => {
     // 02:00-03:00 does not exist that night: 0 real minutes, so no segment.
     expect(spring.segments).toEqual([]);
     expect(spring.skippedCount).toBe(1);
+  });
+
+  it("ends a block at the first 02:00 on the fall-back night, where the clock never returns to before it", () => {
+    const autumn = planTwitchScheduleSegments({
+      blocks: [
+        block({ id: "nightly", dayOfWeek: 6, startMinuteOfDay: 22 * 60, durationMinutes: 240 }),
+        block({ id: "late", dayOfWeek: 0, startMinuteOfDay: 150, durationMinutes: 90 })
+      ],
+      currentDate: "2026-10-19",
+      timeZone: BERLIN,
+      now: new Date("2026-10-19T10:00:00.000Z")
+    });
+    // Saturday 22:00 CEST (20:00Z) to Sunday 02:00 CEST (00:00Z): 240 minutes, not 300.
+    // Sunday 02:30 (first, 00:30Z) to 04:00 CET (03:00Z): 150 minutes.
+    expect(autumn.segments.map((segment) => [segment.blockId, segment.startTime, segment.durationMinutes])).toEqual([
+      ["nightly", "2026-10-24T20:00:00.000Z", 240],
+      ["late", "2026-10-25T00:30:00.000Z", 150]
+    ]);
+    expect(getScheduleEndInstant({ date: "2026-10-25", seconds: 120 * 60, timeZone: BERLIN }).toISOString()).toBe("2026-10-25T00:00:00.000Z");
+    expect(getScheduleEndInstant({ date: "2026-10-25", seconds: 150 * 60, timeZone: BERLIN }).toISOString()).toBe("2026-10-25T01:30:00.000Z");
+    expect(getScheduleEndInstant({ date: "2026-10-25", seconds: 180 * 60, timeZone: BERLIN }).toISOString()).toBe("2026-10-25T02:00:00.000Z");
+    expect(getScheduleEndInstant({ date: "2026-03-29", seconds: 180 * 60, timeZone: BERLIN }).toISOString()).toBe("2026-03-29T01:00:00.000Z");
+    expect(getScheduleEndInstant({ date: "2026-07-05", seconds: 120 * 60, timeZone: BERLIN }).toISOString()).toBe("2026-07-05T00:00:00.000Z");
   });
 
   it("starts a block that begins in the skipped hour after the switch, not before it", () => {
