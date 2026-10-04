@@ -5,10 +5,28 @@
 // it continues where the configuration actually stands. Skipping is just visiting a later step;
 // the skipped step stays visibly open until reality changes.
 
+import { isAssetProbeQuarantined } from "@stream247/core";
 import { resolveAppBaseUrl, type AppState } from "@stream247/db";
 import { getManagedConfigValue } from "./state";
 
-export type SetupWizardStepId = "owner" | "instance" | "twitch-app" | "twitch-connect" | "done";
+export type SetupWizardStepId =
+  | "owner"
+  | "instance"
+  | "twitch-app"
+  | "twitch-connect"
+  | "destination"
+  | "programme"
+  | "done";
+
+/**
+ * The two steps after Twitch (M99) read the go-live checklist's own verdicts, so the wizard calls a step
+ * done exactly when readiness does: "destination" is the checklist's *Live destination*, "programme" its
+ * *Program pools* and *Weekly schedule* together.
+ */
+export type SetupWizardReadiness = {
+  destinationReady: boolean;
+  programmeReady: boolean;
+};
 
 export type SetupWizardStep = {
   id: SetupWizardStepId;
@@ -30,7 +48,8 @@ export type SetupWizardStateSlice = {
 
 export function deriveSetupWizardSteps(
   state: SetupWizardStateSlice,
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
+  readiness: SetupWizardReadiness = { destinationReady: false, programmeReady: false }
 ): SetupWizardStep[] {
   // Env fallbacks come from the same env object the resolver sees, so the whole derivation is a
   // pure function of (state, env) — an env-configured install shows those steps as already done.
@@ -74,10 +93,32 @@ export function deriveSetupWizardSteps(
       complete: hasTwitchConnection
     },
     {
+      id: "destination",
+      title: "Where the stream goes",
+      summary: readiness.destinationReady
+        ? "A destination with a stream key is ready."
+        : "Paste the broadcast channel's stream key; it is stored encrypted.",
+      complete: readiness.destinationReady
+    },
+    {
+      id: "programme",
+      title: "First programme",
+      summary: readiness.programmeReady
+        ? "A pool with ready videos fills every day of the week."
+        : "Pick your media; a pool is made from it and plays around the clock.",
+      complete: readiness.programmeReady
+    },
+    {
       id: "done",
       title: "Review",
       summary: "Secrets, storage, and what the go-live checklist still wants.",
-      complete: hasOwner && hasAppUrl && hasTwitchApp && hasTwitchConnection
+      complete:
+        hasOwner &&
+        hasAppUrl &&
+        hasTwitchApp &&
+        hasTwitchConnection &&
+        readiness.destinationReady &&
+        readiness.programmeReady
     }
   ];
 }
@@ -113,4 +154,27 @@ export function resolveRequestOrigin(requestHeaders: { get(name: string): string
   const forwardedProto = (requestHeaders.get("x-forwarded-proto") || "").split(",")[0]?.trim().toLowerCase();
   const protocol = forwardedProto === "https" ? "https" : "http";
   return `${protocol}://${host}`;
+}
+
+/**
+ * The picks of the "First programme" step (M99, U2): every source with the number of its videos a pool
+ * could play now, by the schedule preview's eligibility (ready, included in programming, not quarantined).
+ * A pool is made of sources, so choosing media there means choosing sources.
+ */
+export function listSetupProgrammeSources(
+  state: Pick<AppState, "sources" | "assets">
+): Array<{ id: string; name: string; readyCount: number }> {
+  return state.sources
+    .filter((source) => source.enabled !== false)
+    .map((source) => ({
+      id: source.id,
+      name: source.name,
+      readyCount: state.assets.filter(
+        (asset) =>
+          asset.sourceId === source.id &&
+          asset.status === "ready" &&
+          asset.includeInProgramming !== false &&
+          !isAssetProbeQuarantined(asset)
+      ).length
+    }));
 }

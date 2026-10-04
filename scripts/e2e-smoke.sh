@@ -39,7 +39,7 @@ STREAM247_WEB_IMAGE=stream247-web:test
 STREAM247_WORKER_IMAGE=stream247-worker:test
 STREAM247_PLAYOUT_IMAGE=stream247-worker:test
 STREAM_OUTPUT_URL=/tmp/stream-output/primary
-STREAM_OUTPUT_KEY=primary.flv
+$( [ "${E2E_FRESH_DESTINATION:-0}" = "1" ] || echo "STREAM_OUTPUT_KEY=primary.flv" )
 TRAEFIK_HOST=stream247.local
 TRAEFIK_ACME_EMAIL=devnull@example.com
 CHANNEL_TIMEZONE=Europe/Berlin
@@ -67,6 +67,22 @@ services:
     volumes:
       - ${TMP_DIR}/postgres:/var/lib/postgresql/data
 EOF
+
+# E2E_FRESH_DESTINATION=1 leaves the primary destination without a stream key (the setup wizard spec
+# pastes one); E2E_MEDIA_FIXTURE=1 puts one short video into the media library before the start, so the
+# worker's scan makes it ready (M99).
+if [ "${E2E_MEDIA_FIXTURE:-0}" = "1" ]; then
+  # shellcheck source=lib/ffmpeg-fallback.sh
+  . "$WORKDIR/scripts/lib/ffmpeg-fallback.sh"
+  enable_ffmpeg_fallback "$TMP_DIR"
+  ffmpeg -hide_banner -loglevel error -y \
+    -f lavfi -i "color=c=0x124f7a:s=640x360:r=25" \
+    -f lavfi -i "anullsrc=channel_layout=stereo:sample_rate=44100" \
+    -shortest -t 20 \
+    -c:v libx264 -pix_fmt yuv420p \
+    -c:a aac -b:a 96k \
+    "$TMP_DIR/media/e2e-first-programme.mp4"
+fi
 
 if [ -f "$ROOT_ENV_FILE" ]; then
   cp "$ROOT_ENV_FILE" "$ROOT_ENV_BACKUP"

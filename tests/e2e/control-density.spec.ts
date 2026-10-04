@@ -51,7 +51,10 @@ const SURFACES: Surface[] = [
   // not clutter, so the budget moves with it.
   // 28: 2.1 (M69) splits the go-live checklist's Twitch entry into one per account — the bot account and
   // the broadcast channel are two things to check, and each entry links to where it is set.
-  { name: "live-status", path: "/live?tab=status", maxControls: 28, primaryActions: 1 },
+  // 21 and no primary: M99 moves the destination forms (the add form and its "Add destination", the
+  // page's one primary) to Studio → Output. Status reads; it says how things are and links to where
+  // they are changed, so no action leads here.
+  { name: "live-status", path: "/live?tab=status", maxControls: 21, primaryActions: 0 },
   { name: "program-schedule", path: "/program?tab=schedule&day=1", maxControls: 14, primaryActions: 0 },
   // The overlay editor, where editing is the point — so this one is folded rather than trimmed. Was
   // 79; twenty-four of those were three buttons on each of eight layers, held open permanently, and
@@ -130,6 +133,8 @@ const SURFACES: Surface[] = [
   // chat game. Each is its own task with its own save, which is the documented exception to the
   // one-primary rule — a shared save across unrelated panels would be the worse design.
   { name: "studio-engagement", path: "/studio?tab=engagement", maxControls: 48, primaryActions: 3 },
+  // Still 20 with the destination forms from Live → Status (M99): the add form and each destination's
+  // editor are folded, and what a closed fold holds is not on screen.
   { name: "studio-output", path: "/studio?tab=output", maxControls: 20, primaryActions: 1 },
   { name: "admin-team", path: "/admin?tab=team", maxControls: 11, primaryActions: 1 }
 ];

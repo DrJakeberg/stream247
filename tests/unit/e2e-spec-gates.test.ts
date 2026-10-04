@@ -5,9 +5,11 @@ import path from "node:path";
 /**
  * Every browser spec runs in a gate.
  *
- * CI runs browser specs in exactly two places: `pnpm test:e2e:smoke`, which runs the E2E_SPECS
+ * CI runs browser specs in two places: `pnpm test:e2e:smoke`, which runs the E2E_SPECS
  * default of scripts/e2e-smoke.sh, and `./scripts/design-baseline.sh`, which runs its
- * DESIGN_BASELINE_SPEC default. A spec in neither list only runs when someone remembers it exists.
+ * DESIGN_BASELINE_SPEC default. A spec that needs a stack of its own (M99's setup wizard needs a
+ * fresh one) runs in a CI step of its own, `E2E_SPECS=<spec> ... pnpm test:e2e:smoke`, and counts
+ * as gated by that step. A spec in neither list only runs when someone remembers it exists.
  * tests/e2e/program-screenshot.spec.ts was such a spec. Its April reference image outlived five months
  * of Program changes; by the time anyone ran it, it described a page that no longer existed, and its
  * coverage had long since moved into the design baseline. It was retired on 2026-10-01 (see M44 in
@@ -22,6 +24,13 @@ const SPEC_PATH = /tests\/e2e\/[\w.-]+\.spec\.ts/g;
 
 function read(relativePath: string) {
   return readFileSync(path.join(ROOT, relativePath), "utf8");
+}
+
+/** The specs a CI step hands to the smoke stack itself: `run: E2E_SPECS=<specs> ... pnpm test:e2e:smoke`. */
+function ciStepSpecs() {
+  return [...read(".github/workflows/ci.yml").matchAll(/run: E2E_SPECS=(\S+)[^\n]*pnpm test:e2e:smoke/g)].flatMap(
+    (match) => match[1].match(SPEC_PATH) ?? []
+  );
 }
 
 /** The spec paths inside a `${VAR:-default}` expansion, for every expansion of VAR in the file. */
@@ -43,7 +52,8 @@ describe("e2e spec gates", () => {
   it("every tests/e2e spec is run by one of them", () => {
     const gated = new Set([
       ...defaultSpecs("scripts/e2e-smoke.sh", "E2E_SPECS"),
-      ...defaultSpecs("scripts/design-baseline.sh", "DESIGN_BASELINE_SPEC")
+      ...defaultSpecs("scripts/design-baseline.sh", "DESIGN_BASELINE_SPEC"),
+      ...ciStepSpecs()
     ]);
     const specs = readdirSync(path.join(ROOT, "tests/e2e"))
       .filter((name) => name.endsWith(".spec.ts"))
@@ -52,11 +62,19 @@ describe("e2e spec gates", () => {
     expect(specs.filter((spec) => !gated.has(spec))).toEqual([]);
   });
 
+  it("M99: the setup wizard spec runs in its own CI step on a fresh stack", () => {
+    expect(ciStepSpecs()).toEqual(["tests/e2e/setup-wizard.spec.ts"]);
+    expect(read(".github/workflows/ci.yml")).toMatch(
+      /run: E2E_SPECS=tests\/e2e\/setup-wizard\.spec\.ts E2E_FRESH_DESTINATION=1 E2E_MEDIA_FIXTURE=1 pnpm test:e2e:smoke/
+    );
+  });
+
   it("every gated spec exists", () => {
     const specs = new Set(readdirSync(path.join(ROOT, "tests/e2e")).map((name) => `tests/e2e/${name}`));
     const gated = [
       ...defaultSpecs("scripts/e2e-smoke.sh", "E2E_SPECS"),
-      ...defaultSpecs("scripts/design-baseline.sh", "DESIGN_BASELINE_SPEC")
+      ...defaultSpecs("scripts/design-baseline.sh", "DESIGN_BASELINE_SPEC"),
+      ...ciStepSpecs()
     ];
 
     expect(gated.filter((spec) => !specs.has(spec))).toEqual([]);

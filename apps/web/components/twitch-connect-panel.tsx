@@ -68,7 +68,7 @@ export function TwitchConnectPanel({
           Stream247 separates the broadcast channel (where the video goes and viewers watch) from the bot
           account it signs in as for chat and moderation; both are set under Admin → Settings → Twitch
           accounts. The button connects the bot account. For actual output the broadcast channel also needs its
-          stream key: on the primary destination under Live → Status → Output destinations, or as
+          stream key: on the primary destination under Studio → Output → Output destinations (or in the setup wizard), or as
           <code> TWITCH_STREAM_KEY </code>
           (or the generic
           <code> STREAM_OUTPUT_URL </code>

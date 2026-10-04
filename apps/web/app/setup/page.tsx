@@ -6,16 +6,22 @@ import { redirect } from "next/navigation";
 import { DEV_FALLBACK_APP_SECRET, resolveAppBaseUrl, resolveAppSecret } from "@stream247/db";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
 import { InsecureHttpNotice } from "@/components/insecure-http-notice";
+import { LibraryUploadForm } from "@/components/library-upload-form";
 import { Panel } from "@/components/panel";
+import { SetupDestinationForm } from "@/components/setup-destination-form";
 import { SetupForm } from "@/components/setup-form";
 import { SetupInstanceForm } from "@/components/setup-instance-form";
+import { SetupProgrammeForm } from "@/components/setup-programme-form";
 import { SetupTwitchAppForm } from "@/components/setup-twitch-app-form";
 import { TwitchAccountsPanel } from "@/components/twitch-accounts-panel";
+import { ToastProvider } from "@/components/ui/Toast";
+import { DESTINATION_STATUS_LABELS, describeStreamKey } from "@/lib/destination-wording";
 import { buildTwitchAccountsPanelProps } from "@/lib/server/twitch-accounts-panel";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { getGoLiveChecklist } from "@/lib/server/onboarding";
 import {
   deriveSetupWizardSteps,
+  listSetupProgrammeSources,
   resolveRequestOrigin,
   resolveActiveSetupWizardStep,
   type SetupWizardStepId
@@ -25,7 +31,15 @@ import { getAbsoluteAppUrl, getTwitchBroadcasterRedirectUri } from "@/lib/server
 import { getAuthenticatedUser } from "@/lib/server/auth";
 import { TWITCH_ACCOUNT_COUNT_SENTENCE, TWITCH_DEVELOPER_CONSOLE_URL } from "@/lib/twitch-account-texts";
 
-const STEP_ORDER: SetupWizardStepId[] = ["owner", "instance", "twitch-app", "twitch-connect", "done"];
+const STEP_ORDER: SetupWizardStepId[] = [
+  "owner",
+  "instance",
+  "twitch-app",
+  "twitch-connect",
+  "destination",
+  "programme",
+  "done"
+];
 
 function stepHref(step: SetupWizardStepId): string {
   return `/setup?step=${step}`;
@@ -58,13 +72,26 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
     redirect("/login");
   }
 
-  const steps = deriveSetupWizardSteps(state);
+  const checklist = getGoLiveChecklist(state);
+  const checklistReady = (id: string) => checklist.some((item) => item.id === id && item.status === "ready");
+  const steps = deriveSetupWizardSteps(state, process.env, {
+    destinationReady: checklistReady("destination"),
+    programmeReady: checklistReady("pools") && checklistReady("schedule")
+  });
   const active = resolveActiveSetupWizardStep(steps, searchParams.step);
   const activeIndex = STEP_ORDER.indexOf(active);
   const twitchAccountsPanel = await buildTwitchAccountsPanelProps(state, user?.role);
   const requestOrigin = resolveRequestOrigin(await headers());
 
   const publicBaseUrl = resolveAppBaseUrl(state.managedConfig);
+  // The built-in primary destination is the one the wizard fills; it cannot be deleted, so the fallback
+  // to the first primary only covers a workspace restored from an old blueprint.
+  const primaryDestination =
+    state.destinations.find((destination) => destination.id === "destination-primary") ??
+    state.destinations.find((destination) => destination.role === "primary") ??
+    null;
+  const programmeSources = listSetupProgrammeSources(state);
+  const hasPlayableMedia = programmeSources.some((source) => source.readyCount > 0);
   const envAppSecret = Boolean((process.env.APP_SECRET || "").trim());
   // The secret story for the review step. resolveAppSecret only throws when production has neither
   // env nor a writable data volume — a state in which this page would not be rendering anyway.
@@ -181,11 +208,82 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
               stream key goes into the output destination); the bot account is what Stream247 signs in as for chat
               and moderation. Name the broadcast channel, then connect the bot account;
               the channel&apos;s own account can connect later for title, category and schedule. Twitch sends you to
-              Admin → Settings → Twitch accounts when it is done; setup is complete by then, and its last step only
-              lists what the go-live checklist still wants.
+              Admin → Settings → Twitch accounts when it is done; come back to{" "}
+              <Link href={stepHref("destination")}>/setup</Link> for the stream key and the first programme.
             </p>
             <TwitchAccountsPanel {...twitchAccountsPanel.props} />
             <SkipLink from="twitch-connect" />
+          </Panel>
+        ) : null}
+        {active === "destination" ? (
+          <Panel title="Where the stream goes" eyebrow={`Step ${activeIndex + 1}`}>
+            <p className="subtle">
+              Without a stream key nothing goes on air. The key belongs to the broadcast channel, never to the bot
+              account: sign in to Twitch as the broadcast channel, open the Creator Dashboard at Settings → Stream and
+              copy the Primary Stream key. It is a password for the channel; never paste it into chat or a
+              screenshot.
+            </p>
+            {primaryDestination ? (
+              <>
+                <div className="item">
+                  <strong>{primaryDestination.name}</strong>
+                  <div className="subtle">
+                    {DESTINATION_STATUS_LABELS[primaryDestination.status]} ·{" "}
+                    {describeStreamKey(primaryDestination.streamKeyPresent, primaryDestination.streamKeySource)}
+                  </div>
+                </div>
+                <SetupDestinationForm
+                  destinationId={primaryDestination.id}
+                  destinationName={primaryDestination.name}
+                  rtmpUrl={primaryDestination.rtmpUrl}
+                  streamKeyPresent={primaryDestination.streamKeyPresent}
+                  streamKeySource={primaryDestination.streamKeySource ?? "missing"}
+                />
+              </>
+            ) : (
+              <p className="subtle">No primary destination exists; add one under Studio → Output.</p>
+            )}
+            <p className="subtle">
+              A backup, more destinations and their full settings are under{" "}
+              <Link href={`${buildWorkspaceHref("studio", "output")}#output-destinations`}>Studio → Output</Link>.
+            </p>
+            <SkipLink from="destination" />
+          </Panel>
+        ) : null}
+        {active === "programme" ? (
+          <Panel title="First programme" eyebrow={`Step ${activeIndex + 1}`}>
+            <p className="subtle">
+              Pick the media the channel plays. A pool is made from it, and the week is filled with it around the
+              clock, so the channel has something to air every hour.
+            </p>
+            {steps.find((step) => step.id === "programme")?.complete ? (
+              <div className="item">
+                <strong>The week already plays</strong>
+                <div className="subtle">
+                  {checklist.find((item) => item.id === "schedule")?.detail} A pool made here again only fills the week
+                  in place of those blocks, with “Replace the blocks already in the week”.
+                </div>
+              </div>
+            ) : null}
+            {hasPlayableMedia ? (
+              <SetupProgrammeForm scheduleBlockCount={state.scheduleBlocks.length} sources={programmeSources} />
+            ) : (
+              <div className="stack-form">
+                <div className="item">
+                  <strong>No video is ready yet</strong>
+                  <div className="subtle">
+                    Upload files here, put them into data/media on the host (mp4, mkv, mov, m4v or webm), or add a
+                    YouTube, Twitch or direct media source under{" "}
+                    <Link href={buildWorkspaceHref("program", "sources")}>Program → Sources</Link>. New files are
+                    scanned within a few minutes; <Link href={stepHref("programme")}>check again</Link> then.
+                  </div>
+                </div>
+                <ToastProvider>
+                  <LibraryUploadForm />
+                </ToastProvider>
+              </div>
+            )}
+            <SkipLink from="programme" />
           </Panel>
         ) : null}
         {active === "done" ? (
@@ -211,8 +309,8 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
               </div>
             </div>
             <p className="subtle">
-              Sources, the schedule, and stream destinations are ordinary workspace tasks — the checklist below keeps
-              track of them.
+              More sources, the schedule and further destinations are ordinary workspace tasks; the checklist below
+              keeps track of what is still missing.
             </p>
             <a className="button" href={buildWorkspaceHref("live", "status")}>
               Open the workspace
@@ -221,7 +319,7 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
         ) : null}
         {active === "done" ? (
           <Panel title="Readiness checklist" eyebrow="Before launch">
-            <GoLiveChecklist items={getGoLiveChecklist(state)} />
+            <GoLiveChecklist items={checklist} />
           </Panel>
         ) : null}
       </section>

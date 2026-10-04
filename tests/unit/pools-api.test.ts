@@ -98,4 +98,13 @@ describe("pools API", () => {
       itemsSinceInsert: 0
     });
   });
+
+  it("answers with the new pool's id, so the setup wizard can fill the week with it (M99)", async () => {
+    const response = await POST(request("POST", { name: "Programme", sourceIds: ["source_youtube"] }));
+    const payload = (await response.json()) as { id?: string };
+
+    expect(response.status).toBe(200);
+    expect(payload.id).toMatch(/^pool_[a-z0-9]+$/);
+    expect(payload.id).toBe((mockCreatePoolRecord.mock.calls[0]?.[0] as { id: string }).id);
+  });
 });

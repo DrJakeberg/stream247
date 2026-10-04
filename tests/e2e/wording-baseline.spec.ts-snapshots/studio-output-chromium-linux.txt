@@ -63,6 +63,22 @@ Set `STREAM_SCALE_ENABLED=0` only as a temporary rollback if output normalizatio
 Parallel renditions
 Destinations can inherit the stream profile or pin a lower fixed profile. Rendering above the stream profile upscales the shared program feed and increases CPU cost.
 DELIVERY
+Output destinations
+Stream247 can fan one channel out to multiple active outputs. Healthy primary outputs are preferred together; backup outputs take over only when no primary output group is available.
+Add another destination
+Lokales Relay
+Primary · priority 0 · Not set up yet
+No RTMP URL configured · Stream key stored here
+Change this destination
+Primary Twitch Output
+Primary · priority 0 · Ready
+/tmp/stream-output · Stream key set in the server configuration
+Change this destination
+Backup RTMP Output
+Backup · priority 10 · Not set up yet
+No RTMP URL configured · Stream key missing
+Change this destination
+DELIVERY
 Per-destination renditions
 Lokales Relay
 primary · priority 0 · No RTMP URL configured

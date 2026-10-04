@@ -6,10 +6,13 @@ import {
   resolveStreamOutputSettings
 } from "@stream247/core";
 import { AdminPageHeader } from "@/components/admin-page-header";
+import { DestinationCreateForm } from "@/components/destination-create-form";
+import { DestinationSettingsForm } from "@/components/destination-settings-form";
 import { DestinationOutputProfileForm } from "@/components/destination-output-profile-form";
 import { EncoderQualityForm } from "@/components/encoder-quality-form";
 import { OutputSettingsForm } from "@/components/output-settings-form";
 import { Panel } from "@/components/panel";
+import { DESTINATION_ROLE_LABELS, DESTINATION_STATUS_LABELS, describeStreamKey } from "@/lib/destination-wording";
 import { readAppState } from "@/lib/server/state";
 
 export default async function OutputPage() {
@@ -90,6 +93,42 @@ export default async function OutputPage() {
           </div>
         </Panel>
       </div>
+
+      {/* Moved here from Live → Status (M99, U1); the setup wizard's "Where the stream goes" links to it. */}
+      <Panel eyebrow="Delivery" id="output-destinations" title="Output destinations">
+        <p className="subtle">
+          Stream247 can fan one channel out to multiple active outputs. Healthy primary outputs are preferred
+          together; backup outputs take over only when no primary output group is available.
+        </p>
+        {/* Folded like each destination's editor: the page keeps one primary action, its output profile save. */}
+        <details className="disclosure" style={{ marginBottom: 16 }}>
+          <summary>Add another destination</summary>
+          <div className="item" style={{ marginTop: 12 }}>
+            <DestinationCreateForm />
+          </div>
+        </details>
+        <div className="list">
+          {orderedDestinations.map((destination) => (
+            <div className="item" key={destination.id}>
+              <strong>{destination.name}</strong>
+              <div className="subtle">
+                {DESTINATION_ROLE_LABELS[destination.role]} · priority {destination.priority} ·{" "}
+                {DESTINATION_STATUS_LABELS[destination.status]}
+              </div>
+              <div className="subtle">
+                {destination.rtmpUrl || "No RTMP URL configured"} ·{" "}
+                {describeStreamKey(destination.streamKeyPresent, destination.streamKeySource)}
+              </div>
+              <details className="disclosure" style={{ marginTop: 12 }}>
+                <summary>Change this destination</summary>
+                <div style={{ marginTop: 12 }}>
+                  <DestinationSettingsForm destination={destination} />
+                </div>
+              </details>
+            </div>
+          ))}
+        </div>
+      </Panel>
 
       <Panel title="Per-destination renditions" eyebrow="Delivery">
         <div className="list">

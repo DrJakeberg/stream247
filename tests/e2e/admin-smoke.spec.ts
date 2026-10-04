@@ -133,6 +133,10 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await liveTabs.getByRole("tab", { name: "Status", exact: true }).click();
   await expect(page).toHaveURL(/\/live\?tab=status$/);
   await expect(page.getByRole("heading", { name: /Check readiness, integrations, and current channel posture/i })).toBeVisible();
+  // Since M99 destinations are added in Studio → Output; Live → Status links there.
+  await page.getByRole("link", { name: /Add or change destinations and stream keys in Studio → Output/ }).click();
+  await expect(page).toHaveURL(/\/studio\?tab=output#output-destinations$/);
+  await page.locator("#output-destinations summary", { hasText: "Add another destination" }).click();
   const destinationForm = page.locator("form").filter({ has: page.getByRole("button", { name: "Add destination" }) }).first();
   await destinationForm.getByLabel("Name").fill(secondaryDestinationName);
   await destinationForm.getByLabel("RTMP URL").fill(`${outputRoot}/secondary-a`);
@@ -144,6 +148,8 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await destinationForm.getByRole("button", { name: "Add destination" }).click();
   await expect((await createDestinationResponse).ok()).toBeTruthy();
   await expect(destinationForm.getByText("Destination created.")).toBeVisible();
+  await expect(page.locator("#output-destinations").getByText(secondaryDestinationName)).toBeVisible();
+  await page.goto("/live?tab=status");
   await expect(page.getByText(secondaryDestinationName)).toBeVisible();
   await expect(page.getByText("2 active", { exact: true })).toBeVisible();
   await expect(page.getByText(/2 active output\(s\) are ready\./i)).toBeVisible();
