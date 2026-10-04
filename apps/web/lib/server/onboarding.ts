@@ -176,7 +176,8 @@ export function getGoLiveChecklist(state: AppState, now: Date = new Date()): GoL
         ? `${routing.activeDestinationIds.length || 1} active output(s) are ready. Lead destination: ${destination?.name || "Destination"}.`
         : "Configure at least one primary or backup RTMP output with a stream key so the playout runtime has somewhere to stream.",
       status: hasDestination ? "ready" : "action",
-      href: buildWorkspaceHref("live", "status")
+      // The destination forms live in Studio → Output since M99 (U1).
+      href: buildWorkspaceHref("studio", "output")
     },
     {
       id: "sources",

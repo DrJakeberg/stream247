@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { ManagedConfigRecord } from "../../packages/db/src/index.js";
 import {
   deriveSetupWizardSteps,
+  listSetupProgrammeSources,
   resolveActiveSetupWizardStep,
+  type SetupWizardReadiness,
   type SetupWizardStateSlice
 } from "../../apps/web/lib/server/setup-wizard.js";
 
@@ -35,8 +37,15 @@ function wizardState(overrides: Partial<SetupWizardStateSlice> = {}): SetupWizar
   };
 }
 
-function activeStep(state: SetupWizardStateSlice, env: Record<string, string | undefined> = {}, requested?: string) {
-  return resolveActiveSetupWizardStep(deriveSetupWizardSteps(state, env), requested);
+const ALL_READY: SetupWizardReadiness = { destinationReady: true, programmeReady: true };
+
+function activeStep(
+  state: SetupWizardStateSlice,
+  env: Record<string, string | undefined> = {},
+  requested?: string,
+  readiness?: SetupWizardReadiness
+) {
+  return resolveActiveSetupWizardStep(deriveSetupWizardSteps(state, env, readiness), requested);
 }
 
 describe("deriveSetupWizardSteps", () => {
@@ -50,7 +59,8 @@ describe("deriveSetupWizardSteps", () => {
         }),
         twitch: { status: "connected", broadcasterLogin: "streamer" }
       }),
-      {}
+      {},
+      ALL_READY
     );
 
     expect(steps.map((step) => `${step.id}:${step.complete}`)).toEqual([
@@ -58,7 +68,47 @@ describe("deriveSetupWizardSteps", () => {
       "instance:true",
       "twitch-app:true",
       "twitch-connect:true",
+      "destination:true",
+      "programme:true",
       "done:true"
+    ]);
+  });
+
+  it("M99: takes the stream key and first programme steps from readiness, and Review waits for them", () => {
+    const configured = wizardState({
+      managedConfig: emptyManagedConfig({
+        appUrl: "https://stream.example",
+        twitchClientId: "client",
+        twitchClientSecret: "secret"
+      }),
+      twitch: { status: "connected", broadcasterLogin: "streamer" }
+    });
+    const completion = (readiness?: SetupWizardReadiness) =>
+      deriveSetupWizardSteps(configured, {}, readiness)
+        .filter((step) => ["destination", "programme", "done"].includes(step.id))
+        .map((step) => `${step.id}:${step.complete}`);
+
+    // Without readiness (the old two-argument call) neither step is done, so Review is not either.
+    expect(completion()).toEqual(["destination:false", "programme:false", "done:false"]);
+    expect(completion({ destinationReady: true, programmeReady: false })).toEqual([
+      "destination:true",
+      "programme:false",
+      "done:false"
+    ]);
+    expect(completion({ destinationReady: false, programmeReady: true })).toEqual([
+      "destination:false",
+      "programme:true",
+      "done:false"
+    ]);
+    expect(completion(ALL_READY)).toEqual(["destination:true", "programme:true", "done:true"]);
+    expect(deriveSetupWizardSteps(configured, {}).map((step) => step.title)).toEqual([
+      "Owner account",
+      "Instance basics",
+      "Twitch app credentials",
+      "Twitch accounts",
+      "Where the stream goes",
+      "First programme",
+      "Review"
     ]);
   });
 
@@ -113,13 +163,59 @@ describe("resolveActiveSetupWizardStep", () => {
             twitchClientSecret: "secret"
           }),
           twitch: { status: "connected", broadcasterLogin: "streamer" }
-        })
+        }),
+        {},
+        undefined,
+        ALL_READY
       )
     ).toBe("done");
+  });
+
+  it("M99: continues with the stream key, then the first programme, after the Twitch steps", () => {
+    const twitchDone = wizardState({
+      managedConfig: emptyManagedConfig({
+        appUrl: "https://a.example",
+        twitchClientId: "client",
+        twitchClientSecret: "secret"
+      }),
+      twitch: { status: "connected", broadcasterLogin: "streamer" }
+    });
+    expect(activeStep(twitchDone)).toBe("destination");
+    expect(activeStep(twitchDone, {}, undefined, { destinationReady: true, programmeReady: false })).toBe("programme");
+    // Skipping the stream key leaves it open and goes on to the programme.
+    expect(activeStep(twitchDone, {}, "programme")).toBe("programme");
+    // A skipped Twitch step does not hold back the later ones once they are reached by link.
+    expect(activeStep(wizardState(), {}, "destination")).toBe("destination");
   });
 
   it("lets a requested step override the derived one, which is what makes skipping work", () => {
     expect(activeStep(wizardState(), {}, "twitch-connect")).toBe("twitch-connect");
     expect(activeStep(wizardState(), {}, "not-a-step")).toBe("instance");
+  });
+});
+
+describe("listSetupProgrammeSources (M99, U2)", () => {
+  it("counts per enabled source the videos a pool could play now", () => {
+    const asset = (id: string, sourceId: string, extra: Record<string, unknown> = {}) =>
+      ({ id, sourceId, status: "ready", includeInProgramming: true, ...extra }) as never;
+    const sources = [
+      { id: "source-local-library", name: "Local Media Library", enabled: true },
+      { id: "source-yt", name: "YouTube", enabled: true },
+      { id: "source-off", name: "Disabled", enabled: false }
+    ] as never[];
+    const assets = [
+      asset("a1", "source-local-library"),
+      asset("a2", "source-local-library"),
+      asset("a3", "source-local-library", { status: "pending" }),
+      asset("a4", "source-local-library", { includeInProgramming: false }),
+      // Quarantined: three probe failures in a row.
+      asset("a5", "source-yt", { playbackProbeFailures: 3 }),
+      asset("a6", "source-off")
+    ];
+
+    expect(listSetupProgrammeSources({ sources, assets } as never)).toEqual([
+      { id: "source-local-library", name: "Local Media Library", readyCount: 2 },
+      { id: "source-yt", name: "YouTube", readyCount: 0 }
+    ]);
   });
 });

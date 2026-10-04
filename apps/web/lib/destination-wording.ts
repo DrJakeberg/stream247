@@ -54,3 +54,10 @@ export const DESTINATION_RECOVERY_LABELS = {
   ready: "Ready",
   "missing-config": "Not set up yet"
 } as const satisfies Record<"active" | "staged" | "cooldown" | "ready" | "missing-config", string>;
+
+/**
+ * The Twitch ingest every Twitch channel streams to; the stream key picks the channel. The setup
+ * wizard's "Where the stream goes" step (M99) offers it as the preset. The seed of the built-in primary
+ * destination (`packages/db`) writes the same address as its own literal.
+ */
+export const TWITCH_INGEST_URL = "rtmp://live.twitch.tv/app";

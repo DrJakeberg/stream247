@@ -107,7 +107,7 @@ cp .env.production.example .env
 | `APP_SECRET` | 32+ random characters, set before the first start or left unset (then generated at `data/media/.stream247-app-secret` — back that file up together with PostgreSQL). Never change it later: it encrypts every stored credential and signs every session. To pin the generated one, copy the file's contents |
 | `POSTGRES_PASSWORD` and the same password inside `DATABASE_URL` | database access |
 | `TRAEFIK_HOST` (and `TRAEFIK_ACME_EMAIL` if the built-in Let's Encrypt profile is used) | the HTTPS front |
-| `TWITCH_STREAM_KEY` | if the channel should go on air immediately; otherwise entered later as the primary destination's stream key under `Live → Status → Output destinations` (`/settings` has no stream-key field) |
+| `TWITCH_STREAM_KEY` | if the channel should go on air immediately; otherwise entered later in the wizard's *Where the stream goes* step or as the primary destination's stream key under `Studio → Output → Output destinations` (`/settings` has no stream-key field) |
 | `CHANNEL_TIMEZONE` | leave unset to let the wizard manage it; the example file no longer pins a zone, because a valid env value always beats the wizard's field (an invalid one is skipped and raises the incident `config.channel-timezone.invalid`) |
 | `CHANNEL_LANGUAGE` | `en` or `de`; leave unset to choose the language in the wizard or under `Admin → Settings → Channel language`. Like the time zone, an env value always beats the saved one; anything else than `de` counts as `en` |
 
@@ -150,10 +150,10 @@ not replace it — so firewall it if you cannot open the browser right away. Ove
 
 Then open `https://<your-host>/setup` (`/` leads there as long as no owner exists). The wizard runs
 in this order, under these names: **Owner account → Instance basics (public URL, time zone, channel
-language) → Twitch app credentials → Twitch accounts → Review**. Creating the owner signs you in; every
-later step can be skipped and stays open. **Review** marked "Done" means the credentials are in place,
-not that the channel can air — its readiness
-checklist lists what is still missing. Reopening `/setup` later requires being signed in and continues at
+language) → Twitch app credentials → Twitch accounts → Where the stream goes (the stream key, section 7)
+→ First programme (a pool from your media that plays all week, section 9) → Review**. Creating the owner
+signs you in; every later step can be skipped and stays open. **Review** is marked "Done" only when every
+step before it is; its readiness checklist lists what is still missing. Reopening `/setup` later requires being signed in and continues at
 the first unfinished step. Create the owner with an e-mail
 address and a password of at least 10 characters, and store the password: the e-mail address cannot be
 changed later, the password only under `Admin → Settings → Security` (with the current one). There is no
@@ -218,11 +218,13 @@ account:
 1. Sign in to Twitch as the broadcast channel and open the Creator Dashboard: *Settings → Stream*.
 2. Copy the *Primary Stream key*. It is a password for your channel: never paste it into chat, a
    screenshot or an issue.
-3. In Stream247 open `Live → Status → Output destinations`, open *Change this destination* under
-   **Primary Twitch Output**, paste the key into *Managed stream key* and save. The RTMP URL is already
-   `rtmp://live.twitch.tv/app`. The key is stored encrypted and never shown again; the list only says
-   whether one is present.
-4. Check the readiness checklist on `Live → Status`: its *Live destination* line turns ready.
+3. In Stream247 paste it into the wizard's *Where the stream goes* step (`/setup`), with *Twitch* as the
+   service, and save. Later, or for another service, open `Studio → Output → Output destinations`, open
+   *Change this destination* under **Primary Twitch Output**, paste the key into *Managed stream key* and
+   save; the RTMP URL is already `rtmp://live.twitch.tv/app`. Either way the key is stored encrypted and
+   never shown again; the forms only say whether one is present.
+4. Check the readiness checklist on `Live → Status` (or the wizard's *Review*): its *Live destination*
+   line turns ready.
 
 `TWITCH_STREAM_KEY` in `.env` (section 4) does the same from the environment; a key saved in the form
 is used ahead of it.
@@ -234,13 +236,20 @@ Three ways in, all end up as library assets the worker scans within a few minute
 - put files into `data/media` (formats: mp4, mkv, mov, m4v, webm — nothing else is picked up),
 - add a direct media URL, a YouTube playlist/channel or a Twitch VOD/channel as a **source** under
   `Program → Sources`,
-- upload through `Program → Library`.
+- upload through `Program → Library` (or in the wizard's *First programme* step while no video is
+  ready yet).
 
 Twitch VODs are downloaded to a local cache before airing. A download that outlives its time limit
 is abandoned and the replay plays from Twitch directly for that airing; see `docs/operations.md`,
 *Remote VOD reaches its end without EOF*.
 
 ## 9. Programme
+
+The quickest start is the wizard's *First programme* step (`/setup`): tick the sources whose videos
+should play (each with its number of ready videos), name the pool and press *Create the pool and fill
+the week*. It creates the pool and applies the *Always-on single pool* template, one block from 00:00
+to 24:00 on every day; with blocks already in the week it asks whether to replace them. The readiness
+lines *Program pools* and *Weekly schedule* then turn ready. Everything after that is done here:
 
 `Program → Pools` groups sources for round-robin selection: a pool with several sources takes the next
 item from each source in turn, in the order the pool lists them, and each source plays its own items

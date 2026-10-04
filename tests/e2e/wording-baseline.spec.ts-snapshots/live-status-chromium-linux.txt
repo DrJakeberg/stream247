@@ -105,7 +105,7 @@ Open Admin
 Live destination
 Ready
 1 active output(s) are ready. Lead destination: Primary Twitch Output.
-Open Live · Status
+Open Studio · Output
 Content sources
 Ready
 1 source(s) can deliver media.
@@ -139,40 +139,13 @@ Selected from Lokale Bibliothek for <minutes> minutes · <day>.
 Selected from Lokale Bibliothek for <minutes> minutes · <day>.
 DELIVERY
 Output destinations
-Stream247 can now fan one channel out to multiple active outputs. Healthy primary outputs are preferred together; backup outputs take over only when no primary output group is available.
-Add output
-Create another primary or backup RTMP target.
-NAME
-i
-PROVIDER
-i
-Custom RTMP
-Twitch
-ROLE
-i
-Primary
-Backup
-PRIORITY
-i
-RTMP URL
-i
-STREAM KEY
-i
-NOTES
-i
-Add destination
 Lokales Relay
-Primary · priority 0 · Not set up yet
-No RTMP URL configured · Stream key stored here
-Change this destination
+Primary · priority 0 · Not set up yet · Stream key stored here
 Primary Twitch Output
-Primary · priority 0 · Ready · in use
-/tmp/stream-output · Stream key set in the server configuration
-Change this destination
+Primary · priority 0 · Ready · in use · Stream key set in the server configuration
 Backup RTMP Output
-Backup · priority 10 · Not set up yet
-No RTMP URL configured · Stream key missing
-Change this destination
+Backup · priority 10 · Not set up yet · Stream key missing
+Add or change destinations and stream keys in Studio → Output
 RUNTIME
 Alerts and drift
 Encoder runtime

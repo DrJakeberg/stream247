@@ -189,6 +189,12 @@ jobs:
       # Installs browsers for the workspace copy of @playwright/test; dlx would fetch a second one.
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e:smoke
+      # M99: the setup wizard on a fresh stack of its own (no owner, no stream key in the environment, one
+      # video in the library): a new owner fills in the stream key and the first programme, and readiness
+      # turns destination, pools and schedule ready.
+      - name: Setup wizard to first programme (fresh stack)
+        timeout-minutes: 15
+        run: E2E_SPECS=tests/e2e/setup-wizard.spec.ts E2E_FRESH_DESTINATION=1 E2E_MEDIA_FIXTURE=1 pnpm test:e2e:smoke
       # Its own stack, deliberately, for two independent reasons: admin-smoke enables two-factor
       # auth on the owner account, so any spec signing in after it never reaches the workspace; and
       # the visual baseline needs the runtime containers stopped so nothing rewrites readiness

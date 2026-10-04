@@ -165,7 +165,7 @@ The one-page path from an empty host to a green channel, with the traps where th
 4. Optional now, or later in the wizard and `/settings`:
    - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` (from an application registered at
      <https://dev.twitch.tv/console/apps>)
-   - `TWITCH_STREAM_KEY` (later: the primary destination's stream key under `Live → Status`)
+   - `TWITCH_STREAM_KEY` (later: the wizard's *Where the stream goes* step, or the primary destination's stream key under `Studio → Output`)
    - `CHANNEL_TIMEZONE` (leave unset to let the wizard manage it)
    - `CHANNEL_LANGUAGE` (`en` or `de`, the language viewers are addressed in; leave unset to choose it in
      the wizard or under `Admin → Settings → Channel language`)
@@ -177,8 +177,9 @@ The one-page path from an empty host to a green channel, with the traps where th
    - `http://localhost:3000/setup` — from another machine use HTTPS; over plain HTTP the session cookie
      only holds on `localhost`
 7. Create the owner account; that signs you in. The wizard then walks through the public URL,
-   Twitch app credentials and the Twitch connection, each step skippable, and ends in a readiness
-   checklist that links to wherever something is still missing.
+   Twitch app credentials, the Twitch connection, the stream key and a first programme (a pool from your
+   media that plays all week), each step skippable, and ends in a readiness checklist that links to
+   wherever something is still missing.
 8. `Live → Status` shows the same readiness afterwards.
 9. Optional during bootstrap:
    - enter `TWITCH_CLIENT_ID`
@@ -187,7 +188,8 @@ The one-page path from an empty host to a green channel, with the traps where th
    - `/settings`
 11. Open `Admin → Settings → Twitch accounts`: set the broadcast channel and connect the bot account (and the channel owner for title, category and schedule sync). See `docs/twitch-setup.md`.
 12. Paste the broadcast channel's stream key (Twitch Creator Dashboard → Settings → Stream) into the
-    primary destination under `Live → Status → Output destinations`; the guide's section 7 has the steps.
+    wizard's *Where the stream goes* step or the primary destination under
+    `Studio → Output → Output destinations`; the guide's section 7 has the steps.
 13. Add media by either:
    - placing files into `data/media`
    - adding direct media URLs

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { InfoTip } from "@/components/ui/InfoTip";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import type { AssetCollectionRecord, AssetRecord, SourceRecord } from "@/lib/server/state";
 
 type GroupByMode = "none" | "source" | "folder" | "tag" | "curated-set" | "status";
@@ -103,6 +104,42 @@ function buildGroups(args: {
     }
     return left.label.localeCompare(right.label);
   });
+}
+
+/**
+ * What an empty list says (M99, R2 U3). A fresh install's library is empty, which is not a filter
+ * problem: it used to read "No assets match the current filters" there. An empty library says how media
+ * gets in; a library the filters hide entirely says so and offers to clear them.
+ */
+export function LibraryEmptyState(props: { totalCount: number; onClearFilters: () => void }) {
+  if (props.totalCount === 0) {
+    return (
+      <div className="item library-empty">
+        <strong>The library is empty</strong>
+        <div className="subtle">
+          Add media in one of three ways: upload files with the form on this page, put them into data/media on the
+          host (mp4, mkv, mov, m4v or webm), or add a YouTube, Twitch or direct media source under{" "}
+          <Link href={buildWorkspaceHref("program", "sources")}>Program → Sources</Link>. The worker scans new media within a few
+          minutes.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="item library-filtered-empty">
+      <strong>The filters hide every asset</strong>
+      <div className="subtle">
+        The library holds {props.totalCount} asset{props.totalCount === 1 ? "" : "s"}, but none matches the source,
+        status, programming, folder, tag, curated set and search filters above.
+      </div>
+      <div className="toggle-row" style={{ marginTop: 8 }}>
+        <button className="button secondary" onClick={props.onClearFilters} type="button">
+          Clear all filters
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function AssetLibraryBrowser(props: {
@@ -744,10 +781,18 @@ export function AssetLibraryBrowser(props: {
         ))}
 
         {filteredAssets.length === 0 ? (
-          <div className="item">
-            <strong>No assets match the current filters</strong>
-            <div className="subtle">Try a different source, curated set, folder, or search query.</div>
-          </div>
+          <LibraryEmptyState
+            onClearFilters={() => {
+              setQuery("");
+              setSourceId("all");
+              setStatus("all");
+              setProgrammingState("all");
+              setFolderFilter("");
+              setTagFilter("");
+              setCollectionFilter("all");
+            }}
+            totalCount={props.assets.length}
+          />
         ) : null}
       </div>
     </div>

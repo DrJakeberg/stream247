@@ -39,7 +39,7 @@ The app has four top-level workspaces and uses tabs inside each workspace.
 Legacy admin routes may continue to redirect, but the workspace URLs above are the canonical entry points.
 
 Outside the workspaces, `/setup` is the first-run wizard (owner account → instance basics → Twitch
-app credentials → Twitch connection → review). It stays reachable for signed-in operators after
+app credentials → Twitch connection → where the stream goes → first programme → review). It stays reachable for signed-in operators after
 bootstrap; each step's completion is derived from what is actually configured, so it is resumable
 and every post-owner step is skippable.
 
@@ -127,7 +127,8 @@ New surfaces should build from those primitives instead of bespoke styled HTML c
 - Publish is explicit and reviewable.
 - Emergency banner controls stay prominent inside `Scene`.
 - Chat, alerts, and engagement behavior live together under `Engagement`.
-- Output profile and destination management live together under `Output`.
+- Output profile and destination management live together under `Output`; `Live → Status` only
+  lists each destination's state, with a link there (M99).
 
 ## Responsive Rules
 

@@ -129,7 +129,7 @@ from these column names.
 
 The stream key must belong to the **broadcast channel**:
 
-- `TWITCH_STREAM_KEY` (or the key on the primary output destination under Live → Status)
+- `TWITCH_STREAM_KEY` (or the key on the primary output destination under Studio → Output, also asked for in the setup wizard)
 - optionally `TWITCH_RTMP_URL` (default `rtmp://live.twitch.tv/app`)
 - generic overrides: `STREAM_OUTPUT_URL`, `STREAM_OUTPUT_KEY`
 

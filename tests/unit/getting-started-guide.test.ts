@@ -140,7 +140,7 @@ describe("getting-started guide", () => {
       twitch: { status: "not-connected", broadcasterLogin: "" }
     } as unknown as SetupWizardStateSlice;
     const titles = deriveSetupWizardSteps(freshInstall, {}).map((step) => step.title);
-    expect(titles).toHaveLength(5);
+    expect(titles).toHaveLength(7);
 
     const start = section(5);
     let cursor = 0;
@@ -197,11 +197,14 @@ describe("getting-started guide from an empty host (M92)", () => {
     const steps = [...streamKey.slice(streamKey.indexOf("\n")).matchAll(/^(\d+)\. /gm)].map((match) => Number(match[1]));
     expect(steps).toEqual([1, 2, 3, 4]);
     expect(streamKey).toContain("broadcast channel");
-    expect(streamKey).toContain("`Live → Status → Output destinations`");
+    // Since M99 the form lives in Studio → Output, and the wizard asks for the key itself.
+    expect(streamKey).toContain("`Studio → Output → Output destinations`");
+    expect(streamKey).toContain("*Where the stream goes*");
     expect(streamKey).toContain("*Managed stream key*");
     // The names it gives are the ones the screens show.
-    expect(read("apps/web/app/(admin)/dashboard/page.tsx")).toContain('title="Output destinations"');
-    expect(read("apps/web/app/(admin)/dashboard/page.tsx")).toContain("<summary>Change this destination</summary>");
+    expect(read("apps/web/app/(admin)/output/page.tsx")).toContain('title="Output destinations"');
+    expect(read("apps/web/app/(admin)/output/page.tsx")).toContain("<summary>Change this destination</summary>");
+    expect(read("apps/web/lib/server/setup-wizard.ts")).toContain('title: "Where the stream goes"');
     expect(read("apps/web/components/destination-settings-form.tsx")).toContain("Managed stream key<InfoTip");
     expect(read("packages/db/src/index.ts")).toContain('name: "Primary Twitch Output"');
     expect(read("apps/web/lib/server/onboarding.ts")).toContain('title: "Live destination"');

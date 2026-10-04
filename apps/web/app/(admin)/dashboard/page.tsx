@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import Link from "next/link";
 import {
   TWITCH_METADATA_WAITING_MESSAGE,
   describeIncidentOperatorAction,
@@ -9,9 +10,8 @@ import {
 import { AdminPageHeader } from "@/components/admin-page-header";
 import { AsRunLogPanel } from "@/components/as-run-log-panel";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
-import { DestinationCreateForm } from "@/components/destination-create-form";
-import { DestinationSettingsForm } from "@/components/destination-settings-form";
 import { IncidentActionForm } from "@/components/incident-action-form";
+import { LegacyAnchorRedirect } from "@/components/legacy-anchor-redirect";
 import { Panel } from "@/components/panel";
 import { TwitchConnectPanel } from "@/components/twitch-connect-panel";
 import { describeTwitchConnection } from "@/components/twitch-connection-status";
@@ -33,6 +33,7 @@ import {
   readRecentAsRunLog
 } from "@/lib/server/state";
 import { isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 
 export default async function DashboardPage() {
   const state = await readAppState();
@@ -176,14 +177,11 @@ export default async function DashboardPage() {
             ))}
           </div>
         </Panel>
+        {/*
+          The forms moved to Studio → Output (M99, U1): this tab called itself read-only while it held the
+          stream-key form. What each destination is and how it is doing stays here, one line each.
+        */}
         <Panel title="Output destinations" eyebrow="Delivery">
-          <p className="subtle">
-            Stream247 can now fan one channel out to multiple active outputs. Healthy primary outputs are preferred
-            together; backup outputs take over only when no primary output group is available.
-          </p>
-          <div className="item" style={{ marginBottom: 16 }}>
-            <DestinationCreateForm />
-          </div>
           <div className="list">
             {orderedDestinations.map((destination) => (
               <div className="item" key={destination.id}>
@@ -191,10 +189,7 @@ export default async function DashboardPage() {
                 <div className="subtle">
                   {DESTINATION_ROLE_LABELS[destination.role]} · priority {destination.priority} ·{" "}
                   {DESTINATION_STATUS_LABELS[destination.status]}
-                  {activeDestinationIds.has(destination.id) ? " · in use" : ""}
-                </div>
-                <div className="subtle">
-                  {destination.rtmpUrl || "No RTMP URL configured"} ·{" "}
+                  {activeDestinationIds.has(destination.id) ? " · in use" : ""} ·{" "}
                   {describeStreamKey(destination.streamKeyPresent, destination.streamKeySource)}
                 </div>
                 {destination.lastFailureAt ? (
@@ -202,22 +197,18 @@ export default async function DashboardPage() {
                     Last failure {destination.lastFailureAt} · count {destination.failureCount} · {destination.lastError || "No error sample captured."}
                   </div>
                 ) : null}
-                {/*
-                  The editor used to stand open under every destination, so a page with three
-                  outputs presented three full forms at once — 62 controls on a page whose job is to
-                  tell you whether you are on air. What each destination is and how it is doing is
-                  already summarised above; the form is only needed when someone intends to change
-                  it.
-                */}
-                <details className="disclosure" style={{ marginTop: 12 }}>
-                  <summary>Change this destination</summary>
-                  <div style={{ marginTop: 12 }}>
-                    <DestinationSettingsForm destination={destination} />
-                  </div>
-                </details>
               </div>
             ))}
           </div>
+          <p className="subtle" style={{ marginTop: 12 }}>
+            <Link href={`${buildWorkspaceHref("studio", "output")}#output-destinations`}>
+              Add or change destinations and stream keys in Studio → Output
+            </Link>
+          </p>
+          <LegacyAnchorRedirect
+            anchors={["output-destinations"]}
+            target={`${buildWorkspaceHref("studio", "output")}#output-destinations`}
+          />
         </Panel>
 
         <Panel title="Alerts and drift" eyebrow="Runtime">

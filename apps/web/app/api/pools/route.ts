@@ -93,8 +93,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const poolId = `pool_${Math.random().toString(36).slice(2, 10)}`;
   await createPoolRecord({
-    id: `pool_${Math.random().toString(36).slice(2, 10)}`,
+    id: poolId,
     name: payload.name,
     sourceIds,
     playbackMode: "round-robin",
@@ -109,7 +110,8 @@ export async function POST(request: NextRequest) {
   });
 
   await appendAuditEvent("pool.created", `Created pool ${payload.name}.`);
-  return NextResponse.json({ ok: true, message: `Pool ${payload.name} created.` });
+  // The id lets a caller go on with the new pool, as the setup wizard's "First programme" step does (M99).
+  return NextResponse.json({ ok: true, id: poolId, message: `Pool ${payload.name} created.` });
 }
 
 export async function PUT(request: NextRequest) {

@@ -34,7 +34,7 @@ How this file works:
 | M96 Local File Durations | Data | Next | Complete | Local-library assets carry their real length, so planning numbers are right | U4: `ffprobe` duration at scan time, bounded timeout, cached by size + mtime; unit test on a generated 2-minute file → `durationSeconds` within 1 s of 120; an unchanged file is not probed again (spy); Day lens shows "Unique library: 6m" for three such files | `apps/worker`, `packages/db`, tests | medium: a large first scan is slower, so probing is incremental | revert the commit; stored durations are harmless to old images |
 | M97 Week View Tells The Truth | UX | Next | Complete | The week view shows what will play, with dates, overnight blocks once, and why a block repeats | U5: each pool's rotation carried across blocks in time order through the worker's rotation function (shared, not copied); dates on day headers; hours, not minutes; an overnight block shown once with "→ 01:00 Sun"; repeat reason with numbers. U6: confirmation before "Replace existing schedule blocks"; "Edit block" and "Add block" on the week view. Tests in `program-week-projection`: three items, two blocks, the second block starts with item 2, not item 1; a 24 h block reads "24 h"; a block with 6 min of video in 24 h carries the reason "plays ≈ 240 times"; an overnight block appears on one day only. e2e: "Replace existing schedule blocks" opens a confirmation and Cancel leaves the blocks unchanged | `packages/core`, `apps/web`, tests, baselines | medium: preview must not drift from the worker, so one shared function | revert the commit |
 | M98 The Production Path Has A Smoke | Test | Next | Complete | CI exercises playout → HLS → uplink with the relay on | U15: a CI job starts the stack with the relay on and asserts that `program.m3u8` MEDIA-SEQUENCE grows and the uplink output grows over 60 s; the job fails when the uplink is stopped (mutation run) | `.github/workflows/ci.yml`, `scripts/`, `docker-compose*.yml` | low (CI only) | revert the commit |
-| M99 Wizard To First Programme | UX | Later | Planned | `/setup` ends with a stream key and a playing week | U1 (decided 5.1 Q9): skippable step "Where the stream goes" with the Twitch preset, the key stored encrypted and masked; the destination form moves to Studio → Output, the old anchor redirects. U2: skippable step "First programme" creates a pool from chosen media and applies the "Always-on single pool" template. R2 U3: render test: an empty library says how to add media, a filtered-empty library says the filters hide everything. e2e: a fresh owner completes both steps and readiness shows destination, pools and schedule ready | `apps/web`, tests, baselines, `docs/getting-started.md` | medium: moves a form operators know | revert the commit |
+| M99 Wizard To First Programme | UX | Later | Complete | `/setup` ends with a stream key and a playing week | U1 (decided 5.1 Q9): skippable step "Where the stream goes" with the Twitch preset, the key stored encrypted and masked; the destination form moves to Studio → Output, the old anchor redirects. U2: skippable step "First programme" creates a pool from chosen media and applies the "Always-on single pool" template. R2 U3: render test: an empty library says how to add media, a filtered-empty library says the filters hide everything. e2e: a fresh owner completes both steps and readiness shows destination, pools and schedule ready | `apps/web`, tests, baselines, `docs/getting-started.md` | medium: moves a form operators know | revert the commit |
 | M100 Public Programme For Viewers | Feature | Later | Planned | Viewers see what comes next and the coming week, in their own time | V1 ("After that" from the schedule) comes with M88 through R1's commits `a41d327` and `51e69ee` and is not built again here. V2: "Scheduled now" when playout is down. R1 row B: a 7-day list on `/channel` per day, dated items marked; `/channel.ics` validated by a parser test; times per default R2 Q7 in 5.2 (viewer's zone first; unit test with a browser zone other than the channel zone). Layout per 2.5a: a *Now* card with progress bar and remaining time (unit test on the remaining-time and progress values for a fixed clock), a *Next* list of the next 24 h at item level from the shared week projection, consecutive items of one block grouped with "N more" (test: 3 blocks × 5 items give 3 groups with "4 more" each), crossing midnight without a break (test); Playwright at 390 px: the *Now* card is above the fold. R2 V7: the on-air Next card adds "in N min" to its bare time range (`packages/core/src/viewer-messages/en.ts:29`) through the catalogue, en + de, unit test for a fixed clock. Catalogue parity en/de green | `apps/web`, `packages/core`, tests, baselines, `docs/` | low | revert the commit |
 | M101 Schedule Across DST, Wall Clock Kept | Bug | Later | Planned | Twice a year the counts are right while blocks keep their wall-clock times (owner Q4) | C5: cuepoint elapsed time from real instants (test: block from 01:00, at 03:30 local on 2027-03-28 reports 5 400 s, not 9 000 s); a non-existent local time maps forward (02:30 on 2026-03-29 → `01:30Z`, not `00:30Z`); the Twitch segment end follows real minutes; `docs/operations.md` states the wall-clock rule (skipped in March, twice in October) | `packages/core`, `apps/worker`, tests, docs | low | revert the commit |
 | M102 Standby Shows Standby | Bug | Later | Planned | The standby or reconnect slate never shows the previous item's title | W8: `writeStandbySlate` sets the standby scene payload; unit test on the payload; a design-baseline check of the standby frame | `apps/worker`, tests, baselines | medium: changes the on-air picture | revert the commit |
@@ -276,6 +276,12 @@ deployed; the release that ships them records the results.
   one day, note the first video of the second block in the morning; it is the one Live names when that
   block starts. A block past midnight is listed once, as *23:00 → 01:00 Sun*, and today's blocks that have
   ended read *Aired earlier today*.
+
+- M99, after the repin: the stream key the DUT already has is where operators now look for it.
+  `Studio -> Output -> Output destinations` lists *Primary Twitch Output* with *Stream key stored here* (or
+  *set in the server configuration*), `Live -> Status` lists it without forms and links there, and `/setup`
+  (signed in) shows *Where the stream goes* and *First programme* as *Done* when the readiness lines *Live
+  destination*, *Program pools* and *Weekly schedule* are ready.
 
 - (The checks for 2.2.0 are in the archive, sections M75-M82.)
 
@@ -849,3 +855,45 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   3. The uplink's tee/fifo output sends an empty H.264 sequence header first; MediaMTX refuses it and the
      fifo never recovers (stand-in images only, see above). Matters for anyone pointing the uplink at their
      own RTMP server.
+
+### M99 Wizard To First Programme
+
+- **U1 (decided 5.1 Q9).** `/setup` has a step 5, *Where the stream goes*, after *Twitch accounts*: the
+  built-in primary destination with *Twitch* (`rtmp://live.twitch.tv/app`, `TWITCH_INGEST_URL`) preselected,
+  or *Another RTMP service* when the destination already points elsewhere, and a masked key field
+  (`type="password"`, `autocomplete="new-password"`, empty after saving). It saves through
+  `PUT /api/destinations`, so the key is stored encrypted as before and never comes back. The forms moved
+  from `Live -> Status` to `Studio -> Output` (panel `#output-destinations`, the add form folded as
+  *Add another destination* so the page keeps one primary action); Status lists each destination's state
+  with a link there. The old section had no anchor of its own; `/live?tab=status#output-destinations` is
+  sent on in the browser (`LegacyAnchorRedirect`, a fragment never reaches the server), and readiness's
+  *Live destination* links to `Studio -> Output`.
+- **U2.** Step 6, *First programme*: the enabled sources with their count of playable videos (the schedule
+  preview's eligibility: ready, included, not quarantined) as picks, a pool name (*Programme*), then
+  `POST /api/pools` (now answering with the pool's `id`) and `POST /api/schedule/templates` with
+  `always-on-single-pool`. A week that already has blocks gets a *Replace the blocks already in the week*
+  switch with M97's confirmation. Without a ready video the step says how media gets in and carries the
+  library upload form. A pool is made of sources, so "chosen media" means chosen sources; single videos
+  cannot be picked.
+- **Completion.** Steps 5 and 6 are done exactly when readiness says so (*Live destination*; *Program pools*
+  and *Weekly schedule*); *Review* is done only when all six before it are.
+- **R2 U3.** `LibraryEmptyState`: an empty library says the three ways in (upload on the page, `data/media`,
+  a source); a library the filters hide says how many assets it holds and offers *Clear all filters*. The
+  list was not moved above curated sets and bulk edit (R2 suggested it; not in this row).
+- **Tests.** `tests/unit/setup-first-programme.test.ts` renders both steps, the Output page and the library
+  states and runs the wizard's three writes through the real routes against an in-memory state, ending with
+  the three readiness lines ready and seven *Done* badges. `tests/e2e/setup-wizard.spec.ts` does it on a
+  fresh stack (CI step *Setup wizard to first programme*: `E2E_FRESH_DESTINATION=1` leaves the key out of
+  the environment, `E2E_MEDIA_FIXTURE=1` puts a 20 s video into the library). Changed, not weakened: the
+  wizard tests now pass readiness and expect seven steps; the guide test names the new place of the form;
+  admin-smoke adds its destination in `Studio -> Output`; the control budgets of Status and Output follow the
+  move.
+
+- **Review (fresh subagent).** All items met; the anchor redirect only nominally, since the old section had
+  no anchor (above). Fixed: the e2e opened the folded add form before asserting its button; the CI step got
+  a 15-minute bound; the library's empty state links through the workspace helper. Left as is: saving a key
+  in the wizard enables the primary destination (the step's purpose is to go on air), a regional Twitch
+  ingest shows as *Another RTMP service*, and sources that become playable after a reload are not ticked
+  until the step is opened again.
+- **Not in this milestone's scope, needed for its e2e:** `scripts/e2e-smoke.sh` (two switches) and the CI
+  step.
