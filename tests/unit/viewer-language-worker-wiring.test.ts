@@ -71,8 +71,8 @@ const LOCALE_SLOT = new Map<string, LocaleSlot>(
     buildStandbySlateSceneInput: field,
     // The bot's answers (M104): !commands, !now, !next, a request's reply, and the titles they name.
     formatChatCommandsReply: field,
-    formatChatNowReply: arg(1),
-    formatChatNextReply: arg(1),
+    formatChatNowReply: arg(2),
+    formatChatNextReply: arg(2),
     formatChatRequestReply: field,
     buildChatProgrammeInfo: field
   })

@@ -84,15 +84,15 @@ Disabled by settings or by the chat feature switch in the admin settings.
 Follow/sub alerts
 Disabled by settings or by the alerts feature switch in the admin settings.
 Bits / cheer alerts
-Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect.
+Disabled by settings, by the alerts feature switch, or because the channel owner connection does not grant these alerts yet: reconnect it under Admin → Settings → Twitch accounts.
 Channel point alerts
-Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect.
+Disabled by settings, by the alerts feature switch, or because the channel owner connection does not grant these alerts yet: reconnect it under Admin → Settings → Twitch accounts.
 Recent engagement events
 No recent chat or alert events.
 Game mode
 Disabled by settings, disabled chat runtime, or no active chatters in the current window.
 Twitch reconnect note
-Broadcasters connected before M32 must reconnect Twitch once so bits and channel point alert scopes are granted.
+A channel owner connected before bits and channel point alerts existed must reconnect once so Twitch grants them: Admin → Settings → Twitch accounts.
 CHAT STEERS THE PROGRAMME
 Viewer control
 Disabled. Chat cannot influence the running order.
@@ -132,6 +132,9 @@ MINIMUM VOTES
 i
 COLLECTION WINDOW (SECONDS)
 i
+CHAT ANSWERS
+The bot answers in chat, in the channel language. One answer to !commands, !now or !next per viewer a minute and one in the chat every ten seconds; a refused request is explained to a viewer once a minute.
+Answers on: 4 of 4
 Save viewer control
 CHAT PLAYS ON AIR
 Chat game

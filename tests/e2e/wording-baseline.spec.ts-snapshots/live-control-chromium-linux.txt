@@ -144,7 +144,7 @@ What the overlay shows
 Replay stream · Stream247
 Always on air
 Preset Replay Lower Third · glass surface · bottom anchor · balanced scale
-Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
+Asset headline Always on air · Insert Insert on air · Standby Stand by, we’ll be right back · Reconnect Scheduled reconnect in progress
 Asset Replay Lower Third · Insert Bumper Board · Standby Standby Board · Reconnect Reconnect Board
 Accent #0e6d5a · Brand badge none · Next visible yes · Clock yes
 Current category yes · Source label yes

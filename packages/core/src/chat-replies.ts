@@ -78,6 +78,8 @@ function normalizeViewer(actor: string): string {
  * nothing that is switched off.
  */
 export function formatChatCommandsReply(args: {
+  /** Named first: Twitch drops a line identical to one the bot sent in the last 30 s, and two viewers asking get the same answer otherwise. */
+  actor: string;
   config: ChatInteractionConfig;
   /** !game answers whenever chat is connected; the worker passes whether a game command is wired. */
   gameCommand: boolean;
@@ -106,7 +108,7 @@ export function formatChatCommandsReply(args: {
   if (args.gameCommand) {
     commands.push("!game");
   }
-  return viewerText(args.locale, "chat.commands.list", { commands: commands.join(" · ") });
+  return viewerText(args.locale, "chat.commands.list", { actor: args.actor, commands: commands.join(" · ") });
 }
 
 /** What the bot knows about the programme when a viewer asks; the worker refreshes it every cycle. */
@@ -125,21 +127,21 @@ function withProgrammeLink(text: string, info: ChatProgrammeInfo, locale?: strin
   return info.channelUrl ? `${text} ${viewerText(locale, "chat.programmeLink", { url: info.channelUrl })}` : text;
 }
 
-/** The answer to !now. */
-export function formatChatNowReply(info: ChatProgrammeInfo, locale?: string): string {
+/** The answer to !now, to the viewer who asked (see formatChatCommandsReply on why the name leads). */
+export function formatChatNowReply(actor: string, info: ChatProgrammeInfo, locale?: string): string {
   const text = info.nowTitle
-    ? viewerText(locale, "chat.now.onAir", { title: info.nowTitle })
-    : viewerText(locale, "chat.now.nothing");
+    ? viewerText(locale, "chat.now.onAir", { actor, title: info.nowTitle })
+    : viewerText(locale, "chat.now.nothing", { actor });
   return withProgrammeLink(text, info, locale);
 }
 
 /** The answer to !next, always with the /channel link when one is configured. */
-export function formatChatNextReply(info: ChatProgrammeInfo, locale?: string): string {
+export function formatChatNextReply(actor: string, info: ChatProgrammeInfo, locale?: string): string {
   const text = !info.nextTitle
-    ? viewerText(locale, "chat.next.nothing")
+    ? viewerText(locale, "chat.next.nothing", { actor })
     : info.nextStartsAt
-      ? viewerText(locale, "chat.next.at", { time: info.nextStartsAt, title: info.nextTitle })
-      : viewerText(locale, "chat.next.item", { title: info.nextTitle });
+      ? viewerText(locale, "chat.next.at", { actor, time: info.nextStartsAt, title: info.nextTitle })
+      : viewerText(locale, "chat.next.item", { actor, title: info.nextTitle });
   return withProgrammeLink(text, info, locale);
 }
 
@@ -208,5 +210,6 @@ export class ChatSendBudget {
 
 /** One IRC line: a title with a line break must not end the PRIVMSG and start a command of its own. */
 export function sanitizeChatLine(message: string): string {
-  return message.replace(/[\r\n\u0000]+/g, " ").trim().slice(0, 480);
+  // By code point, so a cut never splits an emoji's surrogate pair.
+  return Array.from(message.replace(/[\r\n\u0000]+/g, " ").trim()).slice(0, 480).join("");
 }

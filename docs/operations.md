@@ -848,14 +848,15 @@ channel. The worker's `twitch.chat_settings.written` line names both accounts (`
 
 ### What the chat bot answers (since M104)
 
-With *Viewer control* on (Studio → Engagement), the bot answers in chat, in the channel language. Each
+With *Viewer control* on (Studio → Engagement), the bot answers in chat, in the channel language, and
+names the viewer first (`@name …`: Twitch drops a line identical to one the bot sent in the last 30 s). Each
 answer has its own switch under *Chat answers* (all on by default; with *Enable viewer control* off the
 bot answers none of them):
 
 - `!commands` lists the commands that work right now, under the names configured on that page (`!now`,
   `!next`, `!request title`, `!skip`, `!1–!N during a poll`, `!game`); a switched-off command is left out.
 - `!now` names what is on air, or says the channel is on a short break while the standby or reconnect
-  slate runs or nothing plays.
+  slate runs, playout is (re)starting, or nothing plays.
 - `!next` names the next item; while nothing plays, the next schedule block of today with its start time.
 - Both end with `Programme: <APP_URL>/channel` when the app URL is set (`APP_URL` or the wizard's value).
 - Every `!request` gets one answer: queued with its position in the queue, no matching video, the

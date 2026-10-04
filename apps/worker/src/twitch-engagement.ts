@@ -555,7 +555,7 @@ export class TwitchChatBridge {
     // Past the budget the line is dropped, not queued: a late answer is stale, and more lines than
     // Twitch allows put the bot's chat access at risk (M104).
     if (!this.sendBudget.claim(Date.now())) {
-      logRuntimeEvent("chat.say.dropped", { reason: "send-budget" });
+      logRuntimeEvent("chat.say.dropped", { reason: "send-budget", line: message.slice(0, 40) });
       return;
     }
     this.socket.write(`PRIVMSG #${this.channel} :${message}\r\n`);

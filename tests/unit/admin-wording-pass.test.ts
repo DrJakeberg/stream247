@@ -26,8 +26,8 @@ import { describeOnAirWording, describeOverlayHeadlines } from "../../apps/web/l
 // The web components are compiled with the classic JSX runtime here.
 (globalThis as { React?: unknown }).React = React;
 
-/** A milestone id as the proposal's U13 check names it. */
-const MILESTONE_ID = /\bM\d{2}\b/;
+/** A milestone id: the proposal's U13 check `\bM\d{2}\b`, widened to the three-digit ids from M100 on. */
+const MILESTONE_ID = /\bM\d{2,3}\b/;
 
 const ROOT = new URL("../../", import.meta.url);
 
@@ -188,6 +188,12 @@ describe("S19: the Scene tab says first whether overlay output is on", () => {
     expect(html).toContain("Overlay output is off");
     expect(html).toContain("Not published yet");
     expect(html).not.toMatch(/updated at unknown|Published never/);
+  });
+
+  it("leaves no unknown or never on the Scene page around the form either", () => {
+    const page = readFileSync(new URL("apps/web/app/(admin)/overlay-studio/page.tsx", ROOT), "utf8");
+    expect(page).not.toMatch(/\|\| "never"|\|\| "unknown"/);
+    expect(page).toContain('"Not published yet"');
   });
 
   it("says on, and the publish times, once a scene is published", () => {

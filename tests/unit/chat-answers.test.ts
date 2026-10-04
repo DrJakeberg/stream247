@@ -71,24 +71,25 @@ describe("the answer commands are parsed only while their switch is on", () => {
 
 describe("!commands lists only what answers", () => {
   it("names every enabled command under its configured name", () => {
-    expect(formatChatCommandsReply({ config: config({ requestCommand: "wunsch", skipCommand: "weiter" }), gameCommand: true, locale: "en" })).toBe(
-      "Commands: !commands · !now · !next · !wunsch title · !weiter · !1–!3 during a poll · !game"
+    expect(formatChatCommandsReply({ actor: "Ada", config: config({ requestCommand: "wunsch", skipCommand: "weiter" }), gameCommand: true, locale: "en" })).toBe(
+      "@Ada commands: !commands · !now · !next · !wunsch title · !weiter · !1–!3 during a poll · !game"
     );
   });
 
   it("leaves out what is switched off", () => {
     const reply = formatChatCommandsReply({
+      actor: "Ada",
       config: config({ nowReplyEnabled: false, requestsEnabled: false, skipEnabled: false, votingEnabled: false }),
       gameCommand: false,
       locale: "en"
     });
-    expect(reply).toBe("Commands: !commands · !next");
+    expect(reply).toBe("@Ada commands: !commands · !next");
     expect(reply).not.toMatch(/!now|!request|!skip|!1|!game/);
   });
 
   it("speaks German on a German channel", () => {
-    expect(formatChatCommandsReply({ config: config({ voteOptionCount: 2 }), gameCommand: false, locale: "de" })).toBe(
-      "Befehle: !commands · !now · !next · !request Titel · !skip · !1–!2 während einer Abstimmung"
+    expect(formatChatCommandsReply({ actor: "Ada", config: config({ voteOptionCount: 2 }), gameCommand: false, locale: "de" })).toBe(
+      "@Ada Befehle: !commands · !now · !next · !request Titel · !skip · !1–!2 während einer Abstimmung"
     );
   });
 });
@@ -103,26 +104,26 @@ const programme = (overrides: Partial<ChatProgrammeInfo> = {}): ChatProgrammeInf
 
 describe("!now and !next", () => {
   it("!now names the title on air and links the programme", () => {
-    expect(formatChatNowReply(programme(), "en")).toBe("Now on air: Retro Night. Programme: https://tv.example.org/channel");
-    expect(formatChatNowReply(programme(), "de")).toBe("Gerade läuft: Retro Night. Programm: https://tv.example.org/channel");
+    expect(formatChatNowReply("Ada", programme(), "en")).toBe("@Ada now on air: Retro Night. Programme: https://tv.example.org/channel");
+    expect(formatChatNowReply("Ada", programme(), "de")).toBe("@Ada gerade läuft: Retro Night. Programm: https://tv.example.org/channel");
   });
 
   it("!now says so when nothing plays, and has no link without an app URL", () => {
-    expect(formatChatNowReply(programme({ nowTitle: "", channelUrl: "" }), "en")).toBe(
-      "Nothing is playing right now — stand by, we’ll be right back."
+    expect(formatChatNowReply("Ada", programme({ nowTitle: "", channelUrl: "" }), "en")).toBe(
+      "@Ada nothing is playing right now — stand by, we’ll be right back."
     );
-    expect(formatChatNowReply(programme({ nowTitle: "", channelUrl: "" }), "de")).toBe("Gerade läuft nichts – kurze Pause, gleich geht’s weiter.");
+    expect(formatChatNowReply("Ada", programme({ nowTitle: "", channelUrl: "" }), "de")).toBe("@Ada gerade läuft nichts – kurze Pause, gleich geht’s weiter.");
   });
 
   it("!next names the next item, with its start time when it is a block, and the /channel link", () => {
-    expect(formatChatNextReply(programme(), "en")).toBe("Up next: Coding Marathon. Programme: https://tv.example.org/channel");
-    expect(formatChatNextReply(programme({ nextStartsAt: "20:00" }), "en")).toBe(
-      "Next at 20:00: Coding Marathon. Programme: https://tv.example.org/channel"
+    expect(formatChatNextReply("Ada", programme(), "en")).toBe("@Ada up next: Coding Marathon. Programme: https://tv.example.org/channel");
+    expect(formatChatNextReply("Ada", programme({ nextStartsAt: "20:00" }), "en")).toBe(
+      "@Ada next at 20:00: Coding Marathon. Programme: https://tv.example.org/channel"
     );
-    expect(formatChatNextReply(programme({ nextStartsAt: "20:00" }), "de")).toBe(
-      "Als Nächstes um 20:00: Coding Marathon. Programm: https://tv.example.org/channel"
+    expect(formatChatNextReply("Ada", programme({ nextStartsAt: "20:00" }), "de")).toBe(
+      "@Ada als Nächstes um 20:00: Coding Marathon. Programm: https://tv.example.org/channel"
     );
-    expect(formatChatNextReply(programme({ nextTitle: "" }), "de")).toBe("Danach ist noch nichts geplant. Programm: https://tv.example.org/channel");
+    expect(formatChatNextReply("Ada", programme({ nextTitle: "" }), "de")).toBe("@Ada als Nächstes ist noch nichts geplant. Programm: https://tv.example.org/channel");
   });
 });
 
@@ -141,7 +142,7 @@ describe("one answer per !request", () => {
     const reply = formatChatRequestReply({ actor: "Ada", verdict: verdict({ reason: "no-match" }), position: 0, locale: "en" });
     expect(reply).toBe("@Ada no requestable video matches that title.");
     expect(formatChatRequestReply({ actor: "Ada", verdict: verdict({ reason: "no-match" }), position: 0, locale: "de" })).toBe(
-      "@Ada zu diesem Titel gibt es kein Video, das man sich wünschen kann."
+      "@Ada dazu finde ich kein Video, das du dir wünschen kannst."
     );
   });
 
@@ -266,6 +267,15 @@ describe("the bot cannot flood chat or break its own line", () => {
     expect(budget.claim(CHAT_SEND_BUDGET_WINDOW_MS)).toBe(true);
   });
 
+  it("names the viewer first, so two viewers asking the same are not sent one identical line twice", () => {
+    expect(formatChatNowReply("Ada", programme(), "en")).not.toBe(formatChatNowReply("Bob", programme(), "en"));
+  });
+
+  it("cuts a long line by code point, never inside an emoji", () => {
+    expect(Array.from(sanitizeChatLine("😀".repeat(500)))).toHaveLength(480);
+    expect(sanitizeChatLine("😀".repeat(500))).toBe("😀".repeat(480));
+  });
+
   it("turns a line break in a title into a space", () => {
     expect(sanitizeChatLine("Now on air: Evil\r\nPRIVMSG #other :hi")).toBe("Now on air: Evil PRIVMSG #other :hi");
   });
@@ -281,7 +291,9 @@ describe("the worker wiring", () => {
   });
 
   it("confirms every accepted request and explains a refusal once a minute, both behind the request switch", () => {
-    expect(flat(worker)).toContain("if (config.requestRepliesEnabled && chatControl.claimRequestRefusalReply(effect.actor)) {");
+    expect(flat(worker)).toContain("if (config.requestRepliesEnabled) { // Formatted before the claim");
+    expect(flat(worker)).toContain("const refusal = formatChatRequestReply({ actor: effect.actor, verdict, position: 0, locale: viewerLanguage() });");
+    expect(flat(worker)).toContain("if (refusal && chatControl.claimRequestRefusalReply(effect.actor)) {");
     expect(flat(worker)).toMatch(/position = queuedAssetIds\.length;[\s\S]*if \(config\.requestRepliesEnabled\) \{ const reply = formatChatRequestReply\(\{ actor: effect\.actor, verdict, position,/);
   });
 

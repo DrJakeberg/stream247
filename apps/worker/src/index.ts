@@ -629,12 +629,12 @@ const twitchChatBridge = new TwitchChatBridge({
     if (effect.kind === "info" && effect.answer) {
       const locale = viewerLanguage();
       if (effect.info === "now") {
-        twitchChatBridge.say(formatChatNowReply(latestChatProgrammeInfo, locale));
+        twitchChatBridge.say(formatChatNowReply(effect.actor, latestChatProgrammeInfo, locale));
       } else if (effect.info === "next") {
-        twitchChatBridge.say(formatChatNextReply(latestChatProgrammeInfo, locale));
+        twitchChatBridge.say(formatChatNextReply(effect.actor, latestChatProgrammeInfo, locale));
       } else {
         // !game always answers while chat is connected (handleChatGameCommand), so it is listed with the rest.
-        twitchChatBridge.say(formatChatCommandsReply({ config: latestChatInteractionConfig, gameCommand: true, locale }));
+        twitchChatBridge.say(formatChatCommandsReply({ actor: effect.actor, config: latestChatInteractionConfig, gameCommand: true, locale }));
       }
     }
 
@@ -10192,10 +10192,11 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
       logRuntimeEvent("chat.request.rejected", { actor: effect.actor, query: effect.query, reason: verdict.reason });
       // One answer per request (M104); a viewer hears why at most once a minute, so a wrong title typed
       // ten times is not ten lines from the bot.
-      if (config.requestRepliesEnabled && chatControl.claimRequestRefusalReply(effect.actor)) {
-        const reply = formatChatRequestReply({ actor: effect.actor, verdict, position: 0, locale: viewerLanguage() });
-        if (reply) {
-          twitchChatBridge.say(reply);
+      if (config.requestRepliesEnabled) {
+        // Formatted before the claim, so a verdict with nothing to say does not use up the viewer's minute.
+        const refusal = formatChatRequestReply({ actor: effect.actor, verdict, position: 0, locale: viewerLanguage() });
+        if (refusal && chatControl.claimRequestRefusalReply(effect.actor)) {
+          twitchChatBridge.say(refusal);
         }
       }
       continue;

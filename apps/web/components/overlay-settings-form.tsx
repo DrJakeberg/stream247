@@ -812,7 +812,7 @@ export function OverlaySettingsForm(props: {
           <span className="label">Scene draft</span>
           <strong>{canPublish ? "Pending changes" : "Live and draft match"}</strong>
           <div className="subtle">
-            {props.basedOnUpdatedAt ? `Draft is based on live scene updated at ${props.basedOnUpdatedAt}.` : "Not published yet."}
+            {props.basedOnUpdatedAt ? `Draft is based on live scene updated at ${props.basedOnUpdatedAt}.` : "Draft starts from the defaults."}
           </div>
         </div>
         <div className="inline-form">
