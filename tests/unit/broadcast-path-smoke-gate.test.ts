@@ -35,7 +35,9 @@ describe("broadcast path smoke gate", () => {
   it("keeps the mutation run: with the uplink stopped the same measurement must fail", () => {
     const script = read(SCRIPT);
     const mutation = script.slice(script.indexOf("compose stop uplink"));
-    expect(mutation).toMatch(/^compose stop uplink[\s\S]*?if measure_path; then\s+fail /);
+    // The measurement must fail, and for the uplink alone (verdict 2): a stalled feed does not count.
+    expect(mutation).toMatch(/^compose stop uplink[\s\S]*?measure_path \|\| mutation_verdict=\$\?/);
+    expect(mutation).toMatch(/\[ "\$mutation_verdict" -eq 2 \] \|\| fail /);
   });
 
   it("keeps both simulated source failures, and the full run is the default", () => {

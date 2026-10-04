@@ -66,9 +66,15 @@ OUTAGE_SECONDS="${STREAM247_BROADCAST_SMOKE_OUTAGE_SECONDS:-90}"
 # Phases to run, for local iteration: all, path (1 and 2 only) or sources (3 and 4 only).
 PHASES="${STREAM247_BROADCAST_SMOKE_PHASES:-all}"
 
+# Set once this run has put its own .env in the repository root; before that the root .env is the
+# developer's and cleanup leaves it alone.
+ROOT_ENV_REPLACED=0
+
 cleanup() {
   compose down -v >/dev/null 2>&1 || true
-  if [ -f "$ROOT_ENV_BACKUP" ]; then
+  if [ "$ROOT_ENV_REPLACED" != "1" ]; then
+    :
+  elif [ -f "$ROOT_ENV_BACKUP" ]; then
     mv "$ROOT_ENV_BACKUP" "$ROOT_ENV_FILE"
   else
     rm -f "$ROOT_ENV_FILE"
@@ -173,8 +179,9 @@ sink_bytes_received() {
   find "$SINK_DIR" -type f -name '*.flv' -printf '%s\n' 2>/dev/null | awk '{ total += $1 } END { if (total > 0) print total }'
 }
 
-# One measurement over MEASURE_SECONDS: both counters must grow. Prints what it saw; returns 1 when
-# either did not grow, without dumping context (the mutation run expects that).
+# One measurement over MEASURE_SECONDS: both counters must grow. Prints what it saw; returns 1 when only
+# the feed did not grow, 2 when only the uplink output did not, 3 when neither did, without dumping
+# context (the mutation run expects 2).
 measure_path() {
   local seq_before seq_after bytes_before bytes_after verdict=0
   seq_before="$(feed_media_sequence)"
@@ -185,13 +192,27 @@ measure_path() {
   log "MEDIA-SEQUENCE ${seq_before:-none} -> ${seq_after:-none} over ${MEASURE_SECONDS}s; sink bytes ${bytes_before:-none} -> ${bytes_after:-none}"
   if [ -z "$seq_before" ] || [ -z "$seq_after" ] || [ "$seq_after" -le "$seq_before" ]; then
     log "program.m3u8 MEDIA-SEQUENCE did not grow."
-    verdict=1
+    verdict=$((verdict | 1))
   fi
   if [ -z "$bytes_before" ] || [ -z "$bytes_after" ] || [ "$bytes_after" -le "$bytes_before" ]; then
     log "the uplink output (bytes the sink received) did not grow."
-    verdict=1
+    verdict=$((verdict | 2))
   fi
   return "$verdict"
+}
+
+# Waits until the bytes the sink has written stop changing (10 s without a write).
+wait_for_sink_settled() {
+  local previous="" current
+  for _ in $(seq 1 12); do
+    current="$(sink_bytes_received)"
+    if [ -n "$previous" ] && [ "$current" = "$previous" ]; then
+      return 0
+    fi
+    previous="$current"
+    sleep 10
+  done
+  fail "the sink kept writing after the uplink was stopped."
 }
 
 # Waits until the bytes the sink receives are rising, i.e. the uplink is on air.
@@ -456,6 +477,7 @@ EOF
 if [ -f "$ROOT_ENV_FILE" ]; then
   cp "$ROOT_ENV_FILE" "$ROOT_ENV_BACKUP"
 fi
+ROOT_ENV_REPLACED=1
 cp "$ENV_FILE" "$ROOT_ENV_FILE"
 
 compose up -d
@@ -486,9 +508,15 @@ measure_path || fail "the production path did not carry the programme over ${MEA
 # --- 2. Mutation run: the same check fails with the uplink stopped ----------------------------------
 log "Phase 2 (mutation): uplink stopped, the same measurement must fail."
 compose stop uplink >/dev/null
-if measure_path; then
+# The sink writes its last buffered bytes after the uplink's connection closes; measured from before
+# that, they would read as uplink output.
+wait_for_sink_settled
+mutation_verdict=0
+measure_path || mutation_verdict=$?
+if [ "$mutation_verdict" -eq 0 ]; then
   fail "the measurement still passed with the uplink stopped, so it cannot detect a dead uplink."
 fi
+[ "$mutation_verdict" -eq 2 ] || fail "with the uplink stopped the measurement failed for another reason too (verdict ${mutation_verdict}): the feed did not grow."
 log "Mutation detected: with the uplink stopped the measurement fails."
 compose start uplink >/dev/null
 wait_for_uplink_publishing
@@ -547,6 +575,9 @@ docker network disconnect "$OUTSIDE_NETWORK" "$PLAYOUT_CONTAINER"
 air_pool "$REMOTE_POOL_ID"
 sleep "$OUTAGE_SECONDS"
 docker network connect "$OUTSIDE_NETWORK" "$PLAYOUT_CONTAINER"
+# Read before anything probes cleanly again: a clean probe resets the counter, so read later it would
+# hide failures the outage did count.
+COUNTED_FAILURES="$(psql_query "SELECT COALESCE(sum(playback_probe_failures), 0) FROM assets WHERE source_id = '${REMOTE_SOURCE_ID}';")"
 log "Playout reconnected."
 
 OUTAGE_LINES="$(playout_events_since "$PHASE4_SINCE" "playout.probe.network_outage" "$REMOTE_SOURCE_ID")"
@@ -574,7 +605,6 @@ log "Remote item ${on_air} on air after the outage."
   || fail "the outage opened the remote source's breaker."
 REMOTE_BREAKER="$(psql_query "SELECT state FROM source_breakers WHERE source_id = '${REMOTE_SOURCE_ID}';")"
 [ -z "$REMOTE_BREAKER" ] || [ "$REMOTE_BREAKER" = "closed" ] || fail "the remote source's breaker is ${REMOTE_BREAKER}."
-COUNTED_FAILURES="$(psql_query "SELECT COALESCE(sum(playback_probe_failures), 0) FROM assets WHERE source_id = '${REMOTE_SOURCE_ID}';")"
 [ "$COUNTED_FAILURES" = "0" ] || fail "the outage was counted against the remote items (${COUNTED_FAILURES} probe failures)."
 log "No breaker, no quarantine count for the remote source (breaker: ${REMOTE_BREAKER:-none}, probe failures: ${COUNTED_FAILURES})."
 

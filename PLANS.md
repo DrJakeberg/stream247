@@ -831,6 +831,10 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   refused), so the script ran against stand-in images built from the same source tree on Ubuntu with its
   ffmpeg 6.1 (mwader's static ffmpeg links librtmp, whose handshake the sink rejects). The pull request's CI
   run is the one against the real images.
+- **Review (fresh subagent).** All items met. Fixed: the probe-failure count is read right after the
+  reconnect (a clean probe resets it, so read later it could hide a counted failure); the mutation run waits
+  for the sink to stop writing before it measures and requires the uplink alone to be what did not grow; an
+  early exit no longer deletes a developer's own root `.env`.
 - **DUT checks.** None new: M82's check after a nightly blip and M75's breaker on real sources stay as they
   are.
 - **Follow-ups (not changed here).**
