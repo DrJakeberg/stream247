@@ -3313,6 +3313,15 @@ async function ensureScenePayload(asset: AssetRecord | null): Promise<void> {
       return;
     }
 
+    // Read as the cycle reads it: a Live Bridge is requested while its input is set and it is pending or active.
+    const liveBridge =
+      state.playout.liveBridgeInputUrl !== "" &&
+      (state.playout.liveBridgeStatus === "pending" || state.playout.liveBridgeStatus === "active");
+    if (!asset && !liveBridge) {
+      // A slate starting with nothing cached: its own payload, never the playout row's last title (M102).
+      await writeStandbySlate(state, state.playout.queueItems[0]?.kind || "standby");
+      return;
+    }
     await writeOnAirOverlay(state, asset, state.playout.queueItems[0]?.kind || (asset ? "asset" : ""));
   } catch (error) {
     logRuntimeEvent("scene.payload.prime_failed", {
@@ -3603,8 +3612,9 @@ async function writeStandbySlate(
 
   // The scene picture draws the cached payload, so the slate has to be that payload while it is on
   // air (M102); before, it kept the lower third of the item that played last. Not when a programme is
-  // what is actually on air and this only rewrites the slate's text file (scene: false).
-  if (options.scene !== false) {
+  // what is actually on air and this only rewrites the slate's text file (scene: false), and not with
+  // the overlay off, where no scene is drawn (as writeOnAirOverlay is only called with it on).
+  if (options.scene !== false && state.overlay.enabled) {
     currentScenePayloadIsSlate = true;
     currentScenePayload = payload;
     await reportTickerCrawlStaleness(payload);

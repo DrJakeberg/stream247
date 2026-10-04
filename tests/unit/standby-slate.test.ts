@@ -182,6 +182,17 @@ describe("the worker's wiring", () => {
     expect(body("ensureScenePayload")).toContain("shouldPrimeScenePayload(");
   });
 
+  it("primes a slate start with the slate's own payload, not the playout row's last title", () => {
+    const prime = body("ensureScenePayload");
+    expect(prime).toContain("if (!asset && !liveBridge) {");
+    expect(prime).toContain('await writeStandbySlate(state, state.playout.queueItems[0]?.kind || "standby");');
+    expect(prime).toContain('state.playout.liveBridgeInputUrl !== ""');
+  });
+
+  it("sets the picture only with the overlay on, where a scene is drawn", () => {
+    expect(body("writeStandbySlate")).toContain("if (options.scene !== false && state.overlay.enabled) {");
+  });
+
   it("leaves the picture alone where a refresh only rewrites the slate's text under a running programme", () => {
     const calls = worker.match(/await writeStandbySlate\([^;]*\);/g) ?? [];
     expect(calls.filter((call) => call.includes("{ scene: false }"))).toEqual([
@@ -189,7 +200,7 @@ describe("the worker's wiring", () => {
       'await writeStandbySlate(state, state.playout.queueItems[0]?.kind || "standby", { scene: false });'
     ]);
     // Every other call puts the slate on air and so sets the picture.
-    expect(calls.length).toBeGreaterThanOrEqual(8);
+    expect(calls.length).toBeGreaterThanOrEqual(9);
   });
 });
 

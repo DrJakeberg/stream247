@@ -1004,8 +1004,11 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   that only rewrite the text file under a running programme (overlay off, or an asset missing from state)
   pass `{ scene: false }`. A slate is drawn as standby, reconnect or live; a queue head of `asset` or
   `insert` no longer turns it into "Now Playing" (`resolveStandbySlateQueueKind`). A programme that starts
-  over a cached slate payload builds its own before the first frame (`shouldPrimeScenePayload`), so the
-  first second of the new item does not show the standby lower third.
+  over a cached slate payload builds its own before the first frame (`shouldPrimeScenePayload`; a guard,
+  since the cycle already writes the programme's payload before the start), and a slate that starts with
+  nothing cached primes with its own payload instead of `writeOnAirOverlay`, whose fallback is the playout
+  row's last title (review finding). With the overlay off the slate leaves the scene payload alone, so no
+  ticker staleness incident is raised while no scene is drawn.
 - **Side effect.** The slate's picture is rebuilt on every cycle, so the M80 follow-up "a language or zone
   change during a standby or reconnect slate reaches the picture only with the next programme" is gone
   (`docs/operations.md`, `docs/architecture.md`). A ticker edit during a slate now raises the ticker
