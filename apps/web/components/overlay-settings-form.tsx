@@ -45,6 +45,8 @@ import { buildOverlayPublishReviewSections, type OverlayPublishReviewSection } f
 import { OVERLAY_PANEL_LABELS } from "@/lib/overlay-panel-labels";
 import { createDefaultCustomLayer } from "@/lib/overlay-studio-defaults";
 import type { OverlayScenePresetRecord, OverlaySettingsRecord } from "@/lib/server/state";
+import { describeOverlayHeadlines } from "@/lib/overlay-headline-wording";
+import { OnAirWording } from "@/components/on-air-wording";
 import { describeScenePreset, describeTypographyPreset } from "@/lib/scene-preset-names";
 
 type OverlayPreviewSeed = {
@@ -784,11 +786,34 @@ export function OverlaySettingsForm(props: {
         startTransition(() => void saveDraft());
       }}
     >
+      {/*
+        First on the tab (M104, S19): whether the channel draws a scene at all. The switch itself is one
+        checkbox among many in the sidebar, and an operator who never published read "unknown" and
+        "never" here without learning that nothing is drawn over the programme.
+      */}
+      <div
+        className={`scene-output-banner${props.liveOverlay.enabled ? "" : " scene-output-banner-off"}`}
+        role="status"
+      >
+        <strong>{props.liveOverlay.enabled ? "Overlay output is on" : "Overlay output is off"}</strong>
+        <span className="subtle">
+          {props.liveOverlay.enabled
+            ? "The published scene is drawn over the programme picture."
+            : "Nothing is drawn over programme video; the standby and reconnect slates still show their text lines. Tick Enable overlay output and publish to turn it on."}
+        </span>
+        {draft.enabled !== props.liveOverlay.enabled ? (
+          <span className="subtle">The draft turns it {draft.enabled ? "on" : "off"}; it takes effect when you publish.</span>
+        ) : null}
+        {props.liveOverlay.updatedAt ? null : <span className="subtle">Not published yet.</span>}
+      </div>
+
       <div className={`scene-workspace-toolbar${emergencyBannerActive ? " scene-workspace-toolbar-alert" : ""}`}>
         <div>
           <span className="label">Scene draft</span>
           <strong>{canPublish ? "Pending changes" : "Live and draft match"}</strong>
-          <div className="subtle">Draft is based on live scene updated at {props.basedOnUpdatedAt || "unknown"}.</div>
+          <div className="subtle">
+            {props.basedOnUpdatedAt ? `Draft is based on live scene updated at ${props.basedOnUpdatedAt}.` : "Draft starts from the defaults."}
+          </div>
         </div>
         <div className="inline-form">
           <button className="button secondary" onClick={toggleDraftEmergencyBanner} title="Toggle the draft emergency banner." type="button">
@@ -966,20 +991,24 @@ export function OverlaySettingsForm(props: {
               <input onChange={(event) => setDraftField("channelName", event.target.value)} required value={draft.channelName} />
             </label>
             <label>
-              <span className="label label-with-info">Headline<InfoTip text="The line under the programme title in the lower third while a regular asset or the live bridge is on air. Up to 120 characters; cleared, it goes back to Always on air." /></span>
+              <span className="label label-with-info">Headline<InfoTip text={`The line under the programme title in the lower third while a regular asset or the live bridge is on air. Up to 120 characters; cleared, it goes back to ${viewerText(props.preview.locale, "overlay.headline.asset")}.`} /></span>
               <input onChange={(event) => setDraftField("headline", event.target.value)} required value={draft.headline} />
+              <OnAirWording locale={props.preview.locale} value={draft.headline} />
             </label>
             <label>
-              <span className="label label-with-info">Insert headline<InfoTip text="Replaces the headline in the lower third while an insert or bumper is on air, whether an operator started it or the schedule did. Up to 120 characters; cleared, it goes back to Insert on air." /></span>
+              <span className="label label-with-info">Insert headline<InfoTip text={`Replaces the headline in the lower third while an insert or bumper is on air, whether an operator started it or the schedule did. Up to 120 characters; cleared, it goes back to ${viewerText(props.preview.locale, "overlay.headline.insert")}.`} /></span>
               <input onChange={(event) => setDraftField("insertHeadline", event.target.value)} required value={draft.insertHeadline} />
+              <OnAirWording locale={props.preview.locale} value={draft.insertHeadline} />
             </label>
             <label>
-              <span className="label label-with-info">Standby headline<InfoTip text="Replaces the headline while the channel is on air with nothing playable and is waiting for the next item. Up to 120 characters; cleared, it goes back to Please wait, restream is starting." /></span>
+              <span className="label label-with-info">Standby headline<InfoTip text={`Replaces the headline while the channel is on air with nothing playable and is waiting for the next item. Up to 120 characters; cleared, it goes back to ${viewerText(props.preview.locale, "overlay.headline.standby")}.`} /></span>
               <input onChange={(event) => setDraftField("standbyHeadline", event.target.value)} required value={draft.standbyHeadline} />
+              <OnAirWording locale={props.preview.locale} value={draft.standbyHeadline} />
             </label>
             <label>
-              <span className="label label-with-info">Reconnect headline<InfoTip text="Replaces the headline during a scheduled reconnect or an output reset, while the reconnect scene is on the picture. Up to 120 characters; cleared, it goes back to Scheduled reconnect in progress." /></span>
+              <span className="label label-with-info">Reconnect headline<InfoTip text={`Replaces the headline during a scheduled reconnect or an output reset, while the reconnect scene is on the picture. Up to 120 characters; cleared, it goes back to ${viewerText(props.preview.locale, "overlay.headline.reconnect")}.`} /></span>
               <input onChange={(event) => setDraftField("reconnectHeadline", event.target.value)} required value={draft.reconnectHeadline} />
+              <OnAirWording locale={props.preview.locale} value={draft.reconnectHeadline} />
             </label>
             <label>
               <span className="label label-with-info">Replay label<InfoTip text="Starts the small grey text in the lower third's top row, right after the coloured mode chip and before the brand badge and channel name; it is also the first line of the plain-text fallback. Up to 80 characters; cleared, it reads Replay stream." /></span>
@@ -1780,8 +1809,7 @@ export function OverlaySettingsForm(props: {
           <span className="label">Live scene</span>
           <strong>{describeScenePreset(props.liveOverlay.scenePreset)}</strong>
           <div className="subtle">
-            Asset headline {props.liveOverlay.headline} · Insert {props.liveOverlay.insertHeadline} · Standby {props.liveOverlay.standbyHeadline} ·
-            Reconnect {props.liveOverlay.reconnectHeadline}
+            {describeOverlayHeadlines(props.liveOverlay, props.preview.locale)}
           </div>
           <div className="subtle">
             Typography {describeTypographyPreset(props.liveOverlay.typographyPreset)} · {props.liveOverlay.customLayers.length} positioned layer
@@ -1791,13 +1819,13 @@ export function OverlaySettingsForm(props: {
             Asset {describeScenePreset(props.liveOverlay.scenePreset)} · Insert {describeScenePreset(props.liveOverlay.insertScenePreset)} · Standby {describeScenePreset(props.liveOverlay.standbyScenePreset)} · Reconnect{" "}
             {describeScenePreset(props.liveOverlay.reconnectScenePreset)}
           </div>
-          <div className="subtle">Published {props.liveOverlay.updatedAt || "never"}</div>
+          <div className="subtle">{props.liveOverlay.updatedAt ? `Published ${props.liveOverlay.updatedAt}` : "Not published yet"}</div>
         </div>
         <div className="item">
           <span className="label">Draft scene</span>
           <strong>{describeScenePreset(draft.scenePreset)}</strong>
           <div className="subtle">
-            Asset headline {draft.headline} · Insert {draft.insertHeadline} · Standby {draft.standbyHeadline} · Reconnect {draft.reconnectHeadline}
+            {describeOverlayHeadlines(draft, props.preview.locale)}
           </div>
           <div className="subtle">
             Typography {describeTypographyPreset(draft.typographyPreset)} · {draft.customLayers.length} positioned layer{draft.customLayers.length === 1 ? "" : "s"}
@@ -1810,7 +1838,9 @@ export function OverlaySettingsForm(props: {
         <div className="item">
           <span className="label">Publish status</span>
           <strong>{canPublish ? "Pending changes" : "Live and draft match"}</strong>
-          <div className="subtle">Draft is based on live scene updated at {props.basedOnUpdatedAt || "unknown"}.</div>
+          <div className="subtle">
+            {props.basedOnUpdatedAt ? `Draft is based on live scene updated at ${props.basedOnUpdatedAt}.` : "Not published yet."}
+          </div>
         </div>
       </div>
 

@@ -5,6 +5,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   applyOverlayScenePresetRecordToDraft,
   DECLARED_SCHEMA,
+  readChatInteractionSettingsRecord,
+  writeChatInteractionSettingsRecord,
   createPoolRecord,
   createScheduleBlocks,
   createScheduleBlocksChecked,
@@ -1460,6 +1462,43 @@ describe.sequential("database roundtrip", () => {
     // a sequential scan over unbounded request history.
     expect(indexes).toContain("chat_viewer_requests_actor_created_idx");
     expect(migrationApplied).toBe("1");
+  }, 60_000);
+
+  it("adds the chat answer switches to an existing settings row, on by default, and roundtrips them (M104)", async () => {
+    await ensureDatabaseWithRetry();
+    // The table as an install before M104 has it, with a saved row; written in SQL because the writer
+    // already names the new columns.
+    await executeSql(`
+      ALTER TABLE chat_interaction_settings DROP COLUMN IF EXISTS commands_reply_enabled;
+      ALTER TABLE chat_interaction_settings DROP COLUMN IF EXISTS now_reply_enabled;
+      ALTER TABLE chat_interaction_settings DROP COLUMN IF EXISTS next_reply_enabled;
+      ALTER TABLE chat_interaction_settings DROP COLUMN IF EXISTS request_replies_enabled;
+      INSERT INTO chat_interaction_settings (singleton_id, enabled, request_command) VALUES (1, TRUE, 'wunsch')
+        ON CONFLICT (singleton_id) DO UPDATE SET enabled = TRUE, request_command = 'wunsch';
+      DELETE FROM schema_migrations WHERE id = '20261004_001_chat_reply_switches';
+    `);
+
+    await resetDatabaseConnectionsForTests();
+    await ensureDatabaseWithRetry();
+
+    const upgraded = await readChatInteractionSettingsRecord();
+    expect(upgraded).toMatchObject({
+      enabled: true,
+      requestCommand: "wunsch",
+      commandsReplyEnabled: true,
+      nowReplyEnabled: true,
+      nextReplyEnabled: true,
+      requestRepliesEnabled: true
+    });
+    expect(await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '20261004_001_chat_reply_switches';`)).toBe("1");
+
+    await writeChatInteractionSettingsRecord({ ...upgraded, nowReplyEnabled: false, requestRepliesEnabled: false });
+    expect(await readChatInteractionSettingsRecord()).toMatchObject({
+      commandsReplyEnabled: true,
+      nowReplyEnabled: false,
+      nextReplyEnabled: true,
+      requestRepliesEnabled: false
+    });
   }, 60_000);
 
   it("creates the chat-skip-vote schema on an existing database and roundtrips a campaign", async () => {

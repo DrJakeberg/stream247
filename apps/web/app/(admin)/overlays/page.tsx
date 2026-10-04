@@ -6,6 +6,7 @@ import {
   isEngagementChatRuntimeEnabled,
   isEngagementDonationAlertsRuntimeEnabled
 } from "@stream247/core";
+import Link from "next/link";
 import { AdminPageHeader } from "@/components/admin-page-header";
 import { ChatGameSettingsForm } from "@/components/chat-game-settings-form";
 import { EngagementSettingsForm } from "@/components/engagement-settings-form";
@@ -66,7 +67,7 @@ export default async function OverlaysPage() {
               <div className="subtle">
                 {donationsRuntimeEnabled
                   ? "Runtime enabled. Cheer events are recorded and listed here once the channel owner connection grants them; they are not drawn on air yet."
-                  : "Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect."}
+                  : "Disabled by settings, by the alerts feature switch, or because the channel owner connection does not grant these alerts yet: reconnect it under Admin → Settings → Twitch accounts."}
               </div>
             </div>
             <div className="item">
@@ -74,7 +75,7 @@ export default async function OverlaysPage() {
               <div className="subtle">
                 {channelPointsRuntimeEnabled
                   ? "Runtime enabled. Redemption events are recorded and listed here once the channel owner connection grants them and a custom reward exists; they are not drawn on air yet."
-                  : "Disabled by settings, by the alerts feature switch, or missing the post-M32 Twitch reconnect."}
+                  : "Disabled by settings, by the alerts feature switch, or because the channel owner connection does not grant these alerts yet: reconnect it under Admin → Settings → Twitch accounts."}
               </div>
             </div>
             <div className="item">
@@ -99,7 +100,8 @@ export default async function OverlaysPage() {
             <div className="item">
               <strong>Twitch reconnect note</strong>
               <div className="subtle">
-                Broadcasters connected before M32 must reconnect Twitch once so bits and channel point alert scopes are granted.
+                A channel owner connected before bits and channel point alerts existed must reconnect once so Twitch grants
+                them: <Link href="/admin?tab=settings#twitch-accounts">Admin → Settings → Twitch accounts</Link>.
               </div>
             </div>
           </div>

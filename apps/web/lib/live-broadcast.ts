@@ -361,6 +361,8 @@ export type LiveSceneSummary = {
 export type BroadcastSnapshot = {
   generatedAt: string;
   timeZone: string;
+  /** The channel language: the control room shows the overlay texts as viewers read them (M104). */
+  locale: ViewerLocale;
   workerHealth: LiveWorkerHealth;
   /** First in "Open problems": a stale or missing worker or playout heartbeat (M90). */
   heartbeatProblems: LiveHeartbeatProblem[];

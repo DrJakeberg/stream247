@@ -107,6 +107,27 @@ export const DE_VIEWER_MESSAGES: ViewerMessageCatalogue = {
   "chat.skip.pausedInsert": "Die Regie spielt gerade einen Einspieler – Überspringen ist pausiert, bis er vorbei ist.",
   "chat.skip.pausedFallback": "Die Regie hat das Ersatzprogramm auf Sendung – Überspringen ist pausiert, bis es vorbei ist.",
   "chat.skip.pausedPin": "Die Regie hat diesen Beitrag angepinnt – Überspringen ist pausiert, bis der Pin endet.",
+  "chat.commands.list": "@{actor} Befehle: {commands}",
+  "chat.commands.request": "{command} Titel",
+  "chat.commands.vote": "!1–{last} während einer Abstimmung",
+  "chat.now.onAir": "@{actor} gerade läuft: {title}.",
+  "chat.now.nothing": "@{actor} gerade läuft nichts – kurze Pause, gleich geht’s weiter.",
+  "chat.next.at": "@{actor} als Nächstes um {time}: {title}.",
+  "chat.next.item": "@{actor} als Nächstes: {title}.",
+  "chat.next.nothing": "@{actor} als Nächstes ist noch nichts geplant.",
+  "chat.programmeLink": "Programm: {url}",
+  "chat.request.queued": "@{actor} „{title}“ steht in der Warteschlange auf Platz {position}.",
+  "chat.request.noMatch": "@{actor} dazu finde ich kein Video, das du dir wünschen kannst.",
+  "chat.request.cooldownSeconds": {
+    one: "@{actor} du kannst dir in {count} Sekunde wieder etwas wünschen.",
+    other: "@{actor} du kannst dir in {count} Sekunden wieder etwas wünschen."
+  },
+  "chat.request.cooldownMinutes": {
+    one: "@{actor} du kannst dir in {count} Minute wieder etwas wünschen.",
+    other: "@{actor} du kannst dir in {count} Minuten wieder etwas wünschen."
+  },
+  "chat.request.queueFull": "@{actor} die Warteschlange für Wünsche ist voll – versuch es wieder, wenn ein Wunsch gelaufen ist.",
+  "chat.request.alreadyQueued": "@{actor} „{title}“ steht schon in der Warteschlange.",
   "chat.viewerName": "Zuschauer",
 
   "channel.badge": "Programm",

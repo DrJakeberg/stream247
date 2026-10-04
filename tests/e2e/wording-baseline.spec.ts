@@ -176,6 +176,8 @@ test.describe("wording baseline", () => {
         return (root as HTMLElement).innerText;
       });
 
+      // U13 (M104): what a page renders names no milestone id, whatever the recorded baseline says.
+      expect(normalize(text), "a milestone id in rendered admin text").not.toMatch(/\bM\d{2,3}\b/);
       expect(normalize(text)).toMatchSnapshot(`${surface.name}.txt`);
     });
   }

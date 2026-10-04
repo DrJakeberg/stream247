@@ -18,6 +18,8 @@ import {
 } from "@/lib/destination-wording";
 import { describePlayoutReason } from "@/lib/playout-reason";
 import { describeScenePreset } from "@/lib/scene-preset-names";
+import { describeOverlayHeadlines } from "@/lib/overlay-headline-wording";
+import { localizeViewerBuiltInText, resolveOverlayHeadlineForQueueKind } from "@stream247/core";
 
 /** The next item's preparation in words: "ready" is what an operator wants to know at a glance. */
 function describeNextItemReadiness(prefetchStatus: string): string {
@@ -324,16 +326,16 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
           <h3>What the overlay shows</h3>
           <div className="list">
             <div className="item">
-              <strong>{snapshot.overlay.replayLabel} · {snapshot.overlay.channelName}</strong>
-              <div className="subtle">{snapshot.overlay.headline}</div>
+              <strong>
+                {localizeViewerBuiltInText(snapshot.locale, snapshot.overlay.replayLabel)} ·{" "}
+                {localizeViewerBuiltInText(snapshot.locale, snapshot.overlay.channelName)}
+              </strong>
+              <div className="subtle">{resolveOverlayHeadlineForQueueKind(snapshot.overlay.headline, "asset", undefined, snapshot.locale)}</div>
               <div className="subtle">
                 Preset {describeScenePreset(snapshot.overlay.scenePreset)} · {snapshot.overlay.surfaceStyle} surface · {snapshot.overlay.panelAnchor} anchor ·{" "}
                 {snapshot.overlay.titleScale} scale
               </div>
-              <div className="subtle">
-                Asset headline {snapshot.overlay.headline} · Insert {snapshot.overlay.insertHeadline} · Standby {snapshot.overlay.standbyHeadline} ·
-                Reconnect {snapshot.overlay.reconnectHeadline}
-              </div>
+              <div className="subtle">{describeOverlayHeadlines(snapshot.overlay, snapshot.locale)}</div>
               <div className="subtle">
                 Asset {describeScenePreset(snapshot.overlay.scenePreset)} · Insert {describeScenePreset(snapshot.overlay.insertScenePreset)} · Standby {describeScenePreset(snapshot.overlay.standbyScenePreset)} ·
                 Reconnect {describeScenePreset(snapshot.overlay.reconnectScenePreset)}

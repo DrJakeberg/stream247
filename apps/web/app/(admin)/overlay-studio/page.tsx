@@ -107,7 +107,7 @@ export default async function OverlayStudioPage() {
               <div className="subtle">
                 Queue preview {studioState.liveOverlay.showQueuePreview ? `shown (${studioState.liveOverlay.queuePreviewCount})` : "hidden"}
               </div>
-              <div className="subtle">Published {studioState.liveOverlay.updatedAt || "never"}</div>
+              <div className="subtle">{studioState.liveOverlay.updatedAt ? `Published ${studioState.liveOverlay.updatedAt}` : "Not published yet"}</div>
             </div>
             <div className="item">
               <strong>Draft status</strong>
@@ -115,7 +115,7 @@ export default async function OverlayStudioPage() {
                 {studioState.hasUnpublishedChanges ? "Draft differs from live scene." : "Draft matches the live scene."}
               </div>
               <div className="subtle">Draft saved {studioState.draftOverlay.updatedAt || "not yet saved"}</div>
-              <div className="subtle">Based on live scene {studioState.basedOnUpdatedAt || "unknown"}</div>
+              <div className="subtle">{studioState.basedOnUpdatedAt ? `Based on live scene ${studioState.basedOnUpdatedAt}` : "Based on the defaults: no scene published yet"}</div>
               <div className="subtle">
                 Draft preset {describeScenePreset(studioState.draftOverlay.scenePreset)} · {studioState.draftOverlay.surfaceStyle} surface ·{" "}
                 {studioState.draftOverlay.panelAnchor} anchor

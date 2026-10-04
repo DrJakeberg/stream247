@@ -68,7 +68,13 @@ const LOCALE_SLOT = new Map<string, LocaleSlot>(
     parseTwitchIrcMessage: arg(1),
     resolveTwitchFallbackTitle: field,
     // The standby and reconnect slate's fields (M102): the slate's title and next line.
-    buildStandbySlateSceneInput: field
+    buildStandbySlateSceneInput: field,
+    // The bot's answers (M104): !commands, !now, !next, a request's reply, and the titles they name.
+    formatChatCommandsReply: field,
+    formatChatNowReply: arg(2),
+    formatChatNextReply: arg(2),
+    formatChatRequestReply: field,
+    buildChatProgrammeInfo: field
   })
 );
 
@@ -265,7 +271,18 @@ function languageAudit(name: string, source: string): Audit {
 }
 
 /** The helpers a chat line may come from. Each is in LOCALE_SLOT, so each is given the language. */
-const REPLY_BUILDERS = new Set(["viewerText", "formatChatSkipPausedReply", "formatChatGameInfoReply", "formatChatGameNoRoomReply", "formatPresenceClampReply"]);
+const REPLY_BUILDERS = new Set([
+  "viewerText",
+  "formatChatSkipPausedReply",
+  "formatChatGameInfoReply",
+  "formatChatGameNoRoomReply",
+  "formatPresenceClampReply",
+  // The answers to !commands, !now, !next and !request (M104).
+  "formatChatCommandsReply",
+  "formatChatNowReply",
+  "formatChatNextReply",
+  "formatChatRequestReply"
+]);
 /** The bridge's two ways to speak: say() for the worker, sendChatMessage() behind it and inside the bridge. */
 const CHAT_SENDERS = new Set(["say", "sendChatMessage"]);
 

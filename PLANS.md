@@ -39,7 +39,7 @@ How this file works:
 | M101 Schedule Across DST, Wall Clock Kept | Bug | Later | Complete | Twice a year the counts are right while blocks keep their wall-clock times (owner Q4) | C5: cuepoint elapsed time from real instants (test: block from 01:00, at 03:30 local on 2027-03-28 reports 5 400 s, not 9 000 s); a non-existent local time maps forward (02:30 on 2026-03-29 → `01:30Z`, not `00:30Z`); the Twitch segment end follows real minutes; `docs/operations.md` states the wall-clock rule (skipped in March, twice in October) | `packages/core`, `apps/worker`, tests, docs | low | revert the commit |
 | M102 Standby Shows Standby | Bug | Later | Complete | The standby or reconnect slate never shows the previous item's title | W8: `writeStandbySlate` sets the standby scene payload; unit test on the payload; a design-baseline check of the standby frame | `apps/worker`, tests, baselines | medium: changes the on-air picture | revert the commit |
 | M103 Backoff And Health Restarts | Reliability | Later | Complete | Repeated restarts slow down; a hung worker or uplink restarts itself | H7: growing backoff up to 5 min for the crash-loop reset and the uplink watchdog; the crash-loop incident no longer says "Manual intervention is required" when playable media exists (unit test on the message). H8 (owner Q7): worker and uplink exit after 5 min of failing their own healthcheck; playout only while its feed does not advance. Tests: backoff sequence; a playing playout with an advancing feed never exits | `apps/worker`, `docker-compose.yml`, tests, docs | medium: dark time grows with backoff; a wrong rule could restart a playing channel | revert the commit |
-| M104 Wording Pass And Chat Answers | UX | Later | Planned | Admin text names no milestone ids; viewers can ask the bot | U13: render test fails on `\bM\d{2}\b` in admin text. U14: the admin preview and (i) show the localized standby text. S19 (lead from the stopped planning branch, re-checked): overlay output is one checkbox among many (`apps/web/components/overlay-settings-form.tsx:890`) and the Scene tab shows "unknown" / "never" before a first publish; Scene gets an on/off banner at the top and "Not published yet"; render test. V5/V6 (decided 5.1 Q7): `!commands` (only enabled commands), `!now`, `!next` with the `/channel` link, one reply per `!request` (queued with position, no match, cooldown, queue full), each with its own switch, 60 s per viewer and 10 s global cooldown, en + de; unit tests per reply | `apps/web`, `apps/worker`, `packages/core`, tests, baselines | medium: chat volume and Twitch rate limits | revert the commit |
+| M104 Wording Pass And Chat Answers | UX | Later | Complete | Admin text names no milestone ids; viewers can ask the bot | U13: render test fails on `\bM\d{2}\b` in admin text. U14: the admin preview and (i) show the localized standby text. S19 (lead from the stopped planning branch, re-checked): overlay output is one checkbox among many (`apps/web/components/overlay-settings-form.tsx:890`) and the Scene tab shows "unknown" / "never" before a first publish; Scene gets an on/off banner at the top and "Not published yet"; render test. V5/V6 (decided 5.1 Q7): `!commands` (only enabled commands), `!now`, `!next` with the `/channel` link, one reply per `!request` (queued with position, no match, cooldown, queue full), each with its own switch, 60 s per viewer and 10 s global cooldown, en + de; unit tests per reply | `apps/web`, `apps/worker`, `packages/core`, tests, baselines | medium: chat volume and Twitch rate limits | revert the commit |
 
 M84-M104 were approved by the owner on 2026-10-02 (all 21, as written). Their source is `planning/proposal-2026-10.md`: references in these rows such as "decided 5.1 Q5", "2.5a", "3.3" and finding ids (S1, C3, I1, U7, …) point into that file and the research files under `planning/research/`. Order: M84 first, then the table order with M88 before M93, M93 before M100 and M91 before M99; one milestone per thread, the next starts after the previous one is merged.
 
@@ -309,6 +309,15 @@ deployed; the release that ships them records the results.
   prints `0` three times; `ssh dut 'docker logs stream247-uplink-1 2>&1 | grep -E "uplink.watchdog.backoff|worker.health.unhealthy" | tail -20'`
   lists any backoff with its `attempt` and `backoffMs` next to the watchdog restart before it. Any
   `worker.health.self_restart` is reported with the reason it names.
+- M104, on the deployed candidate with *Enable viewer control* on (Studio → Engagement), the channel in
+  German and the app URL set: from a viewer account (not the bot), type in the broadcast channel's chat
+  `!commands`, then after 10 s `!now`, after another 10 s `!next`, then `!request zzzz` and after it `!request`
+  with a word from a requestable title (in this order: after an accepted request the refusal would be the
+  cooldown). Passes when the bot answers each once, in German and addressed `@<account>`: the command list
+  without switched-off commands, `gerade läuft: …` with the title on air, `als Nächstes …` with
+  `Programm: <APP_URL>/channel`, `… kein Video …` and `… steht in der Warteschlange auf Platz N.`; a second
+  `!now` from the same account within a minute gets no answer; `ssh dut 'docker logs stream247-worker-1 2>&1 | grep -c chat.say.dropped'`
+  prints `0`.
 
 - (The checks for 2.2.0 are in the archive, sections M75-M82.)
 
@@ -1050,3 +1059,44 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   (worker exits at five minutes and not before, streak reset, a playing playout with an advancing feed
   never exits over three hours, a stalled one exits at five minutes, holds and the feed verdict never
   count, wiring).
+
+### M104 Wording Pass And Chat Answers
+
+- **V5/V6 (owner 5.1 Q7).** `packages/core/src/chat-replies.ts` holds the answers and their rules; the
+  catalogue has them in en + de. `!commands` lists the enabled commands under their configured names,
+  `!now` and `!next` answer from what the worker's last chat cycle read (`apps/worker/src/chat-programme-info.ts`:
+  the playout row's titles while a programme plays, else today's next block with its start time) and end
+  with `<APP_URL>/channel`, and every `!request` gets one answer (queued with its position, no match,
+  cooldown, queue full, already queued). Four switches, one per answer, in the additive migration
+  `20261004_001_chat_reply_switches` (on by default; the viewer-control master switch still gates all).
+  Every answer names the viewer first: Twitch drops a line identical to one sent in the last 30 s (review
+  finding).
+- **Cooldowns, a reading of the row (decided without the owner).** The 60 s per viewer and 10 s in the room
+  apply to `!commands`, `!now` and `!next` together. Request answers are not under the room's 10 s, because
+  "one reply per `!request`" would otherwise drop answers whenever two viewers request within ten seconds:
+  an accepted request is always confirmed (the request cooldown, at least 30 s, and the queue cap already
+  bound them), a refusal is said to a viewer once a minute. Behind everything the bridge writes at most 15
+  lines in 30 s (Twitch allows 20 for a non-moderator) and drops the rest (`chat.say.dropped`); it also
+  turns line breaks in a line into spaces, so a title cannot end the IRC line.
+- **U13.** The two Engagement texts that named M32 say what to do, with a link to Admin → Settings →
+  Twitch accounts. `tests/unit/admin-wording-pass.test.ts` scans the web app's text (JSX text and string
+  literals, not comments) and the recorded wording baselines for `\bM\d{2,3}\b`; the wording baseline spec
+  fails on one in any rendered page.
+- **U14.** The four headline (i)s name the catalogue's default in the channel language, a stored built-in
+  default shows *Viewers see: …* under its field, and the Scene summaries and Live → Control's overlay
+  panel show the headlines as they air (`BroadcastSnapshot.locale` is new).
+- **S19.** The Scene tab opens with a banner saying whether overlay output is on as published (and that a
+  draft changes it); before a first publish it says *Not published yet* where it said `unknown` / `never`,
+  in the form and on the page around it (review finding).
+- **Baselines.** Re-recorded with `scripts/design-baseline.sh --update` against a stand-in web image (the
+  host's standalone build on `node:22-slim` with the host's DejaVu fonts; the Alpine image cannot be built
+  in the cloud). The verify run before the change failed only on the surfaces this milestone changes
+  (studio-scene and studio-engagement pictures and text, live-control text), so the stand-in draws like CI.
+- **Review (fresh subagent).** Items met except S19 on the page around the form; fixed. Also taken: the
+  `@name` lead, the DUT check's order, a refusal formatted before its cooldown is claimed, German wording
+  of two answers, a code-point cut of long lines, `\bM\d{2,3}\b`. Left: `!now` reads a recovering playout
+  as a break (documented).
+- **Tests.** `tests/unit/chat-answers.test.ts` (parsing and switches, each reply en + de, cooldowns,
+  the runtime's effect, the programme info, send budget, sanitiser, worker wiring),
+  `tests/unit/admin-wording-pass.test.ts` (U13, U14, S19 render tests), the migration in
+  `tests/integration/db-roundtrip.test.ts`; `viewer-language-worker-wiring` knows the four new reply builders.

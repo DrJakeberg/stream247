@@ -4344,6 +4344,28 @@ if (!schemaMigrations.some((migration) => migration.id === assetDurationProbeKey
   schemaMigrations.push(assetDurationProbeKeyMigration);
 }
 
+/**
+ * The chat bot's answers (M104): one switch each for !commands, !now, !next and the replies to
+ * !request. Additive; existing rows read every answer switched on, and the viewer-control master
+ * switch still decides whether the bot answers at all.
+ */
+export const chatReplySwitchesMigration: MigrationDefinition = {
+  id: "20261004_001_chat_reply_switches",
+  description: "Add one switch per chat bot answer: !commands, !now, !next and the replies to !request.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE chat_interaction_settings ADD COLUMN IF NOT EXISTS commands_reply_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+      ALTER TABLE chat_interaction_settings ADD COLUMN IF NOT EXISTS now_reply_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+      ALTER TABLE chat_interaction_settings ADD COLUMN IF NOT EXISTS next_reply_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+      ALTER TABLE chat_interaction_settings ADD COLUMN IF NOT EXISTS request_replies_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === chatReplySwitchesMigration.id)) {
+  schemaMigrations.push(chatReplySwitchesMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -7470,6 +7492,10 @@ export type ChatInteractionSettingsRecord = {
   skipWindowSeconds: number;
   requestCommand: string;
   skipCommand: string;
+  commandsReplyEnabled: boolean;
+  nowReplyEnabled: boolean;
+  nextReplyEnabled: boolean;
+  requestRepliesEnabled: boolean;
   updatedAt: string;
 };
 
@@ -7504,6 +7530,11 @@ export async function readChatInteractionSettingsRecord(): Promise<ChatInteracti
     skipWindowSeconds: num(row?.skip_window_seconds, 120),
     requestCommand: String(row?.request_command ?? "request"),
     skipCommand: String(row?.skip_command ?? "skip"),
+    // The bot's answers (M104) are on by default; the master switch above still gates all of them.
+    commandsReplyEnabled: row?.commands_reply_enabled === undefined ? true : Boolean(row.commands_reply_enabled),
+    nowReplyEnabled: row?.now_reply_enabled === undefined ? true : Boolean(row.now_reply_enabled),
+    nextReplyEnabled: row?.next_reply_enabled === undefined ? true : Boolean(row.next_reply_enabled),
+    requestRepliesEnabled: row?.request_replies_enabled === undefined ? true : Boolean(row.request_replies_enabled),
     updatedAt: String(row?.updated_at ?? "")
   };
 }
@@ -7519,9 +7550,10 @@ export async function writeChatInteractionSettingsRecord(
           vote_duration_seconds, vote_option_count, vote_minimum_voters,
           request_cooldown_seconds, request_queue_limit,
           skip_threshold_ratio, skip_minimum_votes, skip_window_seconds,
-          request_command, skip_command, updated_at
+          request_command, skip_command, updated_at,
+          commands_reply_enabled, now_reply_enabled, next_reply_enabled, request_replies_enabled
         )
-        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
         ON CONFLICT (singleton_id) DO UPDATE SET
           enabled = EXCLUDED.enabled,
           voting_enabled = EXCLUDED.voting_enabled,
@@ -7537,7 +7569,11 @@ export async function writeChatInteractionSettingsRecord(
           skip_window_seconds = EXCLUDED.skip_window_seconds,
           request_command = EXCLUDED.request_command,
           skip_command = EXCLUDED.skip_command,
-          updated_at = EXCLUDED.updated_at
+          updated_at = EXCLUDED.updated_at,
+          commands_reply_enabled = EXCLUDED.commands_reply_enabled,
+          now_reply_enabled = EXCLUDED.now_reply_enabled,
+          next_reply_enabled = EXCLUDED.next_reply_enabled,
+          request_replies_enabled = EXCLUDED.request_replies_enabled
       `,
       [
         settings.enabled,
@@ -7554,7 +7590,11 @@ export async function writeChatInteractionSettingsRecord(
         settings.skipWindowSeconds,
         settings.requestCommand,
         settings.skipCommand,
-        settings.updatedAt || new Date().toISOString()
+        settings.updatedAt || new Date().toISOString(),
+        settings.commandsReplyEnabled,
+        settings.nowReplyEnabled,
+        settings.nextReplyEnabled,
+        settings.requestRepliesEnabled
       ]
     );
   });

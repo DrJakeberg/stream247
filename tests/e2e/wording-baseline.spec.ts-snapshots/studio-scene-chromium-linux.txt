@@ -39,9 +39,12 @@ SCENE
 Scene controls
 i
 The picture is drawn by the playout; the studio preview is the same drawing. Draft changes stay inside the studio until you publish them, and the published scene settings also drive the on-air replay text overlay inside the FFmpeg playout path. Metadata widgets stay inside that canonical scene payload, and custom font stacks resolve only against fonts already installed on the worker image.
+Overlay output is off
+Nothing is drawn over programme video; the standby and reconnect slates still show their text lines. Tick Enable overlay output and publish to turn it on.
+Not published yet.
 SCENE DRAFT
 Live and draft match
-Draft is based on live scene updated at unknown.
+Draft starts from the defaults.
 Activate emergency banner
 Save draft
 Review changes
@@ -77,6 +80,7 @@ INSERT HEADLINE
 i
 STANDBY HEADLINE
 i
+Viewers see: Stand by, we’ll be right back
 RECONNECT HEADLINE
 i
 REPLAY LABEL
@@ -179,19 +183,19 @@ Show source label
 i
 LIVE SCENE
 Replay Lower Third
-Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
+Asset headline Always on air · Insert Insert on air · Standby Stand by, we’ll be right back · Reconnect Scheduled reconnect in progress
 Typography Studio Sans · 0 positioned layers
 Asset Replay Lower Third · Insert Bumper Board · Standby Standby Board · Reconnect Reconnect Board
-Published never
+Not published yet
 DRAFT SCENE
 Replay Lower Third
-Asset headline Always on air · Insert Insert on air · Standby Please wait, restream is starting · Reconnect Scheduled reconnect in progress
+Asset headline Always on air · Insert Insert on air · Standby Stand by, we’ll be right back · Reconnect Scheduled reconnect in progress
 Typography Studio Sans · 0 positioned layers
 Asset Replay Lower Third · Insert Bumper Board · Standby Standby Board · Reconnect Reconnect Board
 Draft saved not yet saved
 PUBLISH STATUS
 Live and draft match
-Draft is based on live scene updated at unknown.
+Not published yet.
 Cameras and feeds the scene layers can show. The feed address is stored encrypted and never shown again — this list only says whether one is stored. Saving with an empty address keeps the stored one.
 Add video source
 No video sources stored yet.
@@ -203,11 +207,11 @@ Replay Lower Third · glass surface · bottom anchor · balanced title scale
 Typography Studio Sans · 0 positioned layers
 Current category shown · source label shown
 Queue preview hidden
-Published never
+Not published yet
 Draft status
 Draft matches the live scene.
 Draft saved not yet saved
-Based on live scene unknown
+Based on the defaults: no scene published yet
 Draft preset Replay Lower Third · glass surface · bottom anchor
 Typography Studio Sans · 0 positioned layers
 0 saved scene presets in the library.

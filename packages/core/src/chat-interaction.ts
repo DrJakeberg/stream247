@@ -32,6 +32,14 @@ export type ChatInteractionConfig = {
   skipWindowSeconds: number;
   requestCommand: string;
   skipCommand: string;
+  /** The bot answers !commands with the commands that are switched on (M104). */
+  commandsReplyEnabled: boolean;
+  /** The bot answers !now with what is on air (M104). */
+  nowReplyEnabled: boolean;
+  /** The bot answers !next with what comes next and the /channel link (M104). */
+  nextReplyEnabled: boolean;
+  /** The bot answers every !request: queued with position, no match, cooldown, queue full (M104). */
+  requestRepliesEnabled: boolean;
 };
 
 export function createDefaultChatInteractionConfig(): ChatInteractionConfig {
@@ -49,14 +57,28 @@ export function createDefaultChatInteractionConfig(): ChatInteractionConfig {
     skipMinimumVotes: 5,
     skipWindowSeconds: 120,
     requestCommand: "request",
-    skipCommand: "skip"
+    skipCommand: "skip",
+    commandsReplyEnabled: true,
+    nowReplyEnabled: true,
+    nextReplyEnabled: true,
+    requestRepliesEnabled: true
   };
 }
+
+/** The fixed words of the answer commands (M104). Not configurable: they are what viewers know from other channels. */
+export const CHAT_INFO_COMMANDS = {
+  commands: "commands",
+  now: "now",
+  next: "next"
+} as const;
+
+export type ChatInfoCommand = keyof typeof CHAT_INFO_COMMANDS;
 
 export type ChatCommand =
   | { kind: "vote"; option: number }
   | { kind: "request"; query: string }
   | { kind: "skip" }
+  | { kind: "info"; info: ChatInfoCommand }
   | { kind: "none" };
 
 const MAX_REQUEST_QUERY_LENGTH = 120;
@@ -99,6 +121,17 @@ export function parseChatCommand(message: string, config: ChatInteractionConfig)
   if (config.requestsEnabled && head === config.requestCommand.trim().toLowerCase() && head.length > 0) {
     const query = rest.slice(0, MAX_REQUEST_QUERY_LENGTH).trim();
     return query ? { kind: "request", query } : { kind: "none" };
+  }
+
+  // After the operator's own command names, so a request or skip command named "next" keeps working.
+  if (head === CHAT_INFO_COMMANDS.commands && config.commandsReplyEnabled) {
+    return { kind: "info", info: "commands" };
+  }
+  if (head === CHAT_INFO_COMMANDS.now && config.nowReplyEnabled) {
+    return { kind: "info", info: "now" };
+  }
+  if (head === CHAT_INFO_COMMANDS.next && config.nextReplyEnabled) {
+    return { kind: "info", info: "next" };
   }
 
   return { kind: "none" };
@@ -445,6 +478,10 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   return Math.max(min, Math.min(max, parsed));
 }
 
+function optionalSwitch(value: unknown, fallback: boolean): boolean {
+  return value === undefined ? fallback : Boolean(value);
+}
+
 function normalizeCommandName(value: unknown, fallback: string): string {
   // Commands are typed by viewers and compared literally. Restricting them to word characters
   // keeps them typable, keeps them from colliding with the "!<number>" vote tokens, and removes
@@ -492,6 +529,10 @@ export function normalizeChatInteractionConfig(
     skipMinimumVotes: clampInt(source.skipMinimumVotes, defaults.skipMinimumVotes, 2, 1000),
     skipWindowSeconds: clampInt(source.skipWindowSeconds, defaults.skipWindowSeconds, 30, 3600),
     requestCommand: normalizeCommandName(source.requestCommand, defaults.requestCommand),
-    skipCommand: normalizeCommandName(source.skipCommand, defaults.skipCommand)
+    skipCommand: normalizeCommandName(source.skipCommand, defaults.skipCommand),
+    commandsReplyEnabled: optionalSwitch(source.commandsReplyEnabled, defaults.commandsReplyEnabled),
+    nowReplyEnabled: optionalSwitch(source.nowReplyEnabled, defaults.nowReplyEnabled),
+    nextReplyEnabled: optionalSwitch(source.nextReplyEnabled, defaults.nextReplyEnabled),
+    requestRepliesEnabled: optionalSwitch(source.requestRepliesEnabled, defaults.requestRepliesEnabled)
   };
 }

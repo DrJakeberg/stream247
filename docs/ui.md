@@ -126,6 +126,8 @@ New surfaces should build from those primitives instead of bespoke styled HTML c
 - `Scene`, `Engagement`, and `Output` are tabs inside one Studio workspace.
 - Publish is explicit and reviewable.
 - Emergency banner controls stay prominent inside `Scene`.
+- `Scene` opens with whether overlay output is on or off, as published, and says *Not published yet*
+  before the first publish (M104).
 - Chat, alerts, and engagement behavior live together under `Engagement`.
 - Output profile and destination management live together under `Output`; `Live → Status` only
   lists each destination's state, with a link there (M99).

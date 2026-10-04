@@ -1618,6 +1618,22 @@ button.collection-chip {
   background: var(--surface-card);
 }
 
+.scene-output-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+  padding: 14px 20px;
+  border-radius: 20px;
+  border: 1px solid var(--brand-tint-strong);
+  background: var(--brand-tint-faint);
+}
+
+.scene-output-banner-off {
+  border-color: var(--tone-caution-border);
+  background: var(--warning-tint-faint);
+}
+
 .scene-workspace-toolbar-alert,
 .scene-header-alert {
   border-color: var(--danger-border-strong);

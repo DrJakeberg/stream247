@@ -31,6 +31,10 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
   const [skipWindowSeconds, setSkipWindowSeconds] = useState(String(settings.skipWindowSeconds));
   const [requestCommand, setRequestCommand] = useState(settings.requestCommand);
   const [skipCommand, setSkipCommand] = useState(settings.skipCommand);
+  const [commandsReplyEnabled, setCommandsReplyEnabled] = useState(settings.commandsReplyEnabled);
+  const [nowReplyEnabled, setNowReplyEnabled] = useState(settings.nowReplyEnabled);
+  const [nextReplyEnabled, setNextReplyEnabled] = useState(settings.nextReplyEnabled);
+  const [requestRepliesEnabled, setRequestRepliesEnabled] = useState(settings.requestRepliesEnabled);
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -55,7 +59,11 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
         skipMinimumVotes: Number(skipMinimumVotes),
         skipWindowSeconds: Number(skipWindowSeconds),
         requestCommand,
-        skipCommand
+        skipCommand,
+        commandsReplyEnabled,
+        nowReplyEnabled,
+        nextReplyEnabled,
+        requestRepliesEnabled
       })
     });
 
@@ -170,7 +178,7 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
                 onChange={(event) => setRequestsEnabled(event.target.checked)}
                 type="checkbox"
               />
-              <span className="label-with-info">Enable requests<InfoTip text="Lets viewers add a video to the end of the queue by naming part of its title in chat. Any item that is ready to play qualifies, including items you have excluded from programming; only a replay whose download failed is skipped until its retry wait is over. A request that does not qualify is dropped silently, with no reply in chat." /></span>
+              <span className="label-with-info">Enable requests<InfoTip text="Lets viewers add a video to the end of the queue by naming part of its title in chat. Any item that is ready to play qualifies, including items you have excluded from programming; only a replay whose download failed is skipped until its retry wait is over. Whether the bot answers a request is set under Chat answers below." /></span>
             </label>
             <label>
               <span className="label label-with-info">Command<InfoTip text="The word viewers type after ! to make a request, followed by part of a title, e.g. with the default name: !request Title; case does not matter. Saved in lowercase with anything but letters, digits, - and _ removed and cut to 24 characters; a name that leaves nothing usable, or is only digits, is replaced by request." /></span>
@@ -243,6 +251,38 @@ export function ViewerControlForm({ settings }: ViewerControlFormProps) {
               />
             </label>
           </div>
+        </div>
+
+        <div className="item">
+          <span className="label">Chat answers</span>
+          <div className="subtle">
+            The bot answers in chat, in the channel language. One answer to !commands, !now or !next per viewer a
+            minute and one in the chat every ten seconds; a refused request is explained to a viewer once a minute.
+          </div>
+          {/* Folded: four switches nobody changes often, and the page's control budget stays where it was. */}
+          <details className="disclosure" style={{ marginTop: 12 }}>
+            <summary>
+              Answers on: {[commandsReplyEnabled, nowReplyEnabled, nextReplyEnabled, requestRepliesEnabled].filter(Boolean).length} of 4
+            </summary>
+            <div className="form-grid" style={{ marginTop: 12 }}>
+              <label className="toggle-row">
+                <input checked={commandsReplyEnabled} onChange={(event) => setCommandsReplyEnabled(event.target.checked)} type="checkbox" />
+                <span className="label-with-info">Answer !commands<InfoTip text="Lists the chat commands that work right now, under the names set on this page; switched-off commands are left out." /></span>
+              </label>
+              <label className="toggle-row">
+                <input checked={nowReplyEnabled} onChange={(event) => setNowReplyEnabled(event.target.checked)} type="checkbox" />
+                <span className="label-with-info">Answer !now<InfoTip text="Says what is on air, or that the channel is on a short break, with a link to the public programme page when the app URL is set." /></span>
+              </label>
+              <label className="toggle-row">
+                <input checked={nextReplyEnabled} onChange={(event) => setNextReplyEnabled(event.target.checked)} type="checkbox" />
+                <span className="label-with-info">Answer !next<InfoTip text="Says what comes next, with its start time when it is a schedule block, and links the public programme page when the app URL is set." /></span>
+              </label>
+              <label className="toggle-row">
+                <input checked={requestRepliesEnabled} onChange={(event) => setRequestRepliesEnabled(event.target.checked)} type="checkbox" />
+                <span className="label-with-info">Answer requests<InfoTip text="Confirms every accepted request with its place in the queue, and tells a viewer why one was turned down: no matching video, their cooldown, the queue is full, or it is already queued." /></span>
+              </label>
+            </div>
+          </details>
         </div>
       </div>
 
