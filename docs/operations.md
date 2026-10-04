@@ -394,7 +394,8 @@ Reading the rows:
 Compose restarts a container when it exits, never because its healthcheck reports unhealthy, and there
 is no autoheal. So each process asks the question its own container healthcheck asks
 (`node apps/worker/dist/index.js healthcheck <mode>`, `apps/worker/src/healthcheck.ts`) after every
-cycle, and exits once the answer has been "unhealthy" for five minutes in a row; the restart policy
+cycle (at most once a minute), and exits once the answer has been "unhealthy" for five minutes in a
+row; the restart policy
 (`unless-stopped`) then starts a fresh one (owner Q7, `apps/worker/src/health-self-restart.ts`).
 
 - worker and uplink: a stale or missing heartbeat counts, and for the uplink also a failed uplink. The log
@@ -421,7 +422,7 @@ cycle, and exits once the answer has been "unhealthy" for five minutes in a row;
   follows the same sequence per output profile: the first restart is immediate, a repeat holds that
   profile's process stopped until its pause is over (`uplink.watchdog.backoff` with `attempt` and
   `backoffMs`; the restart incident names the UTC time). While every profile waits, the uplink status
-  is `failed`
+  is `failed` with the reason "waiting out its restart backoff after a watchdog restart"
 - a streak ends after ten minutes without a new trigger since the last restart, and with a new process:
   the backoff lives in the process's memory
 - the cost: a fault that keeps coming back is dark for longer between attempts, up to five minutes

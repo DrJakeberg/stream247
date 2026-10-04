@@ -1037,8 +1037,8 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   with whether playout restarts by itself (a playable item is selected; with the UTC restart time while
   the backoff runs) or waits for a playable item, followed by the catalogue's action as before.
 - **H8, self-restart (owner Q7).** `apps/worker/src/health-self-restart.ts`: after every cycle each
-  process evaluates `decideHealthcheck` for its own mode and exits after five minutes of consecutive
-  failures; `restart: unless-stopped` brings it back. Not counted: a playout whose programme advances
+  process evaluates `decideHealthcheck` for its own mode (at most once a minute) and exits after five
+  minutes of consecutive failures; `restart: unless-stopped` brings it back. Not counted: a playout whose programme advances
   (HLS: the feed on disk is fresh; direct mode: an ffmpeg is running, since nothing else can be
   measured), crash-loop protection, an uplink holding for backoff or without an output, the uplink's
   "Program feed is failed", and a check that cannot read the database (M86's rule owns the outage).

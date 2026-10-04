@@ -131,6 +131,7 @@ services:
       NODE_ENV: production
     volumes:
       - ./data/media:/app/data/media
+    # Evaluated by the process itself too since M103; see the worker service above.
     healthcheck:
       test: ["CMD", "node", "apps/worker/dist/index.js", "healthcheck", "playout"]
       interval: 45s
@@ -156,6 +157,7 @@ services:
       NODE_ENV: production
     volumes:
       - ./data/media:/app/data/media
+    # Evaluated by the process itself too since M103; see the worker service above.
     healthcheck:
       test: ["CMD", "node", "apps/worker/dist/index.js", "healthcheck", "uplink"]
       interval: 45s

@@ -9096,6 +9096,7 @@ async function runUplinkCycle(): Promise<void> {
   await updatePlayoutRuntime((playout) => ({
     ...playout,
     uplinkStatus: allHeld ? "failed" : "running",
+    ...(allHeld ? { uplinkLastExitReason: "waiting out its restart backoff after a watchdog restart" } : {}),
     uplinkStartedAt: runningStartedAt,
     uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
     uplinkHeartbeatAt: new Date().toISOString(),
@@ -10501,7 +10502,16 @@ async function readSelfRestartReason(mode: RuntimeMode): Promise<string | null> 
   return selfRestartReason({ mode, failure, deliberateHold, feedAdvancing });
 }
 
+// A full state read, so at most once a minute rather than after every 15 s cycle; the exit then comes
+// between five and six minutes after the first failing check.
+const HEALTH_SELF_CHECK_INTERVAL_MS = 60_000;
+let lastHealthSelfCheckAtMs = 0;
+
 async function enforceHealthSelfRestart(mode: RuntimeMode, watch: HealthSelfRestartWatch): Promise<void> {
+  if (Date.now() - lastHealthSelfCheckAtMs < HEALTH_SELF_CHECK_INTERVAL_MS) {
+    return;
+  }
+  lastHealthSelfCheckAtMs = Date.now();
   let reason: string | null;
   try {
     reason = await readSelfRestartReason(mode);
