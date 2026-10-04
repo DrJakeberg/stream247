@@ -101,8 +101,10 @@ describe("the playout cycle", () => {
   });
 
   it("still resets a crash loop and restarts whatever the selection names", () => {
+    // Since M103 the reset also waits out its backoff (restart-backoff.ts) before it stops the process.
+    expect(flatCycle).toContain('const crashLoopPlayableSelected = Boolean(selection.asset || selection.queueKind === "live");');
     expect(flatCycle).toContain(
-      'if (state.playout.crashLoopDetected && (selection.asset || selection.queueKind === "live") && !state.playout.restartRequestedAt) { await stopPlayoutProcess("crash-loop-reset");'
+      'if ( state.playout.crashLoopDetected && crashLoopPlayableSelected && !state.playout.restartRequestedAt && Date.now() >= crashLoopResumeAtMs ) { crashLoopResetBackoff.recordRestart(Date.now()); crashLoopHold = null; await stopPlayoutProcess("crash-loop-reset");'
     );
     expect(flatCycle).toContain('const restartRequested = Boolean(state.playout.restartRequestedAt) && selection.queueKind !== "live";');
     // M76 names what the restart was for (as-run log) right before the stop; nothing is awaited in between.

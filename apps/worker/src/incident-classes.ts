@@ -484,6 +484,27 @@ const EVENT_FAMILIES: IncidentFamily[] = [
     why: "The playout cycle threw once and the loop continued; the throw is a past event."
   },
   {
+    fingerprint: "worker.health.self-restart",
+    keyed: false,
+    kind: "event",
+    area: "worker",
+    why: "The worker failed its own healthcheck for five minutes and exited (M103); the restart is the end of it."
+  },
+  {
+    fingerprint: "playout.health.self-restart",
+    keyed: false,
+    kind: "event",
+    area: "playout",
+    why: "The playout failed its own healthcheck for five minutes with its feed stalled and exited (M103); the restart is the end of it."
+  },
+  {
+    fingerprint: "uplink.health.self-restart",
+    keyed: false,
+    kind: "event",
+    area: "uplink",
+    why: "The uplink failed its own healthcheck for five minutes and exited (M103); the restart is the end of it."
+  },
+  {
     fingerprint: "uplink.loop.stalled",
     keyed: false,
     kind: "event",
