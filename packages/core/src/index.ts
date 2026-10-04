@@ -3017,6 +3017,33 @@ export function getScheduleElapsedSeconds(args: {
   return minuteDelta * 60;
 }
 
+/**
+ * Real seconds since the run of an occurrence started (M101, R3 C5): `now` minus the instant of its start in
+ * the channel zone. Blocks keep their wall-clock times across the switch nights, but a cuepoint "after
+ * 2 h" means two real hours: a block from 01:00 is 5 400 s in at 03:30 on the spring-forward day, where the
+ * wall clock counts 9 000 s and fired cuepoints an hour early. A start that exists twice counts from its
+ * first occurrence. Without the occurrence's `date` it falls back to the wall-clock count.
+ */
+export function getScheduleRunElapsedSeconds(args: {
+  occurrence: { date?: string; startMinuteOfDay: number; effectiveStartMinuteOfDay?: number };
+  now: Date;
+  timeZone: string;
+}): number {
+  const { occurrence } = args;
+  if (!occurrence.date) {
+    return getScheduleElapsedSeconds({
+      startMinuteOfDay: occurrence.startMinuteOfDay,
+      currentTime: getCurrentScheduleMoment({ now: args.now, timeZone: args.timeZone }).time
+    });
+  }
+  const startsAt = getScheduleInstant({
+    date: occurrence.date,
+    seconds: (occurrence.effectiveStartMinuteOfDay ?? occurrence.startMinuteOfDay) * 60,
+    timeZone: args.timeZone
+  });
+  return Math.max(0, Math.floor((args.now.getTime() - startsAt.getTime()) / 1000));
+}
+
 export function getCuepointProgress(args: {
   occurrenceKey: string;
   cuepointOffsetsSeconds: number[];
@@ -4103,13 +4130,31 @@ export function getScheduleOccurrenceAirWindows(occurrence: ScheduleOccurrence):
     : [getScheduleOccurrenceMinuteRange(occurrence)];
 }
 
-/** The air windows in seconds from the block's start, as `getCuepointProgress` reads them. */
-export function getScheduleOccurrenceAirWindowSeconds(occurrence: {
-  effectiveStartMinuteOfDay: number;
-  airWindows?: ScheduleAirWindow[];
-}): ScheduleAirWindow[] | undefined {
+/**
+ * The air windows in seconds from the block's start, as `getCuepointProgress` reads them. With the
+ * occurrence's `date` and the channel zone they are real seconds, like `getScheduleRunElapsedSeconds`
+ * (M101): on a switch night a window's wall-clock length is an hour off.
+ */
+export function getScheduleOccurrenceAirWindowSeconds(
+  occurrence: {
+    effectiveStartMinuteOfDay: number;
+    airWindows?: ScheduleAirWindow[];
+    date?: string;
+  },
+  timeZone?: string
+): ScheduleAirWindow[] | undefined {
   if (!occurrence.airWindows || occurrence.airWindows.length === 0) {
     return undefined;
+  }
+  const date = occurrence.date;
+  if (date && timeZone) {
+    const at = (minute: number, ambiguous: "earlier" | "later") =>
+      getScheduleInstant({ date, seconds: minute * 60, timeZone, ambiguous }).getTime();
+    const runStart = at(occurrence.effectiveStartMinuteOfDay, "earlier");
+    return occurrence.airWindows.map((window) => ({
+      start: Math.round((at(window.start, "earlier") - runStart) / 1000),
+      end: Math.round((at(window.end, "later") - runStart) / 1000)
+    }));
   }
   return occurrence.airWindows.map((window) => ({
     start: (window.start - occurrence.effectiveStartMinuteOfDay) * 60,
@@ -4352,14 +4397,20 @@ function extractFormatterParts(args: { instant: Date; timeZone: string }) {
  * 86 400 is a later day, below 0 the day before, so an item after midnight or a block carried over from the
  * evening before reads right (M100).
  */
-export function getScheduleInstant(args: { date: string; seconds: number; timeZone: string }): Date {
+export function getScheduleInstant(args: {
+  date: string;
+  seconds: number;
+  timeZone: string;
+  ambiguous?: "earlier" | "later";
+}): Date {
   const dayOffset = Math.floor(args.seconds / 86_400);
   const secondOfDay = args.seconds - dayOffset * 86_400;
   const minuteOfDay = Math.floor(secondOfDay / 60);
   const start = toUtcIsoForLocalDateTime({
     date: addDaysToDateString(args.date, dayOffset),
     minuteOfDay,
-    timeZone: args.timeZone
+    timeZone: args.timeZone,
+    ambiguous: args.ambiguous
   });
   return new Date(Date.parse(start) + (secondOfDay - minuteOfDay * 60) * 1000);
 }
@@ -4383,10 +4434,21 @@ export function getScheduleStartsInMinutes(
   return minutes > 0 ? minutes : null;
 }
 
+/**
+ * Which instant a wall-clock time of the channel zone names (M101, R3 C5). Blocks follow the wall clock
+ * (owner decision R3 Q4), so the switch nights need two rules:
+ * - a time that does not exist (02:30 on the spring-forward night in Europe/Berlin) maps forward by the
+ *   length of the gap: 02:30 on 2026-03-29 is 03:30 CEST (`01:30Z`). Before M101 it mapped one hour early,
+ *   to 01:30 CET (`00:30Z`), while the block before was still on air
+ * - a time that exists twice (02:30 on the fall-back night) is its first occurrence by default (`00:30Z` on
+ *   2026-10-25), because a block in the repeated hour starts airing then; `ambiguous: "later"` gives the
+ *   second (`01:30Z`), which is where a block ending in that hour stops airing
+ */
 export function toUtcIsoForLocalDateTime(args: {
   date: string;
   minuteOfDay: number;
   timeZone: string;
+  ambiguous?: "earlier" | "later";
 }): string {
   const [yearText, monthText, dayText] = args.date.split("-");
   const year = Number(yearText);
@@ -4394,22 +4456,29 @@ export function toUtcIsoForLocalDateTime(args: {
   const day = Number(dayText);
   const hour = Math.floor(args.minuteOfDay / 60);
   const minute = args.minuteOfDay % 60;
-  let instant = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
-
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const zoned = extractFormatterParts({ instant, timeZone: args.timeZone });
-    const desiredAsUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
+  const desiredAsUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
+  const offsetAt = (instantMs: number) => {
+    const zoned = extractFormatterParts({ instant: new Date(instantMs), timeZone: args.timeZone });
     const zonedAsUtc = Date.UTC(zoned.year, zoned.month - 1, zoned.day, zoned.hour, zoned.minute, zoned.second);
-    const delta = desiredAsUtc - zonedAsUtc;
+    return zonedAsUtc - (instantMs - (((instantMs % 1000) + 1000) % 1000));
+  };
 
-    if (delta === 0) {
-      break;
-    }
+  // A zone changes its offset at most once within a day, so the offsets a day before and a day after are
+  // the only candidates.
+  const offsetBefore = offsetAt(desiredAsUtc - 86_400_000);
+  const offsetAfter = offsetAt(desiredAsUtc + 86_400_000);
+  const matches = [...new Set([offsetBefore, offsetAfter])]
+    .map((offset) => desiredAsUtc - offset)
+    .filter((candidate) => candidate + offsetAt(candidate) === desiredAsUtc)
+    .sort((left, right) => left - right);
 
-    instant = new Date(instant.getTime() + delta);
+  if (matches.length > 0) {
+    return new Date(args.ambiguous === "later" ? matches[matches.length - 1] : matches[0]).toISOString();
   }
 
-  return instant.toISOString();
+  // In the gap: read the time with the offset that held before it, which lands as far past the switch as
+  // the time lies past its start.
+  return new Date(desiredAsUtc - offsetBefore).toISOString();
 }
 
 export type DestinationRoutingRecord = {

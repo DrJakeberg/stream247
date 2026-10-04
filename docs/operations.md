@@ -534,6 +534,28 @@ The operator's queue (*Play now*, *Insert*) is not shown in *Up next*; the proje
 On air, the next card adds how soon the next block starts: `20:00-22:00 · in 25 min` under an hour,
 `· in 3 h` under a day.
 
+### The clock change (since M101)
+
+The schedule runs on the wall clock of the channel zone, also on the two nights the clocks change (owner
+decision). A block airs while the clock shows its times, so in Europe a block in 02:00-03:00 is skipped on
+the spring-forward Sunday in March and airs twice on the fall-back Sunday in October, and a block across
+that hour is an hour shorter in March and an hour longer in October. Nothing is moved or shortened to
+compensate.
+
+What counts time counts real time:
+
+- cuepoints count real seconds from the block's start: a block from 01:00 is 90 minutes in at 03:30 on
+  the spring-forward day, and its cuepoint at `1:40:00` fires 1 h 40 min after 01:00, not an hour early.
+  In October a block from 01:00 is 90 minutes in at the first 02:30 and 150 at the second; a cuepoint
+  fires once per run
+- the Twitch schedule posts each segment for the real minutes it airs: Sunday 01:00-04:00 is 2 hours in
+  March and 4 hours in October; a block in 02:00-03:00 gets no segment in March (it does not air) and
+  2 hours from the first 02:00 in October. `/channel` and `/channel.ics` show the same times
+- a time the clock skips (02:30 in March) is read as the moment that far past the switch: 03:30 summer
+  time. A time the clock shows twice (02:30 in October) is read as its first occurrence when something
+  starts there, and its second when something ends there
+- the week view and the day lens show wall-clock times and lengths, as the schedule is written
+
 ### Channel timezone is not valid (since M85)
 
 - the incident `config.channel-timezone.invalid` (warning, system) means `CHANNEL_TIMEZONE` in the

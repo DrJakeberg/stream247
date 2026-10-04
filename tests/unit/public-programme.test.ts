@@ -288,3 +288,17 @@ describe("V7: the on-air Next card says how soon", () => {
     expect(getScheduleStartsInMinutes({ airStartMinute: 20 * 60 }, now, ZONE)).toBeNull();
   });
 });
+
+describe("M101: the week across the clock change", () => {
+  it("lists a Sunday 02:00-03:00 block in October from its first 02:00 to its last 03:00", () => {
+    // 2026-10-25 is the fall-back Sunday: 02:00 CEST is 00:00Z, 03:00 CET is 02:00Z; the block airs twice.
+    const programme = programmeAt({
+      date: "2026-10-19",
+      time: "12:00",
+      blocks: [block({ id: "night", dayOfWeek: 0, startMinuteOfDay: 120, durationMinutes: 60 })],
+      pools: [pool("pool-1")],
+      assets: assets("pool-1", 3, 600)
+    });
+    expect(programme.week.map((entry) => [entry.startsAt, entry.endsAt])).toEqual([["2026-10-25T00:00:00.000Z", "2026-10-25T02:00:00.000Z"]]);
+  });
+});
