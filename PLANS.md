@@ -33,7 +33,7 @@ How this file works:
 | M95 Self-Healing Fills The Gaps | Reliability | Next | Complete | No stale incident, no orphan encoder, no permanently lost item | H5: disk and system-volume flags re-armed from open incidents on the first cycle; `secrets.key-mismatch` resolved at a boot where every secret decrypts; tests. W7: the playout exit handler returns when the exiting child is not current (static test as R3's); the uplink handler checked for the same pattern. H9: one re-probe per quarantined item per 24 h, one per source per cycle, only with the breaker closed and no outage verdict (owner Q1); test. U18: `scripts/soak-monitor.sh` counts uplink and relay restarts; shell test or `bash -n` plus a fixture run | `apps/worker`, `scripts/`, tests, `docs/operations.md` | low | revert the commit |
 | M96 Local File Durations | Data | Next | Complete | Local-library assets carry their real length, so planning numbers are right | U4: `ffprobe` duration at scan time, bounded timeout, cached by size + mtime; unit test on a generated 2-minute file → `durationSeconds` within 1 s of 120; an unchanged file is not probed again (spy); Day lens shows "Unique library: 6m" for three such files | `apps/worker`, `packages/db`, tests | medium: a large first scan is slower, so probing is incremental | revert the commit; stored durations are harmless to old images |
 | M97 Week View Tells The Truth | UX | Next | Complete | The week view shows what will play, with dates, overnight blocks once, and why a block repeats | U5: each pool's rotation carried across blocks in time order through the worker's rotation function (shared, not copied); dates on day headers; hours, not minutes; an overnight block shown once with "→ 01:00 Sun"; repeat reason with numbers. U6: confirmation before "Replace existing schedule blocks"; "Edit block" and "Add block" on the week view. Tests in `program-week-projection`: three items, two blocks, the second block starts with item 2, not item 1; a 24 h block reads "24 h"; a block with 6 min of video in 24 h carries the reason "plays ≈ 240 times"; an overnight block appears on one day only. e2e: "Replace existing schedule blocks" opens a confirmation and Cancel leaves the blocks unchanged | `packages/core`, `apps/web`, tests, baselines | medium: preview must not drift from the worker, so one shared function | revert the commit |
-| M98 The Production Path Has A Smoke | Test | Next | Planned | CI exercises playout → HLS → uplink with the relay on | U15: a CI job starts the stack with the relay on and asserts that `program.m3u8` MEDIA-SEQUENCE grows and the uplink output grows over 60 s; the job fails when the uplink is stopped (mutation run) | `.github/workflows/ci.yml`, `scripts/`, `docker-compose*.yml` | low (CI only) | revert the commit |
+| M98 The Production Path Has A Smoke | Test | Next | Complete | CI exercises playout → HLS → uplink with the relay on | U15: a CI job starts the stack with the relay on and asserts that `program.m3u8` MEDIA-SEQUENCE grows and the uplink output grows over 60 s; the job fails when the uplink is stopped (mutation run) | `.github/workflows/ci.yml`, `scripts/`, `docker-compose*.yml` | low (CI only) | revert the commit |
 | M99 Wizard To First Programme | UX | Later | Planned | `/setup` ends with a stream key and a playing week | U1 (decided 5.1 Q9): skippable step "Where the stream goes" with the Twitch preset, the key stored encrypted and masked; the destination form moves to Studio → Output, the old anchor redirects. U2: skippable step "First programme" creates a pool from chosen media and applies the "Always-on single pool" template. R2 U3: render test: an empty library says how to add media, a filtered-empty library says the filters hide everything. e2e: a fresh owner completes both steps and readiness shows destination, pools and schedule ready | `apps/web`, tests, baselines, `docs/getting-started.md` | medium: moves a form operators know | revert the commit |
 | M100 Public Programme For Viewers | Feature | Later | Planned | Viewers see what comes next and the coming week, in their own time | V1 ("After that" from the schedule) comes with M88 through R1's commits `a41d327` and `51e69ee` and is not built again here. V2: "Scheduled now" when playout is down. R1 row B: a 7-day list on `/channel` per day, dated items marked; `/channel.ics` validated by a parser test; times per default R2 Q7 in 5.2 (viewer's zone first; unit test with a browser zone other than the channel zone). Layout per 2.5a: a *Now* card with progress bar and remaining time (unit test on the remaining-time and progress values for a fixed clock), a *Next* list of the next 24 h at item level from the shared week projection, consecutive items of one block grouped with "N more" (test: 3 blocks × 5 items give 3 groups with "4 more" each), crossing midnight without a break (test); Playwright at 390 px: the *Now* card is above the fold. R2 V7: the on-air Next card adds "in N min" to its bare time range (`packages/core/src/viewer-messages/en.ts:29`) through the catalogue, en + de, unit test for a fixed clock. Catalogue parity en/de green | `apps/web`, `packages/core`, tests, baselines, `docs/` | low | revert the commit |
 | M101 Schedule Across DST, Wall Clock Kept | Bug | Later | Planned | Twice a year the counts are right while blocks keep their wall-clock times (owner Q4) | C5: cuepoint elapsed time from real instants (test: block from 01:00, at 03:30 local on 2027-03-28 reports 5 400 s, not 9 000 s); a non-existent local time maps forward (02:30 on 2026-03-29 → `01:30Z`, not `00:30Z`); the Twitch segment end follows real minutes; `docs/operations.md` states the wall-clock rule (skipped in March, twice in October) | `packages/core`, `apps/worker`, tests, docs | low | revert the commit |
@@ -792,3 +792,56 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
 - **Not built.** The Twitch VOD cache cooldown (M94's finding) is not known to the week view; the Day lens
   still counts minutes (*1440m scheduled*) and keeps its internal words (U6's Day-lens rework is not in this
   row).
+
+### M98 The Production Path Has A Smoke
+
+- **What runs.** `pnpm test:broadcast-path` (`scripts/broadcast-path-smoke.sh`), a CI step after runtime
+  parity, bounded at 20 minutes; about seven minutes locally. It starts the compose stack with the relay on
+  and the uplink reading the HLS program feed (the `.env.production.example` values), the primary output
+  pointed at an RTMP sink on a second, internal network (`outside`, `198.51.100.0/24`). The sink is ffmpeg
+  listening in the worker image, not MediaMTX: MediaMTX refuses the uplink's first connection ("unable to
+  parse H264 config: invalid size 1", the tee/fifo muxer's empty sequence header), and after that refusal
+  the fifo's recovery never publishes again (`extract_extradata: A non-NULL packet sent after an EOF`).
+  Measured with the stand-in images below (ffmpeg 6.1, 7.1 and 8.0), not with the Alpine image; Twitch
+  accepts the header on the DUT.
+- **U15.** Over 60 s, `program.m3u8`'s `MEDIA-SEQUENCE` and the bytes the sink wrote both grow. Mutation
+  run: with `compose stop uplink` the same measurement must fail, and does (sink bytes unchanged while the
+  feed still grows). Local run: `MEDIA-SEQUENCE 0 -> 22`, sink bytes `524288 -> 1835008`; mutated:
+  `2020370 -> 2020370`.
+- **Broken source (M75), owner's question of 2026-10-02 15:28, cases as Release answered 15:34.** Three
+  items of one source on a stub answer 404, refuse the connection and hang; `playout.source-breaker.opened`
+  names all three. The stub heals, the stored opening time is moved back 31 minutes (the 30-minute cooldown
+  is not waited out; the playout decides half-open from that stored time alone), and the trial probe closes
+  the breaker (`playout.source-breaker.closed`). Two deviations from the answer, both forced by the code:
+  - the items are YouTube-shaped URLs on the stub (`/youtube.com/watch?v=…`), not direct-media URLs: a
+    direct-media URL is never probed (`resolvePlayableMedia` passes it to ffmpeg as is), so it cannot feed
+    the breaker. They belong to a direct-media source whose own URL does not validate, so the sync keeps
+    the inserted rows;
+  - a local item is pinned while the broken pool is scheduled: the playout probes a pool's next items only
+    while one of its items or an operator item is on air; behind a failed pick the fallback airs and
+    nothing is probed (follow-up 1).
+- **Network outage (M82).** The playout is disconnected from `outside` only, so PostgreSQL stays reachable
+  as on the DUT when its internet drops. For 90 s the pool is three never-probed remote items: two
+  `playout.probe.network_outage` lines (`198.51.100.10:1935 unreachable (connect ETIMEDOUT)`), no breaker
+  opened, zero counted probe failures. Reconnected and the Pin resumed, a remote item goes on air and the
+  path grows again (`MEDIA-SEQUENCE 158 -> 188`).
+- **Why a documentation range.** The outage check skips private and single-label hosts ("no public publish
+  host to ask"); `198.51.100.0/24` is neither, and an `internal: true` network leaks nothing.
+- **Local runs.** The stream247 images cannot be built in the cloud container (Alpine's package CDN is
+  refused), so the script ran against stand-in images built from the same source tree on Ubuntu with its
+  ffmpeg 6.1 (mwader's static ffmpeg links librtmp, whose handshake the sink rejects). The pull request's CI
+  run is the one against the real images.
+- **DUT checks.** None new: M82's check after a nightly blip and M75's breaker on real sources stay as they
+  are.
+- **Follow-ups (not changed here).**
+  1. A pool whose next pick fails to resolve stays on that pick: the fallback bridges every boundary, the
+     rotation does not move on, the queue is not probed, so the breaker learns one item and per-item
+     quarantine none (inline resolves count for neither). Measured: a pool of three broken items picked
+     the 404 item for over four minutes, breaker at one failed item.
+  2. Every ffmpeg stderr chunk of the playout fires an unawaited runtime write and, for a line with
+     "error", an incident upsert. A noisy input (an mp4 read without Range support: about 800 AAC error lines
+     a minute) exhausted the connection pool (`timeout exceeded when trying to connect`, 578 times) and
+     crashed the playout loop (`worker.loop.crashed`).
+  3. The uplink's tee/fifo output sends an empty H.264 sequence header first; MediaMTX refuses it and the
+     fifo never recovers (stand-in images only, see above). Matters for anyone pointing the uplink at their
+     own RTMP server.

@@ -397,7 +397,7 @@ For production pinning, use `.env.production.example` or set the image tags expl
 
 ### Release Behavior
 
-- `push` to `main` validates, runs fresh-stack bootstrap checks, queue continuity, runtime parity, production-config release preflight, and browser smoke checks, and then publishes current images
+- `push` to `main` validates, runs fresh-stack bootstrap checks, queue continuity, runtime parity, the relay-on broadcast path smoke, production-config release preflight, and browser smoke checks, and then publishes current images
 - `push` of `v*` tags pulls the CI-published `main-<sha>` candidate images for the tagged commit, smoke-validates them, and only then retags and publishes those same tested images as versioned GHCR artifacts
 - CI uses the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners
 - production should pin explicit release tags and not follow `latest`
@@ -600,6 +600,7 @@ The intended validation path is:
 - `pnpm test:fresh-compose`
 - `pnpm test:queue-continuity`
 - `pnpm test:runtime-parity`
+- `pnpm test:broadcast-path`
 - `pnpm test:e2e:smoke`
 - `pnpm release:preflight`
 - Docker image build
@@ -616,6 +617,7 @@ Current validation covers:
 - fresh compose bootstrap smoke
 - queue continuity smoke across short local-library assets
 - runtime parity smoke for Multi-Output fanout, audio-lane playback, cuepoint inserts, and Live Bridge takeover/release on a fresh Compose stack
+- broadcast path smoke with the relay on: the program feed and the uplink output both grow over 60 s (and the check fails with the uplink stopped), a broken source opens and closes its circuit breaker, and a 90 s network outage of the playout is counted neither by the breaker nor by quarantine
 - browser smoke for bootstrap, operator IA navigation, secondary-output creation, local 2FA login, live controls, and Scene publish
 - production-config release preflight against pinned image tags and required Compose settings
 - Docker builds
