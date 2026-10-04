@@ -8,6 +8,9 @@ import {
 
 export type HealthcheckMode = "worker" | "playout" | "uplink";
 
+/** The uplink's verdict when the playout's feed is failed; the uplink does not restart itself on it (M103). */
+export const PROGRAM_FEED_FAILED_HEALTHCHECK_MESSAGE = "Program feed is failed.";
+
 export type HealthcheckPlayoutInput = {
   status: string;
   heartbeatAt: string;
@@ -59,7 +62,7 @@ export function decideHealthcheck(
       return `Uplink failed: ${playout.uplinkLastExitReason || "unknown error"}`;
     }
     if (playout.programFeedStatus === "failed") {
-      return "Program feed is failed.";
+      return PROGRAM_FEED_FAILED_HEALTHCHECK_MESSAGE;
     }
     return null;
   }

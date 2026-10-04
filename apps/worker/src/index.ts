@@ -240,6 +240,8 @@ import {
 } from "./multi-output.js";
 import { logRuntimeEvent } from "./runtime-log.js";
 import { decideHealthcheck } from "./healthcheck.js";
+import { HealthSelfRestartWatch, HEALTH_SELF_RESTART_AFTER_MS, selfRestartReason } from "./health-self-restart.js";
+import { RestartBackoff, describeCrashLoopHold, describeRestartBackoff, type RestartBackoffPlan } from "./restart-backoff.js";
 import { planSourceBreakerIncidents } from "./source-breaker-incidents.js";
 import { createBreakerOutcomeCarry, sourceBreakerOutcomesOf, type QueueProbeOutcome } from "./source-breaker-outcomes.js";
 import { createNetworkOutageCheck, ProbeOutageLogLimiter, withoutNetworkOutageOutcomes, networkLookingFailuresOf } from "./probe-network-outage.js";
@@ -517,6 +519,16 @@ let inputOpenRetry: InputOpenRetryState | null = null;
 let uplinkProcesses: UplinkProcessRuntime[] = [];
 let uplinkReconnectUntil = "";
 const uplinkDestinationStallStartedAt: Map<string, number> = new Map();
+// M103 (H7): the uplink watchdog's restarts back off per output profile. A profile whose process the
+// watchdog stopped is not started again before its hold ends.
+const uplinkWatchdogBackoff: Map<string, RestartBackoff> = new Map();
+const uplinkWatchdogHoldUntilMs: Map<string, number> = new Map();
+// Why the uplink cycle deliberately left nothing running, for the self-restart check (M103, H8).
+let uplinkDeliberateHold = "";
+// M103 (H7): crash-loop protection's reset backs off. The hold starts when this process first sees
+// protection active and lasts the planned pause; a playable item restarts playout once it is over.
+const crashLoopResetBackoff = new RestartBackoff();
+let crashLoopHold: { sinceMs: number; plan: RestartBackoffPlan } | null = null;
 // The heartbeat windows live in @stream247/core (heartbeat.ts), shared with the web (M90).
 type WorkerScheduleOccurrence = ReturnType<typeof buildScheduleOccurrences>[number];
 // Hard ceiling on a single reconciliation cycle. If a cycle neither resolves
@@ -7891,7 +7903,28 @@ async function runPlayoutCycle(): Promise<void> {
     await resolveIncident("playout.no-asset", "A playable asset is available again.");
   }
 
-  if (state.playout.crashLoopDetected && (selection.asset || selection.queueKind === "live") && !state.playout.restartRequestedAt) {
+  const crashLoopPlayableSelected = Boolean(selection.asset || selection.queueKind === "live");
+  if (!state.playout.crashLoopDetected) {
+    crashLoopHold = null;
+  } else if (crashLoopHold === null) {
+    const nowMs = Date.now();
+    crashLoopHold = { sinceMs: nowMs, plan: crashLoopResetBackoff.plan(nowMs) };
+    logRuntimeEvent("playout.crash_loop.hold", {
+      attempt: crashLoopHold.plan.attempt,
+      backoffMs: crashLoopHold.plan.delayMs,
+      playableSelected: crashLoopPlayableSelected
+    });
+  }
+  const crashLoopResumeAtMs = crashLoopHold ? crashLoopHold.sinceMs + crashLoopHold.plan.delayMs : 0;
+
+  if (
+    state.playout.crashLoopDetected &&
+    crashLoopPlayableSelected &&
+    !state.playout.restartRequestedAt &&
+    Date.now() >= crashLoopResumeAtMs
+  ) {
+    crashLoopResetBackoff.recordRestart(Date.now());
+    crashLoopHold = null;
     await stopPlayoutProcess("crash-loop-reset");
     await updatePlayoutRuntime((playout) => ({
       ...playout,
@@ -7912,7 +7945,13 @@ async function runPlayoutCycle(): Promise<void> {
       title: "Playout crash-loop protection is active",
       // What to do, not only that something must be done (M90): the action itself comes from the
       // catalogue in @stream247/core, so the card and this message cannot disagree.
-      message: `FFmpeg exited repeatedly, so automatic restarts are paused until a playable item is selected. ${describeIncidentOperatorAction("playout.crash-loop")}`,
+      // Since M103 the first sentence says whether playout restarts by itself (a playable item is
+      // selected and the backoff runs) or waits for one; the action stays, it also skips the wait.
+      message: `${describeCrashLoopHold({
+        playableSelected: crashLoopPlayableSelected,
+        plan: crashLoopHold?.plan ?? { delayMs: 0, attempt: 1 },
+        resumeAtMs: crashLoopResumeAtMs
+      })} ${describeIncidentOperatorAction("playout.crash-loop")}`,
       fingerprint: "playout.crash-loop"
     });
     await updatePlayoutRuntime((playout) => ({
@@ -8762,7 +8801,30 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
   });
 }
 
+/**
+ * The pause before the uplink watchdog's restart of one output profile (M103, H7), recorded as that
+ * profile's next restart. Returns the sentence the restart incident appends; "" for an immediate one.
+ */
+function planUplinkWatchdogRestart(key: string, nowMs: number): string {
+  let backoff = uplinkWatchdogBackoff.get(key);
+  if (!backoff) {
+    backoff = new RestartBackoff();
+    uplinkWatchdogBackoff.set(key, backoff);
+  }
+  const plan = backoff.plan(nowMs);
+  const resumeAtMs = nowMs + plan.delayMs;
+  backoff.recordRestart(resumeAtMs);
+  if (plan.delayMs > 0) {
+    uplinkWatchdogHoldUntilMs.set(key, resumeAtMs);
+    logRuntimeEvent("uplink.watchdog.backoff", { outputProfile: key, attempt: plan.attempt, backoffMs: plan.delayMs });
+  } else {
+    uplinkWatchdogHoldUntilMs.delete(key);
+  }
+  return describeRestartBackoff(plan, resumeAtMs);
+}
+
 async function runUplinkCycle(): Promise<void> {
+  uplinkDeliberateHold = "";
   if (!STREAM247_RELAY_ENABLED) {
     await stopAllUplinkProcesses("relay-disabled");
     await updatePlayoutRuntime((playout) => ({
@@ -8813,6 +8875,7 @@ async function runUplinkCycle(): Promise<void> {
       message: "Configure at least one enabled output with an RTMP URL and stream key so the uplink can publish from the local relay.",
       fingerprint: "uplink.output.missing"
     });
+    uplinkDeliberateHold = "destination-missing";
     return;
   }
 
@@ -8909,11 +8972,12 @@ async function runUplinkCycle(): Promise<void> {
         destinationIds: running.destinationIds,
         runningSeconds
       });
+      const backoffNote = planUplinkWatchdogRestart(running.key, now);
       await upsertIncident({
         scope: "playout",
         severity: "warning",
         title: "Uplink restarted after never encoding a frame",
-        message: `The uplink process for ${running.key} has been running for ${runningSeconds}s without encoding anything, so nothing has reached the destination in that time. Restarting it; if this repeats, the program feed itself is likely unreadable rather than the uplink being at fault.`,
+        message: `The uplink process for ${running.key} has been running for ${runningSeconds}s without encoding anything, so nothing has reached the destination in that time. Restarting it; if this repeats, the program feed itself is likely unreadable rather than the uplink being at fault.${backoffNote ? ` ${backoffNote}` : ""}`,
         fingerprint: `uplink.no-progress.${running.key}`
       });
       await stopUplinkProcess(running, "encoder-stalled");
@@ -8926,11 +8990,12 @@ async function runUplinkCycle(): Promise<void> {
         destinationIds: running.destinationIds,
         eventsInWindow: running.discontinuity.count
       });
+      const backoffNote = planUplinkWatchdogRestart(running.key, now);
       await upsertIncident({
         scope: "playout",
         severity: "warning",
         title: "Uplink restarted after its input timeline came apart",
-        message: `The uplink process for ${running.key} reported ${running.discontinuity.count} timestamp discontinuities in a minute. It keeps encoding in this state but corrects audio and video onto separate timelines, which viewers hear as the tracks drifting apart. Reattaching it to the live edge clears the seam.`,
+        message: `The uplink process for ${running.key} reported ${running.discontinuity.count} timestamp discontinuities in a minute. It keeps encoding in this state but corrects audio and video onto separate timelines, which viewers hear as the tracks drifting apart. Reattaching it to the live edge clears the seam.${backoffNote ? ` ${backoffNote}` : ""}`,
         fingerprint: `uplink.discontinuity-storm.${running.key}`
       });
       await stopUplinkProcess(running, "encoder-stalled");
@@ -8948,11 +9013,12 @@ async function runUplinkCycle(): Promise<void> {
       stalledSeconds,
       thresholdSeconds: Math.round(uplinkStallOptions.stallMs / 1000)
     });
+    const backoffNote = planUplinkWatchdogRestart(running.key, now);
     await upsertIncident({
       scope: "playout",
       severity: "warning",
       title: "Uplink restarted after it stopped encoding",
-      message: `The uplink process for ${running.key} is still running but has not advanced its output timestamp for ${stalledSeconds}s. Restarting it so the channel does not keep an open but silent connection.`,
+      message: `The uplink process for ${running.key} is still running but has not advanced its output timestamp for ${stalledSeconds}s. Restarting it so the channel does not keep an open but silent connection.${backoffNote ? ` ${backoffNote}` : ""}`,
       fingerprint: `uplink.encoder-stall.${running.key}`
     });
     await stopUplinkProcess(running, "encoder-stalled");
@@ -8983,11 +9049,12 @@ async function runUplinkCycle(): Promise<void> {
       stallSeconds: stallDecision.stallSeconds,
       thresholdSeconds: UPLINK_DESTINATION_STALL_RESTART_SECONDS
     });
+    const backoffNote = planUplinkWatchdogRestart(running.key, now);
     await upsertIncident({
       scope: "playout",
       severity: "warning",
       title: "Uplink restarted after every destination stalled",
-      message: `All destinations for ${running.key} have been in error state for ${stallDecision.stallSeconds}s. Restarting the uplink so the fifo muxer reopens the destination connection from a clean slate.`,
+      message: `All destinations for ${running.key} have been in error state for ${stallDecision.stallSeconds}s. Restarting the uplink so the fifo muxer reopens the destination connection from a clean slate.${backoffNote ? ` ${backoffNote}` : ""}`,
       fingerprint: `uplink.destination-stall.${running.key}`
     });
     await stopUplinkProcess(running, "destination-stalled");
@@ -8999,6 +9066,7 @@ async function runUplinkCycle(): Promise<void> {
     }
   }
 
+  const heldGroupKeys: string[] = [];
   for (const group of destinationGroups) {
     const existing = findRunningUplinkProcessByKey(group.key);
     if (existing && !isMatchingRunningUplinkGroup(group)) {
@@ -9006,15 +9074,29 @@ async function runUplinkCycle(): Promise<void> {
     }
 
     if (!isMatchingRunningUplinkGroup(group)) {
+      // A profile the watchdog stopped waits out its backoff (M103, H7); the others start as before.
+      const holdUntilMs = uplinkWatchdogHoldUntilMs.get(group.key) ?? 0;
+      if (Date.now() < holdUntilMs) {
+        heldGroupKeys.push(group.key);
+        continue;
+      }
+      uplinkWatchdogHoldUntilMs.delete(group.key);
       await startUplink(group, state.managedConfig);
     }
   }
 
   const runningDestinationIds = getRunningUplinkDestinationIds();
   const runningStartedAt = getRunningUplinkStartedAt();
+  // Nothing on air because every profile waits out its backoff: "failed" tells readiness and the Live
+  // page the truth, and the self-restart check knows the hold is deliberate.
+  const allHeld = heldGroupKeys.length > 0 && getRunningUplinkProcesses().length === 0;
+  if (allHeld) {
+    uplinkDeliberateHold = "watchdog-backoff";
+  }
   await updatePlayoutRuntime((playout) => ({
     ...playout,
-    uplinkStatus: "running",
+    uplinkStatus: allHeld ? "failed" : "running",
+    ...(allHeld ? { uplinkLastExitReason: "waiting out its restart backoff after a watchdog restart" } : {}),
     uplinkStartedAt: runningStartedAt,
     uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
     uplinkHeartbeatAt: new Date().toISOString(),
@@ -10397,6 +10479,71 @@ async function runHealthcheck(mode: RuntimeMode): Promise<void> {
   }
 }
 
+/**
+ * The healthcheck failure that counts towards this process restarting itself (M103, H8), or null.
+ * The verdict is the container healthcheck's own; see health-self-restart.ts for what never counts.
+ */
+async function readSelfRestartReason(mode: RuntimeMode): Promise<string | null> {
+  const state = await readAppState();
+  const failure = decideHealthcheck(mode, state.playout, Date.now(), process.env);
+  if (failure === null) {
+    return null;
+  }
+  let deliberateHold = "";
+  let feedAdvancing = false;
+  if (mode === "uplink") {
+    deliberateHold = uplinkDeliberateHold;
+  }
+  if (mode === "playout") {
+    deliberateHold = state.playout.crashLoopDetected ? "crash-loop-protection" : "";
+    // The feed on disk, not the runtime row: the row is only as current as the last cycle that wrote it.
+    feedAdvancing = isProgramFeedMode() ? (await readProgramFeedRuntimeStatus()).status === "fresh" : playoutProcess !== null;
+  }
+  return selfRestartReason({ mode, failure, deliberateHold, feedAdvancing });
+}
+
+// A full state read, so at most once a minute rather than after every 15 s cycle; the exit then comes
+// between five and six minutes after the first failing check.
+const HEALTH_SELF_CHECK_INTERVAL_MS = 60_000;
+let lastHealthSelfCheckAtMs = 0;
+
+async function enforceHealthSelfRestart(mode: RuntimeMode, watch: HealthSelfRestartWatch): Promise<void> {
+  if (Date.now() - lastHealthSelfCheckAtMs < HEALTH_SELF_CHECK_INTERVAL_MS) {
+    return;
+  }
+  lastHealthSelfCheckAtMs = Date.now();
+  let reason: string | null;
+  try {
+    reason = await readSelfRestartReason(mode);
+  } catch {
+    // No reading without the database; the database outage rule (M86) owns that case.
+    watch.observeUnknown();
+    return;
+  }
+
+  const verdict = watch.observe(reason, Date.now());
+  if (reason !== null && verdict.unhealthyForMs === 0) {
+    logRuntimeEvent("worker.health.unhealthy", { mode, reason, exitAfterMs: HEALTH_SELF_RESTART_AFTER_MS });
+  }
+  if (!verdict.exit) {
+    return;
+  }
+
+  logRuntimeEvent("worker.health.self_restart", { mode, reason: verdict.reason, unhealthyForMs: verdict.unhealthyForMs });
+  try {
+    await upsertIncident({
+      scope: mode === "worker" ? "worker" : "playout",
+      severity: "warning",
+      title: `${mode} restarted itself after failing its healthcheck`,
+      message: `The ${mode} process failed its own healthcheck for ${Math.round(verdict.unhealthyForMs / 1000)}s in a row (${verdict.reason}), so it exited and Docker started it again.`,
+      fingerprint: `${mode}.health.self-restart`
+    });
+  } catch {
+    // Best-effort incident; we are about to exit regardless.
+  }
+  process.exit(1);
+}
+
 function requestImmediatePlayoutCycle(reason: string): void {
   // Never drops the request: with no waiter armed (i.e. called from inside a running cycle) the
   // latch remembers it and waitForNextLoop skips the delay below.
@@ -10437,6 +10584,7 @@ async function runLoop(mode: RuntimeMode): Promise<void> {
   const run = mode === "worker" ? runWorkerCycle : mode === "uplink" ? runUplinkCycle : runPlayoutCycle;
   const delay = mode === "worker" ? 30_000 : 15_000;
   const databaseOutage = new DatabaseOutageBudget();
+  const healthSelfRestart = new HealthSelfRestartWatch();
   // A playout that comes up has nothing on air: a row the previous process left open (a redeploy kills
   // ffmpeg with no exit handler running) is closed as process-gone at this boot (M76). Queued, not awaited.
   if (mode === "playout") {
@@ -10515,6 +10663,9 @@ async function runLoop(mode: RuntimeMode): Promise<void> {
         // already decided whether this process keeps running.
       }
     }
+
+    // M103 (H8): Compose never restarts an "unhealthy" container, so the process does it itself.
+    await enforceHealthSelfRestart(mode, healthSelfRestart);
 
     await waitForNextLoop(mode, delay);
   }

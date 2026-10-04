@@ -88,6 +88,9 @@ services:
       NODE_ENV: production
     volumes:
       - ./data/media:/app/data/media
+    # Compose does not restart a container for being unhealthy. Since M103 the worker, playout and
+    # uplink processes evaluate this same check after every cycle and exit after five minutes of
+    # failing it (playout only while its feed does not advance); `restart` then starts a fresh one.
     healthcheck:
       test: ["CMD", "node", "apps/worker/dist/index.js", "healthcheck", "worker"]
       interval: 45s
@@ -128,6 +131,7 @@ services:
       NODE_ENV: production
     volumes:
       - ./data/media:/app/data/media
+    # Evaluated by the process itself too since M103; see the worker service above.
     healthcheck:
       test: ["CMD", "node", "apps/worker/dist/index.js", "healthcheck", "playout"]
       interval: 45s
@@ -153,6 +157,7 @@ services:
       NODE_ENV: production
     volumes:
       - ./data/media:/app/data/media
+    # Evaluated by the process itself too since M103; see the worker service above.
     healthcheck:
       test: ["CMD", "node", "apps/worker/dist/index.js", "healthcheck", "uplink"]
       interval: 45s

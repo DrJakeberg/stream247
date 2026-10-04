@@ -382,10 +382,50 @@ Reading the rows:
   paused container) still ends in the stall guard's exit. A pool wait that times out while the database
   is up but busy counts towards the five minutes like an outage
 - the containers' healthchecks read the database, so they report unhealthy during the outage; Compose
-  restarts a container only when it exits, never because it is unhealthy
+  restarts a container only when it exits, never because it is unhealthy. The processes' own
+  five-minute healthcheck rule (since M103, below) does not count a check that could not read the
+  database, so during an outage only the rule above ends a process
 - web: a start while PostgreSQL is down or still starting is retried on the next request; no web
   restart is needed. The schema bootstrap waits at most 5 s for any table lock (an older release still
   writing during an upgrade) and retries a lost deadlock or lock wait, four attempts in all
+
+### A process stops proving it is alive (since M103)
+
+Compose restarts a container when it exits, never because its healthcheck reports unhealthy, and there
+is no autoheal. So each process asks the question its own container healthcheck asks
+(`node apps/worker/dist/index.js healthcheck <mode>`, `apps/worker/src/healthcheck.ts`) after every
+cycle (at most once a minute), and exits once the answer has been "unhealthy" for five minutes in a
+row; the restart policy
+(`unless-stopped`) then starts a fresh one (owner Q7, `apps/worker/src/health-self-restart.ts`).
+
+- worker and uplink: a stale or missing heartbeat counts, and for the uplink also a failed uplink. The log
+  shows `worker.health.unhealthy` (with `mode` and the reason) when a streak begins and
+  `worker.health.self_restart` before the exit; the warning incident `<mode>.health.self-restart` says
+  what failed and closes once the area is healthy again
+- playout: only while its programme does not advance. In HLS relay mode that is the feed on disk (not
+  fresh); a playout whose feed advances is never restarted by this rule, however its own heartbeat or
+  status reads. Without the HLS feed there is nothing to measure, so only a playout with no ffmpeg
+  running restarts itself
+- never counted, because a restart cannot change it: crash-loop protection (below), an uplink waiting out
+  its watchdog backoff or without a configured output, and the uplink's "Program feed is failed" (the feed
+  is the playout's). A check that cannot read the database starts the five minutes again
+- a self-restart is a Docker restart: the soak monitor's restart counts see it and fail the soak, as for
+  any other container restart
+
+### Restarts back off (since M103)
+
+- crash-loop protection (three failed ffmpeg exits within ten minutes) still waits for a playable item.
+  The first reset of a streak happens at once, as before; each further one waits longer: 15 s, 30 s,
+  1 min, 2 min, 4 min, then 5 min. The incident says whether playout restarts by itself and at which UTC
+  time. Soft restart under Live → Control → If something is stuck skips the wait
+- the uplink watchdog (never encoded, timestamp storm, `out_time` frozen, every destination in error)
+  follows the same sequence per output profile: the first restart is immediate, a repeat holds that
+  profile's process stopped until its pause is over (`uplink.watchdog.backoff` with `attempt` and
+  `backoffMs`; the restart incident names the UTC time). While every profile waits, the uplink status
+  is `failed` with the reason "waiting out its restart backoff after a watchdog restart"
+- a streak ends after ten minutes without a new trigger since the last restart, and with a new process:
+  the backoff lives in the process's memory
+- the cost: a fault that keeps coming back is dark for longer between attempts, up to five minutes
 
 ### An external service fails or hangs (since M87)
 
@@ -425,9 +465,11 @@ Reading the rows:
 
 ### Crash-loop protection active
 
-- inspect the latest playout incidents
-- verify stream destination and selected asset
-- request a manual restart only after the cause is understood
+- with a playable item selected, playout restarts by itself after the backoff the incident names (since
+  M103, "Restarts back off" above); without one it waits for a playable item
+- inspect the latest playout incidents and the as-run log for the item that keeps failing
+- skip that item or take its source out of the pool; Soft restart then starts at once without waiting
+  out the backoff
 
 ### Destination cooling down or staged
 
