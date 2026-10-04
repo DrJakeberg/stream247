@@ -957,6 +957,37 @@ describe("ops state helpers", () => {
     expect(down.programme.now?.kind).toBe("block");
   });
 
+  it("V1 since M100: a channel scheduled around the clock lists what comes next, also with nothing ready to play", async () => {
+    vi.useFakeTimers();
+    // A Tuesday, 07:30 in the state's zone; three blocks a day, every day, and no playable asset.
+    vi.setSystemTime(new Date("2026-04-07T07:30:00.000Z"));
+    const day = (dayOfWeek: number) => [
+      { start: 0, length: 6 * 60, title: "Nachtschleife" },
+      { start: 6 * 60, length: 14 * 60, title: "Tagesprogramm" },
+      { start: 20 * 60, length: 4 * 60, title: "Abendprogramm" }
+    ].map((entry) => ({
+      id: `${entry.title}-${dayOfWeek}`,
+      title: entry.title,
+      categoryName: "Archiv",
+      dayOfWeek,
+      startMinuteOfDay: entry.start,
+      durationMinutes: entry.length,
+      poolId: "pool-1",
+      sourceName: "YouTube Playlist"
+    }));
+    const state = createState({ assets: [], scheduleBlocks: [0, 1, 2, 3, 4, 5, 6].flatMap(day) });
+    const { buildPublicChannelView } = await import("../../apps/web/lib/public-channel-view");
+    const view = buildPublicChannelView(getPublicChannelSnapshot(state), true);
+    // Before M88 this read "Nothing further is scheduled yet."; the Up next list replaces that line.
+    expect(view.next.map((group) => [group.timeRange, group.title])).toEqual([
+      ["20:00 to 00:00", "Abendprogramm"],
+      ["00:00 to 06:00", "Nachtschleife"],
+      // Tomorrow's day block: inside the next 24 hours, with its own times.
+      ["06:00 to 20:00", "Tagesprogramm"]
+    ]);
+    expect(view.now.title).toBe("Tagesprogramm");
+  });
+
   it("does not offer next week's run of a weekly block as what follows it", () => {
     vi.useFakeTimers();
     // A Tuesday, 07:30 in the state's zone; the only block airs Tuesdays at 08:00.

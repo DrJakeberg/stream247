@@ -950,7 +950,9 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   all fell behind a long item on air was listed as one without material (test); items starting after their
   block's end on a clock-change night are dropped; the cache key includes the source breakers; "in N h" counts
   whole hours (1430 min is "in 23 h", not "in 24 h"). V1's "After that" card and its test left with the page
-  it described: the *Up next* list replaces it and lists blocks without material the same way.
+  it described: the *Up next* list replaces it and lists blocks without material the same way; V1's case is pinned again
+  in `tests/unit/ops-state.test.ts` ("V1 since M100"): a channel scheduled around the clock with nothing ready
+  lists its next blocks, the block on air only in *Now*.
 - **Left.** `laterScheduleItems` stays in the snapshot (its tests stay) but the page no longer reads it; a
   daily 24 h block gives one *Up next* card per day (each day is its own block); when the item on air
   outlasts its block, the next block's items are still listed from the block's start; local files have

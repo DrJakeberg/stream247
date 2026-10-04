@@ -182,10 +182,11 @@ export function buildPublicProgramme(args: {
           .filter((item) => item.start >= fromMs && item.start < horizonMs)
           .map((item) => ({ block, item, start: item.start, end: item.end }));
       }
-      // A block with nothing to play is still on the programme: listed by its air window.
+      // A block with nothing to play is still on the programme: listed by its air window. One on air now is
+      // the Now card already.
       return block.windows
-        .filter((window) => window.end > nowMs && window.start < horizonMs)
-        .map((window) => ({ block, item: null, start: Math.max(window.start, fromMs), end: window.end }));
+        .filter((window) => window.start > nowMs && window.start < horizonMs)
+        .map((window) => ({ block, item: null, start: window.start, end: window.end }));
     })
     .sort((left, right) => left.start - right.start);
   const groups: PublicProgrammeGroup[] = [];
