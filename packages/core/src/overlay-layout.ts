@@ -429,7 +429,7 @@ export function overlayNextTimeLabel(
     return viewerText(locale, "overlay.next.timeRangeInMinutes", { ...range, count: minutes });
   }
   if (minutes >= 60 && minutes < 24 * 60) {
-    return viewerText(locale, "overlay.next.timeRangeInHours", { ...range, count: Math.round(minutes / 60) });
+    return viewerText(locale, "overlay.next.timeRangeInHours", { ...range, count: Math.floor(minutes / 60) });
   }
   return viewerText(locale, "overlay.next.timeRange", range);
 }

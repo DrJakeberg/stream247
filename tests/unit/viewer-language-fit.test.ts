@@ -178,5 +178,21 @@ describe("German viewer texts fit the on-air panels", () => {
       );
       expect({ label, fits: measured.german <= measured.allowed, ...measured }).toMatchObject({ label, fits: true });
     }
+
+    // M100 (V7): the heading with the widest times and "in N min" / "in N h" (two-digit counts).
+    for (const label of ["overlay.nextLabel.asset", "overlay.nextLabel.reconnect", "overlay.nextLabel.insert"] as const) {
+      for (const key of ["overlay.next.timeRangeInMinutes", "overlay.next.timeRangeInHours"] as const) {
+        const measured = await row(
+          (locale) =>
+            inkWidth(viewerUpperCase(locale, `${text(locale, label)} · ${text(locale, key, { start: "20:00", end: "00:00", count: 59 })}`), {
+              fontSize: 16,
+              fontWeight: 700,
+              letterSpacing: 2
+            }),
+          NEXT_INNER
+        );
+        expect({ label, key, fits: Math.max(measured.german, measured.english) <= NEXT_INNER, ...measured }).toMatchObject({ label, key, fits: true });
+      }
+    }
   });
 });

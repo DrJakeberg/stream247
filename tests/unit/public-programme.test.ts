@@ -134,6 +134,52 @@ describe("the next 24 hours, item by item", () => {
     expect(programme.next[0]?.items.map((item) => berlin(item.startsAt))).toEqual(["12:00", "13:00"]);
   });
 
+  it("moves only the air window on now: the weekly block resumes at its own time after a dated block", () => {
+    // Weekly 18-22 with a dated block 20-21; 19:30, the item on air ran 19:20-19:40.
+    const startedAt = getScheduleInstant({ date: MONDAY, seconds: (19 * 60 + 20) * 60, timeZone: ZONE });
+    const programme = programmeAt({
+      time: "19:30",
+      blocks: [
+        block({ id: "Weekly", dayOfWeek: 1, startMinuteOfDay: 18 * 60, durationMinutes: 240, poolId: "a" }),
+        block({ id: "Special", dayOfWeek: 1, startMinuteOfDay: 20 * 60, durationMinutes: 60, poolId: "b", validFrom: MONDAY, validUntil: MONDAY })
+      ],
+      pools: [pool("a"), pool("b")],
+      assets: [...assets("a", 9, 1200), ...assets("b", 1, 3600)],
+      current: {
+        title: "On air",
+        categoryName: "Archive",
+        startsAt: startedAt.toISOString(),
+        endsAt: new Date(startedAt.getTime() + 1200_000).toISOString()
+      }
+    });
+    expect(programme.next.map((group) => [group.title, group.items.map((item) => `${berlin(item.startsAt)}-${berlin(item.endsAt)}`)])).toEqual([
+      ["Weekly", ["19:40-20:00"]],
+      ["Special", ["20:00-21:00"]],
+      ["Weekly", ["21:00-21:20", "21:20-21:40", "21:40-22:00"]]
+    ]);
+  });
+
+  it("drops the block on air from Up next when the item on air outlasts it", () => {
+    // Block A 10-11, 10:50, the item on air ends 11:40: A has nothing left, B's first item waits for it.
+    const startedAt = getScheduleInstant({ date: MONDAY, seconds: (10 * 60 + 40) * 60, timeZone: ZONE });
+    const programme = programmeAt({
+      time: "10:50",
+      blocks: [
+        block({ id: "A", dayOfWeek: 1, startMinuteOfDay: 10 * 60, durationMinutes: 60, poolId: "a" }),
+        block({ id: "B", dayOfWeek: 1, startMinuteOfDay: 11 * 60, durationMinutes: 120, poolId: "b" })
+      ],
+      pools: [pool("a"), pool("b")],
+      assets: [...assets("a", 3, 3600), ...assets("b", 2, 3600)],
+      current: {
+        title: "Long",
+        categoryName: "Archive",
+        startsAt: startedAt.toISOString(),
+        endsAt: new Date(startedAt.getTime() + 3600_000).toISOString()
+      }
+    });
+    expect(programme.next.map((group) => group.title)).toEqual(["B"]);
+  });
+
   it("lists a block with nothing to play by its air time, and names the block on air without a playout", () => {
     const programme = programmeAt({
       time: "10:30",
@@ -200,6 +246,8 @@ describe("the calendar feed /channel.ics", () => {
       now: new Date("2026-10-05T08:00:00.000Z")
     });
     expect(text.split("\r\n").every((line) => new TextEncoder().encode(line).length <= 75)).toBe(true);
+    // RFC 5545 escapes, read as written (a lenient parser would accept them bare).
+    expect(text).toContain("SUMMARY:Retro\\, Night\\; Teil 1\r\n");
 
     const calendar = new ICAL.Component(ICAL.parse(text));
     expect(calendar.getFirstPropertyValue("x-wr-calname")).toBe("Programm von jimpanse247");
@@ -219,8 +267,10 @@ describe("V7: the on-air Next card says how soon", () => {
     const next = { startTime: "20:00", endTime: "22:00" };
     expect(overlayNextTimeLabel(next, "en", 25)).toBe("20:00-22:00 · in 25 min");
     expect(overlayNextTimeLabel(next, "de", 25)).toBe("20:00–22:00 · in 25 Min.");
-    expect(overlayNextTimeLabel(next, "en", 150)).toBe("20:00-22:00 · in 3 h");
-    expect(overlayNextTimeLabel(next, "de", 150)).toBe("20:00–22:00 · in 3 Std.");
+    expect(overlayNextTimeLabel(next, "en", 150)).toBe("20:00-22:00 · in 2 h");
+    expect(overlayNextTimeLabel(next, "de", 150)).toBe("20:00–22:00 · in 2 Std.");
+    // Whole hours: never "in 24 h" for what is under a day.
+    expect(overlayNextTimeLabel(next, "en", 1430)).toBe("20:00-22:00 · in 23 h");
     // A day or more away, started, or unknown: the bare range as before.
     expect(overlayNextTimeLabel(next, "en", 24 * 60)).toBe("20:00-22:00");
     expect(overlayNextTimeLabel(next, "en", 0)).toBe("20:00-22:00");

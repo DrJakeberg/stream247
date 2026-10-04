@@ -2042,6 +2042,12 @@ button.collection-chip {
   list-style: none;
 }
 
+/* A time and a title on one line; .subtle alone would put the title under its time. */
+.channel-public .channel-more li {
+  display: flex;
+  gap: 8px;
+}
+
 .channel-public .channel-week-list {
   display: grid;
   gap: 14px;

@@ -366,6 +366,31 @@ export function getMaterializedProgrammingWeekPreview(state: AppState, now: Date
  * first 48, so /channel can name the next 24 hours item by item, and the item the playout has on air.
  */
 export function getPublicProgramme(state: AppState, now: Date = new Date()): PublicProgramme {
+  // Every open /channel tab asks for a snapshot every five seconds, and a week of short clips takes tens of
+  // milliseconds to project; tabs asking within the same five seconds of an unchanged playout and schedule
+  // share one projection.
+  const key = [
+    getWorkspaceTimeZone(state),
+    state.playout.status,
+    state.playout.currentAssetId,
+    state.playout.processStartedAt,
+    JSON.stringify(state.scheduleBlocks),
+    JSON.stringify(state.pools),
+    JSON.stringify(state.sourceBreakers),
+    state.assets.length,
+    state.assets.reduce((latest, asset) => (asset.updatedAt > latest ? asset.updatedAt : latest), "")
+  ].join("|");
+  if (publicProgrammeCache && publicProgrammeCache.key === key && Math.abs(now.getTime() - publicProgrammeCache.at) < 5000) {
+    return publicProgrammeCache.value;
+  }
+  const value = buildPublicProgrammeNow(state, now);
+  publicProgrammeCache = { key, at: now.getTime(), value };
+  return value;
+}
+
+let publicProgrammeCache: { key: string; at: number; value: PublicProgramme } | null = null;
+
+function buildPublicProgrammeNow(state: AppState, now: Date): PublicProgramme {
   const timeZone = getWorkspaceTimeZone(state);
   const scheduleMoment = getCurrentScheduleMoment({ now, timeZone });
   const days = buildMaterializedProgrammingWeek({

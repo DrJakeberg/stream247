@@ -1,9 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import type { PublicChannelSnapshot } from "@/lib/live-broadcast";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
 import { buildPublicChannelView } from "@/lib/public-channel-view";
+
+const subscribeToNothing = () => () => undefined;
+
+function subscribeToSeconds(onChange: () => void) {
+  const timer = window.setInterval(onChange, 1000);
+  return () => window.clearInterval(timer);
+}
+
+// The same value within a second, as useSyncExternalStore requires of a snapshot.
+function currentSecond(): number {
+  return Math.floor(Date.now() / 1000) * 1000;
+}
+
+function browserTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
 
 export function LiveChannelPage(props: { initialSnapshot: PublicChannelSnapshot }) {
   const { snapshot, connected } = useLiveSnapshot({
@@ -13,18 +33,8 @@ export function LiveChannelPage(props: { initialSnapshot: PublicChannelSnapshot 
   });
   // The first render is the server's: its clock and the channel zone, so hydration finds the same text.
   // Then the browser's clock, every second for the progress bar, and the viewer's own zone (M100).
-  const [nowMs, setNowMs] = useState<number | undefined>(undefined);
-  const [viewerTimeZone, setViewerTimeZone] = useState<string | null>(null);
-  useEffect(() => {
-    try {
-      setViewerTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || null);
-    } catch {
-      setViewerTimeZone(null);
-    }
-    setNowMs(Date.now());
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
+  const nowMs = useSyncExternalStore(subscribeToSeconds, currentSecond, () => undefined);
+  const viewerTimeZone = useSyncExternalStore(subscribeToNothing, browserTimeZone, () => null);
   // Every word on this page is the channel language's (M80); the view builds them from the snapshot,
   // which carries the language, so a change in Settings reaches an open page with the next update.
   const view = buildPublicChannelView(snapshot, connected, { nowMs, viewerTimeZone });

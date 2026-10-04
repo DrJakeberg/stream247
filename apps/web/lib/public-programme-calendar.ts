@@ -8,7 +8,7 @@ import type { PublicProgrammeWeekEntry } from "@/lib/public-programme";
  */
 
 function escapeText(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/;/g, "\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+  return value.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r\n|\r|\n/g, "\\n");
 }
 
 /** Folds a content line at 75 octets, never inside a UTF-8 sequence. */
@@ -66,7 +66,7 @@ export function buildProgrammeCalendar(args: {
       .join(" · ");
     lines.push(
       "BEGIN:VEVENT",
-      `UID:${entry.key.replace(/[^A-Za-z0-9._:@-]/g, "-")}@stream247`,
+      `UID:${entry.key.replace(/[^A-Za-z0-9._:-]/g, "-")}@stream247`,
       `DTSTAMP:${stamp}`,
       `DTSTART:${formatUtc(entry.startsAt)}`,
       `DTEND:${formatUtc(entry.endsAt)}`,

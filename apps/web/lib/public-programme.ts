@@ -80,6 +80,8 @@ type BlockEntry = {
   /** Air windows as instants (ms). */
   windows: { start: number; end: number }[];
   items: { title: string; start: number; end: number }[];
+  /** It has something to play; decided before the item on air moves its items. */
+  playable: boolean;
 };
 
 function collectBlocks(days: MaterializedProgrammingDay[], timeZone: string): BlockEntry[] {
@@ -91,23 +93,35 @@ function collectBlocks(days: MaterializedProgrammingDay[], timeZone: string): Bl
       }
       const date = block.date || day.date;
       const at = (minute: number) => getScheduleInstant({ date, seconds: minute * 60, timeZone }).getTime();
-      const windows = (block.airWindows && block.airWindows.length > 0
-        ? block.airWindows
-        : [{ start: block.startMinuteOfDay, end: block.startMinuteOfDay + block.durationMinutes }]
-      ).map((window) => ({ start: at(window.start), end: at(window.end) }));
+      const airWindows =
+        block.airWindows && block.airWindows.length > 0
+          ? block.airWindows
+          : [{ start: block.startMinuteOfDay, end: block.startMinuteOfDay + block.durationMinutes }];
+      const windows = airWindows.map((window) => ({ start: at(window.start), end: at(window.end) }));
+      // Items run back to back in real time, so they are placed by elapsed seconds from the block's first air
+      // window; the windows themselves are wall-clock times. One zone lookup per block, not per item: a 24 h
+      // block of short clips has hundreds.
+      const firstSecond = (airWindows[0]?.start ?? 0) * 60;
+      const firstInstant = windows[0]?.start ?? 0;
+      const lastEnd = Math.max(...windows.map((window) => window.end));
+      const items = block.items
+        .filter((item) => typeof item.startSecond === "number" && typeof item.endSecond === "number")
+        .map((item) => ({
+          title: item.title,
+          start: firstInstant + ((item.startSecond as number) - firstSecond) * 1000,
+          end: firstInstant + ((item.endSecond as number) - firstSecond) * 1000
+        }))
+        // Elapsed and wall-clock time part on a night the clocks change: an item that would start after the
+        // block has ended does not air.
+        .filter((item) => item.start < lastEnd);
       blocks.push({
         key: `${block.blockId}:${date}`,
         title: block.title || block.categoryName,
         categoryName: block.categoryName,
         dated: Boolean(block.dated),
         windows,
-        items: block.items
-          .filter((item) => typeof item.startSecond === "number" && typeof item.endSecond === "number")
-          .map((item) => ({
-            title: item.title,
-            start: getScheduleInstant({ date, seconds: item.startSecond as number, timeZone }).getTime(),
-            end: getScheduleInstant({ date, seconds: item.endSecond as number, timeZone }).getTime()
-          }))
+        items,
+        playable: items.length > 0
       });
     }
   }
@@ -139,19 +153,31 @@ export function buildPublicProgramme(args: {
 
   const currentEnd = args.current ? Date.parse(args.current.endsAt) : Number.NaN;
   if (onAir && Number.isFinite(currentEnd) && currentEnd > nowMs) {
-    const first = onAir.items.find((item) => item.start >= fromMs);
+    // Only the air window on now moves: after a dated block the weekly block comes back at its own time.
+    const window = onAir.windows.find((candidate) => candidate.start <= nowMs && nowMs < candidate.end) as { start: number; end: number };
+    const lastWindow = window.end === Math.max(...onAir.windows.map((candidate) => candidate.end));
+    const inWindow = (item: { start: number }) => item.start >= fromMs && item.start < window.end;
+    const first = onAir.items.find(inWindow);
     const shift = first ? Math.max(0, currentEnd - first.start) : 0;
-    const lastEnd = Math.max(...onAir.windows.map((window) => window.end));
-    onAir.items = onAir.items
-      .map((item) => (item.start >= fromMs ? { ...item, start: item.start + shift, end: item.end + shift } : item))
-      .filter((item) => item.start < lastEnd);
+    onAir.items = onAir.items.flatMap((item) => {
+      if (!inWindow(item)) {
+        return [item];
+      }
+      const moved = { ...item, start: item.start + shift, end: item.end + shift };
+      if (moved.start >= window.end) {
+        return [];
+      }
+      // Cut where a dated block takes over, as the projection cuts it; the last window may overrun.
+      return [lastWindow ? moved : { ...moved, end: Math.min(moved.end, window.end) }];
+    });
   }
 
   // Items in airing order, each with its block; consecutive items of one block form a group.
   type TimelineEntry = { block: BlockEntry; item: { title: string; start: number; end: number } | null; start: number; end: number };
   const timeline: TimelineEntry[] = blocks
     .flatMap((block): TimelineEntry[] => {
-      if (block.items.length > 0) {
+      if (block.playable) {
+        // Possibly none left: the item on air outlasts the block.
         return block.items
           .filter((item) => item.start >= fromMs && item.start < horizonMs)
           .map((item) => ({ block, item, start: item.start, end: item.end }));

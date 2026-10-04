@@ -36,7 +36,9 @@ type Surface = {
 
 const SURFACES: Surface[] = [
   // The page the audience actually lands on, and the only one here that is not an operator tool.
-  { name: "channel", path: "/channel", maxControls: 1, primaryActions: 1, authenticated: false },
+  // 2: M100 adds the calendar feed link (/channel.ics) under the week, a secondary link beside the one
+  // primary "Watch the stream". The programme's "N more videos" folds are summaries, which are not counted.
+  { name: "channel", path: "/channel", maxControls: 2, primaryActions: 1, authenticated: false },
   // The page an operator opens when something is wrong. It showed 33 at once, six of them repair
   // actions of equal weight, with the order to try them explained in a paragraph above the form.
   // Now 22: the repairs fold away, and so does bringing in an outside feed — a separate job whose

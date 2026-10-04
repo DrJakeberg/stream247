@@ -35,7 +35,7 @@ How this file works:
 | M97 Week View Tells The Truth | UX | Next | Complete | The week view shows what will play, with dates, overnight blocks once, and why a block repeats | U5: each pool's rotation carried across blocks in time order through the worker's rotation function (shared, not copied); dates on day headers; hours, not minutes; an overnight block shown once with "→ 01:00 Sun"; repeat reason with numbers. U6: confirmation before "Replace existing schedule blocks"; "Edit block" and "Add block" on the week view. Tests in `program-week-projection`: three items, two blocks, the second block starts with item 2, not item 1; a 24 h block reads "24 h"; a block with 6 min of video in 24 h carries the reason "plays ≈ 240 times"; an overnight block appears on one day only. e2e: "Replace existing schedule blocks" opens a confirmation and Cancel leaves the blocks unchanged | `packages/core`, `apps/web`, tests, baselines | medium: preview must not drift from the worker, so one shared function | revert the commit |
 | M98 The Production Path Has A Smoke | Test | Next | Complete | CI exercises playout → HLS → uplink with the relay on | U15: a CI job starts the stack with the relay on and asserts that `program.m3u8` MEDIA-SEQUENCE grows and the uplink output grows over 60 s; the job fails when the uplink is stopped (mutation run) | `.github/workflows/ci.yml`, `scripts/`, `docker-compose*.yml` | low (CI only) | revert the commit |
 | M99 Wizard To First Programme | UX | Later | Complete | `/setup` ends with a stream key and a playing week | U1 (decided 5.1 Q9): skippable step "Where the stream goes" with the Twitch preset, the key stored encrypted and masked; the destination form moves to Studio → Output, the old anchor redirects. U2: skippable step "First programme" creates a pool from chosen media and applies the "Always-on single pool" template. R2 U3: render test: an empty library says how to add media, a filtered-empty library says the filters hide everything. e2e: a fresh owner completes both steps and readiness shows destination, pools and schedule ready | `apps/web`, tests, baselines, `docs/getting-started.md` | medium: moves a form operators know | revert the commit |
-| M100 Public Programme For Viewers | Feature | Later | Planned | Viewers see what comes next and the coming week, in their own time | V1 ("After that" from the schedule) comes with M88 through R1's commits `a41d327` and `51e69ee` and is not built again here. V2: "Scheduled now" when playout is down. R1 row B: a 7-day list on `/channel` per day, dated items marked; `/channel.ics` validated by a parser test; times per default R2 Q7 in 5.2 (viewer's zone first; unit test with a browser zone other than the channel zone). Layout per 2.5a: a *Now* card with progress bar and remaining time (unit test on the remaining-time and progress values for a fixed clock), a *Next* list of the next 24 h at item level from the shared week projection, consecutive items of one block grouped with "N more" (test: 3 blocks × 5 items give 3 groups with "4 more" each), crossing midnight without a break (test); Playwright at 390 px: the *Now* card is above the fold. R2 V7: the on-air Next card adds "in N min" to its bare time range (`packages/core/src/viewer-messages/en.ts:29`) through the catalogue, en + de, unit test for a fixed clock. Catalogue parity en/de green | `apps/web`, `packages/core`, tests, baselines, `docs/` | low | revert the commit |
+| M100 Public Programme For Viewers | Feature | Later | Complete | Viewers see what comes next and the coming week, in their own time | V1 ("After that" from the schedule) comes with M88 through R1's commits `a41d327` and `51e69ee` and is not built again here. V2: "Scheduled now" when playout is down. R1 row B: a 7-day list on `/channel` per day, dated items marked; `/channel.ics` validated by a parser test; times per default R2 Q7 in 5.2 (viewer's zone first; unit test with a browser zone other than the channel zone). Layout per 2.5a: a *Now* card with progress bar and remaining time (unit test on the remaining-time and progress values for a fixed clock), a *Next* list of the next 24 h at item level from the shared week projection, consecutive items of one block grouped with "N more" (test: 3 blocks × 5 items give 3 groups with "4 more" each), crossing midnight without a break (test); Playwright at 390 px: the *Now* card is above the fold. R2 V7: the on-air Next card adds "in N min" to its bare time range (`packages/core/src/viewer-messages/en.ts:29`) through the catalogue, en + de, unit test for a fixed clock. Catalogue parity en/de green | `apps/web`, `packages/core`, tests, baselines, `docs/` | low | revert the commit |
 | M101 Schedule Across DST, Wall Clock Kept | Bug | Later | Planned | Twice a year the counts are right while blocks keep their wall-clock times (owner Q4) | C5: cuepoint elapsed time from real instants (test: block from 01:00, at 03:30 local on 2027-03-28 reports 5 400 s, not 9 000 s); a non-existent local time maps forward (02:30 on 2026-03-29 → `01:30Z`, not `00:30Z`); the Twitch segment end follows real minutes; `docs/operations.md` states the wall-clock rule (skipped in March, twice in October) | `packages/core`, `apps/worker`, tests, docs | low | revert the commit |
 | M102 Standby Shows Standby | Bug | Later | Planned | The standby or reconnect slate never shows the previous item's title | W8: `writeStandbySlate` sets the standby scene payload; unit test on the payload; a design-baseline check of the standby frame | `apps/worker`, tests, baselines | medium: changes the on-air picture | revert the commit |
 | M103 Backoff And Health Restarts | Reliability | Later | Planned | Repeated restarts slow down; a hung worker or uplink restarts itself | H7: growing backoff up to 5 min for the crash-loop reset and the uplink watchdog; the crash-loop incident no longer says "Manual intervention is required" when playable media exists (unit test on the message). H8 (owner Q7): worker and uplink exit after 5 min of failing their own healthcheck; playout only while its feed does not advance. Tests: backoff sequence; a playing playout with an advancing feed never exits | `apps/worker`, `docker-compose.yml`, tests, docs | medium: dark time grows with backoff; a wrong rule could restart a playing channel | revert the commit |
@@ -282,6 +282,18 @@ deployed; the release that ships them records the results.
   *set in the server configuration*), `Live -> Status` lists it without forms and links there, and `/setup`
   (signed in) shows *Where the stream goes* and *First programme* as *Done* when the readiness lines *Live
   destination*, *Program pools* and *Weekly schedule* are ready.
+
+- M100, on the deployed candidate while a video airs: the public programme names it and the next ones. The
+  first command prints the Now card's kind (`item` while a video airs; `block` only on the standby slate or
+  a live input) and how many groups *Up next* has (at least one on a scheduled channel); the second counts
+  the calendar's events (at least one). Then open `/channel` on a phone: the Now card with its bar is on the
+  first screen, and the times are the phone's. On the picture, within an hour before a block change, the
+  Next card reads `… · in N min` (en) or `… · in N Min.` (de).
+
+  ```sh
+  ssh dut 'docker exec stream247-web-1 wget -qO- http://127.0.0.1:3000/api/channel/live' | jq -r '[.programme.now.kind, (.programme.next | length)] | @tsv'
+  ssh dut 'docker exec stream247-web-1 wget -qO- http://127.0.0.1:3000/channel.ics | grep -c BEGIN:VEVENT'
+  ```
 
 - (The checks for 2.2.0 are in the archive, sections M75-M82.)
 
@@ -897,3 +909,49 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   until the step is opened again.
 - **Not in this milestone's scope, needed for its e2e:** `scripts/e2e-smoke.sh` (two switches) and the CI
   step.
+
+### M100 Public Programme For Viewers
+
+- **Projection.** `/channel` reads `programme` from the public snapshot (`apps/web/lib/public-programme.ts`):
+  `buildMaterializedProgrammingWeek` (M97's projection, the worker's rotation) with every item listed
+  (`maxListedItemsPerBlock`; items now carry `startSecond`/`endSecond`), turned into UTC instants. Items are
+  placed by elapsed seconds from their block's first air window, block windows by wall clock. One zone lookup
+  per block: per item it took 1.25 s for a week of 2-minute clips, now about 5 ms (plus 10-25 ms projection);
+  tabs asking within five seconds of an unchanged playout and schedule share one result.
+- **Now.** The item on air when the playout runs an asset: start from `processStartedAt`, end from the asset's
+  length; a start older than the item could be (a stale runtime) or the playout down falls back to the block
+  on air. The block on air continues after the item on air: the projection starts its next item now, so its
+  items are moved to the current item's end. Progress and *12:34 left* tick every second in the browser.
+- **V2.** With the playout not on air the card is headed *Scheduled now*.
+- **Next 24 h.** Consecutive items of one block are one card (its next item, *N more videos* in a fold, at
+  most 25 listed, the count exact); one list across midnight; a block without playable items is listed by its
+  window. The operator's queue (Play now, inserts) is not in the list, only in *Now* once it airs.
+- **Week.** Each block's air windows for seven days, grouped by the viewer's day (*Today*, *Tomorrow*,
+  *Sat 10 Oct*), dated blocks marked *Special*. Weekday and month names come from the catalogue, so server
+  render and hydrated page agree.
+- **Zones (R2 Q7).** Server render and first paint in the channel zone; once hydrated the browser's zone, with
+  *… channel time* beside each time and both zones in the note when the clocks differ.
+- **`/channel.ics`.** RFC 5545, one event per air window, UTC, folded at 75 octets; parsed back with
+  `ical.js` (new dev dependency) in `tests/unit/public-programme.test.ts`. Linked from the page in a new tab.
+- **V7.** `overlayNextTimeLabel(block, locale, startsInMinutes)` adds *· in N min* under an hour and *· in N h*
+  under a day (`getScheduleStartsInMinutes`); worker and studio preview pass it. The widest German heading
+  fits the next card (`viewer-language-fit.test.ts`).
+- **Tests changed, not weakened.** `viewer-language-public-page.test.ts` pinned the three block cards; it now
+  pins the Now card, the groups and the week in both languages with the same states (scheduled, empty,
+  translated standby title, no playout message, language switch). The literal guard's mutations moved to the
+  new fields and gained one. Control density on `/channel` 1 → 2 (the calendar link). Design baseline: the
+  two lists are hidden and the Now card's content masked (clock data, as M97's grid); wording baseline
+  replaces the lists with placeholders. Re-recorded for `channel` only, against a stand-in web image built from
+  the host's standalone build (the Alpine image cannot be built in the cloud); in that image the studio
+  preview has no fonts, so `studio-scene` and the two drag specs fail there and were not touched.
+- **Review (fresh subagent).** All items met. Fixed: `;` in calendar text was not escaped (`"\;"` is `";"` in
+  JS; a raw-line assertion now pins it); the item on air moved the items of every window of its block, so after
+  a dated block the weekly block resumed late (only the window on now moves now, test); a block whose items
+  all fell behind a long item on air was listed as one without material (test); items starting after their
+  block's end on a clock-change night are dropped; the cache key includes the source breakers; "in N h" counts
+  whole hours (1430 min is "in 23 h", not "in 24 h"). V1's "After that" card and its test left with the page
+  it described: the *Up next* list replaces it and lists blocks without material the same way.
+- **Left.** `laterScheduleItems` stays in the snapshot (its tests stay) but the page no longer reads it; a
+  daily 24 h block gives one *Up next* card per day (each day is its own block); when the item on air
+  outlasts its block, the next block's items are still listed from the block's start; local files have
+  no cover image (2.5a, follow-up).

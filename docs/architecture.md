@@ -440,9 +440,14 @@ Operator content is never translated, and the admin interface is English.
   Read*).
 - **The public page** `/channel` builds every word in `apps/web/lib/public-channel-view.ts` from the
   snapshot, which carries the language and the zone's name; the page sets `lang` on its own container,
-  because the root layout's `<html lang="en">` also serves the admin. *After that* lists the playout
-  queue, or, while the queue is empty, the next three scheduled blocks after *Up next* with their start
-  times (`laterScheduleItems`, across midnight).
+  because the root layout's `<html lang="en">` also serves the admin. Since M100 the snapshot carries
+  `programme` (`apps/web/lib/public-programme.ts`): the item on air (from the playout's process start and
+  the asset's length), the next 24 hours item by item and the week block by block, all as UTC instants,
+  built from `buildMaterializedProgrammingWeek` with every item listed (`maxListedItemsPerBlock`), so the
+  page and the week view share the worker's rotation. The view writes the times in the browser's zone once
+  the page has hydrated and in the channel zone before (server render and first paint agree); weekday and
+  month names come from the catalogue, not from `Intl`, whose names differ between ICU builds.
+  `/channel.ics` writes the week as RFC 5545 events (`apps/web/lib/public-programme-calendar.ts`).
 
 ### Adding a viewer language
 
