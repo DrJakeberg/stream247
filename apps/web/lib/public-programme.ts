@@ -1,4 +1,4 @@
-import { getScheduleInstant, type MaterializedProgrammingDay } from "@stream247/core";
+import { getScheduleEndInstant, getScheduleInstant, type MaterializedProgrammingDay } from "@stream247/core";
 
 /**
  * The public programme (M100): what /channel and /channel.ics show viewers, at item level.
@@ -92,12 +92,15 @@ function collectBlocks(days: MaterializedProgrammingDay[], timeZone: string): Bl
         continue;
       }
       const date = block.date || day.date;
+      // A window starts at the first time the wall clock shows its start and ends at the last time it reaches
+      // its end, as the Twitch plan reads it (M101): in the repeated autumn hour a block airs twice.
       const at = (minute: number) => getScheduleInstant({ date, seconds: minute * 60, timeZone }).getTime();
+      const endAt = (minute: number) => getScheduleEndInstant({ date, seconds: minute * 60, timeZone }).getTime();
       const airWindows =
         block.airWindows && block.airWindows.length > 0
           ? block.airWindows
           : [{ start: block.startMinuteOfDay, end: block.startMinuteOfDay + block.durationMinutes }];
-      const windows = airWindows.map((window) => ({ start: at(window.start), end: at(window.end) }));
+      const windows = airWindows.map((window) => ({ start: at(window.start), end: endAt(window.end) }));
       // Items run back to back in real time, so they are placed by elapsed seconds from the block's first air
       // window; the windows themselves are wall-clock times. One zone lookup per block, not per item: a 24 h
       // block of short clips has hundreds.

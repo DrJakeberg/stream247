@@ -1,9 +1,9 @@
 import {
   getCuepointProgress,
   getCurrentScheduleMoment,
-  getScheduleElapsedSeconds,
   getScheduleOccurrenceAirWindowSeconds,
   getScheduleOccurrenceRunKey,
+  getScheduleRunElapsedSeconds,
   isCurrentScheduleTime,
   normalizeCuepointOffsetsSeconds,
   resolveBlockCuepointAssetId
@@ -57,10 +57,9 @@ function evaluateCuepoints(args: CuepointArgs) {
     return null;
   }
 
-  const scheduleMoment = getCurrentScheduleMoment({
-    now: args.now ?? new Date(),
-    timeZone: args.timeZone ?? resolveChannelTimeZone(args.state.managedConfig)
-  });
+  const now = args.now ?? new Date();
+  const timeZone = args.timeZone ?? resolveChannelTimeZone(args.state.managedConfig);
+  const scheduleMoment = getCurrentScheduleMoment({ now, timeZone });
   if (
     !isCurrentScheduleTime({
       startTime: currentScheduleItem.startTime,
@@ -106,20 +105,22 @@ function evaluateCuepoints(args: CuepointArgs) {
   // carry-over with a new key, and the cuepoints it fired before midnight must stay fired.
   const runKey = getScheduleOccurrenceRunKey(currentScheduleItem);
   const firedCuepointKeys = args.state.playout.cuepointWindowKey === runKey ? args.state.playout.cuepointFiredKeys : [];
-  const elapsedSeconds = getScheduleElapsedSeconds({
-    startMinuteOfDay: currentScheduleItem.startMinuteOfDay,
-    currentTime: scheduleMoment.time
-  });
+  // Real seconds, not wall-clock minutes (M101): on the spring-forward day a cuepoint fired an hour early.
+  const elapsedSeconds = getScheduleRunElapsedSeconds({ occurrence: currentScheduleItem, now, timeZone });
   const progress = getCuepointProgress({
     occurrenceKey: runKey,
     cuepointOffsetsSeconds,
     firedCuepointKeys,
     elapsedSeconds,
     // A weekly block cut around a dated one (M93) fires only the cuepoints of the window on air now.
-    airWindowsSeconds: getScheduleOccurrenceAirWindowSeconds({
-      effectiveStartMinuteOfDay: currentScheduleItem.effectiveStartMinuteOfDay ?? currentScheduleItem.startMinuteOfDay,
-      airWindows: currentScheduleItem.airWindows
-    })
+    airWindowsSeconds: getScheduleOccurrenceAirWindowSeconds(
+      {
+        effectiveStartMinuteOfDay: currentScheduleItem.effectiveStartMinuteOfDay ?? currentScheduleItem.startMinuteOfDay,
+        airWindows: currentScheduleItem.airWindows,
+        date: currentScheduleItem.date
+      },
+      timeZone
+    )
   });
 
   return { block, pool, asset, progress, elapsedSeconds };

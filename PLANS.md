@@ -36,7 +36,7 @@ How this file works:
 | M98 The Production Path Has A Smoke | Test | Next | Complete | CI exercises playout → HLS → uplink with the relay on | U15: a CI job starts the stack with the relay on and asserts that `program.m3u8` MEDIA-SEQUENCE grows and the uplink output grows over 60 s; the job fails when the uplink is stopped (mutation run) | `.github/workflows/ci.yml`, `scripts/`, `docker-compose*.yml` | low (CI only) | revert the commit |
 | M99 Wizard To First Programme | UX | Later | Complete | `/setup` ends with a stream key and a playing week | U1 (decided 5.1 Q9): skippable step "Where the stream goes" with the Twitch preset, the key stored encrypted and masked; the destination form moves to Studio → Output, the old anchor redirects. U2: skippable step "First programme" creates a pool from chosen media and applies the "Always-on single pool" template. R2 U3: render test: an empty library says how to add media, a filtered-empty library says the filters hide everything. e2e: a fresh owner completes both steps and readiness shows destination, pools and schedule ready | `apps/web`, tests, baselines, `docs/getting-started.md` | medium: moves a form operators know | revert the commit |
 | M100 Public Programme For Viewers | Feature | Later | Complete | Viewers see what comes next and the coming week, in their own time | V1 ("After that" from the schedule) comes with M88 through R1's commits `a41d327` and `51e69ee` and is not built again here. V2: "Scheduled now" when playout is down. R1 row B: a 7-day list on `/channel` per day, dated items marked; `/channel.ics` validated by a parser test; times per default R2 Q7 in 5.2 (viewer's zone first; unit test with a browser zone other than the channel zone). Layout per 2.5a: a *Now* card with progress bar and remaining time (unit test on the remaining-time and progress values for a fixed clock), a *Next* list of the next 24 h at item level from the shared week projection, consecutive items of one block grouped with "N more" (test: 3 blocks × 5 items give 3 groups with "4 more" each), crossing midnight without a break (test); Playwright at 390 px: the *Now* card is above the fold. R2 V7: the on-air Next card adds "in N min" to its bare time range (`packages/core/src/viewer-messages/en.ts:29`) through the catalogue, en + de, unit test for a fixed clock. Catalogue parity en/de green | `apps/web`, `packages/core`, tests, baselines, `docs/` | low | revert the commit |
-| M101 Schedule Across DST, Wall Clock Kept | Bug | Later | Planned | Twice a year the counts are right while blocks keep their wall-clock times (owner Q4) | C5: cuepoint elapsed time from real instants (test: block from 01:00, at 03:30 local on 2027-03-28 reports 5 400 s, not 9 000 s); a non-existent local time maps forward (02:30 on 2026-03-29 → `01:30Z`, not `00:30Z`); the Twitch segment end follows real minutes; `docs/operations.md` states the wall-clock rule (skipped in March, twice in October) | `packages/core`, `apps/worker`, tests, docs | low | revert the commit |
+| M101 Schedule Across DST, Wall Clock Kept | Bug | Later | Complete | Twice a year the counts are right while blocks keep their wall-clock times (owner Q4) | C5: cuepoint elapsed time from real instants (test: block from 01:00, at 03:30 local on 2027-03-28 reports 5 400 s, not 9 000 s); a non-existent local time maps forward (02:30 on 2026-03-29 → `01:30Z`, not `00:30Z`); the Twitch segment end follows real minutes; `docs/operations.md` states the wall-clock rule (skipped in March, twice in October) | `packages/core`, `apps/worker`, tests, docs | low | revert the commit |
 | M102 Standby Shows Standby | Bug | Later | Planned | The standby or reconnect slate never shows the previous item's title | W8: `writeStandbySlate` sets the standby scene payload; unit test on the payload; a design-baseline check of the standby frame | `apps/worker`, tests, baselines | medium: changes the on-air picture | revert the commit |
 | M103 Backoff And Health Restarts | Reliability | Later | Planned | Repeated restarts slow down; a hung worker or uplink restarts itself | H7: growing backoff up to 5 min for the crash-loop reset and the uplink watchdog; the crash-loop incident no longer says "Manual intervention is required" when playable media exists (unit test on the message). H8 (owner Q7): worker and uplink exit after 5 min of failing their own healthcheck; playout only while its feed does not advance. Tests: backoff sequence; a playing playout with an advancing feed never exits | `apps/worker`, `docker-compose.yml`, tests, docs | medium: dark time grows with backoff; a wrong rule could restart a playing channel | revert the commit |
 | M104 Wording Pass And Chat Answers | UX | Later | Planned | Admin text names no milestone ids; viewers can ask the bot | U13: render test fails on `\bM\d{2}\b` in admin text. U14: the admin preview and (i) show the localized standby text. S19 (lead from the stopped planning branch, re-checked): overlay output is one checkbox among many (`apps/web/components/overlay-settings-form.tsx:890`) and the Scene tab shows "unknown" / "never" before a first publish; Scene gets an on/off banner at the top and "Not published yet"; render test. V5/V6 (decided 5.1 Q7): `!commands` (only enabled commands), `!now`, `!next` with the `/channel` link, one reply per `!request` (queued with position, no match, cooldown, queue full), each with its own switch, 60 s per viewer and 10 s global cooldown, en + de; unit tests per reply | `apps/web`, `apps/worker`, `packages/core`, tests, baselines | medium: chat volume and Twitch rate limits | revert the commit |
@@ -294,6 +294,12 @@ deployed; the release that ships them records the results.
   ssh dut 'docker exec stream247-web-1 wget -qO- http://127.0.0.1:3000/api/channel/live' | jq -r '[.programme.now.kind, (.programme.next | length)] | @tsv'
   ssh dut 'docker exec stream247-web-1 wget -qO- http://127.0.0.1:3000/channel.ics | grep -c BEGIN:VEVENT'
   ```
+
+- M101, on the deployed candidate in the week before a clock change (the next is Sunday 2026-10-25): a
+  block touching 02:00-03:00 on that Sunday is on the Twitch schedule of jimpanse247 with the real length it
+  airs (Sunday 01:00-04:00 reads 01:00-04:00 and lasts 4 hours; a block in 02:00-03:00 starts at the first
+  02:00 and lasts 2 hours). Without such a block, save a test block "Once" on that Sunday 01:00-04:00, let
+  one Twitch sync run, check the Twitch dashboard's schedule, then delete the block.
 
 - (The checks for 2.2.0 are in the archive, sections M75-M82.)
 
@@ -957,3 +963,29 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   daily 24 h block gives one *Up next* card per day (each day is its own block); when the item on air
   outlasts its block, the next block's items are still listed from the block's start; local files have
   no cover image (2.5a, follow-up).
+
+### M101 Schedule Across DST, Wall Clock Kept
+
+- **Rule (owner decision R3 Q4).** Blocks keep their wall-clock times; a block in 02:00-03:00 is skipped in
+  March and airs twice in October. `docs/operations.md`, "The clock change", states it. Only counts change.
+- **Mapping.** `toUtcIsoForLocalDateTime` (and `getScheduleInstant`) tries the offsets a day before and a day
+  after the time. A time in the gap maps forward with the earlier offset (02:30 on 2026-03-29 → `01:30Z`;
+  before: `00:30Z`, the old three-step search oscillated). A time shown twice maps to its first occurrence by
+  default (02:30 on 2026-10-25 → `00:30Z`; before: `01:30Z`), `ambiguous: "later"` to the second. The first
+  is where a block starting there begins to air; the second is where one ending there stops.
+- **Cuepoints.** `getScheduleRunElapsedSeconds` counts real seconds from the run's start instant (a
+  carry-over from the evening before included); worker (`apps/worker/src/cuepoints.ts`) and the live summary
+  (`apps/web/lib/server/state.ts`) use it. With the occurrence's date and the zone, the worker's air windows of
+  a block cut by a dated one are real seconds too. Without a date both fall back to the wall-clock count.
+- **Twitch.** A segment lasts from its start instant to its end instant (`getScheduleEndInstant`: an end inside
+  the repeated hour is its second occurrence, an end at exactly 02:00 the first; review finding):
+  Sunday 01:00-04:00 is 120 min in March, 240 in October; 02:00-03:00 is 0 min (skipped, counted in
+  `skippedCount`) in March and 120 in October. `/channel` and `/channel.ics` read window ends the same way.
+- **Tests.** `tests/unit/schedule-dst.test.ts` (mapping, cuepoints incl. the acceptance's 5 400 s, Twitch),
+  one case in `tests/unit/public-programme.test.ts`.
+- **Left.** A block starting inside the skipped hour starts airing at the switch (03:00 CEST: the wall clock is
+  past its start), while its Twitch segment and its cuepoint count start at the forward-mapped time (02:30 →
+  03:30, so its cuepoints fire up to 30 minutes late that night), as the acceptance asks; a block that ends inside the skipped hour is posted that much too long (02:00-02:30 gets a
+  30-minute segment although it never airs). The week
+  view and the day lens keep wall-clock lengths; the live summary's cuepoint count does not apply a dated
+  block's air windows (the worker does, since M93).
