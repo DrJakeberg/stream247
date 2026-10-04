@@ -210,7 +210,8 @@ What follows the language:
 - text mode and the standby slate (the `Now:` / `Jetzt:` and `Next:` / `Als Nächstes:` lines ffmpeg draws
   when no scene picture is on air)
 - the standby, reconnect and Live Bridge texts the worker writes when nothing titled is on air
-- every chat bot reply (`!here`, `!game`, the skip-paused lines)
+- every chat bot reply (`!here`, `!game`, the skip-paused lines, `!commands`, `!now`, `!next` and the
+  answers to `!request`)
 - the Twitch title when no asset is on air
 - the public page `/channel`, including the name of the time zone (`Central European Time` /
   `Mitteleuropäische Zeit` instead of `Europe/Berlin`), and its calendar feed `/channel.ics`
@@ -222,7 +223,7 @@ What does not:
   built-in rule below: a title, category or source name that is exactly one of the product's own
   English texts is shown in the channel language.
 - **Command words** stay as they are in every language: `!here`, `!skip`, `!request`, `!game`, the
-  game ids, `stop`, `!1`, `!2`.
+  game ids, `stop`, `!1`, `!2`, `!commands`, `!now`, `!next`.
 - **The admin interface stays English**, including the texts it shares with the air: the as-run log
   and the playout state keep `Replay standby`, `Scheduled reconnect`, `Live Bridge` and `Live input`,
   and the sources list keeps `Local Media Library`; viewers get the channel language's words for them
@@ -233,7 +234,10 @@ The studio's built-in headlines (`Stream247`, `Replay stream`, `Always on air`, 
 English and are not migrated. A stored value that still equals its built-in English default counts as
 not customised and is shown in the channel language; anything else is shown exactly as written. So a
 German channel that never touched the headlines gets German headlines, and to keep one of the English
-defaults on a German channel, change it by a character.
+defaults on a German channel, change it by a character. The studio shows what airs (since M104): under a
+headline field that still holds a built-in default it reads *Viewers see:* with the channel language's
+text, its (i) names that text as the value an empty field falls back to, and the scene summaries in
+Studio → Scene and Live → Control show the headlines as viewers read them.
 
 The same rule covers the names the product writes in English for the admin — `Replay standby`,
 `Stand by`, `Scheduled reconnect`, `Live Bridge`, `Live input` and `Local Media Library` (the local
@@ -841,6 +845,29 @@ docker exec stream247-playout-1 yt-dlp --simulate --print "%(is_live)s" https://
 Before touching the uplink because "the channel is offline", repeat that check against the broadcast
 channel. The worker's `twitch.chat_settings.written` line names both accounts (`channelLogin`/`channelId`,
 `botLogin`/`botId`); a refused bot connect is in the audit trail as `twitch.bot.rejected`.
+
+### What the chat bot answers (since M104)
+
+With *Viewer control* on (Studio → Engagement), the bot answers in chat, in the channel language. Each
+answer has its own switch under *Chat answers* (all on by default; with *Enable viewer control* off the
+bot answers none of them):
+
+- `!commands` lists the commands that work right now, under the names configured on that page (`!now`,
+  `!next`, `!request title`, `!skip`, `!1–!N during a poll`, `!game`); a switched-off command is left out.
+- `!now` names what is on air, or says the channel is on a short break while the standby or reconnect
+  slate runs or nothing plays.
+- `!next` names the next item; while nothing plays, the next schedule block of today with its start time.
+- Both end with `Programme: <APP_URL>/channel` when the app URL is set (`APP_URL` or the wizard's value).
+- Every `!request` gets one answer: queued with its position in the queue, no matching video, the
+  viewer's cooldown (in seconds under a minute, else minutes), the queue is full, or already queued.
+  The bot never repeats what the viewer typed.
+
+How often: one answer to `!commands`, `!now` or `!next` per viewer a minute and one in the chat every ten
+seconds; questions inside those windows get no answer. A refused request is explained to each viewer
+once a minute; an accepted one is always confirmed (the request cooldown and the queue cap already bound
+those). Behind all of it, the bot writes at most 15 lines in any 30 seconds (Twitch allows a
+non-moderator account 20); a line past that is dropped with the runtime event `chat.say.dropped`. The
+words come from the worker's last cycle, so a change of what plays reaches `!now` within about 30 s.
 
 ### Owner password lost (since M91)
 

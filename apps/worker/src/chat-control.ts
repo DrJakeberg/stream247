@@ -17,6 +17,8 @@ import {
   openVoteSession,
   parseChatCommand,
   viewerText,
+  ChatReplyCooldown,
+  type ChatInfoCommand,
   type ChatCommand,
   type ChatInteractionConfig,
   type OperatorHold,
@@ -36,7 +38,10 @@ export type ChatControlEffect =
   // counted. `announce` is true when the bot should say why -- at most once per
   // SKIP_PAUSED_REPLY_COOLDOWN_MS.
   | { kind: "skip-paused"; hold: Exclude<OperatorHold, "">; announce: boolean }
-  | { kind: "request"; actor: string; query: string };
+  | { kind: "request"; actor: string; query: string }
+  // !commands, !now or !next (M104). `answer` is true when the cooldowns let the bot reply: one answer per
+  // viewer a minute and one in the room every ten seconds (chat-replies.ts).
+  | { kind: "info"; info: ChatInfoCommand; actor: string; answer: boolean };
 
 // A room that wants an item gone types the command together, for as long as the 120 s skip window it
 // expects. One answer a minute reaches the viewers who arrive later without repeating it for every vote.
@@ -62,6 +67,7 @@ export class ChatControlRuntime {
   private lastOutcome: VoteOutcome | null = null;
   private dirty = false;
   private lastSkipPausedReplyAtMs = Number.NEGATIVE_INFINITY;
+  private readonly replyCooldown = new ChatReplyCooldown();
 
   constructor(options: ChatControlOptions = {}) {
     this.options = options;
@@ -152,6 +158,10 @@ export class ChatControlRuntime {
         return { kind: "request", actor, query: command.query };
       }
 
+      if (command.kind === "info") {
+        return { kind: "info", info: command.info, actor, answer: this.replyCooldown.claimInfo(actor, now.getTime()) };
+      }
+
       return { kind: "none" };
     } catch (error) {
       this.log("chat.command.failed", {
@@ -214,6 +224,14 @@ export class ChatControlRuntime {
     }
     this.lastSkipPausedReplyAtMs = nowMs;
     return true;
+  }
+
+  /**
+   * True at most once a minute per viewer: whether the bot tells this viewer why a request was refused
+   * (M104). An accepted request is always confirmed and does not ask.
+   */
+  claimRequestRefusalReply(actor: string): boolean {
+    return this.replyCooldown.claimViewer(actor, this.now().getTime());
   }
 
   clearSkipVote(): void {

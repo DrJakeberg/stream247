@@ -379,7 +379,12 @@ describe("normalizeChatInteractionConfig", () => {
       skipMinimumVotes: 8,
       skipWindowSeconds: 180,
       requestCommand: "wunsch",
-      skipCommand: "weiter"
+      skipCommand: "weiter",
+      // The answer switches (M104), one of them off so a dropped field cannot pass as its default.
+      commandsReplyEnabled: true,
+      nowReplyEnabled: false,
+      nextReplyEnabled: true,
+      requestRepliesEnabled: true
     };
 
     expect(normalizeChatInteractionConfig(input)).toEqual(input);

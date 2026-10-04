@@ -13,7 +13,7 @@ export const DECLARED_SCHEMA: Record<string, string[]> = {
   audit_events: ["created_at", "id", "message", "type"],
   chat_game_runtime: ["game_id", "settings", "settings_key", "singleton_id", "state", "updated_at"],
   chat_game_settings: ["emote_down", "emote_left", "emote_right", "emote_up", "game_id", "grid_height", "grid_width", "singleton_id", "updated_at"],
-  chat_interaction_settings: ["enabled", "request_command", "request_cooldown_seconds", "request_queue_limit", "requests_enabled", "singleton_id", "skip_command", "skip_enabled", "skip_minimum_votes", "skip_threshold_ratio", "skip_window_seconds", "updated_at", "vote_duration_seconds", "vote_minimum_voters", "vote_option_count", "voting_enabled"],
+  chat_interaction_settings: ["commands_reply_enabled", "enabled", "next_reply_enabled", "now_reply_enabled", "request_command", "request_cooldown_seconds", "request_queue_limit", "request_replies_enabled", "requests_enabled", "singleton_id", "skip_command", "skip_enabled", "skip_minimum_votes", "skip_threshold_ratio", "skip_window_seconds", "updated_at", "vote_duration_seconds", "vote_minimum_voters", "vote_option_count", "voting_enabled"],
   chat_overlay_messages: ["enabled", "max_messages", "messages", "position", "singleton_id", "updated_at"],
   chat_skip_vote: ["asset_id", "expires_at", "singleton_id", "skip_command", "started_at", "updated_at", "votes", "votes_needed"],
   chat_viewer_requests: ["actor", "asset_id", "created_at", "id", "status"],

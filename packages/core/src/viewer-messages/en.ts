@@ -122,6 +122,28 @@ export const EN_VIEWER_MESSAGES = {
   "chat.skip.pausedInsert": "The operator is playing an insert — skip votes are paused until it ends.",
   "chat.skip.pausedFallback": "The operator has put the fallback on air — skip votes are paused until it ends.",
   "chat.skip.pausedPin": "The operator has pinned this item — skip votes are paused until the pin ends.",
+  // The answers viewers can ask for (M104): !commands, !now, !next, and one per !request.
+  "chat.commands.list": "Commands: {commands}",
+  "chat.commands.request": "{command} title",
+  "chat.commands.vote": "!1–{last} during a poll",
+  "chat.now.onAir": "Now on air: {title}.",
+  "chat.now.nothing": "Nothing is playing right now — stand by, we’ll be right back.",
+  "chat.next.at": "Next at {time}: {title}.",
+  "chat.next.item": "Up next: {title}.",
+  "chat.next.nothing": "Nothing further is scheduled yet.",
+  "chat.programmeLink": "Programme: {url}",
+  "chat.request.queued": "@{actor} “{title}” is in the queue at position {position}.",
+  "chat.request.noMatch": "@{actor} no requestable video matches that title.",
+  "chat.request.cooldownSeconds": {
+    one: "@{actor} you can request again in {count} second.",
+    other: "@{actor} you can request again in {count} seconds."
+  },
+  "chat.request.cooldownMinutes": {
+    one: "@{actor} you can request again in {count} minute.",
+    other: "@{actor} you can request again in {count} minutes."
+  },
+  "chat.request.queueFull": "@{actor} the request queue is full — try again once a request has played.",
+  "chat.request.alreadyQueued": "@{actor} “{title}” is already in the queue.",
   // The on-air chat panel's name for a message that arrived without one.
   "chat.viewerName": "Viewer",
 

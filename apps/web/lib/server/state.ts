@@ -1563,6 +1563,7 @@ export function getBroadcastSnapshot(state: AppState): BroadcastSnapshot {
   return {
     generatedAt: new Date().toISOString(),
     timeZone: getWorkspaceTimeZone(state),
+    locale: getViewerLocale(state),
     workerHealth: getWorkerHealth(state),
     heartbeatProblems: getHeartbeatProblems(state),
     relayEnabled: process.env.STREAM247_RELAY_ENABLED === "1",

@@ -30,7 +30,7 @@ this rule.
 
 | Feature | Runs through | Scopes | Without it |
 |---|---|---|---|
-| Chat rail, `!here` check-ins, chat games, viewer votes, requests and `!skip` | bot account | `chat:read`, `chat:edit` | chat features stay quiet |
+| Chat rail, `!here` check-ins, chat games, viewer votes, requests, `!skip` and the bot's answers | bot account | `chat:read`, `chat:edit` | chat features stay quiet |
 | Emote-only and chat moderation on the broadcast channel | bot account (as moderator) | `moderator:manage:chat_settings` | the mode is not switched |
 | Follow alerts | bot account (as moderator) | `moderator:read:followers` | no follow events |
 | Live status and viewer count of the broadcast channel | bot account + Twitch app | — | shown as unknown |
@@ -46,6 +46,8 @@ air, `!skip` votes are paused and the bot says so in chat, at most once a minute
 *Operator controls*). A pool's automatic insert and a cue point insert stay skippable.
 The bot answers in the channel language (`Admin → Settings → Channel language`, English or German;
 since M80). The commands themselves (`!here`, `!skip`, `!game`, `!1`) are the same in both.
+Viewers can also ask the bot `!commands`, `!now` and `!next`, and every `!request` gets an answer (since
+M104; switches and cooldowns in `docs/operations.md`, *What the chat bot answers*).
 
 ## Required Redirect URLs
 

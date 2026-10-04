@@ -61,6 +61,11 @@ import {
   formatChatGameNoRoomReply,
   decidePassedSkipVote,
   formatChatSkipPausedReply,
+  formatChatCommandsReply,
+  formatChatNextReply,
+  formatChatNowReply,
+  formatChatRequestReply,
+  type ChatProgrammeInfo,
   resolveOperatorHold,
   resolveOperatorOverrideHold,
   type ChatGameCommand,
@@ -421,6 +426,7 @@ import { buildFlatListingArgs, resolveListingEntryPublishedAt, type FlatListingC
 import { buildTwitchMetadataTitle, resolveTwitchFallbackTitle } from "./twitch-metadata.js";
 import { ActiveChatterRoster } from "./active-chatters.js";
 import { ChatViewerRequestPass } from "./chat-viewer-requests.js";
+import { buildChatProgrammeInfo } from "./chat-programme-info.js";
 import { EngagementGameTracker } from "./engagement-game.js";
 import {
   ChatGameRuntime,
@@ -619,6 +625,19 @@ const twitchChatBridge = new TwitchChatBridge({
       twitchChatBridge.say(formatChatSkipPausedReply(effect.hold, viewerLanguage()));
     }
 
+    // !commands, !now, !next (M104): answered from what the last cycle read, within the reply cooldowns.
+    if (effect.kind === "info" && effect.answer) {
+      const locale = viewerLanguage();
+      if (effect.info === "now") {
+        twitchChatBridge.say(formatChatNowReply(latestChatProgrammeInfo, locale));
+      } else if (effect.info === "next") {
+        twitchChatBridge.say(formatChatNextReply(latestChatProgrammeInfo, locale));
+      } else {
+        // !game always answers while chat is connected (handleChatGameCommand), so it is listed with the rest.
+        twitchChatBridge.say(formatChatCommandsReply({ config: latestChatInteractionConfig, gameCommand: true, locale }));
+      }
+    }
+
     // Every accepted skip vote goes on air within a second (see CHAT_SKIP_FLUSH_DELAY_MS). The
     // passed campaign flushes too: its full bar stays honest on screen until the worker cycle
     // applies the skip and clears the row.
@@ -688,6 +707,9 @@ let latestManagedConfig: AppState["managedConfig"] | null = null;
 function viewerLanguage(): ViewerLocale {
   return resolveChannelLanguage(latestManagedConfig ?? undefined);
 }
+// What !now and !next answer (M104), rebuilt by every reconcileChatInteraction from the state it reads.
+let latestChatProgrammeInfo: ChatProgrammeInfo = { nowTitle: "", nextTitle: "", nextStartsAt: "", channelUrl: "" };
+
 // Effects the socket handler cannot apply itself; drained by the worker cycle.
 const pendingChatEffects: ChatControlEffect[] = [];
 
@@ -10168,16 +10190,33 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
 
     if (!verdict.accepted) {
       logRuntimeEvent("chat.request.rejected", { actor: effect.actor, query: effect.query, reason: verdict.reason });
+      // One answer per request (M104); a viewer hears why at most once a minute, so a wrong title typed
+      // ten times is not ten lines from the bot.
+      if (config.requestRepliesEnabled && chatControl.claimRequestRefusalReply(effect.actor)) {
+        const reply = formatChatRequestReply({ actor: effect.actor, verdict, position: 0, locale: viewerLanguage() });
+        if (reply) {
+          twitchChatBridge.say(reply);
+        }
+      }
       continue;
     }
 
-    await updatePlayoutRuntime((playout) => ({
-      ...playout,
-      queuedAssetIds: [...playout.queuedAssetIds, verdict.assetId]
-    }));
+    let position = 0;
+    await updatePlayoutRuntime((playout) => {
+      const queuedAssetIds = [...playout.queuedAssetIds, verdict.assetId];
+      position = queuedAssetIds.length;
+      return { ...playout, queuedAssetIds };
+    });
     await appendChatViewerRequestRecord({ actor: effect.actor, assetId: verdict.assetId });
     logRuntimeEvent("chat.request.queued", { actor: effect.actor, assetId: verdict.assetId, queuedRequestCount: queuedRequestCount + 1 });
     await appendAuditEvent("chat.request", `${effect.actor} requested "${verdict.title}" from chat.`);
+    // An accepted request is always confirmed: the request cooldown and the queue cap already bound how often.
+    if (config.requestRepliesEnabled) {
+      const reply = formatChatRequestReply({ actor: effect.actor, verdict, position, locale: viewerLanguage() });
+      if (reply) {
+        twitchChatBridge.say(reply);
+      }
+    }
   }
 }
 
@@ -10197,6 +10236,12 @@ async function reconcileChatInteraction(): Promise<void> {
   }
 
   const state = await readAppState();
+  latestChatProgrammeInfo = buildChatProgrammeInfo({
+    playout: state.playout,
+    nextScheduleItem: getNextScheduleItem(state),
+    appUrl: resolveAppBaseUrl(state.managedConfig),
+    locale: resolveChannelLanguage(state.managedConfig)
+  });
 
   const outcome = chatControl.settleVoteIfDue(config);
   if (outcome?.winnerAssetId) {

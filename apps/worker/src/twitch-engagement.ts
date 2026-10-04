@@ -15,6 +15,8 @@ import {
   type ChatMessageSegment,
   type ViewerLocale,
   isChatBridgeRuntimeNeeded,
+  ChatSendBudget,
+  sanitizeChatLine,
 } from "@stream247/core";
 import type { AppState, EngagementEventRecord } from "@stream247/db";
 import { appendEngagementEventRecord, resolveChannelLanguage } from "@stream247/db";
@@ -334,6 +336,7 @@ export class TwitchChatBridge {
   // getRecentMessages and everything downstream see only the display record.
   private readonly messages = createRingBuffer<EngagementEventRecord & { login: string; segments: ChatMessageSegment[] }>(50);
   private limiter = createChatRateLimiter(30);
+  private readonly sendBudget = new ChatSendBudget();
   private moderationConfig: AppState["moderation"] = createDefaultModerationConfig();
   // The channel language for the bot's own lines, refreshed with the moderation config each sync.
   private viewerLocale: ViewerLocale = "en";
@@ -544,6 +547,17 @@ export class TwitchChatBridge {
       return;
     }
 
+    // One IRC line: a title carrying a line break must not end the PRIVMSG and start a command (M104).
+    message = sanitizeChatLine(message);
+    if (!message) {
+      return;
+    }
+    // Past the budget the line is dropped, not queued: a late answer is stale, and more lines than
+    // Twitch allows put the bot's chat access at risk (M104).
+    if (!this.sendBudget.claim(Date.now())) {
+      logRuntimeEvent("chat.say.dropped", { reason: "send-budget" });
+      return;
+    }
     this.socket.write(`PRIVMSG #${this.channel} :${message}\r\n`);
   }
 
